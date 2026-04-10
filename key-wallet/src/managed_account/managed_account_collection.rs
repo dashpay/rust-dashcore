@@ -884,6 +884,71 @@ impl ManagedAccountCollection {
         get_by_account_type_match_impl!(self, account_type_match, get_mut, as_mut, values_mut)
     }
 
+    /// Get a mutable account reference by [`AccountType`].
+    ///
+    /// Used by `apply_changeset` to route per-account buckets from a
+    /// [`crate::changeset::WalletChangeSet`] directly to the owning
+    /// managed account without address-based scanning.
+    pub fn get_by_account_type_mut(
+        &mut self,
+        account_type: &AccountType,
+    ) -> Option<&mut ManagedCoreAccount> {
+        use crate::account::StandardAccountType;
+        match account_type {
+            AccountType::Standard {
+                index,
+                standard_account_type: StandardAccountType::BIP44Account,
+            } => self.standard_bip44_accounts.get_mut(index),
+            AccountType::Standard {
+                index,
+                standard_account_type: StandardAccountType::BIP32Account,
+            } => self.standard_bip32_accounts.get_mut(index),
+            AccountType::CoinJoin {
+                index,
+            } => self.coinjoin_accounts.get_mut(index),
+            AccountType::IdentityRegistration => self.identity_registration.as_mut(),
+            AccountType::IdentityTopUp {
+                registration_index,
+            } => self.identity_topup.get_mut(registration_index),
+            AccountType::IdentityTopUpNotBoundToIdentity => {
+                self.identity_topup_not_bound.as_mut()
+            }
+            AccountType::IdentityInvitation => self.identity_invitation.as_mut(),
+            AccountType::AssetLockAddressTopUp => self.asset_lock_address_topup.as_mut(),
+            AccountType::AssetLockShieldedAddressTopUp => {
+                self.asset_lock_shielded_address_topup.as_mut()
+            }
+            AccountType::ProviderVotingKeys => self.provider_voting_keys.as_mut(),
+            AccountType::ProviderOwnerKeys => self.provider_owner_keys.as_mut(),
+            AccountType::ProviderOperatorKeys => self.provider_operator_keys.as_mut(),
+            AccountType::ProviderPlatformKeys => self.provider_platform_keys.as_mut(),
+            AccountType::DashpayReceivingFunds {
+                index,
+                user_identity_id,
+                friend_identity_id,
+            } => self.dashpay_receival_accounts.get_mut(&DashpayAccountKey {
+                index: *index,
+                user_identity_id: *user_identity_id,
+                friend_identity_id: *friend_identity_id,
+            }),
+            AccountType::DashpayExternalAccount {
+                index,
+                user_identity_id,
+                friend_identity_id,
+            } => self.dashpay_external_accounts.get_mut(&DashpayAccountKey {
+                index: *index,
+                user_identity_id: *user_identity_id,
+                friend_identity_id: *friend_identity_id,
+            }),
+            // Platform payment accounts use a different managed type —
+            // they don't hold UTXO or transaction state, so changeset
+            // routing bypasses them.
+            AccountType::PlatformPayment {
+                ..
+            } => None,
+        }
+    }
+
     /// Remove an account from the collection
     pub fn remove(&mut self, index: u32) -> Option<ManagedCoreAccount> {
         // Try standard BIP44 first

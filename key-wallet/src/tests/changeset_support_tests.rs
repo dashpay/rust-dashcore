@@ -1,7 +1,6 @@
 //! Tests for methods added to support changeset-based persistence:
 //! - `ManagedCoreAccount::insert_utxo` / `remove_utxo` (idempotent wrappers)
-//! - `ManagedWalletInfo::find_account_by_address_mut`
-//! - `ManagedWalletInfo::find_account_with_utxo_mut`
+//! - `ManagedAccountCollection::get_by_account_type_mut` (apply routing)
 //! - `Wallet::add_account` idempotency (deterministic derivation path)
 
 use crate::account::{AccountType, StandardAccountType};
@@ -148,83 +147,35 @@ fn add_account_errors_when_explicit_xpub_collides() {
 }
 
 // ---------------------------------------------------------------------------
-// ManagedWalletInfo::find_account_by_address_mut / find_account_with_utxo_mut
+// ManagedAccountCollection::get_by_account_type_mut — direct routing for
+// apply_changeset's per_account bucket delegation.
 // ---------------------------------------------------------------------------
 
 #[test]
-fn find_account_by_address_mut_finds_owning_account() {
-    // Build a wallet with a real BIP44 account so we have real addresses.
-    let wallet = Wallet::new_random(
-        Network::Testnet,
-        WalletAccountCreationOptions::Default,
-    )
-    .unwrap();
+fn get_by_account_type_mut_finds_bip44_account() {
+    let wallet =
+        Wallet::new_random(Network::Testnet, WalletAccountCreationOptions::Default)
+            .expect("wallet");
     let mut info = ManagedWalletInfo::from_wallet(&wallet);
 
-    // Grab an address owned by the first BIP44 account.
-    let known_address = {
-        let account = info
-            .first_bip44_managed_account()
-            .expect("default wallet should have a BIP44 account");
-        account
-            .all_addresses()
-            .into_iter()
-            .next()
-            .expect("account should have at least one generated address")
+    let ty = AccountType::Standard {
+        index: 0,
+        standard_account_type: StandardAccountType::BIP44Account,
     };
-
-    let found = info.find_account_by_address_mut(&known_address);
-    assert!(found.is_some(), "must find the account that owns the address");
+    let found = info.accounts.get_by_account_type_mut(&ty);
+    assert!(found.is_some(), "default wallet must expose BIP44-0 by AccountType");
 }
 
 #[test]
-fn find_account_by_address_mut_returns_none_for_unknown_address() {
-    let wallet = Wallet::new_random(
-        Network::Testnet,
-        WalletAccountCreationOptions::Default,
-    )
-    .unwrap();
+fn get_by_account_type_mut_returns_none_for_missing_account_type() {
+    let wallet =
+        Wallet::new_random(Network::Testnet, WalletAccountCreationOptions::None)
+            .expect("wallet");
     let mut info = ManagedWalletInfo::from_wallet(&wallet);
 
-    // An address from an unrelated wallet is not owned by any of our accounts.
-    let other_wallet = Wallet::new_random(
-        Network::Testnet,
-        WalletAccountCreationOptions::Default,
-    )
-    .unwrap();
-    let other_info = ManagedWalletInfo::from_wallet(&other_wallet);
-    let foreign_address = other_info
-        .first_bip44_managed_account()
-        .unwrap()
-        .all_addresses()
-        .into_iter()
-        .next()
-        .unwrap();
-
-    assert!(info.find_account_by_address_mut(&foreign_address).is_none());
-}
-
-#[test]
-fn find_account_with_utxo_mut_finds_owning_account() {
-    let mut info = ManagedWalletInfo::dummy(1);
-    let mut account = ManagedCoreAccount::dummy_bip44();
-    let utxo = Utxo::dummy(1, 50_000, 10, false, true);
-    let outpoint = utxo.outpoint;
-    account.insert_utxo(outpoint, utxo);
-    info.accounts.insert(account).unwrap();
-
-    let found = info.find_account_with_utxo_mut(&outpoint);
-    assert!(found.is_some(), "must find account that holds the UTXO");
-    let found = found.unwrap();
-    assert!(found.utxos.contains_key(&outpoint));
-}
-
-#[test]
-fn find_account_with_utxo_mut_returns_none_for_unknown_outpoint() {
-    let mut info = ManagedWalletInfo::dummy(1);
-    let account = ManagedCoreAccount::dummy_bip44();
-    info.accounts.insert(account).unwrap();
-
-    let phantom_outpoint = Utxo::dummy(99, 1, 1, false, true).outpoint;
-    assert!(info.find_account_with_utxo_mut(&phantom_outpoint).is_none());
+    let ty = AccountType::Standard {
+        index: 42,
+        standard_account_type: StandardAccountType::BIP44Account,
+    };
+    assert!(info.accounts.get_by_account_type_mut(&ty).is_none());
 }

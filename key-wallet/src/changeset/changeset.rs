@@ -6,13 +6,33 @@
 //! native types to their schema as part of their own code — that's a
 //! persister concern, not a changeset concern.
 //!
+//! # Shape
+//!
+//! The top-level [`WalletChangeSet`] carries:
+//! - **Wallet-scoped** sub-changesets that have no per-account meaning:
+//!   [`AccountKeyChangeSet`] (which HD account types exist),
+//!   [`ChainChangeSet`] (synced height), and [`BalanceChangeSet`] (cached
+//!   balance delta).
+//! - **Per-account** deltas in `per_account: BTreeMap<AccountType, _>`.
+//!   Each bucket is an [`AccountChangeSet`] that scopes its own
+//!   `addresses_used`, `highest_used`, `utxos_*`, and `transactions` to
+//!   one `ManagedCoreAccount`.
+//!
+//! The per-account bucketing is intentional: at emission time each mutation
+//! knows which account it's modifying, so it writes directly into
+//! `per_account[key]`. At apply time each bucket is routed to its owning
+//! account by a single `accounts.get_by_account_type_mut(&key)` lookup. No
+//! address-based scanning, no ambiguity for multi-account transactions
+//! (CoinJoin, cross-account transfers) where the same `Txid` carries
+//! different per-account views.
+//!
 //! Every type in this module implements [`Merge`] so that multiple deltas
 //! produced during processing can be accumulated into a single changeset
 //! before being persisted.
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use dashcore::{BlockHash, OutPoint, Txid};
+use dashcore::{BlockHash, OutPoint};
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
@@ -30,47 +50,130 @@ use super::merge::Merge;
 
 /// Atomic delta of wallet state produced by a mutation.
 ///
-/// Composed of optional sub-changesets — `None` means no change in that area.
+/// See the module docs for the overall shape. Wallet-scoped sub-changesets
+/// are `Option<T>`; per-account deltas live in `per_account`, keyed by
+/// `AccountType`.
 #[derive(Debug, Clone, Default, PartialEq)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct WalletChangeSet {
-    /// HD account structure (account types added to the Wallet).
-    /// On apply, re-derived from the seed via `wallet.add_account(type, None)`.
+    /// HD account structure (account types added to the `Wallet`).
+    /// On apply, re-derived from the seed via `wallet.add_account(ty, None)`.
     pub account_keys: Option<AccountKeyChangeSet>,
-
-    /// `ManagedCoreAccount` runtime state (addresses used, highest_used indices).
-    pub account_states: Option<AccountStateChangeSet>,
 
     /// Core chain state (synced height, latest block hash).
     pub chain: Option<ChainChangeSet>,
 
-    /// UTXO additions, spends, and InstantSend-lock transitions.
-    pub utxos: Option<UtxoChangeSet>,
-
-    /// Transaction records.
-    pub transactions: Option<TransactionChangeSet>,
-
-    /// Cached balance delta (signed).
+    /// Cached balance delta (signed, wallet-wide).
     pub balance: Option<BalanceChangeSet>,
+
+    /// Per-account deltas, keyed by [`AccountType`]. Each bucket is
+    /// populated by the owning `ManagedCoreAccount` at emission time and
+    /// routed directly on apply — no address-based fallback scanning.
+    pub per_account: BTreeMap<AccountType, AccountChangeSet>,
 }
 
 impl Merge for WalletChangeSet {
     fn merge(&mut self, other: Self) {
         self.account_keys.merge(other.account_keys);
-        self.account_states.merge(other.account_states);
         self.chain.merge(other.chain);
-        self.utxos.merge(other.utxos);
-        self.transactions.merge(other.transactions);
         self.balance.merge(other.balance);
+        for (key, incoming) in other.per_account {
+            self.per_account.entry(key).or_default().merge(incoming);
+        }
     }
 
     fn is_empty(&self) -> bool {
         self.account_keys.is_empty()
-            && self.account_states.is_empty()
             && self.chain.is_empty()
-            && self.utxos.is_empty()
-            && self.transactions.is_empty()
             && self.balance.is_empty()
+            && self.per_account.values().all(|cs| cs.is_empty())
+    }
+}
+
+impl WalletChangeSet {
+    /// Get (or create) the per-account bucket for `account_type`.
+    ///
+    /// Used by the orchestrator during mutation accumulation to merge an
+    /// [`AccountChangeSet`] returned by a per-account mutation method into
+    /// the correct bucket.
+    pub fn account_bucket(&mut self, account_type: AccountType) -> &mut AccountChangeSet {
+        self.per_account.entry(account_type).or_default()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// AccountChangeSet — per-account delta
+// ---------------------------------------------------------------------------
+
+/// All state changes belonging to a single [`ManagedCoreAccount`].
+///
+/// Produced by the per-account mutation methods on `ManagedCoreAccount`
+/// (e.g. `mark_address_used`, `record_transaction`, `update_utxos`,
+/// `mark_utxos_instant_send`, `update_transaction_context`). The owning
+/// account type is stored outside this struct, as the key in
+/// [`WalletChangeSet::per_account`].
+#[derive(Debug, Clone, Default, PartialEq)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+pub struct AccountChangeSet {
+    /// Addresses marked as used during processing. `BTreeSet` so duplicate
+    /// marks within a single changeset collapse automatically.
+    pub addresses_used: BTreeSet<Address>,
+
+    /// `pool_type → highest_used_index` after gap limit maintenance.
+    /// Max-wins on merge. Mirrors `AddressPool::highest_used`.
+    pub highest_used: BTreeMap<AddressPoolType, u32>,
+
+    /// UTXOs received or upgraded (mempool → confirmed, unlocked → IS-locked).
+    pub utxos_added: BTreeMap<OutPoint, Utxo>,
+
+    /// UTXOs spent.
+    pub utxos_spent: BTreeSet<OutPoint>,
+
+    /// UTXOs that transitioned to InstantSend-locked.
+    pub utxos_instant_locked: BTreeSet<OutPoint>,
+
+    /// Transaction records inserted or updated. `Vec` rather than a map
+    /// keyed by `Txid` because a single account holds at most one record
+    /// per txid; within a single changeset the mutation side pushes the
+    /// record exactly once.
+    pub transactions: Vec<TransactionRecord>,
+}
+
+impl Merge for AccountChangeSet {
+    fn merge(&mut self, other: Self) {
+        self.addresses_used.extend(other.addresses_used);
+        for (pool_type, new_highest) in other.highest_used {
+            self.highest_used
+                .entry(pool_type)
+                .and_modify(|current| *current = (*current).max(new_highest))
+                .or_insert(new_highest);
+        }
+        self.utxos_added.extend(other.utxos_added);
+        self.utxos_spent.extend(other.utxos_spent);
+        self.utxos_instant_locked.extend(other.utxos_instant_locked);
+        // Deduplicate transaction records by txid on merge: the mutation
+        // side pushes at most once per txid per account, so a duplicate
+        // here comes from re-merging the same cs. Last-write-wins preserves
+        // the newest record for the same (account, txid) pair.
+        for record in other.transactions {
+            let txid = record.transaction.txid();
+            if let Some(slot) =
+                self.transactions.iter_mut().find(|r| r.transaction.txid() == txid)
+            {
+                *slot = record;
+            } else {
+                self.transactions.push(record);
+            }
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.addresses_used.is_empty()
+            && self.highest_used.is_empty()
+            && self.utxos_added.is_empty()
+            && self.utxos_spent.is_empty()
+            && self.utxos_instant_locked.is_empty()
+            && self.transactions.is_empty()
     }
 }
 
@@ -83,71 +186,19 @@ impl Merge for WalletChangeSet {
 /// On restore, each account type is re-derived from the seed via
 /// `Wallet::add_account(account_type, None)`. The keys themselves are not
 /// persisted — only the fact that the account exists.
-///
-/// Uses `Vec` rather than `BTreeSet` because `AccountType` does not implement
-/// `Ord`. Duplicates are deduplicated on merge.
 #[derive(Debug, Clone, Default, PartialEq)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct AccountKeyChangeSet {
-    pub added: Vec<AccountType>,
+    pub added: BTreeSet<AccountType>,
 }
 
 impl Merge for AccountKeyChangeSet {
     fn merge(&mut self, other: Self) {
-        for account_type in other.added {
-            if !self.added.contains(&account_type) {
-                self.added.push(account_type);
-            }
-        }
+        self.added.extend(other.added);
     }
 
     fn is_empty(&self) -> bool {
         self.added.is_empty()
-    }
-}
-
-// ---------------------------------------------------------------------------
-// AccountStateChangeSet — per-account address pool state
-// ---------------------------------------------------------------------------
-
-/// Per-account address pool state changes.
-///
-/// Tracks which addresses have been marked used and the highest used
-/// index per (account_index, pool_type). Used by `apply()` to restore
-/// address pool state.
-///
-/// Routing on `apply()` uses the `Address` itself via
-/// `ManagedWalletInfo::find_account_by_address_mut` — no per-account index
-/// is needed in `addresses_used`. The `highest_used` map is keyed by
-/// `(account_index, pool_type)` so Standard accounts (which have both an
-/// external and internal pool) can track each pool independently. Single-
-/// pool account types (Identity*, Provider*, …) don't grow their pools via
-/// gap-limit maintenance so they don't populate this map.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-pub struct AccountStateChangeSet {
-    /// Addresses marked as used during processing. `BTreeSet` so duplicates
-    /// within a single changeset collapse automatically.
-    pub addresses_used: BTreeSet<Address>,
-
-    /// `(account_index, pool_type) → highest_used_index` after gap limit
-    /// maintenance. Max-wins on merge. Matches `AddressPool::highest_used`.
-    pub highest_used: BTreeMap<(u32, AddressPoolType), u32>,
-}
-
-impl Merge for AccountStateChangeSet {
-    fn merge(&mut self, other: Self) {
-        self.addresses_used.extend(other.addresses_used);
-        for (key, new_highest) in other.highest_used {
-            self.highest_used
-                .entry(key)
-                .and_modify(|current| *current = (*current).max(new_highest))
-                .or_insert(new_highest);
-        }
-    }
-
-    fn is_empty(&self) -> bool {
-        self.addresses_used.is_empty() && self.highest_used.is_empty()
     }
 }
 
@@ -179,60 +230,6 @@ impl Merge for ChainChangeSet {
 
     fn is_empty(&self) -> bool {
         self.synced_height.is_none() && self.block_hash.is_none()
-    }
-}
-
-// ---------------------------------------------------------------------------
-// UtxoChangeSet — UTXO additions, spends, IS-lock transitions
-// ---------------------------------------------------------------------------
-
-/// UTXO-level changes from a single mutation.
-///
-/// Carries the native `Utxo` type directly so `apply()` can insert without
-/// conversion. The address inside each `Utxo` is used by the routing logic
-/// in `WalletManager::apply` to find the owning `ManagedCoreAccount`.
-#[derive(Debug, Clone, Default, PartialEq)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-pub struct UtxoChangeSet {
-    pub added: BTreeMap<OutPoint, Utxo>,
-    pub spent: BTreeSet<OutPoint>,
-    pub instant_locked: BTreeSet<OutPoint>,
-}
-
-impl Merge for UtxoChangeSet {
-    fn merge(&mut self, other: Self) {
-        self.added.extend(other.added);
-        self.spent.extend(other.spent);
-        self.instant_locked.extend(other.instant_locked);
-    }
-
-    fn is_empty(&self) -> bool {
-        self.added.is_empty() && self.spent.is_empty() && self.instant_locked.is_empty()
-    }
-}
-
-// ---------------------------------------------------------------------------
-// TransactionChangeSet — transaction record additions / updates
-// ---------------------------------------------------------------------------
-
-/// Transaction record changes.
-///
-/// Carries the native `TransactionRecord` type directly. Later merges
-/// overwrite earlier ones for the same `Txid` (last write wins), matching
-/// `BTreeMap::extend` semantics.
-#[derive(Debug, Clone, Default, PartialEq)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-pub struct TransactionChangeSet {
-    pub records: BTreeMap<Txid, TransactionRecord>,
-}
-
-impl Merge for TransactionChangeSet {
-    fn merge(&mut self, other: Self) {
-        self.records.extend(other.records);
-    }
-
-    fn is_empty(&self) -> bool {
-        self.records.is_empty()
     }
 }
 
@@ -275,6 +272,21 @@ impl Merge for BalanceChangeSet {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::account::StandardAccountType;
+
+    fn bip44_account_0() -> AccountType {
+        AccountType::Standard {
+            index: 0,
+            standard_account_type: StandardAccountType::BIP44Account,
+        }
+    }
+
+    fn bip44_account_1() -> AccountType {
+        AccountType::Standard {
+            index: 1,
+            standard_account_type: StandardAccountType::BIP44Account,
+        }
+    }
 
     #[test]
     fn wallet_changeset_is_empty_by_default() {
@@ -283,7 +295,7 @@ mod tests {
     }
 
     #[test]
-    fn wallet_changeset_merge_combines_sub_changesets() {
+    fn wallet_changeset_merge_keeps_latest_chain_height() {
         let mut a = WalletChangeSet::default();
         let mut b = WalletChangeSet::default();
         a.chain = Some(ChainChangeSet {
@@ -315,21 +327,97 @@ mod tests {
     }
 
     #[test]
-    fn account_state_changeset_merge_keeps_highest_used() {
-        let ext0 = (0, AddressPoolType::External);
-        let int0 = (0, AddressPoolType::Internal);
-        let ext1 = (1, AddressPoolType::External);
+    fn account_changeset_merge_keeps_highest_used() {
+        let mut a = AccountChangeSet::default();
+        a.highest_used.insert(AddressPoolType::External, 5);
+        a.highest_used.insert(AddressPoolType::Internal, 2);
 
-        let mut a = AccountStateChangeSet::default();
-        a.highest_used.insert(ext0, 5);
-        let mut b = AccountStateChangeSet::default();
-        b.highest_used.insert(ext0, 3); // lower — should NOT overwrite
-        b.highest_used.insert(int0, 7); // different pool — should add
-        b.highest_used.insert(ext1, 10); // different account — should add
+        let mut b = AccountChangeSet::default();
+        b.highest_used.insert(AddressPoolType::External, 3); // lower — must not overwrite
+        b.highest_used.insert(AddressPoolType::Internal, 8); // higher — must win
+
         a.merge(b);
-        assert_eq!(a.highest_used.get(&ext0), Some(&5));
-        assert_eq!(a.highest_used.get(&int0), Some(&7));
-        assert_eq!(a.highest_used.get(&ext1), Some(&10));
+        assert_eq!(a.highest_used.get(&AddressPoolType::External), Some(&5));
+        assert_eq!(a.highest_used.get(&AddressPoolType::Internal), Some(&8));
+    }
+
+    #[test]
+    fn account_changeset_merge_dedups_transactions_by_txid() {
+        use crate::managed_account::transaction_record::{TransactionDirection, TransactionRecord};
+        use crate::transaction_checking::transaction_router::TransactionType;
+        use crate::transaction_checking::TransactionContext;
+
+        // Build two records with the same txid but different contexts —
+        // simulates a record being re-emitted with an updated block context.
+        let addr = dashcore::Address::dummy(dashcore::Network::Testnet, 1);
+        let tx = dashcore::Transaction::dummy(&addr, 0..1, &[100]);
+
+        let r1 = TransactionRecord::new(
+            tx.clone(),
+            TransactionContext::Mempool,
+            TransactionType::Standard,
+            TransactionDirection::Incoming,
+            vec![],
+            vec![],
+            100,
+        );
+        let r2 = TransactionRecord::new(
+            tx.clone(),
+            TransactionContext::Mempool,
+            TransactionType::Standard,
+            TransactionDirection::Incoming,
+            vec![],
+            vec![],
+            200, // different net_amount to tell the records apart
+        );
+
+        let mut a = AccountChangeSet::default();
+        a.transactions.push(r1);
+        let mut b = AccountChangeSet::default();
+        b.transactions.push(r2);
+
+        a.merge(b);
+
+        // Same txid → merged into one slot, last write wins.
+        assert_eq!(a.transactions.len(), 1);
+        assert_eq!(a.transactions[0].net_amount, 200);
+    }
+
+    #[test]
+    fn wallet_changeset_merge_merges_per_account_buckets() {
+        let mut a = WalletChangeSet::default();
+        a.account_bucket(bip44_account_0())
+            .highest_used
+            .insert(AddressPoolType::External, 5);
+
+        let mut b = WalletChangeSet::default();
+        b.account_bucket(bip44_account_0())
+            .highest_used
+            .insert(AddressPoolType::External, 8);
+        b.account_bucket(bip44_account_1())
+            .highest_used
+            .insert(AddressPoolType::External, 2);
+
+        a.merge(b);
+
+        // Same bucket merged max-wins on highest_used.
+        assert_eq!(
+            a.per_account
+                .get(&bip44_account_0())
+                .unwrap()
+                .highest_used
+                .get(&AddressPoolType::External),
+            Some(&8)
+        );
+        // Second bucket added.
+        assert_eq!(
+            a.per_account
+                .get(&bip44_account_1())
+                .unwrap()
+                .highest_used
+                .get(&AddressPoolType::External),
+            Some(&2)
+        );
     }
 
     #[test]
