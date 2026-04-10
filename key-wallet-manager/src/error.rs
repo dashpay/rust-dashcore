@@ -27,6 +27,8 @@ pub enum WalletError {
     TransactionBuild(String),
     /// Insufficient funds
     InsufficientFunds,
+    /// Applying a persisted changeset to a wallet failed.
+    ApplyChangeSet(String),
 }
 
 impl core::fmt::Display for WalletError {
@@ -55,7 +57,14 @@ impl core::fmt::Display for WalletError {
             WalletError::InvalidParameter(msg) => write!(f, "Invalid parameter: {}", msg),
             WalletError::TransactionBuild(err) => write!(f, "Transaction build failed: {}", err),
             WalletError::InsufficientFunds => write!(f, "Insufficient funds"),
+            WalletError::ApplyChangeSet(msg) => write!(f, "Apply changeset failed: {}", msg),
         }
+    }
+}
+
+impl From<key_wallet::wallet::managed_wallet_info::apply::ApplyError> for WalletError {
+    fn from(err: key_wallet::wallet::managed_wallet_info::apply::ApplyError) -> Self {
+        WalletError::ApplyChangeSet(err.to_string())
     }
 }
 

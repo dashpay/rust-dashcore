@@ -172,8 +172,8 @@ impl WalletTransactionChecker for ManagedWalletInfo {
                         );
                     }
                 }
-                // Record the pool's highest-revealed index in the changeset so
-                // `apply()` can restore the reveal pointer without re-deriving.
+                // Record the pool's highest-used index in the changeset so
+                // `apply()` can restore the used watermark without re-scanning.
                 // Only indexable account types populate this — single-pool
                 // account types (Identity*, Provider*, …) have no meaningful
                 // account index and don't grow their pools via gap-limit
@@ -185,7 +185,7 @@ impl WalletTransactionChecker for ManagedWalletInfo {
                         .changeset
                         .account_states
                         .get_or_insert_with(Default::default)
-                        .last_revealed
+                        .highest_used
                         .entry((account_index, pool.pool_type))
                         .and_modify(|current| {
                             *current = (*current).max(highest_used)

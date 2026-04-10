@@ -220,6 +220,9 @@ impl From<key_wallet_manager::WalletError> for FFIError {
             WalletError::TransactionBuild(msg) => {
                 (FFIErrorCode::InvalidTransaction, format!("Transaction build failed: {}", msg))
             }
+            WalletError::ApplyChangeSet(msg) => {
+                (FFIErrorCode::WalletError, format!("Apply changeset failed: {}", msg))
+            }
             WalletError::InsufficientFunds => {
                 (FFIErrorCode::InvalidState, "Insufficient funds".to_string())
             }
