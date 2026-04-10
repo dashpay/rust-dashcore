@@ -307,7 +307,7 @@ impl AddressInfo {
     fn mark_used(&mut self) {
         if !self.used {
             self.used = true;
-            self.used_at = Some(0); // Should use actual timestamp
+            self.used_at = Some(crate::managed_account::ManagedCoreAccount::current_timestamp());
         }
     }
 
@@ -751,6 +751,38 @@ impl AddressPool {
             }
         }
         false
+    }
+
+    /// Set the highest-revealed index for this pool.
+    ///
+    /// Idempotent. Used by `apply(changeset)` during wallet restore to
+    /// replay the "last_revealed" tracking without re-triggering address
+    /// generation. Updates `highest_used`, inserts `index` into
+    /// `used_indices`, and marks the address at `index` as used if it
+    /// exists in the pool. No-op if the index is already at or below the
+    /// current `highest_used`.
+    pub fn set_last_revealed(&mut self, index: u32) -> bool {
+        let already_at_or_above = match self.highest_used {
+            Some(current) if current >= index => true,
+            _ => false,
+        };
+        if already_at_or_above && self.used_indices.contains(&index) {
+            return false;
+        }
+
+        self.used_indices.insert(index);
+        self.highest_used = match self.highest_used {
+            None => Some(index),
+            Some(current) => Some(current.max(index)),
+        };
+
+        if let Some(info) = self.addresses.get_mut(&index) {
+            if !info.used {
+                info.mark_used();
+            }
+        }
+
+        true
     }
 
     /// Scan addresses for usage using a check function
@@ -1281,5 +1313,98 @@ mod tests {
         assert_eq!(found.len(), 3);
         assert_eq!(pool.used_indices.len(), 3);
         assert_eq!(pool.highest_used, Some(7));
+    }
+
+    #[test]
+    fn test_mark_used_sets_real_timestamp() {
+        // Regression test: `AddressInfo::mark_used()` used to hardcode
+        // `used_at = Some(0)` which made timestamps useless. Verify the fix
+        // captures a real unix timestamp.
+        let base_path = DerivationPath::from(vec![ChildNumber::from_normal_idx(0).unwrap()]);
+        let mut pool = AddressPool::new_without_generation(
+            base_path,
+            AddressPoolType::External,
+            5,
+            Network::Testnet,
+        );
+        let key_source = test_key_source();
+
+        let addresses = pool.generate_addresses(5, &key_source, true).unwrap();
+        assert!(pool.mark_used(&addresses[0]));
+
+        let info = pool.addresses.get(&0).unwrap();
+        let ts = info.used_at.expect("used_at should be set after mark_used");
+        assert!(ts > 0, "used_at should be a real timestamp, not 0");
+        // Sanity: timestamp should be after year 2020 (1577836800 = 2020-01-01).
+        assert!(ts > 1_577_836_800, "timestamp should look like a real unix second");
+    }
+
+    #[test]
+    fn test_set_last_revealed_idempotent() {
+        let base_path = DerivationPath::from(vec![ChildNumber::from_normal_idx(0).unwrap()]);
+        let mut pool = AddressPool::new_without_generation(
+            base_path,
+            AddressPoolType::External,
+            10,
+            Network::Testnet,
+        );
+        let key_source = test_key_source();
+        let _ = pool.generate_addresses(10, &key_source, true).unwrap();
+
+        // First call marks index 5 — returns true (changed).
+        assert!(pool.set_last_revealed(5));
+        assert_eq!(pool.highest_used, Some(5));
+        assert!(pool.used_indices.contains(&5));
+        assert!(pool.addresses.get(&5).unwrap().used);
+
+        // Second call with same index is a no-op — returns false.
+        assert!(!pool.set_last_revealed(5));
+        assert_eq!(pool.highest_used, Some(5));
+    }
+
+    #[test]
+    fn test_set_last_revealed_keeps_max() {
+        let base_path = DerivationPath::from(vec![ChildNumber::from_normal_idx(0).unwrap()]);
+        let mut pool = AddressPool::new_without_generation(
+            base_path,
+            AddressPoolType::External,
+            10,
+            Network::Testnet,
+        );
+        let key_source = test_key_source();
+        let _ = pool.generate_addresses(10, &key_source, true).unwrap();
+
+        // Set to 7 first.
+        assert!(pool.set_last_revealed(7));
+        assert_eq!(pool.highest_used, Some(7));
+
+        // A lower index still records as used, but highest_used stays at 7.
+        assert!(pool.set_last_revealed(3));
+        assert_eq!(pool.highest_used, Some(7));
+        assert!(pool.used_indices.contains(&3));
+        assert!(pool.used_indices.contains(&7));
+
+        // A higher index bumps highest_used.
+        assert!(pool.set_last_revealed(9));
+        assert_eq!(pool.highest_used, Some(9));
+    }
+
+    #[test]
+    fn test_set_last_revealed_without_generated_address() {
+        // Even if the index isn't in the generated addresses map yet, we
+        // still track it in highest_used / used_indices for restore.
+        let base_path = DerivationPath::from(vec![ChildNumber::from_normal_idx(0).unwrap()]);
+        let mut pool = AddressPool::new_without_generation(
+            base_path,
+            AddressPoolType::External,
+            10,
+            Network::Testnet,
+        );
+        // Don't generate — pool.addresses is empty.
+
+        assert!(pool.set_last_revealed(3));
+        assert_eq!(pool.highest_used, Some(3));
+        assert!(pool.used_indices.contains(&3));
+        assert!(pool.addresses.get(&3).is_none());
     }
 }

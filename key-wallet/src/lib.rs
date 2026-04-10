@@ -26,6 +26,7 @@ pub mod account;
 pub mod bip32;
 #[cfg(feature = "bip38")]
 pub mod bip38;
+pub mod changeset;
 pub mod derivation;
 #[cfg(feature = "bls")]
 pub mod derivation_bls_bip32;

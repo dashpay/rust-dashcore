@@ -535,7 +535,7 @@ mod tests {
         )
         .unwrap();
 
-        // Test duplicate account creation should fail
+        // Duplicate account creation with derivation is idempotent (no-op)
         let result = wallet.add_account(
             AccountType::Standard {
                 index: 0,
@@ -543,7 +543,7 @@ mod tests {
             },
             None,
         );
-        assert!(result.is_err()); // Account 0 already exists
+        assert!(result.is_ok(), "Duplicate add with derivation should be a no-op");
 
         // Default creates multiple accounts
         assert!(wallet.accounts.count() >= 2);

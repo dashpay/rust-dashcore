@@ -150,12 +150,15 @@ fn test_duplicate_account_handling() {
     // First addition should succeed (wallet was created with None, so no accounts exist)
     let result1 = wallet.add_account(account_type, None);
 
-    // Duplicate addition should be handled gracefully
+    // Duplicate addition with derivation (no explicit xpub) is now idempotent.
+    // This allows `apply(changeset)` to replay account_keys without erroring.
     let result2 = wallet.add_account(account_type, None);
 
-    // First should succeed, second should fail due to duplicate
     assert!(result1.is_ok(), "First attempt to add account 0 should succeed");
-    assert!(result2.is_err(), "Second attempt to add duplicate account 0 should error");
+    assert!(
+        result2.is_ok(),
+        "Duplicate add with derivation should be a no-op (idempotent)"
+    );
 }
 
 #[test]

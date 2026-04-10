@@ -8,7 +8,7 @@ use crate::transaction_checking::transaction_router::TransactionType;
 use crate::transaction_checking::{BlockInfo, TransactionContext};
 use crate::Address;
 use dashcore::blockdata::transaction::Transaction;
-use dashcore::Txid;
+use dashcore::{BlockHash, Txid};
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
@@ -17,7 +17,7 @@ pub const MAX_LABEL_LENGTH: usize = 256;
 
 /// Wallet-context metadata for a transaction input.
 /// The index references `transaction.input[index]`.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct InputDetail {
     /// Index into the transaction's input array
@@ -30,7 +30,7 @@ pub struct InputDetail {
 
 /// Wallet-context metadata for a transaction output.
 /// The index references `transaction.output[index]`.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct OutputDetail {
     /// Index into the transaction's output array
@@ -68,7 +68,7 @@ pub enum TransactionDirection {
 }
 
 /// Transaction record with full details
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct TransactionRecord {
     /// The transaction
@@ -91,6 +91,12 @@ pub struct TransactionRecord {
     pub fee: Option<u64>,
     /// Transaction label
     pub label: Option<String>,
+    /// Unix timestamp (seconds) when this transaction was first observed by the wallet.
+    /// Set by `TransactionRecord::new()` and never mutated thereafter. Provides a stable
+    /// timestamp for mempool transactions which have no block-level timestamp — used by
+    /// UI/persistence layers for ordering and display. Restores behavior from before the
+    /// `TransactionContext` refactor (#582) when a flat `timestamp` field existed.
+    pub first_seen: u64,
 }
 
 impl TransactionRecord {
@@ -116,6 +122,7 @@ impl TransactionRecord {
             net_amount,
             fee: None,
             label: None,
+            first_seen: crate::managed_account::ManagedCoreAccount::current_timestamp(),
         }
     }
 
@@ -145,6 +152,26 @@ impl TransactionRecord {
     /// Block height if confirmed
     pub fn height(&self) -> Option<u32> {
         self.context.block_info().map(|info| info.height)
+    }
+
+    /// Block hash if confirmed
+    pub fn block_hash(&self) -> Option<BlockHash> {
+        self.context.block_info().map(|info| info.block_hash())
+    }
+
+    /// Block height if confirmed (alias of `height()` for symmetry with `block_hash()`).
+    pub fn block_height(&self) -> Option<u32> {
+        self.height()
+    }
+
+    /// Whether this transaction has an InstantSend lock.
+    pub fn is_instant_locked(&self) -> bool {
+        matches!(self.context, TransactionContext::InstantSend(_))
+    }
+
+    /// Whether this transaction is in a chain-locked block.
+    pub fn is_chain_locked(&self) -> bool {
+        matches!(self.context, TransactionContext::InChainLockedBlock(_))
     }
 
     /// Set the fee for this transaction
