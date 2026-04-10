@@ -17,6 +17,7 @@ use dashcore::{BlockHash, OutPoint, Txid};
 use serde::{Deserialize, Serialize};
 
 use crate::account::AccountType;
+use crate::managed_account::address_pool::AddressPoolType;
 use crate::managed_account::transaction_record::TransactionRecord;
 use crate::utxo::Utxo;
 use crate::Address;
@@ -112,23 +113,34 @@ impl Merge for AccountKeyChangeSet {
 /// Per-account address pool state changes.
 ///
 /// Tracks which addresses have been marked used and the highest revealed
-/// index per account. Used by `apply()` to restore address pool state.
-#[derive(Debug, Clone, Default, PartialEq)]
+/// index per (account_index, pool_type). Used by `apply()` to restore
+/// address pool state.
+///
+/// Routing on `apply()` uses the `Address` itself via
+/// `ManagedWalletInfo::find_account_by_address_mut` — no per-account index
+/// is needed in `addresses_used`. The `last_revealed` map is keyed by
+/// `(account_index, pool_type)` so Standard accounts (which have both an
+/// external and internal pool) can track each pool independently. Single-
+/// pool account types (Identity*, Provider*, …) don't grow their pools via
+/// gap-limit maintenance so they don't populate this map.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct AccountStateChangeSet {
-    /// `(account_index, address)` pairs marked as used during processing.
-    pub addresses_used: Vec<(u32, Address)>,
+    /// Addresses marked as used during processing. `BTreeSet` so duplicates
+    /// within a single changeset collapse automatically.
+    pub addresses_used: BTreeSet<Address>,
 
-    /// `account_index → highest_revealed_index` after gap limit maintenance.
-    pub last_revealed: BTreeMap<u32, u32>,
+    /// `(account_index, pool_type) → highest_revealed_index` after gap
+    /// limit maintenance. Max-wins on merge.
+    pub last_revealed: BTreeMap<(u32, AddressPoolType), u32>,
 }
 
 impl Merge for AccountStateChangeSet {
     fn merge(&mut self, other: Self) {
         self.addresses_used.extend(other.addresses_used);
-        for (account_index, new_revealed) in other.last_revealed {
+        for (key, new_revealed) in other.last_revealed {
             self.last_revealed
-                .entry(account_index)
+                .entry(key)
                 .and_modify(|current| *current = (*current).max(new_revealed))
                 .or_insert(new_revealed);
         }
@@ -304,14 +316,20 @@ mod tests {
 
     #[test]
     fn account_state_changeset_merge_keeps_highest_revealed() {
+        let ext0 = (0, AddressPoolType::External);
+        let int0 = (0, AddressPoolType::Internal);
+        let ext1 = (1, AddressPoolType::External);
+
         let mut a = AccountStateChangeSet::default();
-        a.last_revealed.insert(0, 5);
+        a.last_revealed.insert(ext0, 5);
         let mut b = AccountStateChangeSet::default();
-        b.last_revealed.insert(0, 3); // lower — should NOT overwrite
-        b.last_revealed.insert(1, 10); // new account — should add
+        b.last_revealed.insert(ext0, 3); // lower — should NOT overwrite
+        b.last_revealed.insert(int0, 7); // different pool — should add
+        b.last_revealed.insert(ext1, 10); // different account — should add
         a.merge(b);
-        assert_eq!(a.last_revealed.get(&0), Some(&5));
-        assert_eq!(a.last_revealed.get(&1), Some(&10));
+        assert_eq!(a.last_revealed.get(&ext0), Some(&5));
+        assert_eq!(a.last_revealed.get(&int0), Some(&7));
+        assert_eq!(a.last_revealed.get(&ext1), Some(&10));
     }
 
     #[test]
