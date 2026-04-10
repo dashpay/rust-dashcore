@@ -44,6 +44,20 @@ impl<T: WalletInfoInterface> WalletManager<T> {
         }
     }
 
+    /// Get mutable wallet + mutable info by ID (split borrow on two maps).
+    ///
+    /// Used by `apply_changeset` which needs `&mut Wallet` to idempotently
+    /// re-derive HD accounts via `Wallet::add_account` during restore.
+    pub fn get_wallet_mut_and_info_mut(
+        &mut self,
+        wallet_id: &WalletId,
+    ) -> Option<(&mut Wallet, &mut T)> {
+        match (self.wallets.get_mut(wallet_id), self.wallet_infos.get_mut(wallet_id)) {
+            (Some(wallet), Some(info)) => Some((wallet, info)),
+            _ => None,
+        }
+    }
+
     /// Insert a pre-built wallet and info pair.
     pub fn insert_wallet(
         &mut self,
@@ -236,5 +250,72 @@ impl<T: WalletInfoInterface> WalletManager<T> {
             outpoints.extend(info.utxos().into_iter().map(|u| u.outpoint));
         }
         outpoints
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Concrete-type methods for WalletManager<ManagedWalletInfo>
+// ---------------------------------------------------------------------------
+
+impl WalletManager<key_wallet::wallet::managed_wallet_info::ManagedWalletInfo> {
+    /// Apply a [`key_wallet::changeset::WalletChangeSet`] to the given
+    /// wallet, replaying its deltas idempotently onto the in-memory state.
+    ///
+    /// This is the restore path: a persister reads a persisted changeset
+    /// from disk and hands it here to converge the runtime state. Calling
+    /// `apply_changeset` twice with the same changeset produces the same
+    /// state as calling it once.
+    ///
+    /// Returns `WalletError::WalletNotFound` if the wallet is not in this
+    /// manager. The wallet must have been inserted via `insert_wallet`
+    /// before apply can route into it.
+    pub fn apply_changeset(
+        &mut self,
+        wallet_id: &WalletId,
+        changeset: &key_wallet::changeset::WalletChangeSet,
+    ) -> Result<(), WalletError> {
+        let (wallet, info) = self
+            .get_wallet_mut_and_info_mut(wallet_id)
+            .ok_or(WalletError::WalletNotFound(*wallet_id))?;
+        info.apply_changeset(wallet, changeset);
+        self.bump_structural_revision();
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod apply_tests {
+    use super::*;
+    use key_wallet::changeset::WalletChangeSet;
+    use key_wallet::wallet::initialization::WalletAccountCreationOptions;
+    use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
+    use key_wallet::Network as KwNetwork;
+
+    #[test]
+    fn apply_changeset_returns_not_found_for_unknown_wallet() {
+        let mut wm: WalletManager<ManagedWalletInfo> = WalletManager::new(KwNetwork::Testnet);
+        let unknown_id = [0u8; 32];
+        let cs = WalletChangeSet::default();
+
+        let err = wm.apply_changeset(&unknown_id, &cs).unwrap_err();
+        assert!(matches!(err, WalletError::WalletNotFound(_)));
+    }
+
+    #[test]
+    fn apply_empty_changeset_is_a_noop_and_bumps_revision() {
+        let mut wm: WalletManager<ManagedWalletInfo> = WalletManager::new(KwNetwork::Testnet);
+        let wallet =
+            Wallet::new_random(KwNetwork::Testnet, WalletAccountCreationOptions::Default)
+                .expect("wallet");
+        let info = ManagedWalletInfo::from_wallet(&wallet);
+        let wallet_id = wm.insert_wallet(wallet, info).expect("insert");
+
+        let rev_before = wm.structural_revision;
+        let cs = WalletChangeSet::default();
+        wm.apply_changeset(&wallet_id, &cs).expect("apply");
+
+        // Empty apply bumps structural revision so observers can detect
+        // that a persistence replay happened, even if no state changed.
+        assert!(wm.structural_revision > rev_before);
     }
 }
