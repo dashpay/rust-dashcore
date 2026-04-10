@@ -102,12 +102,13 @@ impl ApplyChangeSet for ManagedWalletInfo {
 
 impl ManagedWalletInfo {
     /// Apply a [`WalletChangeSet`] onto this managed wallet info, using
-    /// `wallet` as the source of HD key material for any account types that
-    /// need to be re-derived.
+    /// `wallet` as the source of HD key material for any account types
+    /// that need to be re-derived.
     ///
     /// See the module docs for invariants. Typical caller is
-    /// `WalletManager::apply_changeset`, which performs the split borrow of
-    /// `(&mut Wallet, &mut ManagedWalletInfo)` under a single write lock.
+    /// `WalletManager::apply_changeset`, which performs the split borrow
+    /// of `(&mut Wallet, &mut ManagedWalletInfo)` under a single write
+    /// lock.
     pub fn apply_changeset(
         &mut self,
         wallet: &mut Wallet,
@@ -115,10 +116,10 @@ impl ManagedWalletInfo {
     ) -> Result<(), ApplyError> {
         // ------------------------------------------------------------------
         // 1. account_keys — re-derive HD accounts from the seed and mirror
-        //    them into `self.accounts`. Both `Wallet::add_account(ty, None)`
-        //    and `ManagedWalletInfo::add_managed_account` are idempotent
-        //    wrappers that return Ok on replay. Errors are fatal because a
-        //    missing account cascades into dropping every downstream entry.
+        //    them into `self.accounts`. Must run first so every subsequent
+        //    per-account bucket has an owning account to route into.
+        //    Errors are fatal because a missing account cascades into
+        //    dropping every downstream bucket.
         // ------------------------------------------------------------------
         if let Some(account_keys) = &cs.account_keys {
             for account_type in &account_keys.added {
@@ -129,14 +130,7 @@ impl ManagedWalletInfo {
                     });
                 }
                 // Mirror into the managed collection if not already present.
-                // `add_managed_account` errors when the managed type already
-                // exists — that's the idempotent replay case, not a failure.
-                let already_present = self
-                    .accounts
-                    .all_accounts()
-                    .iter()
-                    .any(|a| a.account_type.to_account_type() == *account_type);
-                if !already_present {
+                if self.accounts.get_by_account_type_mut(account_type).is_none() {
                     if let Err(e) = self.add_managed_account(wallet, *account_type) {
                         return Err(ApplyError::AccountDerivationFailed {
                             account_type: *account_type,
@@ -148,94 +142,23 @@ impl ManagedWalletInfo {
         }
 
         // ------------------------------------------------------------------
-        // 2. account_states — addresses_used + highest_used. Both are
-        //    idempotent at the pool level.
+        // 2. per_account buckets — each sub-changeset was emitted into its
+        //    owning account's bucket at mutation time, so routing is a
+        //    direct `get_by_account_type_mut` lookup. No address scanning,
+        //    no txid scanning, no fallbacks. Buckets that don't resolve
+        //    to an account (orphaned persisted data, wrong-network replay)
+        //    are silently skipped — the persister is authoritative.
         // ------------------------------------------------------------------
-        if let Some(account_states) = &cs.account_states {
-            for address in &account_states.addresses_used {
-                if let Some(account) = self.find_account_by_address_mut(address) {
-                    // Discard the returned changeset — apply must not
-                    // re-emit. The account's `mark_address_used` is
-                    // already idempotent on replay.
-                    let _ = account.mark_address_used(address);
-                }
-            }
-            for ((account_index, pool_type), highest_used) in
-                &account_states.highest_used
-            {
-                if let Some(account) =
-                    self.find_managed_account_by_index_mut(*account_index)
-                {
-                    for pool in account.account_type.address_pools_mut() {
-                        if pool.pool_type == *pool_type {
-                            pool.set_highest_used(*highest_used);
-                        }
-                    }
-                }
+        for (account_type, bucket) in &cs.per_account {
+            if let Some(account) = self.accounts.get_by_account_type_mut(account_type) {
+                account.apply(bucket);
             }
         }
 
         // ------------------------------------------------------------------
-        // 3. utxos — additions route by address; spends and instant locks
-        //    route by outpoint. Additions are upserts whose state flags
-        //    (`is_confirmed`, `is_instantlocked`) are merged monotonically:
-        //    they never regress from true to false on replay, even if a
-        //    stale persisted changeset carries an older snapshot.
-        // ------------------------------------------------------------------
-        if let Some(utxos) = &cs.utxos {
-            for (outpoint, utxo) in &utxos.added {
-                if let Some(account) = self.find_account_by_address_mut(&utxo.address) {
-                    let mut merged = utxo.clone();
-                    if let Some(existing) = account.utxos.get(outpoint) {
-                        // Monotonic flag merge: true wins, false loses.
-                        merged.is_confirmed |= existing.is_confirmed;
-                        merged.is_instantlocked |= existing.is_instantlocked;
-                    }
-                    account.insert_utxo(*outpoint, merged);
-                }
-            }
-            for outpoint in &utxos.spent {
-                if let Some(account) = self.find_account_with_utxo_mut(outpoint) {
-                    account.remove_utxo(outpoint);
-                }
-            }
-            for outpoint in &utxos.instant_locked {
-                if let Some(account) = self.find_account_with_utxo_mut(outpoint) {
-                    if let Some(u) = account.utxos.get_mut(outpoint) {
-                        u.is_instantlocked = true;
-                    }
-                }
-            }
-        }
-
-        // ------------------------------------------------------------------
-        // 4. transactions — insert / upsert records. Routed via
-        //    `find_account_for_transaction_record_mut`, which scans both
-        //    input addresses (spends) and output addresses (receives) on
-        //    the record. One address-based pass covers every case:
-        //    receives match on outputs, sends-with-change match on the
-        //    change output, sends to all-external destinations match on
-        //    inputs we spent from, internal transfers match on either side.
-        // ------------------------------------------------------------------
-        if let Some(transactions) = &cs.transactions {
-            for (txid, record) in &transactions.records {
-                // Prefer an account that already has the record (the
-                // confirmation-upgrade case — keeps routing stable when
-                // the same record is re-applied after a live mutation).
-                if let Some(account) = self.find_account_with_txid_mut(txid) {
-                    account.transactions.insert(*txid, record.clone());
-                    continue;
-                }
-                if let Some(account) = self.find_account_for_transaction_record_mut(record) {
-                    account.transactions.insert(*txid, record.clone());
-                }
-            }
-        }
-
-        // ------------------------------------------------------------------
-        // 5. chain — set synced height. `block_hash` is informational: the
+        // 3. chain — set synced height. `block_hash` is informational: the
         //    authoritative block hash lives on the confirmed transactions'
-        //    contexts, already restored in step 4.
+        //    contexts, already restored via the per_account buckets.
         // ------------------------------------------------------------------
         if let Some(chain) = &cs.chain {
             if let Some(height) = chain.synced_height {
@@ -246,7 +169,7 @@ impl ManagedWalletInfo {
         }
 
         // ------------------------------------------------------------------
-        // 6. balance — recompute from the now-restored UTXO set. The
+        // 4. balance — recompute from the now-restored UTXO set. The
         //    cached deltas in `cs.balance` are ignored because UTXO-driven
         //    recomputation is authoritative after the UTXO set is in
         //    place. Discard the returned changeset (apply does not
@@ -362,44 +285,39 @@ mod tests {
         );
     }
 
-    /// Target has a different seed than source, so no address match is
-    /// possible. Unroutable entries must be silently skipped — apply still
-    /// succeeds, just leaves state untouched.
+    /// Per-account buckets keyed by an `AccountType` that the target
+    /// doesn't own must be silently skipped. Apply still succeeds.
     #[tokio::test]
-    async fn apply_ignores_entries_that_cannot_be_routed() {
-        let mut ctx_source = TestWalletContext::new_random();
-        // NOTE: ctx_target uses its own unrelated wallet (not a sibling)
-        // because the point of this test is exactly that addresses from
-        // the source do not match any of the target's address pools.
-        let mut ctx_target = TestWalletContext::new_random();
+    async fn apply_skips_buckets_for_unknown_account_types() {
+        use crate::account::StandardAccountType;
+        use crate::changeset::{AccountChangeSet, WalletChangeSet};
+        use crate::wallet::initialization::WalletAccountCreationOptions;
 
-        let funding_tx = dashcore::Transaction::dummy(
-            &ctx_source.receive_address,
-            0..1,
-            &[42_000],
-        );
-        let result = ctx_source
-            .check_transaction(&funding_tx, TransactionContext::Mempool)
-            .await;
+        // Target has no BIP44 accounts at all.
+        let mut wallet_b = crate::wallet::Wallet::new_random(
+            crate::Network::Testnet,
+            WalletAccountCreationOptions::None,
+        )
+        .expect("wallet b");
+        let mut info_b = ManagedWalletInfo::from_wallet(&wallet_b);
+        let balance_before = info_b.balance;
 
-        let balance_before = ctx_target.managed_wallet.balance;
-        let mut target_wallet = ctx_target.wallet.clone();
-        ctx_target
-            .managed_wallet
-            .apply_changeset(&mut target_wallet, &result.changeset)
-            .expect("apply should succeed even with zero routing hits");
+        // Build a changeset carrying a per_account bucket for an account
+        // type the target doesn't know about.
+        let unknown_type = AccountType::Standard {
+            index: 99,
+            standard_account_type: StandardAccountType::BIP44Account,
+        };
+        let mut cs = WalletChangeSet::default();
+        let mut bucket = AccountChangeSet::default();
+        bucket
+            .addresses_used
+            .insert(dashcore::Address::dummy(dashcore::Network::Testnet, 7));
+        cs.per_account.insert(unknown_type, bucket);
 
-        // Balance and UTXO set must be unchanged.
-        assert_eq!(ctx_target.managed_wallet.balance, balance_before);
-        assert_eq!(
-            ctx_target
-                .managed_wallet
-                .first_bip44_managed_account()
-                .expect("bip44")
-                .utxos
-                .len(),
-            0
-        );
+        info_b.apply_changeset(&mut wallet_b, &cs).expect("apply must not fail");
+        assert_eq!(info_b.balance, balance_before);
+        assert_eq!(info_b.accounts.all_accounts().len(), 0);
     }
 
     /// G2: applying a changeset whose `account_keys.added` carries a new
@@ -425,7 +343,7 @@ mod tests {
         };
         let cs = WalletChangeSet {
             account_keys: Some(crate::changeset::AccountKeyChangeSet {
-                added: vec![new_account_type],
+                added: [new_account_type].into(),
             }),
             ..Default::default()
         };
