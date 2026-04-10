@@ -31,7 +31,7 @@ pub enum PublicKeyType {
 }
 
 /// Type of address pool (external, internal, or absent/single-pool)
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 pub enum AddressPoolType {

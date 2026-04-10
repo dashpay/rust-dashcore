@@ -8,6 +8,8 @@ mod balance_tests;
 
 mod address_pool_tests;
 
+mod changeset_mutation_tests;
+
 mod changeset_support_tests;
 
 mod advanced_transaction_tests;

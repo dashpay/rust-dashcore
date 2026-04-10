@@ -7,6 +7,7 @@ use std::collections::BTreeMap;
 
 use super::transaction_router::AccountTypeToCheck;
 use crate::account::{ManagedAccountCollection, ManagedCoreAccount};
+use crate::changeset::WalletChangeSet;
 use crate::managed_account::address_pool::{AddressInfo, PublicKeyType};
 use crate::managed_account::managed_account_type::ManagedAccountType;
 use crate::managed_account::transaction_record::TransactionRecord;
@@ -28,7 +29,7 @@ pub enum AddressClassification {
 }
 
 /// Result of checking a transaction against accounts
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct TransactionCheckResult {
     /// Whether the transaction belongs to any account
     pub is_relevant: bool,
@@ -48,6 +49,11 @@ pub struct TransactionCheckResult {
     pub new_addresses: Vec<Address>,
     /// Transaction records created for new transactions, paired with their account index
     pub new_records: Vec<(u32, TransactionRecord)>,
+    /// Atomic changeset describing all state mutations from this check.
+    /// Accumulated from sub-changesets returned by `record_transaction`,
+    /// `confirm_transaction`, `mark_address_used`, `update_balance`, etc.
+    /// Empty when `state_modified` is false.
+    pub changeset: WalletChangeSet,
 }
 
 /// Enum representing the type of Core account that matched with embedded data
@@ -366,17 +372,7 @@ impl ManagedAccountCollection {
         tx: &Transaction,
         account_types: &[AccountTypeToCheck],
     ) -> TransactionCheckResult {
-        let mut result = TransactionCheckResult {
-            is_relevant: false,
-            is_new_transaction: false,
-            state_modified: false,
-            affected_accounts: Vec::new(),
-            total_received: 0,
-            total_sent: 0,
-            total_received_for_credit_conversion: 0,
-            new_addresses: Vec::new(),
-            new_records: Vec::new(),
-        };
+        let mut result = TransactionCheckResult::default();
 
         for account_type in account_types {
             let matches = self.check_account_type(tx, *account_type);

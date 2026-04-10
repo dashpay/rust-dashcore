@@ -695,14 +695,14 @@ impl<T: WalletInfoInterface> WalletManager<T> {
                         if let Some(account) =
                             collection.standard_bip44_accounts.get_mut(&account_index)
                         {
-                            account.mark_address_used(address);
+                            let _ = account.mark_address_used(address);
                         }
                     }
                     Some(AccountTypeUsed::BIP32) => {
                         if let Some(account) =
                             collection.standard_bip32_accounts.get_mut(&account_index)
                         {
-                            account.mark_address_used(address);
+                            let _ = account.mark_address_used(address);
                         }
                     }
                     None => {}
@@ -859,14 +859,14 @@ impl<T: WalletInfoInterface> WalletManager<T> {
                         if let Some(account) =
                             collection.standard_bip44_accounts.get_mut(&account_index)
                         {
-                            account.mark_address_used(address);
+                            let _ = account.mark_address_used(address);
                         }
                     }
                     Some(AccountTypeUsed::BIP32) => {
                         if let Some(account) =
                             collection.standard_bip32_accounts.get_mut(&account_index)
                         {
-                            account.mark_address_used(address);
+                            let _ = account.mark_address_used(address);
                         }
                     }
                     None => {}
