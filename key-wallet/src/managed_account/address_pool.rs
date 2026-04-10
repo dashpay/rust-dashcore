@@ -753,15 +753,15 @@ impl AddressPool {
         false
     }
 
-    /// Set the highest-revealed index for this pool.
+    /// Set the highest-used index for this pool.
     ///
     /// Idempotent. Used by `apply(changeset)` during wallet restore to
-    /// replay the "last_revealed" tracking without re-triggering address
-    /// generation. Updates `highest_used`, inserts `index` into
-    /// `used_indices`, and marks the address at `index` as used if it
-    /// exists in the pool. No-op if the index is already at or below the
-    /// current `highest_used`.
-    pub fn set_last_revealed(&mut self, index: u32) -> bool {
+    /// replay `highest_used` without re-triggering address generation.
+    /// Updates `highest_used`, inserts `index` into `used_indices`, and
+    /// marks the address at `index` as used if it exists in the pool.
+    /// No-op if the index is already at or below the current
+    /// `highest_used` and already in `used_indices`.
+    pub fn set_highest_used(&mut self, index: u32) -> bool {
         let already_at_or_above = match self.highest_used {
             Some(current) if current >= index => true,
             _ => false,
@@ -1340,7 +1340,7 @@ mod tests {
     }
 
     #[test]
-    fn test_set_last_revealed_idempotent() {
+    fn test_set_highest_used_idempotent() {
         let base_path = DerivationPath::from(vec![ChildNumber::from_normal_idx(0).unwrap()]);
         let mut pool = AddressPool::new_without_generation(
             base_path,
@@ -1352,18 +1352,18 @@ mod tests {
         let _ = pool.generate_addresses(10, &key_source, true).unwrap();
 
         // First call marks index 5 — returns true (changed).
-        assert!(pool.set_last_revealed(5));
+        assert!(pool.set_highest_used(5));
         assert_eq!(pool.highest_used, Some(5));
         assert!(pool.used_indices.contains(&5));
         assert!(pool.addresses.get(&5).unwrap().used);
 
         // Second call with same index is a no-op — returns false.
-        assert!(!pool.set_last_revealed(5));
+        assert!(!pool.set_highest_used(5));
         assert_eq!(pool.highest_used, Some(5));
     }
 
     #[test]
-    fn test_set_last_revealed_keeps_max() {
+    fn test_set_highest_used_keeps_max() {
         let base_path = DerivationPath::from(vec![ChildNumber::from_normal_idx(0).unwrap()]);
         let mut pool = AddressPool::new_without_generation(
             base_path,
@@ -1375,17 +1375,17 @@ mod tests {
         let _ = pool.generate_addresses(10, &key_source, true).unwrap();
 
         // Set to 7 first.
-        assert!(pool.set_last_revealed(7));
+        assert!(pool.set_highest_used(7));
         assert_eq!(pool.highest_used, Some(7));
 
         // A lower index still records as used, but highest_used stays at 7.
-        assert!(pool.set_last_revealed(3));
+        assert!(pool.set_highest_used(3));
         assert_eq!(pool.highest_used, Some(7));
         assert!(pool.used_indices.contains(&3));
         assert!(pool.used_indices.contains(&7));
 
         // A higher index bumps highest_used.
-        assert!(pool.set_last_revealed(9));
+        assert!(pool.set_highest_used(9));
         assert_eq!(pool.highest_used, Some(9));
     }
 
@@ -1402,7 +1402,7 @@ mod tests {
         );
         // Don't generate — pool.addresses is empty.
 
-        assert!(pool.set_last_revealed(3));
+        assert!(pool.set_highest_used(3));
         assert_eq!(pool.highest_used, Some(3));
         assert!(pool.used_indices.contains(&3));
         assert!(pool.addresses.get(&3).is_none());

@@ -37,7 +37,7 @@ async fn mark_address_used_populates_changeset_then_becomes_idempotent() {
     let state_cs = cs.account_states.expect("account_states must be populated");
     assert_eq!(state_cs.addresses_used.len(), 1);
     assert!(state_cs.addresses_used.contains(&addr));
-    assert!(state_cs.last_revealed.is_empty());
+    assert!(state_cs.highest_used.is_empty());
     // No other sub-changesets for a pure address-mark.
     assert!(cs.utxos.is_none());
     assert!(cs.transactions.is_none());
@@ -227,7 +227,10 @@ async fn check_core_transaction_populates_tx_utxo_balance_and_state_on_new_fundi
     // Gap-limit maintenance should have recorded the pool's highest reveal
     // for this account. We don't assert the exact index (depends on the
     // default gap limit) — just that *something* was recorded.
-    assert!(!state_cs.last_revealed.is_empty(), "gap-limit pass must record last_revealed");
+    assert!(
+        !state_cs.highest_used.is_empty(),
+        "gap-limit pass must record highest_used"
+    );
 }
 
 #[tokio::test]

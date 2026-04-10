@@ -254,10 +254,12 @@ impl<T: WalletInfoInterface> WalletManager<T> {
 }
 
 // ---------------------------------------------------------------------------
-// Concrete-type methods for WalletManager<ManagedWalletInfo>
+// apply_changeset — generic over any info type that implements ApplyChangeSet.
 // ---------------------------------------------------------------------------
 
-impl WalletManager<key_wallet::wallet::managed_wallet_info::ManagedWalletInfo> {
+impl<T: WalletInfoInterface + key_wallet::wallet::managed_wallet_info::apply::ApplyChangeSet>
+    WalletManager<T>
+{
     /// Apply a [`key_wallet::changeset::WalletChangeSet`] to the given
     /// wallet, replaying its deltas idempotently onto the in-memory state.
     ///
@@ -266,19 +268,28 @@ impl WalletManager<key_wallet::wallet::managed_wallet_info::ManagedWalletInfo> {
     /// `apply_changeset` twice with the same changeset produces the same
     /// state as calling it once.
     ///
-    /// Returns `WalletError::WalletNotFound` if the wallet is not in this
-    /// manager. The wallet must have been inserted via `insert_wallet`
-    /// before apply can route into it.
+    /// - Returns [`WalletError::WalletNotFound`] if the wallet is not in
+    ///   this manager. The wallet must have been inserted via
+    ///   `insert_wallet` before apply can route into it.
+    /// - Returns [`WalletError::ApplyChangeSet`] if re-deriving an account
+    ///   from `cs.account_keys` fails (watch-only wallet without the xpub,
+    ///   or network mismatch). Orphan UTXOs / transaction records that
+    ///   fail to route are silently skipped, not reported.
+    /// - Bumps the structural revision only when the changeset is
+    ///   non-empty, so observers don't get poked for pure no-op restores.
     pub fn apply_changeset(
         &mut self,
         wallet_id: &WalletId,
         changeset: &key_wallet::changeset::WalletChangeSet,
     ) -> Result<(), WalletError> {
+        use key_wallet::changeset::Merge;
         let (wallet, info) = self
             .get_wallet_mut_and_info_mut(wallet_id)
             .ok_or(WalletError::WalletNotFound(*wallet_id))?;
-        info.apply_changeset(wallet, changeset);
-        self.bump_structural_revision();
+        info.apply_changeset(wallet, changeset)?;
+        if !changeset.is_empty() {
+            self.bump_structural_revision();
+        }
         Ok(())
     }
 }
@@ -286,7 +297,7 @@ impl WalletManager<key_wallet::wallet::managed_wallet_info::ManagedWalletInfo> {
 #[cfg(test)]
 mod apply_tests {
     use super::*;
-    use key_wallet::changeset::WalletChangeSet;
+    use key_wallet::changeset::{BalanceChangeSet, WalletChangeSet};
     use key_wallet::wallet::initialization::WalletAccountCreationOptions;
     use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
     use key_wallet::Network as KwNetwork;
@@ -302,7 +313,7 @@ mod apply_tests {
     }
 
     #[test]
-    fn apply_empty_changeset_is_a_noop_and_bumps_revision() {
+    fn apply_empty_changeset_does_not_bump_revision() {
         let mut wm: WalletManager<ManagedWalletInfo> = WalletManager::new(KwNetwork::Testnet);
         let wallet =
             Wallet::new_random(KwNetwork::Testnet, WalletAccountCreationOptions::Default)
@@ -311,11 +322,35 @@ mod apply_tests {
         let wallet_id = wm.insert_wallet(wallet, info).expect("insert");
 
         let rev_before = wm.structural_revision;
-        let cs = WalletChangeSet::default();
-        wm.apply_changeset(&wallet_id, &cs).expect("apply");
+        wm.apply_changeset(&wallet_id, &WalletChangeSet::default()).expect("apply");
+        assert_eq!(
+            wm.structural_revision, rev_before,
+            "empty changeset must not bump structural_revision"
+        );
+    }
 
-        // Empty apply bumps structural revision so observers can detect
-        // that a persistence replay happened, even if no state changed.
-        assert!(wm.structural_revision > rev_before);
+    #[test]
+    fn apply_non_empty_changeset_bumps_revision() {
+        let mut wm: WalletManager<ManagedWalletInfo> = WalletManager::new(KwNetwork::Testnet);
+        let wallet =
+            Wallet::new_random(KwNetwork::Testnet, WalletAccountCreationOptions::Default)
+                .expect("wallet");
+        let info = ManagedWalletInfo::from_wallet(&wallet);
+        let wallet_id = wm.insert_wallet(wallet, info).expect("insert");
+
+        let rev_before = wm.structural_revision;
+        // A BalanceChangeSet with any non-zero delta counts as non-empty.
+        let cs = WalletChangeSet {
+            balance: Some(BalanceChangeSet {
+                spendable_delta: 1,
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        wm.apply_changeset(&wallet_id, &cs).expect("apply");
+        assert!(
+            wm.structural_revision > rev_before,
+            "non-empty changeset must bump structural_revision"
+        );
     }
 }
