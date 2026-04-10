@@ -696,14 +696,14 @@ pub unsafe extern "C" fn managed_wallet_mark_address_used(
         let mut found = false;
         // Check all accounts for the address
         for account in collection.standard_bip44_accounts.values_mut() {
-            if account.mark_address_used(&address) {
+            if account.mark_address_used(&address).0 {
                 found = true;
                 break;
             }
         }
         if !found {
             for account in collection.standard_bip32_accounts.values_mut() {
-                if account.mark_address_used(&address) {
+                if account.mark_address_used(&address).0 {
                     found = true;
                     break;
                 }
@@ -711,7 +711,7 @@ pub unsafe extern "C" fn managed_wallet_mark_address_used(
         }
         if !found {
             for account in collection.coinjoin_accounts.values_mut() {
-                if account.mark_address_used(&address) {
+                if account.mark_address_used(&address).0 {
                     found = true;
                     break;
                 }
@@ -719,14 +719,14 @@ pub unsafe extern "C" fn managed_wallet_mark_address_used(
         }
         if !found {
             if let Some(account) = &mut collection.identity_registration {
-                if account.mark_address_used(&address) {
+                if account.mark_address_used(&address).0 {
                     found = true;
                 }
             }
         }
         if !found {
             for account in collection.identity_topup.values_mut() {
-                if account.mark_address_used(&address) {
+                if account.mark_address_used(&address).0 {
                     found = true;
                     break;
                 }
@@ -734,63 +734,63 @@ pub unsafe extern "C" fn managed_wallet_mark_address_used(
         }
         if !found {
             if let Some(account) = &mut collection.identity_topup_not_bound {
-                if account.mark_address_used(&address) {
+                if account.mark_address_used(&address).0 {
                     found = true;
                 }
             }
         }
         if !found {
             if let Some(account) = &mut collection.identity_invitation {
-                if account.mark_address_used(&address) {
+                if account.mark_address_used(&address).0 {
                     found = true;
                 }
             }
         }
         if !found {
             if let Some(account) = &mut collection.asset_lock_address_topup {
-                if account.mark_address_used(&address) {
+                if account.mark_address_used(&address).0 {
                     found = true;
                 }
             }
         }
         if !found {
             if let Some(account) = &mut collection.asset_lock_shielded_address_topup {
-                if account.mark_address_used(&address) {
+                if account.mark_address_used(&address).0 {
                     found = true;
                 }
             }
         }
         if !found {
             if let Some(account) = &mut collection.provider_voting_keys {
-                if account.mark_address_used(&address) {
+                if account.mark_address_used(&address).0 {
                     found = true;
                 }
             }
         }
         if !found {
             if let Some(account) = &mut collection.provider_owner_keys {
-                if account.mark_address_used(&address) {
+                if account.mark_address_used(&address).0 {
                     found = true;
                 }
             }
         }
         if !found {
             if let Some(account) = &mut collection.provider_operator_keys {
-                if account.mark_address_used(&address) {
+                if account.mark_address_used(&address).0 {
                     found = true;
                 }
             }
         }
         if !found {
             if let Some(account) = &mut collection.provider_platform_keys {
-                if account.mark_address_used(&address) {
+                if account.mark_address_used(&address).0 {
                     found = true;
                 }
             }
         }
         if !found {
             for account in collection.dashpay_receival_accounts.values_mut() {
-                if account.mark_address_used(&address) {
+                if account.mark_address_used(&address).0 {
                     found = true;
                     break;
                 }
@@ -798,7 +798,7 @@ pub unsafe extern "C" fn managed_wallet_mark_address_used(
         }
         if !found {
             for account in collection.dashpay_external_accounts.values_mut() {
-                if account.mark_address_used(&address) {
+                if account.mark_address_used(&address).0 {
                     found = true;
                     break;
                 }

@@ -6,6 +6,7 @@
 pub(crate) use super::account_checker::TransactionCheckResult;
 use super::transaction_context::TransactionContext;
 use super::transaction_router::TransactionRouter;
+use crate::changeset::Merge;
 use crate::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
 use crate::wallet::managed_wallet_info::ManagedWalletInfo;
 use crate::{KeySource, Wallet};
@@ -100,14 +101,14 @@ impl WalletTransactionChecker for ManagedWalletInfo {
                         .accounts
                         .get_by_account_type_match_mut(&account_match.account_type_match)
                     {
-                        account.mark_utxos_instant_send(&txid);
-                        if let Some(record) = account.transactions.get_mut(&txid) {
-                            record.update_context(context.clone());
-                        }
+                        let (_, cs) = account.mark_utxos_instant_send(&txid);
+                        result.changeset.merge(cs);
+                        let cs = account.update_transaction_context(&txid, context.clone());
+                        result.changeset.merge(cs);
                     }
                 }
                 if update_balance {
-                    self.update_balance();
+                    result.changeset.merge(self.update_balance());
                 }
                 result.state_modified = true;
                 return result;
@@ -127,18 +128,25 @@ impl WalletTransactionChecker for ManagedWalletInfo {
             };
 
             if is_new {
-                let record =
+                let (record, cs) =
                     account.record_transaction(tx, &account_match, context.clone(), tx_type);
+                result.changeset.merge(cs);
                 if let Some(account_index) = account_match.account_type_match.account_index() {
                     result.new_records.push((account_index, record));
                 }
                 result.state_modified = true;
-            } else if account.confirm_transaction(tx, &account_match, context.clone(), tx_type) {
-                result.state_modified = true;
+            } else {
+                let (changed, cs) =
+                    account.confirm_transaction(tx, &account_match, context.clone(), tx_type);
+                result.changeset.merge(cs);
+                if changed {
+                    result.state_modified = true;
+                }
             }
 
             for address_info in account_match.account_type_match.all_involved_addresses() {
-                account.mark_address_used(&address_info.address);
+                let (_, cs) = account.mark_address_used(&address_info.address);
+                result.changeset.merge(cs);
             }
 
             let Some(xpub) = wallet.extended_public_key_for_account_type(
@@ -150,6 +158,8 @@ impl WalletTransactionChecker for ManagedWalletInfo {
 
             let key_source = KeySource::Public(xpub);
             let rev_before = result.new_addresses.len();
+            let account_index_for_reveal =
+                account_match.account_type_match.account_index();
             for pool in account.account_type.address_pools_mut() {
                 match pool.maintain_gap_limit(&key_source) {
                     Ok(addrs) => result.new_addresses.extend(addrs),
@@ -161,6 +171,26 @@ impl WalletTransactionChecker for ManagedWalletInfo {
                             "Failed to maintain gap limit for address pool"
                         );
                     }
+                }
+                // Record the pool's highest-revealed index in the changeset so
+                // `apply()` can restore the reveal pointer without re-deriving.
+                // Only indexable account types populate this — single-pool
+                // account types (Identity*, Provider*, …) have no meaningful
+                // account index and don't grow their pools via gap-limit
+                // maintenance.
+                if let (Some(account_index), Some(highest_used)) =
+                    (account_index_for_reveal, pool.highest_used)
+                {
+                    result
+                        .changeset
+                        .account_states
+                        .get_or_insert_with(Default::default)
+                        .last_revealed
+                        .entry((account_index, pool.pool_type))
+                        .and_modify(|current| {
+                            *current = (*current).max(highest_used)
+                        })
+                        .or_insert(highest_used);
                 }
             }
             if result.new_addresses.len() > rev_before {
@@ -187,7 +217,7 @@ impl WalletTransactionChecker for ManagedWalletInfo {
         }
 
         if update_balance {
-            self.update_balance();
+            result.changeset.merge(self.update_balance());
         }
 
         result
@@ -1044,7 +1074,8 @@ mod tests {
         let block_context =
             TransactionContext::InBlock(BlockInfo::new(600, block_hash, 1700000000));
         let tx_type = TransactionRouter::classify_transaction(&tx);
-        let changed = account.confirm_transaction(&tx, &account_match, block_context, tx_type);
+        let (changed, _cs) =
+            account.confirm_transaction(&tx, &account_match, block_context, tx_type);
         assert!(changed, "Should return true when backfilling a missing record");
 
         // Verify the transaction was recorded with block context
@@ -1095,7 +1126,8 @@ mod tests {
             .first_bip44_managed_account_mut()
             .expect("Should have BIP44 account");
         let tx_type = TransactionRouter::classify_transaction(&tx);
-        let changed = account.confirm_transaction(&tx, &account_match, block_context, tx_type);
+        let (changed, _cs) =
+            account.confirm_transaction(&tx, &account_match, block_context, tx_type);
         assert!(changed, "Should return true when confirming unconfirmed tx");
 
         let record = account.transactions.get(&txid).expect("Should have record");

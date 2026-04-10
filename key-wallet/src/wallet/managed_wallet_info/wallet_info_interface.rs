@@ -6,6 +6,7 @@ use std::collections::BTreeSet;
 
 use super::managed_account_operations::ManagedAccountOperations;
 use crate::account::ManagedAccountTrait;
+use crate::changeset::{Merge, WalletChangeSet};
 use crate::managed_account::managed_account_collection::ManagedAccountCollection;
 use crate::transaction_checking::TransactionContext;
 use crate::transaction_checking::WalletTransactionChecker;
@@ -71,8 +72,11 @@ pub trait WalletInfoInterface: Sized + WalletTransactionChecker + ManagedAccount
     /// Get the wallet balance
     fn balance(&self) -> WalletCoreBalance;
 
-    /// Update the wallet balance
-    fn update_balance(&mut self);
+    /// Recompute the wallet balance from per-account balances.
+    ///
+    /// Returns a [`WalletChangeSet`] carrying the signed balance delta between
+    /// the new and old balance. An empty changeset means no change.
+    fn update_balance(&mut self) -> WalletChangeSet;
 
     /// Get transaction history
     fn transaction_history(&self) -> Vec<&TransactionRecord>;
@@ -95,8 +99,15 @@ pub trait WalletInfoInterface: Sized + WalletTransactionChecker + ManagedAccount
 
     /// Mark UTXOs for a transaction as InstantSend-locked across all accounts
     /// and update the corresponding transaction record context.
-    /// Returns `true` if any UTXO was newly marked.
-    fn mark_instant_send_utxos(&mut self, txid: &Txid, lock: &InstantLock) -> bool;
+    ///
+    /// Returns `(changed, cs)`:
+    /// - `changed` is `true` iff any UTXO transitioned to instant-locked.
+    /// - `cs` carries the UTXO + transaction + balance deltas for persistence.
+    fn mark_instant_send_utxos(
+        &mut self,
+        txid: &Txid,
+        lock: &InstantLock,
+    ) -> (bool, WalletChangeSet);
 
     /// Return the aggregated monitor revision across all accounts.
     /// Increments whenever the monitored address set changes.
@@ -186,14 +197,16 @@ impl WalletInfoInterface for ManagedWalletInfo {
         self.balance
     }
 
-    fn update_balance(&mut self) {
+    fn update_balance(&mut self) -> WalletChangeSet {
         let mut balance = WalletCoreBalance::default();
         let synced_height = self.synced_height();
+        let mut cs = WalletChangeSet::default();
         for account in self.accounts.all_accounts_mut() {
-            account.update_balance(synced_height);
+            cs.merge(account.update_balance(synced_height));
             balance += *account.balance();
         }
         self.balance = balance;
+        cs
     }
 
     fn transaction_history(&self) -> Vec<&TransactionRecord> {
@@ -242,23 +255,27 @@ impl WalletInfoInterface for ManagedWalletInfo {
         self.update_balance();
     }
 
-    fn mark_instant_send_utxos(&mut self, txid: &Txid, lock: &InstantLock) -> bool {
+    fn mark_instant_send_utxos(
+        &mut self,
+        txid: &Txid,
+        lock: &InstantLock,
+    ) -> (bool, WalletChangeSet) {
+        let mut cs = WalletChangeSet::default();
         if !self.instant_send_locks.insert(*txid) {
-            return false;
+            return (false, cs);
         }
+        let new_context = TransactionContext::InstantSend(lock.clone());
         let mut any_changed = false;
         for account in self.accounts.all_accounts_mut() {
-            if account.mark_utxos_instant_send(txid) {
-                any_changed = true;
-            }
-            if let Some(record) = account.transactions_mut().get_mut(txid) {
-                record.update_context(TransactionContext::InstantSend(lock.clone()));
-            }
+            let (changed, delta) = account.mark_utxos_instant_send(txid);
+            any_changed |= changed;
+            cs.merge(delta);
+            cs.merge(account.update_transaction_context(txid, new_context.clone()));
         }
         if any_changed {
-            self.update_balance();
+            cs.merge(self.update_balance());
         }
-        any_changed
+        (any_changed, cs)
     }
 
     fn monitor_revision(&self) -> u64 {

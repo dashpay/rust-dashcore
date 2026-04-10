@@ -67,7 +67,7 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
         // Refresh cached balances only for affected wallets
         for wallet_id in &check_result.affected_wallets {
             if let Some(info) = self.wallet_infos.get_mut(wallet_id) {
-                info.update_balance();
+                let _ = info.update_balance();
             }
         }
         self.emit_balance_changes(&snapshot);
@@ -134,7 +134,8 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
 
         let mut affected_wallets = Vec::new();
         for (wallet_id, info) in self.wallet_infos.iter_mut() {
-            if info.mark_instant_send_utxos(&txid, &instant_lock) {
+            let (changed, _cs) = info.mark_instant_send_utxos(&txid, &instant_lock);
+            if changed {
                 affected_wallets.push(*wallet_id);
             }
         }
