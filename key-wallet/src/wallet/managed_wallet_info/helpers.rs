@@ -5,7 +5,7 @@ use crate::account::account_collection::PlatformPaymentAccountKey;
 use crate::account::ManagedCoreAccount;
 use crate::managed_account::managed_platform_account::ManagedPlatformAccount;
 use crate::Address;
-use dashcore::OutPoint;
+use dashcore::{OutPoint, Txid};
 
 impl ManagedWalletInfo {
     // BIP44 Account Helpers
@@ -334,6 +334,72 @@ impl ManagedWalletInfo {
     ) -> Option<&mut ManagedCoreAccount> {
         for account in self.accounts.all_accounts_mut() {
             if account.utxos.contains_key(outpoint) {
+                return Some(account);
+            }
+        }
+        None
+    }
+
+    /// Find the managed account that owns any address present on the given
+    /// transaction record — either as an input (an address we spent from)
+    /// or as an output (an address we're receiving at). Used by
+    /// `apply(changeset)` to route [`TransactionRecord`] insertions.
+    ///
+    /// This single-pass address scan covers every relevant case: receives
+    /// match on output addresses; sends-with-change match on change output;
+    /// sends to all-external destinations match on input addresses (we
+    /// owned the outputs we spent from); internal transfers match on
+    /// either side.
+    pub fn find_account_for_transaction_record_mut(
+        &mut self,
+        record: &crate::managed_account::transaction_record::TransactionRecord,
+    ) -> Option<&mut ManagedCoreAccount> {
+        // Collect candidate addresses from the record: input addresses
+        // (we owned these — they're in some account's pool) plus output
+        // addresses resolved from the raw transaction.
+        let mut candidates: Vec<Address> =
+            record.input_details.iter().map(|i| i.address.clone()).collect();
+        for out in &record.output_details {
+            if let Some(txout) = record.transaction.output.get(out.index as usize) {
+                if let Ok(addr) = Address::from_script(&txout.script_pubkey, self.network) {
+                    candidates.push(addr);
+                }
+            }
+        }
+        for account in self.accounts.all_accounts_mut() {
+            if candidates.iter().any(|addr| account.contains_address(addr)) {
+                return Some(account);
+            }
+        }
+        None
+    }
+
+    /// Find the managed account that has already recorded a transaction
+    /// with the given txid. Used by `apply(changeset)` to detect the
+    /// "confirmation upgrade" case where the record already exists and we
+    /// only need to overwrite its context.
+    pub fn find_account_with_txid_mut(
+        &mut self,
+        txid: &Txid,
+    ) -> Option<&mut ManagedCoreAccount> {
+        for account in self.accounts.all_accounts_mut() {
+            if account.transactions.contains_key(txid) {
+                return Some(account);
+            }
+        }
+        None
+    }
+
+    /// Find a managed account by its account index across every indexable
+    /// account type (Standard, CoinJoin, DashpayReceivingFunds, …). Used
+    /// by `apply(changeset)` to route `highest_used` restoration. Returns
+    /// the first account whose `index()` matches.
+    pub fn find_managed_account_by_index_mut(
+        &mut self,
+        account_index: u32,
+    ) -> Option<&mut ManagedCoreAccount> {
+        for account in self.accounts.all_accounts_mut() {
+            if account.index() == Some(account_index) {
                 return Some(account);
             }
         }

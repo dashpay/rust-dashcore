@@ -316,7 +316,7 @@ impl ManagedCoreAccount {
         if changed {
             cs.account_states = Some(crate::changeset::AccountStateChangeSet {
                 addresses_used: [address.clone()].into(),
-                last_revealed: BTreeMap::new(),
+                highest_used: BTreeMap::new(),
             });
         }
         (changed, cs)
