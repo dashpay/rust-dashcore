@@ -10,7 +10,7 @@ use crate::account::BLSAccount;
 use crate::account::EdDSAAccount;
 use crate::account::ManagedAccountTrait;
 use crate::account::TransactionRecord;
-use crate::changeset::{BalanceChangeSet, Merge, WalletChangeSet};
+use crate::changeset::{AccountChangeSet, BalanceChangeSet, Merge, WalletChangeSet};
 #[cfg(feature = "bls")]
 use crate::derivation_bls_bip32::ExtendedBLSPubKey;
 #[cfg(any(feature = "bls", feature = "eddsa"))]
@@ -298,12 +298,10 @@ impl ManagedCoreAccount {
 
     /// Mark an address as used, returning a changeset describing the effect.
     ///
-    /// Returns `(changed, cs)`:
-    /// - `changed` is `true` iff this call transitioned the address from
-    ///   unused → used. `false` on replay or for unknown addresses.
-    /// - `cs.account_states.addresses_used` contains the address iff
-    ///   `changed` is `true`, so applying the same changeset later is a
-    ///   no-op on already-used addresses (idempotent replay).
+    /// Returns `(changed, cs)` where the per-account delta lives at
+    /// `cs.per_account[self.to_account_type()].addresses_used`.
+    /// `changed` is `false` on replay or for unknown addresses, and the
+    /// changeset is empty in that case (idempotent).
     pub fn mark_address_used(
         &mut self,
         address: &Address,
@@ -314,26 +312,25 @@ impl ManagedCoreAccount {
         let changed = self.account_type.mark_address_used(address);
         let mut cs = WalletChangeSet::default();
         if changed {
-            cs.account_states = Some(crate::changeset::AccountStateChangeSet {
-                addresses_used: [address.clone()].into(),
-                highest_used: BTreeMap::new(),
-            });
+            cs.account_bucket(self.account_type.to_account_type())
+                .addresses_used
+                .insert(address.clone());
         }
         (changed, cs)
     }
 
     /// Add new UTXOs for received outputs and remove spent ones.
     ///
-    /// Returns a [`WalletChangeSet`] describing the additions and removals so
-    /// that the caller can persist them via a changeset. Non-spendable
-    /// account types (Identity*, Provider*, etc.) return an empty changeset.
+    /// Returns a [`WalletChangeSet`] whose per-account bucket carries
+    /// the additions and removals. Non-spendable account types
+    /// (Identity*, Provider*, etc.) return an empty changeset.
     fn update_utxos(
         &mut self,
         tx: &Transaction,
         account_match: &AccountMatch,
         context: TransactionContext,
     ) -> WalletChangeSet {
-        let mut cs = WalletChangeSet::default();
+        let mut bucket = AccountChangeSet::default();
 
         // Update UTXOs only for spendable account types
         match &mut self.account_type {
@@ -406,10 +403,7 @@ impl ManagedCoreAccount {
                                 }
                             };
                             if needs_write {
-                                cs.utxos
-                                    .get_or_insert_with(Default::default)
-                                    .added
-                                    .insert(outpoint, utxo.clone());
+                                bucket.utxos_added.insert(outpoint, utxo.clone());
                                 self.utxos.insert(outpoint, utxo);
                                 utxos_changed = true;
                             }
@@ -427,10 +421,7 @@ impl ManagedCoreAccount {
                             txid = %tx.txid(),
                             "Removed spent UTXO"
                         );
-                        cs.utxos
-                            .get_or_insert_with(Default::default)
-                            .spent
-                            .insert(input.previous_output);
+                        bucket.utxos_spent.insert(input.previous_output);
                         utxos_changed = true;
                     }
                 }
@@ -442,6 +433,11 @@ impl ManagedCoreAccount {
             _ => {}
         }
 
+        let mut cs = WalletChangeSet::default();
+        if !bucket.is_empty() {
+            cs.per_account
+                .insert(self.account_type.to_account_type(), bucket);
+        }
         cs
     }
 
@@ -478,9 +474,9 @@ impl ManagedCoreAccount {
             if tx_record.context != context {
                 let was_confirmed = tx_record.context.confirmed();
                 tx_record.update_context(context.clone());
-                cs.transactions = Some(crate::changeset::TransactionChangeSet {
-                    records: [(tx.txid(), tx_record.clone())].into(),
-                });
+                cs.account_bucket(self.account_type.to_account_type())
+                    .transactions
+                    .push(tx_record.clone());
                 // Only signal a change when confirmation status actually changes,
                 // not for upgrades within the confirmed state (e.g. InBlock → InChainLockedBlock).
                 // TODO: emit a change event for InBlock → InChainLockedBlock once chainlock
@@ -496,7 +492,7 @@ impl ManagedCoreAccount {
     ///
     /// Returns `(record, cs)`:
     /// - `record` is the new [`TransactionRecord`] for caller-side reporting.
-    ///   It is also present in `cs.transactions.records[txid]`.
+    ///   It is also present in `cs.per_account[self].transactions`.
     /// - `cs` carries both the transaction record insertion and any UTXO
     ///   delta from `update_utxos`.
     pub(crate) fn record_transaction(
@@ -598,9 +594,9 @@ impl ManagedCoreAccount {
 
         let txid = tx.txid();
         let mut cs = WalletChangeSet::default();
-        cs.transactions = Some(crate::changeset::TransactionChangeSet {
-            records: [(txid, tx_record.clone())].into(),
-        });
+        cs.account_bucket(self.account_type.to_account_type())
+            .transactions
+            .push(tx_record.clone());
         self.transactions.insert(txid, tx_record.clone());
         cs.merge(self.update_utxos(tx, account_match, context));
         (tx_record, cs)
@@ -611,7 +607,14 @@ impl ManagedCoreAccount {
     /// Returns `(changed, cs)`:
     /// - `changed` is `true` iff at least one UTXO transitioned from
     ///   not-locked to locked.
-    /// - `cs.utxos.instant_locked` contains the newly-locked outpoints.
+    /// - `cs.utxos_instant_locked` contains the newly-locked outpoints.
+    ///
+    /// Note: `mark_utxos_instant_send` only emits entries for UTXOs still
+    /// present in `self.utxos`. If an outpoint has already been spent,
+    /// it's no longer in the map, so no spurious `instant_locked` entry
+    /// can be produced for a spent outpoint. This is why `apply()` can
+    /// safely process `utxos_spent` before `utxos_instant_locked` without
+    /// losing state.
     pub(crate) fn mark_utxos_instant_send(
         &mut self,
         txid: &Txid,
@@ -626,10 +629,8 @@ impl ManagedCoreAccount {
         let any_changed = !locked.is_empty();
         let mut cs = WalletChangeSet::default();
         if any_changed {
-            cs.utxos = Some(crate::changeset::UtxoChangeSet {
-                instant_locked: locked,
-                ..Default::default()
-            });
+            cs.account_bucket(self.account_type.to_account_type())
+                .utxos_instant_locked = locked;
         }
         (any_changed, cs)
     }
@@ -638,8 +639,9 @@ impl ManagedCoreAccount {
     /// record and return a changeset describing the change.
     ///
     /// Idempotent: if the record does not exist, or its context already
-    /// equals `new_context`, returns an empty [`WalletChangeSet`]. Otherwise
-    /// updates the record in place and emits it in `cs.transactions`.
+    /// equals `new_context`, returns an empty [`AccountChangeSet`].
+    /// Otherwise updates the record in place and emits it in
+    /// `cs.transactions`.
     pub(crate) fn update_transaction_context(
         &mut self,
         txid: &Txid,
@@ -649,9 +651,9 @@ impl ManagedCoreAccount {
         if let Some(record) = self.transactions.get_mut(txid) {
             if record.context != new_context {
                 record.update_context(new_context);
-                cs.transactions = Some(crate::changeset::TransactionChangeSet {
-                    records: [(*txid, record.clone())].into(),
-                });
+                cs.account_bucket(self.account_type.to_account_type())
+                    .transactions
+                    .push(record.clone());
             }
         }
         cs
@@ -696,6 +698,59 @@ impl ManagedCoreAccount {
             cs.balance = Some(bal);
         }
         cs
+    }
+
+    /// Apply an [`AccountChangeSet`] to this account during restore.
+    ///
+    /// Idempotent: replaying the same changeset twice converges to the
+    /// same state as applying it once. State-flag transitions on UTXOs
+    /// (`is_confirmed`, `is_instantlocked`) are monotonic — true wins,
+    /// false loses — so a stale persisted changeset can't downgrade
+    /// in-memory state under a race.
+    ///
+    /// This method does not emit a new changeset. It's the inverse of
+    /// the mutation methods on this type, called from
+    /// `ManagedWalletInfo::apply_changeset` once a per-account bucket
+    /// has been routed.
+    pub fn apply(&mut self, cs: &AccountChangeSet) {
+        // Addresses marked used — mark_address_used is idempotent.
+        for address in &cs.addresses_used {
+            let _ = self.account_type.mark_address_used(address);
+        }
+        // Highest-used watermark per pool type — max-wins via the
+        // pool's own `set_highest_used`.
+        for pool in self.account_type.address_pools_mut() {
+            if let Some(&highest_used) = cs.highest_used.get(&pool.pool_type) {
+                pool.set_highest_used(highest_used);
+            }
+        }
+        // UTXO additions / upgrades. Monotonic state flags: true wins.
+        for (outpoint, utxo) in &cs.utxos_added {
+            let mut merged = utxo.clone();
+            if let Some(existing) = self.utxos.get(outpoint) {
+                merged.is_confirmed |= existing.is_confirmed;
+                merged.is_instantlocked |= existing.is_instantlocked;
+            }
+            self.utxos.insert(*outpoint, merged);
+        }
+        // UTXO removals.
+        for outpoint in &cs.utxos_spent {
+            self.utxos.remove(outpoint);
+            self.spent_outpoints.insert(*outpoint);
+        }
+        // UTXO instant-lock transitions. Only flips false → true; a
+        // UTXO already spent (removed above) is silently skipped, which
+        // is correct because we don't track IS state for spent outputs.
+        for outpoint in &cs.utxos_instant_locked {
+            if let Some(utxo) = self.utxos.get_mut(outpoint) {
+                utxo.is_instantlocked = true;
+            }
+        }
+        // Transaction records. Last write wins per txid — apply is
+        // idempotent because identical records insert over themselves.
+        for record in &cs.transactions {
+            self.transactions.insert(record.transaction.txid(), record.clone());
+        }
     }
 
     /// Get all addresses from all pools

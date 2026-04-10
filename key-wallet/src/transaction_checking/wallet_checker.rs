@@ -158,8 +158,7 @@ impl WalletTransactionChecker for ManagedWalletInfo {
 
             let key_source = KeySource::Public(xpub);
             let rev_before = result.new_addresses.len();
-            let account_index_for_reveal =
-                account_match.account_type_match.account_index();
+            let account_type_for_bucket = account.account_type.to_account_type();
             for pool in account.account_type.address_pools_mut() {
                 match pool.maintain_gap_limit(&key_source) {
                     Ok(addrs) => result.new_addresses.extend(addrs),
@@ -172,21 +171,15 @@ impl WalletTransactionChecker for ManagedWalletInfo {
                         );
                     }
                 }
-                // Record the pool's highest-used index in the changeset so
-                // `apply()` can restore the used watermark without re-scanning.
-                // Only indexable account types populate this — single-pool
-                // account types (Identity*, Provider*, …) have no meaningful
-                // account index and don't grow their pools via gap-limit
-                // maintenance.
-                if let (Some(account_index), Some(highest_used)) =
-                    (account_index_for_reveal, pool.highest_used)
-                {
-                    result
-                        .changeset
-                        .account_states
-                        .get_or_insert_with(Default::default)
+                // Record the pool's highest-used index in the per-account
+                // bucket so `apply()` can restore the used watermark
+                // without re-scanning.
+                if let Some(highest_used) = pool.highest_used {
+                    let bucket =
+                        result.changeset.account_bucket(account_type_for_bucket);
+                    bucket
                         .highest_used
-                        .entry((account_index, pool.pool_type))
+                        .entry(pool.pool_type)
                         .and_modify(|current| {
                             *current = (*current).max(highest_used)
                         })

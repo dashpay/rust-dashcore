@@ -15,7 +15,6 @@ mod changeset;
 mod merge;
 
 pub use changeset::{
-    AccountKeyChangeSet, AccountStateChangeSet, BalanceChangeSet, ChainChangeSet,
-    TransactionChangeSet, UtxoChangeSet, WalletChangeSet,
+    AccountChangeSet, AccountKeyChangeSet, BalanceChangeSet, ChainChangeSet, WalletChangeSet,
 };
 pub use merge::Merge;
