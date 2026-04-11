@@ -59,6 +59,11 @@ pub struct TransactionBuilder {
     version: u16,
     /// Special transaction payload for Dash-specific transactions
     special_payload: Option<TransactionPayload>,
+    /// When `true`, skip BIP-69 output sorting in [`Self::build`] so
+    /// callers that need position-dependent outputs (e.g. AssetLockTx,
+    /// whose payload validation requires `tx.output[0]` to be the
+    /// OP_RETURN burn) keep outputs in the order they were added.
+    skip_bip69_sort: bool,
 }
 
 impl Default for TransactionBuilder {
@@ -78,7 +83,17 @@ impl TransactionBuilder {
             lock_time: 0,
             version: 2, // Default to version 2 for Dash
             special_payload: None,
+            skip_bip69_sort: false,
         }
+    }
+
+    /// Disable BIP-69 output sorting. Required for transactions whose
+    /// payload validation depends on output position — e.g. AssetLockTx
+    /// requires `tx.output[0]` to be the OP_RETURN burn carrying the
+    /// total locked amount.
+    pub fn skip_bip69_sort(mut self) -> Self {
+        self.skip_bip69_sort = true;
+        self
     }
 
     pub fn outputs(&self) -> &Vec<TxOut> {
@@ -436,16 +451,22 @@ impl TransactionBuilder {
             }
         }
 
-        // BIP-69: Sort outputs by amount first, then by scriptPubKey lexicographically
-        tx_outputs.sort_by(|a, b| {
-            match a.value.cmp(&b.value) {
-                std::cmp::Ordering::Equal => {
-                    // If amounts match, compare scriptPubKeys lexicographically
-                    a.script_pubkey.as_bytes().cmp(b.script_pubkey.as_bytes())
+        // BIP-69: Sort outputs by amount first, then by scriptPubKey
+        // lexicographically. Opt-out via `skip_bip69_sort` for
+        // transactions whose payload validation requires
+        // position-dependent outputs (e.g. AssetLockTx, whose
+        // `tx.output[0]` must be the OP_RETURN burn).
+        if !self.skip_bip69_sort {
+            tx_outputs.sort_by(|a, b| {
+                match a.value.cmp(&b.value) {
+                    std::cmp::Ordering::Equal => {
+                        // If amounts match, compare scriptPubKeys lexicographically
+                        a.script_pubkey.as_bytes().cmp(b.script_pubkey.as_bytes())
+                    }
+                    other => other,
                 }
-                other => other,
-            }
-        });
+            });
+        }
 
         // Create unsigned transaction with optional special payload
         // Update sorted_inputs to maintain the key association after sorting
@@ -629,12 +650,23 @@ impl TransactionBuilder {
 
     /// Build an Asset Lock Transaction
     ///
-    /// Used to lock Dash for use in Platform (creates Platform credits)
-    pub fn build_asset_lock(self, credit_outputs: Vec<TxOut>) -> Result<Transaction, BuilderError> {
+    /// Used to lock Dash for use in Platform (creates Platform credits).
+    /// Per DIP-00X, the AssetLockPayload version is `1`, the credit
+    /// outputs live in the payload (not in `tx.output`), and the
+    /// Dash special transaction wire version is `3`. The caller must
+    /// have already added the OP_RETURN burn output to this builder
+    /// before calling `build_asset_lock`; BIP-69 output sorting is
+    /// disabled so the burn stays at `tx.output[0]`.
+    pub fn build_asset_lock(
+        mut self,
+        credit_outputs: Vec<TxOut>,
+    ) -> Result<Transaction, BuilderError> {
         let payload = AssetLockPayload {
-            version: 0,
+            version: 1,
             credit_outputs,
         };
+        self.version = 3;
+        self.skip_bip69_sort = true;
         self.set_special_payload(TransactionPayload::AssetLockPayloadType(payload)).build()
     }
 
