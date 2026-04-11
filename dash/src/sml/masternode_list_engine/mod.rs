@@ -173,7 +173,7 @@ pub struct MasternodeListEngine {
     pub block_container: MasternodeListEngineBlockContainer,
     pub masternode_lists: BTreeMap<CoreBlockHeight, MasternodeList>,
     pub known_snapshots: BTreeMap<BlockHash, QuorumSnapshot>,
-    pub rotated_quorums_per_cycle: BTreeMap<BlockHash, Vec<QualifiedQuorumEntry>>,
+    pub rotated_quorums_per_cycle: BTreeMap<BlockHash, BTreeMap<u16, QualifiedQuorumEntry>>,
     #[allow(clippy::type_complexity)]
     pub quorum_statuses: BTreeMap<
         LLMQType,
@@ -196,6 +196,40 @@ impl Default for MasternodeListEngine {
             network: Network::Mainnet,
         }
     }
+}
+
+/// Builds a per-cycle quorum map keyed by `quorum_index`.
+/// Rejects missing, negative, or duplicate indices and validates the final count.
+#[cfg(feature = "quorum_validation")]
+fn build_cycle_quorum_map(
+    quorums: Vec<QualifiedQuorumEntry>,
+    rotation_quorum_type: LLMQType,
+) -> Result<BTreeMap<u16, QualifiedQuorumEntry>, QuorumValidationError> {
+    let mut map = BTreeMap::new();
+    for quorum in quorums {
+        let quorum_index = quorum.quorum_entry.quorum_index.ok_or(
+            QuorumValidationError::RequiredQuorumIndexNotPresent(quorum.quorum_entry.quorum_hash),
+        )?;
+        let key =
+            u16::try_from(quorum_index).map_err(|_| QuorumValidationError::InvalidQuorumIndex {
+                quorum_hash: quorum.quorum_entry.quorum_hash,
+                index: quorum_index,
+            })?;
+        if map.contains_key(&key) {
+            return Err(QuorumValidationError::CorruptedCodeExecution(format!(
+                "duplicate quorum_index {key} in rotation cycle"
+            )));
+        }
+        map.insert(key, quorum);
+    }
+    let expected = rotation_quorum_type.active_quorum_count() as usize;
+    if map.len() != expected {
+        return Err(QuorumValidationError::CorruptedCodeExecution(format!(
+            "rotated quorums per cycle count mismatch: expected {expected}, got {}",
+            map.len()
+        )));
+    }
+    Ok(map)
 }
 
 impl MasternodeListEngine {
@@ -384,7 +418,7 @@ impl MasternodeListEngine {
         self.rotated_quorums_per_cycle
             .values()
             .find_map(|qualified_entries| {
-                qualified_entries.iter().find(|qualified_entry| {
+                qualified_entries.values().find(|qualified_entry| {
                     qualified_entry.quorum_entry.quorum_hash == quorum_entry.quorum_hash
                         && qualified_entry.quorum_entry.llmq_type == quorum_entry.llmq_type
                 })
@@ -628,7 +662,7 @@ impl MasternodeListEngine {
             self.apply_diff(mn_list_diff_tip, None, verify_tip_non_rotated_quorums, sigs)?;
 
         #[cfg(feature = "quorum_validation")]
-        let qualified_last_commitment_per_index = last_commitment_per_index
+        let mut qualified_last_commitment_per_index = last_commitment_per_index
             .into_iter()
             .map(|quorum_entry| {
                 if let Some(qualified_quorum_entry) =
@@ -685,26 +719,21 @@ impl MasternodeListEngine {
                 LLMQEntryVerificationStatus,
             )> = Vec::new();
 
-            let mut qualified_rotated_quorums_per_cycle =
-                qualified_last_commitment_per_index.first().map(|quorum_entry| {
-                    self.rotated_quorums_per_cycle
-                        .entry(quorum_entry.quorum_entry.quorum_hash)
-                        .or_default()
-                });
+            let cycle_key =
+                qualified_last_commitment_per_index.first().map(|q| q.quorum_entry.quorum_hash);
 
-            for mut rotated_quorum in qualified_last_commitment_per_index {
+            for rotated_quorum in qualified_last_commitment_per_index.iter_mut() {
                 tracing::debug!(
-                    "  Current cycle quorum: hash={}, index={:?}",
+                    "  Current cycle quorum: hash={}, raw_quorum_index={:?}, map_key={:?}",
                     rotated_quorum.quorum_entry.quorum_hash,
-                    rotated_quorum.quorum_entry.quorum_index
+                    rotated_quorum.quorum_entry.quorum_index,
+                    rotated_quorum.quorum_entry.quorum_index.and_then(|i| u16::try_from(i).ok())
                 );
 
                 rotated_quorum.verified = validation_statuses
                     .get(&rotated_quorum.quorum_entry.quorum_hash)
                     .cloned()
                     .unwrap_or_default();
-
-                qualified_rotated_quorums_per_cycle.as_mut().unwrap().push(rotated_quorum.clone());
 
                 // Store status updates separately to prevent multiple mutable borrows
                 let masternode_lists_having_quorum_hash_for_quorum_type =
@@ -725,6 +754,14 @@ impl MasternodeListEngine {
                 ));
                 heights.insert(tip_height);
                 *status = rotated_quorum.verified.clone();
+            }
+
+            if let Some(key) = cycle_key {
+                let cycle_map = build_cycle_quorum_map(
+                    qualified_last_commitment_per_index,
+                    rotation_quorum_type,
+                )?;
+                *self.rotated_quorums_per_cycle.entry(key).or_default() = cycle_map;
             }
 
             // Apply collected updates after iteration to avoid borrow conflicts
@@ -816,14 +853,12 @@ impl MasternodeListEngine {
                     }
                 }
             }
-        } else if let Some(qualified_rotated_quorums_per_cycle) =
-            qualified_last_commitment_per_index.first().map(|quorum_entry| {
-                self.rotated_quorums_per_cycle
-                    .entry(quorum_entry.quorum_entry.quorum_hash)
-                    .or_default()
-            })
+        } else if let Some(cycle_key) =
+            qualified_last_commitment_per_index.first().map(|q| q.quorum_entry.quorum_hash)
         {
-            *qualified_rotated_quorums_per_cycle = qualified_last_commitment_per_index;
+            let cycle_map =
+                build_cycle_quorum_map(qualified_last_commitment_per_index, rotation_quorum_type)?;
+            *self.rotated_quorums_per_cycle.entry(cycle_key).or_default() = cycle_map;
         }
 
         #[cfg(not(feature = "quorum_validation"))]
@@ -1065,7 +1100,7 @@ impl MasternodeListEngine {
                     && let Some(cycle_quorums) = self.rotated_quorums_per_cycle.get(&cycle_hash)
                 {
                     // Only update rotating quorum statuses based on last commitment entries
-                    for quorum in cycle_quorums {
+                    for quorum in cycle_quorums.values() {
                         if let Some(quorum_entry) =
                             hash_to_quorum_entries.get_mut(&quorum.quorum_entry.quorum_hash)
                         {
@@ -1134,9 +1169,8 @@ impl MasternodeListEngine {
 
 #[cfg(test)]
 mod tests {
-    use crate::BlockHash;
-    use crate::Network;
     use crate::consensus::deserialize;
+    use crate::hashes::Hash;
     use crate::network::message_qrinfo::QRInfo;
     use crate::network::message_sml::MnListDiff;
     use crate::prelude::CoreBlockHeight;
@@ -1149,9 +1183,92 @@ mod tests {
     use crate::sml::masternode_list_engine::{
         MasternodeListEngine, MasternodeListEngineBlockContainer,
     };
-    use crate::sml::quorum_entry::qualified_quorum_entry::VerifyingChainLockSignaturesType;
+    use crate::sml::quorum_entry::qualified_quorum_entry::{
+        QualifiedQuorumEntry, VerifyingChainLockSignaturesType,
+    };
     use crate::sml::quorum_validation_error::ClientDataRetrievalError;
+    #[cfg(feature = "quorum_validation")]
+    use crate::sml::quorum_validation_error::QuorumValidationError;
+    use crate::{BlockHash, Network};
     use std::collections::BTreeMap;
+
+    #[cfg(feature = "quorum_validation")]
+    use {
+        super::build_cycle_quorum_map,
+        crate::QuorumHash,
+        crate::bls_sig_utils::{BLSPublicKey, BLSSignature},
+        crate::hash_types::QuorumVVecHash,
+        crate::transaction::special_transaction::quorum_commitment::QuorumEntry,
+    };
+
+    #[cfg(feature = "quorum_validation")]
+    fn make_qualified_quorum_entry(
+        llmq_type: LLMQType,
+        quorum_index: Option<i16>,
+    ) -> QualifiedQuorumEntry {
+        QuorumEntry {
+            version: 2,
+            llmq_type,
+            quorum_hash: QuorumHash::all_zeros(),
+            quorum_index,
+            signers: vec![true],
+            valid_members: vec![true],
+            quorum_public_key: BLSPublicKey::from([0; 48]),
+            quorum_vvec_hash: QuorumVVecHash::all_zeros(),
+            threshold_sig: BLSSignature::from([0; 96]),
+            all_commitment_aggregated_signature: BLSSignature::from([0; 96]),
+        }
+        .into()
+    }
+
+    #[cfg(feature = "quorum_validation")]
+    #[test]
+    fn build_cycle_quorum_map_edge_cases() {
+        let ty = LLMQType::LlmqtypeTest;
+        assert_eq!(ty.active_quorum_count(), 2, "test assumes active_quorum_count == 2");
+
+        // Valid: two quorums with distinct indices
+        let quorums = vec![
+            make_qualified_quorum_entry(ty, Some(0)),
+            make_qualified_quorum_entry(ty, Some(1)),
+        ];
+        let map = build_cycle_quorum_map(quorums, ty).expect("valid quorums should succeed");
+        assert_eq!(map.len(), 2);
+        assert!(map.contains_key(&0) && map.contains_key(&1));
+
+        // Missing index is rejected
+        let quorums =
+            vec![make_qualified_quorum_entry(ty, Some(0)), make_qualified_quorum_entry(ty, None)];
+        let err = build_cycle_quorum_map(quorums, ty).expect_err("missing index should fail");
+        assert!(matches!(err, QuorumValidationError::RequiredQuorumIndexNotPresent(_)));
+
+        // Negative index is rejected
+        let quorums = vec![
+            make_qualified_quorum_entry(ty, Some(0)),
+            make_qualified_quorum_entry(ty, Some(-1)),
+        ];
+        let err = build_cycle_quorum_map(quorums, ty).expect_err("negative index should fail");
+        assert!(matches!(
+            err,
+            QuorumValidationError::InvalidQuorumIndex {
+                index: -1,
+                ..
+            }
+        ));
+
+        // Duplicate index is rejected
+        let quorums = vec![
+            make_qualified_quorum_entry(ty, Some(0)),
+            make_qualified_quorum_entry(ty, Some(0)),
+        ];
+        let err = build_cycle_quorum_map(quorums, ty).expect_err("duplicate index should fail");
+        assert!(matches!(err, QuorumValidationError::CorruptedCodeExecution(_)));
+
+        // Wrong count is rejected
+        let quorums = vec![make_qualified_quorum_entry(ty, Some(0))];
+        let err = build_cycle_quorum_map(quorums, ty).expect_err("wrong count should fail");
+        assert!(matches!(err, QuorumValidationError::CorruptedCodeExecution(_)));
+    }
 
     fn verify_masternode_list_quorums(
         mn_list_engine: &MasternodeListEngine,
@@ -1413,9 +1530,12 @@ mod tests {
                 .0;
 
         for (cycle_hash, quorums) in mn_list_engine.rotated_quorums_per_cycle.iter() {
-            for (i, quorum) in quorums.iter().enumerate() {
+            for (index, quorum) in quorums.iter() {
                 mn_list_engine.validate_quorum(quorum).unwrap_or_else(|_| {
-                    panic!("expected to validate quorum {} in cycle hash {}", i, cycle_hash)
+                    panic!(
+                        "expected to validate quorum at index {} in cycle hash {}",
+                        index, cycle_hash
+                    )
                 });
             }
         }
@@ -1433,7 +1553,7 @@ mod tests {
 
         for quorums in mn_list_engine.rotated_quorums_per_cycle.values() {
             mn_list_engine
-                .validate_rotation_cycle_quorums(quorums.iter().collect::<Vec<_>>().as_slice())
+                .validate_rotation_cycle_quorums(quorums.values().collect::<Vec<_>>().as_slice())
                 .expect("expected to validated quorums");
         }
     }
