@@ -631,6 +631,19 @@ impl MasternodeListEngine {
             .map(|quorum_entry| quorum_entry.llmq_type)
             .unwrap_or(self.network.isd_llmq_type());
 
+        // IS locks reference the cycle boundary block hash as their `cyclehash` field,
+        // so `rotated_quorums_per_cycle` must be keyed by that hash.
+        #[cfg(feature = "quorum_validation")]
+        let cycle_boundary_hash = {
+            let cycle_boundary_height = h_height + WORK_DIFF_DEPTH;
+            *self.block_container.get_hash(&cycle_boundary_height).ok_or(
+                QuorumValidationError::RequiredBlockNotPresent(
+                    BlockHash::all_zeros(),
+                    format!("cycle boundary at height {cycle_boundary_height}"),
+                ),
+            )?
+        };
+
         if let Some((quorum_snapshot_at_h_minus_4c, mn_list_diff_at_h_minus_4c)) =
             quorum_snapshot_and_mn_list_diff_at_h_minus_4c
         {
@@ -725,9 +738,6 @@ impl MasternodeListEngine {
                 LLMQEntryVerificationStatus,
             )> = Vec::new();
 
-            let cycle_key =
-                qualified_last_commitment_per_index.first().map(|q| q.quorum_entry.quorum_hash);
-
             for rotated_quorum in qualified_last_commitment_per_index.iter_mut() {
                 tracing::debug!(
                     "  Current cycle quorum: hash={}, raw_quorum_index={:?}, map_key={:?}",
@@ -762,13 +772,9 @@ impl MasternodeListEngine {
                 *status = rotated_quorum.verified.clone();
             }
 
-            if let Some(key) = cycle_key {
-                let cycle_map = build_cycle_quorum_map(
-                    qualified_last_commitment_per_index,
-                    rotation_quorum_type,
-                )?;
-                *self.rotated_quorums_per_cycle.entry(key).or_default() = cycle_map;
-            }
+            let cycle_map =
+                build_cycle_quorum_map(qualified_last_commitment_per_index, rotation_quorum_type)?;
+            *self.rotated_quorums_per_cycle.entry(cycle_boundary_hash).or_default() = cycle_map;
 
             // Apply collected updates after iteration to avoid borrow conflicts
             for (heights, quorum_type, quorum_hash, new_status) in updates {
@@ -859,12 +865,10 @@ impl MasternodeListEngine {
                     }
                 }
             }
-        } else if let Some(cycle_key) =
-            qualified_last_commitment_per_index.first().map(|q| q.quorum_entry.quorum_hash)
-        {
+        } else {
             let cycle_map =
                 build_cycle_quorum_map(qualified_last_commitment_per_index, rotation_quorum_type)?;
-            *self.rotated_quorums_per_cycle.entry(cycle_key).or_default() = cycle_map;
+            *self.rotated_quorums_per_cycle.entry(cycle_boundary_hash).or_default() = cycle_map;
         }
 
         #[cfg(not(feature = "quorum_validation"))]
@@ -1187,7 +1191,7 @@ mod tests {
     };
     use crate::sml::masternode_list::MasternodeList;
     use crate::sml::masternode_list_engine::{
-        MasternodeListEngine, MasternodeListEngineBlockContainer,
+        MasternodeListEngine, MasternodeListEngineBlockContainer, WORK_DIFF_DEPTH,
     };
     use crate::sml::quorum_entry::qualified_quorum_entry::{
         QualifiedQuorumEntry, VerifyingChainLockSignaturesType,
@@ -1437,6 +1441,8 @@ mod tests {
                 .expect("expected to apply diff");
         }
 
+        let h_work_block_hash = qr_info.mn_list_diff_h.block_hash;
+
         masternode_list_engine
             .feed_qr_info::<fn(&BlockHash) -> Result<u32, ClientDataRetrievalError>>(
                 qr_info, true, true, None,
@@ -1451,6 +1457,24 @@ mod tests {
                 .expect("expected a last master node list")
                 .1,
             &[Llmqtype400_85, Llmqtype50_60, Llmqtype400_60],
+        );
+
+        // Verify the cycle map is keyed by the cycle boundary hash, not a quorum hash.
+        let h_work_height = masternode_list_engine
+            .block_container
+            .get_height(&h_work_block_hash)
+            .expect("h work block must be in container after feed_qr_info");
+        let expected_cycle_boundary_hash = masternode_list_engine
+            .block_container
+            .get_hash(&(h_work_height + WORK_DIFF_DEPTH))
+            .copied()
+            .expect("cycle boundary hash must be in container after feed_qrinfo_heights_to_engine");
+        assert!(
+            masternode_list_engine
+                .rotated_quorums_per_cycle
+                .contains_key(&expected_cycle_boundary_hash),
+            "rotated_quorums_per_cycle should be keyed by the cycle boundary hash {}",
+            expected_cycle_boundary_hash
         );
     }
 
