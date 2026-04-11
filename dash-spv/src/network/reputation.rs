@@ -94,10 +94,10 @@ where
     let mut v = i32::deserialize(deserializer)?;
 
     if v < MIN_MISBEHAVIOR_SCORE {
-        log::warn!("Peer has invalid score {v}, clamping to min {MIN_MISBEHAVIOR_SCORE}");
+        tracing::warn!("Peer has invalid score {v}, clamping to min {MIN_MISBEHAVIOR_SCORE}");
         v = MIN_MISBEHAVIOR_SCORE
     } else if v > MAX_MISBEHAVIOR_SCORE {
-        log::warn!("Peer has invalid score {v}, clamping to max {MAX_MISBEHAVIOR_SCORE}");
+        tracing::warn!("Peer has invalid score {v}, clamping to max {MAX_MISBEHAVIOR_SCORE}");
         v = MAX_MISBEHAVIOR_SCORE
     }
 
@@ -111,7 +111,7 @@ where
     let mut v = u32::deserialize(deserializer)?;
 
     if v > MAX_BAN_COUNT {
-        log::warn!("Peer has excessive ban count {v}, clamping to {MAX_BAN_COUNT}");
+        tracing::warn!("Peer has excessive ban count {v}, clamping to {MAX_BAN_COUNT}");
         v = MAX_BAN_COUNT
     }
 
@@ -290,7 +290,7 @@ impl PeerReputationManager {
         if should_ban {
             reputation.banned_until = Some(Instant::now() + BAN_DURATION);
             reputation.ban_count += 1;
-            log::warn!(
+            tracing::warn!(
                 "Peer {} banned for misbehavior (score: {}, ban #{}, reason: {})",
                 peer,
                 reputation.score,
@@ -301,7 +301,7 @@ impl PeerReputationManager {
 
         // Log significant changes
         if score_change.abs() >= 10 || should_ban {
-            log::info!(
+            tracing::info!(
                 "Peer {} reputation changed: {} -> {} (change: {}, reason: {})",
                 peer,
                 old_score,
@@ -368,7 +368,7 @@ impl PeerReputationManager {
         reputation.banned_until = Some(Instant::now() + duration);
         reputation.ban_count += 1;
 
-        log::warn!(
+        tracing::warn!(
             "Peer {} temporarily banned for {:?} (ban #{}, reason: {})",
             peer,
             duration,
@@ -415,7 +415,7 @@ impl PeerReputationManager {
         if let Some(reputation) = reputations.get_mut(peer) {
             reputation.banned_until = None;
             reputation.score = reputation.score.min(MAX_MISBEHAVIOR_SCORE - 10);
-            log::info!("Manually unbanned peer {}", peer);
+            tracing::info!("Manually unbanned peer {}", peer);
         }
     }
 
@@ -423,7 +423,7 @@ impl PeerReputationManager {
     pub async fn reset_reputation(&self, peer: &SocketAddr) {
         let mut reputations = self.reputations.write().await;
         reputations.remove(peer);
-        log::info!("Reset reputation for peer {}", peer);
+        tracing::info!("Reset reputation for peer {}", peer);
     }
 
     /// Get peers sorted by reputation (best first)
@@ -470,7 +470,7 @@ impl PeerReputationManager {
             if reputation.positive_actions > MAX_ACTION_COUNT
                 || reputation.negative_actions > MAX_ACTION_COUNT
             {
-                log::warn!("Skipping peer {} with potentially corrupted action counts", addr);
+                tracing::warn!("Skipping peer {} with potentially corrupted action counts", addr);
                 skipped_count += 1;
                 continue;
             }
@@ -484,7 +484,7 @@ impl PeerReputationManager {
             loaded_count += 1;
         }
 
-        log::info!(
+        tracing::info!(
             "Loaded reputation data for {} peers (skipped {} corrupted entries)",
             loaded_count,
             skipped_count
@@ -520,7 +520,7 @@ impl ReputationAware for PeerReputationManager {
 
         for peer in available_peers {
             let Ok(socket_addr) = peer.socket_addr() else {
-                log::warn!("Skip invalid peer address: {:?}", peer);
+                tracing::warn!("Skip invalid peer address: {:?}", peer);
                 continue;
             };
 

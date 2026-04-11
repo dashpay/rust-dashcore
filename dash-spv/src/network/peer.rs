@@ -287,7 +287,7 @@ impl Peer {
         );
 
         // Also log with standard logging for debugging
-        log::info!(
+        tracing::info!(
             "PEER_INFO_DEBUG: Updated peer {} with height={}, version={}",
             self.address,
             version_msg.start_height,

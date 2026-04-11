@@ -16,8 +16,8 @@ impl MasternodeListEngine {
         // Retrieve the cycle hash from the Instant Lock
         let cycle_hash = instant_lock.cyclehash;
 
-        log::debug!("IS lock verification - cyclehash from InstantLock: {}", cycle_hash);
-        log::debug!(
+        tracing::debug!("IS lock verification - cyclehash from InstantLock: {}", cycle_hash);
+        tracing::debug!(
             "Available cycle hashes in rotated_quorums_per_cycle: {:?}",
             self.rotated_quorums_per_cycle.keys().collect::<Vec<_>>()
         );
@@ -28,9 +28,9 @@ impl MasternodeListEngine {
             .get(&cycle_hash)
             .ok_or(MessageVerificationError::CycleHashNotPresent(cycle_hash))?;
 
-        log::debug!("Found {} quorums for cyclehash {}", quorums.len(), cycle_hash);
+        tracing::debug!("Found {} quorums for cyclehash {}", quorums.len(), cycle_hash);
         for q in quorums.iter() {
-            log::debug!(
+            tracing::debug!(
                 "  Quorum: hash={}, index={:?}, height at block_container={:?}",
                 q.quorum_entry.quorum_hash,
                 q.quorum_entry.quorum_index,
@@ -115,7 +115,7 @@ impl MasternodeListEngine {
         // Only God and maybe Odysseus knows why (64 - n - 1)
         let quorum_index = quorum_index_mask & (selection_hash_64 >> (64 - n - 1)) as usize;
 
-        log::debug!(
+        tracing::debug!(
             "IS lock quorum selection: txid={}, request_id={}, selection_hash_64={:#018x}, quorum_count={}, n={}, mask={:#x}, computed_index={}",
             instant_lock.txid,
             request_id,
@@ -137,7 +137,7 @@ impl MasternodeListEngine {
                 )
             })?;
 
-        log::debug!(
+        tracing::debug!(
             "IS lock selected quorum: hash={}, index={:?}, public_key={}, verified={:?}",
             quorum.quorum_entry.quorum_hash,
             quorum.quorum_entry.quorum_index,
@@ -195,7 +195,7 @@ impl MasternodeListEngine {
             )
             .map_err(|e| e.to_string())?;
 
-        log::debug!(
+        tracing::debug!(
             "IS lock verify: txid={}, cyclehash={}, quorum_index={}, quorum_hash={}, sign_id={}, public_key={}, signature={}",
             instant_lock.txid,
             instant_lock.cyclehash,
@@ -208,7 +208,7 @@ impl MasternodeListEngine {
 
         match quorum.verify_message_digest(sign_id.to_byte_array(), instant_lock.signature) {
             Ok(()) => {
-                log::info!(
+                tracing::info!(
                     "IS lock verified: txid={}, quorum_index={}, quorum_hash={}",
                     instant_lock.txid,
                     quorum_index,
@@ -217,7 +217,7 @@ impl MasternodeListEngine {
                 Ok(())
             }
             Err(e) => {
-                log::warn!(
+                tracing::warn!(
                     "IS lock verification failed: txid={}, quorum_index={}, quorum_hash={}, public_key={}, error={}",
                     instant_lock.txid,
                     quorum_index,

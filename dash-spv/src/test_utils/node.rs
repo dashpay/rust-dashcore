@@ -369,6 +369,41 @@ impl DashCoreNode {
         txid
     }
 
+    /// Create and sign a raw transaction without broadcasting it.
+    ///
+    /// Returns the signed transaction for use with `broadcast_transaction()`.
+    pub fn create_signed_transaction(
+        &self,
+        wallet_name: &str,
+        input_txid: Txid,
+        input_vout: u32,
+        input_amount: Amount,
+        destination: &Address,
+        fee: Amount,
+    ) -> Transaction {
+        let client = self.rpc_client_for_wallet(wallet_name);
+
+        let inputs = vec![rpc_json::CreateRawTransactionInput {
+            txid: input_txid,
+            vout: input_vout,
+            sequence: None,
+        }];
+        let send_amount = input_amount.checked_sub(fee).expect("fee exceeds input amount");
+        let mut outputs = HashMap::new();
+        outputs.insert(destination.to_string(), send_amount);
+
+        let raw_tx: Transaction = client
+            .create_raw_transaction(&inputs, &outputs, None)
+            .expect("failed to create raw tx");
+
+        let signed = client
+            .sign_raw_transaction_with_wallet(&raw_tx, None, None)
+            .expect("failed to sign raw tx");
+        assert!(signed.complete, "raw transaction signing incomplete");
+
+        signed.transaction().expect("invalid signed tx")
+    }
+
     /// Connect this dashd node to another dashd node via P2P and wait for the
     /// connection to be established.
     pub async fn connect_to_node(&self, addr: SocketAddr) {

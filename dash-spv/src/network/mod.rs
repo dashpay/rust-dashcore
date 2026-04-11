@@ -97,6 +97,20 @@ impl RequestSender {
         )))
     }
 
+    pub fn request_block_headers_from_peer(
+        &self,
+        start_hash: BlockHash,
+        address: SocketAddr,
+    ) -> NetworkResult<()> {
+        self.send_message_to_peer(
+            NetworkMessage::GetHeaders(GetHeadersMessage::new(
+                vec![start_hash],
+                BlockHash::all_zeros(),
+            )),
+            address,
+        )
+    }
+
     pub fn request_filter_headers(
         &self,
         start_height: u32,
@@ -222,6 +236,12 @@ pub trait NetworkManager: Send + Sync + 'static {
 
     /// Broadcast a message to all connected peers.
     async fn broadcast(&self, _message: NetworkMessage) -> NetworkResult<()>;
+
+    /// Inject a message into the local message dispatcher as if received from a peer.
+    ///
+    /// Used for locally-originated messages (e.g., self-broadcast transactions) that
+    /// should be processed through the same pipeline as peer-received messages.
+    async fn dispatch_local(&self, message: NetworkMessage);
 
     /// Disconnect a specific peer by address.
     async fn disconnect_peer(&self, _addr: &SocketAddr, _reason: &str) -> NetworkResult<()>;

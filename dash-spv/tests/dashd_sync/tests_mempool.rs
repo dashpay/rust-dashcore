@@ -496,3 +496,79 @@ async fn test_mempool_peer_disconnect_reactivation() {
     bf.stop().await;
     tracing::info!("test_mempool_peer_disconnect_reactivation passed");
 }
+
+/// Verify that a locally broadcast transaction is immediately visible in mempool state.
+#[tokio::test]
+async fn test_broadcast_transaction_local_detection() {
+    let Some(ctx) = TestContext::new(TestChain::Minimal).await else {
+        return;
+    };
+    if !ctx.dashd.supports_mining {
+        eprintln!("Skipping test (dashd RPC miner not available)");
+        return;
+    }
+
+    let (mut fa, _fa_dir) = ctx.spawn_client(MempoolStrategy::FetchAll).await;
+    let (mut bf, _bf_dir) = ctx.spawn_client(MempoolStrategy::BloomFilter).await;
+    wait_for_sync_both(&mut fa, &mut bf, ctx.dashd.initial_height).await;
+
+    // Step 1: Fund the SPV wallet with a confirmed UTXO
+    let receive_address = ctx.receive_address().await;
+    let funding_amount = Amount::from_sat(200_000_000);
+    let funding_txid = ctx.dashd.node.send_to_address(&receive_address, funding_amount);
+
+    wait_for_mempool_tx_both(&mut fa, &mut bf, MEMPOOL_TIMEOUT)
+        .await
+        .expect("Expected mempool event for funding tx");
+
+    let miner_address = ctx.dashd.node.get_new_address_from_wallet("default");
+    ctx.dashd.node.generate_blocks(1, &miner_address);
+    let mined_height = ctx.dashd.initial_height + 1;
+    wait_for_sync_both(&mut fa, &mut bf, mined_height).await;
+
+    // Step 2: Create a signed transaction without broadcasting via dashd
+    let wallet_name = &ctx.dashd.wallet.wallet_name;
+    let utxos = ctx.dashd.node.list_unspent_from_wallet(wallet_name);
+    let utxo =
+        utxos.iter().find(|u| u.txid == funding_txid).expect("Funding tx UTXO not found in wallet");
+
+    let external_address = ctx.dashd.node.get_new_address_from_wallet("default");
+    let fee = Amount::from_sat(10_000);
+    let signed_tx = ctx.dashd.node.create_signed_transaction(
+        wallet_name,
+        utxo.txid,
+        utxo.vout,
+        utxo.amount,
+        &external_address,
+        fee,
+    );
+    let txid = signed_tx.txid();
+    tracing::info!("Created signed tx for SPV broadcast, txid: {}", txid);
+
+    // Step 3: Broadcast via the SPV client (not via dashd)
+    fa.client.broadcast_transaction(&signed_tx).await.expect("broadcast_transaction failed");
+    tracing::info!("Broadcast tx via FetchAll client");
+
+    // The locally dispatched transaction should be picked up by the mempool manager
+    let detected = wait_for_mempool_tx_both(&mut fa, &mut bf, MEMPOOL_TIMEOUT)
+        .await
+        .expect("Expected mempool TransactionReceived event after broadcast");
+    assert_eq!(detected, txid, "Detected txid should match broadcast txid");
+
+    // Step 4: Mine the broadcast tx and verify it transitions to confirmed
+    ctx.dashd.node.generate_blocks(1, &miner_address);
+    let confirmed_height = mined_height + 1;
+    wait_for_sync_both(&mut fa, &mut bf, confirmed_height).await;
+    assert!(
+        client_has_transaction(&fa.client, &ctx.wallet_id, &txid).await,
+        "FetchAll: broadcast tx should be confirmed in wallet"
+    );
+    assert!(
+        client_has_transaction(&bf.client, &ctx.wallet_id, &txid).await,
+        "BloomFilter: broadcast tx should be confirmed in wallet"
+    );
+
+    fa.stop().await;
+    bf.stop().await;
+    tracing::info!("test_broadcast_transaction_local_detection passed");
+}

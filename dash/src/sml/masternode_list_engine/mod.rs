@@ -693,7 +693,7 @@ impl MasternodeListEngine {
                 });
 
             for mut rotated_quorum in qualified_last_commitment_per_index {
-                log::debug!(
+                tracing::debug!(
                     "  Current cycle quorum: hash={}, index={:?}",
                     rotated_quorum.quorum_entry.quorum_hash,
                     rotated_quorum.quorum_entry.quorum_index

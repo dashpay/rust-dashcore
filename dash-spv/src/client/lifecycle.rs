@@ -204,7 +204,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager, H: EventHandler>
         // Shut down sync coordinator: signals cancellation and waits for manager
         // tasks to drain before we tear down the network and storage layers.
         if let Err(e) = self.sync_coordinator.lock().await.shutdown().await {
-            log::warn!("Error shutting down sync coordinator: {}", e);
+            tracing::warn!("Error shutting down sync coordinator: {}", e);
         }
 
         // Disconnect from network

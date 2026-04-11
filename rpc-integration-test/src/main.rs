@@ -10,11 +10,12 @@
 
 #[macro_use]
 extern crate lazy_static;
-extern crate log;
 
-use log::trace;
 use std::collections::{HashMap, HashSet};
 use std::str::FromStr;
+use tracing::trace;
+use tracing_log::LogTracer;
+use tracing_subscriber::EnvFilter;
 
 use dashcore_rpc::json;
 use dashcore_rpc::jsonrpc::error::Error as JsonRpcError;
@@ -54,26 +55,6 @@ lazy_static! {
     /// The default fee amount to use when needed.
     static ref FEE: Amount = Amount::from_btc(0.001).unwrap();
 }
-
-struct StdLogger;
-
-impl log::Log for StdLogger {
-    fn enabled(&self, metadata: &log::Metadata) -> bool {
-        metadata.target().contains("jsonrpc")
-            || metadata.target().contains("dashcore_rpc")
-            || metadata.target().contains("integration_test")
-    }
-
-    fn log(&self, record: &log::Record) {
-        if self.enabled(record.metadata()) {
-            println!("[{}][{}]: {}", record.level(), record.metadata().target(), record.args());
-        }
-    }
-
-    fn flush(&self) {}
-}
-
-static LOGGER: StdLogger = StdLogger;
 
 /// Assert that the call returns a "method not found" error.
 macro_rules! assert_not_found {
@@ -161,7 +142,9 @@ fn get_auth() -> (Auth, Auth) {
 }
 
 fn main() {
-    log::set_logger(&LOGGER).map(|()| log::set_max_level(log::LevelFilter::max())).unwrap();
+    LogTracer::init().expect("failed to install log-to-tracing bridge");
+    let filter = EnvFilter::new("jsonrpc=trace,dashcore_rpc=trace,integration_test=trace");
+    tracing_subscriber::fmt().with_env_filter(filter).with_target(true).init();
     dotenvy::dotenv().ok();
 
     let (wallet_node_auth, evo_node_auth) = get_auth();

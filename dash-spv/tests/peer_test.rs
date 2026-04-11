@@ -15,6 +15,11 @@ use dash_spv::types::ValidationMode;
 use dashcore::Network;
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
 use key_wallet_manager::WalletManager;
+
+fn init_test_tracing() {
+    let _ = tracing_subscriber::fmt().with_test_writer().try_init();
+}
+
 /// Create a test configuration with the given network
 fn create_test_config(network: Network) -> ClientConfig {
     let mut config = ClientConfig::new(network);
@@ -32,7 +37,7 @@ fn create_test_config(network: Network) -> ClientConfig {
 #[tokio::test]
 #[ignore] // Requires network access
 async fn test_peer_connection() {
-    let _ = env_logger::builder().is_test(true).try_init();
+    init_test_tracing();
 
     let config = create_test_config(Network::Testnet);
 
@@ -68,7 +73,7 @@ async fn test_peer_connection() {
 #[tokio::test]
 #[ignore] // Requires network access
 async fn test_peer_persistence() {
-    let _ = env_logger::builder().is_test(true).try_init();
+    init_test_tracing();
 
     let config = create_test_config(Network::Testnet);
 
@@ -146,7 +151,7 @@ async fn test_peer_persistence() {
 
 #[tokio::test]
 async fn test_peer_disconnection() {
-    let _ = env_logger::builder().is_test(true).try_init();
+    init_test_tracing();
 
     let mut config = create_test_config(Network::Regtest);
 

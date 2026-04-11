@@ -778,9 +778,10 @@ pub unsafe extern "C" fn managed_core_account_get_transactions(
         };
 
         // Label
-        ffi_record.label = match &record.label {
-            Some(label) => std::ffi::CString::new(label.as_str()).unwrap_or_default().into_raw(),
-            None => std::ptr::null_mut(),
+        ffi_record.label = if record.label.is_empty() {
+            std::ptr::null_mut()
+        } else {
+            std::ffi::CString::new(record.label.as_str()).unwrap_or_default().into_raw()
         };
 
         // Output details

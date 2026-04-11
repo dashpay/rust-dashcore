@@ -35,7 +35,7 @@ impl DnsDiscovery {
             Network::Mainnet => (MAINNET_DNS_SEEDS, 9999),
             Network::Testnet => (TESTNET_DNS_SEEDS, 19999),
             _ => {
-                log::debug!("No DNS seeds for {:?} network", network);
+                tracing::debug!("No DNS seeds for {:?} network", network);
                 return vec![];
             }
         };
@@ -43,19 +43,19 @@ impl DnsDiscovery {
         let mut addresses = Vec::new();
 
         for seed in seeds {
-            log::debug!("Querying DNS seed: {}", seed);
+            tracing::debug!("Querying DNS seed: {}", seed);
 
             match self.resolver.lookup_ip(*seed).await {
                 Ok(lookup) => {
                     let ips: Vec<IpAddr> = lookup.iter().collect();
-                    log::info!("DNS seed {} returned {} addresses", seed, ips.len());
+                    tracing::info!("DNS seed {} returned {} addresses", seed, ips.len());
 
                     for ip in ips {
                         addresses.push(SocketAddr::new(ip, port));
                     }
                 }
                 Err(e) => {
-                    log::warn!("Failed to resolve DNS seed {}: {}", seed, e);
+                    tracing::warn!("Failed to resolve DNS seed {}: {}", seed, e);
                 }
             }
         }
@@ -64,7 +64,7 @@ impl DnsDiscovery {
         addresses.sort();
         addresses.dedup();
 
-        log::info!("Discovered {} unique peer addresses from DNS seeds", addresses.len());
+        tracing::info!("Discovered {} unique peer addresses from DNS seeds", addresses.len());
         addresses
     }
 

@@ -34,6 +34,7 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage> SyncManager for FilterHeade
     fn clear_in_flight_state(&mut self) {
         self.pipeline = FilterHeadersPipeline::default();
         self.checkpoint_start_height = None;
+        self.block_headers_synced = false;
     }
 
     async fn handle_message(
@@ -43,19 +44,10 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage> SyncManager for FilterHeade
     ) -> SyncResult<Vec<SyncEvent>> {
         // Match response to get start height
         let Some((start_height, cfheaders)) = self.pipeline.match_response(msg.inner()) else {
-            // Only mark as Synced if pipeline is complete AND we've reached the chain tip
-            if self.pipeline.is_complete()
-                && self.state() == SyncState::Syncing
-                && self.progress.current_height() >= self.progress.target_height()
-            {
-                self.set_state(SyncState::Synced);
-                tracing::info!(
-                    "Filter header sync complete at height {}",
-                    self.progress.current_height()
-                );
-                return Ok(vec![SyncEvent::FilterHeadersSyncComplete {
-                    tip_height: self.progress.current_height(),
-                }]);
+            if self.pipeline.is_complete() {
+                if let Some(event) = self.try_complete_sync() {
+                    return Ok(vec![event]);
+                }
             }
             return Ok(vec![]);
         };
@@ -125,19 +117,10 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage> SyncManager for FilterHeade
         // Send more requests
         self.pipeline.send_pending(requests)?;
 
-        // Check if complete - use target_height (peer's best) to ensure we've reached chain tip
-        if self.pipeline.is_complete()
-            && self.state() == SyncState::Syncing
-            && self.progress.current_height() >= self.progress.target_height()
-        {
-            self.set_state(SyncState::Synced);
-            tracing::info!(
-                "Filter header sync complete at height {}",
-                self.progress.current_height()
-            );
-            events.push(SyncEvent::FilterHeadersSyncComplete {
-                tip_height: self.progress.current_height(),
-            });
+        if self.pipeline.is_complete() {
+            if let Some(event) = self.try_complete_sync() {
+                events.push(event);
+            }
         }
 
         Ok(events)
@@ -151,7 +134,10 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage> SyncManager for FilterHeade
         match event {
             SyncEvent::BlockHeaderSyncComplete {
                 tip_height,
-            } => self.handle_new_headers(*tip_height, requests).await,
+            } => {
+                self.block_headers_synced = true;
+                self.handle_new_headers(*tip_height, requests).await
+            }
             SyncEvent::BlockHeadersStored {
                 tip_height,
             } => self.handle_new_headers(*tip_height, requests).await,

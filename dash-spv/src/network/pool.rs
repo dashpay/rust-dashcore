@@ -58,7 +58,7 @@ impl PeerPool {
         }
 
         peers.insert(addr, Arc::new(RwLock::new(peer)));
-        log::info!("Added peer {}, total peers: {}", addr, peers.len());
+        tracing::info!("Added peer {}, total peers: {}", addr, peers.len());
         Ok(())
     }
 
@@ -67,7 +67,7 @@ impl PeerPool {
         self.connecting.write().await.remove(addr);
         let removed = self.peers.write().await.remove(addr);
         if removed.is_some() {
-            log::info!("Removed peer {}", addr);
+            tracing::info!("Removed peer {}", addr);
         }
         removed
     }
@@ -106,7 +106,7 @@ impl PeerPool {
         let peers = self.get_all_peers().await;
 
         if peers.is_empty() {
-            log::debug!("get_best_height: No peers available");
+            tracing::debug!("get_best_height: No peers available");
             return None;
         }
 
@@ -117,7 +117,7 @@ impl PeerPool {
             let peer_guard = peer.read().await;
             peer_count += 1;
 
-            log::debug!(
+            tracing::debug!(
                 "get_best_height: Peer {} - best_height: {:?}, version: {:?}, connected: {}",
                 addr,
                 peer_guard.best_height(),
@@ -128,7 +128,7 @@ impl PeerPool {
             if let Some(peer_height) = peer_guard.best_height() {
                 if peer_height > 0 {
                     best_height = best_height.max(peer_height);
-                    log::debug!(
+                    tracing::debug!(
                         "get_best_height: Updated best_height to {} from peer {}",
                         best_height,
                         addr
@@ -137,7 +137,11 @@ impl PeerPool {
             }
         }
 
-        log::debug!("get_best_height: Checked {} peers, best_height: {}", peer_count, best_height);
+        tracing::debug!(
+            "get_best_height: Checked {} peers, best_height: {}",
+            peer_count,
+            best_height
+        );
 
         if best_height > 0 {
             Some(best_height)
