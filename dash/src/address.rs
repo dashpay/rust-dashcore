@@ -834,10 +834,17 @@ impl<'de> serde::Deserialize<'de> for Address<NetworkChecked> {
         let s = String::deserialize(deserializer)?;
         let addr_unchecked = Address::<NetworkUnchecked>::from_str(&s).map_err(D::Error::custom)?;
 
-        // For NetworkChecked, we need to assume a network. This is a limitation
-        // of deserializing without network context. Users should use Address<NetworkUnchecked>
-        // for serde when the network is not known at compile time.
-        addr_unchecked.require_network(Network::Mainnet).map_err(D::Error::custom)
+        // `NetworkChecked` only encodes that the caller has accepted the
+        // address's network — the raw bytes don't carry the network
+        // themselves. We can't validate the network from the string alone,
+        // and historically this impl hardcoded `Network::Mainnet` which
+        // silently broke every testnet/regtest/devnet round-trip. The
+        // native bincode `Decode` impl for `Address` (below) already uses
+        // `assume_checked()`; align serde with the same behavior so the
+        // two serialization paths agree. Callers that need network
+        // validation should deserialize as `Address<NetworkUnchecked>`
+        // and call `require_network` explicitly.
+        Ok(addr_unchecked.assume_checked())
     }
 }
 
