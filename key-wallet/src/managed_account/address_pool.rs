@@ -45,6 +45,33 @@ pub enum AddressPoolType {
     AbsentHardened,
 }
 
+impl AddressPoolType {
+    /// Stable u8 discriminant for persistent storage. Unit-enum
+    /// discriminants are append-only (never reorder the match arms)
+    /// so existing DB rows keep their meaning across version bumps.
+    pub fn db_discriminant(&self) -> u8 {
+        match self {
+            Self::External => 0,
+            Self::Internal => 1,
+            Self::Absent => 2,
+            Self::AbsentHardened => 3,
+        }
+    }
+
+    /// Decode an `AddressPoolType` from its `db_discriminant` form.
+    /// Returns `None` for unrecognized discriminants (e.g. a row
+    /// written by a newer crate version that added a new variant).
+    pub fn from_db_discriminant(d: u8) -> Option<Self> {
+        match d {
+            0 => Some(Self::External),
+            1 => Some(Self::Internal),
+            2 => Some(Self::Absent),
+            3 => Some(Self::AbsentHardened),
+            _ => None,
+        }
+    }
+}
+
 #[cfg(feature = "serde")]
 impl Serialize for PublicKeyType {
     fn serialize<S>(&self, serializer: S) -> core::result::Result<S::Ok, S::Error>

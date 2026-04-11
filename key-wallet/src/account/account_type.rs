@@ -161,6 +161,32 @@ impl TryFrom<AccountType> for AccountTypeToCheck {
     }
 }
 
+#[cfg(feature = "bincode")]
+impl AccountType {
+    /// Encode as a stable byte key for persistent storage (e.g. as a
+    /// BLOB primary key in a database table).
+    ///
+    /// Uses bincode 2.x standard config. The stability contract lives
+    /// on the type declaration: variants are append-only, field order
+    /// is frozen. Encoding is infallible for this type (no `Vec` or
+    /// heap types that can fail to encode).
+    ///
+    /// Paired with [`AccountType::from_db_key`] for round-trip.
+    pub fn to_db_key(&self) -> Vec<u8> {
+        bincode::encode_to_vec(self, bincode::config::standard())
+            .expect("AccountType bincode encoding is infallible")
+    }
+
+    /// Decode an `AccountType` from the byte form produced by
+    /// [`AccountType::to_db_key`]. Returns a bincode error for
+    /// corrupted bytes or an unrecognized variant discriminant
+    /// (which can happen if the DB was written by a newer version
+    /// of the crate).
+    pub fn from_db_key(bytes: &[u8]) -> Result<Self, bincode::error::DecodeError> {
+        bincode::decode_from_slice(bytes, bincode::config::standard()).map(|(v, _)| v)
+    }
+}
+
 impl AccountType {
     /// Get the primary index for this account type
     /// Returns None for provider key types and identity types that don't have account indices
