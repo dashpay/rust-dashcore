@@ -1,6 +1,6 @@
 //! Transaction-related client APIs (e.g., broadcasting)
 
-use crate::error::{NetworkError, Result, SpvError, SyncError};
+use crate::error::{NetworkError, Result, SpvError};
 use crate::network::NetworkManager;
 use crate::storage::StorageManager;
 use dashcore::network::message::NetworkMessage;
@@ -16,10 +16,6 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager, H: EventHandler>
     /// The transaction is also injected into the local message pipeline so that
     /// the mempool manager processes it immediately.
     pub async fn broadcast_transaction(&self, tx: &dashcore::Transaction) -> Result<()> {
-        if !self.sync_progress().await.is_synced() {
-            return Err(SpvError::Sync(SyncError::NotSynced));
-        }
-
         let network_guard = self.network.lock().await;
 
         if network_guard.peer_count() == 0 {
