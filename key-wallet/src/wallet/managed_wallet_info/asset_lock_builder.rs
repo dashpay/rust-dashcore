@@ -3,7 +3,7 @@
 //! Builds a Core special transaction (type 8) with `AssetLockPayload` that
 //! locks Dash for Platform credits.
 
-use dashcore::{Address, Transaction, TxOut};
+use dashcore::{Address, ScriptBuf, Transaction, TxOut};
 use std::collections::HashMap;
 use std::fmt;
 
@@ -216,13 +216,27 @@ impl ManagedWalletInfo {
 
         // Build the transaction FIRST — before deriving keys.
         // This ensures no addresses are consumed if the build fails.
-        let mut tx_builder = TransactionBuilder::new()
-            .set_change_address(change_address)
-            .set_fee_rate(FeeRate::new(fee_per_kb));
+        //
+        // Per DIP-00X (AssetLockTx), `tx.output[0]` must be an OP_RETURN
+        // burn carrying the total amount being locked — this is what
+        // "destroys" the Dash coins on the L1 chain. The credit outputs
+        // themselves live only in the special transaction payload; they
+        // describe where the resulting Platform credits are delivered.
+        //
+        // The previous implementation added the credit outputs as raw
+        // `tx.output` entries (and duplicated them in the payload),
+        // producing a structurally-invalid asset lock transaction that
+        // masternodes refused to IS-lock.
+        let total_credit: u64 = credit_outputs.iter().map(|o| o.value).sum();
+        let burn_output = TxOut {
+            value: total_credit,
+            script_pubkey: ScriptBuf::new_op_return(&[]),
+        };
 
-        for credit_out in &credit_outputs {
-            tx_builder = tx_builder.add_raw_output(credit_out.clone());
-        }
+        let tx_builder = TransactionBuilder::new()
+            .set_change_address(change_address)
+            .set_fee_rate(FeeRate::new(fee_per_kb))
+            .add_raw_output(burn_output);
 
         let tx_builder_with_inputs = tx_builder.select_inputs(
             &utxos,
