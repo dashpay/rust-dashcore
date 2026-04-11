@@ -335,11 +335,6 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
                 self.sync_state.mnlistdiff_pipeline.queue_requests(request_pairs);
                 self.sync_state.mnlistdiff_pipeline.send_pending(requests)?;
 
-                // Track last processed block hash
-                let block_hash = qr_info.mn_list_diff_h.block_hash;
-                self.sync_state.known_block_hashes.insert(block_hash);
-                self.sync_state.last_qrinfo_block_hash = Some(block_hash);
-
                 self.progress.bump_last_activity();
 
                 // If no pending requests, complete
@@ -391,7 +386,6 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
                 match engine.apply_diff(diff.clone(), Some(target_height), false, None) {
                     Ok(_) => {
                         self.sync_state.known_mn_list_heights.insert(target_height);
-                        self.sync_state.known_block_hashes.insert(diff.block_hash);
                         tracing::debug!("Applied MnListDiff at height {}", target_height);
                     }
                     Err(e) => {
