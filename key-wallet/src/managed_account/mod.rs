@@ -552,14 +552,11 @@ impl ManagedCoreAccount {
         any_changed
     }
 
-    /// Return the spendable UTXOs of this account at `synced_height`.
-    ///
-    /// A non-coinbase UTXO is spendable as soon as it is confirmed in
-    /// a block or InstantSend-locked — InstantLocked outputs are
-    /// spendable with 0 confirmations. Coinbase outputs additionally
-    /// require 100 confirmations. Locked UTXOs are never spendable.
-    /// Call this per-account instead of aggregating across the whole
-    /// wallet, since spendability semantics are account-type specific.
+    /// Return the UTXOs of this account for which
+    /// [`Utxo::is_spendable`] holds at `synced_height`. See that method
+    /// for the exact policy. Call this per-account rather than
+    /// aggregating across the wallet, since spendability is
+    /// account-type specific.
     pub fn spendable_utxos(&self, synced_height: u32) -> BTreeSet<&Utxo> {
         self.utxos.values().filter(|utxo| utxo.is_spendable(synced_height)).collect()
     }
