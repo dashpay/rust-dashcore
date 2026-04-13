@@ -65,9 +65,6 @@ pub trait WalletInfoInterface: Sized + WalletTransactionChecker + ManagedAccount
     /// Get all UTXOs for the wallet
     fn utxos(&self) -> BTreeSet<&Utxo>;
 
-    /// Get spendable UTXOs (confirmed and not locked)
-    fn get_spendable_utxos(&self) -> BTreeSet<&Utxo>;
-
     /// Get the wallet balance
     fn balance(&self) -> WalletCoreBalance;
 
@@ -177,9 +174,6 @@ impl WalletInfoInterface for ManagedWalletInfo {
             utxos.extend(account.utxos.values());
         }
         utxos
-    }
-    fn get_spendable_utxos(&self) -> BTreeSet<&Utxo> {
-        self.utxos().into_iter().filter(|utxo| utxo.is_spendable(self.synced_height())).collect()
     }
 
     fn balance(&self) -> WalletCoreBalance {

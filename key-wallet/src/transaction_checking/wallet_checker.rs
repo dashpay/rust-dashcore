@@ -428,8 +428,13 @@ mod tests {
         assert_eq!(managed_wallet.balance().immature(), 5_000_000_000);
 
         // Spendable UTXOs should be empty (coinbase not mature)
+        let synced_height = managed_wallet.synced_height();
         assert!(
-            managed_wallet.get_spendable_utxos().is_empty(),
+            managed_wallet
+                .first_bip44_managed_account()
+                .expect("Should have managed account")
+                .spendable_utxos(synced_height)
+                .is_empty(),
             "Coinbase UTXO should not be spendable until mature"
         );
     }
@@ -582,14 +587,13 @@ mod tests {
         assert_eq!(managed_wallet.balance().immature(), 5_000_000_000);
 
         // Spendable UTXOs should be empty (coinbase not mature yet)
+        let synced_height = managed_wallet.synced_height();
         assert!(
-            managed_wallet.get_spendable_utxos().is_empty(),
-            "No spendable UTXOs while coinbase is immature"
-        );
-
-        // Spendable UTXOs should be empty (coinbase not mature yet)
-        assert!(
-            managed_wallet.get_spendable_utxos().is_empty(),
+            managed_wallet
+                .first_bip44_managed_account()
+                .expect("Should have managed account")
+                .spendable_utxos(synced_height)
+                .is_empty(),
             "No spendable UTXOs while coinbase is immature"
         );
 
@@ -613,7 +617,11 @@ mod tests {
         assert_eq!(immature_balance, 0, "Immature balance should be zero after maturity");
 
         // Spendable UTXOs should now contain the matured coinbase
-        let spendable = managed_wallet.get_spendable_utxos();
+        let synced_height = managed_wallet.synced_height();
+        let spendable = managed_wallet
+            .first_bip44_managed_account()
+            .expect("Should have managed account")
+            .spendable_utxos(synced_height);
         assert_eq!(spendable.len(), 1, "Should have one spendable UTXO after maturity");
     }
 

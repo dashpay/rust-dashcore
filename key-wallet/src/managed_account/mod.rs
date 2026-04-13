@@ -552,6 +552,16 @@ impl ManagedCoreAccount {
         any_changed
     }
 
+    /// Return the spendable UTXOs of this account at `synced_height`.
+    ///
+    /// A UTXO is spendable when it is confirmed deeply enough, not
+    /// time-locked, and (for coinbase outputs) matured. Use this
+    /// per-account instead of aggregating across the whole wallet,
+    /// since spendability semantics are account-type specific.
+    pub fn spendable_utxos(&self, synced_height: u32) -> BTreeSet<&Utxo> {
+        self.utxos.values().filter(|utxo| utxo.is_spendable(synced_height)).collect()
+    }
+
     /// Update the account balance
     pub fn update_balance(&mut self, synced_height: u32) {
         let mut spendable = 0;
