@@ -47,7 +47,7 @@ impl MockNetworkManager {
             sent_messages: Vec::new(),
             request_tx,
             request_rx: Some(request_rx),
-            network_event_sender: broadcast::Sender::new(100),
+            network_event_sender: broadcast::Sender::new(100000),
         }
     }
 
