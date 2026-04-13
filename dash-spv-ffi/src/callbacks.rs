@@ -731,6 +731,13 @@ impl FFIWalletEventCallbacks {
                         .map(|d| FFIOutputDetail {
                             index: d.index,
                             role: FFIOutputRole::from(d.role),
+                            value: d.value,
+                            address: match &d.address {
+                                Some(addr) => {
+                                    CString::new(addr.to_string()).unwrap_or_default().into_raw()
+                                }
+                                None => std::ptr::null_mut(),
+                            },
                         })
                         .collect();
 
@@ -778,6 +785,14 @@ impl FFIWalletEventCallbacks {
 
                     // Free the CString addresses from input details
                     for detail in input_details {
+                        if !detail.address.is_null() {
+                            unsafe {
+                                drop(CString::from_raw(detail.address));
+                            }
+                        }
+                    }
+                    // Free the CString addresses from output details
+                    for detail in output_details {
                         if !detail.address.is_null() {
                             unsafe {
                                 drop(CString::from_raw(detail.address));

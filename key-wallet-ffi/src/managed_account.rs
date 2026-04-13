@@ -791,6 +791,13 @@ pub unsafe extern "C" fn managed_core_account_get_transactions(
             .map(|d| FFIOutputDetail {
                 index: d.index,
                 role: FFIOutputRole::from(d.role),
+                value: d.value,
+                address: match &d.address {
+                    Some(addr) => {
+                        std::ffi::CString::new(addr.to_string()).unwrap_or_default().into_raw()
+                    }
+                    None => std::ptr::null_mut(),
+                },
             })
             .collect::<Vec<_>>()
             .into_boxed_slice();
@@ -841,12 +848,16 @@ pub unsafe extern "C" fn managed_core_account_free_transactions(
             drop(Box::from_raw(slice as *mut [FFIInputDetail]));
         }
 
-        // Free output details
+        // Free output detail addresses first, then the array
         if !record.output_details.is_null() && record.output_details_count > 0 {
-            drop(Box::from_raw(std::ptr::slice_from_raw_parts_mut(
-                record.output_details,
-                record.output_details_count,
-            )));
+            let slice =
+                std::slice::from_raw_parts_mut(record.output_details, record.output_details_count);
+            for detail in slice.iter() {
+                if !detail.address.is_null() {
+                    drop(std::ffi::CString::from_raw(detail.address));
+                }
+            }
+            drop(Box::from_raw(slice as *mut [FFIOutputDetail]));
         }
 
         // Free tx data
@@ -2027,7 +2038,7 @@ mod tests {
             let addr = std::ffi::CString::new("XtestAddress123").unwrap();
             let input_slice = vec![FFIInputDetail {
                 index: 0,
-                value: 100000,
+                value: 0,
                 address: addr.into_raw(),
             }]
             .into_boxed_slice();
@@ -2038,6 +2049,8 @@ mod tests {
             let output_slice = vec![FFIOutputDetail {
                 index: 0,
                 role: FFIOutputRole::Received,
+                value: 0,
+                address: std::ptr::null_mut(),
             }]
             .into_boxed_slice();
             r0.output_details_count = output_slice.len();

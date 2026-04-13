@@ -504,6 +504,8 @@ impl ManagedCoreAccount {
             output_details.push(OutputDetail {
                 index: idx as u32,
                 role,
+                address: resolved_outputs[idx].clone(),
+                value: output.value,
             });
         }
 

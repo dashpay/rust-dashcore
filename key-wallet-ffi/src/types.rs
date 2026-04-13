@@ -930,6 +930,8 @@ pub struct FFIInputDetail {
 pub struct FFIOutputDetail {
     pub index: u32,
     pub role: FFIOutputRole,
+    pub value: u64,
+    pub address: *mut std::os::raw::c_char,
 }
 
 #[cfg(test)]
