@@ -1,6 +1,7 @@
 //! BIP32 and DIP9 derivation path functions
 
 use crate::error::{FFIError, FFIErrorCode};
+use crate::keys::FFIExtendedPrivKey;
 use crate::types::FFINetwork;
 use dashcore::Network;
 use key_wallet::{ExtendedPrivKey, ExtendedPubKey};
@@ -33,11 +34,6 @@ pub enum FFIDerivationPathType {
     PathRoot = 255,
 }
 
-/// Extended private key structure
-pub struct FFIExtendedPrivKey {
-    inner: key_wallet::bip32::ExtendedPrivKey,
-}
-
 /// Extended public key structure
 pub struct FFIExtendedPubKey {
     inner: key_wallet::bip32::ExtendedPubKey,
@@ -68,9 +64,7 @@ pub unsafe extern "C" fn derivation_new_master_key(
     match key_wallet::bip32::ExtendedPrivKey::new_master(network_rust, seed_slice) {
         Ok(xpriv) => {
             FFIError::set_success(error);
-            Box::into_raw(Box::new(FFIExtendedPrivKey {
-                inner: xpriv,
-            }))
+            Box::into_raw(Box::new(FFIExtendedPrivKey::from_inner(xpriv)))
         }
         Err(e) => {
             FFIError::set_error(
@@ -492,9 +486,7 @@ pub unsafe extern "C" fn derivation_derive_private_key_from_seed(
     match master.derive_priv(&secp, &derivation_path) {
         Ok(xpriv) => {
             FFIError::set_success(error);
-            Box::into_raw(Box::new(FFIExtendedPrivKey {
-                inner: xpriv,
-            }))
+            Box::into_raw(Box::new(FFIExtendedPrivKey::from_inner(xpriv)))
         }
         Err(e) => {
             FFIError::set_error(
@@ -534,7 +526,7 @@ pub unsafe extern "C" fn derivation_xpriv_to_xpub(
         use secp256k1::Secp256k1;
 
         let secp = Secp256k1::new();
-        let xpub = ExtendedPubKey::from_priv(&secp, &xpriv.inner);
+        let xpub = ExtendedPubKey::from_priv(&secp, xpriv.inner());
 
         FFIError::set_success(error);
         Box::into_raw(Box::new(FFIExtendedPubKey {
@@ -566,7 +558,7 @@ pub unsafe extern "C" fn derivation_xpriv_to_string(
 
     unsafe {
         let xpriv = &*xpriv;
-        let xpriv_str = xpriv.inner.to_string();
+        let xpriv_str = xpriv.inner().to_string();
 
         match CString::new(xpriv_str) {
             Ok(c_str) => {

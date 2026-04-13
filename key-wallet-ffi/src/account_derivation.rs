@@ -6,7 +6,7 @@ use crate::account::FFIBLSAccount;
 #[cfg(feature = "eddsa")]
 use crate::account::FFIEdDSAAccount;
 use crate::error::{FFIError, FFIErrorCode};
-use crate::keys::{FFIExtendedPrivateKey, FFIPrivateKey};
+use crate::keys::{FFIExtendedPrivKey, FFIPrivateKey};
 use key_wallet::account::derivation::AccountDerivation;
 use key_wallet::account::AccountTrait;
 use std::ffi::CString;
@@ -17,7 +17,7 @@ use std::ptr;
 
 /// Derive an extended private key from an account at a given index, using the provided master xpriv.
 ///
-/// Returns an opaque FFIExtendedPrivateKey pointer that must be freed with `extended_private_key_free`.
+/// Returns an opaque FFIExtendedPrivKey pointer that must be freed with `extended_private_key_free`.
 ///
 /// Notes:
 /// - This is chain-agnostic. For accounts with internal/external chains, this returns an error.
@@ -30,10 +30,10 @@ use std::ptr;
 #[no_mangle]
 pub unsafe extern "C" fn account_derive_extended_private_key_at(
     account: *const FFIAccount,
-    master_xpriv: *const FFIExtendedPrivateKey,
+    master_xpriv: *const FFIExtendedPrivKey,
     index: c_uint,
     error: *mut FFIError,
-) -> *mut FFIExtendedPrivateKey {
+) -> *mut FFIExtendedPrivKey {
     if account.is_null() || master_xpriv.is_null() {
         FFIError::set_error(error, FFIErrorCode::InvalidInput, "Null pointer provided".to_string());
         return ptr::null_mut();
@@ -54,7 +54,7 @@ pub unsafe extern "C" fn account_derive_extended_private_key_at(
     match account.inner().derive_from_master_xpriv_extended_xpriv_at(master_xpriv.inner(), index) {
         Ok(derived) => {
             FFIError::set_success(error);
-            Box::into_raw(Box::new(FFIExtendedPrivateKey::from_inner(derived)))
+            Box::into_raw(Box::new(FFIExtendedPrivKey::from_inner(derived)))
         }
         Err(e) => {
             FFIError::set_error(
@@ -381,7 +381,7 @@ pub unsafe extern "C" fn eddsa_account_derive_private_key_from_mnemonic(
 #[no_mangle]
 pub unsafe extern "C" fn account_derive_private_key_at(
     account: *const FFIAccount,
-    master_xpriv: *const FFIExtendedPrivateKey,
+    master_xpriv: *const FFIExtendedPrivKey,
     index: c_uint,
     error: *mut FFIError,
 ) -> *mut FFIPrivateKey {
@@ -427,7 +427,7 @@ pub unsafe extern "C" fn account_derive_private_key_at(
 #[no_mangle]
 pub unsafe extern "C" fn account_derive_private_key_as_wif_at(
     account: *const FFIAccount,
-    master_xpriv: *const FFIExtendedPrivateKey,
+    master_xpriv: *const FFIExtendedPrivKey,
     index: c_uint,
     error: *mut FFIError,
 ) -> *mut c_char {
@@ -483,7 +483,7 @@ pub unsafe extern "C" fn account_derive_private_key_as_wif_at(
 }
 
 /// Derive an extended private key from a raw seed buffer at the given index.
-/// Returns an opaque FFIExtendedPrivateKey pointer that must be freed with `extended_private_key_free`.
+/// Returns an opaque FFIExtendedPrivKey pointer that must be freed with `extended_private_key_free`.
 ///
 /// # Safety
 /// - `account` must be a valid pointer to an FFIAccount
@@ -496,7 +496,7 @@ pub unsafe extern "C" fn account_derive_extended_private_key_from_seed(
     seed_len: usize,
     index: c_uint,
     error: *mut FFIError,
-) -> *mut FFIExtendedPrivateKey {
+) -> *mut FFIExtendedPrivKey {
     if account.is_null() || seed.is_null() {
         FFIError::set_error(error, FFIErrorCode::InvalidInput, "Null pointer provided".to_string());
         return ptr::null_mut();
@@ -508,7 +508,7 @@ pub unsafe extern "C" fn account_derive_extended_private_key_from_seed(
     match account.inner().derive_from_seed_extended_xpriv_at(seed_slice, index) {
         Ok(derived) => {
             FFIError::set_success(error);
-            Box::into_raw(Box::new(FFIExtendedPrivateKey::from_inner(derived)))
+            Box::into_raw(Box::new(FFIExtendedPrivKey::from_inner(derived)))
         }
         Err(e) => {
             FFIError::set_error(
@@ -561,7 +561,7 @@ pub unsafe extern "C" fn account_derive_private_key_from_seed(
 }
 
 /// Derive an extended private key from a mnemonic + optional passphrase at the given index.
-/// Returns an opaque FFIExtendedPrivateKey pointer that must be freed with `extended_private_key_free`.
+/// Returns an opaque FFIExtendedPrivKey pointer that must be freed with `extended_private_key_free`.
 ///
 /// # Safety
 /// - `account` must be a valid pointer to an FFIAccount
@@ -575,7 +575,7 @@ pub unsafe extern "C" fn account_derive_extended_private_key_from_mnemonic(
     passphrase: *const c_char,
     index: c_uint,
     error: *mut FFIError,
-) -> *mut FFIExtendedPrivateKey {
+) -> *mut FFIExtendedPrivKey {
     if account.is_null() || mnemonic.is_null() {
         FFIError::set_error(error, FFIErrorCode::InvalidInput, "Null pointer provided".to_string());
         return ptr::null_mut();
@@ -617,7 +617,7 @@ pub unsafe extern "C" fn account_derive_extended_private_key_from_mnemonic(
     ) {
         Ok(derived) => {
             FFIError::set_success(error);
-            Box::into_raw(Box::new(FFIExtendedPrivateKey::from_inner(derived)))
+            Box::into_raw(Box::new(FFIExtendedPrivKey::from_inner(derived)))
         }
         Err(e) => {
             FFIError::set_error(

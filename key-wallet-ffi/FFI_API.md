@@ -1445,11 +1445,11 @@ Create a new random wallet with options  # Safety  - `account_options` must be a
 #### `wallet_derive_extended_private_key`
 
 ```c
-wallet_derive_extended_private_key(wallet: *const FFIWallet, derivation_path: *const c_char, error: *mut FFIError,) -> *mut FFIExtendedPrivateKey
+wallet_derive_extended_private_key(wallet: *const FFIWallet, derivation_path: *const c_char, error: *mut FFIError,) -> *mut FFIExtendedPrivKey
 ```
 
 **Description:**
-Derive extended private key at a specific path Returns an opaque FFIExtendedPrivateKey pointer that must be freed with extended_private_key_free  # Safety  - `wallet` must be a valid pointer to an FFIWallet - `derivation_path` must be a valid null-terminated C string - `error` must be a valid pointer to an FFIError - The returned pointer must be freed with `extended_private_key_free`
+Derive extended private key at a specific path Returns an opaque FFIExtendedPrivKey pointer that must be freed with extended_private_key_free  # Safety  - `wallet` must be a valid pointer to an FFIWallet - `derivation_path` must be a valid null-terminated C string - `error` must be a valid pointer to an FFIError - The returned pointer must be freed with `extended_private_key_free`
 
 **Safety:**
 - `wallet` must be a valid pointer to an FFIWallet - `derivation_path` must be a valid null-terminated C string - `error` must be a valid pointer to an FFIError - The returned pointer must be freed with `extended_private_key_free`
@@ -2183,11 +2183,11 @@ Free an account collection summary and all its allocated memory  # Safety  - `su
 #### `account_derive_extended_private_key_at`
 
 ```c
-account_derive_extended_private_key_at(account: *const FFIAccount, master_xpriv: *const FFIExtendedPrivateKey, index: c_uint, error: *mut FFIError,) -> *mut FFIExtendedPrivateKey
+account_derive_extended_private_key_at(account: *const FFIAccount, master_xpriv: *const FFIExtendedPrivKey, index: c_uint, error: *mut FFIError,) -> *mut FFIExtendedPrivKey
 ```
 
 **Description:**
-Derive an extended private key from an account at a given index, using the provided master xpriv.  Returns an opaque FFIExtendedPrivateKey pointer that must be freed with `extended_private_key_free`.  Notes: - This is chain-agnostic. For accounts with internal/external chains, this returns an error. - For hardened-only account types (e.g., EdDSA), a hardened index is used.  # Safety - `account` and `master_xpriv` must be valid, non-null pointers allocated by this library. - `error` must be a valid pointer to an FFIError or null. - The caller must free the returned pointer with `extended_private_key_free`.
+Derive an extended private key from an account at a given index, using the provided master xpriv.  Returns an opaque FFIExtendedPrivKey pointer that must be freed with `extended_private_key_free`.  Notes: - This is chain-agnostic. For accounts with internal/external chains, this returns an error. - For hardened-only account types (e.g., EdDSA), a hardened index is used.  # Safety - `account` and `master_xpriv` must be valid, non-null pointers allocated by this library. - `error` must be a valid pointer to an FFIError or null. - The caller must free the returned pointer with `extended_private_key_free`.
 
 **Safety:**
 - `account` and `master_xpriv` must be valid, non-null pointers allocated by this library. - `error` must be a valid pointer to an FFIError or null. - The caller must free the returned pointer with `extended_private_key_free`.
@@ -2199,11 +2199,11 @@ Derive an extended private key from an account at a given index, using the provi
 #### `account_derive_extended_private_key_from_mnemonic`
 
 ```c
-account_derive_extended_private_key_from_mnemonic(account: *const FFIAccount, mnemonic: *const c_char, passphrase: *const c_char, index: c_uint, error: *mut FFIError,) -> *mut FFIExtendedPrivateKey
+account_derive_extended_private_key_from_mnemonic(account: *const FFIAccount, mnemonic: *const c_char, passphrase: *const c_char, index: c_uint, error: *mut FFIError,) -> *mut FFIExtendedPrivKey
 ```
 
 **Description:**
-Derive an extended private key from a mnemonic + optional passphrase at the given index. Returns an opaque FFIExtendedPrivateKey pointer that must be freed with `extended_private_key_free`.  # Safety - `account` must be a valid pointer to an FFIAccount - `mnemonic` must be a valid, null-terminated C string - `passphrase` may be null; if not null, must be a valid C string - `error` must be a valid pointer to an FFIError or null
+Derive an extended private key from a mnemonic + optional passphrase at the given index. Returns an opaque FFIExtendedPrivKey pointer that must be freed with `extended_private_key_free`.  # Safety - `account` must be a valid pointer to an FFIAccount - `mnemonic` must be a valid, null-terminated C string - `passphrase` may be null; if not null, must be a valid C string - `error` must be a valid pointer to an FFIError or null
 
 **Safety:**
 - `account` must be a valid pointer to an FFIAccount - `mnemonic` must be a valid, null-terminated C string - `passphrase` may be null; if not null, must be a valid C string - `error` must be a valid pointer to an FFIError or null
@@ -2215,11 +2215,11 @@ Derive an extended private key from a mnemonic + optional passphrase at the give
 #### `account_derive_extended_private_key_from_seed`
 
 ```c
-account_derive_extended_private_key_from_seed(account: *const FFIAccount, seed: *const u8, seed_len: usize, index: c_uint, error: *mut FFIError,) -> *mut FFIExtendedPrivateKey
+account_derive_extended_private_key_from_seed(account: *const FFIAccount, seed: *const u8, seed_len: usize, index: c_uint, error: *mut FFIError,) -> *mut FFIExtendedPrivKey
 ```
 
 **Description:**
-Derive an extended private key from a raw seed buffer at the given index. Returns an opaque FFIExtendedPrivateKey pointer that must be freed with `extended_private_key_free`.  # Safety - `account` must be a valid pointer to an FFIAccount - `seed` must point to a valid buffer of length `seed_len` - `error` must be a valid pointer to an FFIError or null
+Derive an extended private key from a raw seed buffer at the given index. Returns an opaque FFIExtendedPrivKey pointer that must be freed with `extended_private_key_free`.  # Safety - `account` must be a valid pointer to an FFIAccount - `seed` must point to a valid buffer of length `seed_len` - `error` must be a valid pointer to an FFIError or null
 
 **Safety:**
 - `account` must be a valid pointer to an FFIAccount - `seed` must point to a valid buffer of length `seed_len` - `error` must be a valid pointer to an FFIError or null
@@ -2231,7 +2231,7 @@ Derive an extended private key from a raw seed buffer at the given index. Return
 #### `account_derive_private_key_as_wif_at`
 
 ```c
-account_derive_private_key_as_wif_at(account: *const FFIAccount, master_xpriv: *const FFIExtendedPrivateKey, index: c_uint, error: *mut FFIError,) -> *mut c_char
+account_derive_private_key_as_wif_at(account: *const FFIAccount, master_xpriv: *const FFIExtendedPrivKey, index: c_uint, error: *mut FFIError,) -> *mut c_char
 ```
 
 **Description:**
@@ -2247,7 +2247,7 @@ Derive a private key from an account at a given chain/index and return as WIF st
 #### `account_derive_private_key_at`
 
 ```c
-account_derive_private_key_at(account: *const FFIAccount, master_xpriv: *const FFIExtendedPrivateKey, index: c_uint, error: *mut FFIError,) -> *mut FFIPrivateKey
+account_derive_private_key_at(account: *const FFIAccount, master_xpriv: *const FFIExtendedPrivKey, index: c_uint, error: *mut FFIError,) -> *mut FFIPrivateKey
 ```
 
 **Description:**
@@ -3859,7 +3859,7 @@ Create a new master extended private key from seed  # Safety  - `seed` must be a
 #### `extended_private_key_free`
 
 ```c
-extended_private_key_free(key: *mut FFIExtendedPrivateKey) -> ()
+extended_private_key_free(key: *mut FFIExtendedPrivKey) -> ()
 ```
 
 **Description:**
@@ -3875,14 +3875,14 @@ Free an extended private key  # Safety  - `key` must be a valid pointer created 
 #### `extended_private_key_get_private_key`
 
 ```c
-extended_private_key_get_private_key(extended_key: *const FFIExtendedPrivateKey, error: *mut FFIError,) -> *mut FFIPrivateKey
+extended_private_key_get_private_key(extended_key: *const FFIExtendedPrivKey, error: *mut FFIError,) -> *mut FFIPrivateKey
 ```
 
 **Description:**
-Get the private key from an extended private key  Extracts the non-extended private key from an extended private key.  # Safety  - `extended_key` must be a valid pointer to an FFIExtendedPrivateKey - `error` must be a valid pointer to an FFIError - The returned FFIPrivateKey must be freed with `private_key_free`
+Get the private key from an extended private key  Extracts the non-extended private key from an extended private key.  # Safety  - `extended_key` must be a valid pointer to an FFIExtendedPrivKey - `error` must be a valid pointer to an FFIError - The returned FFIPrivateKey must be freed with `private_key_free`
 
 **Safety:**
-- `extended_key` must be a valid pointer to an FFIExtendedPrivateKey - `error` must be a valid pointer to an FFIError - The returned FFIPrivateKey must be freed with `private_key_free`
+- `extended_key` must be a valid pointer to an FFIExtendedPrivKey - `error` must be a valid pointer to an FFIError - The returned FFIPrivateKey must be freed with `private_key_free`
 
 **Module:** `keys`
 
@@ -3891,14 +3891,14 @@ Get the private key from an extended private key  Extracts the non-extended priv
 #### `extended_private_key_to_string`
 
 ```c
-extended_private_key_to_string(key: *const FFIExtendedPrivateKey, network: FFINetwork, error: *mut FFIError,) -> *mut c_char
+extended_private_key_to_string(key: *const FFIExtendedPrivKey, network: FFINetwork, error: *mut FFIError,) -> *mut c_char
 ```
 
 **Description:**
-Get extended private key as string (xprv format)  Returns the extended private key in base58 format (xprv... for mainnet, tprv... for testnet)  # Safety  - `key` must be a valid pointer to an FFIExtendedPrivateKey - `network` is ignored; the network is encoded in the extended key - `error` must be a valid pointer to an FFIError - The returned string must be freed with `string_free`
+Get extended private key as string (xprv format)  Returns the extended private key in base58 format (xprv... for mainnet, tprv... for testnet)  # Safety  - `key` must be a valid pointer to an FFIExtendedPrivKey - `network` is ignored; the network is encoded in the extended key - `error` must be a valid pointer to an FFIError - The returned string must be freed with `string_free`
 
 **Safety:**
-- `key` must be a valid pointer to an FFIExtendedPrivateKey - `network` is ignored; the network is encoded in the extended key - `error` must be a valid pointer to an FFIError - The returned string must be freed with `string_free`
+- `key` must be a valid pointer to an FFIExtendedPrivKey - `network` is ignored; the network is encoded in the extended key - `error` must be a valid pointer to an FFIError - The returned string must be freed with `string_free`
 
 **Module:** `keys`
 
