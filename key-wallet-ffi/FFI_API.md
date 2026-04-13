@@ -1461,11 +1461,11 @@ Derive extended private key at a specific path Returns an opaque FFIExtendedPriv
 #### `wallet_derive_extended_public_key`
 
 ```c
-wallet_derive_extended_public_key(wallet: *const FFIWallet, derivation_path: *const c_char, error: *mut FFIError,) -> *mut FFIExtendedPublicKey
+wallet_derive_extended_public_key(wallet: *const FFIWallet, derivation_path: *const c_char, error: *mut FFIError,) -> *mut FFIExtendedPubKey
 ```
 
 **Description:**
-Derive extended public key at a specific path Returns an opaque FFIExtendedPublicKey pointer that must be freed with extended_public_key_free  # Safety  - `wallet` must be a valid pointer to an FFIWallet - `derivation_path` must be a valid null-terminated C string - `error` must be a valid pointer to an FFIError - The returned pointer must be freed with `extended_public_key_free`
+Derive extended public key at a specific path Returns an opaque FFIExtendedPubKey pointer that must be freed with extended_public_key_free  # Safety  - `wallet` must be a valid pointer to an FFIWallet - `derivation_path` must be a valid null-terminated C string - `error` must be a valid pointer to an FFIError - The returned pointer must be freed with `extended_public_key_free`
 
 **Safety:**
 - `wallet` must be a valid pointer to an FFIWallet - `derivation_path` must be a valid null-terminated C string - `error` must be a valid pointer to an FFIError - The returned pointer must be freed with `extended_public_key_free`
@@ -3907,7 +3907,7 @@ Get extended private key as string (xprv format)  Returns the extended private k
 #### `extended_public_key_free`
 
 ```c
-extended_public_key_free(key: *mut FFIExtendedPublicKey) -> ()
+extended_public_key_free(key: *mut FFIExtendedPubKey) -> ()
 ```
 
 **Description:**
@@ -3923,14 +3923,14 @@ Free an extended public key  # Safety  - `key` must be a valid pointer created b
 #### `extended_public_key_get_public_key`
 
 ```c
-extended_public_key_get_public_key(extended_key: *const FFIExtendedPublicKey, error: *mut FFIError,) -> *mut FFIPublicKey
+extended_public_key_get_public_key(extended_key: *const FFIExtendedPubKey, error: *mut FFIError,) -> *mut FFIPublicKey
 ```
 
 **Description:**
-Get the public key from an extended public key  Extracts the non-extended public key from an extended public key.  # Safety  - `extended_key` must be a valid pointer to an FFIExtendedPublicKey - `error` must be a valid pointer to an FFIError - The returned FFIPublicKey must be freed with `public_key_free`
+Get the public key from an extended public key  Extracts the non-extended public key from an extended public key.  # Safety  - `extended_key` must be a valid pointer to an FFIExtendedPubKey - `error` must be a valid pointer to an FFIError - The returned FFIPublicKey must be freed with `public_key_free`
 
 **Safety:**
-- `extended_key` must be a valid pointer to an FFIExtendedPublicKey - `error` must be a valid pointer to an FFIError - The returned FFIPublicKey must be freed with `public_key_free`
+- `extended_key` must be a valid pointer to an FFIExtendedPubKey - `error` must be a valid pointer to an FFIError - The returned FFIPublicKey must be freed with `public_key_free`
 
 **Module:** `keys`
 
@@ -3939,14 +3939,14 @@ Get the public key from an extended public key  Extracts the non-extended public
 #### `extended_public_key_to_string`
 
 ```c
-extended_public_key_to_string(key: *const FFIExtendedPublicKey, network: FFINetwork, error: *mut FFIError,) -> *mut c_char
+extended_public_key_to_string(key: *const FFIExtendedPubKey, network: FFINetwork, error: *mut FFIError,) -> *mut c_char
 ```
 
 **Description:**
-Get extended public key as string (xpub format)  Returns the extended public key in base58 format (xpub... for mainnet, tpub... for testnet)  # Safety  - `key` must be a valid pointer to an FFIExtendedPublicKey - `network` is ignored; the network is encoded in the extended key - `error` must be a valid pointer to an FFIError - The returned string must be freed with `string_free`
+Get extended public key as string (xpub format)  Returns the extended public key in base58 format (xpub... for mainnet, tpub... for testnet)  # Safety  - `key` must be a valid pointer to an FFIExtendedPubKey - `network` is ignored; the network is encoded in the extended key - `error` must be a valid pointer to an FFIError - The returned string must be freed with `string_free`
 
 **Safety:**
-- `key` must be a valid pointer to an FFIExtendedPublicKey - `network` is ignored; the network is encoded in the extended key - `error` must be a valid pointer to an FFIError - The returned string must be freed with `string_free`
+- `key` must be a valid pointer to an FFIExtendedPubKey - `network` is ignored; the network is encoded in the extended key - `error` must be a valid pointer to an FFIError - The returned string must be freed with `string_free`
 
 **Module:** `keys`
 

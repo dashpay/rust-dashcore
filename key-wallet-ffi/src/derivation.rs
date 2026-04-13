@@ -2,6 +2,7 @@
 
 use crate::error::{FFIError, FFIErrorCode};
 use crate::keys::FFIExtendedPrivKey;
+use crate::keys::FFIExtendedPubKey;
 use crate::types::FFINetwork;
 use dashcore::Network;
 use key_wallet::{ExtendedPrivKey, ExtendedPubKey};
@@ -32,11 +33,6 @@ pub enum FFIDerivationPathType {
     PathProviderPlatformNodeKeys = 14,
     PathCoinJoin = 15,
     PathRoot = 255,
-}
-
-/// Extended public key structure
-pub struct FFIExtendedPubKey {
-    inner: key_wallet::bip32::ExtendedPubKey,
 }
 
 /// Create a new master extended private key from seed
@@ -529,9 +525,7 @@ pub unsafe extern "C" fn derivation_xpriv_to_xpub(
         let xpub = ExtendedPubKey::from_priv(&secp, xpriv.inner());
 
         FFIError::set_success(error);
-        Box::into_raw(Box::new(FFIExtendedPubKey {
-            inner: xpub,
-        }))
+        Box::into_raw(Box::new(FFIExtendedPubKey::from_inner(xpub)))
     }
 }
 
@@ -600,7 +594,7 @@ pub unsafe extern "C" fn derivation_xpub_to_string(
 
     unsafe {
         let xpub = &*xpub;
-        let xpub_str = xpub.inner.to_string();
+        let xpub_str = xpub.inner().to_string();
 
         match CString::new(xpub_str) {
             Ok(c_str) => {
@@ -639,7 +633,7 @@ pub unsafe extern "C" fn derivation_xpub_fingerprint(
 
     unsafe {
         let xpub = &*xpub;
-        let fingerprint = xpub.inner.fingerprint();
+        let fingerprint = xpub.inner().fingerprint();
         let bytes = fingerprint.to_bytes();
 
         ptr::copy_nonoverlapping(bytes.as_ptr(), fingerprint_out, 4);

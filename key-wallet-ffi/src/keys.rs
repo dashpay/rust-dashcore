@@ -22,7 +22,7 @@ pub struct FFIPublicKey {
 }
 
 /// Opaque type for an extended public key
-pub struct FFIExtendedPublicKey {
+pub struct FFIExtendedPubKey {
     inner: key_wallet::bip32::ExtendedPubKey,
 }
 
@@ -35,6 +35,20 @@ impl FFIExtendedPrivKey {
     #[inline]
     pub(crate) fn from_inner(inner: key_wallet::bip32::ExtendedPrivKey) -> Self {
         FFIExtendedPrivKey {
+            inner,
+        }
+    }
+}
+
+impl FFIExtendedPubKey {
+    #[inline]
+    pub(crate) fn inner(&self) -> &key_wallet::bip32::ExtendedPubKey {
+        &self.inner
+    }
+
+    #[inline]
+    pub(crate) fn from_inner(inner: key_wallet::bip32::ExtendedPubKey) -> Self {
+        FFIExtendedPubKey {
             inner,
         }
     }
@@ -571,7 +585,7 @@ pub unsafe extern "C" fn wallet_derive_public_key(
 }
 
 /// Derive extended public key at a specific path
-/// Returns an opaque FFIExtendedPublicKey pointer that must be freed with extended_public_key_free
+/// Returns an opaque FFIExtendedPubKey pointer that must be freed with extended_public_key_free
 ///
 /// # Safety
 ///
@@ -584,7 +598,7 @@ pub unsafe extern "C" fn wallet_derive_extended_public_key(
     wallet: *const FFIWallet,
     derivation_path: *const c_char,
     error: *mut FFIError,
-) -> *mut FFIExtendedPublicKey {
+) -> *mut FFIExtendedPubKey {
     if wallet.is_null() || derivation_path.is_null() {
         FFIError::set_error(error, FFIErrorCode::InvalidInput, "Null pointer provided".to_string());
         return ptr::null_mut();
@@ -624,7 +638,7 @@ pub unsafe extern "C" fn wallet_derive_extended_public_key(
         match wallet.inner().derive_extended_public_key(&path) {
             Ok(extended_public_key) => {
                 FFIError::set_success(error);
-                Box::into_raw(Box::new(FFIExtendedPublicKey {
+                Box::into_raw(Box::new(FFIExtendedPubKey {
                     inner: extended_public_key,
                 }))
             }
@@ -739,7 +753,7 @@ pub unsafe extern "C" fn public_key_free(key: *mut FFIPublicKey) {
 /// - `key` must be a valid pointer created by extended public key functions or null
 /// - After calling this function, the pointer becomes invalid
 #[no_mangle]
-pub unsafe extern "C" fn extended_public_key_free(key: *mut FFIExtendedPublicKey) {
+pub unsafe extern "C" fn extended_public_key_free(key: *mut FFIExtendedPubKey) {
     if !key.is_null() {
         unsafe {
             let _ = Box::from_raw(key);
@@ -753,13 +767,13 @@ pub unsafe extern "C" fn extended_public_key_free(key: *mut FFIExtendedPublicKey
 ///
 /// # Safety
 ///
-/// - `key` must be a valid pointer to an FFIExtendedPublicKey
+/// - `key` must be a valid pointer to an FFIExtendedPubKey
 /// - `network` is ignored; the network is encoded in the extended key
 /// - `error` must be a valid pointer to an FFIError
 /// - The returned string must be freed with `string_free`
 #[no_mangle]
 pub unsafe extern "C" fn extended_public_key_to_string(
-    key: *const FFIExtendedPublicKey,
+    key: *const FFIExtendedPubKey,
     network: FFINetwork,
     error: *mut FFIError,
 ) -> *mut c_char {
@@ -798,12 +812,12 @@ pub unsafe extern "C" fn extended_public_key_to_string(
 ///
 /// # Safety
 ///
-/// - `extended_key` must be a valid pointer to an FFIExtendedPublicKey
+/// - `extended_key` must be a valid pointer to an FFIExtendedPubKey
 /// - `error` must be a valid pointer to an FFIError
 /// - The returned FFIPublicKey must be freed with `public_key_free`
 #[no_mangle]
 pub unsafe extern "C" fn extended_public_key_get_public_key(
-    extended_key: *const FFIExtendedPublicKey,
+    extended_key: *const FFIExtendedPubKey,
     error: *mut FFIError,
 ) -> *mut FFIPublicKey {
     if extended_key.is_null() {
