@@ -205,6 +205,7 @@ fn build_cycle_quorum_map(
     quorums: Vec<QualifiedQuorumEntry>,
     rotation_quorum_type: LLMQType,
 ) -> Result<BTreeMap<u16, QualifiedQuorumEntry>, QuorumValidationError> {
+    let expected = rotation_quorum_type.active_quorum_count() as usize;
     let mut map = BTreeMap::new();
     for quorum in quorums {
         let quorum_index = quorum.quorum_entry.quorum_index.ok_or(
@@ -215,6 +216,12 @@ fn build_cycle_quorum_map(
                 quorum_hash: quorum.quorum_entry.quorum_hash,
                 index: quorum_index,
             })?;
+        if (key as usize) >= expected {
+            return Err(QuorumValidationError::InvalidQuorumIndex {
+                quorum_hash: quorum.quorum_entry.quorum_hash,
+                index: quorum_index,
+            });
+        }
         if map.contains_key(&key) {
             return Err(QuorumValidationError::CorruptedCodeExecution(format!(
                 "duplicate quorum_index {key} in rotation cycle"
@@ -222,7 +229,6 @@ fn build_cycle_quorum_map(
         }
         map.insert(key, quorum);
     }
-    let expected = rotation_quorum_type.active_quorum_count() as usize;
     if map.len() != expected {
         return Err(QuorumValidationError::CorruptedCodeExecution(format!(
             "rotated quorums per cycle count mismatch: expected {expected}, got {}",
