@@ -579,7 +579,7 @@ pub unsafe extern "C" fn managed_wallet_get_balance(
     let balance = &managed_wallet.inner().balance;
 
     unsafe {
-        *confirmed_out = balance.spendable();
+        *confirmed_out = balance.confirmed();
         *unconfirmed_out = balance.unconfirmed();
         *immature_out = balance.immature();
         *locked_out = balance.locked();

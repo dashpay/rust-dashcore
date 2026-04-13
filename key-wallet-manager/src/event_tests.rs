@@ -197,11 +197,11 @@ async fn test_mempool_tx_emits_balance_updated() {
             WalletEvent::BalanceUpdated {
                 wallet_id: wid,
                 unconfirmed,
-                spendable,
+                confirmed,
                 ..
-            } if *wid == wallet_id && *unconfirmed == TX_AMOUNT && *spendable == 0
+            } if *wid == wallet_id && *unconfirmed == TX_AMOUNT && *confirmed == 0
         ),
-        "expected BalanceUpdated with unconfirmed={TX_AMOUNT}, spendable=0, got {:?}",
+        "expected BalanceUpdated with unconfirmed={TX_AMOUNT}, confirmed=0, got {:?}",
         balance_events[0]
     );
 }
@@ -223,12 +223,12 @@ async fn test_instantsend_tx_emits_balance_updated_spendable() {
             balance_events[0],
             WalletEvent::BalanceUpdated {
                 wallet_id: wid,
-                spendable,
+                confirmed,
                 unconfirmed,
                 ..
-            } if *wid == wallet_id && *spendable == TX_AMOUNT && *unconfirmed == 0
+            } if *wid == wallet_id && *confirmed == TX_AMOUNT && *unconfirmed == 0
         ),
-        "expected BalanceUpdated with spendable={TX_AMOUNT}, unconfirmed=0, got {:?}",
+        "expected BalanceUpdated with confirmed={TX_AMOUNT}, unconfirmed=0, got {:?}",
         balance_events[0]
     );
 }
@@ -248,15 +248,15 @@ async fn test_mempool_to_instantsend_transitions_balance() {
             WalletEvent::BalanceUpdated {
                 wallet_id: wid,
                 unconfirmed,
-                spendable,
+                confirmed,
                 ..
-            } if *wid == wallet_id && *unconfirmed == TX_AMOUNT && *spendable == 0
+            } if *wid == wallet_id && *unconfirmed == TX_AMOUNT && *confirmed == 0
         )),
         "expected unconfirmed balance after mempool, got {:?}",
         events
     );
 
-    // IS lock: balance should move from unconfirmed to spendable
+    // IS lock: balance should move from unconfirmed to confirmed
     manager.process_instant_send_lock(dummy_instant_lock(tx.txid()));
     let events = drain_events(&mut rx);
     assert!(
@@ -264,12 +264,12 @@ async fn test_mempool_to_instantsend_transitions_balance() {
             e,
             WalletEvent::BalanceUpdated {
                 wallet_id: wid,
-                spendable,
+                confirmed,
                 unconfirmed,
                 ..
-            } if *wid == wallet_id && *spendable == TX_AMOUNT && *unconfirmed == 0
+            } if *wid == wallet_id && *confirmed == TX_AMOUNT && *unconfirmed == 0
         )),
-        "expected spendable balance after IS lock, got {:?}",
+        "expected confirmed balance after IS lock, got {:?}",
         events
     );
 }

@@ -561,9 +561,14 @@ impl ManagedCoreAccount {
         self.utxos.values().filter(|utxo| utxo.is_spendable(synced_height)).collect()
     }
 
-    /// Update the account balance
+    /// Update the account balance.
+    ///
+    /// Mature, non-locked UTXOs land in either the `confirmed` bucket
+    /// (in a block or InstantSend-locked) or the `unconfirmed` bucket
+    /// (mempool only). Both are spendable per [`Utxo::is_spendable`];
+    /// the split is only for display.
     pub fn update_balance(&mut self, synced_height: u32) {
-        let mut spendable = 0;
+        let mut confirmed = 0;
         let mut unconfirmed = 0;
         let mut immature = 0;
         let mut locked = 0;
@@ -573,13 +578,13 @@ impl ManagedCoreAccount {
                 locked += value;
             } else if !utxo.is_mature(synced_height) {
                 immature += value;
-            } else if utxo.is_spendable(synced_height) {
-                spendable += value;
+            } else if utxo.is_confirmed || utxo.is_instantlocked {
+                confirmed += value;
             } else {
                 unconfirmed += value;
             }
         }
-        self.balance = WalletCoreBalance::new(spendable, unconfirmed, immature, locked);
+        self.balance = WalletCoreBalance::new(confirmed, unconfirmed, immature, locked);
         self.metadata.last_used = Some(Self::current_timestamp());
     }
 

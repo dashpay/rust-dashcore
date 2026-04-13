@@ -618,7 +618,7 @@ pub unsafe extern "C" fn managed_core_account_get_balance(
     let balance = &account.inner().balance;
 
     *balance_out = crate::types::FFIBalance {
-        confirmed: balance.spendable(),
+        confirmed: balance.confirmed(),
         unconfirmed: balance.unconfirmed(),
         immature: balance.immature(),
         locked: balance.locked(),

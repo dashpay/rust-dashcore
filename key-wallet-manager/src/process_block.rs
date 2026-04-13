@@ -291,11 +291,11 @@ mod tests {
         let mut found = false;
         while let Ok(event) = rx.try_recv() {
             if let WalletEvent::BalanceUpdated {
-                spendable,
+                confirmed,
                 ..
             } = event
             {
-                assert!(spendable > 0, "spendable balance should increase after block");
+                assert!(confirmed > 0, "confirmed balance should increase after block");
                 found = true;
                 break;
             }

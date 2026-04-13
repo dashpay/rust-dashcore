@@ -884,9 +884,11 @@ mod tests {
         let (mut ctx, tx) = TestWalletContext::new_random().with_mempool_funding(200_000).await;
         let txid = tx.txid();
 
-        // Stage 1: mempool (already done in setup)
+        // Stage 1: mempool (already done in setup). Mempool funds land
+        // in the unconfirmed bucket but are spendable.
         assert_eq!(ctx.managed_wallet.balance().unconfirmed(), 200_000);
-        assert_eq!(ctx.managed_wallet.balance().spendable(), 0);
+        assert_eq!(ctx.managed_wallet.balance().confirmed(), 0);
+        assert_eq!(ctx.managed_wallet.balance().spendable(), 200_000);
         assert_eq!(ctx.managed_wallet.metadata.total_transactions, 1);
 
         // Stage 2: IS lock

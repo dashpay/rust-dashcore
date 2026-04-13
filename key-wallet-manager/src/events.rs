@@ -37,9 +37,9 @@ pub enum WalletEvent {
     BalanceUpdated {
         /// ID of the affected wallet.
         wallet_id: WalletId,
-        /// New spendable balance in duffs (confirmed and mature).
-        spendable: u64,
-        /// New unconfirmed balance in duffs.
+        /// New confirmed balance in duffs (mature, in a block or InstantSend-locked).
+        confirmed: u64,
+        /// New unconfirmed balance in duffs (mature, mempool-only). Also spendable.
         unconfirmed: u64,
         /// New immature balance (coinbase UTXOs not yet mature).
         immature: u64,
@@ -71,15 +71,15 @@ impl WalletEvent {
                 format!("TransactionStatusChanged(txid={}, status={})", txid, status)
             }
             WalletEvent::BalanceUpdated {
-                spendable,
+                confirmed,
                 unconfirmed,
                 immature,
                 locked,
                 ..
             } => {
                 format!(
-                    "BalanceUpdated(spendable={}, unconfirmed={}, immature={}, locked={})",
-                    Amount::from_sat(*spendable),
+                    "BalanceUpdated(confirmed={}, unconfirmed={}, immature={}, locked={})",
+                    Amount::from_sat(*confirmed),
                     Amount::from_sat(*unconfirmed),
                     Amount::from_sat(*immature),
                     Amount::from_sat(*locked)
