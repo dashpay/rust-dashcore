@@ -335,17 +335,11 @@ mod tests {
     #[test]
     fn wallet_changeset_merge_merges_per_account_buckets() {
         let mut a = WalletChangeSet::default();
-        a.account_bucket(bip44_account_0())
-            .highest_used
-            .insert(AddressPoolType::External, 5);
+        a.account_bucket(bip44_account_0()).highest_used.insert(AddressPoolType::External, 5);
 
         let mut b = WalletChangeSet::default();
-        b.account_bucket(bip44_account_0())
-            .highest_used
-            .insert(AddressPoolType::External, 8);
-        b.account_bucket(bip44_account_1())
-            .highest_used
-            .insert(AddressPoolType::External, 2);
+        b.account_bucket(bip44_account_0()).highest_used.insert(AddressPoolType::External, 8);
+        b.account_bucket(bip44_account_1()).highest_used.insert(AddressPoolType::External, 2);
 
         a.merge(b);
 

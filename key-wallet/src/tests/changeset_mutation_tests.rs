@@ -100,10 +100,7 @@ async fn update_transaction_context_emits_record_only_when_context_changes() {
     let (mut ctx, tx) = TestWalletContext::new_random().with_mempool_funding(50_000).await;
     let txid = tx.txid();
 
-    let account = ctx
-        .managed_wallet
-        .first_bip44_managed_account_mut()
-        .expect("bip44 account");
+    let account = ctx.managed_wallet.first_bip44_managed_account_mut().expect("bip44 account");
 
     let block_hash = BlockHash::from_slice(&[42u8; 32]).expect("hash");
     let block_ctx = TransactionContext::InBlock(BlockInfo::new(500, block_hash, 1_700_000_000));
@@ -172,8 +169,7 @@ async fn confirming_mempool_tx_emits_utxo_delta_for_context_upgrade() {
     let (mut ctx, tx) = TestWalletContext::new_random().with_mempool_funding(300_000).await;
 
     let block_hash = BlockHash::from_slice(&[7u8; 32]).expect("hash");
-    let block_ctx =
-        TransactionContext::InBlock(BlockInfo::new(600, block_hash, 1_700_000_000));
+    let block_ctx = TransactionContext::InBlock(BlockInfo::new(600, block_hash, 1_700_000_000));
     let result = ctx.check_transaction(&tx, block_ctx).await;
     assert!(result.is_relevant);
 
@@ -199,11 +195,8 @@ async fn check_core_transaction_populates_bucket_and_balance_on_new_funding() {
     assert!(result.is_relevant);
     assert!(result.is_new_transaction);
 
-    let bucket = result
-        .changeset
-        .per_account
-        .get(&bip44_0())
-        .expect("bip44-0 bucket must be populated");
+    let bucket =
+        result.changeset.per_account.get(&bip44_0()).expect("bip44-0 bucket must be populated");
     assert_eq!(bucket.transactions.len(), 1);
     assert!(bucket.transactions.contains_key(&funding_tx.txid()));
     assert_eq!(bucket.utxos_added.len(), 1);
@@ -233,8 +226,7 @@ async fn check_core_transaction_confirmation_emits_transaction_delta() {
     let txid = tx.txid();
 
     let block_hash = BlockHash::from_slice(&[17u8; 32]).expect("hash");
-    let block_ctx =
-        TransactionContext::InBlock(BlockInfo::new(700, block_hash, 1_700_000_000));
+    let block_ctx = TransactionContext::InBlock(BlockInfo::new(700, block_hash, 1_700_000_000));
     let result = ctx.check_transaction(&tx, block_ctx).await;
     assert!(result.is_relevant);
     assert!(!result.is_new_transaction);
@@ -244,10 +236,7 @@ async fn check_core_transaction_confirmation_emits_transaction_delta() {
         .per_account
         .get(&bip44_0())
         .expect("bip44-0 bucket must carry the updated record");
-    let updated = bucket
-        .transactions
-        .get(&txid)
-        .expect("updated record must be present");
+    let updated = bucket.transactions.get(&txid).expect("updated record must be present");
     assert!(updated.is_confirmed());
 }
 
@@ -263,9 +252,7 @@ fn wallet_changeset_merge_combines_mutations_from_separate_sources() {
     let b_utxo = Utxo::dummy(2, 200, 1, false, true);
 
     let mut cs1 = WalletChangeSet::default();
-    cs1.account_bucket(bip44_0())
-        .utxos_added
-        .insert(a_utxo.outpoint, a_utxo.clone());
+    cs1.account_bucket(bip44_0()).utxos_added.insert(a_utxo.outpoint, a_utxo.clone());
     cs1.balance = Some(BalanceChangeSet {
         spendable_delta: 100,
         ..Default::default()

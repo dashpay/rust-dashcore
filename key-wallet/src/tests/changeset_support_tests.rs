@@ -85,11 +85,8 @@ fn insert_remove_is_idempotent_for_replay() {
 
 #[test]
 fn add_account_idempotent_when_xpub_is_none() {
-    let mut wallet = Wallet::new_random(
-        Network::Testnet,
-        WalletAccountCreationOptions::None,
-    )
-    .unwrap();
+    let mut wallet =
+        Wallet::new_random(Network::Testnet, WalletAccountCreationOptions::None).unwrap();
 
     let acct_type = AccountType::Standard {
         index: 0,
@@ -117,11 +114,8 @@ fn add_account_idempotent_when_xpub_is_none() {
 fn add_account_errors_when_explicit_xpub_collides() {
     // If an explicit xpub is provided for an already-existing account type,
     // we must reject it to avoid silently overwriting with different keys.
-    let mut wallet = Wallet::new_random(
-        Network::Testnet,
-        WalletAccountCreationOptions::None,
-    )
-    .unwrap();
+    let mut wallet =
+        Wallet::new_random(Network::Testnet, WalletAccountCreationOptions::None).unwrap();
 
     let acct_type = AccountType::Standard {
         index: 0,
@@ -132,18 +126,12 @@ fn add_account_errors_when_explicit_xpub_collides() {
     wallet.add_account(acct_type, None).unwrap();
 
     // Get the derived xpub so we can try to re-add with it.
-    let existing_xpub = wallet
-        .accounts
-        .account_of_type(acct_type)
-        .expect("account should exist")
-        .account_xpub;
+    let existing_xpub =
+        wallet.accounts.account_of_type(acct_type).expect("account should exist").account_xpub;
 
     // Explicit xpub for existing account type → error (even if it's the same xpub).
     let result = wallet.add_account(acct_type, Some(existing_xpub));
-    assert!(
-        result.is_err(),
-        "explicit xpub for existing account type must return an error"
-    );
+    assert!(result.is_err(), "explicit xpub for existing account type must return an error");
 }
 
 // ---------------------------------------------------------------------------
@@ -153,9 +141,8 @@ fn add_account_errors_when_explicit_xpub_collides() {
 
 #[test]
 fn get_by_account_type_mut_finds_bip44_account() {
-    let wallet =
-        Wallet::new_random(Network::Testnet, WalletAccountCreationOptions::Default)
-            .expect("wallet");
+    let wallet = Wallet::new_random(Network::Testnet, WalletAccountCreationOptions::Default)
+        .expect("wallet");
     let mut info = ManagedWalletInfo::from_wallet(&wallet);
 
     let ty = AccountType::Standard {
@@ -169,8 +156,7 @@ fn get_by_account_type_mut_finds_bip44_account() {
 #[test]
 fn get_by_account_type_mut_returns_none_for_missing_account_type() {
     let wallet =
-        Wallet::new_random(Network::Testnet, WalletAccountCreationOptions::None)
-            .expect("wallet");
+        Wallet::new_random(Network::Testnet, WalletAccountCreationOptions::None).expect("wallet");
     let mut info = ManagedWalletInfo::from_wallet(&wallet);
 
     let ty = AccountType::Standard {

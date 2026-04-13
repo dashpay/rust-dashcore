@@ -175,14 +175,11 @@ impl WalletTransactionChecker for ManagedWalletInfo {
                 // bucket so `apply()` can restore the used watermark
                 // without re-scanning.
                 if let Some(highest_used) = pool.highest_used {
-                    let bucket =
-                        result.changeset.account_bucket(account_type_for_bucket);
+                    let bucket = result.changeset.account_bucket(account_type_for_bucket);
                     bucket
                         .highest_used
                         .entry(pool.pool_type)
-                        .and_modify(|current| {
-                            *current = (*current).max(highest_used)
-                        })
+                        .and_modify(|current| *current = (*current).max(highest_used))
                         .or_insert(highest_used);
                 }
             }

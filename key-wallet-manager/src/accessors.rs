@@ -34,10 +34,7 @@ impl<T: WalletInfoInterface> WalletManager<T> {
     }
 
     /// Get immutable wallet + mutable info by ID (split borrow on two maps).
-    pub fn get_wallet_and_info_mut(
-        &mut self,
-        wallet_id: &WalletId,
-    ) -> Option<(&Wallet, &mut T)> {
+    pub fn get_wallet_and_info_mut(&mut self, wallet_id: &WalletId) -> Option<(&Wallet, &mut T)> {
         match (self.wallets.get(wallet_id), self.wallet_infos.get_mut(wallet_id)) {
             (Some(wallet), Some(info)) => Some((wallet, info)),
             _ => None,
@@ -59,11 +56,7 @@ impl<T: WalletInfoInterface> WalletManager<T> {
     }
 
     /// Insert a pre-built wallet and info pair.
-    pub fn insert_wallet(
-        &mut self,
-        wallet: Wallet,
-        info: T,
-    ) -> Result<WalletId, WalletError> {
+    pub fn insert_wallet(&mut self, wallet: Wallet, info: T) -> Result<WalletId, WalletError> {
         let wallet_id = wallet.compute_wallet_id();
         if self.wallets.contains_key(&wallet_id) {
             return Err(WalletError::WalletExists(wallet_id));
@@ -318,9 +311,8 @@ mod apply_tests {
     #[test]
     fn apply_empty_changeset_does_not_bump_revision() {
         let mut wm: WalletManager<ManagedWalletInfo> = WalletManager::new(KwNetwork::Testnet);
-        let wallet =
-            Wallet::new_random(KwNetwork::Testnet, WalletAccountCreationOptions::Default)
-                .expect("wallet");
+        let wallet = Wallet::new_random(KwNetwork::Testnet, WalletAccountCreationOptions::Default)
+            .expect("wallet");
         let info = ManagedWalletInfo::from_wallet(&wallet);
         let wallet_id = wm.insert_wallet(wallet, info).expect("insert");
 
@@ -335,9 +327,8 @@ mod apply_tests {
     #[test]
     fn apply_non_empty_changeset_bumps_revision() {
         let mut wm: WalletManager<ManagedWalletInfo> = WalletManager::new(KwNetwork::Testnet);
-        let wallet =
-            Wallet::new_random(KwNetwork::Testnet, WalletAccountCreationOptions::Default)
-                .expect("wallet");
+        let wallet = Wallet::new_random(KwNetwork::Testnet, WalletAccountCreationOptions::Default)
+            .expect("wallet");
         let info = ManagedWalletInfo::from_wallet(&wallet);
         let wallet_id = wm.insert_wallet(wallet, info).expect("insert");
 

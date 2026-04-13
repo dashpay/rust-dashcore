@@ -202,8 +202,7 @@ mod tests {
         let mut info_b = ManagedWalletInfo::from_wallet(&wallet_b);
 
         // Fund A so its changeset carries every sub-field.
-        let funding_tx =
-            dashcore::Transaction::dummy(&ctx.receive_address, 0..1, &[750_000]);
+        let funding_tx = dashcore::Transaction::dummy(&ctx.receive_address, 0..1, &[750_000]);
         let result = ctx.check_transaction(&funding_tx, TransactionContext::Mempool).await;
         assert!(result.is_relevant);
         assert!(result.is_new_transaction);
@@ -218,10 +217,7 @@ mod tests {
         // The UTXO must be present on B with the same value.
         let account_b = info_b.first_bip44_managed_account().expect("bip44 on b");
         assert_eq!(account_b.utxos.len(), 1);
-        assert_eq!(
-            account_b.utxos.values().next().expect("utxo").txout.value,
-            750_000
-        );
+        assert_eq!(account_b.utxos.values().next().expect("utxo").txout.value, 750_000);
 
         // The transaction record must be present on B.
         assert!(account_b.transactions.contains_key(&funding_tx.txid()));
@@ -246,8 +242,7 @@ mod tests {
 
         // The address must be marked used on B — `mark_address_used`
         // returns false on a second call.
-        let account_b_mut =
-            info_b.first_bip44_managed_account_mut().expect("bip44 on b");
+        let account_b_mut = info_b.first_bip44_managed_account_mut().expect("bip44 on b");
         let (changed, _) = account_b_mut.mark_address_used(&ctx.receive_address);
         assert!(!changed, "address must already be marked used after apply");
     }
@@ -258,8 +253,7 @@ mod tests {
         let mut wallet_b = ctx.wallet.clone();
         let mut info_b = ManagedWalletInfo::from_wallet(&wallet_b);
 
-        let funding_tx =
-            dashcore::Transaction::dummy(&ctx.receive_address, 0..1, &[321_000]);
+        let funding_tx = dashcore::Transaction::dummy(&ctx.receive_address, 0..1, &[321_000]);
         let result = ctx.check_transaction(&funding_tx, TransactionContext::Mempool).await;
 
         // First apply. Clone explicitly because the second apply below
@@ -267,8 +261,7 @@ mod tests {
         // hidden clones in the persister-load hot path.
         info_b.apply_changeset(&mut wallet_b, result.changeset.clone()).expect("apply");
         let snapshot_balance = info_b.balance;
-        let snapshot_utxo_count =
-            info_b.first_bip44_managed_account().expect("bip44").utxos.len();
+        let snapshot_utxo_count = info_b.first_bip44_managed_account().expect("bip44").utxos.len();
         let snapshot_tx_count =
             info_b.first_bip44_managed_account().expect("bip44").transactions.len();
 
@@ -316,9 +309,7 @@ mod tests {
         cs.per_account.insert(known_type, known);
         // Unknown bucket: should be silently dropped.
         let mut unknown = AccountChangeSet::default();
-        unknown
-            .addresses_used
-            .insert(dashcore::Address::dummy(dashcore::Network::Testnet, 7));
+        unknown.addresses_used.insert(dashcore::Address::dummy(dashcore::Network::Testnet, 7));
         cs.per_account.insert(unknown_type, unknown);
 
         info_b.apply_changeset(&mut wallet_b, cs).expect("apply");
@@ -386,8 +377,7 @@ mod tests {
 
         // Step 1: fund via mempool on A, capture the changeset, replay
         // onto B. B ends up with an unconfirmed UTXO.
-        let funding_tx =
-            dashcore::Transaction::dummy(&ctx.receive_address, 0..1, &[600_000]);
+        let funding_tx = dashcore::Transaction::dummy(&ctx.receive_address, 0..1, &[600_000]);
         let mempool_cs =
             ctx.check_transaction(&funding_tx, TransactionContext::Mempool).await.changeset;
         info_b.apply_changeset(&mut wallet_b, mempool_cs).expect("apply mempool");
@@ -398,8 +388,7 @@ mod tests {
         // Step 2: re-process the same tx with a block context on A and
         // apply the resulting changeset to B.
         let block_hash = BlockHash::from_slice(&[3u8; 32]).expect("hash");
-        let block_ctx =
-            TransactionContext::InBlock(BlockInfo::new(800, block_hash, 1_700_000_000));
+        let block_ctx = TransactionContext::InBlock(BlockInfo::new(800, block_hash, 1_700_000_000));
         let block_cs = ctx.check_transaction(&funding_tx, block_ctx).await.changeset;
         info_b.apply_changeset(&mut wallet_b, block_cs).expect("apply block");
 
@@ -420,12 +409,9 @@ mod tests {
         let mut info_b = ManagedWalletInfo::from_wallet(&wallet_b);
 
         // Capture the early mempool changeset.
-        let funding_tx =
-            dashcore::Transaction::dummy(&ctx.receive_address, 0..1, &[400_000]);
-        let mempool_cs = ctx
-            .check_transaction(&funding_tx, TransactionContext::Mempool)
-            .await
-            .changeset;
+        let funding_tx = dashcore::Transaction::dummy(&ctx.receive_address, 0..1, &[400_000]);
+        let mempool_cs =
+            ctx.check_transaction(&funding_tx, TransactionContext::Mempool).await.changeset;
 
         // B lands the mempool tx first, then confirms it live.
         info_b.apply_changeset(&mut wallet_b, mempool_cs.clone()).expect("apply mempool");

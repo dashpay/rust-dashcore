@@ -598,11 +598,7 @@ impl AddressPool {
     /// Returns the requested number of unused addresses, generating new
     /// ones if needed. More efficient than calling `next_unused` multiple
     /// times because it minimises the search through existing addresses.
-    pub fn next_unused_multiple(
-        &mut self,
-        count: usize,
-        key_source: &KeySource,
-    ) -> Vec<Address> {
+    pub fn next_unused_multiple(&mut self, count: usize, key_source: &KeySource) -> Vec<Address> {
         let mut addresses = Vec::with_capacity(count);
 
         // First, collect existing unused addresses
@@ -635,8 +631,7 @@ impl AddressPool {
         let start_index = self.highest_generated.map(|h| h + 1).unwrap_or(0);
 
         for i in 0..remaining {
-            if let Ok(address) =
-                self.generate_address_at_index(start_index + i as u32, key_source)
+            if let Ok(address) = self.generate_address_at_index(start_index + i as u32, key_source)
             {
                 addresses.push(address);
             } else {

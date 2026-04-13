@@ -301,5 +301,4 @@ impl ManagedWalletInfo {
     pub fn all_managed_accounts(&self) -> Vec<&ManagedCoreAccount> {
         self.accounts.all_accounts()
     }
-
 }

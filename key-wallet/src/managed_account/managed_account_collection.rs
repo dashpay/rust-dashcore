@@ -884,13 +884,7 @@ impl ManagedAccountCollection {
         &mut self,
         account_type_match: &CoreAccountTypeMatch,
     ) -> Option<&mut ManagedCoreAccount> {
-        get_by_account_type_matching_impl!(
-            self,
-            account_type_match,
-            get_mut,
-            as_mut,
-            values_mut
-        )
+        get_by_account_type_matching_impl!(self, account_type_match, get_mut, as_mut, values_mut)
     }
 
     /// Check whether an account of the given [`AccountType`] exists
@@ -919,9 +913,7 @@ impl ManagedAccountCollection {
             AccountType::IdentityTopUp {
                 registration_index,
             } => self.identity_topup.contains_key(&registration_index),
-            AccountType::IdentityTopUpNotBoundToIdentity => {
-                self.identity_topup_not_bound.is_some()
-            }
+            AccountType::IdentityTopUpNotBoundToIdentity => self.identity_topup_not_bound.is_some(),
             AccountType::IdentityInvitation => self.identity_invitation.is_some(),
             AccountType::AssetLockAddressTopUp => self.asset_lock_address_topup.is_some(),
             AccountType::AssetLockShieldedAddressTopUp => {
@@ -966,10 +958,7 @@ impl ManagedAccountCollection {
     /// in the separate `platform_payment_accounts` map with a different
     /// managed type; use [`Self::contains_account_type`] for a uniform
     /// existence check.
-    pub fn get_by_account_type(
-        &self,
-        account_type: AccountType,
-    ) -> Option<&ManagedCoreAccount> {
+    pub fn get_by_account_type(&self, account_type: AccountType) -> Option<&ManagedCoreAccount> {
         use crate::account::StandardAccountType;
         match account_type {
             AccountType::Standard {
@@ -987,9 +976,7 @@ impl ManagedAccountCollection {
             AccountType::IdentityTopUp {
                 registration_index,
             } => self.identity_topup.get(&registration_index),
-            AccountType::IdentityTopUpNotBoundToIdentity => {
-                self.identity_topup_not_bound.as_ref()
-            }
+            AccountType::IdentityTopUpNotBoundToIdentity => self.identity_topup_not_bound.as_ref(),
             AccountType::IdentityInvitation => self.identity_invitation.as_ref(),
             AccountType::AssetLockAddressTopUp => self.asset_lock_address_topup.as_ref(),
             AccountType::AssetLockShieldedAddressTopUp => {
@@ -1051,9 +1038,7 @@ impl ManagedAccountCollection {
             AccountType::IdentityTopUp {
                 registration_index,
             } => self.identity_topup.get_mut(&registration_index),
-            AccountType::IdentityTopUpNotBoundToIdentity => {
-                self.identity_topup_not_bound.as_mut()
-            }
+            AccountType::IdentityTopUpNotBoundToIdentity => self.identity_topup_not_bound.as_mut(),
             AccountType::IdentityInvitation => self.identity_invitation.as_mut(),
             AccountType::AssetLockAddressTopUp => self.asset_lock_address_topup.as_mut(),
             AccountType::AssetLockShieldedAddressTopUp => {

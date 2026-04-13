@@ -155,10 +155,7 @@ fn test_duplicate_account_handling() {
     let result2 = wallet.add_account(account_type, None);
 
     assert!(result1.is_ok(), "First attempt to add account 0 should succeed");
-    assert!(
-        result2.is_ok(),
-        "Duplicate add with derivation should be a no-op (idempotent)"
-    );
+    assert!(result2.is_ok(), "Duplicate add with derivation should be a no-op (idempotent)");
 }
 
 #[test]

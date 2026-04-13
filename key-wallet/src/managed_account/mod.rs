@@ -303,10 +303,7 @@ impl ManagedCoreAccount {
     /// `cs.per_account[self.account_type.to_account_type()].addresses_used`.
     /// `changed` is `false` on replay or for unknown addresses, and the
     /// changeset is empty in that case (idempotent).
-    pub fn mark_address_used(
-        &mut self,
-        address: &Address,
-    ) -> (bool, WalletChangeSet) {
+    pub fn mark_address_used(&mut self, address: &Address) -> (bool, WalletChangeSet) {
         // Update metadata timestamp
         self.metadata.last_used = Some(Self::current_timestamp());
 
@@ -409,9 +406,7 @@ impl ManagedCoreAccount {
                 }
             };
             if needs_write {
-                cs.account_bucket(account_type_key)
-                    .utxos_added
-                    .insert(outpoint, utxo.clone());
+                cs.account_bucket(account_type_key).utxos_added.insert(outpoint, utxo.clone());
                 self.utxos.insert(outpoint, utxo);
                 utxos_changed = true;
             }
@@ -427,9 +422,7 @@ impl ManagedCoreAccount {
                     txid = %tx.txid(),
                     "Removed spent UTXO"
                 );
-                cs.account_bucket(account_type_key)
-                    .utxos_spent
-                    .insert(input.previous_output);
+                cs.account_bucket(account_type_key).utxos_spent.insert(input.previous_output);
                 utxos_changed = true;
             }
         }
@@ -617,19 +610,14 @@ impl ManagedCoreAccount {
     /// produced for a spent outpoint. This is why
     /// `ManagedCoreAccount::apply_changeset` can safely process
     /// `utxos_spent` before `utxos_instant_locked` without losing state.
-    pub(crate) fn mark_utxos_instant_send(
-        &mut self,
-        txid: &Txid,
-    ) -> (bool, WalletChangeSet) {
+    pub(crate) fn mark_utxos_instant_send(&mut self, txid: &Txid) -> (bool, WalletChangeSet) {
         let mut cs = WalletChangeSet::default();
         let account_type_key = self.account_type.to_account_type();
         let mut any_changed = false;
         for utxo in self.utxos.values_mut() {
             if utxo.outpoint.txid == *txid && !utxo.is_instantlocked {
                 utxo.is_instantlocked = true;
-                cs.account_bucket(account_type_key)
-                    .utxos_instant_locked
-                    .insert(utxo.outpoint);
+                cs.account_bucket(account_type_key).utxos_instant_locked.insert(utxo.outpoint);
                 any_changed = true;
             }
         }
@@ -719,11 +707,7 @@ impl ManagedCoreAccount {
     /// Used only by a `debug_assert` that the caller routed the bucket
     /// to the correct account — a mismatch indicates a routing bug at
     /// the call site.
-    pub fn apply_changeset(
-        &mut self,
-        expected_account_type: AccountType,
-        cs: AccountChangeSet,
-    ) {
+    pub fn apply_changeset(&mut self, expected_account_type: AccountType, cs: AccountChangeSet) {
         debug_assert_eq!(
             self.account_type.to_account_type(),
             expected_account_type,
