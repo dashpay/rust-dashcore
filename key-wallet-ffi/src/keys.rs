@@ -1,7 +1,9 @@
 //! Key derivation and management
 
+use dashcore::ffi::FFINetwork;
+
 use crate::error::{FFIError, FFIErrorCode};
-use crate::types::{FFINetwork, FFIWallet};
+use crate::types::FFIWallet;
 use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_uint};
 use std::ptr;

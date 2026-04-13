@@ -3,7 +3,7 @@
 use crate::error::{FFIError, FFIErrorCode};
 use crate::keys::FFIExtendedPrivKey;
 use crate::keys::FFIExtendedPubKey;
-use crate::types::FFINetwork;
+use dashcore::ffi::FFINetwork;
 use dashcore::Network;
 use key_wallet::{ExtendedPrivKey, ExtendedPubKey};
 use secp256k1::Secp256k1;

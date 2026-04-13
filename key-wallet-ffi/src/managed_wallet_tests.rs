@@ -2,10 +2,12 @@
 
 #[cfg(test)]
 mod tests {
+    use dashcore::ffi::FFINetwork;
+
     use crate::address_pool::managed_wallet_mark_address_used;
     use crate::error::{FFIError, FFIErrorCode};
     use crate::managed_wallet::*;
-    use crate::types::{FFINetwork, FFIWallet};
+    use crate::types::FFIWallet;
     use crate::wallet;
     use crate::wallet_manager::FFIWalletManager;
     use crate::wallet_manager::{

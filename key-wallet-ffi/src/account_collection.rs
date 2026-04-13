@@ -1061,6 +1061,8 @@ pub unsafe extern "C" fn account_collection_summary_free(
 
 #[cfg(test)]
 mod tests {
+    use dashcore::ffi::FFINetwork;
+
     use super::*;
     use crate::wallet::wallet_create_from_mnemonic_with_options;
     use std::ffi::CString;
@@ -1074,7 +1076,7 @@ mod tests {
             let wallet = wallet_create_from_mnemonic_with_options(
                 mnemonic.as_ptr(),
                 ptr::null(),
-                crate::types::FFINetwork::Testnet,
+                FFINetwork::Testnet,
                 ptr::null(),
                 ptr::null_mut(),
             );
@@ -1128,7 +1130,7 @@ mod tests {
             let wallet = wallet_create_from_mnemonic_with_options(
                 mnemonic.as_ptr(),
                 ptr::null(),
-                crate::types::FFINetwork::Testnet,
+                FFINetwork::Testnet,
                 &options,
                 ptr::null_mut(),
             );
@@ -1174,7 +1176,7 @@ mod tests {
             let wallet = wallet_create_from_mnemonic_with_options(
                 mnemonic.as_ptr(),
                 ptr::null(),
-                crate::types::FFINetwork::Testnet,
+                FFINetwork::Testnet,
                 &options,
                 ptr::null_mut(),
             );
@@ -1244,7 +1246,7 @@ mod tests {
             let wallet = wallet_create_from_mnemonic_with_options(
                 mnemonic.as_ptr(),
                 ptr::null(),
-                crate::types::FFINetwork::Testnet,
+                FFINetwork::Testnet,
                 &options,
                 ptr::null_mut(),
             );
@@ -1296,7 +1298,7 @@ mod tests {
             let wallet = wallet_create_from_mnemonic_with_options(
                 mnemonic.as_ptr(),
                 ptr::null(),
-                crate::types::FFINetwork::Testnet,
+                FFINetwork::Testnet,
                 &options,
                 ptr::null_mut(),
             );
@@ -1380,7 +1382,7 @@ mod tests {
             let wallet = wallet_create_from_mnemonic_with_options(
                 mnemonic.as_ptr(),
                 ptr::null(),
-                crate::types::FFINetwork::Testnet,
+                FFINetwork::Testnet,
                 &options,
                 ptr::null_mut(),
             );
@@ -1466,7 +1468,7 @@ mod tests {
             let wallet = wallet_create_from_mnemonic_with_options(
                 mnemonic.as_ptr(),
                 ptr::null(),
-                crate::types::FFINetwork::Testnet,
+                FFINetwork::Testnet,
                 &options,
                 ptr::null_mut(),
             );
@@ -1536,7 +1538,7 @@ mod tests {
             let wallet = wallet_create_from_mnemonic_with_options(
                 mnemonic.as_ptr(),
                 ptr::null(),
-                crate::types::FFINetwork::Testnet,
+                FFINetwork::Testnet,
                 ptr::null(),
                 ptr::null_mut(),
             );

@@ -5,10 +5,11 @@ use std::ptr;
 use clap::{Arg, ArgAction, Command};
 
 use dash_spv_ffi::*;
+use dashcore::ffi::FFINetwork;
 use key_wallet_ffi::managed_account::FFITransactionRecord;
 use key_wallet_ffi::types::FFITransactionContext;
 use key_wallet_ffi::wallet_manager::wallet_manager_add_wallet_from_mnemonic;
-use key_wallet_ffi::{FFIError, FFINetwork};
+use key_wallet_ffi::FFIError;
 
 fn ffi_string_to_rust(s: *const c_char) -> String {
     if s.is_null() {

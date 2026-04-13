@@ -1,6 +1,7 @@
 use crate::{null_check, set_last_error, FFIErrorCode, FFIMempoolStrategy};
 use dash_spv::{ClientConfig, ValidationMode};
-use key_wallet_ffi::FFINetwork;
+use dashcore::ffi::FFINetwork;
+
 use std::ffi::CStr;
 use std::net::{IpAddr, SocketAddr, ToSocketAddrs};
 use std::os::raw::c_char;

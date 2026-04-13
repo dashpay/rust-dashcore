@@ -2,10 +2,11 @@
 
 #[cfg(all(test, feature = "bincode"))]
 mod tests {
+    use dashcore::ffi::FFINetwork;
+
     use crate::error::{FFIError, FFIErrorCode};
     use crate::types::FFIWalletAccountCreationOptions;
     use crate::wallet_manager;
-    use crate::FFINetwork;
     use std::ffi::CString;
     use std::ptr;
 

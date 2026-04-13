@@ -2,11 +2,12 @@
 
 #[cfg(test)]
 mod wallet_tests {
+    use dashcore::ffi::FFINetwork;
+
     use crate::account::account_free;
     use crate::error::{FFIError, FFIErrorCode};
     use crate::types::FFIAccountType;
     use crate::wallet;
-    use crate::FFINetwork;
     use std::ffi::CString;
     use std::ptr;
 

@@ -995,8 +995,9 @@ pub unsafe extern "C" fn address_info_array_free(infos: *mut *mut FFIAddressInfo
 
 #[cfg(test)]
 mod tests {
+    use dashcore::ffi::FFINetwork;
+
     use super::*;
-    use crate::FFINetwork;
 
     #[test]
     fn test_address_pool_type_values() {

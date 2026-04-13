@@ -5,7 +5,6 @@ mod tests {
     use crate::error::{FFIError, FFIErrorCode};
     use crate::types::FFIAccountType;
     use crate::wallet;
-    use crate::FFINetwork;
     use std::ffi::CString;
     use std::ptr;
 
@@ -205,7 +204,7 @@ mod tests {
             assert!(xpub.is_null());
 
             let network = account_get_network(ptr::null());
-            assert_eq!(network, crate::FFINetwork::Mainnet);
+            assert_eq!(network, FFINetwork::Mainnet);
 
             let wallet_id = account_get_parent_wallet_id(ptr::null());
             assert!(wallet_id.is_null());

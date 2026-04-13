@@ -1,14 +1,14 @@
 //! Account management functions
 
-use std::os::raw::c_uint;
-use std::sync::Arc;
-
 use crate::error::{FFIError, FFIErrorCode};
-use crate::types::{FFIAccountResult, FFIAccountType, FFINetwork, FFIWallet};
+use crate::types::{FFIAccountResult, FFIAccountType, FFIWallet};
+use dashcore::ffi::FFINetwork;
 #[cfg(feature = "bls")]
 use key_wallet::account::BLSAccount;
 #[cfg(feature = "eddsa")]
 use key_wallet::account::EdDSAAccount;
+use std::os::raw::c_uint;
+use std::sync::Arc;
 
 /// Opaque account handle
 pub struct FFIAccount {

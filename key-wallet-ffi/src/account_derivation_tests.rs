@@ -2,6 +2,8 @@
 
 #[cfg(test)]
 mod tests {
+    use dashcore::ffi::FFINetwork;
+
     use crate::account::account_free;
     use crate::account_derivation::*;
     use crate::derivation::*;
@@ -9,7 +11,6 @@ mod tests {
     use crate::keys::{extended_private_key_free, private_key_free};
     use crate::types::FFIAccountType;
     use crate::wallet;
-    use crate::FFINetwork;
 
     const MNEMONIC: &str =
         "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
@@ -54,12 +55,7 @@ mod tests {
         assert!(ok);
 
         let master_xpriv = unsafe {
-            derivation_new_master_key(
-                seed.as_ptr(),
-                seed.len(),
-                crate::FFINetwork::Testnet,
-                &mut error,
-            )
+            derivation_new_master_key(seed.as_ptr(), seed.len(), FFINetwork::Testnet, &mut error)
         };
         assert!(!master_xpriv.is_null());
 
@@ -158,12 +154,7 @@ mod tests {
         };
         assert!(ok);
         let master_xpriv = unsafe {
-            derivation_new_master_key(
-                seed.as_ptr(),
-                seed.len(),
-                crate::FFINetwork::Testnet,
-                &mut error,
-            )
+            derivation_new_master_key(seed.as_ptr(), seed.len(), FFINetwork::Testnet, &mut error)
         };
         assert!(!master_xpriv.is_null());
 

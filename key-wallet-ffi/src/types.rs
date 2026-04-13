@@ -5,7 +5,7 @@ use dashcore::hashes::Hash;
 use key_wallet::managed_account::transaction_record::{OutputRole, TransactionDirection};
 use key_wallet::transaction_checking::transaction_router::TransactionType;
 use key_wallet::transaction_checking::{BlockInfo, TransactionContext};
-use key_wallet::{Network, Wallet};
+use key_wallet::Wallet;
 use std::os::raw::c_char;
 use std::sync::Arc;
 
@@ -84,49 +84,6 @@ pub(crate) fn transaction_context_from_ffi(
                 return None;
             }
             Some(TransactionContext::InChainLockedBlock(block_info.to_block_info()))
-        }
-    }
-}
-
-/// FFI Network type (single network)
-#[repr(C)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum FFINetwork {
-    Mainnet = 0,
-    Testnet = 1,
-    Regtest = 2,
-    Devnet = 3,
-}
-
-#[no_mangle]
-pub extern "C" fn ffi_network_get_name(network: FFINetwork) -> *const c_char {
-    match network {
-        FFINetwork::Mainnet => c"mainnet".as_ptr() as *const c_char,
-        FFINetwork::Testnet => c"testnet".as_ptr() as *const c_char,
-        FFINetwork::Regtest => c"regtest".as_ptr() as *const c_char,
-        FFINetwork::Devnet => c"devnet".as_ptr() as *const c_char,
-    }
-}
-
-impl From<FFINetwork> for Network {
-    fn from(net: FFINetwork) -> Self {
-        match net {
-            FFINetwork::Mainnet => Network::Mainnet,
-            FFINetwork::Testnet => Network::Testnet,
-            FFINetwork::Regtest => Network::Regtest,
-            FFINetwork::Devnet => Network::Devnet,
-        }
-    }
-}
-
-impl From<Network> for FFINetwork {
-    fn from(net: Network) -> Self {
-        match net {
-            Network::Mainnet => FFINetwork::Mainnet,
-            Network::Testnet => FFINetwork::Testnet,
-            Network::Regtest => FFINetwork::Regtest,
-            Network::Devnet => FFINetwork::Devnet,
-            _ => FFINetwork::Mainnet,
         }
     }
 }

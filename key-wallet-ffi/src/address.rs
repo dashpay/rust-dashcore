@@ -7,8 +7,9 @@ mod tests;
 use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_uchar};
 
+use dashcore::ffi::FFINetwork;
+
 use crate::error::{FFIError, FFIErrorCode};
-use crate::types::FFINetwork;
 
 /// Free address string
 ///

@@ -7,6 +7,7 @@
 use std::os::raw::{c_char, c_uint};
 use std::sync::Arc;
 
+use dashcore::ffi::FFINetwork;
 use dashcore::hashes::Hash;
 
 use crate::address_pool::{FFIAddressPool, FFIAddressPoolType};
@@ -16,7 +17,6 @@ use crate::types::{
     FFITransactionDirection, FFITransactionType,
 };
 use crate::wallet_manager::FFIWalletManager;
-use crate::FFINetwork;
 use key_wallet::account::account_collection::{DashpayAccountKey, PlatformPaymentAccountKey};
 use key_wallet::managed_account::address_pool::AddressPool;
 use key_wallet::managed_account::managed_platform_account::ManagedPlatformAccount;
@@ -1471,7 +1471,6 @@ mod tests {
         wallet_manager_add_wallet_from_mnemonic_with_options, wallet_manager_create,
         wallet_manager_free, wallet_manager_free_wallet_ids, wallet_manager_get_wallet_ids,
     };
-    use crate::FFINetwork;
     use std::ffi::CString;
     use std::ptr;
 

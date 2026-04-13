@@ -5,7 +5,7 @@ mod tests {
         FiltersProgress, InstantSendProgress, MasternodesProgress, SyncProgress, SyncState,
     };
     use dash_spv_ffi::*;
-    use key_wallet_ffi::FFINetwork;
+    use dashcore::ffi::FFINetwork;
 
     #[test]
     fn test_ffi_string_new_and_destroy() {

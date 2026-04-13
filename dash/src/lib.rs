@@ -90,29 +90,40 @@ mod parse;
 #[cfg(feature = "serde")]
 pub mod serde_utils;
 
+/// cbindgen:ignore
 #[macro_use]
 pub mod network;
 pub mod address;
+/// cbindgen:ignore
 pub mod amount;
 pub mod base58;
 pub mod bip152;
 pub mod bip158;
+/// cbindgen:ignore
 pub mod blockdata;
+/// cbindgen:ignore
 pub mod bloom;
+/// cbindgen:ignore
 pub mod consensus;
 // Private until we either make this a crate or flatten it - still to be decided.
 pub mod bls_sig_utils;
 pub mod crypto;
 pub mod ephemerealdata;
 pub mod error;
+#[cfg(feature = "ffi")]
+pub mod ffi;
 pub mod hash_types;
 pub mod merkle_tree;
+/// cbindgen:ignore
 pub mod policy;
+/// cbindgen:ignore
 pub mod pow;
 pub mod sign_message;
 pub mod signer;
+/// cbindgen:ignore
 pub mod sml;
 pub mod string;
+/// cbindgen:ignore
 pub mod taproot;
 pub mod util;
 

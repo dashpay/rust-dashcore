@@ -4,7 +4,7 @@ This document provides a comprehensive reference for all FFI (Foreign Function I
 
 **Auto-generated**: This documentation is automatically generated from the source code. Do not edit manually.
 
-**Total Functions**: 260
+**Total Functions**: 259
 
 ## Table of Contents
 
@@ -328,7 +328,7 @@ Functions: 6
 
 ### Utility Functions
 
-Functions: 18
+Functions: 17
 
 | Function | Description | Module |
 |----------|-------------|--------|
@@ -346,7 +346,6 @@ Functions: 18
 | `derivation_xpub_fingerprint` | Get fingerprint from extended public key (4 bytes)  # Safety  - `xpub` must... | derivation |
 | `derivation_xpub_free` | Free extended public key  # Safety  - `xpub` must be a valid pointer to an... | derivation |
 | `derivation_xpub_to_string` | Get extended public key as string  # Safety  - `xpub` must be a valid... | derivation |
-| `ffi_network_get_name` | No description | types |
 | `free_u32_array` | Free a u32 array allocated by this library  # Safety  - `array` must be a... | account_collection |
 | `script_p2pkh` | Create a P2PKH script pubkey  # Safety - `pubkey_hash` must be a valid... | transaction |
 | `string_free` | Free a string  # Safety  - `s` must be a valid pointer created by C string... | utils |
@@ -4316,16 +4315,6 @@ Get extended public key as string  # Safety  - `xpub` must be a valid pointer to
 - `xpub` must be a valid pointer to an FFIExtendedPubKey - `error` must be a valid pointer to an FFIError - The returned string must be freed with `string_free`
 
 **Module:** `derivation`
-
----
-
-#### `ffi_network_get_name`
-
-```c
-ffi_network_get_name(network: FFINetwork) -> *const c_char
-```
-
-**Module:** `types`
 
 ---
 

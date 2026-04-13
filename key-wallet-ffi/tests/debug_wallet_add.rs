@@ -1,8 +1,9 @@
+use dashcore::ffi::FFINetwork;
+
 #[test]
 fn test_debug_wallet_add() {
     use key_wallet_ffi::error::FFIError;
     use key_wallet_ffi::wallet_manager;
-    use key_wallet_ffi::FFINetwork;
     use std::ffi::CString;
 
     let mut error = FFIError::success();

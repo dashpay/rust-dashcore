@@ -5,6 +5,7 @@ use std::os::raw::c_char;
 use std::ptr;
 use std::slice;
 
+use dashcore::ffi::FFINetwork;
 use dashcore::{
     consensus, hashes::Hash, sighash::SighashCache, EcdsaSighashType, Network, OutPoint, Script,
     ScriptBuf, Transaction, TxIn, TxOut, Txid,
@@ -19,7 +20,7 @@ use secp256k1::{Message, Secp256k1, SecretKey};
 
 use crate::error::{FFIError, FFIErrorCode};
 use crate::types::{
-    transaction_context_from_ffi, FFIBlockInfo, FFINetwork, FFITransactionContextType, FFIWallet,
+    transaction_context_from_ffi, FFIBlockInfo, FFITransactionContextType, FFIWallet,
 };
 use crate::FFIWalletManager;
 
