@@ -1164,3 +1164,7 @@ mod tests {
         unsafe { error.free_message() };
     }
 }
+
+#[cfg(test)]
+#[path = "managed_wallet_tests.rs"]
+mod managed_wallet_tests;

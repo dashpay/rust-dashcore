@@ -699,3 +699,7 @@ pub unsafe extern "C" fn account_derive_private_key_from_mnemonic(
         }
     }
 }
+
+#[cfg(test)]
+#[path = "account_derivation_tests.rs"]
+mod account_derivation_tests;

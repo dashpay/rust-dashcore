@@ -9,8 +9,7 @@ mod tests {
     use crate::keys::{extended_private_key_free, private_key_free};
     use crate::types::FFIAccountType;
     use crate::wallet;
-    use std::ffi::CString;
-    use std::os::raw::c_char;
+    use crate::FFINetwork;
 
     const MNEMONIC: &str =
         "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
@@ -19,15 +18,24 @@ mod tests {
     fn test_account_derive_private_key_at_receive_index() {
         let mut error = FFIError::success();
 
+        let mnemonic = std::ffi::CString::new(MNEMONIC).unwrap();
+        let passphrase = std::ffi::CString::new("").unwrap();
+
         // Create wallet on testnet with default accounts
-        let wallet = unsafe { wallet::wallet_create_from_mnemonic(c_str(MNEMONIC), c_str(""), FFINetwork::Testnet, &mut error) };
+        let wallet = unsafe {
+            wallet::wallet_create_from_mnemonic(
+                mnemonic.as_ptr(),
+                passphrase.as_ptr(),
+                FFINetwork::Testnet,
+                &mut error,
+            )
+        };
         assert!(!wallet.is_null());
-        assert_eq!(unsafe { (*(&mut error)).code }, FFIErrorCode::Success);
+        assert_eq!(error.code, FFIErrorCode::Success);
 
         // Get account 0 (BIP44)
         let account = unsafe {
-            crate::account::wallet_get_account(wallet, crate::FFINetwork::Testnet, 0, FFIAccountType::StandardBIP44)
-                .account
+            crate::account::wallet_get_account(wallet, 0, FFIAccountType::StandardBIP44).account
         };
         assert!(!account.is_null());
 
@@ -35,22 +43,37 @@ mod tests {
         let mut seed = [0u8; 64];
         // Deterministic seed from mnemonic helper
         let ok = unsafe {
-            crate::mnemonic::mnemonic_to_seed(c_str(MNEMONIC), c_str(""), seed.as_mut_ptr(), &mut (seed.len()), &mut error)
+            crate::mnemonic::mnemonic_to_seed(
+                mnemonic.as_ptr(),
+                passphrase.as_ptr(),
+                seed.as_mut_ptr(),
+                &mut (seed.len()),
+                &mut error,
+            )
         };
         assert!(ok);
 
-        let master_xpriv = unsafe { derivation_new_master_key(seed.as_ptr(), seed.len(), crate::FFINetwork::Testnet, &mut error) };
+        let master_xpriv = unsafe {
+            derivation_new_master_key(
+                seed.as_ptr(),
+                seed.len(),
+                crate::FFINetwork::Testnet,
+                &mut error,
+            )
+        };
         assert!(!master_xpriv.is_null());
 
         // For standard accounts with internal/external, this helper should fail
-        let priv_key = unsafe { account_derive_private_key_at(account, master_xpriv, 0, &mut error) };
+        let priv_key =
+            unsafe { account_derive_private_key_at(account, master_xpriv, 0, &mut error) };
         assert!(priv_key.is_null());
-        assert_eq!(unsafe { (*(&mut error)).code }, FFIErrorCode::WalletError);
+        assert_eq!(error.code, FFIErrorCode::WalletError);
 
         // Derive WIF should also fail for such accounts
-        let wif = unsafe { account_derive_private_key_as_wif_at(account, master_xpriv, 0, &mut error) };
+        let wif =
+            unsafe { account_derive_private_key_as_wif_at(account, master_xpriv, 0, &mut error) };
         assert!(wif.is_null());
-        assert_eq!(unsafe { (*(&mut error)).code }, FFIErrorCode::WalletError);
+        assert_eq!(error.code, FFIErrorCode::WalletError);
 
         // Cleanup
         unsafe {
@@ -70,32 +93,28 @@ mod tests {
         // BLS nulls
         #[cfg(feature = "bls")]
         unsafe {
-            assert!(
-                super::super::account_derivation::bls_account_derive_private_key_from_seed(
-                    std::ptr::null(),
-                    std::ptr::null(),
-                    0,
-                    0,
-                    &mut error,
-                )
-                .is_null()
-            );
+            assert!(super::super::bls_account_derive_private_key_from_seed(
+                std::ptr::null(),
+                std::ptr::null(),
+                0,
+                0,
+                &mut error,
+            )
+            .is_null());
             assert_eq!(error.code, FFIErrorCode::InvalidInput);
         }
 
         // EdDSA nulls
         #[cfg(feature = "eddsa")]
         unsafe {
-            assert!(
-                super::super::account_derivation::eddsa_account_derive_private_key_from_seed(
-                    std::ptr::null(),
-                    std::ptr::null(),
-                    0,
-                    0,
-                    &mut error,
-                )
-                .is_null()
-            );
+            assert!(super::super::eddsa_account_derive_private_key_from_seed(
+                std::ptr::null(),
+                std::ptr::null(),
+                0,
+                0,
+                &mut error,
+            )
+            .is_null());
             assert_eq!(error.code, FFIErrorCode::InvalidInput);
         }
 
@@ -106,31 +125,53 @@ mod tests {
     fn test_account_derive_extended_private_key_at_change_index() {
         let mut error = FFIError::success();
 
+        let mnemonic = std::ffi::CString::new(MNEMONIC).unwrap();
+        let passphrase = std::ffi::CString::new("").unwrap();
+
         // Create wallet on testnet with default accounts
-        let wallet = unsafe { wallet::wallet_create_from_mnemonic(c_str(MNEMONIC), c_str(""), FFINetwork::Testnet, &mut error) };
+        let wallet = unsafe {
+            wallet::wallet_create_from_mnemonic(
+                mnemonic.as_ptr(),
+                passphrase.as_ptr(),
+                FFINetwork::Testnet,
+                &mut error,
+            )
+        };
         assert!(!wallet.is_null());
 
         // Get account 0 (BIP44)
         let account = unsafe {
-            crate::account::wallet_get_account(wallet, crate::FFINetwork::Testnet, 0, FFIAccountType::StandardBIP44)
-                .account
+            crate::account::wallet_get_account(wallet, 0, FFIAccountType::StandardBIP44).account
         };
         assert!(!account.is_null());
 
         // Seed and master xpriv
         let mut seed = [0u8; 64];
         let ok = unsafe {
-            crate::mnemonic::mnemonic_to_seed(c_str(MNEMONIC), c_str(""), seed.as_mut_ptr(), &mut (seed.len()), &mut error)
+            crate::mnemonic::mnemonic_to_seed(
+                mnemonic.as_ptr(),
+                passphrase.as_ptr(),
+                seed.as_mut_ptr(),
+                &mut (seed.len()),
+                &mut error,
+            )
         };
         assert!(ok);
-        let master_xpriv = unsafe { derivation_new_master_key(seed.as_ptr(), seed.len(), crate::FFINetwork::Testnet, &mut error) };
+        let master_xpriv = unsafe {
+            derivation_new_master_key(
+                seed.as_ptr(),
+                seed.len(),
+                crate::FFINetwork::Testnet,
+                &mut error,
+            )
+        };
         assert!(!master_xpriv.is_null());
 
         // Extended xpriv helper should also fail for standard accounts
         let xpriv =
             unsafe { account_derive_extended_private_key_at(account, master_xpriv, 5, &mut error) };
         assert!(xpriv.is_null());
-        assert_eq!(unsafe { (*(&mut error)).code }, FFIErrorCode::WalletError);
+        assert_eq!(error.code, FFIErrorCode::WalletError);
 
         // Cleanup
         unsafe {
@@ -145,26 +186,41 @@ mod tests {
     fn test_account_derive_from_seed_and_mnemonic_helpers_fail_for_standard() {
         let mut error = FFIError::success();
 
+        let mnemonic = std::ffi::CString::new(MNEMONIC).unwrap();
+        let passphrase = std::ffi::CString::new("").unwrap();
+
         // Create wallet and get account 0
-        let wallet = unsafe { wallet::wallet_create_from_mnemonic(c_str(MNEMONIC), c_str(""), FFINetwork::Testnet, &mut error) };
+        let wallet = unsafe {
+            wallet::wallet_create_from_mnemonic(
+                mnemonic.as_ptr(),
+                passphrase.as_ptr(),
+                FFINetwork::Testnet,
+                &mut error,
+            )
+        };
         assert!(!wallet.is_null());
         let account = unsafe {
-            crate::account::wallet_get_account(wallet, crate::FFINetwork::Testnet, 0, FFIAccountType::StandardBIP44)
-                .account
+            crate::account::wallet_get_account(wallet, 0, FFIAccountType::StandardBIP44).account
         };
         assert!(!account.is_null());
 
         // Prepare seed
-        let mnemonic = std::ffi::CString::new(MNEMONIC).unwrap();
-        let pass = std::ffi::CString::new("").unwrap();
         let mut seed = [0u8; 64];
         let mut seed_len = seed.len();
-        let ok = unsafe { crate::mnemonic::mnemonic_to_seed(mnemonic.as_ptr(), pass.as_ptr(), seed.as_mut_ptr(), &mut seed_len, &mut error) };
+        let ok = unsafe {
+            crate::mnemonic::mnemonic_to_seed(
+                mnemonic.as_ptr(),
+                passphrase.as_ptr(),
+                seed.as_mut_ptr(),
+                &mut seed_len,
+                &mut error,
+            )
+        };
         assert!(ok);
 
         // account_derive_extended_private_key_from_seed should fail for standard accounts
         let xpriv_seed = unsafe {
-            super::super::account_derivation::account_derive_extended_private_key_from_seed(
+            super::super::account_derive_extended_private_key_from_seed(
                 account,
                 seed.as_ptr(),
                 seed_len,
@@ -173,11 +229,11 @@ mod tests {
             )
         };
         assert!(xpriv_seed.is_null());
-        assert_eq!(unsafe { (*(&mut error)).code }, FFIErrorCode::WalletError);
+        assert_eq!(error.code, FFIErrorCode::WalletError);
 
         // account_derive_private_key_from_seed should fail
         let priv_seed = unsafe {
-            super::super::account_derivation::account_derive_private_key_from_seed(
+            super::super::account_derive_private_key_from_seed(
                 account,
                 seed.as_ptr(),
                 seed_len,
@@ -186,43 +242,38 @@ mod tests {
             )
         };
         assert!(priv_seed.is_null());
-        assert_eq!(unsafe { (*(&mut error)).code }, FFIErrorCode::WalletError);
+        assert_eq!(error.code, FFIErrorCode::WalletError);
 
         // account_derive_extended_private_key_from_mnemonic should fail
         let xpriv_mn = unsafe {
-            super::super::account_derivation::account_derive_extended_private_key_from_mnemonic(
+            super::super::account_derive_extended_private_key_from_mnemonic(
                 account,
                 mnemonic.as_ptr(),
-                pass.as_ptr(),
+                passphrase.as_ptr(),
                 0,
                 &mut error,
             )
         };
         assert!(xpriv_mn.is_null());
-        assert_eq!(unsafe { (*(&mut error)).code }, FFIErrorCode::WalletError);
+        assert_eq!(error.code, FFIErrorCode::WalletError);
 
         // account_derive_private_key_from_mnemonic should fail
         let priv_mn = unsafe {
-            super::super::account_derivation::account_derive_private_key_from_mnemonic(
+            super::super::account_derive_private_key_from_mnemonic(
                 account,
                 mnemonic.as_ptr(),
-                pass.as_ptr(),
+                passphrase.as_ptr(),
                 0,
                 &mut error,
             )
         };
         assert!(priv_mn.is_null());
-        assert_eq!(unsafe { (*(&mut error)).code }, FFIErrorCode::WalletError);
+        assert_eq!(error.code, FFIErrorCode::WalletError);
 
         unsafe {
             account_free(account);
             wallet::wallet_free(wallet);
             error.free_message();
         }
-    }
-
-    // Helper to make C string pointers
-    fn c_str(s: &str) -> *const c_char {
-        std::ffi::CString::new(s).unwrap().as_ptr()
     }
 }
