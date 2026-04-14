@@ -50,8 +50,7 @@ impl SegmentState {
             coordinator: DownloadCoordinator::new(
                 DownloadConfig::default()
                     .with_max_concurrent(1) // Only 1 request at a time (sequential getheaders)
-                    .with_timeout(HEADERS_TIMEOUT)
-                    .with_max_retries(3),
+                    .with_timeout(HEADERS_TIMEOUT),
             ),
             buffered_headers: Vec::new(),
             complete: false,

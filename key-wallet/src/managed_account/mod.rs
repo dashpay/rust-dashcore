@@ -648,13 +648,27 @@ impl ManagedCoreAccount {
         cs
     }
 
+    /// Return the UTXOs of this account for which
+    /// [`Utxo::is_spendable`] holds at `synced_height`. See that method
+    /// for the exact policy. Call this per-account rather than
+    /// aggregating across the wallet, since spendability is
+    /// account-type specific.
+    pub fn spendable_utxos(&self, synced_height: u32) -> BTreeSet<&Utxo> {
+        self.utxos.values().filter(|utxo| utxo.is_spendable(synced_height)).collect()
+    }
+
     /// Recompute the account balance from its UTXO set.
     ///
-    /// Returns a [`WalletChangeSet`] carrying the signed balance delta between
-    /// the new and old balance buckets. An empty changeset means the balance
-    /// did not change.
+    /// Mature, non-locked UTXOs land in either the `confirmed` bucket
+    /// (in a block or InstantSend-locked) or the `unconfirmed` bucket
+    /// (mempool only). Both are spendable per [`Utxo::is_spendable`];
+    /// the split is only for display.
+    ///
+    /// Returns a [`WalletChangeSet`] carrying the signed balance delta
+    /// between the new and old balance buckets. An empty changeset
+    /// means the balance did not change.
     pub fn update_balance(&mut self, synced_height: u32) -> WalletChangeSet {
-        let mut spendable = 0u64;
+        let mut confirmed = 0u64;
         let mut unconfirmed = 0u64;
         let mut immature = 0u64;
         let mut locked = 0u64;
@@ -664,20 +678,20 @@ impl ManagedCoreAccount {
                 locked += value;
             } else if !utxo.is_mature(synced_height) {
                 immature += value;
-            } else if utxo.is_spendable(synced_height) {
-                spendable += value;
+            } else if utxo.is_confirmed || utxo.is_instantlocked {
+                confirmed += value;
             } else {
                 unconfirmed += value;
             }
         }
 
         let old = self.balance;
-        let new = WalletCoreBalance::new(spendable, unconfirmed, immature, locked);
+        let new = WalletCoreBalance::new(confirmed, unconfirmed, immature, locked);
         self.balance = new;
         self.metadata.last_used = Some(Self::current_timestamp());
 
         let bal = BalanceChangeSet {
-            spendable_delta: new.spendable() as i64 - old.spendable() as i64,
+            confirmed_delta: new.confirmed() as i64 - old.confirmed() as i64,
             unconfirmed_delta: new.unconfirmed() as i64 - old.unconfirmed() as i64,
             immature_delta: new.immature() as i64 - old.immature() as i64,
             locked_delta: new.locked() as i64 - old.locked() as i64,

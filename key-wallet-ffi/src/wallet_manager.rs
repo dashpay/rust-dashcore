@@ -703,7 +703,7 @@ pub unsafe extern "C" fn wallet_manager_get_wallet_balance(
     match result {
         Ok(balance) => {
             unsafe {
-                *confirmed_out = balance.spendable();
+                *confirmed_out = balance.confirmed();
                 *unconfirmed_out = balance.unconfirmed();
             }
             FFIError::set_success(error);

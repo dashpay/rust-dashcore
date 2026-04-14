@@ -124,11 +124,9 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager, H: EventHandler>
 
         // Build mempool manager if tracking is enabled
         if config.enable_mempool_tracking {
-            let mempool_state = Arc::new(RwLock::new(Default::default()));
             let initial_revision = wallet.read().await.monitor_revision();
             managers.mempool = Some(MempoolManager::new(
                 wallet.clone(),
-                mempool_state,
                 config.mempool_strategy,
                 config.max_mempool_transactions,
                 initial_revision,

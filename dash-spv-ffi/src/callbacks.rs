@@ -568,7 +568,7 @@ pub type OnTransactionStatusChangedCallback = Option<
 pub type OnBalanceUpdatedCallback = Option<
     extern "C" fn(
         wallet_id: *const c_char,
-        spendable: u64,
+        confirmed: u64,
         unconfirmed: u64,
         immature: u64,
         locked: u64,
@@ -828,7 +828,7 @@ impl FFIWalletEventCallbacks {
             }
             WalletEvent::BalanceUpdated {
                 wallet_id,
-                spendable,
+                confirmed,
                 unconfirmed,
                 immature,
                 locked,
@@ -838,7 +838,7 @@ impl FFIWalletEventCallbacks {
                     let c_wallet_id = CString::new(wallet_id_hex).unwrap_or_default();
                     cb(
                         c_wallet_id.as_ptr(),
-                        *spendable,
+                        *confirmed,
                         *unconfirmed,
                         *immature,
                         *locked,

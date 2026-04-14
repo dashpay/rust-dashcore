@@ -29,9 +29,6 @@ const MAX_CONCURRENT_FILTER_BATCHES: usize = 20;
 /// Each batch requires 1000 individual filter messages, so allow plenty of time.
 const FILTER_TIMEOUT: Duration = Duration::from_secs(30);
 
-/// Maximum number of retries for CFilter requests.
-const FILTERS_MAX_RETRIES: u32 = 3;
-
 /// Pipeline for downloading compact block filters.
 ///
 /// Uses DownloadCoordinator<u32> for batch-level download mechanics,
@@ -69,8 +66,7 @@ impl FiltersPipeline {
             coordinator: DownloadCoordinator::new(
                 DownloadConfig::default()
                     .with_max_concurrent(MAX_CONCURRENT_FILTER_BATCHES)
-                    .with_timeout(FILTER_TIMEOUT)
-                    .with_max_retries(FILTERS_MAX_RETRIES),
+                    .with_timeout(FILTER_TIMEOUT),
             ),
             batch_trackers: HashMap::new(),
             completed_batches: BTreeSet::new(),
@@ -249,24 +245,11 @@ impl FiltersPipeline {
 
     /// Check for timed out batches and handle retries.
     ///
-    /// Returns batch starts that timed out and were re-queued.
-    /// Uses coordinator's retry mechanism to avoid duplicate requests.
-    /// Note: Does not remove batch trackers - keeps them to receive any late-arriving filters.
-    pub(super) fn handle_timeouts(&mut self) -> Vec<u32> {
-        let mut timed_out_starts = Vec::new();
-
+    /// Does not remove batch trackers — keeps them to receive any late-arriving filters.
+    pub(super) fn handle_timeouts(&mut self) {
         for start in self.coordinator.check_timeouts() {
-            if self.coordinator.enqueue_retry(start) {
-                tracing::warn!("Filter batch at {} timed out, queued for retry", start);
-                timed_out_starts.push(start);
-            } else {
-                // Max retries exceeded - remove tracker, log error
-                tracing::error!("Filter batch at {} exceeded max retries, giving up", start);
-                self.batch_trackers.remove(&start);
-            }
+            self.coordinator.enqueue_retry(start);
         }
-
-        timed_out_starts
     }
 }
 
@@ -291,9 +274,7 @@ mod tests {
     fn create_pipeline_with_short_timeout() -> FiltersPipeline {
         FiltersPipeline {
             coordinator: DownloadCoordinator::new(
-                DownloadConfig::default()
-                    .with_timeout(Duration::from_millis(1))
-                    .with_max_retries(3),
+                DownloadConfig::default().with_timeout(Duration::from_millis(1)),
             ),
             batch_trackers: HashMap::new(),
             completed_batches: BTreeSet::new(),
@@ -307,10 +288,7 @@ mod tests {
     fn create_pipeline_with_low_concurrency() -> FiltersPipeline {
         FiltersPipeline {
             coordinator: DownloadCoordinator::new(
-                DownloadConfig::default()
-                    .with_max_concurrent(2)
-                    .with_timeout(FILTER_TIMEOUT)
-                    .with_max_retries(FILTERS_MAX_RETRIES),
+                DownloadConfig::default().with_max_concurrent(2).with_timeout(FILTER_TIMEOUT),
             ),
             batch_trackers: HashMap::new(),
             completed_batches: BTreeSet::new(),
@@ -665,8 +643,7 @@ mod tests {
     #[test]
     fn test_handle_timeouts_no_batches() {
         let mut pipeline = FiltersPipeline::new();
-        let timed_out = pipeline.handle_timeouts();
-        assert!(timed_out.is_empty());
+        pipeline.handle_timeouts();
     }
 
     #[test]
@@ -681,9 +658,8 @@ mod tests {
         // Wait for timeout
         std::thread::sleep(Duration::from_millis(5));
 
-        let timed_out = pipeline.handle_timeouts();
+        pipeline.handle_timeouts();
 
-        assert_eq!(timed_out, vec![0]);
         // Batch should be re-queued in coordinator's pending queue
         assert_eq!(pipeline.coordinator.pending_count(), 1);
         assert_eq!(pipeline.coordinator.active_count(), 0);
@@ -705,10 +681,9 @@ mod tests {
 
         std::thread::sleep(Duration::from_millis(5));
 
-        let timed_out = pipeline.handle_timeouts();
+        pipeline.handle_timeouts();
 
         // Should timeout but tracker is preserved for late arrivals
-        assert_eq!(timed_out, vec![0]);
         assert!(pipeline.batch_trackers.contains_key(&0));
         assert_eq!(pipeline.batch_trackers.get(&0).unwrap().received(), 10);
     }
@@ -721,7 +696,6 @@ mod tests {
             coordinator: DownloadCoordinator::new(
                 DownloadConfig::default()
                     .with_timeout(Duration::from_millis(1))
-                    .with_max_retries(3)
                     .with_max_concurrent(10),
             ),
             batch_trackers: HashMap::new(),
@@ -744,8 +718,7 @@ mod tests {
         std::thread::sleep(Duration::from_millis(5));
 
         // Handle timeouts - all 3 should timeout and be re-queued
-        let timed_out = pipeline.handle_timeouts();
-        assert_eq!(timed_out.len(), 3);
+        pipeline.handle_timeouts();
 
         // All 3 batches should be in the pending queue, not duplicated
         assert_eq!(pipeline.coordinator.pending_count(), 3);
@@ -945,8 +918,7 @@ mod tests {
         std::thread::sleep(Duration::from_millis(5));
 
         // Handle timeout - should re-queue the batch via coordinator
-        let timed_out = pipeline.handle_timeouts();
-        assert_eq!(timed_out.len(), 1);
+        pipeline.handle_timeouts();
         assert_eq!(pipeline.coordinator.pending_count(), 1);
         assert_eq!(pipeline.coordinator.active_count(), 0);
 

@@ -230,7 +230,7 @@ impl Merge for ChainChangeSet {
 #[derive(Debug, Clone, Default, PartialEq)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct BalanceChangeSet {
-    pub spendable_delta: i64,
+    pub confirmed_delta: i64,
     pub unconfirmed_delta: i64,
     pub immature_delta: i64,
     pub locked_delta: i64,
@@ -238,14 +238,14 @@ pub struct BalanceChangeSet {
 
 impl Merge for BalanceChangeSet {
     fn merge(&mut self, other: Self) {
-        self.spendable_delta = self.spendable_delta.saturating_add(other.spendable_delta);
+        self.confirmed_delta = self.confirmed_delta.saturating_add(other.confirmed_delta);
         self.unconfirmed_delta = self.unconfirmed_delta.saturating_add(other.unconfirmed_delta);
         self.immature_delta = self.immature_delta.saturating_add(other.immature_delta);
         self.locked_delta = self.locked_delta.saturating_add(other.locked_delta);
     }
 
     fn is_empty(&self) -> bool {
-        self.spendable_delta == 0
+        self.confirmed_delta == 0
             && self.unconfirmed_delta == 0
             && self.immature_delta == 0
             && self.locked_delta == 0
@@ -300,16 +300,16 @@ mod tests {
     #[test]
     fn balance_changeset_merge_sums_deltas() {
         let mut a = BalanceChangeSet {
-            spendable_delta: 100,
+            confirmed_delta: 100,
             ..Default::default()
         };
         let b = BalanceChangeSet {
-            spendable_delta: -50,
+            confirmed_delta: -50,
             unconfirmed_delta: 200,
             ..Default::default()
         };
         a.merge(b);
-        assert_eq!(a.spendable_delta, 50);
+        assert_eq!(a.confirmed_delta, 50);
         assert_eq!(a.unconfirmed_delta, 200);
     }
 

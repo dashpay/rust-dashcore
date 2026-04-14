@@ -224,7 +224,7 @@ impl<T: WalletInfoInterface> WalletManager<T> {
                 if *old_balance != new_balance {
                     let event = WalletEvent::BalanceUpdated {
                         wallet_id: *wallet_id,
-                        spendable: new_balance.spendable(),
+                        confirmed: new_balance.confirmed(),
                         unconfirmed: new_balance.unconfirmed(),
                         immature: new_balance.immature(),
                         locked: new_balance.locked(),
@@ -336,7 +336,7 @@ mod apply_tests {
         // A BalanceChangeSet with any non-zero delta counts as non-empty.
         let cs = WalletChangeSet {
             balance: Some(BalanceChangeSet {
-                spendable_delta: 1,
+                confirmed_delta: 1,
                 ..Default::default()
             }),
             ..Default::default()

@@ -19,9 +19,6 @@ const MAX_CONCURRENT_BLOCK_DOWNLOADS: usize = 20;
 /// Timeout for block downloads before retry.
 const BLOCK_TIMEOUT: Duration = Duration::from_secs(30);
 
-/// Maximum number of retries for block downloads.
-const BLOCK_MAX_RETRIES: u32 = 3;
-
 /// Maximum blocks per GetData request, kept a bit lower for better download distribution to multiple peers
 const BLOCKS_PER_REQUEST: usize = 8;
 
@@ -64,8 +61,7 @@ impl BlocksPipeline {
             coordinator: DownloadCoordinator::new(
                 DownloadConfig::default()
                     .with_max_concurrent(MAX_CONCURRENT_BLOCK_DOWNLOADS)
-                    .with_timeout(BLOCK_TIMEOUT)
-                    .with_max_retries(BLOCK_MAX_RETRIES),
+                    .with_timeout(BLOCK_TIMEOUT),
             ),
             pending_heights: BTreeSet::new(),
             downloaded: BTreeMap::new(),
@@ -173,16 +169,8 @@ impl BlocksPipeline {
     }
 
     /// Check for timed out downloads and re-queue them.
-    ///
-    /// Returns the list of timed out block hashes.
-    pub(super) fn handle_timeouts(&mut self) -> Vec<BlockHash> {
-        let timed_out = self.coordinator.check_and_retry_timeouts();
-
-        if !timed_out.is_empty() {
-            tracing::debug!("Re-queued {} timed out block downloads", timed_out.len());
-        }
-
-        timed_out
+    pub(super) fn handle_timeouts(&mut self) {
+        self.coordinator.check_and_retry_timeouts();
     }
 }
 
@@ -324,10 +312,8 @@ mod tests {
         // Wait for timeout
         std::thread::sleep(Duration::from_millis(20));
 
-        let timed_out = pipeline.handle_timeouts();
+        pipeline.handle_timeouts();
 
-        assert_eq!(timed_out.len(), 1);
-        assert_eq!(timed_out[0], hash);
         assert_eq!(pipeline.coordinator.active_count(), 0);
         assert_eq!(pipeline.coordinator.pending_count(), 1);
     }
@@ -428,53 +414,6 @@ mod tests {
 
         pipeline.pending_heights.remove(&100);
         assert!(pipeline.is_complete());
-    }
-
-    #[test]
-    fn test_handle_timeouts_with_multiple_retries() {
-        let mut pipeline = BlocksPipeline {
-            coordinator: DownloadCoordinator::new(
-                DownloadConfig::default()
-                    .with_max_concurrent(MAX_CONCURRENT_BLOCK_DOWNLOADS)
-                    .with_timeout(Duration::from_millis(1))
-                    .with_max_retries(2),
-            ),
-            pending_heights: BTreeSet::new(),
-            downloaded: BTreeMap::new(),
-            hash_to_height: HashMap::new(),
-        };
-
-        // Use coordinator to set up in-flight state
-        let hash = test_hash(1);
-        pipeline.coordinator.enqueue([hash]);
-        let hashes = pipeline.coordinator.take_pending(1);
-        pipeline.coordinator.mark_sent(&hashes);
-
-        // First timeout - returns item (it's re-queued)
-        std::thread::sleep(Duration::from_millis(5));
-        let timed_out = pipeline.handle_timeouts();
-        assert_eq!(timed_out.len(), 1);
-        assert_eq!(pipeline.coordinator.pending_count(), 1);
-
-        // Re-send the retry
-        let items = pipeline.coordinator.take_pending(1);
-        pipeline.coordinator.mark_sent(&items);
-
-        // Second timeout - still re-queued
-        std::thread::sleep(Duration::from_millis(5));
-        let timed_out = pipeline.handle_timeouts();
-        assert_eq!(timed_out.len(), 1);
-        assert_eq!(pipeline.coordinator.pending_count(), 1);
-
-        // Re-send
-        let items = pipeline.coordinator.take_pending(1);
-        pipeline.coordinator.mark_sent(&items);
-
-        // Third timeout - exceeds max retries, NOT re-queued
-        std::thread::sleep(Duration::from_millis(5));
-        let timed_out = pipeline.handle_timeouts();
-        assert_eq!(timed_out.len(), 0);
-        assert_eq!(pipeline.coordinator.pending_count(), 0);
     }
 
     #[test]

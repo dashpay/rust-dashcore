@@ -207,10 +207,7 @@ impl<
         }
 
         // Handle timeouts
-        let timed_out = self.filter_pipeline.handle_timeouts();
-        if !timed_out.is_empty() {
-            tracing::debug!("Re-queued {} timed out filter batches", timed_out.len());
-        }
+        self.filter_pipeline.handle_timeouts();
 
         // Send pending requests (decoupled from processing)
         let header_storage = self.header_storage.read().await;

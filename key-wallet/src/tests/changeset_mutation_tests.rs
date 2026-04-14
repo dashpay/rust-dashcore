@@ -135,7 +135,7 @@ fn update_balance_emits_signed_deltas_for_grows_and_shrinks() {
     account.insert_utxo(outpoint, utxo);
     let cs = account.update_balance(100);
     let bal_cs = cs.balance.expect("first call must emit delta from zero baseline");
-    assert_eq!(bal_cs.spendable_delta, 100_000);
+    assert_eq!(bal_cs.confirmed_delta, 100_000);
 
     // No state change → empty changeset.
     let cs = account.update_balance(100);
@@ -146,13 +146,13 @@ fn update_balance_emits_signed_deltas_for_grows_and_shrinks() {
     account.insert_utxo(utxo2.outpoint, utxo2);
     let cs = account.update_balance(100);
     let bal_cs = cs.balance.expect("balance must be populated");
-    assert_eq!(bal_cs.spendable_delta, 250_000);
+    assert_eq!(bal_cs.confirmed_delta, 250_000);
 
     // Remove the first UTXO → negative delta.
     account.remove_utxo(&outpoint);
     let cs = account.update_balance(100);
     let bal_cs = cs.balance.expect("balance must be populated");
-    assert_eq!(bal_cs.spendable_delta, -100_000);
+    assert_eq!(bal_cs.confirmed_delta, -100_000);
 }
 
 // ---------------------------------------------------------------------------
@@ -254,7 +254,7 @@ fn wallet_changeset_merge_combines_mutations_from_separate_sources() {
     let mut cs1 = WalletChangeSet::default();
     cs1.account_bucket(bip44_0()).utxos_added.insert(a_utxo.outpoint, a_utxo.clone());
     cs1.balance = Some(BalanceChangeSet {
-        spendable_delta: 100,
+        confirmed_delta: 100,
         ..Default::default()
     });
 
@@ -265,7 +265,7 @@ fn wallet_changeset_merge_combines_mutations_from_separate_sources() {
         bucket.utxos_instant_locked.insert(a_utxo.outpoint);
     }
     cs2.balance = Some(BalanceChangeSet {
-        spendable_delta: 200,
+        confirmed_delta: 200,
         ..Default::default()
     });
 
@@ -276,5 +276,5 @@ fn wallet_changeset_merge_combines_mutations_from_separate_sources() {
     assert_eq!(merged_bucket.utxos_instant_locked.len(), 1);
 
     let merged_bal = cs1.balance.expect("balance should be present");
-    assert_eq!(merged_bal.spendable_delta, 300);
+    assert_eq!(merged_bal.confirmed_delta, 300);
 }

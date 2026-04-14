@@ -11,6 +11,9 @@ ignore = [
     # bincode is unmaintained but used throughout the codebase, need to find a solution here.
     # https://rustsec.org/advisories/RUSTSEC-2025-0141.html
     "RUSTSEC-2025-0141",
+    # rand 0.8.5 is pulled in by blsful (pinned git dep). Upgrading requires blsful to update
+    # its rand dependency to >= 0.9.3. Tracked in https://github.com/dashpay/rust-dashcore/issues/638.
+    "RUSTSEC-2026-0097",
 ]
 
 [licenses]

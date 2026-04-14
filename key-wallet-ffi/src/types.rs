@@ -150,7 +150,7 @@ pub struct FFIBalance {
 impl From<key_wallet::WalletCoreBalance> for FFIBalance {
     fn from(balance: key_wallet::WalletCoreBalance) -> Self {
         FFIBalance {
-            confirmed: balance.spendable(),
+            confirmed: balance.confirmed(),
             unconfirmed: balance.unconfirmed(),
             immature: balance.immature(),
             locked: balance.locked(),
