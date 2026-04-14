@@ -38,10 +38,8 @@ pub struct OutputDetail {
     /// Role of this output from the wallet's perspective
     pub role: OutputRole,
     /// Decoded address (None for non-standard scripts)
-    #[cfg_attr(feature = "serde", serde(default))]
     pub address: Option<Address>,
     /// Value in satoshis
-    #[cfg_attr(feature = "serde", serde(default))]
     pub value: u64,
 }
 
