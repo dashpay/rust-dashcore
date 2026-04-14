@@ -4,6 +4,7 @@
 //! ManagedAccount instances from the key-wallet crate. FFIManagedCoreAccount is a
 //! simple wrapper around `Arc<ManagedAccount>` without additional fields.
 
+use std::ffi::{self};
 use std::os::raw::{c_char, c_uint};
 use std::sync::Arc;
 
@@ -788,9 +789,19 @@ pub unsafe extern "C" fn managed_core_account_get_transactions(
         let output_slice: Box<[FFIOutputDetail]> = record
             .output_details
             .iter()
-            .map(|d| FFIOutputDetail {
-                index: d.index,
-                role: FFIOutputRole::from(d.role),
+            .map(|d| {
+                let address = if let Some(address) = &d.address {
+                    ffi::CString::new(address.to_string()).unwrap_or_default().into_raw()
+                } else {
+                    std::ptr::null_mut()
+                };
+
+                FFIOutputDetail {
+                    index: d.index,
+                    role: FFIOutputRole::from(d.role),
+                    value: d.value,
+                    address,
+                }
             })
             .collect::<Vec<_>>()
             .into_boxed_slice();
@@ -2038,6 +2049,8 @@ mod tests {
             let output_slice = vec![FFIOutputDetail {
                 index: 0,
                 role: FFIOutputRole::Received,
+                value: 100000,
+                address: std::ptr::null_mut(),
             }]
             .into_boxed_slice();
             r0.output_details_count = output_slice.len();

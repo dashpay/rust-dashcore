@@ -486,7 +486,8 @@ impl ManagedCoreAccount {
         // Build output details — annotate every output with its role
         let mut output_details = Vec::new();
         for (idx, output) in tx.output.iter().enumerate() {
-            let role = match &resolved_outputs[idx] {
+            let address = resolved_outputs[idx].clone();
+            let role = match &address {
                 Some(addr) if receive_addrs.contains(addr) => OutputRole::Received,
                 Some(addr) if change_addrs.contains(addr) => OutputRole::Change,
                 Some(_) if has_inputs => OutputRole::Sent,
@@ -501,9 +502,12 @@ impl ManagedCoreAccount {
                     }
                 }
             };
+
             output_details.push(OutputDetail {
                 index: idx as u32,
                 role,
+                value: output.value,
+                address,
             });
         }
 

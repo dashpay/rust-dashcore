@@ -17,7 +17,7 @@ use key_wallet_ffi::types::{
     FFITransactionType,
 };
 use key_wallet_manager::WalletEvent;
-use std::ffi::CString;
+use std::ffi::{self, CString};
 use std::os::raw::{c_char, c_void};
 
 // ============================================================================
@@ -728,9 +728,21 @@ impl FFIWalletEventCallbacks {
                     let output_details: Vec<FFIOutputDetail> = record
                         .output_details
                         .iter()
-                        .map(|d| FFIOutputDetail {
-                            index: d.index,
-                            role: FFIOutputRole::from(d.role),
+                        .map(|d| {
+                            let address = if let Some(address) = &d.address {
+                                ffi::CString::new(address.to_string())
+                                    .unwrap_or_default()
+                                    .into_raw()
+                            } else {
+                                std::ptr::null_mut()
+                            };
+
+                            FFIOutputDetail {
+                                index: d.index,
+                                role: FFIOutputRole::from(d.role),
+                                value: d.value,
+                                address,
+                            }
                         })
                         .collect();
 

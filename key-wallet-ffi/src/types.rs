@@ -6,6 +6,7 @@ use key_wallet::managed_account::transaction_record::{OutputRole, TransactionDir
 use key_wallet::transaction_checking::transaction_router::TransactionType;
 use key_wallet::transaction_checking::{BlockInfo, TransactionContext};
 use key_wallet::{Network, Wallet};
+use std::ffi;
 use std::os::raw::c_char;
 use std::sync::Arc;
 
@@ -926,10 +927,23 @@ pub struct FFIInputDetail {
 }
 
 /// FFI-compatible output detail
+/// Address is optional, will be null for unspendable or sent output roles
 #[repr(C)]
 pub struct FFIOutputDetail {
     pub index: u32,
     pub role: FFIOutputRole,
+    pub value: u64,
+    pub address: *mut std::os::raw::c_char,
+}
+
+impl Drop for FFIOutputDetail {
+    fn drop(&mut self) {
+        if self.address != std::ptr::null_mut() {
+            unsafe {
+                let _ = ffi::CString::from_raw(self.address);
+            }
+        }
+    }
 }
 
 #[cfg(test)]
