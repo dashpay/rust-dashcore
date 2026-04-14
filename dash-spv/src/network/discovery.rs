@@ -60,11 +60,21 @@ impl DnsDiscovery {
             }
         }
 
+        // For testnet, add fixed peers as fallback if DNS returned few/no results
+        if matches!(network, Network::Testnet) {
+            use super::constants::TESTNET_FIXED_PEERS;
+            for ip_str in TESTNET_FIXED_PEERS {
+                if let Ok(ip) = ip_str.parse::<IpAddr>() {
+                    addresses.push(SocketAddr::new(ip, port));
+                }
+            }
+        }
+
         // Deduplicate addresses
         addresses.sort();
         addresses.dedup();
 
-        tracing::info!("Discovered {} unique peer addresses from DNS seeds", addresses.len());
+        tracing::info!("Discovered {} unique peer addresses for {:?}", addresses.len(), network);
         addresses
     }
 
