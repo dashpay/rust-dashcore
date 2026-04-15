@@ -446,14 +446,21 @@ impl<W: WalletInterface> MempoolManager<W> {
     /// Transactions whose last broadcast was more than `REBROADCAST_INTERVAL`
     /// ago are rebroadcast and their timestamp is reset.
     pub(super) async fn rebroadcast_if_due(&mut self, requests: &RequestSender) {
+        self.rebroadcast_if_due_at(requests, Instant::now()).await
+    }
+
+    /// `now`-injected variant of [`Self::rebroadcast_if_due`]. Tests project `now`
+    /// forward instead of subtracting from `Instant::now()`, which underflows on
+    /// Windows when the QPC-based monotonic clock has a small value at boot.
+    async fn rebroadcast_if_due_at(&mut self, requests: &RequestSender, now: Instant) {
         let mut due: Vec<Transaction> = Vec::new();
         for (txid, last_broadcast) in &mut self.recent_sends {
-            if last_broadcast.elapsed() < REBROADCAST_INTERVAL {
+            if now.saturating_duration_since(*last_broadcast) < REBROADCAST_INTERVAL {
                 continue;
             }
             if let Some(unconfirmed) = self.transactions.get(txid) {
                 due.push(unconfirmed.transaction.clone());
-                *last_broadcast = Instant::now();
+                *last_broadcast = now;
             }
         }
 
@@ -1646,16 +1653,16 @@ mod tests {
         };
         let txid = tx.txid();
 
-        // Add a transaction and mark its last broadcast as older than the interval
+        let t0 = Instant::now();
+        let later = t0 + REBROADCAST_INTERVAL + Duration::from_secs(1);
+
         manager.transactions.insert(
             txid,
             UnconfirmedTransaction::new(tx, Amount::from_sat(0), false, true, Vec::new(), -100_000),
         );
-        manager
-            .recent_sends
-            .insert(txid, Instant::now() - REBROADCAST_INTERVAL - Duration::from_secs(1));
+        manager.recent_sends.insert(txid, t0);
 
-        manager.rebroadcast_if_due(&requests).await;
+        manager.rebroadcast_if_due_at(&requests, later).await;
 
         // Should have sent a BroadcastMessage for the transaction
         let msg = rx.try_recv().expect("expected a rebroadcast message");
@@ -1665,8 +1672,9 @@ mod tests {
             msg
         );
 
-        // Timestamp should be reset, so a second call should not rebroadcast
-        manager.rebroadcast_if_due(&requests).await;
+        // Timestamp should be reset to `later`, so a second call at the same instant
+        // must not rebroadcast.
+        manager.rebroadcast_if_due_at(&requests, later).await;
         assert!(rx.try_recv().is_err(), "should not rebroadcast immediately after reset");
     }
 
