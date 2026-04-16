@@ -436,4 +436,121 @@ mod tests {
             "create_wallet_with_random_mnemonic should bump revision"
         );
     }
+
+    /// Proves that out-of-order block processing causes stale UTXOs.
+    ///
+    /// Scenario:
+    /// - Block H1 (height 100): external tx pays 1 DASH to our address (creates UTXO)
+    /// - Block H2 (height 200): someone spends that UTXO to an external address
+    ///
+    /// When blocks are processed in correct order (H1 then H2), the UTXO is
+    /// created and then removed — balance returns to zero.
+    ///
+    /// When blocks are processed out of order (H2 then H1), the spending tx
+    /// finds no UTXO to remove (sent=0), then the creating tx adds the UTXO.
+    /// The UTXO is never removed — the wallet shows a stale balance.
+    ///
+    /// See: https://github.com/dashpay/rust-dashcore/issues/649
+    #[tokio::test]
+    async fn test_out_of_order_block_processing_stale_utxo() {
+        let (mut manager, wallet_id, our_addr) = setup_manager_with_wallet();
+
+        // --- Build transactions ---
+
+        // Tx1: pays 1 DASH to our address (appears in block H1 = height 100)
+        let funding_txid = Txid::from_byte_array([0xA1; 32]);
+        let tx_funding = Transaction {
+            version: 2,
+            lock_time: 0,
+            input: vec![TxIn {
+                previous_output: OutPoint {
+                    txid: funding_txid,
+                    vout: 0,
+                },
+                script_sig: ScriptBuf::new(),
+                sequence: u32::MAX,
+                witness: Witness::default(),
+            }],
+            output: vec![TxOut {
+                value: 100_000_000, // 1 DASH
+                script_pubkey: our_addr.script_pubkey(),
+            }],
+            special_transaction_payload: None,
+        };
+
+        let created_outpoint = OutPoint {
+            txid: tx_funding.txid(),
+            vout: 0,
+        };
+
+        // Tx2: spends the UTXO created by tx_funding, sends to an external address
+        // (appears in block H2 = height 200)
+        let external_addr = Address::dummy(Network::Testnet, 99);
+        let tx_spend = Transaction {
+            version: 2,
+            lock_time: 0,
+            input: vec![TxIn {
+                previous_output: created_outpoint,
+                script_sig: our_addr.script_pubkey(), // signed by our key
+                sequence: u32::MAX,
+                witness: Witness::default(),
+            }],
+            output: vec![TxOut {
+                value: 99_999_000, // 1 DASH minus fee
+                script_pubkey: external_addr.script_pubkey(),
+            }],
+            special_transaction_payload: None,
+        };
+
+        // --- Build blocks ---
+        let block_h1 = make_block(vec![tx_funding]);
+        let block_h2 = make_block(vec![tx_spend]);
+
+        // --- CORRECT ORDER: process H1 then H2 ---
+        {
+            let (mut mgr, wid, addr) = setup_manager_with_wallet();
+
+            // Process H1: creates the UTXO
+            mgr.process_block(&block_h1, 100).await;
+            let balance = mgr.get_wallet_balance(&wid).unwrap();
+            assert_eq!(balance.spendable(), 100_000_000, "after H1: should have 1 DASH spendable");
+
+            // Process H2: spends the UTXO
+            mgr.process_block(&block_h2, 200).await;
+            let balance = mgr.get_wallet_balance(&wid).unwrap();
+            assert_eq!(
+                balance.spendable(),
+                0,
+                "after H1→H2 (correct order): UTXO should be spent, balance = 0"
+            );
+        }
+
+        // --- OUT-OF-ORDER: process H2 then H1 ---
+        {
+            // Process H2 first: spending tx — but the UTXO doesn't exist yet
+            manager.process_block(&block_h2, 200).await;
+            let balance_after_h2 = manager.get_wallet_balance(&wallet_id).unwrap();
+            // No UTXO existed, so nothing was spent — balance should be 0
+            assert_eq!(
+                balance_after_h2.spendable(),
+                0,
+                "after H2 only: no UTXO to spend, balance = 0"
+            );
+
+            // Process H1: creating tx — adds the UTXO
+            manager.process_block(&block_h1, 100).await;
+            let balance_after_h1 = manager.get_wallet_balance(&wallet_id).unwrap();
+
+            // BUG: The UTXO was created but never removed, because the spending
+            // tx was already processed (and ignored, since the UTXO didn't exist).
+            // Expected: balance = 0 (UTXO should be recognized as already spent)
+            // Actual (buggy): balance = 1 DASH (stale UTXO)
+            assert_eq!(
+                balance_after_h1.spendable(),
+                0,
+                "after H2→H1 (out-of-order): UTXO was already spent in H2, \
+                 balance should be 0 but the wallet thinks it has 1 DASH (stale UTXO bug)"
+            );
+        }
+    }
 }
