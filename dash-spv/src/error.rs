@@ -236,6 +236,10 @@ pub enum SyncError {
     /// Operation requires the client to be fully synced
     #[error("Client is not synced")]
     NotSynced,
+
+    /// Wallet error during block processing (e.g. persistence failure)
+    #[error("Wallet error: {0}")]
+    Wallet(String),
 }
 
 impl SyncError {
@@ -252,6 +256,7 @@ impl SyncError {
             SyncError::Storage(_) => "storage",
             SyncError::Headers2DecompressionFailed(_) => "headers2",
             SyncError::MasternodeSyncFailed(_) => "masternode",
+            SyncError::Wallet(_) => "wallet",
             // Deprecated variant - should not be used
             #[allow(deprecated)]
             SyncError::SyncFailed(_) => "unknown",
@@ -326,6 +331,12 @@ impl From<StorageError> for SyncError {
 impl From<ValidationError> for SyncError {
     fn from(err: ValidationError) -> Self {
         SyncError::Validation(err.to_string())
+    }
+}
+
+impl From<key_wallet_manager::WalletError> for SyncError {
+    fn from(err: key_wallet_manager::WalletError) -> Self {
+        SyncError::Wallet(err.to_string())
     }
 }
 

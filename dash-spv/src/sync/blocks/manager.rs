@@ -84,7 +84,7 @@ impl<H: BlockHeaderStorage, B: BlockStorage, W: WalletInterface> BlocksManager<H
 
             // Process block through wallet
             let mut wallet = self.wallet.write().await;
-            let result = wallet.process_block(&block, height).await;
+            let result = wallet.process_block(&block, height).await?;
             drop(wallet);
 
             let total_relevant = result.relevant_tx_count();

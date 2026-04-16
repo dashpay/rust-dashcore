@@ -29,6 +29,8 @@ pub enum WalletError {
     InsufficientFunds,
     /// Applying a persisted changeset to a wallet failed.
     ApplyChangeSet(String),
+    /// Persistence backend returned an error during block processing.
+    Persistence(Box<dyn std::error::Error + Send + Sync>),
 }
 
 impl core::fmt::Display for WalletError {
@@ -58,6 +60,7 @@ impl core::fmt::Display for WalletError {
             WalletError::TransactionBuild(err) => write!(f, "Transaction build failed: {}", err),
             WalletError::InsufficientFunds => write!(f, "Insufficient funds"),
             WalletError::ApplyChangeSet(msg) => write!(f, "Apply changeset failed: {}", msg),
+            WalletError::Persistence(e) => write!(f, "Persistence error: {}", e),
         }
     }
 }
