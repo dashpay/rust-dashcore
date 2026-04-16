@@ -453,23 +453,20 @@ impl<W: WalletInterface> MempoolManager<W> {
     /// forward instead of subtracting from `Instant::now()`, which underflows on
     /// Windows when the QPC-based monotonic clock has a small value at boot.
     async fn rebroadcast_if_due_at(&mut self, requests: &RequestSender, now: Instant) {
-        let mut due: Vec<Transaction> = Vec::new();
+        let mut count: usize = 0;
         for (txid, last_broadcast) in &mut self.recent_sends {
             if now.saturating_duration_since(*last_broadcast) < REBROADCAST_INTERVAL {
                 continue;
             }
             if let Some(unconfirmed) = self.transactions.get(txid) {
-                due.push(unconfirmed.transaction.clone());
+                let _ = requests.broadcast(NetworkMessage::Tx(unconfirmed.transaction.clone()));
                 *last_broadcast = now;
+                count += 1;
             }
         }
 
-        for tx in &due {
-            let _ = requests.broadcast(NetworkMessage::Tx(tx.clone()));
-        }
-
-        if !due.is_empty() {
-            tracing::info!("Rebroadcast {} unconfirmed transaction(s) to all peers", due.len());
+        if count > 0 {
+            tracing::info!("Rebroadcast {} unconfirmed transaction(s) to all peers", count);
         }
     }
 
