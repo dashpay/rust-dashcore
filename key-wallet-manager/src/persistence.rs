@@ -10,31 +10,25 @@
 //!
 //! ## Contract
 //!
-//! - `store` is called once per wallet per block for any wallet that had
-//!   relevant transactions in that block.
-//! - `flush` is called once per block after all `store` calls, signalling
-//!   that the buffered changeset may be written atomically.
-//! - Both calls receive the same `wallet_id` so a single shared implementation
-//!   can manage multiple wallets.
+//! - `store` is called once per wallet per block with an accumulated changeset
+//!   containing all transaction state plus the synced height.
+//! - The implementation decides its own flush strategy — it may write
+//!   immediately (like SQLite) or buffer for later.
 
 use crate::WalletId;
 use key_wallet::changeset::WalletChangeSet;
 
 /// Persistence backend for wallet state.
 pub trait WalletPersistence: Send + Sync {
-    /// Buffer a changeset for `wallet_id`.
+    /// Persist a changeset for `wallet_id`.
     ///
-    /// Implementations may write immediately or accumulate for a later [`flush`].
+    /// Called once per wallet per block with the accumulated changeset.
+    /// Implementations decide their own flush strategy — they may write
+    /// inline or buffer for a later batch write.
     fn store(
         &self,
         wallet_id: WalletId,
         cs: WalletChangeSet,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>>;
-
-    /// Flush all buffered state for `wallet_id` to durable storage.
-    fn flush(
-        &self,
-        wallet_id: WalletId,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>>;
 }
 
@@ -48,13 +42,6 @@ impl WalletPersistence for NoWalletPersistence {
         &self,
         _wallet_id: WalletId,
         _cs: WalletChangeSet,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        Ok(())
-    }
-
-    fn flush(
-        &self,
-        _wallet_id: WalletId,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         Ok(())
     }

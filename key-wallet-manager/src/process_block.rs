@@ -68,16 +68,11 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
         }
 
         // Persist accumulated changesets (tx state + height) for every wallet.
-        // Two passes: store all first, then flush all — so backends that support
-        // batch-atomic writes can treat the flush pass as the commit boundary.
-        for (wallet_id, cs) in &block_changesets {
+        // Only calls store — the persister decides its own flush strategy
+        // (e.g. SQLite flushes inline on each store call).
+        for (wallet_id, cs) in block_changesets {
             self.persister
-                .store(*wallet_id, cs.clone())
-                .map_err(WalletError::Persistence)?;
-        }
-        for wallet_id in block_changesets.keys() {
-            self.persister
-                .flush(*wallet_id)
+                .store(wallet_id, cs)
                 .map_err(WalletError::Persistence)?;
         }
 
