@@ -19,7 +19,7 @@ async fn test_mempool_to_confirmed_event_flow() {
     let tx = create_tx_paying_to(&addr, 0xaa);
 
     // First time in mempool — validate all event fields
-    manager.check_transaction_in_all_wallets(&tx, TransactionContext::Mempool, true, true).await;
+    let _ = manager.check_transaction_in_all_wallets(&tx, TransactionContext::Mempool, true, true).await;
     let event = assert_single_event(&mut rx);
     match event {
         WalletEvent::TransactionReceived {
@@ -41,7 +41,7 @@ async fn test_mempool_to_confirmed_event_flow() {
         BlockHash::from_byte_array([0xaa; 32]),
         1000,
     ));
-    manager.check_transaction_in_all_wallets(&tx, block_ctx, true, true).await;
+    let _ = manager.check_transaction_in_all_wallets(&tx, block_ctx, true, true).await;
     let event = assert_single_event(&mut rx);
     match event {
         WalletEvent::TransactionStatusChanged {
@@ -374,7 +374,7 @@ async fn test_process_instant_send_lock_after_block_confirmation() {
         BlockHash::from_byte_array([0xe2; 32]),
         5000,
     ));
-    manager.check_transaction_in_all_wallets(&tx, block_ctx, true, true).await;
+    let _ = manager.check_transaction_in_all_wallets(&tx, block_ctx, true, true).await;
 
     // IS lock after block confirmation is a no-op (already tracked via mempool IS)
     let mut rx = manager.subscribe_events();
@@ -395,7 +395,7 @@ async fn test_mixed_instantsend_paths_no_duplicate_events() {
     let tx = create_tx_paying_to(&addr, 0xf0);
 
     // Mempool first
-    manager.check_transaction_in_all_wallets(&tx, TransactionContext::Mempool, true, true).await;
+    let _ = manager.check_transaction_in_all_wallets(&tx, TransactionContext::Mempool, true, true).await;
     drain_events(&mut rx);
 
     // IS lock via process_instant_send_lock (network IS lock message)
@@ -417,7 +417,7 @@ async fn test_mixed_instantsend_paths_no_duplicate_events() {
     // Same IS lock via check_transaction_in_all_wallets (block/tx processing path)
     // should be suppressed — no duplicate event
     let is_lock = dummy_instant_lock(tx.txid());
-    manager
+    let _ = manager
         .check_transaction_in_all_wallets(&tx, TransactionContext::InstantSend(is_lock), true, true)
         .await;
     assert_no_events(&mut rx);
@@ -430,12 +430,12 @@ async fn test_mixed_instantsend_paths_reverse_no_duplicate_events() {
     let tx = create_tx_paying_to(&addr, 0xf1);
 
     // Mempool first
-    manager.check_transaction_in_all_wallets(&tx, TransactionContext::Mempool, true, true).await;
+    let _ = manager.check_transaction_in_all_wallets(&tx, TransactionContext::Mempool, true, true).await;
     drain_events(&mut rx);
 
     // IS lock via check_transaction_in_all_wallets first
     let is_lock = dummy_instant_lock(tx.txid());
-    manager
+    let _ = manager
         .check_transaction_in_all_wallets(
             &tx,
             TransactionContext::InstantSend(is_lock.clone()),
@@ -484,7 +484,7 @@ async fn test_process_block_emits_events() {
         txdata: vec![tx],
     };
 
-    let result = manager.process_block(&block, 1000).await;
+    let result = manager.process_block(&block, 1000).await.unwrap();
     assert_eq!(result.new_txids.len(), 1);
 
     let events = drain_events(&mut rx);
@@ -589,7 +589,7 @@ async fn test_mempool_to_block_to_chainlocked_event_flow() {
     let tx = create_tx_paying_to(&addr, 0xc4);
 
     // Step 1: mempool — emits TransactionReceived
-    manager.check_transaction_in_all_wallets(&tx, TransactionContext::Mempool, true, true).await;
+    let _ = manager.check_transaction_in_all_wallets(&tx, TransactionContext::Mempool, true, true).await;
     let event = assert_single_event(&mut rx);
     assert!(
         matches!(
@@ -607,7 +607,7 @@ async fn test_mempool_to_block_to_chainlocked_event_flow() {
         BlockHash::from_byte_array([0xc4; 32]),
         17000,
     ));
-    manager.check_transaction_in_all_wallets(&tx, block_ctx, true, true).await;
+    let _ = manager.check_transaction_in_all_wallets(&tx, block_ctx, true, true).await;
     let event = assert_single_event(&mut rx);
     assert!(
         matches!(
@@ -628,7 +628,7 @@ async fn test_mempool_to_block_to_chainlocked_event_flow() {
         BlockHash::from_byte_array([0xc4; 32]),
         17000,
     ));
-    manager.check_transaction_in_all_wallets(&tx, cl_ctx, true, true).await;
+    let _ = manager.check_transaction_in_all_wallets(&tx, cl_ctx, true, true).await;
     assert_no_events(&mut rx);
 }
 
@@ -643,7 +643,7 @@ async fn test_chainlocked_block_event_flow() {
         BlockHash::from_byte_array([0xc1; 32]),
         20000,
     ));
-    manager.check_transaction_in_all_wallets(&tx, ctx, true, true).await;
+    let _ = manager.check_transaction_in_all_wallets(&tx, ctx, true, true).await;
     let event = assert_single_event(&mut rx);
     assert!(
         matches!(
@@ -663,7 +663,7 @@ async fn test_check_transaction_dry_run_does_not_persist_state() {
     let tx = create_tx_paying_to(&addr, 0xd1);
 
     // Dry run: update_state_if_found = false
-    let result = manager
+    let (result, _) = manager
         .check_transaction_in_all_wallets(&tx, TransactionContext::Mempool, false, false)
         .await;
 
@@ -672,7 +672,7 @@ async fn test_check_transaction_dry_run_does_not_persist_state() {
     assert_no_events(&mut rx);
 
     // Call again — should still report as relevant (state not persisted)
-    let result2 = manager
+    let (result2, _) = manager
         .check_transaction_in_all_wallets(&tx, TransactionContext::Mempool, false, false)
         .await;
     assert!(!result2.affected_wallets.is_empty());
@@ -680,7 +680,7 @@ async fn test_check_transaction_dry_run_does_not_persist_state() {
     assert_no_events(&mut rx);
 
     // Now persist — should still report as new since dry runs didn't record it
-    let result3 = manager
+    let (result3, _) = manager
         .check_transaction_in_all_wallets(&tx, TransactionContext::Mempool, true, true)
         .await;
     assert!(result3.is_new_transaction);

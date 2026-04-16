@@ -84,7 +84,7 @@ pub(crate) async fn assert_lifecycle_flow(contexts: &[TransactionContext], input
     let tx = create_tx_paying_to(&addr, input_seed);
 
     for (i, ctx) in contexts.iter().enumerate() {
-        manager.check_transaction_in_all_wallets(&tx, ctx.clone(), true, true).await;
+        let _ = manager.check_transaction_in_all_wallets(&tx, ctx.clone(), true, true).await;
         let event = assert_single_event(&mut rx);
 
         if i == 0 {
@@ -121,11 +121,11 @@ pub(crate) async fn assert_context_suppressed(
     let tx = create_tx_paying_to(&addr, input_seed);
 
     for ctx in setup_contexts {
-        manager.check_transaction_in_all_wallets(&tx, ctx.clone(), true, true).await;
+        let _ = manager.check_transaction_in_all_wallets(&tx, ctx.clone(), true, true).await;
         drain_events(&mut rx);
     }
 
-    manager.check_transaction_in_all_wallets(&tx, suppressed_context, true, true).await;
+    let _ = manager.check_transaction_in_all_wallets(&tx, suppressed_context, true, true).await;
     assert_no_events(&mut rx);
 
     let history = manager.wallet_transaction_history(&wallet_id).unwrap();

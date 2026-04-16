@@ -42,10 +42,10 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
 
             // Accumulate per-wallet changesets across all transactions in this block.
             for (wallet_id, cs) in tx_changesets {
-                block_changesets
-                    .entry(wallet_id)
-                    .and_modify(|existing| existing.merge(cs.clone()))
-                    .or_insert(cs);
+                match block_changesets.entry(wallet_id) {
+                    std::collections::btree_map::Entry::Occupied(mut e) => e.get_mut().merge(cs),
+                    std::collections::btree_map::Entry::Vacant(e) => { e.insert(cs); }
+                }
             }
         }
 
@@ -68,12 +68,16 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
         }
 
         // Persist accumulated changesets (tx state + height) for every wallet.
-        for (wallet_id, cs) in block_changesets {
+        // Two passes: store all first, then flush all — so backends that support
+        // batch-atomic writes can treat the flush pass as the commit boundary.
+        for (wallet_id, cs) in &block_changesets {
             self.persister
-                .store(wallet_id, cs)
+                .store(*wallet_id, cs.clone())
                 .map_err(WalletError::Persistence)?;
+        }
+        for wallet_id in block_changesets.keys() {
             self.persister
-                .flush(wallet_id)
+                .flush(*wallet_id)
                 .map_err(WalletError::Persistence)?;
         }
 

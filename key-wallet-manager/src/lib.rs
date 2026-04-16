@@ -485,7 +485,7 @@ impl<T: WalletInfoInterface> WalletManager<T> {
     ///
     /// Returns `(CheckTransactionsResult, BTreeMap<WalletId, WalletChangeSet>)`.
     /// The changeset map contains one entry per wallet that had relevant state changes;
-    /// callers (e.g. `process_block`) should persist these via [`CorePersistence`].
+    /// callers (e.g. `process_block`) should persist these via [`WalletPersistence`].
     pub async fn check_transaction_in_all_wallets(
         &mut self,
         tx: &Transaction,
@@ -554,10 +554,14 @@ impl<T: WalletInfoInterface> WalletManager<T> {
                     }
 
                     // Accumulate the changeset for this wallet so the caller can persist it.
-                    changesets
-                        .entry(wallet_id)
-                        .and_modify(|existing| existing.merge(check_result.changeset.clone()))
-                        .or_insert(check_result.changeset);
+                    match changesets.entry(wallet_id) {
+                        std::collections::btree_map::Entry::Occupied(mut e) => {
+                            e.get_mut().merge(check_result.changeset);
+                        }
+                        std::collections::btree_map::Entry::Vacant(e) => {
+                            e.insert(check_result.changeset);
+                        }
+                    }
                 }
 
                 result.new_addresses.extend(check_result.new_addresses);
