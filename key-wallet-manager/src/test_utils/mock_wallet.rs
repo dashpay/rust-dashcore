@@ -108,15 +108,19 @@ impl MockWallet {
 
 #[async_trait::async_trait]
 impl WalletInterface for MockWallet {
-    async fn process_block(&mut self, block: &Block, height: u32) -> BlockProcessingResult {
+    async fn process_block(
+        &mut self,
+        block: &Block,
+        height: u32,
+    ) -> Result<BlockProcessingResult, crate::WalletError> {
         let mut processed = self.processed_blocks.lock().await;
         processed.push((block.block_hash(), height));
 
-        BlockProcessingResult {
+        Ok(BlockProcessingResult {
             new_txids: block.txdata.iter().map(|tx| tx.txid()).collect(),
             existing_txids: Vec::new(),
             new_addresses: Vec::new(),
-        }
+        })
     }
 
     async fn process_mempool_transaction(
@@ -211,8 +215,12 @@ impl NonMatchingMockWallet {
 
 #[async_trait::async_trait]
 impl WalletInterface for NonMatchingMockWallet {
-    async fn process_block(&mut self, _block: &Block, _height: u32) -> BlockProcessingResult {
-        BlockProcessingResult::default()
+    async fn process_block(
+        &mut self,
+        _block: &Block,
+        _height: u32,
+    ) -> Result<BlockProcessingResult, crate::WalletError> {
+        Ok(BlockProcessingResult::default())
     }
 
     async fn process_mempool_transaction(

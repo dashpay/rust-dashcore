@@ -1,10 +1,11 @@
 use crate::wallet_interface::{BlockProcessingResult, MempoolTransactionResult, WalletInterface};
-use crate::{WalletEvent, WalletManager};
+use crate::{WalletError, WalletEvent, WalletManager};
 use async_trait::async_trait;
 use core::fmt::Write as _;
 use dashcore::ephemerealdata::instant_lock::InstantLock;
 use dashcore::prelude::CoreBlockHeight;
 use dashcore::{Address, Block, Transaction};
+use key_wallet::changeset::{ChainChangeSet, Merge, WalletChangeSet};
 use key_wallet::transaction_checking::{BlockInfo, TransactionContext};
 use key_wallet::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
 use tokio::sync::broadcast;
@@ -15,15 +16,18 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
         &mut self,
         block: &Block,
         height: CoreBlockHeight,
-    ) -> BlockProcessingResult {
+    ) -> Result<BlockProcessingResult, WalletError> {
         let mut result = BlockProcessingResult::default();
-        let info = BlockInfo::new(height, block.block_hash(), block.header.time);
+        let block_hash = block.block_hash();
+        let info = BlockInfo::new(height, block_hash, block.header.time);
+        let mut block_changesets: std::collections::BTreeMap<crate::WalletId, WalletChangeSet> =
+            std::collections::BTreeMap::new();
 
         // Process each transaction using the base manager
         for tx in &block.txdata {
             let context = TransactionContext::InBlock(info);
 
-            let check_result =
+            let (check_result, tx_changesets) =
                 self.check_transaction_in_all_wallets(tx, context, true, false).await;
 
             if !check_result.affected_wallets.is_empty() {
@@ -35,11 +39,44 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
             }
 
             result.new_addresses.extend(check_result.new_addresses);
+
+            // Accumulate per-wallet changesets across all transactions in this block.
+            for (wallet_id, cs) in tx_changesets {
+                match block_changesets.entry(wallet_id) {
+                    std::collections::btree_map::Entry::Occupied(mut e) => e.get_mut().merge(cs),
+                    std::collections::btree_map::Entry::Vacant(e) => { e.insert(cs); }
+                }
+            }
         }
 
         self.update_synced_height(height);
 
-        result
+        // Every wallet gets a height changeset regardless of whether it had
+        // relevant transactions, so the synced height is always persisted.
+        let height_cs = WalletChangeSet {
+            chain: Some(ChainChangeSet {
+                synced_height: Some(height),
+                block_hash: Some(block_hash),
+            }),
+            ..WalletChangeSet::default()
+        };
+        for wallet_id in self.wallet_infos.keys().cloned().collect::<Vec<_>>() {
+            block_changesets
+                .entry(wallet_id)
+                .and_modify(|existing| existing.merge(height_cs.clone()))
+                .or_insert(height_cs.clone());
+        }
+
+        // Persist accumulated changesets (tx state + height) for every wallet.
+        // Only calls store — the persister decides its own flush strategy
+        // (e.g. SQLite flushes inline on each store call).
+        for (wallet_id, cs) in block_changesets {
+            self.persister
+                .store(wallet_id, cs)
+                .map_err(WalletError::Persistence)?;
+        }
+
+        Ok(result)
     }
 
     async fn process_mempool_transaction(
@@ -55,7 +92,7 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
             None => TransactionContext::Mempool,
         };
         let snapshot = self.snapshot_balances();
-        let check_result = self.check_transaction_in_all_wallets(tx, context, true, false).await;
+        let (check_result, _) = self.check_transaction_in_all_wallets(tx, context, true, false).await;
 
         let is_relevant = !check_result.affected_wallets.is_empty();
         let net_amount = if is_relevant {
@@ -287,7 +324,7 @@ mod tests {
         let block = make_block(vec![tx]);
 
         let mut rx = manager.subscribe_events();
-        manager.process_block(&block, 100).await;
+        manager.process_block(&block, 100).await.unwrap();
 
         let mut found = false;
         while let Ok(event) = rx.try_recv() {
@@ -322,7 +359,7 @@ mod tests {
         let (mut manager, _wallet_id, addr) = setup_manager_with_wallet();
 
         let tx = create_tx_paying_to(&addr, 0xf0);
-        let result = manager
+        let (result, _changesets) = manager
             .check_transaction_in_all_wallets(&tx, TransactionContext::Mempool, true, true)
             .await;
 

@@ -2,7 +2,7 @@
 //!
 //! This module defines the trait that SPV clients use to interact with wallets.
 
-use crate::WalletEvent;
+use crate::{WalletError, WalletEvent};
 use async_trait::async_trait;
 use dashcore::ephemerealdata::instant_lock::InstantLock;
 use dashcore::prelude::CoreBlockHeight;
@@ -51,13 +51,15 @@ impl BlockProcessingResult {
 #[async_trait]
 pub trait WalletInterface: Send + Sync + 'static {
     /// Called when a new block is received that may contain relevant transactions.
-    /// Returns processing result including relevant transactions and any new addresses
-    /// generated during gap limit maintenance.
+    ///
+    /// Returns `Ok(result)` on success. Returns `Err(WalletError::Persistence(_))` if
+    /// the persistence backend fails to store or flush the block's changesets — the
+    /// in-memory wallet state is already updated at that point, but durability is lost.
     async fn process_block(
         &mut self,
         block: &Block,
         height: CoreBlockHeight,
-    ) -> BlockProcessingResult;
+    ) -> Result<BlockProcessingResult, WalletError>;
 
     /// Called when a transaction is seen in the mempool.
     /// Returns whether the transaction was relevant and any new addresses generated.

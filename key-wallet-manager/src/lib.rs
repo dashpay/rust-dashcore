@@ -16,17 +16,20 @@ mod accessors;
 mod error;
 mod events;
 mod matching;
+mod persistence;
 mod process_block;
 mod wallet_interface;
 
 pub use error::WalletError;
 pub use events::WalletEvent;
 pub use matching::{check_compact_filters_for_addresses, FilterMatchKey};
+pub use persistence::{NoWalletPersistence, WalletPersistence};
 pub use wallet_interface::{BlockProcessingResult, MempoolTransactionResult, WalletInterface};
 
 use dashcore::blockdata::transaction::Transaction;
 use dashcore::prelude::CoreBlockHeight;
 use key_wallet::account::AccountCollection;
+use key_wallet::changeset::{Merge, WalletChangeSet};
 use key_wallet::transaction_checking::TransactionContext;
 use key_wallet::wallet::managed_wallet_info::transaction_building::AccountTypePreference;
 use key_wallet::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
@@ -35,6 +38,7 @@ use key_wallet::{AccountType, Address, ExtendedPrivKey, Mnemonic, Network, Walle
 use key_wallet::{ExtendedPubKey, WalletCoreBalance};
 use std::collections::BTreeMap;
 use std::str::FromStr;
+use std::sync::Arc;
 
 use tokio::sync::broadcast;
 
@@ -86,7 +90,6 @@ pub struct CheckTransactionsResult {
 ///
 /// Each wallet can contain multiple accounts following BIP44 standard.
 /// This is the main entry point for wallet operations.
-#[derive(Debug)]
 pub struct WalletManager<T: WalletInfoInterface = ManagedWalletInfo> {
     /// Network the managed wallets are used for
     network: Network,
@@ -104,11 +107,32 @@ pub struct WalletManager<T: WalletInfoInterface = ManagedWalletInfo> {
     structural_revision: u64,
     /// Event sender for wallet events
     event_sender: broadcast::Sender<WalletEvent>,
+    /// Persistence backend — called after each block to durably store
+    /// UTXO/transaction/balance changes. Defaults to [`NoWalletPersistence`].
+    persister: Arc<dyn WalletPersistence>,
+}
+
+impl<T: WalletInfoInterface + std::fmt::Debug> std::fmt::Debug for WalletManager<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("WalletManager")
+            .field("network", &self.network)
+            .field("synced_height", &self.synced_height)
+            .field("filter_committed_height", &self.filter_committed_height)
+            .field("wallets", &self.wallets)
+            .field("wallet_infos", &self.wallet_infos)
+            .field("structural_revision", &self.structural_revision)
+            .finish_non_exhaustive()
+    }
 }
 
 impl<T: WalletInfoInterface> WalletManager<T> {
-    /// Create a new wallet manager
+    /// Create a new wallet manager with the no-op [`NoWalletPersistence`].
     pub fn new(network: Network) -> Self {
+        Self::new_with_persister(network, Arc::new(NoWalletPersistence))
+    }
+
+    /// Create a new wallet manager with a custom [`WalletPersistence`] backend.
+    pub fn new_with_persister(network: Network, persister: Arc<dyn WalletPersistence>) -> Self {
         Self {
             network,
             synced_height: 0,
@@ -117,6 +141,7 @@ impl<T: WalletInfoInterface> WalletManager<T> {
             wallet_infos: BTreeMap::new(),
             structural_revision: 0,
             event_sender: broadcast::Sender::new(DEFAULT_WALLET_EVENT_CAPACITY),
+            persister,
         }
     }
 
@@ -457,15 +482,19 @@ impl<T: WalletInfoInterface> WalletManager<T> {
     }
 
     /// Check a transaction against all wallets and update their states if relevant.
-    /// Returns affected wallets and any new addresses generated during gap limit maintenance.
+    ///
+    /// Returns `(CheckTransactionsResult, BTreeMap<WalletId, WalletChangeSet>)`.
+    /// The changeset map contains one entry per wallet that had relevant state changes;
+    /// callers (e.g. `process_block`) should persist these via [`WalletPersistence`].
     pub async fn check_transaction_in_all_wallets(
         &mut self,
         tx: &Transaction,
         context: TransactionContext,
         update_state_if_found: bool,
         update_balance: bool,
-    ) -> CheckTransactionsResult {
+    ) -> (CheckTransactionsResult, BTreeMap<WalletId, WalletChangeSet>) {
         let mut result = CheckTransactionsResult::default();
+        let mut changesets: BTreeMap<WalletId, WalletChangeSet> = BTreeMap::new();
 
         // We need to iterate carefully since we're mutating
         let wallet_ids: Vec<WalletId> = self.wallets.keys().cloned().collect();
@@ -523,13 +552,23 @@ impl<T: WalletInfoInterface> WalletManager<T> {
                         };
                         let _ = self.event_sender.send(event);
                     }
+
+                    // Accumulate the changeset for this wallet so the caller can persist it.
+                    match changesets.entry(wallet_id) {
+                        std::collections::btree_map::Entry::Occupied(mut e) => {
+                            e.get_mut().merge(check_result.changeset);
+                        }
+                        std::collections::btree_map::Entry::Vacant(e) => {
+                            e.insert(check_result.changeset);
+                        }
+                    }
                 }
 
                 result.new_addresses.extend(check_result.new_addresses);
             }
         }
 
-        result
+        (result, changesets)
     }
 
     /// Create an account in a specific wallet

@@ -226,6 +226,9 @@ impl From<key_wallet_manager::WalletError> for FFIError {
             WalletError::InsufficientFunds => {
                 (FFIErrorCode::InvalidState, "Insufficient funds".to_string())
             }
+            WalletError::Persistence(e) => {
+                (FFIErrorCode::WalletError, format!("Persistence error: {}", e))
+            }
         };
 
         FFIError::error(code, msg)

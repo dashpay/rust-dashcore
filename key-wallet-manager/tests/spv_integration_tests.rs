@@ -29,7 +29,7 @@ async fn test_block_processing() {
     let tx3 = Transaction::dummy(&external, 0..0, &[300_000]);
 
     let block = Block::dummy(100, vec![tx1.clone(), tx2.clone(), tx3.clone()]);
-    let result = manager.process_block(&block, 100).await;
+    let result = manager.process_block(&block, 100).await.unwrap();
 
     // Both transactions should be new (first time seen)
     assert_eq!(result.new_txids.len(), 2);
@@ -61,7 +61,7 @@ async fn test_block_processing_result_empty() {
     let tx2 = Transaction::dummy(&external, 0..0, &[200_000]);
 
     let block = Block::dummy(100, vec![tx1, tx2]);
-    let result = manager.process_block(&block, 100).await;
+    let result = manager.process_block(&block, 100).await.unwrap();
 
     assert!(result.new_txids.is_empty());
     assert!(result.existing_txids.is_empty());
@@ -96,7 +96,7 @@ async fn test_height_updated_after_block_processing() {
     for height in [1000, 2000, 3000] {
         let tx = Transaction::dummy(&Address::dummy(Network::Testnet, 0), 0..0, &[100000]);
         let block = Block::dummy(height, vec![tx]);
-        manager.process_block(&block, height).await;
+        manager.process_block(&block, height).await.unwrap();
         assert_wallet_heights(&manager, height);
     }
 }
@@ -133,7 +133,7 @@ async fn test_immature_balance_matures_during_block_processing() {
     // Process the coinbase at height 1000
     let coinbase_height = 1000;
     let coinbase_block = Block::dummy(coinbase_height, vec![coinbase_tx.clone()]);
-    manager.process_block(&coinbase_block, coinbase_height).await;
+    manager.process_block(&coinbase_block, coinbase_height).await.unwrap();
 
     // Verify the coinbase is detected and stored as immature
     let wallet_info = manager.get_wallet_info(&wallet_id).expect("Wallet info should exist");
@@ -152,7 +152,7 @@ async fn test_immature_balance_matures_during_block_processing() {
     let tx = Transaction::dummy(&Address::dummy(Network::Regtest, 0), 0..0, &[1000]);
     for height in (coinbase_height + 1)..maturity_height {
         let block = Block::dummy(height, vec![tx.clone()]);
-        manager.process_block(&block, height).await;
+        manager.process_block(&block, height).await.unwrap();
     }
 
     // Verify still immature just before maturity
@@ -165,7 +165,7 @@ async fn test_immature_balance_matures_during_block_processing() {
 
     // Process the maturity block
     let maturity_block = Block::dummy(maturity_height, vec![tx.clone()]);
-    manager.process_block(&maturity_block, maturity_height).await;
+    manager.process_block(&maturity_block, maturity_height).await.unwrap();
 
     // Verify the coinbase has matured
     let wallet_info = manager.get_wallet_info(&wallet_id).expect("Wallet info should exist");
@@ -196,7 +196,7 @@ async fn test_block_rescan_marks_transactions_as_existing() {
     let block = Block::dummy(100, vec![tx1.clone()]);
 
     // First processing - transaction should be new
-    let result1 = manager.process_block(&block, 100).await;
+    let result1 = manager.process_block(&block, 100).await.unwrap();
 
     assert_eq!(result1.new_txids.len(), 1, "First processing should have 1 new transaction");
     assert!(
@@ -210,7 +210,7 @@ async fn test_block_rescan_marks_transactions_as_existing() {
     let tx_history_count = wallet_info.transaction_history().len();
 
     // Second processing (simulating rescan) - transaction should be existing
-    let result2 = manager.process_block(&block, 100).await;
+    let result2 = manager.process_block(&block, 100).await.unwrap();
 
     assert!(result2.new_txids.is_empty(), "Rescan should have no new transactions");
     assert_eq!(result2.existing_txids.len(), 1, "Rescan should have 1 existing transaction");
