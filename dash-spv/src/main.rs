@@ -172,9 +172,7 @@ async fn main() {
             match spv_error {
                 dash_spv::SpvError::Network(_) => 1,
                 dash_spv::SpvError::Storage(_) => 2,
-                dash_spv::SpvError::Validation(_) => 3,
-                dash_spv::SpvError::Config(_) => 4,
-                dash_spv::SpvError::Parse(_) => 5,
+                dash_spv::SpvError::Config(_) => 3,
                 _ => 255,
             }
         } else {

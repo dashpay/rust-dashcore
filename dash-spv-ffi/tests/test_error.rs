@@ -25,22 +25,6 @@ mod tests {
 
     #[test]
     #[serial]
-    fn test_error_codes() {
-        assert_eq!(FFIErrorCode::Success as i32, 0);
-        assert_eq!(FFIErrorCode::NullPointer as i32, 1);
-        assert_eq!(FFIErrorCode::InvalidArgument as i32, 2);
-        assert_eq!(FFIErrorCode::NetworkError as i32, 3);
-        assert_eq!(FFIErrorCode::StorageError as i32, 4);
-        assert_eq!(FFIErrorCode::ValidationError as i32, 5);
-        assert_eq!(FFIErrorCode::SyncError as i32, 6);
-        assert_eq!(FFIErrorCode::WalletError as i32, 7);
-        assert_eq!(FFIErrorCode::ConfigError as i32, 8);
-        assert_eq!(FFIErrorCode::RuntimeError as i32, 9);
-        assert_eq!(FFIErrorCode::Unknown as i32, 99);
-    }
-
-    #[test]
-    #[serial]
     fn test_handle_error() {
         let ok_result: Result<i32, String> = Ok(42);
         let handled = handle_error(ok_result);
