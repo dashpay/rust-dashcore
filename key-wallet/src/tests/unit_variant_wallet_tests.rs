@@ -130,6 +130,37 @@ fn round_trip_full_to_watch_only_has_address_parity_per_account() {
     }
 }
 
+// -------- derive_extended_public_key surfaces actionable guidance -----
+
+#[test]
+fn derive_extended_public_key_error_points_to_per_account_xpub() {
+    use crate::DerivationPath;
+
+    let full = built_full_wallet();
+    let watch = Wallet::new_watch_only(Network::Testnet, full.wallet_id, AccountCollection::new());
+    let ext =
+        Wallet::new_external_signable(Network::Testnet, full.wallet_id, AccountCollection::new());
+
+    // Non-hardened path: the generic "root pub key unavailable" error should
+    // be replaced with call-site-specific guidance pointing at per-account
+    // xpubs, which is the actual escape hatch for watch-only callers.
+    let non_hardened: DerivationPath = "m/0/0".parse().unwrap();
+    let err = watch.derive_extended_public_key(&non_hardened).unwrap_err().to_string();
+    assert!(
+        err.contains("extended_public_key") && err.contains("account"),
+        "watch-only derive error should recommend per-account xpubs; got: {err}"
+    );
+    let err = ext.derive_extended_public_key(&non_hardened).unwrap_err().to_string();
+    assert!(
+        err.contains("extended_public_key") && err.contains("account"),
+        "external-signable derive error should recommend per-account xpubs; got: {err}"
+    );
+
+    // Hardened path: the existing "no private key" error shape is preserved.
+    let hardened: DerivationPath = "m/44'/1'/0'".parse().unwrap();
+    assert!(watch.derive_extended_public_key(&hardened).is_err());
+}
+
 // -------- bincode round-trip -------------------------------------------
 
 #[test]

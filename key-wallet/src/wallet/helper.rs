@@ -687,16 +687,27 @@ impl Wallet {
         Ok(dash_key.to_wif())
     }
 
-    /// Derive an extended public key at a specific derivation path
+    /// Derive an extended public key at a specific derivation path from the wallet's root.
     ///
-    /// For hardened derivation paths, this requires private key access.
-    /// For non-hardened paths, this works with watch-only wallets.
+    /// # Behavior by wallet type
+    /// * `Mnemonic`, `Seed`, `ExtendedPrivKey`: works for both hardened and non-hardened paths.
+    /// * `MnemonicWithPassphrase`: works for non-hardened paths only (hardened paths require
+    ///   the passphrase to reconstruct the root private key; use
+    ///   [`Wallet::derive_extended_private_key_with_passphrase`] for those).
+    /// * `WatchOnly` / `ExternalSignable`: **cannot derive from the root at all** — these
+    ///   unit variants carry no root key material. Hardened paths fail because there's no
+    ///   private key on hand, and non-hardened paths fail because there's no root xpub
+    ///   either. For these wallets, fetch the relevant account via
+    ///   [`Wallet::get_bip44_account`] (or similar) and derive non-hardened paths from
+    ///   [`Account::extended_public_key`](crate::account::Account::extended_public_key)
+    ///   directly.
     ///
     /// # Arguments
     /// * `path` - The derivation path (e.g., "m/44'/5'/0'/0/0")
     ///
     /// # Returns
-    /// The extended public key, or an error if the path is invalid
+    /// The extended public key, or an error if the path cannot be derived for this
+    /// wallet type (see above).
     pub fn derive_extended_public_key(
         &self,
         path: &crate::DerivationPath,
@@ -719,26 +730,36 @@ impl Wallet {
             let secp = Secp256k1::new();
             Ok(ExtendedPubKey::from_priv(&secp, &extended_private))
         } else {
-            // For non-hardened paths, derive directly from the root public key.
-            // For watch-only / external-signable unit variants there is no root
-            // key on hand, so this propagates the "root pub key unavailable" error
-            // from `root_extended_pub_key`.
+            // For non-hardened paths, derive from the root public key. Watch-only and
+            // external-signable unit variants have no root key on hand — surface a
+            // path-specific message pointing callers at per-account xpubs instead of
+            // just propagating the generic "root pub key unavailable" error.
+            let root_xpub = self.root_extended_pub_key().map_err(|_| {
+                Error::InvalidParameter(
+                    "Cannot derive from the root xpub for watch-only or external-signable \
+                     wallets; fetch the relevant account (e.g. wallet.get_bip44_account(idx)) \
+                     and derive non-hardened paths from its extended_public_key() instead"
+                        .to_string(),
+                )
+            })?;
             let secp = Secp256k1::new();
-            let xpub = self.root_extended_pub_key()?.to_extended_pub_key(self.network);
+            let xpub = root_xpub.to_extended_pub_key(self.network);
             xpub.derive_pub(&secp, path).map_err(|e| e.into())
         }
     }
 
-    /// Derive a public key at a specific derivation path
+    /// Derive a public key at a specific derivation path from the wallet's root.
     ///
-    /// For hardened derivation paths, this requires private key access.
-    /// For non-hardened paths, this works with watch-only wallets.
+    /// See [`Wallet::derive_extended_public_key`] for the per-wallet-type behavior
+    /// (in particular, watch-only and external-signable wallets cannot derive from
+    /// the root — use per-account xpubs instead).
     ///
     /// # Arguments
     /// * `path` - The derivation path (e.g., "m/44'/5'/0'/0/0")
     ///
     /// # Returns
-    /// The public key (secp256k1::PublicKey), or an error if the path is invalid
+    /// The public key (secp256k1::PublicKey), or an error if the path cannot be
+    /// derived for this wallet type.
     pub fn derive_public_key(&self, path: &crate::DerivationPath) -> Result<secp256k1::PublicKey> {
         // Check if the path contains hardened derivation
         let has_hardened = path.into_iter().any(|child| child.is_hardened());
@@ -762,16 +783,19 @@ impl Wallet {
         }
     }
 
-    /// Derive a public key at a specific derivation path and return as hex string
+    /// Derive a public key at a specific derivation path from the wallet's root
+    /// and return it as a hex string.
     ///
-    /// For hardened derivation paths, this requires private key access.
-    /// For non-hardened paths, this works with watch-only wallets.
+    /// See [`Wallet::derive_extended_public_key`] for the per-wallet-type behavior
+    /// (in particular, watch-only and external-signable wallets cannot derive from
+    /// the root — use per-account xpubs instead).
     ///
     /// # Arguments
     /// * `path` - The derivation path (e.g., "m/44'/5'/0'/0/0")
     ///
     /// # Returns
-    /// The public key as hex string, or an error if the path is invalid
+    /// The public key as a hex string, or an error if the path cannot be derived
+    /// for this wallet type.
     pub fn derive_public_key_as_hex(&self, path: &crate::DerivationPath) -> Result<String> {
         let public_key = self.derive_public_key(path)?;
 
