@@ -241,7 +241,8 @@ impl ManagedWalletInfo {
         let fee = tx_builder_with_inputs.calculate_fee();
         let fee_with_extra = tx_builder_with_inputs.calculate_fee_with_extra_output();
 
-        let transaction = tx_builder_with_inputs.build_asset_lock(credit_outputs)?;
+        let (transaction, sorted_indices) =
+            tx_builder_with_inputs.build_asset_lock(credit_outputs)?;
 
         let actual_fee = if transaction.output.len() > outputs_count_before {
             fee_with_extra
@@ -250,7 +251,9 @@ impl ManagedWalletInfo {
         };
 
         // Transaction built successfully — now derive keys.
-        let mut keys = Vec::with_capacity(credit_output_fundings.len());
+        // Keys are derived in the original funding order, then reordered
+        // to match the BIP-69 sorted credit output positions in the payload.
+        let mut original_keys = Vec::with_capacity(credit_output_fundings.len());
         for funding in &credit_output_fundings {
             let funding_key_account = resolve_funding_account(
                 &mut self.accounts,
@@ -260,7 +263,14 @@ impl ManagedWalletInfo {
             let key = funding_key_account
                 .next_private_key(root_xpriv, network)
                 .map_err(|e| AssetLockError::KeyDerivation(e.to_string()))?;
-            keys.push(key);
+            original_keys.push(key);
+        }
+
+        // Reorder keys to match sorted output positions:
+        // sorted_indices[i] = original index of the output now at position i
+        let mut keys = vec![[0u8; 32]; original_keys.len()];
+        for (sorted_pos, &orig_idx) in sorted_indices.iter().enumerate() {
+            keys[sorted_pos] = original_keys[orig_idx];
         }
 
         Ok(AssetLockResult {
