@@ -77,14 +77,13 @@ impl ManagedAccountOperations for ManagedWalletInfo {
     ) -> Result<()> {
         // Verify this is a passphrase wallet
         match &wallet.wallet_type {
-            WalletType::MnemonicWithPassphrase { mnemonic, .. } => {
+            WalletType::MnemonicWithPassphrase { mnemonic, root_extended_public_key: wallet_pub } => {
                 // Verify the passphrase by deriving and comparing
                 let seed = mnemonic.to_seed(passphrase);
                 let root_key = crate::wallet::root_extended_keys::RootExtendedPrivKey::new_master(&seed)?;
 
                 // Compare with wallet's stored public key
                 let derived_pub = root_key.to_root_extended_pub_key();
-                let wallet_pub = wallet.root_extended_pub_key();
 
                 if derived_pub.root_public_key != wallet_pub.root_public_key {
                     return Err(Error::InvalidParameter(
@@ -194,14 +193,13 @@ impl ManagedAccountOperations for ManagedWalletInfo {
 
         // Verify this is a passphrase wallet
         match &wallet.wallet_type {
-            WalletType::MnemonicWithPassphrase { mnemonic, .. } => {
+            WalletType::MnemonicWithPassphrase { mnemonic, root_extended_public_key: wallet_pub } => {
                 // Verify the passphrase by deriving and comparing
                 let seed = mnemonic.to_seed(passphrase);
                 let root_key = crate::wallet::root_extended_keys::RootExtendedPrivKey::new_master(&seed)?;
 
                 // Compare with wallet's stored public key
                 let derived_pub = root_key.to_root_extended_pub_key();
-                let wallet_pub = wallet.root_extended_pub_key();
 
                 if derived_pub.root_public_key != wallet_pub.root_public_key {
                     return Err(Error::InvalidParameter(
@@ -313,14 +311,13 @@ impl ManagedAccountOperations for ManagedWalletInfo {
 
         // Verify this is a passphrase wallet
         match &wallet.wallet_type {
-            WalletType::MnemonicWithPassphrase { mnemonic, .. } => {
+            WalletType::MnemonicWithPassphrase { mnemonic, root_extended_public_key: wallet_pub } => {
                 // Verify the passphrase by deriving and comparing
                 let seed = mnemonic.to_seed(passphrase);
                 let root_key = crate::wallet::root_extended_keys::RootExtendedPrivKey::new_master(&seed)?;
 
                 // Compare with wallet's stored public key
                 let derived_pub = root_key.to_root_extended_pub_key();
-                let wallet_pub = wallet.root_extended_pub_key();
 
                 if derived_pub.root_public_key != wallet_pub.root_public_key {
                     return Err(Error::InvalidParameter(

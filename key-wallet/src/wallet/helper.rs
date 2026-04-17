@@ -3,7 +3,6 @@
 //! This module contains helper methods and utility functions for wallets.
 
 use super::initialization::WalletAccountCreationOptions;
-use super::root_extended_keys::RootExtendedPrivKey;
 use super::{Wallet, WalletType};
 use crate::account::{Account, AccountType, StandardAccountType};
 use crate::error::Result;
@@ -58,32 +57,16 @@ impl Wallet {
         indices
     }
 
-    /// Export wallet as watch-only
+    /// Export wallet as watch-only.
+    ///
+    /// Preserves the wallet id so the downgraded copy stays addressable by the
+    /// same identifier, and replaces every account with its watch-only
+    /// counterpart. The resulting wallet carries no key material on the
+    /// [`WalletType`] side — per-account xpubs inside `accounts` are the only
+    /// state needed for tracking.
     pub fn to_watch_only(&self) -> Self {
         let mut watch_only = self.clone();
-
-        // Get the root public key
-        let root_pub_key = if let Ok(root_key) = self.root_extended_priv_key() {
-            root_key.to_root_extended_pub_key()
-        } else {
-            // For already watch-only wallets, keep the existing public key
-            match &self.wallet_type {
-                WalletType::WatchOnly(pub_key) | WalletType::ExternalSignable(pub_key) => {
-                    pub_key.clone()
-                }
-                WalletType::MnemonicWithPassphrase {
-                    root_extended_public_key,
-                    ..
-                } => root_extended_public_key.clone(),
-                _ => {
-                    // Fallback - create a dummy key
-                    let dummy_priv = RootExtendedPrivKey::new_master(&[0u8; 64]).unwrap();
-                    dummy_priv.to_root_extended_pub_key()
-                }
-            }
-        };
-
-        watch_only.wallet_type = WalletType::WatchOnly(root_pub_key);
+        watch_only.wallet_type = WalletType::WatchOnly;
 
         // Convert all accounts to watch-only
         for account in watch_only.accounts.all_accounts_mut() {
@@ -103,17 +86,17 @@ impl Wallet {
 
     /// Check if wallet is watch-only
     pub fn is_watch_only(&self) -> bool {
-        matches!(self.wallet_type, WalletType::WatchOnly(_))
+        matches!(self.wallet_type, WalletType::WatchOnly)
     }
 
     /// Check if wallet supports external signing
     pub fn is_external_signable(&self) -> bool {
-        matches!(self.wallet_type, WalletType::ExternalSignable(_))
+        matches!(self.wallet_type, WalletType::ExternalSignable)
     }
 
     /// Check if wallet can sign transactions (has private keys or can get them)
     pub fn can_sign(&self) -> bool {
-        !matches!(self.wallet_type, WalletType::WatchOnly(_))
+        !matches!(self.wallet_type, WalletType::WatchOnly)
     }
 
     /// Check if wallet needs a passphrase for signing
@@ -634,7 +617,7 @@ impl Wallet {
                 ..
             } => root_extended_private_key.to_extended_priv_key(self.network),
             WalletType::ExtendedPrivKey(root_priv) => root_priv.to_extended_priv_key(self.network),
-            WalletType::ExternalSignable(_) | WalletType::WatchOnly(_) => {
+            WalletType::ExternalSignable | WalletType::WatchOnly => {
                 return Err(Error::InvalidParameter(
                     "Cannot derive private keys from watch-only wallet".to_string(),
                 ));
@@ -736,9 +719,12 @@ impl Wallet {
             let secp = Secp256k1::new();
             Ok(ExtendedPubKey::from_priv(&secp, &extended_private))
         } else {
-            // For non-hardened paths, derive directly from public key
+            // For non-hardened paths, derive directly from the root public key.
+            // For watch-only / external-signable unit variants there is no root
+            // key on hand, so this propagates the "root pub key unavailable" error
+            // from `root_extended_pub_key`.
             let secp = Secp256k1::new();
-            let xpub = self.root_extended_pub_key().to_extended_pub_key(self.network);
+            let xpub = self.root_extended_pub_key()?.to_extended_pub_key(self.network);
             xpub.derive_pub(&secp, path).map_err(|e| e.into())
         }
     }

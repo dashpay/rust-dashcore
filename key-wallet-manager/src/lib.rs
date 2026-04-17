@@ -212,7 +212,6 @@ impl<T: WalletInfoInterface> WalletManager<T> {
         downgrade_to_pubkey_wallet: bool,
         allow_external_signing: bool,
     ) -> Result<(Vec<u8>, WalletId), WalletError> {
-        use key_wallet::wallet::WalletType;
         use zeroize::Zeroize;
 
         let mnemonic_obj = Mnemonic::from_phrase(mnemonic, key_wallet::mnemonic::Language::English)
@@ -234,30 +233,22 @@ impl<T: WalletInfoInterface> WalletManager<T> {
 
         // Downgrade to pubkey-only wallet if requested
         let final_wallet = if downgrade_to_pubkey_wallet {
-            // Extract the public key and accounts from the full wallet
-            let root_xpub = wallet.root_extended_pub_key();
-
-            // Copy the accounts structure (but without private keys)
+            // Carry over the wallet id and accounts (watch-only variants do not
+            // need the root xpub — per-account xpubs in `accounts` plus derivation
+            // paths are enough for address generation and signing routing).
+            let wallet_id = wallet.wallet_id;
             let accounts = wallet.accounts.clone();
-
-            let wallet_type = if allow_external_signing {
-                WalletType::ExternalSignable(root_xpub)
-            } else {
-                WalletType::WatchOnly(root_xpub)
-            };
-            // Create a new wallet with only public keys
-            let pubkey_wallet = Wallet {
-                network: wallet.network,
-                wallet_id: wallet.wallet_id,
-                wallet_type,
-                accounts,
-            };
+            let network = wallet.network;
 
             // Zeroize the wallet containing private keys before dropping
             wallet.zeroize();
             drop(wallet);
 
-            pubkey_wallet
+            if allow_external_signing {
+                Wallet::new_external_signable(network, wallet_id, accounts)
+            } else {
+                Wallet::new_watch_only(network, wallet_id, accounts)
+            }
         } else {
             wallet
         };

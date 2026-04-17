@@ -53,10 +53,23 @@ pub enum WalletType {
     },
     /// Wallet from extended private key
     ExtendedPrivKey(RootExtendedPrivKey),
-    /// External signable wallet with extended public key (signing happens externally)
-    ExternalSignable(RootExtendedPubKey),
-    /// Watch-only wallet with extended public key (no signing capability)
-    WatchOnly(RootExtendedPubKey),
+    /// External signable wallet (signing happens externally via a hardware device
+    /// or remote signer).
+    ///
+    /// This variant carries no key material: the external device holds all signing
+    /// keys, and the host only needs the per-account xpubs carried by
+    /// [`AccountCollection`] plus derivation paths to request signatures.
+    /// [`Wallet::wallet_id`] identifies the wallet — see [`Wallet::new_external_signable`].
+    ExternalSignable,
+    /// Watch-only wallet (no signing capability).
+    ///
+    /// This variant carries no key material: every Dash derivation path hits a
+    /// hardened level before the account index, so a host-side root xpub cannot
+    /// expand coverage to account xpubs that weren't already supplied. The
+    /// per-account xpubs carried by [`AccountCollection`] are the only state
+    /// needed for address generation and transaction tracking.
+    /// [`Wallet::wallet_id`] identifies the wallet — see [`Wallet::new_watch_only`].
+    WatchOnly,
 }
 
 /// Complete wallet implementation
@@ -101,9 +114,22 @@ impl Wallet {
         hash.to_byte_array()
     }
 
-    /// Compute wallet ID
+    /// Compute wallet ID.
+    ///
+    /// For wallet types that carry a root public key (directly or derivable from a
+    /// stored root private key), this recomputes the id from that key. For the
+    /// [`WalletType::WatchOnly`] and [`WalletType::ExternalSignable`] unit
+    /// variants there is no root key on hand, so the id fed in at construction
+    /// time (`self.wallet_id`) is returned as-is.
     pub fn compute_wallet_id(&self) -> [u8; 32] {
-        Self::compute_wallet_id_from_root_extended_pub_key(&self.root_extended_pub_key_cow())
+        match &self.wallet_type {
+            WalletType::WatchOnly | WalletType::ExternalSignable => self.wallet_id,
+            _ => Self::compute_wallet_id_from_root_extended_pub_key(
+                &self
+                    .root_extended_pub_key_cow()
+                    .expect("signing wallet types always have a root public key"),
+            ),
+        }
     }
 }
 
@@ -170,10 +196,8 @@ impl Zeroize for Wallet {
                 root_extended_private_key.zeroize();
                 // Note: root_private_key (SecretKey) doesn't implement Zeroize
             }
-            WalletType::ExternalSignable(root_extended_public_key)
-            | WalletType::WatchOnly(root_extended_public_key) => {
-                // Public keys are not sensitive, but zeroize for consistency
-                root_extended_public_key.zeroize();
+            WalletType::ExternalSignable | WalletType::WatchOnly => {
+                // Unit variants carry no key material; nothing sensitive to zeroize.
             }
         }
 
@@ -412,32 +436,31 @@ mod tests {
     // ✓ Test watch-only wallet creation (high level)
     #[test]
     fn test_watch_only_wallet_basics() {
-        // Create a regular wallet first to get the root xpub
-
+        // Create a regular wallet first to snapshot its id + accounts
         let wallet = Wallet::new_random(
             Network::Testnet,
             initialization::WalletAccountCreationOptions::Default,
         )
         .unwrap();
 
-        // Get the root extended public key
-        let root_xpub = wallet.root_extended_pub_key();
-        let root_xpub_as_extended = root_xpub.to_extended_pub_key(Network::Testnet);
+        // Snapshot the id and a single BIP44 account so the watch-only wallet
+        // has something to track without needing a root xpub.
+        let wallet_id = wallet.wallet_id;
+        let account = wallet.get_bip44_account(0).unwrap();
+        let account_xpub = account.extended_public_key();
 
-        // Create watch-only wallet from root xpub
+        // Build a watch-only wallet via the unit-variant constructor.
         let mut watch_only =
-            Wallet::from_xpub(root_xpub_as_extended, AccountCollection::new(), false).unwrap();
+            Wallet::new_watch_only(Network::Testnet, wallet_id, AccountCollection::new());
 
         assert!(watch_only.is_watch_only());
         assert!(!watch_only.has_mnemonic());
+        assert_eq!(watch_only.wallet_id, wallet_id);
 
         // Watch-only wallets start with no accounts
         assert_eq!(watch_only.accounts.count(), 0);
 
         // But we can add accounts manually by providing their xpubs
-        let account = wallet.get_bip44_account(0).unwrap();
-        let account_xpub = account.extended_public_key();
-
         watch_only
             .add_account(
                 AccountType::Standard {
@@ -482,8 +505,8 @@ mod tests {
         .unwrap();
 
         // Different passphrases should generate different root keys
-        let root_xpub1 = wallet1.root_extended_pub_key();
-        let root_xpub2 = wallet2.root_extended_pub_key();
+        let root_xpub1 = wallet1.root_extended_pub_key().unwrap();
+        let root_xpub2 = wallet2.root_extended_pub_key().unwrap();
         assert_ne!(root_xpub1.root_public_key, root_xpub2.root_public_key);
     }
 
