@@ -30,4 +30,6 @@ mod transaction_tests;
 
 mod spent_outpoints_tests;
 
+mod unit_variant_wallet_tests;
+
 mod wallet_tests;

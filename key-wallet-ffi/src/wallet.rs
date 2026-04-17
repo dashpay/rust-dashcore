@@ -10,12 +10,12 @@ use std::ptr;
 use std::slice;
 
 use crate::types::FFIAccountResult;
+use dashcore::ffi::FFINetwork;
 use key_wallet::wallet::initialization::WalletAccountCreationOptions;
 use key_wallet::{Mnemonic, Seed, Wallet};
 
 use crate::error::{FFIError, FFIErrorCode};
 use crate::types::{FFIWallet, FFIWalletAccountCreationOptions};
-use crate::FFINetwork;
 use key_wallet::Network;
 
 /// Create a new wallet from mnemonic with options

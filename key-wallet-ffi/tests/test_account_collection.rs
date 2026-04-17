@@ -1,10 +1,10 @@
 //! Integration tests for account collection FFI functions
 
+use dashcore::ffi::FFINetwork;
 use key_wallet_ffi::account::account_free;
 use key_wallet_ffi::account_collection::*;
 use key_wallet_ffi::types::{FFIAccountCreationOptionType, FFIWalletAccountCreationOptions};
 use key_wallet_ffi::wallet::{wallet_create_from_mnemonic_with_options, wallet_free};
-use key_wallet_ffi::FFINetwork;
 use std::ffi::CString;
 use std::ptr;
 

@@ -653,7 +653,7 @@ mod tests {
     use crate::error::{FFIError, FFIErrorCode};
     use crate::managed_wallet::*;
     use crate::wallet;
-    use crate::FFINetwork;
+    use dashcore::ffi::FFINetwork;
     use key_wallet::managed_account::managed_account_type::ManagedAccountType;
     use std::ffi::{CStr, CString};
     use std::ptr;
@@ -1164,3 +1164,7 @@ mod tests {
         unsafe { error.free_message() };
     }
 }
+
+#[cfg(test)]
+#[path = "managed_wallet_tests.rs"]
+mod managed_wallet_tests;

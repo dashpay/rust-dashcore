@@ -5,7 +5,6 @@ use thiserror::Error;
 use crate::prelude::CoreBlockHeight;
 use crate::sml::error::SmlError;
 use crate::sml::llmq_type::LLMQType;
-use crate::sml::masternode_list_engine::RotationChainLockSignatureSlot;
 use crate::{BlockHash, QuorumHash};
 
 #[derive(Debug, Error, Clone, Ord, PartialOrd, PartialEq, Hash, Eq)]
@@ -99,12 +98,10 @@ pub enum QuorumValidationError {
     #[error("Required quorum index not present for quorum hash: {0}")]
     RequiredQuorumIndexNotPresent(QuorumHash),
 
-    #[error(
-        "Too many rotated quorums in cycle for {llmq_type}: cap is {cap}, attempted to insert another"
-    )]
-    TooManyRotatedQuorumsInCycle {
-        llmq_type: LLMQType,
-        cap: usize,
+    #[error("Invalid quorum index {index} for quorum hash: {quorum_hash}")]
+    InvalidQuorumIndex {
+        quorum_hash: QuorumHash,
+        index: i16,
     },
 
     #[error("Corrupted code execution: {0}")]
@@ -118,19 +115,6 @@ pub enum QuorumValidationError {
     /// Error indicating that a required feature is not turned on.
     #[error("Feature not turned on: {0}")]
     FeatureNotTurnedOn(String),
-
-    /// Returned by `feed_qr_info` when one or more rotation ChainLock signatures are
-    /// absent for a QRInfo whose `last_commitment_per_index` contains quorums that need
-    /// fresh validation. The `missing` vector lists every absent slot at once (rather
-    /// than erroring on the first one) for diagnostic clarity.
-    #[error("Missing rotation ChainLock signatures in QRInfo: {}", format_missing_slots(missing))]
-    MissingRotationSignatures {
-        missing: Vec<RotationChainLockSignatureSlot>,
-    },
-}
-
-fn format_missing_slots(slots: &[RotationChainLockSignatureSlot]) -> String {
-    slots.iter().map(|s| s.legacy_short_name()).collect::<Vec<_>>().join(", ")
 }
 
 impl From<SmlError> for QuorumValidationError {

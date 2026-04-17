@@ -37,6 +37,10 @@ pub struct OutputDetail {
     pub index: u32,
     /// Role of this output from the wallet's perspective
     pub role: OutputRole,
+    /// Decoded address (None for non-standard scripts)
+    pub address: Option<Address>,
+    /// Value in satoshis
+    pub value: u64,
 }
 
 /// Role of a transaction output from the wallet's perspective

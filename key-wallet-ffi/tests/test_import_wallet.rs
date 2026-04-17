@@ -3,10 +3,10 @@
 #[cfg(feature = "bincode")]
 #[cfg(test)]
 mod tests {
+    use dashcore::ffi::FFINetwork;
     use key_wallet_ffi::error::{FFIError, FFIErrorCode};
     use key_wallet_ffi::wallet::wallet_free_const;
     use key_wallet_ffi::wallet_manager::*;
-    use key_wallet_ffi::FFINetwork;
     use std::os::raw::c_char;
     use std::ptr;
 

@@ -1,6 +1,7 @@
 #[cfg(test)]
 mod tests {
     use dash_spv_ffi::*;
+    use dashcore::ffi::FFINetwork;
     use key_wallet::wallet::initialization::WalletAccountCreationOptions;
     use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
     use key_wallet_ffi::{
@@ -8,7 +9,7 @@ mod tests {
             wallet_manager_free_wallet_ids, wallet_manager_get_wallet_ids,
             wallet_manager_import_wallet_from_bytes, wallet_manager_wallet_count,
         },
-        FFIError, FFINetwork, FFIWalletManager,
+        FFIError, FFIWalletManager,
     };
     use key_wallet_manager::WalletManager;
     use std::ffi::{CStr, CString};

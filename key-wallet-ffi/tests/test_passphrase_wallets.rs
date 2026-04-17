@@ -1,8 +1,8 @@
 //! Tests for wallet creation with passphrase through FFI
 //! These tests demonstrate current issues with passphrase handling in the FFI layer
 
+use dashcore::ffi::FFINetwork;
 use key_wallet_ffi::error::{FFIError, FFIErrorCode};
-use key_wallet_ffi::FFINetwork;
 use std::ffi::CString;
 
 #[test]

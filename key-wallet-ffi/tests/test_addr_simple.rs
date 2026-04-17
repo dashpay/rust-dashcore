@@ -1,7 +1,8 @@
+use dashcore::ffi::FFINetwork;
+
 #[test]
 fn test_address_simple() {
     use key_wallet_ffi::error::FFIError;
-    use key_wallet_ffi::FFINetwork;
 
     let mut error = FFIError::success();
     let error = &mut error as *mut FFIError;

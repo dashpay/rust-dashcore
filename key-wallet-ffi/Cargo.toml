@@ -22,7 +22,7 @@ bls = ["dashcore/bls", "key-wallet/bls"]
 [dependencies]
 key-wallet = { path = "../key-wallet" }
 key-wallet-manager = { path = "../key-wallet-manager" }
-dashcore = { path = "../dash" }
+dashcore = { path = "../dash", features = ["ffi"] }
 secp256k1 = { version = "0.30.0", features = ["global-context"] }
 tokio = { version = "1.32", features = ["rt-multi-thread", "sync"] }
 libc = "0.2"
@@ -34,5 +34,4 @@ cbindgen = "0.29"
 [dev-dependencies]
 key-wallet = { path = "../key-wallet", features = ["test-utils"] }
 key-wallet-manager = { path = "../key-wallet-manager", features = ["test-utils"] }
-tempfile = "3.0"
 hex = "0.4"

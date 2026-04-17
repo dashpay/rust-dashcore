@@ -1,5 +1,6 @@
 //! Tests for managed account collection FFI bindings
 
+use dashcore::ffi::FFINetwork;
 use key_wallet_ffi::error::{FFIError, FFIErrorCode};
 use key_wallet_ffi::managed_account_collection::*;
 use key_wallet_ffi::types::{FFIAccountCreationOptionType, FFIWalletAccountCreationOptions};
@@ -7,7 +8,6 @@ use key_wallet_ffi::wallet_manager::{
     wallet_manager_add_wallet_from_mnemonic_with_options, wallet_manager_create,
     wallet_manager_free, wallet_manager_free_wallet_ids, wallet_manager_get_wallet_ids,
 };
-use key_wallet_ffi::FFINetwork;
 use std::ffi::CString;
 use std::ptr;
 

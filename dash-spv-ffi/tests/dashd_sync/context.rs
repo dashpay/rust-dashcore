@@ -21,6 +21,7 @@ use dash_spv_ffi::config::{
 };
 use dash_spv_ffi::types::FFIWalletManager as FFIWalletManagerOpaque;
 use dash_spv_ffi::FFIEventCallbacks;
+use dashcore::ffi::FFINetwork;
 use dashcore::hashes::Hash;
 use dashcore::{Address, Txid};
 use key_wallet_ffi::managed_account::{
@@ -38,8 +39,7 @@ use key_wallet_ffi::wallet_manager::{
 };
 use key_wallet_ffi::{
     wallet_manager_free_string, wallet_manager_free_wallet_ids, wallet_manager_get_wallet,
-    wallet_manager_get_wallet_balance, wallet_manager_get_wallet_ids, FFIError, FFINetwork,
-    FFIWalletManager,
+    wallet_manager_get_wallet_balance, wallet_manager_get_wallet_ids, FFIError, FFIWalletManager,
 };
 use tempfile::TempDir;
 

@@ -4,7 +4,8 @@
 #[allow(clippy::module_inception)]
 mod tests {
     use crate::error::{FFIError, FFIErrorCode};
-    use crate::{wallet, wallet_manager, FFINetwork};
+    use crate::{wallet, wallet_manager};
+    use dashcore::ffi::FFINetwork;
     use key_wallet_manager::WalletInterface;
     use std::ffi::{CStr, CString};
     use std::ptr;

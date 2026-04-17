@@ -352,51 +352,62 @@ impl FromOnNetwork<RootExtendedPubKey> for ExtendedPubKey {
 }
 
 impl Wallet {
-    /// Get the root extended public key from the wallet type
-    pub fn root_extended_pub_key(&self) -> RootExtendedPubKey {
+    /// Get the root extended public key from the wallet type.
+    ///
+    /// The [`WalletType::WatchOnly`] and [`WalletType::ExternalSignable`] unit
+    /// variants carry no key material — they return an error here because there
+    /// is nothing to return. The wallet's identity is available via
+    /// [`Wallet::wallet_id`] for those cases.
+    pub fn root_extended_pub_key(&self) -> crate::Result<RootExtendedPubKey> {
         match &self.wallet_type {
             WalletType::Mnemonic {
                 root_extended_private_key,
                 ..
-            } => root_extended_private_key.to_root_extended_pub_key(),
+            } => Ok(root_extended_private_key.to_root_extended_pub_key()),
             WalletType::MnemonicWithPassphrase {
                 root_extended_public_key,
                 ..
-            } => root_extended_public_key.clone(),
+            } => Ok(root_extended_public_key.clone()),
             WalletType::Seed {
                 root_extended_private_key,
                 ..
-            } => root_extended_private_key.to_root_extended_pub_key(),
-            WalletType::ExtendedPrivKey(key) => key.to_root_extended_pub_key(),
-            WalletType::ExternalSignable(key) => key.clone(),
-            WalletType::WatchOnly(key) => key.clone(),
+            } => Ok(root_extended_private_key.to_root_extended_pub_key()),
+            WalletType::ExtendedPrivKey(key) => Ok(key.to_root_extended_pub_key()),
+            WalletType::ExternalSignable | WalletType::WatchOnly => Err(Error::InvalidParameter(
+                "Root extended public key is not available for watch-only or \
+                     external-signable wallets; use wallet.wallet_id for identity and \
+                     per-account xpubs for derivation"
+                    .into(),
+            )),
         }
     }
 
-    /// Get the root extended public key from the wallet type as Cow
-    pub fn root_extended_pub_key_cow(&self) -> Cow<'_, RootExtendedPubKey> {
+    /// Get the root extended public key from the wallet type as Cow.
+    ///
+    /// See [`Wallet::root_extended_pub_key`] for the unit-variant behavior.
+    pub fn root_extended_pub_key_cow(&self) -> crate::Result<Cow<'_, RootExtendedPubKey>> {
         match &self.wallet_type {
             WalletType::Mnemonic {
                 root_extended_private_key,
                 ..
-            } => Cow::Owned(root_extended_private_key.to_root_extended_pub_key()),
+            } => Ok(Cow::Owned(root_extended_private_key.to_root_extended_pub_key())),
             WalletType::MnemonicWithPassphrase {
                 root_extended_public_key,
                 ..
-            } => Cow::Borrowed(root_extended_public_key),
+            } => Ok(Cow::Borrowed(root_extended_public_key)),
             WalletType::Seed {
                 root_extended_private_key,
                 ..
-            } => Cow::Owned(root_extended_private_key.to_root_extended_pub_key()),
+            } => Ok(Cow::Owned(root_extended_private_key.to_root_extended_pub_key())),
             WalletType::ExtendedPrivKey(root_extended_priv_key) => {
-                Cow::Owned(root_extended_priv_key.to_root_extended_pub_key())
+                Ok(Cow::Owned(root_extended_priv_key.to_root_extended_pub_key()))
             }
-            WalletType::ExternalSignable(root_extended_public_key) => {
-                Cow::Borrowed(root_extended_public_key)
-            }
-            WalletType::WatchOnly(root_extended_public_key) => {
-                Cow::Borrowed(root_extended_public_key)
-            }
+            WalletType::ExternalSignable | WalletType::WatchOnly => Err(Error::InvalidParameter(
+                "Root extended public key is not available for watch-only or \
+                     external-signable wallets; use wallet.wallet_id for identity and \
+                     per-account xpubs for derivation"
+                    .into(),
+            )),
         }
     }
 
@@ -417,10 +428,10 @@ impl Wallet {
                 ..
             } => Ok(root_extended_private_key),
             WalletType::ExtendedPrivKey(key) => Ok(key),
-            WalletType::ExternalSignable(_) => {
+            WalletType::ExternalSignable => {
                 Err(Error::InvalidParameter("External signable wallet has no private key".into()))
             }
-            WalletType::WatchOnly(_) => {
+            WalletType::WatchOnly => {
                 Err(Error::InvalidParameter("Watch-only wallet has no private key".into()))
             }
         }
@@ -453,10 +464,10 @@ impl Wallet {
                 ..
             } => Ok(root_extended_private_key.clone()),
             WalletType::ExtendedPrivKey(key) => Ok(key.clone()),
-            WalletType::ExternalSignable(_) => {
+            WalletType::ExternalSignable => {
                 Err(Error::InvalidParameter("External signable wallet has no private key".into()))
             }
-            WalletType::WatchOnly(_) => {
+            WalletType::WatchOnly => {
                 Err(Error::InvalidParameter("Watch-only wallet has no private key".into()))
             }
         }
