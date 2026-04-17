@@ -24,36 +24,6 @@ line_length = 100
 documentation = true
 documentation_style = "c"
 
-[export]
-# Include all items marked with #[no_mangle] and pub extern
-include = []
-exclude = []
-prefix = ""
-item_types = ["functions", "enums", "structs", "typedefs", "opaque", "constants"]
-
-# Opaque types with Swift-compatible bodies (unsigned char _private[0] allows Swift to import)
-[export.body]
-"FFIPrivateKey" = "{ unsigned char _private[0]; }"
-"FFIExtendedPrivateKey" = "{ unsigned char _private[0]; }"
-"FFIPublicKey" = "{ unsigned char _private[0]; }"
-"FFIExtendedPubKey" = "{ unsigned char _private[0]; }"
-"FFIWalletManager" = "{ unsigned char _private[0]; }"
-"FFIWallet" = "{ unsigned char _private[0]; }"
-"FFIAccount" = "{ unsigned char _private[0]; }"
-"FFIBLSAccount" = "{ unsigned char _private[0]; }"
-"FFIEdDSAAccount" = "{ unsigned char _private[0]; }"
-"FFIManagedAccount" = "{ unsigned char _private[0]; }"
-"FFIManagedPlatformAccount" = "{ unsigned char _private[0]; }"
-"FFIAccountCollection" = "{ unsigned char _private[0]; }"
-"FFIManagedAccountCollection" = "{ unsigned char _private[0]; }"
-"FFIAddressPool" = "{ unsigned char _private[0]; }"
-
-[export.rename]
-# Rename types to match C conventions
-"FFIErrorCode" = "FFIErrorCode"
-"FFINetwork" = "FFINetwork"
-"FFIDerivationPathType" = "FFIDerivationPathType"
-
 [enum]
 # Configure enum generation
 prefix_with_name = true
