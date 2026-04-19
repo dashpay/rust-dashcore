@@ -121,7 +121,7 @@ impl ChainTipManager {
     /// Get all tips sorted by chain work (descending)
     pub fn get_all_tips(&self) -> Vec<&ChainTip> {
         let mut tips: Vec<_> = self.tips.values().collect();
-        tips.sort_by(|a, b| b.chain_work.cmp(&a.chain_work));
+        tips.sort_by_key(|t| std::cmp::Reverse(t.chain_work));
         tips
     }
 
