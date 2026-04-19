@@ -2181,7 +2181,7 @@ mod tests {
             let json = serde_json::to_string(&unchecked.clone().assume_checked()).unwrap();
             let via_serde: Address = serde_json::from_str(&json).unwrap();
             let bytes = bincode::encode_to_vec(
-                &unchecked.clone().assume_checked(),
+                unchecked.clone().assume_checked(),
                 bincode::config::standard(),
             )
             .unwrap();
