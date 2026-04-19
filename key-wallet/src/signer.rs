@@ -71,8 +71,15 @@ pub enum TransactionCategory {
 }
 
 /// Sign on behalf of keys the host does not possess.
+///
+/// The `Send + Sync` supertrait bounds match how callers use a signer in
+/// practice: `build_asset_lock_with_signer` (and future signer-driven
+/// builders) call `&signer` methods across `.await` points, so any
+/// implementor that doesn't satisfy both bounds would fail to compile at
+/// the call site with a cryptic "future is not `Send`/`Sync`" message.
+/// Putting the bounds on the trait surfaces the requirement up front.
 #[async_trait]
-pub trait Signer {
+pub trait Signer: Send + Sync {
     /// Error produced by the underlying signing device or service.
     type Error: std::fmt::Display + Send + Sync + 'static;
 

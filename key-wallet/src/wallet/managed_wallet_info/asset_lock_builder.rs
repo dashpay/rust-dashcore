@@ -470,22 +470,50 @@ impl ManagedWalletInfo {
             transaction.input[index].script_sig = script_sig;
         }
 
-        // Credit-output bookkeeping: advance each funding account's pool to
-        // consume a fresh path, then ask the signer for the matching pubkey.
+        // Credit-output bookkeeping: for each funding, peek the next unused
+        // path on its account, ask the signer for the matching pubkey, and
+        // only mark the index used once the signer has succeeded.
+        //
+        // This protects against a signer failure mid-loop leaving earlier
+        // fundings' pool indices irreversibly consumed: if `public_key`
+        // errors, the current funding's index is still free, and no
+        // subsequent fundings have touched their pools yet.
         let mut credit_output_keys = Vec::with_capacity(credit_output_fundings.len());
         for funding in &credit_output_fundings {
-            let funding_key_account = resolve_funding_account(
-                &mut self.accounts,
-                funding.funding_type,
-                funding.identity_index,
-            )?;
-            let path = funding_key_account
-                .next_path()
-                .map_err(|e| AssetLockError::KeyDerivation(e.to_string()))?;
+            // Phase 1 (sync): peek without marking used. Borrow is scoped
+            // to the block so we can re-resolve the account after the
+            // signer await.
+            let (path, index) = {
+                let funding_key_account = resolve_funding_account(
+                    &mut self.accounts,
+                    funding.funding_type,
+                    funding.identity_index,
+                )?;
+                funding_key_account
+                    .peek_next_path()
+                    .map_err(|e| AssetLockError::KeyDerivation(e.to_string()))?
+            };
+
+            // Phase 2 (async): signer round-trip. If this errors, we return
+            // without ever calling mark_first_pool_index_used — index stays
+            // free for a retry.
             let pubkey = signer
                 .public_key(&path)
                 .await
                 .map_err(|e| AssetLockError::Signer(e.to_string()))?;
+
+            // Phase 3 (sync): signer succeeded, commit the index.
+            {
+                let funding_key_account = resolve_funding_account(
+                    &mut self.accounts,
+                    funding.funding_type,
+                    funding.identity_index,
+                )?;
+                funding_key_account
+                    .mark_first_pool_index_used(index)
+                    .map_err(|e| AssetLockError::KeyDerivation(e.to_string()))?;
+            }
+
             credit_output_keys.push((pubkey, path));
         }
 
@@ -643,9 +671,7 @@ mod tests {
             root,
             network: Network::Testnet,
         };
-        let result = info
-            .build_asset_lock_with_signer(&wallet, 0, vec![], 1000, &signer)
-            .await;
+        let result = info.build_asset_lock_with_signer(&wallet, 0, vec![], 1000, &signer).await;
         assert!(matches!(result, Err(AssetLockError::NoCreditOutputs)));
     }
 
@@ -713,6 +739,102 @@ mod tests {
             result,
             Err(AssetLockError::UnsupportedSignerMethod(SignerMethod::Digest))
         ));
+    }
+
+    #[tokio::test]
+    async fn test_signer_happy_path_end_to_end() {
+        use crate::Utxo;
+        use dashcore::{OutPoint, TxOut, Txid};
+
+        let (wallet, mut info) = test_wallet_and_info();
+        let root = match &wallet.wallet_type {
+            crate::wallet::WalletType::Mnemonic {
+                root_extended_private_key,
+                ..
+            } => root_extended_private_key.clone(),
+            _ => unreachable!(),
+        };
+
+        // Generate a receive address on account 0 and fund it with a
+        // real UTXO at that address — coin selection needs a confirmed,
+        // spendable output the signer can sign for.
+        let account_xpub = wallet.get_bip44_account(0).unwrap().account_xpub;
+        let funding_address = info
+            .accounts
+            .standard_bip44_accounts
+            .get_mut(&0)
+            .unwrap()
+            .next_receive_address(Some(&account_xpub), true)
+            .unwrap();
+
+        let utxo = Utxo {
+            outpoint: OutPoint {
+                txid: Txid::from_byte_array([0x11; 32]),
+                vout: 0,
+            },
+            txout: TxOut {
+                value: 1_000_000,
+                script_pubkey: funding_address.script_pubkey(),
+            },
+            address: funding_address,
+            height: 1000,
+            is_coinbase: false,
+            is_confirmed: true,
+            is_instantlocked: false,
+            is_locked: false,
+        };
+        info.accounts
+            .standard_bip44_accounts
+            .get_mut(&0)
+            .unwrap()
+            .utxos
+            .insert(utxo.outpoint, utxo);
+        info.update_synced_height(1100);
+
+        let signer = InMemorySigner {
+            root,
+            network: Network::Testnet,
+        };
+
+        let credit_amounts = [200_000u64, 300_000u64];
+        let fundings = test_credit_outputs(&credit_amounts);
+        let result = info
+            .build_asset_lock_with_signer(&wallet, 0, fundings, 1000, &signer)
+            .await
+            .expect("build_asset_lock_with_signer should succeed with funded wallet");
+
+        // Result shape: signer path returns public keys + paths, one per
+        // credit output, in payload order.
+        let pub_keys = match &result.keys {
+            AssetLockCreditKeys::Public(v) => v,
+            AssetLockCreditKeys::Private(_) => panic!("signer path must return Public keys"),
+        };
+        assert_eq!(pub_keys.len(), credit_amounts.len(), "one (pubkey, path) per credit output");
+
+        // DIP-00X: tx.output[0] is the OP_RETURN burn carrying the total
+        // locked amount. Credit outputs live only in the payload, not in
+        // tx.output.
+        let total_credit: u64 = credit_amounts.iter().sum();
+        let burn = &result.transaction.output[0];
+        assert_eq!(burn.value, total_credit, "burn output must carry total credit");
+        assert!(
+            burn.script_pubkey.is_op_return(),
+            "tx.output[0] must be OP_RETURN, got {:?}",
+            burn.script_pubkey
+        );
+
+        // Every input should have been signed — empty script_sig means
+        // the signer was never called for that input.
+        assert!(
+            !result.transaction.input.is_empty(),
+            "transaction should have at least one selected input"
+        );
+        for (i, txin) in result.transaction.input.iter().enumerate() {
+            assert!(
+                !txin.script_sig.is_empty(),
+                "input {i} has empty script_sig — signer did not produce a signature"
+            );
+        }
     }
 
     #[tokio::test]
