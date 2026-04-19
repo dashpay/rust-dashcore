@@ -600,8 +600,7 @@ impl MasternodeListEngine {
         } = qr_info;
 
         // Apply quorum snapshots and masternode list diffs
-        for (snapshot, diff) in quorum_snapshot_list.into_iter().zip(mn_list_diff_list.into_iter())
-        {
+        for (snapshot, diff) in quorum_snapshot_list.into_iter().zip(mn_list_diff_list) {
             self.known_snapshots.insert(diff.block_hash, snapshot);
             self.apply_diff(diff, None, false, None)?;
         }
