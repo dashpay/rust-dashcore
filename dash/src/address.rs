@@ -2170,7 +2170,7 @@ mod tests {
     /// so a future "tighten serde with a hardcoded network" regression would
     /// trip here rather than silently diverging.
     #[test]
-    #[cfg(feature = "serde")]
+    #[cfg(all(feature = "serde", feature = "bincode"))]
     fn serde_deserialize_network_checked_agrees_with_bincode_decode() {
         let testnet_strings = [
             "yWZBnVvSxS5xSq27dHVAJpuqbt7vvwGFL1", // P2PKH
@@ -2180,11 +2180,22 @@ mod tests {
 
             let json = serde_json::to_string(&unchecked.clone().assume_checked()).unwrap();
             let via_serde: Address = serde_json::from_str(&json).unwrap();
+            let bytes = bincode::encode_to_vec(
+                &unchecked.clone().assume_checked(),
+                bincode::config::standard(),
+            )
+            .unwrap();
+            let via_bincode: Address =
+                bincode::decode_from_slice(&bytes, bincode::config::standard()).unwrap().0;
 
             let via_assume_checked: Address = unchecked.assume_checked();
 
             assert_eq!(via_serde.to_string(), via_assume_checked.to_string());
             assert_eq!(via_serde.script_pubkey(), via_assume_checked.script_pubkey());
+            assert_eq!(via_bincode.to_string(), via_serde.to_string());
+            assert_eq!(via_bincode.to_string(), via_assume_checked.to_string());
+            assert_eq!(via_bincode.script_pubkey(), via_serde.script_pubkey());
+            assert_eq!(via_bincode.script_pubkey(), via_assume_checked.script_pubkey());
         }
     }
 
