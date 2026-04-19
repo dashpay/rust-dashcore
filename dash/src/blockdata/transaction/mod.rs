@@ -597,10 +597,14 @@ impl Decodable for Transaction {
     ) -> Result<Self, encode::Error> {
         let version = u16::consensus_decode_from_finite_reader(r)?;
         let special_transaction_type_u16 = u16::consensus_decode(r)?;
-        let special_transaction_type = TransactionType::try_from(special_transaction_type_u16)
-            .map_err(|_| {
+        println!("bbbbbb");
+        let special_transaction_type = if version != 0 {
+            TransactionType::try_from(special_transaction_type_u16).map_err(|_| {
                 encode::Error::UnknownSpecialTransactionType(special_transaction_type_u16)
-            })?;
+            })?
+        } else {
+            TransactionType::Classic
+        };
         let input = Vec::<TxIn>::consensus_decode_from_finite_reader(r)?;
         // segwit
         let mut segwit = input.is_empty();
