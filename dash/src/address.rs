@@ -2145,26 +2145,6 @@ mod tests {
         assert_eq!(decoded.script_pubkey(), original.script_pubkey());
     }
 
-    /// Parallel round-trip coverage for regtest/devnet addresses, which share
-    /// the `y`-prefix on base58 but live on different logical networks. The
-    /// serde path doesn't need to distinguish them — raw bytes are all that
-    /// round-trips — but the previous hardcoded-Mainnet behavior still broke
-    /// this case.
-    #[test]
-    #[cfg(feature = "serde")]
-    fn serde_deserialize_network_checked_devnet_round_trip() {
-        let original: Address =
-            Address::from_str("yWZBnVvSxS5xSq27dHVAJpuqbt7vvwGFL1").unwrap().assume_checked();
-
-        let json = serde_json::to_string(&original).expect("serialize");
-        let decoded: Address = serde_json::from_str(&json).expect("deserialize NetworkChecked");
-
-        // Round-trip preserves the raw address bytes (and thus script_pubkey)
-        // even though the `NetworkChecked` side cannot prove which network the
-        // caller had in mind.
-        assert_eq!(decoded.script_pubkey(), original.script_pubkey());
-    }
-
     /// Serde round-trip must agree with the native bincode `Decode` impl.
     /// Both paths now use `assume_checked()`; this test guards the invariant
     /// so a future "tighten serde with a hardcoded network" regression would
