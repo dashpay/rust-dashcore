@@ -12,7 +12,7 @@ use std::collections::HashMap;
 use std::fmt;
 
 use crate::managed_account::ManagedCoreAccount;
-use crate::signer::Signer;
+use crate::signer::{Signer, SignerMethod};
 use crate::wallet::managed_wallet_info::coin_selection::SelectionStrategy;
 use crate::wallet::managed_wallet_info::fee::FeeRate;
 use crate::wallet::managed_wallet_info::transaction_builder::{BuilderError, TransactionBuilder};
@@ -94,6 +94,8 @@ pub enum AssetLockError {
     Signer(String),
     /// Signing produced an unexpected state (e.g. input without a known path).
     SigningFailed(String),
+    /// The signer does not advertise a method required by this build path.
+    UnsupportedSignerMethod(SignerMethod),
     /// The wallet does not have a private key (watch-only).
     WatchOnlyWallet,
     /// The specified BIP44 account was not found.
@@ -117,6 +119,9 @@ impl fmt::Display for AssetLockError {
             Self::KeyDerivation(msg) => write!(f, "Key derivation failed: {msg}"),
             Self::Signer(msg) => write!(f, "Signer error: {msg}"),
             Self::SigningFailed(msg) => write!(f, "Signing failed: {msg}"),
+            Self::UnsupportedSignerMethod(m) => {
+                write!(f, "Signer does not support required method {m:?}")
+            }
             Self::WatchOnlyWallet => write!(f, "Cannot sign with watch-only wallet"),
             Self::AccountNotFound(idx) => write!(f, "BIP44 account {} not found", idx),
             Self::NoChangeAddress => write!(f, "No change address available"),
@@ -334,6 +339,14 @@ impl ManagedWalletInfo {
     ) -> Result<AssetLockResult, AssetLockError> {
         if credit_output_fundings.is_empty() {
             return Err(AssetLockError::NoCreditOutputs);
+        }
+
+        // This build path drives signing via pre-computed P2PKH sighashes,
+        // so the signer must support blind digest signing. Signers that
+        // only advertise transaction-level signing (typical of hardware
+        // wallets) need a future build path that hands them the full tx.
+        if !signer.supports(SignerMethod::Digest) {
+            return Err(AssetLockError::UnsupportedSignerMethod(SignerMethod::Digest));
         }
 
         // UTXOs and address→path map from the funding account.
@@ -578,9 +591,15 @@ mod tests {
         network: Network,
     }
 
+    const IN_MEMORY_METHODS: &[SignerMethod] = &[SignerMethod::Digest];
+
     #[async_trait::async_trait]
     impl Signer for InMemorySigner {
         type Error = String;
+
+        fn supported_methods(&self) -> &[SignerMethod] {
+            IN_MEMORY_METHODS
+        }
 
         async fn sign_ecdsa(
             &self,
@@ -654,6 +673,46 @@ mod tests {
             )
             .await;
         assert!(matches!(result, Err(AssetLockError::AccountNotFound(99))));
+    }
+
+    #[tokio::test]
+    async fn test_signer_without_digest_support_rejected() {
+        // A signer that advertises no methods (or only transaction-level
+        // signing) must be rejected by the digest-driven build path before
+        // any UTXO state is touched.
+        struct NoDigestSigner;
+        #[async_trait::async_trait]
+        impl Signer for NoDigestSigner {
+            type Error = String;
+            fn supported_methods(&self) -> &[SignerMethod] {
+                &[SignerMethod::Transaction(crate::signer::TransactionCategory::PlatformCredits)]
+            }
+            async fn sign_ecdsa(
+                &self,
+                _: &DerivationPath,
+                _: [u8; 32],
+            ) -> Result<(secp256k1::ecdsa::Signature, PublicKey), Self::Error> {
+                unreachable!("should be rejected before any signing is attempted")
+            }
+            async fn public_key(&self, _: &DerivationPath) -> Result<PublicKey, Self::Error> {
+                unreachable!()
+            }
+        }
+
+        let (wallet, mut info) = test_wallet_and_info();
+        let result = info
+            .build_asset_lock_with_signer(
+                &wallet,
+                0,
+                test_credit_outputs(&[100_000]),
+                1000,
+                &NoDigestSigner,
+            )
+            .await;
+        assert!(matches!(
+            result,
+            Err(AssetLockError::UnsupportedSignerMethod(SignerMethod::Digest))
+        ));
     }
 
     #[tokio::test]

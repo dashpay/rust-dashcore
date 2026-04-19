@@ -62,7 +62,7 @@ pub use managed_account::managed_platform_account::ManagedPlatformAccount;
 pub use managed_account::platform_address::PlatformP2PKHAddress;
 pub use mnemonic::Mnemonic;
 pub use seed::Seed;
-pub use signer::Signer;
+pub use signer::{Signer, SignerMethod, TransactionCategory};
 pub use utxo::Utxo;
 pub use wallet::{balance::WalletCoreBalance, Wallet};
 
