@@ -1079,6 +1079,31 @@ impl ManagedCoreAccount {
         Ok(private_key)
     }
 
+    /// Consume the next unused address and return only its derivation path.
+    ///
+    /// Analogous to [`Self::next_private_key`] but does not require any
+    /// root extended private key: used when signing is delegated to an
+    /// external [`Signer`](crate::signer::Signer), which holds the keys
+    /// and only needs the path to produce signatures or public keys.
+    ///
+    /// Only works for single-pool account types (not Standard accounts).
+    pub fn next_path(&mut self) -> Result<crate::DerivationPath, &'static str> {
+        if matches!(self.account_type, ManagedAccountType::Standard { .. }) {
+            return Err("Standard accounts must use next_receive_address or next_change_address");
+        }
+
+        let mut pools = self.account_type.address_pools_mut();
+        let pool = pools.first_mut().ok_or("Account has no address pool")?;
+
+        let info = pool
+            .next_unused_with_info(&address_pool::KeySource::NoKeySource, false)
+            .map_err(|_| "No unused address available")?;
+
+        pool.mark_index_used(info.index);
+
+        Ok(info.path)
+    }
+
     /// Get the derivation path for an address if it belongs to this account
     pub fn address_derivation_path(&self, address: &Address) -> Option<crate::DerivationPath> {
         self.account_type.get_address_derivation_path(address)

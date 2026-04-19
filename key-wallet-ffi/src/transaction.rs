@@ -1146,8 +1146,21 @@ pub unsafe extern "C" fn wallet_build_and_sign_asset_lock_transaction(
             // Write outputs
             *fee_out = result.fee;
 
+            // `build_asset_lock` always returns private keys; the signer-variant
+            // path uses a different FFI entry point.
+            let private_keys = match &result.keys {
+                key_wallet::wallet::managed_wallet_info::asset_lock_builder::AssetLockCreditKeys::Private(k) => k,
+                key_wallet::wallet::managed_wallet_info::asset_lock_builder::AssetLockCreditKeys::Public(_) => {
+                    FFIError::set_error(
+                        error,
+                        FFIErrorCode::WalletError,
+                        "Unexpected public-key result from build_asset_lock".to_string(),
+                    );
+                    return false;
+                }
+            };
             let keys_out = slice::from_raw_parts_mut(private_keys_out, credit_outputs_count);
-            for (i, key) in result.keys.iter().enumerate() {
+            for (i, key) in private_keys.iter().enumerate() {
                 if i < keys_out.len() {
                     keys_out[i] = *key;
                 }

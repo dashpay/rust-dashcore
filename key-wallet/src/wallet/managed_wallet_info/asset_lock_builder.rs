@@ -3,11 +3,16 @@
 //! Builds a Core special transaction (type 8) with `AssetLockPayload` that
 //! locks Dash for Platform credits.
 
+use dashcore::blockdata::script::{Builder, PushBytes};
+use dashcore::sighash::{EcdsaSighashType, SighashCache};
 use dashcore::{Address, ScriptBuf, Transaction, TxOut};
+use dashcore_hashes::Hash;
+use secp256k1::PublicKey;
 use std::collections::HashMap;
 use std::fmt;
 
 use crate::managed_account::ManagedCoreAccount;
+use crate::signer::Signer;
 use crate::wallet::managed_wallet_info::coin_selection::SelectionStrategy;
 use crate::wallet::managed_wallet_info::fee::FeeRate;
 use crate::wallet::managed_wallet_info::transaction_builder::{BuilderError, TransactionBuilder};
@@ -43,17 +48,31 @@ pub struct CreditOutputFunding {
     pub identity_index: u32,
 }
 
+/// One-time credit-output keys carried back from an asset-lock build.
+///
+/// For each credit output (in payload order, unaffected by BIP-69 sorting of
+/// the transaction's output list), either the raw private key — when the host
+/// holds signing material — or the public key + derivation path, when signing
+/// was delegated to an external [`Signer`].
+pub enum AssetLockCreditKeys {
+    /// Raw private keys, one per credit output. Produced by
+    /// [`ManagedWalletInfo::build_asset_lock`] on soft wallets.
+    Private(Vec<[u8; 32]>),
+    /// Public key + derivation path per credit output. Produced by
+    /// [`ManagedWalletInfo::build_asset_lock_with_signer`] when the
+    /// private keys never leave the signing device.
+    Public(Vec<(PublicKey, DerivationPath)>),
+}
+
 /// Result of building an asset lock transaction.
 pub struct AssetLockResult {
     /// The signed transaction.
     pub transaction: Transaction,
     /// The fee paid in duffs.
     pub fee: u64,
-    /// One-time private keys, one per credit output (in order).
-    /// `keys[i]` corresponds to the credit output at index `i` in the
-    /// payload's `credit_outputs` vector (not affected by BIP-69 sorting
-    /// of the transaction's output list).
-    pub keys: Vec<[u8; 32]>,
+    /// Per-credit-output key material. See [`AssetLockCreditKeys`] for
+    /// ordering and variant semantics.
+    pub keys: AssetLockCreditKeys,
 }
 
 /// Errors specific to asset lock transaction building.
@@ -71,6 +90,10 @@ pub enum AssetLockError {
     NoAddressPool,
     /// Key derivation failed.
     KeyDerivation(String),
+    /// The external signer reported an error.
+    Signer(String),
+    /// Signing produced an unexpected state (e.g. input without a known path).
+    SigningFailed(String),
     /// The wallet does not have a private key (watch-only).
     WatchOnlyWallet,
     /// The specified BIP44 account was not found.
@@ -92,6 +115,8 @@ impl fmt::Display for AssetLockError {
             Self::NoAddressAvailable => write!(f, "No address available in funding account"),
             Self::NoAddressPool => write!(f, "Funding account has no address pool"),
             Self::KeyDerivation(msg) => write!(f, "Key derivation failed: {msg}"),
+            Self::Signer(msg) => write!(f, "Signer error: {msg}"),
+            Self::SigningFailed(msg) => write!(f, "Signing failed: {msg}"),
             Self::WatchOnlyWallet => write!(f, "Cannot sign with watch-only wallet"),
             Self::AccountNotFound(idx) => write!(f, "BIP44 account {} not found", idx),
             Self::NoChangeAddress => write!(f, "No change address available"),
@@ -280,7 +305,181 @@ impl ManagedWalletInfo {
         Ok(AssetLockResult {
             transaction,
             fee: actual_fee,
-            keys,
+            keys: AssetLockCreditKeys::Private(keys),
+        })
+    }
+
+    /// Build and sign an asset lock transaction via an external [`Signer`].
+    ///
+    /// Same shape and semantics as [`Self::build_asset_lock`], but every
+    /// signing operation — both the P2PKH input signatures and the public
+    /// keys recorded for credit outputs — is delegated to `signer`. The host
+    /// never sees the underlying private keys, so this is the entry point for
+    /// hardware wallets and remote signers backing a
+    /// [`WalletType::ExternalSignable`](crate::wallet::WalletType::ExternalSignable)
+    /// wallet.
+    ///
+    /// The returned [`AssetLockResult::keys`] is
+    /// [`AssetLockCreditKeys::Public`]: public keys plus derivation paths,
+    /// one per credit output in payload order. The caller uses the paths to
+    /// request signatures from the same signer when later consuming the
+    /// credits on Platform.
+    pub async fn build_asset_lock_with_signer<S: Signer>(
+        &mut self,
+        wallet: &Wallet,
+        account_index: u32,
+        credit_output_fundings: Vec<CreditOutputFunding>,
+        fee_per_kb: u64,
+        signer: &S,
+    ) -> Result<AssetLockResult, AssetLockError> {
+        if credit_output_fundings.is_empty() {
+            return Err(AssetLockError::NoCreditOutputs);
+        }
+
+        // UTXOs and address→path map from the funding account.
+        let funding_account = self
+            .accounts
+            .standard_bip44_accounts
+            .get(&account_index)
+            .ok_or(AssetLockError::AccountNotFound(account_index))?;
+
+        let utxos: Vec<Utxo> = funding_account.utxos.values().cloned().collect();
+        let mut address_to_path: HashMap<Address, DerivationPath> = HashMap::new();
+        for pool in funding_account.account_type.address_pools() {
+            for addr_info in pool.addresses.values() {
+                address_to_path.insert(addr_info.address.clone(), addr_info.path.clone());
+            }
+        }
+
+        // Next change address — derivable from the account xpub, no signing key needed.
+        let xpub = wallet.get_bip44_account(account_index).map(|a| a.account_xpub);
+        let change_address = self
+            .accounts
+            .standard_bip44_accounts
+            .get_mut(&account_index)
+            .and_then(|account| account.next_change_address(xpub.as_ref(), true).ok())
+            .ok_or(AssetLockError::NoChangeAddress)?;
+
+        let synced_height = self.synced_height();
+
+        let credit_outputs: Vec<TxOut> =
+            credit_output_fundings.iter().map(|f| f.output.clone()).collect();
+
+        // Same burn-output shape as the soft-wallet path: tx.output[0] is an
+        // OP_RETURN burn carrying the total locked amount, credit outputs
+        // live only in the payload. See build_asset_lock for details.
+        let total_credit: u64 = credit_outputs.iter().map(|o| o.value).sum();
+        let burn_output = TxOut {
+            value: total_credit,
+            script_pubkey: ScriptBuf::new_op_return(&[]),
+        };
+
+        // Build the transaction WITHOUT keys — TransactionBuilder's internal
+        // signer is skipped when every input's key is None, producing an
+        // unsigned tx we then sign ourselves via the Signer.
+        let tx_builder = TransactionBuilder::new()
+            .set_change_address(change_address)
+            .set_fee_rate(FeeRate::new(fee_per_kb))
+            .add_raw_output(burn_output);
+
+        let tx_builder_with_inputs = tx_builder.select_inputs(
+            &utxos,
+            SelectionStrategy::BranchAndBound,
+            synced_height,
+            |_utxo| None,
+        )?;
+
+        let outputs_count_before = tx_builder_with_inputs.outputs().len();
+        let fee = tx_builder_with_inputs.calculate_fee();
+        let fee_with_extra = tx_builder_with_inputs.calculate_fee_with_extra_output();
+
+        let mut transaction = tx_builder_with_inputs.build_asset_lock(credit_outputs)?;
+
+        let actual_fee = if transaction.output.len() > outputs_count_before {
+            fee_with_extra
+        } else {
+            fee
+        };
+
+        // Map each input back to its prev-txout via UTXO outpoint so we can
+        // compute the legacy P2PKH sighash and look up its derivation path.
+        let utxo_by_outpoint: HashMap<_, _> =
+            utxos.iter().map(|u| (u.outpoint, u.clone())).collect();
+
+        let mut scripts: Vec<ScriptBuf> = Vec::with_capacity(transaction.input.len());
+        {
+            let cache = SighashCache::new(&transaction);
+            for (index, txin) in transaction.input.iter().enumerate() {
+                let utxo = utxo_by_outpoint.get(&txin.previous_output).ok_or_else(|| {
+                    AssetLockError::SigningFailed(format!(
+                        "selected UTXO {:?} not found in funding account",
+                        txin.previous_output
+                    ))
+                })?;
+                let path = address_to_path.get(&utxo.address).ok_or_else(|| {
+                    AssetLockError::SigningFailed(format!(
+                        "no derivation path for input address {}",
+                        utxo.address
+                    ))
+                })?;
+
+                let sighash = cache
+                    .legacy_signature_hash(
+                        index,
+                        &utxo.txout.script_pubkey,
+                        EcdsaSighashType::All.to_u32(),
+                    )
+                    .map_err(|e| {
+                        AssetLockError::SigningFailed(format!(
+                            "failed to compute sighash for input {index}: {e}"
+                        ))
+                    })?;
+
+                let (sig, pubkey) = signer
+                    .sign_ecdsa(path, *sighash.as_byte_array())
+                    .await
+                    .map_err(|e| AssetLockError::Signer(e.to_string()))?;
+
+                let mut sig_bytes = sig.serialize_der().to_vec();
+                sig_bytes.push(EcdsaSighashType::All.to_u32() as u8);
+
+                let script_sig = Builder::new()
+                    .push_slice(<&PushBytes>::try_from(sig_bytes.as_slice()).map_err(|_| {
+                        AssetLockError::SigningFailed("invalid signature length".into())
+                    })?)
+                    .push_slice(pubkey.serialize())
+                    .into_script();
+
+                scripts.push(script_sig);
+            }
+        }
+        for (index, script_sig) in scripts.into_iter().enumerate() {
+            transaction.input[index].script_sig = script_sig;
+        }
+
+        // Credit-output bookkeeping: advance each funding account's pool to
+        // consume a fresh path, then ask the signer for the matching pubkey.
+        let mut credit_output_keys = Vec::with_capacity(credit_output_fundings.len());
+        for funding in &credit_output_fundings {
+            let funding_key_account = resolve_funding_account(
+                &mut self.accounts,
+                funding.funding_type,
+                funding.identity_index,
+            )?;
+            let path = funding_key_account
+                .next_path()
+                .map_err(|e| AssetLockError::KeyDerivation(e.to_string()))?;
+            let pubkey = signer
+                .public_key(&path)
+                .await
+                .map_err(|e| AssetLockError::Signer(e.to_string()))?;
+            credit_output_keys.push((pubkey, path));
+        }
+
+        Ok(AssetLockResult {
+            transaction,
+            fee: actual_fee,
+            keys: AssetLockCreditKeys::Public(credit_output_keys),
         })
     }
 }
@@ -361,6 +560,125 @@ mod tests {
         // Wallet has no UTXOs, so coin selection should fail
         let (wallet, mut info) = test_wallet_and_info();
         let result = info.build_asset_lock(&wallet, 0, test_credit_outputs(&[500_000]), 1000);
+        assert!(
+            matches!(result, Err(AssetLockError::Builder(_))),
+            "Expected Builder error for insufficient funds, got: {:?}",
+            result.err()
+        );
+    }
+
+    // -- Signer-variant tests --
+
+    /// Signer implementation backed by a real [`RootExtendedPrivKey`]. Models
+    /// the same derive-and-sign the soft-wallet path performs internally, so
+    /// `build_asset_lock_with_signer` can be exercised end-to-end without a
+    /// hardware device in the loop.
+    struct InMemorySigner {
+        root: crate::wallet::root_extended_keys::RootExtendedPrivKey,
+        network: Network,
+    }
+
+    #[async_trait::async_trait]
+    impl Signer for InMemorySigner {
+        type Error = String;
+
+        async fn sign_ecdsa(
+            &self,
+            path: &DerivationPath,
+            sighash: [u8; 32],
+        ) -> Result<(secp256k1::ecdsa::Signature, PublicKey), Self::Error> {
+            let secp = secp256k1::Secp256k1::new();
+            let xpriv = self
+                .root
+                .to_extended_priv_key(self.network)
+                .derive_priv(&secp, path)
+                .map_err(|e| e.to_string())?;
+            let msg = secp256k1::Message::from_digest(sighash);
+            let sig = secp.sign_ecdsa(&msg, &xpriv.private_key);
+            let pk = secp256k1::PublicKey::from_secret_key(&secp, &xpriv.private_key);
+            Ok((sig, pk))
+        }
+
+        async fn public_key(&self, path: &DerivationPath) -> Result<PublicKey, Self::Error> {
+            let secp = secp256k1::Secp256k1::new();
+            let xpriv = self
+                .root
+                .to_extended_priv_key(self.network)
+                .derive_priv(&secp, path)
+                .map_err(|e| e.to_string())?;
+            Ok(secp256k1::PublicKey::from_secret_key(&secp, &xpriv.private_key))
+        }
+    }
+
+    #[tokio::test]
+    async fn test_signer_empty_credit_outputs_rejected() {
+        let (wallet, mut info) = test_wallet_and_info();
+        let root = match &wallet.wallet_type {
+            crate::wallet::WalletType::Mnemonic {
+                root_extended_private_key,
+                ..
+            } => root_extended_private_key.clone(),
+            _ => unreachable!("test_wallet_and_info produces a mnemonic wallet"),
+        };
+        let signer = InMemorySigner {
+            root,
+            network: Network::Testnet,
+        };
+        let result = info
+            .build_asset_lock_with_signer(&wallet, 0, vec![], 1000, &signer)
+            .await;
+        assert!(matches!(result, Err(AssetLockError::NoCreditOutputs)));
+    }
+
+    #[tokio::test]
+    async fn test_signer_invalid_account_index() {
+        let (wallet, mut info) = test_wallet_and_info();
+        let root = match &wallet.wallet_type {
+            crate::wallet::WalletType::Mnemonic {
+                root_extended_private_key,
+                ..
+            } => root_extended_private_key.clone(),
+            _ => unreachable!(),
+        };
+        let signer = InMemorySigner {
+            root,
+            network: Network::Testnet,
+        };
+        let result = info
+            .build_asset_lock_with_signer(
+                &wallet,
+                99,
+                test_credit_outputs(&[100_000]),
+                1000,
+                &signer,
+            )
+            .await;
+        assert!(matches!(result, Err(AssetLockError::AccountNotFound(99))));
+    }
+
+    #[tokio::test]
+    async fn test_signer_insufficient_funds() {
+        let (wallet, mut info) = test_wallet_and_info();
+        let root = match &wallet.wallet_type {
+            crate::wallet::WalletType::Mnemonic {
+                root_extended_private_key,
+                ..
+            } => root_extended_private_key.clone(),
+            _ => unreachable!(),
+        };
+        let signer = InMemorySigner {
+            root,
+            network: Network::Testnet,
+        };
+        let result = info
+            .build_asset_lock_with_signer(
+                &wallet,
+                0,
+                test_credit_outputs(&[500_000]),
+                1000,
+                &signer,
+            )
+            .await;
         assert!(
             matches!(result, Err(AssetLockError::Builder(_))),
             "Expected Builder error for insufficient funds, got: {:?}",

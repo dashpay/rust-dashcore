@@ -38,6 +38,7 @@ pub mod managed_account;
 pub mod mnemonic;
 pub mod psbt;
 pub mod seed;
+pub mod signer;
 pub mod transaction_checking;
 pub(crate) mod utils;
 pub mod utxo;
@@ -61,6 +62,7 @@ pub use managed_account::managed_platform_account::ManagedPlatformAccount;
 pub use managed_account::platform_address::PlatformP2PKHAddress;
 pub use mnemonic::Mnemonic;
 pub use seed::Seed;
+pub use signer::Signer;
 pub use utxo::Utxo;
 pub use wallet::{balance::WalletCoreBalance, Wallet};
 
