@@ -441,6 +441,49 @@ impl MasternodeListEngine {
         self.block_container.feed_block_height(height, block_hash)
     }
 
+    /// Block hashes referenced by a QRInfo message that the engine needs heights for.
+    ///
+    /// Covers every diff endpoint (base and target) and every rotating commitment hash
+    /// carried in the QRInfo. When an h-4c diff is present, rotating quorums in
+    /// `mn_list_diff_h.new_quorums` are also included so the previous cycle can be
+    /// revalidated.
+    pub fn qr_info_referenced_block_hashes(qr_info: &QRInfo) -> BTreeSet<BlockHash> {
+        let mut hashes = BTreeSet::new();
+
+        for diff in [
+            &qr_info.mn_list_diff_tip,
+            &qr_info.mn_list_diff_h,
+            &qr_info.mn_list_diff_at_h_minus_c,
+            &qr_info.mn_list_diff_at_h_minus_2c,
+            &qr_info.mn_list_diff_at_h_minus_3c,
+        ] {
+            hashes.insert(diff.base_block_hash);
+            hashes.insert(diff.block_hash);
+        }
+
+        if let Some((_, diff)) = &qr_info.quorum_snapshot_and_mn_list_diff_at_h_minus_4c {
+            hashes.insert(diff.base_block_hash);
+            hashes.insert(diff.block_hash);
+
+            for quorum_entry in &qr_info.mn_list_diff_h.new_quorums {
+                if quorum_entry.llmq_type.is_rotating_quorum_type() {
+                    hashes.insert(quorum_entry.quorum_hash);
+                }
+            }
+        }
+
+        for diff in &qr_info.mn_list_diff_list {
+            hashes.insert(diff.base_block_hash);
+            hashes.insert(diff.block_hash);
+        }
+
+        for quorum_entry in &qr_info.last_commitment_per_index {
+            hashes.insert(quorum_entry.quorum_hash);
+        }
+
+        hashes
+    }
+
     /// Processes and applies a QRInfo message to the masternode list engine.
     ///
     /// The caller is expected to pre-populate [`Self::block_container`] with heights

@@ -134,41 +134,17 @@ pub(super) async fn build_mnlistdiff_request_pairs<S: BlockHeaderStorage>(
 
 /// Feed QRInfo block heights to the engine from storage.
 ///
-/// This feeds all block heights referenced in the QRInfo diffs, plus the cycle boundary
-/// height which is needed for rotated quorum storage key calculation.
+/// Resolves heights for every hash enumerated by
+/// [`MasternodeListEngine::qr_info_referenced_block_hashes`], plus the cycle boundary
+/// block for each work-block diff (`work_height + WORK_DIFF_DEPTH`), which is needed
+/// for rotated quorum storage key calculation.
 pub(super) async fn feed_qrinfo_heights_to_engine<S: BlockHeaderStorage>(
     engine: &mut MasternodeListEngine,
     qr_info: &QRInfo,
     storage: &S,
 ) -> SyncResult<usize> {
-    let mut block_hashes = vec![
-        qr_info.mn_list_diff_tip.block_hash,
-        qr_info.mn_list_diff_h.block_hash,
-        qr_info.mn_list_diff_at_h_minus_c.block_hash,
-        qr_info.mn_list_diff_at_h_minus_2c.block_hash,
-        qr_info.mn_list_diff_at_h_minus_3c.block_hash,
-        qr_info.mn_list_diff_tip.base_block_hash,
-        qr_info.mn_list_diff_h.base_block_hash,
-        qr_info.mn_list_diff_at_h_minus_c.base_block_hash,
-        qr_info.mn_list_diff_at_h_minus_2c.base_block_hash,
-        qr_info.mn_list_diff_at_h_minus_3c.base_block_hash,
-    ];
-
-    if let Some((_, diff)) = &qr_info.quorum_snapshot_and_mn_list_diff_at_h_minus_4c {
-        block_hashes.push(diff.block_hash);
-        block_hashes.push(diff.base_block_hash);
-    }
-
-    for diff in &qr_info.mn_list_diff_list {
-        block_hashes.push(diff.block_hash);
-        block_hashes.push(diff.base_block_hash);
-    }
-
-    block_hashes.sort();
-    block_hashes.dedup();
-
     let mut fed_count = 0;
-    for block_hash in block_hashes {
+    for block_hash in MasternodeListEngine::qr_info_referenced_block_hashes(qr_info) {
         if let Ok(Some(height)) = storage.get_header_height_by_hash(&block_hash).await {
             engine.feed_block_height(height, block_hash);
             fed_count += 1;
@@ -176,8 +152,9 @@ pub(super) async fn feed_qrinfo_heights_to_engine<S: BlockHeaderStorage>(
         }
     }
 
-    // Feed cycle boundary heights for all diffs (current and historical cycles)
-    // Each diff's block_hash is at the "work block" height; the cycle boundary is WORK_DIFF_DEPTH higher
+    // Feed cycle boundary heights for all diffs (current and historical cycles).
+    // Each diff's block_hash is at the "work block" height; the cycle boundary is
+    // WORK_DIFF_DEPTH higher.
     let mut work_block_hashes = vec![
         qr_info.mn_list_diff_h.block_hash,
         qr_info.mn_list_diff_at_h_minus_c.block_hash,
@@ -553,5 +530,188 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
 
     fn progress(&self) -> SyncManagerProgress {
         SyncManagerProgress::Masternodes(self.progress.clone())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::feed_qrinfo_heights_to_engine;
+    use crate::error::StorageResult;
+    use crate::storage::{BlockHeaderStorage, BlockHeaderTip};
+    use crate::types::HashedBlockHeader;
+    use async_trait::async_trait;
+    use dashcore::block::Header as BlockHeader;
+    use dashcore::bls_sig_utils::{BLSPublicKey, BLSSignature};
+    use dashcore::hash_types::QuorumVVecHash;
+    use dashcore::network::message_qrinfo::{MNSkipListMode, QRInfo, QuorumSnapshot};
+    use dashcore::network::message_sml::MnListDiff;
+    use dashcore::sml::llmq_type::LLMQType;
+    use dashcore::sml::masternode_list_engine::MasternodeListEngine;
+    use dashcore::transaction::special_transaction::quorum_commitment::QuorumEntry;
+    use dashcore::{BlockHash, Network, Transaction};
+    use dashcore_hashes::Hash;
+    use std::collections::HashMap;
+    use std::ops::Range;
+
+    struct MockHeaderStorage(HashMap<BlockHash, u32>);
+
+    #[async_trait]
+    impl BlockHeaderStorage for MockHeaderStorage {
+        async fn store_headers(&mut self, _: &[BlockHeader]) -> StorageResult<()> {
+            Ok(())
+        }
+        async fn store_headers_at_height(
+            &mut self,
+            _: &[BlockHeader],
+            _: u32,
+        ) -> StorageResult<()> {
+            Ok(())
+        }
+        async fn store_hashed_headers(&mut self, _: &[HashedBlockHeader]) -> StorageResult<()> {
+            Ok(())
+        }
+        async fn store_hashed_headers_at_height(
+            &mut self,
+            _: &[HashedBlockHeader],
+            _: u32,
+        ) -> StorageResult<()> {
+            Ok(())
+        }
+        async fn load_headers(&self, _: Range<u32>) -> StorageResult<Vec<BlockHeader>> {
+            Ok(vec![])
+        }
+        async fn get_tip_height(&self) -> Option<u32> {
+            None
+        }
+        async fn get_tip(&self) -> Option<BlockHeaderTip> {
+            None
+        }
+        async fn get_start_height(&self) -> Option<u32> {
+            None
+        }
+        async fn get_stored_headers_len(&self) -> u32 {
+            0
+        }
+        async fn get_header_height_by_hash(&self, hash: &BlockHash) -> StorageResult<Option<u32>> {
+            Ok(self.0.get(hash).copied())
+        }
+    }
+
+    fn make_diff(base_byte: u8, tip_byte: u8) -> MnListDiff {
+        MnListDiff {
+            version: 1,
+            base_block_hash: BlockHash::from_slice(&[base_byte; 32]).unwrap(),
+            block_hash: BlockHash::from_slice(&[tip_byte; 32]).unwrap(),
+            total_transactions: 0,
+            merkle_hashes: vec![],
+            merkle_flags: vec![],
+            coinbase_tx: Transaction {
+                version: 1,
+                lock_time: 0,
+                input: vec![],
+                output: vec![],
+                special_transaction_payload: None,
+            },
+            deleted_masternodes: vec![],
+            new_masternodes: vec![],
+            deleted_quorums: vec![],
+            new_quorums: vec![],
+            quorums_chainlock_signatures: vec![],
+        }
+    }
+
+    fn make_quorum_entry(hash_byte: u8, index: i16) -> QuorumEntry {
+        QuorumEntry {
+            version: 1,
+            llmq_type: LLMQType::Llmqtype50_60,
+            quorum_hash: BlockHash::from_slice(&[hash_byte; 32]).unwrap(),
+            quorum_index: Some(index),
+            signers: vec![],
+            valid_members: vec![],
+            quorum_public_key: BLSPublicKey::from([0u8; 48]),
+            quorum_vvec_hash: QuorumVVecHash::from_slice(&[0u8; 32]).unwrap(),
+            threshold_sig: BLSSignature::from([0u8; 96]),
+            all_commitment_aggregated_signature: BLSSignature::from([0u8; 96]),
+        }
+    }
+
+    fn make_snapshot() -> QuorumSnapshot {
+        QuorumSnapshot {
+            skip_list_mode: MNSkipListMode::NoSkipping,
+            active_quorum_members: vec![],
+            skip_list: vec![],
+        }
+    }
+
+    /// Verifies that `feed_qrinfo_heights_to_engine` feeds the engine's
+    /// `block_container` with heights for every hash source in a `QRInfo` message:
+    /// - base and tip hashes for each of the five standard diffs
+    /// - base and tip hashes for the optional h-minus-4c diff
+    /// - base and tip hashes for each entry in `mn_list_diff_list`
+    /// - every `QuorumEntry::quorum_hash` in `last_commitment_per_index`
+    ///
+    /// The last category is the invariant the parent commit fixed: before that,
+    /// only Q[0] (the cycle boundary, already present as a diff endpoint) was
+    /// fed. Q[1]..Q[N-1] were silently missing, causing lookup failures during IS
+    /// lock and rotated quorum formation verification.
+    #[tokio::test]
+    async fn test_feed_qrinfo_heights_to_engine_covers_every_hash_source() {
+        // Each hash category uses a distinct leading byte so failures are easy to diagnose.
+        // Diffs:        0x01..0x0E  (base/tip pairs for each diff field)
+        // Commitments:  0x80..0x83  (last_commitment_per_index quorum hashes)
+        let expected_hashes: &[u8] = &[
+            0x01, 0x02, // mn_list_diff_tip:          base, tip
+            0x03, 0x04, // mn_list_diff_h:             base, tip
+            0x05, 0x06, // mn_list_diff_at_h_minus_c:  base, tip
+            0x07, 0x08, // mn_list_diff_at_h_minus_2c: base, tip
+            0x09, 0x0A, // mn_list_diff_at_h_minus_3c: base, tip
+            0x0B, 0x0C, // mn_list_diff_at_h_minus_4c: base, tip  (optional)
+            0x0D, 0x0E, // mn_list_diff_list[0]:       base, tip
+            0x80, 0x81, 0x82, 0x83, // last_commitment_per_index Q[0]..Q[3]
+        ];
+
+        let mut height_map = HashMap::new();
+        for (i, &b) in expected_hashes.iter().enumerate() {
+            height_map.insert(BlockHash::from_slice(&[b; 32]).unwrap(), 100 + i as u32);
+        }
+
+        let qr_info = QRInfo {
+            quorum_snapshot_at_h_minus_c: make_snapshot(),
+            quorum_snapshot_at_h_minus_2c: make_snapshot(),
+            quorum_snapshot_at_h_minus_3c: make_snapshot(),
+            mn_list_diff_tip: make_diff(0x01, 0x02),
+            mn_list_diff_h: make_diff(0x03, 0x04),
+            mn_list_diff_at_h_minus_c: make_diff(0x05, 0x06),
+            mn_list_diff_at_h_minus_2c: make_diff(0x07, 0x08),
+            mn_list_diff_at_h_minus_3c: make_diff(0x09, 0x0A),
+            quorum_snapshot_and_mn_list_diff_at_h_minus_4c: Some((
+                make_snapshot(),
+                make_diff(0x0B, 0x0C),
+            )),
+            mn_list_diff_list: vec![make_diff(0x0D, 0x0E)],
+            last_commitment_per_index: [0x80u8, 0x81, 0x82, 0x83]
+                .iter()
+                .enumerate()
+                .map(|(i, &b)| make_quorum_entry(b, i as i16))
+                .collect(),
+            quorum_snapshot_list: vec![make_snapshot()],
+        };
+
+        let mut engine = MasternodeListEngine {
+            network: Network::Testnet,
+            ..Default::default()
+        };
+        feed_qrinfo_heights_to_engine(&mut engine, &qr_info, &MockHeaderStorage(height_map))
+            .await
+            .unwrap();
+
+        for &b in expected_hashes {
+            let hash = BlockHash::from_slice(&[b; 32]).unwrap();
+            assert!(
+                engine.block_container.contains_hash(&hash),
+                "hash 0x{:02X} not fed to engine.block_container",
+                b
+            );
+        }
     }
 }
