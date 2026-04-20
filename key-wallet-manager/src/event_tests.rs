@@ -19,7 +19,9 @@ async fn test_mempool_to_confirmed_event_flow() {
     let tx = create_tx_paying_to(&addr, 0xaa);
 
     // First time in mempool — validate all event fields
-    let _ = manager.check_transaction_in_all_wallets(&tx, TransactionContext::Mempool, true, true).await;
+    let _ = manager
+        .check_transaction_in_all_wallets(&tx, TransactionContext::Mempool, true, true)
+        .await;
     let event = assert_single_event(&mut rx);
     match event {
         WalletEvent::TransactionReceived {
@@ -395,7 +397,9 @@ async fn test_mixed_instantsend_paths_no_duplicate_events() {
     let tx = create_tx_paying_to(&addr, 0xf0);
 
     // Mempool first
-    let _ = manager.check_transaction_in_all_wallets(&tx, TransactionContext::Mempool, true, true).await;
+    let _ = manager
+        .check_transaction_in_all_wallets(&tx, TransactionContext::Mempool, true, true)
+        .await;
     drain_events(&mut rx);
 
     // IS lock via process_instant_send_lock (network IS lock message)
@@ -430,7 +434,9 @@ async fn test_mixed_instantsend_paths_reverse_no_duplicate_events() {
     let tx = create_tx_paying_to(&addr, 0xf1);
 
     // Mempool first
-    let _ = manager.check_transaction_in_all_wallets(&tx, TransactionContext::Mempool, true, true).await;
+    let _ = manager
+        .check_transaction_in_all_wallets(&tx, TransactionContext::Mempool, true, true)
+        .await;
     drain_events(&mut rx);
 
     // IS lock via check_transaction_in_all_wallets first
@@ -589,7 +595,9 @@ async fn test_mempool_to_block_to_chainlocked_event_flow() {
     let tx = create_tx_paying_to(&addr, 0xc4);
 
     // Step 1: mempool — emits TransactionReceived
-    let _ = manager.check_transaction_in_all_wallets(&tx, TransactionContext::Mempool, true, true).await;
+    let _ = manager
+        .check_transaction_in_all_wallets(&tx, TransactionContext::Mempool, true, true)
+        .await;
     let event = assert_single_event(&mut rx);
     assert!(
         matches!(

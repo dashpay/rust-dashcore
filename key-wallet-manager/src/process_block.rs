@@ -44,7 +44,9 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
             for (wallet_id, cs) in tx_changesets {
                 match block_changesets.entry(wallet_id) {
                     std::collections::btree_map::Entry::Occupied(mut e) => e.get_mut().merge(cs),
-                    std::collections::btree_map::Entry::Vacant(e) => { e.insert(cs); }
+                    std::collections::btree_map::Entry::Vacant(e) => {
+                        e.insert(cs);
+                    }
                 }
             }
         }
@@ -71,9 +73,7 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
         // Only calls store — the persister decides its own flush strategy
         // (e.g. SQLite flushes inline on each store call).
         for (wallet_id, cs) in block_changesets {
-            self.persister
-                .store(wallet_id, cs)
-                .map_err(WalletError::Persistence)?;
+            self.persister.store(wallet_id, cs).map_err(WalletError::Persistence)?;
         }
 
         Ok(result)
@@ -92,7 +92,8 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
             None => TransactionContext::Mempool,
         };
         let snapshot = self.snapshot_balances();
-        let (check_result, _) = self.check_transaction_in_all_wallets(tx, context, true, false).await;
+        let (check_result, _) =
+            self.check_transaction_in_all_wallets(tx, context, true, false).await;
 
         let is_relevant = !check_result.affected_wallets.is_empty();
         let net_amount = if is_relevant {
