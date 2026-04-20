@@ -81,6 +81,14 @@ pub enum TransactionCategory {
 #[async_trait]
 pub trait Signer: Send + Sync {
     /// Error produced by the underlying signing device or service.
+    ///
+    /// The bound is intentionally loose — only `Display + Send + Sync +
+    /// 'static` — so bring-your-own error types (including `String`) work
+    /// out of the box. Implementors **should** prefer a type that also
+    /// implements `std::error::Error` (derived via `thiserror` or hand-
+    /// rolled) so callers can chain causes and inspect source errors;
+    /// this crate's call sites currently collapse the signer error to a
+    /// `String` via `Display`, which works for either shape.
     type Error: std::fmt::Display + Send + Sync + 'static;
 
     /// Signing methods this signer can perform. A caller that needs a
