@@ -1,5 +1,6 @@
 //! Account management functions
 
+use crate::deref_ptr;
 use crate::error::{FFIError, FFIErrorCode};
 use crate::types::{FFIAccountResult, FFIAccountType, FFIWallet};
 use dashcore::ffi::FFINetwork;
@@ -554,14 +555,8 @@ pub unsafe extern "C" fn wallet_get_account_count(
     wallet: *const FFIWallet,
     error: *mut FFIError,
 ) -> c_uint {
-    if wallet.is_null() {
-        FFIError::set_error(error, FFIErrorCode::InvalidInput, "Wallet is null".to_string());
-        return 0;
-    }
-
-    let wallet = &*wallet;
+    let wallet = deref_ptr!(wallet, error);
     let accounts = &wallet.inner().accounts;
-    FFIError::set_success(error);
     let count = accounts.standard_bip44_accounts.len()
         + accounts.standard_bip32_accounts.len()
         + accounts.coinjoin_accounts.len()

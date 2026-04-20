@@ -11,6 +11,7 @@ use dashcore::ffi::FFINetwork;
 use dashcore::hashes::Hash;
 
 use crate::address_pool::{FFIAddressPool, FFIAddressPoolType};
+use crate::check_ptr;
 use crate::error::{FFIError, FFIErrorCode};
 use crate::types::{
     FFIAccountType, FFIInputDetail, FFIOutputDetail, FFIOutputRole, FFITransactionContext,
@@ -200,7 +201,7 @@ pub unsafe extern "C" fn managed_wallet_get_account(
     }
 
     // Get the managed wallet info from the manager
-    let mut error = FFIError::success();
+    let mut error = FFIError::default();
     let managed_wallet_ptr = crate::wallet_manager::wallet_manager_get_managed_wallet_info(
         manager, wallet_id, &mut error,
     );
@@ -318,7 +319,7 @@ pub unsafe extern "C" fn managed_wallet_get_top_up_account_with_registration_ind
     }
 
     // Get the managed wallet info from the manager
-    let mut error = FFIError::success();
+    let mut error = FFIError::default();
     let managed_wallet_ptr = crate::wallet_manager::wallet_manager_get_managed_wallet_info(
         manager, wallet_id, &mut error,
     );
@@ -390,7 +391,7 @@ pub unsafe extern "C" fn managed_wallet_get_dashpay_receiving_account(
         friend_identity_id: friend_id,
     };
 
-    let mut error = FFIError::success();
+    let mut error = FFIError::default();
     let managed_wallet_ptr = crate::wallet_manager::wallet_manager_get_managed_wallet_info(
         manager, wallet_id, &mut error,
     );
@@ -451,7 +452,7 @@ pub unsafe extern "C" fn managed_wallet_get_dashpay_external_account(
         friend_identity_id: friend_id,
     };
 
-    let mut error = FFIError::success();
+    let mut error = FFIError::default();
     let managed_wallet_ptr = crate::wallet_manager::wallet_manager_get_managed_wallet_info(
         manager, wallet_id, &mut error,
     );
@@ -920,7 +921,7 @@ pub unsafe extern "C" fn managed_core_account_result_free_error(
 ///
 /// - `manager` must be a valid pointer to an FFIWalletManager instance
 /// - `wallet_id` must be a valid pointer to a 32-byte wallet ID
-/// - `error` must be a valid pointer to an FFIError structure or null
+/// - `error` must be a valid pointer to an FFIError structure
 /// - The caller must ensure all pointers remain valid for the duration of this call
 #[no_mangle]
 pub unsafe extern "C" fn managed_wallet_get_account_count(
@@ -928,22 +929,16 @@ pub unsafe extern "C" fn managed_wallet_get_account_count(
     wallet_id: *const u8,
     error: *mut FFIError,
 ) -> c_uint {
-    if manager.is_null() || wallet_id.is_null() {
-        FFIError::set_error(error, FFIErrorCode::InvalidInput, "Null pointer provided".to_string());
-        return 0;
-    }
+    check_ptr!(manager, error);
+    check_ptr!(wallet_id, error);
 
-    // Get the wallet from the manager
     let wallet_ptr = crate::wallet_manager::wallet_manager_get_wallet(manager, wallet_id, error);
-
     if wallet_ptr.is_null() {
         // Error already set by wallet_manager_get_wallet
         return 0;
     }
 
     let wallet = &*wallet_ptr;
-
-    FFIError::set_success(error);
     let accounts = &wallet.inner().accounts;
     let count = accounts.standard_bip44_accounts.len()
         + accounts.standard_bip32_accounts.len()
@@ -1213,7 +1208,7 @@ pub unsafe extern "C" fn managed_wallet_get_platform_payment_account(
     }
 
     // Get the managed wallet info from the manager
-    let mut error = FFIError::success();
+    let mut error = FFIError::default();
     let managed_wallet_ptr = crate::wallet_manager::wallet_manager_get_managed_wallet_info(
         manager, wallet_id, &mut error,
     );
@@ -1479,7 +1474,7 @@ mod tests {
     #[test]
     fn test_managed_account_basic() {
         unsafe {
-            let mut error = FFIError::success();
+            let mut error = FFIError::default();
 
             // Create wallet manager
             let manager = wallet_manager_create(FFINetwork::Testnet, &mut error);
@@ -1541,7 +1536,7 @@ mod tests {
     #[test]
     fn test_managed_account_not_found() {
         unsafe {
-            let mut error = FFIError::success();
+            let mut error = FFIError::default();
 
             // Create wallet manager
             let manager = wallet_manager_create(FFINetwork::Testnet, &mut error);
@@ -1607,7 +1602,7 @@ mod tests {
     #[test]
     fn test_managed_wallet_get_account_count() {
         unsafe {
-            let mut error = FFIError::success();
+            let mut error = FFIError::default();
 
             // Create wallet manager
             let manager = wallet_manager_create(FFINetwork::Testnet, &mut error);
@@ -1668,7 +1663,7 @@ mod tests {
     #[test]
     fn test_managed_account_getters() {
         unsafe {
-            let mut error = FFIError::success();
+            let mut error = FFIError::default();
 
             // Create wallet manager
             let manager = wallet_manager_create(FFINetwork::Testnet, &mut error);
@@ -1792,7 +1787,7 @@ mod tests {
             assert_eq!(index, 0);
 
             // Test null balance_out
-            let mut error = FFIError::success();
+            let mut error = FFIError::default();
             let manager = wallet_manager_create(FFINetwork::Testnet, &mut error);
             assert!(!manager.is_null());
 
@@ -1844,7 +1839,7 @@ mod tests {
     #[test]
     fn test_managed_account_address_pools() {
         unsafe {
-            let mut error = FFIError::success();
+            let mut error = FFIError::default();
 
             // Create wallet manager
             let mut manager = wallet_manager_create(FFINetwork::Testnet, &mut error);

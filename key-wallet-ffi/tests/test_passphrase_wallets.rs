@@ -9,7 +9,7 @@ use std::ffi::CString;
 fn test_ffi_wallet_create_from_mnemonic_with_passphrase() {
     // This test verifies that wallets with passphrases now work correctly through FFI
 
-    let mut error = FFIError::success();
+    let mut error = FFIError::default();
     let error = &mut error as *mut FFIError;
 
     let mnemonic = CString::new("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about").unwrap();
@@ -53,11 +53,13 @@ fn test_ffi_wallet_create_from_mnemonic_with_passphrase() {
 fn test_ffi_wallet_manager_add_wallet_with_passphrase() {
     // This test shows the issue when adding a wallet with passphrase to the wallet manager
 
-    let mut error = FFIError::success();
+    let mut error = FFIError::default();
     let error = &mut error as *mut FFIError;
 
     // Create wallet manager
-    let manager = key_wallet_ffi::wallet_manager::wallet_manager_create(FFINetwork::Testnet, error);
+    let manager = unsafe {
+        key_wallet_ffi::wallet_manager::wallet_manager_create(FFINetwork::Testnet, error)
+    };
     assert!(!manager.is_null());
 
     let mnemonic = CString::new("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about").unwrap();
@@ -106,7 +108,7 @@ fn test_ffi_wallet_manager_add_wallet_with_passphrase() {
 fn test_ffi_wallet_with_passphrase_ideal_workflow() {
     // This test demonstrates what the ideal workflow should be for wallets with passphrases
 
-    let mut error = FFIError::success();
+    let mut error = FFIError::default();
     let error = &mut error as *mut FFIError;
 
     let mnemonic = CString::new("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about").unwrap();
@@ -143,7 +145,7 @@ fn test_ffi_wallet_with_passphrase_ideal_workflow() {
 fn test_demonstrate_passphrase_issue_with_account_creation() {
     // This test verifies that the passphrase wallet issue has been FIXED
 
-    let mut error = FFIError::success();
+    let mut error = FFIError::default();
     let error = &mut error as *mut FFIError;
 
     // Create two wallets: one without passphrase, one with

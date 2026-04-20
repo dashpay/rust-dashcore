@@ -3,6 +3,7 @@
 use crate::error::{FFIError, FFIErrorCode};
 use crate::keys::FFIExtendedPrivKey;
 use crate::keys::FFIExtendedPubKey;
+use crate::{check_ptr, deref_ptr, unwrap_or_return};
 use dashcore::ffi::FFINetwork;
 use dashcore::Network;
 use key_wallet::{ExtendedPrivKey, ExtendedPubKey};
@@ -40,7 +41,7 @@ pub enum FFIDerivationPathType {
 /// # Safety
 ///
 /// - `seed` must be a valid pointer to a byte array of `seed_len` length
-/// - `error` must be a valid pointer to an FFIError structure or null
+/// - `error` must be a valid pointer to an FFIError structure
 /// - The caller must ensure the seed pointer remains valid for the duration of this call
 #[no_mangle]
 pub unsafe extern "C" fn derivation_new_master_key(
@@ -49,47 +50,31 @@ pub unsafe extern "C" fn derivation_new_master_key(
     network: FFINetwork,
     error: *mut FFIError,
 ) -> *mut FFIExtendedPrivKey {
-    if seed.is_null() {
-        FFIError::set_error(error, FFIErrorCode::InvalidInput, "Seed is null".to_string());
-        return ptr::null_mut();
-    }
-
+    check_ptr!(seed, error);
     let seed_slice = slice::from_raw_parts(seed, seed_len);
     let network_rust: key_wallet::Network = network.into();
-
-    match key_wallet::bip32::ExtendedPrivKey::new_master(network_rust, seed_slice) {
-        Ok(xpriv) => {
-            FFIError::set_success(error);
-            Box::into_raw(Box::new(FFIExtendedPrivKey::from_inner(xpriv)))
-        }
-        Err(e) => {
-            FFIError::set_error(
-                error,
-                FFIErrorCode::WalletError,
-                format!("Failed to create master key: {:?}", e),
-            );
-            ptr::null_mut()
-        }
-    }
+    let xpriv = unwrap_or_return!(
+        key_wallet::bip32::ExtendedPrivKey::new_master(network_rust, seed_slice),
+        error
+    );
+    Box::into_raw(Box::new(FFIExtendedPrivKey::from_inner(xpriv)))
 }
 
 /// Derive a BIP44 account path (m/44'/5'/account')
+///
+/// # Safety
+///
+/// `path_out` must point to a writable buffer of at least `path_max_len` bytes
+/// and `error` must be a valid pointer to an `FFIError`.
 #[no_mangle]
-pub extern "C" fn derivation_bip44_account_path(
+pub unsafe extern "C" fn derivation_bip44_account_path(
     network: FFINetwork,
     account_index: c_uint,
     path_out: *mut c_char,
     path_max_len: usize,
     error: *mut FFIError,
 ) -> bool {
-    if path_out.is_null() {
-        FFIError::set_error(
-            error,
-            FFIErrorCode::InvalidInput,
-            "Path output buffer is null".to_string(),
-        );
-        return false;
-    }
+    check_ptr!(path_out, error);
 
     let network_rust: key_wallet::Network = network.into();
 
@@ -98,24 +83,13 @@ pub extern "C" fn derivation_bip44_account_path(
 
     let path_str = format!("{}", derivation);
 
-    let c_string = match CString::new(path_str) {
-        Ok(s) => s,
-        Err(_) => {
-            FFIError::set_error(
-                error,
-                FFIErrorCode::AllocationFailed,
-                "Failed to create C string".to_string(),
-            );
-            return false;
-        }
-    };
+    let c_string = unwrap_or_return!(CString::new(path_str), error);
 
     let bytes = c_string.as_bytes_with_nul();
     if bytes.len() > path_max_len {
-        FFIError::set_error(
-            error,
+        (*error).set(
             FFIErrorCode::InvalidInput,
-            format!("Path too long: {} > {}", bytes.len(), path_max_len),
+            &format!("Path too long: {} > {}", bytes.len(), path_max_len),
         );
         return false;
     }
@@ -123,14 +97,17 @@ pub extern "C" fn derivation_bip44_account_path(
     unsafe {
         ptr::copy_nonoverlapping(bytes.as_ptr(), path_out.cast::<u8>(), bytes.len());
     }
-
-    FFIError::set_success(error);
     true
 }
 
 /// Derive a BIP44 payment path (m/44'/5'/account'/change/index)
+///
+/// # Safety
+///
+/// `path_out` must point to a writable buffer of at least `path_max_len` bytes
+/// and `error` must be a valid pointer to an `FFIError`.
 #[no_mangle]
-pub extern "C" fn derivation_bip44_payment_path(
+pub unsafe extern "C" fn derivation_bip44_payment_path(
     network: FFINetwork,
     account_index: c_uint,
     is_change: bool,
@@ -139,14 +116,7 @@ pub extern "C" fn derivation_bip44_payment_path(
     path_max_len: usize,
     error: *mut FFIError,
 ) -> bool {
-    if path_out.is_null() {
-        FFIError::set_error(
-            error,
-            FFIErrorCode::InvalidInput,
-            "Path output buffer is null".to_string(),
-        );
-        return false;
-    }
+    check_ptr!(path_out, error);
 
     let network_rust: key_wallet::Network = network.into();
 
@@ -156,24 +126,13 @@ pub extern "C" fn derivation_bip44_payment_path(
 
     let path_str = format!("{}", derivation);
 
-    let c_string = match CString::new(path_str) {
-        Ok(s) => s,
-        Err(_) => {
-            FFIError::set_error(
-                error,
-                FFIErrorCode::AllocationFailed,
-                "Failed to create C string".to_string(),
-            );
-            return false;
-        }
-    };
+    let c_string = unwrap_or_return!(CString::new(path_str), error);
 
     let bytes = c_string.as_bytes_with_nul();
     if bytes.len() > path_max_len {
-        FFIError::set_error(
-            error,
+        (*error).set(
             FFIErrorCode::InvalidInput,
-            format!("Path too long: {} > {}", bytes.len(), path_max_len),
+            &format!("Path too long: {} > {}", bytes.len(), path_max_len),
         );
         return false;
     }
@@ -181,28 +140,24 @@ pub extern "C" fn derivation_bip44_payment_path(
     unsafe {
         ptr::copy_nonoverlapping(bytes.as_ptr(), path_out.cast::<u8>(), bytes.len());
     }
-
-    FFIError::set_success(error);
     true
 }
 
 /// Derive CoinJoin path (m/9'/5'/4'/account')
+///
+/// # Safety
+///
+/// `path_out` must point to a writable buffer of at least `path_max_len` bytes
+/// and `error` must be a valid pointer to an `FFIError`.
 #[no_mangle]
-pub extern "C" fn derivation_coinjoin_path(
+pub unsafe extern "C" fn derivation_coinjoin_path(
     network: FFINetwork,
     account_index: c_uint,
     path_out: *mut c_char,
     path_max_len: usize,
     error: *mut FFIError,
 ) -> bool {
-    if path_out.is_null() {
-        FFIError::set_error(
-            error,
-            FFIErrorCode::InvalidInput,
-            "Path output buffer is null".to_string(),
-        );
-        return false;
-    }
+    check_ptr!(path_out, error);
 
     let network_rust: key_wallet::Network = network.into();
 
@@ -211,24 +166,13 @@ pub extern "C" fn derivation_coinjoin_path(
 
     let path_str = format!("{}", derivation);
 
-    let c_string = match CString::new(path_str) {
-        Ok(s) => s,
-        Err(_) => {
-            FFIError::set_error(
-                error,
-                FFIErrorCode::AllocationFailed,
-                "Failed to create C string".to_string(),
-            );
-            return false;
-        }
-    };
+    let c_string = unwrap_or_return!(CString::new(path_str), error);
 
     let bytes = c_string.as_bytes_with_nul();
     if bytes.len() > path_max_len {
-        FFIError::set_error(
-            error,
+        (*error).set(
             FFIErrorCode::InvalidInput,
-            format!("Path too long: {} > {}", bytes.len(), path_max_len),
+            &format!("Path too long: {} > {}", bytes.len(), path_max_len),
         );
         return false;
     }
@@ -236,28 +180,24 @@ pub extern "C" fn derivation_coinjoin_path(
     unsafe {
         ptr::copy_nonoverlapping(bytes.as_ptr(), path_out.cast::<u8>(), bytes.len());
     }
-
-    FFIError::set_success(error);
     true
 }
 
 /// Derive identity registration path (m/9'/5'/5'/1'/index')
+///
+/// # Safety
+///
+/// `path_out` must point to a writable buffer of at least `path_max_len` bytes
+/// and `error` must be a valid pointer to an `FFIError`.
 #[no_mangle]
-pub extern "C" fn derivation_identity_registration_path(
+pub unsafe extern "C" fn derivation_identity_registration_path(
     network: FFINetwork,
     identity_index: c_uint,
     path_out: *mut c_char,
     path_max_len: usize,
     error: *mut FFIError,
 ) -> bool {
-    if path_out.is_null() {
-        FFIError::set_error(
-            error,
-            FFIErrorCode::InvalidInput,
-            "Path output buffer is null".to_string(),
-        );
-        return false;
-    }
+    check_ptr!(path_out, error);
 
     let network_rust: key_wallet::Network = network.into();
 
@@ -266,24 +206,13 @@ pub extern "C" fn derivation_identity_registration_path(
 
     let path_str = format!("{}", derivation);
 
-    let c_string = match CString::new(path_str) {
-        Ok(s) => s,
-        Err(_) => {
-            FFIError::set_error(
-                error,
-                FFIErrorCode::AllocationFailed,
-                "Failed to create C string".to_string(),
-            );
-            return false;
-        }
-    };
+    let c_string = unwrap_or_return!(CString::new(path_str), error);
 
     let bytes = c_string.as_bytes_with_nul();
     if bytes.len() > path_max_len {
-        FFIError::set_error(
-            error,
+        (*error).set(
             FFIErrorCode::InvalidInput,
-            format!("Path too long: {} > {}", bytes.len(), path_max_len),
+            &format!("Path too long: {} > {}", bytes.len(), path_max_len),
         );
         return false;
     }
@@ -291,14 +220,17 @@ pub extern "C" fn derivation_identity_registration_path(
     unsafe {
         ptr::copy_nonoverlapping(bytes.as_ptr(), path_out.cast::<u8>(), bytes.len());
     }
-
-    FFIError::set_success(error);
     true
 }
 
 /// Derive identity top-up path (m/9'/5'/5'/2'/identity_index'/top_up_index')
+///
+/// # Safety
+///
+/// `path_out` must point to a writable buffer of at least `path_max_len` bytes
+/// and `error` must be a valid pointer to an `FFIError`.
 #[no_mangle]
-pub extern "C" fn derivation_identity_topup_path(
+pub unsafe extern "C" fn derivation_identity_topup_path(
     network: FFINetwork,
     identity_index: c_uint,
     topup_index: c_uint,
@@ -306,14 +238,7 @@ pub extern "C" fn derivation_identity_topup_path(
     path_max_len: usize,
     error: *mut FFIError,
 ) -> bool {
-    if path_out.is_null() {
-        FFIError::set_error(
-            error,
-            FFIErrorCode::InvalidInput,
-            "Path output buffer is null".to_string(),
-        );
-        return false;
-    }
+    check_ptr!(path_out, error);
 
     let network_rust: key_wallet::Network = network.into();
 
@@ -323,24 +248,13 @@ pub extern "C" fn derivation_identity_topup_path(
 
     let path_str = format!("{}", derivation);
 
-    let c_string = match CString::new(path_str) {
-        Ok(s) => s,
-        Err(_) => {
-            FFIError::set_error(
-                error,
-                FFIErrorCode::AllocationFailed,
-                "Failed to create C string".to_string(),
-            );
-            return false;
-        }
-    };
+    let c_string = unwrap_or_return!(CString::new(path_str), error);
 
     let bytes = c_string.as_bytes_with_nul();
     if bytes.len() > path_max_len {
-        FFIError::set_error(
-            error,
+        (*error).set(
             FFIErrorCode::InvalidInput,
-            format!("Path too long: {} > {}", bytes.len(), path_max_len),
+            &format!("Path too long: {} > {}", bytes.len(), path_max_len),
         );
         return false;
     }
@@ -348,14 +262,17 @@ pub extern "C" fn derivation_identity_topup_path(
     unsafe {
         ptr::copy_nonoverlapping(bytes.as_ptr(), path_out.cast::<u8>(), bytes.len());
     }
-
-    FFIError::set_success(error);
     true
 }
 
 /// Derive identity authentication path (m/9'/5'/5'/0'/identity_index'/key_index')
+///
+/// # Safety
+///
+/// `path_out` must point to a writable buffer of at least `path_max_len` bytes
+/// and `error` must be a valid pointer to an `FFIError`.
 #[no_mangle]
-pub extern "C" fn derivation_identity_authentication_path(
+pub unsafe extern "C" fn derivation_identity_authentication_path(
     network: FFINetwork,
     identity_index: c_uint,
     key_index: c_uint,
@@ -363,14 +280,7 @@ pub extern "C" fn derivation_identity_authentication_path(
     path_max_len: usize,
     error: *mut FFIError,
 ) -> bool {
-    if path_out.is_null() {
-        FFIError::set_error(
-            error,
-            FFIErrorCode::InvalidInput,
-            "Path output buffer is null".to_string(),
-        );
-        return false;
-    }
+    check_ptr!(path_out, error);
 
     let network_rust: key_wallet::Network = network.into();
 
@@ -384,24 +294,13 @@ pub extern "C" fn derivation_identity_authentication_path(
 
     let path_str = format!("{}", derivation);
 
-    let c_string = match CString::new(path_str) {
-        Ok(s) => s,
-        Err(_) => {
-            FFIError::set_error(
-                error,
-                FFIErrorCode::AllocationFailed,
-                "Failed to create C string".to_string(),
-            );
-            return false;
-        }
-    };
+    let c_string = unwrap_or_return!(CString::new(path_str), error);
 
     let bytes = c_string.as_bytes_with_nul();
     if bytes.len() > path_max_len {
-        FFIError::set_error(
-            error,
+        (*error).set(
             FFIErrorCode::InvalidInput,
-            format!("Path too long: {} > {}", bytes.len(), path_max_len),
+            &format!("Path too long: {} > {}", bytes.len(), path_max_len),
         );
         return false;
     }
@@ -409,8 +308,6 @@ pub extern "C" fn derivation_identity_authentication_path(
     unsafe {
         ptr::copy_nonoverlapping(bytes.as_ptr(), path_out.cast::<u8>(), bytes.len());
     }
-
-    FFIError::set_success(error);
     true
 }
 
@@ -420,7 +317,7 @@ pub extern "C" fn derivation_identity_authentication_path(
 ///
 /// - `seed` must be a valid pointer to a byte array of `seed_len` length
 /// - `path` must be a valid pointer to a null-terminated C string
-/// - `error` must be a valid pointer to an FFIError structure or null
+/// - `error` must be a valid pointer to an FFIError structure
 /// - The caller must ensure all pointers remain valid for the duration of this call
 #[no_mangle]
 pub unsafe extern "C" fn derivation_derive_private_key_from_seed(
@@ -430,69 +327,21 @@ pub unsafe extern "C" fn derivation_derive_private_key_from_seed(
     network: FFINetwork,
     error: *mut FFIError,
 ) -> *mut FFIExtendedPrivKey {
-    if seed.is_null() || path.is_null() {
-        FFIError::set_error(error, FFIErrorCode::InvalidInput, "Null pointer provided".to_string());
-        return ptr::null_mut();
-    }
+    use key_wallet::bip32::{DerivationPath, ExtendedPrivKey};
+    use std::str::FromStr;
+
+    check_ptr!(seed, error);
+    let path = deref_ptr!(path, error);
 
     let seed_slice = slice::from_raw_parts(seed, seed_len);
     let network_rust: Network = network.into();
-
-    let path_str = match CStr::from_ptr(path).to_str() {
-        Ok(s) => s,
-        Err(_) => {
-            FFIError::set_error(
-                error,
-                FFIErrorCode::InvalidInput,
-                "Invalid UTF-8 in path".to_string(),
-            );
-            return ptr::null_mut();
-        }
-    };
-
-    use key_wallet::bip32::{DerivationPath, ExtendedPrivKey};
-    use secp256k1::Secp256k1;
-    use std::str::FromStr;
-
-    let derivation_path = match DerivationPath::from_str(path_str) {
-        Ok(p) => p,
-        Err(e) => {
-            FFIError::set_error(
-                error,
-                FFIErrorCode::InvalidDerivationPath,
-                format!("Invalid derivation path: {:?}", e),
-            );
-            return ptr::null_mut();
-        }
-    };
+    let path_str = unwrap_or_return!(CStr::from_ptr(path).to_str(), error);
+    let derivation_path = unwrap_or_return!(DerivationPath::from_str(path_str), error);
 
     let secp = Secp256k1::new();
-    let master = match ExtendedPrivKey::new_master(network_rust, seed_slice) {
-        Ok(m) => m,
-        Err(e) => {
-            FFIError::set_error(
-                error,
-                FFIErrorCode::WalletError,
-                format!("Failed to create master key: {:?}", e),
-            );
-            return ptr::null_mut();
-        }
-    };
-
-    match master.derive_priv(&secp, &derivation_path) {
-        Ok(xpriv) => {
-            FFIError::set_success(error);
-            Box::into_raw(Box::new(FFIExtendedPrivKey::from_inner(xpriv)))
-        }
-        Err(e) => {
-            FFIError::set_error(
-                error,
-                FFIErrorCode::WalletError,
-                format!("Failed to derive private key: {:?}", e),
-            );
-            ptr::null_mut()
-        }
-    }
+    let master = unwrap_or_return!(ExtendedPrivKey::new_master(network_rust, seed_slice), error);
+    let xpriv = unwrap_or_return!(master.derive_priv(&secp, &derivation_path), error);
+    Box::into_raw(Box::new(FFIExtendedPrivKey::from_inner(xpriv)))
 }
 
 /// Derive public key from extended private key
@@ -507,26 +356,11 @@ pub unsafe extern "C" fn derivation_xpriv_to_xpub(
     xpriv: *const FFIExtendedPrivKey,
     error: *mut FFIError,
 ) -> *mut FFIExtendedPubKey {
-    if xpriv.is_null() {
-        FFIError::set_error(
-            error,
-            FFIErrorCode::InvalidInput,
-            "Extended private key is null".to_string(),
-        );
-        return ptr::null_mut();
-    }
-
-    unsafe {
-        let xpriv = &*xpriv;
-        use key_wallet::bip32::ExtendedPubKey;
-        use secp256k1::Secp256k1;
-
-        let secp = Secp256k1::new();
-        let xpub = ExtendedPubKey::from_priv(&secp, xpriv.inner());
-
-        FFIError::set_success(error);
-        Box::into_raw(Box::new(FFIExtendedPubKey::from_inner(xpub)))
-    }
+    use key_wallet::bip32::ExtendedPubKey;
+    let xpriv = deref_ptr!(xpriv, error);
+    let secp = Secp256k1::new();
+    let xpub = ExtendedPubKey::from_priv(&secp, xpriv.inner());
+    Box::into_raw(Box::new(FFIExtendedPubKey::from_inner(xpub)))
 }
 
 /// Get extended private key as string
@@ -541,34 +375,8 @@ pub unsafe extern "C" fn derivation_xpriv_to_string(
     xpriv: *const FFIExtendedPrivKey,
     error: *mut FFIError,
 ) -> *mut c_char {
-    if xpriv.is_null() {
-        FFIError::set_error(
-            error,
-            FFIErrorCode::InvalidInput,
-            "Extended private key is null".to_string(),
-        );
-        return ptr::null_mut();
-    }
-
-    unsafe {
-        let xpriv = &*xpriv;
-        let xpriv_str = xpriv.inner().to_string();
-
-        match CString::new(xpriv_str) {
-            Ok(c_str) => {
-                FFIError::set_success(error);
-                c_str.into_raw()
-            }
-            Err(_) => {
-                FFIError::set_error(
-                    error,
-                    FFIErrorCode::AllocationFailed,
-                    "Failed to allocate string".to_string(),
-                );
-                ptr::null_mut()
-            }
-        }
-    }
+    let xpriv = deref_ptr!(xpriv, error);
+    unwrap_or_return!(CString::new(xpriv.inner().to_string()), error).into_raw()
 }
 
 /// Get extended public key as string
@@ -583,34 +391,8 @@ pub unsafe extern "C" fn derivation_xpub_to_string(
     xpub: *const FFIExtendedPubKey,
     error: *mut FFIError,
 ) -> *mut c_char {
-    if xpub.is_null() {
-        FFIError::set_error(
-            error,
-            FFIErrorCode::InvalidInput,
-            "Extended public key is null".to_string(),
-        );
-        return ptr::null_mut();
-    }
-
-    unsafe {
-        let xpub = &*xpub;
-        let xpub_str = xpub.inner().to_string();
-
-        match CString::new(xpub_str) {
-            Ok(c_str) => {
-                FFIError::set_success(error);
-                c_str.into_raw()
-            }
-            Err(_) => {
-                FFIError::set_error(
-                    error,
-                    FFIErrorCode::AllocationFailed,
-                    "Failed to allocate string".to_string(),
-                );
-                ptr::null_mut()
-            }
-        }
-    }
+    let xpub = deref_ptr!(xpub, error);
+    unwrap_or_return!(CString::new(xpub.inner().to_string()), error).into_raw()
 }
 
 /// Get fingerprint from extended public key (4 bytes)
@@ -626,21 +408,12 @@ pub unsafe extern "C" fn derivation_xpub_fingerprint(
     fingerprint_out: *mut u8,
     error: *mut FFIError,
 ) -> bool {
-    if xpub.is_null() || fingerprint_out.is_null() {
-        FFIError::set_error(error, FFIErrorCode::InvalidInput, "Null pointer provided".to_string());
-        return false;
-    }
-
-    unsafe {
-        let xpub = &*xpub;
-        let fingerprint = xpub.inner().fingerprint();
-        let bytes = fingerprint.to_bytes();
-
-        ptr::copy_nonoverlapping(bytes.as_ptr(), fingerprint_out, 4);
-
-        FFIError::set_success(error);
-        true
-    }
+    let xpub = deref_ptr!(xpub, error);
+    check_ptr!(fingerprint_out, error);
+    let fingerprint = xpub.inner().fingerprint();
+    let bytes = fingerprint.to_bytes();
+    ptr::copy_nonoverlapping(bytes.as_ptr(), fingerprint_out, 4);
+    true
 }
 
 /// Free extended private key

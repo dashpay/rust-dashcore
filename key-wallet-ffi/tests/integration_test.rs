@@ -12,11 +12,11 @@ const TEST_MNEMONIC: &str =
 
 #[test]
 fn test_full_wallet_workflow() {
-    let mut error = FFIError::success();
+    let mut error = FFIError::default();
     let error = &mut error as *mut FFIError;
 
     // 1. Generate a mnemonic
-    let mnemonic = key_wallet_ffi::mnemonic::mnemonic_generate(12, error);
+    let mnemonic = unsafe { key_wallet_ffi::mnemonic::mnemonic_generate(12, error) };
     assert!(!mnemonic.is_null());
     assert_eq!(unsafe { (*error).code }, FFIErrorCode::Success);
 
@@ -25,7 +25,9 @@ fn test_full_wallet_workflow() {
     assert!(is_valid);
 
     // 3. Create wallet manager
-    let manager = key_wallet_ffi::wallet_manager::wallet_manager_create(FFINetwork::Testnet, error);
+    let manager = unsafe {
+        key_wallet_ffi::wallet_manager::wallet_manager_create(FFINetwork::Testnet, error)
+    };
     assert!(!manager.is_null());
 
     // 4. Add wallet to manager
@@ -82,7 +84,7 @@ fn test_full_wallet_workflow() {
 
 #[test]
 fn test_seed_to_wallet_workflow() {
-    let mut error = FFIError::success();
+    let mut error = FFIError::default();
     let error = &mut error as *mut FFIError;
 
     // 1. Convert mnemonic to seed
@@ -123,20 +125,22 @@ fn test_seed_to_wallet_workflow() {
 
 #[test]
 fn test_derivation_paths() {
-    let mut error = FFIError::success();
+    let mut error = FFIError::default();
     let error = &mut error as *mut FFIError;
 
     // Test BIP44 paths
     let mut path_buffer = vec![0u8; 256];
 
     // Account path
-    let success = key_wallet_ffi::derivation::derivation_bip44_account_path(
-        FFINetwork::Mainnet,
-        0,
-        path_buffer.as_mut_ptr() as *mut std::os::raw::c_char,
-        path_buffer.len(),
-        error,
-    );
+    let success = unsafe {
+        key_wallet_ffi::derivation::derivation_bip44_account_path(
+            FFINetwork::Mainnet,
+            0,
+            path_buffer.as_mut_ptr() as *mut std::os::raw::c_char,
+            path_buffer.len(),
+            error,
+        )
+    };
     assert!(success);
 
     let path_str = unsafe {
@@ -148,15 +152,17 @@ fn test_derivation_paths() {
 
     // Payment path
     path_buffer.fill(0);
-    let success = key_wallet_ffi::derivation::derivation_bip44_payment_path(
-        FFINetwork::Mainnet,
-        0,
-        false,
-        5,
-        path_buffer.as_mut_ptr() as *mut std::os::raw::c_char,
-        path_buffer.len(),
-        error,
-    );
+    let success = unsafe {
+        key_wallet_ffi::derivation::derivation_bip44_payment_path(
+            FFINetwork::Mainnet,
+            0,
+            false,
+            5,
+            path_buffer.as_mut_ptr() as *mut std::os::raw::c_char,
+            path_buffer.len(),
+            error,
+        )
+    };
     assert!(success);
 
     let path_str = unsafe {
@@ -169,7 +175,7 @@ fn test_derivation_paths() {
 
 #[test]
 fn test_error_handling() {
-    let mut error = FFIError::success();
+    let mut error = FFIError::default();
     let error = &mut error as *mut FFIError;
 
     // Test various error conditions
@@ -211,6 +217,4 @@ fn test_error_handling() {
     };
     assert!(wallet.is_null());
     assert_eq!(unsafe { (*error).code }, FFIErrorCode::InvalidInput);
-
-    unsafe { (*error).free_message() };
 }

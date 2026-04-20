@@ -16,6 +16,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 use crate::error::{FFIError, FFIErrorCode};
+use crate::{check_ptr, deref_ptr, deref_ptr_mut, unwrap_or_return};
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
 use key_wallet_manager::WalletInterface;
 use key_wallet_manager::WalletManager;
@@ -65,12 +66,7 @@ pub unsafe extern "C" fn wallet_manager_describe(
     manager: *const FFIWalletManager,
     error: *mut FFIError,
 ) -> *mut c_char {
-    if manager.is_null() {
-        FFIError::set_error(error, FFIErrorCode::InvalidInput, "Null pointer provided".to_string());
-        return ptr::null_mut();
-    }
-
-    let manager_ref = &*manager;
+    let manager_ref = deref_ptr!(manager, error);
     let runtime = manager_ref.runtime.clone();
     let manager_arc = manager_ref.manager.clone();
 
@@ -79,20 +75,7 @@ pub unsafe extern "C" fn wallet_manager_describe(
         guard.describe().await
     });
 
-    match CString::new(description) {
-        Ok(c_string) => {
-            FFIError::set_success(error);
-            c_string.into_raw()
-        }
-        Err(e) => {
-            FFIError::set_error(
-                error,
-                FFIErrorCode::InvalidState,
-                format!("Failed to create description string: {}", e),
-            );
-            ptr::null_mut()
-        }
-    }
+    unwrap_or_return!(CString::new(description), error).into_raw()
 }
 
 /// Free a string previously returned by wallet manager APIs.
@@ -112,8 +95,13 @@ pub unsafe extern "C" fn wallet_manager_free_string(value: *mut c_char) {
 }
 
 /// Create a new wallet manager
+///
+/// # Safety
+///
+/// `error` must be a valid pointer to an `FFIError`. The returned pointer must be
+/// freed with `wallet_manager_free`.
 #[no_mangle]
-pub extern "C" fn wallet_manager_create(
+pub unsafe extern "C" fn wallet_manager_create(
     network: FFINetwork,
     error: *mut FFIError,
 ) -> *mut FFIWalletManager {
@@ -121,15 +109,12 @@ pub extern "C" fn wallet_manager_create(
     let runtime = match tokio::runtime::Runtime::new() {
         Ok(rt) => Arc::new(rt),
         Err(e) => {
-            FFIError::set_error(
-                error,
-                FFIErrorCode::AllocationFailed,
-                format!("Failed to create runtime: {}", e),
-            );
+            (*error)
+                .set(FFIErrorCode::AllocationFailed, &format!("Failed to create runtime: {}", e));
             return ptr::null_mut();
         }
     };
-    FFIError::set_success(error);
+    (*error).clean();
     Box::into_raw(Box::new(FFIWalletManager {
         network,
         manager: Arc::new(RwLock::new(manager)),
@@ -145,7 +130,7 @@ pub extern "C" fn wallet_manager_create(
 /// - `mnemonic` must be a valid pointer to a null-terminated C string
 /// - `passphrase` must be a valid pointer to a null-terminated C string or null
 /// - `account_options` must be a valid pointer to FFIWalletAccountCreationOptions or null
-/// - `error` must be a valid pointer to an FFIError structure or null
+/// - `error` must be a valid pointer to an FFIError structure
 /// - The caller must ensure all pointers remain valid for the duration of this call
 #[no_mangle]
 pub unsafe extern "C" fn wallet_manager_add_wallet_from_mnemonic_with_options(
@@ -155,81 +140,27 @@ pub unsafe extern "C" fn wallet_manager_add_wallet_from_mnemonic_with_options(
     account_options: *const crate::types::FFIWalletAccountCreationOptions,
     error: *mut FFIError,
 ) -> bool {
-    if manager.is_null() || mnemonic.is_null() {
-        FFIError::set_error(error, FFIErrorCode::InvalidInput, "Null pointer provided".to_string());
-        return false;
-    }
-
-    let mnemonic_str = unsafe {
-        match CStr::from_ptr(mnemonic).to_str() {
-            Ok(s) => s,
-            Err(_) => {
-                FFIError::set_error(
-                    error,
-                    FFIErrorCode::InvalidInput,
-                    "Invalid UTF-8 in mnemonic".to_string(),
-                );
-                return false;
-            }
-        }
-    };
-
+    let manager_ref = deref_ptr!(manager, error);
+    let mnemonic = deref_ptr!(mnemonic, error);
+    let mnemonic_str = unwrap_or_return!(CStr::from_ptr(mnemonic).to_str(), error);
     let passphrase_str = if passphrase.is_null() {
         ""
     } else {
-        unsafe {
-            match CStr::from_ptr(passphrase).to_str() {
-                Ok(s) => s,
-                Err(_) => {
-                    FFIError::set_error(
-                        error,
-                        FFIErrorCode::InvalidInput,
-                        "Invalid UTF-8 in passphrase".to_string(),
-                    );
-                    return false;
-                }
-            }
-        }
+        unwrap_or_return!(CStr::from_ptr(passphrase).to_str(), error)
     };
 
-    unsafe {
-        let manager_ref = &*manager;
+    let creation_options = if account_options.is_null() {
+        key_wallet::wallet::initialization::WalletAccountCreationOptions::Default
+    } else {
+        (*account_options).to_wallet_options()
+    };
 
-        // Convert account creation options
-        let creation_options = if account_options.is_null() {
-            key_wallet::wallet::initialization::WalletAccountCreationOptions::Default
-        } else {
-            (*account_options).to_wallet_options()
-        };
-
-        // Use the runtime to execute async code
-        let result = manager_ref.runtime.block_on(async {
-            let mut manager_guard = manager_ref.manager.write().await;
-
-            // Use the WalletManager's public method to create the wallet
-            manager_guard.create_wallet_from_mnemonic(
-                mnemonic_str,
-                passphrase_str,
-                0,
-                creation_options,
-            )
-        });
-
-        match result {
-            Ok(_wallet_id) => {
-                FFIError::set_success(error);
-                true
-            }
-            Err(e) => {
-                FFIError::set_error(
-                    error,
-                    FFIErrorCode::WalletError,
-                    format!("Failed to create wallet: {:?}", e),
-                );
-                false
-            }
-        }
-    }
+    let result = manager_ref.runtime.block_on(async {
+        let mut manager_guard = manager_ref.manager.write().await;
+        manager_guard.create_wallet_from_mnemonic(mnemonic_str, passphrase_str, 0, creation_options)
+    });
+    let _ = unwrap_or_return!(result, error);
+    true
 }
 
 /// Add a wallet from mnemonic to the manager (backward compatibility)
@@ -239,7 +170,7 @@ pub unsafe extern "C" fn wallet_manager_add_wallet_from_mnemonic_with_options(
 /// - `manager` must be a valid pointer to an FFIWalletManager instance
 /// - `mnemonic` must be a valid pointer to a null-terminated C string
 /// - `passphrase` must be a valid pointer to a null-terminated C string or null
-/// - `error` must be a valid pointer to an FFIError structure or null
+/// - `error` must be a valid pointer to an FFIError structure
 /// - The caller must ensure all pointers remain valid for the duration of this call
 #[no_mangle]
 pub unsafe extern "C" fn wallet_manager_add_wallet_from_mnemonic(
@@ -274,7 +205,7 @@ pub unsafe extern "C" fn wallet_manager_add_wallet_from_mnemonic(
 /// - `wallet_bytes_out` must be a valid pointer to a pointer that will receive the serialized bytes
 /// - `wallet_bytes_len_out` must be a valid pointer that will receive the byte length
 /// - `wallet_id_out` must be a valid pointer to a 32-byte array that will receive the wallet ID
-/// - `error` must be a valid pointer to an FFIError structure or null
+/// - `error` must be a valid pointer to an FFIError structure
 /// - The caller must ensure all pointers remain valid for the duration of this call
 /// - The caller must free the returned wallet_bytes using wallet_manager_free_wallet_bytes()
 #[cfg(feature = "bincode")]
@@ -292,60 +223,24 @@ pub unsafe extern "C" fn wallet_manager_add_wallet_from_mnemonic_return_serializ
     wallet_id_out: *mut u8,
     error: *mut FFIError,
 ) -> bool {
-    // Validate input parameters
-    if manager.is_null()
-        || mnemonic.is_null()
-        || wallet_bytes_out.is_null()
-        || wallet_bytes_len_out.is_null()
-        || wallet_id_out.is_null()
-    {
-        FFIError::set_error(error, FFIErrorCode::InvalidInput, "Null pointer provided".to_string());
-        return false;
-    }
+    let manager_ref = deref_ptr!(manager, error);
+    let mnemonic = deref_ptr!(mnemonic, error);
+    check_ptr!(wallet_bytes_out, error);
+    check_ptr!(wallet_bytes_len_out, error);
+    check_ptr!(wallet_id_out, error);
 
-    // Parse mnemonic string
-    let mnemonic_str = unsafe {
-        match CStr::from_ptr(mnemonic).to_str() {
-            Ok(s) => s,
-            Err(_) => {
-                FFIError::set_error(
-                    error,
-                    FFIErrorCode::InvalidInput,
-                    "Invalid UTF-8 in mnemonic".to_string(),
-                );
-                return false;
-            }
-        }
-    };
-
-    // Parse passphrase string
+    let mnemonic_str = unwrap_or_return!(CStr::from_ptr(mnemonic).to_str(), error);
     let passphrase_str = if passphrase.is_null() {
         ""
     } else {
-        unsafe {
-            match CStr::from_ptr(passphrase).to_str() {
-                Ok(s) => s,
-                Err(_) => {
-                    FFIError::set_error(
-                        error,
-                        FFIErrorCode::InvalidInput,
-                        "Invalid UTF-8 in passphrase".to_string(),
-                    );
-                    return false;
-                }
-            }
-        }
+        unwrap_or_return!(CStr::from_ptr(passphrase).to_str(), error)
     };
 
-    // Convert account creation options
     let creation_options = if account_options.is_null() {
         key_wallet::wallet::initialization::WalletAccountCreationOptions::Default
     } else {
-        unsafe { (*account_options).to_wallet_options() }
+        (*account_options).to_wallet_options()
     };
-
-    // Get the manager and call the proper method
-    let manager_ref = unsafe { &*manager };
 
     let result = manager_ref.runtime.block_on(async {
         let mut manager_guard = manager_ref.manager.write().await;
@@ -360,18 +255,7 @@ pub unsafe extern "C" fn wallet_manager_add_wallet_from_mnemonic_return_serializ
         )
     });
 
-    let (serialized, wallet_id) = match result {
-        Ok(result) => result,
-        Err(e) => {
-            let ffi_error: FFIError = e.into();
-            if !error.is_null() {
-                unsafe {
-                    *error = ffi_error;
-                }
-            }
-            return false;
-        }
-    };
+    let (serialized, wallet_id) = unwrap_or_return!(result, error);
 
     // Allocate memory for the serialized bytes
     let boxed_bytes = serialized.into_boxed_slice();
@@ -385,7 +269,7 @@ pub unsafe extern "C" fn wallet_manager_add_wallet_from_mnemonic_return_serializ
         ptr::copy_nonoverlapping(wallet_id.as_ptr(), wallet_id_out, 32);
     }
 
-    FFIError::set_success(error);
+    (*error).clean();
     true
 }
 
@@ -420,7 +304,7 @@ pub unsafe extern "C" fn wallet_manager_free_wallet_bytes(wallet_bytes: *mut u8,
 /// - `wallet_bytes` must be a valid pointer to bincode-serialized wallet bytes
 /// - `wallet_bytes_len` must be the exact length of the wallet bytes
 /// - `wallet_id_out` must be a valid pointer to a 32-byte array that will receive the wallet ID
-/// - `error` must be a valid pointer to an FFIError structure or null
+/// - `error` must be a valid pointer to an FFIError structure
 /// - The caller must ensure all pointers remain valid for the duration of this call
 #[cfg(feature = "bincode")]
 #[no_mangle]
@@ -431,25 +315,11 @@ pub unsafe extern "C" fn wallet_manager_import_wallet_from_bytes(
     wallet_id_out: *mut u8,
     error: *mut FFIError,
 ) -> bool {
-    // Validate input parameters
-    if manager.is_null()
-        || wallet_bytes.is_null()
-        || wallet_bytes_len == 0
-        || wallet_id_out.is_null()
-    {
-        FFIError::set_error(
-            error,
-            FFIErrorCode::InvalidInput,
-            "Null pointer or invalid length provided".to_string(),
-        );
-        return false;
-    }
+    let manager_ref = deref_ptr!(manager, error);
+    check_ptr!(wallet_bytes, error);
+    check_ptr!(wallet_id_out, error);
 
-    // Create a byte slice from the raw pointer
-    let wallet_bytes_slice = unsafe { std::slice::from_raw_parts(wallet_bytes, wallet_bytes_len) };
-
-    // Get the manager reference
-    let manager_ref = unsafe { &*manager };
+    let wallet_bytes_slice = std::slice::from_raw_parts(wallet_bytes, wallet_bytes_len);
 
     // Import the wallet using async runtime
     let result = manager_ref.runtime.block_on(async {
@@ -457,44 +327,12 @@ pub unsafe extern "C" fn wallet_manager_import_wallet_from_bytes(
         manager_guard.import_wallet_from_bytes(wallet_bytes_slice)
     });
 
-    match result {
-        Ok(wallet_id) => {
-            // Copy the wallet ID to the output buffer
-            unsafe {
-                ptr::copy_nonoverlapping(wallet_id.as_ptr(), wallet_id_out, 32);
-            }
-
-            FFIError::set_success(error);
-            true
-        }
-        Err(e) => {
-            // Convert the error to FFI error
-            match e {
-                key_wallet_manager::WalletError::WalletExists(_) => {
-                    FFIError::set_error(
-                        error,
-                        FFIErrorCode::InvalidState,
-                        "Wallet already exists in the manager".to_string(),
-                    );
-                }
-                key_wallet_manager::WalletError::InvalidParameter(msg) => {
-                    FFIError::set_error(
-                        error,
-                        FFIErrorCode::SerializationError,
-                        format!("Failed to deserialize wallet: {}", msg),
-                    );
-                }
-                _ => {
-                    FFIError::set_error(
-                        error,
-                        FFIErrorCode::WalletError,
-                        format!("Failed to import wallet: {:?}", e),
-                    );
-                }
-            }
-            false
-        }
+    let wallet_id = unwrap_or_return!(result, error);
+    // Copy the wallet ID to the output buffer
+    unsafe {
+        ptr::copy_nonoverlapping(wallet_id.as_ptr(), wallet_id_out, 32);
     }
+    true
 }
 
 /// Get wallet IDs
@@ -504,7 +342,7 @@ pub unsafe extern "C" fn wallet_manager_import_wallet_from_bytes(
 /// - `manager` must be a valid pointer to an FFIWalletManager
 /// - `wallet_ids_out` must be a valid pointer to a pointer that will receive the wallet IDs
 /// - `count_out` must be a valid pointer to receive the count
-/// - `error` must be a valid pointer to an FFIError structure or null
+/// - `error` must be a valid pointer to an FFIError structure
 /// - The caller must ensure all pointers remain valid for the duration of this call
 #[no_mangle]
 pub unsafe extern "C" fn wallet_manager_get_wallet_ids(
@@ -513,12 +351,9 @@ pub unsafe extern "C" fn wallet_manager_get_wallet_ids(
     count_out: *mut usize,
     error: *mut FFIError,
 ) -> bool {
-    if manager.is_null() || wallet_ids_out.is_null() || count_out.is_null() {
-        FFIError::set_error(error, FFIErrorCode::InvalidInput, "Null pointer provided".to_string());
-        return false;
-    }
-
-    let manager_ref = &*manager;
+    let manager_ref = deref_ptr!(manager, error);
+    check_ptr!(wallet_ids_out, error);
+    check_ptr!(count_out, error);
 
     // Get wallet IDs from the manager
     let wallet_ids = manager_ref.runtime.block_on(async {
@@ -543,8 +378,6 @@ pub unsafe extern "C" fn wallet_manager_get_wallet_ids(
         *wallet_ids_out = ids_ptr;
         *count_out = count;
     }
-
-    FFIError::set_success(error);
     true
 }
 
@@ -556,7 +389,7 @@ pub unsafe extern "C" fn wallet_manager_get_wallet_ids(
 ///
 /// - `manager` must be a valid pointer to an FFIWalletManager instance
 /// - `wallet_id` must be a valid pointer to a 32-byte wallet ID
-/// - `error` must be a valid pointer to an FFIError structure or null
+/// - `error` must be a valid pointer to an FFIError structure
 /// - The caller must ensure all pointers remain valid for the duration of this call
 /// - The returned wallet must be freed with wallet_free_const()
 #[no_mangle]
@@ -565,42 +398,18 @@ pub unsafe extern "C" fn wallet_manager_get_wallet(
     wallet_id: *const u8,
     error: *mut FFIError,
 ) -> *const crate::types::FFIWallet {
-    if manager.is_null() || wallet_id.is_null() {
-        FFIError::set_error(error, FFIErrorCode::InvalidInput, "Null pointer provided".to_string());
-        return ptr::null();
-    }
+    let manager_ref = deref_ptr!(manager, error);
+    check_ptr!(wallet_id, error);
 
-    // Convert wallet_id pointer to array
     let mut wallet_id_array = [0u8; 32];
-    unsafe {
-        ptr::copy_nonoverlapping(wallet_id, wallet_id_array.as_mut_ptr(), 32);
-    }
+    ptr::copy_nonoverlapping(wallet_id, wallet_id_array.as_mut_ptr(), 32);
 
-    // Get the manager
-    let manager_ref = unsafe { &*manager };
-
-    // Get the wallet using async runtime
     let wallet_opt = manager_ref.runtime.block_on(async {
         let manager_guard = manager_ref.manager.read().await;
         manager_guard.get_wallet(&wallet_id_array).cloned()
     });
-
-    // Return the wallet
-    match wallet_opt {
-        Some(wallet) => {
-            // Create an FFIWallet wrapper
-            // Note: We need to store this somewhere that will outlive this function
-            // For now, we'll return a raw pointer to the wallet
-            // In a real implementation, you might want to store these in the FFIWalletManager
-            let ffi_wallet = Box::new(crate::types::FFIWallet::new(wallet.clone()));
-            FFIError::set_success(error);
-            Box::into_raw(ffi_wallet)
-        }
-        None => {
-            FFIError::set_error(error, FFIErrorCode::NotFound, "Wallet not found".to_string());
-            ptr::null()
-        }
-    }
+    let wallet = unwrap_or_return!(wallet_opt, error);
+    Box::into_raw(Box::new(crate::types::FFIWallet::new(wallet)))
 }
 
 /// Get managed wallet info from the manager
@@ -611,7 +420,7 @@ pub unsafe extern "C" fn wallet_manager_get_wallet(
 ///
 /// - `manager` must be a valid pointer to an FFIWalletManager instance
 /// - `wallet_id` must be a valid pointer to a 32-byte wallet ID
-/// - `error` must be a valid pointer to an FFIError structure or null
+/// - `error` must be a valid pointer to an FFIError structure
 /// - The caller must ensure all pointers remain valid for the duration of this call
 /// - The returned managed wallet info must be freed with managed_wallet_info_free()
 #[no_mangle]
@@ -620,40 +429,18 @@ pub unsafe extern "C" fn wallet_manager_get_managed_wallet_info(
     wallet_id: *const u8,
     error: *mut FFIError,
 ) -> *mut crate::managed_wallet::FFIManagedWalletInfo {
-    if manager.is_null() || wallet_id.is_null() {
-        FFIError::set_error(error, FFIErrorCode::InvalidInput, "Null pointer provided".to_string());
-        return ptr::null_mut();
-    }
+    let manager_ref = deref_ptr!(manager, error);
+    check_ptr!(wallet_id, error);
 
-    // Convert wallet_id pointer to array
     let mut wallet_id_array = [0u8; 32];
-    unsafe {
-        ptr::copy_nonoverlapping(wallet_id, wallet_id_array.as_mut_ptr(), 32);
-    }
+    ptr::copy_nonoverlapping(wallet_id, wallet_id_array.as_mut_ptr(), 32);
 
-    // Get the manager
-    let manager_ref = unsafe { &*manager };
-
-    // Get the wallet info using async runtime
     let wallet_info_opt = manager_ref.runtime.block_on(async {
         let manager_guard = manager_ref.manager.read().await;
         manager_guard.get_wallet_info(&wallet_id_array).cloned()
     });
-
-    // Return the wallet info
-    match wallet_info_opt {
-        Some(wallet_info) => {
-            // Create an FFIManagedWalletInfo wrapper
-            let ffi_wallet_info =
-                Box::new(crate::managed_wallet::FFIManagedWalletInfo::new(wallet_info.clone()));
-            FFIError::set_success(error);
-            Box::into_raw(ffi_wallet_info)
-        }
-        None => {
-            FFIError::set_error(error, FFIErrorCode::NotFound, "Wallet info not found".to_string());
-            ptr::null_mut()
-        }
-    }
+    let wallet_info = unwrap_or_return!(wallet_info_opt, error);
+    Box::into_raw(Box::new(crate::managed_wallet::FFIManagedWalletInfo::new(wallet_info)))
 }
 
 /// Get wallet balance
@@ -666,7 +453,7 @@ pub unsafe extern "C" fn wallet_manager_get_managed_wallet_info(
 /// - `wallet_id` must be a valid pointer to a 32-byte wallet ID
 /// - `confirmed_out` must be a valid pointer to a u64 (maps to C uint64_t)
 /// - `unconfirmed_out` must be a valid pointer to a u64 (maps to C uint64_t)
-/// - `error` must be a valid pointer to an FFIError structure or null
+/// - `error` must be a valid pointer to an FFIError structure
 /// - The caller must ensure all pointers remain valid for the duration of this call
 #[no_mangle]
 pub unsafe extern "C" fn wallet_manager_get_wallet_balance(
@@ -676,48 +463,22 @@ pub unsafe extern "C" fn wallet_manager_get_wallet_balance(
     unconfirmed_out: *mut u64,
     error: *mut FFIError,
 ) -> bool {
-    if manager.is_null()
-        || wallet_id.is_null()
-        || confirmed_out.is_null()
-        || unconfirmed_out.is_null()
-    {
-        FFIError::set_error(error, FFIErrorCode::InvalidInput, "Null pointer provided".to_string());
-        return false;
-    }
+    let manager_ref = deref_ptr!(manager, error);
+    check_ptr!(wallet_id, error);
+    check_ptr!(confirmed_out, error);
+    check_ptr!(unconfirmed_out, error);
 
-    // Convert wallet_id pointer to array
     let mut wallet_id_array = [0u8; 32];
-    unsafe {
-        ptr::copy_nonoverlapping(wallet_id, wallet_id_array.as_mut_ptr(), 32);
-    }
+    ptr::copy_nonoverlapping(wallet_id, wallet_id_array.as_mut_ptr(), 32);
 
-    // Get the manager
-    let manager_ref = unsafe { &*manager };
-
-    // Get the wallet balance using async runtime
     let result = manager_ref.runtime.block_on(async {
         let manager_guard = manager_ref.manager.read().await;
         manager_guard.get_wallet_balance(&wallet_id_array)
     });
-
-    match result {
-        Ok(balance) => {
-            unsafe {
-                *confirmed_out = balance.confirmed();
-                *unconfirmed_out = balance.unconfirmed();
-            }
-            FFIError::set_success(error);
-            true
-        }
-        Err(e) => {
-            FFIError::set_error(
-                error,
-                FFIErrorCode::WalletError,
-                format!("Failed to get wallet balance: {}", e),
-            );
-            false
-        }
-    }
+    let balance = unwrap_or_return!(result, error);
+    *confirmed_out = balance.confirmed();
+    *unconfirmed_out = balance.unconfirmed();
+    true
 }
 
 /// Process a transaction through all wallets
@@ -732,7 +493,7 @@ pub unsafe extern "C" fn wallet_manager_get_wallet_balance(
 /// - `tx_len` must be the length of the transaction bytes
 /// - `context` must be a valid pointer to FFITransactionContext
 /// - `update_state_if_found` indicates whether to update wallet state when transaction is relevant
-/// - `error` must be a valid pointer to an FFIError structure or null
+/// - `error` must be a valid pointer to an FFIError structure
 /// - The caller must ensure all pointers remain valid for the duration of this call
 #[no_mangle]
 pub unsafe extern "C" fn wallet_manager_process_transaction(
@@ -743,49 +504,28 @@ pub unsafe extern "C" fn wallet_manager_process_transaction(
     update_state_if_found: bool,
     error: *mut FFIError,
 ) -> bool {
-    if manager.is_null() || tx_bytes.is_null() || tx_len == 0 || context.is_null() {
-        FFIError::set_error(
-            error,
-            FFIErrorCode::InvalidInput,
-            "Null pointer or empty transaction provided".to_string(),
-        );
-        return false;
-    }
+    let manager_ref = deref_ptr_mut!(manager, error);
+    check_ptr!(tx_bytes, error);
+    check_ptr!(context, error);
 
-    // Convert transaction bytes to slice
-    let tx_slice = unsafe { std::slice::from_raw_parts(tx_bytes, tx_len) };
+    let tx_slice = std::slice::from_raw_parts(tx_bytes, tx_len);
 
-    // Deserialize the transaction
     use dashcore::blockdata::transaction::Transaction;
     use dashcore::consensus::encode::deserialize;
 
-    let tx: Transaction = match deserialize(tx_slice) {
-        Ok(tx) => tx,
-        Err(e) => {
-            FFIError::set_error(
-                error,
-                FFIErrorCode::InvalidInput,
-                format!("Failed to deserialize transaction: {}", e),
-            );
-            return false;
-        }
-    };
+    let tx: Transaction = unwrap_or_return!(deserialize::<Transaction>(tx_slice), error);
 
     // Convert FFI context to native TransactionContext
     let context = match unsafe { (*context).to_transaction_context() } {
         Some(ctx) => ctx,
         None => {
-            FFIError::set_error(
-                error,
+            (*error).set(
                 FFIErrorCode::InvalidInput,
-                "Block info must not be zeroed for confirmed contexts".to_string(),
+                "Block info must not be zeroed for confirmed contexts",
             );
             return false;
         }
     };
-
-    // Get the manager
-    let manager_ref = unsafe { &mut *manager };
 
     // Process the transaction using async runtime
     let result = manager_ref.runtime.block_on(async {
@@ -795,7 +535,7 @@ pub unsafe extern "C" fn wallet_manager_process_transaction(
             .await
     });
 
-    FFIError::set_success(error);
+    (*error).clean();
     !result.affected_wallets.is_empty()
 }
 
@@ -804,20 +544,14 @@ pub unsafe extern "C" fn wallet_manager_process_transaction(
 /// # Safety
 ///
 /// - `manager` must be a valid pointer to an FFIWalletManager
-/// - `error` must be a valid pointer to an FFIError structure or null
+/// - `error` must be a valid pointer to an FFIError structure
 /// - The caller must ensure all pointers remain valid for the duration of this call
 #[no_mangle]
 pub unsafe extern "C" fn wallet_manager_network(
     manager: *const FFIWalletManager,
     error: *mut FFIError,
 ) -> FFINetwork {
-    if manager.is_null() {
-        FFIError::set_error(error, FFIErrorCode::InvalidInput, "Manager is null".to_string());
-        return FFINetwork::Mainnet; // Default fallback
-    }
-
-    let manager_ref = &*manager;
-    FFIError::set_success(error);
+    let manager_ref = deref_ptr!(manager, error, FFINetwork::Mainnet);
     manager_ref.network()
 }
 
@@ -826,28 +560,18 @@ pub unsafe extern "C" fn wallet_manager_network(
 /// # Safety
 ///
 /// - `manager` must be a valid pointer to an FFIWalletManager
-/// - `error` must be a valid pointer to an FFIError structure or null
+/// - `error` must be a valid pointer to an FFIError structure
 /// - The caller must ensure all pointers remain valid for the duration of this call
 #[no_mangle]
 pub unsafe extern "C" fn wallet_manager_current_height(
     manager: *const FFIWalletManager,
     error: *mut FFIError,
 ) -> c_uint {
-    if manager.is_null() {
-        FFIError::set_error(error, FFIErrorCode::InvalidInput, "Manager is null".to_string());
-        return 0;
-    }
-
-    let manager_ref = &*manager;
-
-    // Get current height from network state if it exists
-    let height = manager_ref.runtime.block_on(async {
+    let manager_ref = deref_ptr!(manager, error);
+    manager_ref.runtime.block_on(async {
         let manager_guard = manager_ref.manager.read().await;
         manager_guard.synced_height()
-    });
-
-    FFIError::set_success(error);
-    height
+    })
 }
 
 /// Get wallet count
@@ -855,29 +579,18 @@ pub unsafe extern "C" fn wallet_manager_current_height(
 /// # Safety
 ///
 /// - `manager` must be a valid pointer to an FFIWalletManager instance
-/// - `error` must be a valid pointer to an FFIError structure or null
+/// - `error` must be a valid pointer to an FFIError structure
 /// - The caller must ensure all pointers remain valid for the duration of this call
 #[no_mangle]
 pub unsafe extern "C" fn wallet_manager_wallet_count(
     manager: *const FFIWalletManager,
     error: *mut FFIError,
 ) -> usize {
-    if manager.is_null() {
-        FFIError::set_error(error, FFIErrorCode::InvalidInput, "Manager is null".to_string());
-        return 0;
-    }
-
-    unsafe {
-        let manager_ref = &*manager;
-
-        let count = manager_ref.runtime.block_on(async {
-            let manager_guard = manager_ref.manager.read().await;
-            manager_guard.wallet_count()
-        });
-
-        FFIError::set_success(error);
-        count
-    }
+    let manager_ref = deref_ptr!(manager, error);
+    manager_ref.runtime.block_on(async {
+        let manager_guard = manager_ref.manager.read().await;
+        manager_guard.wallet_count()
+    })
 }
 
 /// Free wallet manager
