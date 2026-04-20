@@ -23,7 +23,7 @@ use crate::sml::masternode_list::from_diff::TryIntoWithBlockHashLookup;
 use crate::sml::quorum_entry::qualified_quorum_entry::QualifiedQuorumEntry;
 #[cfg(feature = "quorum_validation")]
 use crate::sml::quorum_entry::qualified_quorum_entry::VerifyingChainLockSignaturesType;
-use crate::sml::quorum_validation_error::{ClientDataRetrievalError, QuorumValidationError};
+use crate::sml::quorum_validation_error::QuorumValidationError;
 use crate::transaction::special_transaction::quorum_commitment::QuorumEntry;
 use crate::{BlockHash, QuorumHash};
 #[cfg(feature = "bincode")]
@@ -441,148 +441,26 @@ impl MasternodeListEngine {
         self.block_container.feed_block_height(height, block_hash)
     }
 
-    /// Requests and stores block heights for all hashes referenced in a QRInfo message.
-    ///
-    /// # Parameters
-    /// - `qr_info`: The QRInfo message containing various diffs and quorum entries
-    /// - `fetch_block_height`: Function to fetch block height from block hash
-    ///
-    /// # Returns
-    /// Result indicating success or a data retrieval error.
-    fn request_qr_info_block_heights<FH>(
-        &mut self,
-        qr_info: &QRInfo,
-        fetch_block_height: &FH,
-    ) -> Result<(), ClientDataRetrievalError>
-    where
-        FH: Fn(&BlockHash) -> Result<u32, ClientDataRetrievalError>,
-    {
-        let mn_list_diffs = [
-            &qr_info.mn_list_diff_tip,
-            &qr_info.mn_list_diff_h,
-            &qr_info.mn_list_diff_at_h_minus_c,
-            &qr_info.mn_list_diff_at_h_minus_2c,
-            &qr_info.mn_list_diff_at_h_minus_3c,
-        ];
-
-        let should_request_for_previous_validation =
-            qr_info.quorum_snapshot_and_mn_list_diff_at_h_minus_4c.is_some();
-
-        // If h-4c exists, add it to the list
-        if let Some((_, mn_list_diff_h_minus_4c)) =
-            &qr_info.quorum_snapshot_and_mn_list_diff_at_h_minus_4c
-        {
-            mn_list_diffs.iter().try_for_each(|&mn_list_diff| {
-                self.request_mn_list_diff_heights(mn_list_diff, fetch_block_height)
-            })?;
-
-            // Feed h-4c separately
-            self.request_mn_list_diff_heights(mn_list_diff_h_minus_4c, fetch_block_height)?;
-        } else {
-            mn_list_diffs.iter().try_for_each(|&mn_list_diff| {
-                self.request_mn_list_diff_heights(mn_list_diff, fetch_block_height)
-            })?;
-        }
-
-        // Process `last_commitment_per_index` quorum hashes
-        qr_info.last_commitment_per_index.iter().try_for_each(|quorum_entry| {
-            self.request_quorum_entry_height(quorum_entry, fetch_block_height)
-        })?;
-
-        if should_request_for_previous_validation {
-            qr_info.mn_list_diff_h.new_quorums.iter().try_for_each(|quorum_entry| {
-                if quorum_entry.llmq_type.is_rotating_quorum_type() {
-                    self.request_quorum_entry_height(quorum_entry, fetch_block_height)
-                } else {
-                    Ok(())
-                }
-            })?;
-        }
-
-        // Process `mn_list_diff_list` (extra diffs)
-        qr_info.mn_list_diff_list.iter().try_for_each(|mn_list_diff| {
-            self.request_mn_list_diff_heights(mn_list_diff, fetch_block_height)
-        })
-    }
-
-    /// Requests and stores the block height for a quorum entry's hash.
-    ///
-    /// # Parameters
-    /// - `quorum_entry`: The quorum entry containing the hash to look up
-    /// - `fetch_block_height`: Function to fetch block height from block hash
-    ///
-    /// # Returns
-    /// Result indicating success or a data retrieval error.
-    fn request_quorum_entry_height<FH>(
-        &mut self,
-        quorum_entry: &QuorumEntry,
-        fetch_block_height: &FH,
-    ) -> Result<(), ClientDataRetrievalError>
-    where
-        FH: Fn(&BlockHash) -> Result<u32, ClientDataRetrievalError>,
-    {
-        if !self.block_container.contains_hash(&quorum_entry.quorum_hash) {
-            let height = fetch_block_height(&quorum_entry.quorum_hash)?;
-            self.feed_block_height(height, quorum_entry.quorum_hash);
-        }
-        Ok(())
-    }
-
-    /// Requests and stores the block heights for a masternode list diff's base and target hashes.
-    ///
-    /// # Parameters
-    /// - `mn_list_diff`: The masternode list diff containing hashes to look up
-    /// - `fetch_block_height`: Function to fetch block height from block hash
-    ///
-    /// # Returns
-    /// Result indicating success or a data retrieval error.
-    fn request_mn_list_diff_heights<FH>(
-        &mut self,
-        mn_list_diff: &MnListDiff,
-        fetch_block_height: &FH,
-    ) -> Result<(), ClientDataRetrievalError>
-    where
-        FH: Fn(&BlockHash) -> Result<u32, ClientDataRetrievalError>,
-    {
-        if !self.block_container.contains_hash(&mn_list_diff.base_block_hash) {
-            // Feed base block hash height
-            let base_height = fetch_block_height(&mn_list_diff.base_block_hash)?;
-            self.feed_block_height(base_height, mn_list_diff.base_block_hash);
-        }
-
-        if !self.block_container.contains_hash(&mn_list_diff.block_hash) {
-            // Feed block hash height
-            let block_height = fetch_block_height(&mn_list_diff.block_hash)?;
-            self.feed_block_height(block_height, mn_list_diff.block_hash);
-        }
-        Ok(())
-    }
-
     /// Processes and applies a QRInfo message to the masternode list engine.
+    ///
+    /// The caller is expected to pre-populate [`Self::block_container`] with heights
+    /// for every hash referenced by the QRInfo before calling this; missing heights
+    /// surface as `QuorumValidationError::RequiredBlockNotPresent` once they are
+    /// actually needed.
     ///
     /// # Parameters
     /// - `qr_info`: The QRInfo message containing quorum snapshots and diffs
     /// - `verify_tip_non_rotated_quorums`: Whether to verify non-rotating quorums at the tip
     /// - `verify_rotated_quorums`: Whether to verify rotating quorums
-    /// - `fetch_block_height`: Optional function to fetch block heights from hashes
     ///
     /// # Returns
     /// Result indicating success or a quorum validation error.
-    pub fn feed_qr_info<FH>(
+    pub fn feed_qr_info(
         &mut self,
         qr_info: QRInfo,
         verify_tip_non_rotated_quorums: bool,
         verify_rotated_quorums: bool,
-        fetch_block_height: Option<FH>,
-    ) -> Result<(), QuorumValidationError>
-    where
-        FH: Fn(&BlockHash) -> Result<u32, ClientDataRetrievalError>,
-    {
-        // Fetch and process block heights using the provided callback
-        if let Some(fetch_height) = fetch_block_height {
-            self.request_qr_info_block_heights(&qr_info, &fetch_height)?;
-        }
-
+    ) -> Result<(), QuorumValidationError> {
         #[allow(unused_variables)]
         let QRInfo {
             quorum_snapshot_at_h_minus_c,
@@ -1174,6 +1052,7 @@ impl MasternodeListEngine {
 
 #[cfg(test)]
 mod tests {
+    use crate::Network;
     use crate::consensus::deserialize;
     use crate::hashes::Hash;
     use crate::network::message_qrinfo::QRInfo;
@@ -1191,10 +1070,8 @@ mod tests {
     use crate::sml::quorum_entry::qualified_quorum_entry::{
         QualifiedQuorumEntry, VerifyingChainLockSignaturesType,
     };
-    use crate::sml::quorum_validation_error::ClientDataRetrievalError;
     #[cfg(feature = "quorum_validation")]
     use crate::sml::quorum_validation_error::QuorumValidationError;
-    use crate::{BlockHash, Network};
     use std::collections::BTreeMap;
 
     #[cfg(feature = "quorum_validation")]
@@ -1436,11 +1313,7 @@ mod tests {
                 .expect("expected to apply diff");
         }
 
-        masternode_list_engine
-            .feed_qr_info::<fn(&BlockHash) -> Result<u32, ClientDataRetrievalError>>(
-                qr_info, true, true, None,
-            )
-            .expect("expected to feed_qr_info");
+        masternode_list_engine.feed_qr_info(qr_info, true, true).expect("expected to feed_qr_info");
 
         verify_masternode_list_quorums(
             &masternode_list_engine,
@@ -1603,10 +1476,7 @@ mod tests {
         qr_info.mn_list_diff_at_h_minus_2c.quorums_chainlock_signatures.clear();
 
         // feed_qr_info should fail for post-V20 blocks with missing signatures
-        let result = masternode_list_engine
-            .feed_qr_info::<fn(&BlockHash) -> Result<u32, ClientDataRetrievalError>>(
-                qr_info, false, false, None,
-            );
+        let result = masternode_list_engine.feed_qr_info(qr_info, false, false);
 
         assert!(
             result.is_err(),
