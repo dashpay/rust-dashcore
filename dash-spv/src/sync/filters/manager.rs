@@ -440,12 +440,7 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
     async fn try_commit_batches(&mut self) -> SyncResult<Vec<SyncEvent>> {
         let mut events = Vec::new();
 
-        loop {
-            // Get the lowest batch
-            let Some((&batch_start, batch)) = self.active_batches.first_key_value() else {
-                break;
-            };
-
+        while let Some((&batch_start, batch)) = self.active_batches.first_key_value() {
             // Check if batch was scanned - can't commit until scanned
             if !batch.scanned() {
                 break;

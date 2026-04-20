@@ -1266,6 +1266,69 @@ impl ManagedCoreAccount {
         Ok(private_key)
     }
 
+    /// Peek at the next unused address's path and index **without** marking
+    /// the index used.
+    ///
+    /// Intended for two-phase flows where path consumption must not commit
+    /// until an external operation (e.g. an async signer request) has
+    /// succeeded. Pair with [`Self::mark_first_pool_index_used`] to
+    /// commit, or drop the result to leave the pool untouched. Calling
+    /// `peek_next_path` twice without committing in between returns the
+    /// same `(path, index)`.
+    ///
+    /// Only works for single-pool account types (not Standard accounts).
+    pub fn peek_next_path(&mut self) -> Result<(crate::DerivationPath, u32), &'static str> {
+        if matches!(self.account_type, ManagedAccountType::Standard { .. }) {
+            return Err("Standard accounts must use next_receive_address or next_change_address");
+        }
+
+        let mut pools = self.account_type.address_pools_mut();
+        let pool = pools.first_mut().ok_or("Account has no address pool")?;
+
+        let info = pool
+            .next_unused_with_info(&address_pool::KeySource::NoKeySource)
+            .map_err(|_| "No unused address available")?;
+
+        Ok((info.path, info.index))
+    }
+
+    /// Mark an index on the account's first address pool as used.
+    ///
+    /// Commits what [`Self::peek_next_path`] returned. Accepts any index —
+    /// callers are responsible for passing back the index they peeked, not
+    /// an arbitrary one.
+    ///
+    /// Only works for single-pool account types (not Standard accounts).
+    pub fn mark_first_pool_index_used(&mut self, index: u32) -> Result<(), &'static str> {
+        if matches!(self.account_type, ManagedAccountType::Standard { .. }) {
+            return Err("Standard accounts must use next_receive_address or next_change_address");
+        }
+
+        let mut pools = self.account_type.address_pools_mut();
+        let pool = pools.first_mut().ok_or("Account has no address pool")?;
+        pool.mark_index_used(index);
+        Ok(())
+    }
+
+    /// Consume the next unused address and return only its derivation path.
+    ///
+    /// Analogous to [`Self::next_private_key`] but does not require any
+    /// root extended private key: used when signing is delegated to an
+    /// external [`Signer`](crate::signer::Signer), which holds the keys
+    /// and only needs the path to produce signatures or public keys.
+    ///
+    /// Consumes the index immediately; callers that need to defer the
+    /// commit until after an external operation succeeds should use
+    /// [`Self::peek_next_path`] + [`Self::mark_first_pool_index_used`]
+    /// instead.
+    ///
+    /// Only works for single-pool account types (not Standard accounts).
+    pub fn next_path(&mut self) -> Result<crate::DerivationPath, &'static str> {
+        let (path, index) = self.peek_next_path()?;
+        self.mark_first_pool_index_used(index)?;
+        Ok(path)
+    }
+
     /// Get the derivation path for an address if it belongs to this account
     pub fn address_derivation_path(&self, address: &Address) -> Option<crate::DerivationPath> {
         self.account_type.get_address_derivation_path(address)
