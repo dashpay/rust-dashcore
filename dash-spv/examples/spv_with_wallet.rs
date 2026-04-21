@@ -32,7 +32,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Create the SPV client with all components
     let client =
-        DashSpvClient::new(config, network_manager, storage_manager, wallet, Arc::new(())).await?;
+        DashSpvClient::new(config, network_manager, storage_manager, wallet, vec![]).await?;
 
     // The wallet will automatically be notified of:
     // - New blocks via process_block()

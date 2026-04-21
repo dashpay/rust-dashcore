@@ -13,7 +13,6 @@ use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
 
 use super::ClientConfig;
-use crate::client::EventHandler;
 use crate::error::{Result, SpvError};
 use crate::network::NetworkManager;
 use crate::storage::{
@@ -73,7 +72,7 @@ pub(super) type PersistentSyncCoordinator<W> = SyncCoordinator<
 /// - `W: WalletInterface` - Handles UTXO tracking, address management, transaction processing
 /// - `N: NetworkManager` - Manages peer connections, message routing, network protocol
 /// - `S: StorageManager` - Persistent storage for headers, filters, chain state
-/// - `H: EventHandler` - Receives push-based event notifications (defaults to `()` no-op)
+/// - Event handlers are stored as `Vec<Arc<dyn EventHandler>>`
 ///
 /// ## Common Configurations
 ///
@@ -104,12 +103,7 @@ pub(super) type PersistentSyncCoordinator<W> = SyncCoordinator<
 /// - Not reduce binary size (production has one instantiation anyway)
 ///
 /// The generic design is an intentional, beneficial architectural choice for a library.
-pub struct DashSpvClient<
-    W: WalletInterface,
-    N: NetworkManager,
-    S: StorageManager,
-    H: EventHandler = (),
-> {
+pub struct DashSpvClient<W: WalletInterface, N: NetworkManager, S: StorageManager> {
     pub(super) config: Arc<RwLock<ClientConfig>>,
     pub(super) network: Arc<Mutex<N>>,
     pub(super) storage: Arc<Mutex<S>>,
@@ -118,12 +112,10 @@ pub struct DashSpvClient<
     pub(super) masternode_engine: Option<Arc<RwLock<MasternodeListEngine>>>,
     pub(super) sync_coordinator: Arc<Mutex<PersistentSyncCoordinator<W>>>,
     pub(super) running: Arc<RwLock<bool>>,
-    pub(super) event_handler: Arc<H>,
+    pub(super) event_handlers: Arc<Vec<Arc<dyn super::EventHandler>>>,
 }
 
-impl<W: WalletInterface, N: NetworkManager, S: StorageManager, H: EventHandler> Clone
-    for DashSpvClient<W, N, S, H>
-{
+impl<W: WalletInterface, N: NetworkManager, S: StorageManager> Clone for DashSpvClient<W, N, S> {
     fn clone(&self) -> Self {
         Self {
             config: Arc::clone(&self.config),
@@ -133,14 +125,12 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager, H: EventHandler> 
             masternode_engine: self.masternode_engine.clone(),
             sync_coordinator: Arc::clone(&self.sync_coordinator),
             running: Arc::clone(&self.running),
-            event_handler: Arc::clone(&self.event_handler),
+            event_handlers: Arc::clone(&self.event_handlers),
         }
     }
 }
 
-impl<W: WalletInterface, N: NetworkManager, S: StorageManager, H: EventHandler>
-    DashSpvClient<W, N, S, H>
-{
+impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, N, S> {
     // ============ Simple Getters ============
 
     /// Get a reference to the wallet.

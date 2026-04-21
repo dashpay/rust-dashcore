@@ -67,9 +67,10 @@ mod tests {
             DiskStorageManager::with_temp_dir().await.expect("Failed to create tmp storage");
         let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new(config.network)));
 
-        let client = DashSpvClient::new(config, network_manager, storage, wallet, Arc::new(()))
-            .await
-            .expect("client construction must succeed");
+        let client =
+            DashSpvClient::new(config, network_manager, storage, wallet, vec![Arc::new(())])
+                .await
+                .expect("client construction must succeed");
 
         // Verify the wallet is accessible
         let wallet_ref = client.wallet();

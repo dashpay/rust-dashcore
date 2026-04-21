@@ -27,16 +27,14 @@ use dashcore::sml::masternode_list_engine::MasternodeListEngine;
 use dashcore_hashes::Hash;
 use key_wallet_manager::WalletInterface;
 
-impl<W: WalletInterface, N: NetworkManager, S: StorageManager, H: EventHandler>
-    DashSpvClient<W, N, S, H>
-{
+impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, N, S> {
     /// Create a new SPV client with the given configuration, network, storage, and wallet.
     pub async fn new(
         config: ClientConfig,
         network: N,
         mut storage: S,
         wallet: Arc<RwLock<W>>,
-        event_handler: Arc<H>,
+        event_handlers: Vec<Arc<dyn EventHandler>>,
     ) -> Result<Self> {
         // Validate configuration
         config.validate().map_err(SpvError::Config)?;
@@ -146,7 +144,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager, H: EventHandler>
             masternode_engine,
             sync_coordinator: Arc::new(Mutex::new(sync_coordinator)),
             running: Arc::new(RwLock::new(false)),
-            event_handler,
+            event_handlers: Arc::new(event_handlers),
         };
 
         // Load wallet data from storage
@@ -154,7 +152,9 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager, H: EventHandler>
 
         // Emit initial progress so callers get immediate feedback
         let initial_progress = client.sync_coordinator.lock().await.progress().clone();
-        client.event_handler.on_progress(&initial_progress);
+        for event_handler in client.event_handlers.iter() {
+            event_handler.on_progress(&initial_progress);
+        }
 
         Ok(client)
     }

@@ -258,12 +258,8 @@ impl Drop for TestContext {
 }
 
 /// Type alias for the SPV client used in tests.
-pub(super) type TestClient = DashSpvClient<
-    WalletManager<ManagedWalletInfo>,
-    PeerNetworkManager,
-    DiskStorageManager,
-    TestEventHandler,
->;
+pub(super) type TestClient =
+    DashSpvClient<WalletManager<ManagedWalletInfo>, PeerNetworkManager, DiskStorageManager>;
 
 /// A `ClientHandle` is a utility structure that manages the state and handles for a `TestClient`
 /// required to interact with the synchronization process, various event channels, and cancellation capabilities.
@@ -331,7 +327,7 @@ pub(super) async fn create_and_start_client(
     let network_event_receiver = handler.subscribe_network_events();
 
     let client =
-        DashSpvClient::new(config.clone(), network_manager, storage_manager, wallet, handler)
+        DashSpvClient::new(config.clone(), network_manager, storage_manager, wallet, vec![handler])
             .await
             .expect("Failed to create client");
 

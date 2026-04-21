@@ -33,9 +33,7 @@ async fn create_test_client(
     // Create wallet manager
     let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new(config.network)));
 
-    DashSpvClient::new(config, network_manager, storage_manager, wallet, Arc::new(()))
-        .await
-        .unwrap()
+    DashSpvClient::new(config, network_manager, storage_manager, wallet, vec![]).await.unwrap()
 }
 
 #[tokio::test]

@@ -6,11 +6,9 @@ use crate::storage::StorageManager;
 use dashcore::network::message::NetworkMessage;
 use key_wallet_manager::WalletInterface;
 
-use super::{DashSpvClient, EventHandler};
+use super::DashSpvClient;
 
-impl<W: WalletInterface, N: NetworkManager, S: StorageManager, H: EventHandler>
-    DashSpvClient<W, N, S, H>
-{
+impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, N, S> {
     /// Broadcast a transaction to all connected peers.
     ///
     /// The transaction is also injected into the local message pipeline so that

@@ -50,9 +50,8 @@ async fn test_peer_connection() {
     // Create wallet manager
     let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new(config.network)));
 
-    let client = DashSpvClient::new(config, network_manager, storage_manager, wallet, Arc::new(()))
-        .await
-        .unwrap();
+    let client =
+        DashSpvClient::new(config, network_manager, storage_manager, wallet, vec![]).await.unwrap();
 
     let token = CancellationToken::new();
     let cancel = token.clone();
@@ -88,15 +87,10 @@ async fn test_peer_persistence() {
         // Create wallet manager
         let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new(config.network)));
 
-        let client = DashSpvClient::new(
-            config.clone(),
-            network_manager,
-            storage_manager,
-            wallet,
-            Arc::new(()),
-        )
-        .await
-        .unwrap();
+        let client =
+            DashSpvClient::new(config.clone(), network_manager, storage_manager, wallet, vec![])
+                .await
+                .unwrap();
 
         let token = CancellationToken::new();
         let cancel = token.clone();
@@ -123,10 +117,9 @@ async fn test_peer_persistence() {
         // Create wallet manager
         let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new(config.network)));
 
-        let client =
-            DashSpvClient::new(config, network_manager, storage_manager, wallet, Arc::new(()))
-                .await
-                .unwrap();
+        let client = DashSpvClient::new(config, network_manager, storage_manager, wallet, vec![])
+            .await
+            .unwrap();
 
         // Should connect faster due to saved peers
         let token = CancellationToken::new();
@@ -167,9 +160,8 @@ async fn test_peer_disconnection() {
     // Create wallet manager
     let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new(config.network)));
 
-    let client = DashSpvClient::new(config, network_manager, storage_manager, wallet, Arc::new(()))
-        .await
-        .unwrap();
+    let client =
+        DashSpvClient::new(config, network_manager, storage_manager, wallet, vec![]).await.unwrap();
 
     // Note: This test would require actual regtest nodes running
     // For now, we just test that the API works

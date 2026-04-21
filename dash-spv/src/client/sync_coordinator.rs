@@ -6,7 +6,7 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 use super::event_handler::{spawn_broadcast_monitor, spawn_progress_monitor};
-use super::{DashSpvClient, EventHandler};
+use super::DashSpvClient;
 use crate::error::Result;
 use crate::network::NetworkManager;
 use crate::storage::StorageManager;
@@ -16,9 +16,7 @@ use key_wallet_manager::WalletInterface;
 
 const SYNC_COORDINATOR_TICK_MS: Duration = Duration::from_millis(100);
 
-impl<W: WalletInterface, N: NetworkManager, S: StorageManager, H: EventHandler>
-    DashSpvClient<W, N, S, H>
-{
+impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, N, S> {
     /// Get current sync progress.
     pub async fn sync_progress(&self) -> SyncProgress {
         self.sync_coordinator.lock().await.progress().clone()
@@ -30,7 +28,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager, H: EventHandler>
     /// event handler provided at construction. Calls `start()` internally, runs
     /// continuous network monitoring, and calls `stop()` before returning.
     pub async fn run(&self, token: CancellationToken) -> Result<()> {
-        let handler = self.event_handler.clone();
+        let handlers = self.event_handlers.clone();
         let monitor_shutdown = CancellationToken::new();
         let (monitor_failure_tx, mut monitor_failure_rx) = mpsc::channel::<String>(1);
 
@@ -44,7 +42,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager, H: EventHandler>
         let sync_task = spawn_broadcast_monitor(
             "Sync event",
             sync_event_rx,
-            handler.clone(),
+            handlers.clone(),
             monitor_shutdown.clone(),
             monitor_failure_tx.clone(),
             |h, event| h.on_sync_event(event),
@@ -53,7 +51,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager, H: EventHandler>
         let network_task = spawn_broadcast_monitor(
             "Network event",
             network_event_rx,
-            handler.clone(),
+            handlers.clone(),
             monitor_shutdown.clone(),
             monitor_failure_tx.clone(),
             |h, event| h.on_network_event(event),
@@ -62,7 +60,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager, H: EventHandler>
         let wallet_task = spawn_broadcast_monitor(
             "Wallet event",
             wallet_event_rx,
-            handler.clone(),
+            handlers.clone(),
             monitor_shutdown.clone(),
             monitor_failure_tx.clone(),
             |h, event| h.on_wallet_event(event),
@@ -70,7 +68,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager, H: EventHandler>
 
         let progress_task = spawn_progress_monitor(
             progress_rx,
-            handler.clone(),
+            handlers.clone(),
             monitor_shutdown.clone(),
             monitor_failure_tx,
         );
@@ -78,7 +76,9 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager, H: EventHandler>
         if let Err(e) = self.start().await {
             monitor_shutdown.cancel();
             let _ = tokio::join!(sync_task, network_task, wallet_task, progress_task);
-            handler.on_error(&e.to_string());
+            for handler in handlers.iter() {
+                handler.on_error(&e.to_string());
+            }
             return Err(e);
         }
 
@@ -121,7 +121,9 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager, H: EventHandler>
         let _ = tokio::join!(sync_task, network_task, wallet_task, progress_task);
 
         if let Some(ref e) = error {
-            handler.on_error(&e.to_string());
+            for handler in handlers.iter() {
+                handler.on_error(&e.to_string());
+            }
         }
 
         let stop_result = self.stop().await;

@@ -34,7 +34,13 @@
 //!     let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new(config.network)));
 //!
 //!     // Create and run the client
-//!     let client = DashSpvClient::new(config.clone(), network, storage, wallet, Arc::new(())).await?;
+//!     let client = DashSpvClient::new(
+//!         config.clone(),
+//!         network,
+//!         storage,
+//!         wallet,
+//!         vec![Arc::new(())],
+//!     ).await?;
 //!     let shutdown_token = CancellationToken::new();
 //!
 //!     client.run(shutdown_token).await?;

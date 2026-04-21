@@ -332,13 +332,12 @@ async fn run_client<S: dash_spv::storage::StorageManager>(
         WalletManager<ManagedWalletInfo>,
         dash_spv::network::manager::PeerNetworkManager,
         S,
-        LoggingEventHandler,
     >::new(
         config.clone(),
         network_manager,
         storage_manager,
         wallet.clone(),
-        Arc::new(LoggingEventHandler),
+        vec![Arc::new(LoggingEventHandler)],
     )
     .await
     {

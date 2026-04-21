@@ -17,11 +17,9 @@ use key_wallet_manager::WalletInterface;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-use super::{DashSpvClient, EventHandler};
+use super::DashSpvClient;
 
-impl<W: WalletInterface, N: NetworkManager, S: StorageManager, H: EventHandler>
-    DashSpvClient<W, N, S, H>
-{
+impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, N, S> {
     // ============ Peer Queries ============
 
     /// Get the number of connected peers.

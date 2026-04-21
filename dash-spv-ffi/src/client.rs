@@ -20,7 +20,6 @@ type InnerClient = DashSpvClient<
     key_wallet_manager::WalletManager<key_wallet::wallet::managed_wallet_info::ManagedWalletInfo>,
     dash_spv::network::PeerNetworkManager,
     DiskStorageManager,
-    FFIEventCallbacks,
 >;
 
 pub struct FFIDashSpvClient {
@@ -94,8 +93,14 @@ pub unsafe extern "C" fn dash_spv_ffi_client_new(
 
         match (network, storage) {
             (Ok(network), Ok(storage)) => {
-                DashSpvClient::new(client_config, network, storage, wallet, Arc::new(callbacks))
-                    .await
+                DashSpvClient::new(
+                    client_config,
+                    network,
+                    storage,
+                    wallet,
+                    vec![Arc::new(callbacks)],
+                )
+                .await
             }
             (Err(e), _) => Err(e),
             (_, Err(e)) => Err(dash_spv::SpvError::Storage(e)),
