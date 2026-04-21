@@ -1337,8 +1337,10 @@ impl PeerNetworkManager {
 
     async fn is_capability_rejected(&self, addr: &SocketAddr) -> bool {
         let mut rejected = self.capability_rejected.write().await;
-        let cutoff = Instant::now() - CAPABILITY_REJECTED_TTL;
-        rejected.retain(|_, rejected_at| *rejected_at > cutoff);
+        let now = Instant::now();
+        rejected.retain(|_, rejected_at| {
+            now.saturating_duration_since(*rejected_at) < CAPABILITY_REJECTED_TTL
+        });
         rejected.contains_key(addr)
     }
 }
@@ -1506,14 +1508,6 @@ impl PeerNetworkManager {
 
     pub(crate) async fn insert_test_capability_rejected(&self, addr: SocketAddr) {
         self.record_capability_rejection(addr).await;
-    }
-
-    pub(crate) async fn insert_test_capability_rejected_at(
-        &self,
-        addr: SocketAddr,
-        rejected_at: Instant,
-    ) {
-        self.capability_rejected.write().await.insert(addr, rejected_at);
     }
 
     pub(crate) async fn test_capability_rejected_count(&self) -> usize {
