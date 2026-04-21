@@ -122,10 +122,13 @@ impl Wallet {
 
     /// Add a new BLS account to the wallet
     ///
-    /// BLS accounts are used for Platform/masternode operations.
+    /// BLS accounts are used for Platform/masternode operations. Accepts
+    /// [`AccountType::ProviderOperatorKeys`] and
+    /// [`AccountType::IdentityAuthenticationBls`].
     ///
     /// # Arguments
-    /// * `account_type` - The type of account (must be ProviderOperatorKeys)
+    /// * `account_type` - The type of account (must be ProviderOperatorKeys
+    ///   or IdentityAuthenticationBls)
     /// * `bls_seed` - Optional 32-byte seed for BLS key generation. If not provided,
     ///   the account will be derived from the wallet's private key.
     ///
@@ -138,9 +141,13 @@ impl Wallet {
         bls_seed: Option<[u8; 32]>,
     ) -> Result<()> {
         // Validate account type
-        if !matches!(account_type, AccountType::ProviderOperatorKeys) {
+        if !matches!(
+            account_type,
+            AccountType::ProviderOperatorKeys | AccountType::IdentityAuthenticationBls { .. }
+        ) {
             return Err(Error::InvalidParameter(
-                "BLS accounts can only be ProviderOperatorKeys".to_string(),
+                "BLS accounts can only be ProviderOperatorKeys or IdentityAuthenticationBls"
+                    .to_string(),
             ));
         }
 
@@ -197,9 +204,13 @@ impl Wallet {
         passphrase: &str,
     ) -> Result<()> {
         // Validate account type
-        if !matches!(account_type, AccountType::ProviderOperatorKeys) {
+        if !matches!(
+            account_type,
+            AccountType::ProviderOperatorKeys | AccountType::IdentityAuthenticationBls { .. }
+        ) {
             return Err(Error::InvalidParameter(
-                "BLS accounts can only be ProviderOperatorKeys".to_string(),
+                "BLS accounts can only be ProviderOperatorKeys or IdentityAuthenticationBls"
+                    .to_string(),
             ));
         }
 

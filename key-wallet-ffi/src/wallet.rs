@@ -517,7 +517,20 @@ pub unsafe extern "C" fn wallet_add_account(
 
     let wallet = &mut *wallet;
 
-    let account_type_rust = account_type.to_account_type(account_index);
+    let account_type_rust = match account_type.to_account_type(account_index) {
+        Ok(t) => t,
+        Err(mut e) => {
+            let code = e.code;
+            let message = if e.message.is_null() {
+                "Invalid account type".to_string()
+            } else {
+                let m = std::ffi::CStr::from_ptr(e.message).to_string_lossy().to_string();
+                e.free_message();
+                m
+            };
+            return crate::types::FFIAccountResult::error(code, message);
+        }
+    };
 
     match wallet.inner_mut() {
         Some(w) => {
@@ -746,7 +759,20 @@ pub unsafe extern "C" fn wallet_add_account_with_xpub_bytes(
 
     use key_wallet::ExtendedPubKey;
 
-    let account_type_rust = account_type.to_account_type(account_index);
+    let account_type_rust = match account_type.to_account_type(account_index) {
+        Ok(t) => t,
+        Err(mut e) => {
+            let code = e.code;
+            let message = if e.message.is_null() {
+                "Invalid account type".to_string()
+            } else {
+                let m = std::ffi::CStr::from_ptr(e.message).to_string_lossy().to_string();
+                e.free_message();
+                m
+            };
+            return crate::types::FFIAccountResult::error(code, message);
+        }
+    };
 
     // Parse the xpub from bytes (assuming it's a string representation)
     let xpub_slice = slice::from_raw_parts(xpub_bytes, xpub_len);
@@ -869,7 +895,20 @@ pub unsafe extern "C" fn wallet_add_account_with_string_xpub(
 
     use key_wallet::ExtendedPubKey;
 
-    let account_type_rust = account_type.to_account_type(account_index);
+    let account_type_rust = match account_type.to_account_type(account_index) {
+        Ok(t) => t,
+        Err(mut e) => {
+            let code = e.code;
+            let message = if e.message.is_null() {
+                "Invalid account type".to_string()
+            } else {
+                let m = std::ffi::CStr::from_ptr(e.message).to_string_lossy().to_string();
+                e.free_message();
+                m
+            };
+            return crate::types::FFIAccountResult::error(code, message);
+        }
+    };
 
     // Parse the xpub from C string
     let xpub_str = match CStr::from_ptr(xpub_string).to_str() {

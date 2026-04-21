@@ -58,6 +58,14 @@ pub struct AccountCollection {
     pub identity_topup_not_bound: Option<Account>,
     /// Identity invitation account (optional)
     pub identity_invitation: Option<Account>,
+    /// Per-identity ECDSA authentication accounts (DIP-13, sub-feature 0',
+    /// key type 0'), keyed by `identity_index`. Platform-only — these carry no
+    /// L1 UTXOs.
+    pub identity_authentication_ecdsa: BTreeMap<u32, Account>,
+    /// Per-identity BLS authentication accounts (DIP-13, sub-feature 0',
+    /// key type 1'), keyed by `identity_index`. Platform-only.
+    #[cfg(feature = "bls")]
+    pub identity_authentication_bls: BTreeMap<u32, BLSAccount>,
     /// Asset lock address top-up account (optional)
     pub asset_lock_address_topup: Option<Account>,
     /// Asset lock shielded address top-up account (optional)
@@ -91,6 +99,9 @@ impl AccountCollection {
             identity_topup: BTreeMap::new(),
             identity_topup_not_bound: None,
             identity_invitation: None,
+            identity_authentication_ecdsa: BTreeMap::new(),
+            #[cfg(feature = "bls")]
+            identity_authentication_bls: BTreeMap::new(),
             asset_lock_address_topup: None,
             asset_lock_shielded_address_topup: None,
             provider_voting_keys: None,
@@ -140,6 +151,18 @@ impl AccountCollection {
             }
             AccountType::IdentityInvitation => {
                 self.identity_invitation = Some(account);
+            }
+            AccountType::IdentityAuthenticationEcdsa {
+                identity_index,
+            } => {
+                self.identity_authentication_ecdsa.insert(*identity_index, account);
+            }
+            AccountType::IdentityAuthenticationBls {
+                ..
+            } => {
+                return Err(
+                    "IdentityAuthenticationBls requires BLSAccount, use insert_bls_account",
+                );
             }
             AccountType::AssetLockAddressTopUp => {
                 self.asset_lock_address_topup = Some(account);
@@ -197,14 +220,29 @@ impl AccountCollection {
         Ok(())
     }
 
-    /// Insert a BLS account for provider operator keys
+    /// Insert a BLS account for provider operator keys or identity
+    /// authentication.
+    ///
+    /// Accepts [`AccountType::ProviderOperatorKeys`] or
+    /// [`AccountType::IdentityAuthenticationBls`]. Rejects any other account
+    /// type.
     #[cfg(feature = "bls")]
     pub fn insert_bls_account(&mut self, account: BLSAccount) -> Result<(), &'static str> {
-        if !matches!(account.account_type, AccountType::ProviderOperatorKeys) {
-            return Err("BLS account must have ProviderOperatorKeys type");
+        match account.account_type {
+            AccountType::ProviderOperatorKeys => {
+                self.provider_operator_keys = Some(account);
+                Ok(())
+            }
+            AccountType::IdentityAuthenticationBls {
+                identity_index,
+            } => {
+                self.identity_authentication_bls.insert(identity_index, account);
+                Ok(())
+            }
+            _ => {
+                Err("BLS account must have ProviderOperatorKeys or IdentityAuthenticationBls type")
+            }
         }
-        self.provider_operator_keys = Some(account);
-        Ok(())
     }
 
     /// Insert an EdDSA account for provider platform keys
@@ -242,6 +280,17 @@ impl AccountCollection {
             } => self.identity_topup.contains_key(registration_index),
             AccountType::IdentityTopUpNotBoundToIdentity => self.identity_topup_not_bound.is_some(),
             AccountType::IdentityInvitation => self.identity_invitation.is_some(),
+            AccountType::IdentityAuthenticationEcdsa {
+                identity_index,
+            } => self.identity_authentication_ecdsa.contains_key(identity_index),
+            #[cfg(feature = "bls")]
+            AccountType::IdentityAuthenticationBls {
+                identity_index,
+            } => self.identity_authentication_bls.contains_key(identity_index),
+            #[cfg(not(feature = "bls"))]
+            AccountType::IdentityAuthenticationBls {
+                ..
+            } => false,
             AccountType::AssetLockAddressTopUp => self.asset_lock_address_topup.is_some(),
             AccountType::AssetLockShieldedAddressTopUp => {
                 self.asset_lock_shielded_address_topup.is_some()
@@ -315,6 +364,12 @@ impl AccountCollection {
             } => self.identity_topup.get(&registration_index),
             AccountType::IdentityTopUpNotBoundToIdentity => self.identity_topup_not_bound.as_ref(),
             AccountType::IdentityInvitation => self.identity_invitation.as_ref(),
+            AccountType::IdentityAuthenticationEcdsa {
+                identity_index,
+            } => self.identity_authentication_ecdsa.get(&identity_index),
+            AccountType::IdentityAuthenticationBls {
+                ..
+            } => None, // BLSAccount, use bls_account_of_type
             AccountType::AssetLockAddressTopUp => self.asset_lock_address_topup.as_ref(),
             AccountType::AssetLockShieldedAddressTopUp => {
                 self.asset_lock_shielded_address_topup.as_ref()
@@ -382,6 +437,12 @@ impl AccountCollection {
             } => self.identity_topup.get_mut(&registration_index),
             AccountType::IdentityTopUpNotBoundToIdentity => self.identity_topup_not_bound.as_mut(),
             AccountType::IdentityInvitation => self.identity_invitation.as_mut(),
+            AccountType::IdentityAuthenticationEcdsa {
+                identity_index,
+            } => self.identity_authentication_ecdsa.get_mut(&identity_index),
+            AccountType::IdentityAuthenticationBls {
+                ..
+            } => None, // BLSAccount, use bls_account_of_type_mut
             AccountType::AssetLockAddressTopUp => self.asset_lock_address_topup.as_mut(),
             AccountType::AssetLockShieldedAddressTopUp => {
                 self.asset_lock_shielded_address_topup.as_mut()
@@ -449,6 +510,8 @@ impl AccountCollection {
             accounts.push(account);
         }
 
+        accounts.extend(self.identity_authentication_ecdsa.values());
+
         if let Some(account) = &self.asset_lock_address_topup {
             accounts.push(account);
         }
@@ -497,6 +560,8 @@ impl AccountCollection {
             accounts.push(account);
         }
 
+        accounts.extend(self.identity_authentication_ecdsa.values_mut());
+
         if let Some(account) = &mut self.asset_lock_address_topup {
             accounts.push(account);
         }
@@ -523,16 +588,27 @@ impl AccountCollection {
         accounts
     }
 
-    /// Get the BLS account (provider operator keys)
+    /// Get a BLS account by type.
+    ///
+    /// Supports [`AccountType::ProviderOperatorKeys`] and
+    /// [`AccountType::IdentityAuthenticationBls`] — returns `None` for other
+    /// types.
     #[cfg(feature = "bls")]
     pub fn bls_account_of_type(&self, account_type: AccountType) -> Option<&BLSAccount> {
         match account_type {
             AccountType::ProviderOperatorKeys => self.provider_operator_keys.as_ref(),
+            AccountType::IdentityAuthenticationBls {
+                identity_index,
+            } => self.identity_authentication_bls.get(&identity_index),
             _ => None,
         }
     }
 
-    /// Get the BLS account mutably (provider operator keys)
+    /// Get a BLS account by type mutably.
+    ///
+    /// Supports [`AccountType::ProviderOperatorKeys`] and
+    /// [`AccountType::IdentityAuthenticationBls`] — returns `None` for other
+    /// types.
     #[cfg(feature = "bls")]
     pub fn bls_account_of_type_mut(
         &mut self,
@@ -540,6 +616,9 @@ impl AccountCollection {
     ) -> Option<&mut BLSAccount> {
         match account_type {
             AccountType::ProviderOperatorKeys => self.provider_operator_keys.as_mut(),
+            AccountType::IdentityAuthenticationBls {
+                identity_index,
+            } => self.identity_authentication_bls.get_mut(&identity_index),
             _ => None,
         }
     }
@@ -575,6 +654,11 @@ impl AccountCollection {
             count += 1;
         }
 
+        #[cfg(feature = "bls")]
+        {
+            count += self.identity_authentication_bls.len();
+        }
+
         #[cfg(feature = "eddsa")]
         if self.provider_platform_keys.is_some() {
             count += 1;
@@ -605,6 +689,7 @@ impl AccountCollection {
             && self.identity_topup.is_empty()
             && self.identity_topup_not_bound.is_none()
             && self.identity_invitation.is_none()
+            && self.identity_authentication_ecdsa.is_empty()
             && self.asset_lock_address_topup.is_none()
             && self.asset_lock_shielded_address_topup.is_none()
             && self.provider_voting_keys.is_none()
@@ -612,7 +697,9 @@ impl AccountCollection {
 
         #[cfg(feature = "bls")]
         {
-            is_empty = is_empty && self.provider_operator_keys.is_none();
+            is_empty = is_empty
+                && self.provider_operator_keys.is_none()
+                && self.identity_authentication_bls.is_empty();
         }
 
         #[cfg(feature = "eddsa")]
@@ -632,6 +719,7 @@ impl AccountCollection {
         self.identity_topup.clear();
         self.identity_topup_not_bound = None;
         self.identity_invitation = None;
+        self.identity_authentication_ecdsa.clear();
         self.asset_lock_address_topup = None;
         self.asset_lock_shielded_address_topup = None;
         self.provider_voting_keys = None;
@@ -639,6 +727,7 @@ impl AccountCollection {
         #[cfg(feature = "bls")]
         {
             self.provider_operator_keys = None;
+            self.identity_authentication_bls.clear();
         }
         #[cfg(feature = "eddsa")]
         {

@@ -125,7 +125,10 @@ mod tests {
 
         let result = collection.insert_bls_account(bls_account);
         assert!(result.is_err());
-        assert_eq!(result.unwrap_err(), "BLS account must have ProviderOperatorKeys type");
+        assert_eq!(
+            result.unwrap_err(),
+            "BLS account must have ProviderOperatorKeys or IdentityAuthenticationBls type"
+        );
     }
 
     #[test]

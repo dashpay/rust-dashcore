@@ -218,7 +218,20 @@ pub unsafe extern "C" fn managed_wallet_get_account(
     }
 
     let managed_wallet = &*managed_wallet_ptr;
-    let account_type_rust = account_type.to_account_type(account_index);
+    let account_type_rust = match account_type.to_account_type(account_index) {
+        Ok(t) => t,
+        Err(mut e) => {
+            let code = e.code;
+            let message = if e.message.is_null() {
+                "Invalid account type".to_string()
+            } else {
+                let m = std::ffi::CStr::from_ptr(e.message).to_string_lossy().to_string();
+                e.free_message();
+                m
+            };
+            return FFIManagedCoreAccountResult::error(code, message);
+        }
+    };
 
     let result = {
         use key_wallet::account::StandardAccountType;
@@ -247,6 +260,12 @@ pub unsafe extern "C" fn managed_wallet_get_account(
                 managed_collection.identity_topup_not_bound.as_ref()
             }
             AccountType::IdentityInvitation => managed_collection.identity_invitation.as_ref(),
+            AccountType::IdentityAuthenticationEcdsa {
+                identity_index,
+            } => managed_collection.identity_authentication_ecdsa.get(&identity_index),
+            AccountType::IdentityAuthenticationBls {
+                identity_index,
+            } => managed_collection.identity_authentication_bls.get(&identity_index),
             AccountType::AssetLockAddressTopUp => {
                 managed_collection.asset_lock_address_topup.as_ref()
             }
@@ -564,6 +583,12 @@ pub unsafe extern "C" fn managed_core_account_get_account_type(
             FFIAccountType::IdentityTopUpNotBoundToIdentity
         }
         AccountType::IdentityInvitation => FFIAccountType::IdentityInvitation,
+        AccountType::IdentityAuthenticationEcdsa {
+            ..
+        } => FFIAccountType::IdentityAuthenticationEcdsa,
+        AccountType::IdentityAuthenticationBls {
+            ..
+        } => FFIAccountType::IdentityAuthenticationBls,
         AccountType::AssetLockAddressTopUp => FFIAccountType::AssetLockAddressTopUp,
         AccountType::AssetLockShieldedAddressTopUp => FFIAccountType::AssetLockShieldedAddressTopUp,
         AccountType::ProviderVotingKeys => FFIAccountType::ProviderVotingKeys,
@@ -1164,6 +1189,14 @@ pub unsafe extern "C" fn managed_core_account_get_address_pool(
                     ..
                 } => addresses,
                 ManagedAccountType::PlatformPayment {
+                    addresses,
+                    ..
+                } => addresses,
+                ManagedAccountType::IdentityAuthenticationEcdsa {
+                    addresses,
+                    ..
+                } => addresses,
+                ManagedAccountType::IdentityAuthenticationBls {
                     addresses,
                     ..
                 } => addresses,
