@@ -1286,7 +1286,7 @@ impl ManagedCoreAccount {
         let pool = pools.first_mut().ok_or("Account has no address pool")?;
 
         let info = pool
-            .next_unused_with_info(&address_pool::KeySource::NoKeySource)
+            .next_unused_with_info(&address_pool::KeySource::NoKeySource, false)
             .map_err(|_| "No unused address available")?;
 
         Ok((info.path, info.index))

@@ -2123,4 +2123,81 @@ mod tests {
             }
         }
     }
+
+    /// Regression test for the pre-fix behavior in which
+    /// `Address<NetworkChecked>::deserialize` hardcoded `Network::Mainnet`.
+    ///
+    /// A testnet address serialized via serde must round-trip back to a
+    /// `NetworkChecked` value that reproduces the original script_pubkey. Before
+    /// this fix, deserialization would fail with a "network mismatch" error.
+    #[test]
+    #[cfg(feature = "serde")]
+    fn serde_deserialize_network_checked_testnet_round_trip() {
+        // Testnet P2PKH (`y`-prefix) — the pre-fix impl rejected this.
+        let original: Address =
+            Address::from_str("yWZBnVvSxS5xSq27dHVAJpuqbt7vvwGFL1").unwrap().assume_checked();
+
+        let json = serde_json::to_string(&original).expect("serialize");
+        let decoded: Address =
+            serde_json::from_str(&json).expect("deserialize NetworkChecked from testnet address");
+
+        assert_eq!(decoded.to_string(), original.to_string());
+        assert_eq!(decoded.script_pubkey(), original.script_pubkey());
+    }
+
+    /// Serde round-trip must agree with the native bincode `Decode` impl.
+    /// Both paths now use `assume_checked()`; this test guards the invariant
+    /// so a future "tighten serde with a hardcoded network" regression would
+    /// trip here rather than silently diverging.
+    #[test]
+    #[cfg(all(feature = "serde", feature = "bincode"))]
+    fn serde_deserialize_network_checked_agrees_with_bincode_decode() {
+        let testnet_strings = [
+            "yWZBnVvSxS5xSq27dHVAJpuqbt7vvwGFL1", // P2PKH
+        ];
+        for s in testnet_strings {
+            let unchecked = Address::<NetworkUnchecked>::from_str(s).unwrap();
+
+            let json = serde_json::to_string(&unchecked.clone().assume_checked()).unwrap();
+            let via_serde: Address = serde_json::from_str(&json).unwrap();
+            let bytes = bincode::encode_to_vec(
+                unchecked.clone().assume_checked(),
+                bincode::config::standard(),
+            )
+            .unwrap();
+            let via_bincode: Address =
+                bincode::decode_from_slice(&bytes, bincode::config::standard()).unwrap().0;
+
+            let via_assume_checked: Address = unchecked.assume_checked();
+
+            assert_eq!(via_serde.to_string(), via_assume_checked.to_string());
+            assert_eq!(via_serde.script_pubkey(), via_assume_checked.script_pubkey());
+            assert_eq!(via_bincode.to_string(), via_serde.to_string());
+            assert_eq!(via_bincode.to_string(), via_assume_checked.to_string());
+            assert_eq!(via_bincode.script_pubkey(), via_serde.script_pubkey());
+            assert_eq!(via_bincode.script_pubkey(), via_assume_checked.script_pubkey());
+        }
+    }
+
+    /// Callers who need network validation opt in via
+    /// `Address<NetworkUnchecked>` + `require_network(..)`, as documented on
+    /// the deserialize impl. That path must still reject mismatches.
+    #[test]
+    #[cfg(feature = "serde")]
+    fn serde_deserialize_network_unchecked_require_network_still_enforces() {
+        let testnet: Address =
+            Address::from_str("yWZBnVvSxS5xSq27dHVAJpuqbt7vvwGFL1").unwrap().assume_checked();
+        let json = serde_json::to_string(&testnet).expect("serialize");
+
+        let unchecked: Address<NetworkUnchecked> =
+            serde_json::from_str(&json).expect("deserialize");
+        assert!(
+            unchecked.clone().require_network(Network::Mainnet).is_err(),
+            "require_network(Mainnet) on a testnet address must still error"
+        );
+        assert!(
+            unchecked.require_network(Network::Testnet).is_ok(),
+            "require_network(Testnet) on a testnet address must succeed"
+        );
+    }
 }
