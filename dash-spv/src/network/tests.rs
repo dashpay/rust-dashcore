@@ -20,9 +20,11 @@ mod peer_tests {
 #[cfg(test)]
 mod pool_tests {
     use crate::network::manager::PeerNetworkManager;
+    use crate::network::peer::Peer;
     use crate::network::pool::PeerPool;
     use crate::test_utils::test_socket_address;
     use dashcore::network::constants::ServiceFlags;
+    use dashcore::Network;
     use tokio::time::Duration;
 
     #[tokio::test]
@@ -41,8 +43,22 @@ mod pool_tests {
 
     // Cases are sequential in one test to avoid concurrent DnsDiscovery drops (TSAN race in hickory-resolver).
     #[tokio::test]
-    async fn test_evict_mismatched_peers() {
+    async fn test_capability_policy_for_handshake_and_eviction() {
         let cf = ServiceFlags::COMPACT_FILTERS;
+        let mut incapable =
+            Peer::new(test_socket_address(9), Duration::from_secs(10), Network::Testnet);
+        incapable.set_services(ServiceFlags::NETWORK);
+
+        // Handshake admission: keep fallback when no capable peer exists yet.
+        let manager = PeerNetworkManager::new_for_test(cf).await;
+        assert!(!manager.test_has_capable_peer().await);
+        assert!(!manager.test_should_reject_after_handshake(&incapable).await);
+
+        // Handshake admission: reject incapable peers once a capable peer exists.
+        let manager = PeerNetworkManager::new_for_test(cf).await;
+        manager.insert_test_peer(test_socket_address(1), cf).await;
+        assert!(manager.test_has_capable_peer().await);
+        assert!(manager.test_should_reject_after_handshake(&incapable).await);
 
         // Healthy pool: all peers match, nothing evicted
         let manager = PeerNetworkManager::new_for_test(cf).await;
