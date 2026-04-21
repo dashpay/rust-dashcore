@@ -169,8 +169,11 @@ impl TransactionRouter {
 
 /// Core account types that can be checked for transactions
 ///
-/// Note: Platform Payment accounts (DIP-17) are NOT included here as they
-/// operate on Dash Platform, not the Core chain.
+/// Note: Platform Payment accounts (DIP-17) and DIP-13 identity authentication
+/// accounts (sub-feature 0') are NOT included here — they operate on Dash
+/// Platform, not the Core chain, so the conversions from
+/// [`ManagedAccountType`]/[`crate::AccountType`] explicitly return
+/// [`PlatformAccountConversionError`] for those variants.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AccountTypeToCheck {
     StandardBIP44,
@@ -190,13 +193,14 @@ pub enum AccountTypeToCheck {
     DashpayExternalAccount,
 }
 
-/// Error returned when trying to convert a Platform Payment account to AccountTypeToCheck
+/// Error returned when trying to convert a Platform-only account (Platform
+/// Payment or DIP-13 identity authentication) to [`AccountTypeToCheck`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PlatformAccountConversionError;
 
 impl core::fmt::Display for PlatformAccountConversionError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(f, "PlatformPayment accounts cannot be converted to AccountTypeToCheck")
+        write!(f, "Platform-only accounts cannot be converted to AccountTypeToCheck")
     }
 }
 
@@ -231,6 +235,16 @@ impl TryFrom<ManagedAccountType> for AccountTypeToCheck {
             ManagedAccountType::IdentityInvitation {
                 ..
             } => Ok(AccountTypeToCheck::IdentityInvitation),
+            ManagedAccountType::IdentityAuthenticationEcdsa {
+                ..
+            }
+            | ManagedAccountType::IdentityAuthenticationBls {
+                ..
+            } => {
+                // DIP-13 per-identity authentication accounts are Platform-only,
+                // operating on Dash Platform rather than the Core chain.
+                Err(PlatformAccountConversionError)
+            }
             ManagedAccountType::AssetLockAddressTopUp {
                 ..
             } => Ok(AccountTypeToCheck::AssetLockAddressTopUp),
@@ -296,6 +310,16 @@ impl TryFrom<&ManagedAccountType> for AccountTypeToCheck {
             ManagedAccountType::IdentityInvitation {
                 ..
             } => Ok(AccountTypeToCheck::IdentityInvitation),
+            ManagedAccountType::IdentityAuthenticationEcdsa {
+                ..
+            }
+            | ManagedAccountType::IdentityAuthenticationBls {
+                ..
+            } => {
+                // DIP-13 per-identity authentication accounts are Platform-only,
+                // operating on Dash Platform rather than the Core chain.
+                Err(PlatformAccountConversionError)
+            }
             ManagedAccountType::AssetLockAddressTopUp {
                 ..
             } => Ok(AccountTypeToCheck::AssetLockAddressTopUp),

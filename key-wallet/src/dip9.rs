@@ -30,6 +30,12 @@ pub enum DerivationPathReference {
     PlatformPayment = 16,
     BlockchainAssetLockAddressTopupFunding = 17,
     BlockchainAssetLockShieldedAddressTopupFunding = 18,
+    /// Per-identity authentication keys using ECDSA (DIP-13, sub-feature 0', key type 0').
+    /// Path prefix: m/9'/coin_type'/5'/0'/0'/identity_index'
+    BlockchainIdentityAuthenticationEcdsa = 19,
+    /// Per-identity authentication keys using BLS (DIP-13, sub-feature 0', key type 1').
+    /// Path prefix: m/9'/coin_type'/5'/0'/1'/identity_index'
+    BlockchainIdentityAuthenticationBls = 20,
     Root = 255,
 }
 
@@ -421,6 +427,104 @@ pub const ASSET_LOCK_SHIELDED_ADDRESS_TOPUP_PATH_TESTNET: IndexConstPath<4> = In
     ],
     reference: DerivationPathReference::BlockchainAssetLockShieldedAddressTopupFunding,
     path_type: DerivationPathType::CREDIT_FUNDING,
+};
+
+// DIP-13 Identity Authentication (ECDSA) paths — 5 hardened levels:
+// m/9'/coin_type'/5'/0'/0' (key_type = 0' = ECDSA).
+// The account level adds identity_index' on top (see `AccountType::derivation_path`).
+pub const IDENTITY_AUTHENTICATION_ECDSA_PATH_MAINNET: IndexConstPath<5> = IndexConstPath {
+    indexes: [
+        ChildNumber::Hardened {
+            index: FEATURE_PURPOSE,
+        },
+        ChildNumber::Hardened {
+            index: DASH_COIN_TYPE,
+        },
+        ChildNumber::Hardened {
+            index: FEATURE_PURPOSE_IDENTITIES,
+        },
+        ChildNumber::Hardened {
+            index: FEATURE_PURPOSE_IDENTITIES_SUBFEATURE_AUTHENTICATION,
+        },
+        ChildNumber::Hardened {
+            // key_type = 0' for ECDSA
+            index: 0,
+        },
+    ],
+    reference: DerivationPathReference::BlockchainIdentityAuthenticationEcdsa,
+    path_type: DerivationPathType::SINGLE_USER_AUTHENTICATION,
+};
+
+pub const IDENTITY_AUTHENTICATION_ECDSA_PATH_TESTNET: IndexConstPath<5> = IndexConstPath {
+    indexes: [
+        ChildNumber::Hardened {
+            index: FEATURE_PURPOSE,
+        },
+        ChildNumber::Hardened {
+            index: DASH_TESTNET_COIN_TYPE,
+        },
+        ChildNumber::Hardened {
+            index: FEATURE_PURPOSE_IDENTITIES,
+        },
+        ChildNumber::Hardened {
+            index: FEATURE_PURPOSE_IDENTITIES_SUBFEATURE_AUTHENTICATION,
+        },
+        ChildNumber::Hardened {
+            // key_type = 0' for ECDSA
+            index: 0,
+        },
+    ],
+    reference: DerivationPathReference::BlockchainIdentityAuthenticationEcdsa,
+    path_type: DerivationPathType::SINGLE_USER_AUTHENTICATION,
+};
+
+// DIP-13 Identity Authentication (BLS) paths — 5 hardened levels:
+// m/9'/coin_type'/5'/0'/1' (key_type = 1' = BLS).
+// The account level adds identity_index' on top (see `AccountType::derivation_path`).
+pub const IDENTITY_AUTHENTICATION_BLS_PATH_MAINNET: IndexConstPath<5> = IndexConstPath {
+    indexes: [
+        ChildNumber::Hardened {
+            index: FEATURE_PURPOSE,
+        },
+        ChildNumber::Hardened {
+            index: DASH_COIN_TYPE,
+        },
+        ChildNumber::Hardened {
+            index: FEATURE_PURPOSE_IDENTITIES,
+        },
+        ChildNumber::Hardened {
+            index: FEATURE_PURPOSE_IDENTITIES_SUBFEATURE_AUTHENTICATION,
+        },
+        ChildNumber::Hardened {
+            // key_type = 1' for BLS
+            index: 1,
+        },
+    ],
+    reference: DerivationPathReference::BlockchainIdentityAuthenticationBls,
+    path_type: DerivationPathType::SINGLE_USER_AUTHENTICATION,
+};
+
+pub const IDENTITY_AUTHENTICATION_BLS_PATH_TESTNET: IndexConstPath<5> = IndexConstPath {
+    indexes: [
+        ChildNumber::Hardened {
+            index: FEATURE_PURPOSE,
+        },
+        ChildNumber::Hardened {
+            index: DASH_TESTNET_COIN_TYPE,
+        },
+        ChildNumber::Hardened {
+            index: FEATURE_PURPOSE_IDENTITIES,
+        },
+        ChildNumber::Hardened {
+            index: FEATURE_PURPOSE_IDENTITIES_SUBFEATURE_AUTHENTICATION,
+        },
+        ChildNumber::Hardened {
+            // key_type = 1' for BLS
+            index: 1,
+        },
+    ],
+    reference: DerivationPathReference::BlockchainIdentityAuthenticationBls,
+    path_type: DerivationPathType::SINGLE_USER_AUTHENTICATION,
 };
 
 // Authentication Keys Paths

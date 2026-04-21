@@ -179,6 +179,11 @@ impl AccountDerivation<ExtendedPrivKey, ExtendedPubKey, PublicKey, dashcore::Pri
             } => Some(ChildNumber::Hardened {
                 index: registration_index,
             }),
+            AccountType::IdentityAuthenticationEcdsa {
+                identity_index,
+            } => Some(ChildNumber::Hardened {
+                index: identity_index,
+            }),
             _ => None,
         }
     }

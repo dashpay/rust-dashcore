@@ -1,5 +1,6 @@
 //! Common types for FFI interface
 
+use crate::error::{FFIError, FFIErrorCode};
 use dashcore::ephemerealdata::instant_lock::InstantLock;
 use dashcore::hashes::Hash;
 use key_wallet::managed_account::transaction_record::{OutputRole, TransactionDirection};
@@ -235,14 +236,24 @@ pub enum FFIAccountType {
     AssetLockAddressTopUp = 14,
     /// Asset lock shielded address top-up funding (subfeature 5)
     AssetLockShieldedAddressTopUp = 15,
+    /// Per-identity ECDSA authentication keys (DIP-13, sub-feature 0', key type 0').
+    /// Path prefix: `m/9'/coin_type'/5'/0'/0'/identity_index'`.
+    IdentityAuthenticationEcdsa = 16,
+    /// Per-identity BLS authentication keys (DIP-13, sub-feature 0', key type 1').
+    /// Path prefix: `m/9'/coin_type'/5'/0'/1'/identity_index'`.
+    IdentityAuthenticationBls = 17,
 }
 
 impl FFIAccountType {
     /// Convert to AccountType with the provided index (used where applicable).
     /// For types needing an index (e.g., IdentityTopUp.registration_index), the provided index is used.
-    pub fn to_account_type(self, index: u32) -> key_wallet::AccountType {
+    ///
+    /// Returns `Err` for variants that cannot be represented with a single `u32` index
+    /// (DashpayReceivingFunds, DashpayExternalAccount, PlatformPayment), since those
+    /// require additional data not carried by this conversion signature.
+    pub fn to_account_type(self, index: u32) -> Result<key_wallet::AccountType, FFIError> {
         use key_wallet::account::account_type::StandardAccountType;
-        match self {
+        Ok(match self {
             FFIAccountType::StandardBIP44 => key_wallet::AccountType::Standard {
                 index,
                 standard_account_type: StandardAccountType::BIP44Account,
@@ -273,42 +284,50 @@ impl FFIAccountType {
             FFIAccountType::ProviderOwnerKeys => key_wallet::AccountType::ProviderOwnerKeys,
             FFIAccountType::ProviderOperatorKeys => key_wallet::AccountType::ProviderOperatorKeys,
             FFIAccountType::ProviderPlatformKeys => key_wallet::AccountType::ProviderPlatformKeys,
-            // DashPay variants require additional identity IDs (user_identity_id and friend_identity_id)
-            // that are not part of the current FFI API. These types cannot be constructed via this
-            // conversion path. Attempting to use them is a programming error.
-            //
-            // TODO: Extend the FFI API to accept identity IDs for DashPay account creation:
-            //   - Add new FFI functions like:
-            //     * ffi_account_type_to_dashpay_receiving_funds(index, user_id[32], friend_id[32])
-            //     * ffi_account_type_to_dashpay_external_account(index, user_id[32], friend_id[32])
-            //   - Or extend to_account_type to accept optional identity ID parameters
-            //
-            // Until then, attempting to convert these variants will panic to prevent silent misrouting.
+            // DIP-13 authentication accounts use the provided `index` as
+            // `identity_index` (the hardened child at path level 6).
+            FFIAccountType::IdentityAuthenticationEcdsa => {
+                key_wallet::AccountType::IdentityAuthenticationEcdsa {
+                    identity_index: index,
+                }
+            }
+            FFIAccountType::IdentityAuthenticationBls => {
+                key_wallet::AccountType::IdentityAuthenticationBls {
+                    identity_index: index,
+                }
+            }
+            // DashPay and PlatformPayment variants require additional data (identity IDs
+            // or account/key_class indices) that are not part of this single-u32
+            // conversion. Callers must use the dedicated FFI entry points (e.g.
+            // `wallet_add_dashpay_receiving_account`, `wallet_add_platform_payment_account`).
             FFIAccountType::DashpayReceivingFunds => {
-                panic!(
+                return Err(FFIError::error(
+                    FFIErrorCode::InvalidInput,
                     "FFIAccountType::DashpayReceivingFunds cannot be converted to AccountType \
-                     without user_identity_id and friend_identity_id. The FFI API does not yet \
-                     support passing these 32-byte identity IDs. This is a programming error - \
-                     DashPay account creation must use a different API path."
-                );
+                     without user_identity_id and friend_identity_id. Use \
+                     wallet_add_dashpay_receiving_account() instead."
+                        .to_string(),
+                ));
             }
             FFIAccountType::DashpayExternalAccount => {
-                panic!(
+                return Err(FFIError::error(
+                    FFIErrorCode::InvalidInput,
                     "FFIAccountType::DashpayExternalAccount cannot be converted to AccountType \
-                     without user_identity_id and friend_identity_id. The FFI API does not yet \
-                     support passing these 32-byte identity IDs. This is a programming error - \
-                     DashPay account creation must use a different API path."
-                );
+                     without user_identity_id and friend_identity_id. Use \
+                     wallet_add_dashpay_external_account_with_xpub_bytes() instead."
+                        .to_string(),
+                ));
             }
             FFIAccountType::PlatformPayment => {
-                panic!(
+                return Err(FFIError::error(
+                    FFIErrorCode::InvalidInput,
                     "FFIAccountType::PlatformPayment cannot be converted to AccountType \
-                     without account and key_class indices. The FFI API does not yet \
-                     support passing these values. This is a programming error - \
-                     Platform Payment account creation must use a different API path."
-                );
+                     without account and key_class indices. Use \
+                     wallet_add_platform_payment_account() instead."
+                        .to_string(),
+                ));
             }
-        }
+        })
     }
 
     /// Convert from AccountType to FFI representation
@@ -366,6 +385,12 @@ impl FFIAccountType {
             key_wallet::AccountType::ProviderPlatformKeys => {
                 (FFIAccountType::ProviderPlatformKeys, 0, None)
             }
+            key_wallet::AccountType::IdentityAuthenticationEcdsa {
+                identity_index,
+            } => (FFIAccountType::IdentityAuthenticationEcdsa, *identity_index, None),
+            key_wallet::AccountType::IdentityAuthenticationBls {
+                identity_index,
+            } => (FFIAccountType::IdentityAuthenticationBls, *identity_index, None),
             key_wallet::AccountType::DashpayReceivingFunds {
                 index,
                 user_identity_id,
@@ -641,7 +666,13 @@ impl FFIWalletAccountCreationOptions {
                     }
                 }
 
-                // Convert special account types if provided
+                // Convert special account types if provided.
+                //
+                // Variants that cannot be represented with a single `u32` index
+                // (DashpayReceivingFunds, DashpayExternalAccount, PlatformPayment)
+                // are silently skipped here because callers must use the dedicated
+                // entry points (e.g. `wallet_add_dashpay_receiving_account`). This
+                // conversion path has no error-return channel.
                 let special_accounts = if !self.special_account_types.is_null()
                     && self.special_account_types_count > 0
                 {
@@ -651,7 +682,16 @@ impl FFIWalletAccountCreationOptions {
                     );
                     let mut accounts = Vec::new();
                     for &ffi_type in slice {
-                        accounts.push(ffi_type.to_account_type(0));
+                        match ffi_type.to_account_type(0) {
+                            Ok(account_type) => accounts.push(account_type),
+                            Err(mut err) => {
+                                // Free the error message allocated by
+                                // FFIError::error to avoid a leak since we
+                                // cannot propagate the error from this
+                                // signature.
+                                err.free_message();
+                            }
+                        }
                     }
                     Some(accounts)
                 } else {
@@ -910,24 +950,39 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "DashpayReceivingFunds cannot be converted to AccountType")]
-    fn test_dashpay_receiving_funds_to_account_type_panics() {
-        // This should panic because we cannot construct a DashPay account without identity IDs
-        let _ = FFIAccountType::DashpayReceivingFunds.to_account_type(0);
+    fn test_dashpay_receiving_funds_to_account_type_returns_err() {
+        // Cannot construct a DashPay account without identity IDs
+        let result = FFIAccountType::DashpayReceivingFunds.to_account_type(0);
+        let err = result.expect_err("should be an error");
+        assert_eq!(err.code, FFIErrorCode::InvalidInput);
+        unsafe {
+            let mut err = err;
+            err.free_message();
+        }
     }
 
     #[test]
-    #[should_panic(expected = "DashpayExternalAccount cannot be converted to AccountType")]
-    fn test_dashpay_external_account_to_account_type_panics() {
-        // This should panic because we cannot construct a DashPay account without identity IDs
-        let _ = FFIAccountType::DashpayExternalAccount.to_account_type(0);
+    fn test_dashpay_external_account_to_account_type_returns_err() {
+        // Cannot construct a DashPay account without identity IDs
+        let result = FFIAccountType::DashpayExternalAccount.to_account_type(0);
+        let err = result.expect_err("should be an error");
+        assert_eq!(err.code, FFIErrorCode::InvalidInput);
+        unsafe {
+            let mut err = err;
+            err.free_message();
+        }
     }
 
     #[test]
-    #[should_panic(expected = "PlatformPayment cannot be converted to AccountType")]
-    fn test_platform_payment_to_account_type_panics() {
-        // This should panic because we cannot construct a Platform Payment account without indices
-        let _ = FFIAccountType::PlatformPayment.to_account_type(0);
+    fn test_platform_payment_to_account_type_returns_err() {
+        // Cannot construct a Platform Payment account without account/key_class indices
+        let result = FFIAccountType::PlatformPayment.to_account_type(0);
+        let err = result.expect_err("should be an error");
+        assert_eq!(err.code, FFIErrorCode::InvalidInput);
+        unsafe {
+            let mut err = err;
+            err.free_message();
+        }
     }
 
     #[test]
@@ -957,7 +1012,8 @@ mod tests {
     #[test]
     fn test_non_dashpay_conversions_work() {
         // Verify that non-DashPay types still convert correctly
-        let standard_bip44 = FFIAccountType::StandardBIP44.to_account_type(5);
+        let standard_bip44 =
+            FFIAccountType::StandardBIP44.to_account_type(5).expect("StandardBIP44 should convert");
         assert!(matches!(
             standard_bip44,
             key_wallet::AccountType::Standard {
@@ -966,7 +1022,8 @@ mod tests {
             }
         ));
 
-        let coinjoin = FFIAccountType::CoinJoin.to_account_type(3);
+        let coinjoin =
+            FFIAccountType::CoinJoin.to_account_type(3).expect("CoinJoin should convert");
         assert!(matches!(
             coinjoin,
             key_wallet::AccountType::CoinJoin {
