@@ -23,6 +23,7 @@ mod pool_tests {
     use crate::network::pool::PeerPool;
     use crate::test_utils::test_socket_address;
     use dashcore::network::constants::ServiceFlags;
+    use tokio::time::{Duration, Instant};
 
     #[tokio::test]
     async fn test_pool_limits() {
@@ -83,5 +84,25 @@ mod pool_tests {
         assert!(manager.test_is_connected(&p2).await);
         assert!(!manager.test_is_connected(&p3).await);
         assert!(!manager.test_is_connected(&p4).await);
+    }
+
+    #[tokio::test]
+    async fn test_capability_rejection_cache_expires() {
+        let manager = PeerNetworkManager::new_for_test(ServiceFlags::COMPACT_FILTERS).await;
+        let fresh = test_socket_address(42);
+        let expired = test_socket_address(43);
+
+        manager.insert_test_capability_rejected(fresh).await;
+        manager
+            .insert_test_capability_rejected_at(
+                expired,
+                Instant::now() - Duration::from_secs(31 * 60),
+            )
+            .await;
+
+        assert!(manager.test_is_capability_rejected(&fresh).await);
+        assert!(!manager.test_is_capability_rejected(&expired).await);
+
+        assert_eq!(manager.test_capability_rejected_count().await, 1);
     }
 }
