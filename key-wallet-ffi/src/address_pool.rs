@@ -45,6 +45,12 @@ fn get_managed_account_by_type<'a>(
             collection.identity_topup_not_bound.as_ref()
         }
         AccountType::IdentityInvitation => collection.identity_invitation.as_ref(),
+        AccountType::IdentityAuthenticationEcdsa {
+            identity_index,
+        } => collection.identity_authentication_ecdsa.get(identity_index),
+        AccountType::IdentityAuthenticationBls {
+            identity_index,
+        } => collection.identity_authentication_bls.get(identity_index),
         AccountType::AssetLockAddressTopUp => collection.asset_lock_address_topup.as_ref(),
         AccountType::AssetLockShieldedAddressTopUp => {
             collection.asset_lock_shielded_address_topup.as_ref()
@@ -98,6 +104,12 @@ fn get_managed_account_by_type_mut<'a>(
             collection.identity_topup_not_bound.as_mut()
         }
         AccountType::IdentityInvitation => collection.identity_invitation.as_mut(),
+        AccountType::IdentityAuthenticationEcdsa {
+            identity_index,
+        } => collection.identity_authentication_ecdsa.get_mut(identity_index),
+        AccountType::IdentityAuthenticationBls {
+            identity_index,
+        } => collection.identity_authentication_bls.get_mut(identity_index),
         AccountType::AssetLockAddressTopUp => collection.asset_lock_address_topup.as_mut(),
         AccountType::AssetLockShieldedAddressTopUp => {
             collection.asset_lock_shielded_address_topup.as_mut()
@@ -298,7 +310,20 @@ pub unsafe extern "C" fn managed_wallet_get_address_pool_info(
     let wrapper = &*managed_wallet;
     let managed_wallet = wrapper.inner();
 
-    let account_type_rust = account_type.to_account_type(account_index);
+    let account_type_rust = match account_type.to_account_type(account_index) {
+        Ok(t) => t,
+        Err(mut e) => {
+            let msg = if e.message.is_null() {
+                "Invalid account type".to_string()
+            } else {
+                let m = std::ffi::CStr::from_ptr(e.message).to_string_lossy().to_string();
+                e.free_message();
+                m
+            };
+            FFIError::set_error(error, e.code, msg);
+            return false;
+        }
+    };
 
     // Get the specific managed account
     let managed_account =
@@ -404,7 +429,20 @@ pub unsafe extern "C" fn managed_wallet_set_gap_limit(
 
     let managed_wallet = (&mut *managed_wallet).inner_mut();
 
-    let account_type_rust = account_type.to_account_type(account_index);
+    let account_type_rust = match account_type.to_account_type(account_index) {
+        Ok(t) => t,
+        Err(mut e) => {
+            let msg = if e.message.is_null() {
+                "Invalid account type".to_string()
+            } else {
+                let m = std::ffi::CStr::from_ptr(e.message).to_string_lossy().to_string();
+                e.free_message();
+                m
+            };
+            FFIError::set_error(error, e.code, msg);
+            return false;
+        }
+    };
 
     // Get the specific managed account
     let managed_account =
@@ -501,7 +539,20 @@ pub unsafe extern "C" fn managed_wallet_generate_addresses_to_index(
     let managed_wallet = (&mut *managed_wallet).inner_mut();
     let wallet = &*wallet;
 
-    let account_type_rust = account_type.to_account_type(account_index);
+    let account_type_rust = match account_type.to_account_type(account_index) {
+        Ok(t) => t,
+        Err(mut e) => {
+            let msg = if e.message.is_null() {
+                "Invalid account type".to_string()
+            } else {
+                let m = std::ffi::CStr::from_ptr(e.message).to_string_lossy().to_string();
+                e.free_message();
+                m
+            };
+            FFIError::set_error(error, e.code, msg);
+            return false;
+        }
+    };
 
     let account_type_to_check = match account_type_rust.try_into() {
         Ok(check_type) => check_type,
@@ -743,6 +794,22 @@ pub unsafe extern "C" fn managed_wallet_mark_address_used(
             if let Some(account) = &mut collection.identity_invitation {
                 if account.mark_address_used(&address).0 {
                     found = true;
+                }
+            }
+        }
+        if !found {
+            for account in collection.identity_authentication_ecdsa.values_mut() {
+                if account.mark_address_used(&address) {
+                    found = true;
+                    break;
+                }
+            }
+        }
+        if !found {
+            for account in collection.identity_authentication_bls.values_mut() {
+                if account.mark_address_used(&address) {
+                    found = true;
+                    break;
                 }
             }
         }

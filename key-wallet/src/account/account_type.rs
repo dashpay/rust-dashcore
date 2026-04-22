@@ -65,6 +65,32 @@ pub enum AccountType {
     IdentityTopUpNotBoundToIdentity,
     /// Identity invitation funding
     IdentityInvitation,
+    /// Per-identity authentication keys using ECDSA (DIP-13, sub-feature 0', key type 0').
+    ///
+    /// Account-level path: `m/9'/coin_type'/5'/0'/0'/identity_index'`. Individual
+    /// keys live at `.../identity_index'/key_index'` and are managed sequentially
+    /// by the `AddressPool` below this account. These accounts carry no L1
+    /// balance — they are pure signing-key chains the user employs to sign Dash
+    /// Platform state transitions.
+    IdentityAuthenticationEcdsa {
+        /// Which identity in this wallet these keys belong to (hardened).
+        identity_index: u32,
+    },
+    /// Per-identity authentication keys using BLS (DIP-13, sub-feature 0', key type 1').
+    ///
+    /// Account-level path: `m/9'/coin_type'/5'/0'/1'/identity_index'`. When the
+    /// `bls` feature is enabled this is backed by
+    /// [`BLSAccount`](crate::account::BLSAccount); like
+    /// [`AccountType::IdentityAuthenticationEcdsa`] these carry no L1 balance.
+    ///
+    /// The variant itself is always present so that downstream pattern matches
+    /// remain exhaustive regardless of features; the BLS-typed storage it maps
+    /// into (see [`crate::account::AccountCollection::identity_authentication_bls`])
+    /// is what is gated on the `bls` feature.
+    IdentityAuthenticationBls {
+        /// Which identity in this wallet these keys belong to (hardened).
+        identity_index: u32,
+    },
     /// Asset lock address top-up funding (subfeature 4)
     /// Path: m/9'/coinType'/5'/4'/index'
     AssetLockAddressTopUp,
@@ -137,6 +163,16 @@ impl TryFrom<AccountType> for AccountTypeToCheck {
                 Ok(AccountTypeToCheck::IdentityTopUpNotBound)
             }
             AccountType::IdentityInvitation => Ok(AccountTypeToCheck::IdentityInvitation),
+            AccountType::IdentityAuthenticationEcdsa {
+                ..
+            }
+            | AccountType::IdentityAuthenticationBls {
+                ..
+            } => {
+                // DIP-13 per-identity authentication accounts are Platform-only,
+                // operating on Dash Platform rather than the Core chain.
+                Err(PlatformAccountConversionError)
+            }
             AccountType::AssetLockAddressTopUp => Ok(AccountTypeToCheck::AssetLockAddressTopUp),
             AccountType::AssetLockShieldedAddressTopUp => {
                 Ok(AccountTypeToCheck::AssetLockShieldedAddressTopUp)
@@ -218,6 +254,12 @@ impl AccountType {
             }
             | Self::IdentityTopUpNotBoundToIdentity
             | Self::IdentityInvitation
+            | Self::IdentityAuthenticationEcdsa {
+                ..
+            }
+            | Self::IdentityAuthenticationBls {
+                ..
+            }
             | Self::AssetLockAddressTopUp
             | Self::AssetLockShieldedAddressTopUp
             | Self::ProviderVotingKeys
@@ -263,6 +305,12 @@ impl AccountType {
             Self::IdentityInvitation {
                 ..
             } => DerivationPathReference::BlockchainIdentityCreditInvitationFunding,
+            Self::IdentityAuthenticationEcdsa {
+                ..
+            } => DerivationPathReference::BlockchainIdentityAuthenticationEcdsa,
+            Self::IdentityAuthenticationBls {
+                ..
+            } => DerivationPathReference::BlockchainIdentityAuthenticationBls,
             Self::AssetLockAddressTopUp {
                 ..
             } => DerivationPathReference::BlockchainAssetLockAddressTopupFunding,
@@ -389,6 +437,44 @@ impl AccountType {
                     }
                     _ => Err(crate::error::Error::InvalidNetwork),
                 }
+            }
+            Self::IdentityAuthenticationEcdsa {
+                identity_index,
+            } => {
+                // DIP-13: m/9'/coin_type'/5'/0'/0'/identity_index'
+                // The base const supplies the first 5 hardened levels; we append identity_index'.
+                let base_path = match network {
+                    Network::Mainnet => crate::dip9::IDENTITY_AUTHENTICATION_ECDSA_PATH_MAINNET,
+                    Network::Testnet | Network::Devnet | Network::Regtest => {
+                        crate::dip9::IDENTITY_AUTHENTICATION_ECDSA_PATH_TESTNET
+                    }
+                    _ => return Err(crate::error::Error::InvalidNetwork),
+                };
+                let mut path = DerivationPath::from(base_path);
+                path.push(
+                    ChildNumber::from_hardened_idx(*identity_index)
+                        .map_err(crate::error::Error::Bip32)?,
+                );
+                Ok(path)
+            }
+            Self::IdentityAuthenticationBls {
+                identity_index,
+            } => {
+                // DIP-13: m/9'/coin_type'/5'/0'/1'/identity_index'
+                // The base const supplies the first 5 hardened levels; we append identity_index'.
+                let base_path = match network {
+                    Network::Mainnet => crate::dip9::IDENTITY_AUTHENTICATION_BLS_PATH_MAINNET,
+                    Network::Testnet | Network::Devnet | Network::Regtest => {
+                        crate::dip9::IDENTITY_AUTHENTICATION_BLS_PATH_TESTNET
+                    }
+                    _ => return Err(crate::error::Error::InvalidNetwork),
+                };
+                let mut path = DerivationPath::from(base_path);
+                path.push(
+                    ChildNumber::from_hardened_idx(*identity_index)
+                        .map_err(crate::error::Error::Bip32)?,
+                );
+                Ok(path)
             }
             Self::AssetLockAddressTopUp => {
                 // Base path without index - actual key index added when deriving
@@ -529,5 +615,238 @@ impl AccountType {
                 Ok(path)
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod identity_authentication_tests {
+    use super::*;
+
+    /// Helper: build a `DerivationPath` of hardened children from the given
+    /// indices. Keeps tests readable.
+    fn hardened_path(indices: &[u32]) -> DerivationPath {
+        DerivationPath::from(
+            indices.iter().map(|i| ChildNumber::from_hardened_idx(*i).unwrap()).collect::<Vec<_>>(),
+        )
+    }
+
+    #[test]
+    fn test_identity_authentication_ecdsa_mainnet_path() {
+        let account_type = AccountType::IdentityAuthenticationEcdsa {
+            identity_index: 0,
+        };
+        let path = account_type.derivation_path(Network::Mainnet).unwrap();
+        // m/9'/5'/5'/0'/0'/0'
+        assert_eq!(path, hardened_path(&[9, 5, 5, 0, 0, 0]));
+    }
+
+    #[test]
+    fn test_identity_authentication_ecdsa_testnet_path() {
+        let account_type = AccountType::IdentityAuthenticationEcdsa {
+            identity_index: 7,
+        };
+        let path = account_type.derivation_path(Network::Testnet).unwrap();
+        // m/9'/1'/5'/0'/0'/7'
+        assert_eq!(path, hardened_path(&[9, 1, 5, 0, 0, 7]));
+    }
+
+    #[test]
+    fn test_identity_authentication_ecdsa_index_is_none() {
+        // `index()` is for BIP44-style account indices, not identity indices.
+        let account_type = AccountType::IdentityAuthenticationEcdsa {
+            identity_index: 42,
+        };
+        assert!(account_type.index().is_none());
+    }
+
+    #[test]
+    fn test_identity_authentication_ecdsa_derivation_path_reference() {
+        let account_type = AccountType::IdentityAuthenticationEcdsa {
+            identity_index: 0,
+        };
+        assert_eq!(
+            account_type.derivation_path_reference(),
+            crate::dip9::DerivationPathReference::BlockchainIdentityAuthenticationEcdsa,
+        );
+    }
+
+    #[test]
+    fn test_identity_authentication_ecdsa_to_account_type_to_check_errs() {
+        // DIP-13 identity-authentication accounts are Platform-only and must
+        // never be mapped onto a Core-chain [`AccountTypeToCheck`] variant.
+        let account_type = AccountType::IdentityAuthenticationEcdsa {
+            identity_index: 3,
+        };
+        let result: Result<AccountTypeToCheck, _> = account_type.try_into();
+        assert_eq!(result, Err(PlatformAccountConversionError));
+    }
+
+    #[test]
+    fn test_identity_authentication_bls_mainnet_path() {
+        let account_type = AccountType::IdentityAuthenticationBls {
+            identity_index: 0,
+        };
+        let path = account_type.derivation_path(Network::Mainnet).unwrap();
+        // m/9'/5'/5'/0'/1'/0'
+        assert_eq!(path, hardened_path(&[9, 5, 5, 0, 1, 0]));
+    }
+
+    #[test]
+    fn test_identity_authentication_bls_testnet_path() {
+        let account_type = AccountType::IdentityAuthenticationBls {
+            identity_index: 2,
+        };
+        let path = account_type.derivation_path(Network::Testnet).unwrap();
+        // m/9'/1'/5'/0'/1'/2'
+        assert_eq!(path, hardened_path(&[9, 1, 5, 0, 1, 2]));
+    }
+
+    #[test]
+    fn test_identity_authentication_bls_regtest_uses_testnet_coin_type() {
+        let account_type = AccountType::IdentityAuthenticationBls {
+            identity_index: 5,
+        };
+        let path = account_type.derivation_path(Network::Regtest).unwrap();
+        // Regtest/Devnet use the same coin_type (1') as Testnet.
+        assert_eq!(path, hardened_path(&[9, 1, 5, 0, 1, 5]));
+    }
+
+    #[test]
+    fn test_identity_authentication_bls_index_is_none() {
+        let account_type = AccountType::IdentityAuthenticationBls {
+            identity_index: 99,
+        };
+        assert!(account_type.index().is_none());
+    }
+
+    #[test]
+    fn test_identity_authentication_bls_derivation_path_reference() {
+        let account_type = AccountType::IdentityAuthenticationBls {
+            identity_index: 0,
+        };
+        assert_eq!(
+            account_type.derivation_path_reference(),
+            crate::dip9::DerivationPathReference::BlockchainIdentityAuthenticationBls,
+        );
+    }
+
+    #[test]
+    fn test_identity_authentication_bls_to_account_type_to_check_errs() {
+        // DIP-13 identity-authentication accounts are Platform-only and must
+        // never be mapped onto a Core-chain [`AccountTypeToCheck`] variant.
+        let account_type = AccountType::IdentityAuthenticationBls {
+            identity_index: 3,
+        };
+        let result: Result<AccountTypeToCheck, _> = account_type.try_into();
+        assert_eq!(result, Err(PlatformAccountConversionError));
+    }
+
+    /// End-to-end: insert an ECDSA identity-authentication account into an
+    /// `AccountCollection` and round-trip through `contains_account_type` /
+    /// `account_of_type`.
+    #[test]
+    fn test_account_collection_round_trip_ecdsa() {
+        use crate::account::{Account, AccountCollection};
+        use crate::bip32::{ExtendedPrivKey, ExtendedPubKey};
+        use crate::mnemonic::{Language, Mnemonic};
+        use secp256k1::Secp256k1;
+
+        let mut collection = AccountCollection::new();
+
+        let mnemonic = Mnemonic::from_phrase(
+            "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon \
+             abandon about",
+            Language::English,
+        )
+        .unwrap();
+        let seed = mnemonic.to_seed("");
+        let master = ExtendedPrivKey::new_master(Network::Testnet, &seed).unwrap();
+        let secp = Secp256k1::new();
+        let xpub = ExtendedPubKey::from_priv(&secp, &master);
+
+        let account_type = AccountType::IdentityAuthenticationEcdsa {
+            identity_index: 4,
+        };
+        let account = Account::new(None, account_type, xpub, Network::Testnet).unwrap();
+
+        assert!(!collection.contains_account_type(&account_type));
+        assert!(collection.insert(account).is_ok());
+        assert!(collection.contains_account_type(&account_type));
+        assert!(collection.account_of_type(account_type).is_some());
+
+        // Sanity: the ECDSA variant is *not* routed to the BLS map, so the BLS
+        // lookup on an ECDSA variant returns None regardless of features.
+        #[cfg(feature = "bls")]
+        {
+            let bls_probe = AccountType::IdentityAuthenticationBls {
+                identity_index: 4,
+            };
+            assert!(collection.bls_account_of_type(bls_probe).is_none());
+        }
+    }
+
+    /// End-to-end: insert a BLS identity-authentication account into an
+    /// `AccountCollection` via `insert_bls_account`, and round-trip through
+    /// `contains_account_type` / `bls_account_of_type`.
+    #[cfg(feature = "bls")]
+    #[test]
+    fn test_account_collection_round_trip_bls() {
+        use crate::account::{AccountCollection, BLSAccount};
+
+        let mut collection = AccountCollection::new();
+
+        let account_type = AccountType::IdentityAuthenticationBls {
+            identity_index: 11,
+        };
+        let bls_account =
+            BLSAccount::from_seed(None, account_type, [7u8; 32], Network::Testnet).unwrap();
+
+        assert!(!collection.contains_account_type(&account_type));
+        assert!(collection.insert_bls_account(bls_account).is_ok());
+        assert!(collection.contains_account_type(&account_type));
+        assert!(collection.bls_account_of_type(account_type).is_some());
+
+        // ECDSA `account_of_type` should refuse BLS lookups via the plain
+        // accessor.
+        assert!(collection.account_of_type(account_type).is_none());
+    }
+
+    /// Inserting a BLS account via the plain `insert` path must fail with a
+    /// pointer to `insert_bls_account`.
+    #[cfg(feature = "bls")]
+    #[test]
+    fn test_account_collection_rejects_bls_via_plain_insert() {
+        use crate::account::{Account, AccountCollection};
+        use crate::bip32::{ExtendedPrivKey, ExtendedPubKey};
+        use crate::mnemonic::{Language, Mnemonic};
+        use secp256k1::Secp256k1;
+
+        let mut collection = AccountCollection::new();
+
+        let mnemonic = Mnemonic::from_phrase(
+            "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon \
+             abandon about",
+            Language::English,
+        )
+        .unwrap();
+        let seed = mnemonic.to_seed("");
+        let master = ExtendedPrivKey::new_master(Network::Testnet, &seed).unwrap();
+        let secp = Secp256k1::new();
+        let xpub = ExtendedPubKey::from_priv(&secp, &master);
+
+        // Using an Account (ECDSA) constructor but with a BLS auth type is a
+        // programming error — insert() routes it to the BLS error arm.
+        let account = Account::new(
+            None,
+            AccountType::IdentityAuthenticationBls {
+                identity_index: 0,
+            },
+            xpub,
+            Network::Testnet,
+        )
+        .unwrap();
+
+        let err = collection.insert(account).unwrap_err();
+        assert!(err.contains("insert_bls_account"));
     }
 }

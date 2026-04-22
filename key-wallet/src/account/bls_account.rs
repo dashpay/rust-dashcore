@@ -247,6 +247,11 @@ impl
             } => Some(ChildNumber::Hardened {
                 index: registration_index,
             }),
+            AccountType::IdentityAuthenticationBls {
+                identity_index,
+            } => Some(ChildNumber::Hardened {
+                index: identity_index,
+            }),
             _ => None,
         }
     }

@@ -756,6 +756,17 @@ impl ManagedCoreAccount {
                     // They should never be checked for Core chain transactions.
                     return None;
                 }
+                ManagedAccountType::IdentityAuthenticationEcdsa {
+                    ..
+                }
+                | ManagedAccountType::IdentityAuthenticationBls {
+                    ..
+                } => {
+                    // DIP-13 identity authentication keys are Platform-only —
+                    // they never hold L1 UTXOs and should not be reported as
+                    // relevant for Core chain transactions.
+                    return None;
+                }
             };
 
             Some(AccountMatch {

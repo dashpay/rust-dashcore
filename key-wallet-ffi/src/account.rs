@@ -89,7 +89,20 @@ pub unsafe extern "C" fn wallet_get_account(
     }
 
     let wallet = &*wallet;
-    let account_type_rust = account_type.to_account_type(account_index);
+    let account_type_rust = match account_type.to_account_type(account_index) {
+        Ok(t) => t,
+        Err(mut err) => {
+            let code = err.code;
+            let message = if err.message.is_null() {
+                "Invalid account type".to_string()
+            } else {
+                let msg = std::ffi::CStr::from_ptr(err.message).to_string_lossy().to_string();
+                err.free_message();
+                msg
+            };
+            return FFIAccountResult::error(code, message);
+        }
+    };
 
     match wallet.inner().accounts.account_of_type(account_type_rust) {
         Some(account) => {
