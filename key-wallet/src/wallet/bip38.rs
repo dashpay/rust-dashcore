@@ -52,22 +52,24 @@ impl Wallet {
         let master_key = root_key.to_extended_priv_key(self.network);
 
         use crate::account::AccountType;
-        use crate::derivation::HDWallet;
 
-        let hd_wallet = HDWallet::new(master_key);
-        let account_key = match &account.account_type {
+        match &account.account_type {
             AccountType::CoinJoin {
                 ..
-            } => hd_wallet.coinjoin_account(account_index)?,
-            AccountType::Standard {
+            }
+            | AccountType::Standard {
                 ..
-            } => hd_wallet.bip44_account(account_index)?,
+            } => {}
             _ => {
                 return Err(Error::InvalidParameter(
                     "Unsupported account type for BIP38 export".into(),
                 ))
             }
-        };
+        }
+
+        let derivation_path = account.account_type.derivation_path(self.network)?;
+        let secp = secp256k1::Secp256k1::new();
+        let account_key = master_key.derive_priv(&secp, &derivation_path).map_err(Error::Bip32)?;
 
         let secret_key = account_key.private_key;
         encrypt_private_key(&secret_key, password, true, self.network)
