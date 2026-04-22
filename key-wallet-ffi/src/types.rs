@@ -2,6 +2,7 @@
 
 use dashcore::ephemerealdata::instant_lock::InstantLock;
 use dashcore::hashes::Hash;
+use key_wallet::account::{InputDetail, OutputDetail};
 use key_wallet::managed_account::transaction_record::{OutputRole, TransactionDirection};
 use key_wallet::transaction_checking::transaction_router::TransactionType;
 use key_wallet::transaction_checking::{BlockInfo, TransactionContext};
@@ -754,23 +755,6 @@ impl FFITransactionContext {
             self.islock_len,
         )
     }
-
-    /// Free the heap-allocated `islock_data` buffer, if present.
-    ///
-    /// # Safety
-    ///
-    /// Must only be called once per instance. The pointer must have been
-    /// produced by `Box::into_raw` in the `From<TransactionContext>` impl.
-    pub unsafe fn free_islock_data(&mut self) {
-        if !self.islock_data.is_null() && self.islock_len > 0 {
-            drop(Box::from_raw(std::ptr::slice_from_raw_parts_mut(
-                self.islock_data as *mut u8,
-                self.islock_len,
-            )));
-            self.islock_data = std::ptr::null();
-            self.islock_len = 0;
-        }
-    }
 }
 
 impl From<TransactionContext> for FFITransactionContext {
@@ -795,6 +779,19 @@ impl From<TransactionContext> for FFITransactionContext {
             block_info,
             islock_data,
             islock_len,
+        }
+    }
+}
+
+impl Drop for FFITransactionContext {
+    fn drop(&mut self) {
+        if !self.islock_data.is_null() && self.islock_len > 0 {
+            let slice_ptr =
+                std::ptr::slice_from_raw_parts_mut(self.islock_data as *mut u8, self.islock_len);
+            let _ = unsafe { Box::from_raw(slice_ptr) };
+
+            self.islock_data = std::ptr::null();
+            self.islock_len = 0;
         }
     }
 }
@@ -882,6 +879,26 @@ pub struct FFIInputDetail {
     pub address: *mut std::os::raw::c_char,
 }
 
+impl From<&InputDetail> for FFIInputDetail {
+    fn from(d: &InputDetail) -> Self {
+        FFIInputDetail {
+            index: d.index,
+            value: d.value,
+            address: std::ffi::CString::new(d.address.to_string()).unwrap_or_default().into_raw(),
+        }
+    }
+}
+
+impl Drop for FFIInputDetail {
+    fn drop(&mut self) {
+        if !self.address.is_null() {
+            let _ = unsafe { std::ffi::CString::from_raw(self.address) };
+
+            self.address = std::ptr::null_mut();
+        }
+    }
+}
+
 /// FFI-compatible output detail
 #[repr(C)]
 pub struct FFIOutputDetail {
@@ -889,6 +906,32 @@ pub struct FFIOutputDetail {
     pub role: FFIOutputRole,
     pub value: u64,
     pub address: *mut c_char,
+}
+
+impl From<&OutputDetail> for FFIOutputDetail {
+    fn from(d: &OutputDetail) -> Self {
+        FFIOutputDetail {
+            index: d.index,
+            role: FFIOutputRole::from(d.role),
+            value: d.value,
+            address: match &d.address {
+                Some(addr) => {
+                    std::ffi::CString::new(addr.to_string()).unwrap_or_default().into_raw()
+                }
+                None => std::ptr::null_mut(),
+            },
+        }
+    }
+}
+
+impl Drop for FFIOutputDetail {
+    fn drop(&mut self) {
+        if !self.address.is_null() {
+            let _ = unsafe { std::ffi::CString::from_raw(self.address) };
+
+            self.address = std::ptr::null_mut();
+        }
+    }
 }
 
 #[cfg(test)]
