@@ -94,13 +94,13 @@ pub trait WalletInterface: Send + Sync + 'static {
     /// Return the height at which filter scanning was last committed.
     /// Defaults to `last_processed_height()` for implementations that don't separate these concepts.
     // TODO: This can probably somehow be combined with last_processed_height().
-    fn filter_committed_height(&self) -> CoreBlockHeight {
+    fn synced_height(&self) -> CoreBlockHeight {
         self.last_processed_height()
     }
 
-    /// Update the filter committed height. Call when a height is fully processed
+    /// Update the committed synced height. Call when a height is fully processed
     /// (including any rescans for newly discovered addresses).
-    fn update_filter_committed_height(&mut self, height: CoreBlockHeight) {
+    fn update_synced_height(&mut self, height: CoreBlockHeight) {
         if height > self.last_processed_height() {
             self.update_last_processed_height(height);
         }

@@ -113,12 +113,12 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
         self.emit_balance_changes(&snapshot);
     }
 
-    fn filter_committed_height(&self) -> CoreBlockHeight {
-        self.filter_committed_height
+    fn synced_height(&self) -> CoreBlockHeight {
+        self.synced_height
     }
 
-    fn update_filter_committed_height(&mut self, height: CoreBlockHeight) {
-        self.filter_committed_height = height;
+    fn update_synced_height(&mut self, height: CoreBlockHeight) {
+        self.synced_height = height;
         if height > self.last_processed_height {
             self.update_last_processed_height(height);
         }

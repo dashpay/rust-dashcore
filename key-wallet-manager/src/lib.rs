@@ -93,7 +93,7 @@ pub struct WalletManager<T: WalletInfoInterface = ManagedWalletInfo> {
     /// Last fully processed block height.
     last_processed_height: CoreBlockHeight,
     /// Height at which filter scanning was last committed.
-    filter_committed_height: CoreBlockHeight,
+    synced_height: CoreBlockHeight,
     /// Immutable wallets indexed by wallet ID
     wallets: BTreeMap<WalletId, Wallet>,
     /// Mutable wallet info indexed by wallet ID
@@ -112,7 +112,7 @@ impl<T: WalletInfoInterface> WalletManager<T> {
         Self {
             network,
             last_processed_height: 0,
-            filter_committed_height: 0,
+            synced_height: 0,
             wallets: BTreeMap::new(),
             wallet_infos: BTreeMap::new(),
             structural_revision: 0,

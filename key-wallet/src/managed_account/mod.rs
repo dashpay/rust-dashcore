@@ -560,10 +560,7 @@ impl ManagedCoreAccount {
     /// aggregating across the wallet, since spendability is
     /// account-type specific.
     pub fn spendable_utxos(&self, last_processed_height: u32) -> BTreeSet<&Utxo> {
-        self.utxos
-            .values()
-            .filter(|utxo| utxo.is_spendable(last_processed_height))
-            .collect()
+        self.utxos.values().filter(|utxo| utxo.is_spendable(last_processed_height)).collect()
     }
 
     /// Update the account balance.

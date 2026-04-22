@@ -83,7 +83,7 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
         filter_header_storage: Arc<RwLock<FH>>,
         filter_storage: Arc<RwLock<F>>,
     ) -> Self {
-        let committed_height = wallet.read().await.filter_committed_height();
+        let committed_height = wallet.read().await.synced_height();
         let stored_height = filter_storage.read().await.filter_tip_height().await.unwrap_or(0);
         let target_height =
             header_storage.read().await.get_tip().await.map(|t| t.height()).unwrap_or(0);
@@ -158,11 +158,11 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
     ) -> SyncResult<Vec<SyncEvent>> {
         debug_assert!(self.is_idle(), "manager should have no in-flight state on start");
 
-        // Use filter_committed_height for restart recovery instead of
+        // Use synced_height for restart recovery instead of
         // last_processed_height, which advances per-block and may exceed committed scan progress.
         let (wallet_birth_height, wallet_committed_height) = {
             let wallet = self.wallet.read().await;
-            (wallet.earliest_required_height().await, wallet.filter_committed_height())
+            (wallet.earliest_required_height().await, wallet.synced_height())
         };
 
         // Get stored filters tip
@@ -495,7 +495,7 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
             let end = batch.end_height();
             if end > self.progress.committed_height() {
                 self.progress.update_committed_height(end);
-                self.wallet.write().await.update_filter_committed_height(end);
+                self.wallet.write().await.update_synced_height(end);
             }
             self.processing_height = end + 1;
 
