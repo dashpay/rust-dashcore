@@ -570,7 +570,7 @@ pub unsafe extern "C" fn wallet_manager_current_height(
     let manager_ref = deref_ptr!(manager, error);
     manager_ref.runtime.block_on(async {
         let manager_guard = manager_ref.manager.read().await;
-        manager_guard.synced_height()
+        manager_guard.last_processed_height()
     })
 }
 

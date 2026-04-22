@@ -26,7 +26,7 @@ pub trait WalletTransactionChecker {
     ///
     /// If `update_balance` is true, refreshes the cached wallet balance after mutations.
     /// Callers that batch multiple transactions (e.g. block processing) can pass `false`
-    /// and refresh once at the end via `update_synced_height`.
+    /// and refresh once at the end via `update_last_processed_height`.
     ///
     /// The context parameter indicates where the transaction comes from (mempool, block, etc.)
     ///
@@ -400,8 +400,8 @@ mod tests {
         let result = managed_wallet
             .check_core_transaction(&coinbase_tx, context, &mut wallet, true, true)
             .await;
-        // Set synced_height to block where coinbase was received to trigger balance updates.
-        managed_wallet.update_synced_height(block_height);
+        // Set last_processed_height to block where coinbase was received to trigger balance updates.
+        managed_wallet.update_last_processed_height(block_height);
 
         // Should be relevant
         assert!(result.is_relevant);
@@ -428,12 +428,12 @@ mod tests {
         assert_eq!(managed_wallet.balance().immature(), 5_000_000_000);
 
         // Spendable UTXOs should be empty (coinbase not mature)
-        let synced_height = managed_wallet.synced_height();
+        let last_processed_height = managed_wallet.last_processed_height();
         assert!(
             managed_wallet
                 .first_bip44_managed_account()
                 .expect("Should have managed account")
-                .spendable_utxos(synced_height)
+                .spendable_utxos(last_processed_height)
                 .is_empty(),
             "Coinbase UTXO should not be spendable until mature"
         );
@@ -560,8 +560,8 @@ mod tests {
         let result = managed_wallet
             .check_core_transaction(&coinbase_tx, context, &mut wallet, true, true)
             .await;
-        // Set synced_height to block where coinbase was received to trigger balance updates.
-        managed_wallet.update_synced_height(block_height);
+        // Set last_processed_height to block where coinbase was received to trigger balance updates.
+        managed_wallet.update_last_processed_height(block_height);
 
         // Should be relevant
         assert!(result.is_relevant);
@@ -587,19 +587,19 @@ mod tests {
         assert_eq!(managed_wallet.balance().immature(), 5_000_000_000);
 
         // Spendable UTXOs should be empty (coinbase not mature yet)
-        let synced_height = managed_wallet.synced_height();
+        let last_processed_height = managed_wallet.last_processed_height();
         assert!(
             managed_wallet
                 .first_bip44_managed_account()
                 .expect("Should have managed account")
-                .spendable_utxos(synced_height)
+                .spendable_utxos(last_processed_height)
                 .is_empty(),
             "No spendable UTXOs while coinbase is immature"
         );
 
         // Now advance the chain height past maturity (100 blocks)
         let mature_height = block_height + 100;
-        managed_wallet.update_synced_height(mature_height);
+        managed_wallet.update_last_processed_height(mature_height);
 
         let managed_account =
             managed_wallet.first_bip44_managed_account().expect("Should have managed account");
@@ -617,11 +617,11 @@ mod tests {
         assert_eq!(immature_balance, 0, "Immature balance should be zero after maturity");
 
         // Spendable UTXOs should now contain the matured coinbase
-        let synced_height = managed_wallet.synced_height();
+        let last_processed_height = managed_wallet.last_processed_height();
         let spendable = managed_wallet
             .first_bip44_managed_account()
             .expect("Should have managed account")
-            .spendable_utxos(synced_height);
+            .spendable_utxos(last_processed_height);
         assert_eq!(spendable.len(), 1, "Should have one spendable UTXO after maturity");
     }
 

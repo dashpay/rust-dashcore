@@ -37,7 +37,7 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
             result.new_addresses.extend(check_result.new_addresses);
         }
 
-        self.update_synced_height(height);
+        self.update_last_processed_height(height);
 
         result
     }
@@ -97,17 +97,17 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
         self.wallet_infos.values().map(|info| info.birth_height()).min().unwrap_or(0)
     }
 
-    fn synced_height(&self) -> CoreBlockHeight {
-        self.synced_height
+    fn last_processed_height(&self) -> CoreBlockHeight {
+        self.last_processed_height
     }
 
-    fn update_synced_height(&mut self, height: CoreBlockHeight) {
-        self.synced_height = height;
+    fn update_last_processed_height(&mut self, height: CoreBlockHeight) {
+        self.last_processed_height = height;
 
         let snapshot = self.snapshot_balances();
 
         for (_wallet_id, info) in self.wallet_infos.iter_mut() {
-            info.update_synced_height(height);
+            info.update_last_processed_height(height);
         }
 
         self.emit_balance_changes(&snapshot);
@@ -119,8 +119,8 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
 
     fn update_filter_committed_height(&mut self, height: CoreBlockHeight) {
         self.filter_committed_height = height;
-        if height > self.synced_height {
-            self.update_synced_height(height);
+        if height > self.last_processed_height {
+            self.update_last_processed_height(height);
         }
     }
 
@@ -216,19 +216,19 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_synced_height() {
+    async fn test_last_processed_height() {
         let mut manager: WalletManager<ManagedWalletInfo> = WalletManager::new(Network::Testnet);
         // Initial state
-        assert_eq!(manager.synced_height(), 0);
-        // Inrease synced height
-        manager.update_synced_height(1000);
-        assert_eq!(manager.synced_height(), 1000);
-        //Increase synced height again
-        manager.update_synced_height(5000);
-        assert_eq!(manager.synced_height(), 5000);
-        // Decrease synced height
-        manager.update_synced_height(10);
-        assert_eq!(manager.synced_height(), 10);
+        assert_eq!(manager.last_processed_height(), 0);
+        // Increase last processed height
+        manager.update_last_processed_height(1000);
+        assert_eq!(manager.last_processed_height(), 1000);
+        // Increase last processed height again
+        manager.update_last_processed_height(5000);
+        assert_eq!(manager.last_processed_height(), 5000);
+        // Decrease last processed height
+        manager.update_last_processed_height(10);
+        assert_eq!(manager.last_processed_height(), 10);
     }
 
     #[tokio::test]
@@ -386,9 +386,9 @@ mod tests {
             assert_eq!(manager.monitor_revision(), expected_rev, "after get_change_address");
         }
 
-        // update_synced_height does NOT bump
-        manager.update_synced_height(1000);
-        assert_eq!(manager.monitor_revision(), expected_rev, "after update_synced_height");
+        // update_last_processed_height does NOT bump
+        manager.update_last_processed_height(1000);
+        assert_eq!(manager.monitor_revision(), expected_rev, "after update_last_processed_height");
 
         // process_mempool_transaction bumps from UTXO changes and possibly
         // new addresses generated via gap limit maintenance

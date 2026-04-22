@@ -48,10 +48,10 @@ impl<H: BlockHeaderStorage, B: BlockStorage, W: WalletInterface> BlocksManager<H
         header_storage: Arc<RwLock<H>>,
         block_storage: Arc<RwLock<B>>,
     ) -> Self {
-        let synced_height = wallet.read().await.synced_height();
+        let last_processed_height = wallet.read().await.last_processed_height();
 
         let mut initial_progress = BlocksProgress::default();
-        initial_progress.update_last_processed(synced_height);
+        initial_progress.update_last_processed(last_processed_height);
 
         Self {
             progress: initial_progress,

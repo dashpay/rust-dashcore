@@ -238,7 +238,7 @@ impl ManagedWalletInfo {
             .and_then(|account| account.next_change_address(xpub.as_ref(), true).ok())
             .ok_or(AssetLockError::NoChangeAddress)?;
 
-        let synced_height = self.synced_height();
+        let last_processed_height = self.last_processed_height();
 
         // Separate credit outputs from funding specs
         let credit_outputs: Vec<TxOut> =
@@ -271,7 +271,7 @@ impl ManagedWalletInfo {
         let tx_builder_with_inputs = tx_builder.select_inputs(
             &utxos,
             SelectionStrategy::BranchAndBound,
-            synced_height,
+            last_processed_height,
             |utxo| {
                 let path = address_to_path.get(&utxo.address)?;
                 let root_ext_priv = root_xpriv.to_extended_priv_key(network);
@@ -373,7 +373,7 @@ impl ManagedWalletInfo {
             .and_then(|account| account.next_change_address(xpub.as_ref(), true).ok())
             .ok_or(AssetLockError::NoChangeAddress)?;
 
-        let synced_height = self.synced_height();
+        let last_processed_height = self.last_processed_height();
 
         let credit_outputs: Vec<TxOut> =
             credit_output_fundings.iter().map(|f| f.output.clone()).collect();
@@ -398,7 +398,7 @@ impl ManagedWalletInfo {
         let tx_builder_with_inputs = tx_builder.select_inputs(
             &utxos,
             SelectionStrategy::BranchAndBound,
-            synced_height,
+            last_processed_height,
             |_utxo| None,
         )?;
 
@@ -789,7 +789,7 @@ mod tests {
             .unwrap()
             .utxos
             .insert(utxo.outpoint, utxo);
-        info.update_synced_height(1100);
+        info.update_last_processed_height(1100);
 
         let signer = InMemorySigner {
             root,

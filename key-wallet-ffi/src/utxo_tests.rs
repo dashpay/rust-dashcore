@@ -233,7 +233,7 @@ mod utxo_tests {
         managed_info.accounts.insert(bip44_account).unwrap();
 
         let ffi_managed_info = Box::into_raw(Box::new(FFIManagedWalletInfo::new(managed_info)));
-        unsafe { (*ffi_managed_info).inner_mut() }.update_synced_height(300);
+        unsafe { (*ffi_managed_info).inner_mut() }.update_last_processed_height(300);
         let result = unsafe {
             managed_wallet_get_utxos(&*ffi_managed_info, &mut utxos_out, &mut count_out, error)
         };

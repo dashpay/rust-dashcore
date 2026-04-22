@@ -12,7 +12,7 @@ type InstantLockCaptures = Arc<Mutex<Vec<(Txid, Option<InstantLock>)>>>;
 pub struct MockWallet {
     processed_blocks: Arc<Mutex<Vec<(dashcore::BlockHash, u32)>>>,
     processed_transactions: Arc<Mutex<Vec<dashcore::Txid>>>,
-    synced_height: CoreBlockHeight,
+    last_processed_height: CoreBlockHeight,
     event_sender: broadcast::Sender<WalletEvent>,
     /// When true, process_mempool_transaction returns is_relevant=true.
     mempool_relevant: bool,
@@ -47,7 +47,7 @@ impl MockWallet {
         Self {
             processed_blocks: Arc::new(Mutex::new(Vec::new())),
             processed_transactions: Arc::new(Mutex::new(Vec::new())),
-            synced_height: 0,
+            last_processed_height: 0,
             event_sender,
             mempool_relevant: false,
             addresses: Vec::new(),
@@ -156,12 +156,12 @@ impl WalletInterface for MockWallet {
         self.outpoints.clone()
     }
 
-    fn synced_height(&self) -> CoreBlockHeight {
-        self.synced_height
+    fn last_processed_height(&self) -> CoreBlockHeight {
+        self.last_processed_height
     }
 
-    fn update_synced_height(&mut self, height: CoreBlockHeight) {
-        self.synced_height = height;
+    fn update_last_processed_height(&mut self, height: CoreBlockHeight) {
+        self.last_processed_height = height;
     }
 
     fn monitor_revision(&self) -> u64 {
@@ -189,7 +189,7 @@ impl WalletInterface for MockWallet {
 
 /// Mock wallet that returns false for filter checks
 pub struct NonMatchingMockWallet {
-    synced_height: CoreBlockHeight,
+    last_processed_height: CoreBlockHeight,
     event_sender: broadcast::Sender<WalletEvent>,
 }
 
@@ -203,7 +203,7 @@ impl NonMatchingMockWallet {
     pub fn new() -> Self {
         let (event_sender, _) = broadcast::channel(16);
         Self {
-            synced_height: 0,
+            last_processed_height: 0,
             event_sender,
         }
     }
@@ -231,12 +231,12 @@ impl WalletInterface for NonMatchingMockWallet {
         Vec::new()
     }
 
-    fn synced_height(&self) -> CoreBlockHeight {
-        self.synced_height
+    fn last_processed_height(&self) -> CoreBlockHeight {
+        self.last_processed_height
     }
 
-    fn update_synced_height(&mut self, height: CoreBlockHeight) {
-        self.synced_height = height;
+    fn update_last_processed_height(&mut self, height: CoreBlockHeight) {
+        self.last_processed_height = height;
     }
 
     fn subscribe_events(&self) -> broadcast::Receiver<WalletEvent> {

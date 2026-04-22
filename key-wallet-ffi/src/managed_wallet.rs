@@ -453,7 +453,7 @@ pub unsafe extern "C" fn managed_wallet_get_balance(
     true
 }
 
-/// Get current synced height from wallet info
+/// Get current last processed height from wallet info
 ///
 /// # Safety
 ///
@@ -461,12 +461,12 @@ pub unsafe extern "C" fn managed_wallet_get_balance(
 /// - `error` must be a valid pointer to an FFIError structure
 /// - The caller must ensure all pointers remain valid for the duration of this call
 #[no_mangle]
-pub unsafe extern "C" fn managed_wallet_synced_height(
+pub unsafe extern "C" fn managed_wallet_last_processed_height(
     managed_wallet: *const FFIManagedWalletInfo,
     error: *mut FFIError,
 ) -> c_uint {
     let managed_wallet = deref_ptr!(managed_wallet, error);
-    managed_wallet.inner().synced_height()
+    managed_wallet.inner().last_processed_height()
 }
 
 /// Free managed wallet info

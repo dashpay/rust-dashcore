@@ -117,7 +117,7 @@ pub unsafe extern "C" fn managed_wallet_get_utxos(
             // Get script bytes
             let script_bytes = utxo.txout.script_pubkey.as_bytes().to_vec();
 
-            let current_height = managed_info.inner().synced_height();
+            let current_height = managed_info.inner().last_processed_height();
             let confirmations = utxo.confirmations(current_height);
 
             let ffi_utxo = FFIUTXO::new(

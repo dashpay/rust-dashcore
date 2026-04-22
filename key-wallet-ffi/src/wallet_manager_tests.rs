@@ -448,7 +448,7 @@ mod tests {
             let manager_ref = &*manager;
             manager_ref.runtime.block_on(async {
                 let mut manager_guard = manager_ref.manager.write().await;
-                manager_guard.update_synced_height(new_height);
+                manager_guard.update_last_processed_height(new_height);
             });
         }
 

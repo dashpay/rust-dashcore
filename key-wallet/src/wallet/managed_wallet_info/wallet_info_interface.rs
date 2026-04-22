@@ -65,6 +65,9 @@ pub trait WalletInfoInterface: Sized + WalletTransactionChecker + ManagedAccount
     /// Get all UTXOs for the wallet
     fn utxos(&self) -> BTreeSet<&Utxo>;
 
+    /// Get spendable UTXOs (confirmed and not locked)
+    fn get_spendable_utxos(&self) -> BTreeSet<&Utxo>;
+
     /// Get the wallet balance
     fn balance(&self) -> WalletCoreBalance;
 
@@ -84,11 +87,11 @@ pub trait WalletInfoInterface: Sized + WalletTransactionChecker + ManagedAccount
     fn immature_transactions(&self) -> Vec<Transaction>;
 
     /// Return the last fully processed height of the wallet.
-    fn synced_height(&self) -> CoreBlockHeight;
+    fn last_processed_height(&self) -> CoreBlockHeight;
 
     /// Update chain state and process any matured transactions
     /// This should be called when the chain tip advances to a new height
-    fn update_synced_height(&mut self, current_height: u32);
+    fn update_last_processed_height(&mut self, current_height: u32);
 
     /// Mark UTXOs for a transaction as InstantSend-locked across all accounts
     /// and update the corresponding transaction record context.
@@ -144,8 +147,8 @@ impl WalletInfoInterface for ManagedWalletInfo {
         self.metadata.birth_height = height;
     }
 
-    fn synced_height(&self) -> CoreBlockHeight {
-        self.metadata.synced_height
+    fn last_processed_height(&self) -> CoreBlockHeight {
+        self.metadata.last_processed_height
     }
 
     fn first_loaded_at(&self) -> u64 {
@@ -175,6 +178,12 @@ impl WalletInfoInterface for ManagedWalletInfo {
         }
         utxos
     }
+    fn get_spendable_utxos(&self) -> BTreeSet<&Utxo> {
+        self.utxos()
+            .into_iter()
+            .filter(|utxo| utxo.is_spendable(self.last_processed_height()))
+            .collect()
+    }
 
     fn balance(&self) -> WalletCoreBalance {
         self.balance
@@ -182,9 +191,9 @@ impl WalletInfoInterface for ManagedWalletInfo {
 
     fn update_balance(&mut self) {
         let mut balance = WalletCoreBalance::default();
-        let synced_height = self.synced_height();
+        let last_processed_height = self.last_processed_height();
         for account in self.accounts.all_accounts_mut() {
-            account.update_balance(synced_height);
+            account.update_balance(last_processed_height);
             balance += *account.balance();
         }
         self.balance = balance;
@@ -212,7 +221,7 @@ impl WalletInfoInterface for ManagedWalletInfo {
         // Find txids of immature coinbase UTXOs
         for account in self.accounts.all_accounts() {
             for utxo in account.utxos.values() {
-                if utxo.is_coinbase && !utxo.is_mature(self.synced_height()) {
+                if utxo.is_coinbase && !utxo.is_mature(self.last_processed_height()) {
                     immature_txids.insert(utxo.outpoint.txid);
                 }
             }
@@ -230,8 +239,8 @@ impl WalletInfoInterface for ManagedWalletInfo {
         transactions
     }
 
-    fn update_synced_height(&mut self, current_height: u32) {
-        self.metadata.synced_height = current_height;
+    fn update_last_processed_height(&mut self, current_height: u32) {
+        self.metadata.last_processed_height = current_height;
         // Update cached balance
         self.update_balance();
     }

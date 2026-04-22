@@ -142,11 +142,11 @@ fn main() {
     // Example 7: Block height tracking
     println!("\n7. Block height tracking...");
 
-    println!("   Current height (Testnet): {:?}", manager.synced_height());
+    println!("   Current height (Testnet): {:?}", manager.last_processed_height());
 
     // Update height
-    manager.update_synced_height(850_000);
-    println!("   Updated height to: {:?}", manager.synced_height());
+    manager.update_last_processed_height(850_000);
+    println!("   Updated height to: {:?}", manager.last_processed_height());
 
     println!("\n=== Summary ===");
     println!("Total wallets created: {}", manager.wallet_count());

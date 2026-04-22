@@ -555,12 +555,15 @@ impl ManagedCoreAccount {
     }
 
     /// Return the UTXOs of this account for which
-    /// [`Utxo::is_spendable`] holds at `synced_height`. See that method
+    /// [`Utxo::is_spendable`] holds at `last_processed_height`. See that method
     /// for the exact policy. Call this per-account rather than
     /// aggregating across the wallet, since spendability is
     /// account-type specific.
-    pub fn spendable_utxos(&self, synced_height: u32) -> BTreeSet<&Utxo> {
-        self.utxos.values().filter(|utxo| utxo.is_spendable(synced_height)).collect()
+    pub fn spendable_utxos(&self, last_processed_height: u32) -> BTreeSet<&Utxo> {
+        self.utxos
+            .values()
+            .filter(|utxo| utxo.is_spendable(last_processed_height))
+            .collect()
     }
 
     /// Update the account balance.
@@ -569,7 +572,7 @@ impl ManagedCoreAccount {
     /// (in a block or InstantSend-locked) or the `unconfirmed` bucket
     /// (mempool only). Both are spendable per [`Utxo::is_spendable`];
     /// the split is only for display.
-    pub fn update_balance(&mut self, synced_height: u32) {
+    pub fn update_balance(&mut self, last_processed_height: u32) {
         let mut confirmed = 0;
         let mut unconfirmed = 0;
         let mut immature = 0;
@@ -578,7 +581,7 @@ impl ManagedCoreAccount {
             let value = utxo.txout.value;
             if utxo.is_locked {
                 locked += value;
-            } else if !utxo.is_mature(synced_height) {
+            } else if !utxo.is_mature(last_processed_height) {
                 immature += value;
             } else if utxo.is_confirmed || utxo.is_instantlocked {
                 confirmed += value;

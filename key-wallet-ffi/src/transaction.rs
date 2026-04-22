@@ -246,7 +246,7 @@ pub unsafe extern "C" fn wallet_build_and_sign_transaction(
             let mut tx_builder_with_inputs = match tx_builder.select_inputs(
                 &utxos,
                 SelectionStrategy::BranchAndBound,
-                managed_wallet.synced_height(),
+                managed_wallet.last_processed_height(),
                 |utxo| {
                     // Look up the derivation path for this UTXO's address
                     let path = address_to_path.get(&utxo.address)?;
