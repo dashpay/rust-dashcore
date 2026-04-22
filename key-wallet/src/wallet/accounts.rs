@@ -9,8 +9,8 @@ use crate::account::BLSAccount;
 use crate::account::EdDSAAccount;
 use crate::account::{Account, AccountType};
 use crate::bip32::ExtendedPubKey;
-use crate::derivation::HDWallet;
 use crate::error::{Error, Result};
+use secp256k1::Secp256k1;
 
 impl Wallet {
     /// Add a new account to the wallet
@@ -44,8 +44,9 @@ impl Wallet {
             // This will fail if the wallet doesn't have a private key (watch-only or externally managed)
             let root_key = self.root_extended_priv_key()?;
             let master_key = root_key.to_extended_priv_key(self.network);
-            let hd_wallet = HDWallet::new(master_key);
-            let account_xpriv = hd_wallet.derive(&derivation_path)?;
+            let secp = Secp256k1::new();
+            let account_xpriv =
+                master_key.derive_priv(&secp, &derivation_path).map_err(Error::Bip32)?;
 
             Account::from_xpriv(Some(wallet_id), account_type, account_xpriv, self.network)?
         };
@@ -97,8 +98,9 @@ impl Wallet {
                 let seed = mnemonic.to_seed(passphrase);
                 let root_key = super::root_extended_keys::RootExtendedPrivKey::new_master(&seed)?;
                 let master_key = root_key.to_extended_priv_key(self.network);
-                let hd_wallet = HDWallet::new(master_key);
-                let account_xpriv = hd_wallet.derive(&derivation_path)?;
+                let secp = Secp256k1::new();
+                let account_xpriv =
+                    master_key.derive_priv(&secp, &derivation_path).map_err(Error::Bip32)?;
 
                 let account = Account::from_xpriv(Some(wallet_id), account_type, account_xpriv, self.network)?;
 
@@ -158,8 +160,9 @@ impl Wallet {
             // This will fail if the wallet doesn't have a private key
             let root_key = self.root_extended_priv_key()?;
             let master_key = root_key.to_extended_priv_key(self.network);
-            let hd_wallet = HDWallet::new(master_key);
-            let account_xpriv = hd_wallet.derive(&derivation_path)?;
+            let secp = Secp256k1::new();
+            let account_xpriv =
+                master_key.derive_priv(&secp, &derivation_path).map_err(Error::Bip32)?;
 
             // Create BLS seed from derived private key
             let seed = account_xpriv.private_key.secret_bytes();
@@ -216,8 +219,9 @@ impl Wallet {
                 let seed = mnemonic.to_seed(passphrase);
                 let root_key = super::root_extended_keys::RootExtendedPrivKey::new_master(&seed)?;
                 let master_key = root_key.to_extended_priv_key(self.network);
-                let hd_wallet = HDWallet::new(master_key);
-                let account_xpriv = hd_wallet.derive(&derivation_path)?;
+                let secp = Secp256k1::new();
+                let account_xpriv =
+                    master_key.derive_priv(&secp, &derivation_path).map_err(Error::Bip32)?;
 
                 // Create BLS seed from derived private key
                 let bls_seed = account_xpriv.private_key.secret_bytes();
@@ -279,8 +283,9 @@ impl Wallet {
             // This will fail if the wallet doesn't have a private key
             let root_key = self.root_extended_priv_key()?;
             let master_key = root_key.to_extended_priv_key(self.network);
-            let hd_wallet = HDWallet::new(master_key);
-            let account_xpriv = hd_wallet.derive(&derivation_path)?;
+            let secp = Secp256k1::new();
+            let account_xpriv =
+                master_key.derive_priv(&secp, &derivation_path).map_err(Error::Bip32)?;
 
             // Create Ed25519 seed from derived private key
             let seed = account_xpriv.private_key.secret_bytes();
@@ -337,8 +342,9 @@ impl Wallet {
                 let seed = mnemonic.to_seed(passphrase);
                 let root_key = super::root_extended_keys::RootExtendedPrivKey::new_master(&seed)?;
                 let master_key = root_key.to_extended_priv_key(self.network);
-                let hd_wallet = HDWallet::new(master_key);
-                let account_xpriv = hd_wallet.derive(&derivation_path)?;
+                let secp = Secp256k1::new();
+                let account_xpriv =
+                    master_key.derive_priv(&secp, &derivation_path).map_err(Error::Bip32)?;
 
                 // Create Ed25519 seed from derived private key
                 let ed25519_seed = account_xpriv.private_key.secret_bytes();
