@@ -799,7 +799,7 @@ pub unsafe extern "C" fn managed_wallet_mark_address_used(
         }
         if !found {
             for account in collection.identity_authentication_ecdsa.values_mut() {
-                if account.mark_address_used(&address) {
+                if account.mark_address_used(&address).0 {
                     found = true;
                     break;
                 }
@@ -807,7 +807,7 @@ pub unsafe extern "C" fn managed_wallet_mark_address_used(
         }
         if !found {
             for account in collection.identity_authentication_bls.values_mut() {
-                if account.mark_address_used(&address) {
+                if account.mark_address_used(&address).0 {
                     found = true;
                     break;
                 }

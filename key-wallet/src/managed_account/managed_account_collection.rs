@@ -1027,6 +1027,12 @@ impl ManagedAccountCollection {
                 account,
                 key_class,
             }),
+            AccountType::IdentityAuthenticationEcdsa {
+                identity_index,
+            } => self.identity_authentication_ecdsa.contains_key(&identity_index),
+            AccountType::IdentityAuthenticationBls {
+                identity_index,
+            } => self.identity_authentication_bls.contains_key(&identity_index),
         }
     }
 
@@ -1086,6 +1092,12 @@ impl ManagedAccountCollection {
             AccountType::PlatformPayment {
                 ..
             } => None,
+            AccountType::IdentityAuthenticationEcdsa {
+                identity_index,
+            } => self.identity_authentication_ecdsa.get(&identity_index),
+            AccountType::IdentityAuthenticationBls {
+                identity_index,
+            } => self.identity_authentication_bls.get(&identity_index),
         }
     }
 
@@ -1148,6 +1160,12 @@ impl ManagedAccountCollection {
             AccountType::PlatformPayment {
                 ..
             } => None,
+            AccountType::IdentityAuthenticationEcdsa {
+                identity_index,
+            } => self.identity_authentication_ecdsa.get_mut(&identity_index),
+            AccountType::IdentityAuthenticationBls {
+                identity_index,
+            } => self.identity_authentication_bls.get_mut(&identity_index),
         }
     }
 

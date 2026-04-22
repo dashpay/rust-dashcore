@@ -370,7 +370,7 @@ impl ManagedWalletInfo {
             .accounts
             .standard_bip44_accounts
             .get_mut(&account_index)
-            .and_then(|account| account.next_change_address(xpub.as_ref(), true).ok())
+            .and_then(|account| account.next_change_address(xpub.as_ref()).ok())
             .ok_or(AssetLockError::NoChangeAddress)?;
 
         let synced_height = self.synced_height();
@@ -764,7 +764,7 @@ mod tests {
             .standard_bip44_accounts
             .get_mut(&0)
             .unwrap()
-            .next_receive_address(Some(&account_xpub), true)
+            .next_receive_address(Some(&account_xpub))
             .unwrap();
 
         let utxo = Utxo {

@@ -1051,14 +1051,14 @@ impl ManagedCoreAccount {
                 // (similar to `next_bls_operator_key` for ProviderOperatorKeys).
                 // Here we only allow progression when the pool already has a
                 // pre-derived address cached (NoKeySource).
-                addresses.next_unused(&address_pool::KeySource::NoKeySource, add_to_state).map_err(
-                    |e| match e {
+                addresses.next_unused(&address_pool::KeySource::NoKeySource).map_err(|e| {
+                    match e {
                         crate::error::Error::NoKeySource => {
                             "No unused addresses available and no key source provided"
                         }
                         _ => "Failed to generate address",
-                    },
-                )
+                    }
+                })
             }
             ManagedAccountType::IdentityTopUp {
                 addresses,
@@ -1174,10 +1174,7 @@ impl ManagedCoreAccount {
                 // Here we only allow progression when the pool already has a
                 // pre-derived address cached (NoKeySource).
                 addresses
-                    .next_unused_with_info(
-                        &address_pool::KeySource::NoKeySource,
-                        add_to_state,
-                    )
+                    .next_unused_with_info(&address_pool::KeySource::NoKeySource)
                     .map_err(|e| match e {
                         crate::error::Error::NoKeySource => {
                             "No unused addresses available and no key source provided"
@@ -1343,7 +1340,7 @@ impl ManagedCoreAccount {
         let pool = pools.first_mut().ok_or("Account has no address pool")?;
 
         let info = pool
-            .next_unused_with_info(&address_pool::KeySource::NoKeySource, false)
+            .next_unused_with_info(&address_pool::KeySource::NoKeySource)
             .map_err(|_| "No unused address available")?;
 
         Ok((info.path, info.index))
