@@ -17,9 +17,13 @@
 //! assert_eq!(Network::Mainnet.default_p2p_port(), 9999);
 //! ```
 
-#![forbid(unsafe_code)]
+// `ffi` feature exposes an `extern "C" fn` which requires `#[unsafe(no_mangle)]`.
+#![cfg_attr(not(feature = "ffi"), forbid(unsafe_code))]
 
 use core::fmt;
+
+#[cfg(feature = "ffi")]
+pub mod ffi;
 
 #[cfg(feature = "bincode")]
 use bincode_derive::{Decode, Encode};
