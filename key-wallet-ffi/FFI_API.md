@@ -50,7 +50,7 @@ Functions: 19
 | `wallet_manager_add_wallet_from_mnemonic` | Add a wallet from mnemonic to the manager (backward compatibility)  # Safety... | wallet_manager |
 | `wallet_manager_add_wallet_from_mnemonic_return_serialized_bytes` | No description | wallet_manager |
 | `wallet_manager_add_wallet_from_mnemonic_with_options` | Add a wallet from mnemonic to the manager with options  # Safety  -... | wallet_manager |
-| `wallet_manager_create` | Create a new wallet manager | wallet_manager |
+| `wallet_manager_create` | Create a new wallet manager  # Safety  `error` must be a valid pointer to an... | wallet_manager |
 | `wallet_manager_current_height` | Get current height for a network  # Safety  - `manager` must be a valid... | wallet_manager |
 | `wallet_manager_describe` | Describe the wallet manager for a given network and return a newly allocated... | wallet_manager |
 | `wallet_manager_free` | Free wallet manager  # Safety  - `manager` must be a valid pointer to an... | wallet_manager |
@@ -190,7 +190,7 @@ Functions: 109
 | `bls_account_get_extended_public_key_as_string` | No description | account |
 | `bls_account_get_is_watch_only` | No description | account |
 | `bls_account_get_network` | No description | account |
-| `derivation_bip44_account_path` | Derive a BIP44 account path (m/44'/5'/account') | derivation |
+| `derivation_bip44_account_path` | Derive a BIP44 account path (m/44'/5'/account')  # Safety  `path_out` must... | derivation |
 | `eddsa_account_derive_private_key_from_mnemonic` | No description | account_derivation |
 | `eddsa_account_derive_private_key_from_seed` | No description | account_derivation |
 | `eddsa_account_free` | No description | account |
@@ -320,8 +320,8 @@ Functions: 6
 | Function | Description | Module |
 |----------|-------------|--------|
 | `mnemonic_free` | Free a mnemonic string  # Safety  - `mnemonic` must be a valid pointer... | mnemonic |
-| `mnemonic_generate` | Generate a new mnemonic with specified word count (12, 15, 18, 21, or 24) | mnemonic |
-| `mnemonic_generate_with_language` | Generate a new mnemonic with specified language and word count | mnemonic |
+| `mnemonic_generate` | Generate a new mnemonic with specified word count (12, 15, 18, 21, or 24)  #... | mnemonic |
+| `mnemonic_generate_with_language` | Generate a new mnemonic with specified language and word count  # Safety ... | mnemonic |
 | `mnemonic_to_seed` | Convert mnemonic to seed with optional passphrase  # Safety  - `mnemonic`... | mnemonic |
 | `mnemonic_validate` | Validate a mnemonic phrase  # Safety  - `mnemonic` must be a valid... | mnemonic |
 | `mnemonic_word_count` | Get word count from mnemonic  # Safety  - `mnemonic` must be a valid... | mnemonic |
@@ -332,11 +332,11 @@ Functions: 17
 
 | Function | Description | Module |
 |----------|-------------|--------|
-| `derivation_bip44_payment_path` | Derive a BIP44 payment path (m/44'/5'/account'/change/index) | derivation |
-| `derivation_coinjoin_path` | Derive CoinJoin path (m/9'/5'/4'/account') | derivation |
-| `derivation_identity_authentication_path` | Derive identity authentication path (m/9'/5'/5'/0'/identity_index'/key_index') | derivation |
-| `derivation_identity_registration_path` | Derive identity registration path (m/9'/5'/5'/1'/index') | derivation |
-| `derivation_identity_topup_path` | Derive identity top-up path (m/9'/5'/5'/2'/identity_index'/top_up_index') | derivation |
+| `derivation_bip44_payment_path` | Derive a BIP44 payment path (m/44'/5'/account'/change/index)  # Safety ... | derivation |
+| `derivation_coinjoin_path` | Derive CoinJoin path (m/9'/5'/4'/account')  # Safety  `path_out` must point... | derivation |
+| `derivation_identity_authentication_path` | Derive identity authentication path (m/9'/5'/5'/0'/identity_index'/key_index'... | derivation |
+| `derivation_identity_registration_path` | Derive identity registration path (m/9'/5'/5'/1'/index')  # Safety ... | derivation |
+| `derivation_identity_topup_path` | Derive identity top-up path (m/9'/5'/5'/2'/identity_index'/top_up_index')  #... | derivation |
 | `derivation_path_free` | Free derivation path arrays Note: This function expects the count to... | keys |
 | `derivation_path_parse` | Convert derivation path string to indices  # Safety  - `path` must be a... | keys |
 | `derivation_string_free` | Free derivation path string  # Safety  - `s` must be a valid pointer to a C... | derivation |
@@ -455,10 +455,10 @@ wallet_manager_add_wallet_from_mnemonic(manager: *mut FFIWalletManager, mnemonic
 ```
 
 **Description:**
-Add a wallet from mnemonic to the manager (backward compatibility)  # Safety  - `manager` must be a valid pointer to an FFIWalletManager instance - `mnemonic` must be a valid pointer to a null-terminated C string - `passphrase` must be a valid pointer to a null-terminated C string or null - `error` must be a valid pointer to an FFIError structure or null - The caller must ensure all pointers remain valid for the duration of this call
+Add a wallet from mnemonic to the manager (backward compatibility)  # Safety  - `manager` must be a valid pointer to an FFIWalletManager instance - `mnemonic` must be a valid pointer to a null-terminated C string - `passphrase` must be a valid pointer to a null-terminated C string or null - `error` must be a valid pointer to an FFIError structure - The caller must ensure all pointers remain valid for the duration of this call
 
 **Safety:**
-- `manager` must be a valid pointer to an FFIWalletManager instance - `mnemonic` must be a valid pointer to a null-terminated C string - `passphrase` must be a valid pointer to a null-terminated C string or null - `error` must be a valid pointer to an FFIError structure or null - The caller must ensure all pointers remain valid for the duration of this call
+- `manager` must be a valid pointer to an FFIWalletManager instance - `mnemonic` must be a valid pointer to a null-terminated C string - `passphrase` must be a valid pointer to a null-terminated C string or null - `error` must be a valid pointer to an FFIError structure - The caller must ensure all pointers remain valid for the duration of this call
 
 **Module:** `wallet_manager`
 
@@ -481,10 +481,10 @@ wallet_manager_add_wallet_from_mnemonic_with_options(manager: *mut FFIWalletMana
 ```
 
 **Description:**
-Add a wallet from mnemonic to the manager with options  # Safety  - `manager` must be a valid pointer to an FFIWalletManager instance - `mnemonic` must be a valid pointer to a null-terminated C string - `passphrase` must be a valid pointer to a null-terminated C string or null - `account_options` must be a valid pointer to FFIWalletAccountCreationOptions or null - `error` must be a valid pointer to an FFIError structure or null - The caller must ensure all pointers remain valid for the duration of this call
+Add a wallet from mnemonic to the manager with options  # Safety  - `manager` must be a valid pointer to an FFIWalletManager instance - `mnemonic` must be a valid pointer to a null-terminated C string - `passphrase` must be a valid pointer to a null-terminated C string or null - `account_options` must be a valid pointer to FFIWalletAccountCreationOptions or null - `error` must be a valid pointer to an FFIError structure - The caller must ensure all pointers remain valid for the duration of this call
 
 **Safety:**
-- `manager` must be a valid pointer to an FFIWalletManager instance - `mnemonic` must be a valid pointer to a null-terminated C string - `passphrase` must be a valid pointer to a null-terminated C string or null - `account_options` must be a valid pointer to FFIWalletAccountCreationOptions or null - `error` must be a valid pointer to an FFIError structure or null - The caller must ensure all pointers remain valid for the duration of this call
+- `manager` must be a valid pointer to an FFIWalletManager instance - `mnemonic` must be a valid pointer to a null-terminated C string - `passphrase` must be a valid pointer to a null-terminated C string or null - `account_options` must be a valid pointer to FFIWalletAccountCreationOptions or null - `error` must be a valid pointer to an FFIError structure - The caller must ensure all pointers remain valid for the duration of this call
 
 **Module:** `wallet_manager`
 
@@ -497,7 +497,10 @@ wallet_manager_create(network: FFINetwork, error: *mut FFIError,) -> *mut FFIWal
 ```
 
 **Description:**
-Create a new wallet manager
+Create a new wallet manager  # Safety  `error` must be a valid pointer to an `FFIError`. The returned pointer must be freed with `wallet_manager_free`.
+
+**Safety:**
+`error` must be a valid pointer to an `FFIError`. The returned pointer must be freed with `wallet_manager_free`.
 
 **Module:** `wallet_manager`
 
@@ -510,10 +513,10 @@ wallet_manager_current_height(manager: *const FFIWalletManager, error: *mut FFIE
 ```
 
 **Description:**
-Get current height for a network  # Safety  - `manager` must be a valid pointer to an FFIWalletManager - `error` must be a valid pointer to an FFIError structure or null - The caller must ensure all pointers remain valid for the duration of this call
+Get current height for a network  # Safety  - `manager` must be a valid pointer to an FFIWalletManager - `error` must be a valid pointer to an FFIError structure - The caller must ensure all pointers remain valid for the duration of this call
 
 **Safety:**
-- `manager` must be a valid pointer to an FFIWalletManager - `error` must be a valid pointer to an FFIError structure or null - The caller must ensure all pointers remain valid for the duration of this call
+- `manager` must be a valid pointer to an FFIWalletManager - `error` must be a valid pointer to an FFIError structure - The caller must ensure all pointers remain valid for the duration of this call
 
 **Module:** `wallet_manager`
 
@@ -616,10 +619,10 @@ wallet_manager_get_managed_wallet_info(manager: *const FFIWalletManager, wallet_
 ```
 
 **Description:**
-Get managed wallet info from the manager  Returns a reference to the managed wallet info if found  # Safety  - `manager` must be a valid pointer to an FFIWalletManager instance - `wallet_id` must be a valid pointer to a 32-byte wallet ID - `error` must be a valid pointer to an FFIError structure or null - The caller must ensure all pointers remain valid for the duration of this call - The returned managed wallet info must be freed with managed_wallet_info_free()
+Get managed wallet info from the manager  Returns a reference to the managed wallet info if found  # Safety  - `manager` must be a valid pointer to an FFIWalletManager instance - `wallet_id` must be a valid pointer to a 32-byte wallet ID - `error` must be a valid pointer to an FFIError structure - The caller must ensure all pointers remain valid for the duration of this call - The returned managed wallet info must be freed with managed_wallet_info_free()
 
 **Safety:**
-- `manager` must be a valid pointer to an FFIWalletManager instance - `wallet_id` must be a valid pointer to a 32-byte wallet ID - `error` must be a valid pointer to an FFIError structure or null - The caller must ensure all pointers remain valid for the duration of this call - The returned managed wallet info must be freed with managed_wallet_info_free()
+- `manager` must be a valid pointer to an FFIWalletManager instance - `wallet_id` must be a valid pointer to a 32-byte wallet ID - `error` must be a valid pointer to an FFIError structure - The caller must ensure all pointers remain valid for the duration of this call - The returned managed wallet info must be freed with managed_wallet_info_free()
 
 **Module:** `wallet_manager`
 
@@ -632,10 +635,10 @@ wallet_manager_get_wallet(manager: *const FFIWalletManager, wallet_id: *const u8
 ```
 
 **Description:**
-Get a wallet from the manager  Returns a reference to the wallet if found  # Safety  - `manager` must be a valid pointer to an FFIWalletManager instance - `wallet_id` must be a valid pointer to a 32-byte wallet ID - `error` must be a valid pointer to an FFIError structure or null - The caller must ensure all pointers remain valid for the duration of this call - The returned wallet must be freed with wallet_free_const()
+Get a wallet from the manager  Returns a reference to the wallet if found  # Safety  - `manager` must be a valid pointer to an FFIWalletManager instance - `wallet_id` must be a valid pointer to a 32-byte wallet ID - `error` must be a valid pointer to an FFIError structure - The caller must ensure all pointers remain valid for the duration of this call - The returned wallet must be freed with wallet_free_const()
 
 **Safety:**
-- `manager` must be a valid pointer to an FFIWalletManager instance - `wallet_id` must be a valid pointer to a 32-byte wallet ID - `error` must be a valid pointer to an FFIError structure or null - The caller must ensure all pointers remain valid for the duration of this call - The returned wallet must be freed with wallet_free_const()
+- `manager` must be a valid pointer to an FFIWalletManager instance - `wallet_id` must be a valid pointer to a 32-byte wallet ID - `error` must be a valid pointer to an FFIError structure - The caller must ensure all pointers remain valid for the duration of this call - The returned wallet must be freed with wallet_free_const()
 
 **Module:** `wallet_manager`
 
@@ -648,10 +651,10 @@ wallet_manager_get_wallet_balance(manager: *const FFIWalletManager, wallet_id: *
 ```
 
 **Description:**
-Get wallet balance  Returns the confirmed and unconfirmed balance for a specific wallet  # Safety  - `manager` must be a valid pointer to an FFIWalletManager instance - `wallet_id` must be a valid pointer to a 32-byte wallet ID - `confirmed_out` must be a valid pointer to a u64 (maps to C uint64_t) - `unconfirmed_out` must be a valid pointer to a u64 (maps to C uint64_t) - `error` must be a valid pointer to an FFIError structure or null - The caller must ensure all pointers remain valid for the duration of this call
+Get wallet balance  Returns the confirmed and unconfirmed balance for a specific wallet  # Safety  - `manager` must be a valid pointer to an FFIWalletManager instance - `wallet_id` must be a valid pointer to a 32-byte wallet ID - `confirmed_out` must be a valid pointer to a u64 (maps to C uint64_t) - `unconfirmed_out` must be a valid pointer to a u64 (maps to C uint64_t) - `error` must be a valid pointer to an FFIError structure - The caller must ensure all pointers remain valid for the duration of this call
 
 **Safety:**
-- `manager` must be a valid pointer to an FFIWalletManager instance - `wallet_id` must be a valid pointer to a 32-byte wallet ID - `confirmed_out` must be a valid pointer to a u64 (maps to C uint64_t) - `unconfirmed_out` must be a valid pointer to a u64 (maps to C uint64_t) - `error` must be a valid pointer to an FFIError structure or null - The caller must ensure all pointers remain valid for the duration of this call
+- `manager` must be a valid pointer to an FFIWalletManager instance - `wallet_id` must be a valid pointer to a 32-byte wallet ID - `confirmed_out` must be a valid pointer to a u64 (maps to C uint64_t) - `unconfirmed_out` must be a valid pointer to a u64 (maps to C uint64_t) - `error` must be a valid pointer to an FFIError structure - The caller must ensure all pointers remain valid for the duration of this call
 
 **Module:** `wallet_manager`
 
@@ -664,10 +667,10 @@ wallet_manager_get_wallet_ids(manager: *const FFIWalletManager, wallet_ids_out: 
 ```
 
 **Description:**
-Get wallet IDs  # Safety  - `manager` must be a valid pointer to an FFIWalletManager - `wallet_ids_out` must be a valid pointer to a pointer that will receive the wallet IDs - `count_out` must be a valid pointer to receive the count - `error` must be a valid pointer to an FFIError structure or null - The caller must ensure all pointers remain valid for the duration of this call
+Get wallet IDs  # Safety  - `manager` must be a valid pointer to an FFIWalletManager - `wallet_ids_out` must be a valid pointer to a pointer that will receive the wallet IDs - `count_out` must be a valid pointer to receive the count - `error` must be a valid pointer to an FFIError structure - The caller must ensure all pointers remain valid for the duration of this call
 
 **Safety:**
-- `manager` must be a valid pointer to an FFIWalletManager - `wallet_ids_out` must be a valid pointer to a pointer that will receive the wallet IDs - `count_out` must be a valid pointer to receive the count - `error` must be a valid pointer to an FFIError structure or null - The caller must ensure all pointers remain valid for the duration of this call
+- `manager` must be a valid pointer to an FFIWalletManager - `wallet_ids_out` must be a valid pointer to a pointer that will receive the wallet IDs - `count_out` must be a valid pointer to receive the count - `error` must be a valid pointer to an FFIError structure - The caller must ensure all pointers remain valid for the duration of this call
 
 **Module:** `wallet_manager`
 
@@ -690,10 +693,10 @@ wallet_manager_network(manager: *const FFIWalletManager, error: *mut FFIError,) 
 ```
 
 **Description:**
-Get the network for this wallet manager  # Safety  - `manager` must be a valid pointer to an FFIWalletManager - `error` must be a valid pointer to an FFIError structure or null - The caller must ensure all pointers remain valid for the duration of this call
+Get the network for this wallet manager  # Safety  - `manager` must be a valid pointer to an FFIWalletManager - `error` must be a valid pointer to an FFIError structure - The caller must ensure all pointers remain valid for the duration of this call
 
 **Safety:**
-- `manager` must be a valid pointer to an FFIWalletManager - `error` must be a valid pointer to an FFIError structure or null - The caller must ensure all pointers remain valid for the duration of this call
+- `manager` must be a valid pointer to an FFIWalletManager - `error` must be a valid pointer to an FFIError structure - The caller must ensure all pointers remain valid for the duration of this call
 
 **Module:** `wallet_manager`
 
@@ -706,10 +709,10 @@ wallet_manager_process_transaction(manager: *mut FFIWalletManager, tx_bytes: *co
 ```
 
 **Description:**
-Process a transaction through all wallets  Checks a transaction against all wallets and updates their states if relevant. Returns true if the transaction was relevant to at least one wallet.  # Safety  - `manager` must be a valid pointer to an FFIWalletManager instance - `tx_bytes` must be a valid pointer to transaction bytes - `tx_len` must be the length of the transaction bytes - `context` must be a valid pointer to FFITransactionContext - `update_state_if_found` indicates whether to update wallet state when transaction is relevant - `error` must be a valid pointer to an FFIError structure or null - The caller must ensure all pointers remain valid for the duration of this call
+Process a transaction through all wallets  Checks a transaction against all wallets and updates their states if relevant. Returns true if the transaction was relevant to at least one wallet.  # Safety  - `manager` must be a valid pointer to an FFIWalletManager instance - `tx_bytes` must be a valid pointer to transaction bytes - `tx_len` must be the length of the transaction bytes - `context` must be a valid pointer to FFITransactionContext - `update_state_if_found` indicates whether to update wallet state when transaction is relevant - `error` must be a valid pointer to an FFIError structure - The caller must ensure all pointers remain valid for the duration of this call
 
 **Safety:**
-- `manager` must be a valid pointer to an FFIWalletManager instance - `tx_bytes` must be a valid pointer to transaction bytes - `tx_len` must be the length of the transaction bytes - `context` must be a valid pointer to FFITransactionContext - `update_state_if_found` indicates whether to update wallet state when transaction is relevant - `error` must be a valid pointer to an FFIError structure or null - The caller must ensure all pointers remain valid for the duration of this call
+- `manager` must be a valid pointer to an FFIWalletManager instance - `tx_bytes` must be a valid pointer to transaction bytes - `tx_len` must be the length of the transaction bytes - `context` must be a valid pointer to FFITransactionContext - `update_state_if_found` indicates whether to update wallet state when transaction is relevant - `error` must be a valid pointer to an FFIError structure - The caller must ensure all pointers remain valid for the duration of this call
 
 **Module:** `wallet_manager`
 
@@ -722,10 +725,10 @@ wallet_manager_wallet_count(manager: *const FFIWalletManager, error: *mut FFIErr
 ```
 
 **Description:**
-Get wallet count  # Safety  - `manager` must be a valid pointer to an FFIWalletManager instance - `error` must be a valid pointer to an FFIError structure or null - The caller must ensure all pointers remain valid for the duration of this call
+Get wallet count  # Safety  - `manager` must be a valid pointer to an FFIWalletManager instance - `error` must be a valid pointer to an FFIError structure - The caller must ensure all pointers remain valid for the duration of this call
 
 **Safety:**
-- `manager` must be a valid pointer to an FFIWalletManager instance - `error` must be a valid pointer to an FFIError structure or null - The caller must ensure all pointers remain valid for the duration of this call
+- `manager` must be a valid pointer to an FFIWalletManager instance - `error` must be a valid pointer to an FFIError structure - The caller must ensure all pointers remain valid for the duration of this call
 
 **Module:** `wallet_manager`
 
@@ -888,10 +891,10 @@ managed_wallet_generate_addresses_to_index(managed_wallet: *mut FFIManagedWallet
 ```
 
 **Description:**
-Generate addresses up to a specific index in a pool  This ensures that addresses up to and including the specified index exist in the pool. This is useful for wallet recovery or when specific indices are needed.  # Safety  - `managed_wallet` must be a valid pointer to an FFIManagedWalletInfo - `wallet` must be a valid pointer to an FFIWallet (for key derivation) - `error` must be a valid pointer to an FFIError or null
+Generate addresses up to a specific index in a pool  This ensures that addresses up to and including the specified index exist in the pool. This is useful for wallet recovery or when specific indices are needed.  # Safety  - `managed_wallet` must be a valid pointer to an FFIManagedWalletInfo - `wallet` must be a valid pointer to an FFIWallet (for key derivation) - `error` must be a valid pointer to an FFIError
 
 **Safety:**
-- `managed_wallet` must be a valid pointer to an FFIManagedWalletInfo - `wallet` must be a valid pointer to an FFIWallet (for key derivation) - `error` must be a valid pointer to an FFIError or null
+- `managed_wallet` must be a valid pointer to an FFIManagedWalletInfo - `wallet` must be a valid pointer to an FFIWallet (for key derivation) - `error` must be a valid pointer to an FFIError
 
 **Module:** `address_pool`
 
@@ -920,10 +923,10 @@ managed_wallet_get_account_collection(manager: *const FFIWalletManager, wallet_i
 ```
 
 **Description:**
-Get managed account collection for a specific network from wallet manager  # Safety  - `manager` must be a valid pointer to an FFIWalletManager instance - `wallet_id` must be a valid pointer to a 32-byte wallet ID - `error` must be a valid pointer to an FFIError structure or null - The returned pointer must be freed with `managed_account_collection_free` when no longer needed
+Get managed account collection for a specific network from wallet manager  # Safety  - `manager` must be a valid pointer to an FFIWalletManager instance - `wallet_id` must be a valid pointer to a 32-byte wallet ID - `error` must be a valid pointer to an FFIError structure - The returned pointer must be freed with `managed_account_collection_free` when no longer needed
 
 **Safety:**
-- `manager` must be a valid pointer to an FFIWalletManager instance - `wallet_id` must be a valid pointer to a 32-byte wallet ID - `error` must be a valid pointer to an FFIError structure or null - The returned pointer must be freed with `managed_account_collection_free` when no longer needed
+- `manager` must be a valid pointer to an FFIWalletManager instance - `wallet_id` must be a valid pointer to a 32-byte wallet ID - `error` must be a valid pointer to an FFIError structure - The returned pointer must be freed with `managed_account_collection_free` when no longer needed
 
 **Module:** `managed_account_collection`
 
@@ -936,10 +939,10 @@ managed_wallet_get_account_count(manager: *const FFIWalletManager, wallet_id: *c
 ```
 
 **Description:**
-Get number of accounts in a managed wallet  # Safety  - `manager` must be a valid pointer to an FFIWalletManager instance - `wallet_id` must be a valid pointer to a 32-byte wallet ID - `error` must be a valid pointer to an FFIError structure or null - The caller must ensure all pointers remain valid for the duration of this call
+Get number of accounts in a managed wallet  # Safety  - `manager` must be a valid pointer to an FFIWalletManager instance - `wallet_id` must be a valid pointer to a 32-byte wallet ID - `error` must be a valid pointer to an FFIError structure - The caller must ensure all pointers remain valid for the duration of this call
 
 **Safety:**
-- `manager` must be a valid pointer to an FFIWalletManager instance - `wallet_id` must be a valid pointer to a 32-byte wallet ID - `error` must be a valid pointer to an FFIError structure or null - The caller must ensure all pointers remain valid for the duration of this call
+- `manager` must be a valid pointer to an FFIWalletManager instance - `wallet_id` must be a valid pointer to a 32-byte wallet ID - `error` must be a valid pointer to an FFIError structure - The caller must ensure all pointers remain valid for the duration of this call
 
 **Module:** `managed_account`
 
@@ -952,10 +955,10 @@ managed_wallet_get_address_pool_info(managed_wallet: *const FFIManagedWalletInfo
 ```
 
 **Description:**
-Get address pool information for an account  # Safety  - `managed_wallet` must be a valid pointer to an FFIManagedWalletInfo - `info_out` must be a valid pointer to store the pool info - `error` must be a valid pointer to an FFIError or null
+Get address pool information for an account  # Safety  - `managed_wallet` must be a valid pointer to an FFIManagedWalletInfo - `info_out` must be a valid pointer to store the pool info - `error` must be a valid pointer to an FFIError
 
 **Safety:**
-- `managed_wallet` must be a valid pointer to an FFIManagedWalletInfo - `info_out` must be a valid pointer to store the pool info - `error` must be a valid pointer to an FFIError or null
+- `managed_wallet` must be a valid pointer to an FFIManagedWalletInfo - `info_out` must be a valid pointer to store the pool info - `error` must be a valid pointer to an FFIError
 
 **Module:** `address_pool`
 
@@ -1112,10 +1115,10 @@ managed_wallet_get_utxos(managed_info: *const FFIManagedWalletInfo, utxos_out: *
 ```
 
 **Description:**
-Get all UTXOs from managed wallet info  # Safety  - `managed_info` must be a valid pointer to an FFIManagedWalletInfo instance - `utxos_out` must be a valid pointer to store the UTXO array pointer - `count_out` must be a valid pointer to store the UTXO count - `error` must be a valid pointer to an FFIError structure or null - The caller must ensure all pointers remain valid for the duration of this call - The returned UTXO array must be freed with `utxo_array_free` when no longer needed
+Get all UTXOs from managed wallet info  # Safety  - `managed_info` must be a valid pointer to an FFIManagedWalletInfo instance - `utxos_out` must be a valid pointer to store the UTXO array pointer - `count_out` must be a valid pointer to store the UTXO count - `error` must be a valid pointer to an FFIError structure - The caller must ensure all pointers remain valid for the duration of this call - The returned UTXO array must be freed with `utxo_array_free` when no longer needed
 
 **Safety:**
-- `managed_info` must be a valid pointer to an FFIManagedWalletInfo instance - `utxos_out` must be a valid pointer to store the UTXO array pointer - `count_out` must be a valid pointer to store the UTXO count - `error` must be a valid pointer to an FFIError structure or null - The caller must ensure all pointers remain valid for the duration of this call - The returned UTXO array must be freed with `utxo_array_free` when no longer needed
+- `managed_info` must be a valid pointer to an FFIManagedWalletInfo instance - `utxos_out` must be a valid pointer to store the UTXO array pointer - `count_out` must be a valid pointer to store the UTXO count - `error` must be a valid pointer to an FFIError structure - The caller must ensure all pointers remain valid for the duration of this call - The returned UTXO array must be freed with `utxo_array_free` when no longer needed
 
 **Module:** `utxo`
 
@@ -1144,10 +1147,10 @@ managed_wallet_mark_address_used(managed_wallet: *mut FFIManagedWalletInfo, addr
 ```
 
 **Description:**
-Mark an address as used in the pool  This updates the pool's tracking of which addresses have been used, which is important for gap limit management and wallet recovery.  # Safety  - `managed_wallet` must be a valid pointer to an FFIManagedWalletInfo - `address` must be a valid C string - `error` must be a valid pointer to an FFIError or null
+Mark an address as used in the pool  This updates the pool's tracking of which addresses have been used, which is important for gap limit management and wallet recovery.  # Safety  - `managed_wallet` must be a valid pointer to an FFIManagedWalletInfo - `address` must be a valid C string - `error` must be a valid pointer to an FFIError
 
 **Safety:**
-- `managed_wallet` must be a valid pointer to an FFIManagedWalletInfo - `address` must be a valid C string - `error` must be a valid pointer to an FFIError or null
+- `managed_wallet` must be a valid pointer to an FFIManagedWalletInfo - `address` must be a valid C string - `error` must be a valid pointer to an FFIError
 
 **Module:** `address_pool`
 
@@ -1160,10 +1163,10 @@ managed_wallet_set_gap_limit(managed_wallet: *mut FFIManagedWalletInfo, account_
 ```
 
 **Description:**
-Set the gap limit for an address pool  The gap limit determines how many unused addresses to maintain at the end of the pool. This is important for wallet recovery and address discovery.  # Safety  - `managed_wallet` must be a valid pointer to an FFIManagedWalletInfo - `error` must be a valid pointer to an FFIError or null
+Set the gap limit for an address pool  The gap limit determines how many unused addresses to maintain at the end of the pool. This is important for wallet recovery and address discovery.  # Safety  - `managed_wallet` must be a valid pointer to an FFIManagedWalletInfo - `error` must be a valid pointer to an FFIError
 
 **Safety:**
-- `managed_wallet` must be a valid pointer to an FFIManagedWalletInfo - `error` must be a valid pointer to an FFIError or null
+- `managed_wallet` must be a valid pointer to an FFIManagedWalletInfo - `error` must be a valid pointer to an FFIError
 
 **Module:** `address_pool`
 
@@ -1176,10 +1179,10 @@ managed_wallet_synced_height(managed_wallet: *const FFIManagedWalletInfo, error:
 ```
 
 **Description:**
-Get current synced height from wallet info  # Safety  - `managed_wallet` must be a valid pointer to an FFIManagedWalletInfo - `error` must be a valid pointer to an FFIError structure or null - The caller must ensure all pointers remain valid for the duration of this call
+Get current synced height from wallet info  # Safety  - `managed_wallet` must be a valid pointer to an FFIManagedWalletInfo - `error` must be a valid pointer to an FFIError structure - The caller must ensure all pointers remain valid for the duration of this call
 
 **Safety:**
-- `managed_wallet` must be a valid pointer to an FFIManagedWalletInfo - `error` must be a valid pointer to an FFIError structure or null - The caller must ensure all pointers remain valid for the duration of this call
+- `managed_wallet` must be a valid pointer to an FFIManagedWalletInfo - `error` must be a valid pointer to an FFIError structure - The caller must ensure all pointers remain valid for the duration of this call
 
 **Module:** `managed_wallet`
 
@@ -1336,10 +1339,10 @@ wallet_create_from_mnemonic(mnemonic: *const c_char, passphrase: *const c_char, 
 ```
 
 **Description:**
-Create a new wallet from mnemonic (backward compatibility - single network)  # Safety  - `mnemonic` must be a valid pointer to a null-terminated C string - `passphrase` must be a valid pointer to a null-terminated C string or null - `error` must be a valid pointer to an FFIError structure or null - The caller must ensure all pointers remain valid for the duration of this call - The returned pointer must be freed with `wallet_free` when no longer needed
+Create a new wallet from mnemonic (backward compatibility - single network)  # Safety  - `mnemonic` must be a valid pointer to a null-terminated C string - `passphrase` must be a valid pointer to a null-terminated C string or null - `error` must be a valid pointer to an FFIError structure - The caller must ensure all pointers remain valid for the duration of this call - The returned pointer must be freed with `wallet_free` when no longer needed
 
 **Safety:**
-- `mnemonic` must be a valid pointer to a null-terminated C string - `passphrase` must be a valid pointer to a null-terminated C string or null - `error` must be a valid pointer to an FFIError structure or null - The caller must ensure all pointers remain valid for the duration of this call - The returned pointer must be freed with `wallet_free` when no longer needed
+- `mnemonic` must be a valid pointer to a null-terminated C string - `passphrase` must be a valid pointer to a null-terminated C string or null - `error` must be a valid pointer to an FFIError structure - The caller must ensure all pointers remain valid for the duration of this call - The returned pointer must be freed with `wallet_free` when no longer needed
 
 **Module:** `wallet`
 
@@ -1352,10 +1355,10 @@ wallet_create_from_mnemonic_with_options(mnemonic: *const c_char, passphrase: *c
 ```
 
 **Description:**
-Create a new wallet from mnemonic with options  # Safety  - `mnemonic` must be a valid pointer to a null-terminated C string - `passphrase` must be a valid pointer to a null-terminated C string or null - `account_options` must be a valid pointer to FFIWalletAccountCreationOptions or null - `error` must be a valid pointer to an FFIError structure or null - The caller must ensure all pointers remain valid for the duration of this call - The returned pointer must be freed with `wallet_free` when no longer needed
+Create a new wallet from mnemonic with options  # Safety  - `mnemonic` must be a valid pointer to a null-terminated C string - `passphrase` must be a valid pointer to a null-terminated C string or null - `account_options` must be a valid pointer to FFIWalletAccountCreationOptions or null - `error` must be a valid pointer to an FFIError structure - The caller must ensure all pointers remain valid for the duration of this call - The returned pointer must be freed with `wallet_free` when no longer needed
 
 **Safety:**
-- `mnemonic` must be a valid pointer to a null-terminated C string - `passphrase` must be a valid pointer to a null-terminated C string or null - `account_options` must be a valid pointer to FFIWalletAccountCreationOptions or null - `error` must be a valid pointer to an FFIError structure or null - The caller must ensure all pointers remain valid for the duration of this call - The returned pointer must be freed with `wallet_free` when no longer needed
+- `mnemonic` must be a valid pointer to a null-terminated C string - `passphrase` must be a valid pointer to a null-terminated C string or null - `account_options` must be a valid pointer to FFIWalletAccountCreationOptions or null - `error` must be a valid pointer to an FFIError structure - The caller must ensure all pointers remain valid for the duration of this call - The returned pointer must be freed with `wallet_free` when no longer needed
 
 **Module:** `wallet`
 
@@ -1368,10 +1371,10 @@ wallet_create_from_seed(seed: *const u8, seed_len: usize, network: FFINetwork, e
 ```
 
 **Description:**
-Create a new wallet from seed (backward compatibility)  # Safety  - `seed` must be a valid pointer to a byte array of `seed_len` length - `error` must be a valid pointer to an FFIError structure or null - The caller must ensure all pointers remain valid for the duration of this call
+Create a new wallet from seed (backward compatibility)  # Safety  - `seed` must be a valid pointer to a byte array of `seed_len` length - `error` must be a valid pointer to an FFIError structure - The caller must ensure all pointers remain valid for the duration of this call
 
 **Safety:**
-- `seed` must be a valid pointer to a byte array of `seed_len` length - `error` must be a valid pointer to an FFIError structure or null - The caller must ensure all pointers remain valid for the duration of this call
+- `seed` must be a valid pointer to a byte array of `seed_len` length - `error` must be a valid pointer to an FFIError structure - The caller must ensure all pointers remain valid for the duration of this call
 
 **Module:** `wallet`
 
@@ -1384,10 +1387,10 @@ wallet_create_from_seed_with_options(seed: *const u8, seed_len: usize, network: 
 ```
 
 **Description:**
-Create a new wallet from seed with options  # Safety  - `seed` must be a valid pointer to a byte array of `seed_len` length - `account_options` must be a valid pointer to FFIWalletAccountCreationOptions or null - `error` must be a valid pointer to an FFIError structure or null - The caller must ensure all pointers remain valid for the duration of this call
+Create a new wallet from seed with options  # Safety  - `seed` must be a valid pointer to a byte array of `seed_len` length - `account_options` must be a valid pointer to FFIWalletAccountCreationOptions or null - `error` must be a valid pointer to an FFIError structure - The caller must ensure all pointers remain valid for the duration of this call
 
 **Safety:**
-- `seed` must be a valid pointer to a byte array of `seed_len` length - `account_options` must be a valid pointer to FFIWalletAccountCreationOptions or null - `error` must be a valid pointer to an FFIError structure or null - The caller must ensure all pointers remain valid for the duration of this call
+- `seed` must be a valid pointer to a byte array of `seed_len` length - `account_options` must be a valid pointer to FFIWalletAccountCreationOptions or null - `error` must be a valid pointer to an FFIError structure - The caller must ensure all pointers remain valid for the duration of this call
 
 **Module:** `wallet`
 
@@ -1400,10 +1403,10 @@ wallet_create_managed_wallet(wallet: *const FFIWallet, error: *mut FFIError,) ->
 ```
 
 **Description:**
-Create a managed wallet from a regular wallet  This creates a ManagedWalletInfo instance from a Wallet, which includes address pools and transaction checking capabilities.  # Safety  - `wallet` must be a valid pointer to an FFIWallet - `error` must be a valid pointer to an FFIError or null - The returned pointer must be freed with `managed_wallet_info_free` (or `ffi_managed_wallet_free` for compatibility)
+Create a managed wallet from a regular wallet  This creates a ManagedWalletInfo instance from a Wallet, which includes address pools and transaction checking capabilities.  # Safety  - `wallet` must be a valid pointer to an FFIWallet - `error` must be a valid pointer to an FFIError - The returned pointer must be freed with `managed_wallet_info_free` (or `ffi_managed_wallet_free` for compatibility)
 
 **Safety:**
-- `wallet` must be a valid pointer to an FFIWallet - `error` must be a valid pointer to an FFIError or null - The returned pointer must be freed with `managed_wallet_info_free` (or `ffi_managed_wallet_free` for compatibility)
+- `wallet` must be a valid pointer to an FFIWallet - `error` must be a valid pointer to an FFIError - The returned pointer must be freed with `managed_wallet_info_free` (or `ffi_managed_wallet_free` for compatibility)
 
 **Module:** `transaction_checking`
 
@@ -1416,10 +1419,10 @@ wallet_create_random(network: FFINetwork, error: *mut FFIError,) -> *mut FFIWall
 ```
 
 **Description:**
-Create a new random wallet (backward compatibility)  # Safety  - `error` must be a valid pointer to an FFIError structure or null - The caller must ensure the pointer remains valid for the duration of this call
+Create a new random wallet (backward compatibility)  # Safety  - `error` must be a valid pointer to an FFIError structure - The caller must ensure the pointer remains valid for the duration of this call
 
 **Safety:**
-- `error` must be a valid pointer to an FFIError structure or null - The caller must ensure the pointer remains valid for the duration of this call
+- `error` must be a valid pointer to an FFIError structure - The caller must ensure the pointer remains valid for the duration of this call
 
 **Module:** `wallet`
 
@@ -1432,10 +1435,10 @@ wallet_create_random_with_options(network: FFINetwork, account_options: *const F
 ```
 
 **Description:**
-Create a new random wallet with options  # Safety  - `account_options` must be a valid pointer to FFIWalletAccountCreationOptions or null - `error` must be a valid pointer to an FFIError structure or null - The caller must ensure all pointers remain valid for the duration of this call
+Create a new random wallet with options  # Safety  - `account_options` must be a valid pointer to FFIWalletAccountCreationOptions or null - `error` must be a valid pointer to an FFIError structure - The caller must ensure all pointers remain valid for the duration of this call
 
 **Safety:**
-- `account_options` must be a valid pointer to FFIWalletAccountCreationOptions or null - `error` must be a valid pointer to an FFIError structure or null - The caller must ensure all pointers remain valid for the duration of this call
+- `account_options` must be a valid pointer to FFIWalletAccountCreationOptions or null - `error` must be a valid pointer to an FFIError structure - The caller must ensure all pointers remain valid for the duration of this call
 
 **Module:** `wallet`
 
@@ -1592,10 +1595,10 @@ wallet_get_account_collection(wallet: *const FFIWallet, error: *mut FFIError,) -
 ```
 
 **Description:**
-Get account collection for a specific network from wallet  # Safety  - `wallet` must be a valid pointer to an FFIWallet instance - `error` must be a valid pointer to an FFIError structure or null - The returned pointer must be freed with `account_collection_free` when no longer needed
+Get account collection for a specific network from wallet  # Safety  - `wallet` must be a valid pointer to an FFIWallet instance - `error` must be a valid pointer to an FFIError structure - The returned pointer must be freed with `account_collection_free` when no longer needed
 
 **Safety:**
-- `wallet` must be a valid pointer to an FFIWallet instance - `error` must be a valid pointer to an FFIError structure or null - The returned pointer must be freed with `account_collection_free` when no longer needed
+- `wallet` must be a valid pointer to an FFIWallet instance - `error` must be a valid pointer to an FFIError structure - The returned pointer must be freed with `account_collection_free` when no longer needed
 
 **Module:** `account_collection`
 
@@ -1656,10 +1659,10 @@ wallet_get_id(wallet: *const FFIWallet, id_out: *mut u8, error: *mut FFIError,) 
 ```
 
 **Description:**
-Get wallet ID (32-byte hash)  # Safety  - `wallet` must be a valid pointer to an FFIWallet - `id_out` must be a valid pointer to a 32-byte buffer - `error` must be a valid pointer to an FFIError structure or null - The caller must ensure all pointers remain valid for the duration of this call
+Get wallet ID (32-byte hash)  # Safety  - `wallet` must be a valid pointer to an FFIWallet - `id_out` must be a valid pointer to a 32-byte buffer - `error` must be a valid pointer to an FFIError structure - The caller must ensure all pointers remain valid for the duration of this call
 
 **Safety:**
-- `wallet` must be a valid pointer to an FFIWallet - `id_out` must be a valid pointer to a 32-byte buffer - `error` must be a valid pointer to an FFIError structure or null - The caller must ensure all pointers remain valid for the duration of this call
+- `wallet` must be a valid pointer to an FFIWallet - `id_out` must be a valid pointer to a 32-byte buffer - `error` must be a valid pointer to an FFIError structure - The caller must ensure all pointers remain valid for the duration of this call
 
 **Module:** `wallet`
 
@@ -1704,10 +1707,10 @@ wallet_get_xpub(wallet: *const FFIWallet, account_index: c_uint, error: *mut FFI
 ```
 
 **Description:**
-Get extended public key for account  # Safety  - `wallet` must be a valid pointer to an FFIWallet instance - `error` must be a valid pointer to an FFIError structure or null - The caller must ensure all pointers remain valid for the duration of this call - The returned C string must be freed by the caller when no longer needed
+Get extended public key for account  # Safety  - `wallet` must be a valid pointer to an FFIWallet instance - `error` must be a valid pointer to an FFIError structure - The caller must ensure all pointers remain valid for the duration of this call - The returned C string must be freed by the caller when no longer needed
 
 **Safety:**
-- `wallet` must be a valid pointer to an FFIWallet instance - `error` must be a valid pointer to an FFIError structure or null - The caller must ensure all pointers remain valid for the duration of this call - The returned C string must be freed by the caller when no longer needed
+- `wallet` must be a valid pointer to an FFIWallet instance - `error` must be a valid pointer to an FFIError structure - The caller must ensure all pointers remain valid for the duration of this call - The returned C string must be freed by the caller when no longer needed
 
 **Module:** `wallet`
 
@@ -1720,10 +1723,10 @@ wallet_has_mnemonic(wallet: *const FFIWallet, error: *mut FFIError,) -> bool
 ```
 
 **Description:**
-Check if wallet has mnemonic  # Safety  - `wallet` must be a valid pointer to an FFIWallet instance - `error` must be a valid pointer to an FFIError structure or null - The caller must ensure all pointers remain valid for the duration of this call
+Check if wallet has mnemonic  # Safety  - `wallet` must be a valid pointer to an FFIWallet instance - `error` must be a valid pointer to an FFIError structure - The caller must ensure all pointers remain valid for the duration of this call
 
 **Safety:**
-- `wallet` must be a valid pointer to an FFIWallet instance - `error` must be a valid pointer to an FFIError structure or null - The caller must ensure all pointers remain valid for the duration of this call
+- `wallet` must be a valid pointer to an FFIWallet instance - `error` must be a valid pointer to an FFIError structure - The caller must ensure all pointers remain valid for the duration of this call
 
 **Module:** `wallet`
 
@@ -1736,10 +1739,10 @@ wallet_is_watch_only(wallet: *const FFIWallet, error: *mut FFIError,) -> bool
 ```
 
 **Description:**
-Check if wallet is watch-only  # Safety  - `wallet` must be a valid pointer to an FFIWallet instance - `error` must be a valid pointer to an FFIError structure or null - The caller must ensure all pointers remain valid for the duration of this call
+Check if wallet is watch-only  # Safety  - `wallet` must be a valid pointer to an FFIWallet instance - `error` must be a valid pointer to an FFIError structure - The caller must ensure all pointers remain valid for the duration of this call
 
 **Safety:**
-- `wallet` must be a valid pointer to an FFIWallet instance - `error` must be a valid pointer to an FFIError structure or null - The caller must ensure all pointers remain valid for the duration of this call
+- `wallet` must be a valid pointer to an FFIWallet instance - `error` must be a valid pointer to an FFIError structure - The caller must ensure all pointers remain valid for the duration of this call
 
 **Module:** `wallet`
 
@@ -2186,10 +2189,10 @@ account_derive_extended_private_key_at(account: *const FFIAccount, master_xpriv:
 ```
 
 **Description:**
-Derive an extended private key from an account at a given index, using the provided master xpriv.  Returns an opaque FFIExtendedPrivKey pointer that must be freed with `extended_private_key_free`.  Notes: - This is chain-agnostic. For accounts with internal/external chains, this returns an error. - For hardened-only account types (e.g., EdDSA), a hardened index is used.  # Safety - `account` and `master_xpriv` must be valid, non-null pointers allocated by this library. - `error` must be a valid pointer to an FFIError or null. - The caller must free the returned pointer with `extended_private_key_free`.
+Derive an extended private key from an account at a given index, using the provided master xpriv.  Returns an opaque FFIExtendedPrivKey pointer that must be freed with `extended_private_key_free`.  Notes: - This is chain-agnostic. For accounts with internal/external chains, this returns an error. - For hardened-only account types (e.g., EdDSA), a hardened index is used.  # Safety - `account` and `master_xpriv` must be valid, non-null pointers allocated by this library. - `error` must be a valid pointer to an FFIError. - The caller must free the returned pointer with `extended_private_key_free`.
 
 **Safety:**
-- `account` and `master_xpriv` must be valid, non-null pointers allocated by this library. - `error` must be a valid pointer to an FFIError or null. - The caller must free the returned pointer with `extended_private_key_free`.
+- `account` and `master_xpriv` must be valid, non-null pointers allocated by this library. - `error` must be a valid pointer to an FFIError. - The caller must free the returned pointer with `extended_private_key_free`.
 
 **Module:** `account_derivation`
 
@@ -2202,10 +2205,10 @@ account_derive_extended_private_key_from_mnemonic(account: *const FFIAccount, mn
 ```
 
 **Description:**
-Derive an extended private key from a mnemonic + optional passphrase at the given index. Returns an opaque FFIExtendedPrivKey pointer that must be freed with `extended_private_key_free`.  # Safety - `account` must be a valid pointer to an FFIAccount - `mnemonic` must be a valid, null-terminated C string - `passphrase` may be null; if not null, must be a valid C string - `error` must be a valid pointer to an FFIError or null
+Derive an extended private key from a mnemonic + optional passphrase at the given index. Returns an opaque FFIExtendedPrivKey pointer that must be freed with `extended_private_key_free`.  # Safety - `account` must be a valid pointer to an FFIAccount - `mnemonic` must be a valid, null-terminated C string - `passphrase` may be null; if not null, must be a valid C string - `error` must be a valid pointer to an FFIError
 
 **Safety:**
-- `account` must be a valid pointer to an FFIAccount - `mnemonic` must be a valid, null-terminated C string - `passphrase` may be null; if not null, must be a valid C string - `error` must be a valid pointer to an FFIError or null
+- `account` must be a valid pointer to an FFIAccount - `mnemonic` must be a valid, null-terminated C string - `passphrase` may be null; if not null, must be a valid C string - `error` must be a valid pointer to an FFIError
 
 **Module:** `account_derivation`
 
@@ -2218,10 +2221,10 @@ account_derive_extended_private_key_from_seed(account: *const FFIAccount, seed: 
 ```
 
 **Description:**
-Derive an extended private key from a raw seed buffer at the given index. Returns an opaque FFIExtendedPrivKey pointer that must be freed with `extended_private_key_free`.  # Safety - `account` must be a valid pointer to an FFIAccount - `seed` must point to a valid buffer of length `seed_len` - `error` must be a valid pointer to an FFIError or null
+Derive an extended private key from a raw seed buffer at the given index. Returns an opaque FFIExtendedPrivKey pointer that must be freed with `extended_private_key_free`.  # Safety - `account` must be a valid pointer to an FFIAccount - `seed` must point to a valid buffer of length `seed_len` - `error` must be a valid pointer to an FFIError
 
 **Safety:**
-- `account` must be a valid pointer to an FFIAccount - `seed` must point to a valid buffer of length `seed_len` - `error` must be a valid pointer to an FFIError or null
+- `account` must be a valid pointer to an FFIAccount - `seed` must point to a valid buffer of length `seed_len` - `error` must be a valid pointer to an FFIError
 
 **Module:** `account_derivation`
 
@@ -2234,10 +2237,10 @@ account_derive_private_key_as_wif_at(account: *const FFIAccount, master_xpriv: *
 ```
 
 **Description:**
-Derive a private key from an account at a given chain/index and return as WIF string. Caller must free the returned string with `string_free`.  # Safety - `account` and `master_xpriv` must be valid pointers allocated by this library - `error` must be a valid pointer to an FFIError or null
+Derive a private key from an account at a given chain/index and return as WIF string. Caller must free the returned string with `string_free`.  # Safety - `account` and `master_xpriv` must be valid pointers allocated by this library - `error` must be a valid pointer to an FFIError
 
 **Safety:**
-- `account` and `master_xpriv` must be valid pointers allocated by this library - `error` must be a valid pointer to an FFIError or null
+- `account` and `master_xpriv` must be valid pointers allocated by this library - `error` must be a valid pointer to an FFIError
 
 **Module:** `account_derivation`
 
@@ -2250,10 +2253,10 @@ account_derive_private_key_at(account: *const FFIAccount, master_xpriv: *const F
 ```
 
 **Description:**
-Derive a private key (secp256k1) from an account at a given chain/index, using the provided master xpriv. Returns an opaque FFIPrivateKey pointer that must be freed with `private_key_free`.  # Safety - `account` and `master_xpriv` must be valid pointers allocated by this library - `error` must be a valid pointer to an FFIError or null
+Derive a private key (secp256k1) from an account at a given chain/index, using the provided master xpriv. Returns an opaque FFIPrivateKey pointer that must be freed with `private_key_free`.  # Safety - `account` and `master_xpriv` must be valid pointers allocated by this library - `error` must be a valid pointer to an FFIError
 
 **Safety:**
-- `account` and `master_xpriv` must be valid pointers allocated by this library - `error` must be a valid pointer to an FFIError or null
+- `account` and `master_xpriv` must be valid pointers allocated by this library - `error` must be a valid pointer to an FFIError
 
 **Module:** `account_derivation`
 
@@ -2266,10 +2269,10 @@ account_derive_private_key_from_mnemonic(account: *const FFIAccount, mnemonic: *
 ```
 
 **Description:**
-Derive a private key from a mnemonic + optional passphrase at the given index. Returns an opaque FFIPrivateKey pointer that must be freed with `private_key_free`.  # Safety - `account` must be a valid pointer to an FFIAccount - `mnemonic` must be a valid, null-terminated C string - `passphrase` may be null; if not null, must be a valid C string - `error` must be a valid pointer to an FFIError or null
+Derive a private key from a mnemonic + optional passphrase at the given index. Returns an opaque FFIPrivateKey pointer that must be freed with `private_key_free`.  # Safety - `account` must be a valid pointer to an FFIAccount - `mnemonic` must be a valid, null-terminated C string - `passphrase` may be null; if not null, must be a valid C string - `error` must be a valid pointer to an FFIError
 
 **Safety:**
-- `account` must be a valid pointer to an FFIAccount - `mnemonic` must be a valid, null-terminated C string - `passphrase` may be null; if not null, must be a valid C string - `error` must be a valid pointer to an FFIError or null
+- `account` must be a valid pointer to an FFIAccount - `mnemonic` must be a valid, null-terminated C string - `passphrase` may be null; if not null, must be a valid C string - `error` must be a valid pointer to an FFIError
 
 **Module:** `account_derivation`
 
@@ -2282,10 +2285,10 @@ account_derive_private_key_from_seed(account: *const FFIAccount, seed: *const u8
 ```
 
 **Description:**
-Derive a private key from a raw seed buffer at the given index. Returns an opaque FFIPrivateKey pointer that must be freed with `private_key_free`.  # Safety - `account` must be a valid pointer to an FFIAccount - `seed` must point to a valid buffer of length `seed_len` - `error` must be a valid pointer to an FFIError or null
+Derive a private key from a raw seed buffer at the given index. Returns an opaque FFIPrivateKey pointer that must be freed with `private_key_free`.  # Safety - `account` must be a valid pointer to an FFIAccount - `seed` must point to a valid buffer of length `seed_len` - `error` must be a valid pointer to an FFIError
 
 **Safety:**
-- `account` must be a valid pointer to an FFIAccount - `seed` must point to a valid buffer of length `seed_len` - `error` must be a valid pointer to an FFIError or null
+- `account` must be a valid pointer to an FFIAccount - `seed` must point to a valid buffer of length `seed_len` - `error` must be a valid pointer to an FFIError
 
 **Module:** `account_derivation`
 
@@ -2448,7 +2451,10 @@ derivation_bip44_account_path(network: FFINetwork, account_index: c_uint, path_o
 ```
 
 **Description:**
-Derive a BIP44 account path (m/44'/5'/account')
+Derive a BIP44 account path (m/44'/5'/account')  # Safety  `path_out` must point to a writable buffer of at least `path_max_len` bytes and `error` must be a valid pointer to an `FFIError`.
+
+**Safety:**
+`path_out` must point to a writable buffer of at least `path_max_len` bytes and `error` must be a valid pointer to an `FFIError`.
 
 **Module:** `derivation`
 
@@ -3509,10 +3515,10 @@ address_pool_get_address_at_index(pool: *const FFIAddressPool, index: u32, error
 ```
 
 **Description:**
-Get a single address info at a specific index from the pool  Returns detailed information about the address at the given index, or NULL if the index is out of bounds or not generated yet.  # Safety  - `pool` must be a valid pointer to an FFIAddressPool - `error` must be a valid pointer to an FFIError or null - The returned FFIAddressInfo must be freed using `address_info_free`
+Get a single address info at a specific index from the pool  Returns detailed information about the address at the given index, or NULL if the index is out of bounds or not generated yet.  # Safety  - `pool` must be a valid pointer to an FFIAddressPool - `error` must be a valid pointer to an FFIError - The returned FFIAddressInfo must be freed using `address_info_free`
 
 **Safety:**
-- `pool` must be a valid pointer to an FFIAddressPool - `error` must be a valid pointer to an FFIError or null - The returned FFIAddressInfo must be freed using `address_info_free`
+- `pool` must be a valid pointer to an FFIAddressPool - `error` must be a valid pointer to an FFIError - The returned FFIAddressInfo must be freed using `address_info_free`
 
 **Module:** `address_pool`
 
@@ -3525,10 +3531,10 @@ address_pool_get_addresses_in_range(pool: *const FFIAddressPool, start_index: u3
 ```
 
 **Description:**
-Get a range of addresses from the pool  Returns an array of FFIAddressInfo structures for addresses in the range [start_index, end_index). The count_out parameter will be set to the actual number of addresses returned.  Note: This function only reads existing addresses from the pool. It does not generate new addresses. Use managed_wallet_generate_addresses_to_index if you need to generate addresses first.  # Safety  - `pool` must be a valid pointer to an FFIAddressPool - `count_out` must be a valid pointer to store the count - `error` must be a valid pointer to an FFIError or null - The returned array must be freed using `address_info_array_free`
+Get a range of addresses from the pool  Returns an array of FFIAddressInfo structures for addresses in the range [start_index, end_index). The count_out parameter will be set to the actual number of addresses returned.  Note: This function only reads existing addresses from the pool. It does not generate new addresses. Use managed_wallet_generate_addresses_to_index if you need to generate addresses first.  # Safety  - `pool` must be a valid pointer to an FFIAddressPool - `count_out` must be a valid pointer to store the count - `error` must be a valid pointer to an FFIError - The returned array must be freed using `address_info_array_free`
 
 **Safety:**
-- `pool` must be a valid pointer to an FFIAddressPool - `count_out` must be a valid pointer to store the count - `error` must be a valid pointer to an FFIError or null - The returned array must be freed using `address_info_array_free`
+- `pool` must be a valid pointer to an FFIAddressPool - `count_out` must be a valid pointer to store the count - `error` must be a valid pointer to an FFIError - The returned array must be freed using `address_info_array_free`
 
 **Module:** `address_pool`
 
@@ -3639,10 +3645,10 @@ transaction_classify(tx_bytes: *const u8, tx_len: usize, error: *mut FFIError,) 
 ```
 
 **Description:**
-Get the transaction classification for routing  Returns a string describing the transaction type (e.g., "Standard", "CoinJoin", "AssetLock", "AssetUnlock", "ProviderRegistration", etc.)  # Safety  - `tx_bytes` must be a valid pointer to transaction bytes with at least `tx_len` bytes - `error` must be a valid pointer to an FFIError or null - The returned string must be freed by the caller
+Get the transaction classification for routing  Returns a string describing the transaction type (e.g., "Standard", "CoinJoin", "AssetLock", "AssetUnlock", "ProviderRegistration", etc.)  # Safety  - `tx_bytes` must be a valid pointer to transaction bytes with at least `tx_len` bytes - `error` must be a valid pointer to an FFIError - The returned string must be freed by the caller
 
 **Safety:**
-- `tx_bytes` must be a valid pointer to transaction bytes with at least `tx_len` bytes - `error` must be a valid pointer to an FFIError or null - The returned string must be freed by the caller
+- `tx_bytes` must be a valid pointer to transaction bytes with at least `tx_len` bytes - `error` must be a valid pointer to an FFIError - The returned string must be freed by the caller
 
 **Module:** `transaction_checking`
 
@@ -3794,14 +3800,14 @@ Free UTXO array  # Safety  - `utxos` must be a valid pointer to an array of FFIU
 #### `bip38_decrypt_private_key`
 
 ```c
-bip38_decrypt_private_key(encrypted_key: *const c_char, passphrase: *const c_char, error: *mut FFIError,) -> *mut c_char
+bip38_decrypt_private_key(_encrypted_key: *const c_char, _passphrase: *const c_char, error: *mut FFIError,) -> *mut c_char
 ```
 
 **Description:**
-Decrypt a BIP38 encrypted private key  # Safety  This function is unsafe because it dereferences raw pointers: - `encrypted_key` must be a valid, null-terminated C string - `passphrase` must be a valid, null-terminated C string - `error` must be a valid pointer to an FFIError or null
+Decrypt a BIP38 encrypted private key  # Safety  This function is unsafe because it dereferences raw pointers: - `encrypted_key` must be a valid, null-terminated C string - `passphrase` must be a valid, null-terminated C string - `error` must be a valid pointer to an FFIError
 
 **Safety:**
-This function is unsafe because it dereferences raw pointers: - `encrypted_key` must be a valid, null-terminated C string - `passphrase` must be a valid, null-terminated C string - `error` must be a valid pointer to an FFIError or null
+This function is unsafe because it dereferences raw pointers: - `encrypted_key` must be a valid, null-terminated C string - `passphrase` must be a valid, null-terminated C string - `error` must be a valid pointer to an FFIError
 
 **Module:** `bip38`
 
@@ -3810,14 +3816,14 @@ This function is unsafe because it dereferences raw pointers: - `encrypted_key` 
 #### `bip38_encrypt_private_key`
 
 ```c
-bip38_encrypt_private_key(private_key: *const c_char, passphrase: *const c_char, error: *mut FFIError,) -> *mut c_char
+bip38_encrypt_private_key(_private_key: *const c_char, _passphrase: *const c_char, error: *mut FFIError,) -> *mut c_char
 ```
 
 **Description:**
-Encrypt a private key with BIP38  # Safety  This function is unsafe because it dereferences raw pointers: - `private_key` must be a valid, null-terminated C string - `passphrase` must be a valid, null-terminated C string - `error` must be a valid pointer to an FFIError or null
+Encrypt a private key with BIP38  # Safety  This function is unsafe because it dereferences raw pointers: - `private_key` must be a valid, null-terminated C string - `passphrase` must be a valid, null-terminated C string - `error` must be a valid pointer to an FFIError
 
 **Safety:**
-This function is unsafe because it dereferences raw pointers: - `private_key` must be a valid, null-terminated C string - `passphrase` must be a valid, null-terminated C string - `error` must be a valid pointer to an FFIError or null
+This function is unsafe because it dereferences raw pointers: - `private_key` must be a valid, null-terminated C string - `passphrase` must be a valid, null-terminated C string - `error` must be a valid pointer to an FFIError
 
 **Module:** `bip38`
 
@@ -3830,10 +3836,10 @@ derivation_derive_private_key_from_seed(seed: *const u8, seed_len: usize, path: 
 ```
 
 **Description:**
-Derive private key for a specific path from seed  # Safety  - `seed` must be a valid pointer to a byte array of `seed_len` length - `path` must be a valid pointer to a null-terminated C string - `error` must be a valid pointer to an FFIError structure or null - The caller must ensure all pointers remain valid for the duration of this call
+Derive private key for a specific path from seed  # Safety  - `seed` must be a valid pointer to a byte array of `seed_len` length - `path` must be a valid pointer to a null-terminated C string - `error` must be a valid pointer to an FFIError structure - The caller must ensure all pointers remain valid for the duration of this call
 
 **Safety:**
-- `seed` must be a valid pointer to a byte array of `seed_len` length - `path` must be a valid pointer to a null-terminated C string - `error` must be a valid pointer to an FFIError structure or null - The caller must ensure all pointers remain valid for the duration of this call
+- `seed` must be a valid pointer to a byte array of `seed_len` length - `path` must be a valid pointer to a null-terminated C string - `error` must be a valid pointer to an FFIError structure - The caller must ensure all pointers remain valid for the duration of this call
 
 **Module:** `derivation`
 
@@ -3846,10 +3852,10 @@ derivation_new_master_key(seed: *const u8, seed_len: usize, network: FFINetwork,
 ```
 
 **Description:**
-Create a new master extended private key from seed  # Safety  - `seed` must be a valid pointer to a byte array of `seed_len` length - `error` must be a valid pointer to an FFIError structure or null - The caller must ensure the seed pointer remains valid for the duration of this call
+Create a new master extended private key from seed  # Safety  - `seed` must be a valid pointer to a byte array of `seed_len` length - `error` must be a valid pointer to an FFIError structure - The caller must ensure the seed pointer remains valid for the duration of this call
 
 **Safety:**
-- `seed` must be a valid pointer to a byte array of `seed_len` length - `error` must be a valid pointer to an FFIError structure or null - The caller must ensure the seed pointer remains valid for the duration of this call
+- `seed` must be a valid pointer to a byte array of `seed_len` length - `error` must be a valid pointer to an FFIError structure - The caller must ensure the seed pointer remains valid for the duration of this call
 
 **Module:** `derivation`
 
@@ -3890,7 +3896,7 @@ Get the private key from an extended private key  Extracts the non-extended priv
 #### `extended_private_key_to_string`
 
 ```c
-extended_private_key_to_string(key: *const FFIExtendedPrivKey, network: FFINetwork, error: *mut FFIError,) -> *mut c_char
+extended_private_key_to_string(key: *const FFIExtendedPrivKey, _network: FFINetwork, error: *mut FFIError,) -> *mut c_char
 ```
 
 **Description:**
@@ -3938,7 +3944,7 @@ Get the public key from an extended public key  Extracts the non-extended public
 #### `extended_public_key_to_string`
 
 ```c
-extended_public_key_to_string(key: *const FFIExtendedPubKey, network: FFINetwork, error: *mut FFIError,) -> *mut c_char
+extended_public_key_to_string(key: *const FFIExtendedPubKey, _network: FFINetwork, error: *mut FFIError,) -> *mut c_char
 ```
 
 **Description:**
@@ -4036,11 +4042,14 @@ Free a mnemonic string  # Safety  - `mnemonic` must be a valid pointer created b
 #### `mnemonic_generate`
 
 ```c
-mnemonic_generate(word_count: c_uint, error: *mut FFIError) -> *mut c_char
+mnemonic_generate(word_count: c_uint, error: *mut FFIError,) -> *mut c_char
 ```
 
 **Description:**
-Generate a new mnemonic with specified word count (12, 15, 18, 21, or 24)
+Generate a new mnemonic with specified word count (12, 15, 18, 21, or 24)  # Safety  `error` must be a valid pointer to an `FFIError`. The returned string must be freed with `mnemonic_free`.
+
+**Safety:**
+`error` must be a valid pointer to an `FFIError`. The returned string must be freed with `mnemonic_free`.
 
 **Module:** `mnemonic`
 
@@ -4053,7 +4062,10 @@ mnemonic_generate_with_language(word_count: c_uint, language: FFILanguage, error
 ```
 
 **Description:**
-Generate a new mnemonic with specified language and word count
+Generate a new mnemonic with specified language and word count  # Safety  `error` must be a valid pointer to an `FFIError`. The returned string must be freed with `mnemonic_free`.
+
+**Safety:**
+`error` must be a valid pointer to an `FFIError`. The returned string must be freed with `mnemonic_free`.
 
 **Module:** `mnemonic`
 
@@ -4116,7 +4128,10 @@ derivation_bip44_payment_path(network: FFINetwork, account_index: c_uint, is_cha
 ```
 
 **Description:**
-Derive a BIP44 payment path (m/44'/5'/account'/change/index)
+Derive a BIP44 payment path (m/44'/5'/account'/change/index)  # Safety  `path_out` must point to a writable buffer of at least `path_max_len` bytes and `error` must be a valid pointer to an `FFIError`.
+
+**Safety:**
+`path_out` must point to a writable buffer of at least `path_max_len` bytes and `error` must be a valid pointer to an `FFIError`.
 
 **Module:** `derivation`
 
@@ -4129,7 +4144,10 @@ derivation_coinjoin_path(network: FFINetwork, account_index: c_uint, path_out: *
 ```
 
 **Description:**
-Derive CoinJoin path (m/9'/5'/4'/account')
+Derive CoinJoin path (m/9'/5'/4'/account')  # Safety  `path_out` must point to a writable buffer of at least `path_max_len` bytes and `error` must be a valid pointer to an `FFIError`.
+
+**Safety:**
+`path_out` must point to a writable buffer of at least `path_max_len` bytes and `error` must be a valid pointer to an `FFIError`.
 
 **Module:** `derivation`
 
@@ -4142,7 +4160,10 @@ derivation_identity_authentication_path(network: FFINetwork, identity_index: c_u
 ```
 
 **Description:**
-Derive identity authentication path (m/9'/5'/5'/0'/identity_index'/key_index')
+Derive identity authentication path (m/9'/5'/5'/0'/identity_index'/key_index')  # Safety  `path_out` must point to a writable buffer of at least `path_max_len` bytes and `error` must be a valid pointer to an `FFIError`.
+
+**Safety:**
+`path_out` must point to a writable buffer of at least `path_max_len` bytes and `error` must be a valid pointer to an `FFIError`.
 
 **Module:** `derivation`
 
@@ -4155,7 +4176,10 @@ derivation_identity_registration_path(network: FFINetwork, identity_index: c_uin
 ```
 
 **Description:**
-Derive identity registration path (m/9'/5'/5'/1'/index')
+Derive identity registration path (m/9'/5'/5'/1'/index')  # Safety  `path_out` must point to a writable buffer of at least `path_max_len` bytes and `error` must be a valid pointer to an `FFIError`.
+
+**Safety:**
+`path_out` must point to a writable buffer of at least `path_max_len` bytes and `error` must be a valid pointer to an `FFIError`.
 
 **Module:** `derivation`
 
@@ -4168,7 +4192,10 @@ derivation_identity_topup_path(network: FFINetwork, identity_index: c_uint, topu
 ```
 
 **Description:**
-Derive identity top-up path (m/9'/5'/5'/2'/identity_index'/top_up_index')
+Derive identity top-up path (m/9'/5'/5'/2'/identity_index'/top_up_index')  # Safety  `path_out` must point to a writable buffer of at least `path_max_len` bytes and `error` must be a valid pointer to an `FFIError`.
+
+**Safety:**
+`path_out` must point to a writable buffer of at least `path_max_len` bytes and `error` must be a valid pointer to an `FFIError`.
 
 **Module:** `derivation`
 

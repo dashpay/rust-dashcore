@@ -12,12 +12,10 @@ use dash_spv::sync::{SyncEvent, SyncProgress};
 use dash_spv::EventHandler;
 use dashcore::hashes::Hash;
 use key_wallet_ffi::managed_account::FFITransactionRecord;
-use key_wallet_ffi::types::{
-    FFIInputDetail, FFIOutputDetail, FFIOutputRole, FFITransactionContext, FFITransactionDirection,
-    FFITransactionType,
-};
+use key_wallet_ffi::types::FFITransactionContext;
 use key_wallet_manager::WalletEvent;
 use std::ffi::CString;
+use std::ops::Deref;
 use std::os::raw::{c_char, c_void};
 
 // ============================================================================
@@ -705,76 +703,7 @@ impl FFIWalletEventCallbacks {
                     let wallet_id_hex = hex::encode(wallet_id);
                     let c_wallet_id = CString::new(wallet_id_hex).unwrap_or_default();
 
-                    let ffi_ctx = FFITransactionContext::from(record.context.clone());
-                    let islock_data = ffi_ctx.islock_data;
-                    let islock_len = ffi_ctx.islock_len;
-
-                    let tx_bytes =
-                        dashcore::consensus::serialize(&record.transaction).into_boxed_slice();
-
-                    let input_details: Vec<FFIInputDetail> = record
-                        .input_details
-                        .iter()
-                        .map(|d| {
-                            let addr = CString::new(d.address.to_string()).unwrap_or_default();
-                            FFIInputDetail {
-                                index: d.index,
-                                value: d.value,
-                                address: addr.into_raw(),
-                            }
-                        })
-                        .collect();
-
-                    let output_details: Vec<FFIOutputDetail> = record
-                        .output_details
-                        .iter()
-                        .map(|d| FFIOutputDetail {
-                            index: d.index,
-                            role: FFIOutputRole::from(d.role),
-                            value: d.value,
-                            address: match &d.address {
-                                Some(addr) => {
-                                    CString::new(addr.to_string()).unwrap_or_default().into_raw()
-                                }
-                                None => std::ptr::null_mut(),
-                            },
-                        })
-                        .collect();
-
-                    let c_label = CString::new(record.label.as_str()).unwrap_or_default();
-                    let c_label_ptr = if record.label.is_empty() {
-                        std::ptr::null_mut()
-                    } else {
-                        c_label.as_ptr() as *mut _
-                    };
-
-                    let ffi_record = FFITransactionRecord {
-                        txid: record.txid.to_byte_array(),
-                        net_amount: record.net_amount,
-                        context: ffi_ctx,
-                        transaction_type: FFITransactionType::from(record.transaction_type),
-                        direction: FFITransactionDirection::from(record.direction),
-                        fee: record.fee.unwrap_or(0),
-                        input_details: if input_details.is_empty() {
-                            std::ptr::null_mut()
-                        } else {
-                            input_details.as_ptr() as *mut _
-                        },
-                        input_details_count: input_details.len(),
-                        output_details: if output_details.is_empty() {
-                            std::ptr::null_mut()
-                        } else {
-                            output_details.as_ptr() as *mut _
-                        },
-                        output_details_count: output_details.len(),
-                        tx_data: if tx_bytes.is_empty() {
-                            std::ptr::null_mut()
-                        } else {
-                            tx_bytes.as_ptr() as *mut _
-                        },
-                        tx_len: tx_bytes.len(),
-                        label: c_label_ptr,
-                    };
+                    let ffi_record = FFITransactionRecord::from(record.deref());
 
                     cb(
                         c_wallet_id.as_ptr(),
@@ -782,33 +711,6 @@ impl FFIWalletEventCallbacks {
                         &ffi_record as *const FFITransactionRecord,
                         self.user_data,
                     );
-
-                    // Free the CString addresses from input details
-                    for detail in input_details {
-                        if !detail.address.is_null() {
-                            unsafe {
-                                drop(CString::from_raw(detail.address));
-                            }
-                        }
-                    }
-                    // Free the CString addresses from output details
-                    for detail in output_details {
-                        if !detail.address.is_null() {
-                            unsafe {
-                                drop(CString::from_raw(detail.address));
-                            }
-                        }
-                    }
-                    // SAFETY: Free the heap-allocated IS lock bytes produced by
-                    // `From<TransactionContext>` after the callback returns.
-                    if !islock_data.is_null() && islock_len > 0 {
-                        unsafe {
-                            drop(Box::from_raw(std::ptr::slice_from_raw_parts_mut(
-                                islock_data as *mut u8,
-                                islock_len,
-                            )));
-                        }
-                    }
                 }
             }
             WalletEvent::TransactionStatusChanged {
@@ -821,24 +723,13 @@ impl FFIWalletEventCallbacks {
                     let c_wallet_id = CString::new(wallet_id_hex).unwrap_or_default();
                     let txid_bytes = txid.as_byte_array();
                     let ffi_ctx = FFITransactionContext::from(status.clone());
-                    let islock_data = ffi_ctx.islock_data;
-                    let islock_len = ffi_ctx.islock_len;
+
                     cb(
                         c_wallet_id.as_ptr(),
                         txid_bytes as *const [u8; 32],
                         ffi_ctx,
                         self.user_data,
                     );
-                    // SAFETY: Free the heap-allocated IS lock bytes produced by
-                    // `From<TransactionContext>` after the callback returns.
-                    if !islock_data.is_null() && islock_len > 0 {
-                        unsafe {
-                            drop(Box::from_raw(std::ptr::slice_from_raw_parts_mut(
-                                islock_data as *mut u8,
-                                islock_len,
-                            )));
-                        }
-                    }
                 }
             }
             WalletEvent::BalanceUpdated {

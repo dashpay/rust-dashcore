@@ -9,7 +9,8 @@ use std::os::raw::{c_char, c_uchar};
 
 use dashcore::ffi::FFINetwork;
 
-use crate::error::{FFIError, FFIErrorCode};
+use crate::error::FFIError;
+use crate::{deref_ptr, unwrap_or_return};
 
 /// Free address string
 ///
@@ -62,56 +63,15 @@ pub unsafe extern "C" fn address_validate(
     network: FFINetwork,
     error: *mut FFIError,
 ) -> bool {
-    if address.is_null() {
-        FFIError::set_error(error, FFIErrorCode::InvalidInput, "Address is null".to_string());
-        return false;
-    }
-
-    let address_str = unsafe {
-        match CStr::from_ptr(address).to_str() {
-            Ok(s) => s,
-            Err(_) => {
-                FFIError::set_error(
-                    error,
-                    FFIErrorCode::InvalidInput,
-                    "Invalid UTF-8 in address".to_string(),
-                );
-                return false;
-            }
-        }
-    };
-
-    let network_rust: key_wallet::Network = network.into();
     use std::str::FromStr;
 
-    match key_wallet::Address::from_str(address_str) {
-        Ok(addr) => {
-            // Check if address is valid for the given network
-            let dash_network = network_rust;
-            match addr.require_network(dash_network) {
-                Ok(_) => {
-                    FFIError::set_success(error);
-                    true
-                }
-                Err(_) => {
-                    FFIError::set_error(
-                        error,
-                        FFIErrorCode::InvalidAddress,
-                        format!("Address not valid for network {:?}", network_rust),
-                    );
-                    false
-                }
-            }
-        }
-        Err(e) => {
-            FFIError::set_error(
-                error,
-                FFIErrorCode::InvalidAddress,
-                format!("Invalid address: {}", e),
-            );
-            false
-        }
-    }
+    let address = deref_ptr!(address, error);
+    let address_str = unwrap_or_return!(CStr::from_ptr(address).to_str(), error);
+    let network_rust: key_wallet::Network = network.into();
+
+    let addr = unwrap_or_return!(key_wallet::Address::from_str(address_str), error);
+    let _ = unwrap_or_return!(addr.require_network(network_rust), error);
+    true
 }
 
 /// Get address type
@@ -132,59 +92,17 @@ pub unsafe extern "C" fn address_get_type(
     network: FFINetwork,
     error: *mut FFIError,
 ) -> c_uchar {
-    if address.is_null() {
-        FFIError::set_error(error, FFIErrorCode::InvalidInput, "Address is null".to_string());
-        return u8::MAX;
-    }
-
-    let address_str = unsafe {
-        match CStr::from_ptr(address).to_str() {
-            Ok(s) => s,
-            Err(_) => {
-                FFIError::set_error(
-                    error,
-                    FFIErrorCode::InvalidInput,
-                    "Invalid UTF-8 in address".to_string(),
-                );
-                return u8::MAX;
-            }
-        }
-    };
-
-    let network_rust: key_wallet::Network = network.into();
     use std::str::FromStr;
 
-    match key_wallet::Address::from_str(address_str) {
-        Ok(addr) => {
-            let dash_network = network_rust;
-            match addr.require_network(dash_network) {
-                Ok(checked_addr) => {
-                    FFIError::set_success(error);
-                    // Get the actual address type
-                    match checked_addr.address_type() {
-                        Some(key_wallet::AddressType::P2pkh) => 0,
-                        Some(key_wallet::AddressType::P2sh) => 1,
-                        Some(_) => 2, // Other address type
-                        None => 2,    // Unknown type
-                    }
-                }
-                Err(_) => {
-                    FFIError::set_error(
-                        error,
-                        FFIErrorCode::InvalidAddress,
-                        "Address not valid for network".to_string(),
-                    );
-                    u8::MAX // Error
-                }
-            }
-        }
-        Err(e) => {
-            FFIError::set_error(
-                error,
-                FFIErrorCode::InvalidAddress,
-                format!("Invalid address: {}", e),
-            );
-            u8::MAX // Error
-        }
+    let address = deref_ptr!(address, error, u8::MAX);
+    let address_str = unwrap_or_return!(CStr::from_ptr(address).to_str(), error, u8::MAX);
+    let network_rust: key_wallet::Network = network.into();
+    let addr = unwrap_or_return!(key_wallet::Address::from_str(address_str), error, u8::MAX);
+    let checked = unwrap_or_return!(addr.require_network(network_rust), error, u8::MAX);
+
+    match checked.address_type() {
+        Some(key_wallet::AddressType::P2pkh) => 0,
+        Some(key_wallet::AddressType::P2sh) => 1,
+        Some(_) | None => 2,
     }
 }

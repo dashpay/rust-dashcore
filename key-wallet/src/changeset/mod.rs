@@ -11,6 +11,7 @@
 //! etc.) directly rather than flattened persistence-friendly representations.
 //! Persistence backends translate from native types to their own schema.
 
+#[allow(clippy::module_inception)]
 mod changeset;
 mod merge;
 

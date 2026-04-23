@@ -22,7 +22,8 @@ use crate::error::{FFIError, FFIErrorCode};
 use crate::types::{
     transaction_context_from_ffi, FFIBlockInfo, FFITransactionContextType, FFIWallet,
 };
-use crate::FFIWalletManager;
+use crate::{check_ptr, FFIWalletManager};
+use crate::{deref_ptr, deref_ptr_mut, unwrap_or_return};
 
 // MARK: - Transaction Types
 
@@ -98,33 +99,21 @@ pub unsafe extern "C" fn wallet_build_and_sign_transaction(
     tx_len_out: *mut usize,
     error: *mut FFIError,
 ) -> bool {
-    // Validate inputs
-    if manager.is_null()
-        || wallet.is_null()
-        || outputs.is_null()
-        || tx_bytes_out.is_null()
-        || tx_len_out.is_null()
-        || fee_out.is_null()
-    {
-        FFIError::set_error(error, FFIErrorCode::InvalidInput, "Null pointer provided".to_string());
-        return false;
-    }
+    let manager_ref = deref_ptr!(manager, error);
+    let wallet_ref = deref_ptr!(wallet, error);
+    check_ptr!(outputs, error);
+    check_ptr!(tx_bytes_out, error);
+    check_ptr!(tx_len_out, error);
+    check_ptr!(fee_out, error);
 
     if outputs_count == 0 {
-        FFIError::set_error(
-            error,
-            FFIErrorCode::InvalidInput,
-            "At least one output required".to_string(),
-        );
+        (*error).set(FFIErrorCode::InvalidInput, "At least one output required");
         return false;
     }
 
     unsafe {
         use key_wallet::wallet::managed_wallet_info::coin_selection::SelectionStrategy;
         use key_wallet::wallet::managed_wallet_info::transaction_builder::TransactionBuilder;
-
-        let manager_ref = &*manager;
-        let wallet_ref = &*wallet;
         let network_rust = wallet_ref.inner().network;
         let outputs_slice = slice::from_raw_parts(outputs, outputs_count);
 
@@ -142,19 +131,14 @@ pub unsafe extern "C" fn wallet_build_and_sign_transaction(
                 Ok(result) => match result.address {
                     Some(addr) => addr,
                     None => {
-                        FFIError::set_error(
-                            error,
-                            FFIErrorCode::WalletError,
-                            "No change address available".to_string(),
-                        );
+                        (*error).set(FFIErrorCode::WalletError, "No change address available");
                         return false;
                     }
                 },
                 Err(e) => {
-                    FFIError::set_error(
-                        error,
+                    (*error).set(
                         FFIErrorCode::WalletError,
-                        format!("Failed to get change address: {}", e),
+                        &format!("Failed to get change address: {}", e),
                     );
                     return false;
                 }
@@ -164,10 +148,9 @@ pub unsafe extern "C" fn wallet_build_and_sign_transaction(
             let managed_wallet = match manager.get_wallet_info_mut(&wallet_id) {
                 Some(info) => info,
                 None => {
-                    FFIError::set_error(
-                        error,
+                    (*error).set(
                         FFIErrorCode::InvalidInput,
-                        "Could not obtain ManagedWalletInfo for the provided wallet".to_string(),
+                        "Could not obtain ManagedWalletInfo for the provided wallet",
                     );
                     return false;
                 }
@@ -177,10 +160,9 @@ pub unsafe extern "C" fn wallet_build_and_sign_transaction(
                 match managed_wallet.accounts.standard_bip44_accounts.get_mut(&account_index) {
                     Some(account) => account,
                     None => {
-                        FFIError::set_error(
-                            error,
+                        (*error).set(
                             FFIErrorCode::WalletError,
-                            format!("Account {} not found", account_index),
+                            &format!("Account {} not found", account_index),
                         );
                         return false;
                     }
@@ -191,11 +173,7 @@ pub unsafe extern "C" fn wallet_build_and_sign_transaction(
 
             for output in outputs_slice {
                 if output.address.is_null() {
-                    FFIError::set_error(
-                        error,
-                        FFIErrorCode::InvalidInput,
-                        "Output address pointer is null".to_string(),
-                    );
+                    (*error).set(FFIErrorCode::InvalidInput, "Output address pointer is null");
                     return false;
                 }
 
@@ -203,50 +181,23 @@ pub unsafe extern "C" fn wallet_build_and_sign_transaction(
                 let address_str = match CStr::from_ptr(output.address).to_str() {
                     Ok(s) => s,
                     Err(_) => {
-                        FFIError::set_error(
-                            error,
-                            FFIErrorCode::InvalidInput,
-                            "Invalid UTF-8 in output address".to_string(),
-                        );
+                        (*error).set(FFIErrorCode::InvalidInput, "Invalid UTF-8 in output address");
                         return false;
                     }
                 };
 
                 // Parse address using dashcore
                 use std::str::FromStr;
-                let address = match dashcore::Address::from_str(address_str) {
-                    Ok(addr) => {
-                        // Verify network matches
-                        let addr_network = addr.require_network(network_rust).map_err(|e| {
-                            FFIError::set_error(
-                                error,
-                                FFIErrorCode::InvalidAddress,
-                                format!("Address network mismatch: {}", e),
-                            );
-                        });
-                        if addr_network.is_err() {
-                            return false;
-                        }
-                        addr_network.unwrap()
-                    }
-                    Err(e) => {
-                        FFIError::set_error(
-                            error,
-                            FFIErrorCode::InvalidAddress,
-                            format!("Invalid address: {}", e),
-                        );
-                        return false;
-                    }
-                };
+                let parsed = unwrap_or_return!(dashcore::Address::from_str(address_str), error);
+                let address = unwrap_or_return!(parsed.require_network(network_rust), error);
 
                 // Add output
                 tx_builder = match tx_builder.add_output(&address, output.amount) {
                     Ok(builder) => builder,
                     Err(e) => {
-                        FFIError::set_error(
-                            error,
+                        (*error).set(
                             FFIErrorCode::WalletError,
-                            format!("Failed to add output: {}", e),
+                            &format!("Failed to add output: {}", e),
                         );
                         return false;
                     }
@@ -274,11 +225,7 @@ pub unsafe extern "C" fn wallet_build_and_sign_transaction(
                 } => root_extended_private_key,
                 WalletType::ExtendedPrivKey(root_extended_private_key) => root_extended_private_key,
                 _ => {
-                    FFIError::set_error(
-                        error,
-                        FFIErrorCode::WalletError,
-                        "Cannot sign with watch-only wallet".to_string(),
-                    );
+                    (*error).set(FFIErrorCode::WalletError, "Cannot sign with watch-only wallet");
                     return false;
                 }
             };
@@ -314,11 +261,8 @@ pub unsafe extern "C" fn wallet_build_and_sign_transaction(
             ) {
                 Ok(builder) => builder,
                 Err(e) => {
-                    FFIError::set_error(
-                        error,
-                        FFIErrorCode::WalletError,
-                        format!("Coin selection failed: {}", e),
-                    );
+                    (*error)
+                        .set(FFIErrorCode::WalletError, &format!("Coin selection failed: {}", e));
                     return false;
                 }
             };
@@ -327,10 +271,9 @@ pub unsafe extern "C" fn wallet_build_and_sign_transaction(
             let transaction = match tx_builder_with_inputs.build() {
                 Ok(tx) => tx,
                 Err(e) => {
-                    FFIError::set_error(
-                        error,
+                    (*error).set(
                         FFIErrorCode::WalletError,
-                        format!("Failed to build transaction: {}", e),
+                        &format!("Failed to build transaction: {}", e),
                     );
                     return false;
                 }
@@ -359,7 +302,7 @@ pub unsafe extern "C" fn wallet_build_and_sign_transaction(
             *tx_bytes_out = tx_bytes;
             *tx_len_out = size;
 
-            FFIError::set_success(error);
+            (*error).clean();
             true
         })
     }
@@ -401,28 +344,16 @@ pub unsafe extern "C" fn wallet_check_transaction(
     result_out: *mut FFITransactionCheckResult,
     error: *mut FFIError,
 ) -> bool {
-    if wallet.is_null() || tx_bytes.is_null() || result_out.is_null() {
-        FFIError::set_error(error, FFIErrorCode::InvalidInput, "Null pointer provided".to_string());
-        return false;
-    }
+    let wallet = deref_ptr_mut!(wallet, error);
+    check_ptr!(tx_bytes, error);
+    check_ptr!(result_out, error);
 
     unsafe {
-        let wallet = &mut *wallet;
         let tx_slice = slice::from_raw_parts(tx_bytes, tx_len);
 
-        // Parse the transaction
         use dashcore::consensus::Decodable;
-        let tx = match dashcore::Transaction::consensus_decode(&mut &tx_slice[..]) {
-            Ok(tx) => tx,
-            Err(e) => {
-                FFIError::set_error(
-                    error,
-                    FFIErrorCode::InvalidInput,
-                    format!("Failed to decode transaction: {}", e),
-                );
-                return false;
-            }
-        };
+        let tx =
+            unwrap_or_return!(dashcore::Transaction::consensus_decode(&mut &tx_slice[..]), error);
 
         // Build the transaction context
         let context = match transaction_context_from_ffi(
@@ -433,11 +364,7 @@ pub unsafe extern "C" fn wallet_check_transaction(
         ) {
             Some(ctx) => ctx,
             None => {
-                FFIError::set_error(
-                    error,
-                    FFIErrorCode::InvalidInput,
-                    "Invalid transaction context: block info is zeroed for a confirmed context, or IS lock data is missing/malformed for InstantSend".to_string(),
-                );
+                (*error).set(FFIErrorCode::InvalidInput, "Invalid transaction context: block info is zeroed for a confirmed context, or IS lock data is missing/malformed for InstantSend");
                 return false;
             }
         };
@@ -452,10 +379,9 @@ pub unsafe extern "C" fn wallet_check_transaction(
         let wallet_mut = match wallet.inner_mut() {
             Some(w) => w,
             None => {
-                FFIError::set_error(
-                    error,
+                (*error).set(
                     FFIErrorCode::InternalError,
-                    "Cannot get mutable wallet reference (Arc has multiple owners)".to_string(),
+                    "Cannot get mutable wallet reference (Arc has multiple owners)",
                 );
                 return false;
             }
@@ -478,7 +404,7 @@ pub unsafe extern "C" fn wallet_check_transaction(
             affected_accounts_count: check_result.affected_accounts.len() as u32,
         };
 
-        FFIError::set_success(error);
+        (*error).clean();
         true
     }
 }
@@ -649,48 +575,10 @@ pub unsafe extern "C" fn transaction_get_txid_from_bytes(
     tx_len: usize,
     error: *mut FFIError,
 ) -> *mut c_char {
-    if tx_bytes.is_null() {
-        FFIError::set_error(
-            error,
-            FFIErrorCode::InvalidInput,
-            "Transaction bytes is null".to_string(),
-        );
-        return ptr::null_mut();
-    }
-
+    check_ptr!(tx_bytes, error);
     let tx_slice = slice::from_raw_parts(tx_bytes, tx_len);
-
-    // Deserialize the transaction
-    let tx: Transaction = match consensus::deserialize(tx_slice) {
-        Ok(t) => t,
-        Err(e) => {
-            FFIError::set_error(
-                error,
-                FFIErrorCode::SerializationError,
-                format!("Failed to deserialize transaction: {}", e),
-            );
-            return ptr::null_mut();
-        }
-    };
-
-    // Get TXID and convert to hex string
-    let txid = tx.txid();
-    let txid_hex = txid.to_string();
-
-    match CString::new(txid_hex) {
-        Ok(c_str) => {
-            FFIError::set_success(error);
-            c_str.into_raw()
-        }
-        Err(_) => {
-            FFIError::set_error(
-                error,
-                FFIErrorCode::SerializationError,
-                "Failed to convert TXID to C string".to_string(),
-            );
-            ptr::null_mut()
-        }
-    }
+    let tx: Transaction = unwrap_or_return!(consensus::deserialize(tx_slice), error);
+    unwrap_or_return!(CString::new(tx.txid().to_string()), error).into_raw()
 }
 
 /// Serialize a transaction
@@ -1057,28 +945,20 @@ pub unsafe extern "C" fn wallet_build_and_sign_asset_lock_transaction(
     private_keys_out: *mut [u8; 32],
     error: *mut FFIError,
 ) -> bool {
-    if manager.is_null()
-        || wallet.is_null()
-        || funding_types.is_null()
-        || identity_indices.is_null()
-        || credit_output_scripts.is_null()
-        || credit_output_script_lens.is_null()
-        || credit_output_amounts.is_null()
-        || tx_bytes_out.is_null()
-        || tx_len_out.is_null()
-        || fee_out.is_null()
-        || private_keys_out.is_null()
-    {
-        FFIError::set_error(error, FFIErrorCode::InvalidInput, "Null pointer provided".to_string());
-        return false;
-    }
+    check_ptr!(manager, error);
+    check_ptr!(wallet, error);
+    check_ptr!(funding_types, error);
+    check_ptr!(identity_indices, error);
+    check_ptr!(credit_output_scripts, error);
+    check_ptr!(credit_output_script_lens, error);
+    check_ptr!(credit_output_amounts, error);
+    check_ptr!(tx_bytes_out, error);
+    check_ptr!(tx_len_out, error);
+    check_ptr!(fee_out, error);
+    check_ptr!(private_keys_out, error);
 
     if credit_outputs_count == 0 {
-        FFIError::set_error(
-            error,
-            FFIErrorCode::InvalidInput,
-            "At least one credit output required".to_string(),
-        );
+        (*error).set(FFIErrorCode::InvalidInput, "At least one credit output required");
         return false;
     }
 
@@ -1096,10 +976,9 @@ pub unsafe extern "C" fn wallet_build_and_sign_asset_lock_transaction(
         let mut fundings = Vec::with_capacity(credit_outputs_count);
         for i in 0..credit_outputs_count {
             if scripts_slice[i].is_null() {
-                FFIError::set_error(
-                    error,
+                (*error).set(
                     FFIErrorCode::InvalidInput,
-                    format!("Credit output script {} is null", i),
+                    &format!("Credit output script {} is null", i),
                 );
                 return false;
             }
@@ -1121,11 +1000,7 @@ pub unsafe extern "C" fn wallet_build_and_sign_asset_lock_transaction(
             let managed_wallet = match manager.get_wallet_info_mut(&wallet_id) {
                 Some(info) => info,
                 None => {
-                    FFIError::set_error(
-                        error,
-                        FFIErrorCode::InvalidInput,
-                        "Wallet not found".to_string(),
-                    );
+                    (*error).set(FFIErrorCode::InvalidInput, "Wallet not found");
                     return false;
                 }
             };
@@ -1138,7 +1013,7 @@ pub unsafe extern "C" fn wallet_build_and_sign_asset_lock_transaction(
             ) {
                 Ok(r) => r,
                 Err(e) => {
-                    FFIError::set_error(error, FFIErrorCode::WalletError, format!("{}", e));
+                    (*error).set(FFIErrorCode::WalletError, &format!("{}", e));
                     return false;
                 }
             };
@@ -1151,11 +1026,7 @@ pub unsafe extern "C" fn wallet_build_and_sign_asset_lock_transaction(
             let private_keys = match &result.keys {
                 key_wallet::wallet::managed_wallet_info::asset_lock_builder::AssetLockCreditKeys::Private(k) => k,
                 key_wallet::wallet::managed_wallet_info::asset_lock_builder::AssetLockCreditKeys::Public(_) => {
-                    FFIError::set_error(
-                        error,
-                        FFIErrorCode::WalletError,
-                        "Unexpected public-key result from build_asset_lock".to_string(),
-                    );
+                    (*error).set(FFIErrorCode::WalletError, "Unexpected public-key result from build_asset_lock");
                     return false;
                 }
             };
@@ -1172,7 +1043,7 @@ pub unsafe extern "C" fn wallet_build_and_sign_asset_lock_transaction(
             *tx_bytes_out = Box::into_raw(boxed) as *mut u8;
             *tx_len_out = size;
 
-            FFIError::set_success(error);
+            (*error).clean();
             true
         })
     }

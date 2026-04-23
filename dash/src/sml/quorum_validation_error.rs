@@ -10,17 +10,6 @@ use crate::{BlockHash, QuorumHash};
 #[derive(Debug, Error, Clone, Ord, PartialOrd, PartialEq, Hash, Eq)]
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-pub enum ClientDataRetrievalError {
-    #[error("Required block not present: {0}")]
-    RequiredBlockNotPresent(BlockHash),
-
-    #[error("Coinbase not found on block: {0}")]
-    CoinbaseNotFoundOnBlock(BlockHash),
-}
-
-#[derive(Debug, Error, Clone, Ord, PartialOrd, PartialEq, Hash, Eq)]
-#[cfg_attr(feature = "bincode", derive(Encode, Decode))]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum QuorumValidationError {
     #[error("Required block not present: {0} ({1})")]
     RequiredBlockNotPresent(BlockHash, String),
@@ -109,9 +98,6 @@ pub enum QuorumValidationError {
     #[error("Expected only rotated quorums, but got quorum {0} of type {1}")]
     ExpectedOnlyRotatedQuorums(QuorumHash, LLMQType),
 
-    #[error(transparent)]
-    ClientDataRetrievalError(ClientDataRetrievalError),
-
     /// Error indicating that a required feature is not turned on.
     #[error("Feature not turned on: {0}")]
     FeatureNotTurnedOn(String),
@@ -120,11 +106,5 @@ pub enum QuorumValidationError {
 impl From<SmlError> for QuorumValidationError {
     fn from(value: SmlError) -> Self {
         QuorumValidationError::SMLError(value)
-    }
-}
-
-impl From<ClientDataRetrievalError> for QuorumValidationError {
-    fn from(value: ClientDataRetrievalError) -> Self {
-        QuorumValidationError::ClientDataRetrievalError(value)
     }
 }

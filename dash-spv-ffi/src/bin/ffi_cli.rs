@@ -468,7 +468,7 @@ fn main() {
             }
 
             let mnemonic_c = CString::new(mnemonic.as_str()).unwrap();
-            let mut error = FFIError::success();
+            let mut error = FFIError::default();
             let success = wallet_manager_add_wallet_from_mnemonic(
                 wallet_manager as *mut _,
                 mnemonic_c.as_ptr(),

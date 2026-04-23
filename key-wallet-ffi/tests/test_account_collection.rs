@@ -5,6 +5,7 @@ use key_wallet_ffi::account::account_free;
 use key_wallet_ffi::account_collection::*;
 use key_wallet_ffi::types::{FFIAccountCreationOptionType, FFIWalletAccountCreationOptions};
 use key_wallet_ffi::wallet::{wallet_create_from_mnemonic_with_options, wallet_free};
+use key_wallet_ffi::FFIError;
 use std::ffi::CString;
 use std::ptr;
 
@@ -15,6 +16,7 @@ fn test_account_collection_comprehensive() {
         let mnemonic = CString::new(
             "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about"
         ).unwrap();
+        let error = &mut FFIError::default();
 
         // Create wallet with various account types
         let account_options = FFIWalletAccountCreationOptions {
@@ -38,12 +40,12 @@ fn test_account_collection_comprehensive() {
             ptr::null(),
             FFINetwork::Testnet,
             &account_options,
-            ptr::null_mut(),
+            error,
         );
         assert!(!wallet.is_null());
 
         // Get account collection for testnet
-        let collection = wallet_get_account_collection(wallet, ptr::null_mut());
+        let collection = wallet_get_account_collection(wallet, error);
         assert!(!collection.is_null());
 
         // Test account count
@@ -148,6 +150,7 @@ fn test_account_collection_minimal() {
         let mnemonic = CString::new(
             "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about"
         ).unwrap();
+        let test = &mut FFIError::default();
 
         // Create wallet with minimal accounts (default)
         let wallet = wallet_create_from_mnemonic_with_options(
@@ -155,12 +158,12 @@ fn test_account_collection_minimal() {
             ptr::null(),
             FFINetwork::Testnet,
             ptr::null(), // Use default options
-            ptr::null_mut(),
+            test,
         );
         assert!(!wallet.is_null());
 
         // Get account collection
-        let collection = wallet_get_account_collection(wallet, ptr::null_mut());
+        let collection = wallet_get_account_collection(wallet, test);
         assert!(!collection.is_null());
 
         // Should have at least some default accounts

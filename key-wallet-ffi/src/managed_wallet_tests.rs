@@ -69,7 +69,6 @@ mod tests {
         managed_wallet: *mut FFIManagedWalletInfo,
         wallet_ids: *mut u8,
         id_count: usize,
-        error: &mut FFIError,
     ) {
         if !managed_wallet.is_null() {
             managed_wallet_info_free(managed_wallet);
@@ -83,12 +82,11 @@ mod tests {
         if !manager.is_null() {
             wallet_manager_free(manager);
         }
-        error.free_message();
     }
 
     #[test]
     fn test_managed_wallet_info_from_manager_success() {
-        let mut error = FFIError::success();
+        let mut error = FFIError::default();
         let (manager, wallet, managed_wallet, wallet_ids, id_count) =
             unsafe { setup_fixture(&mut error) };
 
@@ -96,13 +94,13 @@ mod tests {
         assert_eq!(error.code, FFIErrorCode::Success);
 
         unsafe {
-            cleanup_fixture(manager, wallet, managed_wallet, wallet_ids, id_count, &mut error);
+            cleanup_fixture(manager, wallet, managed_wallet, wallet_ids, id_count);
         }
     }
 
     #[test]
     fn test_managed_wallet_info_from_manager_null_manager() {
-        let mut error = FFIError::success();
+        let mut error = FFIError::default();
         let wallet_id = [0u8; 32];
 
         let managed_wallet = unsafe {
@@ -111,14 +109,12 @@ mod tests {
 
         assert!(managed_wallet.is_null());
         assert_eq!(error.code, FFIErrorCode::InvalidInput);
-
-        unsafe { error.free_message() };
     }
 
     #[test]
     fn test_managed_wallet_info_from_manager_unknown_wallet_id() {
-        let mut error = FFIError::success();
-        let manager = wallet_manager_create(FFINetwork::Testnet, &mut error);
+        let mut error = FFIError::default();
+        let manager = unsafe { wallet_manager_create(FFINetwork::Testnet, &mut error) };
         assert!(!manager.is_null());
 
         let bogus_wallet_id = [0u8; 32];
@@ -131,13 +127,12 @@ mod tests {
 
         unsafe {
             wallet_manager_free(manager);
-            error.free_message();
         }
     }
 
     #[test]
     fn test_managed_wallet_mark_address_used_valid() {
-        let mut error = FFIError::success();
+        let mut error = FFIError::default();
         let (manager, wallet, managed_wallet, wallet_ids, id_count) =
             unsafe { setup_fixture(&mut error) };
 
@@ -158,13 +153,13 @@ mod tests {
         }
 
         unsafe {
-            cleanup_fixture(manager, wallet, managed_wallet, wallet_ids, id_count, &mut error);
+            cleanup_fixture(manager, wallet, managed_wallet, wallet_ids, id_count);
         }
     }
 
     #[test]
     fn test_managed_wallet_mark_address_used_invalid() {
-        let mut error = FFIError::success();
+        let mut error = FFIError::default();
         let (manager, wallet, managed_wallet, wallet_ids, id_count) =
             unsafe { setup_fixture(&mut error) };
 
@@ -177,26 +172,24 @@ mod tests {
         assert_eq!(error.code, FFIErrorCode::InvalidInput);
 
         unsafe {
-            cleanup_fixture(manager, wallet, managed_wallet, wallet_ids, id_count, &mut error);
+            cleanup_fixture(manager, wallet, managed_wallet, wallet_ids, id_count);
         }
     }
 
     #[test]
     fn test_managed_wallet_mark_address_used_null_inputs() {
-        let mut error = FFIError::success();
+        let mut error = FFIError::default();
 
         let success =
             unsafe { managed_wallet_mark_address_used(ptr::null_mut(), ptr::null(), &mut error) };
 
         assert!(!success);
         assert_eq!(error.code, FFIErrorCode::InvalidInput);
-
-        unsafe { error.free_message() };
     }
 
     #[test]
     fn test_managed_wallet_get_next_bip44_receive_address_null_inputs() {
-        let mut error = FFIError::success();
+        let mut error = FFIError::default();
 
         let address = unsafe {
             managed_wallet_get_next_bip44_receive_address(
@@ -209,13 +202,11 @@ mod tests {
 
         assert!(address.is_null());
         assert_eq!(error.code, FFIErrorCode::InvalidInput);
-
-        unsafe { error.free_message() };
     }
 
     #[test]
     fn test_managed_wallet_get_next_bip44_change_address_null_inputs() {
-        let mut error = FFIError::success();
+        let mut error = FFIError::default();
 
         let address = unsafe {
             managed_wallet_get_next_bip44_change_address(
@@ -228,8 +219,6 @@ mod tests {
 
         assert!(address.is_null());
         assert_eq!(error.code, FFIErrorCode::InvalidInput);
-
-        unsafe { error.free_message() };
     }
 
     #[test]
@@ -243,7 +232,7 @@ mod tests {
 
     #[test]
     fn test_managed_wallet_info_free_valid() {
-        let mut error = FFIError::success();
+        let mut error = FFIError::default();
         let (manager, wallet, managed_wallet, wallet_ids, id_count) =
             unsafe { setup_fixture(&mut error) };
         assert!(!managed_wallet.is_null());
@@ -253,13 +242,13 @@ mod tests {
 
         // Pass null to cleanup_fixture so it doesn't double-free managed_wallet.
         unsafe {
-            cleanup_fixture(manager, wallet, ptr::null_mut(), wallet_ids, id_count, &mut error);
+            cleanup_fixture(manager, wallet, ptr::null_mut(), wallet_ids, id_count);
         }
     }
 
     #[test]
     fn test_ffi_managed_wallet_info_methods() {
-        let mut error = FFIError::success();
+        let mut error = FFIError::default();
         let (manager, wallet, managed_wallet, wallet_ids, id_count) =
             unsafe { setup_fixture(&mut error) };
         assert!(!managed_wallet.is_null());
@@ -274,13 +263,13 @@ mod tests {
         }
 
         unsafe {
-            cleanup_fixture(manager, wallet, managed_wallet, wallet_ids, id_count, &mut error);
+            cleanup_fixture(manager, wallet, managed_wallet, wallet_ids, id_count);
         }
     }
 
     #[test]
     fn test_managed_wallet_mark_address_used_utf8_error() {
-        let mut error = FFIError::success();
+        let mut error = FFIError::default();
         let (manager, wallet, managed_wallet, wallet_ids, id_count) =
             unsafe { setup_fixture(&mut error) };
 
@@ -298,13 +287,13 @@ mod tests {
         assert_eq!(error.code, FFIErrorCode::InvalidInput);
 
         unsafe {
-            cleanup_fixture(manager, wallet, managed_wallet, wallet_ids, id_count, &mut error);
+            cleanup_fixture(manager, wallet, managed_wallet, wallet_ids, id_count);
         }
     }
 
     #[test]
     fn test_managed_wallet_address_operations_with_real_wallet() {
-        let mut error = FFIError::success();
+        let mut error = FFIError::default();
         let (manager, wallet, managed_wallet, wallet_ids, id_count) =
             unsafe { setup_fixture(&mut error) };
         assert!(!managed_wallet.is_null());
@@ -332,7 +321,7 @@ mod tests {
         }
 
         unsafe {
-            cleanup_fixture(manager, wallet, managed_wallet, wallet_ids, id_count, &mut error);
+            cleanup_fixture(manager, wallet, managed_wallet, wallet_ids, id_count);
         }
     }
 }

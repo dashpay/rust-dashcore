@@ -17,7 +17,7 @@ const TEST_MNEMONIC: &str =
 #[test]
 fn test_managed_account_collection_basic() {
     unsafe {
-        let mut error = FFIError::success();
+        let mut error = FFIError::default();
 
         // Create wallet manager
         let manager = wallet_manager_create(FFINetwork::Testnet, &mut error);
@@ -86,7 +86,7 @@ fn test_managed_account_collection_basic() {
 #[test]
 fn test_managed_account_collection_with_special_accounts() {
     unsafe {
-        let mut error = FFIError::success();
+        let mut error = FFIError::default();
 
         // Create wallet manager
         let manager = wallet_manager_create(FFINetwork::Testnet, &mut error);
@@ -214,7 +214,7 @@ fn test_managed_account_collection_summary() {
     unsafe {
         use std::ffi::CStr;
 
-        let mut error = FFIError::success();
+        let mut error = FFIError::default();
 
         // Create wallet manager
         let manager = wallet_manager_create(FFINetwork::Testnet, &mut error);
@@ -295,7 +295,7 @@ fn test_managed_account_collection_summary() {
 #[test]
 fn test_managed_account_collection_summary_data() {
     unsafe {
-        let mut error = FFIError::success();
+        let mut error = FFIError::default();
 
         // Create wallet manager
         let manager = wallet_manager_create(FFINetwork::Testnet, &mut error);
@@ -396,14 +396,13 @@ fn test_managed_account_collection_summary_data() {
 #[test]
 fn test_managed_account_collection_null_safety() {
     unsafe {
-        let mut error = FFIError::success();
+        let mut error = FFIError::default();
 
         // Test with null manager
         let collection =
             managed_wallet_get_account_collection(ptr::null(), ptr::null(), &mut error);
         assert!(collection.is_null());
         assert_eq!(error.code, FFIErrorCode::InvalidInput);
-        error.free_message();
 
         // Test with null collection for various functions
         assert_eq!(managed_account_collection_count(ptr::null()), 0);
@@ -421,7 +420,7 @@ fn test_managed_account_collection_null_safety() {
 #[test]
 fn test_managed_account_collection_nonexistent_accounts() {
     unsafe {
-        let mut error = FFIError::success();
+        let mut error = FFIError::default();
 
         // Create wallet manager
         let manager = wallet_manager_create(FFINetwork::Testnet, &mut error);

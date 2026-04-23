@@ -273,6 +273,7 @@ impl MasternodeTestContext {
     ///
     /// Returns true if enough members reached the phase within the timeout.
     /// Uses error-tolerant RPC calls since nodes may be busy during DKG.
+    #[allow(clippy::too_many_arguments)]
     fn wait_for_quorum_phase(
         &mut self,
         llmq_type: &str,

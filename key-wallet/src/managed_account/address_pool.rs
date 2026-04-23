@@ -779,10 +779,7 @@ impl AddressPool {
     /// No-op if the index is already at or below the current
     /// `highest_used` and already in `used_indices`.
     pub fn set_highest_used(&mut self, index: u32) -> bool {
-        let already_at_or_above = match self.highest_used {
-            Some(current) if current >= index => true,
-            _ => false,
-        };
+        let already_at_or_above = matches!(self.highest_used, Some(current) if current >= index);
         if already_at_or_above && self.used_indices.contains(&index) {
             return false;
         }
@@ -1422,6 +1419,6 @@ mod tests {
         assert!(pool.set_highest_used(3));
         assert_eq!(pool.highest_used, Some(3));
         assert!(pool.used_indices.contains(&3));
-        assert!(pool.addresses.get(&3).is_none());
+        assert!(!pool.addresses.contains_key(&3));
     }
 }

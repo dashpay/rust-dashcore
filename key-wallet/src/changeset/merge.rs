@@ -92,7 +92,7 @@ mod tests {
     fn btreemap_merge_extends() {
         let mut a: BTreeMap<&str, i32> = [("x", 1)].into_iter().collect();
         let b: BTreeMap<&str, i32> = [("y", 2), ("x", 3)].into_iter().collect();
-        a.merge(b);
+        Merge::merge(&mut a, b);
         assert_eq!(a.get("x"), Some(&3));
         assert_eq!(a.get("y"), Some(&2));
         assert_eq!(a.len(), 2);

@@ -1,4 +1,15 @@
-//! DNS-based peer discovery for Dash network
+//! Peer discovery for Dash network.
+//!
+//! Peer discovery is seeded from two sources, in priority order:
+//!
+//! 1. A hardcoded masternode IP list for the network, embedded at compile time
+//!    from `dash-spv/seeds/<network>.txt`. This file is regenerated weekly by
+//!    CI from a live Dash Core node (see `masternode-seeds-fetcher`).
+//! 2. DNS seed queries as a backup. DNS resolution failures are logged but are
+//!    not fatal — as long as the embedded list yields at least one peer, the
+//!    client can bootstrap.
+//!
+//! Results from both sources are merged and deduplicated.
 
 use dashcore::Network;
 use hickory_resolver::config::{ResolverConfig, ResolverOpts};
@@ -7,9 +18,16 @@ use hickory_resolver::TokioResolver;
 use std::net::{IpAddr, SocketAddr};
 
 use crate::error::SpvError as Error;
-use crate::network::constants::{MAINNET_DNS_SEEDS, TESTNET_DNS_SEEDS};
+use crate::network::constants::{
+    mainnet_seed_peers, testnet_seed_peers, MAINNET_DNS_SEEDS, MAINNET_P2P_PORT, TESTNET_DNS_SEEDS,
+    TESTNET_P2P_PORT,
+};
 
-/// DNS discovery for finding initial peers
+/// DNS discovery for finding initial peers.
+///
+/// Despite the name (kept for backwards compatibility), this type also returns
+/// hardcoded masternode seeds embedded at compile time; DNS is used as a
+/// fallback.
 pub struct DnsDiscovery {
     resolver: TokioResolver,
 }
@@ -29,18 +47,24 @@ impl DnsDiscovery {
         })
     }
 
-    /// Discover peers for the given network
+    /// Discover peers for the given network.
+    ///
+    /// Returns the union of the embedded hardcoded masternode seeds and any
+    /// addresses resolved via DNS. DNS resolution failures are logged at warn
+    /// level but do not cause this function to fail — the embedded list acts
+    /// as the primary source and DNS is a best-effort backup.
     pub async fn discover_peers(&self, network: Network) -> Vec<SocketAddr> {
-        let (seeds, port) = match network {
-            Network::Mainnet => (MAINNET_DNS_SEEDS, 9999),
-            Network::Testnet => (TESTNET_DNS_SEEDS, 19999),
+        let (seeds, port, mut addresses) = match network {
+            Network::Mainnet => (MAINNET_DNS_SEEDS, MAINNET_P2P_PORT, mainnet_seed_peers()),
+            Network::Testnet => (TESTNET_DNS_SEEDS, TESTNET_P2P_PORT, testnet_seed_peers()),
             _ => {
-                tracing::debug!("No DNS seeds for {:?} network", network);
+                tracing::debug!("No peer discovery sources for {:?} network", network);
                 return vec![];
             }
         };
 
-        let mut addresses = Vec::new();
+        let embedded_count = addresses.len();
+        tracing::info!("Loaded {} hardcoded masternode seed(s) for {:?}", embedded_count, network);
 
         for seed in seeds {
             tracing::debug!("Querying DNS seed: {}", seed);
@@ -55,12 +79,15 @@ impl DnsDiscovery {
                     }
                 }
                 Err(e) => {
-                    tracing::warn!("Failed to resolve DNS seed {}: {}", seed, e);
+                    // DNS is a best-effort backup; do not propagate the error.
+                    tracing::warn!("Failed to resolve DNS seed {} (backup source): {}", seed, e);
                 }
             }
         }
 
-        // For testnet, add fixed peers as fallback if DNS returned few/no results
+        // For testnet, add fixed peers as fallback if DNS returned few/no results.
+        // This is on top of the embedded hardcoded seeds; fixed peers are a
+        // stable testnet backup we keep in code (see PR #658).
         if matches!(network, Network::Testnet) {
             use super::constants::TESTNET_FIXED_PEERS;
             for ip_str in TESTNET_FIXED_PEERS {
@@ -74,7 +101,12 @@ impl DnsDiscovery {
         addresses.sort();
         addresses.dedup();
 
-        tracing::info!("Discovered {} unique peer addresses for {:?}", addresses.len(), network);
+        tracing::info!(
+            "Discovered {} unique peer addresses for {:?} ({} from embedded seeds + DNS)",
+            addresses.len(),
+            network,
+            embedded_count
+        );
         addresses
     }
 
@@ -102,33 +134,26 @@ mod tests {
             println!("  {}", peer);
         }
 
-        // Should find at least some peers
-        assert!(!peers.is_empty());
-
         // All peers should use the correct port
         for peer in &peers {
-            assert_eq!(peer.port(), 9999);
+            assert_eq!(peer.port(), MAINNET_P2P_PORT);
         }
     }
 
     #[tokio::test]
-    #[ignore] // Requires network access
-    async fn test_dns_discovery_testnet() {
+    async fn test_dns_discovery_testnet_returns_embedded_when_dns_fails() {
+        // This test does not require network access: even if DNS resolution
+        // fails, the embedded seed file must yield peers.
         let discovery = DnsDiscovery::new().await.expect("Failed to create DNS discovery for test");
         let peers = discovery.discover_peers(Network::Testnet).await;
 
-        // Print discovered peers for debugging
-        println!("Discovered {} testnet peers:", peers.len());
+        assert!(
+            peers.len() >= 29,
+            "expected at least the 29 embedded testnet HP-MN seeds, got {}",
+            peers.len()
+        );
         for peer in &peers {
-            println!("  {}", peer);
-        }
-
-        // Should find at least some peers
-        assert!(!peers.is_empty());
-
-        // All peers should use the correct port
-        for peer in &peers {
-            assert_eq!(peer.port(), 19999);
+            assert_eq!(peer.port(), TESTNET_P2P_PORT);
         }
     }
 
@@ -137,7 +162,7 @@ mod tests {
         let discovery = DnsDiscovery::new().await.expect("Failed to create DNS discovery for test");
         let peers = discovery.discover_peers(Network::Regtest).await;
 
-        // Should return empty for regtest (no DNS seeds)
+        // Should return empty for regtest (no DNS seeds and no embedded list)
         assert!(peers.is_empty());
     }
 }

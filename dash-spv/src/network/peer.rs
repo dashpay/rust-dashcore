@@ -147,6 +147,10 @@ impl Peer {
         self.services.map(|s| ServiceFlags::from(s).has(flags)).unwrap_or(false)
     }
 
+    pub(crate) fn services_known(&self) -> bool {
+        self.services.is_some()
+    }
+
     /// Connect to the peer (instance method for compatibility).
     pub async fn connect_instance(&mut self) -> NetworkResult<()> {
         let stream = tokio::time::timeout(self.timeout, TcpStream::connect(self.address))

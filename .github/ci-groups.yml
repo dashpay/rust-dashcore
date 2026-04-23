@@ -9,6 +9,7 @@ groups:
 
   spv:
     - dash-spv
+    - dash-network-seeds
 
   wallet:
     - key-wallet
@@ -26,3 +27,4 @@ groups:
 excluded:
   - integration_test  # Requires live Dash node
   - dash-fuzz  # Honggfuzz binary targets, tested by fuzz.yml
+  - masternode-seeds-fetcher  # Tooling binary; needs live dashd RPC, exercised by update-masternode-seeds.yml
