@@ -126,16 +126,6 @@ pub struct ManagedAccountCollection {
     pub identity_topup_not_bound: Option<ManagedCoreAccount>,
     /// Identity invitation account (optional)
     pub identity_invitation: Option<ManagedCoreAccount>,
-    /// Per-identity ECDSA authentication accounts (DIP-13), keyed by
-    /// `identity_index`. Platform-only — carries no L1 UTXOs.
-    pub identity_authentication_ecdsa: BTreeMap<u32, ManagedCoreAccount>,
-    /// Per-identity BLS authentication accounts (DIP-13), keyed by
-    /// `identity_index`. Platform-only.
-    ///
-    /// Storage type is `ManagedCoreAccount`, which is not BLS-dependent, so the
-    /// field is available regardless of the `bls` feature — mirroring how
-    /// `provider_operator_keys` is handled at the managed-account level.
-    pub identity_authentication_bls: BTreeMap<u32, ManagedCoreAccount>,
     /// Asset lock address top-up account (optional)
     pub asset_lock_address_topup: Option<ManagedCoreAccount>,
     /// Asset lock shielded address top-up account (optional)
@@ -168,8 +158,6 @@ impl ManagedAccountCollection {
             identity_topup: BTreeMap::new(),
             identity_topup_not_bound: None,
             identity_invitation: None,
-            identity_authentication_ecdsa: BTreeMap::new(),
-            identity_authentication_bls: BTreeMap::new(),
             asset_lock_address_topup: None,
             asset_lock_shielded_address_topup: None,
             provider_voting_keys: None,
@@ -216,14 +204,6 @@ impl ManagedAccountCollection {
             ManagedAccountType::IdentityInvitation {
                 ..
             } => self.identity_invitation.is_some(),
-            ManagedAccountType::IdentityAuthenticationEcdsa {
-                identity_index,
-                ..
-            } => self.identity_authentication_ecdsa.contains_key(identity_index),
-            ManagedAccountType::IdentityAuthenticationBls {
-                identity_index,
-                ..
-            } => self.identity_authentication_bls.contains_key(identity_index),
             ManagedAccountType::AssetLockAddressTopUp {
                 ..
             } => self.asset_lock_address_topup.is_some(),
@@ -328,18 +308,6 @@ impl ManagedAccountCollection {
                 ..
             } => {
                 self.identity_invitation = Some(account);
-            }
-            ManagedAccountType::IdentityAuthenticationEcdsa {
-                identity_index,
-                ..
-            } => {
-                self.identity_authentication_ecdsa.insert(*identity_index, account);
-            }
-            ManagedAccountType::IdentityAuthenticationBls {
-                identity_index,
-                ..
-            } => {
-                self.identity_authentication_bls.insert(*identity_index, account);
             }
             ManagedAccountType::AssetLockAddressTopUp {
                 ..
@@ -470,20 +438,10 @@ impl ManagedAccountCollection {
             }
         }
 
-        // Convert per-identity ECDSA authentication accounts
-        for (index, account) in &account_collection.identity_authentication_ecdsa {
-            if let Ok(managed_account) = Self::create_managed_account_from_account(account) {
-                managed_collection.identity_authentication_ecdsa.insert(*index, managed_account);
-            }
-        }
-
-        // Convert per-identity BLS authentication accounts
-        #[cfg(feature = "bls")]
-        for (index, account) in &account_collection.identity_authentication_bls {
-            if let Ok(managed_account) = Self::create_managed_account_from_bls_account(account) {
-                managed_collection.identity_authentication_bls.insert(*index, managed_account);
-            }
-        }
+        // DIP-13 per-identity authentication accounts are Platform-only and
+        // have no managed-side representation. Signing keys are derived on
+        // demand from the immutable `Account`'s xpub / derivation path, which
+        // lives on `account_collection` directly.
 
         if let Some(account) = &account_collection.asset_lock_address_topup {
             if let Ok(managed_account) = Self::create_managed_account_from_account(account) {
@@ -713,36 +671,17 @@ impl ManagedAccountCollection {
                 }
             }
             AccountType::IdentityAuthenticationEcdsa {
-                identity_index,
-            } => {
-                // DIP-13: hardened leaves per the spec.
-                let addresses = AddressPool::new(
-                    base_path,
-                    AddressPoolType::AbsentHardened,
-                    DEFAULT_SPECIAL_GAP_LIMIT,
-                    network,
-                    key_source,
-                )?;
-                ManagedAccountType::IdentityAuthenticationEcdsa {
-                    identity_index,
-                    addresses,
-                }
+                ..
             }
-            AccountType::IdentityAuthenticationBls {
-                identity_index,
+            | AccountType::IdentityAuthenticationBls {
+                ..
             } => {
-                // DIP-13: hardened leaves per the spec.
-                let addresses = AddressPool::new(
-                    base_path,
-                    AddressPoolType::AbsentHardened,
-                    DEFAULT_SPECIAL_GAP_LIMIT,
-                    network,
-                    key_source,
-                )?;
-                ManagedAccountType::IdentityAuthenticationBls {
-                    identity_index,
-                    addresses,
-                }
+                // DIP-13 per-identity authentication accounts are Platform-only
+                // and have no managed-side representation.
+                return Err(crate::error::Error::InvalidParameter(
+                    "DIP-13 identity authentication accounts have no managed representation"
+                        .to_string(),
+                ));
             }
             AccountType::AssetLockAddressTopUp => {
                 let addresses = AddressPool::new(
@@ -1041,10 +980,6 @@ impl ManagedAccountCollection {
             accounts.push(account);
         }
 
-        accounts.extend(self.identity_authentication_ecdsa.values());
-
-        accounts.extend(self.identity_authentication_bls.values());
-
         if let Some(account) = &self.asset_lock_address_topup {
             accounts.push(account);
         }
@@ -1103,10 +1038,6 @@ impl ManagedAccountCollection {
         if let Some(account) = &mut self.identity_invitation {
             accounts.push(account);
         }
-
-        accounts.extend(self.identity_authentication_ecdsa.values_mut());
-
-        accounts.extend(self.identity_authentication_bls.values_mut());
 
         if let Some(account) = &mut self.asset_lock_address_topup {
             accounts.push(account);
@@ -1172,8 +1103,6 @@ impl ManagedAccountCollection {
             && self.identity_topup.is_empty()
             && self.identity_topup_not_bound.is_none()
             && self.identity_invitation.is_none()
-            && self.identity_authentication_ecdsa.is_empty()
-            && self.identity_authentication_bls.is_empty()
             && self.asset_lock_address_topup.is_none()
             && self.asset_lock_shielded_address_topup.is_none()
             && self.provider_voting_keys.is_none()
@@ -1194,8 +1123,6 @@ impl ManagedAccountCollection {
         self.identity_topup.clear();
         self.identity_topup_not_bound = None;
         self.identity_invitation = None;
-        self.identity_authentication_ecdsa.clear();
-        self.identity_authentication_bls.clear();
         self.asset_lock_address_topup = None;
         self.asset_lock_shielded_address_topup = None;
         self.provider_voting_keys = None;

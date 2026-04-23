@@ -58,27 +58,6 @@ pub enum ManagedAccountType {
         /// Identity invitation address pool
         addresses: AddressPool,
     },
-    /// Per-identity ECDSA authentication keys (DIP-13).
-    /// Path: `m/9'/coin_type'/5'/0'/0'/identity_index'`. Platform-only.
-    IdentityAuthenticationEcdsa {
-        /// Which identity in this wallet these keys belong to (hardened).
-        identity_index: u32,
-        /// Address pool for sequential key_index'.
-        addresses: AddressPool,
-    },
-    /// Per-identity BLS authentication keys (DIP-13).
-    /// Path: `m/9'/coin_type'/5'/0'/1'/identity_index'`. Platform-only.
-    ///
-    /// The variant is always present regardless of the `bls` feature — only
-    /// `BLSAccount`-typed storage is cfg-gated. This keeps downstream pattern
-    /// matches on `ManagedAccountType` exhaustive in both feature
-    /// configurations.
-    IdentityAuthenticationBls {
-        /// Which identity in this wallet these keys belong to (hardened).
-        identity_index: u32,
-        /// Address pool for sequential key_index'.
-        addresses: AddressPool,
-    },
     /// Asset lock address top-up funding (subfeature 4)
     /// Path: m/9'/coinType'/5'/4'/index'
     AssetLockAddressTopUp {
@@ -176,9 +155,6 @@ impl ManagedAccountType {
             | Self::IdentityInvitation {
                 ..
             }
-            | Self::IdentityAuthenticationEcdsa {
-                ..
-            }
             | Self::AssetLockAddressTopUp {
                 ..
             }
@@ -209,9 +185,6 @@ impl ManagedAccountType {
                 account,
                 ..
             } => Some(*account),
-            Self::IdentityAuthenticationBls {
-                ..
-            } => None,
         }
     }
 
@@ -261,10 +234,6 @@ impl ManagedAccountType {
                 addresses,
                 ..
             }
-            | Self::IdentityAuthenticationEcdsa {
-                addresses,
-                ..
-            }
             | Self::AssetLockAddressTopUp {
                 addresses,
                 ..
@@ -300,10 +269,6 @@ impl ManagedAccountType {
                 ..
             }
             | Self::PlatformPayment {
-                addresses,
-                ..
-            }
-            | Self::IdentityAuthenticationBls {
                 addresses,
                 ..
             } => vec![addresses],
@@ -340,10 +305,6 @@ impl ManagedAccountType {
                 addresses,
                 ..
             }
-            | Self::IdentityAuthenticationEcdsa {
-                addresses,
-                ..
-            }
             | Self::AssetLockAddressTopUp {
                 addresses,
                 ..
@@ -379,10 +340,6 @@ impl ManagedAccountType {
                 ..
             }
             | Self::PlatformPayment {
-                addresses,
-                ..
-            }
-            | Self::IdentityAuthenticationBls {
                 addresses,
                 ..
             } => vec![addresses],
@@ -469,18 +426,6 @@ impl ManagedAccountType {
             Self::IdentityInvitation {
                 ..
             } => AccountType::IdentityInvitation,
-            Self::IdentityAuthenticationEcdsa {
-                identity_index,
-                ..
-            } => AccountType::IdentityAuthenticationEcdsa {
-                identity_index: *identity_index,
-            },
-            Self::IdentityAuthenticationBls {
-                identity_index,
-                ..
-            } => AccountType::IdentityAuthenticationBls {
-                identity_index: *identity_index,
-            },
             Self::AssetLockAddressTopUp {
                 ..
             } => AccountType::AssetLockAddressTopUp,
@@ -663,50 +608,19 @@ impl ManagedAccountType {
                 })
             }
             AccountType::IdentityAuthenticationEcdsa {
-                identity_index,
-            } => {
-                // Identity authentication keys are signing/authentication
-                // material; falling back to the master path on a derivation
-                // error would produce a subtly-wrong pool at `m/`, so we
-                // propagate the error instead.
-                let path = account_type.derivation_path(network)?;
-                // Hardened leaves per DIP-13 — addresses must be generated from
-                // a private-key-bearing source (watch-only/no-key setups will
-                // create an empty pool that can still track derivation paths).
-                let pool = AddressPool::new(
-                    path,
-                    AddressPoolType::AbsentHardened,
-                    DEFAULT_SPECIAL_GAP_LIMIT,
-                    network,
-                    key_source,
-                )?;
-
-                Ok(Self::IdentityAuthenticationEcdsa {
-                    identity_index,
-                    addresses: pool,
-                })
+                ..
             }
-            AccountType::IdentityAuthenticationBls {
-                identity_index,
+            | AccountType::IdentityAuthenticationBls {
+                ..
             } => {
-                // Identity authentication keys are signing/authentication
-                // material; falling back to the master path on a derivation
-                // error would produce a subtly-wrong pool at `m/`, so we
-                // propagate the error instead.
-                let path = account_type.derivation_path(network)?;
-                // Hardened leaves per DIP-13.
-                let pool = AddressPool::new(
-                    path,
-                    AddressPoolType::AbsentHardened,
-                    DEFAULT_SPECIAL_GAP_LIMIT,
-                    network,
-                    key_source,
-                )?;
-
-                Ok(Self::IdentityAuthenticationBls {
-                    identity_index,
-                    addresses: pool,
-                })
+                // DIP-13 per-identity authentication accounts are Platform-only
+                // — they hold no L1 UTXOs and have no managed-side
+                // representation. Signing keys are derived on demand from the
+                // immutable `Account`'s xpub / derivation path.
+                Err(crate::error::Error::InvalidParameter(
+                    "DIP-13 identity authentication accounts have no managed representation"
+                        .to_string(),
+                ))
             }
             AccountType::AssetLockAddressTopUp => {
                 let path = account_type

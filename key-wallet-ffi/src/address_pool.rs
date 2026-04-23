@@ -47,11 +47,15 @@ fn get_managed_account_by_type<'a>(
         }
         AccountType::IdentityInvitation => collection.identity_invitation.as_ref(),
         AccountType::IdentityAuthenticationEcdsa {
-            identity_index,
-        } => collection.identity_authentication_ecdsa.get(identity_index),
-        AccountType::IdentityAuthenticationBls {
-            identity_index,
-        } => collection.identity_authentication_bls.get(identity_index),
+            ..
+        }
+        | AccountType::IdentityAuthenticationBls {
+            ..
+        } => {
+            // DIP-13 per-identity authentication accounts are Platform-only
+            // and have no managed-side representation.
+            None
+        }
         AccountType::AssetLockAddressTopUp => collection.asset_lock_address_topup.as_ref(),
         AccountType::AssetLockShieldedAddressTopUp => {
             collection.asset_lock_shielded_address_topup.as_ref()
@@ -106,11 +110,15 @@ fn get_managed_account_by_type_mut<'a>(
         }
         AccountType::IdentityInvitation => collection.identity_invitation.as_mut(),
         AccountType::IdentityAuthenticationEcdsa {
-            identity_index,
-        } => collection.identity_authentication_ecdsa.get_mut(identity_index),
-        AccountType::IdentityAuthenticationBls {
-            identity_index,
-        } => collection.identity_authentication_bls.get_mut(identity_index),
+            ..
+        }
+        | AccountType::IdentityAuthenticationBls {
+            ..
+        } => {
+            // DIP-13 per-identity authentication accounts are Platform-only
+            // and have no managed-side representation.
+            None
+        }
         AccountType::AssetLockAddressTopUp => collection.asset_lock_address_topup.as_mut(),
         AccountType::AssetLockShieldedAddressTopUp => {
             collection.asset_lock_shielded_address_topup.as_mut()
@@ -715,22 +723,6 @@ pub unsafe extern "C" fn managed_wallet_mark_address_used(
             if let Some(account) = &mut collection.identity_invitation {
                 if account.mark_address_used(&address) {
                     found = true;
-                }
-            }
-        }
-        if !found {
-            for account in collection.identity_authentication_ecdsa.values_mut() {
-                if account.mark_address_used(&address) {
-                    found = true;
-                    break;
-                }
-            }
-        }
-        if !found {
-            for account in collection.identity_authentication_bls.values_mut() {
-                if account.mark_address_used(&address) {
-                    found = true;
-                    break;
                 }
             }
         }

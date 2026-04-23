@@ -268,11 +268,16 @@ pub unsafe extern "C" fn managed_wallet_get_account(
             }
             AccountType::IdentityInvitation => managed_collection.identity_invitation.as_ref(),
             AccountType::IdentityAuthenticationEcdsa {
-                identity_index,
-            } => managed_collection.identity_authentication_ecdsa.get(&identity_index),
-            AccountType::IdentityAuthenticationBls {
-                identity_index,
-            } => managed_collection.identity_authentication_bls.get(&identity_index),
+                ..
+            }
+            | AccountType::IdentityAuthenticationBls {
+                ..
+            } => {
+                // DIP-13 per-identity authentication accounts are Platform-only
+                // and have no managed-side representation. Signing keys are
+                // derived from the immutable `Account` directly.
+                None
+            }
             AccountType::AssetLockAddressTopUp => {
                 managed_collection.asset_lock_address_topup.as_ref()
             }
@@ -1162,14 +1167,6 @@ pub unsafe extern "C" fn managed_core_account_get_address_pool(
                     ..
                 } => addresses,
                 ManagedAccountType::PlatformPayment {
-                    addresses,
-                    ..
-                } => addresses,
-                ManagedAccountType::IdentityAuthenticationEcdsa {
-                    addresses,
-                    ..
-                } => addresses,
-                ManagedAccountType::IdentityAuthenticationBls {
                     addresses,
                     ..
                 } => addresses,

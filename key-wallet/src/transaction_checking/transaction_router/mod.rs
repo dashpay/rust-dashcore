@@ -235,16 +235,6 @@ impl TryFrom<ManagedAccountType> for AccountTypeToCheck {
             ManagedAccountType::IdentityInvitation {
                 ..
             } => Ok(AccountTypeToCheck::IdentityInvitation),
-            ManagedAccountType::IdentityAuthenticationEcdsa {
-                ..
-            }
-            | ManagedAccountType::IdentityAuthenticationBls {
-                ..
-            } => {
-                // DIP-13 per-identity authentication accounts are Platform-only,
-                // operating on Dash Platform rather than the Core chain.
-                Err(PlatformAccountConversionError)
-            }
             ManagedAccountType::AssetLockAddressTopUp {
                 ..
             } => Ok(AccountTypeToCheck::AssetLockAddressTopUp),
@@ -310,16 +300,6 @@ impl TryFrom<&ManagedAccountType> for AccountTypeToCheck {
             ManagedAccountType::IdentityInvitation {
                 ..
             } => Ok(AccountTypeToCheck::IdentityInvitation),
-            ManagedAccountType::IdentityAuthenticationEcdsa {
-                ..
-            }
-            | ManagedAccountType::IdentityAuthenticationBls {
-                ..
-            } => {
-                // DIP-13 per-identity authentication accounts are Platform-only,
-                // operating on Dash Platform rather than the Core chain.
-                Err(PlatformAccountConversionError)
-            }
             ManagedAccountType::AssetLockAddressTopUp {
                 ..
             } => Ok(AccountTypeToCheck::AssetLockAddressTopUp),

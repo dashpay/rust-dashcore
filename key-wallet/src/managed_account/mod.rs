@@ -254,10 +254,6 @@ impl ManagedCoreAccount {
                 addresses,
                 ..
             }
-            | ManagedAccountType::IdentityAuthenticationEcdsa {
-                addresses,
-                ..
-            }
             | ManagedAccountType::AssetLockAddressTopUp {
                 addresses,
                 ..
@@ -291,10 +287,6 @@ impl ManagedCoreAccount {
                 ..
             }
             | ManagedAccountType::PlatformPayment {
-                addresses,
-                ..
-            }
-            | ManagedAccountType::IdentityAuthenticationBls {
                 addresses,
                 ..
             } => {
@@ -836,10 +828,6 @@ impl ManagedCoreAccount {
             | ManagedAccountType::PlatformPayment {
                 addresses,
                 ..
-            }
-            | ManagedAccountType::IdentityAuthenticationEcdsa {
-                addresses,
-                ..
             } => {
                 // Create appropriate key source based on whether xpub is provided
                 let key_source = match account_xpub {
@@ -853,25 +841,6 @@ impl ManagedCoreAccount {
                     }
                     _ => "Failed to generate address",
                 })
-            }
-            ManagedAccountType::IdentityAuthenticationBls {
-                addresses,
-                ..
-            } => {
-                // `account_xpub` is an ECDSA extended pubkey and is useless for
-                // a BLS key pool. Callers that need to derive fresh BLS
-                // identity-auth keys must go through
-                // `next_bls_identity_authentication_key`, which takes a BLS
-                // xpub. Here we only allow progression when the pool already
-                // has a pre-derived address cached (NoKeySource).
-                addresses.next_unused(&address_pool::KeySource::NoKeySource, add_to_state).map_err(
-                    |e| match e {
-                        crate::error::Error::NoKeySource => {
-                            "No unused addresses available and no key source provided"
-                        }
-                        _ => "Failed to generate address",
-                    },
-                )
             }
             ManagedAccountType::IdentityTopUp {
                 addresses,
@@ -956,10 +925,6 @@ impl ManagedCoreAccount {
             | ManagedAccountType::PlatformPayment {
                 addresses,
                 ..
-            }
-            | ManagedAccountType::IdentityAuthenticationEcdsa {
-                addresses,
-                ..
             } => {
                 // Create appropriate key source based on whether xpub is provided
                 let key_source = match account_xpub {
@@ -973,28 +938,6 @@ impl ManagedCoreAccount {
                     }
                     _ => "Failed to generate address with info",
                 })
-            }
-            ManagedAccountType::IdentityAuthenticationBls {
-                addresses,
-                ..
-            } => {
-                // `account_xpub` is an ECDSA extended pubkey and is useless for
-                // a BLS key pool. Callers that need to derive fresh BLS
-                // identity-auth keys must go through
-                // `next_bls_identity_authentication_key`, which takes a BLS
-                // xpub. Here we only allow progression when the pool already
-                // has a pre-derived address cached (NoKeySource).
-                addresses
-                    .next_unused_with_info(
-                        &address_pool::KeySource::NoKeySource,
-                        add_to_state,
-                    )
-                    .map_err(|e| match e {
-                        crate::error::Error::NoKeySource => {
-                            "No unused addresses available and no key source provided"
-                        }
-                        _ => "Failed to generate address with info",
-                    })
             }
             ManagedAccountType::IdentityTopUp {
                 addresses,
@@ -1018,8 +961,7 @@ impl ManagedCoreAccount {
 
     /// Derive the next BLS public key from an address pool.
     ///
-    /// Shared by [`Self::next_bls_operator_key`] and
-    /// [`Self::next_bls_identity_authentication_key`].
+    /// Used by [`Self::next_bls_operator_key`].
     #[cfg(feature = "bls")]
     fn next_bls_key_from_pool(
         addresses: &mut address_pool::AddressPool,
@@ -1063,28 +1005,6 @@ impl ManagedCoreAccount {
                 ..
             } => Self::next_bls_key_from_pool(addresses, account_xpub, add_to_state),
             _ => Err("This method only works for ProviderOperatorKeys accounts"),
-        }
-    }
-
-    /// Generate the next BLS identity-authentication key
-    /// (only for `IdentityAuthenticationBls` accounts).
-    ///
-    /// Counterpart to [`Self::next_bls_operator_key`] for the DIP-13
-    /// identity authentication BLS pool — the ECDSA `account_xpub` accepted
-    /// by [`Self::next_address`] is useless for BLS derivation, so this
-    /// method takes the BLS xpub directly.
-    #[cfg(feature = "bls")]
-    pub fn next_bls_identity_authentication_key(
-        &mut self,
-        account_xpub: Option<ExtendedBLSPubKey>,
-        add_to_state: bool,
-    ) -> Result<dashcore::blsful::PublicKey<dashcore::blsful::Bls12381G2Impl>, &'static str> {
-        match &mut self.account_type {
-            ManagedAccountType::IdentityAuthenticationBls {
-                addresses,
-                ..
-            } => Self::next_bls_key_from_pool(addresses, account_xpub, add_to_state),
-            _ => Err("This method only works for IdentityAuthenticationBls accounts"),
         }
     }
 
@@ -1333,14 +1253,6 @@ impl ManagedCoreAccount {
                 ..
             }
             | ManagedAccountType::PlatformPayment {
-                addresses,
-                ..
-            }
-            | ManagedAccountType::IdentityAuthenticationEcdsa {
-                addresses,
-                ..
-            }
-            | ManagedAccountType::IdentityAuthenticationBls {
                 addresses,
                 ..
             } => Some(addresses.gap_limit),
