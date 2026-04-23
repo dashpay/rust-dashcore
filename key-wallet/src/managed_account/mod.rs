@@ -858,12 +858,12 @@ impl ManagedCoreAccount {
                 addresses,
                 ..
             } => {
-                // `account_xpub` is an ECDSA extended pubkey and is useless for a
-                // BLS key pool. Callers that need to generate BLS identity-auth
-                // addresses must go through a dedicated BLS-aware API path
-                // (similar to `next_bls_operator_key` for ProviderOperatorKeys).
-                // Here we only allow progression when the pool already has a
-                // pre-derived address cached (NoKeySource).
+                // `account_xpub` is an ECDSA extended pubkey and is useless for
+                // a BLS key pool. Callers that need to derive fresh BLS
+                // identity-auth keys must go through
+                // `next_bls_identity_authentication_key`, which takes a BLS
+                // xpub. Here we only allow progression when the pool already
+                // has a pre-derived address cached (NoKeySource).
                 addresses.next_unused(&address_pool::KeySource::NoKeySource, add_to_state).map_err(
                     |e| match e {
                         crate::error::Error::NoKeySource => {
@@ -978,12 +978,12 @@ impl ManagedCoreAccount {
                 addresses,
                 ..
             } => {
-                // `account_xpub` is an ECDSA extended pubkey and is useless for a
-                // BLS key pool. Callers that need to generate BLS identity-auth
-                // addresses must go through a dedicated BLS-aware API path
-                // (similar to `next_bls_operator_key` for ProviderOperatorKeys).
-                // Here we only allow progression when the pool already has a
-                // pre-derived address cached (NoKeySource).
+                // `account_xpub` is an ECDSA extended pubkey and is useless for
+                // a BLS key pool. Callers that need to derive fresh BLS
+                // identity-auth keys must go through
+                // `next_bls_identity_authentication_key`, which takes a BLS
+                // xpub. Here we only allow progression when the pool already
+                // has a pre-derived address cached (NoKeySource).
                 addresses
                     .next_unused_with_info(
                         &address_pool::KeySource::NoKeySource,
@@ -1016,6 +1016,39 @@ impl ManagedCoreAccount {
         }
     }
 
+    /// Derive the next BLS public key from an address pool.
+    ///
+    /// Shared by [`Self::next_bls_operator_key`] and
+    /// [`Self::next_bls_identity_authentication_key`].
+    #[cfg(feature = "bls")]
+    fn next_bls_key_from_pool(
+        addresses: &mut address_pool::AddressPool,
+        account_xpub: Option<ExtendedBLSPubKey>,
+        add_to_state: bool,
+    ) -> Result<dashcore::blsful::PublicKey<dashcore::blsful::Bls12381G2Impl>, &'static str> {
+        let key_source = match account_xpub {
+            Some(xpub) => address_pool::KeySource::BLSPublic(xpub),
+            None => address_pool::KeySource::NoKeySource,
+        };
+
+        let info = addresses
+            .next_unused_with_info(&key_source, add_to_state)
+            .map_err(|_| "Failed to get next unused address")?;
+
+        let Some(PublicKeyType::BLS(pub_key_bytes)) = info.public_key else {
+            return Err("Expected BLS public key but got different key type");
+        };
+
+        addresses.mark_index_used(info.index);
+
+        use dashcore::blsful::{Bls12381G2Impl, PublicKey, SerializationFormat};
+        PublicKey::<Bls12381G2Impl>::from_bytes_with_mode(
+            &pub_key_bytes,
+            SerializationFormat::Modern,
+        )
+        .map_err(|_| "Failed to deserialize BLS public key")
+    }
+
     /// Generate the next BLS operator key (only for ProviderOperatorKeys accounts)
     /// Returns the BLS public key at the next unused index
     #[cfg(feature = "bls")]
@@ -1028,37 +1061,30 @@ impl ManagedCoreAccount {
             ManagedAccountType::ProviderOperatorKeys {
                 addresses,
                 ..
-            } => {
-                // Create key source from the optional BLS public key
-                let key_source = match account_xpub {
-                    Some(xpub) => address_pool::KeySource::BLSPublic(xpub),
-                    None => address_pool::KeySource::NoKeySource,
-                };
-
-                // Use next_unused_with_info to get the next address (handles caching and derivation)
-                let info = addresses
-                    .next_unused_with_info(&key_source, add_to_state)
-                    .map_err(|_| "Failed to get next unused address")?;
-
-                // Extract the BLS public key from the address info
-                let Some(PublicKeyType::BLS(pub_key_bytes)) = info.public_key else {
-                    return Err("Expected BLS public key but got different key type");
-                };
-
-                // Mark as used
-                addresses.mark_index_used(info.index);
-
-                // Convert bytes to BLS public key
-                use dashcore::blsful::{Bls12381G2Impl, PublicKey, SerializationFormat};
-                let public_key = PublicKey::<Bls12381G2Impl>::from_bytes_with_mode(
-                    &pub_key_bytes,
-                    SerializationFormat::Modern,
-                )
-                .map_err(|_| "Failed to deserialize BLS public key")?;
-
-                Ok(public_key)
-            }
+            } => Self::next_bls_key_from_pool(addresses, account_xpub, add_to_state),
             _ => Err("This method only works for ProviderOperatorKeys accounts"),
+        }
+    }
+
+    /// Generate the next BLS identity-authentication key
+    /// (only for `IdentityAuthenticationBls` accounts).
+    ///
+    /// Counterpart to [`Self::next_bls_operator_key`] for the DIP-13
+    /// identity authentication BLS pool — the ECDSA `account_xpub` accepted
+    /// by [`Self::next_address`] is useless for BLS derivation, so this
+    /// method takes the BLS xpub directly.
+    #[cfg(feature = "bls")]
+    pub fn next_bls_identity_authentication_key(
+        &mut self,
+        account_xpub: Option<ExtendedBLSPubKey>,
+        add_to_state: bool,
+    ) -> Result<dashcore::blsful::PublicKey<dashcore::blsful::Bls12381G2Impl>, &'static str> {
+        match &mut self.account_type {
+            ManagedAccountType::IdentityAuthenticationBls {
+                addresses,
+                ..
+            } => Self::next_bls_key_from_pool(addresses, account_xpub, add_to_state),
+            _ => Err("This method only works for IdentityAuthenticationBls accounts"),
         }
     }
 
