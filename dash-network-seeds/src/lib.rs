@@ -21,7 +21,8 @@
 //! # Example
 //!
 //! ```rust
-//! use dash_network_seeds::{MasternodeType, Network, Reachability, reachable_seeds, seeds};
+//! use dash_network_seeds::{MasternodeType, Reachability, reachable_seeds, seeds};
+//! use dashcore::Network;
 //!
 //! let all = seeds(Network::Mainnet);
 //! assert!(!all.is_empty());
@@ -58,39 +59,16 @@
 
 #![forbid(unsafe_code)]
 
+use dashcore::Network;
 use std::fmt;
 use std::net::{IpAddr, SocketAddr};
 
-// ---------- Network ----------
-
-/// The Dash network for which a seed list is provided.
-///
-/// Only networks that actually have a masternode system (mainnet and testnet)
-/// are represented here. Devnet/regtest have no hardcoded seeds.
-#[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum Network {
-    /// Dash mainnet.
-    Mainnet,
-    /// Dash testnet.
-    Testnet,
-}
-
-impl Network {
-    /// Default P2P port for this network.
-    pub const fn default_p2p_port(self) -> u16 {
-        match self {
-            Network::Mainnet => 9999,
-            Network::Testnet => 19999,
-        }
-    }
-
-    /// Raw embedded seed file contents, as a `&'static str`.
-    pub const fn raw_seed_file(self) -> &'static str {
-        match self {
-            Network::Mainnet => MAINNET_SEED_FILE,
-            Network::Testnet => TESTNET_SEED_FILE,
-        }
+/// Raw embedded seed file contents, as a `&'static str`.
+pub const fn raw_seed_file(network: &Network) -> &'static str {
+    match network {
+        Network::Mainnet => MAINNET_SEED_FILE,
+        Network::Testnet => TESTNET_SEED_FILE,
+        _ => panic!(),
     }
 }
 
@@ -399,7 +377,7 @@ const TESTNET_SEED_FILE: &str = include_str!("../seeds/testnet.txt");
 
 /// Return all hardcoded masternode seeds for the given network.
 pub fn seeds(network: Network) -> Vec<MasternodeSeed> {
-    parse(network.raw_seed_file(), network.default_p2p_port())
+    parse(raw_seed_file(&network), network.default_p2p_port())
 }
 
 /// Return just the socket addresses for all hardcoded masternode seeds,
@@ -525,37 +503,6 @@ fn parse_address(tok: &str, default_port: u16) -> Option<SocketAddr> {
     }
     None
 }
-
-// ---------- dashcore interop (feature-gated) ----------
-
-#[cfg(feature = "dashcore")]
-impl TryFrom<dashcore::Network> for Network {
-    type Error = UnsupportedNetwork;
-
-    fn try_from(n: dashcore::Network) -> Result<Self, Self::Error> {
-        match n {
-            dashcore::Network::Mainnet => Ok(Network::Mainnet),
-            dashcore::Network::Testnet => Ok(Network::Testnet),
-            other => Err(UnsupportedNetwork(other)),
-        }
-    }
-}
-
-/// Returned by [`Network::try_from`] when a `dashcore::Network` has no
-/// hardcoded seed list (devnet / regtest).
-#[cfg(feature = "dashcore")]
-#[derive(Clone, Copy, Debug)]
-pub struct UnsupportedNetwork(pub dashcore::Network);
-
-#[cfg(feature = "dashcore")]
-impl std::fmt::Display for UnsupportedNetwork {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "no hardcoded seeds are shipped for network {:?}", self.0)
-    }
-}
-
-#[cfg(feature = "dashcore")]
-impl std::error::Error for UnsupportedNetwork {}
 
 // ---------- Tests ----------
 

@@ -1,12 +1,11 @@
 [package]
 name = "masternode-seeds-fetcher"
 version = { workspace = true }
-edition = "2021"
+edition = "2024"
 authors = ["Dash Core Team"]
 description = "Fetch the current masternode IP list from the Dash P2P network and write per-network seed files used by dash-spv."
 license = "MIT"
 repository = "https://github.com/dashpay/rust-dashcore"
-rust-version = "1.89"
 publish = false
 
 [[bin]]

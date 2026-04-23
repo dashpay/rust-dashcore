@@ -118,6 +118,14 @@ impl Network {
             Network::Regtest => 19899,
         }
     }
+
+    pub const fn dns_seeds(self) -> &'static [&'static str] {
+        match self {
+            Network::Mainnet => &["dnsseed.dash.org"],
+            Network::Testnet => &["testnet-seed.dashdot.io"],
+            Network::Devnet | Network::Regtest => &[""],
+        }
+    }
 }
 
 impl fmt::Display for Network {

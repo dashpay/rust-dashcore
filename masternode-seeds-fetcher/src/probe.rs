@@ -15,11 +15,11 @@ use anyhow::Result;
 use dash_network_seeds::{
     CoreStatus, PlatformLiveness, PlatformStatus, Reachability, SslStatus, SyncStatus,
 };
+use dashcore::Network as DashNetwork;
+use dashcore::network::Address;
 use dashcore::network::constants::ServiceFlags;
 use dashcore::network::message::NetworkMessage;
 use dashcore::network::message_network::VersionMessage;
-use dashcore::network::Address;
-use dashcore::Network as DashNetwork;
 use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
 use rustls::{ClientConfig, DigitallySignedStruct, SignatureScheme};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};

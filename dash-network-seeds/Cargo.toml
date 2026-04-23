@@ -1,24 +1,11 @@
 [package]
 name = "dash-network-seeds"
 version = { workspace = true }
-edition = "2021"
+edition = "2024"
 authors = ["Dash Core Team"]
 description = "Hardcoded masternode IP seed lists for Dash mainnet and testnet, differentiated by regular/evo type. Refreshed weekly via CI from the live Dash P2P network."
 license = "MIT"
 repository = "https://github.com/dashpay/rust-dashcore"
-rust-version = "1.89"
-
-[lib]
-name = "dash_network_seeds"
-path = "src/lib.rs"
-
-[features]
-# Provides `From<dashcore::Network>` conversions. Off by default so consumers
-# can use the seed list without pulling in `dashcore`.
-dashcore = ["dep:dashcore"]
 
 [dependencies]
-# `dashcore` is optional and only needed by the `TryFrom<dashcore::Network>`
-# impls. Default features stay on because dashcore's own `signer.rs` uses
-# `RecoverableSignature` unconditionally (it requires `secp-recovery`).
-dashcore = { path = "../dash", optional = true }
+dashcore = { path = "../dash" }
