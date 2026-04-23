@@ -122,6 +122,9 @@ impl Params {
                 allow_min_difficulty_blocks: true,
                 no_pow_retargeting: true,
             },
+            // `Network` is `#[non_exhaustive]`; future variants need their
+            // own consensus parameters here.
+            _ => unreachable!("Params::new called with unsupported Network variant"),
         }
     }
 

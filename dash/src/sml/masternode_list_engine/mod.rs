@@ -815,9 +815,7 @@ impl MasternodeListEngine {
         verify_quorums: bool,
         previous_chain_lock_sigs: Option<[BLSSignature; 3]>,
     ) -> Result<Option<BLSSignature>, SmlError> {
-        if let Some(known_genesis_block_hash) = self
-            .network
-            .known_genesis_block_hash()
+        if let Some(known_genesis_block_hash) = crate::known_genesis_block_hash(self.network)
             .or_else(|| self.block_container.get_hash(&0).cloned())
             && (masternode_list_diff.base_block_hash == known_genesis_block_hash
                 || masternode_list_diff.base_block_hash.as_byte_array() == &[0; 32])

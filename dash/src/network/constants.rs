@@ -38,6 +38,8 @@ use core::{fmt, ops};
 
 use hashes::Hash;
 
+pub use dash_network::{Network, ParseNetworkError};
+
 use crate::consensus::encode::{self, Decodable, Encodable};
 use crate::{BlockHash, io};
 
@@ -61,129 +63,53 @@ pub const NODE_HEADERS_COMPRESSED: ServiceFlags = ServiceFlags::NODE_HEADERS_COM
 /// 60001 - Support `pong` message and nonce in `ping` message
 pub const PROTOCOL_VERSION: u32 = 70237;
 
-#[cfg(feature = "bincode")]
-use bincode_derive::{Decode, Encode};
-
-/// The cryptocurrency network to act on.
-#[derive(Copy, PartialEq, Eq, PartialOrd, Ord, Clone, Hash, Debug)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "serde", serde(rename_all = "lowercase"))]
-#[non_exhaustive]
-#[repr(u8)]
-#[cfg_attr(feature = "bincode", derive(Encode, Decode))]
-pub enum Network {
-    /// Dash mainnet, the production network for real transactions.
-    Mainnet,
-    /// Dash public test network for protocol-level testing without real funds.
-    Testnet,
-    /// Dash development network, an isolated environment for feature development and testing.
-    Devnet,
-    /// Local regression testing network for deterministic, offline testing with instant block generation.
-    Regtest,
-}
-
-impl Network {
-    /// Creates a `Network` from the magic bytes.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use dashcore::Network;
-    ///
-    /// assert_eq!(Some(Network::Mainnet), Network::from_magic(0xBD6B0CBF));
-    /// assert_eq!(None, Network::from_magic(0xFFFFFFFF));
-    /// ```
-    pub fn from_magic(magic: u32) -> Option<Network> {
-        // Note: any new entries here must be added to `magic` below
-        match magic {
-            0xBD6B0CBF => Some(Network::Mainnet),
-            0xFFCAE2CE => Some(Network::Testnet),
-            0xCEFFCAE2 => Some(Network::Devnet),
-            0xDCB7C1FC => Some(Network::Regtest),
-            _ => None,
+/// Returns the known genesis block hash for `network`, if one is hardcoded.
+///
+/// `Network::Devnet` returns `None` because devnets use dynamically-generated
+/// genesis blocks.
+///
+/// This used to be a method on [`Network`], but [`Network`] now lives in the
+/// dependency-light `dash-network` crate, which cannot reference
+/// [`BlockHash`]. Call sites should migrate:
+///
+/// ```compile_fail
+/// // Old
+/// let hash = network.known_genesis_block_hash();
+/// ```
+///
+/// ```rust
+/// # use dashcore::{Network, known_genesis_block_hash};
+/// # let network = Network::Mainnet;
+/// let hash = known_genesis_block_hash(network);
+/// ```
+pub fn known_genesis_block_hash(network: Network) -> Option<BlockHash> {
+    match network {
+        Network::Mainnet => {
+            let mut block_hash =
+                hex::decode("00000ffd590b1485b3caadc19b22e6379c733355108f107a430458cdf3407ab6")
+                    .expect("expected valid hex");
+            block_hash.reverse();
+            Some(BlockHash::from_byte_array(block_hash.try_into().expect("expected 32 bytes")))
         }
-    }
-
-    /// Return the network magic bytes, which should be encoded little-endian
-    /// at the start of every message
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use dashcore::Network;
-    ///
-    /// let network = Network::Mainnet;
-    /// assert_eq!(network.magic(), 0xBD6B0CBF);
-    /// ```
-    pub fn magic(self) -> u32 {
-        // Note: any new entries here must be added to `from_magic` above
-        match self {
-            Network::Mainnet => 0xBD6B0CBF,
-            Network::Testnet => 0xFFCAE2CE,
-            Network::Devnet => 0xCEFFCAE2,
-            Network::Regtest => 0xDCB7C1FC,
+        Network::Testnet => {
+            let mut block_hash =
+                hex::decode("00000bafbc94add76cb75e2ec92894837288a481e5c005f6563d91623bf8bc2c")
+                    .expect("expected valid hex");
+            block_hash.reverse();
+            Some(BlockHash::from_byte_array(block_hash.try_into().expect("expected 32 bytes")))
         }
-    }
-
-    pub fn known_genesis_block_hash(&self) -> Option<BlockHash> {
-        match self {
-            Network::Mainnet => {
-                let mut block_hash =
-                    hex::decode("00000ffd590b1485b3caadc19b22e6379c733355108f107a430458cdf3407ab6")
-                        .expect("expected valid hex");
-                block_hash.reverse();
-                Some(BlockHash::from_byte_array(block_hash.try_into().expect("expected 32 bytes")))
-            }
-            Network::Testnet => {
-                let mut block_hash =
-                    hex::decode("00000bafbc94add76cb75e2ec92894837288a481e5c005f6563d91623bf8bc2c")
-                        .expect("expected valid hex");
-                block_hash.reverse();
-                Some(BlockHash::from_byte_array(block_hash.try_into().expect("expected 32 bytes")))
-            }
-            Network::Devnet => None,
-            Network::Regtest => {
-                let mut block_hash =
-                    hex::decode("000008ca1832a4baf228eb1553c03d3a2c8e02399550dd6ea8d65cec3ef23d2e")
-                        .expect("expected valid hex");
-                block_hash.reverse();
-                Some(BlockHash::from_byte_array(block_hash.try_into().expect("expected 32 bytes")))
-            }
+        Network::Devnet => None,
+        Network::Regtest => {
+            let mut block_hash =
+                hex::decode("000008ca1832a4baf228eb1553c03d3a2c8e02399550dd6ea8d65cec3ef23d2e")
+                    .expect("expected valid hex");
+            block_hash.reverse();
+            Some(BlockHash::from_byte_array(block_hash.try_into().expect("expected 32 bytes")))
         }
-    }
-
-    pub fn v20_activation_height(&self) -> u32 {
-        match self {
-            Network::Mainnet => 1_987_776,
-            Network::Testnet => 905_100,
-            // Devnet and regtest activate V20 immediately
-            _ => 0,
-        }
-    }
-}
-
-impl fmt::Display for Network {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            Network::Mainnet => write!(f, "mainnet"),
-            Network::Testnet => write!(f, "testnet"),
-            Network::Devnet => write!(f, "devnet"),
-            Network::Regtest => write!(f, "regtest"),
-        }
-    }
-}
-
-impl std::str::FromStr for Network {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.to_lowercase().as_str() {
-            "mainnet" | "main" => Ok(Network::Mainnet),
-            "testnet" | "test" => Ok(Network::Testnet),
-            "devnet" | "dev" => Ok(Network::Devnet),
-            "regtest" => Ok(Network::Regtest),
-            _ => Err(format!("Unknown network type: {}", s)),
-        }
+        // `Network` is `#[non_exhaustive]`; if a new variant is added in the
+        // dependency-light `dash-network` crate this arm catches it until
+        // call sites are updated.
+        _ => None,
     }
 }
 

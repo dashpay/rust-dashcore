@@ -309,9 +309,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager, H: EventHandler>
         }
 
         // Get the genesis block hash for this network
-        let genesis_hash = config
-            .network
-            .known_genesis_block_hash()
+        let genesis_hash = dashcore::known_genesis_block_hash(config.network)
             .ok_or_else(|| SpvError::Config("No known genesis hash for network".to_string()))?;
 
         tracing::info!(

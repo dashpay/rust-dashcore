@@ -178,6 +178,9 @@ pub fn genesis_block(network: Network) -> Block {
                 txdata,
             }
         }
+        // `Network` is `#[non_exhaustive]`; panic if a new variant appears
+        // until someone adds its genesis block here.
+        _ => unreachable!("genesis_block called with unsupported Network variant"),
     }
 }
 

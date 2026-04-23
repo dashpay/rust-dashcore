@@ -6,6 +6,7 @@ groups:
     - dashcore
     - dashcore_hashes
     - dashcore-private
+    - dash-network
 
   spv:
     - dash-spv

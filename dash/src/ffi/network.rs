@@ -19,6 +19,7 @@ impl From<Network> for FFINetwork {
             Network::Testnet => FFINetwork::Testnet,
             Network::Devnet => FFINetwork::Devnet,
             Network::Regtest => FFINetwork::Regtest,
+            _ => unreachable!("FFINetwork::from: unsupported Network variant"),
         }
     }
 }
