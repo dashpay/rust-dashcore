@@ -89,9 +89,8 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
 
         // Refresh cached balances only for affected wallets *before* emitting
         // so the event carries the post-update balance.
-        let check_result = self
-            .check_transaction_in_all_wallets_silent(tx, context.clone(), true, false)
-            .await;
+        let check_result =
+            self.check_transaction_in_all_wallets_silent(tx, context.clone(), true, false).await;
 
         let is_relevant = !check_result.affected_wallets.is_empty();
         let net_amount = if is_relevant {

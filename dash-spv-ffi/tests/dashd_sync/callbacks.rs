@@ -410,8 +410,7 @@ extern "C" fn on_block_process_change(
         return;
     };
     if !transactions_updated.is_null() && record_count > 0 {
-        let records =
-            unsafe { slice::from_raw_parts(transactions_updated, record_count as usize) };
+        let records = unsafe { slice::from_raw_parts(transactions_updated, record_count as usize) };
         let mut sink = tracker.received_transactions.lock().unwrap_or_else(|e| e.into_inner());
         for r in records {
             sink.push((r.txid, r.net_amount));

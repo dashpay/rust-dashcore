@@ -460,7 +460,7 @@ impl<T: WalletInfoInterface> WalletManager<T> {
     ///
     /// Block-processing callers that want a single consolidated
     /// `BlockProcessChange` per wallet should use the internal
-    /// [`check_transaction_in_all_wallets_silent`] entry point.
+    /// `check_transaction_in_all_wallets_silent` entry point.
     pub async fn check_transaction_in_all_wallets(
         &mut self,
         tx: &Transaction,

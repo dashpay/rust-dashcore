@@ -508,16 +508,9 @@ async fn test_process_block_emits_events() {
     assert_eq!(result.new_txids.len(), 1);
 
     let events = drain_events(&mut rx);
-    let block_events: Vec<_> = events
-        .iter()
-        .filter(|e| matches!(e, WalletEvent::BlockProcessChange { .. }))
-        .collect();
-    assert_eq!(
-        block_events.len(),
-        1,
-        "expected exactly one BlockProcessChange, got {:?}",
-        events
-    );
+    let block_events: Vec<_> =
+        events.iter().filter(|e| matches!(e, WalletEvent::BlockProcessChange { .. })).collect();
+    assert_eq!(block_events.len(), 1, "expected exactly one BlockProcessChange, got {:?}", events);
 
     match block_events[0] {
         WalletEvent::BlockProcessChange {
