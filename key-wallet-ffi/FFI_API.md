@@ -4,7 +4,7 @@ This document provides a comprehensive reference for all FFI (Foreign Function I
 
 **Auto-generated**: This documentation is automatically generated from the source code. Do not edit manually.
 
-**Total Functions**: 259
+**Total Functions**: 257
 
 ## Table of Contents
 
@@ -69,7 +69,7 @@ Functions: 19
 
 ### Wallet Operations
 
-Functions: 64
+Functions: 63
 
 | Function | Description | Module |
 |----------|-------------|--------|
@@ -81,7 +81,6 @@ Functions: 64
 | `key_wallet_derive_address_from_seed` | Derive an address from a seed at a specific derivation path  # Safety -... | derivation |
 | `key_wallet_derive_private_key_from_seed` | Derive a private key from a seed at a specific derivation path  # Safety -... | derivation |
 | `managed_core_account_get_parent_wallet_id` | Get the parent wallet ID of a managed account  Note: ManagedAccount doesn't... | managed_account |
-| `managed_wallet_check_transaction` | Check if a transaction belongs to the wallet  This function checks a... | transaction_checking |
 | `managed_wallet_free` | Free managed wallet info  # Safety  - `managed_wallet` must be a valid... | managed_wallet |
 | `managed_wallet_generate_addresses_to_index` | Generate addresses up to a specific index in a pool  This ensures that... | address_pool |
 | `managed_wallet_get_account` | Get a managed account from a managed wallet  This function gets a... | managed_account |
@@ -273,14 +272,13 @@ Functions: 10
 
 ### Transaction Management
 
-Functions: 14
+Functions: 13
 
 | Function | Description | Module |
 |----------|-------------|--------|
 | `transaction_add_input` | Add an input to a transaction  # Safety - `tx` must be a valid pointer to an... | transaction |
 | `transaction_add_output` | Add an output to a transaction  # Safety - `tx` must be a valid pointer to... | transaction |
 | `transaction_bytes_free` | Free transaction bytes  # Safety  - `tx_bytes` must be a valid pointer... | transaction |
-| `transaction_check_result_free` | Free a transaction check result  # Safety  - `result` must be a valid... | transaction_checking |
 | `transaction_classify` | Get the transaction classification for routing  Returns a string describing... | transaction_checking |
 | `transaction_create` | Create a new empty transaction  # Returns - Pointer to FFITransaction on... | transaction |
 | `transaction_deserialize` | Deserialize a transaction  # Safety - `data` must be a valid pointer to... | transaction |
@@ -849,22 +847,6 @@ Get the parent wallet ID of a managed account  Note: ManagedAccount doesn't stor
 - `wallet_id` must be a valid pointer to a 32-byte wallet ID buffer that was provided by the caller - The returned pointer is the same as the input pointer for convenience - The caller must not free the returned pointer as it's the same as the input
 
 **Module:** `managed_account`
-
----
-
-#### `managed_wallet_check_transaction`
-
-```c
-managed_wallet_check_transaction(managed_wallet: *mut FFIManagedWalletInfo, wallet: *mut FFIWallet, tx_bytes: *const u8, tx_len: usize, context_type: FFITransactionContextType, block_info: FFIBlockInfo, islock_data: *const u8, islock_len: usize, update_state: bool, result_out: *mut FFITransactionCheckResult, error: *mut FFIError,) -> bool
-```
-
-**Description:**
-Check if a transaction belongs to the wallet  This function checks a transaction against all relevant account types in the wallet and returns detailed information about which accounts are affected.  # Safety  - `managed_wallet` must be a valid pointer to an FFIManagedWalletInfo - `wallet` must be a valid pointer to an FFIWallet (needed for address generation and DashPay queries) - `tx_bytes` must be a valid pointer to transaction bytes with at least `tx_len` bytes - `result_out` must be a valid pointer to store the result - `error` must be a valid pointer to an FFIError - The affected_accounts array in the result must be freed with `transaction_check_result_free`
-
-**Safety:**
-- `managed_wallet` must be a valid pointer to an FFIManagedWalletInfo - `wallet` must be a valid pointer to an FFIWallet (needed for address generation and DashPay queries) - `tx_bytes` must be a valid pointer to transaction bytes with at least `tx_len` bytes - `result_out` must be a valid pointer to store the result - `error` must be a valid pointer to an FFIError - The affected_accounts array in the result must be freed with `transaction_check_result_free`
-
-**Module:** `transaction_checking`
 
 ---
 
@@ -3619,22 +3601,6 @@ Free transaction bytes  # Safety  - `tx_bytes` must be a valid pointer created b
 - `tx_bytes` must be a valid pointer created by transaction functions or null - After calling this function, the pointer becomes invalid
 
 **Module:** `transaction`
-
----
-
-#### `transaction_check_result_free`
-
-```c
-transaction_check_result_free(result: *mut FFITransactionCheckResult) -> ()
-```
-
-**Description:**
-Free a transaction check result  # Safety  - `result` must be a valid pointer to an FFITransactionCheckResult - This function must only be called once per result
-
-**Safety:**
-- `result` must be a valid pointer to an FFITransactionCheckResult - This function must only be called once per result
-
-**Module:** `transaction_checking`
 
 ---
 
