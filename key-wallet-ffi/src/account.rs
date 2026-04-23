@@ -92,15 +92,14 @@ pub unsafe extern "C" fn wallet_get_account(
     let wallet = &*wallet;
     let account_type_rust = match account_type.to_account_type(account_index) {
         Ok(t) => t,
-        Err(mut err) => {
+        Err(err) => {
             let code = err.code;
             let message = if err.message.is_null() {
                 "Invalid account type".to_string()
             } else {
-                let msg = std::ffi::CStr::from_ptr(err.message).to_string_lossy().to_string();
-                err.free_message();
-                msg
+                std::ffi::CStr::from_ptr(err.message).to_string_lossy().into_owned()
             };
+            // `err` dropped here; its original message is freed by `Drop`.
             return FFIAccountResult::error(code, message);
         }
     };

@@ -381,15 +381,14 @@ pub unsafe extern "C" fn wallet_add_account(
 
     let account_type_rust = match account_type.to_account_type(account_index) {
         Ok(t) => t,
-        Err(mut e) => {
+        Err(e) => {
             let code = e.code;
             let message = if e.message.is_null() {
                 "Invalid account type".to_string()
             } else {
-                let m = std::ffi::CStr::from_ptr(e.message).to_string_lossy().to_string();
-                e.free_message();
-                m
+                std::ffi::CStr::from_ptr(e.message).to_string_lossy().into_owned()
             };
+            // `e` dropped here; its original message is freed by `Drop`.
             return crate::types::FFIAccountResult::error(code, message);
         }
     };
@@ -623,15 +622,14 @@ pub unsafe extern "C" fn wallet_add_account_with_xpub_bytes(
 
     let account_type_rust = match account_type.to_account_type(account_index) {
         Ok(t) => t,
-        Err(mut e) => {
+        Err(e) => {
             let code = e.code;
             let message = if e.message.is_null() {
                 "Invalid account type".to_string()
             } else {
-                let m = std::ffi::CStr::from_ptr(e.message).to_string_lossy().to_string();
-                e.free_message();
-                m
+                std::ffi::CStr::from_ptr(e.message).to_string_lossy().into_owned()
             };
+            // `e` dropped here; its original message is freed by `Drop`.
             return crate::types::FFIAccountResult::error(code, message);
         }
     };
@@ -759,15 +757,14 @@ pub unsafe extern "C" fn wallet_add_account_with_string_xpub(
 
     let account_type_rust = match account_type.to_account_type(account_index) {
         Ok(t) => t,
-        Err(mut e) => {
+        Err(e) => {
             let code = e.code;
             let message = if e.message.is_null() {
                 "Invalid account type".to_string()
             } else {
-                let m = std::ffi::CStr::from_ptr(e.message).to_string_lossy().to_string();
-                e.free_message();
-                m
+                std::ffi::CStr::from_ptr(e.message).to_string_lossy().into_owned()
             };
+            // `e` dropped here; its original message is freed by `Drop`.
             return crate::types::FFIAccountResult::error(code, message);
         }
     };

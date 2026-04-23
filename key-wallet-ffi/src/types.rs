@@ -8,6 +8,7 @@ use key_wallet::managed_account::transaction_record::{OutputRole, TransactionDir
 use key_wallet::transaction_checking::transaction_router::TransactionType;
 use key_wallet::transaction_checking::{BlockInfo, TransactionContext};
 use key_wallet::Wallet;
+use std::ffi::CString;
 use std::os::raw::c_char;
 use std::sync::Arc;
 
@@ -302,31 +303,40 @@ impl FFIAccountType {
             // conversion. Callers must use the dedicated FFI entry points (e.g.
             // `wallet_add_dashpay_receiving_account`, `wallet_add_platform_payment_account`).
             FFIAccountType::DashpayReceivingFunds => {
-                return Err(FFIError::error(
-                    FFIErrorCode::InvalidInput,
-                    "FFIAccountType::DashpayReceivingFunds cannot be converted to AccountType \
-                     without user_identity_id and friend_identity_id. Use \
-                     wallet_add_dashpay_receiving_account() instead."
-                        .to_string(),
-                ));
+                return Err(FFIError {
+                    code: FFIErrorCode::InvalidInput,
+                    message: CString::new(
+                        "FFIAccountType::DashpayReceivingFunds cannot be converted to \
+                         AccountType without user_identity_id and friend_identity_id. Use \
+                         wallet_add_dashpay_receiving_account() instead.",
+                    )
+                    .unwrap_or_default()
+                    .into_raw(),
+                });
             }
             FFIAccountType::DashpayExternalAccount => {
-                return Err(FFIError::error(
-                    FFIErrorCode::InvalidInput,
-                    "FFIAccountType::DashpayExternalAccount cannot be converted to AccountType \
-                     without user_identity_id and friend_identity_id. Use \
-                     wallet_add_dashpay_external_account_with_xpub_bytes() instead."
-                        .to_string(),
-                ));
+                return Err(FFIError {
+                    code: FFIErrorCode::InvalidInput,
+                    message: CString::new(
+                        "FFIAccountType::DashpayExternalAccount cannot be converted to \
+                         AccountType without user_identity_id and friend_identity_id. Use \
+                         wallet_add_dashpay_external_account_with_xpub_bytes() instead.",
+                    )
+                    .unwrap_or_default()
+                    .into_raw(),
+                });
             }
             FFIAccountType::PlatformPayment => {
-                return Err(FFIError::error(
-                    FFIErrorCode::InvalidInput,
-                    "FFIAccountType::PlatformPayment cannot be converted to AccountType \
-                     without account and key_class indices. Use \
-                     wallet_add_platform_payment_account() instead."
-                        .to_string(),
-                ));
+                return Err(FFIError {
+                    code: FFIErrorCode::InvalidInput,
+                    message: CString::new(
+                        "FFIAccountType::PlatformPayment cannot be converted to AccountType \
+                         without account and key_class indices. Use \
+                         wallet_add_platform_payment_account() instead.",
+                    )
+                    .unwrap_or_default()
+                    .into_raw(),
+                });
             }
         })
     }
@@ -683,15 +693,13 @@ impl FFIWalletAccountCreationOptions {
                     );
                     let mut accounts = Vec::new();
                     for &ffi_type in slice {
-                        match ffi_type.to_account_type(0) {
-                            Ok(account_type) => accounts.push(account_type),
-                            Err(mut err) => {
-                                // Free the error message allocated by
-                                // FFIError::error to avoid a leak since we
-                                // cannot propagate the error from this
-                                // signature.
-                                err.free_message();
-                            }
+                        // Errors are silently dropped — callers must use the
+                        // dedicated entry points for account types that need
+                        // more than a single u32 index, and this signature has
+                        // no error-return channel. `FFIError::Drop` frees the
+                        // allocated message.
+                        if let Ok(account_type) = ffi_type.to_account_type(0) {
+                            accounts.push(account_type);
                         }
                     }
                     Some(accounts)
@@ -998,10 +1006,7 @@ mod tests {
         let result = FFIAccountType::DashpayReceivingFunds.to_account_type(0);
         let err = result.expect_err("should be an error");
         assert_eq!(err.code, FFIErrorCode::InvalidInput);
-        unsafe {
-            let mut err = err;
-            err.free_message();
-        }
+        // FFIError's Drop impl frees the message.
     }
 
     #[test]
@@ -1010,10 +1015,7 @@ mod tests {
         let result = FFIAccountType::DashpayExternalAccount.to_account_type(0);
         let err = result.expect_err("should be an error");
         assert_eq!(err.code, FFIErrorCode::InvalidInput);
-        unsafe {
-            let mut err = err;
-            err.free_message();
-        }
+        // FFIError's Drop impl frees the message.
     }
 
     #[test]
@@ -1022,10 +1024,7 @@ mod tests {
         let result = FFIAccountType::PlatformPayment.to_account_type(0);
         let err = result.expect_err("should be an error");
         assert_eq!(err.code, FFIErrorCode::InvalidInput);
-        unsafe {
-            let mut err = err;
-            err.free_message();
-        }
+        // FFIError's Drop impl frees the message.
     }
 
     #[test]
