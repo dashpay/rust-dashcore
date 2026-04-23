@@ -18,20 +18,7 @@
 //! Dash network constants.
 //!
 //! This module provides various constants relating to the Dash network
-//! protocol, such as protocol versioning and magic header bytes and the
-//! different network types supported by Dash.
-//!
-//! # Example: encoding a network's magic bytes
-//!
-//! ```rust
-//! use dashcore::Network;
-//! use dashcore::consensus::encode::serialize;
-//!
-//! let network = Network::Mainnet;
-//! let bytes = serialize(&network.magic());
-//!
-//! assert_eq!(&bytes[..], &[0xBF, 0x0C, 0x6B, 0xBD]);
-//! ```
+//! protocol.
 
 use core::convert::From;
 use core::{fmt, ops};
@@ -63,56 +50,42 @@ pub const NODE_HEADERS_COMPRESSED: ServiceFlags = ServiceFlags::NODE_HEADERS_COM
 /// 60001 - Support `pong` message and nonce in `ping` message
 pub const PROTOCOL_VERSION: u32 = 70237;
 
-/// Returns the known genesis block hash for `network`, if one is hardcoded.
-///
-/// `Network::Devnet` returns `None` because devnets use dynamically-generated
-/// genesis blocks.
-///
-/// This used to be a method on [`Network`], but [`Network`] now lives in the
-/// dependency-light `dash-network` crate, which cannot reference
-/// [`BlockHash`]. Call sites should migrate:
-///
-/// ```compile_fail
-/// // Old
-/// let hash = network.known_genesis_block_hash();
-/// ```
-///
-/// ```rust
-/// # use dashcore::{Network, known_genesis_block_hash};
-/// # let network = Network::Mainnet;
-/// let hash = known_genesis_block_hash(network);
-/// ```
-pub fn known_genesis_block_hash(network: Network) -> Option<BlockHash> {
-    match network {
-        Network::Mainnet => {
-            let mut block_hash =
-                hex::decode("00000ffd590b1485b3caadc19b22e6379c733355108f107a430458cdf3407ab6")
-                    .expect("expected valid hex");
-            block_hash.reverse();
-            Some(BlockHash::from_byte_array(block_hash.try_into().expect("expected 32 bytes")))
-        }
-        Network::Testnet => {
-            let mut block_hash =
-                hex::decode("00000bafbc94add76cb75e2ec92894837288a481e5c005f6563d91623bf8bc2c")
-                    .expect("expected valid hex");
-            block_hash.reverse();
-            Some(BlockHash::from_byte_array(block_hash.try_into().expect("expected 32 bytes")))
-        }
-        Network::Devnet => None,
-        Network::Regtest => {
-            let mut block_hash =
-                hex::decode("000008ca1832a4baf228eb1553c03d3a2c8e02399550dd6ea8d65cec3ef23d2e")
-                    .expect("expected valid hex");
-            block_hash.reverse();
-            Some(BlockHash::from_byte_array(block_hash.try_into().expect("expected 32 bytes")))
-        }
-        // `Network` is `#[non_exhaustive]`; if a new variant is added in the
-        // dependency-light `dash-network` crate this arm catches it until
-        // call sites are updated.
-        _ => None,
-    }
+pub trait NetworkExt {
+    /// Returns the known genesis block hash for `network`, if one is hardcoded.
+    ///
+    /// `Network::Devnet` returns `None` because devnets use dynamically-generated
+    /// genesis blocks.
+    fn known_genesis_block_hash(&self) -> Option<BlockHash>;
 }
 
+impl NetworkExt for Network {
+    fn known_genesis_block_hash(&self) -> Option<BlockHash> {
+        match self {
+            Network::Mainnet => {
+                let mut block_hash =
+                    hex::decode("00000ffd590b1485b3caadc19b22e6379c733355108f107a430458cdf3407ab6")
+                        .expect("expected valid hex");
+                block_hash.reverse();
+                Some(BlockHash::from_byte_array(block_hash.try_into().expect("expected 32 bytes")))
+            }
+            Network::Testnet => {
+                let mut block_hash =
+                    hex::decode("00000bafbc94add76cb75e2ec92894837288a481e5c005f6563d91623bf8bc2c")
+                        .expect("expected valid hex");
+                block_hash.reverse();
+                Some(BlockHash::from_byte_array(block_hash.try_into().expect("expected 32 bytes")))
+            }
+            Network::Devnet => None,
+            Network::Regtest => {
+                let mut block_hash =
+                    hex::decode("000008ca1832a4baf228eb1553c03d3a2c8e02399550dd6ea8d65cec3ef23d2e")
+                        .expect("expected valid hex");
+                block_hash.reverse();
+                Some(BlockHash::from_byte_array(block_hash.try_into().expect("expected 32 bytes")))
+            }
+        }
+    }
+}
 /// Flags to indicate which network services a node supports.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ServiceFlags(u64);

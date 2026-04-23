@@ -3,7 +3,7 @@
 //! pulling in the full protocol library.
 //!
 //! This crate carries **no** dependencies beyond its optional `serde` /
-//! `bincode` impls. If you need [`Network::known_genesis_block_hash`] — which
+//! `bincode` impls. If you need Network::known_genesis_block_hash — which
 //! returns a `BlockHash` — use the extension trait provided by `dashcore`.
 //!
 //! # Example
@@ -16,9 +16,6 @@
 //! assert_eq!("testnet".parse::<Network>().unwrap(), Network::Testnet);
 //! assert_eq!(Network::Mainnet.default_p2p_port(), 9999);
 //! ```
-
-// `ffi` feature exposes an `extern "C" fn` which requires `#[unsafe(no_mangle)]`.
-#![cfg_attr(not(feature = "ffi"), forbid(unsafe_code))]
 
 use core::fmt;
 
@@ -33,7 +30,6 @@ use bincode_derive::{Decode, Encode};
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "lowercase"))]
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
-#[non_exhaustive]
 #[repr(u8)]
 pub enum Network {
     /// Dash mainnet, the production network for real transactions.
@@ -69,14 +65,15 @@ impl Network {
     }
 
     /// Return the network magic bytes, which should be encoded little-endian
-    /// at the start of every P2P message.
+    /// at the start of every message
     ///
     /// # Examples
     ///
     /// ```rust
     /// use dash_network::Network;
     ///
-    /// assert_eq!(Network::Mainnet.magic(), 0xBD6B0CBF);
+    /// let network = Network::Mainnet;
+    /// assert_eq!(network.magic(), 0xBD6B0CBF);
     /// ```
     pub const fn magic(self) -> u32 {
         // Note: any new entries here must be added to `from_magic` above.
@@ -148,7 +145,7 @@ impl core::str::FromStr for Network {
     }
 }
 
-/// Error returned from [`Network::from_str`] when the input doesn't name a
+/// Error returned from Network::from_str when the input doesn't name a
 /// known network.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ParseNetworkError(pub String);

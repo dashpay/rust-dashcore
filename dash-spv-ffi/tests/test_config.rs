@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod tests {
+    use dash_network::ffi::FFINetwork;
     use dash_spv_ffi::*;
-    use dashcore::ffi::FFINetwork;
     use serial_test::serial;
     use std::ffi::CString;
 

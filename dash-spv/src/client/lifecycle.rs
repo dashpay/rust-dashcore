@@ -8,9 +8,6 @@
 //! - Genesis block initialization
 //! - Wallet data loading
 
-use std::sync::Arc;
-use tokio::sync::{Mutex, RwLock};
-
 use super::{ClientConfig, DashSpvClient, EventHandler};
 use crate::chain::checkpoints::{mainnet_checkpoints, testnet_checkpoints, CheckpointManager};
 use crate::error::{Result, SpvError};
@@ -23,9 +20,12 @@ use crate::sync::{
     BlockHeadersManager, BlocksManager, ChainLockManager, FilterHeadersManager, FiltersManager,
     InstantSendManager, Managers, MasternodesManager, MempoolManager, SyncCoordinator,
 };
+use dashcore::network::constants::NetworkExt;
 use dashcore::sml::masternode_list_engine::MasternodeListEngine;
 use dashcore_hashes::Hash;
 use key_wallet_manager::WalletInterface;
+use std::sync::Arc;
+use tokio::sync::{Mutex, RwLock};
 
 impl<W: WalletInterface, N: NetworkManager, S: StorageManager, H: EventHandler>
     DashSpvClient<W, N, S, H>
@@ -309,7 +309,9 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager, H: EventHandler>
         }
 
         // Get the genesis block hash for this network
-        let genesis_hash = dashcore::known_genesis_block_hash(config.network)
+        let genesis_hash = config
+            .network
+            .known_genesis_block_hash()
             .ok_or_else(|| SpvError::Config("No known genesis hash for network".to_string()))?;
 
         tracing::info!(

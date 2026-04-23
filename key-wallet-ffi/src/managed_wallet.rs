@@ -507,7 +507,7 @@ mod tests {
     use crate::error::{FFIError, FFIErrorCode};
     use crate::managed_wallet::*;
     use crate::wallet;
-    use dashcore::ffi::FFINetwork;
+    use dash_network::ffi::FFINetwork;
     use key_wallet::managed_account::managed_account_type::ManagedAccountType;
     use std::ffi::{CStr, CString};
     use std::ptr;

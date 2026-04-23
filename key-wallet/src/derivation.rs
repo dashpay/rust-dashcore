@@ -194,7 +194,6 @@ impl DerivationPathBuilder {
         let coin_type = match network {
             Network::Mainnet => 5,
             Network::Testnet | Network::Devnet | Network::Regtest => 1,
-            _ => 5, // Default to Dash
         };
 
         self.purpose(44)

@@ -7,6 +7,10 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Duration;
 
+use super::callbacks::{
+    create_network_callbacks, create_sync_callbacks, create_wallet_callbacks, CallbackTracker,
+};
+use dash_network::ffi::FFINetwork;
 use dash_spv::logging::{LogFileConfig, LoggingConfig, LoggingGuard};
 use dash_spv::test_utils::{retain_test_dir, SYNC_TIMEOUT};
 use dash_spv_ffi::client::{
@@ -21,7 +25,6 @@ use dash_spv_ffi::config::{
 };
 use dash_spv_ffi::types::FFIWalletManager as FFIWalletManagerOpaque;
 use dash_spv_ffi::FFIEventCallbacks;
-use dashcore::ffi::FFINetwork;
 use dashcore::hashes::Hash;
 use dashcore::{Address, Txid};
 use key_wallet_ffi::managed_account::{
@@ -42,10 +45,6 @@ use key_wallet_ffi::{
     wallet_manager_get_wallet_balance, wallet_manager_get_wallet_ids, FFIError, FFIWalletManager,
 };
 use tempfile::TempDir;
-
-use super::callbacks::{
-    create_network_callbacks, create_sync_callbacks, create_wallet_callbacks, CallbackTracker,
-};
 
 /// State that stays fixed across client restarts (temp dir, logging, config).
 struct FixedState {

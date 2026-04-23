@@ -10,6 +10,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::Network;
 use crate::bls_sig_utils::{BLSPublicKey, BLSSignature};
+use crate::network::constants::NetworkExt;
 use crate::network::message_qrinfo::{QRInfo, QuorumSnapshot};
 use crate::network::message_sml::MnListDiff;
 use crate::prelude::CoreBlockHeight;
@@ -815,7 +816,9 @@ impl MasternodeListEngine {
         verify_quorums: bool,
         previous_chain_lock_sigs: Option<[BLSSignature; 3]>,
     ) -> Result<Option<BLSSignature>, SmlError> {
-        if let Some(known_genesis_block_hash) = crate::known_genesis_block_hash(self.network)
+        if let Some(known_genesis_block_hash) = self
+            .network
+            .known_genesis_block_hash()
             .or_else(|| self.block_container.get_hash(&0).cloned())
             && (masternode_list_diff.base_block_hash == known_genesis_block_hash
                 || masternode_list_diff.base_block_hash.as_byte_array() == &[0; 32])

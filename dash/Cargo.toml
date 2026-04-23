@@ -33,7 +33,6 @@ eddsa = ["ed25519-dalek"]
 quorum_validation = ["bls"]
 message_verification = ["bls"]
 bincode = [ "dep:bincode", "dep:bincode_derive", "dashcore_hashes/bincode", "dash-network/bincode" ]
-ffi = ["dash-network/ffi"]
 test-utils = []
 
 [package.metadata.docs.rs]
@@ -73,9 +72,6 @@ assert_matches = "1.5.0"
 dashcore = { path = ".", features = ["core-block-hash-use-x11", "message_verification", "quorum_validation", "signer"] }
 criterion = "0.5"
 key-wallet = { path = "../key-wallet" }
-
-[build-dependencies]
-cbindgen = "0.29"
 
 [[example]]
 name = "handshake"

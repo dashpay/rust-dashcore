@@ -6,7 +6,7 @@
 #[cfg(test)]
 mod tests {
     use crate::*;
-    use dashcore::ffi::FFINetwork;
+    use dash_network::ffi::FFINetwork;
     use serial_test::serial;
     use std::ffi::CString;
     use std::sync::mpsc;

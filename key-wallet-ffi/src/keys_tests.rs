@@ -3,8 +3,6 @@
 #[cfg(test)]
 #[allow(clippy::module_inception)]
 mod tests {
-    use dashcore::ffi::FFINetwork;
-
     use crate::error::{FFIError, FFIErrorCode};
     use crate::keys::*;
     use crate::wallet;

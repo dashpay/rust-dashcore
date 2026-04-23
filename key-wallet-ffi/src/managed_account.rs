@@ -4,12 +4,11 @@
 //! ManagedAccount instances from the key-wallet crate. FFIManagedCoreAccount is a
 //! simple wrapper around `Arc<ManagedAccount>` without additional fields.
 
+use dash_network::ffi::FFINetwork;
+use dashcore::hashes::Hash;
 use std::os::raw::{c_char, c_uint};
 use std::ptr::slice_from_raw_parts_mut;
 use std::sync::Arc;
-
-use dashcore::ffi::FFINetwork;
-use dashcore::hashes::Hash;
 
 use crate::address_pool::{FFIAddressPool, FFIAddressPoolType};
 use crate::check_ptr;
@@ -1440,6 +1439,7 @@ mod tests {
         wallet_manager_add_wallet_from_mnemonic_with_options, wallet_manager_create,
         wallet_manager_free, wallet_manager_free_wallet_ids, wallet_manager_get_wallet_ids,
     };
+    use dash_network::ffi::FFINetwork;
     use std::ffi::CString;
     use std::ptr;
 

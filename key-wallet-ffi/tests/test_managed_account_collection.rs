@@ -1,6 +1,6 @@
 //! Tests for managed account collection FFI bindings
 
-use dashcore::ffi::FFINetwork;
+use dash_network::ffi::FFINetwork;
 use key_wallet_ffi::error::{FFIError, FFIErrorCode};
 use key_wallet_ffi::managed_account_collection::*;
 use key_wallet_ffi::types::{FFIAccountCreationOptionType, FFIWalletAccountCreationOptions};

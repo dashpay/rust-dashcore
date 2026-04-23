@@ -20,7 +20,6 @@ impl NetworkLLMQExt for Network {
             Network::Testnet => LLMQType::Llmqtype50_60,
             Network::Devnet => LLMQType::LlmqtypeDevnet,
             Network::Regtest => LLMQType::LlmqtypeTestInstantSend,
-            _ => unreachable!("is_llmq_type: unsupported Network variant"),
         }
     }
 
@@ -30,7 +29,6 @@ impl NetworkLLMQExt for Network {
             Network::Testnet => LLMQType::Llmqtype60_75,
             Network::Devnet => LLMQType::LlmqtypeDevnetDIP0024,
             Network::Regtest => LLMQType::LlmqtypeTestDIP0024,
-            _ => unreachable!("isd_llmq_type: unsupported Network variant"),
         }
     }
 
@@ -40,7 +38,6 @@ impl NetworkLLMQExt for Network {
             Network::Testnet => LLMQType::Llmqtype50_60,
             Network::Devnet => LLMQType::LlmqtypeDevnet,
             Network::Regtest => LLMQType::LlmqtypeTest,
-            _ => unreachable!("chain_locks_type: unsupported Network variant"),
         }
     }
 
@@ -50,7 +47,6 @@ impl NetworkLLMQExt for Network {
             Network::Testnet => LLMQType::Llmqtype25_67,
             Network::Devnet => LLMQType::LlmqtypeDevnet,
             Network::Regtest => LLMQType::LlmqtypeTestnetPlatform,
-            _ => unreachable!("platform_type: unsupported Network variant"),
         }
     }
 
@@ -80,7 +76,6 @@ impl NetworkLLMQExt for Network {
                 LLMQType::LlmqtypeTestDIP0024,
                 LLMQType::LlmqtypeTestInstantSend,
             ],
-            _ => Vec::new(),
         }
     }
 

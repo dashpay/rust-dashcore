@@ -1,21 +1,10 @@
-//! C-ABI mirror of [`Network`].
-//!
-//! `FFINetwork` is a `#[repr(C)]` enum that `From`-converts to and from
-//! [`Network`], giving consumers a stable ABI for Dash's network identity
-//! across language boundaries.
-//!
-//! Gated behind the `ffi` feature because it pulls in `std::ffi` C-string
-//! handling and exposes a `no_mangle` extern function that callers not
-//! building a C-compatible library should not take on by accident.
-
 use std::ffi;
 
 use crate::Network;
 
-/// FFI-compatible variant of [`Network`]. Converts to/from [`Network`] via
-/// [`From`]/[`Into`].
+/// FFI-compatible variant of [`Network`]. Converts to/from [`Network`] via [`From`]/[`Into`].
 #[repr(C)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum FFINetwork {
     Mainnet = 0,
     Testnet = 1,
@@ -25,9 +14,6 @@ pub enum FFINetwork {
 
 impl From<Network> for FFINetwork {
     fn from(network: Network) -> Self {
-        // Exhaustive inside the defining crate. If a new `Network` variant is
-        // added this will fail to compile and `FFINetwork` must be extended
-        // in lockstep (keeping C ABI stable).
         match network {
             Network::Mainnet => FFINetwork::Mainnet,
             Network::Testnet => FFINetwork::Testnet,
@@ -69,37 +55,27 @@ mod tests {
     use super::*;
 
     #[test]
-    fn ffi_network_get_name_returns_canonical_lowercase() {
+    fn test_network_names() {
         unsafe {
-            for (variant, expected) in [
-                (FFINetwork::Mainnet, "mainnet"),
-                (FFINetwork::Testnet, "testnet"),
-                (FFINetwork::Regtest, "regtest"),
-                (FFINetwork::Devnet, "devnet"),
-            ] {
-                let name = dashcore_network_get_name(variant);
-                assert!(!name.is_null(), "{:?} returned null pointer", variant);
-                assert_eq!(CStr::from_ptr(name).to_str().unwrap(), expected);
-            }
-        }
-    }
+            let name = dashcore_network_get_name(FFINetwork::Mainnet);
+            assert!(!name.is_null());
+            let name_str = CStr::from_ptr(name).to_str().unwrap();
+            assert_eq!(name_str, "mainnet");
 
-    #[test]
-    fn ffi_network_round_trips_through_network() {
-        for variant in
-            [FFINetwork::Mainnet, FFINetwork::Testnet, FFINetwork::Devnet, FFINetwork::Regtest]
-        {
-            let back: FFINetwork = Network::from(variant).into();
-            assert_eq!(back, variant);
-        }
-    }
+            let name = dashcore_network_get_name(FFINetwork::Testnet);
+            assert!(!name.is_null());
+            let name_str = CStr::from_ptr(name).to_str().unwrap();
+            assert_eq!(name_str, "testnet");
 
-    #[test]
-    fn ffi_network_discriminants_are_stable_abi() {
-        // The numeric layout is public C ABI; tests pin it in place.
-        assert_eq!(FFINetwork::Mainnet as i32, 0);
-        assert_eq!(FFINetwork::Testnet as i32, 1);
-        assert_eq!(FFINetwork::Devnet as i32, 2);
-        assert_eq!(FFINetwork::Regtest as i32, 3);
+            let name = dashcore_network_get_name(FFINetwork::Regtest);
+            assert!(!name.is_null());
+            let name_str = CStr::from_ptr(name).to_str().unwrap();
+            assert_eq!(name_str, "regtest");
+
+            let name = dashcore_network_get_name(FFINetwork::Devnet);
+            assert!(!name.is_null());
+            let name_str = CStr::from_ptr(name).to_str().unwrap();
+            assert_eq!(name_str, "devnet");
+        }
     }
 }

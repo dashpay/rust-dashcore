@@ -1,4 +1,4 @@
-use dashcore::ffi::FFINetwork;
+use dash_network::ffi::FFINetwork;
 
 #[test]
 fn test_address_simple() {

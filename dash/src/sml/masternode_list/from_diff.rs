@@ -1,6 +1,7 @@
 use crate::bls_sig_utils::BLSSignature;
 
 use crate::Network;
+use crate::network::constants::NetworkExt;
 use crate::network::message_sml::MnListDiff;
 use crate::sml::error::SmlError;
 use crate::sml::llmq_entry_verification::{
@@ -68,7 +69,7 @@ impl TryFromWithBlockHashLookup<MnListDiff> for MasternodeList {
     where
         F: Fn(&BlockHash) -> Option<u32>,
     {
-        if let Some(genesis_block_hash) = crate::known_genesis_block_hash(network) {
+        if let Some(genesis_block_hash) = network.known_genesis_block_hash() {
             // Check if the base block is the genesis block
             if diff.base_block_hash != genesis_block_hash
                 && diff.base_block_hash.as_byte_array() != &[0; 32]

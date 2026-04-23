@@ -999,17 +999,16 @@ impl<V: NetworkValidation> Address<V> {
     fn fmt_internal(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         let p2pkh_prefix = match self.network() {
             Network::Mainnet => PUBKEY_ADDRESS_PREFIX_MAIN,
-            _ => PUBKEY_ADDRESS_PREFIX_TEST,
+            Network::Testnet | Network::Devnet | Network::Regtest => PUBKEY_ADDRESS_PREFIX_TEST,
         };
         let p2sh_prefix = match self.network() {
             Network::Mainnet => SCRIPT_ADDRESS_PREFIX_MAIN,
-            _ => SCRIPT_ADDRESS_PREFIX_TEST,
+            Network::Testnet | Network::Devnet | Network::Regtest => SCRIPT_ADDRESS_PREFIX_TEST,
         };
         let bech32_hrp = match self.network() {
             Network::Mainnet => "ds",
+            Network::Testnet | Network::Devnet => "tb",
             Network::Regtest => "dsrt",
-            // Testnet / Devnet (and any future non-mainnet variants).
-            _ => "tb",
         };
         let encoding = AddressEncoding {
             payload: self.payload(),
@@ -1256,9 +1255,7 @@ impl Address<NetworkUnchecked> {
             (a, b) if *a == b => true,
             (Network::Mainnet, _) | (_, Network::Mainnet) => false,
             (Network::Regtest, _) | (_, Network::Regtest) if !is_legacy => false,
-            // Testnet / Devnet / Regtest (legacy addresses) are interchangeable.
-            // Any future non-mainnet variant falls into the same bucket.
-            _ => true,
+            (Network::Testnet, _) | (Network::Regtest, _) | (Network::Devnet, _) => true,
         }
     }
 
