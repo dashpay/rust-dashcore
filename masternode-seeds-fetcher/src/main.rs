@@ -1,5 +1,5 @@
 //! Fetch the current masternode list from the Dash P2P network and write it
-//! to a seed file consumed by `dash-spv`.
+//! to a seed file consumed by the `dash-network-seeds` crate.
 //!
 //! The fetcher does **not** require RPC credentials. It:
 //!
@@ -23,7 +23,7 @@
 //! Typical usage (e.g. from CI):
 //!
 //! ```bash
-//! masternode-seeds-fetcher --network mainnet --out dash-spv/seeds/mainnet.txt
+//! masternode-seeds-fetcher --network mainnet --out dash-network-seeds/seeds/mainnet.txt
 //! ```
 
 use std::collections::BTreeSet;
@@ -35,6 +35,7 @@ use std::time::Duration;
 
 use anyhow::{anyhow, Context, Result};
 use clap::{Parser, ValueEnum};
+use dash_network_seeds::MasternodeType;
 use dash_spv::network::Peer;
 use dashcore::hashes::Hash;
 use dashcore::network::constants::ServiceFlags;
@@ -43,7 +44,7 @@ use dashcore::network::message_blockdata::Inventory;
 use dashcore::network::message_network::VersionMessage;
 use dashcore::network::message_sml::{GetMnListDiff, MnListDiff};
 use dashcore::network::Address;
-use dashcore::sml::masternode_list_entry::MasternodeListEntry;
+use dashcore::sml::masternode_list_entry::{EntryMasternodeType, MasternodeListEntry};
 use dashcore::{BlockHash, Network as DashNetwork};
 use hickory_resolver::config::{ResolverConfig, ResolverOpts};
 use hickory_resolver::name_server::TokioConnectionProvider;
@@ -91,15 +92,15 @@ impl Network {
 #[command(
     author,
     version,
-    about = "Fetch masternode IPs via the Dash P2P network and write a dash-spv seed file"
+    about = "Fetch masternode IPs via the Dash P2P network and write a dash-network-seeds seed file"
 )]
 struct Args {
     /// Target network.
     #[arg(long, value_enum)]
     network: Network,
 
-    /// Output file path. Defaults to `dash-spv/seeds/<network>.txt` relative to
-    /// the current directory.
+    /// Output file path. Defaults to `dash-network-seeds/seeds/<network>.txt`
+    /// relative to the current directory.
     #[arg(long)]
     out: Option<PathBuf>,
 
@@ -132,10 +133,9 @@ async fn main() -> Result<()> {
         .init();
 
     let args = Args::parse();
-    let out_path = args
-        .out
-        .clone()
-        .unwrap_or_else(|| PathBuf::from(format!("dash-spv/seeds/{}.txt", args.network.as_str())));
+    let out_path = args.out.clone().unwrap_or_else(|| {
+        PathBuf::from(format!("dash-network-seeds/seeds/{}.txt", args.network.as_str()))
+    });
 
     let candidates =
         gather_candidate_peers(args.network, &args.extra_peers, &out_path, args.max_peers).await;
@@ -176,20 +176,22 @@ async fn main() -> Result<()> {
         )
     })?;
 
-    let (total, addrs) = collect_addresses(&diff, &args);
-    if addrs.is_empty() {
+    let collected = collect_seeds(&diff, &args);
+    if collected.seeds.is_empty() {
         return Err(anyhow!(
             "peer {} returned {} masternodes but none were usable; refusing to overwrite {}",
             peer_addr,
-            total,
+            collected.total,
             out_path.display()
         ));
     }
 
-    write_seed_file(&out_path, args.network, peer_addr, &diff, total, &addrs)?;
+    write_seed_file(&out_path, args.network, peer_addr, &diff, &collected)?;
     eprintln!(
-        "wrote {} addresses for {} to {} (from peer {}, tip {})",
-        addrs.len(),
+        "wrote {} seeds ({} regular + {} evo) for {} to {} (from peer {}, tip {})",
+        collected.seeds.len(),
+        collected.regular,
+        collected.evo,
         args.network.as_str(),
         out_path.display(),
         peer_addr,
@@ -212,8 +214,8 @@ async fn gather_candidate_peers(
     // Existing seed file — the file we are about to overwrite. Gives us a fast
     // local starting set even if DNS is unavailable.
     if let Ok(raw) = fs::read_to_string(existing_seeds) {
-        for addr in parse_seed_file(&raw, network.default_p2p_port()) {
-            out.insert(addr);
+        for seed in dash_network_seeds::parse(&raw, network.default_p2p_port()) {
+            out.insert(seed.address);
         }
     }
 
@@ -249,22 +251,6 @@ fn build_resolver() -> Result<hickory_resolver::TokioResolver> {
     .with_options(ResolverOpts::default())
     .build();
     Ok(resolver)
-}
-
-fn parse_seed_file(raw: &str, default_port: u16) -> Vec<SocketAddr> {
-    let mut out = Vec::new();
-    for line in raw.lines() {
-        let line = line.trim();
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-        if let Ok(addr) = line.parse::<SocketAddr>() {
-            out.push(addr);
-        } else if let Ok(ip) = line.parse::<IpAddr>() {
-            out.push(SocketAddr::new(ip, default_port));
-        }
-    }
-    out
 }
 
 // ---------- per-peer P2P flow ----------
@@ -426,15 +412,24 @@ where
 
 // ---------- output ----------
 
-fn collect_addresses(diff: &MnListDiff, args: &Args) -> (usize, Vec<SocketAddr>) {
+/// Collected seeds and summary counts for the seed-file header.
+struct CollectedSeeds {
+    total: usize,
+    regular: usize,
+    evo: usize,
+    // Sorted by (address, mn_type) so that output is deterministic.
+    seeds: Vec<(SocketAddr, MasternodeType)>,
+}
+
+fn collect_seeds(diff: &MnListDiff, args: &Args) -> CollectedSeeds {
     let total = diff.new_masternodes.len();
-    let mut set: BTreeSet<SocketAddr> = BTreeSet::new();
+    let mut set: BTreeSet<(SocketAddr, MasternodeType)> = BTreeSet::new();
     for mn in &diff.new_masternodes {
         if !args.include_invalid && !mn.is_valid {
             continue;
         }
-        let addr = service_address(mn);
-        // Skip 0.0.0.0 / :: (sentinels sometimes emitted for unpublished services).
+        let addr = mn.service_address;
+        // Skip 0.0.0.0 / :: sentinels (sometimes emitted for unpublished services).
         if addr.port() == 0 {
             continue;
         }
@@ -443,13 +438,26 @@ fn collect_addresses(diff: &MnListDiff, args: &Args) -> (usize, Vec<SocketAddr>)
             IpAddr::V6(v6) if v6.is_unspecified() => continue,
             _ => {}
         }
-        set.insert(addr);
+        set.insert((addr, classify(mn)));
     }
-    (total, set.into_iter().collect())
+    let seeds: Vec<_> = set.into_iter().collect();
+    let regular = seeds.iter().filter(|(_, t)| *t == MasternodeType::Regular).count();
+    let evo = seeds.iter().filter(|(_, t)| *t == MasternodeType::Evo).count();
+    CollectedSeeds {
+        total,
+        regular,
+        evo,
+        seeds,
+    }
 }
 
-fn service_address(mn: &MasternodeListEntry) -> SocketAddr {
-    mn.service_address
+fn classify(mn: &MasternodeListEntry) -> MasternodeType {
+    match mn.mn_type {
+        EntryMasternodeType::Regular => MasternodeType::Regular,
+        EntryMasternodeType::HighPerformance {
+            ..
+        } => MasternodeType::Evo,
+    }
 }
 
 fn write_seed_file(
@@ -457,8 +465,7 @@ fn write_seed_file(
     network: Network,
     peer: SocketAddr,
     diff: &MnListDiff,
-    total: usize,
-    addrs: &[SocketAddr],
+    collected: &CollectedSeeds,
 ) -> Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)
@@ -476,13 +483,21 @@ fn write_seed_file(
     writeln!(file, "# Source: Dash P2P network (mnlistdiff)")?;
     writeln!(file, "# Peer: {}", peer)?;
     writeln!(file, "# Tip block hash: {}", diff.block_hash)?;
-    writeln!(file, "# {} addresses ({} total masternodes, valid-only)", addrs.len(), total)?;
+    writeln!(
+        file,
+        "# {} seeds ({} regular + {} evo) of {} total masternodes, valid-only",
+        collected.seeds.len(),
+        collected.regular,
+        collected.evo,
+        collected.total
+    )?;
+    writeln!(file, "# Format: `<type> <ip>:<port>` where <type> is `regular` or `evo`.")?;
     writeln!(
         file,
         "# Do not edit manually — refreshed weekly by .github/workflows/update-masternode-seeds.yml"
     )?;
-    for addr in addrs {
-        writeln!(file, "{}", addr)?;
+    for (addr, mn_type) in &collected.seeds {
+        writeln!(file, "{} {}", mn_type.as_str(), addr)?;
     }
     Ok(())
 }
