@@ -1,0 +1,5 @@
+# Seed peers for Dash mainnet.
+# Do not edit manually — refreshed weekly by .github/workflows/update-masternode-seeds.yml
+# using the `masternode-seeds-fetcher` crate against a live mainnet dashd RPC.
+# Until the first refresh runs, this file is empty and peer discovery falls
+# back to DNS seeds. Lines starting with `#` and blank lines are ignored.
