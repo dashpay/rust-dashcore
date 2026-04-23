@@ -22,7 +22,7 @@
 //!
 //! ```rust
 //! use dash_network_seeds::{MasternodeType, Reachability, reachable_seeds, seeds};
-//! use dashcore::Network;
+//! use dash_network::Network;
 //!
 //! let all = seeds(Network::Mainnet);
 //! assert!(!all.is_empty());
@@ -59,7 +59,7 @@
 
 #![forbid(unsafe_code)]
 
-use dashcore::Network;
+use dash_network::Network;
 use std::fmt;
 use std::net::{IpAddr, SocketAddr};
 
