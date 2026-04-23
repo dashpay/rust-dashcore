@@ -18,10 +18,6 @@ use hickory_resolver::TokioResolver;
 use std::net::{IpAddr, SocketAddr};
 
 use crate::error::SpvError as Error;
-use crate::network::constants::{
-    mainnet_seed_peers, testnet_seed_peers, MAINNET_DNS_SEEDS, MAINNET_P2P_PORT, TESTNET_DNS_SEEDS,
-    TESTNET_P2P_PORT,
-};
 
 /// DNS discovery for finding initial peers.
 ///
@@ -54,14 +50,9 @@ impl DnsDiscovery {
     /// level but do not cause this function to fail — the embedded list acts
     /// as the primary source and DNS is a best-effort backup.
     pub async fn discover_peers(&self, network: Network) -> Vec<SocketAddr> {
-        let (seeds, port, mut addresses) = match network {
-            Network::Mainnet => (MAINNET_DNS_SEEDS, MAINNET_P2P_PORT, mainnet_seed_peers()),
-            Network::Testnet => (TESTNET_DNS_SEEDS, TESTNET_P2P_PORT, testnet_seed_peers()),
-            _ => {
-                tracing::debug!("No peer discovery sources for {:?} network", network);
-                return vec![];
-            }
-        };
+        let seeds = network.dns_seeds();
+        let port = network.default_p2p_port();
+        let mut addresses = dash_network_seeds::addresses(network);
 
         let embedded_count = addresses.len();
         tracing::info!("Loaded {} hardcoded masternode seed(s) for {:?}", embedded_count, network);
@@ -123,7 +114,7 @@ mod tests {
 
         // All peers should use the correct port
         for peer in &peers {
-            assert_eq!(peer.port(), MAINNET_P2P_PORT);
+            assert_eq!(peer.port(), Network::Mainnet.default_p2p_port());
         }
     }
 
@@ -140,7 +131,7 @@ mod tests {
             peers.len()
         );
         for peer in &peers {
-            assert_eq!(peer.port(), TESTNET_P2P_PORT);
+            assert_eq!(peer.port(), Network::Testnet.default_p2p_port());
         }
     }
 
