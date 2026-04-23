@@ -73,7 +73,7 @@ mod utxo_tests {
 
     #[test]
     fn test_deprecated_wallet_get_utxos() {
-        let mut error = FFIError::success();
+        let mut error = FFIError::default();
         let error = &mut error as *mut FFIError;
         let mut utxos_out: *mut FFIUTXO = ptr::null_mut();
         let mut count_out: usize = 0;
@@ -91,7 +91,7 @@ mod utxo_tests {
 
     #[test]
     fn test_managed_wallet_get_utxos_null() {
-        let mut error = FFIError::success();
+        let mut error = FFIError::default();
         let error = &mut error as *mut FFIError;
         let mut utxos_out: *mut FFIUTXO = ptr::null_mut();
         let mut count_out: usize = 0;
@@ -101,8 +101,6 @@ mod utxo_tests {
             unsafe { managed_wallet_get_utxos(ptr::null(), &mut utxos_out, &mut count_out, error) };
         assert!(!result);
         assert_eq!(unsafe { (*error).code }, FFIErrorCode::InvalidInput);
-
-        unsafe { (*error).free_message() };
     }
 
     #[test]
@@ -111,7 +109,7 @@ mod utxo_tests {
         use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
         use key_wallet::Network;
 
-        let mut error = FFIError::success();
+        let mut error = FFIError::default();
         let error = &mut error as *mut FFIError;
         let mut utxos_out: *mut FFIUTXO = ptr::null_mut();
         let mut count_out: usize = 0;
@@ -182,7 +180,7 @@ mod utxo_tests {
         use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
         use key_wallet::Network;
 
-        let mut error = FFIError::success();
+        let mut error = FFIError::default();
         let error = &mut error as *mut FFIError;
         let mut utxos_out: *mut FFIUTXO = ptr::null_mut();
         let mut count_out: usize = 0;
@@ -286,7 +284,7 @@ mod utxo_tests {
         use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
         use key_wallet::Network;
 
-        let mut error = FFIError::success();
+        let mut error = FFIError::default();
         let error = &mut error as *mut FFIError;
         let mut utxos_out: *mut FFIUTXO = ptr::null_mut();
         let mut count_out: usize = 0;
@@ -389,7 +387,7 @@ mod utxo_tests {
         use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
         use key_wallet::Network;
 
-        let mut error = FFIError::success();
+        let mut error = FFIError::default();
         let error = &mut error as *mut FFIError;
         let mut utxos_out: *mut FFIUTXO = ptr::null_mut();
         let mut count_out: usize = 0;
@@ -528,7 +526,7 @@ mod utxo_tests {
         use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
         use key_wallet::Network;
 
-        let mut error = FFIError::success();
+        let mut error = FFIError::default();
         let error = &mut error as *mut FFIError;
         let mut count_out: usize = 0;
 
@@ -552,7 +550,6 @@ mod utxo_tests {
 
         unsafe {
             crate::managed_wallet::managed_wallet_free(ffi_managed_info);
-            (*error).free_message();
         }
     }
 

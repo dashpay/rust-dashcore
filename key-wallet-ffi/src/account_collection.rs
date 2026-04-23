@@ -8,7 +8,8 @@ use std::os::raw::{c_char, c_uint};
 use std::ptr;
 
 use crate::account::FFIAccount;
-use crate::error::{FFIError, FFIErrorCode};
+use crate::deref_ptr;
+use crate::error::FFIError;
 use crate::types::FFIWallet;
 
 /// Opaque handle to an account collection
@@ -78,20 +79,14 @@ pub struct FFIAccountCollectionSummary {
 /// # Safety
 ///
 /// - `wallet` must be a valid pointer to an FFIWallet instance
-/// - `error` must be a valid pointer to an FFIError structure or null
+/// - `error` must be a valid pointer to an FFIError structure
 /// - The returned pointer must be freed with `account_collection_free` when no longer needed
 #[no_mangle]
 pub unsafe extern "C" fn wallet_get_account_collection(
     wallet: *const FFIWallet,
     error: *mut FFIError,
 ) -> *mut FFIAccountCollection {
-    if wallet.is_null() {
-        FFIError::set_error(error, FFIErrorCode::InvalidInput, "Wallet is null".to_string());
-        return ptr::null_mut();
-    }
-
-    let wallet = &*wallet;
-    FFIError::set_success(error);
+    let wallet = deref_ptr!(wallet, error);
     let ffi_collection = FFIAccountCollection::new(&wallet.inner().accounts);
     Box::into_raw(Box::new(ffi_collection))
 }
@@ -1071,6 +1066,7 @@ mod tests {
     fn test_account_collection_basic() {
         unsafe {
             let mnemonic = CString::new("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about").unwrap();
+            let error = &mut FFIError::default();
 
             // Create wallet with default accounts
             let wallet = wallet_create_from_mnemonic_with_options(
@@ -1078,12 +1074,12 @@ mod tests {
                 ptr::null(),
                 FFINetwork::Testnet,
                 ptr::null(),
-                ptr::null_mut(),
+                error,
             );
             assert!(!wallet.is_null());
 
             // Get account collection
-            let collection = wallet_get_account_collection(wallet, ptr::null_mut());
+            let collection = wallet_get_account_collection(wallet, error);
             assert!(!collection.is_null());
 
             // Check that we have some accounts
@@ -1117,6 +1113,7 @@ mod tests {
     fn test_bls_account() {
         unsafe {
             let mnemonic = CString::new("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about").unwrap();
+            let error = &mut FFIError::default();
 
             // Create wallet with provider accounts
             let mut options = crate::types::FFIWalletAccountCreationOptions::default_options();
@@ -1132,12 +1129,12 @@ mod tests {
                 ptr::null(),
                 FFINetwork::Testnet,
                 &options,
-                ptr::null_mut(),
+                error,
             );
             assert!(!wallet.is_null());
 
             // Get account collection
-            let collection = wallet_get_account_collection(wallet, ptr::null_mut());
+            let collection = wallet_get_account_collection(wallet, error);
             assert!(!collection.is_null());
 
             // Check for provider operator keys account (BLS)
@@ -1163,6 +1160,7 @@ mod tests {
     fn test_eddsa_account() {
         unsafe {
             let mnemonic = CString::new("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about").unwrap();
+            let error = &mut FFIError::default();
 
             // Create wallet with provider accounts
             let mut options = crate::types::FFIWalletAccountCreationOptions::default_options();
@@ -1178,12 +1176,12 @@ mod tests {
                 ptr::null(),
                 FFINetwork::Testnet,
                 &options,
-                ptr::null_mut(),
+                error,
             );
             assert!(!wallet.is_null());
 
             // Get account collection
-            let collection = wallet_get_account_collection(wallet, ptr::null_mut());
+            let collection = wallet_get_account_collection(wallet, error);
             assert!(!collection.is_null());
 
             // Check for provider platform keys account (EdDSA)
@@ -1210,6 +1208,7 @@ mod tests {
             use std::ffi::CStr;
 
             let mnemonic = CString::new("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about").unwrap();
+            let error = &mut FFIError::default();
 
             // Create wallet with multiple account types
             let mut options = crate::types::FFIWalletAccountCreationOptions::default_options();
@@ -1248,12 +1247,12 @@ mod tests {
                 ptr::null(),
                 FFINetwork::Testnet,
                 &options,
-                ptr::null_mut(),
+                error,
             );
             assert!(!wallet.is_null());
 
             // Get account collection
-            let collection = wallet_get_account_collection(wallet, ptr::null_mut());
+            let collection = wallet_get_account_collection(wallet, error);
             assert!(!collection.is_null());
 
             // Get the summary
@@ -1289,6 +1288,7 @@ mod tests {
             use std::ffi::CStr;
 
             let mnemonic = CString::new("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about").unwrap();
+            let error = &mut FFIError::default();
 
             // Create wallet with no accounts using SpecificAccounts with empty lists
             let mut options = crate::types::FFIWalletAccountCreationOptions::default_options();
@@ -1300,12 +1300,12 @@ mod tests {
                 ptr::null(),
                 FFINetwork::Testnet,
                 &options,
-                ptr::null_mut(),
+                error,
             );
             assert!(!wallet.is_null());
 
             // Get account collection
-            let collection = wallet_get_account_collection(wallet, ptr::null_mut());
+            let collection = wallet_get_account_collection(wallet, error);
 
             // With SpecificAccounts and empty lists, collection might be null or empty
             if collection.is_null() {
@@ -1346,6 +1346,7 @@ mod tests {
     fn test_account_collection_summary_data() {
         unsafe {
             let mnemonic = CString::new("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about").unwrap();
+            let error = &mut FFIError::default();
 
             // Create wallet with various account types
             let mut options = crate::types::FFIWalletAccountCreationOptions::default_options();
@@ -1384,12 +1385,12 @@ mod tests {
                 ptr::null(),
                 FFINetwork::Testnet,
                 &options,
-                ptr::null_mut(),
+                error,
             );
             assert!(!wallet.is_null());
 
             // Get account collection
-            let collection = wallet_get_account_collection(wallet, ptr::null_mut());
+            let collection = wallet_get_account_collection(wallet, error);
             assert!(!collection.is_null());
 
             // Get the summary data
@@ -1447,6 +1448,7 @@ mod tests {
     fn test_account_collection_summary_data_empty() {
         unsafe {
             let mnemonic = CString::new("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about").unwrap();
+            let error = &mut FFIError::default();
 
             // Create wallet with no accounts - but still create a collection on the network
             // Use SpecificAccounts with empty lists to get truly empty collections
@@ -1470,12 +1472,12 @@ mod tests {
                 ptr::null(),
                 FFINetwork::Testnet,
                 &options,
-                ptr::null_mut(),
+                error,
             );
             assert!(!wallet.is_null());
 
             // Get account collection
-            let collection = wallet_get_account_collection(wallet, ptr::null_mut());
+            let collection = wallet_get_account_collection(wallet, error);
 
             // With AllAccounts but empty lists, collection should still exist
             if collection.is_null() {
@@ -1533,6 +1535,7 @@ mod tests {
     fn test_account_collection_summary_memory_management() {
         unsafe {
             let mnemonic = CString::new("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about").unwrap();
+            let error = &mut FFIError::default();
 
             // Create wallet with default accounts (which should have at least BIP44 account 0)
             let wallet = wallet_create_from_mnemonic_with_options(
@@ -1540,12 +1543,12 @@ mod tests {
                 ptr::null(),
                 FFINetwork::Testnet,
                 ptr::null(),
-                ptr::null_mut(),
+                error,
             );
             assert!(!wallet.is_null());
 
             // Get account collection
-            let collection = wallet_get_account_collection(wallet, ptr::null_mut());
+            let collection = wallet_get_account_collection(wallet, error);
             assert!(!collection.is_null());
 
             // Get multiple summaries to test memory management

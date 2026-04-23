@@ -62,6 +62,11 @@ pub struct PeerNetworkManager {
     user_agent: Option<String>,
     /// Exclusive mode: restrict to configured peers only (no DNS or peer store)
     exclusive_mode: bool,
+    /// Service flags connected peers must advertise. NONE disables capability churn.
+    required_services: ServiceFlags,
+    /// Addresses evicted for lacking required services. Excluded from top-up candidates.
+    /// TODO: remove once peer session outcomes track why sessions ended and drive reconnect policy.
+    capability_rejected: Arc<RwLock<HashMap<SocketAddr, Instant>>>,
     /// Cached count of currently connected peers for fast, non-blocking queries
     connected_peer_count: Arc<AtomicUsize>,
     /// Disable headers2 after decompression failure
@@ -76,6 +81,19 @@ pub struct PeerNetworkManager {
     round_robin_counter: Arc<AtomicUsize>,
     /// Network event bus for notifying about network/peer related changes.
     network_event_sender: broadcast::Sender<NetworkEvent>,
+}
+
+const CAPABILITY_REJECTED_TTL: Duration = Duration::from_secs(30 * 60);
+
+fn required_services_from_config(config: &ClientConfig, exclusive_mode: bool) -> ServiceFlags {
+    if exclusive_mode {
+        return ServiceFlags::NONE;
+    }
+    let mut flags = ServiceFlags::NONE;
+    if config.enable_filters {
+        flags |= ServiceFlags::COMPACT_FILTERS;
+    }
+    flags
 }
 
 impl PeerNetworkManager {
@@ -94,6 +112,7 @@ impl PeerNetworkManager {
 
         // Determine exclusive mode: either explicitly requested or peers were provided
         let exclusive_mode = config.restrict_to_configured_peers || !config.peers.is_empty();
+        let required_services = required_services_from_config(config, exclusive_mode);
 
         // Create request queue for outgoing messages
         let (request_tx, request_rx) = unbounded_channel();
@@ -111,6 +130,8 @@ impl PeerNetworkManager {
             data_dir,
             user_agent: config.user_agent.clone(),
             exclusive_mode,
+            required_services,
+            capability_rejected: Arc::new(RwLock::new(HashMap::new())),
             connected_peer_count: Arc::new(AtomicUsize::new(0)),
             headers2_disabled: Arc::new(Mutex::new(HashSet::new())),
             message_dispatcher: Arc::new(Mutex::new(MessageDispatcher::default())),
@@ -227,6 +248,8 @@ impl PeerNetworkManager {
         let shutdown_token = self.shutdown_token.clone();
         let reputation_manager = self.reputation_manager.clone();
         let user_agent = self.user_agent.clone();
+        let required_services = self.required_services;
+        let capability_rejected = self.capability_rejected.clone();
         let connected_peer_count = self.connected_peer_count.clone();
         let headers2_disabled = self.headers2_disabled.clone();
         let message_dispatcher = self.message_dispatcher.clone();
@@ -258,6 +281,26 @@ impl PeerNetworkManager {
                     let mut handshake_manager = HandshakeManager::new(network, user_agent);
                     match handshake_manager.perform_handshake(&mut peer).await {
                         Ok(_) => {
+                            if PeerNetworkManager::should_reject_after_handshake(
+                                &pool,
+                                &peer,
+                                required_services,
+                            )
+                            .await
+                            {
+                                tracing::info!(
+                                    "Rejecting peer {} during handshake - missing required services ({}) while a capable peer is connected",
+                                    addr,
+                                    required_services
+                                );
+                                PeerNetworkManager::record_capability_rejection_in(
+                                    &capability_rejected,
+                                    addr,
+                                )
+                                .await;
+                                pool.remove_peer(&addr).await;
+                                return;
+                            }
                             tracing::info!("Successfully connected to {}", addr);
 
                             // Request addresses from the peer for discovery
@@ -852,6 +895,52 @@ impl PeerNetworkManager {
         });
     }
 
+    pub(crate) async fn evict_mismatched_peers(&self) {
+        if self.required_services == ServiceFlags::NONE {
+            return;
+        }
+        let all_peers = self.pool.get_all_peers().await;
+        let connected_count = all_peers.len();
+        if connected_count <= 1 {
+            return;
+        }
+        let mut matched_count = 0;
+        let mut mismatched = Vec::new();
+        for (addr, peer) in &all_peers {
+            let peer_guard = peer.read().await;
+            if peer_guard.services_known() && peer_guard.has_service(self.required_services) {
+                matched_count += 1;
+            } else if peer_guard.services_known() {
+                mismatched.push(*addr);
+            }
+        }
+        if mismatched.is_empty() {
+            return;
+        }
+        let drop_count = if matched_count > 0 {
+            mismatched.len()
+        } else {
+            mismatched.len().min(connected_count - 1)
+        };
+        if drop_count == 0 {
+            return;
+        }
+        tracing::info!(
+            "Capability churn: dropping {} of {} peers lacking required services",
+            drop_count,
+            connected_count,
+        );
+        for addr in mismatched.into_iter().take(drop_count) {
+            self.record_capability_rejection(addr).await;
+            let _ = self
+                .disconnect_peer(
+                    &addr,
+                    &format!("missing required services ({})", self.required_services),
+                )
+                .await;
+        }
+    }
+
     async fn maintenance_tick(&self) {
         // Remove peers that the reader loop failed to clean up.
         // This should not trigger under normal operation.
@@ -880,7 +969,11 @@ impl PeerNetworkManager {
                 }
             }
         } else {
-            // Normal mode: try to maintain minimum peer count with discovery
+            // Evict peers that lack required services before top-up so replacements
+            // can be pulled in during the same tick.
+            self.evict_mismatched_peers().await;
+            // Re-read count after potential churn so top-up sees the current pool size.
+            let count = self.pool.peer_count().await;
             if count < TARGET_PEERS {
                 // Try known addresses first, sorted by reputation
                 let known = self.addrv2_handler.get_known_addresses().await;
@@ -890,6 +983,9 @@ impl PeerNetworkManager {
                 let mut attempted = 0;
 
                 for addr in best_peers {
+                    if self.is_capability_rejected(&addr).await {
+                        continue;
+                    }
                     if !self.pool.is_connected(&addr).await && !self.pool.is_connecting(&addr).await
                     {
                         self.connect_to_peer(addr).await;
@@ -957,6 +1053,9 @@ impl PeerNetworkManager {
         tracing::debug!("DNS fallback tick found {} addresses. Needed {}", dns_peers.len(), needed);
         let mut dns_attempted = 0;
         for addr in dns_peers.iter() {
+            if self.is_capability_rejected(addr).await {
+                continue;
+            }
             if !self.pool.is_connected(addr).await && !self.pool.is_connecting(addr).await {
                 self.connect_to_peer(*addr).await;
                 dns_attempted += 1;
@@ -1262,6 +1361,37 @@ impl PeerNetworkManager {
             self.pool.remove_peer(&addr).await;
         }
     }
+
+    async fn record_capability_rejection(&self, addr: SocketAddr) {
+        Self::record_capability_rejection_in(&self.capability_rejected, addr).await;
+    }
+
+    async fn is_capability_rejected(&self, addr: &SocketAddr) -> bool {
+        let mut rejected = self.capability_rejected.write().await;
+        let now = Instant::now();
+        rejected.retain(|_, rejected_at| {
+            now.saturating_duration_since(*rejected_at) < CAPABILITY_REJECTED_TTL
+        });
+        rejected.contains_key(addr)
+    }
+
+    async fn record_capability_rejection_in(
+        capability_rejected: &RwLock<HashMap<SocketAddr, Instant>>,
+        addr: SocketAddr,
+    ) {
+        capability_rejected.write().await.insert(addr, Instant::now());
+    }
+
+    async fn should_reject_after_handshake(
+        pool: &PeerPool,
+        peer: &Peer,
+        required_services: ServiceFlags,
+    ) -> bool {
+        required_services != ServiceFlags::NONE
+            && pool.has_peers_with_service(required_services).await
+            && peer.services_known()
+            && !peer.has_service(required_services)
+    }
 }
 
 // Implement Clone for use in async closures
@@ -1280,6 +1410,8 @@ impl Clone for PeerNetworkManager {
             data_dir: self.data_dir.clone(),
             user_agent: self.user_agent.clone(),
             exclusive_mode: self.exclusive_mode,
+            required_services: self.required_services,
+            capability_rejected: self.capability_rejected.clone(),
             connected_peer_count: self.connected_peer_count.clone(),
             headers2_disabled: self.headers2_disabled.clone(),
             message_dispatcher: self.message_dispatcher.clone(),
@@ -1374,5 +1506,73 @@ impl NetworkManager for PeerNetworkManager {
 
     fn subscribe_network_events(&self) -> broadcast::Receiver<NetworkEvent> {
         self.network_event_sender.subscribe()
+    }
+}
+
+#[cfg(test)]
+impl PeerNetworkManager {
+    pub(crate) async fn new_for_test(required_services: ServiceFlags) -> Self {
+        let test_dir = tempfile::tempdir().expect("test dir creation failed").keep();
+        let peer_store =
+            PersistentPeerStorage::open(&test_dir).await.expect("test peer store init failed");
+        let discovery = DnsDiscovery::new().await.expect("test DNS discovery init failed");
+        let (request_tx, request_rx) = unbounded_channel();
+        Self {
+            pool: Arc::new(PeerPool::new()),
+            discovery: Arc::new(discovery),
+            addrv2_handler: Arc::new(AddrV2Handler::new()),
+            peer_store: Arc::new(peer_store),
+            reputation_manager: Arc::new(PeerReputationManager::new()),
+            network: Network::Testnet,
+            shutdown_token: CancellationToken::new(),
+            tasks: Arc::new(Mutex::new(JoinSet::new())),
+            initial_peers: vec![],
+            data_dir: test_dir,
+            user_agent: None,
+            exclusive_mode: false,
+            required_services,
+            capability_rejected: Arc::new(RwLock::new(HashMap::new())),
+            connected_peer_count: Arc::new(AtomicUsize::new(0)),
+            headers2_disabled: Arc::new(Mutex::new(HashSet::new())),
+            message_dispatcher: Arc::new(Mutex::new(MessageDispatcher::default())),
+            request_tx,
+            request_rx: Arc::new(Mutex::new(Some(request_rx))),
+            round_robin_counter: Arc::new(AtomicUsize::new(0)),
+            network_event_sender: broadcast::Sender::new(DEFAULT_NETWORK_EVENT_CAPACITY),
+        }
+    }
+
+    pub(crate) async fn insert_test_peer(&self, addr: SocketAddr, flags: ServiceFlags) {
+        self.pool.insert_peer_with_services(addr, flags).await;
+        self.connected_peer_count.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub(crate) async fn test_peer_count(&self) -> usize {
+        self.pool.peer_count().await
+    }
+
+    pub(crate) async fn test_is_connected(&self, addr: &SocketAddr) -> bool {
+        self.pool.is_connected(addr).await
+    }
+
+    pub(crate) async fn insert_test_capability_rejected(&self, addr: SocketAddr) {
+        self.record_capability_rejection(addr).await;
+    }
+
+    pub(crate) async fn test_capability_rejected_count(&self) -> usize {
+        self.capability_rejected.read().await.len()
+    }
+
+    pub(crate) async fn test_is_capability_rejected(&self, addr: &SocketAddr) -> bool {
+        self.is_capability_rejected(addr).await
+    }
+
+    pub(crate) async fn test_has_capable_peer(&self) -> bool {
+        self.required_services != ServiceFlags::NONE
+            && self.pool.has_peers_with_service(self.required_services).await
+    }
+
+    pub(crate) async fn test_should_reject_after_handshake(&self, peer: &Peer) -> bool {
+        Self::should_reject_after_handshake(&self.pool, peer, self.required_services).await
     }
 }

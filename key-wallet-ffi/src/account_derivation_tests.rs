@@ -17,7 +17,7 @@ mod tests {
 
     #[test]
     fn test_account_derive_private_key_at_receive_index() {
-        let mut error = FFIError::success();
+        let mut error = FFIError::default();
 
         let mnemonic = std::ffi::CString::new(MNEMONIC).unwrap();
         let passphrase = std::ffi::CString::new("").unwrap();
@@ -63,13 +63,13 @@ mod tests {
         let priv_key =
             unsafe { account_derive_private_key_at(account, master_xpriv, 0, &mut error) };
         assert!(priv_key.is_null());
-        assert_eq!(error.code, FFIErrorCode::WalletError);
+        assert_eq!(error.code, FFIErrorCode::InvalidInput);
 
         // Derive WIF should also fail for such accounts
         let wif =
             unsafe { account_derive_private_key_as_wif_at(account, master_xpriv, 0, &mut error) };
         assert!(wif.is_null());
-        assert_eq!(error.code, FFIErrorCode::WalletError);
+        assert_eq!(error.code, FFIErrorCode::InvalidInput);
 
         // Cleanup
         unsafe {
@@ -78,13 +78,12 @@ mod tests {
             extended_private_key_free(master_xpriv);
             account_free(account);
             wallet::wallet_free(wallet);
-            error.free_message();
         }
     }
 
     #[test]
     fn test_bls_and_eddsa_from_seed_and_mnemonic_null_safety() {
-        let mut error = FFIError::success();
+        let mut error = FFIError::default();
 
         // BLS nulls
         #[cfg(feature = "bls")]
@@ -113,13 +112,11 @@ mod tests {
             .is_null());
             assert_eq!(error.code, FFIErrorCode::InvalidInput);
         }
-
-        unsafe { error.free_message() };
     }
 
     #[test]
     fn test_account_derive_extended_private_key_at_change_index() {
-        let mut error = FFIError::success();
+        let mut error = FFIError::default();
 
         let mnemonic = std::ffi::CString::new(MNEMONIC).unwrap();
         let passphrase = std::ffi::CString::new("").unwrap();
@@ -162,20 +159,19 @@ mod tests {
         let xpriv =
             unsafe { account_derive_extended_private_key_at(account, master_xpriv, 5, &mut error) };
         assert!(xpriv.is_null());
-        assert_eq!(error.code, FFIErrorCode::WalletError);
+        assert_eq!(error.code, FFIErrorCode::InvalidInput);
 
         // Cleanup
         unsafe {
             extended_private_key_free(master_xpriv);
             account_free(account);
             wallet::wallet_free(wallet);
-            error.free_message();
         }
     }
 
     #[test]
     fn test_account_derive_from_seed_and_mnemonic_helpers_fail_for_standard() {
-        let mut error = FFIError::success();
+        let mut error = FFIError::default();
 
         let mnemonic = std::ffi::CString::new(MNEMONIC).unwrap();
         let passphrase = std::ffi::CString::new("").unwrap();
@@ -220,7 +216,7 @@ mod tests {
             )
         };
         assert!(xpriv_seed.is_null());
-        assert_eq!(error.code, FFIErrorCode::WalletError);
+        assert_eq!(error.code, FFIErrorCode::InvalidInput);
 
         // account_derive_private_key_from_seed should fail
         let priv_seed = unsafe {
@@ -233,7 +229,7 @@ mod tests {
             )
         };
         assert!(priv_seed.is_null());
-        assert_eq!(error.code, FFIErrorCode::WalletError);
+        assert_eq!(error.code, FFIErrorCode::InvalidInput);
 
         // account_derive_extended_private_key_from_mnemonic should fail
         let xpriv_mn = unsafe {
@@ -246,7 +242,7 @@ mod tests {
             )
         };
         assert!(xpriv_mn.is_null());
-        assert_eq!(error.code, FFIErrorCode::WalletError);
+        assert_eq!(error.code, FFIErrorCode::InvalidInput);
 
         // account_derive_private_key_from_mnemonic should fail
         let priv_mn = unsafe {
@@ -259,12 +255,11 @@ mod tests {
             )
         };
         assert!(priv_mn.is_null());
-        assert_eq!(error.code, FFIErrorCode::WalletError);
+        assert_eq!(error.code, FFIErrorCode::InvalidInput);
 
         unsafe {
             account_free(account);
             wallet::wallet_free(wallet);
-            error.free_message();
         }
     }
 }

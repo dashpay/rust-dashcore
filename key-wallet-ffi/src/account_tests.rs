@@ -26,7 +26,7 @@ mod tests {
 
     #[test]
     fn test_wallet_get_account_existing() {
-        let mut error = FFIError::success();
+        let mut error = FFIError::default();
 
         // Create a wallet with default accounts
         let mnemonic = CString::new("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about").unwrap();
@@ -70,19 +70,17 @@ mod tests {
 
     #[test]
     fn test_wallet_get_account_count_null_wallet() {
-        let mut error = FFIError::success();
+        let mut error = FFIError::default();
 
         let count = unsafe { wallet_get_account_count(ptr::null(), &mut error) };
 
         assert_eq!(count, 0);
         assert_eq!(error.code, FFIErrorCode::InvalidInput);
-
-        unsafe { error.free_message() };
     }
 
     #[test]
     fn test_wallet_get_account_count() {
-        let mut error = FFIError::success();
+        let mut error = FFIError::default();
 
         // Create a wallet
         let mnemonic = CString::new("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about").unwrap();
@@ -106,7 +104,6 @@ mod tests {
         // Clean up
         unsafe {
             wallet::wallet_free(wallet);
-            error.free_message();
         }
     }
 
@@ -128,7 +125,7 @@ mod tests {
 
     #[test]
     fn test_account_getters() {
-        let mut error = FFIError::success();
+        let mut error = FFIError::default();
 
         // Create a wallet
         let mnemonic = CString::new("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about").unwrap();
@@ -192,34 +189,31 @@ mod tests {
         // Clean up
         unsafe {
             wallet::wallet_free(wallet);
-            error.free_message();
         }
     }
 
     #[test]
     fn test_account_getters_null_safety() {
-        unsafe {
-            // Test all getter functions with null pointers
-            let xpub = account_get_extended_public_key_as_string(ptr::null());
-            assert!(xpub.is_null());
+        // Test all getter functions with null pointers
+        let xpub = unsafe { account_get_extended_public_key_as_string(ptr::null()) };
+        assert!(xpub.is_null());
 
-            let network = account_get_network(ptr::null());
-            assert_eq!(network, FFINetwork::Mainnet);
+        let network = unsafe { account_get_network(ptr::null()) };
+        assert_eq!(network, FFINetwork::Mainnet);
 
-            let wallet_id = account_get_parent_wallet_id(ptr::null());
-            assert!(wallet_id.is_null());
+        let wallet_id = unsafe { account_get_parent_wallet_id(ptr::null()) };
+        assert!(wallet_id.is_null());
 
-            let mut index = 0u32;
-            let account_type = account_get_account_type(ptr::null(), &mut index);
-            assert_eq!(account_type as u32, FFIAccountType::StandardBIP44 as u32);
-            assert_eq!(index, 0);
+        let mut index = 0u32;
+        let account_type = unsafe { account_get_account_type(ptr::null(), &mut index) };
+        assert_eq!(account_type as u32, FFIAccountType::StandardBIP44 as u32);
+        assert_eq!(index, 0);
 
-            // Test with null out_index
-            let account_type = account_get_account_type(ptr::null(), ptr::null_mut());
-            assert_eq!(account_type as u32, FFIAccountType::StandardBIP44 as u32);
+        // Test with null out_index
+        let account_type = unsafe { account_get_account_type(ptr::null(), ptr::null_mut()) };
+        assert_eq!(account_type as u32, FFIAccountType::StandardBIP44 as u32);
 
-            let is_watch_only = account_get_is_watch_only(ptr::null());
-            assert!(!is_watch_only);
-        }
+        let is_watch_only = unsafe { account_get_is_watch_only(ptr::null()) };
+        assert!(!is_watch_only);
     }
 }

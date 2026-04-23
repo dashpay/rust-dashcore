@@ -7,6 +7,7 @@
 use std::sync::Arc;
 use std::time::Instant;
 
+use dashcore::sml::llmq_type::network::NetworkLLMQExt;
 use dashcore::sml::masternode_list_engine::MasternodeListEngine;
 use tokio::sync::RwLock;
 
@@ -16,17 +17,20 @@ use crate::network::RequestSender;
 use crate::storage::BlockHeaderStorage;
 use crate::sync::{MasternodesProgress, SyncEvent, SyncManager, SyncState};
 use dashcore::BlockHash;
-use std::collections::{BTreeSet, HashSet};
+use std::collections::BTreeSet;
+
+/// Anchor `baseBlockHashes` at or before `H - 4 * dkg_interval`. `send_qrinfo_for_tip`
+/// requests QRInfo with `extra_share: true`, which covers `H` down to `H-4C`, so the
+/// base must sit at or before `H-4C` for every historical diff's `(base, target]`
+/// range to include its commit block. Drop to `3` if `extra_share` ever becomes
+/// `false` at the call site.
+const QRINFO_ANCHOR_CYCLES_BEHIND: u32 = 4;
 
 /// Sync state for masternode list synchronization.
 #[derive(Debug, Default)]
 pub(super) struct MasternodeSyncState {
-    /// Block hashes for which we have received MnListDiffs.
-    pub(super) known_block_hashes: HashSet<BlockHash>,
     /// Heights where the engine has masternode lists (for chaining diffs).
     pub(super) known_mn_list_heights: BTreeSet<u32>,
-    /// Last successfully processed QRInfo block hash (for progressive sync).
-    pub(super) last_qrinfo_block_hash: Option<BlockHash>,
     /// Pipeline for MnListDiff requests.
     pub(super) mnlistdiff_pipeline: MnListDiffPipeline,
     /// Whether we are waiting for a QRInfo response.
@@ -38,6 +42,33 @@ pub(super) struct MasternodeSyncState {
     /// When to retry after a ChainLock unavailability error.
     /// The QRInfo response includes the current tip which may not have ChainLock yet.
     pub(super) chainlock_retry_after: Option<Instant>,
+}
+
+/// Pick the QRInfo base anchor for a request at `tip_height`: the highest stored
+/// masternode list at height `<= tip_cycle_start - QRINFO_ANCHOR_CYCLES_BEHIND *
+/// dkg_interval`.
+///
+/// The anchor has to be a block the engine already has a list for. The server's
+/// historical cycle diffs need a base to apply against, and `apply_diff` with no
+/// matching base list fails with `MissingStartMasternodeList`.
+///
+/// Returns `None` on fresh restart (engine empty, or no list old enough to satisfy
+/// the cycles-behind rule). The caller then sends an empty `baseBlockHashes` and the
+/// server falls back to genesis.
+fn compute_qrinfo_anchor_hash(
+    engine: &MasternodeListEngine,
+    network: dashcore::Network,
+    tip_height: u32,
+) -> Option<BlockHash> {
+    let dkg_interval = network.isd_llmq_type().params().dkg_params.interval;
+    if dkg_interval == 0 {
+        return None;
+    }
+    let tip_cycle_start = tip_height - (tip_height % dkg_interval);
+    let max_anchor_height =
+        tip_cycle_start.checked_sub(QRINFO_ANCHOR_CYCLES_BEHIND * dkg_interval)?;
+    let (_, list) = engine.masternode_lists.range(..=max_anchor_height).next_back()?;
+    Some(list.block_hash)
 }
 
 impl MasternodeSyncState {
@@ -147,24 +178,20 @@ impl<H: BlockHeaderStorage> MasternodesManager<H> {
             self.set_state(SyncState::Syncing);
         }
 
-        // Build known hashes from tracked block hashes
-        let mut known_hashes: Vec<_> = self.sync_state.known_block_hashes.iter().copied().collect();
+        let base_hashes = {
+            let engine = self.engine.read().await;
+            match compute_qrinfo_anchor_hash(&engine, self.network, tip_height) {
+                Some(anchor) => vec![anchor],
+                None => Vec::new(),
+            }
+        };
 
-        // Add base hash
-        let base_hash = self
-            .sync_state
-            .last_qrinfo_block_hash
-            .or_else(|| self.network.known_genesis_block_hash());
-        if let Some(hash) = base_hash {
-            known_hashes.push(hash);
-        }
-
-        // Send QRInfo request for the tip
-        // Note: The server's response includes `mn_list_diff_tip` which is always the current tip,
-        // regardless of the requested block. If the tip was just mined and doesn't have a ChainLock
-        // yet, we'll retry after a delay.
-        tracing::info!("Requesting QRInfo for tip at height {}", tip_height);
-        requests.request_qr_info(known_hashes, tip_block_hash, true)?;
+        tracing::info!(
+            "Requesting QRInfo for tip at height {} with {} base hash(es)",
+            tip_height,
+            base_hashes.len()
+        );
+        requests.request_qr_info(base_hashes, tip_block_hash, true)?;
 
         self.sync_state.start_waiting_for_qrinfo();
 
@@ -229,6 +256,8 @@ mod tests {
     use crate::storage::{DiskStorageManager, PersistentBlockHeaderStorage, StorageManager};
     use crate::sync::sync_manager::SyncManager;
     use crate::sync::{ManagerIdentifier, SyncManagerProgress};
+    use dashcore::hashes::Hash;
+    use dashcore::sml::masternode_list::MasternodeList;
 
     type TestMasternodesManager = MasternodesManager<PersistentBlockHeaderStorage>;
 
@@ -266,6 +295,75 @@ mod tests {
             assert!(progress.last_activity().elapsed().as_secs() < 1);
         } else {
             panic!("Expected SyncManagerProgress::Masternodes");
+        }
+    }
+
+    fn anchor_hash(n: u8) -> BlockHash {
+        BlockHash::from_byte_array([n; 32])
+    }
+
+    fn engine_with_lists(lists: &[(u32, u8)]) -> MasternodeListEngine {
+        let mut engine = MasternodeListEngine::default_for_network(dashcore::Network::Regtest);
+        for (height, tag) in lists {
+            engine
+                .masternode_lists
+                .insert(*height, MasternodeList::empty(anchor_hash(*tag), *height));
+        }
+        engine
+    }
+
+    // Regtest `isd_llmq_type` is `LlmqtypeTestDIP0024` which uses `DKG_TEST` with
+    // `interval=24`, so `max_anchor_height = tip_cycle_start - 4 * 24`.
+    #[test]
+    fn test_compute_qrinfo_anchor_hash() {
+        struct Case {
+            name: &'static str,
+            lists: &'static [(u32, u8)],
+            tip: u32,
+            expect: Option<u8>,
+        }
+        let cases = [
+            Case {
+                name: "empty engine",
+                lists: &[],
+                tip: 200,
+                expect: None,
+            },
+            Case {
+                name: "tip too low, anchor underflows",
+                lists: &[(0, 1)],
+                tip: 50,
+                expect: None,
+            },
+            Case {
+                name: "no stored list old enough",
+                lists: &[(100, 1), (150, 2)],
+                tip: 200,
+                expect: None,
+            },
+            Case {
+                name: "single list exactly at max_anchor_height",
+                lists: &[(96, 1)],
+                tip: 200,
+                expect: Some(1),
+            },
+            Case {
+                name: "picks highest list at or below max_anchor_height",
+                lists: &[(50, 1), (80, 2), (100, 3)],
+                tip: 200,
+                expect: Some(2),
+            },
+            Case {
+                name: "mid-cycle tip rounds down to cycle start",
+                lists: &[(96, 1)],
+                tip: 215,
+                expect: Some(1),
+            },
+        ];
+        for case in &cases {
+            let engine = engine_with_lists(case.lists);
+            let got = compute_qrinfo_anchor_hash(&engine, dashcore::Network::Regtest, case.tip);
+            assert_eq!(got, case.expect.map(anchor_hash), "case: {}", case.name);
         }
     }
 }

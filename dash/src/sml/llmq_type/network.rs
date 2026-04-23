@@ -46,7 +46,7 @@ impl NetworkLLMQExt for Network {
             Network::Mainnet => LLMQType::Llmqtype100_67,
             Network::Testnet => LLMQType::Llmqtype25_67,
             Network::Devnet => LLMQType::LlmqtypeDevnet,
-            Network::Regtest => LLMQType::LlmqtypeTest,
+            Network::Regtest => LLMQType::LlmqtypeTestnetPlatform,
         }
     }
 

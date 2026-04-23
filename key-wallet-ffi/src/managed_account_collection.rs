@@ -9,7 +9,8 @@ use std::ffi::CString;
 use std::os::raw::{c_char, c_uint};
 use std::ptr;
 
-use crate::error::{FFIError, FFIErrorCode};
+use crate::check_ptr;
+use crate::error::FFIError;
 use crate::managed_account::FFIManagedCoreAccount;
 use crate::wallet_manager::FFIWalletManager;
 
@@ -88,7 +89,7 @@ pub struct FFIManagedCoreAccountCollectionSummary {
 ///
 /// - `manager` must be a valid pointer to an FFIWalletManager instance
 /// - `wallet_id` must be a valid pointer to a 32-byte wallet ID
-/// - `error` must be a valid pointer to an FFIError structure or null
+/// - `error` must be a valid pointer to an FFIError structure
 /// - The returned pointer must be freed with `managed_account_collection_free` when no longer needed
 #[no_mangle]
 pub unsafe extern "C" fn managed_wallet_get_account_collection(
@@ -96,10 +97,8 @@ pub unsafe extern "C" fn managed_wallet_get_account_collection(
     wallet_id: *const u8,
     error: *mut FFIError,
 ) -> *mut FFIManagedCoreAccountCollection {
-    if manager.is_null() || wallet_id.is_null() {
-        FFIError::set_error(error, FFIErrorCode::InvalidInput, "Null pointer provided".to_string());
-        return ptr::null_mut();
-    }
+    check_ptr!(manager, error);
+    check_ptr!(wallet_id, error);
 
     // Get the managed wallet info from the manager
     let managed_wallet_ptr =

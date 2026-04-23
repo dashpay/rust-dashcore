@@ -18,11 +18,11 @@ mod tests {
 
     #[test]
     fn test_wallet_manager_creation() {
-        let mut error = FFIError::success();
+        let mut error = FFIError::default();
         let error = &mut error as *mut FFIError;
 
         // Create a wallet manager
-        let manager = wallet_manager::wallet_manager_create(FFINetwork::Testnet, error);
+        let manager = unsafe { wallet_manager::wallet_manager_create(FFINetwork::Testnet, error) };
         assert_eq!(unsafe { (*manager).network() }, FFINetwork::Testnet);
 
         assert!(!manager.is_null());
@@ -35,16 +35,15 @@ mod tests {
         // Clean up
         unsafe {
             wallet_manager::wallet_manager_free(manager);
-            (*error).free_message();
         }
     }
 
     #[test]
     fn test_add_wallet_from_mnemonic() {
-        let mut error = FFIError::success();
+        let mut error = FFIError::default();
         let error = &mut error as *mut FFIError;
 
-        let manager = wallet_manager::wallet_manager_create(FFINetwork::Testnet, error);
+        let manager = unsafe { wallet_manager::wallet_manager_create(FFINetwork::Testnet, error) };
         assert!(!manager.is_null());
 
         // Add a wallet from mnemonic
@@ -70,16 +69,15 @@ mod tests {
         // Clean up
         unsafe {
             wallet_manager::wallet_manager_free(manager);
-            (*error).free_message();
         }
     }
 
     #[test]
     fn test_get_wallet_ids() {
-        let mut error = FFIError::success();
+        let mut error = FFIError::default();
         let error = &mut error as *mut FFIError;
 
-        let manager = wallet_manager::wallet_manager_create(FFINetwork::Testnet, error);
+        let manager = unsafe { wallet_manager::wallet_manager_create(FFINetwork::Testnet, error) };
         assert!(!manager.is_null());
 
         // Add multiple wallets
@@ -146,16 +144,15 @@ mod tests {
         unsafe {
             wallet_manager::wallet_manager_free_wallet_ids(wallet_ids, count);
             wallet_manager::wallet_manager_free(manager);
-            (*error).free_message();
         }
     }
 
     #[test]
     fn test_wallet_balance() {
-        let mut error = FFIError::success();
+        let mut error = FFIError::default();
         let error = &mut error as *mut FFIError;
 
-        let manager = wallet_manager::wallet_manager_create(FFINetwork::Testnet, error);
+        let manager = unsafe { wallet_manager::wallet_manager_create(FFINetwork::Testnet, error) };
         assert!(!manager.is_null());
 
         // Add a wallet
@@ -206,13 +203,12 @@ mod tests {
         unsafe {
             wallet_manager::wallet_manager_free_wallet_ids(wallet_ids, count);
             wallet_manager::wallet_manager_free(manager);
-            (*error).free_message();
         }
     }
 
     #[test]
     fn test_error_handling() {
-        let mut error = FFIError::success();
+        let mut error = FFIError::default();
         let error = &mut error as *mut FFIError;
 
         // Test with null manager
@@ -221,7 +217,7 @@ mod tests {
         assert_eq!(unsafe { (*error).code }, FFIErrorCode::InvalidInput);
 
         // Test with invalid mnemonic
-        let manager = wallet_manager::wallet_manager_create(FFINetwork::Testnet, error);
+        let manager = unsafe { wallet_manager::wallet_manager_create(FFINetwork::Testnet, error) };
         assert!(!manager.is_null());
 
         let invalid_mnemonic = CString::new("invalid mnemonic").unwrap();
@@ -234,23 +230,20 @@ mod tests {
             )
         };
         assert!(!success);
-        // The WalletManager returns WalletError for invalid mnemonics, not InvalidMnemonic
-        // because it wraps the mnemonic error in a WalletCreation error
-        assert_eq!(unsafe { (*error).code }, FFIErrorCode::WalletError);
+        assert_eq!(unsafe { (*error).code }, FFIErrorCode::InvalidMnemonic);
 
         // Clean up
         unsafe {
             wallet_manager::wallet_manager_free(manager);
-            (*error).free_message();
         }
     }
 
     #[test]
     fn test_wallet_manager_add_wallet_with_account_count() {
-        let mut error = FFIError::success();
+        let mut error = FFIError::default();
         let error = &mut error as *mut FFIError;
 
-        let manager = wallet_manager::wallet_manager_create(FFINetwork::Testnet, error);
+        let manager = unsafe { wallet_manager::wallet_manager_create(FFINetwork::Testnet, error) };
         assert!(!manager.is_null());
 
         // Add a wallet with account count
@@ -274,16 +267,15 @@ mod tests {
         // Clean up
         unsafe {
             wallet_manager::wallet_manager_free(manager);
-            (*error).free_message();
         }
     }
 
     #[test]
     fn test_wallet_manager_get_wallet() {
-        let mut error = FFIError::success();
+        let mut error = FFIError::default();
         let error = &mut error as *mut FFIError;
 
-        let manager = wallet_manager::wallet_manager_create(FFINetwork::Testnet, error);
+        let manager = unsafe { wallet_manager::wallet_manager_create(FFINetwork::Testnet, error) };
         assert!(!manager.is_null());
 
         // Add a wallet
@@ -327,16 +319,15 @@ mod tests {
         unsafe {
             wallet_manager::wallet_manager_free_wallet_ids(wallet_ids, id_count);
             wallet_manager::wallet_manager_free(manager);
-            (*error).free_message();
         }
     }
 
     #[test]
     fn test_wallet_manager_get_wallet_balance() {
-        let mut error = FFIError::success();
+        let mut error = FFIError::default();
         let error = &mut error as *mut FFIError;
 
-        let manager = wallet_manager::wallet_manager_create(FFINetwork::Testnet, error);
+        let manager = unsafe { wallet_manager::wallet_manager_create(FFINetwork::Testnet, error) };
         assert!(!manager.is_null());
 
         // Add wallet
@@ -387,7 +378,6 @@ mod tests {
         unsafe {
             wallet_manager::wallet_manager_free_wallet_ids(wallet_ids, id_count);
             wallet_manager::wallet_manager_free(manager);
-            (*error).free_message();
         }
     }
 
@@ -395,7 +385,7 @@ mod tests {
 
     #[test]
     fn test_wallet_manager_null_inputs() {
-        let mut error = FFIError::success();
+        let mut error = FFIError::default();
         let error = &mut error as *mut FFIError;
 
         // Test null manager operations
@@ -430,8 +420,6 @@ mod tests {
             )
         };
         assert!(!success);
-
-        unsafe { (*error).free_message() };
     }
 
     #[test]
@@ -444,10 +432,10 @@ mod tests {
 
     #[test]
     fn test_wallet_manager_synced_height() {
-        let mut error = FFIError::success();
+        let mut error = FFIError::default();
         let error = &mut error as *mut FFIError;
 
-        let manager = wallet_manager::wallet_manager_create(FFINetwork::Testnet, error);
+        let manager = unsafe { wallet_manager::wallet_manager_create(FFINetwork::Testnet, error) };
         assert!(!manager.is_null());
 
         // Get initial height
@@ -472,16 +460,15 @@ mod tests {
         // Clean up
         unsafe {
             wallet_manager::wallet_manager_free(manager);
-            (*error).free_message();
         }
     }
 
     #[test]
     fn test_wallet_manager_get_wallet_balance_implementation() {
-        let mut error = FFIError::success();
+        let mut error = FFIError::default();
         let error = &mut error as *mut FFIError;
 
-        let manager = wallet_manager::wallet_manager_create(FFINetwork::Testnet, error);
+        let manager = unsafe { wallet_manager::wallet_manager_create(FFINetwork::Testnet, error) };
         assert!(!manager.is_null());
 
         // Add a wallet from mnemonic
@@ -586,22 +573,21 @@ mod tests {
             )
         };
         assert!(!success);
-        assert_eq!(unsafe { (*error).code }, FFIErrorCode::WalletError);
+        assert_eq!(unsafe { (*error).code }, FFIErrorCode::NotFound);
 
         // Clean up
         unsafe {
             wallet_manager::wallet_manager_free_wallet_ids(wallet_ids, id_count);
             wallet_manager::wallet_manager_free(manager);
-            (*error).free_message();
         }
     }
 
     #[test]
     fn test_wallet_manager_process_transaction() {
-        let mut error = FFIError::success();
+        let mut error = FFIError::default();
         let error = &mut error as *mut FFIError;
 
-        let manager = wallet_manager::wallet_manager_create(FFINetwork::Testnet, error);
+        let manager = unsafe { wallet_manager::wallet_manager_create(FFINetwork::Testnet, error) };
         assert!(!manager.is_null());
 
         // Add a wallet from mnemonic
@@ -748,16 +734,15 @@ mod tests {
         // Clean up
         unsafe {
             wallet_manager::wallet_manager_free(manager);
-            (*error).free_message();
         }
     }
 
     #[test]
     fn test_wallet_manager_get_wallet_and_info() {
-        let mut error = FFIError::success();
+        let mut error = FFIError::default();
         let error = &mut error as *mut FFIError;
 
-        let manager = wallet_manager::wallet_manager_create(FFINetwork::Testnet, error);
+        let manager = unsafe { wallet_manager::wallet_manager_create(FFINetwork::Testnet, error) };
         assert!(!manager.is_null());
 
         // Add a wallet from mnemonic
@@ -857,18 +842,17 @@ mod tests {
             wallet_manager::wallet_manager_free_wallet_ids(wallet_ids, id_count);
             // Free the manager
             wallet_manager::wallet_manager_free(manager);
-            (*error).free_message();
         }
     }
 
     #[cfg(feature = "bincode")]
     #[test]
     fn test_create_wallet_from_mnemonic_return_serialized_bytes() {
-        let mut error = FFIError::success();
+        let mut error = FFIError::default();
         let error = &mut error as *mut FFIError;
 
         // Create a wallet manager
-        let manager = wallet_manager::wallet_manager_create(FFINetwork::Testnet, error);
+        let manager = unsafe { wallet_manager::wallet_manager_create(FFINetwork::Testnet, error) };
         assert!(!manager.is_null());
 
         // Test basic wallet creation and serialization
@@ -913,7 +897,7 @@ mod tests {
         }
 
         // Test with downgrade to watch-only wallet (create new manager to avoid duplicate wallet ID)
-        let manager2 = wallet_manager::wallet_manager_create(FFINetwork::Testnet, error);
+        let manager2 = unsafe { wallet_manager::wallet_manager_create(FFINetwork::Testnet, error) };
         assert!(!manager2.is_null());
 
         let mut wallet_bytes_out: *mut u8 = ptr::null_mut();
@@ -952,7 +936,7 @@ mod tests {
         assert_eq!(wallet_id_out, original_wallet_id);
 
         // Import the watch-only wallet to verify it works (create third manager for import)
-        let manager3 = wallet_manager::wallet_manager_create(FFINetwork::Testnet, error);
+        let manager3 = unsafe { wallet_manager::wallet_manager_create(FFINetwork::Testnet, error) };
         assert!(!manager3.is_null());
 
         let wallet_bytes_slice =
@@ -983,7 +967,7 @@ mod tests {
         }
 
         // Test with externally signable wallet (create fourth manager)
-        let manager4 = wallet_manager::wallet_manager_create(FFINetwork::Testnet, error);
+        let manager4 = unsafe { wallet_manager::wallet_manager_create(FFINetwork::Testnet, error) };
         assert!(!manager4.is_null());
 
         let mut wallet_bytes_out: *mut u8 = ptr::null_mut();
@@ -1021,7 +1005,7 @@ mod tests {
         }
 
         // Test with invalid mnemonic (create fifth manager)
-        let manager5 = wallet_manager::wallet_manager_create(FFINetwork::Testnet, error);
+        let manager5 = unsafe { wallet_manager::wallet_manager_create(FFINetwork::Testnet, error) };
         assert!(!manager5.is_null());
 
         let invalid_mnemonic = CString::new("invalid mnemonic phrase").unwrap();
@@ -1055,18 +1039,17 @@ mod tests {
             crate::wallet_manager::wallet_manager_free(manager);
             crate::wallet_manager::wallet_manager_free(manager4);
             crate::wallet_manager::wallet_manager_free(manager5);
-            (*error).free_message();
         }
     }
 
     #[cfg(feature = "bincode")]
     #[test]
     fn test_serialized_wallet_across_managers() {
-        let mut error = FFIError::success();
+        let mut error = FFIError::default();
         let error = &mut error as *mut FFIError;
 
         // Create first wallet manager
-        let manager1 = wallet_manager::wallet_manager_create(FFINetwork::Testnet, error);
+        let manager1 = unsafe { wallet_manager::wallet_manager_create(FFINetwork::Testnet, error) };
         assert!(!manager1.is_null());
 
         let mnemonic = CString::new(TEST_MNEMONIC).unwrap();
@@ -1115,7 +1098,7 @@ mod tests {
         }
 
         // Create a completely new wallet manager
-        let manager2 = wallet_manager::wallet_manager_create(FFINetwork::Testnet, error);
+        let manager2 = unsafe { wallet_manager::wallet_manager_create(FFINetwork::Testnet, error) };
         assert!(!manager2.is_null());
 
         // Import the wallet using the serialized bytes in the new manager
@@ -1156,7 +1139,6 @@ mod tests {
                 wallet_bytes_len_out,
             );
             crate::wallet_manager::wallet_manager_free(manager2);
-            (*error).free_message();
         }
     }
 }

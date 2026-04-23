@@ -159,9 +159,10 @@ def main():
 
     datadir = os.path.join(cache_dir, f"regtest-blockchain-{TEST_DATA_VERSION}")
 
-    # Output lines for GITHUB_ENV or shell eval
-    print(f"DASHD_PATH={dashd_path}")
-    print(f"DASHD_TEST_DATA={datadir}")
+    # GITHUB_ENV expects bare NAME=value; shell `eval` needs `export NAME=value`.
+    prefix = "" if os.environ.get("GITHUB_ACTIONS") == "true" else "export "
+    print(f"{prefix}DASHD_PATH={dashd_path}")
+    print(f"{prefix}DASHD_TEST_DATA={datadir}")
 
 
 if __name__ == "__main__":

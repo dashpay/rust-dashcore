@@ -16,6 +16,7 @@ use key_wallet::{Mnemonic, Seed, Wallet};
 
 use crate::error::{FFIError, FFIErrorCode};
 use crate::types::{FFIWallet, FFIWalletAccountCreationOptions};
+use crate::{check_ptr, deref_ptr, unwrap_or_return};
 use key_wallet::Network;
 
 /// Create a new wallet from mnemonic with options
@@ -25,7 +26,7 @@ use key_wallet::Network;
 /// - `mnemonic` must be a valid pointer to a null-terminated C string
 /// - `passphrase` must be a valid pointer to a null-terminated C string or null
 /// - `account_options` must be a valid pointer to FFIWalletAccountCreationOptions or null
-/// - `error` must be a valid pointer to an FFIError structure or null
+/// - `error` must be a valid pointer to an FFIError structure
 /// - The caller must ensure all pointers remain valid for the duration of this call
 /// - The returned pointer must be freed with `wallet_free` when no longer needed
 #[no_mangle]
@@ -36,99 +37,40 @@ pub unsafe extern "C" fn wallet_create_from_mnemonic_with_options(
     account_options: *const FFIWalletAccountCreationOptions,
     error: *mut FFIError,
 ) -> *mut FFIWallet {
-    if mnemonic.is_null() {
-        FFIError::set_error(error, FFIErrorCode::InvalidInput, "Mnemonic is null".to_string());
-        return ptr::null_mut();
-    }
+    use key_wallet::mnemonic::Language;
 
-    let mnemonic_str = unsafe {
-        match CStr::from_ptr(mnemonic).to_str() {
-            Ok(s) => s,
-            Err(_) => {
-                FFIError::set_error(
-                    error,
-                    FFIErrorCode::InvalidInput,
-                    "Invalid UTF-8 in mnemonic".to_string(),
-                );
-                return ptr::null_mut();
-            }
-        }
-    };
+    let mnemonic = deref_ptr!(mnemonic, error);
+    let mnemonic_str = unwrap_or_return!(CStr::from_ptr(mnemonic).to_str(), error);
 
     let passphrase_str = if passphrase.is_null() {
         ""
     } else {
-        unsafe {
-            match CStr::from_ptr(passphrase).to_str() {
-                Ok(s) => s,
-                Err(_) => {
-                    FFIError::set_error(
-                        error,
-                        FFIErrorCode::InvalidInput,
-                        "Invalid UTF-8 in passphrase".to_string(),
-                    );
-                    return ptr::null_mut();
-                }
-            }
-        }
+        unwrap_or_return!(CStr::from_ptr(passphrase).to_str(), error)
     };
 
-    use key_wallet::mnemonic::Language;
-    let mnemonic = match Mnemonic::from_phrase(mnemonic_str, Language::English) {
-        Ok(m) => m,
-        Err(e) => {
-            FFIError::set_error(
-                error,
-                FFIErrorCode::InvalidMnemonic,
-                format!("Invalid mnemonic: {}", e),
-            );
-            return ptr::null_mut();
-        }
-    };
+    let mnemonic = unwrap_or_return!(Mnemonic::from_phrase(mnemonic_str, Language::English), error);
 
     let network_rust: Network = network.into();
-
-    // Convert account creation options
     let creation_options = if account_options.is_null() {
         WalletAccountCreationOptions::Default
     } else {
-        unsafe { (*account_options).to_wallet_options() }
+        (*account_options).to_wallet_options()
     };
 
     let wallet = if passphrase_str.is_empty() {
-        match Wallet::from_mnemonic(mnemonic, network_rust, creation_options) {
-            Ok(w) => w,
-            Err(e) => {
-                FFIError::set_error(
-                    error,
-                    FFIErrorCode::WalletError,
-                    format!("Failed to create wallet: {}", e),
-                );
-                return ptr::null_mut();
-            }
-        }
+        unwrap_or_return!(Wallet::from_mnemonic(mnemonic, network_rust, creation_options), error)
     } else {
-        // For wallets with passphrase, we need to handle account creation differently
-        // First create the wallet without accounts
-        match Wallet::from_mnemonic_with_passphrase(
-            mnemonic,
-            passphrase_str.to_string(),
-            network_rust,
-            creation_options,
-        ) {
-            Ok(w) => w,
-            Err(e) => {
-                FFIError::set_error(
-                    error,
-                    FFIErrorCode::WalletError,
-                    format!("Failed to create wallet with passphrase: {}", e),
-                );
-                return ptr::null_mut();
-            }
-        }
+        unwrap_or_return!(
+            Wallet::from_mnemonic_with_passphrase(
+                mnemonic,
+                passphrase_str.to_string(),
+                network_rust,
+                creation_options,
+            ),
+            error
+        )
     };
 
-    FFIError::set_success(error);
     Box::into_raw(Box::new(FFIWallet::new(wallet)))
 }
 
@@ -138,7 +80,7 @@ pub unsafe extern "C" fn wallet_create_from_mnemonic_with_options(
 ///
 /// - `mnemonic` must be a valid pointer to a null-terminated C string
 /// - `passphrase` must be a valid pointer to a null-terminated C string or null
-/// - `error` must be a valid pointer to an FFIError structure or null
+/// - `error` must be a valid pointer to an FFIError structure
 /// - The caller must ensure all pointers remain valid for the duration of this call
 /// - The returned pointer must be freed with `wallet_free` when no longer needed
 #[no_mangle]
@@ -163,7 +105,7 @@ pub unsafe extern "C" fn wallet_create_from_mnemonic(
 ///
 /// - `seed` must be a valid pointer to a byte array of `seed_len` length
 /// - `account_options` must be a valid pointer to FFIWalletAccountCreationOptions or null
-/// - `error` must be a valid pointer to an FFIError structure or null
+/// - `error` must be a valid pointer to an FFIError structure
 /// - The caller must ensure all pointers remain valid for the duration of this call
 #[no_mangle]
 pub unsafe extern "C" fn wallet_create_from_seed_with_options(
@@ -173,16 +115,11 @@ pub unsafe extern "C" fn wallet_create_from_seed_with_options(
     account_options: *const FFIWalletAccountCreationOptions,
     error: *mut FFIError,
 ) -> *mut FFIWallet {
-    if seed.is_null() {
-        FFIError::set_error(error, FFIErrorCode::InvalidInput, "Seed is null".to_string());
-        return ptr::null_mut();
-    }
-
+    let _seed_byte = deref_ptr!(seed, error);
     if seed_len != 64 {
-        FFIError::set_error(
-            error,
+        (*error).set(
             FFIErrorCode::InvalidInput,
-            format!("Invalid seed length: {}, expected 64", seed_len),
+            &format!("Invalid seed length: {}, expected 64", seed_len),
         );
         return ptr::null_mut();
     }
@@ -193,28 +130,14 @@ pub unsafe extern "C" fn wallet_create_from_seed_with_options(
     let seed = Seed::new(seed_array);
 
     let network_rust: Network = network.into();
-
-    // Convert account creation options
     let creation_options = if account_options.is_null() {
         WalletAccountCreationOptions::Default
     } else {
         (*account_options).to_wallet_options()
     };
 
-    match Wallet::from_seed(seed, network_rust, creation_options) {
-        Ok(wallet) => {
-            FFIError::set_success(error);
-            Box::into_raw(Box::new(FFIWallet::new(wallet)))
-        }
-        Err(e) => {
-            FFIError::set_error(
-                error,
-                FFIErrorCode::WalletError,
-                format!("Failed to create wallet from seed: {}", e),
-            );
-            ptr::null_mut()
-        }
-    }
+    let wallet = unwrap_or_return!(Wallet::from_seed(seed, network_rust, creation_options), error);
+    Box::into_raw(Box::new(FFIWallet::new(wallet)))
 }
 
 /// Create a new wallet from seed (backward compatibility)
@@ -222,7 +145,7 @@ pub unsafe extern "C" fn wallet_create_from_seed_with_options(
 /// # Safety
 ///
 /// - `seed` must be a valid pointer to a byte array of `seed_len` length
-/// - `error` must be a valid pointer to an FFIError structure or null
+/// - `error` must be a valid pointer to an FFIError structure
 /// - The caller must ensure all pointers remain valid for the duration of this call
 #[no_mangle]
 pub unsafe extern "C" fn wallet_create_from_seed(
@@ -245,7 +168,7 @@ pub unsafe extern "C" fn wallet_create_from_seed(
 /// # Safety
 ///
 /// - `account_options` must be a valid pointer to FFIWalletAccountCreationOptions or null
-/// - `error` must be a valid pointer to an FFIError structure or null
+/// - `error` must be a valid pointer to an FFIError structure
 /// - The caller must ensure all pointers remain valid for the duration of this call
 #[no_mangle]
 pub unsafe extern "C" fn wallet_create_random_with_options(
@@ -262,27 +185,15 @@ pub unsafe extern "C" fn wallet_create_random_with_options(
         (*account_options).to_wallet_options()
     };
 
-    match Wallet::new_random(network_rust, creation_options) {
-        Ok(wallet) => {
-            FFIError::set_success(error);
-            Box::into_raw(Box::new(FFIWallet::new(wallet)))
-        }
-        Err(e) => {
-            FFIError::set_error(
-                error,
-                FFIErrorCode::WalletError,
-                format!("Failed to create random wallet: {}", e),
-            );
-            ptr::null_mut()
-        }
-    }
+    let wallet = unwrap_or_return!(Wallet::new_random(network_rust, creation_options), error);
+    Box::into_raw(Box::new(FFIWallet::new(wallet)))
 }
 
 /// Create a new random wallet (backward compatibility)
 ///
 /// # Safety
 ///
-/// - `error` must be a valid pointer to an FFIError structure or null
+/// - `error` must be a valid pointer to an FFIError structure
 /// - The caller must ensure the pointer remains valid for the duration of this call
 #[no_mangle]
 pub unsafe extern "C" fn wallet_create_random(
@@ -302,7 +213,7 @@ pub unsafe extern "C" fn wallet_create_random(
 ///
 /// - `wallet` must be a valid pointer to an FFIWallet
 /// - `id_out` must be a valid pointer to a 32-byte buffer
-/// - `error` must be a valid pointer to an FFIError structure or null
+/// - `error` must be a valid pointer to an FFIError structure
 /// - The caller must ensure all pointers remain valid for the duration of this call
 #[no_mangle]
 pub unsafe extern "C" fn wallet_get_id(
@@ -310,16 +221,10 @@ pub unsafe extern "C" fn wallet_get_id(
     id_out: *mut u8,
     error: *mut FFIError,
 ) -> bool {
-    if wallet.is_null() || id_out.is_null() {
-        FFIError::set_error(error, FFIErrorCode::InvalidInput, "Null pointer provided".to_string());
-        return false;
-    }
-
-    let wallet = &*wallet;
+    let wallet = deref_ptr!(wallet, error);
+    check_ptr!(id_out, error);
     let wallet_id = wallet.inner().wallet_id;
-
     ptr::copy_nonoverlapping(wallet_id.as_ptr(), id_out, 32);
-    FFIError::set_success(error);
     true
 }
 
@@ -328,23 +233,15 @@ pub unsafe extern "C" fn wallet_get_id(
 /// # Safety
 ///
 /// - `wallet` must be a valid pointer to an FFIWallet instance
-/// - `error` must be a valid pointer to an FFIError structure or null
+/// - `error` must be a valid pointer to an FFIError structure
 /// - The caller must ensure all pointers remain valid for the duration of this call
 #[no_mangle]
 pub unsafe extern "C" fn wallet_has_mnemonic(
     wallet: *const FFIWallet,
     error: *mut FFIError,
 ) -> bool {
-    if wallet.is_null() {
-        FFIError::set_error(error, FFIErrorCode::InvalidInput, "Wallet is null".to_string());
-        return false;
-    }
-
-    unsafe {
-        let wallet = &*wallet;
-        FFIError::set_success(error);
-        wallet.inner().has_mnemonic()
-    }
+    let wallet = deref_ptr!(wallet, error);
+    wallet.inner().has_mnemonic()
 }
 
 /// Check if wallet is watch-only
@@ -352,23 +249,15 @@ pub unsafe extern "C" fn wallet_has_mnemonic(
 /// # Safety
 ///
 /// - `wallet` must be a valid pointer to an FFIWallet instance
-/// - `error` must be a valid pointer to an FFIError structure or null
+/// - `error` must be a valid pointer to an FFIError structure
 /// - The caller must ensure all pointers remain valid for the duration of this call
 #[no_mangle]
 pub unsafe extern "C" fn wallet_is_watch_only(
     wallet: *const FFIWallet,
     error: *mut FFIError,
 ) -> bool {
-    if wallet.is_null() {
-        FFIError::set_error(error, FFIErrorCode::InvalidInput, "Wallet is null".to_string());
-        return false;
-    }
-
-    unsafe {
-        let wallet = &*wallet;
-        FFIError::set_success(error);
-        wallet.inner().is_watch_only()
-    }
+    let wallet = deref_ptr!(wallet, error);
+    wallet.inner().is_watch_only()
 }
 
 /// Get extended public key for account
@@ -376,7 +265,7 @@ pub unsafe extern "C" fn wallet_is_watch_only(
 /// # Safety
 ///
 /// - `wallet` must be a valid pointer to an FFIWallet instance
-/// - `error` must be a valid pointer to an FFIError structure or null
+/// - `error` must be a valid pointer to an FFIError structure
 /// - The caller must ensure all pointers remain valid for the duration of this call
 /// - The returned C string must be freed by the caller when no longer needed
 #[no_mangle]
@@ -385,36 +274,9 @@ pub unsafe extern "C" fn wallet_get_xpub(
     account_index: c_uint,
     error: *mut FFIError,
 ) -> *mut c_char {
-    if wallet.is_null() {
-        FFIError::set_error(error, FFIErrorCode::InvalidInput, "Wallet is null".to_string());
-        return ptr::null_mut();
-    }
-
-    unsafe {
-        let wallet = &*wallet;
-
-        match wallet.inner().get_bip44_account(account_index) {
-            Some(account) => {
-                let xpub = account.extended_public_key();
-                FFIError::set_success(error);
-                match CString::new(xpub.to_string()) {
-                    Ok(c_str) => c_str.into_raw(),
-                    Err(_) => {
-                        FFIError::set_error(
-                            error,
-                            FFIErrorCode::AllocationFailed,
-                            "Failed to allocate string".to_string(),
-                        );
-                        ptr::null_mut()
-                    }
-                }
-            }
-            None => {
-                FFIError::set_error(error, FFIErrorCode::NotFound, "Account not found".to_string());
-                ptr::null_mut()
-            }
-        }
-    }
+    let wallet = deref_ptr!(wallet, error);
+    let account = unwrap_or_return!(wallet.inner().get_bip44_account(account_index), error);
+    unwrap_or_return!(CString::new(account.extended_public_key().to_string()), error).into_raw()
 }
 
 /// Free a wallet

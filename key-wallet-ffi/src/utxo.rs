@@ -1,7 +1,8 @@
 //! UTXO management
 
-use crate::error::{FFIError, FFIErrorCode};
+use crate::error::FFIError;
 use crate::managed_wallet::FFIManagedWalletInfo;
+use crate::{check_ptr, deref_ptr};
 use key_wallet::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
 use std::ffi::CString;
 use std::os::raw::c_char;
@@ -81,7 +82,7 @@ impl FFIUTXO {
 /// - `managed_info` must be a valid pointer to an FFIManagedWalletInfo instance
 /// - `utxos_out` must be a valid pointer to store the UTXO array pointer
 /// - `count_out` must be a valid pointer to store the UTXO count
-/// - `error` must be a valid pointer to an FFIError structure or null
+/// - `error` must be a valid pointer to an FFIError structure
 /// - The caller must ensure all pointers remain valid for the duration of this call
 /// - The returned UTXO array must be freed with `utxo_array_free` when no longer needed
 #[no_mangle]
@@ -91,12 +92,9 @@ pub unsafe extern "C" fn managed_wallet_get_utxos(
     count_out: *mut usize,
     error: *mut FFIError,
 ) -> bool {
-    if managed_info.is_null() || utxos_out.is_null() || count_out.is_null() {
-        FFIError::set_error(error, FFIErrorCode::InvalidInput, "Null pointer provided".to_string());
-        return false;
-    }
-
-    let managed_info = &*managed_info;
+    let managed_info = deref_ptr!(managed_info, error);
+    check_ptr!(utxos_out, error);
+    check_ptr!(count_out, error);
 
     // Get UTXOs from the managed wallet info
     let utxos = managed_info.inner().utxos();
@@ -141,8 +139,6 @@ pub unsafe extern "C" fn managed_wallet_get_utxos(
         let ptr = Box::into_raw(boxed_utxos) as *mut FFIUTXO;
         *utxos_out = ptr;
     }
-
-    FFIError::set_success(error);
     true
 }
 
@@ -160,16 +156,11 @@ pub unsafe extern "C" fn wallet_get_utxos(
     count_out: *mut usize,
     error: *mut FFIError,
 ) -> bool {
-    if utxos_out.is_null() || count_out.is_null() {
-        FFIError::set_error(error, FFIErrorCode::InvalidInput, "Null pointer provided".to_string());
-        return false;
-    }
+    check_ptr!(utxos_out, error);
+    check_ptr!(count_out, error);
 
-    // Return empty list for backwards compatibility
     *count_out = 0;
     *utxos_out = ptr::null_mut();
-
-    FFIError::set_success(error);
     true
 }
 

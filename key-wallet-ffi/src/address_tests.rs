@@ -11,7 +11,7 @@ mod address_tests {
 
     #[test]
     fn test_address_validation() {
-        let mut error = FFIError::success();
+        let mut error = FFIError::default();
         let error = &mut error as *mut FFIError;
 
         // Test valid testnet address (generated from test mnemonic)
@@ -30,13 +30,11 @@ mod address_tests {
         let is_valid = unsafe { address_validate(ptr::null(), FFINetwork::Testnet, error) };
         assert!(!is_valid);
         assert_eq!(unsafe { (*error).code }, FFIErrorCode::InvalidInput);
-
-        unsafe { (*error).free_message() };
     }
 
     #[test]
     fn test_address_get_type() {
-        let mut error = FFIError::success();
+        let mut error = FFIError::default();
         let error = &mut error as *mut FFIError;
 
         // Test P2PKH address (generated from test mnemonic)
@@ -46,13 +44,11 @@ mod address_tests {
         assert_eq!(unsafe { (*error).code }, FFIErrorCode::Success);
         // Returns 0 for P2PKH
         assert_eq!(addr_type, 0);
-
-        unsafe { (*error).free_message() };
     }
 
     #[test]
     fn test_address_validate_valid() {
-        let mut error = FFIError::success();
+        let mut error = FFIError::default();
 
         // Test with valid testnet address - may fail due to library version differences
         let addr_str = CString::new("yeRZBWYfeNE4yVUHV4ZLs83Ppn9aMRH57A").unwrap();
@@ -60,13 +56,11 @@ mod address_tests {
             unsafe { address_validate(addr_str.as_ptr(), FFINetwork::Testnet, &mut error) };
 
         assert!(is_valid);
-
-        unsafe { error.free_message() };
     }
 
     #[test]
     fn test_address_validate_invalid() {
-        let mut error = FFIError::success();
+        let mut error = FFIError::default();
 
         // Test with invalid address
         let addr_str = CString::new("invalid_address").unwrap();
@@ -75,25 +69,21 @@ mod address_tests {
 
         assert!(!is_valid);
         assert_eq!(error.code, FFIErrorCode::InvalidAddress);
-
-        unsafe { error.free_message() };
     }
 
     #[test]
     fn test_address_validate_null() {
-        let mut error = FFIError::success();
+        let mut error = FFIError::default();
 
         let is_valid = unsafe { address_validate(ptr::null(), FFINetwork::Testnet, &mut error) };
 
         assert!(!is_valid);
         assert_eq!(error.code, FFIErrorCode::InvalidInput);
-
-        unsafe { error.free_message() };
     }
 
     #[test]
     fn test_address_get_type_valid() {
-        let mut error = FFIError::success();
+        let mut error = FFIError::default();
 
         // Test P2PKH address type (use same known-valid address from other tests)
         let addr_str = CString::new("yRd4FhXfVGHXpsuZXPNkMrfD9GVj46pnjt").unwrap();
@@ -108,13 +98,11 @@ mod address_tests {
             assert!(addr_type <= 2);
             assert_eq!(error.code, FFIErrorCode::Success);
         }
-
-        unsafe { error.free_message() };
     }
 
     #[test]
     fn test_address_get_type_invalid() {
-        let mut error = FFIError::success();
+        let mut error = FFIError::default();
 
         let addr_str = CString::new("invalid_address").unwrap();
         let addr_type =
@@ -123,21 +111,17 @@ mod address_tests {
         // Should return 255 (u8::MAX) for invalid
         assert_eq!(addr_type, 255);
         assert_eq!(error.code, FFIErrorCode::InvalidAddress);
-
-        unsafe { error.free_message() };
     }
 
     #[test]
     fn test_address_get_type_null() {
-        let mut error = FFIError::success();
+        let mut error = FFIError::default();
 
         let addr_type = unsafe { address_get_type(ptr::null(), FFINetwork::Testnet, &mut error) };
 
         // Should return 255 (u8::MAX) for null input
         assert_eq!(addr_type, 255);
         assert_eq!(error.code, FFIErrorCode::InvalidInput);
-
-        unsafe { error.free_message() };
     }
 
     #[test]
@@ -177,7 +161,7 @@ mod address_tests {
 
     #[test]
     fn test_address_validation_comprehensive() {
-        let mut error = FFIError::success();
+        let mut error = FFIError::default();
 
         // Test various invalid address formats
         let invalid_addresses = [
@@ -194,14 +178,12 @@ mod address_tests {
                 let is_valid = address_validate(addr_str.as_ptr(), FFINetwork::Testnet, &mut error);
                 assert!(!is_valid);
             }
-
-            error.free_message();
         }
     }
 
     #[test]
     fn test_address_get_type_comprehensive() {
-        let mut error = FFIError::success();
+        let mut error = FFIError::default();
 
         // Test various address formats
         let test_addresses = [
@@ -219,8 +201,6 @@ mod address_tests {
                 // Should return a valid type (0, 1, 2) or 255 for error
                 assert!(addr_type <= 2 || addr_type == 255);
             }
-
-            error.free_message();
         }
     }
 }

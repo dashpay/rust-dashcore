@@ -179,6 +179,17 @@ impl PeerPool {
         result
     }
 
+    /// Check whether any connected peer advertises the given service flags.
+    pub(crate) async fn has_peers_with_service(&self, flags: ServiceFlags) -> bool {
+        let peers = self.peers.read().await;
+        for peer in peers.values() {
+            if peer.read().await.has_service(flags) {
+                return true;
+            }
+        }
+        false
+    }
+
     /// Check if we need more peers
     pub async fn needs_more_peers(&self) -> bool {
         self.peer_count().await < TARGET_PEERS
@@ -225,7 +236,7 @@ impl Default for PeerPool {
 
 #[cfg(test)]
 impl PeerPool {
-    async fn insert_peer_with_services(&self, addr: SocketAddr, flags: ServiceFlags) {
+    pub(crate) async fn insert_peer_with_services(&self, addr: SocketAddr, flags: ServiceFlags) {
         let mut peer = Peer::dummy(addr);
         peer.set_services(flags);
         self.peers.write().await.insert(addr, Arc::new(RwLock::new(peer)));

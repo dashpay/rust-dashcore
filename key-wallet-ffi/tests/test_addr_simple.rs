@@ -4,7 +4,7 @@ use dashcore::ffi::FFINetwork;
 fn test_address_simple() {
     use key_wallet_ffi::error::FFIError;
 
-    let mut error = FFIError::success();
+    let mut error = FFIError::default();
     let error = &mut error as *mut FFIError;
 
     // Create a wallet to get a valid address
