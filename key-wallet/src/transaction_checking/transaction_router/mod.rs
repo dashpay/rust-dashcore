@@ -167,13 +167,24 @@ impl TransactionRouter {
     }
 }
 
-/// Core account types that can be checked for transactions
+/// Core account types that can be checked for transactions.
 ///
-/// Note: Platform Payment accounts (DIP-17) and DIP-13 identity authentication
-/// accounts (sub-feature 0') are NOT included here — they operate on Dash
-/// Platform, not the Core chain, so the conversions from
-/// [`ManagedAccountType`]/[`crate::AccountType`] explicitly return
-/// [`PlatformAccountConversionError`] for those variants.
+/// Platform-only account types are NOT represented here because they operate
+/// on Dash Platform, not the Core chain. The two Platform-only cases differ
+/// in where they live and how the conversion rejects them:
+///
+/// - **Platform Payment (DIP-17)** exists on both sides:
+///   [`ManagedAccountType::PlatformPayment`] and
+///   [`crate::AccountType::PlatformPayment`]. `TryFrom` on either produces
+///   [`PlatformAccountConversionError`].
+/// - **DIP-13 identity authentication** exists ONLY on the immutable side
+///   as [`crate::AccountType::IdentityAuthenticationEcdsa`] /
+///   [`crate::AccountType::IdentityAuthenticationBls`]. It intentionally
+///   has no [`ManagedAccountType`] variant — these keys carry no L1 state,
+///   so there is nothing to manage. Consequently
+///   `TryFrom<ManagedAccountType>` rejects only `PlatformPayment`, while
+///   `TryFrom<crate::AccountType>` rejects both `PlatformPayment` and the
+///   two DIP-13 identity authentication variants.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AccountTypeToCheck {
     StandardBIP44,

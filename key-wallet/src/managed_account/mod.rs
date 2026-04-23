@@ -105,51 +105,63 @@ impl ManagedCoreAccount {
         self.spent_outpoints.contains(outpoint)
     }
 
-    /// Create a ManagedAccount from an Account
-    pub fn from_account(account: &super::Account) -> Self {
+    /// Create a ManagedAccount from an Account.
+    ///
+    /// Returns `Err` for account types that have no managed-side representation
+    /// (e.g. DIP-13 identity authentication accounts). Falls back to a
+    /// `NoKeySource` construction if the primary key-source path fails for any
+    /// other reason (e.g. hardened derivation from a public-only xpub).
+    pub fn from_account(account: &super::Account) -> Result<Self, crate::error::Error> {
         // Use the account's public key as the key source
         let key_source = address_pool::KeySource::Public(account.account_xpub);
-        let managed_type = ManagedAccountType::from_account_type(
+        let managed_type = match ManagedAccountType::from_account_type(
             account.account_type,
             account.network,
             &key_source,
-        )
-        .unwrap_or_else(|_| {
-            // Fallback: create without pre-generated addresses
-            let no_key_source = address_pool::KeySource::NoKeySource;
-            ManagedAccountType::from_account_type(
-                account.account_type,
-                account.network,
-                &no_key_source,
-            )
-            .expect("Should succeed with NoKeySource")
-        });
+        ) {
+            Ok(managed) => managed,
+            Err(e @ crate::error::Error::InvalidParameter(_)) => return Err(e),
+            Err(_) => {
+                // Fallback: create without pre-generated addresses
+                let no_key_source = address_pool::KeySource::NoKeySource;
+                ManagedAccountType::from_account_type(
+                    account.account_type,
+                    account.network,
+                    &no_key_source,
+                )?
+            }
+        };
 
-        Self::new(managed_type, account.network, account.is_watch_only)
+        Ok(Self::new(managed_type, account.network, account.is_watch_only))
     }
 
-    /// Create a ManagedAccount from a BLS Account
+    /// Create a ManagedAccount from a BLS Account.
+    ///
+    /// Returns `Err` for account types that have no managed-side representation
+    /// (e.g. DIP-13 identity authentication accounts).
     #[cfg(feature = "bls")]
-    pub fn from_bls_account(account: &BLSAccount) -> Self {
+    pub fn from_bls_account(account: &BLSAccount) -> Result<Self, crate::error::Error> {
         // Use the BLS public key as the key source
         let key_source = address_pool::KeySource::BLSPublic(account.bls_public_key.clone());
-        let managed_type = ManagedAccountType::from_account_type(
+        let managed_type = match ManagedAccountType::from_account_type(
             account.account_type,
             account.network,
             &key_source,
-        )
-        .unwrap_or_else(|_| {
-            // Fallback: create without pre-generated addresses
-            let no_key_source = address_pool::KeySource::NoKeySource;
-            ManagedAccountType::from_account_type(
-                account.account_type,
-                account.network,
-                &no_key_source,
-            )
-            .expect("Should succeed with NoKeySource")
-        });
+        ) {
+            Ok(managed) => managed,
+            Err(e @ crate::error::Error::InvalidParameter(_)) => return Err(e),
+            Err(_) => {
+                // Fallback: create without pre-generated addresses
+                let no_key_source = address_pool::KeySource::NoKeySource;
+                ManagedAccountType::from_account_type(
+                    account.account_type,
+                    account.network,
+                    &no_key_source,
+                )?
+            }
+        };
 
-        Self::new(managed_type, account.network, account.is_watch_only)
+        Ok(Self::new(managed_type, account.network, account.is_watch_only))
     }
 
     /// Create a ManagedAccount from an EdDSA Account
@@ -981,14 +993,16 @@ impl ManagedCoreAccount {
             return Err("Expected BLS public key but got different key type");
         };
 
-        addresses.mark_index_used(info.index);
-
         use dashcore::blsful::{Bls12381G2Impl, PublicKey, SerializationFormat};
-        PublicKey::<Bls12381G2Impl>::from_bytes_with_mode(
+        let public_key = PublicKey::<Bls12381G2Impl>::from_bytes_with_mode(
             &pub_key_bytes,
             SerializationFormat::Modern,
         )
-        .map_err(|_| "Failed to deserialize BLS public key")
+        .map_err(|_| "Failed to deserialize BLS public key")?;
+
+        addresses.mark_index_used(info.index);
+
+        Ok(public_key)
     }
 
     /// Generate the next BLS operator key (only for ProviderOperatorKeys accounts)
