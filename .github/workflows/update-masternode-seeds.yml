@@ -23,7 +23,7 @@ jobs:
   refresh:
     name: Refresh masternode seed files
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v6
 
@@ -36,23 +36,25 @@ jobs:
       - name: Build fetcher
         run: cargo build --release -p masternode-seeds-fetcher
 
-      - name: Refresh mainnet seeds
+      - name: Refresh mainnet seeds (with probes)
         env:
           RUST_LOG: info
         run: |
           ./target/release/masternode-seeds-fetcher \
             --network mainnet \
             --out dash-network-seeds/seeds/mainnet.txt \
-            --max-peers 16
+            --max-peers 16 \
+            --probe-concurrency 100
 
-      - name: Refresh testnet seeds
+      - name: Refresh testnet seeds (with probes)
         env:
           RUST_LOG: info
         run: |
           ./target/release/masternode-seeds-fetcher \
             --network testnet \
             --out dash-network-seeds/seeds/testnet.txt \
-            --max-peers 16
+            --max-peers 16 \
+            --probe-concurrency 64
 
       - name: Verify parsed seed files still build
         run: cargo test -p dash-network-seeds --lib
