@@ -182,11 +182,11 @@ async fn test_mempool_after_instantsend_is_suppressed() {
 }
 
 // ---------------------------------------------------------------------------
-// BalanceUpdated event tests
+// Balance-carrying event tests
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn test_mempool_tx_emits_balance_updated() {
+async fn test_mempool_tx_event_carries_unconfirmed_balance() {
     let (mut manager, wallet_id, addr) = setup_manager_with_wallet();
     let mut rx = manager.subscribe_events();
     let tx = create_tx_paying_to(&addr, 0xf1);
@@ -219,7 +219,7 @@ async fn test_mempool_tx_emits_balance_updated() {
 }
 
 #[tokio::test]
-async fn test_instantsend_tx_emits_balance_updated_spendable() {
+async fn test_instantsend_tx_event_carries_spendable_balance() {
     let (mut manager, wallet_id, addr) = setup_manager_with_wallet();
     let mut rx = manager.subscribe_events();
     let tx = create_tx_paying_to(&addr, 0xf2);

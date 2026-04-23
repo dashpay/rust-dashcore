@@ -1163,7 +1163,7 @@ handle_tx()
   ├─ wallet.process_mempool_transaction(tx, is_locked)
   │    ├─ Not relevant → discard
   │    └─ Relevant → store in MempoolState
-  │         ├─ Wallet emits BalanceUpdated event
+  │         ├─ Wallet emits MempoolTransactionReceived event (carries record + balance)
   │         └─ New addresses discovered → flag filter rebuild
   └─ Return MempoolTransactionResult { is_relevant, net_amount, is_outgoing, addresses, new_addresses }
 ```
@@ -1229,7 +1229,7 @@ The `WalletInterface` trait provides four methods for mempool support:
 - `pending_balance`: regular unconfirmed transactions
 - `pending_instant_balance`: IS-locked transactions (immediately spendable)
 
-The wallet emits `BalanceUpdated` events only when balance actually changes, with four categories: spendable, unconfirmed, immature, locked.
+The wallet's post-event balance is carried inline on `MempoolTransactionReceived`, `TransactionInstantSendLocked`, and `BlockProcessChange` events, with four categories: spendable, unconfirmed, immature, locked.
 
 **Capacity and limits:**
 

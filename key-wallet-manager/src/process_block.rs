@@ -348,7 +348,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_process_block_emits_balance_updated() {
+    async fn test_process_block_event_carries_balance() {
         let (mut manager, _wallet_id, addr) = setup_manager_with_wallet();
         let tx = create_tx_paying_to(&addr, 0xcc);
         let block = make_block(vec![tx]);
