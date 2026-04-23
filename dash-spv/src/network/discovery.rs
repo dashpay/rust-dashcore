@@ -19,8 +19,8 @@ use std::net::{IpAddr, SocketAddr};
 
 use crate::error::SpvError as Error;
 use crate::network::constants::{
-    parse_seed_file, MAINNET_DNS_SEEDS, MAINNET_P2P_PORT, MAINNET_SEED_PEERS, TESTNET_DNS_SEEDS,
-    TESTNET_P2P_PORT, TESTNET_SEED_PEERS,
+    mainnet_seed_peers, testnet_seed_peers, MAINNET_DNS_SEEDS, MAINNET_P2P_PORT, TESTNET_DNS_SEEDS,
+    TESTNET_P2P_PORT,
 };
 
 /// DNS discovery for finding initial peers.
@@ -54,16 +54,15 @@ impl DnsDiscovery {
     /// level but do not cause this function to fail — the embedded list acts
     /// as the primary source and DNS is a best-effort backup.
     pub async fn discover_peers(&self, network: Network) -> Vec<SocketAddr> {
-        let (seeds, port, embedded) = match network {
-            Network::Mainnet => (MAINNET_DNS_SEEDS, MAINNET_P2P_PORT, MAINNET_SEED_PEERS),
-            Network::Testnet => (TESTNET_DNS_SEEDS, TESTNET_P2P_PORT, TESTNET_SEED_PEERS),
+        let (seeds, port, mut addresses) = match network {
+            Network::Mainnet => (MAINNET_DNS_SEEDS, MAINNET_P2P_PORT, mainnet_seed_peers()),
+            Network::Testnet => (TESTNET_DNS_SEEDS, TESTNET_P2P_PORT, testnet_seed_peers()),
             _ => {
                 tracing::debug!("No peer discovery sources for {:?} network", network);
                 return vec![];
             }
         };
 
-        let mut addresses = parse_seed_file(embedded, port);
         let embedded_count = addresses.len();
         tracing::info!("Loaded {} hardcoded masternode seed(s) for {:?}", embedded_count, network);
 

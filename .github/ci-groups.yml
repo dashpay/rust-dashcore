@@ -10,6 +10,7 @@ groups:
 
   spv:
     - dash-spv
+    - dash-network-seeds
 
   wallet:
     - key-wallet
