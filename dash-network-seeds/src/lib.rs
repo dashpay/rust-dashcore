@@ -68,7 +68,7 @@ pub const fn raw_seed_file(network: &Network) -> &'static str {
     match network {
         Network::Mainnet => MAINNET_SEED_FILE,
         Network::Testnet => TESTNET_SEED_FILE,
-        _ => panic!(),
+        _ => "",
     }
 }
 
@@ -509,6 +509,23 @@ fn parse_address(tok: &str, default_port: u16) -> Option<SocketAddr> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn testnet_seed_peers_contains_hp_mn_ips() {
+        let peers = addresses(Network::Testnet);
+        // The HP-MN range at 68.67.122.1-29 should be present; later runs may
+        // extend it but never shrink below 29.
+        let hp_mn = peers.iter().filter(|a| a.ip().to_string().starts_with("68.67.122.")).count();
+        assert!(hp_mn >= 29, "expected >=29 HP-MN testnet seeds, got {}", hp_mn);
+        assert!(peers.iter().all(|a| a.port() == Network::Testnet.default_p2p_port()));
+    }
+
+    #[test]
+    fn mainnet_seed_peers_non_empty() {
+        let peers = addresses(Network::Mainnet);
+        assert!(!peers.is_empty(), "mainnet seeds must not be empty");
+        assert!(peers.iter().all(|a| a.port() == Network::Mainnet.default_p2p_port()));
+    }
 
     fn mk_full(addr: &str, mn_type: MasternodeType) -> MasternodeSeed {
         MasternodeSeed {
