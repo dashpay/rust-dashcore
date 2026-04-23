@@ -18,4 +18,7 @@ path = "src/lib.rs"
 dashcore = ["dep:dashcore"]
 
 [dependencies]
-dashcore = { path = "../dash", optional = true, default-features = false }
+# `dashcore` is optional and only needed by the `TryFrom<dashcore::Network>`
+# impls. Default features stay on because dashcore's own `signer.rs` uses
+# `RecoverableSignature` unconditionally (it requires `secp-recovery`).
+dashcore = { path = "../dash", optional = true }
