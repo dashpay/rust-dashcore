@@ -62,7 +62,7 @@ pub const MESSAGE_RECEIVE_TIMEOUT: Duration = Duration::from_millis(100);
 /// - blank lines are ignored
 /// - each remaining line is parsed as a `SocketAddr` (`ip:port`); entries that
 ///   contain only an IP are treated as `<ip>:<default_port>`
-/// - unparseable lines are logged at debug level and skipped
+/// - unparsable lines are logged at debug level and skipped
 pub fn parse_seed_file(raw: &str, default_port: u16) -> Vec<SocketAddr> {
     let mut out = Vec::new();
     for (line_no, line) in raw.lines().enumerate() {
@@ -78,7 +78,7 @@ pub fn parse_seed_file(raw: &str, default_port: u16) -> Vec<SocketAddr> {
             out.push(SocketAddr::new(ip, default_port));
             continue;
         }
-        tracing::debug!("ignoring unparseable seed entry at line {}: {:?}", line_no + 1, line);
+        tracing::debug!("ignoring unparsable seed entry at line {}: {:?}", line_no + 1, line);
     }
     out
 }
