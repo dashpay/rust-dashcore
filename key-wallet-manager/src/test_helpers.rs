@@ -74,8 +74,12 @@ pub(crate) fn assert_no_events(rx: &mut broadcast::Receiver<WalletEvent>) {
 
 /// Submit a transaction through a sequence of contexts and verify the event flow.
 ///
-/// The first context produces a `TransactionReceived` event; each subsequent
-/// context produces a `TransactionStatusChanged` event.
+/// - First `Mempool` or `InstantSend` context → `MempoolTransactionReceived`
+///   (the record's `context` matches the submitted context).
+/// - Subsequent `InstantSend` context on an existing record →
+///   `TransactionInstantSendLocked`.
+/// - Subsequent `InBlock` / `InChainLockedBlock` context →
+///   `BlockProcessChange` with `transactions_updated.len() == 1`.
 pub(crate) async fn assert_lifecycle_flow(contexts: &[TransactionContext], input_seed: u8) {
     assert!(!contexts.is_empty(), "at least one context required");
 
@@ -87,22 +91,42 @@ pub(crate) async fn assert_lifecycle_flow(contexts: &[TransactionContext], input
         manager.check_transaction_in_all_wallets(&tx, ctx.clone(), true, true).await;
         let event = assert_single_event(&mut rx);
 
-        if i == 0 {
-            assert!(
-                matches!(&event, WalletEvent::TransactionReceived { wallet_id: wid, record, .. } if *wid == wallet_id && record.context == *ctx),
-                "context[{}]: expected TransactionReceived with wallet_id and status {:?}, got {:?}",
-                i,
-                ctx,
-                event
-            );
-        } else {
-            assert!(
-                matches!(&event, WalletEvent::TransactionStatusChanged { wallet_id: wid, status, .. } if *wid == wallet_id && status == ctx),
-                "context[{}]: expected TransactionStatusChanged with wallet_id and status {:?}, got {:?}",
-                i,
-                ctx,
-                event
-            );
+        match ctx {
+            TransactionContext::Mempool => {
+                assert!(
+                    matches!(&event, WalletEvent::MempoolTransactionReceived { wallet_id: wid, record, .. } if *wid == wallet_id && record.context == *ctx),
+                    "context[{}]: expected MempoolTransactionReceived(Mempool), got {:?}",
+                    i,
+                    event
+                );
+            }
+            TransactionContext::InstantSend(_) => {
+                if i == 0 {
+                    assert!(
+                        matches!(&event, WalletEvent::MempoolTransactionReceived { wallet_id: wid, record, .. } if *wid == wallet_id && record.context == *ctx),
+                        "context[{}]: expected MempoolTransactionReceived(InstantSend), got {:?}",
+                        i,
+                        event
+                    );
+                } else {
+                    assert!(
+                        matches!(&event, WalletEvent::TransactionInstantSendLocked { wallet_id: wid, .. } if *wid == wallet_id),
+                        "context[{}]: expected TransactionInstantSendLocked, got {:?}",
+                        i,
+                        event
+                    );
+                }
+            }
+            TransactionContext::InBlock(info) | TransactionContext::InChainLockedBlock(info) => {
+                let expected_height = info.height();
+                assert!(
+                    matches!(&event, WalletEvent::BlockProcessChange { wallet_id: wid, height, transactions_updated, .. } if *wid == wallet_id && *height == expected_height && transactions_updated.len() == 1),
+                    "context[{}]: expected BlockProcessChange(height={}, 1 tx), got {:?}",
+                    i,
+                    expected_height,
+                    event
+                );
+            }
         }
     }
 }

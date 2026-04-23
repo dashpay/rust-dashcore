@@ -7,7 +7,7 @@ use clap::{Arg, ArgAction, Command};
 use dash_spv_ffi::*;
 use dashcore::ffi::FFINetwork;
 use key_wallet_ffi::managed_account::FFITransactionRecord;
-use key_wallet_ffi::types::FFITransactionContext;
+use key_wallet_ffi::types::FFIBalance;
 use key_wallet_ffi::wallet_manager::wallet_manager_add_wallet_from_mnemonic;
 use key_wallet_ffi::FFIError;
 
@@ -157,10 +157,10 @@ extern "C" fn on_peers_updated(connected_count: u32, best_height: u32, _user_dat
 // Wallet Event Callbacks
 // ============================================================================
 
-extern "C" fn on_transaction_received(
+extern "C" fn on_mempool_transaction_received(
     wallet_id: *const c_char,
-    account_index: u32,
     record: *const FFITransactionRecord,
+    balance: *const FFIBalance,
     _user_data: *mut c_void,
 ) {
     let wallet_str = ffi_string_to_rust(wallet_id);
@@ -170,36 +170,28 @@ extern "C" fn on_transaction_received(
         &wallet_str
     };
     if record.is_null() {
-        println!(
-            "[Wallet] TX received: wallet={}..., account={}, record=null",
-            wallet_short, account_index
-        );
+        println!("[Wallet] Mempool TX received: wallet={}..., record=null", wallet_short);
         return;
     }
     let r = unsafe { &*record };
+    let b = if balance.is_null() {
+        FFIBalance::default()
+    } else {
+        unsafe { *balance }
+    };
     let txid_hex = hex::encode(r.txid);
     println!(
-        "[Wallet] TX received: wallet={}..., txid={}, account={}, amount={} duffs, tx_size={}",
-        wallet_short, txid_hex, account_index, r.net_amount, r.tx_len
+        "[Wallet] Mempool TX received: wallet={}..., txid={}, amount={} duffs, balance[confirmed={}, unconfirmed={}]",
+        wallet_short, txid_hex, r.net_amount, b.confirmed, b.unconfirmed
     );
 }
 
-extern "C" fn on_transaction_status_changed(
-    _wallet_id: *const c_char,
-    txid: *const [u8; 32],
-    status: FFITransactionContext,
-    _user_data: *mut c_void,
-) {
-    let txid_hex = unsafe { hex::encode(*txid) };
-    println!("[Wallet] TX status changed: txid={}, status={:?}", txid_hex, status);
-}
-
-extern "C" fn on_balance_updated(
+extern "C" fn on_transaction_instant_send_locked(
     wallet_id: *const c_char,
-    spendable: u64,
-    unconfirmed: u64,
-    immature: u64,
-    locked: u64,
+    txid: *const [u8; 32],
+    _islock_data: *const u8,
+    _islock_len: usize,
+    balance: *const FFIBalance,
     _user_data: *mut c_void,
 ) {
     let wallet_str = ffi_string_to_rust(wallet_id);
@@ -208,9 +200,40 @@ extern "C" fn on_balance_updated(
     } else {
         &wallet_str
     };
+    let txid_hex = unsafe { hex::encode(*txid) };
+    let b = if balance.is_null() {
+        FFIBalance::default()
+    } else {
+        unsafe { *balance }
+    };
     println!(
-        "[Wallet] Balance updated: wallet={}..., spendable={}, unconfirmed={}, immature={}, locked={}",
-        wallet_short, spendable, unconfirmed, immature, locked
+        "[Wallet] IS lock: wallet={}..., txid={}, balance[confirmed={}]",
+        wallet_short, txid_hex, b.confirmed
+    );
+}
+
+extern "C" fn on_block_process_change(
+    wallet_id: *const c_char,
+    height: u32,
+    _transactions_updated: *const FFITransactionRecord,
+    record_count: u32,
+    balance: *const FFIBalance,
+    _user_data: *mut c_void,
+) {
+    let wallet_str = ffi_string_to_rust(wallet_id);
+    let wallet_short = if wallet_str.len() > 8 {
+        &wallet_str[..8]
+    } else {
+        &wallet_str
+    };
+    let b = if balance.is_null() {
+        FFIBalance::default()
+    } else {
+        unsafe { *balance }
+    };
+    println!(
+        "[Wallet] Block processed: wallet={}..., height={}, tx_count={}, balance[confirmed={}, unconfirmed={}, immature={}, locked={}]",
+        wallet_short, height, record_count, b.confirmed, b.unconfirmed, b.immature, b.locked
     );
 }
 
@@ -435,9 +458,9 @@ fn main() {
                 user_data: ptr::null_mut(),
             },
             wallet: FFIWalletEventCallbacks {
-                on_transaction_received: Some(on_transaction_received),
-                on_transaction_status_changed: Some(on_transaction_status_changed),
-                on_balance_updated: Some(on_balance_updated),
+                on_mempool_transaction_received: Some(on_mempool_transaction_received),
+                on_transaction_instant_send_locked: Some(on_transaction_instant_send_locked),
+                on_block_process_change: Some(on_block_process_change),
                 user_data: ptr::null_mut(),
             },
             error: FFIClientErrorCallback {

@@ -1,12 +1,14 @@
 use crate::wallet_interface::{BlockProcessingResult, MempoolTransactionResult, WalletInterface};
-use crate::{WalletEvent, WalletManager};
+use crate::{WalletEvent, WalletId, WalletManager};
 use async_trait::async_trait;
 use core::fmt::Write as _;
 use dashcore::ephemerealdata::instant_lock::InstantLock;
 use dashcore::prelude::CoreBlockHeight;
 use dashcore::{Address, Block, Transaction};
+use key_wallet::managed_account::transaction_record::TransactionRecord;
 use key_wallet::transaction_checking::{BlockInfo, TransactionContext};
 use key_wallet::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
+use std::collections::BTreeMap;
 use tokio::sync::broadcast;
 
 #[async_trait]
@@ -19,12 +21,18 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
         let mut result = BlockProcessingResult::default();
         let info = BlockInfo::new(height, block.block_hash(), block.header.time);
 
-        // Process each transaction using the base manager
+        // Snapshot balances up front so we can detect purely balance-driven
+        // changes (e.g. coinbase maturity) when `update_synced_height`
+        // refreshes balances after transaction processing.
+        let snapshot = self.snapshot_balances();
+
+        // Process each transaction silently, accumulating records per wallet.
+        let mut records_per_wallet: BTreeMap<WalletId, Vec<TransactionRecord>> = BTreeMap::new();
         for tx in &block.txdata {
             let context = TransactionContext::InBlock(info);
 
             let check_result =
-                self.check_transaction_in_all_wallets(tx, context, true, false).await;
+                self.check_transaction_in_all_wallets_silent(tx, context, true, false).await;
 
             if !check_result.affected_wallets.is_empty() {
                 if check_result.is_new_transaction {
@@ -34,10 +42,34 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
                 }
             }
 
+            for (wallet_id, records) in check_result.records_per_wallet {
+                records_per_wallet.entry(wallet_id).or_default().extend(records);
+            }
+
             result.new_addresses.extend(check_result.new_addresses);
         }
 
-        self.update_synced_height(height);
+        // Advance synced height silently — any coinbase-maturity balance shift
+        // will surface via the `BlockProcessChange` emission below.
+        self.update_synced_height_silent(height);
+
+        // Emit one `BlockProcessChange` per wallet that either had recorded
+        // transactions or whose balance shifted.
+        for (wallet_id, old_balance) in &snapshot {
+            let new_balance = match self.wallet_infos.get(wallet_id) {
+                Some(info) => info.balance(),
+                None => continue,
+            };
+            let records = records_per_wallet.remove(wallet_id).unwrap_or_default();
+            if !records.is_empty() || *old_balance != new_balance {
+                let _ = self.event_sender().send(WalletEvent::BlockProcessChange {
+                    wallet_id: *wallet_id,
+                    height,
+                    transactions_updated: records,
+                    balance: new_balance,
+                });
+            }
+        }
 
         result
     }
@@ -54,8 +86,12 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
             }
             None => TransactionContext::Mempool,
         };
-        let snapshot = self.snapshot_balances();
-        let check_result = self.check_transaction_in_all_wallets(tx, context, true, false).await;
+
+        // Refresh cached balances only for affected wallets *before* emitting
+        // so the event carries the post-update balance.
+        let check_result = self
+            .check_transaction_in_all_wallets_silent(tx, context.clone(), true, false)
+            .await;
 
         let is_relevant = !check_result.affected_wallets.is_empty();
         let net_amount = if is_relevant {
@@ -64,13 +100,33 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
             0
         };
 
-        // Refresh cached balances only for affected wallets
         for wallet_id in &check_result.affected_wallets {
             if let Some(info) = self.wallet_infos.get_mut(wallet_id) {
                 info.update_balance();
             }
         }
-        self.emit_balance_changes(&snapshot);
+
+        // Emit per affected wallet based on context.
+        for wallet_id in &check_result.affected_wallets {
+            let Some(records) = check_result.records_per_wallet.get(wallet_id).cloned() else {
+                continue;
+            };
+            if records.is_empty() {
+                continue;
+            }
+            let balance = match self.wallet_infos.get(wallet_id) {
+                Some(info) => info.balance(),
+                None => continue,
+            };
+            self.emit_context_routed_events(
+                *wallet_id,
+                tx,
+                &context,
+                check_result.is_new_transaction,
+                records,
+                balance,
+            );
+        }
 
         MempoolTransactionResult {
             is_relevant,
@@ -102,15 +158,27 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
     }
 
     fn update_synced_height(&mut self, height: CoreBlockHeight) {
-        self.synced_height = height;
-
         let snapshot = self.snapshot_balances();
 
-        for (_wallet_id, info) in self.wallet_infos.iter_mut() {
-            info.update_synced_height(height);
-        }
+        self.update_synced_height_silent(height);
 
-        self.emit_balance_changes(&snapshot);
+        // Emit an empty-records `BlockProcessChange` for any wallet whose
+        // balance shifted as a result of the height advance (e.g. coinbase
+        // maturity).
+        for (wallet_id, old_balance) in &snapshot {
+            let Some(info) = self.wallet_infos.get(wallet_id) else {
+                continue;
+            };
+            let new_balance = info.balance();
+            if *old_balance != new_balance {
+                let _ = self.event_sender().send(WalletEvent::BlockProcessChange {
+                    wallet_id: *wallet_id,
+                    height,
+                    transactions_updated: Vec::new(),
+                    balance: new_balance,
+                });
+            }
+        }
     }
 
     fn filter_committed_height(&self) -> CoreBlockHeight {
@@ -130,7 +198,6 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
 
     fn process_instant_send_lock(&mut self, instant_lock: InstantLock) {
         let txid = instant_lock.txid;
-        let snapshot = self.snapshot_balances();
 
         let mut affected_wallets = Vec::new();
         for (wallet_id, info) in self.wallet_infos.iter_mut() {
@@ -144,15 +211,17 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
         }
 
         for wallet_id in &affected_wallets {
-            let event = WalletEvent::TransactionStatusChanged {
+            let balance = match self.wallet_infos.get(wallet_id) {
+                Some(info) => info.balance(),
+                None => continue,
+            };
+            let _ = self.event_sender().send(WalletEvent::TransactionInstantSendLocked {
                 wallet_id: *wallet_id,
                 txid,
-                status: TransactionContext::InstantSend(instant_lock.clone()),
-            };
-            let _ = self.event_sender().send(event);
+                instant_send_lock: instant_lock.clone(),
+                balance,
+            });
         }
-
-        self.emit_balance_changes(&snapshot);
     }
 
     async fn describe(&self) -> String {
@@ -236,23 +305,23 @@ mod tests {
         let (mut manager, _wallet_id, addr) = setup_manager_with_wallet();
         let mut rx = manager.subscribe_events();
 
-        // Relevant tx should emit BalanceUpdated
+        // Relevant tx should emit MempoolTransactionReceived with balance
         let tx = create_tx_paying_to(&addr, 0xaa);
         manager.process_mempool_transaction(&tx, None).await;
 
         let mut found = false;
         while let Ok(event) = rx.try_recv() {
-            if let WalletEvent::BalanceUpdated {
-                unconfirmed,
+            if let WalletEvent::MempoolTransactionReceived {
+                balance,
                 ..
             } = event
             {
-                assert!(unconfirmed > 0, "unconfirmed balance should increase");
+                assert!(balance.unconfirmed() > 0, "unconfirmed balance should increase");
                 found = true;
                 break;
             }
         }
-        assert!(found, "should emit BalanceUpdated for mempool transaction");
+        assert!(found, "should emit MempoolTransactionReceived for mempool transaction");
 
         // Irrelevant tx should not emit any events
         let unrelated_tx = Transaction {
@@ -290,17 +359,17 @@ mod tests {
 
         let mut found = false;
         while let Ok(event) = rx.try_recv() {
-            if let WalletEvent::BalanceUpdated {
-                confirmed,
+            if let WalletEvent::BlockProcessChange {
+                balance,
                 ..
             } = event
             {
-                assert!(confirmed > 0, "confirmed balance should increase after block");
+                assert!(balance.confirmed() > 0, "confirmed balance should increase after block");
                 found = true;
                 break;
             }
         }
-        assert!(found, "should emit BalanceUpdated for block processing");
+        assert!(found, "should emit BlockProcessChange for block processing");
     }
 
     #[tokio::test]

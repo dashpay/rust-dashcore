@@ -27,6 +27,7 @@ pub use wallet_interface::{BlockProcessingResult, MempoolTransactionResult, Wall
 use dashcore::blockdata::transaction::Transaction;
 use dashcore::prelude::CoreBlockHeight;
 use key_wallet::account::AccountCollection;
+use key_wallet::managed_account::transaction_record::TransactionRecord;
 use key_wallet::transaction_checking::TransactionContext;
 use key_wallet::wallet::managed_wallet_info::transaction_building::AccountTypePreference;
 use key_wallet::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
@@ -80,6 +81,8 @@ pub struct CheckTransactionsResult {
     pub total_sent: u64,
     /// Addresses involved across all wallets
     pub involved_addresses: Vec<Address>,
+    /// Transaction records recorded or updated by this check, grouped per wallet.
+    pub records_per_wallet: BTreeMap<WalletId, Vec<TransactionRecord>>,
 }
 
 /// High-level wallet manager that manages multiple wallets
@@ -447,14 +450,62 @@ impl<T: WalletInfoInterface> WalletManager<T> {
         Ok(wallet_id)
     }
 
-    /// Check a transaction against all wallets and update their states if relevant.
-    /// Returns affected wallets and any new addresses generated during gap limit maintenance.
+    /// Check a transaction against all wallets, updating their states if relevant
+    /// and emitting the corresponding wallet event per affected wallet based on
+    /// the transaction context:
+    /// - `Mempool` with a new record → `MempoolTransactionReceived`
+    /// - `InstantSend` with a new record → `MempoolTransactionReceived` (record carries the IS context)
+    /// - `InstantSend` on a previously-seen record → `TransactionInstantSendLocked`
+    /// - `InBlock` / `InChainLockedBlock` → `BlockProcessChange` for the single transaction
+    ///
+    /// Block-processing callers that want a single consolidated
+    /// `BlockProcessChange` per wallet should use the internal
+    /// [`check_transaction_in_all_wallets_silent`] entry point.
     pub async fn check_transaction_in_all_wallets(
         &mut self,
         tx: &Transaction,
         context: TransactionContext,
         update_state_if_found: bool,
         update_balance: bool,
+    ) -> CheckTransactionsResult {
+        self.check_transaction_in_all_wallets_inner(
+            tx,
+            context,
+            update_state_if_found,
+            update_balance,
+            true,
+        )
+        .await
+    }
+
+    /// Check a transaction against all wallets without emitting wallet events.
+    ///
+    /// Used by block processing to batch per-wallet records into a single
+    /// `BlockProcessChange` event.
+    pub(crate) async fn check_transaction_in_all_wallets_silent(
+        &mut self,
+        tx: &Transaction,
+        context: TransactionContext,
+        update_state_if_found: bool,
+        update_balance: bool,
+    ) -> CheckTransactionsResult {
+        self.check_transaction_in_all_wallets_inner(
+            tx,
+            context,
+            update_state_if_found,
+            update_balance,
+            false,
+        )
+        .await
+    }
+
+    async fn check_transaction_in_all_wallets_inner(
+        &mut self,
+        tx: &Transaction,
+        context: TransactionContext,
+        update_state_if_found: bool,
+        update_balance: bool,
+        emit_events: bool,
     ) -> CheckTransactionsResult {
         let mut result = CheckTransactionsResult::default();
 
@@ -496,23 +547,31 @@ impl<T: WalletInfoInterface> WalletManager<T> {
                         }
                     }
 
-                    if check_result.is_new_transaction {
-                        for (account_index, record) in check_result.new_records {
-                            let event = WalletEvent::TransactionReceived {
-                                wallet_id,
-                                account_index,
-                                record: Box::new(record),
-                            };
-                            let _ = self.event_sender.send(event);
-                        }
-                    } else if check_result.state_modified {
-                        // Known transaction whose state was modified (confirmation or IS-lock).
-                        let event = WalletEvent::TransactionStatusChanged {
+                    // Collect per-wallet records so callers (e.g. block
+                    // processing) can bundle them into a single event.
+                    if !check_result.affected_records.is_empty() {
+                        result
+                            .records_per_wallet
+                            .entry(wallet_id)
+                            .or_default()
+                            .extend(check_result.affected_records.iter().cloned());
+                    }
+
+                    if emit_events && check_result.state_modified {
+                        // Re-read balance after state change
+                        let balance = self
+                            .wallet_infos
+                            .get(&wallet_id)
+                            .map(|info| info.balance())
+                            .unwrap_or_default();
+                        self.emit_context_routed_events(
                             wallet_id,
-                            txid: tx.txid(),
-                            status: context.clone(),
-                        };
-                        let _ = self.event_sender.send(event);
+                            tx,
+                            &context,
+                            check_result.is_new_transaction,
+                            check_result.affected_records,
+                            balance,
+                        );
                     }
                 }
 
@@ -521,6 +580,72 @@ impl<T: WalletInfoInterface> WalletManager<T> {
         }
 
         result
+    }
+
+    /// Advance `synced_height` and refresh per-wallet balances without
+    /// emitting wallet events.
+    pub(crate) fn update_synced_height_silent(&mut self, height: CoreBlockHeight) {
+        self.synced_height = height;
+        for (_wallet_id, info) in self.wallet_infos.iter_mut() {
+            info.update_synced_height(height);
+        }
+    }
+
+    /// Emit a `WalletEvent` based on the transaction context after a
+    /// state-modifying check. One event per record for mempool / first-seen-IS
+    /// paths; a single consolidated `BlockProcessChange` for in-block paths;
+    /// a single `TransactionInstantSendLocked` for IS-lock on existing records.
+    pub(crate) fn emit_context_routed_events(
+        &self,
+        wallet_id: WalletId,
+        tx: &Transaction,
+        context: &TransactionContext,
+        is_new_transaction: bool,
+        records: Vec<TransactionRecord>,
+        balance: WalletCoreBalance,
+    ) {
+        match context {
+            TransactionContext::InBlock(info) | TransactionContext::InChainLockedBlock(info) => {
+                let _ = self.event_sender.send(WalletEvent::BlockProcessChange {
+                    wallet_id,
+                    height: info.height(),
+                    transactions_updated: records,
+                    balance,
+                });
+            }
+            TransactionContext::Mempool => {
+                // `state_modified` implies `is_new_transaction` for mempool —
+                // a duplicate mempool arrival is an early-return no-op.
+                for record in records {
+                    let _ = self.event_sender.send(WalletEvent::MempoolTransactionReceived {
+                        wallet_id,
+                        record: Box::new(record),
+                        balance,
+                    });
+                }
+            }
+            TransactionContext::InstantSend(lock) => {
+                if is_new_transaction {
+                    // First seen in mempool *with* an IS lock — treat as a
+                    // mempool arrival; the record's context is already
+                    // `InstantSend(..)`.
+                    for record in records {
+                        let _ = self.event_sender.send(WalletEvent::MempoolTransactionReceived {
+                            wallet_id,
+                            record: Box::new(record),
+                            balance,
+                        });
+                    }
+                } else {
+                    let _ = self.event_sender.send(WalletEvent::TransactionInstantSendLocked {
+                        wallet_id,
+                        txid: tx.txid(),
+                        instant_send_lock: lock.clone(),
+                        balance,
+                    });
+                }
+            }
+        }
     }
 
     /// Create an account in a specific wallet

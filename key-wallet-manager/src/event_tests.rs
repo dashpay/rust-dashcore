@@ -22,17 +22,19 @@ async fn test_mempool_to_confirmed_event_flow() {
     manager.check_transaction_in_all_wallets(&tx, TransactionContext::Mempool, true, true).await;
     let event = assert_single_event(&mut rx);
     match event {
-        WalletEvent::TransactionReceived {
+        WalletEvent::MempoolTransactionReceived {
             wallet_id: ev_wid,
             record,
-            ..
+            balance,
         } => {
             assert_eq!(record.context, TransactionContext::Mempool);
             assert_eq!(record.txid, tx.txid());
             assert_eq!(ev_wid, wallet_id);
             assert_eq!(record.net_amount, TX_AMOUNT as i64);
+            assert_eq!(balance.unconfirmed(), TX_AMOUNT);
+            assert_eq!(balance.confirmed(), 0);
         }
-        other => panic!("expected TransactionReceived, got {:?}", other),
+        other => panic!("expected MempoolTransactionReceived, got {:?}", other),
     }
 
     // Same tx now confirmed in a block
@@ -44,23 +46,27 @@ async fn test_mempool_to_confirmed_event_flow() {
     manager.check_transaction_in_all_wallets(&tx, block_ctx, true, true).await;
     let event = assert_single_event(&mut rx);
     match event {
-        WalletEvent::TransactionStatusChanged {
+        WalletEvent::BlockProcessChange {
             wallet_id: ev_wid,
-            txid: ev_txid,
-            status,
+            height,
+            transactions_updated,
+            balance,
         } => {
             assert_eq!(ev_wid, wallet_id);
-            assert_eq!(ev_txid, tx.txid());
+            assert_eq!(height, 100);
+            assert_eq!(transactions_updated.len(), 1);
+            assert_eq!(transactions_updated[0].txid, tx.txid());
             assert!(
                 matches!(
-                                    status,
-                TransactionContext::InBlock(info) if info.height() == 100
-                                ),
-                "expected InBlock(100), got {:?}",
-                status
+                    transactions_updated[0].context,
+                    TransactionContext::InBlock(info) if info.height() == 100
+                ),
+                "expected record context InBlock(100)"
             );
+            assert_eq!(balance.confirmed(), TX_AMOUNT);
+            assert_eq!(balance.unconfirmed(), 0);
         }
-        other => panic!("expected TransactionStatusChanged, got {:?}", other),
+        other => panic!("expected BlockProcessChange, got {:?}", other),
     }
 }
 
@@ -188,21 +194,27 @@ async fn test_mempool_tx_emits_balance_updated() {
     manager.process_mempool_transaction(&tx, None).await;
 
     let events = drain_events(&mut rx);
-    let balance_events: Vec<_> =
-        events.iter().filter(|e| matches!(e, WalletEvent::BalanceUpdated { .. })).collect();
-    assert_eq!(balance_events.len(), 1, "expected exactly 1 BalanceUpdated, got {:?}", events);
+    let received_events: Vec<_> = events
+        .iter()
+        .filter(|e| matches!(e, WalletEvent::MempoolTransactionReceived { .. }))
+        .collect();
+    assert_eq!(
+        received_events.len(),
+        1,
+        "expected exactly 1 MempoolTransactionReceived, got {:?}",
+        events
+    );
     assert!(
         matches!(
-            balance_events[0],
-            WalletEvent::BalanceUpdated {
+            received_events[0],
+            WalletEvent::MempoolTransactionReceived {
                 wallet_id: wid,
-                unconfirmed,
-                confirmed,
+                balance,
                 ..
-            } if *wid == wallet_id && *unconfirmed == TX_AMOUNT && *confirmed == 0
+            } if *wid == wallet_id && balance.unconfirmed() == TX_AMOUNT && balance.confirmed() == 0
         ),
-        "expected BalanceUpdated with unconfirmed={TX_AMOUNT}, confirmed=0, got {:?}",
-        balance_events[0]
+        "expected balance.unconfirmed={TX_AMOUNT}, confirmed=0, got {:?}",
+        received_events[0]
     );
 }
 
@@ -215,21 +227,30 @@ async fn test_instantsend_tx_emits_balance_updated_spendable() {
     manager.process_mempool_transaction(&tx, Some(dummy_instant_lock(tx.txid()))).await;
 
     let events = drain_events(&mut rx);
-    let balance_events: Vec<_> =
-        events.iter().filter(|e| matches!(e, WalletEvent::BalanceUpdated { .. })).collect();
-    assert_eq!(balance_events.len(), 1, "expected exactly 1 BalanceUpdated, got {:?}", events);
+    let received_events: Vec<_> = events
+        .iter()
+        .filter(|e| matches!(e, WalletEvent::MempoolTransactionReceived { .. }))
+        .collect();
+    assert_eq!(
+        received_events.len(),
+        1,
+        "expected exactly 1 MempoolTransactionReceived, got {:?}",
+        events
+    );
     assert!(
         matches!(
-            balance_events[0],
-            WalletEvent::BalanceUpdated {
+            received_events[0],
+            WalletEvent::MempoolTransactionReceived {
                 wallet_id: wid,
-                confirmed,
-                unconfirmed,
-                ..
-            } if *wid == wallet_id && *confirmed == TX_AMOUNT && *unconfirmed == 0
+                record,
+                balance,
+            } if *wid == wallet_id
+                && matches!(record.context, TransactionContext::InstantSend(_))
+                && balance.confirmed() == TX_AMOUNT
+                && balance.unconfirmed() == 0
         ),
-        "expected BalanceUpdated with confirmed={TX_AMOUNT}, unconfirmed=0, got {:?}",
-        balance_events[0]
+        "expected IS-context record + balance.confirmed={TX_AMOUNT}, got {:?}",
+        received_events[0]
     );
 }
 
@@ -245,14 +266,13 @@ async fn test_mempool_to_instantsend_transitions_balance() {
     assert!(
         events.iter().any(|e| matches!(
             e,
-            WalletEvent::BalanceUpdated {
+            WalletEvent::MempoolTransactionReceived {
                 wallet_id: wid,
-                unconfirmed,
-                confirmed,
+                balance,
                 ..
-            } if *wid == wallet_id && *unconfirmed == TX_AMOUNT && *confirmed == 0
+            } if *wid == wallet_id && balance.unconfirmed() == TX_AMOUNT && balance.confirmed() == 0
         )),
-        "expected unconfirmed balance after mempool, got {:?}",
+        "expected MempoolTransactionReceived with unconfirmed={TX_AMOUNT}, got {:?}",
         events
     );
 
@@ -262,14 +282,13 @@ async fn test_mempool_to_instantsend_transitions_balance() {
     assert!(
         events.iter().any(|e| matches!(
             e,
-            WalletEvent::BalanceUpdated {
+            WalletEvent::TransactionInstantSendLocked {
                 wallet_id: wid,
-                confirmed,
-                unconfirmed,
+                balance,
                 ..
-            } if *wid == wallet_id && *confirmed == TX_AMOUNT && *unconfirmed == 0
+            } if *wid == wallet_id && balance.confirmed() == TX_AMOUNT && balance.unconfirmed() == 0
         )),
-        "expected confirmed balance after IS lock, got {:?}",
+        "expected TransactionInstantSendLocked with confirmed={TX_AMOUNT}, got {:?}",
         events
     );
 }
@@ -334,27 +353,30 @@ async fn test_process_instant_send_lock_dedup() {
     manager.process_mempool_transaction(&tx, None).await;
     let mut rx = manager.subscribe_events();
 
-    // First IS lock should emit events
+    // First IS lock should emit one TransactionInstantSendLocked (balance embedded)
     manager.process_instant_send_lock(dummy_instant_lock(tx.txid()));
     let events = drain_events(&mut rx);
-    assert!(
-        events.iter().any(|e| matches!(
-            e,
-            WalletEvent::TransactionStatusChanged {
-                wallet_id: wid,
-                status: TransactionContext::InstantSend(_),
-                ..
-            } if *wid == wallet_id
-        )),
-        "expected TransactionStatusChanged(InstantSend) with correct wallet_id, got {:?}",
+    let is_events: Vec<_> = events
+        .iter()
+        .filter(|e| matches!(e, WalletEvent::TransactionInstantSendLocked { .. }))
+        .collect();
+    assert_eq!(
+        is_events.len(),
+        1,
+        "expected exactly 1 TransactionInstantSendLocked, got {:?}",
         events
     );
     assert!(
-        events.iter().any(
-            |e| matches!(e, WalletEvent::BalanceUpdated { wallet_id: wid, .. } if *wid == wallet_id)
+        matches!(
+            is_events[0],
+            WalletEvent::TransactionInstantSendLocked {
+                wallet_id: wid,
+                balance,
+                ..
+            } if *wid == wallet_id && balance.confirmed() == TX_AMOUNT
         ),
-        "expected BalanceUpdated for wallet, got {:?}",
-        events
+        "expected TransactionInstantSendLocked for wallet with confirmed balance, got {:?}",
+        is_events[0]
     );
 
     // Second IS lock should be a no-op
@@ -404,13 +426,12 @@ async fn test_mixed_instantsend_paths_no_duplicate_events() {
     assert!(
         events.iter().any(|e| matches!(
             e,
-            WalletEvent::TransactionStatusChanged {
+            WalletEvent::TransactionInstantSendLocked {
                 wallet_id: wid,
-                status: TransactionContext::InstantSend(_),
                 ..
             } if *wid == wallet_id
         )),
-        "expected TransactionStatusChanged(InstantSend) with correct wallet_id, got {:?}",
+        "expected TransactionInstantSendLocked with correct wallet_id, got {:?}",
         events
     );
 
@@ -447,13 +468,12 @@ async fn test_mixed_instantsend_paths_reverse_no_duplicate_events() {
     assert!(
         events.iter().any(|e| matches!(
             e,
-            WalletEvent::TransactionStatusChanged {
+            WalletEvent::TransactionInstantSendLocked {
                 wallet_id: wid,
-                status: TransactionContext::InstantSend(_),
                 ..
             } if *wid == wallet_id
         )),
-        "expected TransactionStatusChanged(InstantSend) with correct wallet_id, got {:?}",
+        "expected TransactionInstantSendLocked with correct wallet_id, got {:?}",
         events
     );
 
@@ -488,19 +508,28 @@ async fn test_process_block_emits_events() {
     assert_eq!(result.new_txids.len(), 1);
 
     let events = drain_events(&mut rx);
-    let event = events
+    let block_events: Vec<_> = events
         .iter()
-        .find(|e| matches!(e, WalletEvent::TransactionReceived { .. }))
-        .unwrap_or_else(|| {
-            panic!("expected TransactionReceived from process_block, got {:?}", events)
-        });
+        .filter(|e| matches!(e, WalletEvent::BlockProcessChange { .. }))
+        .collect();
+    assert_eq!(
+        block_events.len(),
+        1,
+        "expected exactly one BlockProcessChange, got {:?}",
+        events
+    );
 
-    match event {
-        WalletEvent::TransactionReceived {
-            account_index,
-            record,
-            ..
+    match block_events[0] {
+        WalletEvent::BlockProcessChange {
+            wallet_id: wid,
+            height,
+            transactions_updated,
+            balance,
         } => {
+            assert_eq!(*wid, wallet_id);
+            assert_eq!(*height, 1000);
+            assert_eq!(transactions_updated.len(), 1);
+            let record = &transactions_updated[0];
             assert!(
                 matches!(
                     record.context,
@@ -509,21 +538,14 @@ async fn test_process_block_emits_events() {
                 "expected InBlock at height 1000, got {:?}",
                 record.context
             );
-            assert_eq!(*account_index, 0);
             assert!(
                 !record.input_details.is_empty() || !record.output_details.is_empty(),
                 "expected non-empty details"
             );
+            assert_eq!(balance.confirmed(), TX_AMOUNT);
         }
         _ => unreachable!(),
     }
-    assert!(
-        events.iter().any(
-            |e| matches!(e, WalletEvent::BalanceUpdated { wallet_id: wid, .. } if *wid == wallet_id)
-        ),
-        "expected BalanceUpdated from process_block, got {:?}",
-        events
-    );
 }
 
 #[tokio::test]
@@ -588,20 +610,20 @@ async fn test_mempool_to_block_to_chainlocked_event_flow() {
     let mut rx = manager.subscribe_events();
     let tx = create_tx_paying_to(&addr, 0xc4);
 
-    // Step 1: mempool — emits TransactionReceived
+    // Step 1: mempool — emits MempoolTransactionReceived
     manager.check_transaction_in_all_wallets(&tx, TransactionContext::Mempool, true, true).await;
     let event = assert_single_event(&mut rx);
     assert!(
         matches!(
             &event,
-            WalletEvent::TransactionReceived { record, .. }
+            WalletEvent::MempoolTransactionReceived { record, .. }
             if record.context == TransactionContext::Mempool
         ),
-        "expected TransactionReceived(Mempool), got {:?}",
+        "expected MempoolTransactionReceived(Mempool), got {:?}",
         event
     );
 
-    // Step 2: block confirmation — emits TransactionStatusChanged
+    // Step 2: block confirmation — emits BlockProcessChange
     let block_ctx = TransactionContext::InBlock(BlockInfo::new(
         1700,
         BlockHash::from_byte_array([0xc4; 32]),
@@ -611,13 +633,14 @@ async fn test_mempool_to_block_to_chainlocked_event_flow() {
     let event = assert_single_event(&mut rx);
     assert!(
         matches!(
-            event,
-            WalletEvent::TransactionStatusChanged {
-                status: TransactionContext::InBlock(_),
+            &event,
+            WalletEvent::BlockProcessChange {
+                height,
+                transactions_updated,
                 ..
-            }
+            } if *height == 1700 && transactions_updated.len() == 1
         ),
-        "expected TransactionStatusChanged(InBlock), got {:?}",
+        "expected BlockProcessChange(height=1700, 1 tx), got {:?}",
         event
     );
 
@@ -648,10 +671,10 @@ async fn test_chainlocked_block_event_flow() {
     assert!(
         matches!(
             &event,
-            WalletEvent::TransactionReceived { record, .. }
-            if matches!(record.context, TransactionContext::InChainLockedBlock(info) if info.height() == 2000)
+            WalletEvent::BlockProcessChange { height, transactions_updated, .. }
+            if *height == 2000 && transactions_updated.len() == 1 && matches!(transactions_updated[0].context, TransactionContext::InChainLockedBlock(info) if info.height() == 2000)
         ),
-        "expected TransactionReceived(InChainLockedBlock at 2000), got {:?}",
+        "expected BlockProcessChange(InChainLockedBlock at 2000, 1 tx), got {:?}",
         event
     );
 }

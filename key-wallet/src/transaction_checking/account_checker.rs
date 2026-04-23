@@ -46,8 +46,13 @@ pub struct TransactionCheckResult {
     pub total_received_for_credit_conversion: u64,
     /// New addresses generated during gap limit maintenance
     pub new_addresses: Vec<Address>,
-    /// Transaction records created for new transactions, paired with their account index
-    pub new_records: Vec<(u32, TransactionRecord)>,
+    /// Transaction records recorded or updated by this check.
+    ///
+    /// Contains one entry per affected account. Entries are present when the
+    /// transaction was newly recorded, confirmed in a block, or InstantSend-locked
+    /// on top of an existing record. Use `is_new_transaction` to know whether
+    /// these records are new or updates to existing ones.
+    pub affected_records: Vec<TransactionRecord>,
 }
 
 /// Enum representing the type of Core account that matched with embedded data
@@ -375,7 +380,7 @@ impl ManagedAccountCollection {
             total_sent: 0,
             total_received_for_credit_conversion: 0,
             new_addresses: Vec::new(),
-            new_records: Vec::new(),
+            affected_records: Vec::new(),
         };
 
         for account_type in account_types {

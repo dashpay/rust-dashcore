@@ -2,13 +2,14 @@
 
 use std::ffi::CStr;
 use std::os::raw::{c_char, c_void};
+use std::slice;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use dash_spv_ffi::*;
 use key_wallet_ffi::managed_account::FFITransactionRecord;
-use key_wallet_ffi::types::FFITransactionContext;
+use key_wallet_ffi::types::FFIBalance;
 
 /// Tracks callback invocations for verification.
 ///
@@ -37,8 +38,13 @@ pub(super) struct CallbackTracker {
     pub(super) peers_updated_count: AtomicU32,
 
     // Wallet event tracking
+    /// Counts `MempoolTransactionReceived` *and* `BlockProcessChange`
+    /// events that carried at least one record — i.e. any event through which
+    /// a new/updated transaction reached the consumer.
     pub(super) transaction_received_count: AtomicU32,
+    /// Counts `TransactionInstantSendLocked` events.
     pub(super) transaction_status_changed_count: AtomicU32,
+    /// Counts any event that carried a fresh balance (all three variants).
     pub(super) balance_updated_count: AtomicU32,
 
     // Data from callbacks
@@ -49,10 +55,12 @@ pub(super) struct CallbackTracker {
     pub(super) connected_peers: Mutex<Vec<String>>,
     pub(super) errors: Mutex<Vec<String>>,
 
-    // Transaction data from on_transaction_received (txid, net_amount)
+    /// Per-record (txid, net_amount) seen via any event.
     pub(super) received_transactions: Mutex<Vec<([u8; 32], i64)>>,
 
-    // Balance data from on_balance_updated
+    // Balance data — `last_spendable` tracks the `confirmed` balance field
+    // so existing assertions that expect "spendable after funds received"
+    // continue to hold.
     pub(super) last_spendable: AtomicU64,
     pub(super) last_unconfirmed: AtomicU64,
 
@@ -341,10 +349,20 @@ extern "C" fn on_peers_updated(connected_count: u32, best_height: u32, user_data
     tracing::debug!("on_peers_updated: connected={}, best_height={}", connected_count, best_height);
 }
 
-extern "C" fn on_transaction_received(
+fn record_balance(tracker: &CallbackTracker, balance: *const FFIBalance) {
+    if balance.is_null() {
+        return;
+    }
+    let b = unsafe { *balance };
+    tracker.last_spendable.store(b.confirmed, Ordering::SeqCst);
+    tracker.last_unconfirmed.store(b.unconfirmed, Ordering::SeqCst);
+    tracker.balance_updated_count.fetch_add(1, Ordering::SeqCst);
+}
+
+extern "C" fn on_mempool_transaction_received(
     wallet_id: *const c_char,
-    account_index: u32,
     record: *const FFITransactionRecord,
+    balance: *const FFIBalance,
     user_data: *mut c_void,
 ) {
     let Some(tracker) = (unsafe { tracker_from(user_data) }) else {
@@ -357,47 +375,56 @@ extern "C" fn on_transaction_received(
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .push((r.txid, r.net_amount));
+        tracker.transaction_received_count.fetch_add(1, Ordering::SeqCst);
     }
-    tracker.transaction_received_count.fetch_add(1, Ordering::SeqCst);
+    record_balance(tracker, balance);
     let wallet_str = unsafe { cstr_or_unknown(wallet_id) };
-    tracing::info!("on_transaction_received: wallet={}, account={}", wallet_str, account_index,);
+    tracing::info!("on_mempool_transaction_received: wallet={}", wallet_str);
 }
 
-extern "C" fn on_transaction_status_changed(
+extern "C" fn on_transaction_instant_send_locked(
     _wallet_id: *const c_char,
     _txid: *const [u8; 32],
-    status: FFITransactionContext,
+    _islock_data: *const u8,
+    _islock_len: usize,
+    balance: *const FFIBalance,
     user_data: *mut c_void,
 ) {
     let Some(tracker) = (unsafe { tracker_from(user_data) }) else {
         return;
     };
     tracker.transaction_status_changed_count.fetch_add(1, Ordering::SeqCst);
-    tracing::debug!("on_transaction_status_changed: status={:?}", status);
+    record_balance(tracker, balance);
+    tracing::debug!("on_transaction_instant_send_locked");
 }
 
-extern "C" fn on_balance_updated(
+extern "C" fn on_block_process_change(
     wallet_id: *const c_char,
-    spendable: u64,
-    unconfirmed: u64,
-    immature: u64,
-    locked: u64,
+    height: u32,
+    transactions_updated: *const FFITransactionRecord,
+    record_count: u32,
+    balance: *const FFIBalance,
     user_data: *mut c_void,
 ) {
     let Some(tracker) = (unsafe { tracker_from(user_data) }) else {
         return;
     };
-    tracker.last_spendable.store(spendable, Ordering::SeqCst);
-    tracker.last_unconfirmed.store(unconfirmed, Ordering::SeqCst);
-    tracker.balance_updated_count.fetch_add(1, Ordering::SeqCst);
+    if !transactions_updated.is_null() && record_count > 0 {
+        let records =
+            unsafe { slice::from_raw_parts(transactions_updated, record_count as usize) };
+        let mut sink = tracker.received_transactions.lock().unwrap_or_else(|e| e.into_inner());
+        for r in records {
+            sink.push((r.txid, r.net_amount));
+            tracker.transaction_received_count.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+    record_balance(tracker, balance);
     let wallet_str = unsafe { cstr_or_unknown(wallet_id) };
     tracing::info!(
-        "on_balance_updated: wallet={}, spendable={}, unconfirmed={}, immature={}, locked={}",
+        "on_block_process_change: wallet={}, height={}, records={}",
         wallet_str,
-        spendable,
-        unconfirmed,
-        immature,
-        locked,
+        height,
+        record_count,
     );
 }
 
@@ -444,9 +471,9 @@ pub(super) fn create_network_callbacks(tracker: &Arc<CallbackTracker>) -> FFINet
 /// Arc outlives all callback invocations.
 pub(super) fn create_wallet_callbacks(tracker: &Arc<CallbackTracker>) -> FFIWalletEventCallbacks {
     FFIWalletEventCallbacks {
-        on_transaction_received: Some(on_transaction_received),
-        on_transaction_status_changed: Some(on_transaction_status_changed),
-        on_balance_updated: Some(on_balance_updated),
+        on_mempool_transaction_received: Some(on_mempool_transaction_received),
+        on_transaction_instant_send_locked: Some(on_transaction_instant_send_locked),
+        on_block_process_change: Some(on_block_process_change),
         user_data: Arc::as_ptr(tracker) as *mut c_void,
     }
 }
