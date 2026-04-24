@@ -3,7 +3,7 @@
 use crate::deref_ptr;
 use crate::error::{FFIError, FFIErrorCode};
 use crate::types::{FFIAccountResult, FFIAccountType, FFIWallet};
-use dashcore::ffi::FFINetwork;
+use dash_network::ffi::FFINetwork;
 #[cfg(feature = "bls")]
 use key_wallet::account::BLSAccount;
 #[cfg(feature = "eddsa")]

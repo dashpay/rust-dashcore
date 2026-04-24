@@ -1,12 +1,11 @@
 [package]
 name = "masternode-seeds-fetcher"
 version = { workspace = true }
-edition = "2021"
+edition = "2024"
 authors = ["Dash Core Team"]
 description = "Fetch the current masternode IP list from the Dash P2P network and write per-network seed files used by dash-spv."
 license = "MIT"
 repository = "https://github.com/dashpay/rust-dashcore"
-rust-version = "1.89"
 publish = false
 
 [[bin]]
@@ -27,3 +26,10 @@ chrono = { version = "0.4.20", default-features = false, features = ["clock"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3.20", features = ["env-filter"] }
 rand = "0.8"
+futures = "0.3"
+
+# TLS probing for the Dash Platform HTTP port (Evo nodes).
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+rustls-pki-types = "1"
+x509-parser = "0.16"

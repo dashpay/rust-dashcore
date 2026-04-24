@@ -1,0 +1,29 @@
+[package]
+name = "dash-network"
+version = { workspace = true }
+edition = "2024"
+authors = ["Dash Core Team"]
+description = "The `Network` enum and its pure helpers (magic bytes, activation heights, default P2P ports) extracted from `dashcore` into a minimal-dependency crate so that lightweight consumers can depend on it without pulling in the full protocol library."
+license = "MIT"
+repository = "https://github.com/dashpay/rust-dashcore"
+
+[lib]
+name = "dash_network"
+path = "src/lib.rs"
+
+[features]
+default = []
+# serde::{Serialize, Deserialize} impls for Network.
+serde = ["dep:serde"]
+# bincode::{Encode, Decode} impls for Network.
+bincode = ["dep:bincode", "dep:bincode_derive"]
+# C-ABI `FFINetwork` mirror + `dashcore_network_get_name` extern fn.
+ffi = []
+
+[dependencies]
+serde = { version = "1.0.219", default-features = false, features = ["derive"], optional = true }
+bincode = { version = "2.0.1", optional = true }
+bincode_derive = { version = "2.0.1", optional = true }
+
+[build-dependencies]
+cbindgen = "0.29"

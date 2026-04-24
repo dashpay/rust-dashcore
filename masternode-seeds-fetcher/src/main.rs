@@ -33,61 +33,31 @@ use std::net::{IpAddr, SocketAddr};
 use std::path::PathBuf;
 use std::time::Duration;
 
-use anyhow::{anyhow, Context, Result};
-use clap::{Parser, ValueEnum};
-use dash_network_seeds::MasternodeType;
+use anyhow::{Context, Result, anyhow};
+use clap::Parser;
+use dash_network_seeds::{
+    CoreStatus, MasternodeSeed, MasternodeType, PlatformStatus, Reachability,
+};
 use dash_spv::network::Peer;
 use dashcore::hashes::Hash;
+use dashcore::network::Address;
 use dashcore::network::constants::ServiceFlags;
 use dashcore::network::message::NetworkMessage;
 use dashcore::network::message_blockdata::Inventory;
 use dashcore::network::message_network::VersionMessage;
 use dashcore::network::message_sml::{GetMnListDiff, MnListDiff};
-use dashcore::network::Address;
-use dashcore::sml::masternode_list_entry::{EntryMasternodeType, MasternodeListEntry};
-use dashcore::{BlockHash, Network as DashNetwork};
+use dashcore::sml::masternode_list_entry::EntryMasternodeType;
+use dashcore::{BlockHash, Network};
+use futures::stream::{FuturesUnordered, StreamExt};
 use hickory_resolver::config::{ResolverConfig, ResolverOpts};
 use hickory_resolver::name_server::TokioConnectionProvider;
+use std::sync::Arc;
+use tokio::sync::Semaphore;
 use tokio::time::Instant;
 
+mod probe;
+
 // ---------- CLI ----------
-
-#[derive(Copy, Clone, Debug, ValueEnum)]
-enum Network {
-    Mainnet,
-    Testnet,
-}
-
-impl Network {
-    fn as_str(self) -> &'static str {
-        match self {
-            Network::Mainnet => "mainnet",
-            Network::Testnet => "testnet",
-        }
-    }
-
-    fn default_p2p_port(self) -> u16 {
-        match self {
-            Network::Mainnet => 9999,
-            Network::Testnet => 19999,
-        }
-    }
-
-    fn dns_seeds(self) -> &'static [&'static str] {
-        match self {
-            Network::Mainnet => &["dnsseed.dash.org"],
-            Network::Testnet => &["testnet-seed.dashdot.io"],
-        }
-    }
-
-    fn dashcore(self) -> DashNetwork {
-        match self {
-            Network::Mainnet => DashNetwork::Mainnet,
-            Network::Testnet => DashNetwork::Testnet,
-        }
-    }
-}
-
 #[derive(Parser, Debug)]
 #[command(
     author,
@@ -118,6 +88,16 @@ struct Args {
     /// actually reachable.
     #[arg(long, default_value_t = false)]
     include_invalid: bool,
+
+    /// Skip the per-masternode reachability probes entirely and write the
+    /// seed file with all status columns set to unknown. Useful for quick
+    /// local runs.
+    #[arg(long, default_value_t = false)]
+    skip_probes: bool,
+
+    /// Maximum number of probes running concurrently.
+    #[arg(long, default_value_t = 64)]
+    probe_concurrency: usize,
 }
 
 // ---------- main ----------
@@ -133,9 +113,10 @@ async fn main() -> Result<()> {
         .init();
 
     let args = Args::parse();
-    let out_path = args.out.clone().unwrap_or_else(|| {
-        PathBuf::from(format!("dash-network-seeds/seeds/{}.txt", args.network.as_str()))
-    });
+    let out_path = args
+        .out
+        .clone()
+        .unwrap_or_else(|| PathBuf::from(format!("dash-network-seeds/seeds/{}.txt", args.network)));
 
     let candidates =
         gather_candidate_peers(args.network, &args.extra_peers, &out_path, args.max_peers).await;
@@ -149,7 +130,7 @@ async fn main() -> Result<()> {
         "Trying up to {} of {} candidate peer(s) on {}",
         args.max_peers,
         candidates.len(),
-        args.network.as_str()
+        args.network
     );
 
     let mut last_error: Option<anyhow::Error> = None;
@@ -176,8 +157,11 @@ async fn main() -> Result<()> {
         )
     })?;
 
+    let tip_height = reference_tip_height(&diff);
+    tracing::info!("Reference tip height: {:?}", tip_height);
+
     let collected = collect_seeds(&diff, &args);
-    if collected.seeds.is_empty() {
+    if collected.entries.is_empty() {
         return Err(anyhow!(
             "peer {} returned {} masternodes but none were usable; refusing to overwrite {}",
             peer_addr,
@@ -186,14 +170,32 @@ async fn main() -> Result<()> {
         ));
     }
 
-    write_seed_file(&out_path, args.network, peer_addr, &diff, &collected)?;
+    let mut entries = collected.entries;
+    if !args.skip_probes {
+        probe_all(&mut entries, args.network, tip_height, args.probe_concurrency).await;
+    }
+
+    let summary = summarize(&entries);
+    write_seed_file(
+        &out_path,
+        args.network,
+        peer_addr,
+        &diff,
+        tip_height,
+        &entries,
+        collected.total,
+        &summary,
+    )?;
     eprintln!(
-        "wrote {} seeds ({} regular + {} evo) for {} to {} (from peer {}, tip {})",
-        collected.seeds.len(),
-        collected.regular,
-        collected.evo,
-        args.network.as_str(),
+        "wrote {} seeds ({} regular + {} evo) for {} to {} — core_ok={} plat_ok={} ssl_valid={} (from peer {}, tip {})",
+        entries.len(),
+        summary.regular,
+        summary.evo,
+        args.network,
         out_path.display(),
+        summary.core_reachable,
+        summary.platform_reachable,
+        summary.ssl_valid,
         peer_addr,
         diff.block_hash
     );
@@ -256,9 +258,7 @@ fn build_resolver() -> Result<hickory_resolver::TokioResolver> {
 // ---------- per-peer P2P flow ----------
 
 async fn fetch_from_peer(peer_addr: SocketAddr, network: Network) -> Result<MnListDiff> {
-    let dashnet = network.dashcore();
-
-    let mut peer = Peer::connect(peer_addr, 15, dashnet)
+    let mut peer = Peer::connect(peer_addr, 15, network)
         .await
         .with_context(|| format!("connecting to {}", peer_addr))?;
 
@@ -412,24 +412,29 @@ where
 
 // ---------- output ----------
 
-/// Collected seeds and summary counts for the seed-file header.
 struct CollectedSeeds {
     total: usize,
+    entries: Vec<MasternodeSeed>,
+}
+
+struct Summary {
     regular: usize,
     evo: usize,
-    // Sorted by (address, mn_type) so that output is deterministic.
-    seeds: Vec<(SocketAddr, MasternodeType)>,
+    core_reachable: usize,
+    platform_reachable: usize,
+    ssl_valid: usize,
 }
 
 fn collect_seeds(diff: &MnListDiff, args: &Args) -> CollectedSeeds {
     let total = diff.new_masternodes.len();
-    let mut set: BTreeSet<(SocketAddr, MasternodeType)> = BTreeSet::new();
+    // Dedupe by (addr, type). If a given address appears as both regular and
+    // evo (should never happen on-chain) we keep only the evo variant.
+    let mut by_addr: BTreeSet<(SocketAddr, MasternodeType, Option<u16>)> = BTreeSet::new();
     for mn in &diff.new_masternodes {
         if !args.include_invalid && !mn.is_valid {
             continue;
         }
         let addr = mn.service_address;
-        // Skip 0.0.0.0 / :: sentinels (sometimes emitted for unpublished services).
         if addr.port() == 0 {
             continue;
         }
@@ -438,34 +443,127 @@ fn collect_seeds(diff: &MnListDiff, args: &Args) -> CollectedSeeds {
             IpAddr::V6(v6) if v6.is_unspecified() => continue,
             _ => {}
         }
-        set.insert((addr, classify(mn)));
+        let (mn_type, platform_port) = match mn.mn_type {
+            EntryMasternodeType::Regular => (MasternodeType::Regular, None),
+            EntryMasternodeType::HighPerformance {
+                platform_http_port,
+                ..
+            } => (MasternodeType::Evo, Some(platform_http_port)),
+        };
+        by_addr.insert((addr, mn_type, platform_port));
     }
-    let seeds: Vec<_> = set.into_iter().collect();
-    let regular = seeds.iter().filter(|(_, t)| *t == MasternodeType::Regular).count();
-    let evo = seeds.iter().filter(|(_, t)| *t == MasternodeType::Evo).count();
+    let entries: Vec<MasternodeSeed> = by_addr
+        .into_iter()
+        .map(|(address, mn_type, platform_http_port)| MasternodeSeed {
+            address,
+            mn_type,
+            platform_http_port,
+            core: CoreStatus::default(),
+            platform: match mn_type {
+                MasternodeType::Evo => Some(PlatformStatus::default()),
+                MasternodeType::Regular => None,
+            },
+        })
+        .collect();
     CollectedSeeds {
         total,
+        entries,
+    }
+}
+
+fn reference_tip_height(diff: &MnListDiff) -> Option<u32> {
+    use dashcore::blockdata::transaction::special_transaction::TransactionPayload;
+    match diff.coinbase_tx.special_transaction_payload.as_ref()? {
+        TransactionPayload::CoinbasePayloadType(cb) => Some(cb.height),
+        _ => None,
+    }
+}
+
+async fn probe_all(
+    entries: &mut [MasternodeSeed],
+    network: Network,
+    tip_height: Option<u32>,
+    concurrency: usize,
+) {
+    let total = entries.len();
+    tracing::info!(
+        "Probing {} seeds with concurrency={} (tip_height={:?})",
+        total,
+        concurrency,
+        tip_height
+    );
+    let permits = Arc::new(Semaphore::new(concurrency.max(1)));
+    let start = Instant::now();
+    let mut tasks = FuturesUnordered::new();
+    for (idx, seed) in entries.iter().enumerate() {
+        let permits = permits.clone();
+        let addr = seed.address;
+        let mn_type = seed.mn_type;
+        let platform_port = seed.platform_http_port;
+        tasks.push(tokio::spawn(async move {
+            let _permit = permits.acquire_owned().await.ok()?;
+            let (reach, peer_h) = probe::probe_core(addr, network).await;
+            let sync = probe::classify_sync(peer_h, tip_height);
+            let core = probe::core_status(reach, sync);
+            let platform = match (mn_type, platform_port) {
+                (MasternodeType::Evo, Some(port)) if port != 0 => {
+                    Some(probe::probe_platform(addr.ip(), port).await)
+                }
+                _ => None,
+            };
+            Some((idx, core, platform))
+        }));
+    }
+
+    let mut done = 0usize;
+    while let Some(res) = tasks.next().await {
+        done += 1;
+        if let Ok(Some((idx, core, platform))) = res {
+            entries[idx].core = core;
+            if let Some(p) = platform {
+                entries[idx].platform = Some(p);
+            }
+        }
+        if done.is_multiple_of(200) || done == total {
+            tracing::info!("Probed {} / {} in {:.1}s", done, total, start.elapsed().as_secs_f64());
+        }
+    }
+    tracing::info!("Probing complete in {:.1}s", start.elapsed().as_secs_f64());
+}
+
+fn summarize(entries: &[MasternodeSeed]) -> Summary {
+    let regular = entries.iter().filter(|s| s.mn_type == MasternodeType::Regular).count();
+    let evo = entries.iter().filter(|s| s.mn_type == MasternodeType::Evo).count();
+    let core_reachable = entries.iter().filter(|s| s.core.reachable == Reachability::Ok).count();
+    let platform_reachable = entries
+        .iter()
+        .filter(|s| s.platform.map(|p| p.reachable == Reachability::Ok).unwrap_or(false))
+        .count();
+    let ssl_valid = entries
+        .iter()
+        .filter(|s| {
+            s.platform.map(|p| p.ssl == dash_network_seeds::SslStatus::Valid).unwrap_or(false)
+        })
+        .count();
+    Summary {
         regular,
         evo,
-        seeds,
+        core_reachable,
+        platform_reachable,
+        ssl_valid,
     }
 }
 
-fn classify(mn: &MasternodeListEntry) -> MasternodeType {
-    match mn.mn_type {
-        EntryMasternodeType::Regular => MasternodeType::Regular,
-        EntryMasternodeType::HighPerformance {
-            ..
-        } => MasternodeType::Evo,
-    }
-}
-
+#[allow(clippy::too_many_arguments)]
 fn write_seed_file(
     path: &std::path::Path,
     network: Network,
     peer: SocketAddr,
     diff: &MnListDiff,
-    collected: &CollectedSeeds,
+    tip_height: Option<u32>,
+    entries: &[MasternodeSeed],
+    total: usize,
+    summary: &Summary,
 ) -> Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)
@@ -477,27 +575,50 @@ fn write_seed_file(
     writeln!(
         file,
         "# Auto-generated by masternode-seeds-fetcher on {} for {}",
-        timestamp,
-        network.as_str()
+        timestamp, network
     )?;
     writeln!(file, "# Source: Dash P2P network (mnlistdiff)")?;
-    writeln!(file, "# Peer: {}", peer)?;
+    writeln!(file, "# Primary peer: {}", peer)?;
     writeln!(file, "# Tip block hash: {}", diff.block_hash)?;
+    if let Some(h) = tip_height {
+        writeln!(file, "# Tip block height: {}", h)?;
+    }
     writeln!(
         file,
         "# {} seeds ({} regular + {} evo) of {} total masternodes, valid-only",
-        collected.seeds.len(),
-        collected.regular,
-        collected.evo,
-        collected.total
+        entries.len(),
+        summary.regular,
+        summary.evo,
+        total
     )?;
-    writeln!(file, "# Format: `<type> <ip>:<port>` where <type> is `regular` or `evo`.")?;
+    writeln!(
+        file,
+        "# Probe summary: core_reachable={}/{} platform_reachable={}/{} ssl_valid={}/{}",
+        summary.core_reachable,
+        entries.len(),
+        summary.platform_reachable,
+        summary.evo,
+        summary.ssl_valid,
+        summary.evo,
+    )?;
+    writeln!(
+        file,
+        "# Columns: <type> <addr> <platform_http_port|-> <core_reach> <core_sync> <plat_reach> <plat_live> <plat_ssl>"
+    )?;
+    writeln!(
+        file,
+        "# Values: core_reach/plat_reach=ok|timeout|refused|error|?, core_sync=sync|-N|+N|?, plat_live=ok|none|?|-, plat_ssl=valid|expired|self-signed|untrusted|no-handshake|?|-"
+    )?;
     writeln!(
         file,
         "# Do not edit manually — refreshed weekly by .github/workflows/update-masternode-seeds.yml"
     )?;
-    for (addr, mn_type) in &collected.seeds {
-        writeln!(file, "{} {}", mn_type.as_str(), addr)?;
+    // Sort by address so the file is deterministic and diffs stay minimal
+    // when only membership changes.
+    let mut sorted: Vec<&MasternodeSeed> = entries.iter().collect();
+    sorted.sort_by_key(|s| (s.address, s.mn_type));
+    for seed in sorted {
+        writeln!(file, "{}", seed.to_line())?;
     }
     Ok(())
 }

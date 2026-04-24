@@ -2,10 +2,9 @@
 
 #[cfg(test)]
 mod address_tests {
-    use dashcore::ffi::FFINetwork;
-
     use crate::address::{address_array_free, address_free, address_get_type, address_validate};
     use crate::error::{FFIError, FFIErrorCode};
+    use dash_network::ffi::FFINetwork;
     use std::ffi::CString;
     use std::ptr;
 

@@ -34,6 +34,10 @@ impl From<FFINetwork> for Network {
     }
 }
 
+/// Return a pointer to the canonical lowercase name of `network`.
+///
+/// The returned pointer is to a static null-terminated string owned by
+/// `dash-network`; callers must not free it.
 #[unsafe(no_mangle)]
 pub extern "C" fn dashcore_network_get_name(network: FFINetwork) -> *const ffi::c_char {
     match network {

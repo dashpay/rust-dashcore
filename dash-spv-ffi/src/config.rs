@@ -1,7 +1,7 @@
 use crate::{null_check, set_last_error, FFIErrorCode, FFIMempoolStrategy};
 use dash_spv::{ClientConfig, ValidationMode};
-use dashcore::ffi::FFINetwork;
 
+use dash_network::ffi::FFINetwork;
 use std::ffi::CStr;
 use std::net::{IpAddr, SocketAddr, ToSocketAddrs};
 use std::os::raw::c_char;
@@ -119,7 +119,6 @@ pub unsafe extern "C" fn dash_spv_ffi_config_add_peer(
         dashcore::Network::Testnet => 19999,
         dashcore::Network::Regtest => 19899,
         dashcore::Network::Devnet => 29999,
-        _ => 9999,
     };
 
     let addr_str = match CStr::from_ptr(addr).to_str() {

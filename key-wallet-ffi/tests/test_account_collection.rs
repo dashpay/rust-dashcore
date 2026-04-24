@@ -1,6 +1,6 @@
 //! Integration tests for account collection FFI functions
 
-use dashcore::ffi::FFINetwork;
+use dash_network::ffi::FFINetwork;
 use key_wallet_ffi::account::account_free;
 use key_wallet_ffi::account_collection::*;
 use key_wallet_ffi::types::{FFIAccountCreationOptionType, FFIWalletAccountCreationOptions};

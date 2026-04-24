@@ -1,12 +1,11 @@
 #[cfg(test)]
 mod tests {
+    use dash_network::ffi::FFINetwork;
     use dash_spv::sync::{
         BlockHeadersProgress, BlocksProgress, ChainLockProgress, FilterHeadersProgress,
         FiltersProgress, InstantSendProgress, MasternodesProgress, SyncProgress, SyncState,
     };
     use dash_spv_ffi::*;
-    use dashcore::ffi::FFINetwork;
-
     #[test]
     fn test_ffi_string_new_and_destroy() {
         let test_str = "Hello, FFI!";

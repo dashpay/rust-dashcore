@@ -97,7 +97,6 @@ impl DnsDiscovery {
             }
         }
 
-        // Deduplicate addresses
         addresses.sort();
         addresses.dedup();
 

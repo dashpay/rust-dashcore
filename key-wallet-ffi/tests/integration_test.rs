@@ -2,7 +2,7 @@
 //!
 //! These tests verify the interaction between different FFI modules
 
-use dashcore::ffi::FFINetwork;
+use dash_network::ffi::FFINetwork;
 use key_wallet_ffi::error::{FFIError, FFIErrorCode};
 use std::ffi::CString;
 use std::ptr;

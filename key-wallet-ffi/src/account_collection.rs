@@ -1056,10 +1056,9 @@ pub unsafe extern "C" fn account_collection_summary_free(
 
 #[cfg(test)]
 mod tests {
-    use dashcore::ffi::FFINetwork;
-
     use super::*;
     use crate::wallet::wallet_create_from_mnemonic_with_options;
+    use dash_network::ffi::FFINetwork;
     use std::ffi::CString;
 
     #[test]

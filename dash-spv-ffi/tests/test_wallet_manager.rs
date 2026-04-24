@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod tests {
+    use dash_network::ffi::FFINetwork;
     use dash_spv_ffi::*;
-    use dashcore::ffi::FFINetwork;
     use key_wallet::wallet::initialization::WalletAccountCreationOptions;
     use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
     use key_wallet_ffi::{

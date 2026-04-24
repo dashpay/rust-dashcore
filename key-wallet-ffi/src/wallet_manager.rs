@@ -8,18 +8,17 @@ mod tests;
 #[path = "wallet_manager_serialization_tests.rs"]
 mod serialization_tests;
 
-use dashcore::ffi::FFINetwork;
+use crate::error::{FFIError, FFIErrorCode};
+use crate::{check_ptr, deref_ptr, deref_ptr_mut, unwrap_or_return};
+use dash_network::ffi::FFINetwork;
+use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
+use key_wallet_manager::WalletInterface;
+use key_wallet_manager::WalletManager;
 use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_uint};
 use std::ptr;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-
-use crate::error::{FFIError, FFIErrorCode};
-use crate::{check_ptr, deref_ptr, deref_ptr_mut, unwrap_or_return};
-use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
-use key_wallet_manager::WalletInterface;
-use key_wallet_manager::WalletManager;
 
 /// FFI wrapper for WalletManager
 ///

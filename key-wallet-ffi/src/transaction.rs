@@ -5,7 +5,13 @@ use std::os::raw::c_char;
 use std::ptr;
 use std::slice;
 
-use dashcore::ffi::FFINetwork;
+use crate::error::{FFIError, FFIErrorCode};
+use crate::types::{
+    transaction_context_from_ffi, FFIBlockInfo, FFITransactionContextType, FFIWallet,
+};
+use crate::{check_ptr, FFIWalletManager};
+use crate::{deref_ptr, deref_ptr_mut, unwrap_or_return};
+use dash_network::ffi::FFINetwork;
 use dashcore::{
     consensus, hashes::Hash, sighash::SighashCache, EcdsaSighashType, Network, OutPoint, Script,
     ScriptBuf, Transaction, TxIn, TxOut, Txid,
@@ -17,13 +23,6 @@ use key_wallet::wallet::managed_wallet_info::fee::FeeRate;
 use key_wallet::wallet::managed_wallet_info::transaction_building::AccountTypePreference;
 use key_wallet::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
 use secp256k1::{Message, Secp256k1, SecretKey};
-
-use crate::error::{FFIError, FFIErrorCode};
-use crate::types::{
-    transaction_context_from_ffi, FFIBlockInfo, FFITransactionContextType, FFIWallet,
-};
-use crate::{check_ptr, FFIWalletManager};
-use crate::{deref_ptr, deref_ptr_mut, unwrap_or_return};
 
 // MARK: - Transaction Types
 

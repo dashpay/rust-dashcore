@@ -4,15 +4,14 @@
 #[path = "wallet_tests.rs"]
 mod tests;
 
+use crate::types::FFIAccountResult;
+use dash_network::ffi::FFINetwork;
+use key_wallet::wallet::initialization::WalletAccountCreationOptions;
+use key_wallet::{Mnemonic, Seed, Wallet};
 use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_uint};
 use std::ptr;
 use std::slice;
-
-use crate::types::FFIAccountResult;
-use dashcore::ffi::FFINetwork;
-use key_wallet::wallet::initialization::WalletAccountCreationOptions;
-use key_wallet::{Mnemonic, Seed, Wallet};
 
 use crate::error::{FFIError, FFIErrorCode};
 use crate::types::{FFIWallet, FFIWalletAccountCreationOptions};

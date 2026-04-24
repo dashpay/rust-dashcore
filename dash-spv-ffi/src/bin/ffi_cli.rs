@@ -3,9 +3,8 @@ use std::os::raw::{c_char, c_void};
 use std::ptr;
 
 use clap::{Arg, ArgAction, Command};
-
+use dash_network::ffi::FFINetwork;
 use dash_spv_ffi::*;
-use dashcore::ffi::FFINetwork;
 use key_wallet_ffi::managed_account::FFITransactionRecord;
 use key_wallet_ffi::types::FFITransactionContext;
 use key_wallet_ffi::wallet_manager::wallet_manager_add_wallet_from_mnemonic;

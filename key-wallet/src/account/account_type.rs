@@ -393,7 +393,6 @@ impl AccountType {
                     Network::Testnet | Network::Devnet | Network::Regtest => {
                         Ok(DerivationPath::from(crate::dip9::IDENTITY_REGISTRATION_PATH_TESTNET))
                     }
-                    _ => Err(crate::error::Error::InvalidNetwork),
                 }
             }
             Self::IdentityTopUp {
@@ -405,7 +404,6 @@ impl AccountType {
                     Network::Testnet | Network::Devnet | Network::Regtest => {
                         crate::dip9::IDENTITY_TOPUP_PATH_TESTNET
                     }
-                    _ => return Err(crate::error::Error::InvalidNetwork),
                 };
                 let mut path = DerivationPath::from(base_path);
                 path.push(
@@ -423,7 +421,6 @@ impl AccountType {
                     Network::Testnet | Network::Devnet | Network::Regtest => {
                         Ok(DerivationPath::from(crate::dip9::IDENTITY_TOPUP_PATH_TESTNET))
                     }
-                    _ => Err(crate::error::Error::InvalidNetwork),
                 }
             }
             Self::IdentityInvitation => {
@@ -435,7 +432,6 @@ impl AccountType {
                     Network::Testnet | Network::Devnet | Network::Regtest => {
                         Ok(DerivationPath::from(crate::dip9::IDENTITY_INVITATION_PATH_TESTNET))
                     }
-                    _ => Err(crate::error::Error::InvalidNetwork),
                 }
             }
             Self::IdentityAuthenticationEcdsa {
@@ -448,7 +444,6 @@ impl AccountType {
                     Network::Testnet | Network::Devnet | Network::Regtest => {
                         crate::dip9::IDENTITY_AUTHENTICATION_ECDSA_PATH_TESTNET
                     }
-                    _ => return Err(crate::error::Error::InvalidNetwork),
                 };
                 let mut path = DerivationPath::from(base_path);
                 path.push(
@@ -467,7 +462,6 @@ impl AccountType {
                     Network::Testnet | Network::Devnet | Network::Regtest => {
                         crate::dip9::IDENTITY_AUTHENTICATION_BLS_PATH_TESTNET
                     }
-                    _ => return Err(crate::error::Error::InvalidNetwork),
                 };
                 let mut path = DerivationPath::from(base_path);
                 path.push(
@@ -485,7 +479,6 @@ impl AccountType {
                     Network::Testnet | Network::Devnet | Network::Regtest => {
                         Ok(DerivationPath::from(crate::dip9::ASSET_LOCK_ADDRESS_TOPUP_PATH_TESTNET))
                     }
-                    _ => Err(crate::error::Error::InvalidNetwork),
                 }
             }
             Self::AssetLockShieldedAddressTopUp => {
@@ -499,7 +492,6 @@ impl AccountType {
                             crate::dip9::ASSET_LOCK_SHIELDED_ADDRESS_TOPUP_PATH_TESTNET,
                         ))
                     }
-                    _ => Err(crate::error::Error::InvalidNetwork),
                 }
             }
             Self::ProviderVotingKeys => {
@@ -555,7 +547,6 @@ impl AccountType {
                     Network::Testnet | Network::Devnet | Network::Regtest => {
                         DerivationPath::from(crate::dip9::DASHPAY_ROOT_PATH_TESTNET)
                     }
-                    _ => return Err(crate::error::Error::InvalidNetwork),
                 };
                 path.push(ChildNumber::from_hardened_idx(0).map_err(crate::error::Error::Bip32)?);
                 path.push(ChildNumber::Normal256 {
@@ -579,7 +570,6 @@ impl AccountType {
                     Network::Testnet | Network::Devnet | Network::Regtest => {
                         DerivationPath::from(crate::dip9::DASHPAY_ROOT_PATH_TESTNET)
                     }
-                    _ => return Err(crate::error::Error::InvalidNetwork),
                 };
                 path.push(ChildNumber::from_hardened_idx(0).map_err(crate::error::Error::Bip32)?);
                 path.push(ChildNumber::Normal256 {
@@ -603,7 +593,6 @@ impl AccountType {
                     Network::Testnet | Network::Devnet | Network::Regtest => {
                         DerivationPath::from(crate::dip9::PLATFORM_PAYMENT_ROOT_PATH_TESTNET)
                     }
-                    _ => return Err(crate::error::Error::InvalidNetwork),
                 };
                 path.push(
                     ChildNumber::from_hardened_idx(*account).map_err(crate::error::Error::Bip32)?,

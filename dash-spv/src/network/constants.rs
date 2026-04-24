@@ -84,13 +84,13 @@ pub const MESSAGE_RECEIVE_TIMEOUT: Duration = Duration::from_millis(100);
 /// regular and Evo masternodes — for a typed view (e.g. evo-only), depend
 /// on `dash-network-seeds` directly.
 pub fn mainnet_seed_peers() -> Vec<SocketAddr> {
-    dash_network_seeds::addresses(dash_network_seeds::Network::Mainnet)
+    dash_network_seeds::addresses(dash_network::Network::Mainnet)
 }
 
 /// Hardcoded masternode peer addresses for testnet. See [`mainnet_seed_peers`]
 /// for context.
 pub fn testnet_seed_peers() -> Vec<SocketAddr> {
-    dash_network_seeds::addresses(dash_network_seeds::Network::Testnet)
+    dash_network_seeds::addresses(dash_network::Network::Testnet)
 }
 
 #[cfg(test)]

@@ -4,13 +4,11 @@
 #[path = "address_tests.rs"]
 mod tests;
 
-use std::ffi::{CStr, CString};
-use std::os::raw::{c_char, c_uchar};
-
-use dashcore::ffi::FFINetwork;
-
 use crate::error::FFIError;
 use crate::{deref_ptr, unwrap_or_return};
+use dash_network::ffi::FFINetwork;
+use std::ffi::{CStr, CString};
+use std::os::raw::{c_char, c_uchar};
 
 /// Free address string
 ///
