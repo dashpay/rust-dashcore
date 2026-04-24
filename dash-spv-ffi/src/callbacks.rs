@@ -378,6 +378,7 @@ impl FFISyncEventCallbacks {
             }
             SyncEvent::MasternodeStateUpdated {
                 height,
+                ..
             } => {
                 if let Some(cb) = self.on_masternode_state_updated {
                     cb(*height, self.user_data);

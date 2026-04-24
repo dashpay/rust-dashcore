@@ -33,6 +33,12 @@ impl QualifiedQuorumEntry {
         let message = self.commitment_hash.to_byte_array();
         let message = message.as_slice();
 
+        // Keep the first few operator key hex strings around so that, if
+        // verification fails, we can emit them with the error log to enable
+        // direct comparison against `dash-cli quorum info` output.
+        let mut first_operator_keys_hex: Vec<String> = Vec::new();
+        let mut deserialize_failures: u32 = 0;
+
         // Collect public keys with proper legacy/modern deserialization
         let public_keys: Vec<PublicKey<Bls12381G2Impl>> = operator_keys
             .into_iter()
@@ -48,8 +54,14 @@ impl QualifiedQuorumEntry {
                 let result = PublicKey::<Bls12381G2Impl>::from_bytes_with_mode(bytes, format);
 
                 match result {
-                    Ok(public_key) => Some(public_key),
+                    Ok(public_key) => {
+                        if first_operator_keys_hex.len() < 3 {
+                            first_operator_keys_hex.push(hex::encode(bytes));
+                        }
+                        Some(public_key)
+                    }
                     Err(e) => {
+                        deserialize_failures += 1;
                         // Log error in debug builds
                         #[cfg(debug_assertions)]
                         eprintln!("Failed to deserialize operator key: {:?}", e);
@@ -64,6 +76,24 @@ impl QualifiedQuorumEntry {
             self.quorum_entry.all_commitment_aggregated_signature.try_into()?;
 
         signature.verify_secure(&public_keys, message).map_err(|e| {
+            let signers_set = self.quorum_entry.signers.iter().filter(|b| **b).count();
+            let signers_len = self.quorum_entry.signers.len();
+            tracing::error!(
+                quorum_hash = %self.quorum_entry.quorum_hash,
+                quorum_index = ?self.quorum_entry.quorum_index,
+                llmq_type = ?self.quorum_entry.llmq_type,
+                version = self.quorum_entry.version,
+                commitment_hash = %self.commitment_hash,
+                signers_set,
+                signers_len,
+                public_keys_used = public_keys.len(),
+                deserialize_failures,
+                first_operator_keys = ?first_operator_keys_hex,
+                quorum_public_key = %self.quorum_entry.quorum_public_key,
+                aggregated_sig = %self.quorum_entry.all_commitment_aggregated_signature,
+                error = %e,
+                "Aggregated commitment signature verification failed"
+            );
             QuorumValidationError::AllCommitmentAggregatedSignatureNotValid(e.to_string())
         })
     }

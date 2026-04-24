@@ -124,6 +124,30 @@ impl MasternodeListEngine {
                     quorum_index
                 )))?
                 .clone();
+            let first_pro_tx_hashes: Vec<String> = masternode_list_entries
+                .iter()
+                .take(3)
+                .map(|e| format!("{}", e.masternode_list_entry.pro_reg_tx_hash))
+                .collect();
+            let first_operator_keys: Vec<String> = masternode_list_entries
+                .iter()
+                .take(3)
+                .map(|e| {
+                    let bytes: &[u8] = e.masternode_list_entry.operator_public_key.as_ref();
+                    hex::encode(bytes)
+                })
+                .collect();
+            tracing::debug!(
+                quorum_hash = %quorum.quorum_entry.quorum_hash,
+                quorum_index,
+                quorum_block_height,
+                cycle_base_height,
+                ?llmq_type,
+                selected_members = masternode_list_entries.len(),
+                ?first_pro_tx_hashes,
+                ?first_operator_keys,
+                "find_rotated_masternodes_for_quorums: member selection"
+            );
             return_btree_map.insert(quorum.quorum_entry.quorum_hash, masternode_list_entries);
         }
 
@@ -209,6 +233,43 @@ impl MasternodeListEngine {
         let cycle_length = llmq_params.dkg_params.interval;
         let work_block_height_for_index =
             |index: u32| (cycle_base_height - index * cycle_length) - 8;
+        let work_block_hash_for_index = |index: u32| {
+            self.block_container.get_hash(&work_block_height_for_index(index)).copied()
+        };
+        let snapshot_stats = |index: u32| {
+            work_block_hash_for_index(index).and_then(|hash| {
+                self.known_snapshots.get(&hash).map(|snapshot| {
+                    (
+                        hash,
+                        snapshot.skip_list_mode,
+                        snapshot.skip_list.len(),
+                        snapshot.active_quorum_members.len(),
+                    )
+                })
+            })
+        };
+        tracing::debug!(
+            ?quorum_llmq_type,
+            cycle_base_height,
+            cycle_length,
+            q0_work_block_height = work_block_height_for_index(3),
+            q0_work_block_hash = ?work_block_hash_for_index(3),
+            q0_snapshot = ?snapshot_stats(3),
+            q1_work_block_height = work_block_height_for_index(2),
+            q1_work_block_hash = ?work_block_hash_for_index(2),
+            q1_snapshot = ?snapshot_stats(2),
+            q2_work_block_height = work_block_height_for_index(1),
+            q2_work_block_hash = ?work_block_hash_for_index(1),
+            q2_snapshot = ?snapshot_stats(1),
+            q3_work_block_height = work_block_height_for_index(0),
+            q3_work_block_hash = ?work_block_hash_for_index(0),
+            q3_snapshot = ?snapshot_stats(0),
+            cl_sig_q0 = %chain_lock_sigs[0],
+            cl_sig_q1 = %chain_lock_sigs[1],
+            cl_sig_q2 = %chain_lock_sigs[2],
+            cl_sig_q3 = %chain_lock_sigs[3],
+            "rotated_quorum_reconstruction: begin cycle reconstruction"
+        );
         // Reconstruct quorum members at h - 3c from snapshot
         let q_h_m_3c = self.quorum_quarter_members_by_reconstruction_type(
             quorum_llmq_type,
@@ -316,12 +377,36 @@ impl MasternodeListEngine {
             self.network,
         )?;
         let quorum_modifier = quorum_modifier_type.build_llmq_hash();
+        tracing::debug!(
+            ?quorum_llmq_type,
+            work_block_height,
+            work_block_hash = %work_block_hash,
+            masternode_list_size = masternode_list.masternodes.len(),
+            quorum_count,
+            quarter_size,
+            best_cl_signature = %best_cl_signature,
+            quorum_modifier_type = %quorum_modifier_type,
+            quorum_modifier = %quorum_modifier,
+            reconstruction_type = match &reconstruction_type {
+                LLMQQuarterReconstructionType::New { .. } => "New",
+                LLMQQuarterReconstructionType::Snapshot => "Snapshot",
+            },
+            "quorum_quarter_members: modifier inputs resolved"
+        );
         match reconstruction_type {
             LLMQQuarterReconstructionType::New {
                 previous_quarters,
             } => {
                 let (used_masternodes, unused_masternodes, used_indexed_masternodes) =
                     masternode_list.usage_info(previous_quarters, quorum_count);
+                tracing::debug!(
+                    work_block_height,
+                    used_masternodes_count = used_masternodes.len(),
+                    unused_masternodes_count = unused_masternodes.len(),
+                    used_indexed_count =
+                        used_indexed_masternodes.iter().map(|v| v.len()).sum::<usize>(),
+                    "quorum_quarter_members: usage_info (New reconstruction)"
+                );
                 Ok(Self::apply_skip_strategy_of_type(
                     LLMQQuarterUsageType::New(used_indexed_masternodes),
                     used_masternodes,
@@ -340,6 +425,17 @@ impl MasternodeListEngine {
                             snapshot,
                             self.network,
                         );
+                    tracing::debug!(
+                        work_block_height,
+                        work_block_hash = %work_block_hash,
+                        masternode_list_block_hash = %masternode_list.block_hash,
+                        skip_list_mode = ?snapshot.skip_list_mode,
+                        skip_list_len = snapshot.skip_list.len(),
+                        active_quorum_members_len = snapshot.active_quorum_members.len(),
+                        used_masternodes_count = used_masternodes.len(),
+                        unused_masternodes_count = unused_masternodes.len(),
+                        "quorum_quarter_members: used_and_unused_masternodes_for_quorum (Snapshot)"
+                    );
                     Ok(Self::apply_skip_strategy_of_type(
                         LLMQQuarterUsageType::Snapshot(snapshot.clone()),
                         used_masternodes,
@@ -349,6 +445,13 @@ impl MasternodeListEngine {
                         quarter_size,
                     ))
                 } else {
+                    tracing::error!(
+                        work_block_height,
+                        work_block_hash = %work_block_hash,
+                        masternode_list_block_hash = %masternode_list.block_hash,
+                        known_snapshots = self.known_snapshots.len(),
+                        "quorum_quarter_members: required snapshot missing"
+                    );
                     Err(QuorumValidationError::RequiredSnapshotNotPresent(*work_block_hash))
                 }
             }
@@ -378,6 +481,8 @@ impl MasternodeListEngine {
         quorum_count: usize,
         quarter_size: usize,
     ) -> Vec<Vec<&'a QualifiedMasternodeListEntry>> {
+        let used_input_count = used_at_h_masternodes.len();
+        let unused_input_count = unused_at_h_masternodes.len();
         let sorted_used_mns_list = MasternodeList::scores_for_quorum_for_masternodes(
             used_at_h_masternodes,
             quorum_modifier,
@@ -394,7 +499,21 @@ impl MasternodeListEngine {
                 .rev()
                 .chain(sorted_used_mns_list.into_values().rev()),
         );
-        match skip_type {
+        let skip_type_tag = match &skip_type {
+            LLMQQuarterUsageType::Snapshot(s) => format!("Snapshot({:?})", s.skip_list_mode),
+            LLMQQuarterUsageType::New(_) => "New".to_string(),
+        };
+        tracing::debug!(
+            %quorum_modifier,
+            quorum_count,
+            quarter_size,
+            used_input_count,
+            unused_input_count,
+            sorted_combined_count = sorted_combined_mns_list.len(),
+            skip_type = %skip_type_tag,
+            "apply_skip_strategy: inputs"
+        );
+        let result: Vec<Vec<&'a QualifiedMasternodeListEntry>> = match skip_type {
             LLMQQuarterUsageType::Snapshot(snapshot) => {
                 match snapshot.skip_list_mode {
                     MNSkipListMode::NoSkipping => sorted_combined_mns_list
@@ -499,6 +618,25 @@ impl MasternodeListEngine {
                 }
                 quarter_quorum_members
             }
-        }
+        };
+        let per_index_sizes: Vec<usize> = result.iter().map(|v| v.len()).collect();
+        let sample_first_quorum_pro_tx_hashes: Vec<String> = result
+            .first()
+            .map(|first| {
+                first
+                    .iter()
+                    .take(3)
+                    .map(|e| format!("{}", e.masternode_list_entry.pro_reg_tx_hash))
+                    .collect()
+            })
+            .unwrap_or_default();
+        tracing::debug!(
+            %quorum_modifier,
+            quorum_count_produced = result.len(),
+            per_index_first_8_sizes = ?per_index_sizes.iter().take(8).copied().collect::<Vec<_>>(),
+            ?sample_first_quorum_pro_tx_hashes,
+            "apply_skip_strategy: result"
+        );
+        result
     }
 }

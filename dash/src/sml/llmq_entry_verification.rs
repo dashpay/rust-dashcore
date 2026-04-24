@@ -14,6 +14,13 @@ pub enum LLMQEntryVerificationSkipStatus {
     NotMarkedForVerification,
     MissedList(CoreBlockHeight),
     UnknownBlock(BlockHash),
+    /// The quorum entry came through without an attached
+    /// `VerifyingChainLockSignaturesType::Rotating`. Typically happens when
+    /// a QRInfo's historical diff covers a block range in which no rotating
+    /// DKG successfully committed, so `apply_diff` extracts no
+    /// `rotation_sig` and `feed_qr_info` can't populate the 4-sig tuple for
+    /// the quorums in `lastCommitmentPerIndex`.
+    MissingRotationChainLockSigs(BlockHash),
     OtherContext(String),
 }
 
@@ -29,6 +36,9 @@ impl Display for LLMQEntryVerificationSkipStatus {
                 }
                 LLMQEntryVerificationSkipStatus::UnknownBlock(block_hash) => {
                     format!("UnknownBlock({})", block_hash)
+                }
+                LLMQEntryVerificationSkipStatus::MissingRotationChainLockSigs(quorum_hash) => {
+                    format!("MissingRotationChainLockSigs({})", quorum_hash)
                 }
                 LLMQEntryVerificationSkipStatus::OtherContext(message) => {
                     format!("OtherContext({message})")
@@ -49,6 +59,32 @@ pub enum LLMQEntryVerificationStatus {
     Skipped(LLMQEntryVerificationSkipStatus),
     Invalid(QuorumValidationError),
 }
+impl LLMQEntryVerificationStatus {
+    /// Classify a validation error as either `Skipped` (missing infrastructure
+    /// data that the caller should have provided) or `Invalid` (the quorum
+    /// data itself is genuinely bad).
+    pub fn from_validation_error(error: QuorumValidationError) -> Self {
+        match error {
+            QuorumValidationError::RequiredBlockNotPresent(block_hash, _) => {
+                Self::Skipped(LLMQEntryVerificationSkipStatus::UnknownBlock(block_hash))
+            }
+            QuorumValidationError::RequiredMasternodeListNotPresent(height)
+            | QuorumValidationError::RequiredBlockHeightNotPresent(height) => {
+                Self::Skipped(LLMQEntryVerificationSkipStatus::MissedList(height))
+            }
+            QuorumValidationError::RequiredSnapshotNotPresent(hash) => {
+                Self::Skipped(LLMQEntryVerificationSkipStatus::UnknownBlock(hash))
+            }
+            QuorumValidationError::RequiredRotatedChainLockSigsNotPresent(quorum_hash) => {
+                Self::Skipped(LLMQEntryVerificationSkipStatus::MissingRotationChainLockSigs(
+                    quorum_hash,
+                ))
+            }
+            other => Self::Invalid(other),
+        }
+    }
+}
+
 impl Display for LLMQEntryVerificationStatus {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         f.write_str(

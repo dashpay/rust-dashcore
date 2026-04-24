@@ -1,3 +1,4 @@
+use super::manager::PipelineMode;
 use crate::error::SyncResult;
 use crate::network::{Message, MessageType, RequestSender};
 use crate::storage::BlockHeaderStorage;
@@ -9,7 +10,6 @@ use async_trait::async_trait;
 use dashcore::network::message::NetworkMessage;
 use dashcore::network::message_qrinfo::QRInfo;
 use dashcore::sml::masternode_list_engine::{MasternodeListEngine, WORK_DIFF_DEPTH};
-use dashcore::sml::quorum_validation_error::QuorumValidationError;
 use dashcore::{BlockHash, QuorumHash};
 use dashcore_hashes::Hash;
 use std::collections::{BTreeSet, HashSet};
@@ -20,10 +20,6 @@ const QRINFO_TIMEOUT_SECS: u64 = 15;
 
 /// Maximum number of retry attempts before giving up.
 const MAX_RETRY_ATTEMPTS: u8 = 3;
-
-/// Delay between retries when ChainLock is not yet available for the tip.
-/// ChainLocks typically propagate within a few seconds after a block is mined.
-const CHAINLOCK_RETRY_DELAY_SECS: u64 = 5;
 
 /// Build MnListDiff request pairs (base_hash, target_hash) for quorum validation.
 ///
@@ -235,43 +231,24 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
                 tracing::info!("Fed {} block heights to engine", fed);
 
                 // Feed QRInfo to engine first to populate masternode lists
-                if let Err(e) = engine.feed_qr_info(qr_info.clone(), true, true) {
-                    // Check if this is a tip ChainLock error (h - 0 means the tip block)
-                    // The QRInfo response always includes `mn_list_diff_tip` which is the current
-                    // chain tip. If the tip was just mined, the ChainLock hasn't propagated yet.
-                    let is_tip_chainlock_error = matches!(
-                        e,
-                        QuorumValidationError::RequiredRotatedChainLockSigNotPresent(0, _)
-                    );
-
-                    if is_tip_chainlock_error {
-                        self.sync_state.qrinfo_retry_count += 1;
-
-                        if self.sync_state.qrinfo_retry_count <= MAX_RETRY_ATTEMPTS {
-                            tracing::info!(
-                                "ChainLock not yet available for tip, scheduling retry {}/{} in {}s",
-                                self.sync_state.qrinfo_retry_count,
-                                MAX_RETRY_ATTEMPTS,
-                                CHAINLOCK_RETRY_DELAY_SECS
-                            );
-                            // Schedule a delayed retry - the tick handler will trigger it
-                            self.sync_state.chainlock_retry_after = Some(
-                                Instant::now() + Duration::from_secs(CHAINLOCK_RETRY_DELAY_SECS),
-                            );
-                            drop(engine);
-                            self.set_state(SyncState::Syncing);
-                            return Ok(vec![]);
-                        }
+                let engine_list_count_before = engine.masternode_lists.len();
+                let engine_tip_height_before = engine.masternode_lists.keys().next_back().copied();
+                let summary = match engine.feed_qr_info(qr_info.clone(), true, true) {
+                    Ok(summary) => summary,
+                    Err(e) => {
+                        tracing::error!(
+                            retries = self.sync_state.qrinfo_retry_count,
+                            tip_block_hash = %qr_info.mn_list_diff_tip.block_hash,
+                            h_block_hash = %qr_info.mn_list_diff_h.block_hash,
+                            last_commitment_count = qr_info.last_commitment_per_index.len(),
+                            engine_list_count_before,
+                            engine_tip_height_before = ?engine_tip_height_before,
+                            error = %e,
+                            "QRInfo feed_qr_info failed"
+                        );
+                        return Err(SyncError::MasternodeSyncFailed(e.to_string()));
                     }
-
-                    // For other errors or max retries reached, fail
-                    tracing::error!(
-                        "QRInfo failed after {} retries: {}",
-                        self.sync_state.qrinfo_retry_count,
-                        e
-                    );
-                    return Err(SyncError::MasternodeSyncFailed(e.to_string()));
-                }
+                };
 
                 // Populate known_mn_list_heights from engine after QRInfo processing
                 self.sync_state.known_mn_list_heights =
@@ -296,7 +273,31 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
                 drop(engine);
                 drop(storage);
 
-                // Queue and send MnListDiff requests via pipeline
+                if let Some(ref summary) = summary {
+                    tracing::info!(
+                        "QRInfo processed: stored_cycle_height={:?}, rotated_quorum_count={}, freshly_validated_count={}",
+                        summary.stored_cycle_height,
+                        summary.rotated_quorum_count,
+                        summary.freshly_validated_count,
+                    );
+                    // If every rotated quorum in this QRInfo went through the fresh-
+                    // validation path, mark the cycle validated so
+                    // `incremental_update_action` will return `MnListDiffOnly` for every
+                    // subsequent header in this cycle - no more QRInfo requests for this
+                    // cycle until the next boundary.
+                    if summary.all_freshly_validated() {
+                        if let Some(ref stored_cycle_height) = summary.stored_cycle_height {
+                            self.mark_cycle_validated(*stored_cycle_height);
+                        }
+                    }
+                }
+
+                // The historical diffs that follow a QRInfo run under QuorumValidation.
+                // Carry the summary on the mode so `complete_pipeline` can pass it
+                // into the resulting `MasternodeStateUpdated` event.
+                self.sync_state.pipeline_mode = PipelineMode::QuorumValidation {
+                    qr_info_summary: summary,
+                };
                 self.sync_state.mnlistdiff_pipeline.queue_requests(request_pairs);
                 self.sync_state.mnlistdiff_pipeline.send_pending(requests)?;
 
@@ -304,7 +305,7 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
 
                 // If no pending requests, complete
                 if !self.sync_state.has_pending_requests() {
-                    return self.verify_and_complete().await;
+                    return self.complete_pipeline().await;
                 }
             }
 
@@ -348,19 +349,22 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
                 let mut engine = self.engine.write().await;
                 engine.feed_block_height(target_height, diff.block_hash);
 
-                match engine.apply_diff(diff.clone(), Some(target_height), false, None) {
-                    Ok(_) => {
-                        self.sync_state.known_mn_list_heights.insert(target_height);
-                        tracing::debug!("Applied MnListDiff at height {}", target_height);
-                    }
-                    Err(e) => {
-                        tracing::warn!(
-                            "Failed to apply MnListDiff at height {}: {}",
-                            target_height,
-                            e
-                        );
-                    }
-                }
+                let apply_ok =
+                    match engine.apply_diff(diff.clone(), Some(target_height), false, None) {
+                        Ok(_) => {
+                            self.sync_state.known_mn_list_heights.insert(target_height);
+                            tracing::debug!("Applied MnListDiff at height {}", target_height);
+                            true
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                "Failed to apply MnListDiff at height {}: {}",
+                                target_height,
+                                e
+                            );
+                            false
+                        }
+                    };
                 drop(engine);
 
                 self.progress.add_diffs_processed(1);
@@ -369,8 +373,17 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
 
                 // Check if all responses received
                 if self.sync_state.mnlistdiff_pipeline.is_complete() {
+                    // In `Incremental` mode, a failed `apply_diff` means the engine
+                    // state is unchanged - skip completion to avoid emitting a
+                    // spurious `MasternodeStateUpdated` for stale state. The next
+                    // `BlockHeadersStored` event will re-drive an incremental update.
+                    if !apply_ok
+                        && matches!(self.sync_state.pipeline_mode, PipelineMode::Incremental)
+                    {
+                        return Ok(vec![]);
+                    }
                     tracing::info!("All MnListDiff responses received");
-                    return self.verify_and_complete().await;
+                    return self.complete_pipeline().await;
                 }
             }
 
@@ -396,18 +409,52 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
                 self.progress.update_target_height(*tip_height);
             }
 
-            // If Synced but behind, trigger incremental update to catch up with new blocks
+            // If Synced but behind, pick the pipeline mode for this tip update. The
+            // mode selector fires a full QRInfo only inside the current cycle's DKG
+            // mining window (and only while the cycle has not been freshly validated),
+            // and uses a targeted `GetMnListDiff` for tip updates in every other case -
+            // keeping the masternode list fresh on every new block without re-running
+            // rotated quorum validation.
             if self.state() == SyncState::Synced
                 && self.progress.current_height() < self.progress.block_header_tip_height()
             {
-                tracing::debug!(
-                    "New headers stored (tip: {}), updating masternode list from {}",
-                    tip_height,
-                    self.progress.current_height()
-                );
-                self.sync_state.qrinfo_retry_count = 0;
-                self.sync_state.clear_pending();
-                return self.send_qrinfo_for_tip(requests).await;
+                match self.next_pipeline_mode(*tip_height) {
+                    PipelineMode::QuorumValidation {
+                        ..
+                    } => {
+                        if self.sync_state.waiting_for_qrinfo {
+                            tracing::debug!(
+                                "New headers stored (tip: {}), QRInfo already in flight",
+                                tip_height,
+                            );
+                            return Ok(vec![]);
+                        }
+                        tracing::info!(
+                            tip_height,
+                            current_height = self.progress.current_height(),
+                            target_height = self.progress.block_header_tip_height(),
+                            waiting_for_qrinfo = self.sync_state.waiting_for_qrinfo,
+                            qrinfo_retry_count = self.sync_state.qrinfo_retry_count,
+                            "QRInfo dispatch reason: new BlockHeadersStored tip entered QuorumValidation"
+                        );
+                        tracing::debug!(
+                            "New headers stored (tip: {}), firing QRInfo from {}",
+                            tip_height,
+                            self.progress.current_height()
+                        );
+                        self.sync_state.qrinfo_retry_count = 0;
+                        self.sync_state.clear_pending();
+                        return self.send_qrinfo_for_tip(requests).await;
+                    }
+                    PipelineMode::Incremental => {
+                        tracing::debug!(
+                            "New headers stored (tip: {}), firing targeted MnListDiff from {}",
+                            tip_height,
+                            self.progress.current_height()
+                        );
+                        return self.send_tip_mnlistdiff_update(requests).await;
+                    }
+                }
             }
         }
 
@@ -439,18 +486,66 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
             };
 
             if should_restart {
-                // Use debug for incremental updates (when already Synced)
+                tracing::debug!(
+                    tip_height = *tip_height,
+                    current_height = self.progress.current_height(),
+                    state = ?self.state(),
+                    "Masternode sync: BlockHeaderSyncComplete will restart sync"
+                );
+                // A `BlockHeaderSyncComplete` event fires whenever the header pipeline
+                // catches up to the latest known tip, including after brief lags during
+                // normal runtime - so this branch runs both for initial sync AND for
+                // catch-ups from `Synced`. The two cases need different dispatch:
+                //
+                // - Initial sync (`WaitingForConnections` / `WaitForEvents` / stuck
+                //   `Syncing`): fire a full QRInfo unconditionally to seed the
+                //   masternode list engine from scratch.
+                // - Catch-up from `Synced`: route through `next_pipeline_mode` so that
+                //   the gate picks QRInfo vs targeted `GetMnListDiff` based on where
+                //   the tip sits relative to the current cycle's DKG mining window,
+                //   matching the `BlockHeadersStored` per-block path. Bypassing the
+                //   gate here would cause a full QRInfo on every batch catch-up,
+                //   which fires several times per cycle even when the cycle is
+                //   already freshly-validated and the tip should just be refreshed
+                //   with a targeted mnlistdiff.
                 if self.state() == SyncState::Synced {
                     tracing::debug!(
                         "Headers sync complete at {}, updating masternode list",
                         self.progress.block_header_tip_height()
                     );
-                } else {
-                    tracing::info!(
-                        "Headers sync complete at {}, starting masternode sync",
-                        self.progress.block_header_tip_height()
-                    );
+                    match self.next_pipeline_mode(*tip_height) {
+                        PipelineMode::QuorumValidation {
+                            ..
+                        } => {
+                            if self.sync_state.waiting_for_qrinfo {
+                                tracing::debug!(
+                                    "Headers sync complete at {}, QRInfo already in flight",
+                                    self.progress.block_header_tip_height()
+                                );
+                                return Ok(vec![]);
+                            }
+                            tracing::info!(
+                                tip_height = *tip_height,
+                                current_height = self.progress.current_height(),
+                                target_height = self.progress.block_header_tip_height(),
+                                waiting_for_qrinfo = self.sync_state.waiting_for_qrinfo,
+                                qrinfo_retry_count = self.sync_state.qrinfo_retry_count,
+                                "QRInfo dispatch reason: BlockHeaderSyncComplete catch-up entered QuorumValidation"
+                            );
+                            self.sync_state.qrinfo_retry_count = 0;
+                            self.sync_state.clear_pending();
+                            return self.send_qrinfo_for_tip(requests).await;
+                        }
+                        PipelineMode::Incremental => {
+                            return self.send_tip_mnlistdiff_update(requests).await;
+                        }
+                    }
                 }
+                tracing::info!(
+                    tip_height = self.progress.block_header_tip_height(),
+                    state = ?self.state(),
+                    "Headers sync complete, starting masternode sync (initial-sync branch, bypasses mining-window gate)"
+                );
                 self.sync_state.qrinfo_retry_count = 0;
                 self.sync_state.clear_pending();
                 return self.send_qrinfo_for_tip(requests).await;
@@ -466,8 +561,37 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
             return Ok(vec![]);
         }
 
-        // If Synced with no pending requests, nothing to do
+        // If Synced with no pending requests, check whether new headers arrived
+        // while the initial sync was in progress. BlockHeadersStored events that
+        // landed during Syncing state updated block_header_tip_height but couldn't
+        // trigger an incremental update (the handler requires Synced). The tick
+        // catches this gap and fires the appropriate pipeline.
         if self.state() == SyncState::Synced && !self.sync_state.has_pending_requests() {
+            if self.progress.current_height() < self.progress.block_header_tip_height() {
+                let tip = self.progress.block_header_tip_height();
+                match self.next_pipeline_mode(tip) {
+                    PipelineMode::QuorumValidation {
+                        ..
+                    } => {
+                        if !self.sync_state.waiting_for_qrinfo {
+                            tracing::info!(
+                                tip_height = tip,
+                                current_height = self.progress.current_height(),
+                                target_height = self.progress.block_header_tip_height(),
+                                waiting_for_qrinfo = self.sync_state.waiting_for_qrinfo,
+                                qrinfo_retry_count = self.sync_state.qrinfo_retry_count,
+                                "QRInfo dispatch reason: tick sees synced manager behind tip in QuorumValidation mode"
+                            );
+                            self.sync_state.qrinfo_retry_count = 0;
+                            self.sync_state.clear_pending();
+                            return self.send_qrinfo_for_tip(requests).await;
+                        }
+                    }
+                    PipelineMode::Incremental => {
+                        return self.send_tip_mnlistdiff_update(requests).await;
+                    }
+                }
+            }
             return Ok(vec![]);
         }
 
@@ -498,7 +622,7 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
                             MAX_RETRY_ATTEMPTS
                         );
                         self.sync_state.clear_pending();
-                        return self.verify_and_complete().await;
+                        return self.complete_pipeline().await;
                     }
                 }
             }
@@ -515,7 +639,7 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
             // Check if complete after handling timeouts
             if self.sync_state.mnlistdiff_pipeline.is_complete() {
                 tracing::info!("MnListDiff pipeline complete");
-                return self.verify_and_complete().await;
+                return self.complete_pipeline().await;
             }
         }
 

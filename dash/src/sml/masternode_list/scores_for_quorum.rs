@@ -35,16 +35,36 @@ impl MasternodeList {
         network: Network,
     ) -> (Vec<&QualifiedMasternodeListEntry>, Vec<&QualifiedMasternodeListEntry>) {
         let hpmn_only = quorum_llmq_type == network.platform_type();
-        let quorum_modifier = quorum_modifier.build_llmq_hash();
-        let score_dictionary = self.scores_for_quorum(quorum_modifier, hpmn_only);
+        let quorum_modifier_hash = quorum_modifier.build_llmq_hash();
+        let score_dictionary = self.scores_for_quorum(quorum_modifier_hash, hpmn_only);
+        let scored_count = score_dictionary.len();
         let masternode_entry_list: Vec<&QualifiedMasternodeListEntry> =
             score_dictionary.into_values().rev().collect();
+        let bitset_true_count =
+            quorum_snapshot.active_quorum_members.iter().filter(|b| **b).count();
         let mut i = 0;
-        masternode_entry_list.into_iter().partition(|_| {
+        let (used, unused): (
+            Vec<&QualifiedMasternodeListEntry>,
+            Vec<&QualifiedMasternodeListEntry>,
+        ) = masternode_entry_list.into_iter().partition(|_| {
             let used = quorum_snapshot.active_quorum_members.get(i).copied().unwrap_or_default();
             i += 1;
             used
-        })
+        });
+        tracing::debug!(
+            list_height = self.known_height,
+            list_block_hash = %self.block_hash,
+            ?quorum_llmq_type,
+            hpmn_only,
+            scored_masternodes = scored_count,
+            active_quorum_members_len = quorum_snapshot.active_quorum_members.len(),
+            active_quorum_members_set = bitset_true_count,
+            used_count = used.len(),
+            unused_count = unused.len(),
+            quorum_modifier_hash = %quorum_modifier_hash,
+            "used_and_unused_masternodes_for_quorum: scored and partitioned"
+        );
+        (used, unused)
     }
 
     pub fn scores_for_quorum_for_masternodes<'a, T>(

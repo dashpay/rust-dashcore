@@ -161,7 +161,25 @@ impl MasternodeList {
             diff_end_height,
         );
 
-        Ok((builder.build(), rotating_sig))
+        let new_list = builder.build();
+        let rotating_quorum_count = new_list
+            .quorums
+            .iter()
+            .filter(|(t, _)| t.is_rotating_quorum_type())
+            .map(|(_, qs)| qs.len())
+            .sum::<usize>();
+        tracing::debug!(
+            target_height = diff_end_height,
+            target_hash = %new_list.block_hash,
+            base_hash = %self.block_hash,
+            total_masternodes = new_list.masternodes.len(),
+            rotating_quorums_on_list = rotating_quorum_count,
+            rotating_sig_present = rotating_sig.is_some(),
+            rotating_sig = rotating_sig.map(|s| s.to_string()).unwrap_or_default(),
+            "apply_diff completed"
+        );
+
+        Ok((new_list, rotating_sig))
     }
 }
 

@@ -109,11 +109,9 @@ impl MasternodeListEngine {
         let masternodes_by_quorum_hash = match self.find_rotated_masternodes_for_quorums(quorums) {
             Ok(masternodes_by_quorum_hash) => masternodes_by_quorum_hash,
             Err(e) => {
+                let status = LLMQEntryVerificationStatus::from_validation_error(e);
                 for quorum in quorums {
-                    return_statuses.insert(
-                        quorum.quorum_entry.quorum_hash,
-                        LLMQEntryVerificationStatus::Invalid(e.clone()),
-                    );
+                    return_statuses.insert(quorum.quorum_entry.quorum_hash, status.clone());
                 }
                 return return_statuses;
             }

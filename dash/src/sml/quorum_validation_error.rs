@@ -5,6 +5,7 @@ use thiserror::Error;
 use crate::prelude::CoreBlockHeight;
 use crate::sml::error::SmlError;
 use crate::sml::llmq_type::LLMQType;
+use crate::sml::masternode_list_engine::RotationChainLockSignatureSlot;
 use crate::{BlockHash, QuorumHash};
 
 #[derive(Debug, Error, Clone, Ord, PartialOrd, PartialEq, Hash, Eq)]
@@ -101,6 +102,17 @@ pub enum QuorumValidationError {
     /// Error indicating that a required feature is not turned on.
     #[error("Feature not turned on: {0}")]
     FeatureNotTurnedOn(String),
+
+    /// Returned when one or more rotation ChainLock signatures are missing.
+    /// The `missing` vector lists every absent slot.
+    #[error("Missing rotation ChainLock signatures in QRInfo: {}", format_missing_slots(missing))]
+    MissingRotationSignatures {
+        missing: Vec<RotationChainLockSignatureSlot>,
+    },
+}
+
+fn format_missing_slots(slots: &[RotationChainLockSignatureSlot]) -> String {
+    slots.iter().map(|s| s.legacy_short_name()).collect::<Vec<_>>().join(", ")
 }
 
 impl From<SmlError> for QuorumValidationError {

@@ -42,7 +42,7 @@ impl MasternodeList {
                 }
             }
         }
-        let unused_at_h_masternodes = self
+        let unused_at_h_masternodes: Vec<&QualifiedMasternodeListEntry> = self
             .masternodes
             .values()
             .filter(|mn| {
@@ -53,6 +53,21 @@ impl MasternodeList {
                     })
             })
             .collect();
+        let valid_mns =
+            self.masternodes.values().filter(|mn| mn.masternode_list_entry.is_valid).count();
+        let per_index_sizes: Vec<usize> =
+            used_indexed_masternodes.iter().map(|v| v.len()).collect();
+        tracing::debug!(
+            list_height = self.known_height,
+            list_block_hash = %self.block_hash,
+            total_masternodes = self.masternodes.len(),
+            valid_masternodes = valid_mns,
+            used_masternodes = used_masternodes.len(),
+            unused_at_h_masternodes = unused_at_h_masternodes.len(),
+            quorum_count,
+            used_indexed_first_8_sizes = ?per_index_sizes.iter().take(8).copied().collect::<Vec<_>>(),
+            "usage_info: partition complete"
+        );
         (used_masternodes, unused_at_h_masternodes, used_indexed_masternodes)
     }
 }

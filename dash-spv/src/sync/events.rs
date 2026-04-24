@@ -1,6 +1,7 @@
 use crate::sync::ManagerIdentifier;
 use dashcore::ephemerealdata::chain_lock::ChainLock;
 use dashcore::ephemerealdata::instant_lock::InstantLock;
+use dashcore::sml::masternode_list_engine::QRInfoFeedSummary;
 use dashcore::{Address, BlockHash, Txid};
 use key_wallet_manager::FilterMatchKey;
 use std::collections::BTreeSet;
@@ -110,6 +111,14 @@ pub enum SyncEvent {
     MasternodeStateUpdated {
         /// New masternode state height
         height: u32,
+        /// QRInfo processing summary when this update came through the
+        /// QuorumValidation pipeline. `None` for Incremental (MnListDiff-only)
+        /// updates. Consumers that care about rotation cycle storage (e.g.
+        /// IS lock verification across rotation) can gate on
+        /// `summary.all_freshly_validated()` together with
+        /// `summary.stored_cycle_height` to know which cycle was freshly
+        /// stored in `rotated_quorums_per_cycle` by this update.
+        qr_info_summary: Option<QRInfoFeedSummary>,
     },
 
     /// A manager encountered a recoverable error.
@@ -217,9 +226,17 @@ impl SyncEvent {
             }
             SyncEvent::MasternodeStateUpdated {
                 height,
-            } => {
-                format!("MasternodeStateUpdated(height={})", height)
-            }
+                qr_info_summary,
+            } => match qr_info_summary {
+                Some(s) => format!(
+                    "MasternodeStateUpdated(height={}, qr_info={{stored_cycle_height={:?}, freshly_validated={}/{}}})",
+                    height,
+                    s.stored_cycle_height,
+                    s.freshly_validated_count,
+                    s.rotated_quorum_count,
+                ),
+                None => format!("MasternodeStateUpdated(height={})", height),
+            },
             SyncEvent::ManagerError {
                 manager,
                 error,

@@ -173,7 +173,11 @@ pub trait SyncManager: Send + Sync + std::fmt::Debug {
                 self.update_target_height(*best_height);
             }
             if *connected_count == 0 {
-                tracing::info!("{} - no peers available, stopping sync", self.identifier());
+                tracing::info!(
+                    manager = %self.identifier(),
+                    prior_state = ?self.state(),
+                    "No peers available, stopping sync (state → WaitingForConnections, in-flight cleared)"
+                );
                 self.stop_sync();
             } else if *connected_count > 0 && self.state() == SyncState::WaitingForConnections {
                 tracing::info!(
