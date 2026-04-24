@@ -3,25 +3,13 @@
 use crate::{
     current_timestamp, WalletCoreBalance, WalletError, WalletEvent, WalletId, WalletManager,
 };
-use dashcore::prelude::CoreBlockHeight;
 use key_wallet::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
 use key_wallet::wallet::managed_wallet_info::TransactionRecord;
 use key_wallet::{Account, Address, Network, Utxo, Wallet};
 use std::collections::{BTreeMap, BTreeSet};
 use tokio::sync::broadcast;
 
-impl<T: WalletInfoInterface> WalletManager<T> {
-    /// Return the highest last-processed height across all managed wallets.
-    pub fn last_processed_height(&self) -> CoreBlockHeight {
-        self.wallet_infos.values().map(|info| info.last_processed_height()).max().unwrap_or(0)
-    }
-
-    /// Return the lowest durable sync checkpoint height across all managed wallets.
-    /// This is the conservative floor used as the filter-sync resume point.
-    pub fn synced_height(&self) -> CoreBlockHeight {
-        self.wallet_infos.values().map(|info| info.synced_height()).min().unwrap_or(0)
-    }
-
+impl<T: WalletInfoInterface + Send + Sync + 'static> WalletManager<T> {
     /// Get a wallet by ID
     pub fn get_wallet(&self, wallet_id: &WalletId) -> Option<&Wallet> {
         self.wallets.get(wallet_id)

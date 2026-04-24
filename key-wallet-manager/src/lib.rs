@@ -87,7 +87,7 @@ pub struct CheckTransactionsResult {
 /// Each wallet can contain multiple accounts following BIP44 standard.
 /// This is the main entry point for wallet operations.
 #[derive(Debug)]
-pub struct WalletManager<T: WalletInfoInterface = ManagedWalletInfo> {
+pub struct WalletManager<T: WalletInfoInterface + Send + Sync + 'static = ManagedWalletInfo> {
     /// Network the managed wallets are used for
     network: Network,
     /// Immutable wallets indexed by wallet ID
@@ -102,7 +102,7 @@ pub struct WalletManager<T: WalletInfoInterface = ManagedWalletInfo> {
     event_sender: broadcast::Sender<WalletEvent>,
 }
 
-impl<T: WalletInfoInterface> WalletManager<T> {
+impl<T: WalletInfoInterface + Send + Sync + 'static> WalletManager<T> {
     /// Create a new wallet manager
     pub fn new(network: Network) -> Self {
         Self {
