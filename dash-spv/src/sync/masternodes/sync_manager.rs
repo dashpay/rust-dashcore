@@ -235,8 +235,8 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
                 tracing::info!("Fed {} block heights to engine", fed);
 
                 // Feed QRInfo to engine first to populate masternode lists
-                let summary = match engine.feed_qr_info(qr_info.clone(), true, true) {
-                    Ok(summary) => summary,
+                let result = match engine.feed_qr_info(qr_info.clone(), true, true) {
+                    Ok(result) => result,
                     Err(e) => {
                         // Check if this is a tip ChainLock error (h - 0 means the tip block)
                         // The QRInfo response always includes `mn_list_diff_tip` which is the
@@ -301,12 +301,12 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
                 drop(engine);
                 drop(storage);
 
-                if let Some(summary) = summary {
+                if let Some(result) = result {
                     tracing::info!(
                         "QRInfo processed: stored_cycle_height={:?}, rotated_quorum_count={}, freshly_validated_count={}",
-                        summary.stored_cycle_height,
-                        summary.rotated_quorum_count,
-                        summary.freshly_validated_count,
+                        result.stored_cycle_height,
+                        result.rotated_quorum_count,
+                        result.freshly_validated_count,
                     );
                 }
 
