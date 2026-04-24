@@ -442,7 +442,7 @@ mod tests {
         let height = unsafe { wallet_manager::wallet_manager_current_height(manager, error) };
         assert_eq!(height, 0);
 
-        // Update height
+        // Updating last-processed height without wallets is a no-op
         let new_height = 12345;
         unsafe {
             let manager_ref = &*manager;
@@ -455,7 +455,7 @@ mod tests {
         // Get updated height
         let current_height =
             unsafe { wallet_manager::wallet_manager_current_height(manager, error) };
-        assert_eq!(current_height, new_height);
+        assert_eq!(current_height, 0);
 
         // Clean up
         unsafe {

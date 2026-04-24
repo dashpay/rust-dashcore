@@ -18,6 +18,8 @@ pub struct WalletMetadata {
     pub birth_height: CoreBlockHeight,
     /// Last processed block height
     pub last_processed_height: CoreBlockHeight,
+    /// Sync checkpoint height
+    pub synced_height: CoreBlockHeight,
     /// Last sync timestamp
     pub last_synced: Option<u64>,
     /// Total transactions

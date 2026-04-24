@@ -89,9 +89,15 @@ pub trait WalletInfoInterface: Sized + WalletTransactionChecker + ManagedAccount
     /// Return the last fully processed height of the wallet.
     fn last_processed_height(&self) -> CoreBlockHeight;
 
+    /// Return the durable wallet sync checkpoint height.
+    fn synced_height(&self) -> CoreBlockHeight;
+
     /// Update chain state and process any matured transactions
     /// This should be called when the chain tip advances to a new height
     fn update_last_processed_height(&mut self, current_height: u32);
+
+    /// Record that the durable wallet sync checkpoint has advanced to `current_height`.
+    fn update_synced_height(&mut self, current_height: u32);
 
     /// Mark UTXOs for a transaction as InstantSend-locked across all accounts
     /// and update the corresponding transaction record context.
@@ -149,6 +155,10 @@ impl WalletInfoInterface for ManagedWalletInfo {
 
     fn last_processed_height(&self) -> CoreBlockHeight {
         self.metadata.last_processed_height
+    }
+
+    fn synced_height(&self) -> CoreBlockHeight {
+        self.metadata.synced_height
     }
 
     fn first_loaded_at(&self) -> u64 {
@@ -243,6 +253,10 @@ impl WalletInfoInterface for ManagedWalletInfo {
         self.metadata.last_processed_height = current_height;
         // Update cached balance
         self.update_balance();
+    }
+
+    fn update_synced_height(&mut self, current_height: u32) {
+        self.metadata.synced_height = current_height;
     }
 
     fn mark_instant_send_utxos(&mut self, txid: &Txid, lock: &InstantLock) -> bool {

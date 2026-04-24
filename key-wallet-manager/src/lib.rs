@@ -90,10 +90,6 @@ pub struct CheckTransactionsResult {
 pub struct WalletManager<T: WalletInfoInterface = ManagedWalletInfo> {
     /// Network the managed wallets are used for
     network: Network,
-    /// Last fully processed block height.
-    last_processed_height: CoreBlockHeight,
-    /// Height at which filter scanning was last committed.
-    synced_height: CoreBlockHeight,
     /// Immutable wallets indexed by wallet ID
     wallets: BTreeMap<WalletId, Wallet>,
     /// Mutable wallet info indexed by wallet ID
@@ -111,8 +107,6 @@ impl<T: WalletInfoInterface> WalletManager<T> {
     pub fn new(network: Network) -> Self {
         Self {
             network,
-            last_processed_height: 0,
-            synced_height: 0,
             wallets: BTreeMap::new(),
             wallet_infos: BTreeMap::new(),
             structural_revision: 0,
@@ -304,7 +298,7 @@ impl<T: WalletInfoInterface> WalletManager<T> {
 
         // Create managed wallet info
         let mut managed_info = T::from_wallet(&wallet);
-        managed_info.set_birth_height(self.last_processed_height);
+        managed_info.set_birth_height(self.last_processed_height());
         managed_info.set_first_loaded_at(current_timestamp());
 
         self.wallets.insert(wallet_id, wallet);
@@ -345,7 +339,7 @@ impl<T: WalletInfoInterface> WalletManager<T> {
 
         // Create managed wallet info
         let mut managed_info = T::from_wallet(&wallet);
-        managed_info.set_birth_height(self.last_processed_height);
+        managed_info.set_birth_height(self.last_processed_height());
         managed_info.set_first_loaded_at(current_timestamp());
 
         self.wallets.insert(wallet_id, wallet);
@@ -393,7 +387,7 @@ impl<T: WalletInfoInterface> WalletManager<T> {
 
         // Create managed wallet info
         let mut managed_info = T::from_wallet(&wallet);
-        managed_info.set_birth_height(self.last_processed_height);
+        managed_info.set_birth_height(self.last_processed_height());
         managed_info.set_first_loaded_at(current_timestamp());
 
         self.wallets.insert(wallet_id, wallet);
@@ -438,7 +432,7 @@ impl<T: WalletInfoInterface> WalletManager<T> {
         let mut managed_info = T::from_wallet(&wallet);
 
         // Use the current height as the birth height since we don't know when it was originally created
-        managed_info.set_birth_height(self.last_processed_height);
+        managed_info.set_birth_height(self.last_processed_height());
         managed_info.set_first_loaded_at(current_timestamp());
 
         self.wallets.insert(wallet_id, wallet);

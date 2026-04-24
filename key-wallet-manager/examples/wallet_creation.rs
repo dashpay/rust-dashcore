@@ -142,11 +142,11 @@ fn main() {
     // Example 7: Block height tracking
     println!("\n7. Block height tracking...");
 
-    println!("   Current height (Testnet): {:?}", manager.last_processed_height());
+    println!("   Current last-processed height (Testnet): {:?}", manager.last_processed_height());
 
-    // Update height
+    // Update last-processed height across all managed wallets
     manager.update_last_processed_height(850_000);
-    println!("   Updated height to: {:?}", manager.last_processed_height());
+    println!("   Updated last-processed height to: {:?}", manager.last_processed_height());
 
     println!("\n=== Summary ===");
     println!("Total wallets created: {}", manager.wallet_count());

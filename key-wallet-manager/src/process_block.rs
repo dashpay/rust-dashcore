@@ -98,12 +98,10 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
     }
 
     fn last_processed_height(&self) -> CoreBlockHeight {
-        self.last_processed_height
+        self.wallet_infos.values().map(|info| info.last_processed_height()).max().unwrap_or(0)
     }
 
     fn update_last_processed_height(&mut self, height: CoreBlockHeight) {
-        self.last_processed_height = height;
-
         let snapshot = self.snapshot_balances();
 
         for (_wallet_id, info) in self.wallet_infos.iter_mut() {
@@ -114,13 +112,12 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
     }
 
     fn synced_height(&self) -> CoreBlockHeight {
-        self.synced_height
+        self.wallet_infos.values().map(|info| info.synced_height()).min().unwrap_or(0)
     }
 
     fn update_synced_height(&mut self, height: CoreBlockHeight) {
-        self.synced_height = height;
-        if height > self.last_processed_height {
-            self.update_last_processed_height(height);
+        for (_wallet_id, info) in self.wallet_infos.iter_mut() {
+            info.update_synced_height(height);
         }
     }
 
@@ -220,15 +217,14 @@ mod tests {
         let mut manager: WalletManager<ManagedWalletInfo> = WalletManager::new(Network::Testnet);
         // Initial state
         assert_eq!(manager.last_processed_height(), 0);
-        // Increase last processed height
+        // Updating last-processed height without wallets is a no-op
         manager.update_last_processed_height(1000);
-        assert_eq!(manager.last_processed_height(), 1000);
-        // Increase last processed height again
+        assert_eq!(manager.last_processed_height(), 0);
+        // Still a no-op without wallets
         manager.update_last_processed_height(5000);
-        assert_eq!(manager.last_processed_height(), 5000);
-        // Decrease last processed height
+        assert_eq!(manager.last_processed_height(), 0);
         manager.update_last_processed_height(10);
-        assert_eq!(manager.last_processed_height(), 10);
+        assert_eq!(manager.last_processed_height(), 0);
     }
 
     #[tokio::test]
