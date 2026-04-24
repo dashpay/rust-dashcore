@@ -10,7 +10,7 @@ use std::ptr;
 
 use crate::error::{FFIError, FFIErrorCode};
 use crate::types::FFIWallet;
-use crate::{check_ptr, deref_ptr, deref_ptr_mut};
+use crate::{check_ptr, deref_ptr, deref_ptr_mut, unwrap_or_return};
 use key_wallet::managed_account::address_pool::KeySource;
 use key_wallet::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
@@ -62,55 +62,22 @@ pub unsafe extern "C" fn managed_wallet_get_next_bip44_receive_address(
     let wallet = deref_ptr!(wallet, error);
 
     // Get the specific managed account (default to BIP44)
-    let managed_account =
-        match managed_wallet.inner_mut().accounts.standard_bip44_accounts.get_mut(&account_index) {
-            Some(account) => account,
-            None => {
-                (*error).set(
-                    FFIErrorCode::WalletError,
-                    &format!("Account {} not found", account_index),
-                );
-                return ptr::null_mut();
-            }
-        };
+    let managed_account = unwrap_or_return!(
+        managed_wallet.inner_mut().accounts.standard_bip44_accounts.get_mut(&account_index),
+        error
+    );
 
     // Get the account from the wallet to get the extended public key
-    let account = match wallet.wallet.accounts.standard_bip44_accounts.get(&account_index) {
-        Some(account) => account,
-        None => {
-            (*error).set(
-                FFIErrorCode::WalletError,
-                &format!("Account {} not found in wallet", account_index),
-            );
-            return ptr::null_mut();
-        }
-    };
+    let account = unwrap_or_return!(
+        wallet.wallet.accounts.standard_bip44_accounts.get(&account_index),
+        error
+    );
 
     // Generate the next receive address
     let xpub = account.extended_public_key();
-    match managed_account.next_receive_address(Some(&xpub), true) {
-        Ok(address) => {
-            let address_str = address.to_string();
-            match CString::new(address_str) {
-                Ok(c_str) => {
-                    (*error).clean();
-                    c_str.into_raw()
-                }
-                Err(_) => {
-                    (*error)
-                        .set(FFIErrorCode::WalletError, "Failed to convert address to C string");
-                    ptr::null_mut()
-                }
-            }
-        }
-        Err(e) => {
-            (*error).set(
-                FFIErrorCode::WalletError,
-                &format!("Failed to generate receive address: {}", e),
-            );
-            ptr::null_mut()
-        }
-    }
+    let address = unwrap_or_return!(managed_account.next_receive_address(Some(&xpub), true), error)
+        .to_string();
+    unwrap_or_return!(CString::new(address), error).into_raw()
 }
 
 /// Get the next unused change address
@@ -135,55 +102,23 @@ pub unsafe extern "C" fn managed_wallet_get_next_bip44_change_address(
     let wallet = deref_ptr!(wallet, error);
 
     // Get the specific managed account (default to BIP44)
-    let managed_account =
-        match managed_wallet.inner_mut().accounts.standard_bip44_accounts.get_mut(&account_index) {
-            Some(account) => account,
-            None => {
-                (*error).set(
-                    FFIErrorCode::WalletError,
-                    &format!("Account {} not found", account_index),
-                );
-                return ptr::null_mut();
-            }
-        };
+    let managed_account = unwrap_or_return!(
+        managed_wallet.inner_mut().accounts.standard_bip44_accounts.get_mut(&account_index),
+        error
+    );
 
     // Get the account from the wallet to get the extended public key
-    let account = match wallet.wallet.accounts.standard_bip44_accounts.get(&account_index) {
-        Some(account) => account,
-        None => {
-            (*error).set(
-                FFIErrorCode::WalletError,
-                &format!("Account {} not found in wallet", account_index),
-            );
-            return ptr::null_mut();
-        }
-    };
+    let account = unwrap_or_return!(
+        wallet.wallet.accounts.standard_bip44_accounts.get(&account_index),
+        error
+    );
 
     // Generate the next change address
     let xpub = account.extended_public_key();
-    match managed_account.next_change_address(Some(&xpub), true) {
-        Ok(address) => {
-            let address_str = address.to_string();
-            match CString::new(address_str) {
-                Ok(c_str) => {
-                    (*error).clean();
-                    c_str.into_raw()
-                }
-                Err(_) => {
-                    (*error)
-                        .set(FFIErrorCode::WalletError, "Failed to convert address to C string");
-                    ptr::null_mut()
-                }
-            }
-        }
-        Err(e) => {
-            (*error).set(
-                FFIErrorCode::WalletError,
-                &format!("Failed to generate change address: {}", e),
-            );
-            ptr::null_mut()
-        }
-    }
+    let next_change_address =
+        unwrap_or_return!(managed_account.next_change_address(Some(&xpub), true), error)
+            .to_string();
+    unwrap_or_return!(CString::new(next_change_address), error).into_raw()
 }
 
 /// Get BIP44 external (receive) addresses in the specified range
@@ -216,33 +151,16 @@ pub unsafe extern "C" fn managed_wallet_get_bip_44_external_address_range(
     let wallet = deref_ptr!(wallet, error);
 
     // Get the specific managed account (BIP44)
-    let managed_account =
-        match managed_wallet.inner_mut().accounts.standard_bip44_accounts.get_mut(&account_index) {
-            Some(account) => account,
-            None => {
-                (*error).set(
-                    FFIErrorCode::WalletError,
-                    &format!("BIP44 account {} not found", account_index),
-                );
-                *count_out = 0;
-                *addresses_out = ptr::null_mut();
-                return false;
-            }
-        };
+    let managed_account = unwrap_or_return!(
+        managed_wallet.inner_mut().accounts.standard_bip44_accounts.get_mut(&account_index),
+        error
+    );
 
     // Get the account from the wallet to get the extended public key
-    let account = match wallet.wallet.accounts.standard_bip44_accounts.get(&account_index) {
-        Some(account) => account,
-        None => {
-            (*error).set(
-                FFIErrorCode::WalletError,
-                &format!("Account {} not found in wallet", account_index),
-            );
-            *count_out = 0;
-            *addresses_out = ptr::null_mut();
-            return false;
-        }
-    };
+    let account = unwrap_or_return!(
+        wallet.wallet.accounts.standard_bip44_accounts.get(&account_index),
+        error
+    );
 
     // Get external addresses in the range
     let xpub = account.extended_public_key();
@@ -254,16 +172,10 @@ pub unsafe extern "C" fn managed_wallet_get_bip_44_external_address_range(
         ..
     } = &mut managed_account.account_type
     {
-        match external_addresses.address_range(start_index, end_index, &key_source) {
-            Ok(addrs) => addrs,
-            Err(e) => {
-                (*error)
-                    .set(FFIErrorCode::WalletError, &format!("Failed to get address range: {}", e));
-                *count_out = 0;
-                *addresses_out = ptr::null_mut();
-                return false;
-            }
-        }
+        unwrap_or_return!(
+            external_addresses.address_range(start_index, end_index, &key_source),
+            error
+        )
     } else {
         (*error).set(FFIErrorCode::WalletError, "Account is not a standard BIP44 account");
         *count_out = 0;
@@ -274,19 +186,8 @@ pub unsafe extern "C" fn managed_wallet_get_bip_44_external_address_range(
     // Convert addresses to C strings
     let mut c_addresses = Vec::with_capacity(addresses.len());
     for address in addresses {
-        match CString::new(address.to_string()) {
-            Ok(c_str) => c_addresses.push(c_str.into_raw()),
-            Err(_) => {
-                // Clean up already allocated strings
-                for ptr in c_addresses {
-                    let _ = CString::from_raw(ptr);
-                }
-                (*error).set(FFIErrorCode::WalletError, "Failed to convert address to C string");
-                *count_out = 0;
-                *addresses_out = ptr::null_mut();
-                return false;
-            }
-        }
+        let c_str = unwrap_or_return!(CString::new(address.to_string()), error).into_raw();
+        c_addresses.push(c_str);
     }
 
     // Convert Vec to Box<[*mut c_char]> and leak it properly
@@ -330,33 +231,16 @@ pub unsafe extern "C" fn managed_wallet_get_bip_44_internal_address_range(
     let wallet = deref_ptr!(wallet, error);
 
     // Get the specific managed account (BIP44)
-    let managed_account =
-        match managed_wallet.inner_mut().accounts.standard_bip44_accounts.get_mut(&account_index) {
-            Some(account) => account,
-            None => {
-                (*error).set(
-                    FFIErrorCode::WalletError,
-                    &format!("BIP44 account {} not found", account_index),
-                );
-                *count_out = 0;
-                *addresses_out = ptr::null_mut();
-                return false;
-            }
-        };
+    let managed_account = unwrap_or_return!(
+        managed_wallet.inner_mut().accounts.standard_bip44_accounts.get_mut(&account_index),
+        error
+    );
 
     // Get the account from the wallet to get the extended public key
-    let account = match wallet.wallet.accounts.standard_bip44_accounts.get(&account_index) {
-        Some(account) => account,
-        None => {
-            (*error).set(
-                FFIErrorCode::WalletError,
-                &format!("Account {} not found in wallet", account_index),
-            );
-            *count_out = 0;
-            *addresses_out = ptr::null_mut();
-            return false;
-        }
-    };
+    let account = unwrap_or_return!(
+        wallet.wallet.accounts.standard_bip44_accounts.get(&account_index),
+        error
+    );
 
     // Get internal addresses in the range
     let xpub = account.extended_public_key();
@@ -368,16 +252,10 @@ pub unsafe extern "C" fn managed_wallet_get_bip_44_internal_address_range(
         ..
     } = &mut managed_account.account_type
     {
-        match internal_addresses.address_range(start_index, end_index, &key_source) {
-            Ok(addrs) => addrs,
-            Err(e) => {
-                (*error)
-                    .set(FFIErrorCode::WalletError, &format!("Failed to get address range: {}", e));
-                *count_out = 0;
-                *addresses_out = ptr::null_mut();
-                return false;
-            }
-        }
+        unwrap_or_return!(
+            internal_addresses.address_range(start_index, end_index, &key_source),
+            error
+        )
     } else {
         (*error).set(FFIErrorCode::WalletError, "Account is not a standard BIP44 account");
         *count_out = 0;
@@ -388,19 +266,8 @@ pub unsafe extern "C" fn managed_wallet_get_bip_44_internal_address_range(
     // Convert addresses to C strings
     let mut c_addresses = Vec::with_capacity(addresses.len());
     for address in addresses {
-        match CString::new(address.to_string()) {
-            Ok(c_str) => c_addresses.push(c_str.into_raw()),
-            Err(_) => {
-                // Clean up already allocated strings
-                for ptr in c_addresses {
-                    let _ = CString::from_raw(ptr);
-                }
-                (*error).set(FFIErrorCode::WalletError, "Failed to convert address to C string");
-                *count_out = 0;
-                *addresses_out = ptr::null_mut();
-                return false;
-            }
-        }
+        let c_str = unwrap_or_return!(CString::new(address.to_string()), error).into_raw();
+        c_addresses.push(c_str);
     }
 
     // Convert Vec to Box<[*mut c_char]> and leak it properly

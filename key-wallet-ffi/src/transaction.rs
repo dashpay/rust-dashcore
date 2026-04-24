@@ -121,51 +121,24 @@ pub unsafe extern "C" fn wallet_build_and_sign_transaction(
             let wallet_id = wallet_ref.inner().wallet_id;
 
             // Get change address through the manager
-            let change_address = match manager.get_change_address(
-                &wallet_id,
-                account_index,
-                AccountTypePreference::BIP44,
-                true,
-            ) {
-                Ok(result) => match result.address {
-                    Some(addr) => addr,
-                    None => {
-                        (*error).set(FFIErrorCode::WalletError, "No change address available");
-                        return false;
-                    }
-                },
-                Err(e) => {
-                    (*error).set(
-                        FFIErrorCode::WalletError,
-                        &format!("Failed to get change address: {}", e),
-                    );
-                    return false;
-                }
-            };
+            let result = unwrap_or_return!(
+                manager.get_change_address(
+                    &wallet_id,
+                    account_index,
+                    AccountTypePreference::BIP44,
+                    true,
+                ),
+                error
+            );
+            let change_address = unwrap_or_return!(result.address, error);
 
             // Get the managed account for UTXOs and signing data
-            let managed_wallet = match manager.get_wallet_info_mut(&wallet_id) {
-                Some(info) => info,
-                None => {
-                    (*error).set(
-                        FFIErrorCode::InvalidInput,
-                        "Could not obtain ManagedWalletInfo for the provided wallet",
-                    );
-                    return false;
-                }
-            };
+            let managed_wallet = unwrap_or_return!(manager.get_wallet_info_mut(&wallet_id), error);
 
-            let managed_account =
-                match managed_wallet.accounts.standard_bip44_accounts.get_mut(&account_index) {
-                    Some(account) => account,
-                    None => {
-                        (*error).set(
-                            FFIErrorCode::WalletError,
-                            &format!("Account {} not found", account_index),
-                        );
-                        return false;
-                    }
-                };
+            let managed_account = unwrap_or_return!(
+                managed_wallet.accounts.standard_bip44_accounts.get_mut(&account_index),
+                error
+            );
 
             // Convert FFI outputs to Rust outputs
             let mut tx_builder = TransactionBuilder::new();
@@ -177,13 +150,7 @@ pub unsafe extern "C" fn wallet_build_and_sign_transaction(
                 }
 
                 // Convert address from C string
-                let address_str = match CStr::from_ptr(output.address).to_str() {
-                    Ok(s) => s,
-                    Err(_) => {
-                        (*error).set(FFIErrorCode::InvalidInput, "Invalid UTF-8 in output address");
-                        return false;
-                    }
-                };
+                let address_str = unwrap_or_return!(CStr::from_ptr(output.address).to_str(), error);
 
                 // Parse address using dashcore
                 use std::str::FromStr;
@@ -191,16 +158,8 @@ pub unsafe extern "C" fn wallet_build_and_sign_transaction(
                 let address = unwrap_or_return!(parsed.require_network(network_rust), error);
 
                 // Add output
-                tx_builder = match tx_builder.add_output(&address, output.amount) {
-                    Ok(builder) => builder,
-                    Err(e) => {
-                        (*error).set(
-                            FFIErrorCode::WalletError,
-                            &format!("Failed to add output: {}", e),
-                        );
-                        return false;
-                    }
-                };
+                tx_builder =
+                    unwrap_or_return!(tx_builder.add_output(&address, output.amount), error);
             }
 
             tx_builder = tx_builder
@@ -242,7 +201,7 @@ pub unsafe extern "C" fn wallet_build_and_sign_transaction(
             }
 
             // Select inputs and build transaction
-            let mut tx_builder_with_inputs = match tx_builder.select_inputs(
+            let select_inputs_result = tx_builder.select_inputs(
                 &utxos,
                 SelectionStrategy::BranchAndBound,
                 managed_wallet.last_processed_height(),
@@ -257,26 +216,9 @@ pub unsafe extern "C" fn wallet_build_and_sign_transaction(
 
                     Some(derived_xpriv.private_key)
                 },
-            ) {
-                Ok(builder) => builder,
-                Err(e) => {
-                    (*error)
-                        .set(FFIErrorCode::WalletError, &format!("Coin selection failed: {}", e));
-                    return false;
-                }
-            };
-
-            // Build and sign the transaction
-            let transaction = match tx_builder_with_inputs.build() {
-                Ok(tx) => tx,
-                Err(e) => {
-                    (*error).set(
-                        FFIErrorCode::WalletError,
-                        &format!("Failed to build transaction: {}", e),
-                    );
-                    return false;
-                }
-            };
+            );
+            let mut tx_builder_with_inputs = unwrap_or_return!(select_inputs_result, error);
+            let transaction = unwrap_or_return!(tx_builder_with_inputs.build(), error);
 
             // This is tricky, the transaction creation + fee calculation need a little
             // bit of love to avoid this kind of logic.
@@ -355,18 +297,10 @@ pub unsafe extern "C" fn wallet_check_transaction(
             unwrap_or_return!(dashcore::Transaction::consensus_decode(&mut &tx_slice[..]), error);
 
         // Build the transaction context
-        let context = match transaction_context_from_ffi(
-            context_type,
-            &block_info,
-            islock_data,
-            islock_len,
-        ) {
-            Some(ctx) => ctx,
-            None => {
-                (*error).set(FFIErrorCode::InvalidInput, "Invalid transaction context: block info is zeroed for a confirmed context, or IS lock data is missing/malformed for InstantSend");
-                return false;
-            }
-        };
+        let context = unwrap_or_return!(
+            transaction_context_from_ffi(context_type, &block_info, islock_data, islock_len),
+            error
+        );
 
         // Create a ManagedWalletInfo from the wallet
         use key_wallet::transaction_checking::WalletTransactionChecker;
@@ -375,16 +309,7 @@ pub unsafe extern "C" fn wallet_check_transaction(
         let mut managed_info = ManagedWalletInfo::from_wallet(wallet.inner());
 
         // Check the transaction - wallet is always required now
-        let wallet_mut = match wallet.inner_mut() {
-            Some(w) => w,
-            None => {
-                (*error).set(
-                    FFIErrorCode::InternalError,
-                    "Cannot get mutable wallet reference (Arc has multiple owners)",
-                );
-                return false;
-            }
-        };
+        let wallet_mut = unwrap_or_return!(wallet.inner_mut(), error);
 
         // Block on the async check_transaction call
         let check_result = tokio::runtime::Handle::current().block_on(
@@ -996,26 +921,14 @@ pub unsafe extern "C" fn wallet_build_and_sign_asset_lock_transaction(
             let mut manager = manager_ref.manager.write().await;
             let wallet_id = wallet_ref.inner().wallet_id;
 
-            let managed_wallet = match manager.get_wallet_info_mut(&wallet_id) {
-                Some(info) => info,
-                None => {
-                    (*error).set(FFIErrorCode::InvalidInput, "Wallet not found");
-                    return false;
-                }
-            };
+            let managed_wallet = unwrap_or_return!(manager.get_wallet_info_mut(&wallet_id), error);
 
-            let result = match managed_wallet.build_asset_lock(
+            let result = unwrap_or_return!(managed_wallet.build_asset_lock(
                 wallet_ref.inner(),
                 account_index,
                 fundings,
                 fee_per_kb,
-            ) {
-                Ok(r) => r,
-                Err(e) => {
-                    (*error).set(FFIErrorCode::WalletError, &format!("{}", e));
-                    return false;
-                }
-            };
+            ), error);
 
             // Write outputs
             *fee_out = result.fee;

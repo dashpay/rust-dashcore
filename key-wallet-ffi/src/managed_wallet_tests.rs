@@ -148,7 +148,7 @@ mod tests {
             assert_eq!(error.code, FFIErrorCode::Success);
         } else {
             // Address validation might fail due to library version differences
-            assert!(error.code == FFIErrorCode::InvalidInput);
+            assert_eq!(error.code, FFIErrorCode::InvalidAddress);
         }
 
         unsafe {
@@ -168,7 +168,7 @@ mod tests {
         };
 
         assert!(!success);
-        assert_eq!(error.code, FFIErrorCode::InvalidInput);
+        assert_eq!(error.code, FFIErrorCode::InvalidAddress);
 
         unsafe {
             cleanup_fixture(manager, wallet, managed_wallet, wallet_ids, id_count);

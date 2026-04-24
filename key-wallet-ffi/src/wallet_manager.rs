@@ -8,7 +8,7 @@ mod tests;
 #[path = "wallet_manager_serialization_tests.rs"]
 mod serialization_tests;
 
-use crate::error::{FFIError, FFIErrorCode};
+use crate::error::FFIError;
 use crate::{check_ptr, deref_ptr, deref_ptr_mut, unwrap_or_return};
 use dash_network::ffi::FFINetwork;
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
@@ -105,19 +105,12 @@ pub unsafe extern "C" fn wallet_manager_create(
     error: *mut FFIError,
 ) -> *mut FFIWalletManager {
     let manager = WalletManager::new(network.into());
-    let runtime = match tokio::runtime::Runtime::new() {
-        Ok(rt) => Arc::new(rt),
-        Err(e) => {
-            (*error)
-                .set(FFIErrorCode::AllocationFailed, &format!("Failed to create runtime: {}", e));
-            return ptr::null_mut();
-        }
-    };
-    (*error).clean();
+    let runtime = unwrap_or_return!(tokio::runtime::Runtime::new(), error);
+
     Box::into_raw(Box::new(FFIWalletManager {
         network,
         manager: Arc::new(RwLock::new(manager)),
-        runtime,
+        runtime: Arc::new(runtime),
     }))
 }
 
@@ -515,16 +508,7 @@ pub unsafe extern "C" fn wallet_manager_process_transaction(
     let tx: Transaction = unwrap_or_return!(deserialize::<Transaction>(tx_slice), error);
 
     // Convert FFI context to native TransactionContext
-    let context = match unsafe { (*context).to_transaction_context() } {
-        Some(ctx) => ctx,
-        None => {
-            (*error).set(
-                FFIErrorCode::InvalidInput,
-                "Block info must not be zeroed for confirmed contexts",
-            );
-            return false;
-        }
-    };
+    let context = unwrap_or_return!(unsafe { (*context).to_transaction_context() }, error);
 
     // Process the transaction using async runtime
     let result = manager_ref.runtime.block_on(async {

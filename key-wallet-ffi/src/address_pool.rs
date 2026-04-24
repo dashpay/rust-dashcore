@@ -298,14 +298,10 @@ pub unsafe extern "C" fn managed_wallet_get_address_pool_info(
     let account_type_rust = account_type.to_account_type(account_index);
 
     // Get the specific managed account
-    let managed_account =
-        match get_managed_account_by_type(&managed_wallet.accounts, &account_type_rust) {
-            Some(account) => account,
-            None => {
-                (*error).set(FFIErrorCode::NotFound, "Account not found");
-                return false;
-            }
-        };
+    let managed_account = unwrap_or_return!(
+        get_managed_account_by_type(&managed_wallet.accounts, &account_type_rust),
+        error
+    );
 
     // Get the appropriate address pool
     let pool = match pool_type {
@@ -387,14 +383,10 @@ pub unsafe extern "C" fn managed_wallet_set_gap_limit(
     let account_type_rust = account_type.to_account_type(account_index);
 
     // Get the specific managed account
-    let managed_account =
-        match get_managed_account_by_type_mut(&mut managed_wallet.accounts, &account_type_rust) {
-            Some(account) => account,
-            None => {
-                (*error).set(FFIErrorCode::NotFound, "Account not found");
-                return false;
-            }
-        };
+    let managed_account = unwrap_or_return!(
+        get_managed_account_by_type_mut(&mut managed_wallet.accounts, &account_type_rust),
+        error
+    );
 
     // Get the appropriate address pool
     let pool = match pool_type {
@@ -466,40 +458,22 @@ pub unsafe extern "C" fn managed_wallet_generate_addresses_to_index(
 
     let account_type_rust = account_type.to_account_type(account_index);
 
-    let account_type_to_check = match account_type_rust.try_into() {
-        Ok(check_type) => check_type,
-        Err(_) => {
-            (*error).set(
-                FFIErrorCode::InvalidInput,
-                "Platform Payment accounts cannot be used for address pool operations",
-            );
-            return false;
-        }
-    };
+    let account_type_to_check = unwrap_or_return!(account_type_rust.try_into(), error);
 
-    let xpub_opt = wallet
-        .inner()
-        .extended_public_key_for_account_type(&account_type_to_check, Some(account_index));
-
-    let xpub = match xpub_opt {
-        Some(xpub) => xpub,
-        None => {
-            (*error).set(FFIErrorCode::NotFound, "Account not found in wallet");
-            return false;
-        }
-    };
+    let xpub = unwrap_or_return!(
+        wallet
+            .inner()
+            .extended_public_key_for_account_type(&account_type_to_check, Some(account_index)),
+        error
+    );
 
     let key_source = KeySource::Public(xpub);
 
     // Get the specific managed account
-    let managed_account =
-        match get_managed_account_by_type_mut(&mut managed_wallet.accounts, &account_type_rust) {
-            Some(account) => account,
-            None => {
-                (*error).set(FFIErrorCode::NotFound, "Account not found");
-                return false;
-            }
-        };
+    let managed_account = unwrap_or_return!(
+        get_managed_account_by_type_mut(&mut managed_wallet.accounts, &account_type_rust),
+        error
+    );
 
     // Get the appropriate address pool and generate addresses
     let result = match pool_type {
@@ -563,17 +537,8 @@ pub unsafe extern "C" fn managed_wallet_generate_addresses_to_index(
         }
     };
 
-    match result {
-        Ok(_) => {
-            (*error).clean();
-            true
-        }
-        Err(e) => {
-            (*error)
-                .set(FFIErrorCode::WalletError, &format!("Failed to generate addresses: {}", e));
-            false
-        }
-    }
+    let _ = unwrap_or_return!(result, error);
+    true
 }
 
 /// Mark an address as used in the pool
@@ -601,13 +566,8 @@ pub unsafe extern "C" fn managed_wallet_mark_address_used(
     use core::str::FromStr;
     use dashcore::address::{Address, NetworkUnchecked};
 
-    let unchecked_addr = match Address::<NetworkUnchecked>::from_str(address_str) {
-        Ok(addr) => addr,
-        Err(e) => {
-            (*error).set(FFIErrorCode::InvalidInput, &format!("Invalid address: {}", e));
-            return false;
-        }
-    };
+    let unchecked_addr =
+        unwrap_or_return!(Address::<NetworkUnchecked>::from_str(address_str), error);
 
     // Assume the address uses the same network we're working with
     let address = unchecked_addr.assume_checked();
@@ -760,17 +720,9 @@ pub unsafe extern "C" fn address_pool_get_address_at_index(
     let address_pool = &*pool.pool;
 
     // Get the address info at the specified index
-    match address_pool.info_at_index(index) {
-        Some(info) => {
-            let ffi_info = address_info_to_ffi(info);
-            (*error).clean();
-            Box::into_raw(Box::new(ffi_info))
-        }
-        None => {
-            (*error).set(FFIErrorCode::NotFound, &format!("No address at index {}", index));
-            std::ptr::null_mut()
-        }
-    }
+    let info = unwrap_or_return!(address_pool.info_at_index(index), error);
+    let ffi_info = address_info_to_ffi(info);
+    Box::into_raw(Box::new(ffi_info))
 }
 
 /// Get a range of addresses from the pool

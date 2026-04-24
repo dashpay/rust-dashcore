@@ -119,18 +119,10 @@ pub unsafe extern "C" fn managed_wallet_check_transaction(
     let tx = unwrap_or_return!(Transaction::consensus_decode(&mut &tx_slice[..]), error);
 
     // Build the transaction context
-    let context = match transaction_context_from_ffi(
-        context_type,
-        &block_info,
-        islock_data,
-        islock_len,
-    ) {
-        Some(ctx) => ctx,
-        None => {
-            (*error).set(FFIErrorCode::InvalidInput, "Invalid transaction context: block info is zeroed for a confirmed context, or IS lock data is missing/malformed for InstantSend");
-            return false;
-        }
-    };
+    let context = unwrap_or_return!(
+        transaction_context_from_ffi(context_type, &block_info, islock_data, islock_len,),
+        error
+    );
 
     if let TransactionContext::InstantSend(ref lock) = context {
         if lock.txid != tx.txid() {
@@ -139,16 +131,8 @@ pub unsafe extern "C" fn managed_wallet_check_transaction(
         }
     }
 
-    let wallet_mut = match deref_ptr_mut!(wallet, error).inner_mut() {
-        Some(w) => w,
-        None => {
-            (*error).set(
-                FFIErrorCode::InternalError,
-                "Cannot get mutable wallet reference (Arc has multiple owners)",
-            );
-            return false;
-        }
-    };
+    let ff_wallet_mut = deref_ptr_mut!(wallet, error);
+    let wallet_mut = unwrap_or_return!(ff_wallet_mut.inner_mut(), error);
 
     // Block on the async check_transaction call
     let check_result = tokio::runtime::Handle::current().block_on(

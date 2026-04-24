@@ -1,9 +1,12 @@
 //! Error handling for FFI interface
 
+use key_wallet::transaction_checking::PlatformAccountConversionError;
+use key_wallet::wallet::managed_wallet_info::asset_lock_builder::AssetLockError;
+use key_wallet::wallet::managed_wallet_info::transaction_builder::BuilderError;
 use std::ffi::CString;
 use std::os::raw::c_char;
 use std::str::Utf8Error;
-use std::{ffi, ptr};
+use std::{ffi, io, ptr};
 
 /// Dereference a raw `*const` pointer as `&T`, or early-return after writing
 /// `InvalidInput` into `*error`. The two-arg form returns `Default::default()`.
@@ -143,6 +146,10 @@ pub enum FFIErrorCode {
     InvalidState = 11,
     InternalError = 12,
     NulByteError = 13,
+    TransactionBuildingError = 14,
+    AssetLockerError = 15,
+    PlatformAccountConversionError = 16,
+    IOError = 17,
 }
 
 /// FFI Error structure
@@ -356,6 +363,72 @@ impl From<dashcore::consensus::encode::Error> for FFIError {
                     )
                     .unwrap(),
                 )
+                .into_raw(),
+        }
+    }
+}
+
+impl From<BuilderError> for FFIError {
+    fn from(value: BuilderError) -> Self {
+        FFIError {
+            code: FFIErrorCode::TransactionBuildingError,
+            message: CString::new(value.to_string())
+                .unwrap_or(
+                    CString::new(
+                        "Rust key_wallet::wallet::managed_wallet_info::transaction_builder::BuilderError message contains null byte",
+                    ).unwrap()
+                ).into_raw(),
+        }
+    }
+}
+
+impl From<AssetLockError> for FFIError {
+    fn from(value: AssetLockError) -> Self {
+        FFIError {
+            code: FFIErrorCode::AssetLockerError,
+            message: CString::new(value.to_string())
+                .unwrap_or(
+                    CString::new(
+                        "Rust key_wallet::wallet::managed_wallet_info::asset_lock_builder::AssetLockError message contains null byte",
+                    ).unwrap()
+                ).into_raw(),
+        }
+    }
+}
+
+impl From<PlatformAccountConversionError> for FFIError {
+    fn from(value: PlatformAccountConversionError) -> Self {
+        FFIError {
+            code: FFIErrorCode::PlatformAccountConversionError,
+            message: CString::new(value.to_string())
+                .unwrap_or(
+                    CString::new(
+                        "Rust key_wallet::transaction_checking::transaction_router::PlatformAccountConversionError message contains null byte",
+                    ).unwrap()
+                ).into_raw(),
+        }
+    }
+}
+
+impl From<io::Error> for FFIError {
+    fn from(value: io::Error) -> Self {
+        FFIError {
+            code: FFIErrorCode::IOError,
+            message: CString::new(value.to_string())
+                .unwrap_or(CString::new("Rust io::Error message contains null byte").unwrap())
+                .into_raw(),
+        }
+    }
+}
+
+// TODO: Some Results contain a str as the error, need to change that
+//  so the conversion can be more specific, this is to generic
+impl From<&str> for FFIError {
+    fn from(value: &str) -> Self {
+        FFIError {
+            code: FFIErrorCode::InternalError,
+            message: CString::new(value.to_string())
+                .unwrap_or(CString::new("Rust error message contains null byte").unwrap())
                 .into_raw(),
         }
     }
