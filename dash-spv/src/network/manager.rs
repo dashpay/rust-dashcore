@@ -99,7 +99,7 @@ fn required_services_from_config(config: &ClientConfig, exclusive_mode: bool) ->
 impl PeerNetworkManager {
     /// Create a new peer network manager
     pub async fn new(config: &ClientConfig) -> Result<Self, Error> {
-        let discovery = DnsDiscovery::new().await?;
+        let discovery = DnsDiscovery::new();
         let data_dir = config.storage_path.clone();
 
         let peer_store = PersistentPeerStorage::open(data_dir.clone()).await?;
@@ -1515,7 +1515,7 @@ impl PeerNetworkManager {
         let test_dir = tempfile::tempdir().expect("test dir creation failed").keep();
         let peer_store =
             PersistentPeerStorage::open(&test_dir).await.expect("test peer store init failed");
-        let discovery = DnsDiscovery::new().await.expect("test DNS discovery init failed");
+        let discovery = DnsDiscovery::new();
         let (request_tx, request_rx) = unbounded_channel();
         Self {
             pool: Arc::new(PeerPool::new()),

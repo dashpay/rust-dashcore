@@ -50,9 +50,6 @@ rayon = "1.11"
 tempfile = { version = "3.0", optional = true }
 dashcore-rpc = { path = "../rpc-client", optional = true }
 
-# DNS (trust-dns-resolver was renamed to hickory_resolver)
-hickory-resolver = "0.25"
-
 [dev-dependencies]
 dash-spv = { path = ".", features = ["test-utils"] }
 dashcore = { path = "../dash", features = ["test-utils"] }

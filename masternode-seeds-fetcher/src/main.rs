@@ -49,8 +49,6 @@ use dashcore::network::message_sml::{GetMnListDiff, MnListDiff};
 use dashcore::sml::masternode_list_entry::EntryMasternodeType;
 use dashcore::{BlockHash, Network};
 use futures::stream::{FuturesUnordered, StreamExt};
-use hickory_resolver::config::{ResolverConfig, ResolverOpts};
-use hickory_resolver::name_server::TokioConnectionProvider;
 use std::sync::Arc;
 use tokio::sync::Semaphore;
 use tokio::time::Instant;
@@ -222,18 +220,11 @@ async fn gather_candidate_peers(
     }
 
     // DNS seeds.
-    if let Ok(resolver) = build_resolver() {
-        for seed in network.dns_seeds() {
-            match resolver.lookup_ip(*seed).await {
-                Ok(lookup) => {
-                    for ip in lookup.iter() {
-                        out.insert(SocketAddr::new(ip, network.default_p2p_port()));
-                    }
-                }
-                Err(e) => {
-                    tracing::warn!("DNS seed {} failed: {}", seed, e);
-                }
-            }
+    let port = network.default_p2p_port();
+    for seed in network.dns_seeds() {
+        match tokio::net::lookup_host((*seed, port)).await {
+            Ok(iter) => out.extend(iter),
+            Err(e) => tracing::warn!("DNS seed {} failed: {}", seed, e),
         }
     }
 
@@ -243,16 +234,6 @@ async fn gather_candidate_peers(
     list.shuffle(&mut rand::thread_rng());
     list.truncate(max.saturating_mul(4).max(max));
     list
-}
-
-fn build_resolver() -> Result<hickory_resolver::TokioResolver> {
-    let resolver = hickory_resolver::Resolver::builder_with_config(
-        ResolverConfig::default(),
-        TokioConnectionProvider::default(),
-    )
-    .with_options(ResolverOpts::default())
-    .build();
-    Ok(resolver)
 }
 
 // ---------- per-peer P2P flow ----------

@@ -221,7 +221,7 @@ mod unit_tests {
     #[tokio::test]
     #[ignore] // Requires network access
     async fn test_dns_discovery() {
-        let discovery = DnsDiscovery::new().await.unwrap();
+        let discovery = DnsDiscovery::new();
 
         // Test mainnet discovery
         let peers = discovery.discover_peers(Network::Mainnet).await;

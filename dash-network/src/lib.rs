@@ -119,11 +119,13 @@ impl Network {
         }
     }
 
+    /// DNS seed hostnames for this network. Empty for networks without
+    /// public DNS seeds (Devnet, Regtest).
     pub const fn dns_seeds(self) -> &'static [&'static str] {
         match self {
             Network::Mainnet => &["dnsseed.dash.org"],
             Network::Testnet => &["testnet-seed.dashdot.io"],
-            Network::Devnet | Network::Regtest => &[""],
+            Network::Devnet | Network::Regtest => &[],
         }
     }
 }

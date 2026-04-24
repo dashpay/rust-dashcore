@@ -12,35 +12,20 @@
 //! Results from both sources are merged and deduplicated.
 
 use dashcore::Network;
-use hickory_resolver::config::{ResolverConfig, ResolverOpts};
-use hickory_resolver::name_server::TokioConnectionProvider;
-use hickory_resolver::TokioResolver;
-use std::net::{IpAddr, SocketAddr};
-
-use crate::error::SpvError as Error;
+use std::net::SocketAddr;
 
 /// DNS discovery for finding initial peers.
 ///
 /// Despite the name (kept for backwards compatibility), this type also returns
 /// hardcoded masternode seeds embedded at compile time; DNS is used as a
 /// fallback.
-pub struct DnsDiscovery {
-    resolver: TokioResolver,
-}
+#[derive(Default)]
+pub struct DnsDiscovery {}
 
 impl DnsDiscovery {
     /// Create a new DNS discovery instance
-    pub async fn new() -> Result<Self, Error> {
-        let resolver = hickory_resolver::Resolver::builder_with_config(
-            ResolverConfig::default(),
-            TokioConnectionProvider::default(),
-        )
-        .with_options(ResolverOpts::default())
-        .build();
-
-        Ok(Self {
-            resolver,
-        })
+    pub fn new() -> Self {
+        Self {}
     }
 
     /// Discover peers for the given network.
@@ -60,14 +45,11 @@ impl DnsDiscovery {
         for seed in seeds {
             tracing::debug!("Querying DNS seed: {}", seed);
 
-            match self.resolver.lookup_ip(*seed).await {
-                Ok(lookup) => {
-                    let ips: Vec<IpAddr> = lookup.iter().collect();
-                    tracing::info!("DNS seed {} returned {} addresses", seed, ips.len());
-
-                    for ip in ips {
-                        addresses.push(SocketAddr::new(ip, port));
-                    }
+            match tokio::net::lookup_host((*seed, port)).await {
+                Ok(iter) => {
+                    let resolved: Vec<SocketAddr> = iter.collect();
+                    tracing::info!("DNS seed {} returned {} addresses", seed, resolved.len());
+                    addresses.extend(resolved);
                 }
                 Err(e) => {
                     // DNS is a best-effort backup; do not propagate the error.
@@ -103,7 +85,7 @@ mod tests {
     #[tokio::test]
     #[ignore] // Requires network access
     async fn test_dns_discovery_mainnet() {
-        let discovery = DnsDiscovery::new().await.expect("Failed to create DNS discovery for test");
+        let discovery = DnsDiscovery::new();
         let peers = discovery.discover_peers(Network::Mainnet).await;
 
         // Print discovered peers for debugging
@@ -122,7 +104,7 @@ mod tests {
     async fn test_dns_discovery_testnet_returns_embedded_when_dns_fails() {
         // This test does not require network access: even if DNS resolution
         // fails, the embedded seed file must yield peers.
-        let discovery = DnsDiscovery::new().await.expect("Failed to create DNS discovery for test");
+        let discovery = DnsDiscovery::new();
         let peers = discovery.discover_peers(Network::Testnet).await;
 
         assert!(
@@ -137,7 +119,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_dns_discovery_regtest() {
-        let discovery = DnsDiscovery::new().await.expect("Failed to create DNS discovery for test");
+        let discovery = DnsDiscovery::new();
         let peers = discovery.discover_peers(Network::Regtest).await;
 
         // Should return empty for regtest (no DNS seeds and no embedded list)

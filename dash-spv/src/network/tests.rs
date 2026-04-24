@@ -41,7 +41,6 @@ mod pool_tests {
         assert_eq!(pool.peer_count().await, 0);
     }
 
-    // Cases are sequential in one test to avoid concurrent DnsDiscovery drops (TSAN race in hickory-resolver).
     #[tokio::test]
     async fn test_capability_policy_for_handshake_and_eviction() {
         let cf = ServiceFlags::COMPACT_FILTERS;
