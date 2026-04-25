@@ -93,6 +93,7 @@ mod tests {
                 wallet_manager_ptr,
                 serialized_wallet.as_ptr(),
                 serialized_wallet.len(),
+                0,
                 imported_wallet_id.as_mut_ptr(),
                 &mut error as *mut FFIError,
             );

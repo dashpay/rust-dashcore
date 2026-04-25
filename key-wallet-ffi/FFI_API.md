@@ -678,7 +678,7 @@ Get wallet IDs  # Safety  - `manager` must be a valid pointer to an FFIWalletMan
 #### `wallet_manager_import_wallet_from_bytes`
 
 ```c
-wallet_manager_import_wallet_from_bytes(manager: *mut FFIWalletManager, wallet_bytes: *const u8, wallet_bytes_len: usize, wallet_id_out: *mut u8, error: *mut FFIError,) -> bool
+wallet_manager_import_wallet_from_bytes(manager: *mut FFIWalletManager, wallet_bytes: *const u8, wallet_bytes_len: usize, birth_height: u32, wallet_id_out: *mut u8, error: *mut FFIError,) -> bool
 ```
 
 **Module:** `wallet_manager`

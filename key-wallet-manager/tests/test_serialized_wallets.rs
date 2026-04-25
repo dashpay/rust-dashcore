@@ -64,10 +64,15 @@ mod tests {
         assert_eq!(wallet_id, wallet_id3);
         println!("Externally signable wallet ID: {}", hex::encode(wallet_id3));
 
-        // Test 4: Import the serialized wallet back
+        // Test 4: Import the serialized wallet back with a specific birth height
         let mut manager4 = WalletManager::<ManagedWalletInfo>::new(Network::Testnet);
-        let import_result = manager4.import_wallet_from_bytes(&bytes);
+        let import_result = manager4.import_wallet_from_bytes(&bytes, 50_000);
         assert!(import_result.is_ok());
-        assert_eq!(import_result.unwrap(), wallet_id);
+        let imported_id = import_result.unwrap();
+        assert_eq!(imported_id, wallet_id);
+        let imported = manager4.get_wallet_info(&imported_id).unwrap();
+        assert_eq!(imported.birth_height(), 50_000);
+        assert_eq!(imported.synced_height(), 49_999);
+        assert_eq!(imported.last_processed_height(), 49_999);
     }
 }
