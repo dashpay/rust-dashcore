@@ -44,7 +44,7 @@ async fn test_identity_registration_account_routing() {
     wallet.add_account(account_type, None).expect("Failed to add account to wallet");
 
     let mut managed_wallet_info =
-        ManagedWalletInfo::from_wallet_with_name(&wallet, "Test".to_string());
+        ManagedWalletInfo::from_wallet_with_name(&wallet, "Test".to_string(), 0);
 
     // Get the identity registration account
     let account = wallet
@@ -155,7 +155,7 @@ async fn test_normal_payment_to_identity_address_not_detected() {
     let mut wallet = Wallet::new_random(network, WalletAccountCreationOptions::Default)
         .expect("Failed to create wallet with default options");
     let mut managed_wallet_info =
-        ManagedWalletInfo::from_wallet_with_name(&wallet, "Test".to_string());
+        ManagedWalletInfo::from_wallet_with_name(&wallet, "Test".to_string(), 0);
 
     let account = wallet
         .accounts

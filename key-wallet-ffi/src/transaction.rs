@@ -306,7 +306,7 @@ pub unsafe extern "C" fn wallet_check_transaction(
         use key_wallet::transaction_checking::WalletTransactionChecker;
         use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
 
-        let mut managed_info = ManagedWalletInfo::from_wallet(wallet.inner());
+        let mut managed_info = ManagedWalletInfo::from_wallet(wallet.inner(), 0);
 
         // Check the transaction - wallet is always required now
         let wallet_mut = unwrap_or_return!(wallet.inner_mut(), error);

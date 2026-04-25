@@ -79,7 +79,7 @@ pub unsafe extern "C" fn wallet_create_managed_wallet(
     error: *mut FFIError,
 ) -> *mut FFIManagedWalletInfo {
     let wallet = deref_ptr!(wallet, error);
-    let managed_info = ManagedWalletInfo::from_wallet(wallet.inner());
+    let managed_info = ManagedWalletInfo::from_wallet(wallet.inner(), 0);
     Box::into_raw(Box::new(FFIManagedWalletInfo::new(managed_info)))
 }
 

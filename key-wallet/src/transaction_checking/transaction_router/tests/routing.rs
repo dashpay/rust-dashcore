@@ -77,7 +77,7 @@ async fn test_transaction_routing_to_bip32_account() {
     wallet.add_account(account_type, None).expect("Failed to add account to wallet");
 
     let mut managed_wallet_info =
-        ManagedWalletInfo::from_wallet_with_name(&wallet, "Test".to_string());
+        ManagedWalletInfo::from_wallet_with_name(&wallet, "Test".to_string(), 0);
 
     // Get the account's xpub for address derivation
     let account = wallet
@@ -159,7 +159,7 @@ async fn test_transaction_routing_to_coinjoin_account() {
     wallet.add_account(account_type, None).expect("Failed to add account to wallet");
 
     let mut managed_wallet_info =
-        ManagedWalletInfo::from_wallet_with_name(&wallet, "Test".to_string());
+        ManagedWalletInfo::from_wallet_with_name(&wallet, "Test".to_string(), 0);
 
     // Get the account's xpub
     let account = wallet
@@ -258,7 +258,7 @@ async fn test_transaction_affects_multiple_accounts() {
     wallet.add_account(account_type, None).expect("Failed to add account to wallet");
 
     let mut managed_wallet_info =
-        ManagedWalletInfo::from_wallet_with_name(&wallet, "Test".to_string());
+        ManagedWalletInfo::from_wallet_with_name(&wallet, "Test".to_string(), 0);
 
     // Get addresses from different accounts
 
@@ -362,7 +362,7 @@ fn test_next_address_method_restrictions() {
     let wallet = Wallet::new_random(Network::Testnet, WalletAccountCreationOptions::Default)
         .expect("Failed to create wallet with default options");
     let mut managed_wallet_info =
-        ManagedWalletInfo::from_wallet_with_name(&wallet, "Test".to_string());
+        ManagedWalletInfo::from_wallet_with_name(&wallet, "Test".to_string(), 0);
 
     // Test that standard BIP44 accounts reject next_address
     {

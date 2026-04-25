@@ -82,34 +82,38 @@ impl ManagedWalletInfo {
     }
 
     /// Create managed wallet info from a Wallet
-    pub fn from_wallet(wallet: &super::super::Wallet) -> Self {
+    /// Create managed wallet info from a Wallet, seeding the sync checkpoint at `birth_height`.
+    ///
+    /// Sets `birth_height` and seeds both `synced_height` and `last_processed_height` to
+    /// `birth_height.saturating_sub(1)` so that the next block to scan is `birth_height`.
+    pub fn from_wallet(wallet: &super::super::Wallet, birth_height: CoreBlockHeight) -> Self {
+        let initial_height = birth_height.saturating_sub(1);
         Self {
             network: wallet.network,
             wallet_id: wallet.wallet_id,
             name: None,
             description: None,
-            metadata: WalletMetadata::default(),
+            metadata: WalletMetadata {
+                birth_height,
+                synced_height: initial_height,
+                last_processed_height: initial_height,
+                ..WalletMetadata::default()
+            },
             accounts: ManagedAccountCollection::from_account_collection(&wallet.accounts),
             balance: WalletCoreBalance::default(),
             instant_send_locks: HashSet::new(),
         }
     }
 
-    /// Create managed wallet info from a Wallet with a name
-    pub fn from_wallet_with_name(wallet: &super::super::Wallet, name: String) -> Self {
-        let mut info = Self::from_wallet(wallet);
-        info.name = Some(name);
-        info
-    }
-
-    /// Create managed wallet info with birth height
-    pub fn with_birth_height(
-        network: Network,
-        wallet_id: [u8; 32],
+    /// Create managed wallet info from a Wallet with a name, seeding the sync checkpoint
+    /// at `birth_height` (see `from_wallet` for details).
+    pub fn from_wallet_with_name(
+        wallet: &super::super::Wallet,
+        name: String,
         birth_height: CoreBlockHeight,
     ) -> Self {
-        let mut info = Self::new(network, wallet_id);
-        info.metadata.birth_height = birth_height;
+        let mut info = Self::from_wallet(wallet, birth_height);
+        info.name = Some(name);
         info
     }
 

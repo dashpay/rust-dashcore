@@ -170,8 +170,7 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletManager<T> {
 
         // Create managed wallet info from the wallet to properly initialize accounts
         // This ensures the ManagedAccountCollection is synchronized with the Wallet's accounts
-        let mut managed_info = T::from_wallet(&wallet);
-        managed_info.set_birth_height(birth_height);
+        let mut managed_info = T::from_wallet(&wallet, birth_height);
         managed_info.set_first_loaded_at(current_timestamp());
 
         // The wallet already has accounts created according to the provided options
@@ -276,8 +275,7 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletManager<T> {
         })?;
 
         // Add the wallet to the manager
-        let mut managed_info = T::from_wallet(&final_wallet);
-        managed_info.set_birth_height(birth_height);
+        let mut managed_info = T::from_wallet(&final_wallet, birth_height);
         managed_info.set_first_loaded_at(current_timestamp());
 
         self.wallets.insert(wallet_id, final_wallet);
@@ -311,8 +309,7 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletManager<T> {
         }
 
         // Create managed wallet info
-        let mut managed_info = T::from_wallet(&wallet);
-        managed_info.set_birth_height(self.last_processed_height());
+        let mut managed_info = T::from_wallet(&wallet, self.last_processed_height());
         managed_info.set_first_loaded_at(current_timestamp());
 
         self.wallets.insert(wallet_id, wallet);
@@ -352,8 +349,7 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletManager<T> {
         }
 
         // Create managed wallet info
-        let mut managed_info = T::from_wallet(&wallet);
-        managed_info.set_birth_height(self.last_processed_height());
+        let mut managed_info = T::from_wallet(&wallet, self.last_processed_height());
         managed_info.set_first_loaded_at(current_timestamp());
 
         self.wallets.insert(wallet_id, wallet);
@@ -400,8 +396,7 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletManager<T> {
         }
 
         // Create managed wallet info
-        let mut managed_info = T::from_wallet(&wallet);
-        managed_info.set_birth_height(self.last_processed_height());
+        let mut managed_info = T::from_wallet(&wallet, self.last_processed_height());
         managed_info.set_first_loaded_at(current_timestamp());
 
         self.wallets.insert(wallet_id, wallet);
@@ -442,11 +437,9 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletManager<T> {
             return Err(WalletError::WalletExists(wallet_id));
         }
 
-        // Create managed wallet info from the imported wallet
-        let mut managed_info = T::from_wallet(&wallet);
-
-        // Use the current height as the birth height since we don't know when it was originally created
-        managed_info.set_birth_height(self.last_processed_height());
+        // Create managed wallet info from the imported wallet, using the current chain
+        // tip as the birth height since the serialized form does not preserve it.
+        let mut managed_info = T::from_wallet(&wallet, self.last_processed_height());
         managed_info.set_first_loaded_at(current_timestamp());
 
         self.wallets.insert(wallet_id, wallet);

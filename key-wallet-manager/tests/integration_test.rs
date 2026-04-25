@@ -181,19 +181,24 @@ fn test_block_height_tracking() {
         .create_wallet_from_mnemonic(
             &mnemonic2.to_string(),
             "",
-            0,
+            5000,
             WalletAccountCreationOptions::Default,
         )
         .unwrap();
 
     assert_eq!(manager.wallet_count(), 2);
 
-    // Both wallets initialized with `synced_height = birth_height - 1 = 0`,
-    // so neither has been processed past genesis.
-    for wallet_info in manager.get_all_wallet_infos().values() {
-        assert_eq!(wallet_info.last_processed_height(), 0);
-        assert_eq!(wallet_info.synced_height(), 0);
-    }
+    // wallet1 was created with birth_height = 0 so its sync checkpoint stays at 0;
+    // wallet2 was created with birth_height = 5000 and is seeded to birth_height - 1.
+    let wallet_info1 = manager.get_wallet_info(&wallet_id1).unwrap();
+    let wallet_info2 = manager.get_wallet_info(&wallet_id2).unwrap();
+    assert_eq!(wallet_info1.last_processed_height(), 0);
+    assert_eq!(wallet_info1.synced_height(), 0);
+    assert_eq!(wallet_info2.last_processed_height(), 4999);
+    assert_eq!(wallet_info2.synced_height(), 4999);
+    // Manager aggregates: synced_height is the min, last_processed_height is the max.
+    assert_eq!(manager.synced_height(), 0);
+    assert_eq!(manager.last_processed_height(), 4999);
 
     // Per-wallet last-processed updates only touch the addressed wallet.
     manager.update_wallet_last_processed_height(&wallet_id1, 12345);
@@ -201,16 +206,16 @@ fn test_block_height_tracking() {
     let wallet_info1 = manager.get_wallet_info(&wallet_id1).unwrap();
     let wallet_info2 = manager.get_wallet_info(&wallet_id2).unwrap();
     assert_eq!(wallet_info1.last_processed_height(), 12345);
-    assert_eq!(wallet_info2.last_processed_height(), 0);
+    assert_eq!(wallet_info2.last_processed_height(), 4999);
 
     // Per-wallet synced-height updates only touch the addressed wallet.
     manager.update_wallet_synced_height(&wallet_id1, 12000);
     let wallet_info1 = manager.get_wallet_info(&wallet_id1).unwrap();
     let wallet_info2 = manager.get_wallet_info(&wallet_id2).unwrap();
     assert_eq!(wallet_info1.synced_height(), 12000);
-    assert_eq!(wallet_info2.synced_height(), 0);
-    // Aggregate `synced_height()` is `min` across wallets, so wallet 2 holds it at 0.
-    assert_eq!(manager.synced_height(), 0);
+    assert_eq!(wallet_info2.synced_height(), 4999);
+    // Aggregate `synced_height()` is `min` across wallets, so wallet 2 holds it at 4999.
+    assert_eq!(manager.synced_height(), 4999);
 
     // Advance wallet 2 too. Aggregate min jumps to wallet 2's new value.
     manager.update_wallet_synced_height(&wallet_id2, 11000);

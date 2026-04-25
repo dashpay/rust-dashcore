@@ -501,7 +501,7 @@ mod tests {
 
         // Create managed wallet info from the wallet heap-allocated like C would do
         let wallet_rust = unsafe { &(*wallet).wallet };
-        let managed_info = ManagedWalletInfo::from_wallet(wallet_rust);
+        let managed_info = ManagedWalletInfo::from_wallet(wallet_rust, 0);
         let ffi_managed = Box::into_raw(Box::new(FFIManagedWalletInfo::new(managed_info)));
 
         // Test get_next_receive_address with valid pointers
@@ -581,7 +581,7 @@ mod tests {
 
         // We need to work with the existing wallet structure
         // Create managed wallet info from the existing wallet
-        let mut managed_info = ManagedWalletInfo::from_wallet(wallet_arc);
+        let mut managed_info = ManagedWalletInfo::from_wallet(wallet_arc, 0);
 
         let network = key_wallet::Network::Testnet;
 
@@ -759,7 +759,7 @@ mod tests {
 
         // Create managed wallet info
         let wallet_arc = unsafe { &(*wallet_ptr).wallet };
-        let mut managed_info = ManagedWalletInfo::from_wallet(wallet_arc);
+        let mut managed_info = ManagedWalletInfo::from_wallet(wallet_arc, 0);
 
         // Set some test balance values
         managed_info.balance = WalletCoreBalance::new(1000000, 50000, 10000, 25000);

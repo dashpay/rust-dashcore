@@ -136,10 +136,10 @@ async fn test_provider_registration_transaction_routing_check_owner_only() {
         .expect("Failed to create wallet with default options");
 
     let mut other_managed_wallet_info =
-        ManagedWalletInfo::from_wallet_with_name(&other_wallet, "Other".to_string());
+        ManagedWalletInfo::from_wallet_with_name(&other_wallet, "Other".to_string(), 0);
 
     let mut managed_wallet_info =
-        ManagedWalletInfo::from_wallet_with_name(&wallet, "Test".to_string());
+        ManagedWalletInfo::from_wallet_with_name(&wallet, "Test".to_string(), 0);
 
     // Get addresses from provider accounts
     let managed_owner = managed_wallet_info
@@ -271,10 +271,10 @@ async fn test_provider_registration_transaction_routing_check_voting_only() {
         .expect("Failed to create wallet with default options");
 
     let mut other_managed_wallet_info =
-        ManagedWalletInfo::from_wallet_with_name(&other_wallet, "Other".to_string());
+        ManagedWalletInfo::from_wallet_with_name(&other_wallet, "Other".to_string(), 0);
 
     let mut managed_wallet_info =
-        ManagedWalletInfo::from_wallet_with_name(&wallet, "Test".to_string());
+        ManagedWalletInfo::from_wallet_with_name(&wallet, "Test".to_string(), 0);
 
     // Get addresses from provider accounts
     let owner_address = other_managed_wallet_info
@@ -406,10 +406,10 @@ async fn test_provider_registration_transaction_routing_check_operator_only() {
         .expect("Failed to create wallet with default options");
 
     let mut other_managed_wallet_info =
-        ManagedWalletInfo::from_wallet_with_name(&other_wallet, "Other".to_string());
+        ManagedWalletInfo::from_wallet_with_name(&other_wallet, "Other".to_string(), 0);
 
     let mut managed_wallet_info =
-        ManagedWalletInfo::from_wallet_with_name(&wallet, "Test".to_string());
+        ManagedWalletInfo::from_wallet_with_name(&wallet, "Test".to_string(), 0);
 
     // Get addresses from provider accounts
     let owner_address = other_managed_wallet_info
@@ -587,10 +587,10 @@ async fn test_provider_registration_transaction_routing_check_platform_only() {
         .expect("Failed to create wallet with default options");
 
     let mut other_managed_wallet_info =
-        ManagedWalletInfo::from_wallet_with_name(&other_wallet, "Other".to_string());
+        ManagedWalletInfo::from_wallet_with_name(&other_wallet, "Other".to_string(), 0);
 
     let mut managed_wallet_info =
-        ManagedWalletInfo::from_wallet_with_name(&wallet, "Test".to_string());
+        ManagedWalletInfo::from_wallet_with_name(&wallet, "Test".to_string(), 0);
 
     // Get addresses from provider accounts
     let owner_address = other_managed_wallet_info
@@ -785,7 +785,7 @@ async fn test_provider_update_registrar_with_voting_and_operator() {
         .expect("Failed to create wallet with default options");
 
     let mut managed_wallet_info =
-        ManagedWalletInfo::from_wallet_with_name(&wallet, "Test".to_string());
+        ManagedWalletInfo::from_wallet_with_name(&wallet, "Test".to_string(), 0);
 
     // Get voting address
     let voting_address = managed_wallet_info
@@ -858,7 +858,7 @@ async fn test_provider_revocation_classification_and_routing() {
         .expect("Failed to create wallet with default options");
 
     let mut managed_wallet_info =
-        ManagedWalletInfo::from_wallet_with_name(&wallet, "Test".to_string());
+        ManagedWalletInfo::from_wallet_with_name(&wallet, "Test".to_string(), 0);
 
     // Get a standard address for collateral return
     let account = wallet

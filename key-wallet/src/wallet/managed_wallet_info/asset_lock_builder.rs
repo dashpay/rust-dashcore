@@ -553,7 +553,7 @@ mod tests {
     fn test_wallet_and_info() -> (Wallet, ManagedWalletInfo) {
         let wallet =
             Wallet::new_random(Network::Testnet, WalletAccountCreationOptions::Default).unwrap();
-        let info = ManagedWalletInfo::from_wallet_with_name(&wallet, "Test".to_string());
+        let info = ManagedWalletInfo::from_wallet_with_name(&wallet, "Test".to_string(), 0);
         (wallet, info)
     }
 

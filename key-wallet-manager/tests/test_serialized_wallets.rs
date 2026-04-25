@@ -2,6 +2,7 @@
 #[cfg(test)]
 mod tests {
     use key_wallet::wallet::initialization::WalletAccountCreationOptions;
+    use key_wallet::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
     use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
     use key_wallet::Network;
     use key_wallet_manager::WalletManager;
@@ -25,6 +26,12 @@ mod tests {
         let (bytes, wallet_id) = result.unwrap();
         assert!(!bytes.is_empty());
         println!("Full wallet ID: {}", hex::encode(wallet_id));
+
+        // The wallet's sync checkpoint should be seeded to birth_height - 1.
+        let info = manager.get_wallet_info(&wallet_id).unwrap();
+        assert_eq!(info.birth_height(), 100_000);
+        assert_eq!(info.synced_height(), 99_999);
+        assert_eq!(info.last_processed_height(), 99_999);
 
         // Test 2: Create watch-only wallet (no private keys)
         let mut manager2 = WalletManager::<ManagedWalletInfo>::new(Network::Testnet);

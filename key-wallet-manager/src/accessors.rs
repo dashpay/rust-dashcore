@@ -249,7 +249,7 @@ mod tests {
     fn insert_wallet_rejects_duplicate() {
         let mut manager: WalletManager<ManagedWalletInfo> = WalletManager::new(Network::Testnet);
         let wallet = build_wallet();
-        let info = ManagedWalletInfo::from_wallet(&wallet);
+        let info = ManagedWalletInfo::from_wallet(&wallet, 0);
 
         let id =
             manager.insert_wallet(wallet.clone(), info.clone()).expect("first insert succeeds");

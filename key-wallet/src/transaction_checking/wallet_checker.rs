@@ -249,7 +249,7 @@ mod tests {
             .expect("Should create wallet");
 
         let mut managed_wallet =
-            ManagedWalletInfo::from_wallet_with_name(&wallet, "Test".to_string());
+            ManagedWalletInfo::from_wallet_with_name(&wallet, "Test".to_string(), 0);
 
         // Create a transaction to an external address
         let dummy_address = Address::p2pkh(
@@ -311,7 +311,7 @@ mod tests {
             .expect("Should add identity registration account");
 
         let mut managed_wallet =
-            ManagedWalletInfo::from_wallet_with_name(&wallet, "Test".to_string());
+            ManagedWalletInfo::from_wallet_with_name(&wallet, "Test".to_string(), 0);
 
         // Get BIP32 account address - scope the immutable borrow
         let (bip32_xpub, bip32_address) = {
@@ -1029,7 +1029,7 @@ mod tests {
             .expect("Should add second BIP44 account");
 
         let mut managed_wallet =
-            ManagedWalletInfo::from_wallet_with_name(&wallet, "Test".to_string());
+            ManagedWalletInfo::from_wallet_with_name(&wallet, "Test".to_string(), 0);
 
         let xpub0 = wallet
             .accounts
@@ -1638,7 +1638,7 @@ mod tests {
             .expect("add coinjoin");
 
         let mut managed_wallet =
-            ManagedWalletInfo::from_wallet_with_name(&wallet, "Test".to_string());
+            ManagedWalletInfo::from_wallet_with_name(&wallet, "Test".to_string(), 0);
 
         let xpub =
             wallet.accounts.coinjoin_accounts.get(&0).expect("coinjoin account").account_xpub;

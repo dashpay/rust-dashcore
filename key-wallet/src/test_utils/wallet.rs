@@ -31,7 +31,7 @@ impl TestWalletContext {
         let wallet = Wallet::new_random(Network::Testnet, WalletAccountCreationOptions::Default)
             .expect("Should create wallet");
         let mut managed_wallet =
-            ManagedWalletInfo::from_wallet_with_name(&wallet, "Test".to_string());
+            ManagedWalletInfo::from_wallet_with_name(&wallet, "Test".to_string(), 0);
 
         let xpub = wallet
             .accounts

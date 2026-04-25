@@ -18,13 +18,18 @@ use dashcore::{Address as DashAddress, Transaction, Txid};
 
 /// Trait that wallet info types must implement to work with WalletManager
 pub trait WalletInfoInterface: Sized + WalletTransactionChecker + ManagedAccountOperations {
-    /// Create a wallet info from an existing wallet
-    /// This properly initializes the wallet info from the wallet's state
-    fn from_wallet(wallet: &Wallet) -> Self;
+    /// Create a wallet info from an existing wallet, seeding the sync checkpoint at
+    /// `birth_height`.
+    ///
+    /// Both `synced_height` and `last_processed_height` are seeded to
+    /// `birth_height.saturating_sub(1)` so the next block to scan is `birth_height`.
+    /// Taking `birth_height` at construction makes the sync checkpoint a required
+    /// invariant of the type rather than something callers have to remember to set.
+    fn from_wallet(wallet: &Wallet, birth_height: CoreBlockHeight) -> Self;
 
-    /// Create a wallet info from an existing wallet with proper account initialization
-    /// Default implementation just uses with_name (backward compatibility)
-    fn from_wallet_with_name(wallet: &Wallet, name: String) -> Self;
+    /// Create a wallet info with a name, seeding the sync checkpoint at `birth_height`
+    /// (see `from_wallet` for details).
+    fn from_wallet_with_name(wallet: &Wallet, name: String, birth_height: CoreBlockHeight) -> Self;
 
     /// Get the wallet's network
     fn network(&self) -> Network;
@@ -125,12 +130,12 @@ pub trait WalletInfoInterface: Sized + WalletTransactionChecker + ManagedAccount
 
 /// Default implementation for ManagedWalletInfo
 impl WalletInfoInterface for ManagedWalletInfo {
-    fn from_wallet(wallet: &Wallet) -> Self {
-        Self::from_wallet_with_name(wallet, String::new())
+    fn from_wallet(wallet: &Wallet, birth_height: CoreBlockHeight) -> Self {
+        Self::from_wallet(wallet, birth_height)
     }
 
-    fn from_wallet_with_name(wallet: &Wallet, name: String) -> Self {
-        Self::from_wallet_with_name(wallet, name)
+    fn from_wallet_with_name(wallet: &Wallet, name: String, birth_height: CoreBlockHeight) -> Self {
+        Self::from_wallet_with_name(wallet, name, birth_height)
     }
 
     fn network(&self) -> Network {

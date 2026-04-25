@@ -413,7 +413,7 @@ mod tests {
         .unwrap();
 
         // Create managed info from the wallet
-        let mut managed_info = ManagedWalletInfo::from_wallet(&wallet);
+        let mut managed_info = ManagedWalletInfo::from_wallet(&wallet, 0);
         managed_info.set_name("Test Wallet".to_string());
         managed_info.set_description(Some("A test wallet".to_string()));
 
