@@ -170,7 +170,7 @@ pub unsafe extern "C" fn managed_wallet_get_bip_44_external_address_range(
     let addresses = if let key_wallet::account::ManagedAccountType::Standard {
         external_addresses,
         ..
-    } = &mut managed_account.account_type
+    } = &mut managed_account.managed_account_type
     {
         unwrap_or_return!(
             external_addresses.address_range(start_index, end_index, &key_source),
@@ -250,7 +250,7 @@ pub unsafe extern "C" fn managed_wallet_get_bip_44_internal_address_range(
     let addresses = if let key_wallet::account::ManagedAccountType::Standard {
         internal_addresses,
         ..
-    } = &mut managed_account.account_type
+    } = &mut managed_account.managed_account_type
     {
         unwrap_or_return!(
             internal_addresses.address_range(start_index, end_index, &key_source),

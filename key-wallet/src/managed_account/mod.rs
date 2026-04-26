@@ -51,7 +51,7 @@ pub mod transaction_record;
 #[cfg_attr(feature = "serde", derive(Serialize))]
 pub struct ManagedCoreAccount {
     /// Account type with embedded address pools and index
-    pub account_type: ManagedAccountType,
+    pub managed_account_type: ManagedAccountType,
     /// Network this account belongs to
     pub network: Network,
     /// Account metadata
@@ -76,9 +76,13 @@ pub struct ManagedCoreAccount {
 
 impl ManagedCoreAccount {
     /// Create a new managed account
-    pub fn new(account_type: ManagedAccountType, network: Network, is_watch_only: bool) -> Self {
+    pub fn new(
+        managed_account_type: ManagedAccountType,
+        network: Network,
+        is_watch_only: bool,
+    ) -> Self {
         Self {
-            account_type,
+            managed_account_type,
             network,
             metadata: AccountMetadata::default(),
             is_watch_only,
@@ -169,17 +173,17 @@ impl ManagedCoreAccount {
 
     /// Get the account index
     pub fn index(&self) -> Option<u32> {
-        self.account_type.index()
+        self.managed_account_type.index()
     }
 
     /// Get the account index or 0 if none exists
     pub fn index_or_default(&self) -> u32 {
-        self.account_type.index_or_default()
+        self.managed_account_type.index_or_default()
     }
 
     /// Get the managed account type
     pub fn managed_type(&self) -> &ManagedAccountType {
-        &self.account_type
+        &self.managed_account_type
     }
 
     /// Get the next unused receive address index for standard accounts
@@ -190,7 +194,7 @@ impl ManagedCoreAccount {
         if let ManagedAccountType::Standard {
             external_addresses,
             ..
-        } = &self.account_type
+        } = &self.managed_account_type
         {
             // Get the first unused address or the next index after the last used one
             if let Some(addr) = external_addresses.unused_addresses().first() {
@@ -213,7 +217,7 @@ impl ManagedCoreAccount {
         if let ManagedAccountType::Standard {
             internal_addresses,
             ..
-        } = &self.account_type
+        } = &self.managed_account_type
         {
             // Get the first unused address or the next index after the last used one
             if let Some(addr) = internal_addresses.unused_addresses().first() {
@@ -230,7 +234,7 @@ impl ManagedCoreAccount {
 
     /// Get the next unused address index for single-pool account types
     pub fn get_next_address_index(&self) -> Option<u32> {
-        match &self.account_type {
+        match &self.managed_account_type {
             ManagedAccountType::Standard {
                 ..
             } => self.get_next_receive_address_index(),
@@ -302,7 +306,7 @@ impl ManagedCoreAccount {
 
         // Use the account type's mark_address_used method
         // The address pools already track gap limits internally
-        self.account_type.mark_address_used(address)
+        self.managed_account_type.mark_address_used(address)
     }
 
     /// Add new ones for received outputs, remove spent ones
@@ -313,7 +317,7 @@ impl ManagedCoreAccount {
         context: TransactionContext,
     ) {
         // Update UTXOs only for spendable account types
-        match &mut self.account_type {
+        match &mut self.managed_account_type {
             ManagedAccountType::Standard {
                 ..
             }
@@ -526,7 +530,7 @@ impl ManagedCoreAccount {
 
         let tx_record = TransactionRecord::new(
             tx.clone(),
-            self.account_type.to_account_type(),
+            self.managed_account_type.to_account_type(),
             context.clone(),
             transaction_type,
             direction,
@@ -593,22 +597,22 @@ impl ManagedCoreAccount {
 
     /// Get all addresses from all pools
     pub fn all_addresses(&self) -> Vec<Address> {
-        self.account_type.all_addresses()
+        self.managed_account_type.all_addresses()
     }
 
     /// Check if an address belongs to this account
     pub fn contains_address(&self, address: &Address) -> bool {
-        self.account_type.contains_address(address)
+        self.managed_account_type.contains_address(address)
     }
 
     /// Check if a script pub key belongs to this account
     pub fn contains_script_pub_key(&self, script_pub_key: &ScriptBuf) -> bool {
-        self.account_type.contains_script_pub_key(script_pub_key)
+        self.managed_account_type.contains_script_pub_key(script_pub_key)
     }
 
     /// Get address info for a given address
     pub fn get_address_info(&self, address: &Address) -> Option<address_pool::AddressInfo> {
-        self.account_type.get_address_info(address)
+        self.managed_account_type.get_address_info(address)
     }
 
     /// Generate the next receive address using the optionally provided extended public key
@@ -624,7 +628,7 @@ impl ManagedCoreAccount {
         if let ManagedAccountType::Standard {
             external_addresses,
             ..
-        } = &mut self.account_type
+        } = &mut self.managed_account_type
         {
             // Create appropriate key source based on whether xpub is provided
             let key_source = match account_xpub {
@@ -658,7 +662,7 @@ impl ManagedCoreAccount {
         if let ManagedAccountType::Standard {
             internal_addresses,
             ..
-        } = &mut self.account_type
+        } = &mut self.managed_account_type
         {
             // Create appropriate key source based on whether xpub is provided
             let key_source = match account_xpub {
@@ -695,7 +699,7 @@ impl ManagedCoreAccount {
         if let ManagedAccountType::Standard {
             external_addresses,
             ..
-        } = &mut self.account_type
+        } = &mut self.managed_account_type
         {
             // Create appropriate key source based on whether xpub is provided
             let key_source = match account_xpub {
@@ -738,7 +742,7 @@ impl ManagedCoreAccount {
         if let ManagedAccountType::Standard {
             internal_addresses,
             ..
-        } = &mut self.account_type
+        } = &mut self.managed_account_type
         {
             // Create appropriate key source based on whether xpub is provided
             let key_source = match account_xpub {
@@ -774,7 +778,7 @@ impl ManagedCoreAccount {
         account_xpub: Option<&ExtendedPubKey>,
         add_to_state: bool,
     ) -> Result<Address, &'static str> {
-        match &mut self.account_type {
+        match &mut self.managed_account_type {
             ManagedAccountType::Standard {
                 ..
             } => Err("Standard accounts must use next_receive_address or next_change_address"),
@@ -871,7 +875,7 @@ impl ManagedCoreAccount {
         account_xpub: Option<&ExtendedPubKey>,
         add_to_state: bool,
     ) -> Result<address_pool::AddressInfo, &'static str> {
-        match &mut self.account_type {
+        match &mut self.managed_account_type {
             ManagedAccountType::Standard {
                 ..
             } => Err("Standard accounts must use next_receive_address_with_info or next_change_address_with_info"),
@@ -968,7 +972,7 @@ impl ManagedCoreAccount {
         account_xpub: Option<ExtendedBLSPubKey>,
         add_to_state: bool,
     ) -> Result<dashcore::blsful::PublicKey<dashcore::blsful::Bls12381G2Impl>, &'static str> {
-        match &mut self.account_type {
+        match &mut self.managed_account_type {
             ManagedAccountType::ProviderOperatorKeys {
                 addresses,
                 ..
@@ -1014,7 +1018,7 @@ impl ManagedCoreAccount {
         account_xpriv: crate::derivation_slip10::ExtendedEd25519PrivKey,
         add_to_state: bool,
     ) -> Result<(crate::derivation_slip10::VerifyingKey, AddressInfo), &'static str> {
-        match &mut self.account_type {
+        match &mut self.managed_account_type {
             ManagedAccountType::ProviderPlatformKeys {
                 addresses,
                 ..
@@ -1057,11 +1061,11 @@ impl ManagedCoreAccount {
         root_xpriv: &crate::wallet::root_extended_keys::RootExtendedPrivKey,
         network: Network,
     ) -> Result<[u8; 32], &'static str> {
-        if matches!(self.account_type, ManagedAccountType::Standard { .. }) {
+        if matches!(self.managed_account_type, ManagedAccountType::Standard { .. }) {
             return Err("Standard accounts must use next_receive_address or next_change_address");
         }
 
-        let mut pools = self.account_type.address_pools_mut();
+        let mut pools = self.managed_account_type.address_pools_mut();
         let pool = pools.first_mut().ok_or("Account has no address pool")?;
 
         let info = pool
@@ -1092,11 +1096,11 @@ impl ManagedCoreAccount {
     ///
     /// Only works for single-pool account types (not Standard accounts).
     pub fn peek_next_path(&mut self) -> Result<(crate::DerivationPath, u32), &'static str> {
-        if matches!(self.account_type, ManagedAccountType::Standard { .. }) {
+        if matches!(self.managed_account_type, ManagedAccountType::Standard { .. }) {
             return Err("Standard accounts must use next_receive_address or next_change_address");
         }
 
-        let mut pools = self.account_type.address_pools_mut();
+        let mut pools = self.managed_account_type.address_pools_mut();
         let pool = pools.first_mut().ok_or("Account has no address pool")?;
 
         let info = pool
@@ -1114,11 +1118,11 @@ impl ManagedCoreAccount {
     ///
     /// Only works for single-pool account types (not Standard accounts).
     pub fn mark_first_pool_index_used(&mut self, index: u32) -> Result<(), &'static str> {
-        if matches!(self.account_type, ManagedAccountType::Standard { .. }) {
+        if matches!(self.managed_account_type, ManagedAccountType::Standard { .. }) {
             return Err("Standard accounts must use next_receive_address or next_change_address");
         }
 
-        let mut pools = self.account_type.address_pools_mut();
+        let mut pools = self.managed_account_type.address_pools_mut();
         let pool = pools.first_mut().ok_or("Account has no address pool")?;
         pool.mark_index_used(index);
         Ok(())
@@ -1145,7 +1149,7 @@ impl ManagedCoreAccount {
 
     /// Get the derivation path for an address if it belongs to this account
     pub fn address_derivation_path(&self, address: &Address) -> Option<crate::DerivationPath> {
-        self.account_type.get_address_derivation_path(address)
+        self.managed_account_type.get_address_derivation_path(address)
     }
 
     /// Get the current timestamp (for metadata)
@@ -1158,7 +1162,7 @@ impl ManagedCoreAccount {
 
     /// Get total address count across all pools
     pub fn total_address_count(&self) -> usize {
-        self.account_type
+        self.managed_account_type
             .address_pools()
             .iter()
             .map(|pool| pool.stats().total_generated as usize)
@@ -1167,12 +1171,16 @@ impl ManagedCoreAccount {
 
     /// Get used address count across all pools
     pub fn used_address_count(&self) -> usize {
-        self.account_type.address_pools().iter().map(|pool| pool.stats().used_count as usize).sum()
+        self.managed_account_type
+            .address_pools()
+            .iter()
+            .map(|pool| pool.stats().used_count as usize)
+            .sum()
     }
 
     /// Get the external gap limit for standard accounts
     pub fn external_gap_limit(&self) -> Option<u32> {
-        match &self.account_type {
+        match &self.managed_account_type {
             ManagedAccountType::Standard {
                 external_addresses,
                 ..
@@ -1183,7 +1191,7 @@ impl ManagedCoreAccount {
 
     /// Get the internal gap limit for standard accounts
     pub fn internal_gap_limit(&self) -> Option<u32> {
-        match &self.account_type {
+        match &self.managed_account_type {
             ManagedAccountType::Standard {
                 internal_addresses,
                 ..
@@ -1194,7 +1202,7 @@ impl ManagedCoreAccount {
 
     /// Get the gap limit for non-standard (single-pool) accounts
     pub fn gap_limit(&self) -> Option<u32> {
-        match &self.account_type {
+        match &self.managed_account_type {
             ManagedAccountType::Standard {
                 ..
             } => None,
@@ -1259,12 +1267,12 @@ impl ManagedCoreAccount {
 }
 
 impl ManagedAccountTrait for ManagedCoreAccount {
-    fn account_type(&self) -> &ManagedAccountType {
-        &self.account_type
+    fn managed_account_type(&self) -> &ManagedAccountType {
+        &self.managed_account_type
     }
 
-    fn account_type_mut(&mut self) -> &mut ManagedAccountType {
-        &mut self.account_type
+    fn managed_account_type_mut(&mut self) -> &mut ManagedAccountType {
+        &mut self.managed_account_type
     }
 
     fn network(&self) -> Network {
@@ -1316,7 +1324,7 @@ impl<'de> Deserialize<'de> for ManagedCoreAccount {
     {
         #[derive(Deserialize)]
         struct Helper {
-            account_type: ManagedAccountType,
+            managed_account_type: ManagedAccountType,
             network: Network,
             metadata: AccountMetadata,
             is_watch_only: bool,
@@ -1335,7 +1343,7 @@ impl<'de> Deserialize<'de> for ManagedCoreAccount {
             .collect();
 
         Ok(ManagedCoreAccount {
-            account_type: helper.account_type,
+            managed_account_type: helper.managed_account_type,
             network: helper.network,
             metadata: helper.metadata,
             is_watch_only: helper.is_watch_only,

@@ -183,7 +183,7 @@ async fn test_transaction_routing_to_coinjoin_account() {
             if let ManagedAccountType::CoinJoin {
                 addresses,
                 ..
-            } = &mut managed_account.account_type
+            } = &mut managed_account.managed_account_type
             {
                 addresses.next_unused(&KeySource::Public(xpub), true).unwrap_or_else(|_| {
                     // If that fails, generate a dummy address for testing

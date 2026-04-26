@@ -194,7 +194,7 @@ pub unsafe extern "C" fn wallet_build_and_sign_transaction(
                 HashMap::new();
 
             // Collect from all address pools (receive, change, etc.)
-            for pool in managed_account.account_type.address_pools() {
+            for pool in managed_account.managed_account_type.address_pools() {
                 for addr_info in pool.addresses.values() {
                     address_to_path.insert(addr_info.address.clone(), addr_info.path.clone());
                 }

@@ -223,7 +223,7 @@ impl ManagedWalletInfo {
 
         let utxos: Vec<Utxo> = funding_account.utxos.values().cloned().collect();
         let mut address_to_path: HashMap<Address, DerivationPath> = HashMap::new();
-        for pool in funding_account.account_type.address_pools() {
+        for pool in funding_account.managed_account_type.address_pools() {
             for addr_info in pool.addresses.values() {
                 address_to_path.insert(addr_info.address.clone(), addr_info.path.clone());
             }
@@ -358,7 +358,7 @@ impl ManagedWalletInfo {
 
         let utxos: Vec<Utxo> = funding_account.utxos.values().cloned().collect();
         let mut address_to_path: HashMap<Address, DerivationPath> = HashMap::new();
-        for pool in funding_account.account_type.address_pools() {
+        for pool in funding_account.managed_account_type.address_pools() {
             for addr_info in pool.addresses.values() {
                 address_to_path.insert(addr_info.address.clone(), addr_info.path.clone());
             }

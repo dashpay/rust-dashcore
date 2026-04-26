@@ -175,7 +175,7 @@ impl WalletTransactionChecker for ManagedWalletInfo {
 
             let key_source = KeySource::Public(xpub);
             let rev_before = result.new_addresses.len();
-            for pool in account.account_type.address_pools_mut() {
+            for pool in account.managed_account_type.address_pools_mut() {
                 match pool.maintain_gap_limit(&key_source) {
                     Ok(addrs) => result.new_addresses.extend(addrs),
                     Err(e) => {
@@ -1650,7 +1650,7 @@ mod tests {
         let coinjoin_address = if let ManagedAccountType::CoinJoin {
             addresses,
             ..
-        } = &mut managed_account.account_type
+        } = &mut managed_account.managed_account_type
         {
             addresses.next_unused(&KeySource::Public(xpub), true).expect("coinjoin address")
         } else {

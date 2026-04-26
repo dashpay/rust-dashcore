@@ -15,11 +15,11 @@ use dashcore::Txid;
 
 /// Common trait for all managed account types
 pub trait ManagedAccountTrait {
-    /// Get the account type
-    fn account_type(&self) -> &ManagedAccountType;
+    /// Get the managed account type
+    fn managed_account_type(&self) -> &ManagedAccountType;
 
-    /// Get mutable account type
-    fn account_type_mut(&mut self) -> &mut ManagedAccountType;
+    /// Get mutable managed account type
+    fn managed_account_type_mut(&mut self) -> &mut ManagedAccountType;
 
     /// Get the network
     fn network(&self) -> Network;
@@ -53,11 +53,11 @@ pub trait ManagedAccountTrait {
 
     /// Get the account index
     fn index(&self) -> Option<u32> {
-        self.account_type().index()
+        self.managed_account_type().index()
     }
 
     /// Get the account index or 0 if none exists
     fn index_or_default(&self) -> u32 {
-        self.account_type().index_or_default()
+        self.managed_account_type().index_or_default()
     }
 }

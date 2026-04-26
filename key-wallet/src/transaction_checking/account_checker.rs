@@ -517,7 +517,7 @@ impl ManagedAccountCollection {
 impl ManagedCoreAccount {
     /// Classify an address within this account
     pub fn classify_address(&self, address: &Address) -> AddressClassification {
-        match &self.account_type {
+        match &self.managed_account_type {
             ManagedAccountType::Standard {
                 external_addresses,
                 internal_addresses,
@@ -666,7 +666,7 @@ impl ManagedCoreAccount {
             || sent > 0;
 
         if has_addresses {
-            let account_type_match = match &self.account_type {
+            let account_type_match = match &self.managed_account_type {
                 ManagedAccountType::Standard {
                     standard_account_type,
                     ..
@@ -812,7 +812,7 @@ impl ManagedCoreAccount {
 
             if !involved_addresses.is_empty() {
                 // Create the appropriate CoreAccountTypeMatch for identity accounts
-                let account_type_match = match &self.account_type {
+                let account_type_match = match &self.managed_account_type {
                     ManagedAccountType::IdentityRegistration {
                         ..
                     } => CoreAccountTypeMatch::IdentityRegistration {
@@ -870,7 +870,7 @@ impl ManagedCoreAccount {
         // Only check if this is a provider voting keys account
         if let ManagedAccountType::ProviderVotingKeys {
             addresses,
-        } = &self.account_type
+        } = &self.managed_account_type
         {
             if let Some(payload) = &tx.special_transaction_payload {
                 let voting_key_hash = match payload {
@@ -915,7 +915,7 @@ impl ManagedCoreAccount {
         // Only check if this is a provider owner keys account
         if let ManagedAccountType::ProviderOwnerKeys {
             addresses,
-        } = &self.account_type
+        } = &self.managed_account_type
         {
             if let Some(payload) = &tx.special_transaction_payload {
                 let owner_key_hash = match payload {
@@ -955,7 +955,7 @@ impl ManagedCoreAccount {
         // Only check if this is a provider voting keys account
         if let ManagedAccountType::ProviderOperatorKeys {
             addresses,
-        } = &self.account_type
+        } = &self.managed_account_type
         {
             if let Some(payload) = &tx.special_transaction_payload {
                 let operator_public_key = match payload {
@@ -999,7 +999,7 @@ impl ManagedCoreAccount {
         // Only check if this is a provider voting keys account
         if let ManagedAccountType::ProviderPlatformKeys {
             addresses,
-        } = &self.account_type
+        } = &self.managed_account_type
         {
             if let Some(payload) = &tx.special_transaction_payload {
                 let platform_node_id = match payload {

@@ -146,7 +146,7 @@ impl TestContext {
         let ManagedAccountType::Standard {
             external_addresses,
             ..
-        } = &account.account_type
+        } = &account.managed_account_type
         else {
             panic!("Account 0 is not a Standard account type");
         };

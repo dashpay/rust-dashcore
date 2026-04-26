@@ -536,7 +536,7 @@ pub unsafe extern "C" fn managed_core_account_get_account_type(
 
     let account = &*account;
     let managed_account = account.inner();
-    let account_type_rust = managed_account.account_type.to_account_type();
+    let account_type_rust = managed_account.managed_account_type.to_account_type();
 
     // Set the index if output pointer is provided
     if !index_out.is_null() {
@@ -1078,7 +1078,7 @@ pub unsafe extern "C" fn managed_core_account_get_index(
     }
 
     let account = &*account;
-    account.inner().account_type.index_or_default()
+    account.inner().managed_account_type.index_or_default()
 }
 
 /// Get the external address pool from a managed account
@@ -1102,7 +1102,7 @@ pub unsafe extern "C" fn managed_core_account_get_external_address_pool(
     let managed_account = account.inner();
 
     // Get external address pool if this is a standard account
-    match &managed_account.account_type {
+    match &managed_account.managed_account_type {
         key_wallet::managed_account::managed_account_type::ManagedAccountType::Standard {
             external_addresses,
             ..
@@ -1138,7 +1138,7 @@ pub unsafe extern "C" fn managed_core_account_get_internal_address_pool(
     let managed_account = account.inner();
 
     // Get internal address pool if this is a standard account
-    match &managed_account.account_type {
+    match &managed_account.managed_account_type {
         key_wallet::managed_account::managed_account_type::ManagedAccountType::Standard {
             internal_addresses,
             ..
@@ -1182,7 +1182,7 @@ pub unsafe extern "C" fn managed_core_account_get_address_pool(
     match pool_type {
         FFIAddressPoolType::External => {
             // Only standard accounts have external pools
-            match &managed_account.account_type {
+            match &managed_account.managed_account_type {
                 ManagedAccountType::Standard {
                     external_addresses,
                     ..
@@ -1198,7 +1198,7 @@ pub unsafe extern "C" fn managed_core_account_get_address_pool(
         }
         FFIAddressPoolType::Internal => {
             // Only standard accounts have internal pools
-            match &managed_account.account_type {
+            match &managed_account.managed_account_type {
                 ManagedAccountType::Standard {
                     internal_addresses,
                     ..
@@ -1214,7 +1214,7 @@ pub unsafe extern "C" fn managed_core_account_get_address_pool(
         }
         FFIAddressPoolType::Single => {
             // Get the single address pool for non-standard accounts
-            let pool_ref = match &managed_account.account_type {
+            let pool_ref = match &managed_account.managed_account_type {
                 ManagedAccountType::Standard {
                     ..
                 } => {
