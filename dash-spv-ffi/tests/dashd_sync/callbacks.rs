@@ -492,8 +492,8 @@ extern "C" fn on_block_update(
     if records_added > 0 {
         tracker.block_processed_wallet_record_count.fetch_add(records_added, Ordering::SeqCst);
     }
-    tracker.block_processed_wallet_count.fetch_add(1, Ordering::SeqCst);
     record_balance(tracker, balance);
+    tracker.block_processed_wallet_count.fetch_add(1, Ordering::SeqCst);
     let wallet_str = unsafe { cstr_or_unknown(wallet_id) };
     tracing::info!(
         "on_block_update: wallet={}, height={}, inserted={}, updated={}, matured={}",
