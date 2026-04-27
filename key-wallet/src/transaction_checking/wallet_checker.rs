@@ -132,10 +132,17 @@ impl WalletTransactionChecker for ManagedWalletInfo {
                     account.record_transaction(tx, &account_match, context.clone(), tx_type);
                 result.new_records.push(record);
                 result.state_modified = true;
-            } else if account.confirm_transaction(tx, &account_match, context.clone(), tx_type) {
-                result.state_modified = true;
-                if let Some(record) = account.transactions.get(&tx.txid()) {
-                    result.updated_records.push(record.clone());
+            } else {
+                let existed_before = account.transactions.contains_key(&tx.txid());
+                if account.confirm_transaction(tx, &account_match, context.clone(), tx_type) {
+                    result.state_modified = true;
+                    if let Some(record) = account.transactions.get(&tx.txid()) {
+                        if existed_before {
+                            result.updated_records.push(record.clone());
+                        } else {
+                            result.new_records.push(record.clone());
+                        }
+                    }
                 }
             }
 
