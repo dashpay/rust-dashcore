@@ -347,7 +347,7 @@ impl FFISyncEventCallbacks {
             } => {
                 if let Some(cb) = self.on_blocks_needed {
                     let ffi_blocks: Vec<FFIBlockNeeded> = blocks
-                        .iter()
+                        .keys()
                         .map(|key| FFIBlockNeeded {
                             height: key.height(),
                             hash: *key.hash().as_byte_array(),
@@ -361,15 +361,17 @@ impl FFISyncEventCallbacks {
                 height,
                 new_addresses,
                 confirmed_txids,
+                ..
             } => {
                 if let Some(cb) = self.on_block_processed {
                     let hash_bytes = block_hash.as_byte_array();
                     let txid_bytes: Vec<[u8; 32]> =
                         confirmed_txids.iter().map(|txid| *txid.as_byte_array()).collect();
+                    let total_new_addresses: usize = new_addresses.values().map(|v| v.len()).sum();
                     cb(
                         *height,
                         hash_bytes as *const [u8; 32],
-                        new_addresses.len() as u32,
+                        total_new_addresses as u32,
                         txid_bytes.as_ptr(),
                         txid_bytes.len() as u32,
                         self.user_data,
@@ -753,5 +755,87 @@ impl FFIWalletEventCallbacks {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use dashcore::hashes::Hash;
+    use dashcore::{Address, BlockHash, Network, Txid};
+    use key_wallet_manager::{FilterMatchKey, WalletId};
+    use std::collections::{BTreeMap, BTreeSet};
+    use std::sync::atomic::{AtomicU32, Ordering};
+
+    /// `BlocksNeeded` dispatch must pass exactly one entry per
+    /// `FilterMatchKey` to the FFI callback (i.e. iterate keys, not
+    /// inflated by the per-block wallet attribution).
+    #[test]
+    fn test_blocks_needed_dispatch_passes_unique_keys_count() {
+        static COUNT: AtomicU32 = AtomicU32::new(u32::MAX);
+        extern "C" fn cb(_blocks: *const FFIBlockNeeded, count: u32, _user: *mut c_void) {
+            COUNT.store(count, Ordering::SeqCst);
+        }
+
+        let callbacks = FFISyncEventCallbacks {
+            on_blocks_needed: Some(cb),
+            ..FFISyncEventCallbacks::default()
+        };
+
+        let mut blocks: BTreeMap<FilterMatchKey, BTreeSet<WalletId>> = BTreeMap::new();
+        // Two distinct blocks, each attributed to two wallets. The dispatch
+        // must report 2 (unique keys), not 4.
+        blocks.insert(
+            FilterMatchKey::new(10, BlockHash::from_byte_array([1u8; 32])),
+            BTreeSet::from([[1u8; 32], [2u8; 32]]),
+        );
+        blocks.insert(
+            FilterMatchKey::new(20, BlockHash::from_byte_array([2u8; 32])),
+            BTreeSet::from([[1u8; 32], [2u8; 32]]),
+        );
+
+        callbacks.dispatch(&SyncEvent::BlocksNeeded {
+            blocks,
+        });
+        assert_eq!(COUNT.load(Ordering::SeqCst), 2);
+    }
+
+    /// `BlockProcessed` dispatch must report the total address count
+    /// summed across all per-wallet entries in the `new_addresses` map.
+    #[test]
+    fn test_block_processed_dispatch_sums_per_wallet_addresses() {
+        static NEW_ADDR_COUNT: AtomicU32 = AtomicU32::new(u32::MAX);
+        extern "C" fn cb(
+            _height: u32,
+            _hash: *const [u8; 32],
+            new_address_count: u32,
+            _txids: *const [u8; 32],
+            _txid_count: u32,
+            _user: *mut c_void,
+        ) {
+            NEW_ADDR_COUNT.store(new_address_count, Ordering::SeqCst);
+        }
+
+        let callbacks = FFISyncEventCallbacks {
+            on_block_processed: Some(cb),
+            ..FFISyncEventCallbacks::default()
+        };
+
+        let addr_a = Address::dummy(Network::Regtest, 1);
+        let addr_b = Address::dummy(Network::Regtest, 2);
+        let addr_c = Address::dummy(Network::Regtest, 3);
+        let mut new_addresses: BTreeMap<WalletId, Vec<Address>> = BTreeMap::new();
+        // Wallet 1 contributes 2 new addresses, wallet 2 contributes 1. Total = 3.
+        new_addresses.insert([1u8; 32], vec![addr_a, addr_b]);
+        new_addresses.insert([2u8; 32], vec![addr_c]);
+
+        callbacks.dispatch(&SyncEvent::BlockProcessed {
+            block_hash: BlockHash::from_byte_array([7u8; 32]),
+            height: 100,
+            wallets: BTreeSet::new(),
+            new_addresses,
+            confirmed_txids: vec![Txid::from_byte_array([9u8; 32])],
+        });
+        assert_eq!(NEW_ADDR_COUNT.load(Ordering::SeqCst), 3);
     }
 }

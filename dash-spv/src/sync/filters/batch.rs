@@ -1,7 +1,7 @@
 use dashcore::bip158::BlockFilter;
 use dashcore::Address;
-use key_wallet_manager::FilterMatchKey;
-use std::collections::{HashMap, HashSet};
+use key_wallet_manager::{FilterMatchKey, WalletId};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 /// A completed batch of compact block filters ready for verification.
 ///
@@ -24,8 +24,14 @@ pub(super) struct FiltersBatch {
     pending_blocks: u32,
     /// Whether rescan has been completed for this batch.
     rescan_complete: bool,
-    /// Addresses discovered during block processing that need rescan.
-    collected_addresses: HashSet<Address>,
+    /// Wallets that were behind for this batch's height range at scan time and
+    /// therefore need their `synced_height` advanced when the batch commits.
+    /// Already-synced wallets must not be touched.
+    scanned_wallets: BTreeSet<WalletId>,
+    /// Addresses discovered during block processing that still need rescan,
+    /// attributed per wallet so we can rerun matching only against the wallet
+    /// that produced each new address.
+    collected_addresses: HashMap<WalletId, HashSet<Address>>,
 }
 
 impl FiltersBatch {
@@ -43,7 +49,8 @@ impl FiltersBatch {
             scanned: false,
             pending_blocks: 0,
             rescan_complete: false,
-            collected_addresses: HashSet::new(),
+            scanned_wallets: BTreeSet::new(),
+            collected_addresses: HashMap::new(),
         }
     }
     /// Start height of this batch (inclusive).
@@ -100,12 +107,25 @@ impl FiltersBatch {
         self.rescan_complete = true;
     }
     /// Add addresses discovered during block processing for later rescan.
-    pub(super) fn add_addresses(&mut self, addresses: impl IntoIterator<Item = Address>) {
-        self.collected_addresses.extend(addresses);
+    pub(super) fn add_addresses_for_wallet(
+        &mut self,
+        wallet_id: WalletId,
+        addresses: impl IntoIterator<Item = Address>,
+    ) {
+        self.collected_addresses.entry(wallet_id).or_default().extend(addresses);
     }
-    /// Take collected addresses for rescan, leaving the set empty.
-    pub(super) fn take_collected_addresses(&mut self) -> HashSet<Address> {
+    /// Take collected per-wallet addresses for rescan, leaving the map empty.
+    pub(super) fn take_collected_addresses(&mut self) -> HashMap<WalletId, HashSet<Address>> {
         std::mem::take(&mut self.collected_addresses)
+    }
+    /// Record the set of wallets that were behind for this batch at scan time.
+    pub(super) fn set_scanned_wallets(&mut self, wallets: BTreeSet<WalletId>) {
+        self.scanned_wallets = wallets;
+    }
+    /// Wallets that were behind at scan time and must have their synced_height
+    /// advanced when this batch commits.
+    pub(super) fn scanned_wallets(&self) -> &BTreeSet<WalletId> {
+        &self.scanned_wallets
     }
 }
 

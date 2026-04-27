@@ -7,6 +7,7 @@ use dashcore::hash_types::CycleHash;
 use dashcore::hashes::Hash;
 use dashcore::BlockHash;
 use key_wallet::transaction_checking::BlockInfo;
+use std::collections::BTreeSet;
 
 // ---------------------------------------------------------------------------
 // Lifecycle flow tests
@@ -484,7 +485,8 @@ async fn test_process_block_emits_events() {
         txdata: vec![tx],
     };
 
-    let result = manager.process_block(&block, 1000).await;
+    let wallets = BTreeSet::from([wallet_id]);
+    let result = manager.process_block_for_wallets(&block, 1000, &wallets).await;
     assert_eq!(result.new_txids.len(), 1);
 
     let events = drain_events(&mut rx);

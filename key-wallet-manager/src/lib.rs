@@ -33,7 +33,7 @@ use key_wallet::wallet::managed_wallet_info::wallet_info_interface::WalletInfoIn
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
 use key_wallet::{AccountType, Address, ExtendedPrivKey, Mnemonic, Network, Wallet};
 use key_wallet::{ExtendedPubKey, WalletCoreBalance};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::str::FromStr;
 
 use tokio::sync::broadcast;
@@ -72,14 +72,22 @@ pub struct CheckTransactionsResult {
     pub affected_wallets: Vec<WalletId>,
     /// Set to false if the transaction was already stored and is being re-processed (e.g., during rescan)
     pub is_new_transaction: bool,
-    /// New addresses generated during gap limit maintenance
-    pub new_addresses: Vec<Address>,
+    /// New addresses generated during gap limit maintenance, attributed to the
+    /// wallet that produced them.
+    pub new_addresses: BTreeMap<WalletId, Vec<Address>>,
     /// Total value received across all wallets
     pub total_received: u64,
     /// Total value sent across all wallets
     pub total_sent: u64,
     /// Addresses involved across all wallets
     pub involved_addresses: Vec<Address>,
+}
+
+impl CheckTransactionsResult {
+    /// Iterate over every newly generated address regardless of wallet attribution.
+    pub(crate) fn all_new_addresses(&self) -> impl Iterator<Item = &Address> {
+        self.new_addresses.values().flatten()
+    }
 }
 
 /// High-level wallet manager that manages multiple wallets
@@ -450,16 +458,33 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletManager<T> {
         update_state_if_found: bool,
         update_balance: bool,
     ) -> CheckTransactionsResult {
-        let mut result = CheckTransactionsResult::default();
+        let wallet_ids: BTreeSet<WalletId> = self.wallets.keys().cloned().collect();
+        self.check_transaction_in_wallets(
+            tx,
+            context,
+            &wallet_ids,
+            update_state_if_found,
+            update_balance,
+        )
+        .await
+    }
 
-        // We need to iterate carefully since we're mutating
-        let wallet_ids: Vec<WalletId> = self.wallets.keys().cloned().collect();
+    /// Check a transaction against the given subset of wallets and update their states if relevant.
+    pub(crate) async fn check_transaction_in_wallets(
+        &mut self,
+        tx: &Transaction,
+        context: TransactionContext,
+        wallet_ids: &BTreeSet<WalletId>,
+        update_state_if_found: bool,
+        update_balance: bool,
+    ) -> CheckTransactionsResult {
+        let mut result = CheckTransactionsResult::default();
 
         for wallet_id in wallet_ids {
             // Get mutable references to both wallet and wallet_info
             // We need to use split borrowing to get around Rust's borrow checker
-            let wallet_opt = self.wallets.get_mut(&wallet_id);
-            let wallet_info_opt = self.wallet_infos.get_mut(&wallet_id);
+            let wallet_opt = self.wallets.get_mut(wallet_id);
+            let wallet_info_opt = self.wallet_infos.get_mut(wallet_id);
 
             if let (Some(wallet), Some(wallet_info)) = (wallet_opt, wallet_info_opt) {
                 let check_result = wallet_info
@@ -472,15 +497,12 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletManager<T> {
                     )
                     .await;
 
-                // If the transaction is relevant
                 if check_result.is_relevant {
-                    result.affected_wallets.push(wallet_id);
-                    // If any wallet reports this as new, mark result as new
+                    result.affected_wallets.push(*wallet_id);
                     if check_result.is_new_transaction {
                         result.is_new_transaction = true;
                     }
 
-                    // Aggregate totals and involved addresses across wallets
                     result.total_received =
                         result.total_received.saturating_add(check_result.total_received);
                     result.total_sent = result.total_sent.saturating_add(check_result.total_sent);
@@ -493,16 +515,15 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletManager<T> {
                     if check_result.is_new_transaction {
                         for (account_index, record) in check_result.new_records {
                             let event = WalletEvent::TransactionReceived {
-                                wallet_id,
+                                wallet_id: *wallet_id,
                                 account_index,
                                 record: Box::new(record),
                             };
                             let _ = self.event_sender.send(event);
                         }
                     } else if check_result.state_modified {
-                        // Known transaction whose state was modified (confirmation or IS-lock).
                         let event = WalletEvent::TransactionStatusChanged {
-                            wallet_id,
+                            wallet_id: *wallet_id,
                             txid: tx.txid(),
                             status: context.clone(),
                         };
@@ -510,7 +531,13 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletManager<T> {
                     }
                 }
 
-                result.new_addresses.extend(check_result.new_addresses);
+                if !check_result.new_addresses.is_empty() {
+                    result
+                        .new_addresses
+                        .entry(*wallet_id)
+                        .or_default()
+                        .extend(check_result.new_addresses);
+                }
             }
         }
 

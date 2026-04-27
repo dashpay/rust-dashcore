@@ -144,8 +144,11 @@ fn main() {
 
     println!("   Current last-processed height (Testnet): {:?}", manager.last_processed_height());
 
-    // Update last-processed height across all managed wallets
-    manager.update_last_processed_height(850_000);
+    // Advance every wallet's last-processed height through the per-wallet API.
+    let wallet_ids: Vec<_> = manager.list_wallets().into_iter().copied().collect();
+    for wallet_id in &wallet_ids {
+        manager.update_wallet_last_processed_height(wallet_id, 850_000);
+    }
     println!("   Updated last-processed height to: {:?}", manager.last_processed_height());
 
     println!("\n=== Summary ===");

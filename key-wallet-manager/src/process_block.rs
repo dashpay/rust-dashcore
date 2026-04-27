@@ -1,5 +1,5 @@
 use crate::wallet_interface::{BlockProcessingResult, MempoolTransactionResult, WalletInterface};
-use crate::{WalletEvent, WalletManager};
+use crate::{WalletEvent, WalletId, WalletManager};
 use async_trait::async_trait;
 use core::fmt::Write as _;
 use dashcore::ephemerealdata::instant_lock::InstantLock;
@@ -7,24 +7,27 @@ use dashcore::prelude::CoreBlockHeight;
 use dashcore::{Address, Block, Transaction};
 use key_wallet::transaction_checking::{BlockInfo, TransactionContext};
 use key_wallet::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
+use std::collections::BTreeSet;
 use tokio::sync::broadcast;
 
 #[async_trait]
 impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletManager<T> {
-    async fn process_block(
+    async fn process_block_for_wallets(
         &mut self,
         block: &Block,
         height: CoreBlockHeight,
+        wallets: &BTreeSet<WalletId>,
     ) -> BlockProcessingResult {
         let mut result = BlockProcessingResult::default();
+        if wallets.is_empty() {
+            return result;
+        }
         let info = BlockInfo::new(height, block.block_hash(), block.header.time);
 
-        // Process each transaction using the base manager
         for tx in &block.txdata {
             let context = TransactionContext::InBlock(info);
-
             let check_result =
-                self.check_transaction_in_all_wallets(tx, context, true, false).await;
+                self.check_transaction_in_wallets(tx, context, wallets, true, false).await;
 
             if !check_result.affected_wallets.is_empty() {
                 if check_result.is_new_transaction {
@@ -34,10 +37,27 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
                 }
             }
 
-            result.new_addresses.extend(check_result.new_addresses);
+            for (wallet_id, addrs) in check_result.new_addresses {
+                result.new_addresses.entry(wallet_id).or_default().extend(addrs);
+            }
         }
 
-        self.update_last_processed_height(height);
+        // For each processed wallet: advance last-processed height monotonically
+        // and refresh the cached balance so it reflects any UTXO changes from
+        // this block. Rescan blocks at heights below the wallet's current
+        // checkpoint must not drag the height backwards, but they still need a
+        // balance refresh because UTXOs were added or removed.
+        let snapshot = self.snapshot_balances();
+        for wallet_id in wallets {
+            if let Some(info) = self.wallet_infos.get_mut(wallet_id) {
+                if height > info.last_processed_height() {
+                    info.update_last_processed_height(height);
+                } else {
+                    info.update_balance();
+                }
+            }
+        }
+        self.emit_balance_changes(&snapshot);
 
         result
     }
@@ -72,17 +92,22 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
         }
         self.emit_balance_changes(&snapshot);
 
+        let new_addresses: Vec<Address> = check_result.all_new_addresses().cloned().collect();
         MempoolTransactionResult {
             is_relevant,
             net_amount,
             is_outgoing: net_amount < 0,
             addresses: check_result.involved_addresses,
-            new_addresses: check_result.new_addresses,
+            new_addresses,
         }
     }
 
     fn monitored_addresses(&self) -> Vec<Address> {
         self.monitored_addresses()
+    }
+
+    fn monitored_addresses_for(&self, wallet_id: &WalletId) -> Vec<Address> {
+        self.wallet_infos.get(wallet_id).map(|info| info.monitored_addresses()).unwrap_or_default()
     }
 
     fn watched_outpoints(&self) -> Vec<dashcore::OutPoint> {
@@ -101,24 +126,47 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
         self.wallet_infos.values().map(|info| info.last_processed_height()).max().unwrap_or(0)
     }
 
-    fn update_last_processed_height(&mut self, height: CoreBlockHeight) {
-        let snapshot = self.snapshot_balances();
-
-        for (_wallet_id, info) in self.wallet_infos.iter_mut() {
-            info.update_last_processed_height(height);
-        }
-
-        self.emit_balance_changes(&snapshot);
-    }
-
     fn synced_height(&self) -> CoreBlockHeight {
         self.wallet_infos.values().map(|info| info.synced_height()).min().unwrap_or(0)
     }
 
-    fn update_synced_height(&mut self, height: CoreBlockHeight) {
-        for (_wallet_id, info) in self.wallet_infos.iter_mut() {
-            info.update_synced_height(height);
+    fn wallets_behind(&self, height: CoreBlockHeight) -> BTreeSet<WalletId> {
+        self.wallet_infos
+            .iter()
+            .filter_map(|(id, info)| {
+                if info.synced_height() < height {
+                    Some(*id)
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
+    fn wallet_synced_height(&self, wallet_id: &WalletId) -> CoreBlockHeight {
+        self.wallet_infos.get(wallet_id).map(|info| info.synced_height()).unwrap_or(0)
+    }
+
+    fn update_wallet_synced_height(&mut self, wallet_id: &WalletId, height: CoreBlockHeight) {
+        if let Some(info) = self.wallet_infos.get_mut(wallet_id) {
+            if height > info.synced_height() {
+                info.update_synced_height(height);
+            }
         }
+    }
+
+    fn update_wallet_last_processed_height(
+        &mut self,
+        wallet_id: &WalletId,
+        height: CoreBlockHeight,
+    ) {
+        let snapshot = self.snapshot_balances();
+        if let Some(info) = self.wallet_infos.get_mut(wallet_id) {
+            if height > info.last_processed_height() {
+                info.update_last_processed_height(height);
+            }
+        }
+        self.emit_balance_changes(&snapshot);
     }
 
     fn subscribe_events(&self) -> broadcast::Receiver<WalletEvent> {
@@ -193,10 +241,11 @@ mod tests {
         BlockHash, Network, OutPoint, ScriptBuf, TxIn, TxMerkleNode, TxOut, Txid, Witness,
     };
     use key_wallet::account::StandardAccountType;
+    use key_wallet::mnemonic::Language;
     use key_wallet::wallet::initialization::WalletAccountCreationOptions;
     use key_wallet::wallet::managed_wallet_info::transaction_building::AccountTypePreference;
     use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
-    use key_wallet::AccountType;
+    use key_wallet::{AccountType, Mnemonic};
 
     fn make_block(txdata: Vec<Transaction>) -> Block {
         Block {
@@ -215,15 +264,9 @@ mod tests {
     #[tokio::test]
     async fn test_last_processed_height() {
         let mut manager: WalletManager<ManagedWalletInfo> = WalletManager::new(Network::Testnet);
-        // Initial state
         assert_eq!(manager.last_processed_height(), 0);
-        // Updating last-processed height without wallets is a no-op
-        manager.update_last_processed_height(1000);
-        assert_eq!(manager.last_processed_height(), 0);
-        // Still a no-op without wallets
-        manager.update_last_processed_height(5000);
-        assert_eq!(manager.last_processed_height(), 0);
-        manager.update_last_processed_height(10);
+        let unknown: WalletId = [0xff; 32];
+        manager.update_wallet_last_processed_height(&unknown, 1000);
         assert_eq!(manager.last_processed_height(), 0);
     }
 
@@ -277,12 +320,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_process_block_emits_balance_updated() {
-        let (mut manager, _wallet_id, addr) = setup_manager_with_wallet();
+        let (mut manager, wallet_id, addr) = setup_manager_with_wallet();
         let tx = create_tx_paying_to(&addr, 0xcc);
         let block = make_block(vec![tx]);
 
         let mut rx = manager.subscribe_events();
-        manager.process_block(&block, 100).await;
+        let wallets = BTreeSet::from([wallet_id]);
+        manager.process_block_for_wallets(&block, 100, &wallets).await;
 
         let mut found = false;
         while let Ok(event) = rx.try_recv() {
@@ -297,6 +341,38 @@ mod tests {
             }
         }
         assert!(found, "should emit BalanceUpdated for block processing");
+    }
+
+    #[tokio::test]
+    async fn test_process_block_for_wallets_only_touches_listed() {
+        let (mut manager, wallet_id1, _) = setup_manager_with_wallet();
+        let mnemonic2 = Mnemonic::generate(12, Language::English).unwrap();
+        let wallet_id2 = manager
+            .create_wallet_from_mnemonic(
+                &mnemonic2.to_string(),
+                "",
+                0,
+                WalletAccountCreationOptions::Default,
+            )
+            .unwrap();
+
+        let block = make_block(vec![]);
+
+        let only_w1 = BTreeSet::from([wallet_id1]);
+        manager.process_block_for_wallets(&block, 200, &only_w1).await;
+        assert_eq!(manager.get_wallet_info(&wallet_id1).unwrap().last_processed_height(), 200);
+        assert_eq!(manager.get_wallet_info(&wallet_id2).unwrap().last_processed_height(), 0);
+
+        let only_w2 = BTreeSet::from([wallet_id2]);
+        manager.process_block_for_wallets(&block, 300, &only_w2).await;
+        assert_eq!(manager.get_wallet_info(&wallet_id1).unwrap().last_processed_height(), 200);
+        assert_eq!(manager.get_wallet_info(&wallet_id2).unwrap().last_processed_height(), 300);
+
+        // Empty wallet set is a no-op even though the height is past both wallets.
+        let none = BTreeSet::new();
+        manager.process_block_for_wallets(&block, 1000, &none).await;
+        assert_eq!(manager.get_wallet_info(&wallet_id1).unwrap().last_processed_height(), 200);
+        assert_eq!(manager.get_wallet_info(&wallet_id2).unwrap().last_processed_height(), 300);
     }
 
     #[tokio::test]
@@ -382,9 +458,13 @@ mod tests {
             assert_eq!(manager.monitor_revision(), expected_rev, "after get_change_address");
         }
 
-        // update_last_processed_height does NOT bump
-        manager.update_last_processed_height(1000);
-        assert_eq!(manager.monitor_revision(), expected_rev, "after update_last_processed_height");
+        // `update_wallet_last_processed_height` does not bump the monitor revision.
+        manager.update_wallet_last_processed_height(&wallet_id, 1000);
+        assert_eq!(
+            manager.monitor_revision(),
+            expected_rev,
+            "after update_wallet_last_processed_height"
+        );
 
         // process_mempool_transaction bumps from UTXO changes and possibly
         // new addresses generated via gap limit maintenance
@@ -406,11 +486,12 @@ mod tests {
             "after process_instant_send_lock"
         );
 
-        // process_block bumps from UTXO changes and possibly new addresses
+        // process_block_for_wallets bumps from UTXO changes and possibly new addresses
         let rev_before_block = manager.monitor_revision();
         let tx2 = create_tx_paying_to(&addr, 0xd1);
         let block = make_block(vec![tx2]);
-        let _result = manager.process_block(&block, 100).await;
+        let block_wallets = BTreeSet::from([wallet_id]);
+        let _result = manager.process_block_for_wallets(&block, 100, &block_wallets).await;
         assert!(
             manager.monitor_revision() > rev_before_block,
             "block with tx paying to our address should bump revision (UTXO added)"

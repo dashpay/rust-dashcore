@@ -6,7 +6,7 @@ mod tests {
     use crate::error::{FFIError, FFIErrorCode};
     use crate::{wallet, wallet_manager};
     use dash_network::ffi::FFINetwork;
-    use key_wallet_manager::WalletInterface;
+    use key_wallet_manager::{WalletId, WalletInterface};
     use std::ffi::{CStr, CString};
     use std::ptr;
     use std::slice;
@@ -442,13 +442,14 @@ mod tests {
         let height = unsafe { wallet_manager::wallet_manager_current_height(manager, error) };
         assert_eq!(height, 0);
 
-        // Updating last-processed height without wallets is a no-op
+        // Updating last-processed height for an unknown wallet is a no-op.
+        let unknown_wallet: WalletId = [0xff; 32];
         let new_height = 12345;
         unsafe {
             let manager_ref = &*manager;
             manager_ref.runtime.block_on(async {
                 let mut manager_guard = manager_ref.manager.write().await;
-                manager_guard.update_last_processed_height(new_height);
+                manager_guard.update_wallet_last_processed_height(&unknown_wallet, new_height);
             });
         }
 

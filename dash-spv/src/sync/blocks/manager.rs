@@ -79,15 +79,17 @@ impl<H: BlockHeaderStorage, B: BlockStorage, W: WalletInterface> BlocksManager<H
         let mut events = Vec::new();
 
         // Process blocks in height order using pipeline's ordering logic
-        while let Some((block, height)) = self.pipeline.take_next_ordered_block() {
+        while let Some((block, height, interested)) = self.pipeline.take_next_ordered_block() {
             let hash = block.block_hash();
 
-            // Process block through wallet
+            // Process the block only for the wallets whose filter matched it.
+            // Already-synced wallets that did not match are not touched.
             let mut wallet = self.wallet.write().await;
-            let result = wallet.process_block(&block, height).await;
+            let result = wallet.process_block_for_wallets(&block, height, &interested).await;
             drop(wallet);
 
             let total_relevant = result.relevant_tx_count();
+            let new_addresses_total: usize = result.new_addresses.values().map(|v| v.len()).sum();
             if total_relevant > 0 {
                 tracing::info!(
                     "Found {} relevant transactions ({} new, {} existing) {} at height {}, new addresses: {}",
@@ -96,7 +98,7 @@ impl<H: BlockHeaderStorage, B: BlockStorage, W: WalletInterface> BlocksManager<H
                     result.existing_txids.len(),
                     hash,
                     height,
-                    result.new_addresses.len()
+                    new_addresses_total
                 );
             }
 
@@ -104,11 +106,12 @@ impl<H: BlockHeaderStorage, B: BlockStorage, W: WalletInterface> BlocksManager<H
             let confirmed_txids: Vec<_> = result.relevant_txids().cloned().collect();
 
             // Collect new addresses for gap limit rescanning
-            let new_addresses: Vec<_> = result.new_addresses.into_iter().collect();
-            if !new_addresses.is_empty() {
+            let new_addresses = result.new_addresses;
+            if new_addresses_total > 0 {
                 tracing::debug!(
-                    "Block {} generated {} new addresses for gap limit maintenance",
+                    "Block {} generated {} new addresses for gap limit maintenance across {} wallets",
                     height,
+                    new_addresses_total,
                     new_addresses.len()
                 );
             }
@@ -124,6 +127,7 @@ impl<H: BlockHeaderStorage, B: BlockStorage, W: WalletInterface> BlocksManager<H
             events.push(SyncEvent::BlockProcessed {
                 block_hash: hash,
                 height,
+                wallets: interested,
                 new_addresses,
                 confirmed_txids,
             });
@@ -168,9 +172,9 @@ mod tests {
     };
     use crate::sync::{ManagerIdentifier, SyncEvent, SyncManagerProgress};
     use crate::test_utils::MockNetworkManager;
-    use key_wallet_manager::test_utils::MockWallet;
+    use key_wallet_manager::test_utils::{MockWallet, MOCK_WALLET_ID};
     use key_wallet_manager::FilterMatchKey;
-    use std::collections::BTreeSet;
+    use std::collections::{BTreeMap, BTreeSet};
 
     type TestBlocksManager =
         BlocksManager<PersistentBlockHeaderStorage, PersistentBlockStorage, MockWallet>;
@@ -215,8 +219,8 @@ mod tests {
         let requests = network.request_sender();
 
         let block_hash = dashcore::BlockHash::dummy(0);
-        let mut blocks = BTreeSet::new();
-        blocks.insert(FilterMatchKey::new(100, block_hash));
+        let mut blocks = BTreeMap::new();
+        blocks.insert(FilterMatchKey::new(100, block_hash), BTreeSet::from([MOCK_WALLET_ID]));
         let event = SyncEvent::BlocksNeeded {
             blocks,
         };
@@ -226,5 +230,101 @@ mod tests {
         // Should queue the block
         assert_eq!(manager.state(), SyncState::Syncing);
         assert!(events.is_empty());
+    }
+
+    /// `process_buffered_blocks` must call `process_block_for_wallets` with
+    /// the exact wallet set carried in the pipeline so already-synced
+    /// wallets are not touched by routing logic.
+    #[tokio::test]
+    async fn test_process_buffered_blocks_routes_wallet_set() {
+        use dashcore::block::Header;
+        use dashcore::{Block, TxMerkleNode};
+        use dashcore_hashes::Hash;
+
+        let mut manager = create_test_manager().await;
+        manager.progress.set_state(SyncState::Syncing);
+
+        let header = Header {
+            version: dashcore::blockdata::block::Version::from_consensus(1),
+            prev_blockhash: dashcore::BlockHash::all_zeros(),
+            merkle_root: TxMerkleNode::all_zeros(),
+            time: 0,
+            bits: dashcore::CompactTarget::from_consensus(0),
+            nonce: 0,
+        };
+        let block = Block {
+            header,
+            txdata: vec![],
+        };
+        manager.pipeline.add_from_storage(block.clone(), 100, BTreeSet::from([MOCK_WALLET_ID]));
+
+        let events = manager.process_buffered_blocks().await.unwrap();
+        assert!(matches!(events.first(), Some(SyncEvent::BlockProcessed { .. })));
+
+        // MOCK_WALLET_ID was in the routed set, so MockWallet recorded the
+        // block. (MockWallet::process_block_for_wallets returns early when
+        // its id is absent.)
+        let processed = manager.wallet.read().await.processed_blocks();
+        let processed = processed.lock().await;
+        assert_eq!(processed.len(), 1);
+        assert_eq!(processed[0].1, 100);
+    }
+
+    /// A wallet that is NOT in the pipeline's interested set must not be
+    /// routed the block. Two wallets are registered, but only `wallet_in`
+    /// appears in the routed set; the other wallet's processed log must
+    /// stay empty for that block.
+    #[tokio::test]
+    async fn test_process_buffered_blocks_excludes_uninterested_wallet() {
+        use dashcore::block::Header;
+        use dashcore::{Block, TxMerkleNode};
+        use dashcore_hashes::Hash;
+        use key_wallet_manager::test_utils::{MockWalletState, MultiMockWallet};
+        use key_wallet_manager::WalletId;
+
+        let storage = DiskStorageManager::with_temp_dir().await.unwrap();
+        let multi = MultiMockWallet::new();
+        let wallet_in: WalletId = [0xAA; 32];
+        let wallet_out: WalletId = [0xBB; 32];
+        let multi = Arc::new(RwLock::new(multi));
+        {
+            let mut w = multi.write().await;
+            w.insert_wallet(wallet_in, MockWalletState::default());
+            w.insert_wallet(wallet_out, MockWalletState::default());
+        }
+        let mut manager: BlocksManager<
+            PersistentBlockHeaderStorage,
+            PersistentBlockStorage,
+            MultiMockWallet,
+        > = BlocksManager::new(multi.clone(), storage.block_headers(), storage.blocks()).await;
+        manager.progress.set_state(SyncState::Syncing);
+
+        let header = Header {
+            version: dashcore::blockdata::block::Version::from_consensus(1),
+            prev_blockhash: dashcore::BlockHash::all_zeros(),
+            merkle_root: TxMerkleNode::all_zeros(),
+            time: 0,
+            bits: dashcore::CompactTarget::from_consensus(0),
+            nonce: 0,
+        };
+        let block = Block {
+            header,
+            txdata: vec![],
+        };
+        // Only wallet_in is in the routed set.
+        manager.pipeline.add_from_storage(block.clone(), 100, BTreeSet::from([wallet_in]));
+
+        let _ = manager.process_buffered_blocks().await.unwrap();
+
+        let processed = multi.read().await.processed();
+        let processed = processed.lock().await;
+        // Exactly one entry, for wallet_in only.
+        assert_eq!(processed.len(), 1);
+        assert_eq!(processed[0].0, wallet_in);
+        assert_eq!(processed[0].2, 100);
+        assert!(
+            !processed.iter().any(|(id, _, _)| *id == wallet_out),
+            "wallet_out was not in the routed set, must not be processed"
+        );
     }
 }

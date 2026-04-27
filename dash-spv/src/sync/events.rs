@@ -2,8 +2,8 @@ use crate::sync::ManagerIdentifier;
 use dashcore::ephemerealdata::chain_lock::ChainLock;
 use dashcore::ephemerealdata::instant_lock::InstantLock;
 use dashcore::{Address, BlockHash, Txid};
-use key_wallet_manager::FilterMatchKey;
-use std::collections::BTreeSet;
+use key_wallet_manager::{FilterMatchKey, WalletId};
+use std::collections::{BTreeMap, BTreeSet};
 
 /// Events that managers can emit and subscribe to.
 ///
@@ -80,11 +80,15 @@ pub enum SyncEvent {
 
     /// Filters matched the wallet, blocks need downloading.
     ///
+    /// Each block is tagged with the wallets whose addresses matched its filter,
+    /// so the block is processed only for those wallets.
+    ///
     /// Emitted by: `FiltersManager`
     /// Consumed by: `BlocksManager`
     BlocksNeeded {
-        /// Blocks to download (sorted by height)
-        blocks: BTreeSet<FilterMatchKey>,
+        /// Blocks to download (height-ordered by `FilterMatchKey`), each
+        /// associated with the wallet ids that need it.
+        blocks: BTreeMap<FilterMatchKey, BTreeSet<WalletId>>,
     },
 
     /// Block downloaded and processed through wallet.
@@ -97,8 +101,11 @@ pub enum SyncEvent {
         block_hash: BlockHash,
         /// Height of the processed block
         height: u32,
-        /// New addresses discovered from wallet gap limit maintenance
-        new_addresses: Vec<Address>,
+        /// Wallets the block was actually processed for.
+        wallets: BTreeSet<WalletId>,
+        /// New addresses discovered from wallet gap limit maintenance, attributed
+        /// to the wallet that produced them.
+        new_addresses: BTreeMap<WalletId, Vec<Address>>,
         /// Transaction IDs confirmed in this block that are relevant to the wallet
         confirmed_txids: Vec<Txid>,
     },
@@ -213,7 +220,8 @@ impl SyncEvent {
                 new_addresses,
                 ..
             } => {
-                format!("BlockProcessed(height={}, new_addrs={})", height, new_addresses.len())
+                let total: usize = new_addresses.values().map(|v| v.len()).sum();
+                format!("BlockProcessed(height={}, new_addrs={})", height, total)
             }
             SyncEvent::MasternodeStateUpdated {
                 height,

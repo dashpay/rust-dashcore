@@ -162,13 +162,7 @@ fn test_balance_calculation() {
 fn test_block_height_tracking() {
     let mut manager = WalletManager::<ManagedWalletInfo>::new(Network::Testnet);
 
-    // Initial state
-    assert_eq!(manager.last_processed_height(), 0);
-    assert_eq!(manager.synced_height(), 0);
-
-    // Updating heights before adding wallets is a no-op
-    manager.update_last_processed_height(1000);
-    manager.update_synced_height(500);
+    // Initial state with no wallets
     assert_eq!(manager.last_processed_height(), 0);
     assert_eq!(manager.synced_height(), 0);
 
@@ -194,53 +188,58 @@ fn test_block_height_tracking() {
 
     assert_eq!(manager.wallet_count(), 2);
 
-    // Verify both wallets have last_processed_height and synced_height of 0 initially
+    // Both wallets initialized with `synced_height = birth_height - 1 = 0`,
+    // so neither has been processed past genesis.
     for wallet_info in manager.get_all_wallet_infos().values() {
         assert_eq!(wallet_info.last_processed_height(), 0);
         assert_eq!(wallet_info.synced_height(), 0);
     }
 
-    // Update last-processed height - should propagate to all wallets
-    manager.update_last_processed_height(12345);
+    // Per-wallet last-processed updates only touch the addressed wallet.
+    manager.update_wallet_last_processed_height(&wallet_id1, 12345);
     assert_eq!(manager.last_processed_height(), 12345);
-
-    // Verify all wallets got updated while synced_height stays at 0
     let wallet_info1 = manager.get_wallet_info(&wallet_id1).unwrap();
     let wallet_info2 = manager.get_wallet_info(&wallet_id2).unwrap();
     assert_eq!(wallet_info1.last_processed_height(), 12345);
-    assert_eq!(wallet_info2.last_processed_height(), 12345);
-    assert_eq!(wallet_info1.synced_height(), 0);
+    assert_eq!(wallet_info2.last_processed_height(), 0);
+
+    // Per-wallet synced-height updates only touch the addressed wallet.
+    manager.update_wallet_synced_height(&wallet_id1, 12000);
+    let wallet_info1 = manager.get_wallet_info(&wallet_id1).unwrap();
+    let wallet_info2 = manager.get_wallet_info(&wallet_id2).unwrap();
+    assert_eq!(wallet_info1.synced_height(), 12000);
     assert_eq!(wallet_info2.synced_height(), 0);
+    // Aggregate `synced_height()` is `min` across wallets, so wallet 2 holds it at 0.
+    assert_eq!(manager.synced_height(), 0);
 
-    // Update synced height - should propagate to all wallets without touching last_processed_height
-    manager.update_synced_height(20000);
-    assert_eq!(manager.synced_height(), 20000);
+    // Advance wallet 2 too. Aggregate min jumps to wallet 2's new value.
+    manager.update_wallet_synced_height(&wallet_id2, 11000);
+    assert_eq!(manager.synced_height(), 11000);
 
-    for wallet_info in manager.get_all_wallet_infos().values() {
-        assert_eq!(wallet_info.last_processed_height(), 12345);
-        assert_eq!(wallet_info.synced_height(), 20000);
-    }
-
-    // Update wallets individually to different last-processed heights
-    let wallet_info1 = manager.get_wallet_info_mut(&wallet_id1).unwrap();
-    wallet_info1.update_last_processed_height(30000);
-
-    let wallet_info2 = manager.get_wallet_info_mut(&wallet_id2).unwrap();
-    wallet_info2.update_last_processed_height(25000);
-
-    // Verify each wallet has its own last_processed_height and manager reports the max
+    // Wallets advance independently. Aggregate `last_processed_height()` is `max`.
+    manager.update_wallet_last_processed_height(&wallet_id2, 25000);
     let wallet_info1 = manager.get_wallet_info(&wallet_id1).unwrap();
     let wallet_info2 = manager.get_wallet_info(&wallet_id2).unwrap();
-    assert_eq!(wallet_info1.last_processed_height(), 30000);
+    assert_eq!(wallet_info1.last_processed_height(), 12345);
     assert_eq!(wallet_info2.last_processed_height(), 25000);
-    assert_eq!(manager.last_processed_height(), 30000);
+    assert_eq!(manager.last_processed_height(), 25000);
 
-    // Manager synced-height update syncs across all wallets
-    manager.update_synced_height(40000);
-    let wallet_info1 = manager.get_wallet_info(&wallet_id1).unwrap();
+    // Per-wallet updates are monotonic. Values below the current are ignored.
+    manager.update_wallet_last_processed_height(&wallet_id2, 10);
+    manager.update_wallet_synced_height(&wallet_id2, 10);
     let wallet_info2 = manager.get_wallet_info(&wallet_id2).unwrap();
-    assert_eq!(wallet_info1.last_processed_height(), 30000);
     assert_eq!(wallet_info2.last_processed_height(), 25000);
-    assert_eq!(wallet_info1.synced_height(), 40000);
-    assert_eq!(wallet_info2.synced_height(), 40000);
+    assert_eq!(wallet_info2.synced_height(), 11000);
+
+    // `wallets_behind(height)` lists wallets with `synced_height < height`.
+    let behind_at_12500 = manager.wallets_behind(12500);
+    assert!(behind_at_12500.contains(&wallet_id1));
+    assert!(behind_at_12500.contains(&wallet_id2));
+    // A wallet at exactly `height` is not behind. wallet_id1 sits at 12000,
+    // wallet_id2 sits at 11000.
+    let behind_at_12000 = manager.wallets_behind(12000);
+    assert!(!behind_at_12000.contains(&wallet_id1));
+    assert!(behind_at_12000.contains(&wallet_id2));
+    let behind_at_500 = manager.wallets_behind(500);
+    assert!(behind_at_500.is_empty());
 }

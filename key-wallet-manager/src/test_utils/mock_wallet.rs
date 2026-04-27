@@ -1,18 +1,27 @@
-use crate::{BlockProcessingResult, MempoolTransactionResult, WalletEvent, WalletInterface};
+use crate::{
+    BlockProcessingResult, MempoolTransactionResult, WalletEvent, WalletId, WalletInterface,
+};
 use dashcore::ephemerealdata::instant_lock::InstantLock;
 use dashcore::prelude::CoreBlockHeight;
 use dashcore::{Address, Block, OutPoint, Transaction, Txid};
 use key_wallet::transaction_checking::TransactionContext;
+use std::collections::BTreeSet;
 use std::sync::Arc;
 use tokio::sync::{broadcast, Mutex};
 
 // Type alias for captured IS lock payloads
 type InstantLockCaptures = Arc<Mutex<Vec<(Txid, Option<InstantLock>)>>>;
 
+/// Default wallet ID used by `MockWallet` and `NonMatchingMockWallet` for tests
+/// that don't care about per-wallet attribution.
+pub const MOCK_WALLET_ID: WalletId = [0u8; 32];
+
 pub struct MockWallet {
+    wallet_id: WalletId,
     processed_blocks: Arc<Mutex<Vec<(dashcore::BlockHash, u32)>>>,
     processed_transactions: Arc<Mutex<Vec<dashcore::Txid>>>,
     last_processed_height: CoreBlockHeight,
+    synced_height: CoreBlockHeight,
     event_sender: broadcast::Sender<WalletEvent>,
     /// When true, process_mempool_transaction returns is_relevant=true.
     mempool_relevant: bool,
@@ -45,9 +54,11 @@ impl MockWallet {
     pub fn new() -> Self {
         let (event_sender, _) = broadcast::channel(16);
         Self {
+            wallet_id: MOCK_WALLET_ID,
             processed_blocks: Arc::new(Mutex::new(Vec::new())),
             processed_transactions: Arc::new(Mutex::new(Vec::new())),
             last_processed_height: 0,
+            synced_height: 0,
             event_sender,
             mempool_relevant: false,
             addresses: Vec::new(),
@@ -59,6 +70,11 @@ impl MockWallet {
             processed_instant_locks: Arc::new(Mutex::new(Vec::new())),
             monitor_revision: 0,
         }
+    }
+
+    /// Override the wallet id used for per-wallet API surfaces.
+    pub fn set_wallet_id(&mut self, wallet_id: WalletId) {
+        self.wallet_id = wallet_id;
     }
 
     /// Configure whether mempool transactions are reported as relevant.
@@ -108,14 +124,25 @@ impl MockWallet {
 
 #[async_trait::async_trait]
 impl WalletInterface for MockWallet {
-    async fn process_block(&mut self, block: &Block, height: u32) -> BlockProcessingResult {
+    async fn process_block_for_wallets(
+        &mut self,
+        block: &Block,
+        height: u32,
+        wallets: &BTreeSet<WalletId>,
+    ) -> BlockProcessingResult {
+        if !wallets.contains(&self.wallet_id) {
+            return BlockProcessingResult::default();
+        }
         let mut processed = self.processed_blocks.lock().await;
         processed.push((block.block_hash(), height));
+        if height > self.last_processed_height {
+            self.last_processed_height = height;
+        }
 
         BlockProcessingResult {
             new_txids: block.txdata.iter().map(|tx| tx.txid()).collect(),
             existing_txids: Vec::new(),
-            new_addresses: Vec::new(),
+            new_addresses: Default::default(),
         }
     }
 
@@ -152,6 +179,14 @@ impl WalletInterface for MockWallet {
         self.addresses.clone()
     }
 
+    fn monitored_addresses_for(&self, wallet_id: &WalletId) -> Vec<Address> {
+        if wallet_id == &self.wallet_id {
+            self.addresses.clone()
+        } else {
+            Vec::new()
+        }
+    }
+
     fn watched_outpoints(&self) -> Vec<OutPoint> {
         self.outpoints.clone()
     }
@@ -160,8 +195,40 @@ impl WalletInterface for MockWallet {
         self.last_processed_height
     }
 
-    fn update_last_processed_height(&mut self, height: CoreBlockHeight) {
-        self.last_processed_height = height;
+    fn synced_height(&self) -> CoreBlockHeight {
+        self.synced_height
+    }
+
+    fn wallets_behind(&self, height: CoreBlockHeight) -> BTreeSet<WalletId> {
+        if self.synced_height < height {
+            BTreeSet::from([self.wallet_id])
+        } else {
+            BTreeSet::new()
+        }
+    }
+
+    fn wallet_synced_height(&self, wallet_id: &WalletId) -> CoreBlockHeight {
+        if wallet_id == &self.wallet_id {
+            self.synced_height
+        } else {
+            0
+        }
+    }
+
+    fn update_wallet_synced_height(&mut self, wallet_id: &WalletId, height: CoreBlockHeight) {
+        if wallet_id == &self.wallet_id && height > self.synced_height {
+            self.synced_height = height;
+        }
+    }
+
+    fn update_wallet_last_processed_height(
+        &mut self,
+        wallet_id: &WalletId,
+        height: CoreBlockHeight,
+    ) {
+        if wallet_id == &self.wallet_id && height > self.last_processed_height {
+            self.last_processed_height = height;
+        }
     }
 
     fn monitor_revision(&self) -> u64 {
@@ -189,7 +256,9 @@ impl WalletInterface for MockWallet {
 
 /// Mock wallet that returns false for filter checks
 pub struct NonMatchingMockWallet {
+    wallet_id: WalletId,
     last_processed_height: CoreBlockHeight,
+    synced_height: CoreBlockHeight,
     event_sender: broadcast::Sender<WalletEvent>,
 }
 
@@ -203,7 +272,9 @@ impl NonMatchingMockWallet {
     pub fn new() -> Self {
         let (event_sender, _) = broadcast::channel(16);
         Self {
+            wallet_id: MOCK_WALLET_ID,
             last_processed_height: 0,
+            synced_height: 0,
             event_sender,
         }
     }
@@ -211,7 +282,15 @@ impl NonMatchingMockWallet {
 
 #[async_trait::async_trait]
 impl WalletInterface for NonMatchingMockWallet {
-    async fn process_block(&mut self, _block: &Block, _height: u32) -> BlockProcessingResult {
+    async fn process_block_for_wallets(
+        &mut self,
+        _block: &Block,
+        height: u32,
+        wallets: &BTreeSet<WalletId>,
+    ) -> BlockProcessingResult {
+        if wallets.contains(&self.wallet_id) && height > self.last_processed_height {
+            self.last_processed_height = height;
+        }
         BlockProcessingResult::default()
     }
 
@@ -227,6 +306,10 @@ impl WalletInterface for NonMatchingMockWallet {
         Vec::new()
     }
 
+    fn monitored_addresses_for(&self, _wallet_id: &WalletId) -> Vec<Address> {
+        Vec::new()
+    }
+
     fn watched_outpoints(&self) -> Vec<OutPoint> {
         Vec::new()
     }
@@ -235,8 +318,40 @@ impl WalletInterface for NonMatchingMockWallet {
         self.last_processed_height
     }
 
-    fn update_last_processed_height(&mut self, height: CoreBlockHeight) {
-        self.last_processed_height = height;
+    fn synced_height(&self) -> CoreBlockHeight {
+        self.synced_height
+    }
+
+    fn wallets_behind(&self, height: CoreBlockHeight) -> BTreeSet<WalletId> {
+        if self.synced_height < height {
+            BTreeSet::from([self.wallet_id])
+        } else {
+            BTreeSet::new()
+        }
+    }
+
+    fn wallet_synced_height(&self, wallet_id: &WalletId) -> CoreBlockHeight {
+        if wallet_id == &self.wallet_id {
+            self.synced_height
+        } else {
+            0
+        }
+    }
+
+    fn update_wallet_synced_height(&mut self, wallet_id: &WalletId, height: CoreBlockHeight) {
+        if wallet_id == &self.wallet_id && height > self.synced_height {
+            self.synced_height = height;
+        }
+    }
+
+    fn update_wallet_last_processed_height(
+        &mut self,
+        wallet_id: &WalletId,
+        height: CoreBlockHeight,
+    ) {
+        if wallet_id == &self.wallet_id && height > self.last_processed_height {
+            self.last_processed_height = height;
+        }
     }
 
     fn subscribe_events(&self) -> broadcast::Receiver<WalletEvent> {
@@ -245,5 +360,148 @@ impl WalletInterface for NonMatchingMockWallet {
 
     async fn describe(&self) -> String {
         "NonMatchingWallet (test implementation)".to_string()
+    }
+}
+
+/// Per-wallet state held inside `MultiMockWallet`.
+#[derive(Default)]
+pub struct MockWalletState {
+    pub addresses: Vec<Address>,
+    pub synced_height: CoreBlockHeight,
+    pub last_processed_height: CoreBlockHeight,
+}
+
+/// Multi-wallet mock that holds independent state for several wallet IDs,
+/// enabling tests that exercise per-wallet attribution paths.
+pub struct MultiMockWallet {
+    wallets: std::collections::BTreeMap<WalletId, MockWalletState>,
+    event_sender: broadcast::Sender<WalletEvent>,
+    /// Track every block processed for assertions.
+    processed: Arc<Mutex<Vec<(WalletId, dashcore::BlockHash, u32)>>>,
+}
+
+impl Default for MultiMockWallet {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl MultiMockWallet {
+    pub fn new() -> Self {
+        let (event_sender, _) = broadcast::channel(16);
+        Self {
+            wallets: std::collections::BTreeMap::new(),
+            event_sender,
+            processed: Arc::new(Mutex::new(Vec::new())),
+        }
+    }
+
+    /// Insert or replace a wallet's state.
+    pub fn insert_wallet(&mut self, wallet_id: WalletId, state: MockWalletState) {
+        self.wallets.insert(wallet_id, state);
+    }
+
+    /// Mutable access to a wallet's state, panicking if absent.
+    pub fn wallet_mut(&mut self, wallet_id: &WalletId) -> &mut MockWalletState {
+        self.wallets.get_mut(wallet_id).expect("wallet present")
+    }
+
+    pub fn processed(&self) -> Arc<Mutex<Vec<(WalletId, dashcore::BlockHash, u32)>>> {
+        self.processed.clone()
+    }
+}
+
+#[async_trait::async_trait]
+impl WalletInterface for MultiMockWallet {
+    async fn process_block_for_wallets(
+        &mut self,
+        block: &Block,
+        height: CoreBlockHeight,
+        wallets: &BTreeSet<WalletId>,
+    ) -> BlockProcessingResult {
+        let hash = block.block_hash();
+        let mut processed = self.processed.lock().await;
+        for wallet_id in wallets {
+            if let Some(state) = self.wallets.get_mut(wallet_id) {
+                processed.push((*wallet_id, hash, height));
+                if height > state.last_processed_height {
+                    state.last_processed_height = height;
+                }
+            }
+        }
+        BlockProcessingResult::default()
+    }
+
+    async fn process_mempool_transaction(
+        &mut self,
+        _tx: &Transaction,
+        _instant_lock: Option<InstantLock>,
+    ) -> MempoolTransactionResult {
+        MempoolTransactionResult::default()
+    }
+
+    fn monitored_addresses(&self) -> Vec<Address> {
+        self.wallets.values().flat_map(|s| s.addresses.iter().cloned()).collect()
+    }
+
+    fn monitored_addresses_for(&self, wallet_id: &WalletId) -> Vec<Address> {
+        self.wallets.get(wallet_id).map(|s| s.addresses.clone()).unwrap_or_default()
+    }
+
+    fn watched_outpoints(&self) -> Vec<OutPoint> {
+        Vec::new()
+    }
+
+    fn last_processed_height(&self) -> CoreBlockHeight {
+        self.wallets.values().map(|s| s.last_processed_height).max().unwrap_or(0)
+    }
+
+    fn synced_height(&self) -> CoreBlockHeight {
+        self.wallets.values().map(|s| s.synced_height).min().unwrap_or(0)
+    }
+
+    fn wallets_behind(&self, height: CoreBlockHeight) -> BTreeSet<WalletId> {
+        self.wallets
+            .iter()
+            .filter_map(|(id, s)| {
+                if s.synced_height < height {
+                    Some(*id)
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
+    fn wallet_synced_height(&self, wallet_id: &WalletId) -> CoreBlockHeight {
+        self.wallets.get(wallet_id).map(|s| s.synced_height).unwrap_or(0)
+    }
+
+    fn update_wallet_synced_height(&mut self, wallet_id: &WalletId, height: CoreBlockHeight) {
+        if let Some(state) = self.wallets.get_mut(wallet_id) {
+            if height > state.synced_height {
+                state.synced_height = height;
+            }
+        }
+    }
+
+    fn update_wallet_last_processed_height(
+        &mut self,
+        wallet_id: &WalletId,
+        height: CoreBlockHeight,
+    ) {
+        if let Some(state) = self.wallets.get_mut(wallet_id) {
+            if height > state.last_processed_height {
+                state.last_processed_height = height;
+            }
+        }
+    }
+
+    fn subscribe_events(&self) -> broadcast::Receiver<WalletEvent> {
+        self.event_sender.subscribe()
+    }
+
+    async fn describe(&self) -> String {
+        "MultiMockWallet (test implementation)".to_string()
     }
 }

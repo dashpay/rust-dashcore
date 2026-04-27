@@ -2,11 +2,12 @@
 //!
 //! This module defines the trait that SPV clients use to interact with wallets.
 
-use crate::WalletEvent;
+use crate::{WalletEvent, WalletId};
 use async_trait::async_trait;
 use dashcore::ephemerealdata::instant_lock::InstantLock;
 use dashcore::prelude::CoreBlockHeight;
 use dashcore::{Address, Block, OutPoint, Transaction, Txid};
+use std::collections::{BTreeMap, BTreeSet};
 use tokio::sync::broadcast;
 
 /// Result of processing a block through the wallet
@@ -16,8 +17,8 @@ pub struct BlockProcessingResult {
     pub new_txids: Vec<Txid>,
     /// Transaction IDs that were already in wallet history
     pub existing_txids: Vec<Txid>,
-    /// New addresses generated during gap limit maintenance
-    pub new_addresses: Vec<Address>,
+    /// New addresses generated per wallet during gap-limit maintenance.
+    pub new_addresses: BTreeMap<WalletId, Vec<Address>>,
 }
 
 /// Result of processing a mempool transaction through the wallet
@@ -45,18 +46,27 @@ impl BlockProcessingResult {
     pub fn relevant_tx_count(&self) -> usize {
         self.new_txids.len() + self.existing_txids.len()
     }
+
+    /// Iterate over every newly generated address regardless of wallet attribution.
+    pub fn all_new_addresses(&self) -> impl Iterator<Item = &Address> {
+        self.new_addresses.values().flatten()
+    }
 }
 
 /// Trait for wallet implementations to receive SPV events
 #[async_trait]
 pub trait WalletInterface: Send + Sync + 'static {
-    /// Called when a new block is received that may contain relevant transactions.
-    /// Returns processing result including relevant transactions and any new addresses
-    /// generated during gap limit maintenance.
-    async fn process_block(
+    /// Process a block, but only against the listed wallets. Implementations
+    /// must update the per-wallet `last_processed_height` for each wallet in
+    /// `wallets` once the block is applied to its state.
+    ///
+    /// Pass the result of `wallets_behind(height)` for the canonical "scan
+    /// only the wallets that need this block" semantics.
+    async fn process_block_for_wallets(
         &mut self,
         block: &Block,
         height: CoreBlockHeight,
+        wallets: &BTreeSet<WalletId>,
     ) -> BlockProcessingResult;
 
     /// Called when a transaction is seen in the mempool.
@@ -70,6 +80,9 @@ pub trait WalletInterface: Send + Sync + 'static {
 
     /// Get all addresses the wallet is monitoring for incoming transactions
     fn monitored_addresses(&self) -> Vec<Address>;
+
+    /// Get monitored addresses for a specific wallet.
+    fn monitored_addresses_for(&self, wallet_id: &WalletId) -> Vec<Address>;
 
     /// Get all outpoints the wallet is watching (unspent outputs).
     /// Used for bloom filter construction to detect spends of our UTXOs.
@@ -88,23 +101,37 @@ pub trait WalletInterface: Send + Sync + 'static {
     /// Return the last fully processed height of the wallet.
     fn last_processed_height(&self) -> CoreBlockHeight;
 
-    /// Update the wallet's last processed height. This also triggers balance updates.
-    fn update_last_processed_height(&mut self, height: CoreBlockHeight);
+    /// Return the lowest committed sync checkpoint across all managed wallets.
+    /// Filter scanning resumes from this height. A new wallet added behind this
+    /// drags the value down and triggers a rescan.
+    fn synced_height(&self) -> CoreBlockHeight;
 
-    /// Return the height at which filter scanning was last committed.
-    /// Defaults to `last_processed_height()` for implementations that don't separate these concepts.
-    // TODO: This can probably somehow be combined with last_processed_height().
-    fn synced_height(&self) -> CoreBlockHeight {
-        self.last_processed_height()
+    /// Return the wallet IDs whose `synced_height` is strictly less than `height`,
+    /// i.e. the wallets that still need filter coverage at that height.
+    fn wallets_behind(&self, height: CoreBlockHeight) -> BTreeSet<WalletId>;
+
+    /// Return the wallet IDs that still need filter coverage at heights up to
+    /// and including `height`. Equivalent to `wallets_behind(height + 1)` but
+    /// expresses the inclusive intent at the call site, so callers don't have
+    /// to compensate the strict-less-than semantics with `+ 1`.
+    fn wallets_not_yet_at(&self, height: CoreBlockHeight) -> BTreeSet<WalletId> {
+        self.wallets_behind(height.saturating_add(1))
     }
 
-    /// Update the committed synced height. Call when a height is fully processed
-    /// (including any rescans for newly discovered addresses).
-    fn update_synced_height(&mut self, height: CoreBlockHeight) {
-        if height > self.last_processed_height() {
-            self.update_last_processed_height(height);
-        }
-    }
+    /// Return the per-wallet committed sync checkpoint, or `0` if unknown.
+    fn wallet_synced_height(&self, wallet_id: &WalletId) -> CoreBlockHeight;
+
+    /// Advance one wallet's committed sync checkpoint. Implementations must
+    /// only advance forward (a value below the current is silently ignored).
+    fn update_wallet_synced_height(&mut self, wallet_id: &WalletId, height: CoreBlockHeight);
+
+    /// Advance one wallet's last-processed height after a block has been applied
+    /// to its state. Implementations must only advance forward.
+    fn update_wallet_last_processed_height(
+        &mut self,
+        wallet_id: &WalletId,
+        height: CoreBlockHeight,
+    );
 
     /// Return a revision counter that increments whenever the set of monitored
     /// addresses or watched outpoints changes. The mempool manager uses this to

@@ -10,7 +10,8 @@ use crate::types::HashedBlock;
 use crate::SyncError;
 use async_trait::async_trait;
 use dashcore::network::message::NetworkMessage;
-use key_wallet_manager::WalletInterface;
+use key_wallet_manager::{FilterMatchKey, WalletId, WalletInterface};
+use std::collections::BTreeSet;
 
 #[async_trait]
 impl<H: BlockHeaderStorage, B: BlockStorage, W: WalletInterface + 'static> SyncManager
@@ -115,10 +116,10 @@ impl<H: BlockHeaderStorage, B: BlockStorage, W: WalletInterface + 'static> SyncM
 
             tracing::debug!("Blocks needed: {} blocks", blocks.len());
 
-            let mut to_download = Vec::new();
+            let mut to_download: Vec<(FilterMatchKey, BTreeSet<WalletId>)> = Vec::new();
 
             let block_storage = self.block_storage.read().await;
-            for key in blocks {
+            for (key, wallets) in blocks {
                 // Check if block is already stored (from previous sync)
                 if let Ok(Some(hashed_block)) = block_storage.load_block(key.height()).await {
                     if hashed_block.hash() != key.hash() {
@@ -135,13 +136,17 @@ impl<H: BlockHeaderStorage, B: BlockStorage, W: WalletInterface + 'static> SyncM
                         )));
                     }
                     // Block loaded from storage, add to pipeline for processing
-                    self.pipeline.add_from_storage(hashed_block.block().clone(), key.height());
+                    self.pipeline.add_from_storage(
+                        hashed_block.block().clone(),
+                        key.height(),
+                        wallets.clone(),
+                    );
                     self.progress.add_from_storage(1);
                     continue;
                 }
 
-                // Block not in storage, queue for download with height
-                to_download.push(key.clone());
+                // Block not in storage, queue for download with height + wallets
+                to_download.push((key.clone(), wallets.clone()));
             }
             drop(block_storage);
 
