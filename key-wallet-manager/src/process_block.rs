@@ -1,12 +1,14 @@
 use crate::wallet_interface::{BlockProcessingResult, MempoolTransactionResult, WalletInterface};
-use crate::{WalletEvent, WalletManager};
+use crate::{WalletEvent, WalletId, WalletManager};
 use async_trait::async_trait;
 use core::fmt::Write as _;
 use dashcore::ephemerealdata::instant_lock::InstantLock;
 use dashcore::prelude::CoreBlockHeight;
 use dashcore::{Address, Block, Transaction};
+use key_wallet::managed_account::transaction_record::TransactionRecord;
 use key_wallet::transaction_checking::{BlockInfo, TransactionContext};
 use key_wallet::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
+use std::collections::BTreeMap;
 use tokio::sync::broadcast;
 
 #[async_trait]
@@ -19,7 +21,15 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
         let mut result = BlockProcessingResult::default();
         let info = BlockInfo::new(height, block.block_hash(), block.header.time);
 
-        // Process each transaction using the base manager
+        let snapshot = self.snapshot_balances();
+        let prior_heights: BTreeMap<WalletId, CoreBlockHeight> = self
+            .wallet_infos
+            .iter()
+            .map(|(id, info)| (*id, info.last_processed_height()))
+            .collect();
+        let mut per_wallet_inserted: BTreeMap<WalletId, Vec<TransactionRecord>> = BTreeMap::new();
+        let mut per_wallet_updated: BTreeMap<WalletId, Vec<TransactionRecord>> = BTreeMap::new();
+
         for tx in &block.txdata {
             let context = TransactionContext::InBlock(info);
 
@@ -35,9 +45,52 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
             }
 
             result.new_addresses.extend(check_result.new_addresses);
+
+            for (wallet_id, records) in check_result.per_wallet_new_records {
+                per_wallet_inserted.entry(wallet_id).or_default().extend(records);
+            }
+            for (wallet_id, records) in check_result.per_wallet_updated_records {
+                per_wallet_updated.entry(wallet_id).or_default().extend(records);
+            }
         }
 
-        self.update_last_processed_height(height);
+        // Collect matured coinbase records before advancing the height so the
+        // (old, new] window is well-defined per wallet.
+        let mut per_wallet_matured: BTreeMap<WalletId, Vec<TransactionRecord>> = BTreeMap::new();
+        for (wallet_id, info) in &self.wallet_infos {
+            let old_height = prior_heights.get(wallet_id).copied().unwrap_or(0);
+            let matured = info.matured_coinbase_records(old_height, height);
+            if !matured.is_empty() {
+                per_wallet_matured.insert(*wallet_id, matured);
+            }
+        }
+
+        // Advance heights and refresh balances. Event emission happens below
+        // so each wallet's event carries the post-advance balance.
+        for info in self.wallet_infos.values_mut() {
+            info.update_last_processed_height(height);
+        }
+
+        for (wallet_id, info) in &self.wallet_infos {
+            let new_balance = info.balance();
+            let inserted = per_wallet_inserted.remove(wallet_id).unwrap_or_default();
+            let updated = per_wallet_updated.remove(wallet_id).unwrap_or_default();
+            let matured = per_wallet_matured.remove(wallet_id).unwrap_or_default();
+            let balance_changed = snapshot.get(wallet_id).copied() != Some(new_balance);
+
+            if !inserted.is_empty() || !updated.is_empty() || !matured.is_empty() || balance_changed
+            {
+                let event = WalletEvent::BlockUpdate {
+                    wallet_id: *wallet_id,
+                    height,
+                    inserted,
+                    updated,
+                    matured,
+                    balance: new_balance,
+                };
+                let _ = self.event_sender.send(event);
+            }
+        }
 
         result
     }
@@ -47,14 +100,13 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
         tx: &Transaction,
         instant_lock: Option<InstantLock>,
     ) -> MempoolTransactionResult {
-        let context = match instant_lock {
+        let context = match instant_lock.as_ref() {
             Some(lock) => {
                 debug_assert_eq!(lock.txid, tx.txid(), "InstantLock txid must match transaction");
-                TransactionContext::InstantSend(lock)
+                TransactionContext::InstantSend(lock.clone())
             }
             None => TransactionContext::Mempool,
         };
-        let snapshot = self.snapshot_balances();
         let check_result = self.check_transaction_in_all_wallets(tx, context, true, false).await;
 
         let is_relevant = !check_result.affected_wallets.is_empty();
@@ -64,13 +116,49 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
             0
         };
 
-        // Refresh cached balances only for affected wallets
+        // Refresh cached balances for affected wallets before emitting so
+        // every event carries a post-change balance.
         for wallet_id in &check_result.affected_wallets {
             if let Some(info) = self.wallet_infos.get_mut(wallet_id) {
                 info.update_balance();
             }
         }
-        self.emit_balance_changes(&snapshot);
+
+        for (wallet_id, records) in check_result.per_wallet_new_records {
+            let Some(info) = self.wallet_infos.get(&wallet_id) else {
+                continue;
+            };
+            let balance = info.balance();
+            for record in records {
+                let event = WalletEvent::TransactionReceived {
+                    wallet_id,
+                    record: Box::new(record),
+                    balance,
+                };
+                let _ = self.event_sender.send(event);
+            }
+        }
+
+        if let Some(lock) = instant_lock {
+            for (wallet_id, records) in check_result.per_wallet_updated_records {
+                if records.is_empty() {
+                    continue;
+                }
+                let Some(info) = self.wallet_infos.get(&wallet_id) else {
+                    continue;
+                };
+                let balance = info.balance();
+                for record in records {
+                    let event = WalletEvent::TransactionStatusChanged {
+                        wallet_id,
+                        txid: record.txid,
+                        status: TransactionContext::InstantSend(lock.clone()),
+                        balance,
+                    };
+                    let _ = self.event_sender.send(event);
+                }
+            }
+        }
 
         MempoolTransactionResult {
             is_relevant,
@@ -103,12 +191,42 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
 
     fn update_last_processed_height(&mut self, height: CoreBlockHeight) {
         let snapshot = self.snapshot_balances();
+        let prior_heights: BTreeMap<WalletId, CoreBlockHeight> = self
+            .wallet_infos
+            .iter()
+            .map(|(id, info)| (*id, info.last_processed_height()))
+            .collect();
 
-        for (_wallet_id, info) in self.wallet_infos.iter_mut() {
+        let mut per_wallet_matured: BTreeMap<WalletId, Vec<TransactionRecord>> = BTreeMap::new();
+        for (wallet_id, info) in &self.wallet_infos {
+            let old_height = prior_heights.get(wallet_id).copied().unwrap_or(0);
+            let matured = info.matured_coinbase_records(old_height, height);
+            if !matured.is_empty() {
+                per_wallet_matured.insert(*wallet_id, matured);
+            }
+        }
+
+        for info in self.wallet_infos.values_mut() {
             info.update_last_processed_height(height);
         }
 
-        self.emit_balance_changes(&snapshot);
+        for (wallet_id, info) in &self.wallet_infos {
+            let new_balance = info.balance();
+            let matured = per_wallet_matured.remove(wallet_id).unwrap_or_default();
+            let balance_changed = snapshot.get(wallet_id).copied() != Some(new_balance);
+
+            if !matured.is_empty() || balance_changed {
+                let event = WalletEvent::BlockUpdate {
+                    wallet_id: *wallet_id,
+                    height,
+                    inserted: Vec::new(),
+                    updated: Vec::new(),
+                    matured,
+                    balance: new_balance,
+                };
+                let _ = self.event_sender.send(event);
+            }
+        }
     }
 
     fn synced_height(&self) -> CoreBlockHeight {
@@ -116,8 +234,15 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
     }
 
     fn update_synced_height(&mut self, height: CoreBlockHeight) {
-        for (_wallet_id, info) in self.wallet_infos.iter_mut() {
+        for (wallet_id, info) in self.wallet_infos.iter_mut() {
+            let advanced = height > info.synced_height();
             info.update_synced_height(height);
+            if advanced {
+                let _ = self.event_sender.send(WalletEvent::SyncHeightUpdate {
+                    wallet_id: *wallet_id,
+                    height,
+                });
+            }
         }
     }
 
@@ -127,11 +252,11 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
 
     fn process_instant_send_lock(&mut self, instant_lock: InstantLock) {
         let txid = instant_lock.txid;
-        let snapshot = self.snapshot_balances();
 
         let mut affected_wallets = Vec::new();
         for (wallet_id, info) in self.wallet_infos.iter_mut() {
             if info.mark_instant_send_utxos(&txid, &instant_lock) {
+                info.update_balance();
                 affected_wallets.push(*wallet_id);
             }
         }
@@ -140,16 +265,18 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
             return;
         }
 
-        for wallet_id in &affected_wallets {
-            let event = WalletEvent::TransactionStatusChanged {
-                wallet_id: *wallet_id,
-                txid,
-                status: TransactionContext::InstantSend(instant_lock.clone()),
+        let context = TransactionContext::InstantSend(instant_lock);
+        for wallet_id in affected_wallets {
+            let Some(info) = self.wallet_infos.get(&wallet_id) else {
+                continue;
             };
-            let _ = self.event_sender().send(event);
+            let _ = self.event_sender().send(WalletEvent::TransactionStatusChanged {
+                wallet_id,
+                txid,
+                status: context.clone(),
+                balance: info.balance(),
+            });
         }
-
-        self.emit_balance_changes(&snapshot);
     }
 
     async fn describe(&self) -> String {
@@ -228,27 +355,29 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_process_mempool_transaction_balance_events() {
+    async fn test_process_mempool_transaction_emits_event() {
         let (mut manager, _wallet_id, addr) = setup_manager_with_wallet();
         let mut rx = manager.subscribe_events();
 
-        // Relevant tx should emit BalanceUpdated
+        // Relevant tx should emit TransactionReceived carrying the balance
         let tx = create_tx_paying_to(&addr, 0xaa);
         manager.process_mempool_transaction(&tx, None).await;
 
         let mut found = false;
         while let Ok(event) = rx.try_recv() {
-            if let WalletEvent::BalanceUpdated {
-                unconfirmed,
+            if let WalletEvent::TransactionReceived {
+                balance,
+                record,
                 ..
             } = event
             {
-                assert!(unconfirmed > 0, "unconfirmed balance should increase");
+                assert_eq!(record.txid, tx.txid(), "event should carry the mempool tx");
+                assert!(balance.unconfirmed() > 0, "unconfirmed balance should increase");
                 found = true;
                 break;
             }
         }
-        assert!(found, "should emit BalanceUpdated for mempool transaction");
+        assert!(found, "should emit TransactionReceived for mempool transaction");
 
         // Irrelevant tx should not emit any events
         let unrelated_tx = Transaction {
@@ -276,27 +405,54 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_process_block_emits_balance_updated() {
+    async fn test_process_block_emits_block_update() {
         let (mut manager, _wallet_id, addr) = setup_manager_with_wallet();
         let tx = create_tx_paying_to(&addr, 0xcc);
-        let block = make_block(vec![tx]);
+        let block = make_block(vec![tx.clone()]);
 
         let mut rx = manager.subscribe_events();
         manager.process_block(&block, 100).await;
 
         let mut found = false;
         while let Ok(event) = rx.try_recv() {
-            if let WalletEvent::BalanceUpdated {
-                confirmed,
+            if let WalletEvent::BlockUpdate {
+                height,
+                inserted,
+                balance,
                 ..
             } = event
             {
-                assert!(confirmed > 0, "confirmed balance should increase after block");
+                assert_eq!(height, 100);
+                assert!(balance.confirmed() > 0, "confirmed balance should increase after block");
+                assert_eq!(inserted.len(), 1);
+                assert_eq!(inserted[0].txid, tx.txid());
                 found = true;
                 break;
             }
         }
-        assert!(found, "should emit BalanceUpdated for block processing");
+        assert!(found, "should emit BlockUpdate for block processing");
+    }
+
+    #[tokio::test]
+    async fn test_update_synced_height_emits_sync_height_update() {
+        let (mut manager, wallet_id, _addr) = setup_manager_with_wallet();
+        let mut rx = manager.subscribe_events();
+
+        manager.update_synced_height(500);
+
+        let mut found = false;
+        while let Ok(event) = rx.try_recv() {
+            if let WalletEvent::SyncHeightUpdate {
+                wallet_id: evt_wallet_id,
+                height,
+            } = event
+            {
+                assert_eq!(evt_wallet_id, wallet_id);
+                assert_eq!(height, 500);
+                found = true;
+            }
+        }
+        assert!(found, "should emit SyncHeightUpdate on update_synced_height");
     }
 
     #[tokio::test]

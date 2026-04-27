@@ -103,6 +103,7 @@ impl WalletTransactionChecker for ManagedWalletInfo {
                         account.mark_utxos_instant_send(&txid);
                         if let Some(record) = account.transactions.get_mut(&txid) {
                             record.update_context(context.clone());
+                            result.updated_records.push(record.clone());
                         }
                     }
                 }
@@ -129,12 +130,13 @@ impl WalletTransactionChecker for ManagedWalletInfo {
             if is_new {
                 let record =
                     account.record_transaction(tx, &account_match, context.clone(), tx_type);
-                if let Some(account_index) = account_match.account_type_match.account_index() {
-                    result.new_records.push((account_index, record));
-                }
+                result.new_records.push(record);
                 result.state_modified = true;
             } else if account.confirm_transaction(tx, &account_match, context.clone(), tx_type) {
                 result.state_modified = true;
+                if let Some(record) = account.transactions.get(&tx.txid()) {
+                    result.updated_records.push(record.clone());
+                }
             }
 
             for address_info in account_match.account_type_match.all_involved_addresses() {

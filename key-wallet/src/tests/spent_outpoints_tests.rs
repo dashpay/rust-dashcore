@@ -3,7 +3,7 @@
 use dashcore::blockdata::transaction::{OutPoint, Transaction};
 use dashcore::{TxIn, Txid};
 
-use crate::account::TransactionRecord;
+use crate::account::{AccountType, StandardAccountType, TransactionRecord};
 use crate::managed_account::transaction_record::TransactionDirection;
 use crate::managed_account::ManagedCoreAccount;
 use crate::transaction_checking::{TransactionContext, TransactionType};
@@ -39,6 +39,10 @@ fn receive_only_tx() -> Transaction {
 fn record_from_tx(tx: &Transaction) -> TransactionRecord {
     TransactionRecord::new(
         tx.clone(),
+        AccountType::Standard {
+            index: 0,
+            standard_account_type: StandardAccountType::BIP44Account,
+        },
         TransactionContext::Mempool,
         TransactionType::Standard,
         TransactionDirection::Incoming,

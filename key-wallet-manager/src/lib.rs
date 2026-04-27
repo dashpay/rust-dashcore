@@ -27,6 +27,7 @@ pub use wallet_interface::{BlockProcessingResult, MempoolTransactionResult, Wall
 use dashcore::blockdata::transaction::Transaction;
 use dashcore::prelude::CoreBlockHeight;
 use key_wallet::account::AccountCollection;
+use key_wallet::managed_account::transaction_record::TransactionRecord;
 use key_wallet::transaction_checking::TransactionContext;
 use key_wallet::wallet::managed_wallet_info::transaction_building::AccountTypePreference;
 use key_wallet::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
@@ -80,6 +81,11 @@ pub struct CheckTransactionsResult {
     pub total_sent: u64,
     /// Addresses involved across all wallets
     pub involved_addresses: Vec<Address>,
+    /// Records newly recorded by this check, grouped by wallet.
+    pub per_wallet_new_records: BTreeMap<WalletId, Vec<TransactionRecord>>,
+    /// Records whose state was updated by this check (confirmation or
+    /// InstantSend lock on a previously stored record), grouped by wallet.
+    pub per_wallet_updated_records: BTreeMap<WalletId, Vec<TransactionRecord>>,
 }
 
 /// High-level wallet manager that manages multiple wallets
@@ -442,7 +448,11 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletManager<T> {
     }
 
     /// Check a transaction against all wallets and update their states if relevant.
-    /// Returns affected wallets and any new addresses generated during gap limit maintenance.
+    ///
+    /// Collects — but does not emit — the per-wallet records affected by the
+    /// check. Callers are responsible for emitting the appropriate
+    /// `WalletEvent` *after* refreshing wallet balances so events never
+    /// carry a stale balance.
     pub async fn check_transaction_in_all_wallets(
         &mut self,
         tx: &Transaction,
@@ -490,23 +500,19 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletManager<T> {
                         }
                     }
 
-                    if check_result.is_new_transaction {
-                        for (account_index, record) in check_result.new_records {
-                            let event = WalletEvent::TransactionReceived {
-                                wallet_id,
-                                account_index,
-                                record: Box::new(record),
-                            };
-                            let _ = self.event_sender.send(event);
-                        }
-                    } else if check_result.state_modified {
-                        // Known transaction whose state was modified (confirmation or IS-lock).
-                        let event = WalletEvent::TransactionStatusChanged {
-                            wallet_id,
-                            txid: tx.txid(),
-                            status: context.clone(),
-                        };
-                        let _ = self.event_sender.send(event);
+                    if !check_result.new_records.is_empty() {
+                        result
+                            .per_wallet_new_records
+                            .entry(wallet_id)
+                            .or_default()
+                            .extend(check_result.new_records);
+                    }
+                    if !check_result.updated_records.is_empty() {
+                        result
+                            .per_wallet_updated_records
+                            .entry(wallet_id)
+                            .or_default()
+                            .extend(check_result.updated_records);
                     }
                 }
 

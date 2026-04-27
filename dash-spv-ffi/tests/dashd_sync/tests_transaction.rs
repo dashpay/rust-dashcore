@@ -1,6 +1,7 @@
 use std::sync::atomic::Ordering;
 
 use dash_spv::test_utils::{DashdTestContext, TestChain};
+use dash_spv_ffi::FFIAccountKind;
 use dashcore::hashes::Hash;
 use dashcore::Amount;
 
@@ -47,7 +48,10 @@ fn test_ffi_sync_then_generate_blocks() {
 
         // Generate a block containing a wallet transaction and wait for sync.
         let cycle_before = ctx.tracker().last_sync_cycle.load(Ordering::SeqCst);
-        let tx_received_before = ctx.tracker().transaction_received_count.load(Ordering::SeqCst);
+        let block_changes_before =
+            ctx.tracker().block_processed_wallet_count.load(Ordering::SeqCst);
+        let block_records_before =
+            ctx.tracker().block_processed_wallet_record_count.load(Ordering::SeqCst);
         let receive_address = ctx.get_receive_address(&wallet_id);
         let send_amount = Amount::from_sat(100_000_000);
         let txid = dashd.node.send_to_address(&receive_address, send_amount);
@@ -66,22 +70,69 @@ fn test_ffi_sync_then_generate_blocks() {
             cycle_after_first
         );
 
-        // Wait for wallet callback (travels on a separate channel from sync events)
+        // Wait for wallet callback (travels on a separate channel from sync events).
+        // The per-callback counter is bumped last in the callback, so observing
+        // it incremented guarantees the per-record vectors are also updated.
         ctx.tracker().wait_for_callback(
-            &ctx.tracker().transaction_received_count,
-            tx_received_before,
-            "transaction_received",
+            &ctx.tracker().block_processed_wallet_count,
+            block_changes_before,
+            "block_processed",
         );
 
-        // Verify the transaction was received via wallet callback
-        let received_txs = ctx.tracker().received_transactions.lock().unwrap();
+        // Verify the transaction was received via the block-processed callback
+        let received_txs = ctx.tracker().block_received_transactions.lock().unwrap();
         let txid_bytes = *txid.as_byte_array();
         assert!(
             received_txs.iter().any(|&(txid, _)| txid == txid_bytes),
-            "Wallet callback should have received txid {}",
+            "Block-processed callback should have received txid {}",
             txid
         );
         drop(received_txs);
+
+        // Verify per-record bucketing was captured for the post-sync block.
+        let bucket = ctx.tracker().block_record_inserted.lock().unwrap();
+        assert!(
+            bucket.len() >= block_records_before as usize,
+            "block_record_inserted length ({}) < block_records_before ({}): counter/vector mismatch",
+            bucket.len(),
+            block_records_before
+        );
+        let new_bucket = &bucket[block_records_before as usize..];
+        assert!(
+            !new_bucket.is_empty(),
+            "block_record_inserted should be populated for the post-sync block"
+        );
+        drop(bucket);
+
+        // Verify the BIP-44 account discriminant + index were delivered for
+        // the post-sync block records.
+        let types = ctx.tracker().block_account_types.lock().unwrap();
+        let indices = ctx.tracker().block_account_indices.lock().unwrap();
+        assert!(
+            types.len() >= block_records_before as usize,
+            "block_account_types length ({}) < block_records_before ({}): counter/vector mismatch",
+            types.len(),
+            block_records_before
+        );
+        assert_eq!(
+            types.len(),
+            indices.len(),
+            "block account types and indices must be paired 1:1"
+        );
+        let new_types = &types[block_records_before as usize..];
+        let new_indices = &indices[block_records_before as usize..];
+        assert!(
+            new_types.iter().all(|t| *t == FFIAccountKind::StandardBIP44),
+            "post-sync block changes should carry FFIAccountKind::StandardBIP44, got: {:?}",
+            new_types
+        );
+        assert!(
+            new_indices.iter().all(|i| *i == 0),
+            "post-sync BIP-44 changes should carry account_index = 0, got: {:?}",
+            new_indices
+        );
+        drop(indices);
+        drop(types);
 
         // Verify via wallet query as well
         assert!(

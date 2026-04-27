@@ -26,7 +26,7 @@ use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
 /// Account type match result
 #[repr(C)]
 pub struct FFIAccountMatch {
-    /// Account type ID (matches FFIAccountType enum values)
+    /// Account type ID (matches FFIAccountKind enum values)
     pub account_type: c_uint,
     /// Account index (if applicable)
     pub account_index: c_uint,
