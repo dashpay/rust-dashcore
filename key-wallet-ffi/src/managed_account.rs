@@ -716,7 +716,7 @@ impl From<&AccountType> for FFIAccountType {
             AccountType::IdentityRegistration => (FFIAccountKind::IdentityRegistration, 0, -1),
             AccountType::IdentityTopUp {
                 registration_index,
-            } => (FFIAccountKind::IdentityTopUp, registration_index, -1),
+            } => (FFIAccountKind::IdentityTopUp, 0, registration_index as i32),
             AccountType::IdentityTopUpNotBoundToIdentity => {
                 (FFIAccountKind::IdentityTopUpNotBoundToIdentity, 0, -1)
             }
