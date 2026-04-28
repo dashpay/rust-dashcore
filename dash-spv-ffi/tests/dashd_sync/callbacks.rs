@@ -432,8 +432,8 @@ extern "C" fn on_transaction_instant_locked(
         let bytes = unsafe { slice::from_raw_parts(islock_data, islock_len) }.to_vec();
         *tracker.last_islock_bytes.lock().unwrap_or_else(|e| e.into_inner()) = Some(bytes);
     }
-    tracker.transaction_instant_send_locked_count.fetch_add(1, Ordering::SeqCst);
     record_balance(tracker, balance);
+    tracker.transaction_instant_send_locked_count.fetch_add(1, Ordering::SeqCst);
     tracing::debug!("on_transaction_instant_locked");
 }
 
