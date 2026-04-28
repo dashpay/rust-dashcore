@@ -14,7 +14,7 @@ use crate::address_pool::{FFIAddressPool, FFIAddressPoolType};
 use crate::check_ptr;
 use crate::error::{FFIError, FFIErrorCode};
 use crate::types::{
-    FFIAccountType, FFIInputDetail, FFIOutputDetail, FFITransactionContext,
+    FFIAccountKind, FFIInputDetail, FFIOutputDetail, FFITransactionContext,
     FFITransactionDirection, FFITransactionType,
 };
 use crate::wallet_manager::FFIWalletManager;
@@ -185,7 +185,7 @@ pub unsafe extern "C" fn managed_wallet_get_account(
     manager: *const FFIWalletManager,
     wallet_id: *const u8,
     account_index: c_uint,
-    account_type: FFIAccountType,
+    account_type: FFIAccountKind,
 ) -> FFIManagedCoreAccountResult {
     if manager.is_null() {
         return FFIManagedCoreAccountResult::error(
@@ -529,9 +529,9 @@ pub unsafe extern "C" fn managed_core_account_get_parent_wallet_id(
 pub unsafe extern "C" fn managed_core_account_get_account_type(
     account: *const FFIManagedCoreAccount,
     index_out: *mut c_uint,
-) -> FFIAccountType {
+) -> FFIAccountKind {
     if account.is_null() {
-        return FFIAccountType::StandardBIP44; // Default type
+        return FFIAccountKind::StandardBIP44; // Default type
     }
 
     let account = &*account;
@@ -551,36 +551,36 @@ pub unsafe extern "C" fn managed_core_account_get_account_type(
         } => {
             use key_wallet::account::StandardAccountType;
             match standard_account_type {
-                StandardAccountType::BIP44Account => FFIAccountType::StandardBIP44,
-                StandardAccountType::BIP32Account => FFIAccountType::StandardBIP32,
+                StandardAccountType::BIP44Account => FFIAccountKind::StandardBIP44,
+                StandardAccountType::BIP32Account => FFIAccountKind::StandardBIP32,
             }
         }
         AccountType::CoinJoin {
             ..
-        } => FFIAccountType::CoinJoin,
-        AccountType::IdentityRegistration => FFIAccountType::IdentityRegistration,
+        } => FFIAccountKind::CoinJoin,
+        AccountType::IdentityRegistration => FFIAccountKind::IdentityRegistration,
         AccountType::IdentityTopUp {
             ..
-        } => FFIAccountType::IdentityTopUp,
+        } => FFIAccountKind::IdentityTopUp,
         AccountType::IdentityTopUpNotBoundToIdentity => {
-            FFIAccountType::IdentityTopUpNotBoundToIdentity
+            FFIAccountKind::IdentityTopUpNotBoundToIdentity
         }
-        AccountType::IdentityInvitation => FFIAccountType::IdentityInvitation,
-        AccountType::AssetLockAddressTopUp => FFIAccountType::AssetLockAddressTopUp,
-        AccountType::AssetLockShieldedAddressTopUp => FFIAccountType::AssetLockShieldedAddressTopUp,
-        AccountType::ProviderVotingKeys => FFIAccountType::ProviderVotingKeys,
-        AccountType::ProviderOwnerKeys => FFIAccountType::ProviderOwnerKeys,
-        AccountType::ProviderOperatorKeys => FFIAccountType::ProviderOperatorKeys,
-        AccountType::ProviderPlatformKeys => FFIAccountType::ProviderPlatformKeys,
+        AccountType::IdentityInvitation => FFIAccountKind::IdentityInvitation,
+        AccountType::AssetLockAddressTopUp => FFIAccountKind::AssetLockAddressTopUp,
+        AccountType::AssetLockShieldedAddressTopUp => FFIAccountKind::AssetLockShieldedAddressTopUp,
+        AccountType::ProviderVotingKeys => FFIAccountKind::ProviderVotingKeys,
+        AccountType::ProviderOwnerKeys => FFIAccountKind::ProviderOwnerKeys,
+        AccountType::ProviderOperatorKeys => FFIAccountKind::ProviderOperatorKeys,
+        AccountType::ProviderPlatformKeys => FFIAccountKind::ProviderPlatformKeys,
         AccountType::DashpayReceivingFunds {
             ..
-        } => FFIAccountType::DashpayReceivingFunds,
+        } => FFIAccountKind::DashpayReceivingFunds,
         AccountType::DashpayExternalAccount {
             ..
-        } => FFIAccountType::DashpayExternalAccount,
+        } => FFIAccountKind::DashpayExternalAccount,
         AccountType::PlatformPayment {
             ..
-        } => FFIAccountType::PlatformPayment,
+        } => FFIAccountKind::PlatformPayment,
     }
 }
 
@@ -664,6 +664,134 @@ pub unsafe extern "C" fn managed_core_account_get_utxo_count(
     account.inner().utxos.len() as c_uint
 }
 
+/// FFI-compatible owning-account descriptor for a [`FFITransactionRecord`].
+///
+/// Mirrors the Rust-side `TransactionRecord::account_type`. `kind` is the
+/// discriminant; `index` is the primary index (`0` for variants that have no
+/// meaningful primary index — identity-singletons, provider-key, asset-lock);
+/// `index_secondary` carries the secondary index (`registration_index` for
+/// `IdentityTopUp`, `key_class` for `PlatformPayment`) or `-1` when not
+/// applicable. The `identity_user` and `identity_friend` pointers are non-null
+/// only for the Dashpay variants and point to 32-byte identity hashes owned by
+/// this struct (freed by its `Drop` impl). `key_class` is `-1` unless
+/// this is a `PlatformPayment` record, in which case it carries the `key_class`
+/// hardened index (also exposed in `index_secondary` for symmetry with the
+/// existing FFI tuple contract).
+#[repr(C)]
+pub struct FFIAccountType {
+    /// Discriminant identifying the owning account variant.
+    pub kind: FFIAccountKind,
+    /// Primary account index for variants that carry one.
+    pub index: u32,
+    /// Secondary account index when applicable, `-1` otherwise.
+    pub index_secondary: i32,
+    /// Pointer to the 32-byte `user_identity_id` of the Dashpay account that
+    /// owns this record, null when the account is not a Dashpay variant. The
+    /// pointee is owned by this struct and freed when it is dropped.
+    pub identity_user: *const [u8; 32],
+    /// Pointer to the 32-byte `friend_identity_id` of the Dashpay account
+    /// that owns this record, null when the account is not a Dashpay variant.
+    /// The pointee is owned by this struct and freed when it is dropped.
+    pub identity_friend: *const [u8; 32],
+    /// `PlatformPayment` `key_class` hardened index, `-1` for any other
+    /// account variant. Mirrors `index_secondary` for `PlatformPayment`.
+    pub key_class: i32,
+}
+
+impl From<&AccountType> for FFIAccountType {
+    fn from(account_type: &AccountType) -> Self {
+        use key_wallet::account::StandardAccountType;
+        let (kind, index, index_secondary) = match *account_type {
+            AccountType::Standard {
+                index,
+                standard_account_type: StandardAccountType::BIP44Account,
+            } => (FFIAccountKind::StandardBIP44, index, -1),
+            AccountType::Standard {
+                index,
+                standard_account_type: StandardAccountType::BIP32Account,
+            } => (FFIAccountKind::StandardBIP32, index, -1),
+            AccountType::CoinJoin {
+                index,
+            } => (FFIAccountKind::CoinJoin, index, -1),
+            AccountType::IdentityRegistration => (FFIAccountKind::IdentityRegistration, 0, -1),
+            AccountType::IdentityTopUp {
+                registration_index,
+            } => (FFIAccountKind::IdentityTopUp, 0, registration_index as i32),
+            AccountType::IdentityTopUpNotBoundToIdentity => {
+                (FFIAccountKind::IdentityTopUpNotBoundToIdentity, 0, -1)
+            }
+            AccountType::IdentityInvitation => (FFIAccountKind::IdentityInvitation, 0, -1),
+            AccountType::AssetLockAddressTopUp => (FFIAccountKind::AssetLockAddressTopUp, 0, -1),
+            AccountType::AssetLockShieldedAddressTopUp => {
+                (FFIAccountKind::AssetLockShieldedAddressTopUp, 0, -1)
+            }
+            AccountType::ProviderVotingKeys => (FFIAccountKind::ProviderVotingKeys, 0, -1),
+            AccountType::ProviderOwnerKeys => (FFIAccountKind::ProviderOwnerKeys, 0, -1),
+            AccountType::ProviderOperatorKeys => (FFIAccountKind::ProviderOperatorKeys, 0, -1),
+            AccountType::ProviderPlatformKeys => (FFIAccountKind::ProviderPlatformKeys, 0, -1),
+            AccountType::DashpayReceivingFunds {
+                index,
+                ..
+            } => (FFIAccountKind::DashpayReceivingFunds, index, -1),
+            AccountType::DashpayExternalAccount {
+                index,
+                ..
+            } => (FFIAccountKind::DashpayExternalAccount, index, -1),
+            AccountType::PlatformPayment {
+                account,
+                key_class,
+            } => (FFIAccountKind::PlatformPayment, account, key_class as i32),
+        };
+
+        let (identity_user, identity_friend) = match *account_type {
+            AccountType::DashpayReceivingFunds {
+                user_identity_id,
+                friend_identity_id,
+                ..
+            }
+            | AccountType::DashpayExternalAccount {
+                user_identity_id,
+                friend_identity_id,
+                ..
+            } => (
+                Box::into_raw(Box::new(user_identity_id)) as *const [u8; 32],
+                Box::into_raw(Box::new(friend_identity_id)) as *const [u8; 32],
+            ),
+            _ => (std::ptr::null(), std::ptr::null()),
+        };
+
+        let key_class = match *account_type {
+            AccountType::PlatformPayment {
+                key_class,
+                ..
+            } => key_class as i32,
+            _ => -1,
+        };
+
+        FFIAccountType {
+            kind,
+            index,
+            index_secondary,
+            identity_user,
+            identity_friend,
+            key_class,
+        }
+    }
+}
+
+impl Drop for FFIAccountType {
+    fn drop(&mut self) {
+        if !self.identity_user.is_null() {
+            let _ = unsafe { Box::from_raw(self.identity_user as *mut [u8; 32]) };
+            self.identity_user = std::ptr::null();
+        }
+        if !self.identity_friend.is_null() {
+            let _ = unsafe { Box::from_raw(self.identity_friend as *mut [u8; 32]) };
+            self.identity_friend = std::ptr::null();
+        }
+    }
+}
+
 /// FFI-compatible transaction record
 ///
 /// Heap-allocated fields are freed automatically when the record is dropped
@@ -682,6 +810,8 @@ pub struct FFITransactionRecord {
     pub direction: FFITransactionDirection,
     /// Fee if known, 0 if unknown
     pub fee: u64,
+    /// Owning-account descriptor (discriminant + indices + identity ids).
+    pub account_type: FFIAccountType,
     /// Input details array
     pub input_details: *mut FFIInputDetail,
     /// Number of input details
@@ -706,6 +836,8 @@ impl From<&TransactionRecord> for FFITransactionRecord {
         let transaction_type = FFITransactionType::from(value.transaction_type);
         let direction = FFITransactionDirection::from(value.direction);
         let fee = value.fee.unwrap_or(0);
+
+        let account_type = FFIAccountType::from(&value.account_type);
 
         // Serialize transaction bytes
         let tx_slice = dashcore::consensus::serialize(&value.transaction).into_boxed_slice();
@@ -750,6 +882,7 @@ impl From<&TransactionRecord> for FFITransactionRecord {
             transaction_type,
             direction,
             fee,
+            account_type,
             input_details,
             input_details_count,
             output_details,
@@ -1488,7 +1621,7 @@ mod tests {
                 manager,
                 wallet_ids_out,
                 0,
-                FFIAccountType::StandardBIP44,
+                FFIAccountKind::StandardBIP44,
             );
 
             assert!(!result.account.is_null());
@@ -1550,7 +1683,7 @@ mod tests {
 
             // Try to get a non-existent CoinJoin account
             let mut result =
-                managed_wallet_get_account(manager, wallet_ids_out, 0, FFIAccountType::CoinJoin);
+                managed_wallet_get_account(manager, wallet_ids_out, 0, FFIAccountKind::CoinJoin);
 
             assert!(result.account.is_null());
             assert_ne!(result.error_code, 0);
@@ -1677,7 +1810,7 @@ mod tests {
                 manager,
                 wallet_ids_out,
                 0,
-                FFIAccountType::StandardBIP44,
+                FFIAccountKind::StandardBIP44,
             );
 
             assert!(!result.account.is_null());
@@ -1693,7 +1826,7 @@ mod tests {
             // Test get_account_type
             let mut index_out: c_uint = 999; // Initialize with unexpected value
             let account_type = managed_core_account_get_account_type(account, &mut index_out);
-            assert_eq!(account_type, FFIAccountType::StandardBIP44);
+            assert_eq!(account_type, FFIAccountKind::StandardBIP44);
             assert_eq!(index_out, 0);
 
             // Test get_is_watch_only
@@ -1745,7 +1878,7 @@ mod tests {
 
             let mut index_out: c_uint = 0;
             let account_type = managed_core_account_get_account_type(ptr::null(), &mut index_out);
-            assert_eq!(account_type, FFIAccountType::StandardBIP44); // Default type
+            assert_eq!(account_type, FFIAccountKind::StandardBIP44); // Default type
 
             let is_watch_only = managed_core_account_get_is_watch_only(ptr::null());
             assert!(!is_watch_only);
@@ -1795,7 +1928,7 @@ mod tests {
                 manager,
                 wallet_ids_out,
                 0,
-                FFIAccountType::StandardBIP44,
+                FFIAccountKind::StandardBIP44,
             );
             assert!(!result.account.is_null());
 
@@ -1853,7 +1986,7 @@ mod tests {
                 manager,
                 wallet_ids_out,
                 0,
-                FFIAccountType::StandardBIP44,
+                FFIAccountKind::StandardBIP44,
             );
 
             assert!(!result.account.is_null());
@@ -1939,7 +2072,7 @@ mod tests {
 
             // Get CoinJoin account
             let cj_result =
-                managed_wallet_get_account(manager, wallet_ids_out, 0, FFIAccountType::CoinJoin);
+                managed_wallet_get_account(manager, wallet_ids_out, 0, FFIAccountKind::CoinJoin);
             assert!(!cj_result.account.is_null());
 
             let cj_account = cj_result.account;
@@ -2014,6 +2147,14 @@ mod tests {
             transaction_type: FFITransactionType::Standard,
             direction: FFITransactionDirection::Incoming,
             fee: 226,
+            account_type: FFIAccountType {
+                kind: FFIAccountKind::StandardBIP44,
+                index: 0,
+                index_secondary: -1,
+                identity_user: std::ptr::null(),
+                identity_friend: std::ptr::null(),
+                key_class: -1,
+            },
             input_details_count: input_slice.len(),
             input_details: Box::into_raw(input_slice) as *mut FFIInputDetail,
             output_details_count: output_slice.len(),
@@ -2038,6 +2179,14 @@ mod tests {
             transaction_type: FFITransactionType::Standard,
             direction: FFITransactionDirection::Outgoing,
             fee: 0,
+            account_type: FFIAccountType {
+                kind: FFIAccountKind::StandardBIP44,
+                index: 0,
+                index_secondary: -1,
+                identity_user: std::ptr::null(),
+                identity_friend: std::ptr::null(),
+                key_class: -1,
+            },
             input_details: std::ptr::null_mut(),
             input_details_count: 0,
             output_details: std::ptr::null_mut(),

@@ -38,7 +38,7 @@ async fn test_mempool_detects_incoming_tx() {
 
     let mempool_txid = wait_for_mempool_tx_both(&mut fa, &mut bf, MEMPOOL_TIMEOUT)
         .await
-        .expect("Expected mempool TransactionReceived event");
+        .expect("Expected TransactionDetected event");
     assert_eq!(mempool_txid, txid, "Mempool event txid should match sent txid");
 
     fa.stop().await;
@@ -106,7 +106,7 @@ async fn test_mempool_to_confirmed_lifecycle() {
 
     let mempool_txid = wait_for_mempool_tx_both(&mut fa, &mut bf, MEMPOOL_TIMEOUT)
         .await
-        .expect("Expected mempool TransactionReceived event");
+        .expect("Expected TransactionDetected event");
     assert_eq!(mempool_txid, txid);
 
     // Mine the transaction
@@ -552,7 +552,7 @@ async fn test_broadcast_transaction_local_detection() {
     // The locally dispatched transaction should be picked up by the mempool manager
     let detected = wait_for_mempool_tx_both(&mut fa, &mut bf, MEMPOOL_TIMEOUT)
         .await
-        .expect("Expected mempool TransactionReceived event after broadcast");
+        .expect("Expected TransactionDetected event after broadcast");
     assert_eq!(detected, txid, "Detected txid should match broadcast txid");
 
     // Step 4: Mine the broadcast tx and verify it transitions to confirmed

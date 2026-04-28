@@ -101,10 +101,10 @@ fn test_managed_account_collection_with_special_accounts() {
 
         // Add various special accounts
         let special_types = [
-            key_wallet_ffi::types::FFIAccountType::ProviderVotingKeys,
-            key_wallet_ffi::types::FFIAccountType::ProviderOwnerKeys,
-            key_wallet_ffi::types::FFIAccountType::IdentityRegistration,
-            key_wallet_ffi::types::FFIAccountType::IdentityInvitation,
+            key_wallet_ffi::types::FFIAccountKind::ProviderVotingKeys,
+            key_wallet_ffi::types::FFIAccountKind::ProviderOwnerKeys,
+            key_wallet_ffi::types::FFIAccountKind::IdentityRegistration,
+            key_wallet_ffi::types::FFIAccountKind::IdentityInvitation,
         ];
         options.special_account_types = special_types.as_ptr();
         options.special_account_types_count = special_types.len();
@@ -229,9 +229,9 @@ fn test_managed_account_collection_summary() {
 
         // Add various special accounts
         let special_types = [
-            key_wallet_ffi::types::FFIAccountType::ProviderVotingKeys,
-            key_wallet_ffi::types::FFIAccountType::ProviderOwnerKeys,
-            key_wallet_ffi::types::FFIAccountType::IdentityRegistration,
+            key_wallet_ffi::types::FFIAccountKind::ProviderVotingKeys,
+            key_wallet_ffi::types::FFIAccountKind::ProviderOwnerKeys,
+            key_wallet_ffi::types::FFIAccountKind::IdentityRegistration,
         ];
         options.special_account_types = special_types.as_ptr();
         options.special_account_types_count = special_types.len();
@@ -310,8 +310,8 @@ fn test_managed_account_collection_summary_data() {
 
         // Add various special accounts
         let special_types = [
-            key_wallet_ffi::types::FFIAccountType::IdentityRegistration,
-            key_wallet_ffi::types::FFIAccountType::IdentityInvitation,
+            key_wallet_ffi::types::FFIAccountKind::IdentityRegistration,
+            key_wallet_ffi::types::FFIAccountKind::IdentityInvitation,
         ];
         options.special_account_types = special_types.as_ptr();
         options.special_account_types_count = special_types.len();

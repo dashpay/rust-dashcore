@@ -7,7 +7,7 @@ mod tests {
     use crate::derivation::*;
     use crate::error::{FFIError, FFIErrorCode};
     use crate::keys::{extended_private_key_free, private_key_free};
-    use crate::types::FFIAccountType;
+    use crate::types::FFIAccountKind;
     use crate::wallet;
     use dash_network::ffi::FFINetwork;
 
@@ -35,7 +35,7 @@ mod tests {
 
         // Get account 0 (BIP44)
         let account = unsafe {
-            crate::account::wallet_get_account(wallet, 0, FFIAccountType::StandardBIP44).account
+            crate::account::wallet_get_account(wallet, 0, FFIAccountKind::StandardBIP44).account
         };
         assert!(!account.is_null());
 
@@ -133,7 +133,7 @@ mod tests {
 
         // Get account 0 (BIP44)
         let account = unsafe {
-            crate::account::wallet_get_account(wallet, 0, FFIAccountType::StandardBIP44).account
+            crate::account::wallet_get_account(wallet, 0, FFIAccountKind::StandardBIP44).account
         };
         assert!(!account.is_null());
 
@@ -186,7 +186,7 @@ mod tests {
         };
         assert!(!wallet.is_null());
         let account = unsafe {
-            crate::account::wallet_get_account(wallet, 0, FFIAccountType::StandardBIP44).account
+            crate::account::wallet_get_account(wallet, 0, FFIAccountKind::StandardBIP44).account
         };
         assert!(!account.is_null());
 

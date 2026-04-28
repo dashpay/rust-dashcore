@@ -335,10 +335,10 @@ pub unsafe extern "C" fn wallet_free_const(wallet: *const FFIWallet) {
 #[no_mangle]
 pub unsafe extern "C" fn wallet_add_account(
     wallet: *mut FFIWallet,
-    account_type: crate::types::FFIAccountType,
+    account_type: crate::types::FFIAccountKind,
     account_index: c_uint,
 ) -> crate::types::FFIAccountResult {
-    use crate::types::FFIAccountType;
+    use crate::types::FFIAccountKind;
 
     if wallet.is_null() {
         return crate::types::FFIAccountResult::error(
@@ -349,7 +349,7 @@ pub unsafe extern "C" fn wallet_add_account(
 
     // Check for account types that require special handling
     match account_type {
-        FFIAccountType::PlatformPayment => {
+        FFIAccountKind::PlatformPayment => {
             return crate::types::FFIAccountResult::error(
                 FFIErrorCode::InvalidInput,
                 "PlatformPayment accounts require account and key_class indices. \
@@ -357,7 +357,7 @@ pub unsafe extern "C" fn wallet_add_account(
                     .to_string(),
             );
         }
-        FFIAccountType::DashpayReceivingFunds => {
+        FFIAccountKind::DashpayReceivingFunds => {
             return crate::types::FFIAccountResult::error(
                 FFIErrorCode::InvalidInput,
                 "DashpayReceivingFunds accounts require identity IDs. \
@@ -365,7 +365,7 @@ pub unsafe extern "C" fn wallet_add_account(
                     .to_string(),
             );
         }
-        FFIAccountType::DashpayExternalAccount => {
+        FFIAccountKind::DashpayExternalAccount => {
             return crate::types::FFIAccountResult::error(
                 FFIErrorCode::InvalidInput,
                 "DashpayExternalAccount accounts require identity IDs. \
@@ -553,12 +553,12 @@ pub unsafe extern "C" fn wallet_add_dashpay_external_account_with_xpub_bytes(
 #[no_mangle]
 pub unsafe extern "C" fn wallet_add_account_with_xpub_bytes(
     wallet: *mut FFIWallet,
-    account_type: crate::types::FFIAccountType,
+    account_type: crate::types::FFIAccountKind,
     account_index: c_uint,
     xpub_bytes: *const u8,
     xpub_len: usize,
 ) -> crate::types::FFIAccountResult {
-    use crate::types::FFIAccountType;
+    use crate::types::FFIAccountKind;
 
     if wallet.is_null() {
         return crate::types::FFIAccountResult::error(
@@ -576,7 +576,7 @@ pub unsafe extern "C" fn wallet_add_account_with_xpub_bytes(
 
     // Check for account types that require special handling
     match account_type {
-        FFIAccountType::PlatformPayment => {
+        FFIAccountKind::PlatformPayment => {
             return crate::types::FFIAccountResult::error(
                 FFIErrorCode::InvalidInput,
                 "PlatformPayment accounts require account and key_class indices. \
@@ -584,7 +584,7 @@ pub unsafe extern "C" fn wallet_add_account_with_xpub_bytes(
                     .to_string(),
             );
         }
-        FFIAccountType::DashpayReceivingFunds => {
+        FFIAccountKind::DashpayReceivingFunds => {
             return crate::types::FFIAccountResult::error(
                 FFIErrorCode::InvalidInput,
                 "DashpayReceivingFunds accounts require identity IDs. \
@@ -592,7 +592,7 @@ pub unsafe extern "C" fn wallet_add_account_with_xpub_bytes(
                     .to_string(),
             );
         }
-        FFIAccountType::DashpayExternalAccount => {
+        FFIAccountKind::DashpayExternalAccount => {
             return crate::types::FFIAccountResult::error(
                 FFIErrorCode::InvalidInput,
                 "DashpayExternalAccount accounts require identity IDs. \
@@ -677,11 +677,11 @@ pub unsafe extern "C" fn wallet_add_account_with_xpub_bytes(
 #[no_mangle]
 pub unsafe extern "C" fn wallet_add_account_with_string_xpub(
     wallet: *mut FFIWallet,
-    account_type: crate::types::FFIAccountType,
+    account_type: crate::types::FFIAccountKind,
     account_index: c_uint,
     xpub_string: *const c_char,
 ) -> crate::types::FFIAccountResult {
-    use crate::types::FFIAccountType;
+    use crate::types::FFIAccountKind;
 
     if wallet.is_null() {
         return crate::types::FFIAccountResult::error(
@@ -699,7 +699,7 @@ pub unsafe extern "C" fn wallet_add_account_with_string_xpub(
 
     // Check for account types that require special handling
     match account_type {
-        FFIAccountType::PlatformPayment => {
+        FFIAccountKind::PlatformPayment => {
             return crate::types::FFIAccountResult::error(
                 FFIErrorCode::InvalidInput,
                 "PlatformPayment accounts require account and key_class indices. \
@@ -707,7 +707,7 @@ pub unsafe extern "C" fn wallet_add_account_with_string_xpub(
                     .to_string(),
             );
         }
-        FFIAccountType::DashpayReceivingFunds => {
+        FFIAccountKind::DashpayReceivingFunds => {
             return crate::types::FFIAccountResult::error(
                 FFIErrorCode::InvalidInput,
                 "DashpayReceivingFunds accounts require identity IDs. \
@@ -715,7 +715,7 @@ pub unsafe extern "C" fn wallet_add_account_with_string_xpub(
                     .to_string(),
             );
         }
-        FFIAccountType::DashpayExternalAccount => {
+        FFIAccountKind::DashpayExternalAccount => {
             return crate::types::FFIAccountResult::error(
                 FFIErrorCode::InvalidInput,
                 "DashpayExternalAccount accounts require identity IDs. \

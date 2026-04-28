@@ -14,6 +14,12 @@ pub use platform_integration::*;
 pub use types::*;
 pub use utils::*;
 
+// Re-export wallet-FFI types used by `FFIWalletEventCallbacks` so consumers
+// can refer to them via `dash_spv_ffi::*` without importing `key_wallet_ffi`
+// directly.
+pub use key_wallet_ffi::managed_account::{FFIAccountType, FFITransactionRecord};
+pub use key_wallet_ffi::types::FFIAccountKind;
+
 // FFINetwork is now defined in types.rs for cbindgen compatibility
 // It must match the definition in key_wallet_ffi
 
