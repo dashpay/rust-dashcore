@@ -33,6 +33,44 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletManager<T> {
         }
     }
 
+    /// Immutable wallet + mutable info — split borrow on two maps.
+    pub fn get_wallet_and_info_mut(&mut self, wallet_id: &WalletId) -> Option<(&Wallet, &mut T)> {
+        match (self.wallets.get(wallet_id), self.wallet_infos.get_mut(wallet_id)) {
+            (Some(wallet), Some(info)) => Some((wallet, info)),
+            _ => None,
+        }
+    }
+
+    /// Mutable wallet + mutable info — split borrow on two maps.
+    ///
+    /// Used when the caller needs to mutate both the `Wallet` (e.g. to
+    /// idempotently re-derive HD accounts via `Wallet::add_account` during
+    /// changeset replay) and the associated info in the same scope.
+    pub fn get_wallet_mut_and_info_mut(
+        &mut self,
+        wallet_id: &WalletId,
+    ) -> Option<(&mut Wallet, &mut T)> {
+        match (self.wallets.get_mut(wallet_id), self.wallet_infos.get_mut(wallet_id)) {
+            (Some(wallet), Some(info)) => Some((wallet, info)),
+            _ => None,
+        }
+    }
+
+    /// Insert a pre-built wallet and info pair.
+    ///
+    /// Errors with [`WalletError::WalletExists`] if a wallet with the same ID is
+    /// already registered. On success bumps the structural revision.
+    pub fn insert_wallet(&mut self, wallet: Wallet, info: T) -> Result<WalletId, WalletError> {
+        let wallet_id = wallet.compute_wallet_id();
+        if self.wallets.contains_key(&wallet_id) {
+            return Err(WalletError::WalletExists(wallet_id));
+        }
+        self.wallets.insert(wallet_id, wallet);
+        self.wallet_infos.insert(wallet_id, info);
+        self.bump_structural_revision();
+        Ok(wallet_id)
+    }
+
     /// Remove a wallet
     pub fn remove_wallet(&mut self, wallet_id: &WalletId) -> Result<(Wallet, T), WalletError> {
         let wallet =
@@ -190,5 +228,35 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletManager<T> {
             outpoints.extend(info.utxos().into_iter().map(|u| u.outpoint));
         }
         outpoints
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_helpers::TEST_MNEMONIC;
+    use key_wallet::mnemonic::{Language, Mnemonic};
+    use key_wallet::wallet::initialization::WalletAccountCreationOptions;
+    use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
+
+    fn build_wallet() -> Wallet {
+        let mnemonic = Mnemonic::from_phrase(TEST_MNEMONIC, Language::English).unwrap();
+        Wallet::from_mnemonic(mnemonic, Network::Testnet, WalletAccountCreationOptions::Default)
+            .expect("wallet from mnemonic")
+    }
+
+    #[test]
+    fn insert_wallet_rejects_duplicate() {
+        let mut manager: WalletManager<ManagedWalletInfo> = WalletManager::new(Network::Testnet);
+        let wallet = build_wallet();
+        let info = ManagedWalletInfo::from_wallet(&wallet);
+
+        let id =
+            manager.insert_wallet(wallet.clone(), info.clone()).expect("first insert succeeds");
+
+        match manager.insert_wallet(wallet, info) {
+            Err(WalletError::WalletExists(dup_id)) => assert_eq!(dup_id, id),
+            other => panic!("expected WalletExists, got {:?}", other),
+        }
     }
 }
