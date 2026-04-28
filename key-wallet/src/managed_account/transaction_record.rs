@@ -3,6 +3,7 @@
 //! This module contains the transaction record structure used to track
 //! transactions associated with accounts.
 
+use crate::account::AccountType;
 use crate::error::Error;
 use crate::transaction_checking::transaction_router::TransactionType;
 use crate::transaction_checking::{BlockInfo, TransactionContext};
@@ -79,6 +80,8 @@ pub struct TransactionRecord {
     pub transaction: Transaction,
     /// Transaction ID
     pub txid: Txid,
+    /// Account this record belongs to.
+    pub account_type: AccountType,
     /// The context in which this transaction was last seen
     pub context: TransactionContext,
     /// Classification of the transaction type
@@ -98,9 +101,13 @@ pub struct TransactionRecord {
 }
 
 impl TransactionRecord {
-    /// Create a new transaction record with the given context
+    /// Create a new transaction record with the given context.
+    ///
+    /// `account_type` identifies the owning account.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         transaction: Transaction,
+        account_type: AccountType,
         context: TransactionContext,
         transaction_type: TransactionType,
         direction: TransactionDirection,
@@ -111,6 +118,7 @@ impl TransactionRecord {
         let txid = transaction.txid();
         Self {
             txid,
+            account_type,
             transaction,
             context,
             transaction_type,
@@ -194,8 +202,16 @@ impl TransactionRecord {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::account::StandardAccountType;
     use dashcore::hashes::Hash;
     use dashcore::BlockHash;
+
+    fn test_account_type() -> AccountType {
+        AccountType::Standard {
+            index: 0,
+            standard_account_type: StandardAccountType::BIP44Account,
+        }
+    }
 
     fn test_block_context(height: u32) -> TransactionContext {
         TransactionContext::InBlock(BlockInfo::new(height, BlockHash::all_zeros(), 1234567890))
@@ -208,6 +224,7 @@ mod tests {
     ) -> TransactionRecord {
         TransactionRecord::new(
             tx,
+            test_account_type(),
             context,
             TransactionType::Standard,
             TransactionDirection::Incoming,
@@ -264,6 +281,7 @@ mod tests {
 
         let outgoing = TransactionRecord::new(
             tx.clone(),
+            test_account_type(),
             TransactionContext::Mempool,
             TransactionType::Standard,
             TransactionDirection::Outgoing,
@@ -277,6 +295,7 @@ mod tests {
 
         let internal = TransactionRecord::new(
             tx.clone(),
+            test_account_type(),
             TransactionContext::Mempool,
             TransactionType::Standard,
             TransactionDirection::Internal,
@@ -289,6 +308,7 @@ mod tests {
 
         let coinjoin = TransactionRecord::new(
             tx,
+            test_account_type(),
             TransactionContext::Mempool,
             TransactionType::CoinJoin,
             TransactionDirection::CoinJoin,

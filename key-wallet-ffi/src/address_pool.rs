@@ -8,7 +8,7 @@ use std::os::raw::{c_char, c_uint};
 
 use crate::error::{FFIError, FFIErrorCode};
 use crate::managed_wallet::FFIManagedWalletInfo;
-use crate::types::{FFIAccountType, FFIWallet};
+use crate::types::{FFIAccountKind, FFIWallet};
 use crate::utils::rust_string_to_c;
 use crate::{check_ptr, deref_ptr, deref_ptr_mut, unwrap_or_return};
 use key_wallet::account::ManagedAccountCollection;
@@ -285,7 +285,7 @@ pub struct FFIAddressPoolInfo {
 #[no_mangle]
 pub unsafe extern "C" fn managed_wallet_get_address_pool_info(
     managed_wallet: *const FFIManagedWalletInfo,
-    account_type: FFIAccountType,
+    account_type: FFIAccountKind,
     account_index: c_uint,
     pool_type: FFIAddressPoolType,
     info_out: *mut FFIAddressPoolInfo,
@@ -372,7 +372,7 @@ pub unsafe extern "C" fn managed_wallet_get_address_pool_info(
 #[no_mangle]
 pub unsafe extern "C" fn managed_wallet_set_gap_limit(
     managed_wallet: *mut FFIManagedWalletInfo,
-    account_type: FFIAccountType,
+    account_type: FFIAccountKind,
     account_index: c_uint,
     pool_type: FFIAddressPoolType,
     gap_limit: c_uint,
@@ -447,7 +447,7 @@ pub unsafe extern "C" fn managed_wallet_set_gap_limit(
 pub unsafe extern "C" fn managed_wallet_generate_addresses_to_index(
     managed_wallet: *mut FFIManagedWalletInfo,
     wallet: *const FFIWallet,
-    account_type: FFIAccountType,
+    account_type: FFIAccountKind,
     account_index: c_uint,
     pool_type: FFIAddressPoolType,
     target_index: c_uint,
@@ -977,7 +977,7 @@ mod tests {
                 manager,
                 wallet_ids_out,
                 0,
-                FFIAccountType::StandardBIP44,
+                FFIAccountKind::StandardBIP44,
             );
 
             assert!(!result.account.is_null());
@@ -1076,7 +1076,7 @@ mod tests {
                 manager,
                 wallet_ids_out,
                 0,
-                FFIAccountType::StandardBIP44,
+                FFIAccountKind::StandardBIP44,
             );
 
             assert!(!result.account.is_null());

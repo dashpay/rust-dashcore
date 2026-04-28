@@ -126,7 +126,8 @@ pub(super) async fn wait_for_network_event(
     }
 }
 
-/// Wait for a wallet `TransactionReceived` event with mempool status within the given timeout.
+/// Wait for a wallet `TransactionDetected` event within the given timeout.
+/// Accepts both plain mempool and InstantSend-locked mempool arrivals.
 /// Returns `Some(txid)` if received, `None` on timeout.
 pub(super) async fn wait_for_mempool_tx(
     receiver: &mut broadcast::Receiver<WalletEvent>,
@@ -140,7 +141,14 @@ pub(super) async fn wait_for_mempool_tx(
             _ = &mut timeout => return None,
             result = receiver.recv() => {
                 match result {
-                    Ok(WalletEvent::TransactionReceived { ref record, .. }) if record.context == TransactionContext::Mempool => return Some(record.txid),
+                    Ok(WalletEvent::TransactionDetected { ref record, .. })
+                        if matches!(
+                            record.context,
+                            TransactionContext::Mempool | TransactionContext::InstantSend(_)
+                        ) =>
+                    {
+                        return Some(record.txid);
+                    }
                     Ok(_) => continue,
                     Err(_) => return None,
                 }
@@ -176,13 +184,13 @@ pub(super) async fn wait_for_mempool_synced(
     }
 }
 
-/// Assert that no mempool `TransactionReceived` event arrives within the given duration.
+/// Assert that no mempool `TransactionDetected` event arrives within the given duration.
 pub(super) async fn assert_no_mempool_tx(
     receiver: &mut broadcast::Receiver<WalletEvent>,
     wait: Duration,
 ) {
     if let Some(txid) = wait_for_mempool_tx(receiver, wait).await {
-        panic!("Unexpected mempool TransactionReceived event with txid: {}", txid);
+        panic!("Unexpected TransactionDetected event with txid: {}", txid);
     }
 }
 
@@ -319,7 +327,7 @@ pub(super) async fn wait_for_mempool_txs_both(
         for _ in 0..count {
             let txid = wait_for_mempool_tx(receiver, timeout)
                 .await
-                .expect("Expected mempool TransactionReceived event");
+                .expect("Expected TransactionDetected event");
             txids.insert(txid);
         }
         txids

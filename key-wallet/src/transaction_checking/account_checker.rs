@@ -46,8 +46,15 @@ pub struct TransactionCheckResult {
     pub total_received_for_credit_conversion: u64,
     /// New addresses generated during gap limit maintenance
     pub new_addresses: Vec<Address>,
-    /// Transaction records created for new transactions, paired with their account index
-    pub new_records: Vec<(u32, TransactionRecord)>,
+    /// Transaction records created for new transactions. Each record carries
+    /// its owning [`AccountType`](crate::account::AccountType) on
+    /// `record.account_type`, so consumers can recover it without an external
+    /// pairing.
+    pub new_records: Vec<TransactionRecord>,
+    /// Transaction records updated by this check (confirmation or IS-lock
+    /// applied to a previously stored record). Each record carries its owning
+    /// `AccountType` on `record.account_type`.
+    pub updated_records: Vec<TransactionRecord>,
 }
 
 /// Enum representing the type of Core account that matched with embedded data
@@ -376,6 +383,7 @@ impl ManagedAccountCollection {
             total_received_for_credit_conversion: 0,
             new_addresses: Vec::new(),
             new_records: Vec::new(),
+            updated_records: Vec::new(),
         };
 
         for account_type in account_types {

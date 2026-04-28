@@ -35,7 +35,7 @@ use key_wallet_ffi::managed_account::{
 use key_wallet_ffi::managed_wallet::{
     managed_wallet_get_next_bip44_receive_address, managed_wallet_info_free,
 };
-use key_wallet_ffi::types::FFIAccountType;
+use key_wallet_ffi::types::FFIAccountKind;
 use key_wallet_ffi::wallet::wallet_free_const;
 use key_wallet_ffi::wallet_manager::{
     wallet_manager_add_wallet_from_mnemonic, wallet_manager_get_managed_wallet_info,
@@ -313,7 +313,7 @@ impl FFITestContext {
     ) -> T {
         let wm = self.session.wallet_manager as *const FFIWalletManager;
         let result =
-            managed_wallet_get_account(wm, wallet_id.as_ptr(), 0, FFIAccountType::StandardBIP44);
+            managed_wallet_get_account(wm, wallet_id.as_ptr(), 0, FFIAccountKind::StandardBIP44);
         assert!(
             result.error_code == 0 && !result.account.is_null(),
             "Failed to get BIP44 account 0"

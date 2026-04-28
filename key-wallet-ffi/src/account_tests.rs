@@ -3,14 +3,14 @@
 mod tests {
     use super::super::*;
     use crate::error::{FFIError, FFIErrorCode};
-    use crate::types::FFIAccountType;
+    use crate::types::FFIAccountKind;
     use crate::wallet;
     use std::ffi::CString;
     use std::ptr;
 
     #[test]
     fn test_wallet_get_account_null_wallet() {
-        let result = unsafe { wallet_get_account(ptr::null(), 0, FFIAccountType::StandardBIP44) };
+        let result = unsafe { wallet_get_account(ptr::null(), 0, FFIAccountKind::StandardBIP44) };
 
         assert!(result.account.is_null());
         assert_ne!(result.error_code, 0);
@@ -42,7 +42,7 @@ mod tests {
         };
 
         // Try to get the default account (should exist)
-        let result = unsafe { wallet_get_account(wallet, 0, FFIAccountType::StandardBIP44) };
+        let result = unsafe { wallet_get_account(wallet, 0, FFIAccountKind::StandardBIP44) };
 
         // Note: Since the account may not exist yet (depends on wallet creation logic),
         // we just check that the call doesn't return an error for invalid parameters
@@ -109,18 +109,18 @@ mod tests {
 
     #[test]
     fn test_account_type_values() {
-        // Test FFIAccountType enum values
-        assert_eq!(FFIAccountType::StandardBIP44 as u32, 0);
-        assert_eq!(FFIAccountType::StandardBIP32 as u32, 1);
-        assert_eq!(FFIAccountType::CoinJoin as u32, 2);
-        assert_eq!(FFIAccountType::IdentityRegistration as u32, 3);
-        assert_eq!(FFIAccountType::IdentityTopUp as u32, 4);
-        assert_eq!(FFIAccountType::IdentityTopUpNotBoundToIdentity as u32, 5);
-        assert_eq!(FFIAccountType::IdentityInvitation as u32, 6);
-        assert_eq!(FFIAccountType::ProviderVotingKeys as u32, 7);
-        assert_eq!(FFIAccountType::ProviderOwnerKeys as u32, 8);
-        assert_eq!(FFIAccountType::ProviderOperatorKeys as u32, 9);
-        assert_eq!(FFIAccountType::ProviderPlatformKeys as u32, 10);
+        // Test FFIAccountKind enum values
+        assert_eq!(FFIAccountKind::StandardBIP44 as u32, 0);
+        assert_eq!(FFIAccountKind::StandardBIP32 as u32, 1);
+        assert_eq!(FFIAccountKind::CoinJoin as u32, 2);
+        assert_eq!(FFIAccountKind::IdentityRegistration as u32, 3);
+        assert_eq!(FFIAccountKind::IdentityTopUp as u32, 4);
+        assert_eq!(FFIAccountKind::IdentityTopUpNotBoundToIdentity as u32, 5);
+        assert_eq!(FFIAccountKind::IdentityInvitation as u32, 6);
+        assert_eq!(FFIAccountKind::ProviderVotingKeys as u32, 7);
+        assert_eq!(FFIAccountKind::ProviderOwnerKeys as u32, 8);
+        assert_eq!(FFIAccountKind::ProviderOperatorKeys as u32, 9);
+        assert_eq!(FFIAccountKind::ProviderPlatformKeys as u32, 10);
     }
 
     #[test]
@@ -144,7 +144,7 @@ mod tests {
         assert_eq!(error.code, FFIErrorCode::Success);
 
         // Get an account
-        let result = unsafe { wallet_get_account(wallet, 0, FFIAccountType::StandardBIP44) };
+        let result = unsafe { wallet_get_account(wallet, 0, FFIAccountKind::StandardBIP44) };
 
         if !result.account.is_null() {
             // Test all the getter functions
@@ -167,7 +167,7 @@ mod tests {
                 // Test get account type
                 let mut index = 999u32;
                 let account_type = account_get_account_type(result.account, &mut index);
-                assert_eq!(account_type as u32, FFIAccountType::StandardBIP44 as u32);
+                assert_eq!(account_type as u32, FFIAccountKind::StandardBIP44 as u32);
                 assert_eq!(index, 0); // Account index should be 0
 
                 // Test is watch only - should be false for a wallet created from mnemonic
@@ -206,12 +206,12 @@ mod tests {
 
         let mut index = 0u32;
         let account_type = unsafe { account_get_account_type(ptr::null(), &mut index) };
-        assert_eq!(account_type as u32, FFIAccountType::StandardBIP44 as u32);
+        assert_eq!(account_type as u32, FFIAccountKind::StandardBIP44 as u32);
         assert_eq!(index, 0);
 
         // Test with null out_index
         let account_type = unsafe { account_get_account_type(ptr::null(), ptr::null_mut()) };
-        assert_eq!(account_type as u32, FFIAccountType::StandardBIP44 as u32);
+        assert_eq!(account_type as u32, FFIAccountKind::StandardBIP44 as u32);
 
         let is_watch_only = unsafe { account_get_is_watch_only(ptr::null()) };
         assert!(!is_watch_only);

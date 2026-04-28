@@ -94,16 +94,33 @@ impl WalletTransactionChecker for ManagedWalletInfo {
                 if already_confirmed {
                     return result;
                 }
-                // Mark UTXOs as IS-locked and update the transaction context
-                for account_match in &result.affected_accounts {
-                    if let Some(account) = self
+                // Mark UTXOs as IS-locked and update the transaction context.
+                // An account can match (its address pool detects the tx) without
+                // already holding a record — backfill via `record_transaction`
+                // before marking UTXOs so the freshly registered UTXOs get the
+                // IS-lock flag too.
+                for account_match in result.affected_accounts.clone() {
+                    let Some(account) = self
                         .accounts
                         .get_by_account_type_match_mut(&account_match.account_type_match)
-                    {
+                    else {
+                        continue;
+                    };
+                    if account.transactions.contains_key(&txid) {
                         account.mark_utxos_instant_send(&txid);
                         if let Some(record) = account.transactions.get_mut(&txid) {
                             record.update_context(context.clone());
+                            result.updated_records.push(record.clone());
                         }
+                    } else {
+                        let record = account.record_transaction(
+                            tx,
+                            &account_match,
+                            context.clone(),
+                            tx_type,
+                        );
+                        account.mark_utxos_instant_send(&txid);
+                        result.new_records.push(record);
                     }
                 }
                 if update_balance {
@@ -129,12 +146,20 @@ impl WalletTransactionChecker for ManagedWalletInfo {
             if is_new {
                 let record =
                     account.record_transaction(tx, &account_match, context.clone(), tx_type);
-                if let Some(account_index) = account_match.account_type_match.account_index() {
-                    result.new_records.push((account_index, record));
+                result.new_records.push(record);
+                result.state_modified = true;
+            } else {
+                let existed_before = account.transactions.contains_key(&tx.txid());
+                if account.confirm_transaction(tx, &account_match, context.clone(), tx_type) {
+                    result.state_modified = true;
+                    if let Some(record) = account.transactions.get(&tx.txid()) {
+                        if existed_before {
+                            result.updated_records.push(record.clone());
+                        } else {
+                            result.new_records.push(record.clone());
+                        }
+                    }
                 }
-                result.state_modified = true;
-            } else if account.confirm_transaction(tx, &account_match, context.clone(), tx_type) {
-                result.state_modified = true;
             }
 
             for address_info in account_match.account_type_match.all_involved_addresses() {
@@ -197,6 +222,7 @@ impl WalletTransactionChecker for ManagedWalletInfo {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::account::account_type::StandardAccountType;
     use crate::managed_account::transaction_record::{OutputRole, TransactionDirection};
     use crate::test_utils::TestWalletContext;
     use crate::transaction_checking::BlockInfo;
@@ -204,7 +230,7 @@ mod tests {
     use crate::wallet::initialization::WalletAccountCreationOptions;
     use crate::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
     use crate::wallet::{ManagedWalletInfo, Wallet};
-    use crate::Network;
+    use crate::{AccountType, Network};
     use dashcore::blockdata::script::ScriptBuf;
     use dashcore::blockdata::transaction::Transaction;
     use dashcore::ephemerealdata::instant_lock::InstantLock;
@@ -978,6 +1004,121 @@ mod tests {
         assert!(!result2.is_new_transaction);
         assert_eq!(ctx.managed_wallet.balance().spendable(), 150_000);
         assert_eq!(ctx.managed_wallet.metadata.total_transactions, 1);
+    }
+
+    /// Test that the InstantSend branch backfills a `TransactionRecord` on accounts
+    /// that match the transaction but have no prior record. This mirrors the
+    /// confirmation path's backfill: a tx pays outputs to two accounts but only
+    /// the first holds a record (e.g., a missed mempool delivery on the second
+    /// account); when the IS lock arrives, the wallet-level `is_new` is `false`,
+    /// yet the second account must still be backfilled or its UTXOs would be
+    /// IS-locked without a matching `TransactionRecord`.
+    #[tokio::test]
+    async fn test_instantsend_backfills_missing_record_in_other_account() {
+        let mut wallet =
+            Wallet::new_random(Network::Testnet, WalletAccountCreationOptions::Default)
+                .expect("Should create wallet");
+        wallet
+            .add_account(
+                AccountType::Standard {
+                    index: 1,
+                    standard_account_type: StandardAccountType::BIP44Account,
+                },
+                None,
+            )
+            .expect("Should add second BIP44 account");
+
+        let mut managed_wallet =
+            ManagedWalletInfo::from_wallet_with_name(&wallet, "Test".to_string());
+
+        let xpub0 = wallet
+            .accounts
+            .standard_bip44_accounts
+            .get(&0)
+            .expect("Should have BIP44 account 0")
+            .account_xpub;
+        let address0 = managed_wallet
+            .bip44_managed_account_at_index_mut(0)
+            .expect("Should have managed account 0")
+            .next_receive_address(Some(&xpub0), true)
+            .expect("Should generate address for account 0");
+
+        let xpub1 = wallet
+            .accounts
+            .standard_bip44_accounts
+            .get(&1)
+            .expect("Should have BIP44 account 1")
+            .account_xpub;
+        let address1 = managed_wallet
+            .bip44_managed_account_at_index_mut(1)
+            .expect("Should have managed account 1")
+            .next_receive_address(Some(&xpub1), true)
+            .expect("Should generate address for account 1");
+
+        // Build a tx with outputs to both accounts.
+        let mut tx = Transaction::dummy(&address0, 0..1, &[100_000]);
+        tx.output.push(TxOut {
+            value: 50_000,
+            script_pubkey: address1.script_pubkey(),
+        });
+        let txid = tx.txid();
+
+        // Process as mempool first so both accounts record the tx.
+        let mut wallet_mut = wallet;
+        let mempool_result = managed_wallet
+            .check_core_transaction(&tx, TransactionContext::Mempool, &mut wallet_mut, true, true)
+            .await;
+        assert!(mempool_result.is_relevant);
+        assert!(mempool_result.is_new_transaction);
+        assert_eq!(mempool_result.affected_accounts.len(), 2);
+
+        // Drop the record + UTXOs from account 1 to simulate a missed delivery
+        // there. Account 0 keeps the record so wallet-level `is_new` will be
+        // `false` when the IS lock arrives, exercising the backfill branch.
+        let account1 = managed_wallet
+            .bip44_managed_account_at_index_mut(1)
+            .expect("Should have managed account 1");
+        account1.transactions.remove(&txid);
+        account1.utxos.clear();
+        assert!(!account1.transactions.contains_key(&txid));
+        assert!(account1.utxos.is_empty());
+
+        let is_result = managed_wallet
+            .check_core_transaction(
+                &tx,
+                TransactionContext::InstantSend(InstantLock::default()),
+                &mut wallet_mut,
+                true,
+                true,
+            )
+            .await;
+        assert!(is_result.is_relevant);
+        assert!(!is_result.is_new_transaction, "Account 0 still holds the record");
+        assert!(is_result.state_modified);
+
+        // Account 0 was already known: classified as updated.
+        assert_eq!(is_result.updated_records.len(), 1);
+        assert_eq!(is_result.updated_records[0].txid, txid);
+        // Account 1 was backfilled: classified as new.
+        assert_eq!(is_result.new_records.len(), 1);
+        assert_eq!(is_result.new_records[0].txid, txid);
+
+        // Both accounts should now hold the record with IS context and IS-locked UTXOs.
+        for account_index in 0..=1 {
+            let account = managed_wallet
+                .bip44_managed_account_at_index(account_index)
+                .expect("Should have account");
+            let record = account
+                .transactions
+                .get(&txid)
+                .expect("Both accounts should hold the record after IS backfill");
+            assert!(matches!(record.context, TransactionContext::InstantSend(_)));
+            assert!(
+                account.utxos.values().any(|u| u.outpoint.txid == txid && u.is_instantlocked),
+                "Account {account_index} should have an IS-locked UTXO from this tx"
+            );
+        }
+        assert!(managed_wallet.instant_send_locks.contains(&txid));
     }
 
     /// Test that `confirm_transaction` backfills a `TransactionRecord` when the account

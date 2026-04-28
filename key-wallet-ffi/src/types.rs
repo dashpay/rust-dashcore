@@ -203,7 +203,7 @@ pub enum FFIStandardAccountType {
 /// - Provider accounts: Various masternode provider key types (voting, owner, operator, platform)
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub enum FFIAccountType {
+pub enum FFIAccountKind {
     /// Standard BIP44 account (m/44'/coin_type'/account'/x/x)
     StandardBIP44 = 0,
     /// Standard BIP32 account (m/account'/x/x)
@@ -238,42 +238,42 @@ pub enum FFIAccountType {
     AssetLockShieldedAddressTopUp = 15,
 }
 
-impl FFIAccountType {
+impl FFIAccountKind {
     /// Convert to AccountType with the provided index (used where applicable).
     /// For types needing an index (e.g., IdentityTopUp.registration_index), the provided index is used.
     pub fn to_account_type(self, index: u32) -> key_wallet::AccountType {
         use key_wallet::account::account_type::StandardAccountType;
         match self {
-            FFIAccountType::StandardBIP44 => key_wallet::AccountType::Standard {
+            FFIAccountKind::StandardBIP44 => key_wallet::AccountType::Standard {
                 index,
                 standard_account_type: StandardAccountType::BIP44Account,
             },
-            FFIAccountType::StandardBIP32 => key_wallet::AccountType::Standard {
+            FFIAccountKind::StandardBIP32 => key_wallet::AccountType::Standard {
                 index,
                 standard_account_type: StandardAccountType::BIP32Account,
             },
-            FFIAccountType::CoinJoin => key_wallet::AccountType::CoinJoin {
+            FFIAccountKind::CoinJoin => key_wallet::AccountType::CoinJoin {
                 index,
             },
-            FFIAccountType::IdentityRegistration => key_wallet::AccountType::IdentityRegistration,
-            FFIAccountType::IdentityTopUp => {
+            FFIAccountKind::IdentityRegistration => key_wallet::AccountType::IdentityRegistration,
+            FFIAccountKind::IdentityTopUp => {
                 // IdentityTopUp requires a registration_index
                 key_wallet::AccountType::IdentityTopUp {
                     registration_index: index,
                 }
             }
-            FFIAccountType::IdentityTopUpNotBoundToIdentity => {
+            FFIAccountKind::IdentityTopUpNotBoundToIdentity => {
                 key_wallet::AccountType::IdentityTopUpNotBoundToIdentity
             }
-            FFIAccountType::IdentityInvitation => key_wallet::AccountType::IdentityInvitation,
-            FFIAccountType::AssetLockAddressTopUp => key_wallet::AccountType::AssetLockAddressTopUp,
-            FFIAccountType::AssetLockShieldedAddressTopUp => {
+            FFIAccountKind::IdentityInvitation => key_wallet::AccountType::IdentityInvitation,
+            FFIAccountKind::AssetLockAddressTopUp => key_wallet::AccountType::AssetLockAddressTopUp,
+            FFIAccountKind::AssetLockShieldedAddressTopUp => {
                 key_wallet::AccountType::AssetLockShieldedAddressTopUp
             }
-            FFIAccountType::ProviderVotingKeys => key_wallet::AccountType::ProviderVotingKeys,
-            FFIAccountType::ProviderOwnerKeys => key_wallet::AccountType::ProviderOwnerKeys,
-            FFIAccountType::ProviderOperatorKeys => key_wallet::AccountType::ProviderOperatorKeys,
-            FFIAccountType::ProviderPlatformKeys => key_wallet::AccountType::ProviderPlatformKeys,
+            FFIAccountKind::ProviderVotingKeys => key_wallet::AccountType::ProviderVotingKeys,
+            FFIAccountKind::ProviderOwnerKeys => key_wallet::AccountType::ProviderOwnerKeys,
+            FFIAccountKind::ProviderOperatorKeys => key_wallet::AccountType::ProviderOperatorKeys,
+            FFIAccountKind::ProviderPlatformKeys => key_wallet::AccountType::ProviderPlatformKeys,
             // DashPay variants require additional identity IDs (user_identity_id and friend_identity_id)
             // that are not part of the current FFI API. These types cannot be constructed via this
             // conversion path. Attempting to use them is a programming error.
@@ -285,25 +285,25 @@ impl FFIAccountType {
             //   - Or extend to_account_type to accept optional identity ID parameters
             //
             // Until then, attempting to convert these variants will panic to prevent silent misrouting.
-            FFIAccountType::DashpayReceivingFunds => {
+            FFIAccountKind::DashpayReceivingFunds => {
                 panic!(
-                    "FFIAccountType::DashpayReceivingFunds cannot be converted to AccountType \
+                    "FFIAccountKind::DashpayReceivingFunds cannot be converted to AccountType \
                      without user_identity_id and friend_identity_id. The FFI API does not yet \
                      support passing these 32-byte identity IDs. This is a programming error - \
                      DashPay account creation must use a different API path."
                 );
             }
-            FFIAccountType::DashpayExternalAccount => {
+            FFIAccountKind::DashpayExternalAccount => {
                 panic!(
-                    "FFIAccountType::DashpayExternalAccount cannot be converted to AccountType \
+                    "FFIAccountKind::DashpayExternalAccount cannot be converted to AccountType \
                      without user_identity_id and friend_identity_id. The FFI API does not yet \
                      support passing these 32-byte identity IDs. This is a programming error - \
                      DashPay account creation must use a different API path."
                 );
             }
-            FFIAccountType::PlatformPayment => {
+            FFIAccountKind::PlatformPayment => {
                 panic!(
-                    "FFIAccountType::PlatformPayment cannot be converted to AccountType \
+                    "FFIAccountKind::PlatformPayment cannot be converted to AccountType \
                      without account and key_class indices. The FFI API does not yet \
                      support passing these values. This is a programming error - \
                      Platform Payment account creation must use a different API path."
@@ -314,7 +314,7 @@ impl FFIAccountType {
 
     /// Convert from AccountType to FFI representation
     ///
-    /// Returns: (FFIAccountType, primary_index, optional_secondary_index)
+    /// Returns: (FFIAccountKind, primary_index, optional_secondary_index)
     ///
     /// # Panics
     ///
@@ -331,41 +331,41 @@ impl FFIAccountType {
                 index,
                 standard_account_type,
             } => match standard_account_type {
-                StandardAccountType::BIP44Account => (FFIAccountType::StandardBIP44, *index, None),
-                StandardAccountType::BIP32Account => (FFIAccountType::StandardBIP32, *index, None),
+                StandardAccountType::BIP44Account => (FFIAccountKind::StandardBIP44, *index, None),
+                StandardAccountType::BIP32Account => (FFIAccountKind::StandardBIP32, *index, None),
             },
             key_wallet::AccountType::CoinJoin {
                 index,
-            } => (FFIAccountType::CoinJoin, *index, None),
+            } => (FFIAccountKind::CoinJoin, *index, None),
             key_wallet::AccountType::IdentityRegistration => {
-                (FFIAccountType::IdentityRegistration, 0, None)
+                (FFIAccountKind::IdentityRegistration, 0, None)
             }
             key_wallet::AccountType::IdentityTopUp {
                 registration_index,
-            } => (FFIAccountType::IdentityTopUp, 0, Some(*registration_index)),
+            } => (FFIAccountKind::IdentityTopUp, 0, Some(*registration_index)),
             key_wallet::AccountType::IdentityTopUpNotBoundToIdentity => {
-                (FFIAccountType::IdentityTopUpNotBoundToIdentity, 0, None)
+                (FFIAccountKind::IdentityTopUpNotBoundToIdentity, 0, None)
             }
             key_wallet::AccountType::IdentityInvitation => {
-                (FFIAccountType::IdentityInvitation, 0, None)
+                (FFIAccountKind::IdentityInvitation, 0, None)
             }
             key_wallet::AccountType::AssetLockAddressTopUp => {
-                (FFIAccountType::AssetLockAddressTopUp, 0, None)
+                (FFIAccountKind::AssetLockAddressTopUp, 0, None)
             }
             key_wallet::AccountType::AssetLockShieldedAddressTopUp => {
-                (FFIAccountType::AssetLockShieldedAddressTopUp, 0, None)
+                (FFIAccountKind::AssetLockShieldedAddressTopUp, 0, None)
             }
             key_wallet::AccountType::ProviderVotingKeys => {
-                (FFIAccountType::ProviderVotingKeys, 0, None)
+                (FFIAccountKind::ProviderVotingKeys, 0, None)
             }
             key_wallet::AccountType::ProviderOwnerKeys => {
-                (FFIAccountType::ProviderOwnerKeys, 0, None)
+                (FFIAccountKind::ProviderOwnerKeys, 0, None)
             }
             key_wallet::AccountType::ProviderOperatorKeys => {
-                (FFIAccountType::ProviderOperatorKeys, 0, None)
+                (FFIAccountKind::ProviderOperatorKeys, 0, None)
             }
             key_wallet::AccountType::ProviderPlatformKeys => {
-                (FFIAccountType::ProviderPlatformKeys, 0, None)
+                (FFIAccountKind::ProviderPlatformKeys, 0, None)
             }
             key_wallet::AccountType::DashpayReceivingFunds {
                 index,
@@ -375,7 +375,7 @@ impl FFIAccountType {
                 // Cannot convert DashPay accounts to FFI without losing identity ID information
                 panic!(
                     "Cannot convert AccountType::DashpayReceivingFunds (index={}, user_id={:?}, friend_id={:?}) \
-                     to FFI representation. The current FFI tuple format (FFIAccountType, u32, Option<u32>) \
+                     to FFI representation. The current FFI tuple format (FFIAccountKind, u32, Option<u32>) \
                      cannot represent the two 32-byte identity IDs required by DashPay accounts. \
                      This would result in silent data loss. A dedicated FFI API for DashPay accounts is needed.",
                     index,
@@ -391,7 +391,7 @@ impl FFIAccountType {
                 // Cannot convert DashPay accounts to FFI without losing identity ID information
                 panic!(
                     "Cannot convert AccountType::DashpayExternalAccount (index={}, user_id={:?}, friend_id={:?}) \
-                     to FFI representation. The current FFI tuple format (FFIAccountType, u32, Option<u32>) \
+                     to FFI representation. The current FFI tuple format (FFIAccountKind, u32, Option<u32>) \
                      cannot represent the two 32-byte identity IDs required by DashPay accounts. \
                      This would result in silent data loss. A dedicated FFI API for DashPay accounts is needed.",
                     index,
@@ -402,7 +402,7 @@ impl FFIAccountType {
             key_wallet::AccountType::PlatformPayment {
                 account,
                 key_class,
-            } => (FFIAccountType::PlatformPayment, *account, Some(*key_class)),
+            } => (FFIAccountKind::PlatformPayment, *account, Some(*key_class)),
         }
     }
 }
@@ -499,8 +499,8 @@ pub struct FFIWalletAccountCreationOptions {
 
     /// For SpecificAccounts: Additional special account types to create
     /// (e.g., IdentityRegistration, ProviderKeys, etc.)
-    /// This is an array of FFIAccountType values
-    pub special_account_types: *const FFIAccountType,
+    /// This is an array of FFIAccountKind values
+    pub special_account_types: *const FFIAccountKind,
     pub special_account_types_count: usize,
 }
 
@@ -956,21 +956,21 @@ mod tests {
     #[should_panic(expected = "DashpayReceivingFunds cannot be converted to AccountType")]
     fn test_dashpay_receiving_funds_to_account_type_panics() {
         // This should panic because we cannot construct a DashPay account without identity IDs
-        let _ = FFIAccountType::DashpayReceivingFunds.to_account_type(0);
+        let _ = FFIAccountKind::DashpayReceivingFunds.to_account_type(0);
     }
 
     #[test]
     #[should_panic(expected = "DashpayExternalAccount cannot be converted to AccountType")]
     fn test_dashpay_external_account_to_account_type_panics() {
         // This should panic because we cannot construct a DashPay account without identity IDs
-        let _ = FFIAccountType::DashpayExternalAccount.to_account_type(0);
+        let _ = FFIAccountKind::DashpayExternalAccount.to_account_type(0);
     }
 
     #[test]
     #[should_panic(expected = "PlatformPayment cannot be converted to AccountType")]
     fn test_platform_payment_to_account_type_panics() {
         // This should panic because we cannot construct a Platform Payment account without indices
-        let _ = FFIAccountType::PlatformPayment.to_account_type(0);
+        let _ = FFIAccountKind::PlatformPayment.to_account_type(0);
     }
 
     #[test]
@@ -982,7 +982,7 @@ mod tests {
             user_identity_id: [1u8; 32],
             friend_identity_id: [2u8; 32],
         };
-        let _ = FFIAccountType::from_account_type(&account_type);
+        let _ = FFIAccountKind::from_account_type(&account_type);
     }
 
     #[test]
@@ -994,13 +994,13 @@ mod tests {
             user_identity_id: [1u8; 32],
             friend_identity_id: [2u8; 32],
         };
-        let _ = FFIAccountType::from_account_type(&account_type);
+        let _ = FFIAccountKind::from_account_type(&account_type);
     }
 
     #[test]
     fn test_non_dashpay_conversions_work() {
         // Verify that non-DashPay types still convert correctly
-        let standard_bip44 = FFIAccountType::StandardBIP44.to_account_type(5);
+        let standard_bip44 = FFIAccountKind::StandardBIP44.to_account_type(5);
         assert!(matches!(
             standard_bip44,
             key_wallet::AccountType::Standard {
@@ -1009,7 +1009,7 @@ mod tests {
             }
         ));
 
-        let coinjoin = FFIAccountType::CoinJoin.to_account_type(3);
+        let coinjoin = FFIAccountKind::CoinJoin.to_account_type(3);
         assert!(matches!(
             coinjoin,
             key_wallet::AccountType::CoinJoin {
@@ -1018,8 +1018,8 @@ mod tests {
         ));
 
         // Test reverse conversion
-        let (ffi_type, index, _) = FFIAccountType::from_account_type(&standard_bip44);
-        assert_eq!(ffi_type, FFIAccountType::StandardBIP44);
+        let (ffi_type, index, _) = FFIAccountKind::from_account_type(&standard_bip44);
+        assert_eq!(ffi_type, FFIAccountKind::StandardBIP44);
         assert_eq!(index, 5);
     }
 

@@ -526,6 +526,7 @@ impl ManagedCoreAccount {
 
         let tx_record = TransactionRecord::new(
             tx.clone(),
+            self.account_type.to_account_type(),
             context.clone(),
             transaction_type,
             direction,

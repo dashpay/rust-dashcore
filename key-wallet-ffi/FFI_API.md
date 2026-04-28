@@ -887,7 +887,7 @@ Free managed wallet info  # Safety  - `managed_wallet` must be a valid pointer t
 #### `managed_wallet_generate_addresses_to_index`
 
 ```c
-managed_wallet_generate_addresses_to_index(managed_wallet: *mut FFIManagedWalletInfo, wallet: *const FFIWallet, account_type: FFIAccountType, account_index: c_uint, pool_type: FFIAddressPoolType, target_index: c_uint, error: *mut FFIError,) -> bool
+managed_wallet_generate_addresses_to_index(managed_wallet: *mut FFIManagedWalletInfo, wallet: *const FFIWallet, account_type: FFIAccountKind, account_index: c_uint, pool_type: FFIAddressPoolType, target_index: c_uint, error: *mut FFIError,) -> bool
 ```
 
 **Description:**
@@ -903,7 +903,7 @@ Generate addresses up to a specific index in a pool  This ensures that addresses
 #### `managed_wallet_get_account`
 
 ```c
-managed_wallet_get_account(manager: *const FFIWalletManager, wallet_id: *const u8, account_index: c_uint, account_type: FFIAccountType,) -> FFIManagedCoreAccountResult
+managed_wallet_get_account(manager: *const FFIWalletManager, wallet_id: *const u8, account_index: c_uint, account_type: FFIAccountKind,) -> FFIManagedCoreAccountResult
 ```
 
 **Description:**
@@ -951,7 +951,7 @@ Get number of accounts in a managed wallet  # Safety  - `manager` must be a vali
 #### `managed_wallet_get_address_pool_info`
 
 ```c
-managed_wallet_get_address_pool_info(managed_wallet: *const FFIManagedWalletInfo, account_type: FFIAccountType, account_index: c_uint, pool_type: FFIAddressPoolType, info_out: *mut FFIAddressPoolInfo, error: *mut FFIError,) -> bool
+managed_wallet_get_address_pool_info(managed_wallet: *const FFIManagedWalletInfo, account_type: FFIAccountKind, account_index: c_uint, pool_type: FFIAddressPoolType, info_out: *mut FFIAddressPoolInfo, error: *mut FFIError,) -> bool
 ```
 
 **Description:**
@@ -1175,7 +1175,7 @@ Mark an address as used in the pool  This updates the pool's tracking of which a
 #### `managed_wallet_set_gap_limit`
 
 ```c
-managed_wallet_set_gap_limit(managed_wallet: *mut FFIManagedWalletInfo, account_type: FFIAccountType, account_index: c_uint, pool_type: FFIAddressPoolType, gap_limit: c_uint, error: *mut FFIError,) -> bool
+managed_wallet_set_gap_limit(managed_wallet: *mut FFIManagedWalletInfo, account_type: FFIAccountKind, account_index: c_uint, pool_type: FFIAddressPoolType, gap_limit: c_uint, error: *mut FFIError,) -> bool
 ```
 
 **Description:**
@@ -1191,7 +1191,7 @@ Set the gap limit for an address pool  The gap limit determines how many unused 
 #### `wallet_add_account`
 
 ```c
-wallet_add_account(wallet: *mut FFIWallet, account_type: crate::types::FFIAccountType, account_index: c_uint,) -> crate::types::FFIAccountResult
+wallet_add_account(wallet: *mut FFIWallet, account_type: crate::types::FFIAccountKind, account_index: c_uint,) -> crate::types::FFIAccountResult
 ```
 
 **Description:**
@@ -1207,7 +1207,7 @@ This function dereferences a raw pointer to FFIWallet. The caller must ensure th
 #### `wallet_add_account_with_string_xpub`
 
 ```c
-wallet_add_account_with_string_xpub(wallet: *mut FFIWallet, account_type: crate::types::FFIAccountType, account_index: c_uint, xpub_string: *const c_char,) -> crate::types::FFIAccountResult
+wallet_add_account_with_string_xpub(wallet: *mut FFIWallet, account_type: crate::types::FFIAccountKind, account_index: c_uint, xpub_string: *const c_char,) -> crate::types::FFIAccountResult
 ```
 
 **Description:**
@@ -1223,7 +1223,7 @@ This function dereferences raw pointers. The caller must ensure that: - The wall
 #### `wallet_add_account_with_xpub_bytes`
 
 ```c
-wallet_add_account_with_xpub_bytes(wallet: *mut FFIWallet, account_type: crate::types::FFIAccountType, account_index: c_uint, xpub_bytes: *const u8, xpub_len: usize,) -> crate::types::FFIAccountResult
+wallet_add_account_with_xpub_bytes(wallet: *mut FFIWallet, account_type: crate::types::FFIAccountKind, account_index: c_uint, xpub_bytes: *const u8, xpub_len: usize,) -> crate::types::FFIAccountResult
 ```
 
 **Description:**
@@ -1575,7 +1575,7 @@ Free a const wallet handle  This is a const-safe wrapper for wallet_free() that 
 #### `wallet_get_account`
 
 ```c
-wallet_get_account(wallet: *const FFIWallet, account_index: c_uint, account_type: FFIAccountType,) -> FFIAccountResult
+wallet_get_account(wallet: *const FFIWallet, account_index: c_uint, account_type: FFIAccountKind,) -> FFIAccountResult
 ```
 
 **Description:**
@@ -2313,14 +2313,14 @@ Free an account handle  # Safety  - `account` must be a valid pointer to an FFIA
 #### `account_get_account_type`
 
 ```c
-account_get_account_type(account: *const FFIAccount, out_index: *mut c_uint,) -> FFIAccountType
+account_get_account_type(account: *const FFIAccount, out_index: *mut c_uint,) -> FFIAccountKind
 ```
 
 **Description:**
-Get the account type of an account  # Safety  - `account` must be a valid pointer to an FFIAccount instance - `out_index` must be a valid pointer to a c_uint where the index will be stored - Returns FFIAccountType::StandardBIP44 with index 0 if the account is null
+Get the account type of an account  # Safety  - `account` must be a valid pointer to an FFIAccount instance - `out_index` must be a valid pointer to a c_uint where the index will be stored - Returns FFIAccountKind::StandardBIP44 with index 0 if the account is null
 
 **Safety:**
-- `account` must be a valid pointer to an FFIAccount instance - `out_index` must be a valid pointer to a c_uint where the index will be stored - Returns FFIAccountType::StandardBIP44 with index 0 if the account is null
+- `account` must be a valid pointer to an FFIAccount instance - `out_index` must be a valid pointer to a c_uint where the index will be stored - Returns FFIAccountKind::StandardBIP44 with index 0 if the account is null
 
 **Module:** `account`
 
@@ -2407,7 +2407,7 @@ bls_account_free(account: *mut FFIBLSAccount) -> ()
 #### `bls_account_get_account_type`
 
 ```c
-bls_account_get_account_type(account: *const FFIBLSAccount, out_index: *mut c_uint,) -> FFIAccountType
+bls_account_get_account_type(account: *const FFIBLSAccount, out_index: *mut c_uint,) -> FFIAccountKind
 ```
 
 **Module:** `account`
@@ -2493,7 +2493,7 @@ eddsa_account_free(account: *mut FFIEdDSAAccount) -> ()
 #### `eddsa_account_get_account_type`
 
 ```c
-eddsa_account_get_account_type(account: *const FFIEdDSAAccount, out_index: *mut c_uint,) -> FFIAccountType
+eddsa_account_get_account_type(account: *const FFIEdDSAAccount, out_index: *mut c_uint,) -> FFIAccountKind
 ```
 
 **Module:** `account`
@@ -3077,7 +3077,7 @@ Free transactions array returned by managed_core_account_get_transactions  # Saf
 #### `managed_core_account_get_account_type`
 
 ```c
-managed_core_account_get_account_type(account: *const FFIManagedCoreAccount, index_out: *mut c_uint,) -> FFIAccountType
+managed_core_account_get_account_type(account: *const FFIManagedCoreAccount, index_out: *mut c_uint,) -> FFIAccountKind
 ```
 
 **Description:**

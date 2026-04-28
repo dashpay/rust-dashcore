@@ -1119,7 +1119,7 @@ mod tests {
             options.option_type = crate::types::FFIAccountCreationOptionType::AllAccounts;
 
             // Add provider operator keys account type
-            let special_types = [crate::types::FFIAccountType::ProviderOperatorKeys];
+            let special_types = [crate::types::FFIAccountKind::ProviderOperatorKeys];
             options.special_account_types = special_types.as_ptr();
             options.special_account_types_count = special_types.len();
 
@@ -1166,7 +1166,7 @@ mod tests {
             options.option_type = crate::types::FFIAccountCreationOptionType::AllAccounts;
 
             // Add provider platform keys account type
-            let special_types = [crate::types::FFIAccountType::ProviderPlatformKeys];
+            let special_types = [crate::types::FFIAccountKind::ProviderPlatformKeys];
             options.special_account_types = special_types.as_ptr();
             options.special_account_types_count = special_types.len();
 
@@ -1215,10 +1215,10 @@ mod tests {
 
             // Add various special accounts
             let special_types = [
-                crate::types::FFIAccountType::ProviderVotingKeys,
-                crate::types::FFIAccountType::ProviderOwnerKeys,
-                crate::types::FFIAccountType::IdentityRegistration,
-                crate::types::FFIAccountType::IdentityInvitation,
+                crate::types::FFIAccountKind::ProviderVotingKeys,
+                crate::types::FFIAccountKind::ProviderOwnerKeys,
+                crate::types::FFIAccountKind::IdentityRegistration,
+                crate::types::FFIAccountKind::IdentityInvitation,
             ];
             options.special_account_types = special_types.as_ptr();
             options.special_account_types_count = special_types.len();
@@ -1353,10 +1353,10 @@ mod tests {
 
             // Add various special accounts
             let special_types = [
-                crate::types::FFIAccountType::ProviderVotingKeys,
-                crate::types::FFIAccountType::ProviderOwnerKeys,
-                crate::types::FFIAccountType::IdentityRegistration,
-                crate::types::FFIAccountType::IdentityInvitation,
+                crate::types::FFIAccountKind::ProviderVotingKeys,
+                crate::types::FFIAccountKind::ProviderOwnerKeys,
+                crate::types::FFIAccountKind::IdentityRegistration,
+                crate::types::FFIAccountKind::IdentityInvitation,
             ];
             options.special_account_types = special_types.as_ptr();
             options.special_account_types_count = special_types.len();

@@ -99,6 +99,18 @@ pub trait WalletInfoInterface: Sized + WalletTransactionChecker + ManagedAccount
     /// Record that the durable wallet sync checkpoint has advanced to `current_height`.
     fn update_synced_height(&mut self, current_height: u32);
 
+    /// Records whose coinbase maturity threshold lies in
+    /// `(old_height, new_height]`, i.e. coinbase records that just matured
+    /// during the height advance from `old_height` to `new_height`.
+    ///
+    /// Returns clones of the matured records so the caller can include them
+    /// in atomic events without mutating wallet state.
+    fn matured_coinbase_records(
+        &self,
+        old_height: CoreBlockHeight,
+        new_height: CoreBlockHeight,
+    ) -> Vec<TransactionRecord>;
+
     /// Mark UTXOs for a transaction as InstantSend-locked across all accounts
     /// and update the corresponding transaction record context.
     /// Returns `true` if any UTXO was newly marked.
@@ -257,6 +269,32 @@ impl WalletInfoInterface for ManagedWalletInfo {
 
     fn update_synced_height(&mut self, current_height: u32) {
         self.metadata.synced_height = current_height;
+    }
+
+    fn matured_coinbase_records(
+        &self,
+        old_height: CoreBlockHeight,
+        new_height: CoreBlockHeight,
+    ) -> Vec<TransactionRecord> {
+        if new_height <= old_height {
+            return Vec::new();
+        }
+        let mut matured = Vec::new();
+        for account in self.accounts.all_accounts() {
+            for record in account.transactions.values() {
+                if !record.transaction.is_coin_base() {
+                    continue;
+                }
+                let Some(record_height) = record.height() else {
+                    continue;
+                };
+                let maturity_height = record_height.saturating_add(100);
+                if maturity_height > old_height && maturity_height <= new_height {
+                    matured.push(record.clone());
+                }
+            }
+        }
+        matured
     }
 
     fn mark_instant_send_utxos(&mut self, txid: &Txid, lock: &InstantLock) -> bool {

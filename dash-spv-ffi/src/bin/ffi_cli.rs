@@ -5,8 +5,7 @@ use std::ptr;
 use clap::{Arg, ArgAction, Command};
 use dash_network::ffi::FFINetwork;
 use dash_spv_ffi::*;
-use key_wallet_ffi::managed_account::FFITransactionRecord;
-use key_wallet_ffi::types::FFITransactionContext;
+use key_wallet_ffi::types::FFIBalance;
 use key_wallet_ffi::wallet_manager::wallet_manager_add_wallet_from_mnemonic;
 use key_wallet_ffi::FFIError;
 
@@ -156,61 +155,106 @@ extern "C" fn on_peers_updated(connected_count: u32, best_height: u32, _user_dat
 // Wallet Event Callbacks
 // ============================================================================
 
-extern "C" fn on_transaction_received(
+fn short_wallet(wallet_id: *const c_char) -> String {
+    let s = ffi_string_to_rust(wallet_id);
+    if s.len() > 8 {
+        s[..8].to_string()
+    } else {
+        s
+    }
+}
+
+fn read_balance(balance: *const FFIBalance) -> FFIBalance {
+    if balance.is_null() {
+        tracing::warn!("read_balance: null pointer, returning zero balance");
+        return FFIBalance::default();
+    }
+    unsafe { *balance }
+}
+
+extern "C" fn on_transaction_detected(
     wallet_id: *const c_char,
-    account_index: u32,
     record: *const FFITransactionRecord,
+    balance: *const FFIBalance,
     _user_data: *mut c_void,
 ) {
-    let wallet_str = ffi_string_to_rust(wallet_id);
-    let wallet_short = if wallet_str.len() > 8 {
-        &wallet_str[..8]
-    } else {
-        &wallet_str
-    };
+    let wallet_short = short_wallet(wallet_id);
     if record.is_null() {
-        println!(
-            "[Wallet] TX received: wallet={}..., account={}, record=null",
-            wallet_short, account_index
-        );
+        println!("[Wallet] TX detected: wallet={}..., record=null", wallet_short);
         return;
     }
     let r = unsafe { &*record };
+    let b = read_balance(balance);
     let txid_hex = hex::encode(r.txid);
     println!(
-        "[Wallet] TX received: wallet={}..., txid={}, account={}, amount={} duffs, tx_size={}",
-        wallet_short, txid_hex, account_index, r.net_amount, r.tx_len
+        "[Wallet] TX detected: wallet={}..., txid={}, account_kind={:?}, account_index={}, amount={} duffs, balance[confirmed={}, unconfirmed={}]",
+        wallet_short,
+        txid_hex,
+        r.account_type.kind,
+        r.account_type.index,
+        r.net_amount,
+        b.confirmed,
+        b.unconfirmed
     );
 }
 
-extern "C" fn on_transaction_status_changed(
-    _wallet_id: *const c_char,
-    txid: *const [u8; 32],
-    status: FFITransactionContext,
-    _user_data: *mut c_void,
-) {
-    let txid_hex = unsafe { hex::encode(*txid) };
-    println!("[Wallet] TX status changed: txid={}, status={:?}", txid_hex, status);
-}
-
-extern "C" fn on_balance_updated(
+extern "C" fn on_transaction_instant_locked(
     wallet_id: *const c_char,
-    spendable: u64,
-    unconfirmed: u64,
-    immature: u64,
-    locked: u64,
+    txid: *const [u8; 32],
+    _islock_data: *const u8,
+    islock_len: usize,
+    balance: *const FFIBalance,
     _user_data: *mut c_void,
 ) {
-    let wallet_str = ffi_string_to_rust(wallet_id);
-    let wallet_short = if wallet_str.len() > 8 {
-        &wallet_str[..8]
-    } else {
-        &wallet_str
-    };
+    let wallet_short = short_wallet(wallet_id);
+    if txid.is_null() {
+        println!("[Wallet] TX instant-locked: wallet={}..., txid=null", wallet_short);
+        return;
+    }
+    let txid_bytes = unsafe { &*txid };
+    let b = read_balance(balance);
+    let txid_hex = hex::encode(txid_bytes);
     println!(
-        "[Wallet] Balance updated: wallet={}..., spendable={}, unconfirmed={}, immature={}, locked={}",
-        wallet_short, spendable, unconfirmed, immature, locked
+        "[Wallet] TX instant-locked: wallet={}..., txid={}, islock_len={}, balance[confirmed={}, unconfirmed={}]",
+        wallet_short, txid_hex, islock_len, b.confirmed, b.unconfirmed
     );
+}
+
+extern "C" fn on_wallet_block_processed(
+    wallet_id: *const c_char,
+    height: u32,
+    _inserted: *const FFITransactionRecord,
+    inserted_count: u32,
+    _updated: *const FFITransactionRecord,
+    updated_count: u32,
+    _matured: *const FFITransactionRecord,
+    matured_count: u32,
+    balance: *const FFIBalance,
+    _user_data: *mut c_void,
+) {
+    let wallet_short = short_wallet(wallet_id);
+    let b = read_balance(balance);
+    println!(
+        "[Wallet] Block processed: wallet={}..., height={}, inserted={}, updated={}, matured={}, balance[confirmed={}, unconfirmed={}, immature={}, locked={}]",
+        wallet_short,
+        height,
+        inserted_count,
+        updated_count,
+        matured_count,
+        b.confirmed,
+        b.unconfirmed,
+        b.immature,
+        b.locked
+    );
+}
+
+extern "C" fn on_sync_height_advanced(
+    wallet_id: *const c_char,
+    height: u32,
+    _user_data: *mut c_void,
+) {
+    let wallet_short = short_wallet(wallet_id);
+    println!("[Wallet] Sync height advanced: wallet={}..., height={}", wallet_short, height);
 }
 
 // ============================================================================
@@ -434,9 +478,10 @@ fn main() {
                 user_data: ptr::null_mut(),
             },
             wallet: FFIWalletEventCallbacks {
-                on_transaction_received: Some(on_transaction_received),
-                on_transaction_status_changed: Some(on_transaction_status_changed),
-                on_balance_updated: Some(on_balance_updated),
+                on_transaction_detected: Some(on_transaction_detected),
+                on_transaction_instant_locked: Some(on_transaction_instant_locked),
+                on_block_processed: Some(on_wallet_block_processed),
+                on_sync_height_advanced: Some(on_sync_height_advanced),
                 user_data: ptr::null_mut(),
             },
             error: FFIClientErrorCallback {
