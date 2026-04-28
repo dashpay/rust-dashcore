@@ -21,12 +21,6 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
         let mut result = BlockProcessingResult::default();
         let info = BlockInfo::new(height, block.block_hash(), block.header.time);
 
-        let snapshot = self.snapshot_balances();
-        let prior_heights: BTreeMap<WalletId, CoreBlockHeight> = self
-            .wallet_infos
-            .iter()
-            .map(|(id, info)| (*id, info.last_processed_height()))
-            .collect();
         let mut per_wallet_inserted: BTreeMap<WalletId, Vec<TransactionRecord>> = BTreeMap::new();
         let mut per_wallet_updated: BTreeMap<WalletId, Vec<TransactionRecord>> = BTreeMap::new();
 
@@ -54,43 +48,7 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
             }
         }
 
-        // Collect matured coinbase records before advancing the height so the
-        // (old, new] window is well-defined per wallet.
-        let mut per_wallet_matured: BTreeMap<WalletId, Vec<TransactionRecord>> = BTreeMap::new();
-        for (wallet_id, info) in &self.wallet_infos {
-            let old_height = prior_heights.get(wallet_id).copied().unwrap_or(0);
-            let matured = info.matured_coinbase_records(old_height, height);
-            if !matured.is_empty() {
-                per_wallet_matured.insert(*wallet_id, matured);
-            }
-        }
-
-        // Advance heights and refresh balances. Event emission happens below
-        // so each wallet's event carries the post-advance balance.
-        for info in self.wallet_infos.values_mut() {
-            info.update_last_processed_height(height);
-        }
-
-        for (wallet_id, info) in &self.wallet_infos {
-            let new_balance = info.balance();
-            let inserted = per_wallet_inserted.remove(wallet_id).unwrap_or_default();
-            let updated = per_wallet_updated.remove(wallet_id).unwrap_or_default();
-            let matured = per_wallet_matured.remove(wallet_id).unwrap_or_default();
-            let balance_changed = snapshot.get(wallet_id).copied() != Some(new_balance);
-
-            if !inserted.is_empty() || !updated.is_empty() || !matured.is_empty() || balance_changed
-            {
-                let event = WalletEvent::BlockUpdate {
-                    wallet_id: *wallet_id,
-                    height,
-                    inserted,
-                    updated,
-                    matured,
-                    balance: new_balance,
-                };
-                let _ = self.event_sender.send(event);
-            }
-        }
+        self.finalize_block_advance(height, per_wallet_inserted, per_wallet_updated);
 
         result
     }
@@ -190,43 +148,7 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
     }
 
     fn update_last_processed_height(&mut self, height: CoreBlockHeight) {
-        let snapshot = self.snapshot_balances();
-        let prior_heights: BTreeMap<WalletId, CoreBlockHeight> = self
-            .wallet_infos
-            .iter()
-            .map(|(id, info)| (*id, info.last_processed_height()))
-            .collect();
-
-        let mut per_wallet_matured: BTreeMap<WalletId, Vec<TransactionRecord>> = BTreeMap::new();
-        for (wallet_id, info) in &self.wallet_infos {
-            let old_height = prior_heights.get(wallet_id).copied().unwrap_or(0);
-            let matured = info.matured_coinbase_records(old_height, height);
-            if !matured.is_empty() {
-                per_wallet_matured.insert(*wallet_id, matured);
-            }
-        }
-
-        for info in self.wallet_infos.values_mut() {
-            info.update_last_processed_height(height);
-        }
-
-        for (wallet_id, info) in &self.wallet_infos {
-            let new_balance = info.balance();
-            let matured = per_wallet_matured.remove(wallet_id).unwrap_or_default();
-            let balance_changed = snapshot.get(wallet_id).copied() != Some(new_balance);
-
-            if !matured.is_empty() || balance_changed {
-                let event = WalletEvent::BlockUpdate {
-                    wallet_id: *wallet_id,
-                    height,
-                    inserted: Vec::new(),
-                    updated: Vec::new(),
-                    matured,
-                    balance: new_balance,
-                };
-                let _ = self.event_sender.send(event);
-            }
-        }
+        self.finalize_block_advance(height, BTreeMap::new(), BTreeMap::new());
     }
 
     fn synced_height(&self) -> CoreBlockHeight {
@@ -306,6 +228,65 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
             self.network,
             details.join("\n")
         )
+    }
+}
+
+impl<T: WalletInfoInterface + Send + Sync + 'static> WalletManager<T> {
+    /// Advance every wallet's last-processed height to `height`, collect the
+    /// matured-coinbase window `(prior, height]` per wallet, and emit a
+    /// `BlockUpdate` event for each wallet whose balance changed or whose
+    /// `inserted`/`updated`/`matured` lists are non-empty. Snapshots are taken
+    /// before the advance so events carry the post-advance balance.
+    fn finalize_block_advance(
+        &mut self,
+        height: CoreBlockHeight,
+        mut per_wallet_inserted: BTreeMap<WalletId, Vec<TransactionRecord>>,
+        mut per_wallet_updated: BTreeMap<WalletId, Vec<TransactionRecord>>,
+    ) {
+        let snapshot = self.snapshot_balances();
+        let prior_heights: BTreeMap<WalletId, CoreBlockHeight> = self
+            .wallet_infos
+            .iter()
+            .map(|(id, info)| (*id, info.last_processed_height()))
+            .collect();
+
+        // Collect matured coinbase records before advancing the height so the
+        // (old, new] window is well-defined per wallet.
+        let mut per_wallet_matured: BTreeMap<WalletId, Vec<TransactionRecord>> = BTreeMap::new();
+        for (wallet_id, info) in &self.wallet_infos {
+            let old_height = prior_heights.get(wallet_id).copied().unwrap_or(0);
+            let matured = info.matured_coinbase_records(old_height, height);
+            if !matured.is_empty() {
+                per_wallet_matured.insert(*wallet_id, matured);
+            }
+        }
+
+        // Advance heights and refresh balances. Event emission happens below
+        // so each wallet's event carries the post-advance balance.
+        for info in self.wallet_infos.values_mut() {
+            info.update_last_processed_height(height);
+        }
+
+        for (wallet_id, info) in &self.wallet_infos {
+            let new_balance = info.balance();
+            let inserted = per_wallet_inserted.remove(wallet_id).unwrap_or_default();
+            let updated = per_wallet_updated.remove(wallet_id).unwrap_or_default();
+            let matured = per_wallet_matured.remove(wallet_id).unwrap_or_default();
+            let balance_changed = snapshot.get(wallet_id).copied() != Some(new_balance);
+
+            if !inserted.is_empty() || !updated.is_empty() || !matured.is_empty() || balance_changed
+            {
+                let event = WalletEvent::BlockUpdate {
+                    wallet_id: *wallet_id,
+                    height,
+                    inserted,
+                    updated,
+                    matured,
+                    balance: new_balance,
+                };
+                let _ = self.event_sender.send(event);
+            }
+        }
     }
 }
 
