@@ -437,8 +437,9 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletManager<T> {
             return Err(WalletError::WalletExists(wallet_id));
         }
 
-        // Create managed wallet info from the imported wallet, using the current chain
-        // tip as the birth height since the serialized form does not preserve it.
+        // Create managed wallet info from the imported wallet, using the manager's
+        // current aggregated last-processed height as the fallback birth height
+        // since the serialized form does not preserve it.
         let mut managed_info = T::from_wallet(&wallet, self.last_processed_height());
         managed_info.set_first_loaded_at(current_timestamp());
 
