@@ -4,6 +4,7 @@
 
 use core::fmt::{Display, Formatter};
 use core::ops::AddAssign;
+use dashcore::Amount;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
@@ -74,11 +75,11 @@ impl Display for WalletCoreBalance {
         write!(
             f,
             "Confirmed: {}, Unconfirmed: {}, Immature: {}, Locked: {}, Total: {}",
-            self.confirmed,
-            self.unconfirmed,
-            self.immature,
-            self.locked,
-            self.total()
+            Amount::from_sat(self.confirmed),
+            Amount::from_sat(self.unconfirmed),
+            Amount::from_sat(self.immature),
+            Amount::from_sat(self.locked),
+            Amount::from_sat(self.total())
         )
     }
 }
@@ -119,14 +120,14 @@ mod tests {
         let zero = WalletCoreBalance::default();
         assert_eq!(
             zero.to_string(),
-            "Confirmed: 0, Unconfirmed: 0, Immature: 0, Locked: 0, Total: 0"
+            "Confirmed: 0 DASH, Unconfirmed: 0 DASH, Immature: 0 DASH, Locked: 0 DASH, Total: 0 DASH"
         );
 
-        let balance = WalletCoreBalance::new(1000, 500, 100, 200);
+        let balance = WalletCoreBalance::new(100_000_000, 50_000_000, 10_000_000, 20_000_000);
         let display = balance.to_string();
         assert_eq!(
             display,
-            "Confirmed: 1000, Unconfirmed: 500, Immature: 100, Locked: 200, Total: 1800"
+            "Confirmed: 1 DASH, Unconfirmed: 0.5 DASH, Immature: 0.1 DASH, Locked: 0.2 DASH, Total: 1.8 DASH"
         );
     }
 

@@ -11,6 +11,7 @@ use crate::wallet::managed_wallet_info::ManagedWalletInfo;
 use crate::{KeySource, Wallet};
 use async_trait::async_trait;
 use dashcore::blockdata::transaction::Transaction;
+use dashcore::{Amount, SignedAmount};
 
 /// Extension trait for ManagedWalletInfo to add transaction checking capabilities
 #[async_trait]
@@ -204,9 +205,9 @@ impl WalletTransactionChecker for ManagedWalletInfo {
             tracing::info!(
                 txid = %tx.txid(),
                 context = %context,
-                net_change = wallet_net,
-                received = result.total_received,
-                sent = result.total_sent,
+                net_change = %SignedAmount::from_sat(wallet_net),
+                received = %Amount::from_sat(result.total_received),
+                sent = %Amount::from_sat(result.total_sent),
                 "New wallet transaction detected"
             );
         }
