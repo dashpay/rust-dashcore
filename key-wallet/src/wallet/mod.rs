@@ -412,8 +412,9 @@ mod tests {
         )
         .unwrap();
 
-        // Create managed info from the wallet
-        let mut managed_info = ManagedWalletInfo::from_wallet(&wallet, 0);
+        // Create managed info from the wallet with a non-zero birth height so the
+        // seeded checkpoints are observable.
+        let mut managed_info = ManagedWalletInfo::from_wallet(&wallet, 100);
         managed_info.set_name("Test Wallet".to_string());
         managed_info.set_description(Some("A test wallet".to_string()));
 
@@ -421,6 +422,9 @@ mod tests {
         assert_eq!(managed_info.wallet_id, wallet.wallet_id);
         assert_eq!(managed_info.name.as_ref().unwrap(), "Test Wallet");
         assert_eq!(managed_info.description.as_ref().unwrap(), "A test wallet");
+        assert_eq!(managed_info.metadata.birth_height, 100);
+        assert_eq!(managed_info.metadata.synced_height, 99);
+        assert_eq!(managed_info.metadata.last_processed_height, 99);
         assert_eq!(managed_info.metadata.first_loaded_at, 0); // Default value
         assert!(managed_info.metadata.last_synced.is_none());
 
