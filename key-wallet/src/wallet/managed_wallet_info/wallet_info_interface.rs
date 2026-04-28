@@ -52,9 +52,6 @@ pub trait WalletInfoInterface: Sized + WalletTransactionChecker + ManagedAccount
     /// Get the birth height of the wallet
     fn birth_height(&self) -> CoreBlockHeight;
 
-    /// Set the birth height
-    fn set_birth_height(&mut self, height: CoreBlockHeight);
-
     /// Get the timestamp when first loaded
     fn first_loaded_at(&self) -> u64;
 
@@ -164,10 +161,6 @@ impl WalletInfoInterface for ManagedWalletInfo {
 
     fn birth_height(&self) -> CoreBlockHeight {
         self.metadata.birth_height
-    }
-
-    fn set_birth_height(&mut self, height: CoreBlockHeight) {
-        self.metadata.birth_height = height;
     }
 
     fn last_processed_height(&self) -> CoreBlockHeight {
