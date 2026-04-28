@@ -66,7 +66,7 @@ async fn test_mempool_tx_emits_single_event_with_balance() {
     let events = drain_events(&mut rx);
     assert_eq!(events.len(), 1, "exactly one event expected, got {:?}", events);
     match &events[0] {
-        WalletEvent::TransactionReceived {
+        WalletEvent::TransactionDetected {
             wallet_id: wid,
             record,
             balance,
@@ -85,12 +85,12 @@ async fn test_mempool_tx_emits_single_event_with_balance() {
             assert_eq!(balance.unconfirmed(), TX_AMOUNT);
             assert_eq!(balance.confirmed(), 0);
         }
-        other => panic!("expected TransactionReceived, got {:?}", other),
+        other => panic!("expected TransactionDetected, got {:?}", other),
     }
 }
 
 #[tokio::test]
-async fn test_mempool_tx_with_instant_lock_emits_received_event_with_locked_balance() {
+async fn test_mempool_tx_with_instant_lock_emits_detected_event_with_locked_balance() {
     let (mut manager, wallet_id, addr) = setup_manager_with_wallet();
     let mut rx = manager.subscribe_events();
     let tx = create_tx_paying_to(&addr, 0xbb);
@@ -100,7 +100,7 @@ async fn test_mempool_tx_with_instant_lock_emits_received_event_with_locked_bala
     let events = drain_events(&mut rx);
     assert_eq!(events.len(), 1, "one event expected for first-seen IS-locked tx, got {:?}", events);
     match &events[0] {
-        WalletEvent::TransactionReceived {
+        WalletEvent::TransactionDetected {
             wallet_id: wid,
             record,
             balance,
@@ -110,7 +110,7 @@ async fn test_mempool_tx_with_instant_lock_emits_received_event_with_locked_bala
             assert_eq!(balance.confirmed(), TX_AMOUNT);
             assert_eq!(balance.unconfirmed(), 0);
         }
-        other => panic!("expected TransactionReceived with IS context, got {:?}", other),
+        other => panic!("expected TransactionDetected with IS context, got {:?}", other),
     }
 }
 
@@ -152,7 +152,7 @@ async fn test_irrelevant_mempool_tx_emits_no_events() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn test_instant_send_lock_on_known_mempool_tx_emits_status_changed_event() {
+async fn test_instant_send_lock_on_known_mempool_tx_emits_instant_locked_event() {
     let (mut manager, wallet_id, addr) = setup_manager_with_wallet();
     let tx = create_tx_paying_to(&addr, 0xe1);
 
@@ -174,22 +174,19 @@ async fn test_instant_send_lock_on_known_mempool_tx_emits_status_changed_event()
     let events = drain_events(&mut rx);
     assert_eq!(events.len(), 1, "exactly one event expected, got {:?}", events);
     match &events[0] {
-        WalletEvent::TransactionStatusChanged {
+        WalletEvent::TransactionInstantLocked {
             wallet_id: wid,
             txid,
-            status,
+            instant_lock,
             balance,
         } => {
             assert_eq!(*wid, wallet_id);
             assert_eq!(*txid, tx.txid());
-            match status {
-                TransactionContext::InstantSend(emitted_lock) => assert_eq!(*emitted_lock, lock),
-                other => panic!("expected InstantSend context, got {:?}", other),
-            }
+            assert_eq!(*instant_lock, lock);
             assert_eq!(balance.confirmed(), TX_AMOUNT);
             assert_eq!(balance.unconfirmed(), 0);
         }
-        other => panic!("expected TransactionStatusChanged, got {:?}", other),
+        other => panic!("expected TransactionInstantLocked, got {:?}", other),
     }
 }
 
@@ -220,7 +217,7 @@ async fn test_instant_send_lock_for_unknown_txid_is_silent() {
 async fn test_late_instant_send_lock_after_block_confirmation_emits_event() {
     // A late IS-lock for a transaction that was already confirmed in a block
     // currently downgrades the record context from `InBlock(_)` back to
-    // `InstantSend(_)` and re-emits `TransactionStatusChanged`. This test
+    // `InstantSend(_)` and re-emits `TransactionInstantLocked`. This test
     // pins down that observable behavior so any future change (silently
     // ignoring the late lock, rejecting it at the record layer) shows up as a
     // test failure rather than a silent semantic drift.
@@ -241,29 +238,26 @@ async fn test_late_instant_send_lock_after_block_confirmation_emits_event() {
     manager.process_instant_send_lock(lock.clone());
 
     let events = drain_events(&mut rx);
-    let status_changed = events
+    let lock_event = events
         .iter()
-        .find(|e| matches!(e, WalletEvent::TransactionStatusChanged { .. }))
+        .find(|e| matches!(e, WalletEvent::TransactionInstantLocked { .. }))
         .unwrap_or_else(|| {
             panic!(
                 "late IS-lock for an already-confirmed tx currently emits \
-                 TransactionStatusChanged, got: {:?}",
+                 TransactionInstantLocked, got: {:?}",
                 events
             )
         });
-    match status_changed {
-        WalletEvent::TransactionStatusChanged {
+    match lock_event {
+        WalletEvent::TransactionInstantLocked {
             wallet_id: wid,
             txid,
-            status,
+            instant_lock,
             ..
         } => {
             assert_eq!(*wid, wallet_id);
             assert_eq!(*txid, tx.txid());
-            match status {
-                TransactionContext::InstantSend(emitted_lock) => assert_eq!(*emitted_lock, lock),
-                other => panic!("expected InstantSend context, got {:?}", other),
-            }
+            assert_eq!(*instant_lock, lock);
         }
         _ => unreachable!(),
     }
@@ -286,7 +280,7 @@ async fn test_block_with_new_tx_emits_inserted_record() {
     let events = drain_events(&mut rx);
     assert_eq!(events.len(), 1, "one event per affected wallet expected, got {:?}", events);
     match &events[0] {
-        WalletEvent::BlockUpdate {
+        WalletEvent::BlockProcessed {
             wallet_id: wid,
             height,
             inserted,
@@ -313,7 +307,7 @@ async fn test_block_with_new_tx_emits_inserted_record() {
             ));
             assert_eq!(balance.confirmed(), TX_AMOUNT);
         }
-        other => panic!("expected BlockUpdate, got {:?}", other),
+        other => panic!("expected BlockProcessed, got {:?}", other),
     }
 }
 
@@ -330,9 +324,9 @@ async fn test_block_confirming_known_mempool_tx_emits_updated_record() {
     manager.process_block(&block, 200).await;
 
     let events = drain_events(&mut rx);
-    assert_eq!(events.len(), 1, "one BlockUpdate expected, got {:?}", events);
+    assert_eq!(events.len(), 1, "one BlockProcessed expected, got {:?}", events);
     match &events[0] {
-        WalletEvent::BlockUpdate {
+        WalletEvent::BlockProcessed {
             wallet_id: wid,
             height,
             inserted,
@@ -350,7 +344,7 @@ async fn test_block_confirming_known_mempool_tx_emits_updated_record() {
             assert_eq!(balance.confirmed(), TX_AMOUNT);
             assert_eq!(balance.unconfirmed(), 0);
         }
-        other => panic!("expected BlockUpdate with updated record, got {:?}", other),
+        other => panic!("expected BlockProcessed with updated record, got {:?}", other),
     }
 }
 
@@ -382,7 +376,7 @@ async fn test_block_with_index_less_account_tx_carries_account_type() {
     // Build a DIP-2 AssetLock transaction whose `credit_outputs` pay to the
     // identity registration address. AssetLock funds aren't spendable on the
     // Core chain, so balance does not shift, but the account does receive a
-    // record — which is exactly what we want to observe in `BlockUpdate`.
+    // record — which is exactly what we want to observe in `BlockProcessed`.
     let tx = Transaction {
         version: 3,
         lock_time: 0,
@@ -420,11 +414,11 @@ async fn test_block_with_index_less_account_tx_carries_account_type() {
     let events = drain_events(&mut rx);
     let block_event = events
         .iter()
-        .find(|e| matches!(e, WalletEvent::BlockUpdate { .. }))
-        .unwrap_or_else(|| panic!("expected a BlockUpdate event, got {:?}", events));
+        .find(|e| matches!(e, WalletEvent::BlockProcessed { .. }))
+        .unwrap_or_else(|| panic!("expected a BlockProcessed event, got {:?}", events));
 
     match block_event {
-        WalletEvent::BlockUpdate {
+        WalletEvent::BlockProcessed {
             wallet_id: wid,
             inserted,
             ..
@@ -457,11 +451,11 @@ async fn test_empty_block_for_idle_wallet_emits_nothing() {
 }
 
 #[tokio::test]
-async fn test_block_update_carries_matured_coinbase_record() {
+async fn test_block_processed_carries_matured_coinbase_record() {
     // A coinbase received at height H matures at H + 100. Process the
     // coinbase block first, then advance the chain past maturity by
     // processing further blocks. The block whose height crosses H + 100
-    // must carry the matured coinbase in `BlockUpdate.matured`.
+    // must carry the matured coinbase in `BlockProcessed.matured`.
     let (mut manager, wallet_id, addr) = setup_manager_with_wallet();
     let coinbase_tx = make_coinbase_paying_to(&addr, 5_000_000_000);
     let coinbase_height = 100;
@@ -477,13 +471,13 @@ async fn test_block_update_carries_matured_coinbase_record() {
     let events = drain_events(&mut rx);
     let block_event = events
         .iter()
-        .find(|e| matches!(e, WalletEvent::BlockUpdate { matured, .. } if !matured.is_empty()))
+        .find(|e| matches!(e, WalletEvent::BlockProcessed { matured, .. } if !matured.is_empty()))
         .unwrap_or_else(|| {
-            panic!("expected a BlockUpdate carrying matured coinbase, got {:?}", events)
+            panic!("expected a BlockProcessed carrying matured coinbase, got {:?}", events)
         });
 
     match block_event {
-        WalletEvent::BlockUpdate {
+        WalletEvent::BlockProcessed {
             wallet_id: wid,
             height,
             inserted,
@@ -503,7 +497,7 @@ async fn test_block_update_carries_matured_coinbase_record() {
 }
 
 // ---------------------------------------------------------------------------
-// SyncHeightUpdate
+// SyncHeightAdvanced
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
@@ -516,7 +510,7 @@ async fn test_update_synced_height_emits_event_per_wallet() {
     let synced_events: Vec<_> = drain_events(&mut rx)
         .into_iter()
         .filter_map(|e| match e {
-            WalletEvent::SyncHeightUpdate {
+            WalletEvent::SyncHeightAdvanced {
                 wallet_id,
                 height,
             } => Some((wallet_id, height)),
@@ -534,12 +528,12 @@ async fn test_update_synced_height_does_not_re_emit_when_unchanged() {
     manager.update_synced_height(2000);
     drain_events(&mut rx);
 
-    // Re-calling with the same height must not emit another SyncHeightUpdate
+    // Re-calling with the same height must not emit another SyncHeightAdvanced
     manager.update_synced_height(2000);
     let events = drain_events(&mut rx);
     assert!(
-        !events.iter().any(|e| matches!(e, WalletEvent::SyncHeightUpdate { .. })),
-        "no SyncHeightUpdate should fire when height did not advance, got {:?}",
+        !events.iter().any(|e| matches!(e, WalletEvent::SyncHeightAdvanced { .. })),
+        "no SyncHeightAdvanced should fire when height did not advance, got {:?}",
         events
     );
 
@@ -547,8 +541,8 @@ async fn test_update_synced_height_does_not_re_emit_when_unchanged() {
     manager.update_synced_height(1500);
     let events = drain_events(&mut rx);
     assert!(
-        !events.iter().any(|e| matches!(e, WalletEvent::SyncHeightUpdate { .. })),
-        "no SyncHeightUpdate should fire when height went backwards, got {:?}",
+        !events.iter().any(|e| matches!(e, WalletEvent::SyncHeightAdvanced { .. })),
+        "no SyncHeightAdvanced should fire when height went backwards, got {:?}",
         events
     );
 }

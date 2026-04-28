@@ -172,7 +172,7 @@ fn read_balance(balance: *const FFIBalance) -> FFIBalance {
     unsafe { *balance }
 }
 
-extern "C" fn on_transaction_received(
+extern "C" fn on_transaction_detected(
     wallet_id: *const c_char,
     record: *const FFITransactionRecord,
     balance: *const FFIBalance,
@@ -180,14 +180,14 @@ extern "C" fn on_transaction_received(
 ) {
     let wallet_short = short_wallet(wallet_id);
     if record.is_null() {
-        println!("[Wallet] TX received: wallet={}..., record=null", wallet_short);
+        println!("[Wallet] TX detected: wallet={}..., record=null", wallet_short);
         return;
     }
     let r = unsafe { &*record };
     let b = read_balance(balance);
     let txid_hex = hex::encode(r.txid);
     println!(
-        "[Wallet] TX received: wallet={}..., txid={}, account_kind={:?}, account_index={}, amount={} duffs, balance[confirmed={}, unconfirmed={}]",
+        "[Wallet] TX detected: wallet={}..., txid={}, account_kind={:?}, account_index={}, amount={} duffs, balance[confirmed={}, unconfirmed={}]",
         wallet_short,
         txid_hex,
         r.account_type.kind,
@@ -198,28 +198,29 @@ extern "C" fn on_transaction_received(
     );
 }
 
-extern "C" fn on_transaction_status_changed(
+extern "C" fn on_transaction_instant_locked(
     wallet_id: *const c_char,
     txid: *const [u8; 32],
-    _context: key_wallet_ffi::types::FFITransactionContext,
+    _islock_data: *const u8,
+    islock_len: usize,
     balance: *const FFIBalance,
     _user_data: *mut c_void,
 ) {
     let wallet_short = short_wallet(wallet_id);
     if txid.is_null() {
-        println!("[Wallet] TX status changed: wallet={}..., txid=null", wallet_short);
+        println!("[Wallet] TX instant-locked: wallet={}..., txid=null", wallet_short);
         return;
     }
     let txid_bytes = unsafe { &*txid };
     let b = read_balance(balance);
     let txid_hex = hex::encode(txid_bytes);
     println!(
-        "[Wallet] TX status changed: wallet={}..., txid={}, balance[confirmed={}, unconfirmed={}]",
-        wallet_short, txid_hex, b.confirmed, b.unconfirmed
+        "[Wallet] TX instant-locked: wallet={}..., txid={}, islock_len={}, balance[confirmed={}, unconfirmed={}]",
+        wallet_short, txid_hex, islock_len, b.confirmed, b.unconfirmed
     );
 }
 
-extern "C" fn on_block_update(
+extern "C" fn on_wallet_block_processed(
     wallet_id: *const c_char,
     height: u32,
     _inserted: *const FFITransactionRecord,
@@ -234,7 +235,7 @@ extern "C" fn on_block_update(
     let wallet_short = short_wallet(wallet_id);
     let b = read_balance(balance);
     println!(
-        "[Wallet] Block update: wallet={}..., height={}, inserted={}, updated={}, matured={}, balance[confirmed={}, unconfirmed={}, immature={}, locked={}]",
+        "[Wallet] Block processed: wallet={}..., height={}, inserted={}, updated={}, matured={}, balance[confirmed={}, unconfirmed={}, immature={}, locked={}]",
         wallet_short,
         height,
         inserted_count,
@@ -247,13 +248,13 @@ extern "C" fn on_block_update(
     );
 }
 
-extern "C" fn on_sync_height_update(
+extern "C" fn on_sync_height_advanced(
     wallet_id: *const c_char,
     height: u32,
     _user_data: *mut c_void,
 ) {
     let wallet_short = short_wallet(wallet_id);
-    println!("[Wallet] Sync height update: wallet={}..., height={}", wallet_short, height);
+    println!("[Wallet] Sync height advanced: wallet={}..., height={}", wallet_short, height);
 }
 
 // ============================================================================
@@ -477,10 +478,10 @@ fn main() {
                 user_data: ptr::null_mut(),
             },
             wallet: FFIWalletEventCallbacks {
-                on_transaction_received: Some(on_transaction_received),
-                on_transaction_status_changed: Some(on_transaction_status_changed),
-                on_block_update: Some(on_block_update),
-                on_sync_height_update: Some(on_sync_height_update),
+                on_transaction_detected: Some(on_transaction_detected),
+                on_transaction_instant_locked: Some(on_transaction_instant_locked),
+                on_block_processed: Some(on_wallet_block_processed),
+                on_sync_height_advanced: Some(on_sync_height_advanced),
                 user_data: ptr::null_mut(),
             },
             error: FFIClientErrorCallback {

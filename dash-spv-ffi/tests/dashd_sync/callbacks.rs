@@ -69,7 +69,7 @@ pub(super) struct CallbackTracker {
     pub(super) received_account_indices: Mutex<Vec<u32>>,
     pub(super) block_account_indices: Mutex<Vec<u32>>,
 
-    // Per-record bucketing observed on `BlockUpdate` changes, in delivery
+    // Per-record bucketing observed on `BlockProcessed` changes, in delivery
     // order. Each entry is `true` when the record was delivered via the
     // `inserted` array, `false` when delivered via `updated`. Lets tests
     // assert that confirmation of a previously-known mempool transaction
@@ -379,7 +379,7 @@ fn record_balance(tracker: &CallbackTracker, balance: *const FFIBalance) {
     tracker.last_unconfirmed.store(b.unconfirmed, Ordering::SeqCst);
 }
 
-extern "C" fn on_transaction_received(
+extern "C" fn on_transaction_detected(
     wallet_id: *const c_char,
     record: *const FFITransactionRecord,
     balance: *const FFIBalance,
@@ -414,33 +414,31 @@ extern "C" fn on_transaction_received(
     record_balance(tracker, balance);
     tracker.transaction_received_count.fetch_add(1, Ordering::SeqCst);
     let wallet_str = unsafe { cstr_or_unknown(wallet_id) };
-    tracing::info!("on_transaction_received: wallet={}, account={:?}", wallet_str, account_log);
+    tracing::info!("on_transaction_detected: wallet={}, account={:?}", wallet_str, account_log);
 }
 
-extern "C" fn on_transaction_status_changed(
+extern "C" fn on_transaction_instant_locked(
     _wallet_id: *const c_char,
     _txid: *const [u8; 32],
-    context: key_wallet_ffi::types::FFITransactionContext,
+    islock_data: *const u8,
+    islock_len: usize,
     balance: *const FFIBalance,
     user_data: *mut c_void,
 ) {
     let Some(tracker) = (unsafe { tracker_from(user_data) }) else {
         return;
     };
-    if let key_wallet_ffi::types::FFITransactionContextType::InstantSend = context.context_type {
-        if !context.islock_data.is_null() && context.islock_len > 0 {
-            let bytes =
-                unsafe { slice::from_raw_parts(context.islock_data, context.islock_len) }.to_vec();
-            *tracker.last_islock_bytes.lock().unwrap_or_else(|e| e.into_inner()) = Some(bytes);
-        }
+    if !islock_data.is_null() && islock_len > 0 {
+        let bytes = unsafe { slice::from_raw_parts(islock_data, islock_len) }.to_vec();
+        *tracker.last_islock_bytes.lock().unwrap_or_else(|e| e.into_inner()) = Some(bytes);
     }
     tracker.transaction_instant_send_locked_count.fetch_add(1, Ordering::SeqCst);
     record_balance(tracker, balance);
-    tracing::debug!("on_transaction_status_changed");
+    tracing::debug!("on_transaction_instant_locked");
 }
 
 #[allow(clippy::too_many_arguments)]
-extern "C" fn on_block_update(
+extern "C" fn on_wallet_block_processed(
     wallet_id: *const c_char,
     height: u32,
     inserted: *const FFITransactionRecord,
@@ -496,7 +494,7 @@ extern "C" fn on_block_update(
     tracker.block_processed_wallet_count.fetch_add(1, Ordering::SeqCst);
     let wallet_str = unsafe { cstr_or_unknown(wallet_id) };
     tracing::info!(
-        "on_block_update: wallet={}, height={}, inserted={}, updated={}, matured={}",
+        "on_wallet_block_processed: wallet={}, height={}, inserted={}, updated={}, matured={}",
         wallet_str,
         height,
         inserted_count,
@@ -505,7 +503,11 @@ extern "C" fn on_block_update(
     );
 }
 
-extern "C" fn on_sync_height_update(wallet_id: *const c_char, height: u32, user_data: *mut c_void) {
+extern "C" fn on_sync_height_advanced(
+    wallet_id: *const c_char,
+    height: u32,
+    user_data: *mut c_void,
+) {
     let Some(tracker) = (unsafe { tracker_from(user_data) }) else {
         return;
     };
@@ -515,7 +517,7 @@ extern "C" fn on_sync_height_update(wallet_id: *const c_char, height: u32, user_
     tracker.last_synced_height.store(height, Ordering::SeqCst);
     tracker.synced_height_updated_count.fetch_add(1, Ordering::SeqCst);
     let wallet_str = unsafe { cstr_or_unknown(wallet_id) };
-    tracing::info!("on_sync_height_update: wallet={}, height={}", wallet_str, height);
+    tracing::info!("on_sync_height_advanced: wallet={}, height={}", wallet_str, height);
 }
 
 /// Create sync callbacks with all event handlers wired to the tracker.
@@ -561,10 +563,10 @@ pub(super) fn create_network_callbacks(tracker: &Arc<CallbackTracker>) -> FFINet
 /// Arc outlives all callback invocations.
 pub(super) fn create_wallet_callbacks(tracker: &Arc<CallbackTracker>) -> FFIWalletEventCallbacks {
     FFIWalletEventCallbacks {
-        on_transaction_received: Some(on_transaction_received),
-        on_transaction_status_changed: Some(on_transaction_status_changed),
-        on_block_update: Some(on_block_update),
-        on_sync_height_update: Some(on_sync_height_update),
+        on_transaction_detected: Some(on_transaction_detected),
+        on_transaction_instant_locked: Some(on_transaction_instant_locked),
+        on_block_processed: Some(on_wallet_block_processed),
+        on_sync_height_advanced: Some(on_sync_height_advanced),
         user_data: Arc::as_ptr(tracker) as *mut c_void,
     }
 }

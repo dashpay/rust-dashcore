@@ -4,10 +4,10 @@
 //! triggered it and the wallet's new balance after the change. Consumers can
 //! persist the transaction(s) and balance atomically off a single event.
 
+use dashcore::ephemerealdata::instant_lock::InstantLock;
 use dashcore::prelude::CoreBlockHeight;
 use dashcore::Txid;
 use key_wallet::managed_account::transaction_record::TransactionRecord;
-use key_wallet::transaction_checking::TransactionContext;
 use key_wallet::WalletCoreBalance;
 
 use crate::WalletId;
@@ -22,7 +22,7 @@ pub enum WalletEvent {
     /// First time the wallet sees an off-chain wallet-relevant transaction
     /// (mempool, or directly via an InstantSend lock — in that case
     /// `record.context` is `InstantSend(..)`).
-    TransactionReceived {
+    TransactionDetected {
         /// ID of the affected wallet.
         wallet_id: WalletId,
         /// The full transaction record with all details.
@@ -30,16 +30,15 @@ pub enum WalletEvent {
         /// Wallet balance after the transaction was recorded.
         balance: WalletCoreBalance,
     },
-    /// A previously-seen off-chain wallet-relevant transaction had its state
-    /// changed. Currently fires only for InstantSend locks applied
-    /// to a known mempool tx.
-    TransactionStatusChanged {
+    /// An InstantSend lock was applied to a previously-seen off-chain
+    /// wallet-relevant transaction.
+    TransactionInstantLocked {
         /// ID of the affected wallet.
         wallet_id: WalletId,
         /// Transaction ID.
         txid: Txid,
-        /// New transaction context.
-        status: TransactionContext,
+        /// The InstantSend lock now applied to the transaction.
+        instant_lock: InstantLock,
         /// Wallet balance after the status change.
         balance: WalletCoreBalance,
     },
@@ -49,7 +48,7 @@ pub enum WalletEvent {
     /// previously-known records that just confirmed, `matured` is older
     /// coinbase records that crossed the maturity threshold as the scanned
     /// height advanced.
-    BlockUpdate {
+    BlockProcessed {
         /// ID of the affected wallet.
         wallet_id: WalletId,
         /// Height of the block that was processed.
@@ -67,8 +66,8 @@ pub enum WalletEvent {
     /// The wallet's scan cursor advanced because the filter pipeline
     /// committed a batch covering blocks up to `height`. No records or
     /// balance — consumers persist this as a checkpoint atomically with
-    /// any records/balance from prior `BlockUpdate` events in the batch.
-    SyncHeightUpdate {
+    /// any records/balance from prior `BlockProcessed` events in the batch.
+    SyncHeightAdvanced {
         /// ID of the affected wallet.
         wallet_id: WalletId,
         /// New scanned height for the wallet.
@@ -80,19 +79,19 @@ impl WalletEvent {
     /// ID of the wallet this event pertains to.
     pub fn wallet_id(&self) -> WalletId {
         match self {
-            WalletEvent::TransactionReceived {
+            WalletEvent::TransactionDetected {
                 wallet_id,
                 ..
             }
-            | WalletEvent::TransactionStatusChanged {
+            | WalletEvent::TransactionInstantLocked {
                 wallet_id,
                 ..
             }
-            | WalletEvent::BlockUpdate {
+            | WalletEvent::BlockProcessed {
                 wallet_id,
                 ..
             }
-            | WalletEvent::SyncHeightUpdate {
+            | WalletEvent::SyncHeightAdvanced {
                 wallet_id,
                 ..
             } => *wallet_id,
@@ -102,28 +101,24 @@ impl WalletEvent {
     /// Short description for logging.
     pub fn description(&self) -> String {
         match self {
-            WalletEvent::TransactionReceived {
+            WalletEvent::TransactionDetected {
                 record,
                 balance,
                 ..
             } => {
                 format!(
-                    "TransactionReceived(txid={}, context={}, balance={})",
+                    "TransactionDetected(txid={}, context={}, balance={})",
                     record.txid, record.context, balance
                 )
             }
-            WalletEvent::TransactionStatusChanged {
+            WalletEvent::TransactionInstantLocked {
                 txid,
-                status,
                 balance,
                 ..
             } => {
-                format!(
-                    "TransactionStatusChanged(txid={}, status={}, balance={})",
-                    txid, status, balance
-                )
+                format!("TransactionInstantLocked(txid={}, balance={})", txid, balance)
             }
-            WalletEvent::BlockUpdate {
+            WalletEvent::BlockProcessed {
                 height,
                 inserted,
                 updated,
@@ -132,7 +127,7 @@ impl WalletEvent {
                 ..
             } => {
                 format!(
-                    "BlockUpdate(height={}, inserted={}, updated={}, matured={}, balance={})",
+                    "BlockProcessed(height={}, inserted={}, updated={}, matured={}, balance={})",
                     height,
                     inserted.len(),
                     updated.len(),
@@ -140,11 +135,11 @@ impl WalletEvent {
                     balance
                 )
             }
-            WalletEvent::SyncHeightUpdate {
+            WalletEvent::SyncHeightAdvanced {
                 height,
                 ..
             } => {
-                format!("SyncHeightUpdate(height={})", height)
+                format!("SyncHeightAdvanced(height={})", height)
             }
         }
     }

@@ -12,7 +12,7 @@ use dash_spv::sync::{SyncEvent, SyncProgress};
 use dash_spv::EventHandler;
 use dashcore::hashes::Hash;
 use key_wallet_ffi::managed_account::FFITransactionRecord;
-use key_wallet_ffi::types::{FFIBalance, FFITransactionContext};
+use key_wallet_ffi::types::FFIBalance;
 use key_wallet_manager::WalletEvent;
 use std::ffi::CString;
 use std::os::raw::{c_char, c_void};
@@ -530,7 +530,7 @@ impl FFINetworkEventCallbacks {
 // FFIWalletEventCallbacks - One callback per WalletEvent variant
 // ============================================================================
 
-/// Callback for `WalletEvent::TransactionReceived`.
+/// Callback for `WalletEvent::TransactionDetected`.
 ///
 /// Fires when a wallet-relevant transaction is first seen off-chain — either
 /// in the mempool, or directly via an InstantSend lock (in that case the
@@ -539,7 +539,7 @@ impl FFINetworkEventCallbacks {
 /// All pointer parameters are borrowed and only valid for the duration of the
 /// callback. `balance` is the wallet's balance *after* the transaction was
 /// recorded.
-pub type OnTransactionReceivedCallback = Option<
+pub type OnTransactionDetectedCallback = Option<
     extern "C" fn(
         wallet_id: *const c_char,
         record: *const FFITransactionRecord,
@@ -548,27 +548,27 @@ pub type OnTransactionReceivedCallback = Option<
     ),
 >;
 
-/// Callback for `WalletEvent::TransactionStatusChanged`.
+/// Callback for `WalletEvent::TransactionInstantLocked`.
 ///
-/// Fires when a previously-seen off-chain wallet-relevant transaction had
-/// its state change off-chain (currently only InstantSend locks applied to
-/// a known mempool tx). Consumers already hold the full record from the
-/// prior `TransactionReceived`; only the txid, the new context, and the
-/// post-change balance are delivered.
+/// Fires when an InstantSend lock is applied to a previously-seen off-chain
+/// wallet-relevant transaction. Consumers already hold the full record from
+/// the prior `TransactionDetected`; only the txid, the consensus-serialized
+/// `InstantLock` bytes, and the post-change balance are delivered.
 ///
 /// All pointer parameters are borrowed and only valid for the duration of
 /// the callback. `balance` is the wallet's balance *after* the change.
-pub type OnTransactionStatusChangedCallback = Option<
+pub type OnTransactionInstantLockedCallback = Option<
     extern "C" fn(
         wallet_id: *const c_char,
         txid: *const [u8; 32],
-        context: FFITransactionContext,
+        islock_data: *const u8,
+        islock_len: usize,
         balance: *const FFIBalance,
         user_data: *mut c_void,
     ),
 >;
 
-/// Callback for `WalletEvent::BlockUpdate`.
+/// Callback for `WalletEvent::BlockProcessed`.
 ///
 /// Fires once per wallet affected by a processed block. The three record
 /// arrays bucket what happened in this block: `inserted` is records first
@@ -579,7 +579,7 @@ pub type OnTransactionStatusChangedCallback = Option<
 ///
 /// All array pointers and their contents are borrowed and only valid for the
 /// duration of the callback.
-pub type OnBlockUpdateCallback = Option<
+pub type OnWalletBlockProcessedCallback = Option<
     extern "C" fn(
         wallet_id: *const c_char,
         height: u32,
@@ -594,13 +594,13 @@ pub type OnBlockUpdateCallback = Option<
     ),
 >;
 
-/// Callback for `WalletEvent::SyncHeightUpdate`.
+/// Callback for `WalletEvent::SyncHeightAdvanced`.
 ///
 /// Fires once per wallet when the filter pipeline commits a batch — the
 /// wallet has been scanned up to `height`. Consumers can persist this as a
 /// checkpoint atomically with any records/balance already persisted from
-/// prior `BlockUpdate` events inside the batch.
-pub type OnSyncHeightUpdateCallback =
+/// prior `BlockProcessed` events inside the batch.
+pub type OnSyncHeightAdvancedCallback =
     Option<extern "C" fn(wallet_id: *const c_char, height: u32, user_data: *mut c_void)>;
 
 /// Wallet event callbacks - one callback per WalletEvent variant.
@@ -613,10 +613,10 @@ pub type OnSyncHeightUpdateCallback =
 #[repr(C)]
 #[derive(Clone)]
 pub struct FFIWalletEventCallbacks {
-    pub on_transaction_received: OnTransactionReceivedCallback,
-    pub on_transaction_status_changed: OnTransactionStatusChangedCallback,
-    pub on_block_update: OnBlockUpdateCallback,
-    pub on_sync_height_update: OnSyncHeightUpdateCallback,
+    pub on_transaction_detected: OnTransactionDetectedCallback,
+    pub on_transaction_instant_locked: OnTransactionInstantLockedCallback,
+    pub on_block_processed: OnWalletBlockProcessedCallback,
+    pub on_sync_height_advanced: OnSyncHeightAdvancedCallback,
     pub user_data: *mut c_void,
 }
 
@@ -627,10 +627,10 @@ unsafe impl Sync for FFIWalletEventCallbacks {}
 impl Default for FFIWalletEventCallbacks {
     fn default() -> Self {
         Self {
-            on_transaction_received: None,
-            on_transaction_status_changed: None,
-            on_block_update: None,
-            on_sync_height_update: None,
+            on_transaction_detected: None,
+            on_transaction_instant_locked: None,
+            on_block_processed: None,
+            on_sync_height_advanced: None,
             user_data: std::ptr::null_mut(),
         }
     }
@@ -725,12 +725,12 @@ impl FFIWalletEventCallbacks {
     /// Dispatch a WalletEvent to the appropriate callback.
     pub fn dispatch(&self, event: &WalletEvent) {
         match event {
-            WalletEvent::TransactionReceived {
+            WalletEvent::TransactionDetected {
                 wallet_id,
                 record,
                 balance,
             } => {
-                if let Some(cb) = self.on_transaction_received {
+                if let Some(cb) = self.on_transaction_detected {
                     let wallet_id_hex = hex::encode(wallet_id);
                     let c_wallet_id = CString::new(wallet_id_hex).unwrap_or_default();
                     let ffi_record = FFITransactionRecord::from(record.as_ref());
@@ -744,29 +744,30 @@ impl FFIWalletEventCallbacks {
                     );
                 }
             }
-            WalletEvent::TransactionStatusChanged {
+            WalletEvent::TransactionInstantLocked {
                 wallet_id,
                 txid,
-                status,
+                instant_lock,
                 balance,
             } => {
-                if let Some(cb) = self.on_transaction_status_changed {
+                if let Some(cb) = self.on_transaction_instant_locked {
                     let wallet_id_hex = hex::encode(wallet_id);
                     let c_wallet_id = CString::new(wallet_id_hex).unwrap_or_default();
                     let txid_bytes = *txid.as_byte_array();
-                    let ffi_context = FFITransactionContext::from(status.clone());
+                    let islock_bytes = dashcore::consensus::serialize(instant_lock);
                     let ffi_balance = FFIBalance::from(*balance);
 
                     cb(
                         c_wallet_id.as_ptr(),
                         &txid_bytes as *const [u8; 32],
-                        ffi_context,
+                        islock_bytes.as_ptr(),
+                        islock_bytes.len(),
                         &ffi_balance as *const FFIBalance,
                         self.user_data,
                     );
                 }
             }
-            WalletEvent::BlockUpdate {
+            WalletEvent::BlockProcessed {
                 wallet_id,
                 height,
                 inserted,
@@ -774,7 +775,7 @@ impl FFIWalletEventCallbacks {
                 matured,
                 balance,
             } => {
-                if let Some(cb) = self.on_block_update {
+                if let Some(cb) = self.on_block_processed {
                     let wallet_id_hex = hex::encode(wallet_id);
                     let c_wallet_id = CString::new(wallet_id_hex).unwrap_or_default();
                     let ffi_inserted: Vec<FFITransactionRecord> =
@@ -822,11 +823,11 @@ impl FFIWalletEventCallbacks {
                     drop(ffi_matured);
                 }
             }
-            WalletEvent::SyncHeightUpdate {
+            WalletEvent::SyncHeightAdvanced {
                 wallet_id,
                 height,
             } => {
-                if let Some(cb) = self.on_sync_height_update {
+                if let Some(cb) = self.on_sync_height_advanced {
                     let wallet_id_hex = hex::encode(wallet_id);
                     let c_wallet_id = CString::new(wallet_id_hex).unwrap_or_default();
                     cb(c_wallet_id.as_ptr(), *height, self.user_data);

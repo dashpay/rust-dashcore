@@ -133,7 +133,7 @@ fn test_all_callbacks_during_sync() {
         );
         assert_eq!(
             received, 0,
-            "on_transaction_received must not fire during historical block sync"
+            "on_transaction_detected must not fire during historical block sync"
         );
         assert_eq!(
             instant_send_locked, 0,
@@ -257,7 +257,7 @@ fn test_all_callbacks_during_sync() {
 
         // Every record observed during initial sync is a fresh insertion
         // (no prior mempool sighting), so each must arrive in the `inserted`
-        // bucket of `BlockUpdate`.
+        // bucket of `BlockProcessed`.
         let bucket = tracker.block_record_inserted.lock().unwrap();
         assert!(!bucket.is_empty(), "block records should be captured");
         assert!(
@@ -305,7 +305,7 @@ fn test_all_callbacks_during_sync() {
 /// Verify wallet and network callbacks fire correctly after initial sync completes.
 ///
 /// After initial sync, sends DASH to the wallet and mines a block. Verifies that
-/// on_transaction_received and on_balance_updated callbacks fire. Then disconnects
+/// on_transaction_detected and on_balance_updated callbacks fire. Then disconnects
 /// dashd peers and verifies on_peer_disconnected fires, followed by on_peer_connected
 /// after automatic reconnection.
 #[test]
@@ -378,11 +378,11 @@ fn test_callbacks_post_sync_transactions_and_disconnect() {
             "block_processed",
         );
 
-        // Verify on_transaction_received fired for the new transaction
+        // Verify on_transaction_detected fired for the new transaction
         let received_after = tracker.transaction_received_count.load(Ordering::SeqCst);
         assert!(
             received_after > received_before,
-            "on_transaction_received should fire for post-sync transaction: {} -> {}",
+            "on_transaction_detected should fire for post-sync transaction: {} -> {}",
             received_before,
             received_after
         );
@@ -433,7 +433,7 @@ fn test_callbacks_post_sync_transactions_and_disconnect() {
         drop(received_types);
 
         // The post-sync block confirms a transaction that was already known
-        // from the mempool, so the corresponding `BlockUpdate` change must
+        // from the mempool, so the corresponding `BlockProcessed` change must
         // arrive in the `updated` bucket rather than `inserted`. Slice by
         // the pre-captured index so only post-sync entries are checked,
         // avoiding masking by any `updated` entry that might appear during

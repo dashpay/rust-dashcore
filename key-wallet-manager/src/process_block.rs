@@ -88,7 +88,7 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
             };
             let balance = info.balance();
             for record in records {
-                let event = WalletEvent::TransactionReceived {
+                let event = WalletEvent::TransactionDetected {
                     wallet_id,
                     record: Box::new(record),
                     balance,
@@ -107,10 +107,10 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
                 };
                 let balance = info.balance();
                 for record in records {
-                    let event = WalletEvent::TransactionStatusChanged {
+                    let event = WalletEvent::TransactionInstantLocked {
                         wallet_id,
                         txid: record.txid,
-                        status: TransactionContext::InstantSend(lock.clone()),
+                        instant_lock: lock.clone(),
                         balance,
                     };
                     let _ = self.event_sender.send(event);
@@ -160,7 +160,7 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
             let advanced = height > info.synced_height();
             info.update_synced_height(height);
             if advanced {
-                let _ = self.event_sender.send(WalletEvent::SyncHeightUpdate {
+                let _ = self.event_sender.send(WalletEvent::SyncHeightAdvanced {
                     wallet_id: *wallet_id,
                     height,
                 });
@@ -187,15 +187,14 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
             return;
         }
 
-        let context = TransactionContext::InstantSend(instant_lock);
         for wallet_id in affected_wallets {
             let Some(info) = self.wallet_infos.get(&wallet_id) else {
                 continue;
             };
-            let _ = self.event_sender().send(WalletEvent::TransactionStatusChanged {
+            let _ = self.event_sender().send(WalletEvent::TransactionInstantLocked {
                 wallet_id,
                 txid,
-                status: context.clone(),
+                instant_lock: instant_lock.clone(),
                 balance: info.balance(),
             });
         }
@@ -234,7 +233,7 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
 impl<T: WalletInfoInterface + Send + Sync + 'static> WalletManager<T> {
     /// Advance every wallet's last-processed height to `height`, collect the
     /// matured-coinbase window `(prior, height]` per wallet, and emit a
-    /// `BlockUpdate` event for each wallet whose balance changed or whose
+    /// `BlockProcessed` event for each wallet whose balance changed or whose
     /// `inserted`/`updated`/`matured` lists are non-empty. Snapshots are taken
     /// before the advance so events carry the post-advance balance.
     fn finalize_block_advance(
@@ -276,7 +275,7 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletManager<T> {
 
             if !inserted.is_empty() || !updated.is_empty() || !matured.is_empty() || balance_changed
             {
-                let event = WalletEvent::BlockUpdate {
+                let event = WalletEvent::BlockProcessed {
                     wallet_id: *wallet_id,
                     height,
                     inserted,
@@ -340,13 +339,13 @@ mod tests {
         let (mut manager, _wallet_id, addr) = setup_manager_with_wallet();
         let mut rx = manager.subscribe_events();
 
-        // Relevant tx should emit TransactionReceived carrying the balance
+        // Relevant tx should emit TransactionDetected carrying the balance
         let tx = create_tx_paying_to(&addr, 0xaa);
         manager.process_mempool_transaction(&tx, None).await;
 
         let mut found = false;
         while let Ok(event) = rx.try_recv() {
-            if let WalletEvent::TransactionReceived {
+            if let WalletEvent::TransactionDetected {
                 balance,
                 record,
                 ..
@@ -358,7 +357,7 @@ mod tests {
                 break;
             }
         }
-        assert!(found, "should emit TransactionReceived for mempool transaction");
+        assert!(found, "should emit TransactionDetected for mempool transaction");
 
         // Irrelevant tx should not emit any events
         let unrelated_tx = Transaction {
@@ -386,7 +385,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_process_block_emits_block_update() {
+    async fn test_process_block_emits_block_processed() {
         let (mut manager, _wallet_id, addr) = setup_manager_with_wallet();
         let tx = create_tx_paying_to(&addr, 0xcc);
         let block = make_block(vec![tx.clone()]);
@@ -396,7 +395,7 @@ mod tests {
 
         let mut found = false;
         while let Ok(event) = rx.try_recv() {
-            if let WalletEvent::BlockUpdate {
+            if let WalletEvent::BlockProcessed {
                 height,
                 inserted,
                 balance,
@@ -411,11 +410,11 @@ mod tests {
                 break;
             }
         }
-        assert!(found, "should emit BlockUpdate for block processing");
+        assert!(found, "should emit BlockProcessed for block processing");
     }
 
     #[tokio::test]
-    async fn test_update_synced_height_emits_sync_height_update() {
+    async fn test_update_synced_height_emits_sync_height_advanced() {
         let (mut manager, wallet_id, _addr) = setup_manager_with_wallet();
         let mut rx = manager.subscribe_events();
 
@@ -423,7 +422,7 @@ mod tests {
 
         let mut found = false;
         while let Ok(event) = rx.try_recv() {
-            if let WalletEvent::SyncHeightUpdate {
+            if let WalletEvent::SyncHeightAdvanced {
                 wallet_id: evt_wallet_id,
                 height,
             } = event
@@ -433,7 +432,7 @@ mod tests {
                 found = true;
             }
         }
-        assert!(found, "should emit SyncHeightUpdate on update_synced_height");
+        assert!(found, "should emit SyncHeightAdvanced on update_synced_height");
     }
 
     #[tokio::test]
