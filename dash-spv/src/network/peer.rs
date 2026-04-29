@@ -46,8 +46,6 @@ pub struct Peer {
     relay: Option<bool>,
     prefers_headers2: bool,
     sent_sendheaders2: bool,
-    // Basic telemetry for resync events
-    consecutive_resyncs: u32,
 }
 
 impl Peer {
@@ -74,7 +72,6 @@ impl Peer {
             relay: None,
             prefers_headers2: false,
             sent_sendheaders2: false,
-            consecutive_resyncs: 0,
         }
     }
 
@@ -121,7 +118,6 @@ impl Peer {
             relay: None,
             prefers_headers2: false,
             sent_sendheaders2: false,
-            consecutive_resyncs: 0,
         })
     }
 
@@ -430,7 +426,6 @@ impl Peer {
                                 self.address,
                                 pos
                             );
-                            self.consecutive_resyncs = self.consecutive_resyncs.saturating_add(1);
                             state.framing_buffer.drain(0..pos);
                             resync_steps += 1;
                             if resync_steps >= MAX_RESYNC_STEPS_PER_CALL {
@@ -447,7 +442,6 @@ impl Peer {
                                 self.address,
                                 dropped
                             );
-                            self.consecutive_resyncs = self.consecutive_resyncs.saturating_add(1);
                             state.framing_buffer.drain(0..dropped);
                             resync_steps += 1;
                             if resync_steps >= MAX_RESYNC_STEPS_PER_CALL {
@@ -579,7 +573,6 @@ impl Peer {
                     }
                     // Resync by dropping a byte and retrying
                     state.framing_buffer.drain(0..1);
-                    self.consecutive_resyncs = self.consecutive_resyncs.saturating_add(1);
                     resync_steps += 1;
                     if resync_steps >= MAX_RESYNC_STEPS_PER_CALL {
                         return Ok(None);
@@ -593,7 +586,6 @@ impl Peer {
                     Ok(raw_message) => {
                         // Consume bytes
                         state.framing_buffer.drain(0..total_len);
-                        self.consecutive_resyncs = 0;
 
                         // Validate magic matches our network
                         if raw_message.magic != self.network.magic() {
@@ -624,7 +616,6 @@ impl Peer {
                             e
                         );
                         state.framing_buffer.drain(0..1);
-                        self.consecutive_resyncs = self.consecutive_resyncs.saturating_add(1);
                         resync_steps += 1;
                         if resync_steps >= MAX_RESYNC_STEPS_PER_CALL {
                             return Ok(None);
