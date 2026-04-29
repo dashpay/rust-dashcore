@@ -6,6 +6,7 @@ mod event_handler;
 mod filter;
 mod fs_helpers;
 mod network;
+mod network_chaos;
 mod node;
 mod types;
 
@@ -18,6 +19,7 @@ pub use context::DashdTestContext;
 pub use event_handler::TestEventHandler;
 pub use fs_helpers::retain_test_dir;
 pub use network::{test_socket_address, MockNetworkManager};
+pub use network_chaos::ChaoticDashd;
 pub use node::{DashCoreNode, TestChain, WalletFile};
 
 pub(crate) use node::DashCoreConfig;
