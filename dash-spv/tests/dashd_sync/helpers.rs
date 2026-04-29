@@ -16,6 +16,11 @@ use dash_spv::test_utils::SYNC_TIMEOUT;
 
 use super::setup::{ClientHandle, TestContext};
 
+/// Read the headers manager's effective height (storage tip plus buffered).
+fn current_header_height(handle: &ClientHandle) -> u32 {
+    handle.progress_receiver.borrow().headers().ok().map(|h| h.current_height()).unwrap_or(0)
+}
+
 /// Wait for sync to reach target height.
 pub(super) async fn wait_for_sync(
     progress_receiver: &mut watch::Receiver<SyncProgress>,
@@ -198,7 +203,9 @@ pub(super) async fn assert_no_mempool_tx(
 ///
 /// Waits for progress events, disconnects all peers after every 5th event,
 /// validates disconnect/reconnect network events, and asserts wallet state
-/// after sync completes.
+/// after sync completes. Also asserts header progress (storage tip plus
+/// buffered) is monotonic across each disconnect cycle, so a regression that
+/// drops validated chain state on disconnect is caught.
 pub(super) async fn run_disconnect_loop(
     mut client_handle: ClientHandle,
     node: &DashCoreNode,
@@ -230,6 +237,7 @@ pub(super) async fn run_disconnect_loop(
                                 disconnect_count + 1,
                                 event.description()
                             );
+                            let pre_disconnect_height = current_header_height(&client_handle);
                             node.disconnect_all_peers();
                             disconnect_count += 1;
                             events_since_disconnect = 0;
@@ -249,6 +257,13 @@ pub(super) async fn run_disconnect_loop(
                             ).await;
                             assert!(saw_reconnect, "SPV should reconnect after disconnection");
                             tracing::info!("SPV reconnected (PeerConnected)");
+
+                            let post_reconnect_height = current_header_height(&client_handle);
+                            assert!(
+                                post_reconnect_height >= pre_disconnect_height,
+                                "Header progress regressed across disconnect {}: {} -> {}",
+                                disconnect_count, pre_disconnect_height, post_reconnect_height
+                            );
                         }
                     }
                     Ok(SyncEvent::SyncComplete { .. }) => {

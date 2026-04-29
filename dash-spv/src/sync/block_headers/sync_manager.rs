@@ -1,7 +1,6 @@
 use crate::error::SyncResult;
 use crate::network::{Message, MessageType, NetworkEvent, RequestSender};
 use crate::storage::{BlockHeaderStorage, MetadataStorage};
-use crate::sync::block_headers::pipeline::HeadersPipeline;
 use crate::sync::sync_manager::ensure_not_started;
 use crate::sync::{
     BlockHeadersManager, ManagerIdentifier, ProgressPercentage, SyncEvent, SyncManager,
@@ -38,8 +37,12 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> SyncManager for BlockHeadersMana
     }
 
     fn clear_in_flight_state(&mut self) {
-        let checkpoint_manager = self.pipeline.checkpoint_manager().clone();
-        self.pipeline = HeadersPipeline::new(checkpoint_manager);
+        // Drop only per-peer in-flight bookkeeping. Segment topology and
+        // validated chain state per segment (current_tip_hash, current_height,
+        // buffered_headers, complete) are preserved so a reconnect can resume
+        // from where the disconnected peer left off without re-fetching headers
+        // we already have.
+        self.pipeline.clear_in_flight();
         self.pending_announcements.clear();
         self.announced_peers.clear();
     }
@@ -48,18 +51,31 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> SyncManager for BlockHeadersMana
         ensure_not_started(self.state(), self.identifier())?;
         self.progress.set_state(SyncState::Syncing);
 
-        let tip = self.tip().await?;
-        let target_height = self.progress.target_height();
+        if !self.pipeline.is_initialized() {
+            let tip = self.tip().await?;
+            let target_height = self.progress.target_height();
 
-        // Initialize the pipeline with checkpoint-based segments
-        self.pipeline.init(tip.height(), *tip.hash(), target_height);
+            // Initialize the pipeline with checkpoint-based segments
+            self.pipeline.init(tip.height(), *tip.hash(), target_height);
 
-        tracing::info!(
-            "Starting parallel header sync from {} to {} ({} segments)",
-            tip.height(),
-            target_height,
-            self.pipeline.segment_count()
-        );
+            tracing::info!(
+                "Starting parallel header sync from {} to {} ({} segments)",
+                tip.height(),
+                target_height,
+                self.pipeline.segment_count()
+            );
+        } else {
+            // Resume path: if we previously synced past the tip the open-ended
+            // segment is marked complete and `send_pending` would skip it.
+            // Reset it so a fresh GetHeaders is fired from the preserved
+            // `current_tip_hash`. No-op if the tip is still mid-sync.
+            self.pipeline.reset_tip_segment();
+            tracing::info!(
+                "Resuming parallel header sync ({} segments, {} buffered)",
+                self.pipeline.segment_count(),
+                self.pipeline.total_buffered()
+            );
+        }
 
         // Send initial batch of requests
         let sent = self.pipeline.send_pending(requests)?;
