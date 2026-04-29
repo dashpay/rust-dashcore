@@ -60,6 +60,7 @@ tempfile = "3.0"
 tokio-test = "0.4"
 hex = "0.4"
 test-case = "3.3"
+toxiproxy_rust = "0.1.6"
 
 [[bench]]
 name = "storage"

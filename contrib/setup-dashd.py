@@ -1,15 +1,17 @@
 #!/usr/bin/env python3
 """Cross-platform setup script for dashd and test blockchain data.
 
-Downloads the Dash Core binary and regtest test data for integration tests.
-Outputs DASHD_PATH and DASHD_TEST_DATA lines suitable for appending to GITHUB_ENV
-or evaluating in a shell.
+Downloads the Dash Core binary and regtest test data for integration tests,
+plus the Toxiproxy server binary used by the network chaos tests.
+Outputs DASHD_PATH, DASHD_TEST_DATA and TOXIPROXY_BIN lines suitable for
+appending to GITHUB_ENV or evaluating in a shell.
 
 Environment variables:
-    DASHVERSION        - Dash Core version (default: 23.1.0)
-    TEST_DATA_VERSION  - Test data release version (default: v0.0.3)
-    TEST_DATA_REPO     - GitHub repo for test data (default: dashpay/regtest-blockchain)
-    CACHE_DIR          - Cache directory (default: ~/.rust-dashcore-test)
+    DASHVERSION         - Dash Core version (default: 23.1.0)
+    TEST_DATA_VERSION   - Test data release version (default: v0.0.3)
+    TEST_DATA_REPO      - GitHub repo for test data (default: dashpay/regtest-blockchain)
+    TOXIPROXY_VERSION   - Toxiproxy server version (default: 2.12.0)
+    CACHE_DIR           - Cache directory (default: ~/.rust-dashcore-test)
 """
 
 import os
@@ -24,6 +26,7 @@ import zipfile
 DASHVERSION = os.environ.get("DASHVERSION", "23.1.0")
 TEST_DATA_VERSION = os.environ.get("TEST_DATA_VERSION", "v0.0.3")
 TEST_DATA_REPO = os.environ.get("TEST_DATA_REPO", "dashpay/regtest-blockchain")
+TOXIPROXY_VERSION = os.environ.get("TOXIPROXY_VERSION", "2.12.0")
 
 
 def get_cache_dir():
@@ -149,6 +152,54 @@ def setup_test_data(cache_dir, variant):
     log(f"Downloaded test data to {test_data_dir}")
 
 
+def get_toxiproxy_asset():
+    """Return the toxiproxy-server asset filename for the current platform."""
+    system = platform.system()
+    machine = platform.machine()
+
+    if system == "Linux":
+        archs = {"aarch64": "arm64", "arm64": "arm64", "x86_64": "amd64", "amd64": "amd64"}
+        os_tag = "linux"
+    elif system == "Darwin":
+        archs = {"arm64": "arm64", "x86_64": "amd64"}
+        os_tag = "darwin"
+    elif system == "Windows":
+        archs = {"AMD64": "amd64", "x86_64": "amd64"}
+        os_tag = "windows"
+    else:
+        sys.exit(f"Unsupported platform for toxiproxy: {system}")
+
+    arch = archs.get(machine)
+    if not arch:
+        sys.exit(f"Unsupported {system} architecture for toxiproxy: {machine}")
+
+    suffix = ".exe" if system == "Windows" else ""
+    return f"toxiproxy-server-{os_tag}-{arch}{suffix}"
+
+
+def setup_toxiproxy(cache_dir):
+    """Download the toxiproxy server binary. Returns the path to the binary."""
+    asset = get_toxiproxy_asset()
+    toxiproxy_dir = os.path.join(cache_dir, f"toxiproxy-{TOXIPROXY_VERSION}")
+    os.makedirs(toxiproxy_dir, exist_ok=True)
+
+    bin_path = os.path.join(toxiproxy_dir, asset)
+    if os.path.isfile(bin_path):
+        log(f"toxiproxy {TOXIPROXY_VERSION} already available")
+        return bin_path
+
+    log(f"Downloading toxiproxy {TOXIPROXY_VERSION}...")
+    url = (
+        f"https://github.com/Shopify/toxiproxy/releases/download/"
+        f"v{TOXIPROXY_VERSION}/{asset}"
+    )
+    download(url, bin_path)
+    if platform.system() != "Windows":
+        os.chmod(bin_path, 0o755)
+    log(f"Downloaded toxiproxy to {bin_path}")
+    return bin_path
+
+
 def main():
     cache_dir = get_cache_dir()
     os.makedirs(cache_dir, exist_ok=True)
@@ -156,6 +207,7 @@ def main():
     dashd_path = setup_dashd(cache_dir)
     for variant in VARIANTS:
         setup_test_data(cache_dir, variant)
+    toxiproxy_bin = setup_toxiproxy(cache_dir)
 
     datadir = os.path.join(cache_dir, f"regtest-blockchain-{TEST_DATA_VERSION}")
 
@@ -163,6 +215,7 @@ def main():
     prefix = "" if os.environ.get("GITHUB_ACTIONS") == "true" else "export "
     print(f"{prefix}DASHD_PATH={dashd_path}")
     print(f"{prefix}DASHD_TEST_DATA={datadir}")
+    print(f"{prefix}TOXIPROXY_BIN={toxiproxy_bin}")
 
 
 if __name__ == "__main__":
