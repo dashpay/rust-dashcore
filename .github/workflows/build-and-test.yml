@@ -19,6 +19,7 @@ env:
   DASHVERSION: "23.1.0"
   TEST_DATA_REPO: "dashpay/regtest-blockchain"
   TEST_DATA_VERSION: "v0.0.3"
+  TOXIPROXY_VERSION: "2.12.0"
 
 jobs:
   test:
@@ -51,7 +52,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: .rust-dashcore-test
-          key: rust-dashcore-test-${{ inputs.os }}-${{ env.DASHVERSION }}-${{ env.TEST_DATA_REPO }}-${{ env.TEST_DATA_VERSION }}
+          key: rust-dashcore-test-${{ inputs.os }}-${{ env.DASHVERSION }}-${{ env.TEST_DATA_REPO }}-${{ env.TEST_DATA_VERSION }}-toxiproxy-${{ env.TOXIPROXY_VERSION }}
 
       - name: Setup dashd for integration tests
         if: matrix.group == 'spv' || matrix.group == 'ffi'
