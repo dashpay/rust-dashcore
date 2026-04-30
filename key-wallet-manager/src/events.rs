@@ -9,11 +9,84 @@ use std::collections::BTreeMap;
 use dashcore::ephemerealdata::instant_lock::InstantLock;
 use dashcore::prelude::CoreBlockHeight;
 use dashcore::Txid;
-use key_wallet::account::AccountType;
+use key_wallet::account::{AccountType, StandardAccountType};
 use key_wallet::managed_account::transaction_record::TransactionRecord;
 use key_wallet::WalletCoreBalance;
 
 use crate::WalletId;
+
+/// Compact label for an [`AccountType`] suitable for log lines. Avoids
+/// printing 32-byte identity hashes from the Dashpay variants.
+fn format_account_type(account_type: &AccountType) -> String {
+    match account_type {
+        AccountType::Standard {
+            index,
+            standard_account_type,
+        } => {
+            let kind = match standard_account_type {
+                StandardAccountType::BIP44Account => "BIP44",
+                StandardAccountType::BIP32Account => "BIP32",
+            };
+            format!("Standard{{idx:{},{}}}", index, kind)
+        }
+        AccountType::CoinJoin {
+            index,
+        } => {
+            format!("CoinJoin{{idx:{}}}", index)
+        }
+        AccountType::IdentityRegistration => "IdentityRegistration".to_string(),
+        AccountType::IdentityTopUp {
+            registration_index,
+        } => {
+            format!("IdentityTopUp{{reg:{}}}", registration_index)
+        }
+        AccountType::IdentityTopUpNotBoundToIdentity => "IdentityTopUpNotBound".to_string(),
+        AccountType::IdentityInvitation => "IdentityInvitation".to_string(),
+        AccountType::AssetLockAddressTopUp => "AssetLockAddressTopUp".to_string(),
+        AccountType::AssetLockShieldedAddressTopUp => "AssetLockShieldedAddressTopUp".to_string(),
+        AccountType::ProviderVotingKeys => "ProviderVotingKeys".to_string(),
+        AccountType::ProviderOwnerKeys => "ProviderOwnerKeys".to_string(),
+        AccountType::ProviderOperatorKeys => "ProviderOperatorKeys".to_string(),
+        AccountType::ProviderPlatformKeys => "ProviderPlatformKeys".to_string(),
+        AccountType::DashpayReceivingFunds {
+            index,
+            ..
+        } => {
+            format!("DashpayReceiving{{idx:{}}}", index)
+        }
+        AccountType::DashpayExternalAccount {
+            index,
+            ..
+        } => {
+            format!("DashpayExternal{{idx:{}}}", index)
+        }
+        AccountType::PlatformPayment {
+            account,
+            key_class,
+        } => {
+            format!("PlatformPayment{{acct:{},class:{}}}", account, key_class)
+        }
+    }
+}
+
+/// Render the changed-account balance map as a short bracketed list
+/// suitable for log lines, e.g. `[Standard{idx:0,BIP44}=>1.5 DASH]`.
+fn format_account_balances(map: &BTreeMap<AccountType, WalletCoreBalance>) -> String {
+    if map.is_empty() {
+        return "[]".to_string();
+    }
+    let parts: Vec<String> = map
+        .iter()
+        .map(|(account_type, balance)| {
+            format!(
+                "{}=>{}",
+                format_account_type(account_type),
+                dashcore::Amount::from_sat(balance.total())
+            )
+        })
+        .collect();
+    format!("[{}]", parts.join(", "))
+}
 
 /// Events emitted by the wallet manager.
 ///
@@ -32,10 +105,11 @@ pub enum WalletEvent {
         record: Box<TransactionRecord>,
         /// Wallet balance after the transaction was recorded.
         balance: WalletCoreBalance,
-        /// Per-account balances for accounts whose balance changed as a
-        /// result of this event. Accounts whose balance was unchanged are
-        /// omitted to keep the payload small (most transactions touch only
-        /// 1–2 accounts).
+        /// Post-event balance **snapshots** for accounts whose balance
+        /// changed as a result of this event. Each value is the account's
+        /// full balance after the change — not a delta. Accounts whose
+        /// balance was unchanged are omitted to keep the payload small
+        /// (most transactions touch only 1–2 accounts).
         account_balances: BTreeMap<AccountType, WalletCoreBalance>,
     },
     /// An InstantSend lock was applied to a previously-seen off-chain
@@ -49,9 +123,9 @@ pub enum WalletEvent {
         instant_lock: InstantLock,
         /// Wallet balance after the status change.
         balance: WalletCoreBalance,
-        /// Per-account balances for accounts whose balance changed as a
-        /// result of this event. Accounts whose balance was unchanged are
-        /// omitted.
+        /// Post-event balance **snapshots** for accounts whose balance
+        /// changed as a result of this event. Each value is the account's
+        /// full balance after the change — not a delta.
         account_balances: BTreeMap<AccountType, WalletCoreBalance>,
     },
     /// A block was processed for a wallet. Carries records bucketed by what
@@ -74,9 +148,10 @@ pub enum WalletEvent {
         matured: Vec<TransactionRecord>,
         /// Wallet balance after the block was processed.
         balance: WalletCoreBalance,
-        /// Per-account balances for accounts whose balance changed during
-        /// processing of this block. Accounts whose balance was unchanged
-        /// are omitted.
+        /// Post-event balance **snapshots** for accounts whose balance
+        /// changed during processing of this block. Each value is the
+        /// account's full balance after the change — not a delta. Accounts
+        /// whose balance was unchanged are omitted.
         account_balances: BTreeMap<AccountType, WalletCoreBalance>,
     },
     /// The wallet's scan cursor advanced because the filter pipeline
@@ -128,7 +203,7 @@ impl WalletEvent {
                     record.txid,
                     record.context,
                     balance,
-                    account_balances.len()
+                    format_account_balances(account_balances),
                 )
             }
             WalletEvent::TransactionInstantLocked {
@@ -141,7 +216,7 @@ impl WalletEvent {
                     "TransactionInstantLocked(txid={}, balance={}, account_balances={})",
                     txid,
                     balance,
-                    account_balances.len()
+                    format_account_balances(account_balances),
                 )
             }
             WalletEvent::BlockProcessed {
@@ -160,7 +235,7 @@ impl WalletEvent {
                     updated.len(),
                     matured.len(),
                     balance,
-                    account_balances.len()
+                    format_account_balances(account_balances),
                 )
             }
             WalletEvent::SyncHeightAdvanced {

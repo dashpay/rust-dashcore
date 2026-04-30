@@ -11,9 +11,12 @@ use dash_spv::network::NetworkEvent;
 use dash_spv::sync::{SyncEvent, SyncProgress};
 use dash_spv::EventHandler;
 use dashcore::hashes::Hash;
-use key_wallet_ffi::managed_account::FFITransactionRecord;
+use key_wallet::account::AccountType;
+use key_wallet::WalletCoreBalance;
+use key_wallet_ffi::managed_account::{FFIAccountType, FFITransactionRecord};
 use key_wallet_ffi::types::FFIBalance;
 use key_wallet_manager::WalletEvent;
+use std::collections::BTreeMap;
 use std::ffi::CString;
 use std::os::raw::{c_char, c_void};
 use std::ptr;
@@ -529,6 +532,42 @@ impl FFINetworkEventCallbacks {
 }
 
 // ============================================================================
+// FFIAccountBalance - Per-account balance entry
+// ============================================================================
+
+/// Per-account balance pair carried on wallet events.
+///
+/// Wallet events deliver an array of these — one entry per account whose
+/// balance changed during the event. Accounts whose balance was unchanged
+/// are omitted to keep the payload small (most transactions touch only
+/// 1–2 accounts).
+///
+/// `account_type` follows the same memory rules as the equivalent field on
+/// [`FFITransactionRecord`]: the embedded `identity_user` / `identity_friend`
+/// pointers (non-null only for Dashpay variants) are owned by the
+/// `FFIAccountType` and freed when the array is dropped after the callback
+/// returns. Consumers that need to retain the data past the callback must
+/// copy the contents.
+#[repr(C)]
+pub struct FFIAccountBalance {
+    /// Owning-account descriptor (discriminant + indices + identity ids).
+    pub account_type: FFIAccountType,
+    /// Balance for the account after the event.
+    pub balance: FFIBalance,
+}
+
+impl FFIAccountBalance {
+    fn from_map(map: &BTreeMap<AccountType, WalletCoreBalance>) -> Vec<Self> {
+        map.iter()
+            .map(|(account_type, balance)| FFIAccountBalance {
+                account_type: FFIAccountType::from(account_type),
+                balance: FFIBalance::from(*balance),
+            })
+            .collect()
+    }
+}
+
+// ============================================================================
 // FFIWalletEventCallbacks - One callback per WalletEvent variant
 // ============================================================================
 
@@ -540,12 +579,18 @@ impl FFINetworkEventCallbacks {
 ///
 /// All pointer parameters are borrowed and only valid for the duration of the
 /// callback. `balance` is the wallet's balance *after* the transaction was
-/// recorded.
+/// recorded. `account_balances` is an array of size `account_balances_count`
+/// containing one entry per account whose balance changed (typically 1–2
+/// entries for a normal transaction); accounts whose balance is unchanged
+/// are omitted. The array is null with a zero count when no per-account
+/// balance changed.
 pub type OnTransactionDetectedCallback = Option<
     extern "C" fn(
         wallet_id: *const c_char,
         record: *const FFITransactionRecord,
         balance: *const FFIBalance,
+        account_balances: *const FFIAccountBalance,
+        account_balances_count: u32,
         user_data: *mut c_void,
     ),
 >;
@@ -559,6 +604,8 @@ pub type OnTransactionDetectedCallback = Option<
 ///
 /// All pointer parameters are borrowed and only valid for the duration of
 /// the callback. `balance` is the wallet's balance *after* the change.
+/// `account_balances` follows the same contract as on
+/// [`OnTransactionDetectedCallback`].
 pub type OnTransactionInstantLockedCallback = Option<
     extern "C" fn(
         wallet_id: *const c_char,
@@ -566,6 +613,8 @@ pub type OnTransactionInstantLockedCallback = Option<
         islock_data: *const u8,
         islock_len: usize,
         balance: *const FFIBalance,
+        account_balances: *const FFIAccountBalance,
+        account_balances_count: u32,
         user_data: *mut c_void,
     ),
 >;
@@ -577,7 +626,8 @@ pub type OnTransactionInstantLockedCallback = Option<
 /// stored, `updated` is previously-known records confirmed, `matured` is
 /// older coinbase records whose maturity threshold was just crossed. Empty
 /// arrays are passed as null with a zero count. `balance` is the wallet's
-/// balance *after* the block was processed.
+/// balance *after* the block was processed. `account_balances` follows the
+/// same contract as on [`OnTransactionDetectedCallback`].
 ///
 /// All array pointers and their contents are borrowed and only valid for the
 /// duration of the callback.
@@ -592,6 +642,8 @@ pub type OnWalletBlockProcessedCallback = Option<
         matured: *const FFITransactionRecord,
         matured_count: u32,
         balance: *const FFIBalance,
+        account_balances: *const FFIAccountBalance,
+        account_balances_count: u32,
         user_data: *mut c_void,
     ),
 >;
@@ -731,20 +783,30 @@ impl FFIWalletEventCallbacks {
                 wallet_id,
                 record,
                 balance,
-                account_balances: _,
+                account_balances,
             } => {
                 if let Some(cb) = self.on_transaction_detected {
                     let wallet_id_hex = hex::encode(wallet_id);
                     let c_wallet_id = CString::new(wallet_id_hex).unwrap_or_default();
                     let ffi_record = FFITransactionRecord::from(record.as_ref());
                     let ffi_balance = FFIBalance::from(*balance);
+                    let ffi_account_balances = FFIAccountBalance::from_map(account_balances);
+                    let account_balances_ptr = if ffi_account_balances.is_empty() {
+                        ptr::null()
+                    } else {
+                        ffi_account_balances.as_ptr()
+                    };
 
                     cb(
                         c_wallet_id.as_ptr(),
                         &ffi_record as *const FFITransactionRecord,
                         &ffi_balance as *const FFIBalance,
+                        account_balances_ptr,
+                        ffi_account_balances.len() as u32,
                         self.user_data,
                     );
+
+                    drop(ffi_account_balances);
                 }
             }
             WalletEvent::TransactionInstantLocked {
@@ -752,7 +814,7 @@ impl FFIWalletEventCallbacks {
                 txid,
                 instant_lock,
                 balance,
-                account_balances: _,
+                account_balances,
             } => {
                 if let Some(cb) = self.on_transaction_instant_locked {
                     let wallet_id_hex = hex::encode(wallet_id);
@@ -760,6 +822,12 @@ impl FFIWalletEventCallbacks {
                     let txid_bytes = *txid.as_byte_array();
                     let islock_bytes = dashcore::consensus::serialize(instant_lock);
                     let ffi_balance = FFIBalance::from(*balance);
+                    let ffi_account_balances = FFIAccountBalance::from_map(account_balances);
+                    let account_balances_ptr = if ffi_account_balances.is_empty() {
+                        ptr::null()
+                    } else {
+                        ffi_account_balances.as_ptr()
+                    };
 
                     cb(
                         c_wallet_id.as_ptr(),
@@ -767,8 +835,12 @@ impl FFIWalletEventCallbacks {
                         islock_bytes.as_ptr(),
                         islock_bytes.len(),
                         &ffi_balance as *const FFIBalance,
+                        account_balances_ptr,
+                        ffi_account_balances.len() as u32,
                         self.user_data,
                     );
+
+                    drop(ffi_account_balances);
                 }
             }
             WalletEvent::BlockProcessed {
@@ -778,7 +850,7 @@ impl FFIWalletEventCallbacks {
                 updated,
                 matured,
                 balance,
-                account_balances: _,
+                account_balances,
             } => {
                 if let Some(cb) = self.on_block_processed {
                     let wallet_id_hex = hex::encode(wallet_id);
@@ -790,6 +862,7 @@ impl FFIWalletEventCallbacks {
                     let ffi_matured: Vec<FFITransactionRecord> =
                         matured.iter().map(FFITransactionRecord::from).collect();
                     let ffi_balance = FFIBalance::from(*balance);
+                    let ffi_account_balances = FFIAccountBalance::from_map(account_balances);
 
                     // Pass a null pointer when an array is empty so C/Swift
                     // consumers that null-check before reading don't see a
@@ -809,6 +882,11 @@ impl FFIWalletEventCallbacks {
                     } else {
                         ffi_matured.as_ptr()
                     };
+                    let account_balances_ptr = if ffi_account_balances.is_empty() {
+                        ptr::null()
+                    } else {
+                        ffi_account_balances.as_ptr()
+                    };
 
                     cb(
                         c_wallet_id.as_ptr(),
@@ -820,12 +898,15 @@ impl FFIWalletEventCallbacks {
                         matured_ptr,
                         ffi_matured.len() as u32,
                         &ffi_balance as *const FFIBalance,
+                        account_balances_ptr,
+                        ffi_account_balances.len() as u32,
                         self.user_data,
                     );
 
                     drop(ffi_inserted);
                     drop(ffi_updated);
                     drop(ffi_matured);
+                    drop(ffi_account_balances);
                 }
             }
             WalletEvent::SyncHeightAdvanced {

@@ -176,6 +176,8 @@ extern "C" fn on_transaction_detected(
     wallet_id: *const c_char,
     record: *const FFITransactionRecord,
     balance: *const FFIBalance,
+    _account_balances: *const dash_spv_ffi::FFIAccountBalance,
+    account_balances_count: u32,
     _user_data: *mut c_void,
 ) {
     let wallet_short = short_wallet(wallet_id);
@@ -187,14 +189,15 @@ extern "C" fn on_transaction_detected(
     let b = read_balance(balance);
     let txid_hex = hex::encode(r.txid);
     println!(
-        "[Wallet] TX detected: wallet={}..., txid={}, account_kind={:?}, account_index={}, amount={} duffs, balance[confirmed={}, unconfirmed={}]",
+        "[Wallet] TX detected: wallet={}..., txid={}, account_kind={:?}, account_index={}, amount={} duffs, balance[confirmed={}, unconfirmed={}], changed_accounts={}",
         wallet_short,
         txid_hex,
         r.account_type.kind,
         r.account_type.index,
         r.net_amount,
         b.confirmed,
-        b.unconfirmed
+        b.unconfirmed,
+        account_balances_count,
     );
 }
 
@@ -204,6 +207,8 @@ extern "C" fn on_transaction_instant_locked(
     _islock_data: *const u8,
     islock_len: usize,
     balance: *const FFIBalance,
+    _account_balances: *const dash_spv_ffi::FFIAccountBalance,
+    account_balances_count: u32,
     _user_data: *mut c_void,
 ) {
     let wallet_short = short_wallet(wallet_id);
@@ -215,11 +220,17 @@ extern "C" fn on_transaction_instant_locked(
     let b = read_balance(balance);
     let txid_hex = hex::encode(txid_bytes);
     println!(
-        "[Wallet] TX instant-locked: wallet={}..., txid={}, islock_len={}, balance[confirmed={}, unconfirmed={}]",
-        wallet_short, txid_hex, islock_len, b.confirmed, b.unconfirmed
+        "[Wallet] TX instant-locked: wallet={}..., txid={}, islock_len={}, balance[confirmed={}, unconfirmed={}], changed_accounts={}",
+        wallet_short,
+        txid_hex,
+        islock_len,
+        b.confirmed,
+        b.unconfirmed,
+        account_balances_count,
     );
 }
 
+#[allow(clippy::too_many_arguments)]
 extern "C" fn on_wallet_block_processed(
     wallet_id: *const c_char,
     height: u32,
@@ -230,12 +241,14 @@ extern "C" fn on_wallet_block_processed(
     _matured: *const FFITransactionRecord,
     matured_count: u32,
     balance: *const FFIBalance,
+    _account_balances: *const dash_spv_ffi::FFIAccountBalance,
+    account_balances_count: u32,
     _user_data: *mut c_void,
 ) {
     let wallet_short = short_wallet(wallet_id);
     let b = read_balance(balance);
     println!(
-        "[Wallet] Block processed: wallet={}..., height={}, inserted={}, updated={}, matured={}, balance[confirmed={}, unconfirmed={}, immature={}, locked={}]",
+        "[Wallet] Block processed: wallet={}..., height={}, inserted={}, updated={}, matured={}, balance[confirmed={}, unconfirmed={}, immature={}, locked={}], changed_accounts={}",
         wallet_short,
         height,
         inserted_count,
@@ -244,7 +257,8 @@ extern "C" fn on_wallet_block_processed(
         b.confirmed,
         b.unconfirmed,
         b.immature,
-        b.locked
+        b.locked,
+        account_balances_count,
     );
 }
 

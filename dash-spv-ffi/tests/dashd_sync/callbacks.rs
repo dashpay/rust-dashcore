@@ -76,6 +76,15 @@ pub(super) struct CallbackTracker {
     // lands in `updated` rather than `inserted`.
     pub(super) block_record_inserted: Mutex<Vec<bool>>,
 
+    // Number of changed-account entries observed on the most recent wallet
+    // event. Lets tests assert that per-account balance diffs are wired
+    // through and arrive non-empty for state-changing events.
+    pub(super) last_changed_account_count: AtomicU32,
+    /// Highest changed-account count observed across all wallet events so a
+    /// single state-changing event can be detected without racing the
+    /// "last" snapshot.
+    pub(super) max_changed_account_count: AtomicU32,
+
     // Balance data from the most recent wallet event.
     pub(super) last_confirmed: AtomicU64,
     pub(super) last_unconfirmed: AtomicU64,
@@ -379,15 +388,45 @@ fn record_balance(tracker: &CallbackTracker, balance: *const FFIBalance) {
     tracker.last_unconfirmed.store(b.unconfirmed, Ordering::SeqCst);
 }
 
+/// Capture the size of the per-account balance diff delivered with a wallet
+/// event. Stores both the most recent and the running max so tests can wait
+/// on a non-zero observation without racing the "last" snapshot.
+fn record_account_balances(
+    tracker: &CallbackTracker,
+    account_balances: *const FFIAccountBalance,
+    count: u32,
+) {
+    tracker.last_changed_account_count.store(count, Ordering::SeqCst);
+    tracker.max_changed_account_count.fetch_max(count, Ordering::SeqCst);
+    if account_balances.is_null() || count == 0 {
+        return;
+    }
+    // Borrow check: the array and its `FFIAccountType` entries are owned by
+    // the caller's dispatch and freed when control returns. We only read.
+    let slice = unsafe { slice::from_raw_parts(account_balances, count as usize) };
+    for entry in slice {
+        tracing::debug!(
+            "  account_balance: kind={:?}, idx={}, total={}",
+            entry.account_type.kind,
+            entry.account_type.index,
+            entry.balance.total
+        );
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
 extern "C" fn on_transaction_detected(
     wallet_id: *const c_char,
     record: *const FFITransactionRecord,
     balance: *const FFIBalance,
+    account_balances: *const FFIAccountBalance,
+    account_balances_count: u32,
     user_data: *mut c_void,
 ) {
     let Some(tracker) = (unsafe { tracker_from(user_data) }) else {
         return;
     };
+    record_account_balances(tracker, account_balances, account_balances_count);
     let mut account_log = None;
     if !record.is_null() {
         let r = unsafe { &*record };
@@ -417,17 +456,21 @@ extern "C" fn on_transaction_detected(
     tracing::info!("on_transaction_detected: wallet={}, account={:?}", wallet_str, account_log);
 }
 
+#[allow(clippy::too_many_arguments)]
 extern "C" fn on_transaction_instant_locked(
     _wallet_id: *const c_char,
     _txid: *const [u8; 32],
     islock_data: *const u8,
     islock_len: usize,
     balance: *const FFIBalance,
+    account_balances: *const FFIAccountBalance,
+    account_balances_count: u32,
     user_data: *mut c_void,
 ) {
     let Some(tracker) = (unsafe { tracker_from(user_data) }) else {
         return;
     };
+    record_account_balances(tracker, account_balances, account_balances_count);
     if !islock_data.is_null() && islock_len > 0 {
         let bytes = unsafe { slice::from_raw_parts(islock_data, islock_len) }.to_vec();
         *tracker.last_islock_bytes.lock().unwrap_or_else(|e| e.into_inner()) = Some(bytes);
@@ -448,11 +491,14 @@ extern "C" fn on_wallet_block_processed(
     _matured: *const FFITransactionRecord,
     matured_count: u32,
     balance: *const FFIBalance,
+    account_balances: *const FFIAccountBalance,
+    account_balances_count: u32,
     user_data: *mut c_void,
 ) {
     let Some(tracker) = (unsafe { tracker_from(user_data) }) else {
         return;
     };
+    record_account_balances(tracker, account_balances, account_balances_count);
     // Append all per-record state before bumping either counter so that a
     // test waiting on `block_processed_wallet_count` (the per-callback counter)
     // is guaranteed to also observe the matching `block_processed_wallet_record_count`
