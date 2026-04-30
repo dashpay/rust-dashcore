@@ -4,7 +4,7 @@ This document provides a comprehensive reference for all FFI (Foreign Function I
 
 **Auto-generated**: This documentation is automatically generated from the source code. Do not edit manually.
 
-**Total Functions**: 259
+**Total Functions**: 258
 
 ## Table of Contents
 
@@ -69,7 +69,7 @@ Functions: 19
 
 ### Wallet Operations
 
-Functions: 64
+Functions: 63
 
 | Function | Description | Module |
 |----------|-------------|--------|
@@ -115,7 +115,6 @@ Functions: 64
 | `wallet_create_from_mnemonic_with_options` | Create a new wallet from mnemonic with options  # Safety  - `mnemonic` must... | wallet |
 | `wallet_create_from_seed` | Create a new wallet from seed (backward compatibility)  # Safety  - `seed`... | wallet |
 | `wallet_create_from_seed_with_options` | Create a new wallet from seed with options  # Safety  - `seed` must be a... | wallet |
-| `wallet_create_managed_wallet` | Create a managed wallet from a regular wallet  This creates a... | transaction_checking |
 | `wallet_create_random` | Create a new random wallet (backward compatibility)  # Safety  - `error`... | wallet |
 | `wallet_create_random_with_options` | Create a new random wallet with options  # Safety  - `account_options` must... | wallet |
 | `wallet_derive_extended_private_key` | Derive extended private key at a specific path Returns an opaque... | keys |
@@ -1393,22 +1392,6 @@ Create a new wallet from seed with options  # Safety  - `seed` must be a valid p
 - `seed` must be a valid pointer to a byte array of `seed_len` length - `account_options` must be a valid pointer to FFIWalletAccountCreationOptions or null - `error` must be a valid pointer to an FFIError structure - The caller must ensure all pointers remain valid for the duration of this call
 
 **Module:** `wallet`
-
----
-
-#### `wallet_create_managed_wallet`
-
-```c
-wallet_create_managed_wallet(wallet: *const FFIWallet, error: *mut FFIError,) -> *mut FFIManagedWalletInfo
-```
-
-**Description:**
-Create a managed wallet from a regular wallet  This creates a ManagedWalletInfo instance from a Wallet, which includes address pools and transaction checking capabilities.  # Safety  - `wallet` must be a valid pointer to an FFIWallet - `error` must be a valid pointer to an FFIError - The returned pointer must be freed with `managed_wallet_info_free` (or `ffi_managed_wallet_free` for compatibility)
-
-**Safety:**
-- `wallet` must be a valid pointer to an FFIWallet - `error` must be a valid pointer to an FFIError - The returned pointer must be freed with `managed_wallet_info_free` (or `ffi_managed_wallet_free` for compatibility)
-
-**Module:** `transaction_checking`
 
 ---
 

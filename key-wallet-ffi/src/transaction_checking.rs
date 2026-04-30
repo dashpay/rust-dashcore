@@ -13,7 +13,7 @@ use crate::managed_wallet::{managed_wallet_info_free, FFIManagedWalletInfo};
 use crate::types::{
     transaction_context_from_ffi, FFIBlockInfo, FFITransactionContextType, FFIWallet,
 };
-use crate::{check_ptr, deref_ptr, deref_ptr_mut, unwrap_or_return};
+use crate::{check_ptr, deref_ptr_mut, unwrap_or_return};
 use dashcore::consensus::Decodable;
 use dashcore::Transaction;
 use key_wallet::transaction_checking::{
@@ -61,26 +61,6 @@ pub struct FFITransactionCheckResult {
     pub affected_accounts: *mut FFIAccountMatch,
     /// Number of affected accounts
     pub affected_accounts_count: c_uint,
-}
-
-/// Create a managed wallet from a regular wallet
-///
-/// This creates a ManagedWalletInfo instance from a Wallet, which includes
-/// address pools and transaction checking capabilities.
-///
-/// # Safety
-///
-/// - `wallet` must be a valid pointer to an FFIWallet
-/// - `error` must be a valid pointer to an FFIError
-/// - The returned pointer must be freed with `managed_wallet_info_free` (or `ffi_managed_wallet_free` for compatibility)
-#[no_mangle]
-pub unsafe extern "C" fn wallet_create_managed_wallet(
-    wallet: *const FFIWallet,
-    error: *mut FFIError,
-) -> *mut FFIManagedWalletInfo {
-    let wallet = deref_ptr!(wallet, error);
-    let managed_info = ManagedWalletInfo::from_wallet(wallet.inner(), 0);
-    Box::into_raw(Box::new(FFIManagedWalletInfo::new(managed_info)))
 }
 
 /// Check if a transaction belongs to the wallet
