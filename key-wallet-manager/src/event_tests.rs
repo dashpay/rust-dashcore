@@ -71,6 +71,7 @@ async fn test_mempool_tx_emits_single_event_with_balance() {
             wallet_id: wid,
             record,
             balance,
+            account_balances,
         } => {
             assert_eq!(*wid, wallet_id);
             assert_eq!(record.txid, tx.txid());
@@ -85,6 +86,23 @@ async fn test_mempool_tx_emits_single_event_with_balance() {
             ));
             assert_eq!(balance.unconfirmed(), TX_AMOUNT);
             assert_eq!(balance.confirmed(), 0);
+            // Only the BIP44 account that received the funds should be in
+            // the diff; idle accounts are omitted.
+            assert_eq!(
+                account_balances.len(),
+                1,
+                "only the receiving account's balance should appear, got {:?}",
+                account_balances
+            );
+            let receiving = AccountType::Standard {
+                index: 0,
+                standard_account_type: StandardAccountType::BIP44Account,
+            };
+            let acct_balance = account_balances
+                .get(&receiving)
+                .expect("receiving account balance should be present");
+            assert_eq!(acct_balance.unconfirmed(), TX_AMOUNT);
+            assert_eq!(acct_balance.confirmed(), 0);
         }
         other => panic!("expected TransactionDetected, got {:?}", other),
     }
@@ -105,11 +123,22 @@ async fn test_mempool_tx_with_instant_lock_emits_detected_event_with_locked_bala
             wallet_id: wid,
             record,
             balance,
+            account_balances,
         } => {
             assert_eq!(*wid, wallet_id);
             assert!(matches!(record.context, TransactionContext::InstantSend(_)));
             assert_eq!(balance.confirmed(), TX_AMOUNT);
             assert_eq!(balance.unconfirmed(), 0);
+            assert_eq!(account_balances.len(), 1, "only the receiving account should appear");
+            let receiving = AccountType::Standard {
+                index: 0,
+                standard_account_type: StandardAccountType::BIP44Account,
+            };
+            let acct_balance = account_balances
+                .get(&receiving)
+                .expect("receiving account balance should be present");
+            assert_eq!(acct_balance.confirmed(), TX_AMOUNT);
+            assert_eq!(acct_balance.unconfirmed(), 0);
         }
         other => panic!("expected TransactionDetected with IS context, got {:?}", other),
     }
@@ -180,12 +209,30 @@ async fn test_instant_send_lock_on_known_mempool_tx_emits_instant_locked_event()
             txid,
             instant_lock,
             balance,
+            account_balances,
         } => {
             assert_eq!(*wid, wallet_id);
             assert_eq!(*txid, tx.txid());
             assert_eq!(*instant_lock, lock);
             assert_eq!(balance.confirmed(), TX_AMOUNT);
             assert_eq!(balance.unconfirmed(), 0);
+            // The receiving account moved from unconfirmed -> confirmed,
+            // so it must appear in the diff. Other accounts must not.
+            assert_eq!(
+                account_balances.len(),
+                1,
+                "only the affected account should appear, got {:?}",
+                account_balances
+            );
+            let receiving = AccountType::Standard {
+                index: 0,
+                standard_account_type: StandardAccountType::BIP44Account,
+            };
+            let acct_balance = account_balances
+                .get(&receiving)
+                .expect("receiving account balance should be present");
+            assert_eq!(acct_balance.confirmed(), TX_AMOUNT);
+            assert_eq!(acct_balance.unconfirmed(), 0);
         }
         other => panic!("expected TransactionInstantLocked, got {:?}", other),
     }
@@ -290,6 +337,7 @@ async fn test_block_with_new_tx_emits_inserted_record() {
             updated,
             matured,
             balance,
+            account_balances,
         } => {
             assert_eq!(*wid, wallet_id);
             assert_eq!(*height, 100);
@@ -309,6 +357,22 @@ async fn test_block_with_new_tx_emits_inserted_record() {
                 TransactionContext::InBlock(info) if info.height() == 100
             ));
             assert_eq!(balance.confirmed(), TX_AMOUNT);
+            // Only the receiving BIP44 account moved; idle accounts must
+            // be omitted from the diff.
+            assert_eq!(
+                account_balances.len(),
+                1,
+                "only the receiving account should appear, got {:?}",
+                account_balances
+            );
+            let receiving = AccountType::Standard {
+                index: 0,
+                standard_account_type: StandardAccountType::BIP44Account,
+            };
+            let acct_balance = account_balances
+                .get(&receiving)
+                .expect("receiving account balance should be present");
+            assert_eq!(acct_balance.confirmed(), TX_AMOUNT);
         }
         other => panic!("expected BlockProcessed, got {:?}", other),
     }
@@ -337,6 +401,7 @@ async fn test_block_confirming_known_mempool_tx_emits_updated_record() {
             updated,
             matured,
             balance,
+            account_balances,
         } => {
             assert_eq!(*wid, wallet_id);
             assert_eq!(*height, 200);
@@ -347,6 +412,17 @@ async fn test_block_confirming_known_mempool_tx_emits_updated_record() {
             // Confirmation moves balance from unconfirmed to confirmed
             assert_eq!(balance.confirmed(), TX_AMOUNT);
             assert_eq!(balance.unconfirmed(), 0);
+            // The receiving account moved from unconfirmed -> confirmed,
+            // so it must appear in the diff.
+            let receiving = AccountType::Standard {
+                index: 0,
+                standard_account_type: StandardAccountType::BIP44Account,
+            };
+            let acct_balance = account_balances
+                .get(&receiving)
+                .expect("receiving account balance should be present");
+            assert_eq!(acct_balance.confirmed(), TX_AMOUNT);
+            assert_eq!(acct_balance.unconfirmed(), 0);
         }
         other => panic!("expected BlockProcessed with updated record, got {:?}", other),
     }

@@ -4,9 +4,12 @@
 //! triggered it and the wallet's new balance after the change. Consumers can
 //! persist the transaction(s) and balance atomically off a single event.
 
+use std::collections::BTreeMap;
+
 use dashcore::ephemerealdata::instant_lock::InstantLock;
 use dashcore::prelude::CoreBlockHeight;
 use dashcore::Txid;
+use key_wallet::account::AccountType;
 use key_wallet::managed_account::transaction_record::TransactionRecord;
 use key_wallet::WalletCoreBalance;
 
@@ -29,6 +32,11 @@ pub enum WalletEvent {
         record: Box<TransactionRecord>,
         /// Wallet balance after the transaction was recorded.
         balance: WalletCoreBalance,
+        /// Per-account balances for accounts whose balance changed as a
+        /// result of this event. Accounts whose balance was unchanged are
+        /// omitted to keep the payload small (most transactions touch only
+        /// 1–2 accounts).
+        account_balances: BTreeMap<AccountType, WalletCoreBalance>,
     },
     /// An InstantSend lock was applied to a previously-seen off-chain
     /// wallet-relevant transaction.
@@ -41,6 +49,10 @@ pub enum WalletEvent {
         instant_lock: InstantLock,
         /// Wallet balance after the status change.
         balance: WalletCoreBalance,
+        /// Per-account balances for accounts whose balance changed as a
+        /// result of this event. Accounts whose balance was unchanged are
+        /// omitted.
+        account_balances: BTreeMap<AccountType, WalletCoreBalance>,
     },
     /// A block was processed for a wallet. Carries records bucketed by what
     /// happened to them in this block, plus the post-block balance.
@@ -62,6 +74,10 @@ pub enum WalletEvent {
         matured: Vec<TransactionRecord>,
         /// Wallet balance after the block was processed.
         balance: WalletCoreBalance,
+        /// Per-account balances for accounts whose balance changed during
+        /// processing of this block. Accounts whose balance was unchanged
+        /// are omitted.
+        account_balances: BTreeMap<AccountType, WalletCoreBalance>,
     },
     /// The wallet's scan cursor advanced because the filter pipeline
     /// committed a batch covering blocks up to `height`. No records or
@@ -104,19 +120,29 @@ impl WalletEvent {
             WalletEvent::TransactionDetected {
                 record,
                 balance,
+                account_balances,
                 ..
             } => {
                 format!(
-                    "TransactionDetected(txid={}, context={}, balance={})",
-                    record.txid, record.context, balance
+                    "TransactionDetected(txid={}, context={}, balance={}, account_balances={})",
+                    record.txid,
+                    record.context,
+                    balance,
+                    account_balances.len()
                 )
             }
             WalletEvent::TransactionInstantLocked {
                 txid,
                 balance,
+                account_balances,
                 ..
             } => {
-                format!("TransactionInstantLocked(txid={}, balance={})", txid, balance)
+                format!(
+                    "TransactionInstantLocked(txid={}, balance={}, account_balances={})",
+                    txid,
+                    balance,
+                    account_balances.len()
+                )
             }
             WalletEvent::BlockProcessed {
                 height,
@@ -124,15 +150,17 @@ impl WalletEvent {
                 updated,
                 matured,
                 balance,
+                account_balances,
                 ..
             } => {
                 format!(
-                    "BlockProcessed(height={}, inserted={}, updated={}, matured={}, balance={})",
+                    "BlockProcessed(height={}, inserted={}, updated={}, matured={}, balance={}, account_balances={})",
                     height,
                     inserted.len(),
                     updated.len(),
                     matured.len(),
-                    balance
+                    balance,
+                    account_balances.len()
                 )
             }
             WalletEvent::SyncHeightAdvanced {

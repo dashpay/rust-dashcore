@@ -2,10 +2,10 @@
 //!
 //! This trait allows WalletManager to work with different wallet info implementations
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use super::managed_account_operations::ManagedAccountOperations;
-use crate::account::ManagedAccountTrait;
+use crate::account::{AccountType, ManagedAccountTrait};
 use crate::managed_account::managed_account_collection::ManagedAccountCollection;
 use crate::transaction_checking::TransactionContext;
 use crate::transaction_checking::WalletTransactionChecker;
@@ -75,6 +75,41 @@ pub trait WalletInfoInterface: Sized + WalletTransactionChecker + ManagedAccount
 
     /// Update the wallet balance
     fn update_balance(&mut self);
+
+    /// Snapshot the current per-account balances keyed by `AccountType`.
+    ///
+    /// Reads each account's cached `.balance` field as-is; combine with
+    /// `update_balance()` (or `update_last_processed_height()`) to control
+    /// whether the snapshot reflects pre- or post-recompute state.
+    fn account_balance_snapshot(&self) -> BTreeMap<AccountType, WalletCoreBalance> {
+        self.accounts()
+            .all_accounts()
+            .iter()
+            .map(|acc| (acc.managed_account_type().to_account_type(), *acc.balance()))
+            .collect()
+    }
+
+    /// Diff the current per-account balances against `prior` and return only
+    /// the accounts whose balance changed (including accounts that didn't
+    /// exist in `prior`). Intended to be paired with
+    /// `account_balance_snapshot()` taken before mutation.
+    fn changed_account_balances(
+        &self,
+        prior: &BTreeMap<AccountType, WalletCoreBalance>,
+    ) -> BTreeMap<AccountType, WalletCoreBalance> {
+        let mut changed = BTreeMap::new();
+        for acc in self.accounts().all_accounts() {
+            let account_type = acc.managed_account_type().to_account_type();
+            let new_balance = *acc.balance();
+            match prior.get(&account_type) {
+                Some(prior_balance) if *prior_balance == new_balance => {}
+                _ => {
+                    changed.insert(account_type, new_balance);
+                }
+            }
+        }
+        changed
+    }
 
     /// Get transaction history
     fn transaction_history(&self) -> Vec<&TransactionRecord>;
