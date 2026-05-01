@@ -360,13 +360,17 @@ pub(crate) use {serde_string_deserialize_impl, serde_string_impl, serde_string_s
 /// serde_string_impl and the non-human-readable impl is done as a struct.
 ///
 /// The deserialize impl uses a *single* visitor that handles all three shapes
-/// (`visit_str`, `visit_seq`, `visit_map`) so it works correctly when serde
-/// replays values through an intermediate buffer such as `ContentDeserializer`
-/// — used by internally-tagged enums (`#[serde(tag = "...")]`), `flatten`, and
-/// untagged enums. Those replays always report `is_human_readable() == true`
-/// regardless of the upstream format, so a value that was originally written
-/// as a non-human-readable struct can still be replayed into the human-readable
-/// branch and must accept the map/seq shapes there. See the regression test
+/// (`visit_str`, `visit_seq`, `visit_map`) — required to interoperate with
+/// serde's `ContentDeserializer`, the format-agnostic intermediate buffer
+/// serde uses to dispatch internally-tagged enums (`#[serde(tag = "...")]`),
+/// `flatten`, and untagged enums. `ContentDeserializer` always reports
+/// `is_human_readable() == true` regardless of the upstream format (this is
+/// intentional in serde's source: see long-standing upstream issues — the
+/// recommended pattern is "don't branch on `is_human_readable()` for shape
+/// dispatch — accept any shape"). A value originally written by a
+/// non-human-readable encoder can therefore be replayed into the
+/// human-readable branch as a map and must be accepted there. See the
+/// regression test
 /// `outpoint::tests::serde_round_trip_through_internally_tagged_enum`.
 macro_rules! serde_struct_human_string_impl {
     ($name:ident, $expecting:literal, $($fe:ident),*) => (

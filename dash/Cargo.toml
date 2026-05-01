@@ -67,7 +67,7 @@ serde_json = "1.0.140"
 serde_test = "1.0.177"
 serde_derive = "1.0.219"
 secp256k1 = { features = [ "recovery", "rand", "hashes" ], version="0.30.0" }
-bincode = { version = "2.0.1" }
+bincode = { version = "2.0.1", features = ["serde"] }
 assert_matches = "1.5.0"
 dashcore = { path = ".", features = ["core-block-hash-use-x11", "message_verification", "quorum_validation", "signer"] }
 criterion = "0.5"
