@@ -336,6 +336,18 @@ impl ManagedCoreAccount {
                     .iter()
                     .map(|info| info.address.clone())
                     .collect();
+                let change_addrs: BTreeSet<_> = account_match
+                    .account_type_match
+                    .involved_change_addresses()
+                    .iter()
+                    .map(|info| info.address.clone())
+                    .collect();
+
+                // Detect a self-send: this account owns at least one input being
+                // spent. `account_match.sent` is computed by matching inputs against
+                // this account's UTXO set, so a non-zero value means we owned at
+                // least one of the spent outpoints.
+                let has_owned_input = account_match.sent > 0;
 
                 let txid = tx.txid();
                 let mut utxos_changed = false;
@@ -364,6 +376,13 @@ impl ManagedCoreAccount {
                                 continue;
                             }
 
+                            // A change output from a transaction that also spends one of our
+                            // own UTXOs is just our previously-tracked funds returning. Treat
+                            // it as confirmed even in the mempool so the user's confirmed
+                            // balance does not appear to drop by the entire input value while
+                            // the change waits in the mempool.
+                            let is_self_send_change =
+                                has_owned_input && change_addrs.contains(&addr);
                             let txout = dashcore::TxOut {
                                 value: output.value,
                                 script_pubkey: output.script_pubkey.clone(),
@@ -371,7 +390,7 @@ impl ManagedCoreAccount {
                             let block_height = context.block_info().map_or(0, |info| info.height);
                             let mut utxo =
                                 Utxo::new(outpoint, txout, addr, block_height, tx.is_coin_base());
-                            utxo.is_confirmed = context.confirmed();
+                            utxo.is_confirmed = context.confirmed() || is_self_send_change;
                             utxo.is_instantlocked =
                                 matches!(context, TransactionContext::InstantSend(_));
                             self.utxos.insert(outpoint, utxo);
