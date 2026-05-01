@@ -407,7 +407,7 @@ mod tests {
             vout: 7,
         };
         let cfg = bincode::config::standard();
-        let bytes = bincode::serde::encode_to_vec(&raw, cfg).unwrap();
+        let bytes = bincode::serde::encode_to_vec(raw, cfg).unwrap();
         let (decoded, _): (OutPoint, _) = bincode::serde::decode_from_slice(&bytes, cfg).unwrap();
         assert_eq!(raw, decoded);
     }
