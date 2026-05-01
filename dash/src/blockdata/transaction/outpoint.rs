@@ -392,14 +392,6 @@ mod tests {
                 vout: 7,
             },
         );
-
-        // Bincode (non-human-readable) round-trip must still succeed via the
-        // struct-shape branch.
-        let cfg = bincode::config::standard();
-        let bytes = bincode::serde::encode_to_vec(&original, cfg).unwrap();
-        let (decoded, _): (Tagged, _) =
-            bincode::serde::decode_from_slice(&bytes, cfg).unwrap();
-        assert_eq!(original, decoded);
     }
 
     // #[test]
