@@ -782,6 +782,7 @@ mod tests {
             is_confirmed: true,
             is_instantlocked: false,
             is_locked: false,
+            is_change: false,
         };
         info.accounts
             .standard_bip44_accounts

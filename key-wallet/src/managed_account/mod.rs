@@ -376,13 +376,12 @@ impl ManagedCoreAccount {
                                 continue;
                             }
 
-                            // A change output from a transaction that also spends one of our
-                            // own UTXOs is just our previously-tracked funds returning. Treat
-                            // it as confirmed even in the mempool so the user's confirmed
-                            // balance does not appear to drop by the entire input value while
-                            // the change waits in the mempool.
-                            let is_self_send_change =
-                                has_owned_input && change_addrs.contains(&addr);
+                            // Mark change outputs (output to one of our internal addresses
+                            // from a transaction that also spends one of our own UTXOs) so
+                            // `update_balance` can credit them to the confirmed bucket even
+                            // before the parent transaction settles — they are just our
+                            // previously-tracked funds returning to us.
+                            let is_change_output = has_owned_input && change_addrs.contains(&addr);
                             let txout = dashcore::TxOut {
                                 value: output.value,
                                 script_pubkey: output.script_pubkey.clone(),
@@ -390,9 +389,10 @@ impl ManagedCoreAccount {
                             let block_height = context.block_info().map_or(0, |info| info.height);
                             let mut utxo =
                                 Utxo::new(outpoint, txout, addr, block_height, tx.is_coin_base());
-                            utxo.is_confirmed = context.confirmed() || is_self_send_change;
+                            utxo.is_confirmed = context.confirmed();
                             utxo.is_instantlocked =
                                 matches!(context, TransactionContext::InstantSend(_));
+                            utxo.is_change = is_change_output;
                             self.utxos.insert(outpoint, utxo);
                             utxos_changed = true;
                         }
@@ -590,9 +590,12 @@ impl ManagedCoreAccount {
     /// Update the account balance.
     ///
     /// Mature, non-locked UTXOs land in either the `confirmed` bucket
-    /// (in a block or InstantSend-locked) or the `unconfirmed` bucket
-    /// (mempool only). Both are spendable per [`Utxo::is_spendable`];
-    /// the split is only for display.
+    /// (in a block, InstantSend-locked, or a self-send change output)
+    /// or the `unconfirmed` bucket (mempool only). Self-send change is
+    /// surfaced as confirmed because it is just our previously-tracked
+    /// funds returning — see [`Utxo::is_change`]. Both buckets are
+    /// spendable per [`Utxo::is_spendable`]; the split is only for
+    /// display.
     pub fn update_balance(&mut self, last_processed_height: u32) {
         let mut confirmed = 0;
         let mut unconfirmed = 0;
@@ -604,7 +607,7 @@ impl ManagedCoreAccount {
                 locked += value;
             } else if !utxo.is_mature(last_processed_height) {
                 immature += value;
-            } else if utxo.is_confirmed || utxo.is_instantlocked {
+            } else if utxo.is_confirmed || utxo.is_instantlocked || utxo.is_change {
                 confirmed += value;
             } else {
                 unconfirmed += value;
