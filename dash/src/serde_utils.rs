@@ -469,6 +469,9 @@ macro_rules! serde_struct_human_string_impl {
                                 }
                                 $(
                                     Some(Enum::$fe) => {
+                                        if $fe.is_some() {
+                                            return Err(A::Error::duplicate_field(stringify!($fe)));
+                                        }
                                         $fe = Some(map.next_value()?);
                                     }
                                 )*
