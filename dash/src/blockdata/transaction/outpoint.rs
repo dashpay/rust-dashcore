@@ -393,13 +393,23 @@ mod tests {
             },
         );
 
-        // Bincode (non-human-readable) round-trip via the tagged enum must
-        // still succeed via the struct-shape branch — symmetric to the JSON
-        // case above.
+        // Plain bincode (non-human-readable) round-trip of an `OutPoint`
+        // must still succeed via the struct-shape branch — guards against
+        // breaking the `visit_seq` path. (Note: a bincode round-trip of the
+        // tagged enum above is *not* possible in serde at all — internally-
+        // tagged enum dispatch requires `deserialize_any` on the upstream
+        // deserializer, and bincode is not self-describing. That's a serde
+        // limitation orthogonal to this bug.)
+        let raw = OutPoint {
+            txid: "5df6e0e2761359d30a8275058e299fcc0381534545f55cf43e41983f5d4c9456"
+                .parse()
+                .unwrap(),
+            vout: 7,
+        };
         let cfg = bincode::config::standard();
-        let bytes = bincode::serde::encode_to_vec(&original, cfg).unwrap();
-        let (decoded, _): (Tagged, _) = bincode::serde::decode_from_slice(&bytes, cfg).unwrap();
-        assert_eq!(original, decoded);
+        let bytes = bincode::serde::encode_to_vec(&raw, cfg).unwrap();
+        let (decoded, _): (OutPoint, _) = bincode::serde::decode_from_slice(&bytes, cfg).unwrap();
+        assert_eq!(raw, decoded);
     }
 
     // #[test]
