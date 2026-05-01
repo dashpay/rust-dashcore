@@ -9,64 +9,31 @@ use std::collections::BTreeMap;
 use dashcore::ephemerealdata::instant_lock::InstantLock;
 use dashcore::prelude::CoreBlockHeight;
 use dashcore::Txid;
-use key_wallet::account::{AccountType, StandardAccountType};
+use key_wallet::account::AccountType;
 use key_wallet::managed_account::transaction_record::TransactionRecord;
 use key_wallet::WalletCoreBalance;
 
 use crate::WalletId;
 
-/// Compact label for an [`AccountType`] suitable for log lines. Avoids
-/// printing 32-byte identity hashes from the Dashpay variants.
-fn format_account_type(account_type: &AccountType) -> String {
-    match account_type {
-        AccountType::Standard {
-            index,
-            standard_account_type,
-        } => {
-            let kind = match standard_account_type {
-                StandardAccountType::BIP44Account => "BIP44",
-                StandardAccountType::BIP32Account => "BIP32",
-            };
-            format!("Standard{{idx:{},{}}}", index, kind)
-        }
-        AccountType::CoinJoin {
-            index,
-        } => {
-            format!("CoinJoin{{idx:{}}}", index)
-        }
-        AccountType::IdentityRegistration => "IdentityRegistration".to_string(),
-        AccountType::IdentityTopUp {
-            registration_index,
-        } => {
-            format!("IdentityTopUp{{reg:{}}}", registration_index)
-        }
-        AccountType::IdentityTopUpNotBoundToIdentity => "IdentityTopUpNotBound".to_string(),
-        AccountType::IdentityInvitation => "IdentityInvitation".to_string(),
-        AccountType::AssetLockAddressTopUp => "AssetLockAddressTopUp".to_string(),
-        AccountType::AssetLockShieldedAddressTopUp => "AssetLockShieldedAddressTopUp".to_string(),
-        AccountType::ProviderVotingKeys => "ProviderVotingKeys".to_string(),
-        AccountType::ProviderOwnerKeys => "ProviderOwnerKeys".to_string(),
-        AccountType::ProviderOperatorKeys => "ProviderOperatorKeys".to_string(),
-        AccountType::ProviderPlatformKeys => "ProviderPlatformKeys".to_string(),
-        AccountType::DashpayReceivingFunds {
-            index,
-            ..
-        } => {
-            format!("DashpayReceiving{{idx:{}}}", index)
-        }
-        AccountType::DashpayExternalAccount {
-            index,
-            ..
-        } => {
-            format!("DashpayExternal{{idx:{}}}", index)
-        }
-        AccountType::PlatformPayment {
-            account,
-            key_class,
-        } => {
-            format!("PlatformPayment{{acct:{},class:{}}}", account, key_class)
+/// Diff `current` against `prior` and return only the entries whose
+/// balance changed (including ones missing from `prior`). Intended for
+/// pairing two snapshots taken via
+/// [`WalletInfoInterface::account_balances`] before and after a
+/// mutation.
+pub(crate) fn diff_account_balances(
+    prior: &BTreeMap<AccountType, WalletCoreBalance>,
+    current: &BTreeMap<AccountType, WalletCoreBalance>,
+) -> BTreeMap<AccountType, WalletCoreBalance> {
+    let mut changed = BTreeMap::new();
+    for (account_type, new_balance) in current {
+        match prior.get(account_type) {
+            Some(prior_balance) if prior_balance == new_balance => {}
+            _ => {
+                changed.insert(*account_type, *new_balance);
+            }
         }
     }
+    changed
 }
 
 /// Render the changed-account balance map as a short bracketed list
@@ -78,11 +45,7 @@ fn format_account_balances(map: &BTreeMap<AccountType, WalletCoreBalance>) -> St
     let parts: Vec<String> = map
         .iter()
         .map(|(account_type, balance)| {
-            format!(
-                "{}=>{}",
-                format_account_type(account_type),
-                dashcore::Amount::from_sat(balance.total())
-            )
+            format!("{}=>{}", account_type, dashcore::Amount::from_sat(balance.total()))
         })
         .collect();
     format!("[{}]", parts.join(", "))

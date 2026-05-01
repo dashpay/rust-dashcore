@@ -1,3 +1,4 @@
+use crate::events::diff_account_balances;
 use crate::wallet_interface::{BlockProcessingResult, MempoolTransactionResult, WalletInterface};
 use crate::{WalletEvent, WalletId, WalletManager};
 use async_trait::async_trait;
@@ -81,39 +82,23 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
             0
         };
 
-        // Snapshot per-account balances before refreshing so the diff after
-        // `update_balance()` surfaces only accounts whose balance actually
-        // changed for this transaction. The cached `.balance` field is stale
-        // until `update_balance()` runs, so taking the snapshot here captures
-        // the pre-transaction state.
-        let mut prior_account_balances: BTreeMap<
-            WalletId,
-            BTreeMap<AccountType, WalletCoreBalance>,
-        > = BTreeMap::new();
-        for wallet_id in &check_result.affected_wallets {
-            if let Some(info) = self.wallet_infos.get(wallet_id) {
-                prior_account_balances.insert(*wallet_id, info.account_balance_snapshot());
-            }
-        }
-
         // Refresh cached balances for affected wallets before emitting so
-        // every event carries a post-change balance.
-        for wallet_id in &check_result.affected_wallets {
-            if let Some(info) = self.wallet_infos.get_mut(wallet_id) {
-                info.update_balance();
-            }
-        }
-
+        // every event carries a post-change balance, snapshotting before
+        // and after to surface only accounts whose balance actually
+        // changed. The cached `.balance` field is stale until
+        // `update_balance()` runs, so the pre-snapshot taken here captures
+        // the pre-transaction state.
         let mut per_wallet_account_diff: BTreeMap<
             WalletId,
             BTreeMap<AccountType, WalletCoreBalance>,
         > = BTreeMap::new();
         for wallet_id in &check_result.affected_wallets {
-            let Some(info) = self.wallet_infos.get(wallet_id) else {
-                continue;
-            };
-            let prior = prior_account_balances.remove(wallet_id).unwrap_or_default();
-            per_wallet_account_diff.insert(*wallet_id, info.changed_account_balances(&prior));
+            if let Some(info) = self.wallet_infos.get_mut(wallet_id) {
+                let prior = info.account_balances();
+                info.update_balance();
+                let current = info.account_balances();
+                per_wallet_account_diff.insert(*wallet_id, diff_account_balances(&prior, &current));
+            }
         }
 
         let per_wallet_new_records = std::mem::take(&mut check_result.per_wallet_new_records);
@@ -251,11 +236,7 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
         let mut prior_account_balances: BTreeMap<
             WalletId,
             BTreeMap<AccountType, WalletCoreBalance>,
-        > = self
-            .wallet_infos
-            .iter()
-            .map(|(id, info)| (*id, info.account_balance_snapshot()))
-            .collect();
+        > = self.wallet_infos.iter().map(|(id, info)| (*id, info.account_balances())).collect();
 
         let mut affected_wallets = Vec::new();
         for (wallet_id, info) in self.wallet_infos.iter_mut() {
@@ -274,7 +255,7 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
                 continue;
             };
             let prior = prior_account_balances.remove(&wallet_id).unwrap_or_default();
-            let account_balances = info.changed_account_balances(&prior);
+            let account_balances = diff_account_balances(&prior, &info.account_balances());
             let _ = self.event_sender().send(WalletEvent::TransactionInstantLocked {
                 wallet_id,
                 txid,
@@ -341,9 +322,7 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletManager<T> {
             BTreeMap<AccountType, WalletCoreBalance>,
         > = wallets
             .iter()
-            .filter_map(|id| {
-                self.wallet_infos.get(id).map(|info| (*id, info.account_balance_snapshot()))
-            })
+            .filter_map(|id| self.wallet_infos.get(id).map(|info| (*id, info.account_balances())))
             .collect();
         let prior_heights: BTreeMap<WalletId, CoreBlockHeight> = wallets
             .iter()
@@ -392,7 +371,7 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletManager<T> {
             let matured = per_wallet_matured.remove(wallet_id).unwrap_or_default();
             let balance_changed = snapshot.get(wallet_id).copied() != Some(new_balance);
             let prior = prior_account_balances.remove(wallet_id).unwrap_or_default();
-            let account_balances = info.changed_account_balances(&prior);
+            let account_balances = diff_account_balances(&prior, &info.account_balances());
 
             if !inserted.is_empty() || !updated.is_empty() || !matured.is_empty() || balance_changed
             {
