@@ -337,6 +337,71 @@ mod tests {
         assert!(tx.out_point_buffer(1).is_none());
     }
 
+    /// Regression test for the bug where `OutPoint::deserialize` errored with
+    /// "invalid type: map, expected an OutPoint" when an OutPoint-bearing
+    /// struct was wrapped by an internally-tagged enum and round-tripped
+    /// through serde's intermediate `ContentDeserializer`. `ContentDeserializer`
+    /// always reports `is_human_readable() == true`, so a value originally
+    /// produced by a non-human-readable encoder ends up replayed into the HR
+    /// branch as a map — which the previous string-only HR visitor rejected.
+    #[cfg(feature = "serde")]
+    #[test]
+    fn serde_round_trip_through_internally_tagged_enum() {
+        use serde_derive::{Deserialize, Serialize};
+
+        #[derive(Debug, PartialEq, Serialize, Deserialize)]
+        struct WithOutPoint {
+            out_point: OutPoint,
+        }
+
+        #[derive(Debug, PartialEq, Serialize, Deserialize)]
+        #[serde(tag = "type")]
+        enum Tagged {
+            A(WithOutPoint),
+        }
+
+        let original = Tagged::A(WithOutPoint {
+            out_point: OutPoint {
+                txid: "5df6e0e2761359d30a8275058e299fcc0381534545f55cf43e41983f5d4c9456"
+                    .parse()
+                    .unwrap(),
+                vout: 7,
+            },
+        });
+
+        // Round-trip through serde_json::Value forces serde to buffer the value
+        // into a Content tree, then replay it through ContentDeserializer when
+        // resolving the internally-tagged enum variant. Before the fix this
+        // path failed with `invalid type: map, expected an OutPoint`.
+        let value = serde_json::to_value(&original).unwrap();
+        let restored: Tagged = serde_json::from_value(value).unwrap();
+        assert_eq!(original, restored);
+
+        // The canonical HR string form must still deserialize, so existing
+        // JSON producers do not break.
+        let from_string: OutPoint = serde_json::from_str(
+            "\"5df6e0e2761359d30a8275058e299fcc0381534545f55cf43e41983f5d4c9456:7\"",
+        )
+        .unwrap();
+        assert_eq!(
+            from_string,
+            OutPoint {
+                txid: "5df6e0e2761359d30a8275058e299fcc0381534545f55cf43e41983f5d4c9456"
+                    .parse()
+                    .unwrap(),
+                vout: 7,
+            },
+        );
+
+        // Bincode (non-human-readable) round-trip must still succeed via the
+        // struct-shape branch.
+        let cfg = bincode::config::standard();
+        let bytes = bincode::serde::encode_to_vec(&original, cfg).unwrap();
+        let (decoded, _): (Tagged, _) =
+            bincode::serde::decode_from_slice(&bytes, cfg).unwrap();
+        assert_eq!(original, decoded);
+    }
+
     // #[test]
     // fn out_point_parse() {
     //     let mut tx = Transaction {
