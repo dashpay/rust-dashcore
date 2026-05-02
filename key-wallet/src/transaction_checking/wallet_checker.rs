@@ -1791,7 +1791,7 @@ mod tests {
         assert!(!record.is_confirmed());
         assert_eq!(record.direction, TransactionDirection::Outgoing);
 
-        // The change UTXO should be flagged via `is_change` so that
+        // The change UTXO should be flagged via `is_trusted` so that
         // `update_balance` credits it to the confirmed bucket, despite the
         // parent transaction still being in the mempool.
         let change_outpoint = OutPoint {
@@ -1801,11 +1801,11 @@ mod tests {
         let change_utxo =
             ctx.bip44_account().utxos.get(&change_outpoint).expect("change UTXO recorded");
         // The parent transaction is still in the mempool, so `is_confirmed`
-        // stays false; the change-ness is what shifts the UTXO into the
+        // stays false; the trust signal is what shifts the UTXO into the
         // confirmed balance bucket.
         assert!(!change_utxo.is_confirmed);
         assert!(!change_utxo.is_instantlocked);
-        assert!(change_utxo.is_change, "self-send change UTXO should be flagged");
+        assert!(change_utxo.is_trusted, "self-send change UTXO should be trusted");
         assert_eq!(change_utxo.txout.value, change_amount);
 
         // Account-level balance: change lives in `confirmed`, not `unconfirmed`.
@@ -1831,7 +1831,7 @@ mod tests {
 
         let utxo = ctx.first_utxo();
         assert!(!utxo.is_confirmed, "external mempool payment must stay unconfirmed");
-        assert!(!utxo.is_change, "external payment is not a self-send change");
+        assert!(!utxo.is_trusted, "external payment is not a self-send change");
         assert_eq!(ctx.managed_wallet.balance().confirmed(), 0);
         assert_eq!(ctx.managed_wallet.balance().unconfirmed(), payment_value);
     }
