@@ -126,6 +126,17 @@ impl ManagedWalletInfo {
     pub fn increment_transactions(&mut self) {
         self.metadata.total_transactions += 1;
     }
+
+    /// Read-only access to the InstantSend lock txid set.
+    ///
+    /// Exposes `instant_send_locks` (a `pub(crate)` field marked
+    /// `serde(skip)`) so external diagnostic surfaces (e.g. the iOS
+    /// memory explorer) can list the txids that have received an
+    /// IS-lock without bypassing the encapsulation that keeps mutation
+    /// inside this crate.
+    pub fn instant_send_locks(&self) -> &HashSet<Txid> {
+        &self.instant_send_locks
+    }
 }
 
 /// Re-export types from account module for convenience
