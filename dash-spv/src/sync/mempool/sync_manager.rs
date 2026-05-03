@@ -123,7 +123,7 @@ impl<W: WalletInterface + 'static> SyncManager for MempoolManager<W> {
         // Rebuild bloom filter if the wallet's monitored set has changed.
         //
         // We poll the revision counter rather than using push-based wallet events
-        // for simplicity: the revision lives on `ManagedCoreAccount` and auto-bumps
+        // for simplicity: the revision lives on `ManagedCoreFundsAccount` and auto-bumps
         // on address generation and UTXO mutations, giving us a single source of
         // truth without needing event emission after every wallet operation.
         // Adding a push-based approach would require a new `select!` branch in the

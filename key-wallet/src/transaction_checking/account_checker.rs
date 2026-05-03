@@ -6,7 +6,7 @@
 use std::collections::BTreeMap;
 
 use super::transaction_router::AccountTypeToCheck;
-use crate::account::{ManagedAccountCollection, ManagedCoreAccount};
+use crate::account::{ManagedAccountCollection, ManagedCoreFundsAccount};
 use crate::managed_account::address_pool::{AddressInfo, PublicKeyType};
 use crate::managed_account::managed_account_type::ManagedAccountType;
 use crate::managed_account::transaction_record::TransactionRecord;
@@ -501,7 +501,7 @@ impl ManagedAccountCollection {
 
     /// Check indexed accounts (BTreeMap of accounts)
     fn check_indexed_accounts(
-        accounts: &BTreeMap<u32, ManagedCoreAccount>,
+        accounts: &BTreeMap<u32, ManagedCoreFundsAccount>,
         tx: &Transaction,
     ) -> Vec<AccountMatch> {
         let mut matches = Vec::new();
@@ -514,7 +514,7 @@ impl ManagedAccountCollection {
     }
 }
 
-impl ManagedCoreAccount {
+impl ManagedCoreFundsAccount {
     /// Classify an address within this account
     pub fn classify_address(&self, address: &Address) -> AddressClassification {
         match &self.managed_account_type {

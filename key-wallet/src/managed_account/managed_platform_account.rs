@@ -1,7 +1,7 @@
 //! Managed Platform Account for DIP-17 Platform Payment addresses
 //!
 //! This module provides the `ManagedPlatformAccount` type which is a simplified
-//! account structure for Platform Payment accounts. Unlike `ManagedCoreAccount`,
+//! account structure for Platform Payment accounts. Unlike `ManagedCoreFundsAccount`,
 //! this type:
 //! - Uses a simple `u64` balance instead of `WalletCoreBalance`
 //! - Tracks per-address balances directly
@@ -22,7 +22,7 @@ use serde::{Deserialize, Serialize};
 /// Managed Platform Account for DIP-17 Platform Payment addresses
 ///
 /// This is a simplified account structure designed specifically for Platform
-/// Payment accounts (DIP-17). It differs from `ManagedCoreAccount` in that:
+/// Payment accounts (DIP-17). It differs from `ManagedCoreFundsAccount` in that:
 ///
 /// - **Balance**: Simple `u64` credit balance (1000 credits = 1 duff)
 /// - **Address Balances**: Direct mapping of addresses to their credit balances
