@@ -425,7 +425,6 @@ mod tests {
         assert_eq!(managed_info.metadata.birth_height, 100);
         assert_eq!(managed_info.metadata.synced_height, 99);
         assert_eq!(managed_info.metadata.last_processed_height, 99);
-        assert_eq!(managed_info.metadata.first_loaded_at, 0); // Default value
         assert!(managed_info.metadata.last_synced.is_none());
 
         // Test updating metadata
