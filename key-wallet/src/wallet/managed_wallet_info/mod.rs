@@ -122,11 +122,6 @@ impl ManagedWalletInfo {
         self.network
     }
 
-    /// Increment the transaction count
-    pub fn increment_transactions(&mut self) {
-        self.metadata.total_transactions += 1;
-    }
-
     /// Read-only access to the InstantSend lock txid set.
     ///
     /// Exposes `instant_send_locks` (a `pub(crate)` field marked

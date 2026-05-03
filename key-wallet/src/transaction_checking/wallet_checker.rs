@@ -199,7 +199,6 @@ impl WalletTransactionChecker for ManagedWalletInfo {
             if context.is_instant_send() {
                 self.instant_send_locks.insert(txid);
             }
-            self.increment_transactions();
 
             let wallet_net = result.total_received as i64 - result.total_sent as i64;
             tracing::info!(
@@ -723,11 +722,6 @@ mod tests {
             "Transaction should be stored"
         );
         let tx_count_before = managed_account.transactions.len();
-        let total_tx_count_before = managed_wallet.metadata.total_transactions;
-        assert_eq!(
-            total_tx_count_before, 1,
-            "total_transactions should be 1 after first processing"
-        );
 
         // Second processing (simulating rescan) - should be marked as existing
         let result2 =
@@ -747,12 +741,6 @@ mod tests {
             managed_account.transactions.len(),
             tx_count_before,
             "Transaction count should not increase on rescan"
-        );
-
-        // Verify total_transactions metadata hasn't changed on rescan
-        assert_eq!(
-            managed_wallet.metadata.total_transactions, total_tx_count_before,
-            "total_transactions should not increase on rescan"
         );
 
         // Verify UTXO state is unchanged after rescan
@@ -880,8 +868,6 @@ mod tests {
         assert_eq!(ctx.transaction(&txid).context, TransactionContext::Mempool);
         assert!(!ctx.first_utxo().is_confirmed, "Mempool UTXO should be unconfirmed");
 
-        let total_tx_before = ctx.managed_wallet.metadata.total_transactions;
-
         // Same transaction now seen in a block
         let block_hash = BlockHash::from_slice(&[5u8; 32]).expect("Should create block hash");
         let block_context =
@@ -898,11 +884,6 @@ mod tests {
         assert_eq!(record.block_info().unwrap().block_hash, block_hash);
         assert_eq!(record.block_info().unwrap().timestamp, 1700000000);
         assert!(ctx.first_utxo().is_confirmed, "UTXO should now be confirmed");
-
-        assert_eq!(
-            ctx.managed_wallet.metadata.total_transactions, total_tx_before,
-            "total_transactions should not increase for confirmation of existing tx"
-        );
     }
 
     /// Test the full lifecycle: mempool -> IS -> block -> chain-locked block -> late IS
@@ -916,7 +897,6 @@ mod tests {
         assert_eq!(ctx.managed_wallet.balance().unconfirmed(), 200_000);
         assert_eq!(ctx.managed_wallet.balance().confirmed(), 0);
         assert_eq!(ctx.managed_wallet.balance().spendable(), 200_000);
-        assert_eq!(ctx.managed_wallet.metadata.total_transactions, 1);
 
         // Stage 2: IS lock
         let is_lock = InstantLock {
@@ -930,7 +910,6 @@ mod tests {
         assert_eq!(ctx.managed_wallet.balance().unconfirmed(), 0);
         assert!(ctx.first_utxo().is_instantlocked);
         assert!(!ctx.first_utxo().is_confirmed);
-        assert_eq!(ctx.managed_wallet.metadata.total_transactions, 1);
         assert!(ctx.managed_wallet.instant_send_locks.contains(&txid));
 
         // Verify the TransactionRecord stores the IS lock payload
@@ -966,7 +945,6 @@ mod tests {
         let result = ctx.check_transaction(&tx, cl_context).await;
         assert!(!result.is_new_transaction);
         assert_eq!(ctx.managed_wallet.balance().spendable(), 200_000);
-        assert_eq!(ctx.managed_wallet.metadata.total_transactions, 1);
 
         // Stage 5: late IS lock on already-confirmed tx should be ignored
         let balance_before = ctx.managed_wallet.balance();
@@ -1004,7 +982,6 @@ mod tests {
             .await;
         assert!(!result2.is_new_transaction);
         assert_eq!(ctx.managed_wallet.balance().spendable(), 150_000);
-        assert_eq!(ctx.managed_wallet.metadata.total_transactions, 1);
     }
 
     /// Test that the InstantSend branch backfills a `TransactionRecord` on accounts
