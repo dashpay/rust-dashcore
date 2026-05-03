@@ -6,7 +6,6 @@
 //! special-purpose flows (identity registration, asset locks, masternode provider
 //! keys) rather than to hold and spend Dash directly.
 
-use crate::account::AccountMetadata;
 #[cfg(feature = "bls")]
 use crate::account::BLSAccount;
 #[cfg(feature = "eddsa")]
@@ -49,8 +48,6 @@ pub struct ManagedCoreKeysAccount {
     pub managed_account_type: ManagedAccountType,
     /// Network this account belongs to
     pub network: Network,
-    /// Account metadata
-    pub metadata: AccountMetadata,
     /// Whether this is a watch-only account
     pub is_watch_only: bool,
     /// Transaction history for this account.
@@ -84,7 +81,6 @@ impl ManagedCoreKeysAccount {
         Self {
             managed_account_type,
             network,
-            metadata: AccountMetadata::default(),
             is_watch_only,
             #[cfg(feature = "keep_txs_in_memory")]
             transactions: BTreeMap::new(),
@@ -309,7 +305,6 @@ impl ManagedCoreKeysAccount {
 
     /// Mark an address as used
     pub fn mark_address_used(&mut self, address: &Address) -> bool {
-        self.metadata.last_used = Some(Self::current_timestamp());
         self.managed_account_type.mark_address_used(address)
     }
 
@@ -639,13 +634,6 @@ impl ManagedCoreKeysAccount {
         self.managed_account_type.get_address_derivation_path(address)
     }
 
-    /// Get the current timestamp (for metadata)
-    fn current_timestamp() -> u64 {
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs()
-    }
 
     /// Get total address count across all pools
     pub fn total_address_count(&self) -> usize {
@@ -1288,7 +1276,6 @@ impl<'de> Deserialize<'de> for ManagedCoreKeysAccount {
         struct Helper {
             managed_account_type: ManagedAccountType,
             network: Network,
-            metadata: AccountMetadata,
             is_watch_only: bool,
             #[cfg(feature = "keep_txs_in_memory")]
             #[serde(default)]
@@ -1305,7 +1292,6 @@ impl<'de> Deserialize<'de> for ManagedCoreKeysAccount {
         Ok(ManagedCoreKeysAccount {
             managed_account_type: helper.managed_account_type,
             network: helper.network,
-            metadata: helper.metadata,
             is_watch_only: helper.is_watch_only,
             #[cfg(feature = "keep_txs_in_memory")]
             transactions: helper.transactions,

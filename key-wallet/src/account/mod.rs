@@ -34,7 +34,6 @@ use crate::managed_account::address_pool::AddressPoolType;
 pub use crate::managed_account::managed_account_collection::ManagedAccountCollection;
 pub use crate::managed_account::managed_account_trait::ManagedAccountTrait;
 pub use crate::managed_account::managed_account_type::ManagedAccountType;
-pub use crate::managed_account::metadata::AccountMetadata;
 pub use crate::managed_account::transaction_record::{
     InputDetail, OutputDetail, OutputRole, TransactionDirection, TransactionRecord,
 };

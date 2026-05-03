@@ -10,7 +10,6 @@
 //! recording, etc.) are NOT exposed here — callers that need them must match on
 //! the variant explicitly.
 
-use crate::account::AccountMetadata;
 #[cfg(feature = "keep_txs_in_memory")]
 use crate::account::TransactionRecord;
 use crate::managed_account::address_pool::AddressInfo;
@@ -59,14 +58,6 @@ impl<'a> ManagedAccountRef<'a> {
         match self {
             ManagedAccountRef::Funds(a) => a.network,
             ManagedAccountRef::Keys(a) => a.network,
-        }
-    }
-
-    /// Get the account metadata.
-    pub fn metadata(&self) -> &AccountMetadata {
-        match self {
-            ManagedAccountRef::Funds(a) => &a.metadata,
-            ManagedAccountRef::Keys(a) => &a.metadata,
         }
     }
 
@@ -215,6 +206,22 @@ impl<'a> ManagedAccountRef<'a> {
             ManagedAccountRef::Keys(a) => Some(*a),
         }
     }
+
+    /// Resolve the BIP-32 derivation path for `address`, if owned.
+    ///
+    /// Both variants have an identical-shape `address_derivation_path`
+    /// method on the underlying account; this delegate spares callers
+    /// (e.g. broadcast / identity-payment paths that need a path to
+    /// produce a signing key) from manual `match`-on-variant dispatch.
+    pub fn address_derivation_path(
+        &self,
+        address: &Address,
+    ) -> Option<crate::DerivationPath> {
+        match self {
+            ManagedAccountRef::Funds(a) => a.address_derivation_path(address),
+            ManagedAccountRef::Keys(a) => a.address_derivation_path(address),
+        }
+    }
 }
 
 impl<'a> ManagedAccountRefMut<'a> {
@@ -239,22 +246,6 @@ impl<'a> ManagedAccountRefMut<'a> {
         match self {
             ManagedAccountRefMut::Funds(a) => a.network,
             ManagedAccountRefMut::Keys(a) => a.network,
-        }
-    }
-
-    /// Get the account metadata.
-    pub fn metadata(&self) -> &AccountMetadata {
-        match self {
-            ManagedAccountRefMut::Funds(a) => &a.metadata,
-            ManagedAccountRefMut::Keys(a) => &a.metadata,
-        }
-    }
-
-    /// Get mutable account metadata.
-    pub fn metadata_mut(&mut self) -> &mut AccountMetadata {
-        match self {
-            ManagedAccountRefMut::Funds(a) => &mut a.metadata,
-            ManagedAccountRefMut::Keys(a) => &mut a.metadata,
         }
     }
 

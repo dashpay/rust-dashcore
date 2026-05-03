@@ -20,7 +20,6 @@ pub mod managed_account_type;
 pub mod managed_core_funds_account;
 pub mod managed_core_keys_account;
 pub mod managed_platform_account;
-pub mod metadata;
 pub mod platform_address;
 pub mod transaction_record;
 
