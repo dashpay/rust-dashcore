@@ -71,7 +71,7 @@ impl WalletTransactionChecker for ManagedWalletInfo {
             if let Some(account) =
                 self.accounts.get_by_account_type_match(&account_match.account_type_match)
             {
-                if account.transactions.contains_key(&txid) {
+                if account.has_transaction(&txid) {
                     is_new = false;
                     break;
                 }
@@ -89,7 +89,7 @@ impl WalletTransactionChecker for ManagedWalletInfo {
                 let already_confirmed = result.affected_accounts.iter().any(|am| {
                     self.accounts
                         .get_by_account_type_match(&am.account_type_match)
-                        .and_then(|a| a.transactions.get(&txid))
+                        .and_then(|a| a.get_transaction(&txid))
                         .map_or(false, |r| r.is_confirmed())
                 });
                 if already_confirmed {
@@ -107,8 +107,14 @@ impl WalletTransactionChecker for ManagedWalletInfo {
                     else {
                         continue;
                     };
-                    if account.transactions.contains_key(&txid) {
+                    #[cfg(feature = "keep_txs_in_memory")]
+                    let has_record = account.transactions.contains_key(&txid);
+                    #[cfg(not(feature = "keep_txs_in_memory"))]
+                    let has_record = false;
+
+                    if has_record {
                         account.mark_utxos_instant_send(&txid);
+                        #[cfg(feature = "keep_txs_in_memory")]
                         if let Some(record) = account.transactions.get_mut(&txid) {
                             record.update_context(context.clone());
                             result.updated_records.push(record.clone());
@@ -150,10 +156,10 @@ impl WalletTransactionChecker for ManagedWalletInfo {
                 result.new_records.push(record);
                 result.state_modified = true;
             } else {
-                let existed_before = account.transactions.contains_key(&tx.txid());
+                let existed_before = account.has_transaction(&tx.txid());
                 if account.confirm_transaction(tx, &account_match, context.clone(), tx_type) {
                     result.state_modified = true;
-                    if let Some(record) = account.transactions.get(&tx.txid()) {
+                    if let Some(record) = account.get_transaction(&tx.txid()) {
                         if existed_before {
                             result.updated_records.push(record.clone());
                         } else {
@@ -220,7 +226,9 @@ impl WalletTransactionChecker for ManagedWalletInfo {
     }
 }
 
-#[cfg(test)]
+// These tests rely on per-account transaction history and so only run when
+// the `keep_txs_in_memory` Cargo feature is enabled.
+#[cfg(all(test, feature = "keep_txs_in_memory"))]
 mod tests {
     use super::*;
     use crate::account::account_type::StandardAccountType;
@@ -1131,13 +1139,17 @@ mod tests {
         let (mut ctx, tx) = TestWalletContext::new_random().with_mempool_funding(300_000).await;
         let txid = tx.txid();
 
-        // Simulate the account missing the mempool record by removing it
+        // Simulate the account missing the mempool record by removing it.
+        // Clear `processed_txids` too — otherwise the always-present dedup
+        // set would keep `has_transaction` truthy and the wallet checker
+        // wouldn't treat this confirmation as new.
         let account = ctx
             .managed_wallet
             .first_bip44_managed_account_mut()
             .expect("Should have BIP44 account");
         assert!(account.transactions.contains_key(&txid));
         account.transactions.remove(&txid);
+        account.processed_txids.remove(&txid);
         assert!(!account.transactions.contains_key(&txid));
 
         // Now process the same tx as a block confirmation.
@@ -1187,6 +1199,7 @@ mod tests {
             .first_bip44_managed_account_mut()
             .expect("Should have BIP44 account");
         account.transactions.remove(&txid);
+        account.processed_txids.remove(&txid);
         account.utxos.clear();
         assert!(!account.transactions.contains_key(&txid));
         assert!(account.utxos.is_empty());

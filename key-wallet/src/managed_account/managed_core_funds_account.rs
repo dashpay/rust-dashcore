@@ -54,10 +54,23 @@ pub struct ManagedCoreFundsAccount {
     pub is_watch_only: bool,
     /// Account balance information
     pub balance: WalletCoreBalance,
-    /// Transaction history for this account
+    /// Transaction history for this account.
+    ///
+    /// Only present when the `keep_txs_in_memory` Cargo feature is enabled.
+    /// With the feature off, processed transactions update UTXOs and balance
+    /// but no per-tx history is retained.
+    #[cfg(feature = "keep_txs_in_memory")]
     pub transactions: BTreeMap<Txid, TransactionRecord>,
     /// UTXO set for this account
     pub utxos: BTreeMap<OutPoint, Utxo>,
+    /// Txids of every transaction this account has already processed.
+    ///
+    /// Always populated regardless of `keep_txs_in_memory`, so the
+    /// dedup guard in `confirm_transaction` works in either feature
+    /// configuration. Rebuilt from `transactions` during deserialization
+    /// when the feature is enabled.
+    #[cfg_attr(feature = "serde", serde(skip_serializing))]
+    pub(crate) processed_txids: HashSet<Txid>,
     /// Outpoints spent by recorded transactions.
     /// Rebuilt from `transactions` during deserialization.
     #[cfg_attr(feature = "serde", serde(skip_serializing))]
@@ -81,10 +94,38 @@ impl ManagedCoreFundsAccount {
             metadata: AccountMetadata::default(),
             is_watch_only,
             balance: WalletCoreBalance::default(),
+            #[cfg(feature = "keep_txs_in_memory")]
             transactions: BTreeMap::new(),
             utxos: BTreeMap::new(),
+            processed_txids: HashSet::new(),
             spent_outpoints: HashSet::new(),
             monitor_revision: 0,
+        }
+    }
+
+    /// Returns `true` if this account has already processed `txid`.
+    ///
+    /// Backed by an always-present `processed_txids` set, so this works
+    /// regardless of whether the `keep_txs_in_memory` Cargo feature is
+    /// enabled. Use [`Self::get_transaction`] to retrieve the full record
+    /// (only available when the feature is enabled).
+    pub fn has_transaction(&self, txid: &Txid) -> bool {
+        self.processed_txids.contains(txid)
+    }
+
+    /// Returns the stored transaction record for `txid`, if any.
+    ///
+    /// Always returns `None` when the `keep_txs_in_memory` Cargo feature is
+    /// disabled.
+    pub fn get_transaction(&self, txid: &Txid) -> Option<&TransactionRecord> {
+        #[cfg(feature = "keep_txs_in_memory")]
+        {
+            self.transactions.get(txid)
+        }
+        #[cfg(not(feature = "keep_txs_in_memory"))]
+        {
+            let _ = txid;
+            None
         }
     }
 
@@ -418,6 +459,12 @@ impl ManagedCoreFundsAccount {
 
     /// Re-process an existing transaction with updated context (e.g., mempool→block confirmation)
     /// and potentially new address matches from gap limit rescans.
+    ///
+    /// Deduplication uses `processed_txids`, which is populated regardless
+    /// of the `keep_txs_in_memory` Cargo feature. When the feature is off
+    /// the per-tx record isn't stored, so we can't detect a confirmation
+    /// status transition; we still refresh the UTXO state and report no
+    /// change.
     pub(crate) fn confirm_transaction(
         &mut self,
         tx: &Transaction,
@@ -425,12 +472,14 @@ impl ManagedCoreFundsAccount {
         context: TransactionContext,
         transaction_type: TransactionType,
     ) -> bool {
-        if !self.transactions.contains_key(&tx.txid()) {
+        if !self.processed_txids.contains(&tx.txid()) {
             self.record_transaction(tx, account_match, context, transaction_type);
             return true;
         }
 
+        #[cfg_attr(not(feature = "keep_txs_in_memory"), allow(unused_mut))]
         let mut changed = false;
+        #[cfg(feature = "keep_txs_in_memory")]
         if let Some(tx_record) = self.transactions.get_mut(&tx.txid()) {
             debug_assert_eq!(
                 tx_record.transaction_type,
@@ -447,6 +496,12 @@ impl ManagedCoreFundsAccount {
                 // wallet transaction events are properly handled
                 changed = !was_confirmed;
             }
+        }
+        #[cfg(not(feature = "keep_txs_in_memory"))]
+        {
+            // No record stored — silence the unused-binding warning on
+            // `transaction_type` and let UTXO state convey the upgrade.
+            let _ = transaction_type;
         }
         self.update_utxos(tx, account_match, context);
         changed
@@ -554,7 +609,11 @@ impl ManagedCoreFundsAccount {
         );
 
         let record = tx_record.clone();
+        self.processed_txids.insert(tx.txid());
+        #[cfg(feature = "keep_txs_in_memory")]
         self.transactions.insert(tx.txid(), tx_record);
+        #[cfg(not(feature = "keep_txs_in_memory"))]
+        let _ = tx_record;
 
         self.update_utxos(tx, account_match, context);
         record
@@ -1316,10 +1375,12 @@ impl ManagedAccountTrait for ManagedCoreFundsAccount {
         &mut self.balance
     }
 
+    #[cfg(feature = "keep_txs_in_memory")]
     fn transactions(&self) -> &BTreeMap<Txid, TransactionRecord> {
         &self.transactions
     }
 
+    #[cfg(feature = "keep_txs_in_memory")]
     fn transactions_mut(&mut self) -> &mut BTreeMap<Txid, TransactionRecord> {
         &mut self.transactions
     }
@@ -1346,12 +1407,14 @@ impl<'de> Deserialize<'de> for ManagedCoreFundsAccount {
             metadata: AccountMetadata,
             is_watch_only: bool,
             balance: WalletCoreBalance,
+            #[serde(default)]
             transactions: BTreeMap<Txid, TransactionRecord>,
             utxos: BTreeMap<OutPoint, Utxo>,
         }
 
         let helper = Helper::deserialize(deserializer)?;
 
+        let processed_txids: HashSet<Txid> = helper.transactions.keys().copied().collect();
         let spent_outpoints = helper
             .transactions
             .values()
@@ -1365,8 +1428,10 @@ impl<'de> Deserialize<'de> for ManagedCoreFundsAccount {
             metadata: helper.metadata,
             is_watch_only: helper.is_watch_only,
             balance: helper.balance,
+            #[cfg(feature = "keep_txs_in_memory")]
             transactions: helper.transactions,
             utxos: helper.utxos,
+            processed_txids,
             spent_outpoints,
             monitor_revision: 0,
         })

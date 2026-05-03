@@ -16,7 +16,7 @@ bls = ["key-wallet/bls"]
 eddsa = ["key-wallet/eddsa"]
 
 [dependencies]
-key-wallet = { path = "../key-wallet", default-features = false }
+key-wallet = { path = "../key-wallet", default-features = false, features = ["keep_txs_in_memory"] }
 dashcore = { path = "../dash" }
 async-trait = "0.1"
 tokio = { version = "1", features = ["macros", "rt", "sync"] }
