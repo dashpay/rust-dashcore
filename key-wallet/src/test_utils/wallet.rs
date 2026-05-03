@@ -1,15 +1,15 @@
-use dashcore::{Address, Network, Transaction};
 #[cfg(feature = "keep_txs_in_memory")]
 use dashcore::Txid;
+use dashcore::{Address, Network, Transaction};
 
+#[cfg(feature = "keep_txs_in_memory")]
+use crate::account::TransactionRecord;
 use crate::{
     account::ManagedCoreAccount,
     transaction_checking::{TransactionCheckResult, TransactionContext, WalletTransactionChecker},
     wallet::{initialization::WalletAccountCreationOptions, ManagedWalletInfo},
     ExtendedPubKey, Utxo, Wallet,
 };
-#[cfg(feature = "keep_txs_in_memory")]
-use crate::account::TransactionRecord;
 
 impl ManagedWalletInfo {
     pub fn dummy(id: u8) -> Self {
