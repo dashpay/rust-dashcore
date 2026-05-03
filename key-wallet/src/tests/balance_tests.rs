@@ -1,6 +1,6 @@
 //! Tests for update_balance() UTXO categorization.
 
-use crate::managed_account::ManagedCoreAccount;
+use crate::managed_account::ManagedCoreFundsAccount;
 use crate::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
 use crate::wallet::managed_wallet_info::ManagedWalletInfo;
 use crate::{Utxo, WalletCoreBalance};
@@ -8,7 +8,7 @@ use crate::{Utxo, WalletCoreBalance};
 #[test]
 fn test_balance_with_mixed_utxo_types() {
     let mut wallet_info = ManagedWalletInfo::dummy(1);
-    let mut account = ManagedCoreAccount::dummy_bip44();
+    let mut account = ManagedCoreFundsAccount::dummy_bip44();
 
     // Regular confirmed UTXO
     let utxo1 = Utxo::dummy(1, 100_000, 1000, false, true);
@@ -30,7 +30,7 @@ fn test_balance_with_mixed_utxo_types() {
 #[test]
 fn test_coinbase_maturity_boundary() {
     let mut wallet_info = ManagedWalletInfo::dummy(2);
-    let mut account = ManagedCoreAccount::dummy_bip44();
+    let mut account = ManagedCoreFundsAccount::dummy_bip44();
 
     // Coinbase at height 1000
     let utxo = Utxo::dummy(1, 50_000_000, 1000, true, true);
@@ -52,7 +52,7 @@ fn test_coinbase_maturity_boundary() {
 #[test]
 fn test_locked_utxos_in_locked_balance() {
     let mut wallet_info = ManagedWalletInfo::dummy(3);
-    let mut account = ManagedCoreAccount::dummy_bip44();
+    let mut account = ManagedCoreFundsAccount::dummy_bip44();
 
     let mut utxo = Utxo::dummy(1, 100_000, 1000, false, true);
     utxo.is_locked = true;
@@ -68,7 +68,7 @@ fn test_locked_utxos_in_locked_balance() {
 #[test]
 fn test_unconfirmed_utxos_in_unconfirmed_balance() {
     let mut wallet_info = ManagedWalletInfo::dummy(4);
-    let mut account = ManagedCoreAccount::dummy_bip44();
+    let mut account = ManagedCoreFundsAccount::dummy_bip44();
 
     let utxo = Utxo::dummy(1, 100_000, 0, false, false);
     account.utxos.insert(utxo.outpoint, utxo);

@@ -22,25 +22,25 @@ use key_wallet::account::account_collection::{DashpayAccountKey, PlatformPayment
 use key_wallet::account::TransactionRecord;
 use key_wallet::managed_account::address_pool::AddressPool;
 use key_wallet::managed_account::managed_platform_account::ManagedPlatformAccount;
-use key_wallet::managed_account::ManagedCoreAccount;
+use key_wallet::managed_account::ManagedCoreFundsAccount;
 use key_wallet::AccountType;
 
 /// Opaque managed account handle that wraps ManagedAccount
 pub struct FFIManagedCoreAccount {
     /// The underlying managed account
-    pub(crate) account: Arc<ManagedCoreAccount>,
+    pub(crate) account: Arc<ManagedCoreFundsAccount>,
 }
 
 impl FFIManagedCoreAccount {
     /// Create a new FFI managed account handle
-    pub fn new(account: &ManagedCoreAccount) -> Self {
+    pub fn new(account: &ManagedCoreFundsAccount) -> Self {
         FFIManagedCoreAccount {
             account: Arc::new(account.clone()),
         }
     }
 
     /// Get a reference to the inner managed account
-    pub fn inner(&self) -> &ManagedCoreAccount {
+    pub fn inner(&self) -> &ManagedCoreFundsAccount {
         self.account.as_ref()
     }
 }

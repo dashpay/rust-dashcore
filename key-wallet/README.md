@@ -94,7 +94,7 @@ println!("Wallet ID: {:?}", hex::encode(wallet.wallet_id));
 
 ```rust
 use key_wallet::account::{Account, AccountType, StandardAccountType};
-use key_wallet::managed_account::ManagedCoreAccount;
+use key_wallet::managed_account::ManagedCoreFundsAccount;
 
 // Create a standard BIP44 account
 let account = wallet.create_account(
@@ -106,7 +106,7 @@ let account = wallet.create_account(
 )?;
 
 // Convert to managed account for mutable operations
-let mut managed_account = ManagedCoreAccount::from_account(&account);
+let mut managed_account = ManagedCoreFundsAccount::from_account(&account);
 
 // Generate receive addresses
 let addresses = managed_account.generate_receive_addresses(10)?;
@@ -218,7 +218,7 @@ if result.is_relevant {
 
 - `Wallet`: Main wallet structure managing accounts and keys
 - `Account`: Individual account within a wallet
-- `ManagedCoreAccount`: Mutable account with address pools and metadata
+- `ManagedCoreFundsAccount`: Mutable account with address pools and metadata
 - `Mnemonic`: BIP39 mnemonic phrase handling
 - `ExtendedPrivKey`/`ExtendedPubKey`: BIP32 extended keys
 - `DerivationPath`: HD wallet derivation paths
@@ -240,7 +240,7 @@ if result.is_relevant {
 
 ### From v0.39 to v0.40
 
-- Account structure split into immutable `Account` and mutable `ManagedCoreAccount`
+- Account structure split into immutable `Account` and mutable `ManagedCoreFundsAccount`
 - New transaction checking system with optimized routing
 - Enhanced address pool management with pre-generation support
 - Improved gap limit tracking with staged discovery
