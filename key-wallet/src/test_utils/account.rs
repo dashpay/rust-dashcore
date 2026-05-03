@@ -34,6 +34,6 @@ impl ManagedCoreFundsAccount {
             internal_addresses: internal_pool,
         };
 
-        ManagedCoreFundsAccount::new(account_type, Network::Regtest, false)
+        ManagedCoreFundsAccount::new(account_type, Network::Regtest)
     }
 }

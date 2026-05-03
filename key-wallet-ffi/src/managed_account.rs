@@ -94,14 +94,6 @@ impl FFIManagedCoreAccount {
         }
     }
 
-    /// Whether the underlying account is watch-only.
-    pub fn is_watch_only(&self) -> bool {
-        match &self.inner {
-            FFIManagedCoreAccountInner::Funds(a) => a.is_watch_only,
-            FFIManagedCoreAccountInner::Keys(a) => a.is_watch_only,
-        }
-    }
-
     /// Get a reference to the inner funds account, panicking if this handle
     /// wraps a keys-only account.
     ///
@@ -684,23 +676,6 @@ pub unsafe extern "C" fn managed_core_account_get_account_type(
             ..
         } => FFIAccountKind::PlatformPayment,
     }
-}
-
-/// Check if a managed account is watch-only
-///
-/// # Safety
-///
-/// - `account` must be a valid pointer to an FFIManagedCoreAccount instance
-#[no_mangle]
-pub unsafe extern "C" fn managed_core_account_get_is_watch_only(
-    account: *const FFIManagedCoreAccount,
-) -> bool {
-    if account.is_null() {
-        return false;
-    }
-
-    let account = &*account;
-    account.inner().is_watch_only
 }
 
 /// Get the balance of a managed account
@@ -1730,10 +1705,7 @@ mod tests {
             assert_eq!(result.error_code, 0);
             assert!(result.error_message.is_null());
 
-            // Verify the account was created successfully
-            let account = &*result.account;
             // Account should exist and be valid
-            assert!(!account.inner().is_watch_only);
 
             // Clean up
             managed_core_account_free(result.account);
@@ -1931,10 +1903,6 @@ mod tests {
             assert_eq!(account_type, FFIAccountKind::StandardBIP44);
             assert_eq!(index_out, 0);
 
-            // Test get_is_watch_only
-            let is_watch_only = managed_core_account_get_is_watch_only(account);
-            assert!(!is_watch_only);
-
             // Test get_balance
             let mut balance_out = crate::types::FFIBalance {
                 confirmed: 999,
@@ -1981,9 +1949,6 @@ mod tests {
             let mut index_out: c_uint = 0;
             let account_type = managed_core_account_get_account_type(ptr::null(), &mut index_out);
             assert_eq!(account_type, FFIAccountKind::StandardBIP44); // Default type
-
-            let is_watch_only = managed_core_account_get_is_watch_only(ptr::null());
-            assert!(!is_watch_only);
 
             let tx_count = managed_core_account_get_transaction_count(ptr::null());
             assert_eq!(tx_count, 0);

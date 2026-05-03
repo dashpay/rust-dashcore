@@ -53,14 +53,6 @@ impl OwnedManagedCoreAccount {
         }
     }
 
-    /// Whether this account is watch-only.
-    pub fn is_watch_only(&self) -> bool {
-        match self {
-            OwnedManagedCoreAccount::Funds(a) => a.is_watch_only,
-            OwnedManagedCoreAccount::Keys(a) => a.is_watch_only,
-        }
-    }
-
     /// Borrow as a [`ManagedAccountRef`].
     pub fn as_ref(&self) -> ManagedAccountRef<'_> {
         match self {
@@ -781,7 +773,6 @@ impl ManagedAccountCollection {
         Self::create_managed_account_from_account_type(
             account.account_type,
             account.network,
-            account.is_watch_only,
             &key_source,
         )
     }
@@ -795,7 +786,6 @@ impl ManagedAccountCollection {
         Self::create_managed_account_from_account_type(
             account.account_type,
             account.network,
-            account.is_watch_only,
             &key_source,
         )
     }
@@ -815,13 +805,11 @@ impl ManagedAccountCollection {
         Self::create_managed_account_from_account_type(
             account.account_type,
             account.network,
-            account.is_watch_only,
             &key_source,
         )
     }
 
-    /// Create an [`OwnedManagedCoreAccount`] from an [`AccountType`] plus
-    /// network and watch-only status.
+    /// Create an [`OwnedManagedCoreAccount`] from an [`AccountType`] plus network.
     ///
     /// The variant of the returned [`OwnedManagedCoreAccount`] is determined
     /// by `account_type`: identity / asset-lock / provider types build a
@@ -830,7 +818,6 @@ impl ManagedAccountCollection {
     pub(crate) fn create_managed_account_from_account_type(
         account_type: AccountType,
         network: Network,
-        is_watch_only: bool,
         key_source: &KeySource,
     ) -> Result<OwnedManagedCoreAccount, crate::error::Error> {
         // Get the derivation path for this account type
@@ -1061,17 +1048,9 @@ impl ManagedAccountCollection {
         };
 
         if account_type_is_keys_only(account_type) {
-            Ok(OwnedManagedCoreAccount::Keys(ManagedCoreKeysAccount::new(
-                managed_type,
-                network,
-                is_watch_only,
-            )))
+            Ok(OwnedManagedCoreAccount::Keys(ManagedCoreKeysAccount::new(managed_type, network)))
         } else {
-            Ok(OwnedManagedCoreAccount::Funds(ManagedCoreFundsAccount::new(
-                managed_type,
-                network,
-                is_watch_only,
-            )))
+            Ok(OwnedManagedCoreAccount::Funds(ManagedCoreFundsAccount::new(managed_type, network)))
         }
     }
 

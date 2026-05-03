@@ -48,8 +48,6 @@ pub struct ManagedCoreKeysAccount {
     pub managed_account_type: ManagedAccountType,
     /// Network this account belongs to
     pub network: Network,
-    /// Whether this is a watch-only account
-    pub is_watch_only: bool,
     /// Transaction history for this account.
     ///
     /// Only present when the `keep_txs_in_memory` Cargo feature is enabled.
@@ -73,15 +71,10 @@ pub struct ManagedCoreKeysAccount {
 
 impl ManagedCoreKeysAccount {
     /// Create a new managed keys account
-    pub fn new(
-        managed_account_type: ManagedAccountType,
-        network: Network,
-        is_watch_only: bool,
-    ) -> Self {
+    pub fn new(managed_account_type: ManagedAccountType, network: Network) -> Self {
         Self {
             managed_account_type,
             network,
-            is_watch_only,
             #[cfg(feature = "keep_txs_in_memory")]
             transactions: BTreeMap::new(),
             processed_txids: HashSet::new(),
@@ -146,7 +139,7 @@ impl ManagedCoreKeysAccount {
             .expect("Should succeed with NoKeySource")
         });
 
-        Self::new(managed_type, account.network, account.is_watch_only)
+        Self::new(managed_type, account.network)
     }
 
     /// Create a ManagedCoreKeysAccount from a BLS Account
@@ -168,7 +161,7 @@ impl ManagedCoreKeysAccount {
             .expect("Should succeed with NoKeySource")
         });
 
-        Self::new(managed_type, account.network, account.is_watch_only)
+        Self::new(managed_type, account.network)
     }
 
     /// Create a ManagedCoreKeysAccount from an EdDSA Account
@@ -182,7 +175,7 @@ impl ManagedCoreKeysAccount {
         )
         .expect("Should succeed with NoKeySource");
 
-        Self::new(managed_type, account.network, account.is_watch_only)
+        Self::new(managed_type, account.network)
     }
 
     /// Get the account index
@@ -633,7 +626,6 @@ impl ManagedCoreKeysAccount {
     pub fn address_derivation_path(&self, address: &Address) -> Option<crate::DerivationPath> {
         self.managed_account_type.get_address_derivation_path(address)
     }
-
 
     /// Get total address count across all pools
     pub fn total_address_count(&self) -> usize {
@@ -1276,7 +1268,6 @@ impl<'de> Deserialize<'de> for ManagedCoreKeysAccount {
         struct Helper {
             managed_account_type: ManagedAccountType,
             network: Network,
-            is_watch_only: bool,
             #[cfg(feature = "keep_txs_in_memory")]
             #[serde(default)]
             transactions: BTreeMap<Txid, TransactionRecord>,
@@ -1292,7 +1283,6 @@ impl<'de> Deserialize<'de> for ManagedCoreKeysAccount {
         Ok(ManagedCoreKeysAccount {
             managed_account_type: helper.managed_account_type,
             network: helper.network,
-            is_watch_only: helper.is_watch_only,
             #[cfg(feature = "keep_txs_in_memory")]
             transactions: helper.transactions,
             processed_txids,

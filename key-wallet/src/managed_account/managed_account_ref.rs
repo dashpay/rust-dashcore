@@ -61,14 +61,6 @@ impl<'a> ManagedAccountRef<'a> {
         }
     }
 
-    /// Whether this is a watch-only account.
-    pub fn is_watch_only(&self) -> bool {
-        match self {
-            ManagedAccountRef::Funds(a) => a.is_watch_only,
-            ManagedAccountRef::Keys(a) => a.is_watch_only,
-        }
-    }
-
     /// Check whether the address belongs to this account.
     pub fn contains_address(&self, address: &Address) -> bool {
         match self {
@@ -213,10 +205,7 @@ impl<'a> ManagedAccountRef<'a> {
     /// method on the underlying account; this delegate spares callers
     /// (e.g. broadcast / identity-payment paths that need a path to
     /// produce a signing key) from manual `match`-on-variant dispatch.
-    pub fn address_derivation_path(
-        &self,
-        address: &Address,
-    ) -> Option<crate::DerivationPath> {
+    pub fn address_derivation_path(&self, address: &Address) -> Option<crate::DerivationPath> {
         match self {
             ManagedAccountRef::Funds(a) => a.address_derivation_path(address),
             ManagedAccountRef::Keys(a) => a.address_derivation_path(address),
@@ -246,14 +235,6 @@ impl<'a> ManagedAccountRefMut<'a> {
         match self {
             ManagedAccountRefMut::Funds(a) => a.network,
             ManagedAccountRefMut::Keys(a) => a.network,
-        }
-    }
-
-    /// Whether this is a watch-only account.
-    pub fn is_watch_only(&self) -> bool {
-        match self {
-            ManagedAccountRefMut::Funds(a) => a.is_watch_only,
-            ManagedAccountRefMut::Keys(a) => a.is_watch_only,
         }
     }
 

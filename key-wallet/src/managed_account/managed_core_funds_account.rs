@@ -47,8 +47,6 @@ pub struct ManagedCoreFundsAccount {
     pub managed_account_type: ManagedAccountType,
     /// Network this account belongs to
     pub network: Network,
-    /// Whether this is a watch-only account
-    pub is_watch_only: bool,
     /// Account balance information
     pub balance: WalletCoreBalance,
     /// Transaction history for this account.
@@ -80,15 +78,10 @@ pub struct ManagedCoreFundsAccount {
 
 impl ManagedCoreFundsAccount {
     /// Create a new managed account
-    pub fn new(
-        managed_account_type: ManagedAccountType,
-        network: Network,
-        is_watch_only: bool,
-    ) -> Self {
+    pub fn new(managed_account_type: ManagedAccountType, network: Network) -> Self {
         Self {
             managed_account_type,
             network,
-            is_watch_only,
             balance: WalletCoreBalance::default(),
             #[cfg(feature = "keep_txs_in_memory")]
             transactions: BTreeMap::new(),
@@ -160,7 +153,7 @@ impl ManagedCoreFundsAccount {
             .expect("Should succeed with NoKeySource")
         });
 
-        Self::new(managed_type, account.network, account.is_watch_only)
+        Self::new(managed_type, account.network)
     }
 
     /// Create a ManagedAccount from a BLS Account
@@ -184,7 +177,7 @@ impl ManagedCoreFundsAccount {
             .expect("Should succeed with NoKeySource")
         });
 
-        Self::new(managed_type, account.network, account.is_watch_only)
+        Self::new(managed_type, account.network)
     }
 
     /// Create a ManagedAccount from an EdDSA Account
@@ -199,7 +192,7 @@ impl ManagedCoreFundsAccount {
         )
         .expect("Should succeed with NoKeySource");
 
-        Self::new(managed_type, account.network, account.is_watch_only)
+        Self::new(managed_type, account.network)
     }
 
     /// Get the account index
@@ -1339,10 +1332,6 @@ impl ManagedAccountTrait for ManagedCoreFundsAccount {
         self.network
     }
 
-    fn is_watch_only(&self) -> bool {
-        self.is_watch_only
-    }
-
     fn balance(&self) -> &WalletCoreBalance {
         &self.balance
     }
@@ -1380,7 +1369,6 @@ impl<'de> Deserialize<'de> for ManagedCoreFundsAccount {
         struct Helper {
             managed_account_type: ManagedAccountType,
             network: Network,
-            is_watch_only: bool,
             balance: WalletCoreBalance,
             #[serde(default)]
             transactions: BTreeMap<Txid, TransactionRecord>,
@@ -1400,7 +1388,6 @@ impl<'de> Deserialize<'de> for ManagedCoreFundsAccount {
         Ok(ManagedCoreFundsAccount {
             managed_account_type: helper.managed_account_type,
             network: helper.network,
-            is_watch_only: helper.is_watch_only,
             balance: helper.balance,
             #[cfg(feature = "keep_txs_in_memory")]
             transactions: helper.transactions,
