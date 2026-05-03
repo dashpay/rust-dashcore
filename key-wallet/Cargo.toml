@@ -9,7 +9,7 @@ readme = "README.md"
 license = "CC0-1.0"
 
 [features]
-default = ["getrandom", "keep_txs_in_memory"]
+default = ["getrandom"]
 serde = ["dep:serde", "dep:serde_json", "dashcore_hashes/serde", "secp256k1/serde", "dashcore/serde"]
 bincode = ["serde", "dep:bincode", "dep:bincode_derive", "dashcore_hashes/bincode", "dashcore/bincode"]
 bip38 = ["scrypt", "aes", "bs58", "rand"]
