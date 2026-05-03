@@ -10,7 +10,9 @@ mod helpers;
 mod asset_unlock;
 #[cfg(test)]
 mod classification;
-#[cfg(test)]
+// `coinbase` exercises in-memory transaction storage; only built when the
+// `keep_txs_in_memory` Cargo feature is enabled.
+#[cfg(all(test, feature = "keep_txs_in_memory"))]
 mod coinbase;
 #[cfg(test)]
 mod coinjoin;

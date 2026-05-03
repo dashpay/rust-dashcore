@@ -24,6 +24,9 @@ mod special_transaction_tests;
 
 mod transaction_tests;
 
+// `spent_outpoints_tests` populates `account.transactions` directly, so it
+// only compiles with the `keep_txs_in_memory` Cargo feature enabled.
+#[cfg(feature = "keep_txs_in_memory")]
 mod spent_outpoints_tests;
 
 mod keep_txs_in_memory_tests;

@@ -7,6 +7,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use super::managed_account_operations::ManagedAccountOperations;
 use crate::account::{AccountType, ManagedAccountTrait};
 use crate::managed_account::managed_account_collection::ManagedAccountCollection;
+#[cfg(feature = "keep_txs_in_memory")]
 use crate::transaction_checking::TransactionContext;
 use crate::transaction_checking::WalletTransactionChecker;
 use crate::wallet::managed_wallet_info::TransactionRecord;
@@ -229,11 +230,16 @@ impl WalletInfoInterface for ManagedWalletInfo {
     }
 
     fn transaction_history(&self) -> Vec<&TransactionRecord> {
-        let mut transactions = Vec::new();
-        for account in self.accounts.all_accounts() {
-            transactions.extend(account.transactions.values());
+        #[cfg(feature = "keep_txs_in_memory")]
+        {
+            let mut transactions = Vec::new();
+            for account in self.accounts.all_accounts() {
+                transactions.extend(account.transactions.values());
+            }
+            transactions
         }
-        transactions
+        #[cfg(not(feature = "keep_txs_in_memory"))]
+        Vec::new()
     }
 
     fn accounts_mut(&mut self) -> &mut ManagedAccountCollection {
@@ -245,27 +251,32 @@ impl WalletInfoInterface for ManagedWalletInfo {
     }
 
     fn immature_transactions(&self) -> Vec<Transaction> {
-        let mut immature_txids: BTreeSet<Txid> = BTreeSet::new();
+        #[cfg(feature = "keep_txs_in_memory")]
+        {
+            let mut immature_txids: BTreeSet<Txid> = BTreeSet::new();
 
-        // Find txids of immature coinbase UTXOs
-        for account in self.accounts.all_accounts() {
-            for utxo in account.utxos.values() {
-                if utxo.is_coinbase && !utxo.is_mature(self.last_processed_height()) {
-                    immature_txids.insert(utxo.outpoint.txid);
+            // Find txids of immature coinbase UTXOs
+            for account in self.accounts.all_accounts() {
+                for utxo in account.utxos.values() {
+                    if utxo.is_coinbase && !utxo.is_mature(self.last_processed_height()) {
+                        immature_txids.insert(utxo.outpoint.txid);
+                    }
                 }
             }
-        }
 
-        // Get the actual transactions
-        let mut transactions = Vec::new();
-        for account in self.accounts.all_accounts() {
-            for (txid, record) in &account.transactions {
-                if immature_txids.contains(txid) {
-                    transactions.push(record.transaction.clone());
+            // Get the actual transactions
+            let mut transactions = Vec::new();
+            for account in self.accounts.all_accounts() {
+                for (txid, record) in &account.transactions {
+                    if immature_txids.contains(txid) {
+                        transactions.push(record.transaction.clone());
+                    }
                 }
             }
+            transactions
         }
-        transactions
+        #[cfg(not(feature = "keep_txs_in_memory"))]
+        Vec::new()
     }
 
     fn update_last_processed_height(&mut self, current_height: u32) {
@@ -286,22 +297,27 @@ impl WalletInfoInterface for ManagedWalletInfo {
         if new_height <= old_height {
             return Vec::new();
         }
-        let mut matured = Vec::new();
-        for account in self.accounts.all_accounts() {
-            for record in account.transactions.values() {
-                if !record.transaction.is_coin_base() {
-                    continue;
-                }
-                let Some(record_height) = record.height() else {
-                    continue;
-                };
-                let maturity_height = record_height.saturating_add(100);
-                if maturity_height > old_height && maturity_height <= new_height {
-                    matured.push(record.clone());
+        #[cfg(feature = "keep_txs_in_memory")]
+        {
+            let mut matured = Vec::new();
+            for account in self.accounts.all_accounts() {
+                for record in account.transactions.values() {
+                    if !record.transaction.is_coin_base() {
+                        continue;
+                    }
+                    let Some(record_height) = record.height() else {
+                        continue;
+                    };
+                    let maturity_height = record_height.saturating_add(100);
+                    if maturity_height > old_height && maturity_height <= new_height {
+                        matured.push(record.clone());
+                    }
                 }
             }
+            matured
         }
-        matured
+        #[cfg(not(feature = "keep_txs_in_memory"))]
+        Vec::new()
     }
 
     fn mark_instant_send_utxos(&mut self, txid: &Txid, lock: &InstantLock) -> bool {
@@ -313,10 +329,13 @@ impl WalletInfoInterface for ManagedWalletInfo {
             if account.mark_utxos_instant_send(txid) {
                 any_changed = true;
             }
+            #[cfg(feature = "keep_txs_in_memory")]
             if let Some(record) = account.transactions_mut().get_mut(txid) {
                 record.update_context(TransactionContext::InstantSend(lock.clone()));
             }
         }
+        #[cfg(not(feature = "keep_txs_in_memory"))]
+        let _ = lock;
         if any_changed {
             self.update_balance();
         }

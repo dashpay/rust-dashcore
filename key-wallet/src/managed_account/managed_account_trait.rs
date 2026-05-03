@@ -5,12 +5,14 @@
 use std::collections::BTreeMap;
 
 use crate::account::AccountMetadata;
+#[cfg(feature = "keep_txs_in_memory")]
 use crate::account::TransactionRecord;
 use crate::managed_account::managed_account_type::ManagedAccountType;
 use crate::utxo::Utxo;
 use crate::wallet::balance::WalletCoreBalance;
 use crate::Network;
 use dashcore::blockdata::transaction::OutPoint;
+#[cfg(feature = "keep_txs_in_memory")]
 use dashcore::Txid;
 
 /// Common trait for all managed account types
@@ -39,10 +41,16 @@ pub trait ManagedAccountTrait {
     /// Get mutable balance
     fn balance_mut(&mut self) -> &mut WalletCoreBalance;
 
-    /// Get transactions
+    /// Get transactions.
+    ///
+    /// Only available when the `keep_txs_in_memory` Cargo feature is enabled.
+    #[cfg(feature = "keep_txs_in_memory")]
     fn transactions(&self) -> &BTreeMap<Txid, TransactionRecord>;
 
-    /// Get mutable transactions
+    /// Get mutable transactions.
+    ///
+    /// Only available when the `keep_txs_in_memory` Cargo feature is enabled.
+    #[cfg(feature = "keep_txs_in_memory")]
     fn transactions_mut(&mut self) -> &mut BTreeMap<Txid, TransactionRecord>;
 
     /// Get UTXOs

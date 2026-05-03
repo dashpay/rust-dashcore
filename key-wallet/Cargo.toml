@@ -9,13 +9,16 @@ readme = "README.md"
 license = "CC0-1.0"
 
 [features]
-default = ["getrandom"]
+default = ["getrandom", "keep_txs_in_memory"]
 serde = ["dep:serde", "dep:serde_json", "dashcore_hashes/serde", "secp256k1/serde", "dashcore/serde"]
 bincode = ["serde", "dep:bincode", "dep:bincode_derive", "dashcore_hashes/bincode", "dashcore/bincode"]
 bip38 = ["scrypt", "aes", "bs58", "rand"]
 eddsa = ["dashcore/eddsa"]
 bls = ["dashcore/bls"]
 test-utils = ["dashcore/test-utils"]
+# Keep per-account transaction history (`ManagedCoreAccount::transactions`) in memory.
+# Disable to skip storing transaction records when only UTXOs and balances matter.
+keep_txs_in_memory = []
 
 [dependencies]
 internals = { path = "../internals", package = "dashcore-private" }
@@ -46,7 +49,7 @@ async-trait = "0.1"
 [dev-dependencies]
 dashcore = { path="../dash", features = ["test-utils"] }
 hex = "0.4"
-key-wallet = { path = ".", features = ["test-utils", "bip38", "serde", "bincode", "eddsa", "bls"] }
+key-wallet = { path = ".", default-features = false, features = ["test-utils", "bip38", "serde", "bincode", "eddsa", "bls", "getrandom"] }
 rand = { version = "0.8", features = ["std", "std_rng"] }
 test-case = "3.3"
 tokio = { version = "1", features = ["macros", "rt"] }
