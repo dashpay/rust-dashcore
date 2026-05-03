@@ -513,7 +513,6 @@ impl ManagedAccountCollection {
         Self::create_managed_account_from_account_type(
             account.account_type,
             account.network,
-            account.is_watch_only,
             &key_source,
         )
     }
@@ -527,7 +526,6 @@ impl ManagedAccountCollection {
         Self::create_managed_account_from_account_type(
             account.account_type,
             account.network,
-            account.is_watch_only,
             &key_source,
         )
     }
@@ -546,16 +544,14 @@ impl ManagedAccountCollection {
         Self::create_managed_account_from_account_type(
             account.account_type,
             account.network,
-            account.is_watch_only,
             &key_source,
         )
     }
 
-    /// Create a ManagedAccount from an Account type with network and watch-only status
+    /// Create a ManagedAccount from an Account type with network
     fn create_managed_account_from_account_type(
         account_type: AccountType,
         network: Network,
-        is_watch_only: bool,
         key_source: &KeySource,
     ) -> Result<ManagedCoreAccount, crate::error::Error> {
         // Get the derivation path for this account type
@@ -785,7 +781,7 @@ impl ManagedAccountCollection {
             }
         };
 
-        Ok(ManagedCoreAccount::new(managed_type, network, is_watch_only))
+        Ok(ManagedCoreAccount::new(managed_type, network))
     }
 
     /// Create a ManagedPlatformAccount from an Account for Platform Payment accounts

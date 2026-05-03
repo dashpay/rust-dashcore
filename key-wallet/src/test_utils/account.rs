@@ -34,6 +34,6 @@ impl ManagedCoreAccount {
             internal_addresses: internal_pool,
         };
 
-        ManagedCoreAccount::new(account_type, Network::Regtest, false)
+        ManagedCoreAccount::new(account_type, Network::Regtest)
     }
 }

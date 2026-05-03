@@ -56,8 +56,6 @@ pub struct ManagedCoreAccount {
     pub network: Network,
     /// Account metadata
     pub metadata: AccountMetadata,
-    /// Whether this is a watch-only account
-    pub is_watch_only: bool,
     /// Account balance information
     pub balance: WalletCoreBalance,
     /// Transaction history for this account
@@ -76,16 +74,11 @@ pub struct ManagedCoreAccount {
 
 impl ManagedCoreAccount {
     /// Create a new managed account
-    pub fn new(
-        managed_account_type: ManagedAccountType,
-        network: Network,
-        is_watch_only: bool,
-    ) -> Self {
+    pub fn new(managed_account_type: ManagedAccountType, network: Network) -> Self {
         Self {
             managed_account_type,
             network,
             metadata: AccountMetadata::default(),
-            is_watch_only,
             balance: WalletCoreBalance::default(),
             transactions: BTreeMap::new(),
             utxos: BTreeMap::new(),
@@ -129,7 +122,7 @@ impl ManagedCoreAccount {
             .expect("Should succeed with NoKeySource")
         });
 
-        Self::new(managed_type, account.network, account.is_watch_only)
+        Self::new(managed_type, account.network)
     }
 
     /// Create a ManagedAccount from a BLS Account
@@ -153,7 +146,7 @@ impl ManagedCoreAccount {
             .expect("Should succeed with NoKeySource")
         });
 
-        Self::new(managed_type, account.network, account.is_watch_only)
+        Self::new(managed_type, account.network)
     }
 
     /// Create a ManagedAccount from an EdDSA Account
@@ -168,7 +161,7 @@ impl ManagedCoreAccount {
         )
         .expect("Should succeed with NoKeySource");
 
-        Self::new(managed_type, account.network, account.is_watch_only)
+        Self::new(managed_type, account.network)
     }
 
     /// Get the account index
@@ -1310,10 +1303,6 @@ impl ManagedAccountTrait for ManagedCoreAccount {
         &mut self.metadata
     }
 
-    fn is_watch_only(&self) -> bool {
-        self.is_watch_only
-    }
-
     fn balance(&self) -> &WalletCoreBalance {
         &self.balance
     }
@@ -1350,7 +1339,6 @@ impl<'de> Deserialize<'de> for ManagedCoreAccount {
             managed_account_type: ManagedAccountType,
             network: Network,
             metadata: AccountMetadata,
-            is_watch_only: bool,
             balance: WalletCoreBalance,
             transactions: BTreeMap<Txid, TransactionRecord>,
             utxos: BTreeMap<OutPoint, Utxo>,
@@ -1369,7 +1357,6 @@ impl<'de> Deserialize<'de> for ManagedCoreAccount {
             managed_account_type: helper.managed_account_type,
             network: helper.network,
             metadata: helper.metadata,
-            is_watch_only: helper.is_watch_only,
             balance: helper.balance,
             transactions: helper.transactions,
             utxos: helper.utxos,

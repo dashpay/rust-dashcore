@@ -30,9 +30,6 @@ pub trait ManagedAccountTrait {
     /// Get mutable metadata
     fn metadata_mut(&mut self) -> &mut AccountMetadata;
 
-    /// Check if this is a watch-only account
-    fn is_watch_only(&self) -> bool;
-
     /// Get balance
     fn balance(&self) -> &WalletCoreBalance;
 
