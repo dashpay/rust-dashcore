@@ -66,23 +66,9 @@ impl QualifiedQuorumEntry {
     ///
     /// * `result` - A `Result` containing either success (`Ok`) or a `QuorumValidationError`.
     pub fn update_quorum_status(&mut self, result: Result<(), QuorumValidationError>) {
-        match result {
-            Err(QuorumValidationError::RequiredBlockNotPresent(block_hash, _)) => {
-                self.verified = LLMQEntryVerificationStatus::Skipped(
-                    LLMQEntryVerificationSkipStatus::UnknownBlock(block_hash),
-                );
-            }
-            Err(QuorumValidationError::RequiredMasternodeListNotPresent(block_height)) => {
-                self.verified = LLMQEntryVerificationStatus::Skipped(
-                    LLMQEntryVerificationSkipStatus::MissedList(block_height),
-                );
-            }
-            Err(e) => {
-                self.verified = LLMQEntryVerificationStatus::Invalid(e);
-            }
-            Ok(_) => {
-                self.verified = LLMQEntryVerificationStatus::Verified;
-            }
-        }
+        self.verified = match result {
+            Ok(_) => LLMQEntryVerificationStatus::Verified,
+            Err(e) => e.into(),
+        };
     }
 }
