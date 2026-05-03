@@ -69,6 +69,14 @@ pub struct ManagedCoreAccount {
     pub transactions: BTreeMap<Txid, TransactionRecord>,
     /// UTXO set for this account
     pub utxos: BTreeMap<OutPoint, Utxo>,
+    /// Txids of every transaction this account has already processed.
+    ///
+    /// Always populated regardless of `keep_txs_in_memory`, so the
+    /// dedup guard in `confirm_transaction` works in either feature
+    /// configuration. Rebuilt from `transactions` during deserialization
+    /// when the feature is enabled.
+    #[cfg_attr(feature = "serde", serde(skip_serializing))]
+    pub(crate) processed_txids: HashSet<Txid>,
     /// Outpoints spent by recorded transactions.
     /// Rebuilt from `transactions` during deserialization.
     #[cfg_attr(feature = "serde", serde(skip_serializing))]
@@ -95,25 +103,20 @@ impl ManagedCoreAccount {
             #[cfg(feature = "keep_txs_in_memory")]
             transactions: BTreeMap::new(),
             utxos: BTreeMap::new(),
+            processed_txids: HashSet::new(),
             spent_outpoints: HashSet::new(),
             monitor_revision: 0,
         }
     }
 
-    /// Returns `true` if a transaction record for `txid` is stored on this account.
+    /// Returns `true` if this account has already processed `txid`.
     ///
-    /// Always returns `false` when the `keep_txs_in_memory` Cargo feature is
-    /// disabled, since no records are kept.
+    /// Backed by an always-present `processed_txids` set, so this works
+    /// regardless of whether the `keep_txs_in_memory` Cargo feature is
+    /// enabled. Use [`Self::get_transaction`] to retrieve the full record
+    /// (only available when the feature is enabled).
     pub fn has_transaction(&self, txid: &Txid) -> bool {
-        #[cfg(feature = "keep_txs_in_memory")]
-        {
-            self.transactions.contains_key(txid)
-        }
-        #[cfg(not(feature = "keep_txs_in_memory"))]
-        {
-            let _ = txid;
-            false
-        }
+        self.processed_txids.contains(txid)
     }
 
     /// Returns the stored transaction record for `txid`, if any.
@@ -463,9 +466,11 @@ impl ManagedCoreAccount {
     /// Re-process an existing transaction with updated context (e.g., mempool→block confirmation)
     /// and potentially new address matches from gap limit rescans.
     ///
-    /// When the `keep_txs_in_memory` Cargo feature is disabled, no per-tx
-    /// records exist, so this always falls through to `record_transaction`
-    /// and reports the call as a state change.
+    /// Deduplication uses `processed_txids`, which is populated regardless
+    /// of the `keep_txs_in_memory` Cargo feature. When the feature is off
+    /// the per-tx record isn't stored, so we can't detect a confirmation
+    /// status transition; we still refresh the UTXO state and report no
+    /// change.
     pub(crate) fn confirm_transaction(
         &mut self,
         tx: &Transaction,
@@ -473,39 +478,39 @@ impl ManagedCoreAccount {
         context: TransactionContext,
         transaction_type: TransactionType,
     ) -> bool {
-        #[cfg(feature = "keep_txs_in_memory")]
-        {
-            if !self.transactions.contains_key(&tx.txid()) {
-                self.record_transaction(tx, account_match, context, transaction_type);
-                return true;
-            }
+        if !self.processed_txids.contains(&tx.txid()) {
+            self.record_transaction(tx, account_match, context, transaction_type);
+            return true;
+        }
 
-            let mut changed = false;
-            if let Some(tx_record) = self.transactions.get_mut(&tx.txid()) {
-                debug_assert_eq!(
-                    tx_record.transaction_type,
-                    transaction_type,
-                    "transaction_type changed between recordings for {}",
-                    tx.txid()
-                );
-                if tx_record.context != context {
-                    let was_confirmed = tx_record.context.confirmed();
-                    tx_record.update_context(context.clone());
-                    // Only signal a change when confirmation status actually changes,
-                    // not for upgrades within the confirmed state (e.g. InBlock → InChainLockedBlock).
-                    // TODO: emit a change event for InBlock → InChainLockedBlock once chainlock
-                    // wallet transaction events are properly handled
-                    changed = !was_confirmed;
-                }
+        #[cfg_attr(not(feature = "keep_txs_in_memory"), allow(unused_mut))]
+        let mut changed = false;
+        #[cfg(feature = "keep_txs_in_memory")]
+        if let Some(tx_record) = self.transactions.get_mut(&tx.txid()) {
+            debug_assert_eq!(
+                tx_record.transaction_type,
+                transaction_type,
+                "transaction_type changed between recordings for {}",
+                tx.txid()
+            );
+            if tx_record.context != context {
+                let was_confirmed = tx_record.context.confirmed();
+                tx_record.update_context(context.clone());
+                // Only signal a change when confirmation status actually changes,
+                // not for upgrades within the confirmed state (e.g. InBlock → InChainLockedBlock).
+                // TODO: emit a change event for InBlock → InChainLockedBlock once chainlock
+                // wallet transaction events are properly handled
+                changed = !was_confirmed;
             }
-            self.update_utxos(tx, account_match, context);
-            changed
         }
         #[cfg(not(feature = "keep_txs_in_memory"))]
         {
-            self.record_transaction(tx, account_match, context, transaction_type);
-            true
+            // No record stored — silence the unused-binding warning on
+            // `transaction_type` and let UTXO state convey the upgrade.
+            let _ = transaction_type;
         }
+        self.update_utxos(tx, account_match, context);
+        changed
     }
 
     /// Record a new transaction and update UTXOs for spendable account types
@@ -610,6 +615,7 @@ impl ManagedCoreAccount {
         );
 
         let record = tx_record.clone();
+        self.processed_txids.insert(tx.txid());
         #[cfg(feature = "keep_txs_in_memory")]
         self.transactions.insert(tx.txid(), tx_record);
 
@@ -1412,6 +1418,7 @@ impl<'de> Deserialize<'de> for ManagedCoreAccount {
 
         let helper = Helper::deserialize(deserializer)?;
 
+        let processed_txids: HashSet<Txid> = helper.transactions.keys().copied().collect();
         let spent_outpoints = helper
             .transactions
             .values()
@@ -1428,6 +1435,7 @@ impl<'de> Deserialize<'de> for ManagedCoreAccount {
             #[cfg(feature = "keep_txs_in_memory")]
             transactions: helper.transactions,
             utxos: helper.utxos,
+            processed_txids,
             spent_outpoints,
             monitor_revision: 0,
         })

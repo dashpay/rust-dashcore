@@ -1139,13 +1139,17 @@ mod tests {
         let (mut ctx, tx) = TestWalletContext::new_random().with_mempool_funding(300_000).await;
         let txid = tx.txid();
 
-        // Simulate the account missing the mempool record by removing it
+        // Simulate the account missing the mempool record by removing it.
+        // Clear `processed_txids` too — otherwise the always-present dedup
+        // set would keep `has_transaction` truthy and the wallet checker
+        // wouldn't treat this confirmation as new.
         let account = ctx
             .managed_wallet
             .first_bip44_managed_account_mut()
             .expect("Should have BIP44 account");
         assert!(account.transactions.contains_key(&txid));
         account.transactions.remove(&txid);
+        account.processed_txids.remove(&txid);
         assert!(!account.transactions.contains_key(&txid));
 
         // Now process the same tx as a block confirmation.
@@ -1195,6 +1199,7 @@ mod tests {
             .first_bip44_managed_account_mut()
             .expect("Should have BIP44 account");
         account.transactions.remove(&txid);
+        account.processed_txids.remove(&txid);
         account.utxos.clear();
         assert!(!account.transactions.contains_key(&txid));
         assert!(account.utxos.is_empty());
