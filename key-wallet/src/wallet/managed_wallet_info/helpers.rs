@@ -69,7 +69,10 @@ impl ManagedWalletInfo {
     }
 
     /// Get a CoinJoin managed account at a specific index
-    pub fn coinjoin_managed_account_at_index(&self, index: u32) -> Option<&ManagedCoreFundsAccount> {
+    pub fn coinjoin_managed_account_at_index(
+        &self,
+        index: u32,
+    ) -> Option<&ManagedCoreFundsAccount> {
         self.accounts.coinjoin_accounts.get(&index)
     }
 
@@ -117,7 +120,9 @@ impl ManagedWalletInfo {
     }
 
     /// Get the identity registration managed account (mutable)
-    pub fn identity_registration_managed_account_mut(&mut self) -> Option<&mut ManagedCoreFundsAccount> {
+    pub fn identity_registration_managed_account_mut(
+        &mut self,
+    ) -> Option<&mut ManagedCoreFundsAccount> {
         self.accounts.identity_registration.as_mut()
     }
 
@@ -143,7 +148,9 @@ impl ManagedWalletInfo {
     }
 
     /// Get the identity invitation managed account (mutable)
-    pub fn identity_invitation_managed_account_mut(&mut self) -> Option<&mut ManagedCoreFundsAccount> {
+    pub fn identity_invitation_managed_account_mut(
+        &mut self,
+    ) -> Option<&mut ManagedCoreFundsAccount> {
         self.accounts.identity_invitation.as_mut()
     }
 
@@ -155,7 +162,9 @@ impl ManagedWalletInfo {
     }
 
     /// Get the provider voting keys managed account (mutable)
-    pub fn provider_voting_keys_managed_account_mut(&mut self) -> Option<&mut ManagedCoreFundsAccount> {
+    pub fn provider_voting_keys_managed_account_mut(
+        &mut self,
+    ) -> Option<&mut ManagedCoreFundsAccount> {
         self.accounts.provider_voting_keys.as_mut()
     }
 
@@ -167,7 +176,9 @@ impl ManagedWalletInfo {
     }
 
     /// Get the provider owner keys managed account (mutable)
-    pub fn provider_owner_keys_managed_account_mut(&mut self) -> Option<&mut ManagedCoreFundsAccount> {
+    pub fn provider_owner_keys_managed_account_mut(
+        &mut self,
+    ) -> Option<&mut ManagedCoreFundsAccount> {
         self.accounts.provider_owner_keys.as_mut()
     }
 
