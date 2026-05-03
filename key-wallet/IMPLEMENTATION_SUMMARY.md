@@ -180,10 +180,10 @@ let account = wallet.create_account(
 )?;
 
 // Wrap in a managed account for mutable operations
-let mut managed = ManagedCoreAccount::from_account(&account);
+let mut managed = ManagedCoreFundsAccount::from_account(&account);
 
 // Get a receive address
-let address = managed.get_next_receive_address()?;
+let address = managed.next_receive_address(Some(&account.account_xpub), true)?;
 ```
 
 ## Dependencies

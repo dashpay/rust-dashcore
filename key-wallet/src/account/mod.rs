@@ -38,7 +38,7 @@ pub use crate::managed_account::metadata::AccountMetadata;
 pub use crate::managed_account::transaction_record::{
     InputDetail, OutputDetail, OutputRole, TransactionDirection, TransactionRecord,
 };
-pub use crate::managed_account::ManagedCoreAccount;
+pub use crate::managed_account::ManagedCoreFundsAccount;
 pub use account_collection::AccountCollection;
 pub use account_trait::AccountTrait;
 pub use account_type::{AccountType, StandardAccountType};
