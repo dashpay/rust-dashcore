@@ -60,10 +60,16 @@ pub struct ManagedCoreAccount {
     pub is_watch_only: bool,
     /// Account balance information
     pub balance: WalletCoreBalance,
-    /// Transaction history for this account
+    /// Transaction history for this account.
+    /// Stays empty when [`Self::keep_txs_in_memory`] is `false`.
     pub transactions: BTreeMap<Txid, TransactionRecord>,
     /// UTXO set for this account
     pub utxos: BTreeMap<OutPoint, Utxo>,
+    /// When `true` (default), processed transactions are inserted into
+    /// `transactions`. When `false`, the map stays empty even as new
+    /// transactions are processed; UTXOs and balance are still tracked.
+    #[cfg_attr(feature = "serde", serde(default = "default_keep_txs_in_memory"))]
+    pub keep_txs_in_memory: bool,
     /// Outpoints spent by recorded transactions.
     /// Rebuilt from `transactions` during deserialization.
     #[cfg_attr(feature = "serde", serde(skip_serializing))]
@@ -72,6 +78,11 @@ pub struct ManagedCoreAccount {
     /// (e.g. new addresses generated). Used to detect bloom filter staleness.
     #[cfg_attr(feature = "serde", serde(skip_serializing))]
     monitor_revision: u64,
+}
+
+#[cfg(feature = "serde")]
+fn default_keep_txs_in_memory() -> bool {
+    true
 }
 
 impl ManagedCoreAccount {
@@ -89,8 +100,28 @@ impl ManagedCoreAccount {
             balance: WalletCoreBalance::default(),
             transactions: BTreeMap::new(),
             utxos: BTreeMap::new(),
+            keep_txs_in_memory: true,
             spent_outpoints: HashSet::new(),
             monitor_revision: 0,
+        }
+    }
+
+    /// Builder helper: set whether transactions are retained in memory.
+    /// Disabling clears any already-stored records.
+    pub fn with_keep_txs_in_memory(mut self, keep: bool) -> Self {
+        self.set_keep_txs_in_memory(keep);
+        self
+    }
+
+    /// Enable or disable transaction history retention in memory.
+    ///
+    /// When set to `false`, the `transactions` map is cleared and future
+    /// transactions are not inserted into it. UTXOs and balance continue to
+    /// be tracked normally.
+    pub fn set_keep_txs_in_memory(&mut self, keep: bool) {
+        self.keep_txs_in_memory = keep;
+        if !keep {
+            self.transactions.clear();
         }
     }
 
@@ -560,7 +591,9 @@ impl ManagedCoreAccount {
         );
 
         let record = tx_record.clone();
-        self.transactions.insert(tx.txid(), tx_record);
+        if self.keep_txs_in_memory {
+            self.transactions.insert(tx.txid(), tx_record);
+        }
 
         self.update_utxos(tx, account_match, context);
         record
@@ -1354,6 +1387,8 @@ impl<'de> Deserialize<'de> for ManagedCoreAccount {
             balance: WalletCoreBalance,
             transactions: BTreeMap<Txid, TransactionRecord>,
             utxos: BTreeMap<OutPoint, Utxo>,
+            #[serde(default = "default_keep_txs_in_memory")]
+            keep_txs_in_memory: bool,
         }
 
         let helper = Helper::deserialize(deserializer)?;
@@ -1365,14 +1400,21 @@ impl<'de> Deserialize<'de> for ManagedCoreAccount {
             .map(|input| input.previous_output)
             .collect();
 
+        let transactions = if helper.keep_txs_in_memory {
+            helper.transactions
+        } else {
+            BTreeMap::new()
+        };
+
         Ok(ManagedCoreAccount {
             managed_account_type: helper.managed_account_type,
             network: helper.network,
             metadata: helper.metadata,
             is_watch_only: helper.is_watch_only,
             balance: helper.balance,
-            transactions: helper.transactions,
+            transactions,
             utxos: helper.utxos,
+            keep_txs_in_memory: helper.keep_txs_in_memory,
             spent_outpoints,
             monitor_revision: 0,
         })
