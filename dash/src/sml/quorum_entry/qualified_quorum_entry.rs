@@ -56,33 +56,61 @@ impl From<QuorumEntry> for QualifiedQuorumEntry {
 impl QualifiedQuorumEntry {
     /// Updates the verification status of the quorum based on a validation result.
     ///
-    /// This method processes the result of a quorum validation and updates the `verified` field accordingly:
-    /// - If validation succeeds (`Ok(_)`), the status is set to `Verified`.
-    /// - If validation fails due to a missing block, it is marked as `Skipped` with `UnknownBlock`.
-    /// - If validation fails due to a missing masternode list, it is marked as `Skipped` with `MissedList`.
-    /// - Other errors result in the quorum being marked as `Invalid`.
-    ///
-    /// # Arguments
-    ///
-    /// * `result` - A `Result` containing either success (`Ok`) or a `QuorumValidationError`.
+    /// On `Ok`, sets `verified` to `Verified`. On `Err`, classifies the error
+    /// via `From<QuorumValidationError> for LLMQEntryVerificationStatus`,
+    /// which decides whether the failure is `Skipped` (missing infrastructure
+    /// the caller should have provided) or `Invalid` (genuinely bad quorum
+    /// data).
     pub fn update_quorum_status(&mut self, result: Result<(), QuorumValidationError>) {
-        match result {
-            Err(QuorumValidationError::RequiredBlockNotPresent(block_hash, _)) => {
-                self.verified = LLMQEntryVerificationStatus::Skipped(
-                    LLMQEntryVerificationSkipStatus::UnknownBlock(block_hash),
-                );
-            }
-            Err(QuorumValidationError::RequiredMasternodeListNotPresent(block_height)) => {
-                self.verified = LLMQEntryVerificationStatus::Skipped(
-                    LLMQEntryVerificationSkipStatus::MissedList(block_height),
-                );
-            }
-            Err(e) => {
-                self.verified = LLMQEntryVerificationStatus::Invalid(e);
-            }
-            Ok(_) => {
-                self.verified = LLMQEntryVerificationStatus::Verified;
-            }
+        self.verified = match result {
+            Ok(_) => LLMQEntryVerificationStatus::Verified,
+            Err(e) => e.into(),
+        };
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use hashes::Hash;
+
+    use super::*;
+    use crate::QuorumHash;
+    use crate::bls_sig_utils::{BLSPublicKey, BLSSignature};
+    use crate::hash_types::QuorumVVecHash;
+    use crate::sml::llmq_type::LLMQType;
+
+    fn dummy_qualified_quorum_entry() -> QualifiedQuorumEntry {
+        QuorumEntry {
+            version: 2,
+            llmq_type: LLMQType::LlmqtypeTestDIP0024,
+            quorum_hash: QuorumHash::all_zeros(),
+            quorum_index: Some(0),
+            signers: vec![true; 4],
+            valid_members: vec![true; 4],
+            quorum_public_key: BLSPublicKey::from([1; 48]),
+            quorum_vvec_hash: QuorumVVecHash::all_zeros(),
+            threshold_sig: BLSSignature::from([1; 96]),
+            all_commitment_aggregated_signature: BLSSignature::from([1; 96]),
         }
+        .into()
+    }
+
+    #[test]
+    fn update_quorum_status_delegates_to_classifier() {
+        let mut entry = dummy_qualified_quorum_entry();
+        entry.update_quorum_status(Ok(()));
+        assert_eq!(entry.verified, LLMQEntryVerificationStatus::Verified);
+
+        let snapshot_hash = QuorumHash::from_byte_array([7; 32]);
+        let mut entry = dummy_qualified_quorum_entry();
+        entry.update_quorum_status(Err(QuorumValidationError::RequiredSnapshotNotPresent(
+            snapshot_hash,
+        )));
+        assert_eq!(
+            entry.verified,
+            LLMQEntryVerificationStatus::Skipped(LLMQEntryVerificationSkipStatus::MissingSnapshot(
+                snapshot_hash,
+            )),
+        );
     }
 }
