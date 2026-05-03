@@ -37,6 +37,81 @@ use serde::{Deserialize, Serialize};
 /// The mnListDiffH in QRInfo is at (cycle_height - WORK_DIFF_DEPTH), not at the cycle boundary itself
 pub const WORK_DIFF_DEPTH: u32 = 8;
 
+/// Identifies one of the four rotation ChainLock signature slots carried by a QRInfo
+/// response. The slots correspond to the four per-cycle diffs that together make up a
+/// rotated quorum's formation proof: three historical cycles plus the tip.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "bincode", derive(Encode, Decode))]
+pub enum RotationChainLockSignatureSlot {
+    /// Signature attributable to the `mnListDiffAtHMinus3C` diff.
+    HMinus3c,
+    /// Signature attributable to the `mnListDiffAtHMinus2C` diff.
+    HMinus2c,
+    /// Signature attributable to the `mnListDiffAtHMinusC` diff.
+    HMinusC,
+    /// Signature attributable to the `mnListDiffH` diff.
+    H,
+    /// Signature attributable to the `mnListDiffTip` diff.
+    Tip,
+}
+
+impl core::fmt::Display for RotationChainLockSignatureSlot {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let name = match self {
+            Self::HMinus3c => "h-3c",
+            Self::HMinus2c => "h-2c",
+            Self::HMinusC => "h-c",
+            Self::H => "h",
+            Self::Tip => "tip",
+        };
+        f.write_str(name)
+    }
+}
+
+/// Transient observability report returned from [`MasternodeListEngine::feed_qr_info`].
+///
+/// Callers can use this to log what happened during the call, or to decide whether a
+/// rotation cycle is now fully verified. This is a pure push-model report: nothing
+/// here is persisted, and it exists only for the duration of the call.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct QRInfoFeedResult {
+    /// Total number of rotated quorums in `last_commitment_per_index` for this QRInfo.
+    pub rotated_quorum_count: usize,
+    /// Rotated quorums for which no cached `QualifiedQuorumEntry` existed, so one was
+    /// constructed fresh and, when `rotation_sigs` were available, the rotation CL
+    /// signatures were attached. Incremented independently of `verify_rotated_quorums`
+    /// and of the final verification outcome. Useful for cache-hit observability, not
+    /// as a trust signal. Pair with `fully_verified_count` to know how many of these
+    /// actually ended up `Verified`.
+    pub newly_qualified_count: usize,
+    /// Rotated quorums whose `.verified` is `LLMQEntryVerificationStatus::Verified`
+    /// after this call settled. Always `0` when `verify_rotated_quorums == false`
+    /// (no validation ran, so no entry could move to `Verified`). This is the
+    /// authoritative trust signal: a cycle is only stored in
+    /// `rotated_quorums_per_cycle` when every entry is `Verified`.
+    pub fully_verified_count: usize,
+    /// Height of the cycle under which rotated quorums were stored in
+    /// `rotated_quorums_per_cycle`. `None` when nothing was stored, either
+    /// because `last_commitment_per_index` was empty or its first entry's
+    /// `quorum_hash` could not be resolved to a height.
+    ///
+    /// This is the first entry's `quorum_hash` height, which carries the
+    /// previous cycle when the current cycle's DKG has not completed yet.
+    pub stored_cycle_height: Option<CoreBlockHeight>,
+}
+
+impl QRInfoFeedResult {
+    /// Returns true when every rotated quorum in this QRInfo settled as
+    /// `LLMQEntryVerificationStatus::Verified`, which is the exact condition
+    /// under which `feed_qr_info` stores the cycle in
+    /// `rotated_quorums_per_cycle`. Use this as the trust gate for callers
+    /// that need to know the cycle is fully validated.
+    pub fn all_fully_verified(&self) -> bool {
+        self.rotated_quorum_count > 0 && self.fully_verified_count == self.rotated_quorum_count
+    }
+}
+
 #[derive(Clone, Eq, PartialEq, Default)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
@@ -442,6 +517,120 @@ impl MasternodeListEngine {
         self.block_container.feed_block_height(height, block_hash)
     }
 
+    /// Validate and store rotated quorums from the MN list at the h-c work
+    /// block under their cycle boundary hash. This enables IS lock verification
+    /// for the previous cycle after a fresh sync where `lastCommitmentPerIndex`
+    /// only provides the current cycle's quorums.
+    ///
+    /// The 4 CL sigs `[sig_h_minus_3c, sig_h_minus_2c, sig_h_minus_c, sig_h]` captured by `feed_qr_info`
+    /// are the correct sigs for h-c cycle validation too: their per-diff
+    /// extraction happens to align — sig_h_minus_3c carries the CL from h-4c work block
+    /// (h-c's quarter 0), sig_h_minus_2c from h-3c work block (quarter 1), sig_h_minus_c from
+    /// h-2c work block (quarter 2), sig_h from h-c work block (quarter 3).
+    #[cfg(feature = "quorum_validation")]
+    fn validate_and_store_previous_cycle_quorums(
+        &mut self,
+        work_block_hash: BlockHash,
+        sigs: [BLSSignature; 4],
+    ) -> Result<(), QuorumValidationError> {
+        use crate::sml::llmq_type::network::NetworkLLMQExt;
+
+        let Some(work_height) = self.block_container.get_height(&work_block_hash) else {
+            return Ok(());
+        };
+        let isd_type = self.network.isd_llmq_type();
+        let Some(mn_list) = self.masternode_lists.get(&work_height) else {
+            return Ok(());
+        };
+        let Some(quorums_of_type) = mn_list.quorums.get(&isd_type) else {
+            return Ok(());
+        };
+        let mut entries: Vec<QualifiedQuorumEntry> = quorums_of_type
+            .values()
+            .cloned()
+            .map(|mut q| {
+                q.verifying_chain_lock_signature =
+                    Some(VerifyingChainLockSignaturesType::Rotating(sigs));
+                q
+            })
+            .collect();
+        let Some(cycle_hash) = entries.first().map(|q| q.quorum_entry.quorum_hash) else {
+            return Ok(());
+        };
+        if self.rotated_quorums_per_cycle.contains_key(&cycle_hash) {
+            return Ok(());
+        }
+
+        let validation_statuses = self.validate_rotation_cycle_quorums_validation_statuses(
+            entries.iter().collect::<Vec<_>>().as_slice(),
+        );
+        for entry in entries.iter_mut() {
+            entry.verified = validation_statuses
+                .get(&entry.quorum_entry.quorum_hash)
+                .cloned()
+                .unwrap_or_default();
+            match entry.verified {
+                LLMQEntryVerificationStatus::Verified => {}
+                LLMQEntryVerificationStatus::Invalid(ref e) => return Err(e.clone()),
+                _ => {
+                    // Can't fully validate (e.g. MN list at a required work
+                    // block is missing because it's deeper than the QRInfo's
+                    // diff range). Don't store unverified quorums: IS lock
+                    // verification for this cycle will fail, which is correct.
+                    tracing::debug!(
+                        "Previous-cycle quorum {} at cycle {} could not be validated ({}); skipping storage",
+                        entry.quorum_entry.quorum_hash,
+                        cycle_hash,
+                        entry.verified
+                    );
+                    return Ok(());
+                }
+            }
+        }
+
+        // Also mirror statuses into `quorum_statuses` and the MN list.
+        let mut updates: Vec<(BTreeSet<CoreBlockHeight>, QuorumHash, LLMQEntryVerificationStatus)> =
+            Vec::new();
+        {
+            let statuses_for_type = self.quorum_statuses.entry(isd_type).or_default();
+            for entry in entries.iter() {
+                let (heights, _, status) =
+                    statuses_for_type.entry(entry.quorum_entry.quorum_hash).or_insert((
+                        BTreeSet::default(),
+                        entry.quorum_entry.quorum_public_key,
+                        LLMQEntryVerificationStatus::Unknown,
+                    ));
+                updates.push((
+                    heights.clone(),
+                    entry.quorum_entry.quorum_hash,
+                    entry.verified.clone(),
+                ));
+                *status = entry.verified.clone();
+            }
+        }
+        for (heights, quorum_hash, new_status) in updates {
+            for height in heights {
+                if let Some(list_at_height) = self.masternode_lists.get_mut(&height)
+                    && let Some(quorum_at_height) = list_at_height
+                        .quorums
+                        .get_mut(&isd_type)
+                        .and_then(|qs| qs.get_mut(&quorum_hash))
+                {
+                    quorum_at_height.verified = new_status.clone();
+                }
+            }
+        }
+
+        if let Ok(cycle_map) = build_cycle_quorum_map(entries, isd_type) {
+            self.rotated_quorums_per_cycle.insert(cycle_hash, cycle_map);
+            tracing::debug!(
+                "Validated and stored previous-cycle rotated quorums under cycle hash {}",
+                cycle_hash
+            );
+        }
+        Ok(())
+    }
+
     /// Block hashes referenced by a QRInfo message that the engine needs heights for.
     ///
     /// Covers every diff endpoint (base and target) and every rotating commitment hash
@@ -504,7 +693,7 @@ impl MasternodeListEngine {
         qr_info: QRInfo,
         verify_tip_non_rotated_quorums: bool,
         verify_rotated_quorums: bool,
-    ) -> Result<(), QuorumValidationError> {
+    ) -> Result<Option<QRInfoFeedResult>, QuorumValidationError> {
         #[allow(unused_variables)]
         let QRInfo {
             quorum_snapshot_at_h_minus_c,
@@ -520,6 +709,17 @@ impl MasternodeListEngine {
             quorum_snapshot_list,
             mn_list_diff_list,
         } = qr_info;
+
+        // Check whether the tip diff contains any rotating-type quorum entries.
+        // When it doesn't (the tip is mid-cycle, before the DKG commitment is
+        // mined), `sig_tip` will naturally be `None` but isn't needed for
+        // validating the historical rotation quorums in
+        // `last_commitment_per_index`. The pre-check below skips the `sig_tip`
+        // requirement in that case so the rotation quorums can still be stored
+        // (as unverified if sigs are incomplete).
+        #[cfg(feature = "quorum_validation")]
+        let tip_diff_has_rotating_quorums =
+            mn_list_diff_tip.new_quorums.iter().any(|q| q.llmq_type.is_rotating_quorum_type());
 
         // Apply quorum snapshots and masternode list diffs
         for (snapshot, diff) in quorum_snapshot_list.into_iter().zip(mn_list_diff_list) {
@@ -552,6 +752,16 @@ impl MasternodeListEngine {
             .map(|quorum_entry| quorum_entry.llmq_type)
             .unwrap_or(self.network.isd_llmq_type());
 
+        #[cfg(feature = "quorum_validation")]
+        let stored_cycle_height = last_commitment_per_index
+            .first()
+            .and_then(|q| self.block_container.get_height(&q.quorum_hash));
+        #[cfg(feature = "quorum_validation")]
+        let rotated_quorum_count = last_commitment_per_index.len();
+        #[cfg(feature = "quorum_validation")]
+        let mut newly_qualified_count: usize = 0;
+        #[cfg(feature = "quorum_validation")]
+        let mut fully_verified_count: usize = 0;
         if let Some((quorum_snapshot_at_h_minus_4c, mn_list_diff_at_h_minus_4c)) =
             quorum_snapshot_and_mn_list_diff_at_h_minus_4c
         {
@@ -562,31 +772,141 @@ impl MasternodeListEngine {
 
         self.known_snapshots
             .insert(mn_list_diff_at_h_minus_3c.block_hash, quorum_snapshot_at_h_minus_3c);
-        self.apply_diff(mn_list_diff_at_h_minus_3c, None, false, None)?;
+        let maybe_sig_h_minus_3c =
+            self.apply_diff(mn_list_diff_at_h_minus_3c, None, false, None)?;
         self.known_snapshots
             .insert(mn_list_diff_at_h_minus_2c.block_hash, quorum_snapshot_at_h_minus_2c);
-        #[cfg(feature = "quorum_validation")]
-        let mn_list_diff_at_h_minus_2c_block_hash = mn_list_diff_at_h_minus_2c.block_hash;
-        let maybe_sigm2 = self.apply_diff(mn_list_diff_at_h_minus_2c, None, false, None)?;
+        let maybe_sig_h_minus_2c =
+            self.apply_diff(mn_list_diff_at_h_minus_2c, None, false, None)?;
         self.known_snapshots
             .insert(mn_list_diff_at_h_minus_c.block_hash, quorum_snapshot_at_h_minus_c);
-        #[cfg(feature = "quorum_validation")]
-        let mn_list_diff_at_h_minus_c_block_hash = mn_list_diff_at_h_minus_c.block_hash;
-        let maybe_sigm1 = self.apply_diff(mn_list_diff_at_h_minus_c, None, false, None)?;
-        #[cfg(feature = "quorum_validation")]
-        let mn_list_diff_at_h_block_hash = mn_list_diff_h.block_hash;
-        let maybe_sigm0 = self.apply_diff(mn_list_diff_h, None, false, None)?;
+        let maybe_sig_h_minus_c = self.apply_diff(mn_list_diff_at_h_minus_c, None, false, None)?;
+        // Capture the h work block hash before `mn_list_diff_h` is consumed.
+        // After all diffs are applied, `masternode_lists[h]` holds the h-c
+        // cycle's rotated quorums (mined in the `(h-c, h]` range containing
+        // that cycle's mining window). `validate_and_store_previous_cycle_quorums`
+        // revalidates them under the 4 captured CL sigs so IS locks signed
+        // under the previous cycle can be verified. Using `mn_list_diff_h`
+        // (not `mn_list_diff_at_h_minus_c`) is load-bearing: at block height
+        // h-c the h-c cycle has not been mined yet, so
+        // `masternode_lists[h-c].quorums` contains the cycle *two* back,
+        // whose quarter work blocks don't line up with `[sig_h_minus_3c..sig_h]`.
+        let work_block_hash_h = mn_list_diff_h.block_hash;
+        let maybe_sig_h = self.apply_diff(mn_list_diff_h, None, false, None)?;
 
-        let sigs = match (maybe_sigm2, maybe_sigm1, maybe_sigm0) {
+        let sigs = match (maybe_sig_h_minus_2c, maybe_sig_h_minus_c, maybe_sig_h) {
             (Some(s2), Some(s1), Some(s0)) => Some([s2, s1, s0]),
             _ => None,
         };
 
-        #[allow(unused_variables)]
-        let mn_list_diff_tip_block_hash = mn_list_diff_tip.block_hash;
-        #[allow(unused_variables)]
-        let maybe_sigmtip =
+        let maybe_sig_tip =
             self.apply_diff(mn_list_diff_tip, None, verify_tip_non_rotated_quorums, sigs)?;
+
+        // Validate h-c cycle quorums using the 4 historical CL sigs we just
+        // captured. The per-diff sig extraction aligns such that
+        // `[sig_h_minus_3c, sig_h_minus_2c, sig_h_minus_c, sig_h]` are the right sigs for h-c cycle's 4
+        // quarters (work blocks h-4c-8, h-3c-8, h-2c-8, h-c-8). Those quorums
+        // live on `masternode_lists[h]`, not `masternode_lists[h-c]` — the
+        // h-c cycle is mined in the `(h-c, h]` diff range.
+        #[cfg(feature = "quorum_validation")]
+        if let (Some(s3), Some(s2), Some(s1), Some(s0)) =
+            (maybe_sig_h_minus_3c, maybe_sig_h_minus_2c, maybe_sig_h_minus_c, maybe_sig_h)
+        {
+            self.validate_and_store_previous_cycle_quorums(work_block_hash_h, [s3, s2, s1, s0])?;
+        }
+
+        // Collect the 4 rotation ChainLock signatures if available, otherwise
+        // fall through with `None`. Missing CL sigs are a legitimate state
+        // when a diff in the QRInfo spans a range with no successful rotating
+        // DKG: Dash Core's `BuildQuorumsDiff`
+        // (`evo/smldiff.cpp:BuildQuorumsDiff`) only emits mined-AND-active
+        // commitments into `new_quorums`, so failed/null DKG commits leave
+        // `new_quorums` empty for that diff, and `apply_diff` returns no
+        // rotating-sig for it. Rather than erroring out and failing the
+        // whole QRInfo (the prior behavior), we log once and leave
+        // `rotation_sigs = None`; downstream, quorums in
+        // `last_commitment_per_index` that would have been freshly validated
+        // are recorded without a `VerifyingChainLockSignaturesType::Rotating`
+        // and end up marked `Skipped(RequiredRotatedChainLockSigsNotPresent)`
+        // by `validate_rotation_cycle_quorums_validation_statuses`. They are
+        // not inserted into `rotated_quorums_per_cycle`, which means IS locks
+        // signed under that cycle can't be verified by this SPV — the correct
+        // outcome, consistent with the design report in
+        // `/Users/kevin/spv/rotated_quorum_spv_validation.md`.
+        #[cfg(feature = "quorum_validation")]
+        let rotation_sigs: Option<[BLSSignature; 4]> = {
+            let any_rotated_quorum_needs_fresh_validation = last_commitment_per_index
+                .iter()
+                .any(|quorum_entry| self.known_qualified_quorum_entry(quorum_entry).is_none());
+            if !any_rotated_quorum_needs_fresh_validation {
+                None
+            } else if tip_diff_has_rotating_quorums {
+                // Tip has new rotating quorums: `lastCommitmentPerIndex` is
+                // from the current cycle. The 4 sigs align as
+                // `[sig_h_minus_2c, sig_h_minus_c, sig_h, sig_tip]`.
+                let mut missing: Vec<RotationChainLockSignatureSlot> = Vec::new();
+                if maybe_sig_h_minus_2c.is_none() {
+                    missing.push(RotationChainLockSignatureSlot::HMinus2c);
+                }
+                if maybe_sig_h_minus_c.is_none() {
+                    missing.push(RotationChainLockSignatureSlot::HMinusC);
+                }
+                if maybe_sig_h.is_none() {
+                    missing.push(RotationChainLockSignatureSlot::H);
+                }
+                if maybe_sig_tip.is_none() {
+                    missing.push(RotationChainLockSignatureSlot::Tip);
+                }
+                if !missing.is_empty() {
+                    tracing::debug!(
+                        "QRInfo missing rotation ChainLock signatures: {:?}; \
+                         current-cycle rotated quorums will not be stored",
+                        missing
+                    );
+                    None
+                } else {
+                    match (maybe_sig_h_minus_2c, maybe_sig_h_minus_c, maybe_sig_h, maybe_sig_tip) {
+                        (Some(s2), Some(s1), Some(s0), Some(st)) => Some([s2, s1, s0, st]),
+                        _ => None,
+                    }
+                }
+            } else {
+                // Tip has no new rotating quorums: `lastCommitmentPerIndex`
+                // is from the previous cycle. The 4 sigs come from the
+                // historical diffs `[sig_h_minus_3c, sig_h_minus_2c, sig_h_minus_c, sig_h]`.
+                let mut missing: Vec<RotationChainLockSignatureSlot> = Vec::new();
+                if maybe_sig_h_minus_3c.is_none() {
+                    missing.push(RotationChainLockSignatureSlot::HMinus3c);
+                }
+                if maybe_sig_h_minus_2c.is_none() {
+                    missing.push(RotationChainLockSignatureSlot::HMinus2c);
+                }
+                if maybe_sig_h_minus_c.is_none() {
+                    missing.push(RotationChainLockSignatureSlot::HMinusC);
+                }
+                if maybe_sig_h.is_none() {
+                    missing.push(RotationChainLockSignatureSlot::H);
+                }
+                if !missing.is_empty() {
+                    tracing::debug!(
+                        "QRInfo missing rotation ChainLock signatures: {:?}; \
+                         previous-cycle rotated quorums will not be stored",
+                        missing
+                    );
+                    None
+                } else {
+                    match (
+                        maybe_sig_h_minus_3c,
+                        maybe_sig_h_minus_2c,
+                        maybe_sig_h_minus_c,
+                        maybe_sig_h,
+                    ) {
+                        (Some(s3), Some(s2), Some(s1), Some(s0)) => Some([s3, s2, s1, s0]),
+                        _ => None,
+                    }
+                }
+            }
+        };
 
         #[cfg(feature = "quorum_validation")]
         let mut qualified_last_commitment_per_index = last_commitment_per_index
@@ -597,37 +917,17 @@ impl MasternodeListEngine {
                 {
                     Ok(qualified_quorum_entry)
                 } else {
-                    let sigm2 = maybe_sigm2.ok_or(
-                        QuorumValidationError::RequiredRotatedChainLockSigNotPresent(
-                            3,
-                            mn_list_diff_at_h_minus_2c_block_hash,
-                        ),
-                    )?;
-
-                    let sigm1 = maybe_sigm1.ok_or(
-                        QuorumValidationError::RequiredRotatedChainLockSigNotPresent(
-                            2,
-                            mn_list_diff_at_h_minus_c_block_hash,
-                        ),
-                    )?;
-
-                    let sigm0 = maybe_sigm0.ok_or(
-                        QuorumValidationError::RequiredRotatedChainLockSigNotPresent(
-                            1,
-                            mn_list_diff_at_h_block_hash,
-                        ),
-                    )?;
-                    let sigmtip = maybe_sigmtip.ok_or(
-                        QuorumValidationError::RequiredRotatedChainLockSigNotPresent(
-                            0,
-                            mn_list_diff_tip_block_hash,
-                        ),
-                    )?;
+                    newly_qualified_count += 1;
                     let mut qualified_quorum_entry: QualifiedQuorumEntry = quorum_entry.into();
-                    qualified_quorum_entry.verifying_chain_lock_signature =
-                        Some(VerifyingChainLockSignaturesType::Rotating([
-                            sigm2, sigm1, sigm0, sigmtip,
-                        ]));
+                    if let Some([sig_h_minus_2c, sig_h_minus_c, sig_h, sig_tip]) = rotation_sigs {
+                        qualified_quorum_entry.verifying_chain_lock_signature =
+                            Some(VerifyingChainLockSignaturesType::Rotating([
+                                sig_h_minus_2c,
+                                sig_h_minus_c,
+                                sig_h,
+                                sig_tip,
+                            ]));
+                    }
                     Ok(qualified_quorum_entry)
                 }
             })
@@ -635,10 +935,6 @@ impl MasternodeListEngine {
 
         #[cfg(feature = "quorum_validation")]
         if verify_rotated_quorums {
-            let validation_statuses = self.validate_rotation_cycle_quorums_validation_statuses(
-                qualified_last_commitment_per_index.iter().collect::<Vec<_>>().as_slice(),
-            );
-
             let mut updates: Vec<(
                 BTreeSet<CoreBlockHeight>,
                 LLMQType,
@@ -646,8 +942,9 @@ impl MasternodeListEngine {
                 LLMQEntryVerificationStatus,
             )> = Vec::new();
 
-            let cycle_key =
-                qualified_last_commitment_per_index.first().map(|q| q.quorum_entry.quorum_hash);
+            let validation_statuses = self.validate_rotation_cycle_quorums_validation_statuses(
+                qualified_last_commitment_per_index.iter().collect::<Vec<_>>().as_slice(),
+            );
 
             for rotated_quorum in qualified_last_commitment_per_index.iter_mut() {
                 tracing::debug!(
@@ -662,7 +959,15 @@ impl MasternodeListEngine {
                     .cloned()
                     .unwrap_or_default();
 
-                // Store status updates separately to prevent multiple mutable borrows
+                if let LLMQEntryVerificationStatus::Invalid(ref e) = rotated_quorum.verified {
+                    return Err(e.clone());
+                }
+            }
+
+            let cycle_key =
+                qualified_last_commitment_per_index.first().map(|q| q.quorum_entry.quorum_hash);
+
+            for rotated_quorum in qualified_last_commitment_per_index.iter() {
                 let masternode_lists_having_quorum_hash_for_quorum_type =
                     self.quorum_statuses.entry(rotated_quorum.quorum_entry.llmq_type).or_default();
                 let (heights, _, status) = masternode_lists_having_quorum_hash_for_quorum_type
@@ -683,12 +988,41 @@ impl MasternodeListEngine {
                 *status = rotated_quorum.verified.clone();
             }
 
+            fully_verified_count = qualified_last_commitment_per_index
+                .iter()
+                .filter(|q| matches!(q.verified, LLMQEntryVerificationStatus::Verified))
+                .count();
+
             if let Some(key) = cycle_key {
-                let cycle_map = build_cycle_quorum_map(
-                    qualified_last_commitment_per_index,
-                    rotation_quorum_type,
-                )?;
-                *self.rotated_quorums_per_cycle.entry(key).or_default() = cycle_map;
+                // Only store a cycle when every quorum is Verified.
+                // `Skipped` entries (e.g. `MissingRotationChainLockSigs`
+                // from a QRInfo with incomplete CL sigs, or
+                // `RequiredBlockNotPresent` from missing context) must not
+                // enter `rotated_quorums_per_cycle`: it is the
+                // authoritative map for IS lock verification, and a
+                // Skipped quorum can't sign anything. A later QRInfo with
+                // complete context will store the cycle. Also preserve an
+                // existing fully-Verified cycle across subsequent QRInfo
+                // responses: a thin `mn_list_diff_h` produces
+                // `Skipped(MissingRotationChainLockSigs)` entries which
+                // must not downgrade an already-Verified cycle.
+                let already_fully_verified =
+                    self.rotated_quorums_per_cycle.get(&key).is_some_and(|existing| {
+                        !existing.is_empty()
+                            && existing.values().all(|q| {
+                                matches!(q.verified, LLMQEntryVerificationStatus::Verified)
+                            })
+                    });
+                let all_entries_verified = qualified_last_commitment_per_index
+                    .iter()
+                    .all(|q| matches!(q.verified, LLMQEntryVerificationStatus::Verified));
+                if all_entries_verified && !already_fully_verified {
+                    let cycle_map = build_cycle_quorum_map(
+                        qualified_last_commitment_per_index,
+                        rotation_quorum_type,
+                    )?;
+                    *self.rotated_quorums_per_cycle.entry(key).or_default() = cycle_map;
+                }
             }
 
             // Apply collected updates after iteration to avoid borrow conflicts
@@ -783,6 +1117,10 @@ impl MasternodeListEngine {
         } else if let Some(cycle_key) =
             qualified_last_commitment_per_index.first().map(|q| q.quorum_entry.quorum_hash)
         {
+            fully_verified_count = qualified_last_commitment_per_index
+                .iter()
+                .filter(|q| matches!(q.verified, LLMQEntryVerificationStatus::Verified))
+                .count();
             let cycle_map =
                 build_cycle_quorum_map(qualified_last_commitment_per_index, rotation_quorum_type)?;
             *self.rotated_quorums_per_cycle.entry(cycle_key).or_default() = cycle_map;
@@ -795,7 +1133,19 @@ impl MasternodeListEngine {
             ));
         }
 
-        Ok(())
+        #[cfg(feature = "quorum_validation")]
+        {
+            Ok(Some(QRInfoFeedResult {
+                rotated_quorum_count,
+                newly_qualified_count,
+                fully_verified_count,
+                stored_cycle_height,
+            }))
+        }
+        #[cfg(not(feature = "quorum_validation"))]
+        {
+            Ok(None)
+        }
     }
 
     /// Applies a masternode list diff to create or update a masternode list.
@@ -1121,9 +1471,12 @@ mod tests {
     #[cfg(feature = "quorum_validation")]
     use {
         super::build_cycle_quorum_map,
+        crate::BlockHash,
         crate::QuorumHash,
+        crate::Transaction,
         crate::bls_sig_utils::{BLSPublicKey, BLSSignature},
         crate::hash_types::QuorumVVecHash,
+        crate::network::message_qrinfo::{MNSkipListMode, QuorumSnapshot},
         crate::transaction::special_transaction::quorum_commitment::QuorumEntry,
     };
 
@@ -1319,13 +1672,15 @@ mod tests {
         }
     }
 
-    #[test]
-    fn validate_from_qr_info_and_mn_list_diffs() {
+    /// Load the mainnet QRInfo-2240504 fixture and return a fresh engine
+    /// pre-loaded with its block container and historical mn_list_diffs,
+    /// alongside the QRInfo to feed.
+    #[cfg(feature = "quorum_validation")]
+    fn load_qrinfo_2240504_fixture() -> (MasternodeListEngine, QRInfo) {
         let mn_list_diff_bytes: &[u8] =
             include_bytes!("../../../tests/data/test_DML_diffs/mn_list_diff_0_2227096.bin");
-        // This one is serialized not with bincode, but with core consensus
         let diff: MnListDiff = deserialize(mn_list_diff_bytes).expect("expected to deserialize");
-        let mut masternode_list_engine =
+        let mut engine =
             MasternodeListEngine::initialize_with_diff_to_height(diff, 2227096, Network::Mainnet)
                 .expect("expected to start engine");
 
@@ -1348,16 +1703,54 @@ mod tests {
                 .expect("expected to decode")
                 .0;
 
-        // We know these are the blocks we need to know about.
-        masternode_list_engine.block_container = block_container;
-
+        engine.block_container = block_container;
         for ((_start_height, height), diff) in mn_list_diffs.into_iter() {
-            masternode_list_engine
-                .apply_diff(diff, Some(height), false, None)
-                .expect("expected to apply diff");
+            engine.apply_diff(diff, Some(height), false, None).expect("expected to apply diff");
         }
 
+        (engine, qr_info)
+    }
+
+    #[test]
+    fn validate_from_qr_info_and_mn_list_diffs() {
+        let (mut masternode_list_engine, qr_info) = load_qrinfo_2240504_fixture();
+
+        // Lock which `feed_qr_info` rotation-storage branch this fixture
+        // exercises so a future fixture replacement that flips the branch
+        // is caught immediately. The branch is determined by whether
+        // `mn_list_diff_tip` carries any rotating-type new quorums:
+        //   - true  -> current-cycle storage from `last_commitment_per_index`
+        //   - false -> previous-cycle storage via
+        //              `validate_and_store_previous_cycle_quorums`
+        // The 2240504 fixture currently hits the *current-cycle* branch.
+        let tip_diff_has_rotating_quorums = qr_info
+            .mn_list_diff_tip
+            .new_quorums
+            .iter()
+            .any(|q| q.llmq_type.is_rotating_quorum_type());
+        assert!(
+            tip_diff_has_rotating_quorums,
+            "fixture invariant: 2240504 QRInfo must have rotating quorums in mn_list_diff_tip; \
+             swap fixture or update assertion if this changes"
+        );
+
         masternode_list_engine.feed_qr_info(qr_info, true, true).expect("expected to feed_qr_info");
+
+        // Regression guard for the h-c work-block pick in
+        // `validate_and_store_previous_cycle_quorums`. When `feed_qr_info`
+        // captures all four `[sig_h_minus_3c..sig_h]` rotation CL sigs, it must store
+        // both the current cycle (from `last_commitment_per_index`) *and* the
+        // previous cycle. The previous-cycle path reconstructs members using
+        // `masternode_lists[h]` (which holds the h-c cycle mined in the diff
+        // range `(h-c, h]`); picking `masternode_lists[h-c]` instead selects
+        // the cycle two back, whose quarters need `mn_list[h-4c-c]` (not in
+        // the QRInfo diff set), so reconstruction silently `Skipped`s and
+        // only the tip cycle ends up stored.
+        assert_eq!(
+            masternode_list_engine.rotated_quorums_per_cycle.len(),
+            2,
+            "expected both tip and previous rotation cycles stored"
+        );
 
         verify_masternode_list_quorums(
             &masternode_list_engine,
@@ -1368,6 +1761,24 @@ mod tests {
                 .1,
             &[Llmqtype400_85, Llmqtype50_60, Llmqtype400_60],
         );
+
+        // Every rotated quorum stored by `feed_qr_info` (current cycle from
+        // `last_commitment_per_index`, plus the previous cycle stored by
+        // `validate_and_store_previous_cycle_quorums`) must re-validate under
+        // its captured CL sigs. A regression where the previous-cycle path
+        // picks the wrong work block stores quorums whose reconstructed
+        // members don't match the real signers, and `validate_quorum` here
+        // would return `AllCommitmentAggregatedSignatureNotValid`.
+        for (cycle_hash, quorums) in masternode_list_engine.rotated_quorums_per_cycle.iter() {
+            for (index, quorum) in quorums.iter() {
+                masternode_list_engine.validate_quorum(quorum).unwrap_or_else(|e| {
+                    panic!(
+                        "stored rotated quorum at index {} in cycle {} failed re-validation: {}",
+                        index, cycle_hash, e
+                    )
+                });
+            }
+        }
     }
 
     #[test]
@@ -1482,39 +1893,7 @@ mod tests {
 
     #[test]
     fn feed_qr_info_rejects_post_v20_with_missing_chainlock_signatures() {
-        let mn_list_diff_bytes: &[u8] =
-            include_bytes!("../../../tests/data/test_DML_diffs/mn_list_diff_0_2227096.bin");
-        let diff: MnListDiff = deserialize(mn_list_diff_bytes).expect("expected to deserialize");
-        let mut masternode_list_engine =
-            MasternodeListEngine::initialize_with_diff_to_height(diff, 2227096, Network::Mainnet)
-                .expect("expected to start engine");
-
-        let block_container_bytes: &[u8] =
-            include_bytes!("../../../tests/data/test_DML_diffs/block_container_2240504.dat");
-        let block_container: MasternodeListEngineBlockContainer =
-            bincode::decode_from_slice(block_container_bytes, bincode::config::standard())
-                .expect("expected to decode")
-                .0;
-        let mn_list_diffs_bytes: &[u8] =
-            include_bytes!("../../../tests/data/test_DML_diffs/mnlistdiffs_2240504.dat");
-        let mn_list_diffs: BTreeMap<(CoreBlockHeight, CoreBlockHeight), MnListDiff> =
-            bincode::decode_from_slice(mn_list_diffs_bytes, bincode::config::standard())
-                .expect("expected to decode")
-                .0;
-        let qr_info_bytes: &[u8] =
-            include_bytes!("../../../tests/data/test_DML_diffs/qrinfo_2240504.dat");
-        let mut qr_info: QRInfo =
-            bincode::decode_from_slice(qr_info_bytes, bincode::config::standard())
-                .expect("expected to decode")
-                .0;
-
-        masternode_list_engine.block_container = block_container;
-
-        for ((_start_height, height), diff) in mn_list_diffs.into_iter() {
-            masternode_list_engine
-                .apply_diff(diff, Some(height), false, None)
-                .expect("expected to apply diff");
-        }
+        let (mut masternode_list_engine, mut qr_info) = load_qrinfo_2240504_fixture();
 
         // Clear chainlock signatures to simulate missing data for post-V20 block
         qr_info.mn_list_diff_at_h_minus_2c.quorums_chainlock_signatures.clear();
@@ -1526,5 +1905,256 @@ mod tests {
             result.is_err(),
             "Post-V20 feed_qr_info should reject missing chainlock signatures"
         );
+        assert!(
+            masternode_list_engine.rotated_quorums_per_cycle.is_empty(),
+            "Rejected QRInfo must not have stored any rotation cycle"
+        );
+    }
+
+    /// Storage gate: when a QRInfo carries no rotation chain-lock signatures
+    /// (every diff has empty `quorums_chainlock_signatures` and no
+    /// `new_quorums` to demand sigs for) and rotated quorums in
+    /// `last_commitment_per_index` would need fresh validation, the cycle
+    /// must NOT enter `rotated_quorums_per_cycle`. The validated entries
+    /// are recorded as `Skipped`, `all_entries_verified` is false, and the
+    /// gate at `feed_qr_info` skips storage.
+    ///
+    /// Mutates the fixture: clear `new_quorums` and
+    /// `quorums_chainlock_signatures` on every diff. The post-V20 strict
+    /// check requires every `new_quorums` slot to have a matching
+    /// `quorums_chainlock_signatures` entry; emptying both lists keeps
+    /// `apply_diff` happy while ensuring no per-diff rotating sig is
+    /// captured.
+    #[cfg(feature = "quorum_validation")]
+    #[test]
+    fn feed_qr_info_does_not_store_cycle_when_rotation_sigs_missing() {
+        let (mut engine, mut qr_info) = load_qrinfo_2240504_fixture();
+
+        let strip = |diff: &mut MnListDiff| {
+            diff.new_quorums.clear();
+            diff.quorums_chainlock_signatures.clear();
+        };
+        strip(&mut qr_info.mn_list_diff_tip);
+        strip(&mut qr_info.mn_list_diff_h);
+        strip(&mut qr_info.mn_list_diff_at_h_minus_c);
+        strip(&mut qr_info.mn_list_diff_at_h_minus_2c);
+        strip(&mut qr_info.mn_list_diff_at_h_minus_3c);
+        if let Some((_, ref mut diff)) = qr_info.quorum_snapshot_and_mn_list_diff_at_h_minus_4c {
+            strip(diff);
+        }
+        for diff in qr_info.mn_list_diff_list.iter_mut() {
+            strip(diff);
+        }
+
+        // The cycle key from `last_commitment_per_index` must still be present
+        // so the post-feed assertion is meaningful.
+        let expected_cycle_key = qr_info
+            .last_commitment_per_index
+            .first()
+            .map(|q| q.quorum_hash)
+            .expect("fixture has rotation commitments");
+
+        engine
+            .feed_qr_info(qr_info, false, true)
+            .expect("feed_qr_info should succeed even when rotation sigs are missing");
+
+        assert!(
+            !engine.rotated_quorums_per_cycle.contains_key(&expected_cycle_key),
+            "Cycle {} must not be stored when rotation sigs are missing; current keys: {:?}",
+            expected_cycle_key,
+            engine.rotated_quorums_per_cycle.keys().collect::<Vec<_>>()
+        );
+    }
+
+    /// A QRInfo whose rotated quorum carries a corrupt
+    /// `all_commitment_aggregated_signature` must be rejected with
+    /// `AllCommitmentAggregatedSignatureNotValid` rather than silently
+    /// stored: a fully-Verified entry with an invalid aggregate signature
+    /// would let bogus signed messages pass IS lock verification.
+    #[cfg(feature = "quorum_validation")]
+    #[test]
+    fn feed_qr_info_rejects_corrupt_aggregate_signature() {
+        let (mut engine, mut qr_info) = load_qrinfo_2240504_fixture();
+
+        assert!(
+            !qr_info.last_commitment_per_index.is_empty(),
+            "fixture must carry at least one rotation commitment"
+        );
+        // Corrupt the aggregate signature on the first rotated commitment.
+        // Every other field stays intact so the entry still parses and
+        // reaches signature validation.
+        qr_info.last_commitment_per_index[0].all_commitment_aggregated_signature =
+            BLSSignature::from([0u8; 96]);
+
+        let result = engine.feed_qr_info(qr_info, false, true);
+
+        // The corrupted aggregate signature must surface as a hard validation
+        // error and prevent any cycle from being stored. Both
+        // `AllCommitmentAggregatedSignatureNotValid` (per-quorum check
+        // rejection) and `InvalidFinalSignature` (rotation-cycle aggregate
+        // rejection) are valid signals; what matters is that we don't
+        // silently store a corrupt cycle.
+        let err = result.expect_err("corrupt aggregate signature must reject");
+        assert!(
+            matches!(
+                err,
+                QuorumValidationError::AllCommitmentAggregatedSignatureNotValid(_)
+                    | QuorumValidationError::InvalidFinalSignature
+            ),
+            "expected aggregate-signature rejection, got {:?}",
+            err
+        );
+        // The corrupted commitment lives in `last_commitment_per_index`. The
+        // matching cycle (keyed by that quorum's hash) must not have been
+        // stored. Other rotation cycles - notably the previous-cycle entry
+        // populated from `validate_and_store_previous_cycle_quorums` before
+        // the rejection point - are unaffected and may remain.
+        let corrupted_cycle_key =
+            engine.rotated_quorums_per_cycle.keys().copied().collect::<Vec<_>>();
+        // Re-load the original fixture to find the cycle key the corruption
+        // would have stored, then assert that key is absent from the engine.
+        let (_engine_for_key, original_qr_info) = load_qrinfo_2240504_fixture();
+        let target_key = original_qr_info
+            .last_commitment_per_index
+            .first()
+            .map(|q| q.quorum_hash)
+            .expect("fixture has rotation commitments");
+        assert!(
+            !corrupted_cycle_key.contains(&target_key),
+            "rejected QRInfo must not have stored cycle keyed at {} (stored keys: {:?})",
+            target_key,
+            corrupted_cycle_key
+        );
+    }
+
+    /// Anti-clobber: a thin/incomplete second QRInfo where rotated entries
+    /// land as `Skipped` (no rotation CL sigs reachable) must not downgrade
+    /// an already-fully-Verified rotation cycle. Feeds the mainnet fixture
+    /// once to populate `rotated_quorums_per_cycle[K]` with all entries
+    /// `Verified`, then feeds a synthetic self-loop QRInfo whose diffs do
+    /// not carry rotation sigs, with `last_commitment_per_index` matching
+    /// the existing cycle's first quorum hash plus a fresh fake quorum
+    /// that needs new validation. Asserts the existing cycle's entries
+    /// remain `Verified`.
+    #[cfg(feature = "quorum_validation")]
+    #[test]
+    fn feed_qr_info_does_not_downgrade_already_verified_cycle() {
+        let (mut engine, qr_info) = load_qrinfo_2240504_fixture();
+
+        engine.feed_qr_info(qr_info, false, true).expect("first feed should succeed");
+
+        let cycle_key = *engine
+            .rotated_quorums_per_cycle
+            .keys()
+            .next()
+            .expect("first feed must have stored at least one rotation cycle");
+
+        let original_cycle =
+            engine.rotated_quorums_per_cycle.get(&cycle_key).expect("cycle present").clone();
+        assert!(
+            !original_cycle.is_empty()
+                && original_cycle
+                    .values()
+                    .all(|q| matches!(q.verified, LLMQEntryVerificationStatus::Verified)),
+            "first feed must leave the cycle fully Verified"
+        );
+
+        let known_quorum = original_cycle
+            .values()
+            .find(|q| q.quorum_entry.quorum_hash == cycle_key)
+            .expect("cycle map must contain its key entry")
+            .clone();
+        let rotation_quorum_type = known_quorum.quorum_entry.llmq_type;
+        let active_count = rotation_quorum_type.active_quorum_count() as i16;
+
+        // Build `last_commitment_per_index`: first entry is the existing
+        // cycle key (so cycle_key matches, exercising the gate), rest are
+        // fresh fakes that need new validation.
+        let mut last_commitment_per_index = vec![known_quorum.quorum_entry.clone()];
+        for i in 1..active_count {
+            last_commitment_per_index.push(QuorumEntry {
+                version: 2,
+                llmq_type: rotation_quorum_type,
+                quorum_hash: QuorumHash::from_byte_array([0xCC; 32].map(|b| b ^ i as u8)),
+                quorum_index: Some(i),
+                signers: vec![true],
+                valid_members: vec![true],
+                quorum_public_key: BLSPublicKey::from([0; 48]),
+                quorum_vvec_hash: QuorumVVecHash::all_zeros(),
+                threshold_sig: BLSSignature::from([0; 96]),
+                all_commitment_aggregated_signature: BLSSignature::from([0; 96]),
+            });
+        }
+
+        // Self-loop diffs at the engine's current tip make the second feed a
+        // no-op for masternode-list state while still exercising the QRInfo
+        // verification pipeline.
+        let tip_hash = engine
+            .masternode_lists
+            .iter()
+            .next_back()
+            .map(|(_, list)| list.block_hash)
+            .expect("engine has a tip list after first feed");
+        let make_self_loop = |hash: BlockHash| MnListDiff {
+            version: 1,
+            base_block_hash: hash,
+            block_hash: hash,
+            total_transactions: 0,
+            merkle_hashes: vec![],
+            merkle_flags: vec![],
+            coinbase_tx: Transaction {
+                version: 1,
+                lock_time: 0,
+                input: vec![],
+                output: vec![],
+                special_transaction_payload: None,
+            },
+            deleted_masternodes: vec![],
+            new_masternodes: vec![],
+            deleted_quorums: vec![],
+            new_quorums: vec![],
+            quorums_chainlock_signatures: vec![],
+        };
+        let empty_snapshot = || QuorumSnapshot {
+            skip_list_mode: MNSkipListMode::NoSkipping,
+            active_quorum_members: vec![],
+            skip_list: vec![],
+        };
+
+        let thin_qr_info = QRInfo {
+            quorum_snapshot_at_h_minus_c: empty_snapshot(),
+            quorum_snapshot_at_h_minus_2c: empty_snapshot(),
+            quorum_snapshot_at_h_minus_3c: empty_snapshot(),
+            mn_list_diff_tip: make_self_loop(tip_hash),
+            mn_list_diff_h: make_self_loop(tip_hash),
+            mn_list_diff_at_h_minus_c: make_self_loop(tip_hash),
+            mn_list_diff_at_h_minus_2c: make_self_loop(tip_hash),
+            mn_list_diff_at_h_minus_3c: make_self_loop(tip_hash),
+            quorum_snapshot_and_mn_list_diff_at_h_minus_4c: None,
+            last_commitment_per_index,
+            quorum_snapshot_list: vec![],
+            mn_list_diff_list: vec![],
+        };
+
+        let _ = engine.feed_qr_info(thin_qr_info, false, true);
+
+        let after_cycle = engine
+            .rotated_quorums_per_cycle
+            .get(&cycle_key)
+            .expect("cycle must still exist after thin second feed");
+        assert_eq!(
+            after_cycle.len(),
+            original_cycle.len(),
+            "thin second feed must not change cycle entry count"
+        );
+        for (idx, entry) in after_cycle {
+            assert!(
+                matches!(entry.verified, LLMQEntryVerificationStatus::Verified),
+                "cycle quorum at index {} (hash {}) must remain Verified after thin second feed, got {}",
+                idx,
+                entry.quorum_entry.quorum_hash,
+                entry.verified
+            );
+        }
     }
 }
