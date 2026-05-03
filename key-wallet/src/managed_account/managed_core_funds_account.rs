@@ -13,13 +13,13 @@ use crate::account::ManagedAccountTrait;
 use crate::account::TransactionRecord;
 #[cfg(feature = "bls")]
 use crate::derivation_bls_bip32::ExtendedBLSPubKey;
+use crate::managed_account::address_pool;
 #[cfg(any(feature = "bls", feature = "eddsa"))]
 use crate::managed_account::address_pool::PublicKeyType;
 use crate::managed_account::managed_account_type::ManagedAccountType;
 use crate::managed_account::transaction_record::{
     InputDetail, OutputDetail, OutputRole, TransactionDirection,
 };
-use crate::managed_account::address_pool;
 use crate::transaction_checking::transaction_router::TransactionType;
 use crate::transaction_checking::{AccountMatch, TransactionContext};
 use crate::utxo::Utxo;

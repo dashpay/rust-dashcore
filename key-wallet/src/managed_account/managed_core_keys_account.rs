@@ -1,7 +1,7 @@
 //! Managed core keys account: address pools and key derivation without funds tracking
 //!
 //! This module contains a lightweight mutable account state that omits the funds
-//! bookkeeping (balance, UTXOs, spent outpoints) carried by [`ManagedCoreFundsAccount`].
+//! bookkeeping (balance, UTXOs, spent outpoints) carried by [`crate::managed_account::ManagedCoreFundsAccount`].
 //! It is intended for accounts that exist primarily to derive keys/addresses for
 //! special-purpose flows (identity registration, asset locks, masternode provider
 //! keys) rather than to hold and spend Dash directly.
@@ -14,9 +14,9 @@ use crate::account::EdDSAAccount;
 use crate::account::TransactionRecord;
 #[cfg(feature = "bls")]
 use crate::derivation_bls_bip32::ExtendedBLSPubKey;
+use crate::managed_account::address_pool;
 #[cfg(any(feature = "bls", feature = "eddsa"))]
 use crate::managed_account::address_pool::PublicKeyType;
-use crate::managed_account::address_pool;
 use crate::managed_account::managed_account_type::ManagedAccountType;
 #[cfg(feature = "eddsa")]
 use crate::AddressInfo;
@@ -29,7 +29,7 @@ use std::collections::BTreeMap;
 
 /// Managed core keys account with mutable state but no funds tracking
 ///
-/// Like [`ManagedCoreFundsAccount`] but without `balance`, `utxos`, or
+/// Like [`crate::managed_account::ManagedCoreFundsAccount`] but without `balance`, `utxos`, or
 /// `spent_outpoints`. Used for accounts that derive special-purpose keys
 /// (identity registration, asset locks, masternode provider keys) where
 /// per-account UTXO/balance bookkeeping is not meaningful.
