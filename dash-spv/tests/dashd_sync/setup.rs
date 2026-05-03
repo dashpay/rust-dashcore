@@ -121,7 +121,12 @@ impl TestContext {
         let wallet_read = self.wallet.read().await;
         let wallet_info =
             wallet_read.get_wallet_info(&self.wallet_id).expect("Wallet info not found");
-        wallet_info.accounts().all_accounts().iter().map(|a| a.transactions.len()).sum()
+        wallet_info
+            .accounts()
+            .all_accounts()
+            .into_iter()
+            .map(|a| a.transactions_iter().count())
+            .sum()
     }
     /// Retrieves the spendable balance of the wallet.
     pub(super) async fn spendable_balance(&self) -> u64 {
@@ -150,6 +155,9 @@ impl TestContext {
         else {
             panic!("Account 0 is not a Standard account type");
         };
+        // `account` is a `&ManagedCoreFundsAccount` from the funds-typed
+        // `standard_bip44_accounts` map; the destructure above reads through
+        // its public `managed_account_type` field.
 
         external_addresses
             .unused_addresses()
@@ -166,8 +174,8 @@ impl TestContext {
         wallet_info
             .accounts()
             .all_accounts()
-            .iter()
-            .any(|account| account.transactions.contains_key(txid))
+            .into_iter()
+            .any(|account| account.transactions_iter().any(|(stored, _)| stored == txid))
             || wallet_info.immature_transactions().iter().any(|tx| &tx.txid() == txid)
     }
 
@@ -196,7 +204,7 @@ impl TestContext {
 
         let mut spv_txids = HashSet::new();
         for managed_account in wallet_info.accounts().all_accounts() {
-            for txid in managed_account.transactions.keys() {
+            for (txid, _) in managed_account.transactions_iter() {
                 spv_txids.insert(txid.to_string());
             }
         }
@@ -303,8 +311,8 @@ pub(super) async fn client_has_transaction(
     wallet_info
         .accounts()
         .all_accounts()
-        .iter()
-        .any(|account| account.transactions.contains_key(txid))
+        .into_iter()
+        .any(|account| account.transactions_iter().any(|(stored, _)| stored == txid))
         || wallet_info.immature_transactions().iter().any(|tx| &tx.txid() == txid)
 }
 

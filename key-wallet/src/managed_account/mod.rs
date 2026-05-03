@@ -14,6 +14,7 @@
 
 pub mod address_pool;
 pub mod managed_account_collection;
+pub mod managed_account_ref;
 pub mod managed_account_trait;
 pub mod managed_account_type;
 pub mod managed_core_funds_account;
@@ -23,5 +24,7 @@ pub mod metadata;
 pub mod platform_address;
 pub mod transaction_record;
 
+pub use managed_account_ref::{ManagedAccountRef, ManagedAccountRefMut};
+pub use managed_account_type::ManagedAccountType;
 pub use managed_core_funds_account::ManagedCoreFundsAccount;
 pub use managed_core_keys_account::ManagedCoreKeysAccount;

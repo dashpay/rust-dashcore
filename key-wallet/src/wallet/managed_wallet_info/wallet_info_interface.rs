@@ -78,11 +78,17 @@ pub trait WalletInfoInterface: Sized + WalletTransactionChecker + ManagedAccount
     fn update_balance(&mut self);
 
     /// Per-account balances keyed by `AccountType`.
+    ///
+    /// Only funds-bearing accounts (Standard, CoinJoin, DashPay) carry a
+    /// balance — keys-only accounts are skipped.
     fn account_balances(&self) -> BTreeMap<AccountType, WalletCoreBalance> {
         self.accounts()
             .all_accounts()
             .iter()
-            .map(|acc| (acc.managed_account_type().to_account_type(), *acc.balance()))
+            .filter_map(|acc| {
+                acc.as_funds()
+                    .map(|funds| (funds.managed_account_type.to_account_type(), *funds.balance()))
+            })
             .collect()
     }
 
@@ -204,7 +210,9 @@ impl WalletInfoInterface for ManagedWalletInfo {
     fn utxos(&self) -> BTreeSet<&Utxo> {
         let mut utxos = BTreeSet::new();
         for account in self.accounts.all_accounts() {
-            utxos.extend(account.utxos.values());
+            if let Some(funds) = account.as_funds() {
+                utxos.extend(funds.utxos.values());
+            }
         }
         utxos
     }
@@ -223,8 +231,10 @@ impl WalletInfoInterface for ManagedWalletInfo {
         let mut balance = WalletCoreBalance::default();
         let last_processed_height = self.last_processed_height();
         for account in self.accounts.all_accounts_mut() {
-            account.update_balance(last_processed_height);
-            balance += *account.balance();
+            if let Some(funds) = account.into_funds() {
+                funds.update_balance(last_processed_height);
+                balance += *funds.balance();
+            }
         }
         self.balance = balance;
     }
@@ -234,7 +244,14 @@ impl WalletInfoInterface for ManagedWalletInfo {
         {
             let mut transactions = Vec::new();
             for account in self.accounts.all_accounts() {
-                transactions.extend(account.transactions.values());
+                match account {
+                    crate::managed_account::ManagedAccountRef::Funds(funds) => {
+                        transactions.extend(funds.transactions.values());
+                    }
+                    crate::managed_account::ManagedAccountRef::Keys(keys) => {
+                        transactions.extend(keys.transactions.values());
+                    }
+                }
             }
             transactions
         }
@@ -255,19 +272,29 @@ impl WalletInfoInterface for ManagedWalletInfo {
         {
             let mut immature_txids: BTreeSet<Txid> = BTreeSet::new();
 
-            // Find txids of immature coinbase UTXOs
+            // Find txids of immature coinbase UTXOs (only funds accounts hold UTXOs).
             for account in self.accounts.all_accounts() {
-                for utxo in account.utxos.values() {
-                    if utxo.is_coinbase && !utxo.is_mature(self.last_processed_height()) {
-                        immature_txids.insert(utxo.outpoint.txid);
+                if let Some(funds) = account.as_funds() {
+                    for utxo in funds.utxos.values() {
+                        if utxo.is_coinbase && !utxo.is_mature(self.last_processed_height()) {
+                            immature_txids.insert(utxo.outpoint.txid);
+                        }
                     }
                 }
             }
 
-            // Get the actual transactions
+            // Get the actual transactions across both account variants.
             let mut transactions = Vec::new();
             for account in self.accounts.all_accounts() {
-                for (txid, record) in &account.transactions {
+                let recs: Box<dyn Iterator<Item = (&Txid, &TransactionRecord)>> = match account {
+                    crate::managed_account::ManagedAccountRef::Funds(funds) => {
+                        Box::new(funds.transactions.iter())
+                    }
+                    crate::managed_account::ManagedAccountRef::Keys(keys) => {
+                        Box::new(keys.transactions.iter())
+                    }
+                };
+                for (txid, record) in recs {
                     if immature_txids.contains(txid) {
                         transactions.push(record.transaction.clone());
                     }
@@ -300,8 +327,19 @@ impl WalletInfoInterface for ManagedWalletInfo {
         #[cfg(feature = "keep_txs_in_memory")]
         {
             let mut matured = Vec::new();
+            // Coinbase-bearing transactions only land in funds accounts —
+            // keys accounts don't track UTXOs and so never see coinbase
+            // outputs, but iterate both for safety.
             for account in self.accounts.all_accounts() {
-                for record in account.transactions.values() {
+                let recs: Box<dyn Iterator<Item = &TransactionRecord>> = match account {
+                    crate::managed_account::ManagedAccountRef::Funds(funds) => {
+                        Box::new(funds.transactions.values())
+                    }
+                    crate::managed_account::ManagedAccountRef::Keys(keys) => {
+                        Box::new(keys.transactions.values())
+                    }
+                };
+                for record in recs {
                     if !record.transaction.is_coin_base() {
                         continue;
                     }
@@ -326,12 +364,27 @@ impl WalletInfoInterface for ManagedWalletInfo {
         }
         let mut any_changed = false;
         for account in self.accounts.all_accounts_mut() {
-            if account.mark_utxos_instant_send(txid) {
-                any_changed = true;
-            }
-            #[cfg(feature = "keep_txs_in_memory")]
-            if let Some(record) = account.transactions_mut().get_mut(txid) {
-                record.update_context(TransactionContext::InstantSend(lock.clone()));
+            match account {
+                crate::managed_account::ManagedAccountRefMut::Funds(funds) => {
+                    if funds.mark_utxos_instant_send(txid) {
+                        any_changed = true;
+                    }
+                    #[cfg(feature = "keep_txs_in_memory")]
+                    if let Some(record) = funds.transactions.get_mut(txid) {
+                        record.update_context(TransactionContext::InstantSend(lock.clone()));
+                    }
+                }
+                crate::managed_account::ManagedAccountRefMut::Keys(keys) => {
+                    // Keys accounts have no UTXOs, but they may still track
+                    // a record of the transaction whose context we want to
+                    // update.
+                    #[cfg(feature = "keep_txs_in_memory")]
+                    if let Some(record) = keys.transactions.get_mut(txid) {
+                        record.update_context(TransactionContext::InstantSend(lock.clone()));
+                    }
+                    #[cfg(not(feature = "keep_txs_in_memory"))]
+                    let _ = keys;
+                }
             }
         }
         #[cfg(not(feature = "keep_txs_in_memory"))]

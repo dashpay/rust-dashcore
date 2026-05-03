@@ -10,6 +10,7 @@ use crate::account::{ManagedAccountCollection, ManagedCoreFundsAccount};
 use crate::managed_account::address_pool::{AddressInfo, PublicKeyType};
 use crate::managed_account::managed_account_type::ManagedAccountType;
 use crate::managed_account::transaction_record::TransactionRecord;
+use crate::managed_account::ManagedCoreKeysAccount;
 use crate::Address;
 use dashcore::address::Payload;
 use dashcore::blockdata::transaction::Transaction;
@@ -424,7 +425,7 @@ impl ManagedAccountCollection {
                 .into_iter()
                 .collect(),
             AccountTypeToCheck::IdentityTopUp => {
-                Self::check_indexed_accounts(&self.identity_topup, tx)
+                Self::check_indexed_keys_accounts(&self.identity_topup, tx)
             }
             AccountTypeToCheck::IdentityTopUpNotBound => self
                 .identity_topup_not_bound
@@ -499,13 +500,40 @@ impl ManagedAccountCollection {
         }
     }
 
-    /// Check indexed accounts (BTreeMap of accounts)
+    /// Check indexed funds accounts (BTreeMap of [`ManagedCoreFundsAccount`])
     fn check_indexed_accounts(
         accounts: &BTreeMap<u32, ManagedCoreFundsAccount>,
         tx: &Transaction,
     ) -> Vec<AccountMatch> {
         let mut matches = Vec::new();
         for (index, account) in accounts {
+            if let Some(match_info) = account.check_transaction_for_match(tx, Some(*index)) {
+                matches.push(match_info);
+            }
+        }
+        matches
+    }
+
+    /// Check indexed keys accounts (BTreeMap of [`ManagedCoreKeysAccount`]).
+    ///
+    /// IdentityTopUp accounts hold keys but no funds, so they live in
+    /// `BTreeMap<u32, ManagedCoreKeysAccount>` rather than the funds-typed
+    /// map used by Standard, BIP32, CoinJoin, etc. Both AssetLock-payload
+    /// matches and regular-output matches are checked, so funding
+    /// transactions and the asset-lock special transaction itself are both
+    /// recognised.
+    fn check_indexed_keys_accounts(
+        accounts: &BTreeMap<u32, ManagedCoreKeysAccount>,
+        tx: &Transaction,
+    ) -> Vec<AccountMatch> {
+        let mut matches = Vec::new();
+        for (index, account) in accounts {
+            if let Some(match_info) =
+                account.check_asset_lock_transaction_for_match(tx, Some(*index))
+            {
+                matches.push(match_info);
+                continue;
+            }
             if let Some(match_info) = account.check_transaction_for_match(tx, Some(*index)) {
                 matches.push(match_info);
             }

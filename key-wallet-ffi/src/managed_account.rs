@@ -22,26 +22,101 @@ use key_wallet::account::account_collection::{DashpayAccountKey, PlatformPayment
 use key_wallet::account::TransactionRecord;
 use key_wallet::managed_account::address_pool::AddressPool;
 use key_wallet::managed_account::managed_platform_account::ManagedPlatformAccount;
-use key_wallet::managed_account::ManagedCoreFundsAccount;
+use key_wallet::managed_account::{
+    ManagedAccountType, ManagedCoreFundsAccount, ManagedCoreKeysAccount,
+};
 use key_wallet::AccountType;
 
-/// Opaque managed account handle that wraps ManagedAccount
+/// Opaque managed account handle that wraps a managed core account.
+///
+/// Internally stores either a funds-bearing or a keys-only account; FFI
+/// callers can ignore the distinction for read-only queries that work on
+/// either variant (network, addresses, watch-only flag, etc.). Operations
+/// that only make sense for funds accounts (balance, UTXOs, on-chain
+/// transactions) require the funds variant; calling them on a keys
+/// account returns a sensible default (zero, empty collection).
 pub struct FFIManagedCoreAccount {
-    /// The underlying managed account
-    pub(crate) account: Arc<ManagedCoreFundsAccount>,
+    pub(crate) inner: FFIManagedCoreAccountInner,
+}
+
+/// Internal variant carried by [`FFIManagedCoreAccount`].
+pub(crate) enum FFIManagedCoreAccountInner {
+    /// Funds-bearing managed account (Standard, CoinJoin, DashPay).
+    Funds(Arc<ManagedCoreFundsAccount>),
+    /// Keys-only managed account (identity, asset-lock, provider).
+    Keys(Arc<ManagedCoreKeysAccount>),
 }
 
 impl FFIManagedCoreAccount {
-    /// Create a new FFI managed account handle
+    /// Create a new FFI managed account handle from a funds-bearing account.
     pub fn new(account: &ManagedCoreFundsAccount) -> Self {
         FFIManagedCoreAccount {
-            account: Arc::new(account.clone()),
+            inner: FFIManagedCoreAccountInner::Funds(Arc::new(account.clone())),
         }
     }
 
-    /// Get a reference to the inner managed account
+    /// Create a new FFI managed account handle from a keys-only account.
+    pub fn new_keys(account: &ManagedCoreKeysAccount) -> Self {
+        FFIManagedCoreAccount {
+            inner: FFIManagedCoreAccountInner::Keys(Arc::new(account.clone())),
+        }
+    }
+
+    /// Get the funds variant if this handle wraps one.
+    pub fn as_funds(&self) -> Option<&ManagedCoreFundsAccount> {
+        match &self.inner {
+            FFIManagedCoreAccountInner::Funds(a) => Some(a.as_ref()),
+            FFIManagedCoreAccountInner::Keys(_) => None,
+        }
+    }
+
+    /// Get the keys variant if this handle wraps one.
+    pub fn as_keys(&self) -> Option<&ManagedCoreKeysAccount> {
+        match &self.inner {
+            FFIManagedCoreAccountInner::Funds(_) => None,
+            FFIManagedCoreAccountInner::Keys(a) => Some(a.as_ref()),
+        }
+    }
+
+    /// Get the underlying [`ManagedAccountType`], regardless of variant.
+    pub fn managed_account_type(&self) -> &ManagedAccountType {
+        match &self.inner {
+            FFIManagedCoreAccountInner::Funds(a) => &a.managed_account_type,
+            FFIManagedCoreAccountInner::Keys(a) => &a.managed_account_type,
+        }
+    }
+
+    /// Get the network of the underlying account, regardless of variant.
+    pub fn network(&self) -> key_wallet::Network {
+        match &self.inner {
+            FFIManagedCoreAccountInner::Funds(a) => a.network,
+            FFIManagedCoreAccountInner::Keys(a) => a.network,
+        }
+    }
+
+    /// Whether the underlying account is watch-only.
+    pub fn is_watch_only(&self) -> bool {
+        match &self.inner {
+            FFIManagedCoreAccountInner::Funds(a) => a.is_watch_only,
+            FFIManagedCoreAccountInner::Keys(a) => a.is_watch_only,
+        }
+    }
+
+    /// Get a reference to the inner funds account, panicking if this handle
+    /// wraps a keys-only account.
+    ///
+    /// Kept for backwards source compatibility with callers that have not
+    /// yet been migrated to dispatch on the variant. Prefer
+    /// [`Self::as_funds`] or the explicit accessors below for new code.
     pub fn inner(&self) -> &ManagedCoreFundsAccount {
-        self.account.as_ref()
+        match &self.inner {
+            FFIManagedCoreAccountInner::Funds(a) => a.as_ref(),
+            FFIManagedCoreAccountInner::Keys(_) => {
+                panic!(
+                    "FFIManagedCoreAccount::inner() called on a keys-only account; use as_keys() or the variant-aware accessors"
+                )
+            }
+        }
     }
 }
 
@@ -226,39 +301,67 @@ pub unsafe extern "C" fn managed_wallet_get_account(
         use key_wallet::account::StandardAccountType;
 
         let managed_collection = &managed_wallet.inner().accounts;
-        let managed_account = match account_type_rust {
+        // Funds-bearing variants build the FFI handle directly; keys-only
+        // variants go through `FFIManagedCoreAccount::new_keys`. The two
+        // halves run inside small closures so each branch returns the same
+        // `Option<FFIManagedCoreAccount>` shape.
+        let ffi_account: Option<FFIManagedCoreAccount> = match account_type_rust {
             AccountType::Standard {
                 index,
                 standard_account_type,
             } => match standard_account_type {
-                StandardAccountType::BIP44Account => {
-                    managed_collection.standard_bip44_accounts.get(&index)
-                }
-                StandardAccountType::BIP32Account => {
-                    managed_collection.standard_bip32_accounts.get(&index)
-                }
+                StandardAccountType::BIP44Account => managed_collection
+                    .standard_bip44_accounts
+                    .get(&index)
+                    .map(FFIManagedCoreAccount::new),
+                StandardAccountType::BIP32Account => managed_collection
+                    .standard_bip32_accounts
+                    .get(&index)
+                    .map(FFIManagedCoreAccount::new),
             },
             AccountType::CoinJoin {
                 index,
-            } => managed_collection.coinjoin_accounts.get(&index),
-            AccountType::IdentityRegistration => managed_collection.identity_registration.as_ref(),
+            } => managed_collection.coinjoin_accounts.get(&index).map(FFIManagedCoreAccount::new),
+            AccountType::IdentityRegistration => managed_collection
+                .identity_registration
+                .as_ref()
+                .map(FFIManagedCoreAccount::new_keys),
             AccountType::IdentityTopUp {
                 registration_index,
-            } => managed_collection.identity_topup.get(&registration_index),
-            AccountType::IdentityTopUpNotBoundToIdentity => {
-                managed_collection.identity_topup_not_bound.as_ref()
+            } => managed_collection
+                .identity_topup
+                .get(&registration_index)
+                .map(FFIManagedCoreAccount::new_keys),
+            AccountType::IdentityTopUpNotBoundToIdentity => managed_collection
+                .identity_topup_not_bound
+                .as_ref()
+                .map(FFIManagedCoreAccount::new_keys),
+            AccountType::IdentityInvitation => {
+                managed_collection.identity_invitation.as_ref().map(FFIManagedCoreAccount::new_keys)
             }
-            AccountType::IdentityInvitation => managed_collection.identity_invitation.as_ref(),
-            AccountType::AssetLockAddressTopUp => {
-                managed_collection.asset_lock_address_topup.as_ref()
+            AccountType::AssetLockAddressTopUp => managed_collection
+                .asset_lock_address_topup
+                .as_ref()
+                .map(FFIManagedCoreAccount::new_keys),
+            AccountType::AssetLockShieldedAddressTopUp => managed_collection
+                .asset_lock_shielded_address_topup
+                .as_ref()
+                .map(FFIManagedCoreAccount::new_keys),
+            AccountType::ProviderVotingKeys => managed_collection
+                .provider_voting_keys
+                .as_ref()
+                .map(FFIManagedCoreAccount::new_keys),
+            AccountType::ProviderOwnerKeys => {
+                managed_collection.provider_owner_keys.as_ref().map(FFIManagedCoreAccount::new_keys)
             }
-            AccountType::AssetLockShieldedAddressTopUp => {
-                managed_collection.asset_lock_shielded_address_topup.as_ref()
-            }
-            AccountType::ProviderVotingKeys => managed_collection.provider_voting_keys.as_ref(),
-            AccountType::ProviderOwnerKeys => managed_collection.provider_owner_keys.as_ref(),
-            AccountType::ProviderOperatorKeys => managed_collection.provider_operator_keys.as_ref(),
-            AccountType::ProviderPlatformKeys => managed_collection.provider_platform_keys.as_ref(),
+            AccountType::ProviderOperatorKeys => managed_collection
+                .provider_operator_keys
+                .as_ref()
+                .map(FFIManagedCoreAccount::new_keys),
+            AccountType::ProviderPlatformKeys => managed_collection
+                .provider_platform_keys
+                .as_ref()
+                .map(FFIManagedCoreAccount::new_keys),
             AccountType::DashpayReceivingFunds {
                 ..
             } => None,
@@ -270,9 +373,8 @@ pub unsafe extern "C" fn managed_wallet_get_account(
             } => None,
         };
 
-        match managed_account {
-            Some(account) => {
-                let ffi_account = FFIManagedCoreAccount::new(account);
+        match ffi_account {
+            Some(ffi_account) => {
                 FFIManagedCoreAccountResult::success(Box::into_raw(Box::new(ffi_account)))
             }
             None => FFIManagedCoreAccountResult::error(
@@ -341,7 +443,7 @@ pub unsafe extern "C" fn managed_wallet_get_top_up_account_with_registration_ind
 
     let result = match managed_wallet.inner().accounts.identity_topup.get(&registration_index) {
         Some(account) => {
-            let ffi_account = FFIManagedCoreAccount::new(account);
+            let ffi_account = FFIManagedCoreAccount::new_keys(account);
             FFIManagedCoreAccountResult::success(Box::into_raw(Box::new(ffi_account)))
         }
         None => FFIManagedCoreAccountResult::error(

@@ -623,7 +623,7 @@ mod tests {
         // Insert the managed account directly into managed_info's accounts
         managed_info
             .accounts
-            .insert(managed_account)
+            .insert_funds(managed_account)
             .expect("insert should succeed for Standard account");
 
         // Create wrapper for managed info heap-allocated like C would do

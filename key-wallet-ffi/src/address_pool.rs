@@ -15,45 +15,61 @@ use key_wallet::account::ManagedAccountCollection;
 use key_wallet::managed_account::address_pool::{
     AddressInfo, AddressPool, KeySource, PublicKeyType,
 };
-use key_wallet::managed_account::ManagedCoreFundsAccount;
+use key_wallet::managed_account::{ManagedAccountRef, ManagedAccountRefMut, ManagedAccountType};
 use key_wallet::AccountType;
 
-// Helper functions to get managed accounts by type
+// Helper functions to get managed accounts by type. Returns the funds- or
+// keys-typed reference via `ManagedAccountRef` so callers don't need to know
+// the concrete variant statically.
 fn get_managed_account_by_type<'a>(
     collection: &'a ManagedAccountCollection,
     account_type: &AccountType,
-) -> Option<&'a ManagedCoreFundsAccount> {
+) -> Option<ManagedAccountRef<'a>> {
     match account_type {
         AccountType::Standard {
             index,
             standard_account_type,
         } => match standard_account_type {
             key_wallet::account::StandardAccountType::BIP44Account => {
-                collection.standard_bip44_accounts.get(index)
+                collection.standard_bip44_accounts.get(index).map(ManagedAccountRef::Funds)
             }
             key_wallet::account::StandardAccountType::BIP32Account => {
-                collection.standard_bip32_accounts.get(index)
+                collection.standard_bip32_accounts.get(index).map(ManagedAccountRef::Funds)
             }
         },
         AccountType::CoinJoin {
             index,
-        } => collection.coinjoin_accounts.get(index),
-        AccountType::IdentityRegistration => collection.identity_registration.as_ref(),
+        } => collection.coinjoin_accounts.get(index).map(ManagedAccountRef::Funds),
+        AccountType::IdentityRegistration => {
+            collection.identity_registration.as_ref().map(ManagedAccountRef::Keys)
+        }
         AccountType::IdentityTopUp {
             registration_index,
-        } => collection.identity_topup.get(registration_index),
+        } => collection.identity_topup.get(registration_index).map(ManagedAccountRef::Keys),
         AccountType::IdentityTopUpNotBoundToIdentity => {
-            collection.identity_topup_not_bound.as_ref()
+            collection.identity_topup_not_bound.as_ref().map(ManagedAccountRef::Keys)
         }
-        AccountType::IdentityInvitation => collection.identity_invitation.as_ref(),
-        AccountType::AssetLockAddressTopUp => collection.asset_lock_address_topup.as_ref(),
+        AccountType::IdentityInvitation => {
+            collection.identity_invitation.as_ref().map(ManagedAccountRef::Keys)
+        }
+        AccountType::AssetLockAddressTopUp => {
+            collection.asset_lock_address_topup.as_ref().map(ManagedAccountRef::Keys)
+        }
         AccountType::AssetLockShieldedAddressTopUp => {
-            collection.asset_lock_shielded_address_topup.as_ref()
+            collection.asset_lock_shielded_address_topup.as_ref().map(ManagedAccountRef::Keys)
         }
-        AccountType::ProviderVotingKeys => collection.provider_voting_keys.as_ref(),
-        AccountType::ProviderOwnerKeys => collection.provider_owner_keys.as_ref(),
-        AccountType::ProviderOperatorKeys => collection.provider_operator_keys.as_ref(),
-        AccountType::ProviderPlatformKeys => collection.provider_platform_keys.as_ref(),
+        AccountType::ProviderVotingKeys => {
+            collection.provider_voting_keys.as_ref().map(ManagedAccountRef::Keys)
+        }
+        AccountType::ProviderOwnerKeys => {
+            collection.provider_owner_keys.as_ref().map(ManagedAccountRef::Keys)
+        }
+        AccountType::ProviderOperatorKeys => {
+            collection.provider_operator_keys.as_ref().map(ManagedAccountRef::Keys)
+        }
+        AccountType::ProviderPlatformKeys => {
+            collection.provider_platform_keys.as_ref().map(ManagedAccountRef::Keys)
+        }
         AccountType::DashpayReceivingFunds {
             ..
         }
@@ -75,38 +91,52 @@ fn get_managed_account_by_type<'a>(
 fn get_managed_account_by_type_mut<'a>(
     collection: &'a mut ManagedAccountCollection,
     account_type: &AccountType,
-) -> Option<&'a mut ManagedCoreFundsAccount> {
+) -> Option<ManagedAccountRefMut<'a>> {
     match account_type {
         AccountType::Standard {
             index,
             standard_account_type,
         } => match standard_account_type {
             key_wallet::account::StandardAccountType::BIP44Account => {
-                collection.standard_bip44_accounts.get_mut(index)
+                collection.standard_bip44_accounts.get_mut(index).map(ManagedAccountRefMut::Funds)
             }
             key_wallet::account::StandardAccountType::BIP32Account => {
-                collection.standard_bip32_accounts.get_mut(index)
+                collection.standard_bip32_accounts.get_mut(index).map(ManagedAccountRefMut::Funds)
             }
         },
         AccountType::CoinJoin {
             index,
-        } => collection.coinjoin_accounts.get_mut(index),
-        AccountType::IdentityRegistration => collection.identity_registration.as_mut(),
+        } => collection.coinjoin_accounts.get_mut(index).map(ManagedAccountRefMut::Funds),
+        AccountType::IdentityRegistration => {
+            collection.identity_registration.as_mut().map(ManagedAccountRefMut::Keys)
+        }
         AccountType::IdentityTopUp {
             registration_index,
-        } => collection.identity_topup.get_mut(registration_index),
+        } => collection.identity_topup.get_mut(registration_index).map(ManagedAccountRefMut::Keys),
         AccountType::IdentityTopUpNotBoundToIdentity => {
-            collection.identity_topup_not_bound.as_mut()
+            collection.identity_topup_not_bound.as_mut().map(ManagedAccountRefMut::Keys)
         }
-        AccountType::IdentityInvitation => collection.identity_invitation.as_mut(),
-        AccountType::AssetLockAddressTopUp => collection.asset_lock_address_topup.as_mut(),
+        AccountType::IdentityInvitation => {
+            collection.identity_invitation.as_mut().map(ManagedAccountRefMut::Keys)
+        }
+        AccountType::AssetLockAddressTopUp => {
+            collection.asset_lock_address_topup.as_mut().map(ManagedAccountRefMut::Keys)
+        }
         AccountType::AssetLockShieldedAddressTopUp => {
-            collection.asset_lock_shielded_address_topup.as_mut()
+            collection.asset_lock_shielded_address_topup.as_mut().map(ManagedAccountRefMut::Keys)
         }
-        AccountType::ProviderVotingKeys => collection.provider_voting_keys.as_mut(),
-        AccountType::ProviderOwnerKeys => collection.provider_owner_keys.as_mut(),
-        AccountType::ProviderOperatorKeys => collection.provider_operator_keys.as_mut(),
-        AccountType::ProviderPlatformKeys => collection.provider_platform_keys.as_mut(),
+        AccountType::ProviderVotingKeys => {
+            collection.provider_voting_keys.as_mut().map(ManagedAccountRefMut::Keys)
+        }
+        AccountType::ProviderOwnerKeys => {
+            collection.provider_owner_keys.as_mut().map(ManagedAccountRefMut::Keys)
+        }
+        AccountType::ProviderOperatorKeys => {
+            collection.provider_operator_keys.as_mut().map(ManagedAccountRefMut::Keys)
+        }
+        AccountType::ProviderPlatformKeys => {
+            collection.provider_platform_keys.as_mut().map(ManagedAccountRefMut::Keys)
+        }
         AccountType::DashpayReceivingFunds {
             ..
         }
@@ -304,34 +334,43 @@ pub unsafe extern "C" fn managed_wallet_get_address_pool_info(
     );
 
     // Get the appropriate address pool
+    let managed_account_type = managed_account.managed_account_type();
     let pool = match pool_type {
         FFIAddressPoolType::External => {
             // Only standard accounts have external/internal pools
-            if let key_wallet::managed_account::managed_account_type::ManagedAccountType::Standard {
+            if let ManagedAccountType::Standard {
                 external_addresses,
                 ..
-            } = &managed_account.managed_account_type {
+            } = managed_account_type
+            {
                 external_addresses
             } else {
-                (*error).set(FFIErrorCode::InvalidInput, "Account type does not have external address pool");
+                (*error).set(
+                    FFIErrorCode::InvalidInput,
+                    "Account type does not have external address pool",
+                );
                 return false;
             }
         }
         FFIAddressPoolType::Internal => {
             // Only standard accounts have external/internal pools
-            if let key_wallet::managed_account::managed_account_type::ManagedAccountType::Standard {
+            if let ManagedAccountType::Standard {
                 internal_addresses,
                 ..
-            } = &managed_account.managed_account_type {
+            } = managed_account_type
+            {
                 internal_addresses
             } else {
-                (*error).set(FFIErrorCode::InvalidInput, "Account type does not have internal address pool");
+                (*error).set(
+                    FFIErrorCode::InvalidInput,
+                    "Account type does not have internal address pool",
+                );
                 return false;
             }
         }
         FFIAddressPoolType::Single => {
             // Get the first (and only) address pool for non-standard accounts
-            let pools = managed_account.managed_account_type.address_pools();
+            let pools = managed_account_type.address_pools();
             if pools.is_empty() {
                 (*error).set(FFIErrorCode::InvalidInput, "Account has no address pools");
                 return false;
@@ -383,40 +422,49 @@ pub unsafe extern "C" fn managed_wallet_set_gap_limit(
     let account_type_rust = account_type.to_account_type(account_index);
 
     // Get the specific managed account
-    let managed_account = unwrap_or_return!(
+    let mut managed_account = unwrap_or_return!(
         get_managed_account_by_type_mut(&mut managed_wallet.accounts, &account_type_rust),
         error
     );
 
     // Get the appropriate address pool
+    let managed_account_type = managed_account.managed_account_type_mut();
     let pool = match pool_type {
         FFIAddressPoolType::External => {
             // Only standard accounts have external/internal pools
-            if let key_wallet::managed_account::managed_account_type::ManagedAccountType::Standard {
+            if let ManagedAccountType::Standard {
                 external_addresses,
                 ..
-            } = &mut managed_account.managed_account_type {
+            } = managed_account_type
+            {
                 external_addresses
             } else {
-                (*error).set(FFIErrorCode::InvalidInput, "Account type does not have external address pool");
+                (*error).set(
+                    FFIErrorCode::InvalidInput,
+                    "Account type does not have external address pool",
+                );
                 return false;
             }
         }
         FFIAddressPoolType::Internal => {
             // Only standard accounts have external/internal pools
-            if let key_wallet::managed_account::managed_account_type::ManagedAccountType::Standard {
+            if let ManagedAccountType::Standard {
                 internal_addresses,
                 ..
-            } = &mut managed_account.managed_account_type {
+            } = managed_account_type
+            {
                 internal_addresses
             } else {
-                (*error).set(FFIErrorCode::InvalidInput, "Account type does not have internal address pool");
+                (*error).set(
+                    FFIErrorCode::InvalidInput,
+                    "Account type does not have internal address pool",
+                );
                 return false;
             }
         }
         FFIAddressPoolType::Single => {
             // Get the first (and only) address pool for non-standard accounts
-            let pools = managed_account.managed_account_type.address_pools_mut();
+            let pools = managed_account_type.address_pools_mut();
             if pools.is_empty() {
                 (*error).set(FFIErrorCode::InvalidInput, "Account has no address pools");
                 return false;
@@ -470,56 +518,61 @@ pub unsafe extern "C" fn managed_wallet_generate_addresses_to_index(
     let key_source = KeySource::Public(xpub);
 
     // Get the specific managed account
-    let managed_account = unwrap_or_return!(
+    let mut managed_account = unwrap_or_return!(
         get_managed_account_by_type_mut(&mut managed_wallet.accounts, &account_type_rust),
         error
     );
 
     // Get the appropriate address pool and generate addresses
+    let managed_account_type = managed_account.managed_account_type_mut();
     let result = match pool_type {
         FFIAddressPoolType::External => {
             // Only standard accounts have external/internal pools
-            if let key_wallet::managed_account::managed_account_type::ManagedAccountType::Standard {
+            if let ManagedAccountType::Standard {
                 external_addresses,
                 ..
-            } = &mut managed_account.managed_account_type {
-                {
-                    let current = external_addresses.highest_generated.unwrap_or(0);
-                    if target_index > current {
-                        let needed = target_index - current;
-                        external_addresses.generate_addresses(needed, &key_source, true)
-                    } else {
-                        Ok(Vec::new())
-                    }
+            } = managed_account_type
+            {
+                let current = external_addresses.highest_generated.unwrap_or(0);
+                if target_index > current {
+                    let needed = target_index - current;
+                    external_addresses.generate_addresses(needed, &key_source, true)
+                } else {
+                    Ok(Vec::new())
                 }
             } else {
-                (*error).set(FFIErrorCode::InvalidInput, "Account type does not have external address pool");
+                (*error).set(
+                    FFIErrorCode::InvalidInput,
+                    "Account type does not have external address pool",
+                );
                 return false;
             }
         }
         FFIAddressPoolType::Internal => {
             // Only standard accounts have external/internal pools
-            if let key_wallet::managed_account::managed_account_type::ManagedAccountType::Standard {
+            if let ManagedAccountType::Standard {
                 internal_addresses,
                 ..
-            } = &mut managed_account.managed_account_type {
-                {
-                    let current = internal_addresses.highest_generated.unwrap_or(0);
-                    if target_index > current {
-                        let needed = target_index - current;
-                        internal_addresses.generate_addresses(needed, &key_source, true)
-                    } else {
-                        Ok(Vec::new())
-                    }
+            } = managed_account_type
+            {
+                let current = internal_addresses.highest_generated.unwrap_or(0);
+                if target_index > current {
+                    let needed = target_index - current;
+                    internal_addresses.generate_addresses(needed, &key_source, true)
+                } else {
+                    Ok(Vec::new())
                 }
             } else {
-                (*error).set(FFIErrorCode::InvalidInput, "Account type does not have internal address pool");
+                (*error).set(
+                    FFIErrorCode::InvalidInput,
+                    "Account type does not have internal address pool",
+                );
                 return false;
             }
         }
         FFIAddressPoolType::Single => {
             // Get the first (and only) address pool for non-standard accounts
-            let mut pools = managed_account.managed_account_type.address_pools_mut();
+            let mut pools = managed_account_type.address_pools_mut();
             if pools.is_empty() {
                 (*error).set(FFIErrorCode::InvalidInput, "Account has no address pools");
                 return false;

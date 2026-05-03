@@ -354,7 +354,7 @@ pub unsafe extern "C" fn managed_account_collection_get_identity_registration(
     let collection = &*collection;
     match &collection.collection.identity_registration {
         Some(account) => {
-            let ffi_account = FFIManagedCoreAccount::new(account);
+            let ffi_account = FFIManagedCoreAccount::new_keys(account);
             Box::into_raw(Box::new(ffi_account))
         }
         None => ptr::null_mut(),
@@ -396,7 +396,7 @@ pub unsafe extern "C" fn managed_account_collection_get_identity_topup(
     let collection = &*collection;
     match collection.collection.identity_topup.get(&registration_index) {
         Some(account) => {
-            let ffi_account = FFIManagedCoreAccount::new(account);
+            let ffi_account = FFIManagedCoreAccount::new_keys(account);
             Box::into_raw(Box::new(ffi_account))
         }
         None => ptr::null_mut(),
@@ -460,7 +460,7 @@ pub unsafe extern "C" fn managed_account_collection_get_identity_topup_not_bound
     let collection = &*collection;
     match &collection.collection.identity_topup_not_bound {
         Some(account) => {
-            let ffi_account = FFIManagedCoreAccount::new(account);
+            let ffi_account = FFIManagedCoreAccount::new_keys(account);
             Box::into_raw(Box::new(ffi_account))
         }
         None => ptr::null_mut(),
@@ -501,7 +501,7 @@ pub unsafe extern "C" fn managed_account_collection_get_identity_invitation(
     let collection = &*collection;
     match &collection.collection.identity_invitation {
         Some(account) => {
-            let ffi_account = FFIManagedCoreAccount::new(account);
+            let ffi_account = FFIManagedCoreAccount::new_keys(account);
             Box::into_raw(Box::new(ffi_account))
         }
         None => ptr::null_mut(),
@@ -544,7 +544,7 @@ pub unsafe extern "C" fn managed_account_collection_get_provider_voting_keys(
     let collection = &*collection;
     match &collection.collection.provider_voting_keys {
         Some(account) => {
-            let ffi_account = FFIManagedCoreAccount::new(account);
+            let ffi_account = FFIManagedCoreAccount::new_keys(account);
             Box::into_raw(Box::new(ffi_account))
         }
         None => ptr::null_mut(),
@@ -585,7 +585,7 @@ pub unsafe extern "C" fn managed_account_collection_get_provider_owner_keys(
     let collection = &*collection;
     match &collection.collection.provider_owner_keys {
         Some(account) => {
-            let ffi_account = FFIManagedCoreAccount::new(account);
+            let ffi_account = FFIManagedCoreAccount::new_keys(account);
             Box::into_raw(Box::new(ffi_account))
         }
         None => ptr::null_mut(),
@@ -629,7 +629,7 @@ pub unsafe extern "C" fn managed_account_collection_get_provider_operator_keys(
         let collection = &*collection;
         match &collection.collection.provider_operator_keys {
             Some(account) => {
-                let ffi_account = FFIManagedCoreAccount::new(account);
+                let ffi_account = FFIManagedCoreAccount::new_keys(account);
                 Box::into_raw(Box::new(ffi_account)) as *mut std::os::raw::c_void
             }
             None => ptr::null_mut(),
@@ -689,7 +689,7 @@ pub unsafe extern "C" fn managed_account_collection_get_provider_platform_keys(
         let collection = &*collection;
         match &collection.collection.provider_platform_keys {
             Some(account) => {
-                let ffi_account = FFIManagedCoreAccount::new(account);
+                let ffi_account = FFIManagedCoreAccount::new_keys(account);
                 Box::into_raw(Box::new(ffi_account)) as *mut std::os::raw::c_void
             }
             None => ptr::null_mut(),

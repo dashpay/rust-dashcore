@@ -101,23 +101,21 @@ impl WalletTransactionChecker for ManagedWalletInfo {
                 // before marking UTXOs so the freshly registered UTXOs get the
                 // IS-lock flag too.
                 for account_match in result.affected_accounts.clone() {
-                    let Some(account) = self
+                    let Some(mut account) = self
                         .accounts
                         .get_by_account_type_match_mut(&account_match.account_type_match)
                     else {
                         continue;
                     };
-                    #[cfg(feature = "keep_txs_in_memory")]
-                    let has_record = account.transactions.contains_key(&txid);
-                    #[cfg(not(feature = "keep_txs_in_memory"))]
-                    let has_record = false;
+                    let has_record = account.contains_transaction_record(&txid);
 
                     if has_record {
                         account.mark_utxos_instant_send(&txid);
                         #[cfg(feature = "keep_txs_in_memory")]
-                        if let Some(record) = account.transactions.get_mut(&txid) {
-                            record.update_context(context.clone());
-                            result.updated_records.push(record.clone());
+                        if let Some(record) =
+                            account.update_transaction_record_context(&txid, context.clone())
+                        {
+                            result.updated_records.push(record);
                         }
                     } else {
                         let record = account.record_transaction(
@@ -144,7 +142,7 @@ impl WalletTransactionChecker for ManagedWalletInfo {
 
         // Process each affected account
         for account_match in result.affected_accounts.clone() {
-            let Some(account) =
+            let Some(mut account) =
                 self.accounts.get_by_account_type_match_mut(&account_match.account_type_match)
             else {
                 continue;
@@ -182,7 +180,7 @@ impl WalletTransactionChecker for ManagedWalletInfo {
 
             let key_source = KeySource::Public(xpub);
             let rev_before = result.new_addresses.len();
-            for pool in account.managed_account_type.address_pools_mut() {
+            for pool in account.managed_account_type_mut().address_pools_mut() {
                 match pool.maintain_gap_limit(&key_source) {
                     Ok(addrs) => result.new_addresses.extend(addrs),
                     Err(e) => {

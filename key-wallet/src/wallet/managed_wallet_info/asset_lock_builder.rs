@@ -11,7 +11,7 @@ use secp256k1::PublicKey;
 use std::collections::HashMap;
 use std::fmt;
 
-use crate::managed_account::ManagedCoreFundsAccount;
+use crate::managed_account::ManagedCoreKeysAccount;
 use crate::signer::{Signer, SignerMethod};
 use crate::wallet::managed_wallet_info::coin_selection::SelectionStrategy;
 use crate::wallet::managed_wallet_info::fee::FeeRate;
@@ -141,7 +141,7 @@ fn resolve_funding_account(
     accounts: &mut crate::account::ManagedAccountCollection,
     funding_type: AssetLockFundingType,
     identity_index: u32,
-) -> Result<&mut ManagedCoreFundsAccount, AssetLockError> {
+) -> Result<&mut ManagedCoreKeysAccount, AssetLockError> {
     match funding_type {
         AssetLockFundingType::IdentityRegistration => accounts
             .identity_registration
