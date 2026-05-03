@@ -183,7 +183,7 @@ let account = wallet.create_account(
 let mut managed = ManagedCoreFundsAccount::from_account(&account);
 
 // Get a receive address
-let address = managed.get_next_receive_address()?;
+let address = managed.next_receive_address(Some(&account.account_xpub), true)?;
 ```
 
 ## Dependencies
