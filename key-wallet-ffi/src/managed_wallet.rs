@@ -554,7 +554,7 @@ mod tests {
     #[test]
     fn test_comprehensive_address_generation() {
         use key_wallet::account::{
-            ManagedAccountCollection, ManagedCoreAccount, StandardAccountType,
+            ManagedAccountCollection, ManagedCoreFundsAccount, StandardAccountType,
         };
         use key_wallet::bip32::DerivationPath;
         use key_wallet::managed_account::address_pool::{AddressPool, AddressPoolType};
@@ -608,7 +608,7 @@ mod tests {
         )
         .expect("Failed to create internal pool");
 
-        let managed_account = ManagedCoreAccount::new(
+        let managed_account = ManagedCoreFundsAccount::new(
             ManagedAccountType::Standard {
                 index: 0,
                 standard_account_type: StandardAccountType::BIP44Account,

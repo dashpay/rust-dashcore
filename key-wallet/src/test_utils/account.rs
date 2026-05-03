@@ -1,10 +1,10 @@
 use crate::account::StandardAccountType;
 use crate::managed_account::address_pool::{AddressPool, AddressPoolType, KeySource};
 use crate::managed_account::managed_account_type::ManagedAccountType;
-use crate::managed_account::ManagedCoreAccount;
+use crate::managed_account::ManagedCoreFundsAccount;
 use crate::{DerivationPath, Network};
 
-impl ManagedCoreAccount {
+impl ManagedCoreFundsAccount {
     /// Create a test managed account with a standard BIP44 type and empty address pools
     pub fn dummy_bip44() -> Self {
         let base_path = DerivationPath::master();
@@ -34,6 +34,6 @@ impl ManagedCoreAccount {
             internal_addresses: internal_pool,
         };
 
-        ManagedCoreAccount::new(account_type, Network::Regtest, false)
+        ManagedCoreFundsAccount::new(account_type, Network::Regtest, false)
     }
 }

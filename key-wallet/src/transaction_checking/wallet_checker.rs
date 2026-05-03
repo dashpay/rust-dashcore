@@ -1168,7 +1168,7 @@ mod tests {
         assert!(ctx.first_utxo().is_confirmed);
     }
 
-    /// Test `confirm_transaction` backfill directly on `ManagedCoreAccount` when the
+    /// Test `confirm_transaction` backfill directly on `ManagedCoreFundsAccount` when the
     /// account has no prior record of the transaction.
     #[tokio::test]
     async fn test_managed_account_confirm_backfills_missing_transaction() {

@@ -14,7 +14,7 @@ use crate::gap_limit::{
 use crate::managed_account::address_pool::{AddressPool, AddressPoolType};
 use crate::managed_account::managed_account_type::ManagedAccountType;
 use crate::managed_account::managed_platform_account::ManagedPlatformAccount;
-use crate::managed_account::ManagedCoreAccount;
+use crate::managed_account::ManagedCoreFundsAccount;
 use crate::transaction_checking::account_checker::CoreAccountTypeMatch;
 use crate::{Account, AccountCollection};
 use crate::{KeySource, Network};
@@ -113,35 +113,35 @@ macro_rules! get_by_account_type_match_impl {
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct ManagedAccountCollection {
     /// Standard BIP44 accounts by index
-    pub standard_bip44_accounts: BTreeMap<u32, ManagedCoreAccount>,
+    pub standard_bip44_accounts: BTreeMap<u32, ManagedCoreFundsAccount>,
     /// Standard BIP32 accounts by index
-    pub standard_bip32_accounts: BTreeMap<u32, ManagedCoreAccount>,
+    pub standard_bip32_accounts: BTreeMap<u32, ManagedCoreFundsAccount>,
     /// CoinJoin accounts by index
-    pub coinjoin_accounts: BTreeMap<u32, ManagedCoreAccount>,
+    pub coinjoin_accounts: BTreeMap<u32, ManagedCoreFundsAccount>,
     /// Identity registration account (optional)
-    pub identity_registration: Option<ManagedCoreAccount>,
+    pub identity_registration: Option<ManagedCoreFundsAccount>,
     /// Identity top-up accounts by registration index
-    pub identity_topup: BTreeMap<u32, ManagedCoreAccount>,
+    pub identity_topup: BTreeMap<u32, ManagedCoreFundsAccount>,
     /// Identity top-up not bound to identity (optional)
-    pub identity_topup_not_bound: Option<ManagedCoreAccount>,
+    pub identity_topup_not_bound: Option<ManagedCoreFundsAccount>,
     /// Identity invitation account (optional)
-    pub identity_invitation: Option<ManagedCoreAccount>,
+    pub identity_invitation: Option<ManagedCoreFundsAccount>,
     /// Asset lock address top-up account (optional)
-    pub asset_lock_address_topup: Option<ManagedCoreAccount>,
+    pub asset_lock_address_topup: Option<ManagedCoreFundsAccount>,
     /// Asset lock shielded address top-up account (optional)
-    pub asset_lock_shielded_address_topup: Option<ManagedCoreAccount>,
+    pub asset_lock_shielded_address_topup: Option<ManagedCoreFundsAccount>,
     /// Provider voting keys (optional)
-    pub provider_voting_keys: Option<ManagedCoreAccount>,
+    pub provider_voting_keys: Option<ManagedCoreFundsAccount>,
     /// Provider owner keys (optional)
-    pub provider_owner_keys: Option<ManagedCoreAccount>,
+    pub provider_owner_keys: Option<ManagedCoreFundsAccount>,
     /// Provider operator keys (optional)
-    pub provider_operator_keys: Option<ManagedCoreAccount>,
+    pub provider_operator_keys: Option<ManagedCoreFundsAccount>,
     /// Provider platform keys (optional)
-    pub provider_platform_keys: Option<ManagedCoreAccount>,
+    pub provider_platform_keys: Option<ManagedCoreFundsAccount>,
     /// DashPay receiving funds accounts keyed by (index, user_id, friend_id)
-    pub dashpay_receival_accounts: BTreeMap<DashpayAccountKey, ManagedCoreAccount>,
+    pub dashpay_receival_accounts: BTreeMap<DashpayAccountKey, ManagedCoreFundsAccount>,
     /// DashPay external accounts keyed by (index, user_id, friend_id)
-    pub dashpay_external_accounts: BTreeMap<DashpayAccountKey, ManagedCoreAccount>,
+    pub dashpay_external_accounts: BTreeMap<DashpayAccountKey, ManagedCoreFundsAccount>,
     /// Platform Payment accounts (DIP-17)
     /// Uses ManagedPlatformAccount for simplified balance tracking without transactions/UTXOs
     pub platform_payment_accounts: BTreeMap<PlatformPaymentAccountKey, ManagedPlatformAccount>,
@@ -266,7 +266,7 @@ impl ManagedAccountCollection {
     ///
     /// Returns an error if a PlatformPayment account type is passed, since those
     /// should use `insert_platform_account()` with `ManagedPlatformAccount` instead.
-    pub fn insert(&mut self, account: ManagedCoreAccount) -> Result<(), crate::error::Error> {
+    pub fn insert(&mut self, account: ManagedCoreFundsAccount) -> Result<(), crate::error::Error> {
         use crate::account::StandardAccountType;
 
         match &account.managed_account_type {
@@ -369,7 +369,7 @@ impl ManagedAccountCollection {
                 ..
             } => {
                 // Platform Payment accounts should use insert_platform_account() instead
-                // as they use ManagedPlatformAccount, not ManagedCoreAccount
+                // as they use ManagedPlatformAccount, not ManagedCoreFundsAccount
                 return Err(crate::error::Error::InvalidParameter(
                     "Use insert_platform_account() for Platform Payment accounts".into(),
                 ));
@@ -507,7 +507,7 @@ impl ManagedAccountCollection {
     /// Create a ManagedAccount from an Account
     fn create_managed_account_from_account(
         account: &Account,
-    ) -> Result<ManagedCoreAccount, crate::error::Error> {
+    ) -> Result<ManagedCoreFundsAccount, crate::error::Error> {
         // Use the account's existing public key
         let key_source = KeySource::Public(account.account_xpub);
         Self::create_managed_account_from_account_type(
@@ -521,8 +521,8 @@ impl ManagedAccountCollection {
     /// Create a ManagedAccount from a BLS Account
     #[cfg(feature = "bls")]
     fn create_managed_account_from_bls_account(
-        account: &super::BLSAccount,
-    ) -> Result<ManagedCoreAccount, crate::error::Error> {
+        account: &crate::account::BLSAccount,
+    ) -> Result<ManagedCoreFundsAccount, crate::error::Error> {
         let key_source = KeySource::BLSPublic(account.bls_public_key.clone());
         Self::create_managed_account_from_account_type(
             account.account_type,
@@ -535,9 +535,9 @@ impl ManagedAccountCollection {
     /// Create a ManagedAccount from an EdDSA Account
     #[cfg(feature = "eddsa")]
     fn create_managed_account_from_eddsa_account(
-        account: &super::EdDSAAccount,
+        account: &crate::account::EdDSAAccount,
         xpriv: Option<crate::derivation_slip10::ExtendedEd25519PrivKey>,
-    ) -> Result<ManagedCoreAccount, crate::error::Error> {
+    ) -> Result<ManagedCoreFundsAccount, crate::error::Error> {
         // EdDSA requires hardened derivation, so we need the private key to generate addresses
         let key_source = match xpriv {
             Some(priv_key) => KeySource::EdDSAPrivate(priv_key),
@@ -557,7 +557,7 @@ impl ManagedAccountCollection {
         network: Network,
         is_watch_only: bool,
         key_source: &KeySource,
-    ) -> Result<ManagedCoreAccount, crate::error::Error> {
+    ) -> Result<ManagedCoreFundsAccount, crate::error::Error> {
         // Get the derivation path for this account type
         let base_path = account_type
             .derivation_path(network)
@@ -785,7 +785,7 @@ impl ManagedAccountCollection {
             }
         };
 
-        Ok(ManagedCoreAccount::new(managed_type, network, is_watch_only))
+        Ok(ManagedCoreFundsAccount::new(managed_type, network, is_watch_only))
     }
 
     /// Create a ManagedPlatformAccount from an Account for Platform Payment accounts
@@ -819,7 +819,7 @@ impl ManagedAccountCollection {
         ))
     }
 
-    pub fn get(&self, index: u32) -> Option<&ManagedCoreAccount> {
+    pub fn get(&self, index: u32) -> Option<&ManagedCoreFundsAccount> {
         // Try standard BIP44 first
         if let Some(account) = self.standard_bip44_accounts.get(&index) {
             return Some(account);
@@ -844,7 +844,7 @@ impl ManagedAccountCollection {
     }
 
     /// Get a mutable account by index
-    pub fn get_mut(&mut self, index: u32) -> Option<&mut ManagedCoreAccount> {
+    pub fn get_mut(&mut self, index: u32) -> Option<&mut ManagedCoreFundsAccount> {
         // Try standard BIP44 first
         if let Some(account) = self.standard_bip44_accounts.get_mut(&index) {
             return Some(account);
@@ -872,7 +872,7 @@ impl ManagedAccountCollection {
     pub fn get_by_account_type_match(
         &self,
         account_type_match: &CoreAccountTypeMatch,
-    ) -> Option<&ManagedCoreAccount> {
+    ) -> Option<&ManagedCoreFundsAccount> {
         get_by_account_type_match_impl!(self, account_type_match, get, as_ref, values)
     }
 
@@ -880,12 +880,12 @@ impl ManagedAccountCollection {
     pub fn get_by_account_type_match_mut(
         &mut self,
         account_type_match: &CoreAccountTypeMatch,
-    ) -> Option<&mut ManagedCoreAccount> {
+    ) -> Option<&mut ManagedCoreFundsAccount> {
         get_by_account_type_match_impl!(self, account_type_match, get_mut, as_mut, values_mut)
     }
 
     /// Remove an account from the collection
-    pub fn remove(&mut self, index: u32) -> Option<ManagedCoreAccount> {
+    pub fn remove(&mut self, index: u32) -> Option<ManagedCoreFundsAccount> {
         // Try standard BIP44 first
         if let Some(account) = self.standard_bip44_accounts.remove(&index) {
             return Some(account);
@@ -935,7 +935,7 @@ impl ManagedAccountCollection {
     }
 
     /// Get all accounts
-    pub fn all_accounts(&self) -> Vec<&ManagedCoreAccount> {
+    pub fn all_accounts(&self) -> Vec<&ManagedCoreFundsAccount> {
         let mut accounts = Vec::new();
 
         // Add standard BIP44 accounts
@@ -994,7 +994,7 @@ impl ManagedAccountCollection {
     }
 
     /// Get all accounts mutably
-    pub fn all_accounts_mut(&mut self) -> Vec<&mut ManagedCoreAccount> {
+    pub fn all_accounts_mut(&mut self) -> Vec<&mut ManagedCoreFundsAccount> {
         let mut accounts = Vec::new();
 
         // Add standard BIP44 accounts

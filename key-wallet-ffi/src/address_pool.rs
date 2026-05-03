@@ -15,14 +15,14 @@ use key_wallet::account::ManagedAccountCollection;
 use key_wallet::managed_account::address_pool::{
     AddressInfo, AddressPool, KeySource, PublicKeyType,
 };
-use key_wallet::managed_account::ManagedCoreAccount;
+use key_wallet::managed_account::ManagedCoreFundsAccount;
 use key_wallet::AccountType;
 
 // Helper functions to get managed accounts by type
 fn get_managed_account_by_type<'a>(
     collection: &'a ManagedAccountCollection,
     account_type: &AccountType,
-) -> Option<&'a ManagedCoreAccount> {
+) -> Option<&'a ManagedCoreFundsAccount> {
     match account_type {
         AccountType::Standard {
             index,
@@ -75,7 +75,7 @@ fn get_managed_account_by_type<'a>(
 fn get_managed_account_by_type_mut<'a>(
     collection: &'a mut ManagedAccountCollection,
     account_type: &AccountType,
-) -> Option<&'a mut ManagedCoreAccount> {
+) -> Option<&'a mut ManagedCoreFundsAccount> {
     match account_type {
         AccountType::Standard {
             index,
