@@ -3,7 +3,6 @@
 //! This module contains the mutable account state that changes during wallet operation,
 //! kept separate from the immutable Account structure.
 
-use crate::account::AccountMetadata;
 #[cfg(feature = "bls")]
 use crate::account::BLSAccount;
 #[cfg(feature = "eddsa")]
@@ -38,15 +37,14 @@ pub mod managed_account_collection;
 pub mod managed_account_trait;
 pub mod managed_account_type;
 pub mod managed_platform_account;
-pub mod metadata;
 pub mod platform_address;
 pub mod transaction_record;
 
 /// Managed account with mutable state
 ///
-/// This struct contains the mutable state of an account including address pools,
-/// metadata, and balance information. It is managed separately from
-/// the immutable Account structure.
+/// This struct contains the mutable state of an account including address pools
+/// and balance information. It is managed separately from the immutable Account
+/// structure.
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize))]
 pub struct ManagedCoreAccount {
@@ -54,8 +52,6 @@ pub struct ManagedCoreAccount {
     pub managed_account_type: ManagedAccountType,
     /// Network this account belongs to
     pub network: Network,
-    /// Account metadata
-    pub metadata: AccountMetadata,
     /// Whether this is a watch-only account
     pub is_watch_only: bool,
     /// Account balance information
@@ -84,7 +80,6 @@ impl ManagedCoreAccount {
         Self {
             managed_account_type,
             network,
-            metadata: AccountMetadata::default(),
             is_watch_only,
             balance: WalletCoreBalance::default(),
             transactions: BTreeMap::new(),
@@ -301,9 +296,6 @@ impl ManagedCoreAccount {
 
     /// Mark an address as used
     pub fn mark_address_used(&mut self, address: &Address) -> bool {
-        // Update metadata timestamp
-        self.metadata.last_used = Some(Self::current_timestamp());
-
         // Use the account type's mark_address_used method
         // The address pools already track gap limits internally
         self.managed_account_type.mark_address_used(address)
@@ -615,7 +607,6 @@ impl ManagedCoreAccount {
             }
         }
         self.balance = WalletCoreBalance::new(confirmed, unconfirmed, immature, locked);
-        self.metadata.last_used = Some(Self::current_timestamp());
     }
 
     /// Get all addresses from all pools
@@ -1175,14 +1166,6 @@ impl ManagedCoreAccount {
         self.managed_account_type.get_address_derivation_path(address)
     }
 
-    /// Get the current timestamp (for metadata)
-    fn current_timestamp() -> u64 {
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs()
-    }
-
     /// Get total address count across all pools
     pub fn total_address_count(&self) -> usize {
         self.managed_account_type
@@ -1302,14 +1285,6 @@ impl ManagedAccountTrait for ManagedCoreAccount {
         self.network
     }
 
-    fn metadata(&self) -> &AccountMetadata {
-        &self.metadata
-    }
-
-    fn metadata_mut(&mut self) -> &mut AccountMetadata {
-        &mut self.metadata
-    }
-
     fn is_watch_only(&self) -> bool {
         self.is_watch_only
     }
@@ -1349,7 +1324,6 @@ impl<'de> Deserialize<'de> for ManagedCoreAccount {
         struct Helper {
             managed_account_type: ManagedAccountType,
             network: Network,
-            metadata: AccountMetadata,
             is_watch_only: bool,
             balance: WalletCoreBalance,
             transactions: BTreeMap<Txid, TransactionRecord>,
@@ -1368,7 +1342,6 @@ impl<'de> Deserialize<'de> for ManagedCoreAccount {
         Ok(ManagedCoreAccount {
             managed_account_type: helper.managed_account_type,
             network: helper.network,
-            metadata: helper.metadata,
             is_watch_only: helper.is_watch_only,
             balance: helper.balance,
             transactions: helper.transactions,

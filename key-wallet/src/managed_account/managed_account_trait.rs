@@ -4,7 +4,6 @@
 
 use std::collections::BTreeMap;
 
-use crate::account::AccountMetadata;
 use crate::account::TransactionRecord;
 use crate::managed_account::managed_account_type::ManagedAccountType;
 use crate::utxo::Utxo;
@@ -23,12 +22,6 @@ pub trait ManagedAccountTrait {
 
     /// Get the network
     fn network(&self) -> Network;
-
-    /// Get metadata
-    fn metadata(&self) -> &AccountMetadata;
-
-    /// Get mutable metadata
-    fn metadata_mut(&mut self) -> &mut AccountMetadata;
 
     /// Check if this is a watch-only account
     fn is_watch_only(&self) -> bool;
