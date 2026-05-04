@@ -34,10 +34,13 @@ pub struct DerivedAddress {
     /// Which pool of the account the address belongs to (External /
     /// Internal / Absent / AbsentHardened).
     pub pool_type: AddressPoolType,
-    /// Derivation index within the pool.
+    /// Derivation index within the pool. Combined with `account_type`
+    /// (which carries any account-level indices like the Dashpay
+    /// `user_identity_id` / `friend_identity_id`) and `pool_type`, this
+    /// fully determines the derivation path — consumers that need a
+    /// rendered path can recompute it deterministically rather than
+    /// shipping a redundant string on every event.
     pub derivation_index: u32,
-    /// Full derivation path (rendered).
-    pub derivation_path: String,
     /// The derived address.
     pub address: dashcore::Address,
     /// Compressed ECDSA public key (33 bytes). Non-ECDSA pools
@@ -67,7 +70,6 @@ impl DerivedAddress {
             account_type: derived.account_type,
             pool_type: derived.pool_type,
             derivation_index: derived.info.index,
-            derivation_path: derived.info.path.to_string(),
             address: derived.info.address,
             public_key,
         })
