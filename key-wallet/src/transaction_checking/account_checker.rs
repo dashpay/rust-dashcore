@@ -68,9 +68,8 @@ pub struct TransactionCheckResult {
     /// the derivation precisely without re-deriving.
     pub new_addresses: Vec<DerivedAddressInfo>,
     /// Transaction records created for new transactions. Each record carries
-    /// its owning [`AccountType`](crate::account::AccountType) on
-    /// `record.account_type`, so consumers can recover it without an external
-    /// pairing.
+    /// its owning [`AccountType`] on `record.account_type`, so consumers can
+    /// recover it without an external pairing.
     pub new_records: Vec<TransactionRecord>,
     /// Transaction records updated by this check (confirmation or IS-lock
     /// applied to a previously stored record). Each record carries its owning

@@ -76,8 +76,10 @@ pub struct CheckTransactionsResult {
     pub is_new_transaction: bool,
     /// Addresses derived during gap-limit maintenance, attributed to the
     /// wallet that produced them. Each entry carries the originating
-    /// account type, pool type, and full [`AddressInfo`] so downstream
-    /// emitters can attribute the derivation precisely without re-deriving.
+    /// account type, pool type, and full
+    /// [`AddressInfo`](key_wallet::managed_account::address_pool::AddressInfo)
+    /// so downstream emitters can attribute the derivation precisely without
+    /// re-deriving.
     pub new_addresses: BTreeMap<WalletId, Vec<DerivedAddressInfo>>,
     /// Total value received across all wallets
     pub total_received: u64,
