@@ -172,12 +172,15 @@ fn read_balance(balance: *const FFIBalance) -> FFIBalance {
     unsafe { *balance }
 }
 
+#[allow(clippy::too_many_arguments)]
 extern "C" fn on_transaction_detected(
     wallet_id: *const c_char,
     record: *const FFITransactionRecord,
     balance: *const FFIBalance,
     _account_balances: *const dash_spv_ffi::FFIAccountBalance,
     account_balances_count: u32,
+    _addresses_derived: *const dash_spv_ffi::FFIDerivedAddress,
+    addresses_derived_count: u32,
     _user_data: *mut c_void,
 ) {
     let wallet_short = short_wallet(wallet_id);
@@ -189,7 +192,7 @@ extern "C" fn on_transaction_detected(
     let b = read_balance(balance);
     let txid_hex = hex::encode(r.txid);
     println!(
-        "[Wallet] TX detected: wallet={}..., txid={}, account_kind={:?}, account_index={}, amount={} duffs, balance[confirmed={}, unconfirmed={}], changed_accounts={}",
+        "[Wallet] TX detected: wallet={}..., txid={}, account_kind={:?}, account_index={}, amount={} duffs, balance[confirmed={}, unconfirmed={}], changed_accounts={}, derived={}",
         wallet_short,
         txid_hex,
         r.account_type.kind,
@@ -198,6 +201,7 @@ extern "C" fn on_transaction_detected(
         b.confirmed,
         b.unconfirmed,
         account_balances_count,
+        addresses_derived_count,
     );
 }
 
@@ -243,12 +247,14 @@ extern "C" fn on_wallet_block_processed(
     balance: *const FFIBalance,
     _account_balances: *const dash_spv_ffi::FFIAccountBalance,
     account_balances_count: u32,
+    _addresses_derived: *const dash_spv_ffi::FFIDerivedAddress,
+    addresses_derived_count: u32,
     _user_data: *mut c_void,
 ) {
     let wallet_short = short_wallet(wallet_id);
     let b = read_balance(balance);
     println!(
-        "[Wallet] Block processed: wallet={}..., height={}, inserted={}, updated={}, matured={}, balance[confirmed={}, unconfirmed={}, immature={}, locked={}], changed_accounts={}",
+        "[Wallet] Block processed: wallet={}..., height={}, inserted={}, updated={}, matured={}, balance[confirmed={}, unconfirmed={}, immature={}, locked={}], changed_accounts={}, derived={}",
         wallet_short,
         height,
         inserted_count,
@@ -259,6 +265,7 @@ extern "C" fn on_wallet_block_processed(
         b.immature,
         b.locked,
         account_balances_count,
+        addresses_derived_count,
     );
 }
 
