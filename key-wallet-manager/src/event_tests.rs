@@ -15,6 +15,7 @@ use dashcore::{
 };
 use key_wallet::account::StandardAccountType;
 use key_wallet::managed_account::address_pool::AddressPoolType;
+use key_wallet::managed_account::managed_account_trait::ManagedAccountTrait;
 use key_wallet::managed_account::managed_account_type::ManagedAccountType;
 use key_wallet::AccountType;
 use std::collections::BTreeSet;

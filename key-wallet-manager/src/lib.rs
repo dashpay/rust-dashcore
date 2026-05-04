@@ -27,7 +27,6 @@ pub use wallet_interface::{BlockProcessingResult, MempoolTransactionResult, Wall
 use dashcore::blockdata::transaction::Transaction;
 use dashcore::prelude::CoreBlockHeight;
 use key_wallet::account::AccountCollection;
-use key_wallet::managed_account::managed_account_trait::ManagedAccountTrait;
 use key_wallet::managed_account::transaction_record::TransactionRecord;
 use key_wallet::transaction_checking::{DerivedAddressInfo, TransactionContext};
 use key_wallet::wallet::managed_wallet_info::transaction_building::AccountTypePreference;
@@ -38,6 +37,8 @@ use key_wallet::{ExtendedPubKey, WalletCoreBalance};
 use std::collections::{BTreeMap, BTreeSet};
 use std::str::FromStr;
 
+use dashcore::address::NetworkUnchecked;
+use key_wallet::wallet::managed_wallet_info::fee::FeeRate;
 use tokio::sync::broadcast;
 
 /// Default capacity for the wallet event bus.
@@ -570,334 +571,52 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletManager<T> {
         self.bump_structural_revision();
         Ok(())
     }
+}
 
+impl WalletManager<ManagedWalletInfo> {
     /// Get receive address from a specific wallet and account
-    pub fn get_receive_address(
+    pub fn next_receive_address(
         &mut self,
         wallet_id: &WalletId,
         account_index: u32,
         account_type_pref: AccountTypePreference,
         mark_as_used: bool,
-    ) -> Result<AddressGenerationResult, WalletError> {
+    ) -> Option<Address> {
         // Get the wallet account to access the xpub
-        let wallet = self.wallets.get(wallet_id).ok_or(WalletError::WalletNotFound(*wallet_id))?;
+        let (wallet, managed_info) = self.get_wallet_and_info_mut(wallet_id)?;
 
-        let managed_info =
-            self.wallet_infos.get_mut(wallet_id).ok_or(WalletError::WalletNotFound(*wallet_id))?;
-
-        // Get the account collection for the network
-        let collection = managed_info.accounts_mut();
-
-        // Try to get address based on preference
-        let (address_opt, account_type_used) = match account_type_pref {
-            AccountTypePreference::BIP44 => {
-                if let (Some(managed_account), Some(wallet_account)) = (
-                    collection.standard_bip44_accounts.get_mut(&account_index),
-                    wallet.get_bip44_account(account_index),
-                ) {
-                    match managed_account
-                        .next_receive_address(Some(&wallet_account.account_xpub), true)
-                    {
-                        Ok(addr) => (Some(addr), Some(AccountTypeUsed::BIP44)),
-                        Err(_) => (None, None),
-                    }
-                } else {
-                    (None, None)
-                }
-            }
-            AccountTypePreference::BIP32 => {
-                if let (Some(managed_account), Some(wallet_account)) = (
-                    collection.standard_bip32_accounts.get_mut(&account_index),
-                    wallet.get_bip32_account(account_index),
-                ) {
-                    match managed_account
-                        .next_receive_address(Some(&wallet_account.account_xpub), true)
-                    {
-                        Ok(addr) => (Some(addr), Some(AccountTypeUsed::BIP32)),
-                        Err(_) => (None, None),
-                    }
-                } else {
-                    (None, None)
-                }
-            }
-            AccountTypePreference::PreferBIP44 => {
-                // Try BIP44 first
-                if let (Some(managed_account), Some(wallet_account)) = (
-                    collection.standard_bip44_accounts.get_mut(&account_index),
-                    wallet.get_bip44_account(account_index),
-                ) {
-                    match managed_account
-                        .next_receive_address(Some(&wallet_account.account_xpub), true)
-                    {
-                        Ok(addr) => (Some(addr), Some(AccountTypeUsed::BIP44)),
-                        Err(_) => {
-                            // Fallback to BIP32
-                            if let (Some(managed_account), Some(wallet_account)) = (
-                                collection.standard_bip32_accounts.get_mut(&account_index),
-                                wallet.get_bip32_account(account_index),
-                            ) {
-                                match managed_account
-                                    .next_receive_address(Some(&wallet_account.account_xpub), true)
-                                {
-                                    Ok(addr) => (Some(addr), Some(AccountTypeUsed::BIP32)),
-                                    Err(_) => (None, None),
-                                }
-                            } else {
-                                (None, None)
-                            }
-                        }
-                    }
-                } else if let (Some(managed_account), Some(wallet_account)) = (
-                    collection.standard_bip32_accounts.get_mut(&account_index),
-                    wallet.get_bip32_account(account_index),
-                ) {
-                    match managed_account
-                        .next_receive_address(Some(&wallet_account.account_xpub), true)
-                    {
-                        Ok(addr) => (Some(addr), Some(AccountTypeUsed::BIP32)),
-                        Err(_) => (None, None),
-                    }
-                } else {
-                    (None, None)
-                }
-            }
-            AccountTypePreference::PreferBIP32 => {
-                // Try BIP32 first
-                if let (Some(managed_account), Some(wallet_account)) = (
-                    collection.standard_bip32_accounts.get_mut(&account_index),
-                    wallet.get_bip32_account(account_index),
-                ) {
-                    match managed_account
-                        .next_receive_address(Some(&wallet_account.account_xpub), true)
-                    {
-                        Ok(addr) => (Some(addr), Some(AccountTypeUsed::BIP32)),
-                        Err(_) => {
-                            // Fallback to BIP44
-                            if let (Some(managed_account), Some(wallet_account)) = (
-                                collection.standard_bip44_accounts.get_mut(&account_index),
-                                wallet.get_bip44_account(account_index),
-                            ) {
-                                match managed_account
-                                    .next_receive_address(Some(&wallet_account.account_xpub), true)
-                                {
-                                    Ok(addr) => (Some(addr), Some(AccountTypeUsed::BIP44)),
-                                    Err(_) => (None, None),
-                                }
-                            } else {
-                                (None, None)
-                            }
-                        }
-                    }
-                } else if let (Some(managed_account), Some(wallet_account)) = (
-                    collection.standard_bip44_accounts.get_mut(&account_index),
-                    wallet.get_bip44_account(account_index),
-                ) {
-                    match managed_account
-                        .next_receive_address(Some(&wallet_account.account_xpub), true)
-                    {
-                        Ok(addr) => (Some(addr), Some(AccountTypeUsed::BIP44)),
-                        Err(_) => (None, None),
-                    }
-                } else {
-                    (None, None)
-                }
-            }
-        };
-
-        // Mark the address as used if requested
-        if let Some(ref address) = address_opt {
-            if mark_as_used {
-                // Get the account collection again for marking
-                let collection = managed_info.accounts_mut();
-                // Mark address as used in the appropriate account type
-                match account_type_used {
-                    Some(AccountTypeUsed::BIP44) => {
-                        if let Some(account) =
-                            collection.standard_bip44_accounts.get_mut(&account_index)
-                        {
-                            account.mark_address_used(address);
-                        }
-                    }
-                    Some(AccountTypeUsed::BIP32) => {
-                        if let Some(account) =
-                            collection.standard_bip32_accounts.get_mut(&account_index)
-                        {
-                            account.mark_address_used(address);
-                        }
-                    }
-                    None => {}
-                }
-            }
-        }
-
-        Ok(AddressGenerationResult {
-            address: address_opt,
-            account_type_used,
-        })
+        managed_info.next_receive_address(wallet, account_index, account_type_pref, mark_as_used)
     }
 
     /// Get change address from a specific wallet and account
-    pub fn get_change_address(
+    pub fn next_change_address(
         &mut self,
         wallet_id: &WalletId,
         account_index: u32,
         account_type_pref: AccountTypePreference,
         mark_as_used: bool,
-    ) -> Result<AddressGenerationResult, WalletError> {
+    ) -> Option<Address> {
         // Get the wallet account to access the xpub
-        let wallet = self.wallets.get(wallet_id).ok_or(WalletError::WalletNotFound(*wallet_id))?;
-        let managed_info =
-            self.wallet_infos.get_mut(wallet_id).ok_or(WalletError::WalletNotFound(*wallet_id))?;
+        let (wallet, managed_info) = self.get_wallet_and_info_mut(wallet_id)?;
 
-        // Get the account collection for the network
-        let collection = managed_info.accounts_mut();
+        managed_info.next_change_address(wallet, account_index, account_type_pref, mark_as_used)
+    }
 
-        // Try to get address based on preference
-        let (address_opt, account_type_used) = match account_type_pref {
-            AccountTypePreference::BIP44 => {
-                if let (Some(managed_account), Some(wallet_account)) = (
-                    collection.standard_bip44_accounts.get_mut(&account_index),
-                    wallet.get_bip44_account(account_index),
-                ) {
-                    match managed_account
-                        .next_change_address(Some(&wallet_account.account_xpub), true)
-                    {
-                        Ok(addr) => (Some(addr), Some(AccountTypeUsed::BIP44)),
-                        Err(_) => (None, None),
-                    }
-                } else {
-                    (None, None)
-                }
-            }
-            AccountTypePreference::BIP32 => {
-                if let (Some(managed_account), Some(wallet_account)) = (
-                    collection.standard_bip32_accounts.get_mut(&account_index),
-                    wallet.get_bip32_account(account_index),
-                ) {
-                    match managed_account
-                        .next_change_address(Some(&wallet_account.account_xpub), true)
-                    {
-                        Ok(addr) => (Some(addr), Some(AccountTypeUsed::BIP32)),
-                        Err(_) => (None, None),
-                    }
-                } else {
-                    (None, None)
-                }
-            }
-            AccountTypePreference::PreferBIP44 => {
-                // Try BIP44 first
-                if let (Some(managed_account), Some(wallet_account)) = (
-                    collection.standard_bip44_accounts.get_mut(&account_index),
-                    wallet.get_bip44_account(account_index),
-                ) {
-                    match managed_account
-                        .next_change_address(Some(&wallet_account.account_xpub), true)
-                    {
-                        Ok(addr) => (Some(addr), Some(AccountTypeUsed::BIP44)),
-                        Err(_) => {
-                            // Fallback to BIP32
-                            if let (Some(managed_account), Some(wallet_account)) = (
-                                collection.standard_bip32_accounts.get_mut(&account_index),
-                                wallet.get_bip32_account(account_index),
-                            ) {
-                                match managed_account
-                                    .next_change_address(Some(&wallet_account.account_xpub), true)
-                                {
-                                    Ok(addr) => (Some(addr), Some(AccountTypeUsed::BIP32)),
-                                    Err(_) => (None, None),
-                                }
-                            } else {
-                                (None, None)
-                            }
-                        }
-                    }
-                } else if let (Some(managed_account), Some(wallet_account)) = (
-                    collection.standard_bip32_accounts.get_mut(&account_index),
-                    wallet.get_bip32_account(account_index),
-                ) {
-                    match managed_account
-                        .next_change_address(Some(&wallet_account.account_xpub), true)
-                    {
-                        Ok(addr) => (Some(addr), Some(AccountTypeUsed::BIP32)),
-                        Err(_) => (None, None),
-                    }
-                } else {
-                    (None, None)
-                }
-            }
-            AccountTypePreference::PreferBIP32 => {
-                // Try BIP32 first
-                if let (Some(managed_account), Some(wallet_account)) = (
-                    collection.standard_bip32_accounts.get_mut(&account_index),
-                    wallet.get_bip32_account(account_index),
-                ) {
-                    match managed_account
-                        .next_change_address(Some(&wallet_account.account_xpub), true)
-                    {
-                        Ok(addr) => (Some(addr), Some(AccountTypeUsed::BIP32)),
-                        Err(_) => {
-                            // Fallback to BIP44
-                            if let (Some(managed_account), Some(wallet_account)) = (
-                                collection.standard_bip44_accounts.get_mut(&account_index),
-                                wallet.get_bip44_account(account_index),
-                            ) {
-                                match managed_account
-                                    .next_change_address(Some(&wallet_account.account_xpub), true)
-                                {
-                                    Ok(addr) => (Some(addr), Some(AccountTypeUsed::BIP44)),
-                                    Err(_) => (None, None),
-                                }
-                            } else {
-                                (None, None)
-                            }
-                        }
-                    }
-                } else if let (Some(managed_account), Some(wallet_account)) = (
-                    collection.standard_bip44_accounts.get_mut(&account_index),
-                    wallet.get_bip44_account(account_index),
-                ) {
-                    match managed_account
-                        .next_change_address(Some(&wallet_account.account_xpub), true)
-                    {
-                        Ok(addr) => (Some(addr), Some(AccountTypeUsed::BIP44)),
-                        Err(_) => (None, None),
-                    }
-                } else {
-                    (None, None)
-                }
-            }
-        };
+    pub fn build_and_sign_transaction(
+        &mut self,
+        wallet_id: &WalletId,
+        account_index: u32,
+        outputs: Vec<(Address<NetworkUnchecked>, u64)>,
+        fee_rate: FeeRate,
+    ) -> Result<(Transaction, u64), WalletError> {
+        // Get the managed account for UTXOs and signing data
+        let (wallet, managed_wallet) = self
+            .get_wallet_and_info_mut(wallet_id)
+            .ok_or(WalletError::WalletNotFound(*wallet_id))?;
 
-        // Mark the address as used if requested
-        if let Some(ref address) = address_opt {
-            if mark_as_used {
-                // Get the account collection again for marking
-                let collection = managed_info.accounts_mut();
-                // Mark address as used in the appropriate account type
-                match account_type_used {
-                    Some(AccountTypeUsed::BIP44) => {
-                        if let Some(account) =
-                            collection.standard_bip44_accounts.get_mut(&account_index)
-                        {
-                            account.mark_address_used(address);
-                        }
-                    }
-                    Some(AccountTypeUsed::BIP32) => {
-                        if let Some(account) =
-                            collection.standard_bip32_accounts.get_mut(&account_index)
-                        {
-                            account.mark_address_used(address);
-                        }
-                    }
-                    None => {}
-                }
-            }
-        }
-
-        Ok(AddressGenerationResult {
-            address: address_opt,
-            account_type_used,
-        })
+        managed_wallet
+            .build_and_sign_transaction(wallet, account_index, outputs, fee_rate)
+            .map_err(|e| WalletError::TransactionBuild(e.to_string()))
     }
 }
 

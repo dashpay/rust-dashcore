@@ -681,17 +681,17 @@ mod tests {
         assert_eq!(manager.monitor_revision(), expected_rev, "after create_account");
 
         // get_receive_address bumps (when address is generated)
-        let result =
-            manager.get_receive_address(&wallet_id, 0, AccountTypePreference::PreferBIP44, true);
-        if result.is_ok() && result.unwrap().address.is_some() {
+        let address =
+            manager.next_receive_address(&wallet_id, 0, AccountTypePreference::BIP44, true);
+        if address.is_some() {
             expected_rev += 1;
             assert_eq!(manager.monitor_revision(), expected_rev, "after get_receive_address");
         }
 
         // get_change_address bumps (when address is generated)
-        let result =
-            manager.get_change_address(&wallet_id, 0, AccountTypePreference::PreferBIP44, true);
-        if result.is_ok() && result.unwrap().address.is_some() {
+        let address =
+            manager.next_change_address(&wallet_id, 0, AccountTypePreference::BIP44, true);
+        if address.is_some() {
             expected_rev += 1;
             assert_eq!(manager.monitor_revision(), expected_rev, "after get_change_address");
         }

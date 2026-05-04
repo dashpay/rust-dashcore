@@ -18,9 +18,12 @@ pub use managed_account_operations::ManagedAccountOperations;
 use super::balance::WalletCoreBalance;
 use super::metadata::WalletMetadata;
 use crate::account::ManagedAccountCollection;
-use crate::Network;
+use crate::managed_account::managed_account_trait::ManagedAccountTrait;
+use crate::wallet::managed_wallet_info::transaction_building::AccountTypePreference;
+use crate::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
+use crate::{Network, Wallet};
 use dashcore::prelude::CoreBlockHeight;
-use dashcore::Txid;
+use dashcore::{Address, Txid};
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
@@ -131,6 +134,92 @@ impl ManagedWalletInfo {
     /// inside this crate.
     pub fn instant_send_locks(&self) -> &HashSet<Txid> {
         &self.instant_send_locks
+    }
+
+    pub fn next_change_address(
+        &mut self,
+        wallet: &Wallet,
+        account_index: u32,
+        account_type_pref: AccountTypePreference,
+        mark_as_used: bool,
+    ) -> Option<Address> {
+        let collection = self.accounts_mut();
+
+        let address = match account_type_pref {
+            AccountTypePreference::BIP44 => {
+                let managed_account = collection.standard_bip44_accounts.get_mut(&account_index)?;
+                let wallet_account = wallet.get_bip44_account(account_index)?;
+
+                let address = managed_account
+                    .next_change_address(Some(&wallet_account.account_xpub), true)
+                    .ok();
+
+                if let (Some(address), true) = (&address, mark_as_used) {
+                    managed_account.mark_address_used(address);
+                }
+
+                address
+            }
+            AccountTypePreference::BIP32 => {
+                let managed_account = collection.standard_bip32_accounts.get_mut(&account_index)?;
+                let wallet_account = wallet.get_bip32_account(account_index)?;
+
+                let address = managed_account
+                    .next_change_address(Some(&wallet_account.account_xpub), true)
+                    .ok();
+
+                if let (Some(address), true) = (&address, mark_as_used) {
+                    managed_account.mark_address_used(address);
+                }
+
+                address
+            }
+        };
+
+        address
+    }
+
+    pub fn next_receive_address(
+        &mut self,
+        wallet: &Wallet,
+        account_index: u32,
+        account_type_pref: AccountTypePreference,
+        mark_as_used: bool,
+    ) -> Option<Address> {
+        let collection = self.accounts_mut();
+
+        let address = match account_type_pref {
+            AccountTypePreference::BIP44 => {
+                let managed_account = collection.standard_bip44_accounts.get_mut(&account_index)?;
+                let wallet_account = wallet.get_bip44_account(account_index)?;
+
+                let address = managed_account
+                    .next_receive_address(Some(&wallet_account.account_xpub), true)
+                    .ok();
+
+                if let (Some(address), true) = (&address, mark_as_used) {
+                    managed_account.mark_address_used(address);
+                }
+
+                address
+            }
+            AccountTypePreference::BIP32 => {
+                let managed_account = collection.standard_bip32_accounts.get_mut(&account_index)?;
+                let wallet_account = wallet.get_bip32_account(account_index)?;
+
+                let address = managed_account
+                    .next_receive_address(Some(&wallet_account.account_xpub), true)
+                    .ok();
+
+                if let (Some(address), true) = (&address, mark_as_used) {
+                    managed_account.mark_address_used(address);
+                }
+
+                address
+            }
+        };
+
+        address
     }
 }
 

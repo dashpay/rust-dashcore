@@ -90,30 +90,17 @@ fn main() {
     // Example 4: Generate addresses
     println!("\n4. Generating addresses...");
 
-    // Note: This might fail with InvalidNetwork error if the account collection
-    // isn't properly initialized in the managed wallet info
-    let address_result = manager.get_receive_address(
+    let address = manager.next_receive_address(
         &wallet_id,
         0, // Account index
         AccountTypePreference::BIP44,
         false, // Don't advance index
     );
 
-    match address_result {
-        Ok(result) => {
-            if let Some(address) = result.address {
-                println!("✅ Receive address: {}", address);
-                if let Some(account_type) = result.account_type_used {
-                    println!("   Account type used: {:?}", account_type);
-                }
-            } else {
-                println!("⚠️  No address generated");
-            }
-        }
-        Err(e) => {
-            println!("⚠️  Could not get address: {:?}", e);
-            println!("   (This is expected with the current implementation)");
-        }
+    if let Some(address) = address {
+        println!("✅ Receive address: {}", address);
+    } else {
+        println!("⚠️ No address generated");
     }
 
     // Example 5: WalletManager now includes SPV functionality

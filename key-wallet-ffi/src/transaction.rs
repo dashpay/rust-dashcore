@@ -1,10 +1,5 @@
 //! Transaction building and management
 
-use std::ffi::{CStr, CString};
-use std::os::raw::c_char;
-use std::ptr;
-use std::slice;
-
 use crate::error::{FFIError, FFIErrorCode};
 use crate::types::{
     transaction_context_from_ffi, FFIBlockInfo, FFITransactionContextType, FFIWallet,
@@ -16,15 +11,16 @@ use dashcore::{
     consensus, hashes::Hash, sighash::SighashCache, EcdsaSighashType, Network, OutPoint, Script,
     ScriptBuf, Transaction, TxIn, TxOut, Txid,
 };
-use key_wallet::managed_account::managed_account_trait::ManagedAccountTrait;
 use key_wallet::wallet::managed_wallet_info::asset_lock_builder::{
     AssetLockFundingType, CreditOutputFunding,
 };
 use key_wallet::wallet::managed_wallet_info::fee::FeeRate;
-use key_wallet::wallet::managed_wallet_info::transaction_building::AccountTypePreference;
-use key_wallet::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
 use secp256k1::{Message, Secp256k1, SecretKey};
-
+use std::ffi::{CStr, CString};
+use std::os::raw::c_char;
+use std::ptr;
+use std::slice;
+use std::str::FromStr;
 // MARK: - Transaction Types
 
 /// Opaque handle for a transaction
@@ -111,128 +107,40 @@ pub unsafe extern "C" fn wallet_build_and_sign_transaction(
         return false;
     }
 
-    unsafe {
-        use key_wallet::wallet::managed_wallet_info::coin_selection::SelectionStrategy;
-        use key_wallet::wallet::managed_wallet_info::transaction_builder::TransactionBuilder;
-        let network_rust = wallet_ref.inner().network;
-        let outputs_slice = slice::from_raw_parts(outputs, outputs_count);
+    let ffi_outputs = slice::from_raw_parts(outputs, outputs_count);
+    let mut outputs = Vec::with_capacity(outputs_count);
 
+    for output in ffi_outputs {
+        if output.address.is_null() {
+            (*error).set(FFIErrorCode::InvalidInput, "Output address pointer is null");
+            return false;
+        }
+
+        // Convert address from C string
+        let address_str = unwrap_or_return!(CStr::from_ptr(output.address).to_str(), error);
+
+        // Parse address using dashcore
+        let address = unwrap_or_return!(dashcore::Address::from_str(address_str), error);
+
+        outputs.push((address, output.amount));
+    }
+
+    let wallet_id = wallet_ref.inner().wallet_id;
+
+    unsafe {
         manager_ref.runtime.block_on(async {
             let mut manager = manager_ref.manager.write().await;
-            let wallet_id = wallet_ref.inner().wallet_id;
 
-            // Get change address through the manager
-            let result = unwrap_or_return!(
-                manager.get_change_address(
+            let (transaction, fee) = unwrap_or_return!(
+                manager.build_and_sign_transaction(
                     &wallet_id,
                     account_index,
-                    AccountTypePreference::BIP44,
-                    true,
+                    outputs,
+                    FeeRate::new(fee_per_kb)
                 ),
                 error
             );
-            let change_address = unwrap_or_return!(result.address, error);
-
-            // Get the managed account for UTXOs and signing data
-            let managed_wallet = unwrap_or_return!(manager.get_wallet_info_mut(&wallet_id), error);
-
-            let managed_account = unwrap_or_return!(
-                managed_wallet.accounts.standard_bip44_accounts.get_mut(&account_index),
-                error
-            );
-
-            // Convert FFI outputs to Rust outputs
-            let mut tx_builder = TransactionBuilder::new();
-
-            for output in outputs_slice {
-                if output.address.is_null() {
-                    (*error).set(FFIErrorCode::InvalidInput, "Output address pointer is null");
-                    return false;
-                }
-
-                // Convert address from C string
-                let address_str = unwrap_or_return!(CStr::from_ptr(output.address).to_str(), error);
-
-                // Parse address using dashcore
-                use std::str::FromStr;
-                let parsed = unwrap_or_return!(dashcore::Address::from_str(address_str), error);
-                let address = unwrap_or_return!(parsed.require_network(network_rust), error);
-
-                // Add output
-                tx_builder =
-                    unwrap_or_return!(tx_builder.add_output(&address, output.amount), error);
-            }
-
-            tx_builder = tx_builder
-                .set_change_address(change_address)
-                .set_fee_rate(FeeRate::new(fee_per_kb));
-
-            // Get available UTXOs (collect owned UTXOs, not references)
-            let utxos: Vec<key_wallet::Utxo> = managed_account.utxos.values().cloned().collect();
-
-            // Get the wallet's root extended private key for signing
-            use key_wallet::wallet::WalletType;
-
-            let root_xpriv = match &wallet_ref.inner().wallet_type {
-                WalletType::Mnemonic {
-                    root_extended_private_key,
-                    ..
-                } => root_extended_private_key,
-                WalletType::Seed {
-                    root_extended_private_key,
-                    ..
-                } => root_extended_private_key,
-                WalletType::ExtendedPrivKey(root_extended_private_key) => root_extended_private_key,
-                _ => {
-                    (*error).set(FFIErrorCode::WalletError, "Cannot sign with watch-only wallet");
-                    return false;
-                }
-            };
-
-            // Build a map of address -> derivation path for all addresses in the account
-            use std::collections::HashMap;
-            let mut address_to_path: HashMap<dashcore::Address, key_wallet::DerivationPath> =
-                HashMap::new();
-
-            // Collect from all address pools (receive, change, etc.)
-            for pool in managed_account.managed_account_type().address_pools() {
-                for addr_info in pool.addresses.values() {
-                    address_to_path.insert(addr_info.address.clone(), addr_info.path.clone());
-                }
-            }
-
-            // Select inputs and build transaction
-            let select_inputs_result = tx_builder.select_inputs(
-                &utxos,
-                SelectionStrategy::BranchAndBound,
-                managed_wallet.last_processed_height(),
-                |utxo| {
-                    // Look up the derivation path for this UTXO's address
-                    let path = address_to_path.get(&utxo.address)?;
-
-                    // Convert root key to ExtendedPrivKey and derive the child key
-                    let root_ext_priv = root_xpriv.to_extended_priv_key(network_rust);
-                    let secp = secp256k1::Secp256k1::new();
-                    let derived_xpriv = root_ext_priv.derive_priv(&secp, path).ok()?;
-
-                    Some(derived_xpriv.private_key)
-                },
-            );
-            let mut tx_builder_with_inputs = unwrap_or_return!(select_inputs_result, error);
-            let transaction = unwrap_or_return!(tx_builder_with_inputs.build(), error);
-
-            // This is tricky, the transaction creation + fee calculation need a little
-            // bit of love to avoid this kind of logic.
-            //
-            // First, we need to know that TransactionBuilder may add an extra output for change
-            // to the final transaction but not to itself, with that knowledge, we can compare the
-            // number of outputs in the transaction with the number of outputs in the TransactionBuilder
-            // to then call the appropriate fee calculation method
-            *fee_out = if transaction.output.len() > tx_builder_with_inputs.outputs().len() {
-                tx_builder_with_inputs.calculate_fee_with_extra_output()
-            } else {
-                tx_builder_with_inputs.calculate_fee()
-            };
+            *fee_out = fee;
 
             // Serialize the transaction
             let serialized = consensus::serialize(&transaction);

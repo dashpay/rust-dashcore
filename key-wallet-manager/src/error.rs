@@ -1,6 +1,7 @@
 //! Error types for the wallet manager.
 
 use crate::WalletId;
+use key_wallet::wallet::managed_wallet_info::transaction_builder::BuilderError;
 
 /// Wallet manager errors
 #[derive(Debug)]
@@ -95,5 +96,11 @@ impl From<key_wallet::Error> for WalletError {
             #[allow(unreachable_patterns)]
             _ => WalletError::InvalidParameter(format!("Key wallet error: {}", err)),
         }
+    }
+}
+
+impl From<BuilderError> for WalletError {
+    fn from(err: BuilderError) -> Self {
+        WalletError::TransactionBuild(format!("Transaction building error: {}", err))
     }
 }

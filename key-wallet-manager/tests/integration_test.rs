@@ -9,7 +9,7 @@ use key_wallet::wallet::managed_wallet_info::wallet_info_interface::WalletInfoIn
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
 use key_wallet::{mnemonic::Language, Mnemonic, Network};
 use key_wallet_manager::WalletInterface;
-use key_wallet_manager::{WalletError, WalletManager};
+use key_wallet_manager::WalletManager;
 
 #[test]
 fn test_wallet_manager_creation() {
@@ -82,31 +82,13 @@ fn test_address_generation() {
     let wallet_id = wallet_result.unwrap();
 
     // The wallet should already have account 0 from creation
-    // But the managed wallet info might not have the account collection initialized
 
-    // Test address generation - it may fail if accounts aren't initialized
-    let address1 = manager.get_receive_address(&wallet_id, 0, AccountTypePreference::BIP44, false);
-    // This might fail with InvalidNetwork if the account collection isn't initialized
-    // We'll check if it's the expected error
-    if let Err(ref e) = address1 {
-        match e {
-            WalletError::InvalidNetwork => {
-                // This is expected given the current implementation
-                // The managed wallet info doesn't initialize account collections
-                return;
-            }
-            _ => panic!("Unexpected error: {:?}", e),
-        }
-    }
+    // Test address generation - it may be missing if accounts aren't initialized
+    let address1 = manager.next_receive_address(&wallet_id, 0, AccountTypePreference::BIP44, false);
+    assert!(address1.is_some(), "Failed to generate receive address: {:?}", address1);
 
-    let change = manager.get_change_address(&wallet_id, 0, AccountTypePreference::BIP44, false);
-    // Same check for change address
-    if let Err(ref e) = change {
-        match e {
-            WalletError::InvalidNetwork => {}
-            _ => panic!("Unexpected error: {:?}", e),
-        }
-    }
+    let change = manager.next_change_address(&wallet_id, 0, AccountTypePreference::BIP44, false);
+    assert!(change.is_some(), "Failed to generate change: {:?}", change);
 }
 
 #[test]
