@@ -52,11 +52,6 @@ impl HeadersPipeline {
         }
     }
 
-    /// Get a reference to the checkpoint manager.
-    pub fn checkpoint_manager(&self) -> &Arc<CheckpointManager> {
-        &self.checkpoint_manager
-    }
-
     /// Initialize the pipeline for downloading from current_height to target_height.
     pub fn init(&mut self, current_height: u32, current_hash: BlockHash, target_height: u32) {
         self.segments.clear();
@@ -270,6 +265,18 @@ impl HeadersPipeline {
     pub fn handle_timeouts(&mut self) {
         for segment in &mut self.segments {
             segment.handle_timeouts();
+        }
+    }
+
+    /// Drop only per-peer in-flight bookkeeping across every segment.
+    ///
+    /// Buffered headers, segment topology, and per-segment validated tip state
+    /// are preserved. `next_to_store` and `initialized` stay put so a reconnect
+    /// can resume sending `GetHeaders` from each segment's preserved
+    /// `current_tip_hash` without re-fetching what we already have.
+    pub fn clear_in_flight(&mut self) {
+        for segment in &mut self.segments {
+            segment.clear_in_flight();
         }
     }
 
@@ -526,6 +533,68 @@ mod tests {
         let matched = pipeline.receive_headers(&[first_header]).unwrap();
         assert_eq!(matched, None, "Duplicate headers should be silently ignored");
         assert!(pipeline.segments[0].buffered_headers.is_empty());
+    }
+
+    #[test]
+    fn test_clear_in_flight_preserves_buffers_across_segments() {
+        let shared_hash = BlockHash::dummy(42);
+
+        let mut completed =
+            SegmentState::new(0, 0, BlockHash::dummy(0), Some(100), Some(shared_hash));
+        completed.complete = true;
+        completed.current_height = 100;
+        completed.current_tip_hash = shared_hash;
+        // Buffered headers on a complete-but-not-yet-drained segment must survive.
+        let mut completed_header = Header::dummy(1);
+        completed_header.prev_blockhash = BlockHash::dummy(0);
+        completed.buffered_headers.push(HashedBlockHeader::from(completed_header));
+
+        let mut mid = SegmentState::new(1, 100, shared_hash, Some(200), None);
+        mid.coordinator.mark_sent(&[shared_hash]);
+        let mut mid_header = Header::dummy(2);
+        mid_header.prev_blockhash = shared_hash;
+        mid.receive_headers(&[mid_header]).unwrap();
+        let mid_preserved_tip = mid.current_tip_hash;
+        let mid_preserved_height = mid.current_height;
+        let mid_preserved_buffered = mid.buffered_headers.len();
+        // Simulate a fresh in-flight follow-up request for this segment.
+        mid.coordinator.mark_sent(&[mid_preserved_tip]);
+
+        let tip_hash = BlockHash::dummy(99);
+        let mut tip = SegmentState::new(2, 500, tip_hash, None, None);
+        tip.coordinator.mark_sent(&[tip_hash]);
+
+        let cm = create_test_checkpoint_manager(true);
+        let mut pipeline = HeadersPipeline::new(cm);
+        pipeline.initialized = true;
+        pipeline.next_to_store = 0;
+        pipeline.segments = vec![completed, mid, tip];
+
+        pipeline.clear_in_flight();
+
+        // initialized and next_to_store stay put.
+        assert!(pipeline.is_initialized());
+        assert_eq!(pipeline.next_to_store, 0);
+
+        // Completed segment keeps its buffer and complete flag.
+        assert!(pipeline.segments[0].complete);
+        assert_eq!(pipeline.segments[0].buffered_headers.len(), 1);
+        assert_eq!(pipeline.segments[0].current_tip_hash, shared_hash);
+
+        // Mid-download segment: validated chain state preserved; coordinator wiped.
+        assert_eq!(pipeline.segments[1].current_tip_hash, mid_preserved_tip);
+        assert_eq!(pipeline.segments[1].current_height, mid_preserved_height);
+        assert_eq!(pipeline.segments[1].buffered_headers.len(), mid_preserved_buffered);
+        assert!(!pipeline.segments[1].complete);
+        assert_eq!(pipeline.segments[1].coordinator.active_count(), 0);
+        assert_eq!(pipeline.segments[1].coordinator.pending_count(), 0);
+        // can_send returns true so a fresh GetHeaders can resume from preserved tip.
+        assert!(pipeline.segments[1].can_send());
+
+        // Tip segment: in-flight cleared, preserved hash/height intact.
+        assert_eq!(pipeline.segments[2].current_tip_hash, tip_hash);
+        assert_eq!(pipeline.segments[2].coordinator.active_count(), 0);
+        assert!(pipeline.segments[2].can_send());
     }
 
     #[test]

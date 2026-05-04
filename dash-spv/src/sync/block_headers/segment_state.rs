@@ -194,6 +194,15 @@ impl SegmentState {
             self.coordinator.enqueue_retry(hash);
         }
     }
+
+    /// Drop only per-peer in-flight bookkeeping.
+    ///
+    /// Buffered headers and the validated `current_tip_hash` / `current_height`
+    /// are preserved so a reconnect can resume from where the last peer left off
+    /// without re-fetching headers we already have.
+    pub(super) fn clear_in_flight(&mut self) {
+        self.coordinator.clear();
+    }
 }
 
 #[cfg(test)]
@@ -365,5 +374,42 @@ mod tests {
             other => panic!("Expected SyncError::InvalidState, got {:?}", other),
         }
         assert!(segment.buffered_headers.is_empty());
+    }
+
+    #[test]
+    fn test_clear_in_flight_preserves_chain_state() {
+        let start_hash = BlockHash::dummy(0);
+        let mut segment = SegmentState::new(0, 0, start_hash, None, None);
+        segment.coordinator.mark_sent(&[start_hash]);
+
+        let mut header = Header::dummy(1);
+        header.prev_blockhash = start_hash;
+        segment.receive_headers(&[header]).unwrap();
+
+        let preserved_tip_hash = segment.current_tip_hash;
+        let preserved_height = segment.current_height;
+        let preserved_buffered = segment.buffered_headers.len();
+        assert_ne!(preserved_tip_hash, start_hash);
+        assert_eq!(preserved_height, 1);
+        assert_eq!(preserved_buffered, 1);
+
+        // Simulate a fresh in-flight request, then clear it.
+        segment.coordinator.mark_sent(&[preserved_tip_hash]);
+        assert!(segment.coordinator.is_in_flight(&preserved_tip_hash));
+
+        segment.clear_in_flight();
+
+        assert!(!segment.coordinator.is_in_flight(&preserved_tip_hash));
+        assert_eq!(segment.coordinator.active_count(), 0);
+        assert_eq!(segment.coordinator.pending_count(), 0);
+
+        assert_eq!(segment.current_tip_hash, preserved_tip_hash);
+        assert_eq!(segment.current_height, preserved_height);
+        assert_eq!(segment.buffered_headers.len(), preserved_buffered);
+        assert!(!segment.complete);
+
+        // After clearing, can_send should be true again so a fresh GetHeaders
+        // can resume from the preserved tip hash without re-fetching what we have.
+        assert!(segment.can_send());
     }
 }

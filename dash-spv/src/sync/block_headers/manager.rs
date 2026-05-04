@@ -263,6 +263,7 @@ mod tests {
         DiskStorageManager, PersistentBlockHeaderStorage, PersistentMetadataStorage, StorageManager,
     };
     use crate::sync::{ManagerIdentifier, SyncManager, SyncManagerProgress};
+    use dashcore::network::message::NetworkMessage;
     use tokio::sync::mpsc::unbounded_channel;
 
     type TestBlockHeadersManager =
@@ -425,6 +426,111 @@ mod tests {
 
         manager.handle_network_event(&connect, &requests).await.unwrap();
         assert!(!manager.announced_peers.contains(&addr));
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn test_disconnect_preserves_pipeline_and_resumes_from_advanced_tip() {
+        let mut manager = create_test_manager().await;
+        let (requests, mut rx) = create_test_request_sender();
+
+        // Use a target below the first testnet checkpoint (50000) so the
+        // pipeline produces a single open-ended tip segment.
+        let initial_event = NetworkEvent::PeersUpdated {
+            connected_count: 1,
+            best_height: Some(40_000),
+            addresses: vec![],
+        };
+        manager.handle_network_event(&initial_event, &requests).await.unwrap();
+        assert_eq!(manager.state(), SyncState::Syncing);
+        assert!(manager.pipeline.is_initialized());
+        assert_eq!(manager.pipeline.segment_count(), 1);
+
+        let initial_locator = match rx.try_recv().expect("initial GetHeaders not sent") {
+            NetworkRequest::SendMessage(NetworkMessage::GetHeaders(msg)) => msg.locator_hashes[0],
+            other => panic!("Expected GetHeaders, got {:?}", other),
+        };
+        assert!(rx.try_recv().is_err());
+
+        // Simulate a peer response. The single tip segment drains its buffer
+        // through take_ready_to_store, advancing the storage tip and the
+        // segment's current_tip_hash to advanced_hash.
+        let header = Header::dummy_chain(1, initial_locator).remove(0);
+        let advanced_hash = header.block_hash();
+        manager.handle_headers_pipeline(&[header], &requests).await.unwrap();
+
+        // Drain the follow-up GetHeaders that send_pending issued.
+        match rx.try_recv().expect("follow-up GetHeaders not sent") {
+            NetworkRequest::SendMessage(NetworkMessage::GetHeaders(msg)) => {
+                assert_eq!(msg.locator_hashes[0], advanced_hash);
+            }
+            other => panic!("Expected GetHeaders, got {:?}", other),
+        }
+        assert!(rx.try_recv().is_err());
+
+        let disconnect_event = NetworkEvent::PeersUpdated {
+            connected_count: 0,
+            best_height: Some(40_000),
+            addresses: vec![],
+        };
+        manager.handle_network_event(&disconnect_event, &requests).await.unwrap();
+        assert_eq!(manager.state(), SyncState::WaitingForConnections);
+        assert!(
+            manager.pipeline.is_initialized(),
+            "pipeline must survive disconnect so resume can reuse validated state"
+        );
+        assert_eq!(manager.pipeline.segment_count(), 1);
+
+        // Reconnect: start_sync must skip pipeline.init and resume by sending
+        // GetHeaders from each segment's preserved current_tip_hash.
+        manager.handle_network_event(&initial_event, &requests).await.unwrap();
+        assert_eq!(manager.state(), SyncState::Syncing);
+
+        let resumed_locator = match rx.try_recv().expect("resumed GetHeaders not sent") {
+            NetworkRequest::SendMessage(NetworkMessage::GetHeaders(msg)) => msg.locator_hashes[0],
+            other => panic!("Expected GetHeaders, got {:?}", other),
+        };
+        assert_eq!(
+            resumed_locator, advanced_hash,
+            "GetHeaders on reconnect must use the preserved current_tip_hash"
+        );
+        assert_ne!(resumed_locator, initial_locator);
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn test_disconnect_after_sync_resumes_and_catches_up() {
+        let mut manager = create_synced_manager().await;
+        let tip = manager.tip().await.unwrap();
+        let synced_hash = *tip.hash();
+        manager.pipeline.mark_tip_complete();
+        assert!(manager.pipeline.is_tip_complete());
+
+        let (requests, mut rx) = create_test_request_sender();
+
+        let disconnect_event = NetworkEvent::PeersUpdated {
+            connected_count: 0,
+            best_height: Some(tip.height()),
+            addresses: vec![],
+        };
+        manager.handle_network_event(&disconnect_event, &requests).await.unwrap();
+        assert_eq!(manager.state(), SyncState::WaitingForConnections);
+        assert!(manager.pipeline.is_initialized());
+
+        // Reconnect with a higher peer best_height (a new block was mined).
+        let reconnect_event = NetworkEvent::PeersUpdated {
+            connected_count: 1,
+            best_height: Some(tip.height() + 1),
+            addresses: vec![],
+        };
+        manager.handle_network_event(&reconnect_event, &requests).await.unwrap();
+        assert_eq!(manager.state(), SyncState::Syncing);
+
+        let resumed_locator = match rx.try_recv().expect("resumed GetHeaders not sent") {
+            NetworkRequest::SendMessage(NetworkMessage::GetHeaders(msg)) => msg.locator_hashes[0],
+            other => panic!("Expected GetHeaders, got {:?}", other),
+        };
+        assert_eq!(resumed_locator, synced_hash);
         assert!(rx.try_recv().is_err());
     }
 
