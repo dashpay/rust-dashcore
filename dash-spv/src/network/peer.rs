@@ -393,12 +393,6 @@ impl Peer {
                             return Err(NetworkError::PeerDisconnected);
                         }
                         Ok(_) => {}
-                        Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                            return Ok(None);
-                        }
-                        Err(ref e) if e.kind() == std::io::ErrorKind::TimedOut => {
-                            return Ok(None);
-                        }
                         Err(ref e)
                             if e.kind() == std::io::ErrorKind::ConnectionAborted
                                 || e.kind() == std::io::ErrorKind::ConnectionReset =>
@@ -455,12 +449,6 @@ impl Peer {
                                 return Err(NetworkError::PeerDisconnected);
                             }
                             Ok(_) => {}
-                            Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                                return Ok(None);
-                            }
-                            Err(ref e) if e.kind() == std::io::ErrorKind::TimedOut => {
-                                return Ok(None);
-                            }
                             Err(e) => {
                                 return Err(NetworkError::ConnectionFailed(format!(
                                     "Read failed: {}",
@@ -480,12 +468,6 @@ impl Peer {
                             return Err(NetworkError::PeerDisconnected);
                         }
                         Ok(_) => {}
-                        Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                            return Ok(None);
-                        }
-                        Err(ref e) if e.kind() == std::io::ErrorKind::TimedOut => {
-                            return Ok(None);
-                        }
                         Err(e) => {
                             return Err(NetworkError::ConnectionFailed(format!(
                                 "Read failed: {}",
@@ -534,12 +516,6 @@ impl Peer {
                             return Err(NetworkError::PeerDisconnected);
                         }
                         Ok(_) => {}
-                        Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                            return Ok(None);
-                        }
-                        Err(ref e) if e.kind() == std::io::ErrorKind::TimedOut => {
-                            return Ok(None);
-                        }
                         Err(e) => {
                             return Err(NetworkError::ConnectionFailed(format!(
                                 "Read failed: {}",
