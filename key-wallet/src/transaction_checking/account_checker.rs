@@ -6,8 +6,8 @@
 use std::collections::BTreeMap;
 
 use super::transaction_router::AccountTypeToCheck;
-use crate::account::{ManagedAccountCollection, ManagedCoreAccount};
-use crate::managed_account::address_pool::{AddressInfo, PublicKeyType};
+use crate::account::{AccountType, ManagedAccountCollection, ManagedCoreAccount};
+use crate::managed_account::address_pool::{AddressInfo, AddressPoolType, PublicKeyType};
 use crate::managed_account::managed_account_type::ManagedAccountType;
 use crate::managed_account::transaction_record::TransactionRecord;
 use crate::Address;
@@ -27,6 +27,23 @@ pub enum AddressClassification {
     Other,
 }
 
+/// A freshly-derived address produced as a side effect of gap-limit
+/// maintenance during transaction processing. Carries the originating
+/// [`AccountType`] and [`AddressPoolType`] alongside the rich
+/// [`AddressInfo`] so downstream consumers (e.g. the wallet-manager
+/// event seam) can build a fully self-describing event payload without
+/// re-deriving from the wallet.
+#[derive(Debug, Clone)]
+pub struct DerivedAddressInfo {
+    /// The account that derived this address.
+    pub account_type: AccountType,
+    /// Which pool of the account the address belongs to (External /
+    /// Internal / Absent / AbsentHardened).
+    pub pool_type: AddressPoolType,
+    /// The full address info — derivation index, path, public key, etc.
+    pub info: AddressInfo,
+}
+
 /// Result of checking a transaction against accounts
 #[derive(Debug, Clone)]
 pub struct TransactionCheckResult {
@@ -44,8 +61,11 @@ pub struct TransactionCheckResult {
     pub total_sent: u64,
     /// Total value received for Platform credit conversion
     pub total_received_for_credit_conversion: u64,
-    /// New addresses generated during gap limit maintenance
-    pub new_addresses: Vec<Address>,
+    /// Addresses derived as a side effect of gap-limit maintenance during
+    /// this check. Each entry carries the originating account type, pool
+    /// type, and full [`AddressInfo`] so downstream emitters can attribute
+    /// the derivation precisely without re-deriving.
+    pub new_addresses: Vec<DerivedAddressInfo>,
     /// Transaction records created for new transactions. Each record carries
     /// its owning [`AccountType`](crate::account::AccountType) on
     /// `record.account_type`, so consumers can recover it without an external

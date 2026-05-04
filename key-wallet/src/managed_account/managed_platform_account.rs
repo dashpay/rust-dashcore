@@ -11,7 +11,7 @@
 
 use std::collections::BTreeMap;
 
-use super::address_pool::{AddressPool, KeySource};
+use super::address_pool::{AddressInfo, AddressPool, KeySource};
 use super::platform_address::PlatformP2PKHAddress;
 use crate::error::{Error, Result};
 use crate::Network;
@@ -276,8 +276,8 @@ impl ManagedPlatformAccount {
     /// Maintain the gap limit for the address pool
     ///
     /// This generates new addresses if needed to maintain the gap limit.
-    /// Returns the newly generated addresses.
-    pub fn maintain_gap_limit(&mut self, key_source: &KeySource) -> Result<Vec<Address>> {
+    /// Returns the newly generated address info entries (in derivation order).
+    pub fn maintain_gap_limit(&mut self, key_source: &KeySource) -> Result<Vec<AddressInfo>> {
         self.addresses
             .maintain_gap_limit(key_source)
             .map_err(|e| Error::InvalidParameter(format!("Failed to maintain gap limit: {}", e)))

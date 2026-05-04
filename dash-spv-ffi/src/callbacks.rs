@@ -784,6 +784,7 @@ impl FFIWalletEventCallbacks {
                 record,
                 balance,
                 account_balances,
+                addresses_derived: _,
             } => {
                 if let Some(cb) = self.on_transaction_detected {
                     let wallet_id_hex = hex::encode(wallet_id);
@@ -851,6 +852,7 @@ impl FFIWalletEventCallbacks {
                 matured,
                 balance,
                 account_balances,
+                addresses_derived: _,
             } => {
                 if let Some(cb) = self.on_block_processed {
                     let wallet_id_hex = hex::encode(wallet_id);
