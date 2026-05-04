@@ -177,13 +177,21 @@ impl WalletTransactionChecker for ManagedWalletInfo {
 
             let key_source = KeySource::Public(xpub);
             let rev_before = result.new_addresses.len();
+            let owning_account_type = account.managed_account_type().to_account_type();
             for pool in account.managed_account_type_mut().address_pools_mut() {
+                let pool_type = pool.pool_type;
                 match pool.maintain_gap_limit(&key_source) {
-                    Ok(addrs) => result.new_addresses.extend(addrs),
+                    Ok(infos) => result.new_addresses.extend(infos.into_iter().map(|info| {
+                        super::account_checker::DerivedAddressInfo {
+                            account_type: owning_account_type,
+                            pool_type,
+                            info,
+                        }
+                    })),
                     Err(e) => {
                         tracing::error!(
                             account_index = ?account_match.account_type_match.account_index(),
-                            pool_type = ?pool.pool_type,
+                            pool_type = ?pool_type,
                             error = %e,
                             "Failed to maintain gap limit for address pool"
                         );

@@ -1,4 +1,4 @@
-use crate::events::diff_account_balances;
+use crate::events::{diff_account_balances, project_derived_addresses, DerivedAddress};
 use crate::wallet_interface::{BlockProcessingResult, MempoolTransactionResult, WalletInterface};
 use crate::{WalletEvent, WalletId, WalletManager};
 use async_trait::async_trait;
@@ -8,7 +8,7 @@ use dashcore::prelude::CoreBlockHeight;
 use dashcore::{Address, Block, Transaction};
 use key_wallet::account::AccountType;
 use key_wallet::managed_account::transaction_record::TransactionRecord;
-use key_wallet::transaction_checking::{BlockInfo, TransactionContext};
+use key_wallet::transaction_checking::{BlockInfo, DerivedAddressInfo, TransactionContext};
 use key_wallet::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
 use key_wallet::WalletCoreBalance;
 use std::collections::{BTreeMap, BTreeSet};
@@ -30,6 +30,7 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
 
         let mut per_wallet_inserted: BTreeMap<WalletId, Vec<TransactionRecord>> = BTreeMap::new();
         let mut per_wallet_updated: BTreeMap<WalletId, Vec<TransactionRecord>> = BTreeMap::new();
+        let mut per_wallet_derived: BTreeMap<WalletId, Vec<DerivedAddressInfo>> = BTreeMap::new();
 
         for tx in &block.txdata {
             let context = TransactionContext::InBlock(info);
@@ -44,8 +45,10 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
                 }
             }
 
-            for (wallet_id, addrs) in check_result.new_addresses {
-                result.new_addresses.entry(wallet_id).or_default().extend(addrs);
+            for (wallet_id, derived) in check_result.new_addresses {
+                let addresses = derived.iter().map(|d| d.info.address.clone()).collect::<Vec<_>>();
+                result.new_addresses.entry(wallet_id).or_default().extend(addresses);
+                per_wallet_derived.entry(wallet_id).or_default().extend(derived);
             }
             for (wallet_id, records) in check_result.per_wallet_new_records {
                 per_wallet_inserted.entry(wallet_id).or_default().extend(records);
@@ -55,7 +58,13 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
             }
         }
 
-        self.finalize_block_advance(height, wallets, per_wallet_inserted, per_wallet_updated);
+        self.finalize_block_advance(
+            height,
+            wallets,
+            per_wallet_inserted,
+            per_wallet_updated,
+            per_wallet_derived,
+        );
 
         result
     }
@@ -104,6 +113,7 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
         let per_wallet_new_records = std::mem::take(&mut check_result.per_wallet_new_records);
         let per_wallet_updated_records =
             std::mem::take(&mut check_result.per_wallet_updated_records);
+        let mut per_wallet_derived = std::mem::take(&mut check_result.new_addresses);
 
         for (wallet_id, records) in per_wallet_new_records {
             let Some(info) = self.wallet_infos.get(&wallet_id) else {
@@ -112,12 +122,20 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
             let balance = info.balance();
             let account_balances =
                 per_wallet_account_diff.get(&wallet_id).cloned().unwrap_or_default();
+            // A single mempool tx maps to a single
+            // `process_mempool_transaction` invocation, so any
+            // gap-limit derivations attributable to this tx travel on
+            // the first record. Subsequent per-account records get an
+            // empty `addresses_derived`.
+            let derived_for_wallet = per_wallet_derived.remove(&wallet_id).unwrap_or_default();
+            let mut addresses_derived = project_derived_addresses(derived_for_wallet);
             for record in records {
                 let event = WalletEvent::TransactionDetected {
                     wallet_id,
                     record: Box::new(record),
                     balance,
                     account_balances: account_balances.clone(),
+                    addresses_derived: std::mem::take(&mut addresses_derived),
                 };
                 let _ = self.event_sender.send(event);
             }
@@ -220,7 +238,13 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
         height: CoreBlockHeight,
     ) {
         let wallets = BTreeSet::from([*wallet_id]);
-        self.finalize_block_advance(height, &wallets, BTreeMap::new(), BTreeMap::new());
+        self.finalize_block_advance(
+            height,
+            &wallets,
+            BTreeMap::new(),
+            BTreeMap::new(),
+            BTreeMap::new(),
+        );
     }
 
     fn subscribe_events(&self) -> broadcast::Receiver<WalletEvent> {
@@ -311,6 +335,7 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletManager<T> {
         wallets: &BTreeSet<WalletId>,
         mut per_wallet_inserted: BTreeMap<WalletId, Vec<TransactionRecord>>,
         mut per_wallet_updated: BTreeMap<WalletId, Vec<TransactionRecord>>,
+        mut per_wallet_derived: BTreeMap<WalletId, Vec<DerivedAddressInfo>>,
     ) {
         if wallets.is_empty() {
             return;
@@ -372,8 +397,15 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletManager<T> {
             let balance_changed = snapshot.get(wallet_id).copied() != Some(new_balance);
             let prior = prior_account_balances.remove(wallet_id).unwrap_or_default();
             let account_balances = diff_account_balances(&prior, &info.account_balances());
+            let derived_for_wallet = per_wallet_derived.remove(wallet_id).unwrap_or_default();
+            let addresses_derived: Vec<DerivedAddress> =
+                project_derived_addresses(derived_for_wallet);
 
-            if !inserted.is_empty() || !updated.is_empty() || !matured.is_empty() || balance_changed
+            if !inserted.is_empty()
+                || !updated.is_empty()
+                || !matured.is_empty()
+                || !addresses_derived.is_empty()
+                || balance_changed
             {
                 let event = WalletEvent::BlockProcessed {
                     wallet_id: *wallet_id,
@@ -383,6 +415,7 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletManager<T> {
                     matured,
                     balance: new_balance,
                     account_balances,
+                    addresses_derived,
                 };
                 let _ = self.event_sender.send(event);
             }
