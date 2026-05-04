@@ -199,15 +199,22 @@ impl Transaction {
     pub fn txid(&self) -> Txid {
         let mut enc = Txid::engine();
         self.version.consensus_encode(&mut enc).expect("engines don't error");
-        (self.tx_type() as u16).consensus_encode(&mut enc).expect("engines don't error");
+        self.tx_type().to_u16().consensus_encode(&mut enc).expect("engines don't error");
         self.input.consensus_encode(&mut enc).expect("engines don't error");
         self.output.consensus_encode(&mut enc).expect("engines don't error");
         self.lock_time.consensus_encode(&mut enc).expect("engines don't error");
         if let Some(payload) = &self.special_transaction_payload {
-            let mut buf = Vec::new();
-            payload.consensus_encode(&mut buf).expect("engines don't error");
-            // this is so we get the size of the payload
-            buf.consensus_encode(&mut enc).expect("engines don't error");
+            // Pre-DIP-0002 transactions have no payload section on the wire — keep
+            // the txid bit-identical to the on-chain bytes by skipping the section.
+            if !matches!(
+                payload,
+                TransactionPayload::ClassicalWithNonStandardVersionTypeBytesPayloadType(_)
+            ) {
+                let mut buf = Vec::new();
+                payload.consensus_encode(&mut buf).expect("engines don't error");
+                // this is so we get the size of the payload
+                buf.consensus_encode(&mut enc).expect("engines don't error");
+            }
         }
 
         Txid::from_engine(enc)
@@ -544,7 +551,7 @@ impl Encodable for Transaction {
     fn consensus_encode<W: io::Write + ?Sized>(&self, w: &mut W) -> Result<usize, io::Error> {
         let mut len = 0;
         len += self.version.consensus_encode(w)?;
-        len += (self.tx_type() as u16).consensus_encode(w)?;
+        len += self.tx_type().to_u16().consensus_encode(w)?;
         // To avoid serialization ambiguity, no inputs means we use BIP141 serialization (see
         // `Transaction` docs for full explanation).
         let mut have_witness = self.input.is_empty();
@@ -582,10 +589,18 @@ impl Encodable for Transaction {
         }
         len += self.lock_time.consensus_encode(w)?;
         if let Some(payload) = &self.special_transaction_payload {
-            let mut buf = Vec::new();
-            payload.consensus_encode(&mut buf)?;
-            // this is so we get the size of the payload
-            len += buf.consensus_encode(w)?;
+            // Pre-DIP-0002 transactions have no payload section on the wire (not even
+            // a length prefix). Skip the encoding block entirely so re-serialization
+            // matches the on-chain bytes verbatim.
+            if !matches!(
+                payload,
+                TransactionPayload::ClassicalWithNonStandardVersionTypeBytesPayloadType(_)
+            ) {
+                let mut buf = Vec::new();
+                payload.consensus_encode(&mut buf)?;
+                // this is so we get the size of the payload
+                len += buf.consensus_encode(w)?;
+            }
         }
         Ok(len)
     }
@@ -601,8 +616,13 @@ impl Decodable for Transaction {
             TransactionType::try_from(special_transaction_type_u16).map_err(|_| {
                 encode::Error::UnknownSpecialTransactionType(special_transaction_type_u16)
             })?
-        } else {
+        } else if special_transaction_type_u16 == 0 {
             TransactionType::Classic
+        } else {
+            // Pre-DIP-0002 (version 0) transactions are logically Classic, but at least
+            // one mainnet tx put non-zero bytes in the type slot. Preserve the raw u16
+            // so consensus_encode/txid keep matching the on-chain bytes.
+            TransactionType::ClassicalWithNonStandardVersionTypeBytes(special_transaction_type_u16)
         };
         let input = Vec::<TxIn>::consensus_decode_from_finite_reader(r)?;
         // segwit
@@ -1016,6 +1036,53 @@ mod tests {
         assert!(tx2.is_ok());
         let realtx2 = tx2.unwrap();
         assert_eq!(realtx2.version, 0);
+    }
+
+    #[test]
+    fn test_pre_dip2_classical_with_non_standard_version_type_bytes_roundtrip() {
+        use crate::blockdata::transaction::special_transaction::{
+            TransactionPayload, TransactionType,
+        };
+
+        // Same tx as `test_transaction_version`'s second case, but with the on-wire
+        // `nTxType` slot set to a non-zero u16 (0x2A in little-endian => 0x002A).
+        // Pre-DIP-0002 these bytes were ignored by consensus but still part of the
+        // serialized transaction and therefore part of the txid pre-image. Bytes 2..4
+        // are the `nTxType` field; bytes 0..2 are version=0.
+        let tx_bytes = Vec::from_hex("00002a000100000000000000000000000000000000000000000000000000000000000000000000000000ffffffff0100f2052a01000000434104678afdb0fe5548271967f1a67130b7105cd6a828e03909a67962e0ea1f61deb649f6bc3f4cef38c4f35504e51ec112de5c384df7ba0b8d578a4c702b6bf11d5fac00000000").unwrap();
+        let tx: Transaction =
+            deserialize(&tx_bytes).expect("decoder must accept pre-DIP-0002 raw type bytes");
+        assert_eq!(tx.version, 0);
+        assert_eq!(
+            tx.tx_type(),
+            TransactionType::ClassicalWithNonStandardVersionTypeBytes(0x002A),
+            "raw on-wire u16 must be preserved on the decoded type"
+        );
+        assert!(matches!(
+            tx.special_transaction_payload,
+            Some(TransactionPayload::ClassicalWithNonStandardVersionTypeBytesPayloadType(0x002A))
+        ));
+
+        // Round-trip: re-serializing must reproduce the original bytes.
+        let reser = serialize(&tx);
+        assert_eq!(reser, tx_bytes, "consensus_encode must round-trip raw type bytes");
+
+        // The txid must match the txid computed from the original on-wire bytes
+        // (double-SHA256 of the serialized transaction). Since the encoder now
+        // reproduces the input bytes exactly, the txid is the hash of those bytes.
+        assert_eq!(tx.txid(), Txid::hash(&tx_bytes), "txid must hash the original bytes");
+
+        // The txid must differ from the same transaction with type bytes zeroed —
+        // proves we no longer collapse different on-chain transactions to one id.
+        let mut zero_type_bytes = tx_bytes.clone();
+        zero_type_bytes[2] = 0;
+        zero_type_bytes[3] = 0;
+        let zero_type_tx: Transaction = deserialize(&zero_type_bytes).unwrap();
+        assert_ne!(
+            tx.txid(),
+            zero_type_tx.txid(),
+            "txids of pre-DIP-0002 txs must depend on the raw type bytes"
+        );
     }
 
     #[test]

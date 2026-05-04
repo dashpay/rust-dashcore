@@ -42,26 +42,34 @@ impl TransactionRouter {
     /// Classify a transaction based on its type and payload
     pub fn classify_transaction(tx: &Transaction) -> TransactionType {
         // Check if it's a special transaction
-        if let Some(ref payload) = tx.special_transaction_payload {
+        let special_classification = tx.special_transaction_payload.as_ref().and_then(|payload| {
             match payload {
                 TransactionPayload::ProviderRegistrationPayloadType(_) => {
-                    TransactionType::ProviderRegistration
+                    Some(TransactionType::ProviderRegistration)
                 }
                 TransactionPayload::ProviderUpdateRegistrarPayloadType(_) => {
-                    TransactionType::ProviderUpdateRegistrar
+                    Some(TransactionType::ProviderUpdateRegistrar)
                 }
                 TransactionPayload::ProviderUpdateServicePayloadType(_) => {
-                    TransactionType::ProviderUpdateService
+                    Some(TransactionType::ProviderUpdateService)
                 }
                 TransactionPayload::ProviderUpdateRevocationPayloadType(_) => {
-                    TransactionType::ProviderUpdateRevocation
+                    Some(TransactionType::ProviderUpdateRevocation)
                 }
-                TransactionPayload::AssetLockPayloadType(_) => TransactionType::AssetLock,
-                TransactionPayload::AssetUnlockPayloadType(_) => TransactionType::AssetUnlock,
-                TransactionPayload::CoinbasePayloadType(_) => TransactionType::Coinbase,
-                TransactionPayload::QuorumCommitmentPayloadType(_) => TransactionType::Ignored,
-                TransactionPayload::MnhfSignalPayloadType(_) => TransactionType::Ignored,
+                TransactionPayload::AssetLockPayloadType(_) => Some(TransactionType::AssetLock),
+                TransactionPayload::AssetUnlockPayloadType(_) => Some(TransactionType::AssetUnlock),
+                TransactionPayload::CoinbasePayloadType(_) => Some(TransactionType::Coinbase),
+                TransactionPayload::QuorumCommitmentPayloadType(_) => {
+                    Some(TransactionType::Ignored)
+                }
+                TransactionPayload::MnhfSignalPayloadType(_) => Some(TransactionType::Ignored),
+                // Pre-DIP-0002 transactions are logically Classic — fall through to the
+                // standard / coinbase / coinjoin classification below.
+                TransactionPayload::ClassicalWithNonStandardVersionTypeBytesPayloadType(_) => None,
             }
+        });
+        if let Some(classification) = special_classification {
+            classification
         } else if tx.is_coin_base() {
             TransactionType::Coinbase
         } else if Self::is_coinjoin_transaction(tx) {
