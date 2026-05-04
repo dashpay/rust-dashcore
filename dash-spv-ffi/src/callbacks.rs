@@ -779,6 +779,14 @@ impl FFIWalletEventCallbacks {
     /// Dispatch a WalletEvent to the appropriate callback.
     pub fn dispatch(&self, event: &WalletEvent) {
         match event {
+            // TODO(addresses_derived FFI): the Rust event carries a
+            // `Vec<DerivedAddress>` that downstream FFI persisters need to
+            // mirror the wallet's address pool to disk transactionally
+            // with the tx record. The C callback signature has no slot
+            // for it yet, so we drop it here. Until a paired callback
+            // (or extended signature) lands, FFI persisters will continue
+            // to orphan `CoreAddress` rows for addresses derived during
+            // gap-limit maintenance.
             WalletEvent::TransactionDetected {
                 wallet_id,
                 record,
@@ -844,6 +852,8 @@ impl FFIWalletEventCallbacks {
                     drop(ffi_account_balances);
                 }
             }
+            // TODO(addresses_derived FFI): see TransactionDetected arm above —
+            // dropped at the FFI seam pending a paired callback.
             WalletEvent::BlockProcessed {
                 wallet_id,
                 height,

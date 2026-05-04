@@ -778,6 +778,23 @@ async fn test_mempool_tx_to_highest_external_carries_addresses_derived() {
         index: 0,
         standard_account_type: StandardAccountType::BIP44Account,
     };
+
+    // Snapshot the pool state *after* extension so we can pin every
+    // emitted (address, public_key) pair against what the wallet
+    // actually stored. The persistence contract this PR enforces is
+    // that each `DerivedAddress` row matches the wallet's
+    // `AddressInfo` for the same `(account, pool, index)` — drift
+    // here would silently corrupt downstream `CoreAddress` rows.
+    let info_after = manager.get_wallet_info(&wallet_id).expect("wallet info");
+    let acct_after = info_after.accounts.standard_bip44_accounts.get(&0).expect("BIP44 0");
+    let external_pool_after = match &acct_after.managed_account_type {
+        ManagedAccountType::Standard {
+            external_addresses,
+            ..
+        } => external_addresses,
+        _ => panic!("expected Standard account"),
+    };
+
     for (i, derived) in addresses_derived.iter().enumerate() {
         assert_eq!(derived.account_type, expected_account);
         assert_eq!(derived.pool_type, AddressPoolType::External);
@@ -785,6 +802,32 @@ async fn test_mempool_tx_to_highest_external_carries_addresses_derived() {
             derived.derivation_index,
             highest_before + 1 + i as u32,
             "derivation indices must be contiguous starting just past the prior highest"
+        );
+
+        // Pin the persistence-critical payload against the wallet's
+        // own AddressInfo for the same index.
+        let stored = external_pool_after
+            .info_at_index(derived.derivation_index)
+            .unwrap_or_else(|| panic!("pool missing index {}", derived.derivation_index));
+        assert_eq!(
+            derived.address, stored.address,
+            "address mismatch at index {}",
+            derived.derivation_index
+        );
+        let stored_pubkey = match stored.public_key.as_ref().expect("ECDSA pool stores pubkey") {
+            key_wallet::managed_account::address_pool::PublicKeyType::ECDSA(b) => b,
+            other => panic!("BIP44 external pool produced non-ECDSA key: {:?}", other),
+        };
+        assert_eq!(
+            stored_pubkey.len(),
+            33,
+            "BIP44 external pool must store 33-byte compressed keys"
+        );
+        assert_eq!(
+            &derived.public_key[..],
+            stored_pubkey.as_slice(),
+            "public key mismatch at index {}",
+            derived.derivation_index
         );
     }
 }

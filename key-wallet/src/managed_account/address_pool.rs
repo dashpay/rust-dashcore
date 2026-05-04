@@ -894,9 +894,19 @@ impl AddressPool {
         while self.highest_generated.unwrap_or(0) < target {
             let next_index = self.highest_generated.map(|h| h + 1).unwrap_or(0);
             self.generate_address_at_index(next_index, key_source, true)?;
-            if let Some(info) = self.addresses.get(&next_index) {
-                new_addresses.push(info.clone());
-            }
+            // `generate_address_at_index` with `add_to_state = true` always
+            // inserts at `next_index`. Asserting the invariant explicitly
+            // here turns a regression that breaks it (e.g. a refactor that
+            // hits the early-return branch on a re-derivation) into a loud
+            // panic instead of an infinite loop on the outer `while`.
+            let info = self.addresses.get(&next_index).cloned().unwrap_or_else(|| {
+                panic!(
+                    "maintain_gap_limit: generate_address_at_index({}) succeeded but \
+                     the entry was not stored; pool invariant broken",
+                    next_index
+                )
+            });
+            new_addresses.push(info);
         }
 
         Ok(new_addresses)

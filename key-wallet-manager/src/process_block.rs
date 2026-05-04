@@ -122,22 +122,38 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
             let balance = info.balance();
             let account_balances =
                 per_wallet_account_diff.get(&wallet_id).cloned().unwrap_or_default();
-            // A single mempool tx maps to a single
-            // `process_mempool_transaction` invocation, so any
-            // gap-limit derivations attributable to this tx travel on
-            // the first record. Subsequent per-account records get an
-            // empty `addresses_derived`.
-            let derived_for_wallet = per_wallet_derived.remove(&wallet_id).unwrap_or_default();
-            let mut addresses_derived = project_derived_addresses(derived_for_wallet);
+            // Attribute derivations to the record whose owning account
+            // produced them. A single mempool tx can pay into more than
+            // one account in the same wallet; each affected account ran
+            // its own gap-limit maintenance, and `DerivedAddressInfo`
+            // already carries the originating `account_type`. Filter by
+            // record so persisters scoping by `record.account_type` get
+            // the correct rows.
+            let mut derived_for_wallet = per_wallet_derived.remove(&wallet_id).unwrap_or_default();
             for record in records {
+                let record_account = record.account_type;
+                let (for_record, rest): (Vec<_>, Vec<_>) =
+                    derived_for_wallet.into_iter().partition(|d| d.account_type == record_account);
+                derived_for_wallet = rest;
                 let event = WalletEvent::TransactionDetected {
                     wallet_id,
                     record: Box::new(record),
                     balance,
                     account_balances: account_balances.clone(),
-                    addresses_derived: std::mem::take(&mut addresses_derived),
+                    addresses_derived: project_derived_addresses(for_record),
                 };
                 let _ = self.event_sender.send(event);
+            }
+            // If any derivations were left unattributed (records vector
+            // didn't cover every account that derived), log so the
+            // mismatch is debuggable rather than silently lost.
+            if !derived_for_wallet.is_empty() {
+                tracing::warn!(
+                    wallet_id = ?wallet_id,
+                    leftover = derived_for_wallet.len(),
+                    "mempool tx produced gap-limit derivations not covered by any \
+                     emitted TransactionDetected record; ignoring"
+                );
             }
         }
 
