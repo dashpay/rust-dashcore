@@ -14,6 +14,8 @@ use dashcore::{
     BlockHash, CompactTarget, OutPoint, ScriptBuf, TxIn, TxMerkleNode, TxOut, Txid, Witness,
 };
 use key_wallet::account::StandardAccountType;
+use key_wallet::managed_account::address_pool::AddressPoolType;
+use key_wallet::managed_account::managed_account_type::ManagedAccountType;
 use key_wallet::AccountType;
 use std::collections::BTreeSet;
 
@@ -72,6 +74,7 @@ async fn test_mempool_tx_emits_single_event_with_balance() {
             record,
             balance,
             account_balances,
+            addresses_derived: _,
         } => {
             assert_eq!(*wid, wallet_id);
             assert_eq!(record.txid, tx.txid());
@@ -124,6 +127,7 @@ async fn test_mempool_tx_with_instant_lock_emits_detected_event_with_locked_bala
             record,
             balance,
             account_balances,
+            addresses_derived: _,
         } => {
             assert_eq!(*wid, wallet_id);
             assert!(matches!(record.context, TransactionContext::InstantSend(_)));
@@ -338,6 +342,7 @@ async fn test_block_with_new_tx_emits_inserted_record() {
             matured,
             balance,
             account_balances,
+            addresses_derived: _,
         } => {
             assert_eq!(*wid, wallet_id);
             assert_eq!(*height, 100);
@@ -402,6 +407,7 @@ async fn test_block_confirming_known_mempool_tx_emits_updated_record() {
             matured,
             balance,
             account_balances,
+            addresses_derived: _,
         } => {
             assert_eq!(*wid, wallet_id);
             assert_eq!(*height, 200);
@@ -668,4 +674,370 @@ async fn test_check_transaction_dry_run_does_not_persist_state() {
         .check_transaction_in_all_wallets(&tx, TransactionContext::Mempool, true, true)
         .await;
     assert!(result.is_new_transaction);
+}
+
+// ---------------------------------------------------------------------------
+// addresses_derived (gap-limit extension piggy-backed on the event)
+// ---------------------------------------------------------------------------
+
+/// Pull `(highest_generated_index, gap_limit)` and the address at the given
+/// index for the BIP44 account 0 pool of the given type.
+fn pool_state(
+    manager: &WalletManager,
+    wallet_id: &WalletId,
+    pool_type: AddressPoolType,
+) -> (u32, u32, Address) {
+    let info = manager.get_wallet_info(wallet_id).expect("wallet info");
+    let acct = info
+        .accounts
+        .standard_bip44_accounts
+        .get(&0)
+        .expect("BIP44 account 0 should exist on the default test wallet");
+    let pool = match (&acct.managed_account_type, pool_type) {
+        (
+            ManagedAccountType::Standard {
+                external_addresses,
+                ..
+            },
+            AddressPoolType::External,
+        ) => external_addresses,
+        (
+            ManagedAccountType::Standard {
+                internal_addresses,
+                ..
+            },
+            AddressPoolType::Internal,
+        ) => internal_addresses,
+        _ => panic!("unexpected pool type {:?}", pool_type),
+    };
+    let highest = pool.highest_generated.expect("pre-generated pool must have addresses");
+    let gap_limit = pool.gap_limit;
+    let addr = pool.address_at_index(highest).expect("highest index must exist");
+    (highest, gap_limit, addr)
+}
+
+/// Build a tx whose only output pays to `addr`. `seed` differentiates the
+/// input prevout so two different txs can pay to the same address without
+/// being deduped on `txid`.
+fn create_tx_paying_to_with_input_seed(addr: &Address, txid_seed: u8, vout: u32) -> Transaction {
+    Transaction {
+        version: 2,
+        lock_time: 0,
+        input: vec![TxIn {
+            previous_output: OutPoint {
+                txid: Txid::from_byte_array([txid_seed; 32]),
+                vout,
+            },
+            script_sig: ScriptBuf::new(),
+            sequence: u32::MAX,
+            witness: Witness::default(),
+        }],
+        output: vec![TxOut {
+            value: TX_AMOUNT,
+            script_pubkey: addr.script_pubkey(),
+        }],
+        special_transaction_payload: None,
+    }
+}
+
+#[tokio::test]
+async fn test_mempool_tx_to_highest_external_carries_addresses_derived() {
+    let (mut manager, wallet_id, _addr) = setup_manager_with_wallet();
+    let (highest_before, gap_limit, highest_addr) =
+        pool_state(&manager, &wallet_id, AddressPoolType::External);
+
+    let mut rx = manager.subscribe_events();
+    let tx = create_tx_paying_to(&highest_addr, 0xa0);
+    manager.process_mempool_transaction(&tx, None).await;
+
+    let events = drain_events(&mut rx);
+    let detected = events
+        .iter()
+        .find(|e| matches!(e, WalletEvent::TransactionDetected { .. }))
+        .unwrap_or_else(|| panic!("expected TransactionDetected, got {:?}", events));
+    let WalletEvent::TransactionDetected {
+        addresses_derived,
+        ..
+    } = detected
+    else {
+        unreachable!()
+    };
+
+    // Receiving to the highest pre-generated External address must extend
+    // the pool by exactly `gap_limit`, with all entries on the External
+    // pool of the BIP44 account 0, and contiguous derivation indices
+    // starting just past `highest_before`.
+    assert_eq!(
+        addresses_derived.len() as u32,
+        gap_limit,
+        "expected gap_limit ({}) new addresses, got {}",
+        gap_limit,
+        addresses_derived.len()
+    );
+    let expected_account = AccountType::Standard {
+        index: 0,
+        standard_account_type: StandardAccountType::BIP44Account,
+    };
+
+    // Snapshot the pool state *after* extension so we can pin every
+    // emitted (address, public_key) pair against what the wallet
+    // actually stored. The persistence contract this PR enforces is
+    // that each `DerivedAddress` row matches the wallet's
+    // `AddressInfo` for the same `(account, pool, index)` — drift
+    // here would silently corrupt downstream `CoreAddress` rows.
+    let info_after = manager.get_wallet_info(&wallet_id).expect("wallet info");
+    let acct_after = info_after.accounts.standard_bip44_accounts.get(&0).expect("BIP44 0");
+    let external_pool_after = match &acct_after.managed_account_type {
+        ManagedAccountType::Standard {
+            external_addresses,
+            ..
+        } => external_addresses,
+        _ => panic!("expected Standard account"),
+    };
+
+    for (i, derived) in addresses_derived.iter().enumerate() {
+        assert_eq!(derived.account_type, expected_account);
+        assert_eq!(derived.pool_type, AddressPoolType::External);
+        assert_eq!(
+            derived.derivation_index,
+            highest_before + 1 + i as u32,
+            "derivation indices must be contiguous starting just past the prior highest"
+        );
+
+        // Pin the persistence-critical payload against the wallet's
+        // own AddressInfo for the same index.
+        let stored = external_pool_after
+            .info_at_index(derived.derivation_index)
+            .unwrap_or_else(|| panic!("pool missing index {}", derived.derivation_index));
+        assert_eq!(
+            derived.address, stored.address,
+            "address mismatch at index {}",
+            derived.derivation_index
+        );
+        let stored_pubkey = match stored.public_key.as_ref().expect("ECDSA pool stores pubkey") {
+            key_wallet::managed_account::address_pool::PublicKeyType::ECDSA(b) => b,
+            other => panic!("BIP44 external pool produced non-ECDSA key: {:?}", other),
+        };
+        assert_eq!(
+            stored_pubkey.len(),
+            33,
+            "BIP44 external pool must store 33-byte compressed keys"
+        );
+        assert_eq!(
+            &derived.public_key[..],
+            stored_pubkey.as_slice(),
+            "public key mismatch at index {}",
+            derived.derivation_index
+        );
+    }
+}
+
+#[tokio::test]
+async fn test_mempool_tx_to_already_buffered_external_carries_no_addresses_derived() {
+    // After a first hit on the highest-index External address, the pool
+    // is already extended by `gap_limit` past that index. A subsequent
+    // tx to a LOWER index sits well inside the buffer and must not
+    // trigger any further derivation.
+    let (mut manager, wallet_id, _addr) = setup_manager_with_wallet();
+    let (highest_before, _gap, highest_addr) =
+        pool_state(&manager, &wallet_id, AddressPoolType::External);
+
+    // Prime: first tx pushes the boundary and extends the pool.
+    let tx_prime = create_tx_paying_to(&highest_addr, 0xa1);
+    manager.process_mempool_transaction(&tx_prime, None).await;
+
+    // Now send a second tx to an index that is well within the new
+    // buffer (e.g. index 0). The pool is already at highest_before +
+    // gap_limit; using a lower index does not push it further.
+    let info = manager.get_wallet_info(&wallet_id).expect("wallet info");
+    let acct = info.accounts.standard_bip44_accounts.get(&0).expect("BIP44 0");
+    let buffered_addr = match &acct.managed_account_type {
+        ManagedAccountType::Standard {
+            external_addresses,
+            ..
+        } => external_addresses.address_at_index(0).expect("low-index external address must exist"),
+        _ => panic!("expected Standard account type"),
+    };
+    assert!(
+        buffered_addr != highest_addr,
+        "test setup mismatch: low-index addr should differ from highest"
+    );
+    let _ = highest_before;
+
+    let mut rx = manager.subscribe_events();
+    let tx = create_tx_paying_to(&buffered_addr, 0xa2);
+    manager.process_mempool_transaction(&tx, None).await;
+
+    let events = drain_events(&mut rx);
+    let detected = events
+        .iter()
+        .find(|e| matches!(e, WalletEvent::TransactionDetected { .. }))
+        .unwrap_or_else(|| panic!("expected TransactionDetected, got {:?}", events));
+    let WalletEvent::TransactionDetected {
+        addresses_derived,
+        ..
+    } = detected
+    else {
+        unreachable!()
+    };
+    assert!(
+        addresses_derived.is_empty(),
+        "no derivation expected when the second hit sits inside the existing buffer, got {:?}",
+        addresses_derived
+    );
+}
+
+#[tokio::test]
+async fn test_block_with_external_and_internal_high_index_extends_both_pools() {
+    let (mut manager, wallet_id, _addr) = setup_manager_with_wallet();
+    let (ext_highest_before, ext_gap, ext_highest_addr) =
+        pool_state(&manager, &wallet_id, AddressPoolType::External);
+    let (int_highest_before, int_gap, int_highest_addr) =
+        pool_state(&manager, &wallet_id, AddressPoolType::Internal);
+
+    let tx_ext = create_tx_paying_to(&ext_highest_addr, 0xb0);
+    let tx_int = create_tx_paying_to(&int_highest_addr, 0xb1);
+    let block = make_block(vec![tx_ext, tx_int], 0xb2, 6000);
+
+    let mut rx = manager.subscribe_events();
+    let wallets = BTreeSet::from([wallet_id]);
+    manager.process_block_for_wallets(&block, 700, &wallets).await;
+
+    let events = drain_events(&mut rx);
+    let block_event = events
+        .iter()
+        .find(|e| matches!(e, WalletEvent::BlockProcessed { .. }))
+        .unwrap_or_else(|| panic!("expected BlockProcessed, got {:?}", events));
+    let WalletEvent::BlockProcessed {
+        addresses_derived,
+        ..
+    } = block_event
+    else {
+        unreachable!()
+    };
+
+    let ext_count =
+        addresses_derived.iter().filter(|d| d.pool_type == AddressPoolType::External).count()
+            as u32;
+    let int_count =
+        addresses_derived.iter().filter(|d| d.pool_type == AddressPoolType::Internal).count()
+            as u32;
+    assert_eq!(ext_count, ext_gap, "External pool must extend by gap_limit");
+    assert_eq!(int_count, int_gap, "Internal pool must extend by gap_limit");
+
+    // De-dup invariant: each (pool, index) appears once.
+    let mut ext_indices: Vec<u32> = addresses_derived
+        .iter()
+        .filter(|d| d.pool_type == AddressPoolType::External)
+        .map(|d| d.derivation_index)
+        .collect();
+    ext_indices.sort_unstable();
+    ext_indices.dedup();
+    assert_eq!(ext_indices.len() as u32, ext_gap);
+    let expected_first_ext = ext_highest_before + 1;
+    assert_eq!(ext_indices.first().copied(), Some(expected_first_ext));
+
+    let mut int_indices: Vec<u32> = addresses_derived
+        .iter()
+        .filter(|d| d.pool_type == AddressPoolType::Internal)
+        .map(|d| d.derivation_index)
+        .collect();
+    int_indices.sort_unstable();
+    int_indices.dedup();
+    assert_eq!(int_indices.len() as u32, int_gap);
+    let expected_first_int = int_highest_before + 1;
+    assert_eq!(int_indices.first().copied(), Some(expected_first_int));
+}
+
+#[tokio::test]
+async fn test_block_with_two_records_pushing_external_boundary_dedupes() {
+    let (mut manager, wallet_id, _addr) = setup_manager_with_wallet();
+    let (_, gap_limit, highest_addr) = pool_state(&manager, &wallet_id, AddressPoolType::External);
+
+    // Two distinct txs (different prevouts → different txids) both paying
+    // to the same highest-index External address. Both records will be
+    // processed within the same block. The first triggers gap-limit
+    // extension; the second hits an already-extended boundary and must not
+    // double-extend.
+    let tx1 = create_tx_paying_to_with_input_seed(&highest_addr, 0xc0, 0);
+    let tx2 = create_tx_paying_to_with_input_seed(&highest_addr, 0xc1, 0);
+    let block = make_block(vec![tx1, tx2], 0xc2, 7000);
+
+    let mut rx = manager.subscribe_events();
+    let wallets = BTreeSet::from([wallet_id]);
+    manager.process_block_for_wallets(&block, 800, &wallets).await;
+
+    let events = drain_events(&mut rx);
+    let block_event = events
+        .iter()
+        .find(|e| matches!(e, WalletEvent::BlockProcessed { .. }))
+        .unwrap_or_else(|| panic!("expected BlockProcessed, got {:?}", events));
+    let WalletEvent::BlockProcessed {
+        addresses_derived,
+        ..
+    } = block_event
+    else {
+        unreachable!()
+    };
+
+    // Exactly `gap_limit` entries — not `2 * gap_limit`, despite both
+    // records nominally pushing the boundary.
+    assert_eq!(
+        addresses_derived.len() as u32,
+        gap_limit,
+        "two records pushing the same boundary must dedup to gap_limit, got {}",
+        addresses_derived.len()
+    );
+    // And every entry must be distinct on (account, pool, index).
+    let mut keys: Vec<(AccountType, AddressPoolType, u32)> = addresses_derived
+        .iter()
+        .map(|d| (d.account_type, d.pool_type, d.derivation_index))
+        .collect();
+    keys.sort();
+    let total = keys.len();
+    keys.dedup();
+    assert_eq!(keys.len(), total, "duplicate (account, pool, index) entries leaked through");
+}
+
+#[tokio::test]
+async fn test_instant_send_lock_event_does_not_carry_addresses_derived_field() {
+    // IS-lock application doesn't extend the pool — addresses are
+    // already marked used at mempool time. The InstantLocked event
+    // intentionally has no `addresses_derived` field; this test pins
+    // that down so a future "defensively add the field everywhere"
+    // refactor surfaces here.
+    let (mut manager, wallet_id, addr) = setup_manager_with_wallet();
+    let tx = create_tx_paying_to(&addr, 0xd0);
+    manager.process_mempool_transaction(&tx, None).await;
+
+    let mut rx = manager.subscribe_events();
+    let lock = InstantLock {
+        txid: tx.txid(),
+        cyclehash: CycleHash::from_byte_array([0xab; 32]),
+        signature: BLSSignature::from([0xcd; 96]),
+        ..InstantLock::default()
+    };
+    manager.process_instant_send_lock(lock);
+
+    let events = drain_events(&mut rx);
+    let lock_event = events
+        .iter()
+        .find(|e| matches!(e, WalletEvent::TransactionInstantLocked { .. }))
+        .unwrap_or_else(|| panic!("expected TransactionInstantLocked, got {:?}", events));
+    // Pattern-match on every field; if a future change adds
+    // `addresses_derived`, this fails to compile and forces a
+    // deliberate decision.
+    match lock_event {
+        WalletEvent::TransactionInstantLocked {
+            wallet_id: wid,
+            txid,
+            instant_lock: _,
+            balance: _,
+            account_balances: _,
+        } => {
+            assert_eq!(*wid, wallet_id);
+            assert_eq!(*txid, tx.txid());
+        }
+        _ => unreachable!(),
+    }
 }

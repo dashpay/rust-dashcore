@@ -20,7 +20,7 @@ mod process_block;
 mod wallet_interface;
 
 pub use error::WalletError;
-pub use events::WalletEvent;
+pub use events::{DerivedAddress, WalletEvent};
 pub use matching::{check_compact_filters_for_addresses, FilterMatchKey};
 pub use wallet_interface::{BlockProcessingResult, MempoolTransactionResult, WalletInterface};
 
@@ -28,7 +28,7 @@ use dashcore::blockdata::transaction::Transaction;
 use dashcore::prelude::CoreBlockHeight;
 use key_wallet::account::AccountCollection;
 use key_wallet::managed_account::transaction_record::TransactionRecord;
-use key_wallet::transaction_checking::TransactionContext;
+use key_wallet::transaction_checking::{DerivedAddressInfo, TransactionContext};
 use key_wallet::wallet::managed_wallet_info::transaction_building::AccountTypePreference;
 use key_wallet::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
@@ -73,9 +73,13 @@ pub struct CheckTransactionsResult {
     pub affected_wallets: Vec<WalletId>,
     /// Set to false if the transaction was already stored and is being re-processed (e.g., during rescan)
     pub is_new_transaction: bool,
-    /// New addresses generated during gap limit maintenance, attributed to the
-    /// wallet that produced them.
-    pub new_addresses: BTreeMap<WalletId, Vec<Address>>,
+    /// Addresses derived during gap-limit maintenance, attributed to the
+    /// wallet that produced them. Each entry carries the originating
+    /// account type, pool type, and full
+    /// [`AddressInfo`](key_wallet::managed_account::address_pool::AddressInfo)
+    /// so downstream emitters can attribute the derivation precisely without
+    /// re-deriving.
+    pub new_addresses: BTreeMap<WalletId, Vec<DerivedAddressInfo>>,
     /// Total value received across all wallets
     pub total_received: u64,
     /// Total value sent across all wallets
@@ -90,9 +94,17 @@ pub struct CheckTransactionsResult {
 }
 
 impl CheckTransactionsResult {
-    /// Iterate over every newly generated address regardless of wallet attribution.
-    pub(crate) fn all_new_addresses(&self) -> impl Iterator<Item = &Address> {
+    /// Iterate over every newly derived [`DerivedAddressInfo`] regardless of
+    /// wallet attribution.
+    pub(crate) fn all_new_address_infos(&self) -> impl Iterator<Item = &DerivedAddressInfo> {
         self.new_addresses.values().flatten()
+    }
+
+    /// Iterate over every newly derived address regardless of wallet
+    /// attribution. The richer [`DerivedAddressInfo`] is available via
+    /// [`Self::all_new_address_infos`].
+    pub(crate) fn all_new_addresses(&self) -> impl Iterator<Item = &Address> {
+        self.all_new_address_infos().map(|d| &d.info.address)
     }
 }
 

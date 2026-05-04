@@ -568,6 +568,106 @@ impl FFIAccountBalance {
 }
 
 // ============================================================================
+// FFIDerivedAddress - One address derived during gap-limit maintenance
+// ============================================================================
+
+/// Pool the derived address belongs to.
+///
+/// Mirrors `key_wallet::managed_account::address_pool::AddressPoolType`
+/// 1:1 — kept distinct from the existing `FFIAddressPoolType` (which
+/// collapses Absent / AbsentHardened into a single `Single` variant) so
+/// event consumers can distinguish hardened single-pool variants
+/// (Provider operator keys, etc.) from non-hardened ones.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FFIDerivedAddressPoolType {
+    External = 0,
+    Internal = 1,
+    Absent = 2,
+    AbsentHardened = 3,
+}
+
+impl From<key_wallet::managed_account::address_pool::AddressPoolType>
+    for FFIDerivedAddressPoolType
+{
+    fn from(t: key_wallet::managed_account::address_pool::AddressPoolType) -> Self {
+        use key_wallet::managed_account::address_pool::AddressPoolType as P;
+        match t {
+            P::External => FFIDerivedAddressPoolType::External,
+            P::Internal => FFIDerivedAddressPoolType::Internal,
+            P::Absent => FFIDerivedAddressPoolType::Absent,
+            P::AbsentHardened => FFIDerivedAddressPoolType::AbsentHardened,
+        }
+    }
+}
+
+/// One address derived as a side effect of gap-limit maintenance during
+/// transaction or block processing.
+///
+/// Wallet events deliver an array of these so persisters can mirror the
+/// on-disk address pool transactionally with the tx/block records that
+/// triggered the derivation. Without this, UTXOs landing on freshly
+/// derived addresses orphan their parent address row at the persister.
+///
+/// `account_type` follows the same memory rules as on
+/// [`FFIAccountBalance`]: the embedded `identity_user` / `identity_friend`
+/// pointers are owned by the `FFIAccountType` and freed when the array is
+/// dropped after the callback returns. `address` is a heap-allocated
+/// null-terminated UTF-8 string, owned by this struct and freed on drop.
+/// Consumers that need to retain the data past the callback must copy
+/// every owning field — not just retain pointers.
+#[repr(C)]
+pub struct FFIDerivedAddress {
+    /// Owning-account descriptor (discriminant + indices + identity ids).
+    pub account_type: FFIAccountType,
+    /// Pool within the account that derived this address.
+    pub pool_type: FFIDerivedAddressPoolType,
+    /// Derivation index within the pool. Combined with `account_type`
+    /// and `pool_type`, this fully determines the derivation path —
+    /// consumers that need a rendered path can recompute it
+    /// deterministically.
+    pub derivation_index: u32,
+    /// Heap-allocated null-terminated UTF-8 string. Owned by this
+    /// struct; freed when the struct is dropped.
+    pub address: *mut c_char,
+    /// 33-byte compressed ECDSA public key (inline, no allocation).
+    pub public_key: [u8; 33],
+}
+
+impl FFIDerivedAddress {
+    fn from_slice(addresses: &[key_wallet_manager::DerivedAddress]) -> Vec<Self> {
+        addresses
+            .iter()
+            .map(|d| {
+                let address_str = d.address.to_string();
+                let c_address = CString::new(address_str).unwrap_or_else(|_| CString::default());
+                FFIDerivedAddress {
+                    account_type: FFIAccountType::from(&d.account_type),
+                    pool_type: FFIDerivedAddressPoolType::from(d.pool_type),
+                    derivation_index: d.derivation_index,
+                    address: c_address.into_raw(),
+                    public_key: d.public_key,
+                }
+            })
+            .collect()
+    }
+}
+
+impl Drop for FFIDerivedAddress {
+    fn drop(&mut self) {
+        if !self.address.is_null() {
+            // SAFETY: `address` was constructed via `CString::into_raw` in
+            // `FFIDerivedAddress::from_slice`, so reclaiming via
+            // `CString::from_raw` is the matching free.
+            let _ = unsafe { CString::from_raw(self.address) };
+            self.address = std::ptr::null_mut();
+        }
+        // `account_type` has its own Drop impl that frees the
+        // identity_user / identity_friend allocations when applicable.
+    }
+}
+
+// ============================================================================
 // FFIWalletEventCallbacks - One callback per WalletEvent variant
 // ============================================================================
 
@@ -584,6 +684,13 @@ impl FFIAccountBalance {
 /// entries for a normal transaction); accounts whose balance is unchanged
 /// are omitted. The array is null with a zero count when no per-account
 /// balance changed.
+///
+/// `addresses_derived` is an array of size `addresses_derived_count` of
+/// addresses derived as a side effect of gap-limit maintenance while
+/// processing this transaction, attributed to the same account as
+/// `record`. Empty in the common case (null pointer with zero count).
+/// Persisters should write these rows transactionally with `record` so
+/// UTXOs landing on freshly-derived addresses retain a parent row.
 pub type OnTransactionDetectedCallback = Option<
     extern "C" fn(
         wallet_id: *const c_char,
@@ -591,6 +698,8 @@ pub type OnTransactionDetectedCallback = Option<
         balance: *const FFIBalance,
         account_balances: *const FFIAccountBalance,
         account_balances_count: u32,
+        addresses_derived: *const FFIDerivedAddress,
+        addresses_derived_count: u32,
         user_data: *mut c_void,
     ),
 >;
@@ -629,6 +738,13 @@ pub type OnTransactionInstantLockedCallback = Option<
 /// balance *after* the block was processed. `account_balances` follows the
 /// same contract as on [`OnTransactionDetectedCallback`].
 ///
+/// `addresses_derived` is an array of size `addresses_derived_count` of
+/// addresses derived as a side effect of gap-limit maintenance across
+/// every record in the block, deduplicated by
+/// `(account_type, pool_type, derivation_index)`. Empty in the common
+/// case (null pointer with zero count). Persisters should write these
+/// rows transactionally with the inserted/updated records.
+///
 /// All array pointers and their contents are borrowed and only valid for the
 /// duration of the callback.
 pub type OnWalletBlockProcessedCallback = Option<
@@ -644,6 +760,8 @@ pub type OnWalletBlockProcessedCallback = Option<
         balance: *const FFIBalance,
         account_balances: *const FFIAccountBalance,
         account_balances_count: u32,
+        addresses_derived: *const FFIDerivedAddress,
+        addresses_derived_count: u32,
         user_data: *mut c_void,
     ),
 >;
@@ -784,6 +902,7 @@ impl FFIWalletEventCallbacks {
                 record,
                 balance,
                 account_balances,
+                addresses_derived,
             } => {
                 if let Some(cb) = self.on_transaction_detected {
                     let wallet_id_hex = hex::encode(wallet_id);
@@ -791,10 +910,16 @@ impl FFIWalletEventCallbacks {
                     let ffi_record = FFITransactionRecord::from(record.as_ref());
                     let ffi_balance = FFIBalance::from(*balance);
                     let ffi_account_balances = FFIAccountBalance::from_map(account_balances);
+                    let ffi_addresses_derived = FFIDerivedAddress::from_slice(addresses_derived);
                     let account_balances_ptr = if ffi_account_balances.is_empty() {
                         ptr::null()
                     } else {
                         ffi_account_balances.as_ptr()
+                    };
+                    let addresses_derived_ptr = if ffi_addresses_derived.is_empty() {
+                        ptr::null()
+                    } else {
+                        ffi_addresses_derived.as_ptr()
                     };
 
                     cb(
@@ -803,10 +928,13 @@ impl FFIWalletEventCallbacks {
                         &ffi_balance as *const FFIBalance,
                         account_balances_ptr,
                         ffi_account_balances.len() as u32,
+                        addresses_derived_ptr,
+                        ffi_addresses_derived.len() as u32,
                         self.user_data,
                     );
 
                     drop(ffi_account_balances);
+                    drop(ffi_addresses_derived);
                 }
             }
             WalletEvent::TransactionInstantLocked {
@@ -851,6 +979,7 @@ impl FFIWalletEventCallbacks {
                 matured,
                 balance,
                 account_balances,
+                addresses_derived,
             } => {
                 if let Some(cb) = self.on_block_processed {
                     let wallet_id_hex = hex::encode(wallet_id);
@@ -863,6 +992,7 @@ impl FFIWalletEventCallbacks {
                         matured.iter().map(FFITransactionRecord::from).collect();
                     let ffi_balance = FFIBalance::from(*balance);
                     let ffi_account_balances = FFIAccountBalance::from_map(account_balances);
+                    let ffi_addresses_derived = FFIDerivedAddress::from_slice(addresses_derived);
 
                     // Pass a null pointer when an array is empty so C/Swift
                     // consumers that null-check before reading don't see a
@@ -887,6 +1017,11 @@ impl FFIWalletEventCallbacks {
                     } else {
                         ffi_account_balances.as_ptr()
                     };
+                    let addresses_derived_ptr = if ffi_addresses_derived.is_empty() {
+                        ptr::null()
+                    } else {
+                        ffi_addresses_derived.as_ptr()
+                    };
 
                     cb(
                         c_wallet_id.as_ptr(),
@@ -900,6 +1035,8 @@ impl FFIWalletEventCallbacks {
                         &ffi_balance as *const FFIBalance,
                         account_balances_ptr,
                         ffi_account_balances.len() as u32,
+                        addresses_derived_ptr,
+                        ffi_addresses_derived.len() as u32,
                         self.user_data,
                     );
 
@@ -907,6 +1044,7 @@ impl FFIWalletEventCallbacks {
                     drop(ffi_updated);
                     drop(ffi_matured);
                     drop(ffi_account_balances);
+                    drop(ffi_addresses_derived);
                 }
             }
             WalletEvent::SyncHeightAdvanced {

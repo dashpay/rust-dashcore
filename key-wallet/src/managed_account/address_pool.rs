@@ -31,7 +31,7 @@ pub enum PublicKeyType {
 }
 
 /// Type of address pool (external, internal, or absent/single-pool)
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 pub enum AddressPoolType {
@@ -877,8 +877,14 @@ impl AddressPool {
         unused_count < self.gap_limit
     }
 
-    /// Generate addresses to maintain the gap limit
-    pub fn maintain_gap_limit(&mut self, key_source: &KeySource) -> Result<Vec<Address>> {
+    /// Generate addresses to maintain the gap limit.
+    ///
+    /// Returns the freshly generated [`AddressInfo`] entries (in derivation
+    /// order). Returning the rich [`AddressInfo`] rather than just
+    /// [`Address`] lets callers — in particular the wallet-manager event
+    /// emission seam — surface the full derivation context (index, path,
+    /// public key) for downstream persisters without re-deriving it.
+    pub fn maintain_gap_limit(&mut self, key_source: &KeySource) -> Result<Vec<AddressInfo>> {
         let target = match self.highest_used {
             None => self.gap_limit - 1,
             Some(highest) => highest + self.gap_limit,
@@ -887,8 +893,20 @@ impl AddressPool {
         let mut new_addresses = Vec::new();
         while self.highest_generated.unwrap_or(0) < target {
             let next_index = self.highest_generated.map(|h| h + 1).unwrap_or(0);
-            let address = self.generate_address_at_index(next_index, key_source, true)?;
-            new_addresses.push(address);
+            self.generate_address_at_index(next_index, key_source, true)?;
+            // `generate_address_at_index` with `add_to_state = true` always
+            // inserts at `next_index`. Asserting the invariant explicitly
+            // here turns a regression that breaks it (e.g. a refactor that
+            // hits the early-return branch on a re-derivation) into a loud
+            // panic instead of an infinite loop on the outer `while`.
+            let info = self.addresses.get(&next_index).cloned().unwrap_or_else(|| {
+                panic!(
+                    "maintain_gap_limit: generate_address_at_index({}) succeeded but \
+                     the entry was not stored; pool invariant broken",
+                    next_index
+                )
+            });
+            new_addresses.push(info);
         }
 
         Ok(new_addresses)
@@ -1229,6 +1247,7 @@ mod tests {
         // Should generate exactly 1 address to maintain gap_limit unused after index 0
         let new_addresses = pool.maintain_gap_limit(&key_source).unwrap();
         assert_eq!(new_addresses.len(), 1);
+        assert_eq!(new_addresses[0].index, gap_limit);
         assert_eq!(pool.highest_generated, Some(gap_limit));
         assert_eq!(pool.addresses.len(), gap_limit as usize + 1);
 
@@ -1239,6 +1258,8 @@ mod tests {
         // Should generate exactly 2 more addresses
         let new_addresses = pool.maintain_gap_limit(&key_source).unwrap();
         assert_eq!(new_addresses.len(), 2);
+        assert_eq!(new_addresses[0].index, gap_limit + 1);
+        assert_eq!(new_addresses[1].index, gap_limit + 2);
         assert_eq!(pool.highest_generated, Some(gap_limit + 2));
         assert_eq!(pool.addresses.len(), gap_limit as usize + 3);
     }
