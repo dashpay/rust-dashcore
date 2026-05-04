@@ -421,6 +421,8 @@ extern "C" fn on_transaction_detected(
     balance: *const FFIBalance,
     account_balances: *const FFIAccountBalance,
     account_balances_count: u32,
+    _addresses_derived: *const dash_spv_ffi::FFIDerivedAddress,
+    _addresses_derived_count: u32,
     user_data: *mut c_void,
 ) {
     let Some(tracker) = (unsafe { tracker_from(user_data) }) else {
@@ -493,6 +495,8 @@ extern "C" fn on_wallet_block_processed(
     balance: *const FFIBalance,
     account_balances: *const FFIAccountBalance,
     account_balances_count: u32,
+    _addresses_derived: *const dash_spv_ffi::FFIDerivedAddress,
+    _addresses_derived_count: u32,
     user_data: *mut c_void,
 ) {
     let Some(tracker) = (unsafe { tracker_from(user_data) }) else {
