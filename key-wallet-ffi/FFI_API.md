@@ -277,7 +277,7 @@ Functions: 14
 |----------|-------------|--------|
 | `transaction_add_input` | Add an input to a transaction  # Safety - `tx` must be a valid pointer to an... | transaction |
 | `transaction_add_output` | Add an output to a transaction  # Safety - `tx` must be a valid pointer to... | transaction |
-| `transaction_bytes_free` | Free transaction bytes  # Safety  - `tx_bytes` must be a valid pointer... | transaction |
+| `transaction_bytes_free` | Free transaction bytes returned by transaction-building FFI functions | transaction |
 | `transaction_check_result_free` | Free a transaction check result  # Safety  - `result` must be a valid... | transaction_checking |
 | `transaction_classify` | Get the transaction classification for routing  Returns a string describing... | transaction_checking |
 | `transaction_create` | Create a new empty transaction  # Returns - Pointer to FFITransaction on... | transaction |
@@ -1289,10 +1289,10 @@ wallet_build_and_sign_asset_lock_transaction(manager: *const FFIWalletManager, w
 ```
 
 **Description:**
-Build and sign an asset lock transaction for Core to Platform transfers.  Creates a special transaction (type 8) with `AssetLockPayload` that locks Dash for Platform credits. Derives one unique private key per credit output from the specified funding account types.  # Parameters  - `funding_types`: Array of `credit_outputs_count` funding account types, one per credit output (registration, top-up, invitation, etc.) - `identity_indices`: Array of `credit_outputs_count` identity indices. Only used for `IdentityTopUp` entries; ignored for other funding types. - `private_keys_out`: Caller-allocated array of `credit_outputs_count` × 32-byte buffers. On success, each `private_keys_out[i]` receives the one-time private key corresponding to `credit_output_scripts[i]`.  # Safety  - All pointer parameters must be valid and non-null - All parallel arrays must have at least `credit_outputs_count` elements - `private_keys_out` must point to an array of `credit_outputs_count` × `[u8; 32]` buffers - Caller must free `tx_bytes_out` with `transaction_bytes_free`
+Build and sign an asset lock transaction for Core to Platform transfers.  Creates a special transaction (type 8) with `AssetLockPayload` that locks Dash for Platform credits. Derives one unique private key per credit output from the specified funding account types.  # Parameters  - `funding_types`: Array of `credit_outputs_count` funding account types, one per credit output (registration, top-up, invitation, etc.) - `identity_indices`: Array of `credit_outputs_count` identity indices. Only used for `IdentityTopUp` entries; ignored for other funding types. - `private_keys_out`: Caller-allocated array of `credit_outputs_count` × 32-byte buffers. On success, each `private_keys_out[i]` receives the one-time private key corresponding to `credit_output_scripts[i]`.  # Safety  - All pointer parameters must be valid and non-null - All parallel arrays must have at least `credit_outputs_count` elements - `private_keys_out` must point to an array of `credit_outputs_count` × `[u8; 32]` buffers - On success, the caller must free the returned transaction bytes by calling `transaction_bytes_free(*tx_bytes_out)`.
 
 **Safety:**
-- All pointer parameters must be valid and non-null - All parallel arrays must have at least `credit_outputs_count` elements - `private_keys_out` must point to an array of `credit_outputs_count` × `[u8; 32]` buffers - Caller must free `tx_bytes_out` with `transaction_bytes_free`
+- All pointer parameters must be valid and non-null - All parallel arrays must have at least `credit_outputs_count` elements - `private_keys_out` must point to an array of `credit_outputs_count` × `[u8; 32]` buffers - On success, the caller must free the returned transaction bytes by calling `transaction_bytes_free(*tx_bytes_out)`.
 
 **Module:** `transaction`
 
@@ -1305,10 +1305,10 @@ wallet_build_and_sign_transaction(manager: *const FFIWalletManager, wallet: *con
 ```
 
 **Description:**
-Build and sign a transaction using the wallet's managed info  This is the recommended way to build transactions. It handles: - UTXO selection using coin selection algorithms - Fee calculation - Change address generation - Transaction signing  # Safety  - `manager` must be a valid pointer to an FFIWalletManager - `wallet` must be a valid pointer to an FFIWallet - `account_index` must be a valid BIP44 account index present in the wallet - `outputs` must be a valid pointer to an array of FFITxOutput with at least `outputs_count` elements - `fee_rate` must be a valid variant of FFIFeeRate - `fee_out` must be a valid, non-null pointer to a `u64`; on success it receives the calculated transaction fee in duffs - `tx_bytes_out` must be a valid pointer to store the transaction bytes pointer - `tx_len_out` must be a valid pointer to store the transaction length - `error` must be a valid pointer to an FFIError - The returned transaction bytes must be freed with `transaction_bytes_free`
+Build and sign a transaction using the wallet's managed info  This is the recommended way to build transactions. It handles: - UTXO selection using coin selection algorithms - Fee calculation - Change address generation - Transaction signing  # Safety  - `manager` must be a valid pointer to an FFIWalletManager - `wallet` must be a valid pointer to an FFIWallet - `account_index` must be a valid BIP44 account index present in the wallet - `outputs` must be a valid pointer to an array of FFITxOutput with at least `outputs_count` elements - `fee_per_kb` is the requested fee rate in duffs per kilobyte - `fee_out` must be a valid, non-null pointer to a `u64`; on success it receives the calculated transaction fee in duffs - `tx_bytes_out` must be a valid pointer to store the transaction bytes pointer - `tx_len_out` must be a valid pointer to store the transaction length - `error` must be a valid pointer to an FFIError - On success, the returned transaction bytes must be freed by calling `transaction_bytes_free(*tx_bytes_out)`.
 
 **Safety:**
-- `manager` must be a valid pointer to an FFIWalletManager - `wallet` must be a valid pointer to an FFIWallet - `account_index` must be a valid BIP44 account index present in the wallet - `outputs` must be a valid pointer to an array of FFITxOutput with at least `outputs_count` elements - `fee_rate` must be a valid variant of FFIFeeRate - `fee_out` must be a valid, non-null pointer to a `u64`; on success it receives the calculated transaction fee in duffs - `tx_bytes_out` must be a valid pointer to store the transaction bytes pointer - `tx_len_out` must be a valid pointer to store the transaction length - `error` must be a valid pointer to an FFIError - The returned transaction bytes must be freed with `transaction_bytes_free`
+- `manager` must be a valid pointer to an FFIWalletManager - `wallet` must be a valid pointer to an FFIWallet - `account_index` must be a valid BIP44 account index present in the wallet - `outputs` must be a valid pointer to an array of FFITxOutput with at least `outputs_count` elements - `fee_per_kb` is the requested fee rate in duffs per kilobyte - `fee_out` must be a valid, non-null pointer to a `u64`; on success it receives the calculated transaction fee in duffs - `tx_bytes_out` must be a valid pointer to store the transaction bytes pointer - `tx_len_out` must be a valid pointer to store the transaction length - `error` must be a valid pointer to an FFIError - On success, the returned transaction bytes must be freed by calling `transaction_bytes_free(*tx_bytes_out)`.
 
 **Module:** `transaction`
 
@@ -3579,10 +3579,10 @@ transaction_bytes_free(tx_bytes: *mut u8) -> ()
 ```
 
 **Description:**
-Free transaction bytes  # Safety  - `tx_bytes` must be a valid pointer created by transaction functions or null - After calling this function, the pointer becomes invalid
+Free transaction bytes returned by transaction-building FFI functions.  The returned pointer carries a small hidden length prefix so the C ABI can keep the historical one-argument free function while still reconstructing the original boxed slice layout correctly.  # Safety  - `tx_bytes` must either be null, or a pointer previously returned by a `wallet_build_and_sign_*` FFI function and not yet freed. - After calling this function, the pointer becomes invalid and must not be used again.
 
 **Safety:**
-- `tx_bytes` must be a valid pointer created by transaction functions or null - After calling this function, the pointer becomes invalid
+- `tx_bytes` must either be null, or a pointer previously returned by a `wallet_build_and_sign_*` FFI function and not yet freed. - After calling this function, the pointer becomes invalid and must not be used again.
 
 **Module:** `transaction`
 
