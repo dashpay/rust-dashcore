@@ -111,16 +111,18 @@ pub mod serde_details {
         {
             // Used by bincode and any non-self-describing format that emits a
             // length-prefixed sequence of u8. Use a stack buffer sized to fit
-            // the largest hash this trait services (currently 64 bytes — sized
-            // for sha512 / 64-byte digests) so we keep `no_std`-compatible
-            // (no `Vec`/`alloc`).
+            // the largest hash this trait services (sha512 / Hmac<sha512> at
+            // 64 bytes) so we keep `no_std`-compatible (no `Vec`/`alloc`).
+            // Bumping `MAX_HASH_BYTES` is only needed if a wider digest type
+            // is added — `debug_assert!` catches that in tests.
             const MAX_HASH_BYTES: usize = 64;
             let raw_len_bytes = ValueT::N;
-            if raw_len_bytes > MAX_HASH_BYTES {
-                return Err(de::Error::custom(
-                    "hash byte-length exceeds AnyShapeVisitor buffer (recompile with larger MAX)",
-                ));
-            }
+            debug_assert!(
+                raw_len_bytes <= MAX_HASH_BYTES,
+                "hash byte-length {} exceeds AnyShapeVisitor stack buffer ({}); bump MAX_HASH_BYTES",
+                raw_len_bytes,
+                MAX_HASH_BYTES,
+            );
             let mut buf = [0u8; MAX_HASH_BYTES];
             let mut len: usize = 0;
             while let Some(b) = seq.next_element::<u8>()? {

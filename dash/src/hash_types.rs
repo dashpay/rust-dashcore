@@ -432,25 +432,27 @@ mod tests {
         let restored: Tagged = serde_json::from_value(value).unwrap();
         assert_eq!(original, restored);
 
-        // Hand-build the bytes form of the Txid inside the tagged enum and
-        // deserialize from it. This is the exact shape that triggered the
-        // original bug downstream (`platform_value::Value` produces
-        // `Value::Bytes32` for hash newtypes because it is non-human-readable,
-        // and the tagged enum then replays those through `ContentDeserializer`
-        // with `is_human_readable() == true`). Before the fix this failed
-        // with `bad hex string length 32 (expected 64)`.
+        // Hand-build the array-of-numbers form of the Txid inside the tagged
+        // enum and deserialize from it. This routes through `ContentDeserializer`
+        // (because of the internally-tagged enum) and exercises the
+        // `visit_seq` path on the unified visitor — the exact shape produced
+        // downstream when a non-human-readable encoder hands hash bytes to a
+        // tagged-enum-bearing context. Before the fix the visitor only had
+        // string/bytes-disjoint visitors and rejected this shape.
         let raw_txid_bytes: [u8; 32] = [
             0x56, 0x94, 0x4c, 0x5d, 0x3f, 0x98, 0x41, 0x3e, 0xf4, 0x5c, 0xf5, 0x45, 0x45, 0x53,
             0x81, 0x03, 0xcc, 0x9f, 0x29, 0x8e, 0x05, 0x75, 0x82, 0x0a, 0xd3, 0x59, 0x13, 0x76,
             0xe2, 0xe0, 0xf6, 0x5d,
         ];
-        // Wrap the bytes literal in a serde_json::Value::String of base64,
-        // then base64-decode in a custom deserializer? Simpler: use
-        // bincode-like raw bytes through serde_test or via a manual
-        // ContentDeserializer setup. The cleanest reproduction: rely on the
-        // serde_json round-trip above, which already exercises the
-        // `ContentDeserializer` path and would fail under the old bug.
-        let _ = raw_txid_bytes; // documentation only
+        let arr_value = serde_json::Value::Array(
+            raw_txid_bytes.iter().map(|b| serde_json::Value::Number((*b).into())).collect(),
+        );
+        let map_form = serde_json::json!({
+            "type": "A",
+            "txid": arr_value,
+        });
+        let from_arr: Tagged = serde_json::from_value(map_form).unwrap();
+        assert_eq!(original, from_arr);
 
         // The canonical HR string form must still deserialize, so existing
         // JSON producers do not break.
