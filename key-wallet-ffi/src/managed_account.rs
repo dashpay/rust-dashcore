@@ -618,7 +618,7 @@ pub unsafe extern "C" fn managed_core_account_get_balance(
     }
 
     let account = &*account;
-    let balance = account.inner().balance();
+    let balance = account.inner().balance;
 
     *balance_out = crate::types::FFIBalance {
         confirmed: balance.confirmed(),
@@ -662,7 +662,7 @@ pub unsafe extern "C" fn managed_core_account_get_utxo_count(
     }
 
     let account = &*account;
-    account.inner().utxos().len() as c_uint
+    account.inner().utxos.len() as c_uint
 }
 
 /// FFI-compatible owning-account descriptor for a [`FFITransactionRecord`].

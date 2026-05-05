@@ -222,7 +222,7 @@ impl ManagedWalletInfo {
             .get(&account_index)
             .ok_or(AssetLockError::AccountNotFound(account_index))?;
 
-        let utxos: Vec<Utxo> = funding_account.utxos().values().cloned().collect();
+        let utxos: Vec<Utxo> = funding_account.utxos.values().cloned().collect();
         let mut address_to_path: HashMap<Address, DerivationPath> = HashMap::new();
         for pool in funding_account.managed_account_type().address_pools() {
             for addr_info in pool.addresses.values() {
@@ -357,7 +357,7 @@ impl ManagedWalletInfo {
             .get(&account_index)
             .ok_or(AssetLockError::AccountNotFound(account_index))?;
 
-        let utxos: Vec<Utxo> = funding_account.utxos().values().cloned().collect();
+        let utxos: Vec<Utxo> = funding_account.utxos.values().cloned().collect();
         let mut address_to_path: HashMap<Address, DerivationPath> = HashMap::new();
         for pool in funding_account.managed_account_type().address_pools() {
             for addr_info in pool.addresses.values() {
@@ -789,7 +789,7 @@ mod tests {
             .standard_bip44_accounts
             .get_mut(&0)
             .unwrap()
-            .utxos_mut()
+            .utxos
             .insert(utxo.outpoint, utxo);
         info.update_last_processed_height(1100);
 

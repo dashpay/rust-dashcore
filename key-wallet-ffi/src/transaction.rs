@@ -168,7 +168,7 @@ pub unsafe extern "C" fn wallet_build_and_sign_transaction(
                 .set_fee_rate(FeeRate::new(fee_per_kb));
 
             // Get available UTXOs (collect owned UTXOs, not references)
-            let utxos: Vec<key_wallet::Utxo> = managed_account.utxos().values().cloned().collect();
+            let utxos: Vec<key_wallet::Utxo> = managed_account.utxos.values().cloned().collect();
 
             // Get the wallet's root extended private key for signing
             use key_wallet::wallet::WalletType;

@@ -639,7 +639,7 @@ impl ManagedCoreFundsAccount {
         // Check inputs (sent) - rely on tracked UTXOs to determine spends
         if !tx.is_coin_base() {
             for input in &tx.input {
-                if let Some(utxo) = self.utxos().get(&input.previous_output) {
+                if let Some(utxo) = self.utxos.get(&input.previous_output) {
                     sent = sent.saturating_add(utxo.txout.value);
 
                     if let Some(address_info) = self.get_address_info(&utxo.address) {

@@ -43,18 +43,19 @@ use std::collections::{BTreeSet, HashSet};
 /// Most read/write surface comes from [`ManagedAccountTrait`] default methods
 /// — which delegate to the inner keys account via the primitive accessors —
 /// so this struct only carries the funds-specific inherent methods
-/// ([`Self::balance`], [`Self::utxos`], [`Self::record_transaction`], the
-/// Standard-account receive/change paths, etc.).
+/// ([`Self::record_transaction`], the Standard-account receive/change paths,
+/// etc.). The funds-specific state (`balance`, `utxos`) is reachable as a
+/// public field directly.
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize))]
 pub struct ManagedCoreFundsAccount {
     /// Shared keys-account state (address pools, transactions, network,
     /// is_watch_only, monitor revision).
-    core: ManagedCoreKeysAccount,
+    keys: ManagedCoreKeysAccount,
     /// Account balance information
-    balance: WalletCoreBalance,
+    pub balance: WalletCoreBalance,
     /// UTXO set for this account
-    utxos: BTreeMap<OutPoint, Utxo>,
+    pub utxos: BTreeMap<OutPoint, Utxo>,
     /// Outpoints spent by recorded transactions.
     /// Rebuilt from `transactions` during deserialization.
     #[cfg_attr(feature = "serde", serde(skip_serializing))]
@@ -69,7 +70,7 @@ impl ManagedCoreFundsAccount {
         is_watch_only: bool,
     ) -> Self {
         Self {
-            core: ManagedCoreKeysAccount::new(managed_account_type, network, is_watch_only),
+            keys: ManagedCoreKeysAccount::new(managed_account_type, network, is_watch_only),
             balance: WalletCoreBalance::default(),
             utxos: BTreeMap::new(),
             spent_outpoints: HashSet::new(),
@@ -93,9 +94,9 @@ impl ManagedCoreFundsAccount {
         Self::wrap(ManagedCoreKeysAccount::from_eddsa_account(account))
     }
 
-    fn wrap(core: ManagedCoreKeysAccount) -> Self {
+    fn wrap(keys: ManagedCoreKeysAccount) -> Self {
         Self {
-            core,
+            keys,
             balance: WalletCoreBalance::default(),
             utxos: BTreeMap::new(),
             spent_outpoints: HashSet::new(),
@@ -103,33 +104,13 @@ impl ManagedCoreFundsAccount {
     }
 
     /// Get a reference to the inner keys-account state.
-    pub fn core(&self) -> &ManagedCoreKeysAccount {
-        &self.core
+    pub fn keys(&self) -> &ManagedCoreKeysAccount {
+        &self.keys
     }
 
     /// Get a mutable reference to the inner keys-account state.
-    pub fn core_mut(&mut self) -> &mut ManagedCoreKeysAccount {
-        &mut self.core
-    }
-
-    /// Get the account balance.
-    pub fn balance(&self) -> &WalletCoreBalance {
-        &self.balance
-    }
-
-    /// Get a mutable reference to the account balance.
-    pub fn balance_mut(&mut self) -> &mut WalletCoreBalance {
-        &mut self.balance
-    }
-
-    /// Get the UTXO set for this account.
-    pub fn utxos(&self) -> &BTreeMap<OutPoint, Utxo> {
-        &self.utxos
-    }
-
-    /// Get a mutable reference to the UTXO set.
-    pub fn utxos_mut(&mut self) -> &mut BTreeMap<OutPoint, Utxo> {
-        &mut self.utxos
+    pub fn keys_mut(&mut self) -> &mut ManagedCoreKeysAccount {
+        &mut self.keys
     }
 
     /// Check if an outpoint was spent by a previously recorded transaction.
@@ -145,7 +126,7 @@ impl ManagedCoreFundsAccount {
         context: TransactionContext,
     ) {
         // Update UTXOs only for spendable account types
-        match self.core.managed_account_type() {
+        match self.keys.managed_account_type() {
             ManagedAccountType::Standard {
                 ..
             }
@@ -180,7 +161,7 @@ impl ManagedCoreFundsAccount {
                 let txid = tx.txid();
                 let mut utxos_changed = false;
 
-                let network = self.core.network();
+                let network = self.keys.network();
 
                 // Insert UTXOs for outputs paying to our addresses
                 for (vout, output) in tx.output.iter().enumerate() {
@@ -245,7 +226,7 @@ impl ManagedCoreFundsAccount {
                 }
 
                 if utxos_changed {
-                    self.core.bump_monitor_revision();
+                    self.keys.bump_monitor_revision();
                 }
             }
             _ => {}
@@ -261,13 +242,13 @@ impl ManagedCoreFundsAccount {
         context: TransactionContext,
         transaction_type: TransactionType,
     ) -> bool {
-        if !self.core.transactions().contains_key(&tx.txid()) {
+        if !self.keys.transactions().contains_key(&tx.txid()) {
             self.record_transaction(tx, account_match, context, transaction_type);
             return true;
         }
 
         let mut changed = false;
-        if let Some(tx_record) = self.core.transactions_mut().get_mut(&tx.txid()) {
+        if let Some(tx_record) = self.keys.transactions_mut().get_mut(&tx.txid()) {
             debug_assert_eq!(
                 tx_record.transaction_type,
                 transaction_type,
@@ -331,7 +312,7 @@ impl ManagedCoreFundsAccount {
         // the transaction still spent our funds even without matching UTXOs.
         let has_inputs = !input_details.is_empty() || account_match.sent > 0;
 
-        let network = self.core.network();
+        let network = self.keys.network();
         let resolved_outputs: Vec<Option<Address>> = tx
             .output
             .iter()
@@ -381,7 +362,7 @@ impl ManagedCoreFundsAccount {
 
         let tx_record = TransactionRecord::new(
             tx.clone(),
-            self.core.managed_account_type().to_account_type(),
+            self.keys.managed_account_type().to_account_type(),
             context.clone(),
             transaction_type,
             direction,
@@ -391,7 +372,7 @@ impl ManagedCoreFundsAccount {
         );
 
         let record = tx_record.clone();
-        self.core.transactions_mut().insert(tx.txid(), tx_record);
+        self.keys.transactions_mut().insert(tx.txid(), tx_record);
 
         self.update_utxos(tx, account_match, context);
         record
@@ -459,7 +440,7 @@ impl ManagedCoreFundsAccount {
         if let ManagedAccountType::Standard {
             external_addresses,
             ..
-        } = self.core.managed_account_type_mut()
+        } = self.keys.managed_account_type_mut()
         {
             let key_source = match account_xpub {
                 Some(xpub) => address_pool::KeySource::Public(*xpub),
@@ -473,7 +454,7 @@ impl ManagedCoreFundsAccount {
                     }
                     _ => "Failed to generate receive address",
                 })?;
-            self.core.bump_monitor_revision();
+            self.keys.bump_monitor_revision();
             Ok(addr)
         } else {
             Err("Cannot generate receive address for non-standard account type")
@@ -490,7 +471,7 @@ impl ManagedCoreFundsAccount {
         if let ManagedAccountType::Standard {
             internal_addresses,
             ..
-        } = self.core.managed_account_type_mut()
+        } = self.keys.managed_account_type_mut()
         {
             let key_source = match account_xpub {
                 Some(xpub) => address_pool::KeySource::Public(*xpub),
@@ -504,7 +485,7 @@ impl ManagedCoreFundsAccount {
                     }
                     _ => "Failed to generate change address",
                 })?;
-            self.core.bump_monitor_revision();
+            self.keys.bump_monitor_revision();
             Ok(addr)
         } else {
             Err("Cannot generate change address for non-standard account type")
@@ -522,7 +503,7 @@ impl ManagedCoreFundsAccount {
         if let ManagedAccountType::Standard {
             external_addresses,
             ..
-        } = self.core.managed_account_type_mut()
+        } = self.keys.managed_account_type_mut()
         {
             let key_source = match account_xpub {
                 Some(xpub) => address_pool::KeySource::Public(*xpub),
@@ -560,7 +541,7 @@ impl ManagedCoreFundsAccount {
         if let ManagedAccountType::Standard {
             internal_addresses,
             ..
-        } = self.core.managed_account_type_mut()
+        } = self.keys.managed_account_type_mut()
         {
             let key_source = match account_xpub {
                 Some(xpub) => address_pool::KeySource::Public(*xpub),
@@ -589,7 +570,7 @@ impl ManagedCoreFundsAccount {
 
     /// Get the external gap limit for standard accounts
     pub fn external_gap_limit(&self) -> Option<u32> {
-        match self.core.managed_account_type() {
+        match self.keys.managed_account_type() {
             ManagedAccountType::Standard {
                 external_addresses,
                 ..
@@ -600,7 +581,7 @@ impl ManagedCoreFundsAccount {
 
     /// Get the internal gap limit for standard accounts
     pub fn internal_gap_limit(&self) -> Option<u32> {
-        match self.core.managed_account_type() {
+        match self.keys.managed_account_type() {
             ManagedAccountType::Standard {
                 internal_addresses,
                 ..
@@ -612,35 +593,35 @@ impl ManagedCoreFundsAccount {
 
 impl ManagedAccountTrait for ManagedCoreFundsAccount {
     fn managed_account_type(&self) -> &ManagedAccountType {
-        self.core.managed_account_type()
+        self.keys.managed_account_type()
     }
 
     fn managed_account_type_mut(&mut self) -> &mut ManagedAccountType {
-        self.core.managed_account_type_mut()
+        self.keys.managed_account_type_mut()
     }
 
     fn network(&self) -> Network {
-        self.core.network()
+        self.keys.network()
     }
 
     fn is_watch_only(&self) -> bool {
-        self.core.is_watch_only()
+        self.keys.is_watch_only()
     }
 
     fn transactions(&self) -> &BTreeMap<Txid, TransactionRecord> {
-        self.core.transactions()
+        self.keys.transactions()
     }
 
     fn transactions_mut(&mut self) -> &mut BTreeMap<Txid, TransactionRecord> {
-        self.core.transactions_mut()
+        self.keys.transactions_mut()
     }
 
     fn monitor_revision(&self) -> u64 {
-        self.core.monitor_revision()
+        self.keys.monitor_revision()
     }
 
     fn bump_monitor_revision(&mut self) {
-        self.core.bump_monitor_revision()
+        self.keys.bump_monitor_revision()
     }
 }
 
@@ -652,7 +633,7 @@ impl<'de> Deserialize<'de> for ManagedCoreFundsAccount {
     {
         #[derive(Deserialize)]
         struct Helper {
-            core: ManagedCoreKeysAccount,
+            keys: ManagedCoreKeysAccount,
             balance: WalletCoreBalance,
             utxos: BTreeMap<OutPoint, Utxo>,
         }
@@ -660,7 +641,7 @@ impl<'de> Deserialize<'de> for ManagedCoreFundsAccount {
         let helper = Helper::deserialize(deserializer)?;
 
         let spent_outpoints = helper
-            .core
+            .keys
             .transactions()
             .values()
             .flat_map(|record| &record.transaction.input)
@@ -668,7 +649,7 @@ impl<'de> Deserialize<'de> for ManagedCoreFundsAccount {
             .collect();
 
         Ok(ManagedCoreFundsAccount {
-            core: helper.core,
+            keys: helper.keys,
             balance: helper.balance,
             utxos: helper.utxos,
             spent_outpoints,

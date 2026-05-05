@@ -227,7 +227,7 @@ mod utxo_tests {
             let mut utxo = Utxo::new(outpoint, txout, address, 100 + i as u32, false);
             utxo.is_confirmed = true;
 
-            bip44_account.utxos_mut().insert(outpoint, utxo);
+            bip44_account.utxos.insert(outpoint, utxo);
         }
 
         managed_info.accounts.insert(bip44_account).unwrap();
@@ -313,7 +313,7 @@ mod utxo_tests {
 
         let utxos = Utxo::dummy_batch(0..2, 10000, 100, false, false);
         for utxo in utxos {
-            bip44_account.utxos_mut().insert(utxo.outpoint, utxo);
+            bip44_account.utxos.insert(utxo.outpoint, utxo);
         }
         managed_info.accounts.insert(bip44_account).unwrap();
 
@@ -339,7 +339,7 @@ mod utxo_tests {
 
         let utxos = Utxo::dummy_batch(10..11, 20000, 200, false, false);
         for utxo in utxos {
-            bip32_account.utxos_mut().insert(utxo.outpoint, utxo);
+            bip32_account.utxos.insert(utxo.outpoint, utxo);
         }
         managed_info.accounts.insert(bip32_account).unwrap();
 
@@ -358,7 +358,7 @@ mod utxo_tests {
 
         let utxos = Utxo::dummy_batch(20..22, 30000, 300, false, false);
         for utxo in utxos {
-            coinjoin_account.utxos_mut().insert(utxo.outpoint, utxo);
+            coinjoin_account.utxos.insert(utxo.outpoint, utxo);
         }
         managed_info.accounts.insert(coinjoin_account).unwrap();
 
@@ -417,7 +417,7 @@ mod utxo_tests {
 
         let utxos = Utxo::dummy_batch(1..2, 10000, 100, false, false);
         for utxo in utxos {
-            testnet_account.utxos_mut().insert(utxo.outpoint, utxo);
+            testnet_account.utxos.insert(utxo.outpoint, utxo);
         }
         managed_info.accounts.insert(testnet_account).unwrap();
 

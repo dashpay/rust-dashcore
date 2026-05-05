@@ -81,7 +81,7 @@ pub trait WalletInfoInterface: Sized + WalletTransactionChecker + ManagedAccount
         self.accounts()
             .all_accounts()
             .iter()
-            .map(|acc| (acc.managed_account_type().to_account_type(), *acc.balance()))
+            .map(|acc| (acc.managed_account_type().to_account_type(), acc.balance))
             .collect()
     }
 
@@ -203,7 +203,7 @@ impl WalletInfoInterface for ManagedWalletInfo {
     fn utxos(&self) -> BTreeSet<&Utxo> {
         let mut utxos = BTreeSet::new();
         for account in self.accounts.all_accounts() {
-            utxos.extend(account.utxos().values());
+            utxos.extend(account.utxos.values());
         }
         utxos
     }
@@ -223,7 +223,7 @@ impl WalletInfoInterface for ManagedWalletInfo {
         let last_processed_height = self.last_processed_height();
         for account in self.accounts.all_accounts_mut() {
             account.update_balance(last_processed_height);
-            balance += *account.balance();
+            balance += account.balance;
         }
         self.balance = balance;
     }
@@ -249,7 +249,7 @@ impl WalletInfoInterface for ManagedWalletInfo {
 
         // Find txids of immature coinbase UTXOs
         for account in self.accounts.all_accounts() {
-            for utxo in account.utxos().values() {
+            for utxo in account.utxos.values() {
                 if utxo.is_coinbase && !utxo.is_mature(self.last_processed_height()) {
                     immature_txids.insert(utxo.outpoint.txid);
                 }
