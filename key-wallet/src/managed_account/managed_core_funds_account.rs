@@ -235,6 +235,11 @@ impl ManagedCoreFundsAccount {
 
     /// Re-process an existing transaction with updated context (e.g., mempool→block confirmation)
     /// and potentially new address matches from gap limit rescans.
+    ///
+    /// Deduplication uses the always-present `processed_txids` set on the
+    /// inner keys account. With the `keep_txs_in_memory` Cargo feature off,
+    /// no per-tx record is stored, so we cannot detect a confirmation
+    /// status transition; we still refresh UTXO state and report no change.
     pub(crate) fn confirm_transaction(
         &mut self,
         tx: &Transaction,
@@ -242,12 +247,14 @@ impl ManagedCoreFundsAccount {
         context: TransactionContext,
         transaction_type: TransactionType,
     ) -> bool {
-        if !self.keys.transactions().contains_key(&tx.txid()) {
+        if !self.keys.has_transaction(&tx.txid()) {
             self.record_transaction(tx, account_match, context, transaction_type);
             return true;
         }
 
+        #[cfg_attr(not(feature = "keep_txs_in_memory"), allow(unused_mut))]
         let mut changed = false;
+        #[cfg(feature = "keep_txs_in_memory")]
         if let Some(tx_record) = self.keys.transactions_mut().get_mut(&tx.txid()) {
             debug_assert_eq!(
                 tx_record.transaction_type,
@@ -265,6 +272,8 @@ impl ManagedCoreFundsAccount {
                 changed = !was_confirmed;
             }
         }
+        #[cfg(not(feature = "keep_txs_in_memory"))]
+        let _ = transaction_type;
         self.update_utxos(tx, account_match, context);
         changed
     }
@@ -372,7 +381,7 @@ impl ManagedCoreFundsAccount {
         );
 
         let record = tx_record.clone();
-        self.keys.transactions_mut().insert(tx.txid(), tx_record);
+        self.keys.insert_transaction(tx.txid(), tx_record);
 
         self.update_utxos(tx, account_match, context);
         record
@@ -608,12 +617,18 @@ impl ManagedAccountTrait for ManagedCoreFundsAccount {
         self.keys.is_watch_only()
     }
 
+    #[cfg(feature = "keep_txs_in_memory")]
     fn transactions(&self) -> &BTreeMap<Txid, TransactionRecord> {
         self.keys.transactions()
     }
 
+    #[cfg(feature = "keep_txs_in_memory")]
     fn transactions_mut(&mut self) -> &mut BTreeMap<Txid, TransactionRecord> {
         self.keys.transactions_mut()
+    }
+
+    fn has_transaction(&self, txid: &Txid) -> bool {
+        self.keys.has_transaction(txid)
     }
 
     fn monitor_revision(&self) -> u64 {
@@ -640,6 +655,10 @@ impl<'de> Deserialize<'de> for ManagedCoreFundsAccount {
 
         let helper = Helper::deserialize(deserializer)?;
 
+        // `spent_outpoints` is rebuilt from stored transactions, which only
+        // exist when the `keep_txs_in_memory` Cargo feature is enabled. When
+        // the feature is off, start empty.
+        #[cfg(feature = "keep_txs_in_memory")]
         let spent_outpoints = helper
             .keys
             .transactions()
@@ -647,6 +666,8 @@ impl<'de> Deserialize<'de> for ManagedCoreFundsAccount {
             .flat_map(|record| &record.transaction.input)
             .map(|input| input.previous_output)
             .collect();
+        #[cfg(not(feature = "keep_txs_in_memory"))]
+        let spent_outpoints = HashSet::new();
 
         Ok(ManagedCoreFundsAccount {
             keys: helper.keys,

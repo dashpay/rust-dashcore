@@ -5,8 +5,10 @@
 //! depend on funds bookkeeping (balance / UTXOs / spent outpoints) lives here
 //! as default-method implementations so it is written exactly once.
 
+#[cfg(feature = "keep_txs_in_memory")]
 use std::collections::BTreeMap;
 
+#[cfg(feature = "keep_txs_in_memory")]
 use crate::account::TransactionRecord;
 #[cfg(feature = "bls")]
 use crate::derivation_bls_bip32::ExtendedBLSPubKey;
@@ -41,11 +43,23 @@ pub trait ManagedAccountTrait {
     /// Check if this is a watch-only account
     fn is_watch_only(&self) -> bool;
 
-    /// Get transactions
+    /// Get transactions.
+    ///
+    /// Only available when the `keep_txs_in_memory` Cargo feature is enabled.
+    #[cfg(feature = "keep_txs_in_memory")]
     fn transactions(&self) -> &BTreeMap<Txid, TransactionRecord>;
 
-    /// Get mutable transactions
+    /// Get mutable transactions.
+    ///
+    /// Only available when the `keep_txs_in_memory` Cargo feature is enabled.
+    #[cfg(feature = "keep_txs_in_memory")]
     fn transactions_mut(&mut self) -> &mut BTreeMap<Txid, TransactionRecord>;
+
+    /// Returns `true` if this account has already processed `txid`.
+    ///
+    /// Backed by an always-present "processed" set, so this works in both
+    /// feature configurations.
+    fn has_transaction(&self, txid: &Txid) -> bool;
 
     /// Return the current monitor revision.
     ///

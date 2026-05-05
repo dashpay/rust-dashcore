@@ -1,11 +1,16 @@
-use dashcore::{Address, Network, Transaction, Txid};
+#[cfg(feature = "keep_txs_in_memory")]
+use dashcore::Txid;
+use dashcore::{Address, Network, Transaction};
 
 use crate::{
-    account::{ManagedCoreFundsAccount, TransactionRecord},
-    managed_account::managed_account_trait::ManagedAccountTrait,
+    account::ManagedCoreFundsAccount,
     transaction_checking::{TransactionCheckResult, TransactionContext, WalletTransactionChecker},
     wallet::{initialization::WalletAccountCreationOptions, ManagedWalletInfo},
     ExtendedPubKey, Utxo, Wallet,
+};
+#[cfg(feature = "keep_txs_in_memory")]
+use crate::{
+    account::TransactionRecord, managed_account::managed_account_trait::ManagedAccountTrait,
 };
 
 impl ManagedWalletInfo {
@@ -61,6 +66,9 @@ impl TestWalletContext {
     }
 
     /// Returns a transaction record by txid from the first BIP44 account.
+    ///
+    /// Only available when the `keep_txs_in_memory` Cargo feature is enabled.
+    #[cfg(feature = "keep_txs_in_memory")]
     pub fn transaction(&self, txid: &Txid) -> &TransactionRecord {
         self.bip44_account().transactions().get(txid).expect("Should have transaction")
     }
