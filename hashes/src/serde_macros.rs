@@ -78,14 +78,15 @@ pub mod serde_details {
             E: de::Error,
         {
             // Disambiguate by length. A correctly-sized raw hash byte string
-            // is exactly N/8 bytes; a hex-encoded form of that hash is 2*N/8
-            // ASCII bytes. Any other length is rejected.
+            // is exactly `N` bytes (`N` is in bytes per the macro — see
+            // `serde_impl!` invocation in `internal_macros.rs`); a hex-encoded
+            // form of that hash is `2*N` ASCII bytes. Any other length is
+            // rejected.
             let raw_len_bytes = ValueT::N;
             let hex_len_bytes = raw_len_bytes * 2;
             if v.len() == raw_len_bytes {
-                SerdeHash::from_slice_delegated(v).map_err(|_| {
-                    E::invalid_length(v.len(), &stringify!(N))
-                })
+                SerdeHash::from_slice_delegated(v)
+                    .map_err(|_| E::invalid_length(v.len(), &stringify!(N)))
             } else if v.len() == hex_len_bytes {
                 if let Ok(hex) = str::from_utf8(v) {
                     Self::Value::from_str(hex).map_err(E::custom)
@@ -117,7 +118,7 @@ pub mod serde_details {
             let raw_len_bytes = ValueT::N;
             if raw_len_bytes > MAX_HASH_BYTES {
                 return Err(de::Error::custom(
-                    "hash bit-length exceeds AnyShapeVisitor buffer (recompile with larger MAX)",
+                    "hash byte-length exceeds AnyShapeVisitor buffer (recompile with larger MAX)",
                 ));
             }
             let mut buf = [0u8; MAX_HASH_BYTES];
@@ -132,9 +133,8 @@ pub mod serde_details {
             if len != raw_len_bytes {
                 return Err(de::Error::invalid_length(len, &stringify!(N)));
             }
-            SerdeHash::from_slice_delegated(&buf[..len]).map_err(|_| {
-                de::Error::invalid_length(len, &stringify!(N))
-            })
+            SerdeHash::from_slice_delegated(&buf[..len])
+                .map_err(|_| de::Error::invalid_length(len, &stringify!(N)))
         }
     }
 

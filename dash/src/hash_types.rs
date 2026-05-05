@@ -468,13 +468,11 @@ mod tests {
         // Plain bincode (non-human-readable) round-trip of a `Txid` must
         // still succeed via the byte-shape branch — guards against breaking
         // the `visit_seq` path used by length-prefixed sequence formats.
-        let raw: Txid = "5df6e0e2761359d30a8275058e299fcc0381534545f55cf43e41983f5d4c9456"
-            .parse()
-            .unwrap();
+        let raw: Txid =
+            "5df6e0e2761359d30a8275058e299fcc0381534545f55cf43e41983f5d4c9456".parse().unwrap();
         let cfg = bincode::config::standard();
         let bytes = bincode::serde::encode_to_vec(raw, cfg).unwrap();
-        let (decoded, _): (Txid, _) =
-            bincode::serde::decode_from_slice(&bytes, cfg).unwrap();
+        let (decoded, _): (Txid, _) = bincode::serde::decode_from_slice(&bytes, cfg).unwrap();
         assert_eq!(raw, decoded);
     }
 
