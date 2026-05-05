@@ -595,7 +595,8 @@ impl ManagedCoreFundsAccount {
                 if let Some(payout_info) = self.check_provider_payout(payout_script) {
                     provider_payout_involved = true;
                     // Classify the payout address
-                    if let Ok(payout_address) = Address::from_script(payout_script, self.network()) {
+                    if let Ok(payout_address) = Address::from_script(payout_script, self.network())
+                    {
                         match self.classify_address(&payout_address) {
                             AddressClassification::External => {
                                 involved_receive_addresses.push(payout_info);

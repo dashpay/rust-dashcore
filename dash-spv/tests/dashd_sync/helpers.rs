@@ -63,8 +63,12 @@ pub(super) async fn count_wallet_transactions(
 ) -> usize {
     let wallet_read = wallet.read().await;
     let wallet_info = wallet_read.get_wallet_info(wallet_id).expect("Wallet info not found");
-    let txids: HashSet<_> =
-        wallet_info.accounts().all_accounts().iter().flat_map(|a| a.transactions().keys()).collect();
+    let txids: HashSet<_> = wallet_info
+        .accounts()
+        .all_accounts()
+        .iter()
+        .flat_map(|a| a.transactions().keys())
+        .collect();
     txids.len()
 }
 

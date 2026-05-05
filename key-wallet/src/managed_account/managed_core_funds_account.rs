@@ -42,10 +42,10 @@ use std::collections::{BTreeSet, HashSet};
 ///
 /// Most read/write surface comes from [`ManagedAccountTrait`] default methods
 /// — which delegate to the inner keys account via the primitive accessors —
-/// so this struct only carries the funds-specific inherent methods
-/// ([`Self::record_transaction`], the Standard-account receive/change paths,
-/// etc.). The funds-specific state (`balance`, `utxos`) is reachable as a
-/// public field directly.
+/// so this struct only carries the funds-specific inherent methods (transaction
+/// recording, the Standard-account receive/change paths, etc.). The
+/// funds-specific state (`balance`, `utxos`) is reachable as a public field
+/// directly.
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize))]
 pub struct ManagedCoreFundsAccount {

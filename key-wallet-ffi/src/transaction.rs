@@ -5,7 +5,6 @@ use std::os::raw::c_char;
 use std::ptr;
 use std::slice;
 
-use key_wallet::managed_account::managed_account_trait::ManagedAccountTrait;
 use crate::error::{FFIError, FFIErrorCode};
 use crate::types::{
     transaction_context_from_ffi, FFIBlockInfo, FFITransactionContextType, FFIWallet,
@@ -17,6 +16,7 @@ use dashcore::{
     consensus, hashes::Hash, sighash::SighashCache, EcdsaSighashType, Network, OutPoint, Script,
     ScriptBuf, Transaction, TxIn, TxOut, Txid,
 };
+use key_wallet::managed_account::managed_account_trait::ManagedAccountTrait;
 use key_wallet::wallet::managed_wallet_info::asset_lock_builder::{
     AssetLockFundingType, CreditOutputFunding,
 };

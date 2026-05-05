@@ -20,8 +20,8 @@ use crate::types::{
 use crate::wallet_manager::FFIWalletManager;
 use key_wallet::account::account_collection::{DashpayAccountKey, PlatformPaymentAccountKey};
 use key_wallet::account::TransactionRecord;
-use key_wallet::managed_account::managed_account_trait::ManagedAccountTrait;
 use key_wallet::managed_account::address_pool::AddressPool;
+use key_wallet::managed_account::managed_account_trait::ManagedAccountTrait;
 use key_wallet::managed_account::managed_platform_account::ManagedPlatformAccount;
 use key_wallet::managed_account::ManagedCoreFundsAccount;
 use key_wallet::AccountType;

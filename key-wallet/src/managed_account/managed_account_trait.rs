@@ -14,10 +14,10 @@ use crate::managed_account::address_pool;
 #[cfg(any(feature = "bls", feature = "eddsa"))]
 use crate::managed_account::address_pool::PublicKeyType;
 use crate::managed_account::managed_account_type::ManagedAccountType;
-use crate::Network;
 #[cfg(feature = "eddsa")]
 use crate::AddressInfo;
 use crate::ExtendedPubKey;
+use crate::Network;
 use dashcore::{Address, ScriptBuf, Txid};
 
 /// Common trait for "core" managed account types — both funds-bearing

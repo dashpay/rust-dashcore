@@ -12,10 +12,10 @@ use crate::types::{FFIAccountKind, FFIWallet};
 use crate::utils::rust_string_to_c;
 use crate::{check_ptr, deref_ptr, deref_ptr_mut, unwrap_or_return};
 use key_wallet::account::ManagedAccountCollection;
-use key_wallet::managed_account::managed_account_trait::ManagedAccountTrait;
 use key_wallet::managed_account::address_pool::{
     AddressInfo, AddressPool, KeySource, PublicKeyType,
 };
+use key_wallet::managed_account::managed_account_trait::ManagedAccountTrait;
 use key_wallet::managed_account::ManagedCoreFundsAccount;
 use key_wallet::AccountType;
 

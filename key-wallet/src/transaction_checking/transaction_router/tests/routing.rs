@@ -2,8 +2,8 @@
 
 use super::helpers::{test_addr, test_block_info};
 use crate::account::{AccountType, StandardAccountType};
-use crate::managed_account::managed_account_trait::ManagedAccountTrait;
 use crate::managed_account::address_pool::KeySource;
+use crate::managed_account::managed_account_trait::ManagedAccountTrait;
 use crate::managed_account::managed_account_type::ManagedAccountType;
 use crate::test_utils::TestWalletContext;
 use crate::transaction_checking::transaction_router::{

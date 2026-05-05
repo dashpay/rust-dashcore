@@ -8,9 +8,9 @@ use crate::account::BLSAccount;
 #[cfg(feature = "eddsa")]
 use crate::account::EdDSAAccount;
 use crate::account::{Account, AccountType, ManagedCoreFundsAccount};
-use crate::managed_account::managed_account_trait::ManagedAccountTrait;
 use crate::bip32::ExtendedPubKey;
 use crate::error::{Error, Result};
+use crate::managed_account::managed_account_trait::ManagedAccountTrait;
 use crate::wallet::{Wallet, WalletType};
 
 impl ManagedAccountOperations for ManagedWalletInfo {
