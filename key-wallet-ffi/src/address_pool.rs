@@ -12,6 +12,7 @@ use crate::types::{FFIAccountKind, FFIWallet};
 use crate::utils::rust_string_to_c;
 use crate::{check_ptr, deref_ptr, deref_ptr_mut, unwrap_or_return};
 use key_wallet::account::ManagedAccountCollection;
+use key_wallet::managed_account::managed_account_trait::ManagedAccountTrait;
 use key_wallet::managed_account::address_pool::{
     AddressInfo, AddressPool, KeySource, PublicKeyType,
 };
@@ -310,7 +311,7 @@ pub unsafe extern "C" fn managed_wallet_get_address_pool_info(
             if let key_wallet::managed_account::managed_account_type::ManagedAccountType::Standard {
                 external_addresses,
                 ..
-            } = &managed_account.managed_account_type {
+            } = managed_account.managed_account_type() {
                 external_addresses
             } else {
                 (*error).set(FFIErrorCode::InvalidInput, "Account type does not have external address pool");
@@ -322,7 +323,7 @@ pub unsafe extern "C" fn managed_wallet_get_address_pool_info(
             if let key_wallet::managed_account::managed_account_type::ManagedAccountType::Standard {
                 internal_addresses,
                 ..
-            } = &managed_account.managed_account_type {
+            } = managed_account.managed_account_type() {
                 internal_addresses
             } else {
                 (*error).set(FFIErrorCode::InvalidInput, "Account type does not have internal address pool");
@@ -331,7 +332,7 @@ pub unsafe extern "C" fn managed_wallet_get_address_pool_info(
         }
         FFIAddressPoolType::Single => {
             // Get the first (and only) address pool for non-standard accounts
-            let pools = managed_account.managed_account_type.address_pools();
+            let pools = managed_account.managed_account_type().address_pools();
             if pools.is_empty() {
                 (*error).set(FFIErrorCode::InvalidInput, "Account has no address pools");
                 return false;
@@ -395,7 +396,7 @@ pub unsafe extern "C" fn managed_wallet_set_gap_limit(
             if let key_wallet::managed_account::managed_account_type::ManagedAccountType::Standard {
                 external_addresses,
                 ..
-            } = &mut managed_account.managed_account_type {
+            } = managed_account.managed_account_type_mut() {
                 external_addresses
             } else {
                 (*error).set(FFIErrorCode::InvalidInput, "Account type does not have external address pool");
@@ -407,7 +408,7 @@ pub unsafe extern "C" fn managed_wallet_set_gap_limit(
             if let key_wallet::managed_account::managed_account_type::ManagedAccountType::Standard {
                 internal_addresses,
                 ..
-            } = &mut managed_account.managed_account_type {
+            } = managed_account.managed_account_type_mut() {
                 internal_addresses
             } else {
                 (*error).set(FFIErrorCode::InvalidInput, "Account type does not have internal address pool");
@@ -416,7 +417,7 @@ pub unsafe extern "C" fn managed_wallet_set_gap_limit(
         }
         FFIAddressPoolType::Single => {
             // Get the first (and only) address pool for non-standard accounts
-            let pools = managed_account.managed_account_type.address_pools_mut();
+            let pools = managed_account.managed_account_type_mut().address_pools_mut();
             if pools.is_empty() {
                 (*error).set(FFIErrorCode::InvalidInput, "Account has no address pools");
                 return false;
@@ -482,7 +483,7 @@ pub unsafe extern "C" fn managed_wallet_generate_addresses_to_index(
             if let key_wallet::managed_account::managed_account_type::ManagedAccountType::Standard {
                 external_addresses,
                 ..
-            } = &mut managed_account.managed_account_type {
+            } = managed_account.managed_account_type_mut() {
                 {
                     let current = external_addresses.highest_generated.unwrap_or(0);
                     if target_index > current {
@@ -502,7 +503,7 @@ pub unsafe extern "C" fn managed_wallet_generate_addresses_to_index(
             if let key_wallet::managed_account::managed_account_type::ManagedAccountType::Standard {
                 internal_addresses,
                 ..
-            } = &mut managed_account.managed_account_type {
+            } = managed_account.managed_account_type_mut() {
                 {
                     let current = internal_addresses.highest_generated.unwrap_or(0);
                     if target_index > current {
@@ -519,7 +520,7 @@ pub unsafe extern "C" fn managed_wallet_generate_addresses_to_index(
         }
         FFIAddressPoolType::Single => {
             // Get the first (and only) address pool for non-standard accounts
-            let mut pools = managed_account.managed_account_type.address_pools_mut();
+            let mut pools = managed_account.managed_account_type_mut().address_pools_mut();
             if pools.is_empty() {
                 (*error).set(FFIErrorCode::InvalidInput, "Account has no address pools");
                 return false;

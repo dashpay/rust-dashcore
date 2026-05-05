@@ -2,6 +2,7 @@
 
 use super::helpers::{test_addr, test_block_info};
 use crate::account::{AccountType, StandardAccountType};
+use crate::managed_account::managed_account_trait::ManagedAccountTrait;
 use crate::managed_account::address_pool::KeySource;
 use crate::managed_account::managed_account_type::ManagedAccountType;
 use crate::test_utils::TestWalletContext;
@@ -125,7 +126,7 @@ async fn test_transaction_routing_to_bip32_account() {
             .first_bip32_managed_account_mut()
             .expect("Failed to get first BIP32 managed account");
         assert_eq!(
-            managed_account.balance.spendable(),
+            managed_account.balance().spendable(),
             0,
             "Balance should not be updated when update_state is false"
         );
@@ -183,7 +184,7 @@ async fn test_transaction_routing_to_coinjoin_account() {
             if let ManagedAccountType::CoinJoin {
                 addresses,
                 ..
-            } = &mut managed_account.managed_account_type
+            } = managed_account.managed_account_type_mut()
             {
                 addresses.next_unused(&KeySource::Public(xpub), true).unwrap_or_else(|_| {
                     // If that fails, generate a dummy address for testing

@@ -20,6 +20,7 @@ use crate::types::{
 use crate::wallet_manager::FFIWalletManager;
 use key_wallet::account::account_collection::{DashpayAccountKey, PlatformPaymentAccountKey};
 use key_wallet::account::TransactionRecord;
+use key_wallet::managed_account::managed_account_trait::ManagedAccountTrait;
 use key_wallet::managed_account::address_pool::AddressPool;
 use key_wallet::managed_account::managed_platform_account::ManagedPlatformAccount;
 use key_wallet::managed_account::ManagedCoreFundsAccount;
@@ -497,7 +498,7 @@ pub unsafe extern "C" fn managed_core_account_get_network(
     }
 
     let account = &*account;
-    account.inner().network.into()
+    account.inner().network().into()
 }
 
 /// Get the parent wallet ID of a managed account
@@ -536,7 +537,7 @@ pub unsafe extern "C" fn managed_core_account_get_account_type(
 
     let account = &*account;
     let managed_account = account.inner();
-    let account_type_rust = managed_account.managed_account_type.to_account_type();
+    let account_type_rust = managed_account.managed_account_type().to_account_type();
 
     // Set the index if output pointer is provided
     if !index_out.is_null() {
@@ -598,7 +599,7 @@ pub unsafe extern "C" fn managed_core_account_get_is_watch_only(
     }
 
     let account = &*account;
-    account.inner().is_watch_only
+    account.inner().is_watch_only()
 }
 
 /// Get the balance of a managed account
@@ -617,7 +618,7 @@ pub unsafe extern "C" fn managed_core_account_get_balance(
     }
 
     let account = &*account;
-    let balance = &account.inner().balance;
+    let balance = account.inner().balance();
 
     *balance_out = crate::types::FFIBalance {
         confirmed: balance.confirmed(),
@@ -644,7 +645,7 @@ pub unsafe extern "C" fn managed_core_account_get_transaction_count(
     }
 
     let account = &*account;
-    account.inner().transactions.len() as c_uint
+    account.inner().transactions().len() as c_uint
 }
 
 /// Get the number of UTXOs in a managed account
@@ -661,7 +662,7 @@ pub unsafe extern "C" fn managed_core_account_get_utxo_count(
     }
 
     let account = &*account;
-    account.inner().utxos.len() as c_uint
+    account.inner().utxos().len() as c_uint
 }
 
 /// FFI-compatible owning-account descriptor for a [`FFITransactionRecord`].
@@ -951,7 +952,7 @@ pub unsafe extern "C" fn managed_core_account_get_transactions(
     }
 
     let account = &*account;
-    let transactions = &account.inner().transactions;
+    let transactions = account.inner().transactions();
 
     if transactions.is_empty() {
         *transactions_out = std::ptr::null_mut();
@@ -1078,7 +1079,7 @@ pub unsafe extern "C" fn managed_core_account_get_index(
     }
 
     let account = &*account;
-    account.inner().managed_account_type.index_or_default()
+    account.inner().managed_account_type().index_or_default()
 }
 
 /// Get the external address pool from a managed account
@@ -1102,7 +1103,7 @@ pub unsafe extern "C" fn managed_core_account_get_external_address_pool(
     let managed_account = account.inner();
 
     // Get external address pool if this is a standard account
-    match &managed_account.managed_account_type {
+    match managed_account.managed_account_type() {
         key_wallet::managed_account::managed_account_type::ManagedAccountType::Standard {
             external_addresses,
             ..
@@ -1138,7 +1139,7 @@ pub unsafe extern "C" fn managed_core_account_get_internal_address_pool(
     let managed_account = account.inner();
 
     // Get internal address pool if this is a standard account
-    match &managed_account.managed_account_type {
+    match managed_account.managed_account_type() {
         key_wallet::managed_account::managed_account_type::ManagedAccountType::Standard {
             internal_addresses,
             ..
@@ -1182,7 +1183,7 @@ pub unsafe extern "C" fn managed_core_account_get_address_pool(
     match pool_type {
         FFIAddressPoolType::External => {
             // Only standard accounts have external pools
-            match &managed_account.managed_account_type {
+            match managed_account.managed_account_type() {
                 ManagedAccountType::Standard {
                     external_addresses,
                     ..
@@ -1198,7 +1199,7 @@ pub unsafe extern "C" fn managed_core_account_get_address_pool(
         }
         FFIAddressPoolType::Internal => {
             // Only standard accounts have internal pools
-            match &managed_account.managed_account_type {
+            match managed_account.managed_account_type() {
                 ManagedAccountType::Standard {
                     internal_addresses,
                     ..
@@ -1214,7 +1215,7 @@ pub unsafe extern "C" fn managed_core_account_get_address_pool(
         }
         FFIAddressPoolType::Single => {
             // Get the single address pool for non-standard accounts
-            let pool_ref = match &managed_account.managed_account_type {
+            let pool_ref = match managed_account.managed_account_type() {
                 ManagedAccountType::Standard {
                     ..
                 } => {
@@ -1631,7 +1632,7 @@ mod tests {
             // Verify the account was created successfully
             let account = &*result.account;
             // Account should exist and be valid
-            assert!(!account.inner().is_watch_only);
+            assert!(!account.inner().is_watch_only());
 
             // Clean up
             managed_core_account_free(result.account);

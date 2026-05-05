@@ -203,7 +203,7 @@ impl WalletInfoInterface for ManagedWalletInfo {
     fn utxos(&self) -> BTreeSet<&Utxo> {
         let mut utxos = BTreeSet::new();
         for account in self.accounts.all_accounts() {
-            utxos.extend(account.utxos.values());
+            utxos.extend(account.utxos().values());
         }
         utxos
     }
@@ -231,7 +231,7 @@ impl WalletInfoInterface for ManagedWalletInfo {
     fn transaction_history(&self) -> Vec<&TransactionRecord> {
         let mut transactions = Vec::new();
         for account in self.accounts.all_accounts() {
-            transactions.extend(account.transactions.values());
+            transactions.extend(account.transactions().values());
         }
         transactions
     }
@@ -249,7 +249,7 @@ impl WalletInfoInterface for ManagedWalletInfo {
 
         // Find txids of immature coinbase UTXOs
         for account in self.accounts.all_accounts() {
-            for utxo in account.utxos.values() {
+            for utxo in account.utxos().values() {
                 if utxo.is_coinbase && !utxo.is_mature(self.last_processed_height()) {
                     immature_txids.insert(utxo.outpoint.txid);
                 }
@@ -259,7 +259,7 @@ impl WalletInfoInterface for ManagedWalletInfo {
         // Get the actual transactions
         let mut transactions = Vec::new();
         for account in self.accounts.all_accounts() {
-            for (txid, record) in &account.transactions {
+            for (txid, record) in account.transactions() {
                 if immature_txids.contains(txid) {
                     transactions.push(record.transaction.clone());
                 }
@@ -288,7 +288,7 @@ impl WalletInfoInterface for ManagedWalletInfo {
         }
         let mut matured = Vec::new();
         for account in self.accounts.all_accounts() {
-            for record in account.transactions.values() {
+            for record in account.transactions().values() {
                 if !record.transaction.is_coin_base() {
                     continue;
                 }

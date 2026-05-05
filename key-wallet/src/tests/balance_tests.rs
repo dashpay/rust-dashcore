@@ -12,13 +12,13 @@ fn test_balance_with_mixed_utxo_types() {
 
     // Regular confirmed UTXO
     let utxo1 = Utxo::dummy(1, 100_000, 1000, false, true);
-    account.utxos.insert(utxo1.outpoint, utxo1);
+    account.utxos_mut().insert(utxo1.outpoint, utxo1);
     // Mature coinbase (100+ confirmations at height 1100)
     let utxo2 = Utxo::dummy(2, 10_000_000, 1000, true, true);
-    account.utxos.insert(utxo2.outpoint, utxo2);
+    account.utxos_mut().insert(utxo2.outpoint, utxo2);
     // Immature coinbase (<100 confirmations at height 1100)
     let utxo3 = Utxo::dummy(3, 20_000_000, 1050, true, true);
-    account.utxos.insert(utxo3.outpoint, utxo3);
+    account.utxos_mut().insert(utxo3.outpoint, utxo3);
     wallet_info.accounts.insert(account).unwrap();
 
     assert_eq!(wallet_info.balance(), WalletCoreBalance::default());
@@ -34,7 +34,7 @@ fn test_coinbase_maturity_boundary() {
 
     // Coinbase at height 1000
     let utxo = Utxo::dummy(1, 50_000_000, 1000, true, true);
-    account.utxos.insert(utxo.outpoint, utxo);
+    account.utxos_mut().insert(utxo.outpoint, utxo);
     wallet_info.accounts.insert(account).unwrap();
 
     assert_eq!(wallet_info.balance(), WalletCoreBalance::default());
@@ -56,7 +56,7 @@ fn test_locked_utxos_in_locked_balance() {
 
     let mut utxo = Utxo::dummy(1, 100_000, 1000, false, true);
     utxo.is_locked = true;
-    account.utxos.insert(utxo.outpoint, utxo);
+    account.utxos_mut().insert(utxo.outpoint, utxo);
     wallet_info.accounts.insert(account).unwrap();
 
     assert_eq!(wallet_info.balance(), WalletCoreBalance::default());
@@ -71,7 +71,7 @@ fn test_unconfirmed_utxos_in_unconfirmed_balance() {
     let mut account = ManagedCoreFundsAccount::dummy_bip44();
 
     let utxo = Utxo::dummy(1, 100_000, 0, false, false);
-    account.utxos.insert(utxo.outpoint, utxo);
+    account.utxos_mut().insert(utxo.outpoint, utxo);
     wallet_info.accounts.insert(account).unwrap();
 
     assert_eq!(wallet_info.balance(), WalletCoreBalance::default());

@@ -8,6 +8,7 @@ use std::collections::BTreeMap;
 use super::transaction_router::AccountTypeToCheck;
 use crate::account::{ManagedAccountCollection, ManagedCoreFundsAccount};
 use crate::managed_account::address_pool::{AddressInfo, PublicKeyType};
+use crate::managed_account::managed_account_trait::ManagedAccountTrait;
 use crate::managed_account::managed_account_type::ManagedAccountType;
 use crate::managed_account::transaction_record::TransactionRecord;
 use crate::Address;
@@ -517,7 +518,7 @@ impl ManagedAccountCollection {
 impl ManagedCoreFundsAccount {
     /// Classify an address within this account
     pub fn classify_address(&self, address: &Address) -> AddressClassification {
-        match &self.managed_account_type {
+        match self.managed_account_type() {
             ManagedAccountType::Standard {
                 external_addresses,
                 internal_addresses,
@@ -553,7 +554,7 @@ impl ManagedCoreFundsAccount {
         // Check if this script pubkey belongs to any address in this account
         if self.contains_script_pub_key(script_pubkey) {
             // Try to create an address from the script pubkey and get its info
-            if let Ok(address) = Address::from_script(script_pubkey, self.network) {
+            if let Ok(address) = Address::from_script(script_pubkey, self.network()) {
                 return self.get_address_info(&address);
             }
         }
@@ -594,7 +595,7 @@ impl ManagedCoreFundsAccount {
                 if let Some(payout_info) = self.check_provider_payout(payout_script) {
                     provider_payout_involved = true;
                     // Classify the payout address
-                    if let Ok(payout_address) = Address::from_script(payout_script, self.network) {
+                    if let Ok(payout_address) = Address::from_script(payout_script, self.network()) {
                         match self.classify_address(&payout_address) {
                             AddressClassification::External => {
                                 involved_receive_addresses.push(payout_info);
@@ -614,7 +615,7 @@ impl ManagedCoreFundsAccount {
         // Check outputs (received)
         for output in &tx.output {
             if self.contains_script_pub_key(&output.script_pubkey) {
-                if let Ok(address) = Address::from_script(&output.script_pubkey, self.network) {
+                if let Ok(address) = Address::from_script(&output.script_pubkey, self.network()) {
                     // Try to find the address info from the account
                     if let Some(address_info) = self.get_address_info(&address) {
                         // Use the new classification method
@@ -638,7 +639,7 @@ impl ManagedCoreFundsAccount {
         // Check inputs (sent) - rely on tracked UTXOs to determine spends
         if !tx.is_coin_base() {
             for input in &tx.input {
-                if let Some(utxo) = self.utxos.get(&input.previous_output) {
+                if let Some(utxo) = self.utxos().get(&input.previous_output) {
                     sent = sent.saturating_add(utxo.txout.value);
 
                     if let Some(address_info) = self.get_address_info(&utxo.address) {
@@ -666,7 +667,7 @@ impl ManagedCoreFundsAccount {
             || sent > 0;
 
         if has_addresses {
-            let account_type_match = match &self.managed_account_type {
+            let account_type_match = match self.managed_account_type() {
                 ManagedAccountType::Standard {
                     standard_account_type,
                     ..
@@ -799,7 +800,7 @@ impl ManagedCoreFundsAccount {
             for credit_output in &payload.credit_outputs {
                 if self.contains_script_pub_key(&credit_output.script_pubkey) {
                     if let Ok(address) =
-                        Address::from_script(&credit_output.script_pubkey, self.network)
+                        Address::from_script(&credit_output.script_pubkey, self.network())
                     {
                         // Try to find the address info from the account
                         if let Some(address_info) = self.get_address_info(&address) {
@@ -812,7 +813,7 @@ impl ManagedCoreFundsAccount {
 
             if !involved_addresses.is_empty() {
                 // Create the appropriate CoreAccountTypeMatch for identity accounts
-                let account_type_match = match &self.managed_account_type {
+                let account_type_match = match self.managed_account_type() {
                     ManagedAccountType::IdentityRegistration {
                         ..
                     } => CoreAccountTypeMatch::IdentityRegistration {
@@ -870,7 +871,7 @@ impl ManagedCoreFundsAccount {
         // Only check if this is a provider voting keys account
         if let ManagedAccountType::ProviderVotingKeys {
             addresses,
-        } = &self.managed_account_type
+        } = self.managed_account_type()
         {
             if let Some(payload) = &tx.special_transaction_payload {
                 let voting_key_hash = match payload {
@@ -915,7 +916,7 @@ impl ManagedCoreFundsAccount {
         // Only check if this is a provider owner keys account
         if let ManagedAccountType::ProviderOwnerKeys {
             addresses,
-        } = &self.managed_account_type
+        } = self.managed_account_type()
         {
             if let Some(payload) = &tx.special_transaction_payload {
                 let owner_key_hash = match payload {
@@ -955,7 +956,7 @@ impl ManagedCoreFundsAccount {
         // Only check if this is a provider voting keys account
         if let ManagedAccountType::ProviderOperatorKeys {
             addresses,
-        } = &self.managed_account_type
+        } = self.managed_account_type()
         {
             if let Some(payload) = &tx.special_transaction_payload {
                 let operator_public_key = match payload {
@@ -999,7 +1000,7 @@ impl ManagedCoreFundsAccount {
         // Only check if this is a provider voting keys account
         if let ManagedAccountType::ProviderPlatformKeys {
             addresses,
-        } = &self.managed_account_type
+        } = self.managed_account_type()
         {
             if let Some(payload) = &tx.special_transaction_payload {
                 let platform_node_id = match payload {

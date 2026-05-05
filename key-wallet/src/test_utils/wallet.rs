@@ -2,6 +2,7 @@ use dashcore::{Address, Network, Transaction, Txid};
 
 use crate::{
     account::{ManagedCoreFundsAccount, TransactionRecord},
+    managed_account::managed_account_trait::ManagedAccountTrait,
     transaction_checking::{TransactionCheckResult, TransactionContext, WalletTransactionChecker},
     wallet::{initialization::WalletAccountCreationOptions, ManagedWalletInfo},
     ExtendedPubKey, Utxo, Wallet,
@@ -61,12 +62,12 @@ impl TestWalletContext {
 
     /// Returns a transaction record by txid from the first BIP44 account.
     pub fn transaction(&self, txid: &Txid) -> &TransactionRecord {
-        self.bip44_account().transactions.get(txid).expect("Should have transaction")
+        self.bip44_account().transactions().get(txid).expect("Should have transaction")
     }
 
     /// Returns the first UTXO from the first BIP44 account.
     pub fn first_utxo(&self) -> &Utxo {
-        self.bip44_account().utxos.values().next().expect("Should have UTXO")
+        self.bip44_account().utxos().values().next().expect("Should have UTXO")
     }
 
     /// Processes a transaction: runs `check_core_transaction` with `update_state = true`.

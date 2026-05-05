@@ -5,6 +5,7 @@ use std::os::raw::c_char;
 use std::ptr;
 use std::slice;
 
+use key_wallet::managed_account::managed_account_trait::ManagedAccountTrait;
 use crate::error::{FFIError, FFIErrorCode};
 use crate::types::{
     transaction_context_from_ffi, FFIBlockInfo, FFITransactionContextType, FFIWallet,
@@ -167,7 +168,7 @@ pub unsafe extern "C" fn wallet_build_and_sign_transaction(
                 .set_fee_rate(FeeRate::new(fee_per_kb));
 
             // Get available UTXOs (collect owned UTXOs, not references)
-            let utxos: Vec<key_wallet::Utxo> = managed_account.utxos.values().cloned().collect();
+            let utxos: Vec<key_wallet::Utxo> = managed_account.utxos().values().cloned().collect();
 
             // Get the wallet's root extended private key for signing
             use key_wallet::wallet::WalletType;
@@ -194,7 +195,7 @@ pub unsafe extern "C" fn wallet_build_and_sign_transaction(
                 HashMap::new();
 
             // Collect from all address pools (receive, change, etc.)
-            for pool in managed_account.managed_account_type.address_pools() {
+            for pool in managed_account.managed_account_type().address_pools() {
                 for addr_info in pool.addresses.values() {
                     address_to_path.insert(addr_info.address.clone(), addr_info.path.clone());
                 }

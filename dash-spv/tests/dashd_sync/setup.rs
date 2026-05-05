@@ -12,6 +12,7 @@ use dash_spv::{
 use dashcore::network::address::AddrV2Message;
 use dashcore::network::constants::ServiceFlags;
 use dashcore::Txid;
+use key_wallet::managed_account::managed_account_trait::ManagedAccountTrait;
 use key_wallet::managed_account::managed_account_type::ManagedAccountType;
 use key_wallet::wallet::initialization::WalletAccountCreationOptions;
 use key_wallet::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
@@ -121,7 +122,7 @@ impl TestContext {
         let wallet_read = self.wallet.read().await;
         let wallet_info =
             wallet_read.get_wallet_info(&self.wallet_id).expect("Wallet info not found");
-        wallet_info.accounts().all_accounts().iter().map(|a| a.transactions.len()).sum()
+        wallet_info.accounts().all_accounts().iter().map(|a| a.transactions().len()).sum()
     }
     /// Retrieves the spendable balance of the wallet.
     pub(super) async fn spendable_balance(&self) -> u64 {
@@ -146,7 +147,7 @@ impl TestContext {
         let ManagedAccountType::Standard {
             external_addresses,
             ..
-        } = &account.managed_account_type
+        } = account.managed_account_type()
         else {
             panic!("Account 0 is not a Standard account type");
         };
@@ -167,7 +168,7 @@ impl TestContext {
             .accounts()
             .all_accounts()
             .iter()
-            .any(|account| account.transactions.contains_key(txid))
+            .any(|account| account.transactions().contains_key(txid))
             || wallet_info.immature_transactions().iter().any(|tx| &tx.txid() == txid)
     }
 
@@ -196,7 +197,7 @@ impl TestContext {
 
         let mut spv_txids = HashSet::new();
         for managed_account in wallet_info.accounts().all_accounts() {
-            for txid in managed_account.transactions.keys() {
+            for txid in managed_account.transactions().keys() {
                 spv_txids.insert(txid.to_string());
             }
         }
@@ -304,7 +305,7 @@ pub(super) async fn client_has_transaction(
         .accounts()
         .all_accounts()
         .iter()
-        .any(|account| account.transactions.contains_key(txid))
+        .any(|account| account.transactions().contains_key(txid))
         || wallet_info.immature_transactions().iter().any(|tx| &tx.txid() == txid)
 }
 

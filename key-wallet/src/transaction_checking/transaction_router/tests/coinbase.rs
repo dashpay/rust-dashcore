@@ -1,6 +1,7 @@
 //! Tests for coinbase transaction handling
 
 use super::helpers::test_addr;
+use crate::managed_account::managed_account_trait::ManagedAccountTrait;
 use crate::test_utils::TestWalletContext;
 use crate::transaction_checking::transaction_router::{
     AccountTypeToCheck, TransactionRouter, TransactionType,
@@ -170,7 +171,7 @@ async fn test_update_state_flag_behavior() {
         let managed_account = managed_wallet_info
             .first_bip44_managed_account_mut()
             .expect("Failed to get first BIP44 managed account");
-        (managed_account.balance.spendable(), managed_account.transactions.len())
+        (managed_account.balance().spendable(), managed_account.transactions().len())
     };
 
     // Create a test transaction
@@ -200,12 +201,12 @@ async fn test_update_state_flag_behavior() {
             .first_bip44_managed_account_mut()
             .expect("Failed to get first BIP44 managed account");
         assert_eq!(
-            managed_account.balance.spendable(),
+            managed_account.balance().spendable(),
             initial_balance,
             "Balance should not change when update_state=false"
         );
         assert_eq!(
-            managed_account.transactions.len(),
+            managed_account.transactions().len(),
             initial_tx_count,
             "Transaction count should not change when update_state=false"
         );
@@ -237,8 +238,8 @@ async fn test_update_state_flag_behavior() {
             .expect("Failed to get first BIP44 managed account");
         println!(
             "After update_state=true: balance={}, tx_count={}",
-            managed_account.balance.spendable(),
-            managed_account.transactions.len()
+            managed_account.balance().spendable(),
+            managed_account.transactions().len()
         );
     }
 }

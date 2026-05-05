@@ -11,6 +11,7 @@ use secp256k1::PublicKey;
 use std::collections::HashMap;
 use std::fmt;
 
+use crate::managed_account::managed_account_trait::ManagedAccountTrait;
 use crate::managed_account::ManagedCoreFundsAccount;
 use crate::signer::{Signer, SignerMethod};
 use crate::wallet::managed_wallet_info::coin_selection::SelectionStrategy;
@@ -221,9 +222,9 @@ impl ManagedWalletInfo {
             .get(&account_index)
             .ok_or(AssetLockError::AccountNotFound(account_index))?;
 
-        let utxos: Vec<Utxo> = funding_account.utxos.values().cloned().collect();
+        let utxos: Vec<Utxo> = funding_account.utxos().values().cloned().collect();
         let mut address_to_path: HashMap<Address, DerivationPath> = HashMap::new();
-        for pool in funding_account.managed_account_type.address_pools() {
+        for pool in funding_account.managed_account_type().address_pools() {
             for addr_info in pool.addresses.values() {
                 address_to_path.insert(addr_info.address.clone(), addr_info.path.clone());
             }
@@ -356,9 +357,9 @@ impl ManagedWalletInfo {
             .get(&account_index)
             .ok_or(AssetLockError::AccountNotFound(account_index))?;
 
-        let utxos: Vec<Utxo> = funding_account.utxos.values().cloned().collect();
+        let utxos: Vec<Utxo> = funding_account.utxos().values().cloned().collect();
         let mut address_to_path: HashMap<Address, DerivationPath> = HashMap::new();
-        for pool in funding_account.managed_account_type.address_pools() {
+        for pool in funding_account.managed_account_type().address_pools() {
             for addr_info in pool.addresses.values() {
                 address_to_path.insert(addr_info.address.clone(), addr_info.path.clone());
             }
@@ -788,7 +789,7 @@ mod tests {
             .standard_bip44_accounts
             .get_mut(&0)
             .unwrap()
-            .utxos
+            .utxos_mut()
             .insert(utxo.outpoint, utxo);
         info.update_last_processed_height(1100);
 

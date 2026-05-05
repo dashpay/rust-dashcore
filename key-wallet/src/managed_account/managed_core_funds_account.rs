@@ -1,21 +1,24 @@
-//! Managed core funds account with mutable state including balance and UTXOs
+//! Managed core funds account: keys-account state plus balance, UTXOs, and spent outpoints.
 //!
-//! This module contains the mutable account state that changes during wallet operation,
-//! kept separate from the immutable Account structure. Used for accounts that hold and
-//! spend funds (Standard, CoinJoin, DashPay).
+//! Composed of an inner [`ManagedCoreKeysAccount`] (which carries the address
+//! pools, transactions, network, and monitor revision) plus the funds-specific
+//! bookkeeping needed for accounts that hold and spend Dash directly
+//! (Standard, CoinJoin, DashPay).
+//!
+//! Shared address-pool / key-derivation behavior is provided by
+//! [`ManagedAccountTrait`] default methods; only the funds-specific pieces
+//! (balance, UTXO updates, transaction recording, the Standard-account
+//! receive/change paths) live here as inherent methods.
 
 #[cfg(feature = "bls")]
 use crate::account::BLSAccount;
 #[cfg(feature = "eddsa")]
 use crate::account::EdDSAAccount;
-use crate::account::ManagedAccountTrait;
 use crate::account::TransactionRecord;
-#[cfg(feature = "bls")]
-use crate::derivation_bls_bip32::ExtendedBLSPubKey;
 use crate::managed_account::address_pool;
-#[cfg(any(feature = "bls", feature = "eddsa"))]
-use crate::managed_account::address_pool::PublicKeyType;
+use crate::managed_account::managed_account_trait::ManagedAccountTrait;
 use crate::managed_account::managed_account_type::ManagedAccountType;
+use crate::managed_account::managed_core_keys_account::ManagedCoreKeysAccount;
 use crate::managed_account::transaction_record::{
     InputDetail, OutputDetail, OutputRole, TransactionDirection,
 };
@@ -23,75 +26,110 @@ use crate::transaction_checking::transaction_router::TransactionType;
 use crate::transaction_checking::{AccountMatch, TransactionContext};
 use crate::utxo::Utxo;
 use crate::wallet::balance::WalletCoreBalance;
-#[cfg(feature = "eddsa")]
-use crate::AddressInfo;
 use crate::{ExtendedPubKey, Network};
 use dashcore::blockdata::transaction::OutPoint;
-use dashcore::{Address, ScriptBuf};
-use dashcore::{Transaction, Txid};
+use dashcore::{Address, Transaction, Txid};
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::collections::{BTreeSet, HashSet};
 
-/// Managed core funds account with mutable state
+/// Managed core funds account with mutable state including balance and UTXOs.
 ///
-/// This struct contains the mutable state of an account including address pools,
-/// metadata, balance, UTXO set, and transaction history. It is managed separately
-/// from the immutable Account structure and is used for accounts that hold and
-/// spend funds (Standard, CoinJoin, DashPay).
+/// Wraps a [`ManagedCoreKeysAccount`] (the shared address-pool / transaction
+/// state) and adds the funds-specific bookkeeping used by accounts that hold
+/// and spend Dash directly (Standard, CoinJoin, DashPay).
+///
+/// Most read/write surface comes from [`ManagedAccountTrait`] default methods
+/// — which delegate to the inner keys account via the primitive accessors —
+/// so this struct only carries the funds-specific inherent methods
+/// ([`Self::balance`], [`Self::utxos`], [`Self::record_transaction`], the
+/// Standard-account receive/change paths, etc.).
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize))]
 pub struct ManagedCoreFundsAccount {
-    /// Account type with embedded address pools and index
-    pub managed_account_type: ManagedAccountType,
-    /// Network this account belongs to
-    pub network: Network,
-    /// Whether this is a watch-only account
-    pub is_watch_only: bool,
+    /// Shared keys-account state (address pools, transactions, network,
+    /// is_watch_only, monitor revision).
+    core: ManagedCoreKeysAccount,
     /// Account balance information
-    pub balance: WalletCoreBalance,
-    /// Transaction history for this account
-    pub transactions: BTreeMap<Txid, TransactionRecord>,
+    balance: WalletCoreBalance,
     /// UTXO set for this account
-    pub utxos: BTreeMap<OutPoint, Utxo>,
+    utxos: BTreeMap<OutPoint, Utxo>,
     /// Outpoints spent by recorded transactions.
     /// Rebuilt from `transactions` during deserialization.
     #[cfg_attr(feature = "serde", serde(skip_serializing))]
     spent_outpoints: HashSet<OutPoint>,
-    /// Revision counter incremented when the monitored address set changes
-    /// (e.g. new addresses generated). Used to detect bloom filter staleness.
-    #[cfg_attr(feature = "serde", serde(skip_serializing))]
-    monitor_revision: u64,
 }
 
 impl ManagedCoreFundsAccount {
-    /// Create a new managed account
+    /// Create a new managed funds account
     pub fn new(
         managed_account_type: ManagedAccountType,
         network: Network,
         is_watch_only: bool,
     ) -> Self {
         Self {
-            managed_account_type,
-            network,
-            is_watch_only,
+            core: ManagedCoreKeysAccount::new(managed_account_type, network, is_watch_only),
             balance: WalletCoreBalance::default(),
-            transactions: BTreeMap::new(),
             utxos: BTreeMap::new(),
             spent_outpoints: HashSet::new(),
-            monitor_revision: 0,
         }
     }
 
-    /// Return the current monitor revision.
-    pub fn monitor_revision(&self) -> u64 {
-        self.monitor_revision
+    /// Create a `ManagedCoreFundsAccount` from an [`Account`](super::super::Account).
+    pub fn from_account(account: &super::super::Account) -> Self {
+        Self::wrap(ManagedCoreKeysAccount::from_account(account))
     }
 
-    /// Increment the monitor revision to signal that the monitored address set changed.
-    pub fn bump_monitor_revision(&mut self) {
-        self.monitor_revision += 1;
+    /// Create a `ManagedCoreFundsAccount` from a [`BLSAccount`].
+    #[cfg(feature = "bls")]
+    pub fn from_bls_account(account: &BLSAccount) -> Self {
+        Self::wrap(ManagedCoreKeysAccount::from_bls_account(account))
+    }
+
+    /// Create a `ManagedCoreFundsAccount` from an [`EdDSAAccount`].
+    #[cfg(feature = "eddsa")]
+    pub fn from_eddsa_account(account: &EdDSAAccount) -> Self {
+        Self::wrap(ManagedCoreKeysAccount::from_eddsa_account(account))
+    }
+
+    fn wrap(core: ManagedCoreKeysAccount) -> Self {
+        Self {
+            core,
+            balance: WalletCoreBalance::default(),
+            utxos: BTreeMap::new(),
+            spent_outpoints: HashSet::new(),
+        }
+    }
+
+    /// Get a reference to the inner keys-account state.
+    pub fn core(&self) -> &ManagedCoreKeysAccount {
+        &self.core
+    }
+
+    /// Get a mutable reference to the inner keys-account state.
+    pub fn core_mut(&mut self) -> &mut ManagedCoreKeysAccount {
+        &mut self.core
+    }
+
+    /// Get the account balance.
+    pub fn balance(&self) -> &WalletCoreBalance {
+        &self.balance
+    }
+
+    /// Get a mutable reference to the account balance.
+    pub fn balance_mut(&mut self) -> &mut WalletCoreBalance {
+        &mut self.balance
+    }
+
+    /// Get the UTXO set for this account.
+    pub fn utxos(&self) -> &BTreeMap<OutPoint, Utxo> {
+        &self.utxos
+    }
+
+    /// Get a mutable reference to the UTXO set.
+    pub fn utxos_mut(&mut self) -> &mut BTreeMap<OutPoint, Utxo> {
+        &mut self.utxos
     }
 
     /// Check if an outpoint was spent by a previously recorded transaction.
@@ -99,204 +137,7 @@ impl ManagedCoreFundsAccount {
         self.spent_outpoints.contains(outpoint)
     }
 
-    /// Create a ManagedAccount from an Account
-    pub fn from_account(account: &super::super::Account) -> Self {
-        // Use the account's public key as the key source
-        let key_source = address_pool::KeySource::Public(account.account_xpub);
-        let managed_type = ManagedAccountType::from_account_type(
-            account.account_type,
-            account.network,
-            &key_source,
-        )
-        .unwrap_or_else(|_| {
-            // Fallback: create without pre-generated addresses
-            let no_key_source = address_pool::KeySource::NoKeySource;
-            ManagedAccountType::from_account_type(
-                account.account_type,
-                account.network,
-                &no_key_source,
-            )
-            .expect("Should succeed with NoKeySource")
-        });
-
-        Self::new(managed_type, account.network, account.is_watch_only)
-    }
-
-    /// Create a ManagedAccount from a BLS Account
-    #[cfg(feature = "bls")]
-    pub fn from_bls_account(account: &BLSAccount) -> Self {
-        // Use the BLS public key as the key source
-        let key_source = address_pool::KeySource::BLSPublic(account.bls_public_key.clone());
-        let managed_type = ManagedAccountType::from_account_type(
-            account.account_type,
-            account.network,
-            &key_source,
-        )
-        .unwrap_or_else(|_| {
-            // Fallback: create without pre-generated addresses
-            let no_key_source = address_pool::KeySource::NoKeySource;
-            ManagedAccountType::from_account_type(
-                account.account_type,
-                account.network,
-                &no_key_source,
-            )
-            .expect("Should succeed with NoKeySource")
-        });
-
-        Self::new(managed_type, account.network, account.is_watch_only)
-    }
-
-    /// Create a ManagedAccount from an EdDSA Account
-    #[cfg(feature = "eddsa")]
-    pub fn from_eddsa_account(account: &EdDSAAccount) -> Self {
-        // EdDSA requires hardened derivation, so we can't generate addresses without private key
-        let key_source = address_pool::KeySource::NoKeySource;
-        let managed_type = ManagedAccountType::from_account_type(
-            account.account_type,
-            account.network,
-            &key_source,
-        )
-        .expect("Should succeed with NoKeySource");
-
-        Self::new(managed_type, account.network, account.is_watch_only)
-    }
-
-    /// Get the account index
-    pub fn index(&self) -> Option<u32> {
-        self.managed_account_type.index()
-    }
-
-    /// Get the account index or 0 if none exists
-    pub fn index_or_default(&self) -> u32 {
-        self.managed_account_type.index_or_default()
-    }
-
-    /// Get the managed account type
-    pub fn managed_type(&self) -> &ManagedAccountType {
-        &self.managed_account_type
-    }
-
-    /// Get the next unused receive address index for standard accounts
-    /// Note: This requires a key source which is not available in ManagedAccount
-    /// Address generation should be done through a method that has access to the Account's keys
-    pub fn get_next_receive_address_index(&self) -> Option<u32> {
-        // Only applicable for standard accounts
-        if let ManagedAccountType::Standard {
-            external_addresses,
-            ..
-        } = &self.managed_account_type
-        {
-            // Get the first unused address or the next index after the last used one
-            if let Some(addr) = external_addresses.unused_addresses().first() {
-                external_addresses.address_index(addr)
-            } else {
-                // If no unused addresses, return the next index based on stats
-                let stats = external_addresses.stats();
-                Some(stats.highest_generated.map(|h| h + 1).unwrap_or(0))
-            }
-        } else {
-            None
-        }
-    }
-
-    /// Get the next unused change address index for standard accounts
-    /// Note: This requires a key source which is not available in ManagedAccount
-    /// Address generation should be done through a method that has access to the Account's keys
-    pub fn get_next_change_address_index(&self) -> Option<u32> {
-        // Only applicable for standard accounts
-        if let ManagedAccountType::Standard {
-            internal_addresses,
-            ..
-        } = &self.managed_account_type
-        {
-            // Get the first unused address or the next index after the last used one
-            if let Some(addr) = internal_addresses.unused_addresses().first() {
-                internal_addresses.address_index(addr)
-            } else {
-                // If no unused addresses, return the next index based on stats
-                let stats = internal_addresses.stats();
-                Some(stats.highest_generated.map(|h| h + 1).unwrap_or(0))
-            }
-        } else {
-            None
-        }
-    }
-
-    /// Get the next unused address index for single-pool account types
-    pub fn get_next_address_index(&self) -> Option<u32> {
-        match &self.managed_account_type {
-            ManagedAccountType::Standard {
-                ..
-            } => self.get_next_receive_address_index(),
-            ManagedAccountType::CoinJoin {
-                addresses,
-                ..
-            }
-            | ManagedAccountType::IdentityRegistration {
-                addresses,
-                ..
-            }
-            | ManagedAccountType::IdentityTopUp {
-                addresses,
-                ..
-            }
-            | ManagedAccountType::IdentityTopUpNotBoundToIdentity {
-                addresses,
-                ..
-            }
-            | ManagedAccountType::IdentityInvitation {
-                addresses,
-                ..
-            }
-            | ManagedAccountType::AssetLockAddressTopUp {
-                addresses,
-                ..
-            }
-            | ManagedAccountType::AssetLockShieldedAddressTopUp {
-                addresses,
-                ..
-            }
-            | ManagedAccountType::ProviderVotingKeys {
-                addresses,
-                ..
-            }
-            | ManagedAccountType::ProviderOwnerKeys {
-                addresses,
-                ..
-            }
-            | ManagedAccountType::ProviderOperatorKeys {
-                addresses,
-                ..
-            }
-            | ManagedAccountType::ProviderPlatformKeys {
-                addresses,
-                ..
-            }
-            | ManagedAccountType::DashpayReceivingFunds {
-                addresses,
-                ..
-            }
-            | ManagedAccountType::DashpayExternalAccount {
-                addresses,
-                ..
-            }
-            | ManagedAccountType::PlatformPayment {
-                addresses,
-                ..
-            } => {
-                addresses.unused_addresses().first().and_then(|addr| addresses.address_index(addr))
-            }
-        }
-    }
-
-    /// Mark an address as used
-    pub fn mark_address_used(&mut self, address: &Address) -> bool {
-        // Use the account type's mark_address_used method
-        // The address pools already track gap limits internally
-        self.managed_account_type.mark_address_used(address)
-    }
-
-    /// Add new ones for received outputs, remove spent ones
+    /// Add new UTXOs for received outputs, remove spent ones.
     fn update_utxos(
         &mut self,
         tx: &Transaction,
@@ -304,7 +145,7 @@ impl ManagedCoreFundsAccount {
         context: TransactionContext,
     ) {
         // Update UTXOs only for spendable account types
-        match &mut self.managed_account_type {
+        match self.core.managed_account_type() {
             ManagedAccountType::Standard {
                 ..
             }
@@ -339,9 +180,11 @@ impl ManagedCoreFundsAccount {
                 let txid = tx.txid();
                 let mut utxos_changed = false;
 
+                let network = self.core.network();
+
                 // Insert UTXOs for outputs paying to our addresses
                 for (vout, output) in tx.output.iter().enumerate() {
-                    if let Ok(addr) = Address::from_script(&output.script_pubkey, self.network) {
+                    if let Ok(addr) = Address::from_script(&output.script_pubkey, network) {
                         if involved_addrs.contains(&addr) {
                             let outpoint = OutPoint {
                                 txid,
@@ -402,7 +245,7 @@ impl ManagedCoreFundsAccount {
                 }
 
                 if utxos_changed {
-                    self.monitor_revision += 1;
+                    self.core.bump_monitor_revision();
                 }
             }
             _ => {}
@@ -418,13 +261,13 @@ impl ManagedCoreFundsAccount {
         context: TransactionContext,
         transaction_type: TransactionType,
     ) -> bool {
-        if !self.transactions.contains_key(&tx.txid()) {
+        if !self.core.transactions().contains_key(&tx.txid()) {
             self.record_transaction(tx, account_match, context, transaction_type);
             return true;
         }
 
         let mut changed = false;
-        if let Some(tx_record) = self.transactions.get_mut(&tx.txid()) {
+        if let Some(tx_record) = self.core.transactions_mut().get_mut(&tx.txid()) {
             debug_assert_eq!(
                 tx_record.transaction_type,
                 transaction_type,
@@ -488,10 +331,11 @@ impl ManagedCoreFundsAccount {
         // the transaction still spent our funds even without matching UTXOs.
         let has_inputs = !input_details.is_empty() || account_match.sent > 0;
 
+        let network = self.core.network();
         let resolved_outputs: Vec<Option<Address>> = tx
             .output
             .iter()
-            .map(|output| Address::from_script(&output.script_pubkey, self.network).ok())
+            .map(|output| Address::from_script(&output.script_pubkey, network).ok())
             .collect();
 
         // Build output details — annotate every output with its role
@@ -537,7 +381,7 @@ impl ManagedCoreFundsAccount {
 
         let tx_record = TransactionRecord::new(
             tx.clone(),
-            self.managed_account_type.to_account_type(),
+            self.core.managed_account_type().to_account_type(),
             context.clone(),
             transaction_type,
             direction,
@@ -547,7 +391,7 @@ impl ManagedCoreFundsAccount {
         );
 
         let record = tx_record.clone();
-        self.transactions.insert(tx.txid(), tx_record);
+        self.core.transactions_mut().insert(tx.txid(), tx_record);
 
         self.update_utxos(tx, account_match, context);
         record
@@ -604,42 +448,19 @@ impl ManagedCoreFundsAccount {
         self.balance = WalletCoreBalance::new(confirmed, unconfirmed, immature, locked);
     }
 
-    /// Get all addresses from all pools
-    pub fn all_addresses(&self) -> Vec<Address> {
-        self.managed_account_type.all_addresses()
-    }
-
-    /// Check if an address belongs to this account
-    pub fn contains_address(&self, address: &Address) -> bool {
-        self.managed_account_type.contains_address(address)
-    }
-
-    /// Check if a script pub key belongs to this account
-    pub fn contains_script_pub_key(&self, script_pub_key: &ScriptBuf) -> bool {
-        self.managed_account_type.contains_script_pub_key(script_pub_key)
-    }
-
-    /// Get address info for a given address
-    pub fn get_address_info(&self, address: &Address) -> Option<address_pool::AddressInfo> {
-        self.managed_account_type.get_address_info(address)
-    }
-
     /// Generate the next receive address using the optionally provided extended public key
-    /// If no key is provided, can only return pre-generated unused addresses
-    /// This method derives a new address from the account's xpub but does not add it to the pool
-    /// The address must be added to the pool separately with proper tracking
+    /// If no key is provided, can only return pre-generated unused addresses.
+    /// Only valid for Standard accounts.
     pub fn next_receive_address(
         &mut self,
         account_xpub: Option<&ExtendedPubKey>,
         add_to_state: bool,
     ) -> Result<Address, &'static str> {
-        // For standard accounts, use the address pool to get the next unused address
         if let ManagedAccountType::Standard {
             external_addresses,
             ..
-        } = &mut self.managed_account_type
+        } = self.core.managed_account_type_mut()
         {
-            // Create appropriate key source based on whether xpub is provided
             let key_source = match account_xpub {
                 Some(xpub) => address_pool::KeySource::Public(*xpub),
                 None => address_pool::KeySource::NoKeySource,
@@ -652,28 +473,25 @@ impl ManagedCoreFundsAccount {
                     }
                     _ => "Failed to generate receive address",
                 })?;
-            self.monitor_revision += 1;
+            self.core.bump_monitor_revision();
             Ok(addr)
         } else {
             Err("Cannot generate receive address for non-standard account type")
         }
     }
 
-    /// Generate the next change address using the optionally provided extended public key
-    /// If no key is provided, can only return pre-generated unused addresses
-    /// This method uses the address pool to properly track and generate addresses
+    /// Generate the next change address using the optionally provided extended public key.
+    /// Only valid for Standard accounts.
     pub fn next_change_address(
         &mut self,
         account_xpub: Option<&ExtendedPubKey>,
         add_to_state: bool,
     ) -> Result<Address, &'static str> {
-        // For standard accounts, use the address pool to get the next unused address
         if let ManagedAccountType::Standard {
             internal_addresses,
             ..
-        } = &mut self.managed_account_type
+        } = self.core.managed_account_type_mut()
         {
-            // Create appropriate key source based on whether xpub is provided
             let key_source = match account_xpub {
                 Some(xpub) => address_pool::KeySource::Public(*xpub),
                 None => address_pool::KeySource::NoKeySource,
@@ -686,31 +504,26 @@ impl ManagedCoreFundsAccount {
                     }
                     _ => "Failed to generate change address",
                 })?;
-            self.monitor_revision += 1;
+            self.core.bump_monitor_revision();
             Ok(addr)
         } else {
             Err("Cannot generate change address for non-standard account type")
         }
     }
 
-    /// Generate multiple receive addresses at once using the optionally provided extended public key
-    ///
-    /// Returns the requested number of unused receive addresses, generating new ones if needed.
-    /// This is more efficient than calling `next_receive_address` multiple times.
-    /// If no key is provided, can only return pre-generated unused addresses.
+    /// Generate multiple receive addresses at once using the optionally provided extended public key.
+    /// Only valid for Standard accounts.
     pub fn next_receive_addresses(
         &mut self,
         account_xpub: Option<&ExtendedPubKey>,
         count: usize,
         add_to_state: bool,
     ) -> Result<Vec<Address>, String> {
-        // For standard accounts, use the address pool to get multiple unused addresses
         if let ManagedAccountType::Standard {
             external_addresses,
             ..
-        } = &mut self.managed_account_type
+        } = self.core.managed_account_type_mut()
         {
-            // Create appropriate key source based on whether xpub is provided
             let key_source = match account_xpub {
                 Some(xpub) => address_pool::KeySource::Public(*xpub),
                 None => address_pool::KeySource::NoKeySource,
@@ -736,24 +549,19 @@ impl ManagedCoreFundsAccount {
         }
     }
 
-    /// Generate multiple change addresses at once using the optionally provided extended public key
-    ///
-    /// Returns the requested number of unused change addresses, generating new ones if needed.
-    /// This is more efficient than calling `next_change_address` multiple times.
-    /// If no key is provided, can only return pre-generated unused addresses.
+    /// Generate multiple change addresses at once using the optionally provided extended public key.
+    /// Only valid for Standard accounts.
     pub fn next_change_addresses(
         &mut self,
         account_xpub: Option<&ExtendedPubKey>,
         count: usize,
         add_to_state: bool,
     ) -> Result<Vec<Address>, String> {
-        // For standard accounts, use the address pool to get multiple unused addresses
         if let ManagedAccountType::Standard {
             internal_addresses,
             ..
-        } = &mut self.managed_account_type
+        } = self.core.managed_account_type_mut()
         {
-            // Create appropriate key source based on whether xpub is provided
             let key_source = match account_xpub {
                 Some(xpub) => address_pool::KeySource::Public(*xpub),
                 None => address_pool::KeySource::NoKeySource,
@@ -779,409 +587,9 @@ impl ManagedCoreFundsAccount {
         }
     }
 
-    /// Generate the next address for non-standard accounts
-    /// This method is for special accounts like Identity, Provider accounts, etc.
-    /// Standard accounts (BIP44/BIP32) should use next_receive_address or next_change_address
-    pub fn next_address(
-        &mut self,
-        account_xpub: Option<&ExtendedPubKey>,
-        add_to_state: bool,
-    ) -> Result<Address, &'static str> {
-        match &mut self.managed_account_type {
-            ManagedAccountType::Standard {
-                ..
-            } => Err("Standard accounts must use next_receive_address or next_change_address"),
-            ManagedAccountType::CoinJoin {
-                addresses,
-                ..
-            }
-            | ManagedAccountType::IdentityRegistration {
-                addresses,
-                ..
-            }
-            | ManagedAccountType::IdentityTopUpNotBoundToIdentity {
-                addresses,
-                ..
-            }
-            | ManagedAccountType::IdentityInvitation {
-                addresses,
-                ..
-            }
-            | ManagedAccountType::AssetLockAddressTopUp {
-                addresses,
-                ..
-            }
-            | ManagedAccountType::AssetLockShieldedAddressTopUp {
-                addresses,
-                ..
-            }
-            | ManagedAccountType::ProviderVotingKeys {
-                addresses,
-                ..
-            }
-            | ManagedAccountType::ProviderOwnerKeys {
-                addresses,
-                ..
-            }
-            | ManagedAccountType::ProviderOperatorKeys {
-                addresses,
-                ..
-            }
-            | ManagedAccountType::ProviderPlatformKeys {
-                addresses,
-                ..
-            }
-            | ManagedAccountType::DashpayReceivingFunds {
-                addresses,
-                ..
-            }
-            | ManagedAccountType::DashpayExternalAccount {
-                addresses,
-                ..
-            }
-            | ManagedAccountType::PlatformPayment {
-                addresses,
-                ..
-            } => {
-                // Create appropriate key source based on whether xpub is provided
-                let key_source = match account_xpub {
-                    Some(xpub) => address_pool::KeySource::Public(*xpub),
-                    None => address_pool::KeySource::NoKeySource,
-                };
-
-                addresses.next_unused(&key_source, add_to_state).map_err(|e| match e {
-                    crate::error::Error::NoKeySource => {
-                        "No unused addresses available and no key source provided"
-                    }
-                    _ => "Failed to generate address",
-                })
-            }
-            ManagedAccountType::IdentityTopUp {
-                addresses,
-                ..
-            } => {
-                // Identity top-up has an address pool
-                let key_source = match account_xpub {
-                    Some(xpub) => address_pool::KeySource::Public(*xpub),
-                    None => address_pool::KeySource::NoKeySource,
-                };
-
-                addresses.next_unused(&key_source, add_to_state).map_err(|e| match e {
-                    crate::error::Error::NoKeySource => {
-                        "No unused addresses available and no key source provided"
-                    }
-                    _ => "Failed to generate address",
-                })
-            }
-        }
-    }
-
-    /// Generate the next address with full info for non-standard accounts
-    /// This method is for special accounts like Identity, Provider accounts, etc.
-    /// Standard accounts (BIP44/BIP32) should use next_receive_address_with_info or next_change_address_with_info
-    pub fn next_address_with_info(
-        &mut self,
-        account_xpub: Option<&ExtendedPubKey>,
-        add_to_state: bool,
-    ) -> Result<address_pool::AddressInfo, &'static str> {
-        match &mut self.managed_account_type {
-            ManagedAccountType::Standard {
-                ..
-            } => Err("Standard accounts must use next_receive_address_with_info or next_change_address_with_info"),
-            ManagedAccountType::CoinJoin {
-                addresses,
-                ..
-            }
-            | ManagedAccountType::IdentityRegistration {
-                addresses,
-                ..
-            }
-            | ManagedAccountType::IdentityTopUpNotBoundToIdentity {
-                addresses,
-                ..
-            }
-            | ManagedAccountType::IdentityInvitation {
-                addresses,
-                ..
-            }
-            | ManagedAccountType::AssetLockAddressTopUp {
-                addresses,
-                ..
-            }
-            | ManagedAccountType::AssetLockShieldedAddressTopUp {
-                addresses,
-                ..
-            }
-            | ManagedAccountType::ProviderVotingKeys {
-                addresses,
-                ..
-            }
-            | ManagedAccountType::ProviderOwnerKeys {
-                addresses,
-                ..
-            }
-            | ManagedAccountType::ProviderOperatorKeys {
-                addresses,
-                ..
-            }
-            | ManagedAccountType::ProviderPlatformKeys {
-                addresses,
-                ..
-            }
-            | ManagedAccountType::DashpayReceivingFunds {
-                addresses,
-                ..
-            }
-            | ManagedAccountType::DashpayExternalAccount {
-                addresses,
-                ..
-            }
-            | ManagedAccountType::PlatformPayment {
-                addresses,
-                ..
-            } => {
-                // Create appropriate key source based on whether xpub is provided
-                let key_source = match account_xpub {
-                    Some(xpub) => address_pool::KeySource::Public(*xpub),
-                    None => address_pool::KeySource::NoKeySource,
-                };
-
-                addresses.next_unused_with_info(&key_source, add_to_state).map_err(|e| match e {
-                    crate::error::Error::NoKeySource => {
-                        "No unused addresses available and no key source provided"
-                    }
-                    _ => "Failed to generate address with info",
-                })
-            }
-            ManagedAccountType::IdentityTopUp {
-                addresses,
-                ..
-            } => {
-                // Identity top-up has an address pool
-                let key_source = match account_xpub {
-                    Some(xpub) => address_pool::KeySource::Public(*xpub),
-                    None => address_pool::KeySource::NoKeySource,
-                };
-
-                addresses.next_unused_with_info(&key_source, add_to_state).map_err(|e| match e {
-                    crate::error::Error::NoKeySource => {
-                        "No unused addresses available and no key source provided"
-                    }
-                    _ => "Failed to generate address with info",
-                })
-            }
-        }
-    }
-
-    /// Generate the next BLS operator key (only for ProviderOperatorKeys accounts)
-    /// Returns the BLS public key at the next unused index
-    #[cfg(feature = "bls")]
-    pub fn next_bls_operator_key(
-        &mut self,
-        account_xpub: Option<ExtendedBLSPubKey>,
-        add_to_state: bool,
-    ) -> Result<dashcore::blsful::PublicKey<dashcore::blsful::Bls12381G2Impl>, &'static str> {
-        match &mut self.managed_account_type {
-            ManagedAccountType::ProviderOperatorKeys {
-                addresses,
-                ..
-            } => {
-                // Create key source from the optional BLS public key
-                let key_source = match account_xpub {
-                    Some(xpub) => address_pool::KeySource::BLSPublic(xpub),
-                    None => address_pool::KeySource::NoKeySource,
-                };
-
-                // Use next_unused_with_info to get the next address (handles caching and derivation)
-                let info = addresses
-                    .next_unused_with_info(&key_source, add_to_state)
-                    .map_err(|_| "Failed to get next unused address")?;
-
-                // Extract the BLS public key from the address info
-                let Some(PublicKeyType::BLS(pub_key_bytes)) = info.public_key else {
-                    return Err("Expected BLS public key but got different key type");
-                };
-
-                // Mark as used
-                addresses.mark_index_used(info.index);
-
-                // Convert bytes to BLS public key
-                use dashcore::blsful::{Bls12381G2Impl, PublicKey, SerializationFormat};
-                let public_key = PublicKey::<Bls12381G2Impl>::from_bytes_with_mode(
-                    &pub_key_bytes,
-                    SerializationFormat::Modern,
-                )
-                .map_err(|_| "Failed to deserialize BLS public key")?;
-
-                Ok(public_key)
-            }
-            _ => Err("This method only works for ProviderOperatorKeys accounts"),
-        }
-    }
-
-    /// Generate the next EdDSA platform key (only for ProviderPlatformKeys accounts)
-    /// Returns the Ed25519 public key and address info at the next unused index
-    #[cfg(feature = "eddsa")]
-    pub fn next_eddsa_platform_key(
-        &mut self,
-        account_xpriv: crate::derivation_slip10::ExtendedEd25519PrivKey,
-        add_to_state: bool,
-    ) -> Result<(crate::derivation_slip10::VerifyingKey, AddressInfo), &'static str> {
-        match &mut self.managed_account_type {
-            ManagedAccountType::ProviderPlatformKeys {
-                addresses,
-                ..
-            } => {
-                // Create key source from the EdDSA private key
-                let key_source = address_pool::KeySource::EdDSAPrivate(account_xpriv);
-
-                // Use next_unused_with_info to get the next address (handles caching and derivation)
-                let info = addresses
-                    .next_unused_with_info(&key_source, add_to_state)
-                    .map_err(|_| "Failed to get next unused address")?;
-
-                // Extract the EdDSA public key from the address info
-                let Some(PublicKeyType::EdDSA(pub_key_bytes)) = info.public_key.clone() else {
-                    return Err("Expected EdDSA public key but got different key type");
-                };
-
-                // Mark as used
-                addresses.mark_index_used(info.index);
-
-                let verifying_key = crate::derivation_slip10::VerifyingKey::from_bytes(
-                    &pub_key_bytes.try_into().map_err(|_| "Invalid EdDSA public key length")?,
-                )
-                .map_err(|_| "Failed to deserialize EdDSA public key")?;
-
-                Ok((verifying_key, info))
-            }
-            _ => Err("This method only works for ProviderPlatformKeys accounts"),
-        }
-    }
-
-    /// Consume the next unused address and derive its private key.
-    ///
-    /// Used for one-time keys (asset lock funding, identity registration, etc.).
-    /// The address is marked as used so subsequent calls return fresh keys.
-    ///
-    /// Only works for single-pool account types (not Standard accounts).
-    pub fn next_private_key(
-        &mut self,
-        root_xpriv: &crate::wallet::root_extended_keys::RootExtendedPrivKey,
-        network: Network,
-    ) -> Result<[u8; 32], &'static str> {
-        if matches!(self.managed_account_type, ManagedAccountType::Standard { .. }) {
-            return Err("Standard accounts must use next_receive_address or next_change_address");
-        }
-
-        let mut pools = self.managed_account_type.address_pools_mut();
-        let pool = pools.first_mut().ok_or("Account has no address pool")?;
-
-        let info = pool
-            .next_unused_with_info(&address_pool::KeySource::NoKeySource, false)
-            .map_err(|_| "No unused address available")?;
-
-        pool.mark_index_used(info.index);
-
-        let secp = secp256k1::Secp256k1::new();
-        let root_ext_priv = root_xpriv.to_extended_priv_key(network);
-        let derived_xpriv =
-            root_ext_priv.derive_priv(&secp, &info.path).map_err(|_| "Key derivation failed")?;
-
-        let mut private_key = [0u8; 32];
-        private_key.copy_from_slice(&derived_xpriv.private_key[..]);
-        Ok(private_key)
-    }
-
-    /// Peek at the next unused address's path and index **without** marking
-    /// the index used.
-    ///
-    /// Intended for two-phase flows where path consumption must not commit
-    /// until an external operation (e.g. an async signer request) has
-    /// succeeded. Pair with [`Self::mark_first_pool_index_used`] to
-    /// commit, or drop the result to leave the pool untouched. Calling
-    /// `peek_next_path` twice without committing in between returns the
-    /// same `(path, index)`.
-    ///
-    /// Only works for single-pool account types (not Standard accounts).
-    pub fn peek_next_path(&mut self) -> Result<(crate::DerivationPath, u32), &'static str> {
-        if matches!(self.managed_account_type, ManagedAccountType::Standard { .. }) {
-            return Err("Standard accounts must use next_receive_address or next_change_address");
-        }
-
-        let mut pools = self.managed_account_type.address_pools_mut();
-        let pool = pools.first_mut().ok_or("Account has no address pool")?;
-
-        let info = pool
-            .next_unused_with_info(&address_pool::KeySource::NoKeySource, false)
-            .map_err(|_| "No unused address available")?;
-
-        Ok((info.path, info.index))
-    }
-
-    /// Mark an index on the account's first address pool as used.
-    ///
-    /// Commits what [`Self::peek_next_path`] returned. Accepts any index —
-    /// callers are responsible for passing back the index they peeked, not
-    /// an arbitrary one.
-    ///
-    /// Only works for single-pool account types (not Standard accounts).
-    pub fn mark_first_pool_index_used(&mut self, index: u32) -> Result<(), &'static str> {
-        if matches!(self.managed_account_type, ManagedAccountType::Standard { .. }) {
-            return Err("Standard accounts must use next_receive_address or next_change_address");
-        }
-
-        let mut pools = self.managed_account_type.address_pools_mut();
-        let pool = pools.first_mut().ok_or("Account has no address pool")?;
-        pool.mark_index_used(index);
-        Ok(())
-    }
-
-    /// Consume the next unused address and return only its derivation path.
-    ///
-    /// Analogous to [`Self::next_private_key`] but does not require any
-    /// root extended private key: used when signing is delegated to an
-    /// external [`Signer`](crate::signer::Signer), which holds the keys
-    /// and only needs the path to produce signatures or public keys.
-    ///
-    /// Consumes the index immediately; callers that need to defer the
-    /// commit until after an external operation succeeds should use
-    /// [`Self::peek_next_path`] + [`Self::mark_first_pool_index_used`]
-    /// instead.
-    ///
-    /// Only works for single-pool account types (not Standard accounts).
-    pub fn next_path(&mut self) -> Result<crate::DerivationPath, &'static str> {
-        let (path, index) = self.peek_next_path()?;
-        self.mark_first_pool_index_used(index)?;
-        Ok(path)
-    }
-
-    /// Get the derivation path for an address if it belongs to this account
-    pub fn address_derivation_path(&self, address: &Address) -> Option<crate::DerivationPath> {
-        self.managed_account_type.get_address_derivation_path(address)
-    }
-
-    /// Get total address count across all pools
-    pub fn total_address_count(&self) -> usize {
-        self.managed_account_type
-            .address_pools()
-            .iter()
-            .map(|pool| pool.stats().total_generated as usize)
-            .sum()
-    }
-
-    /// Get used address count across all pools
-    pub fn used_address_count(&self) -> usize {
-        self.managed_account_type
-            .address_pools()
-            .iter()
-            .map(|pool| pool.stats().used_count as usize)
-            .sum()
-    }
-
     /// Get the external gap limit for standard accounts
     pub fn external_gap_limit(&self) -> Option<u32> {
-        match &self.managed_account_type {
+        match self.core.managed_account_type() {
             ManagedAccountType::Standard {
                 external_addresses,
                 ..
@@ -1192,7 +600,7 @@ impl ManagedCoreFundsAccount {
 
     /// Get the internal gap limit for standard accounts
     pub fn internal_gap_limit(&self) -> Option<u32> {
-        match &self.managed_account_type {
+        match self.core.managed_account_type() {
             ManagedAccountType::Standard {
                 internal_addresses,
                 ..
@@ -1200,112 +608,39 @@ impl ManagedCoreFundsAccount {
             _ => None,
         }
     }
-
-    /// Get the gap limit for non-standard (single-pool) accounts
-    pub fn gap_limit(&self) -> Option<u32> {
-        match &self.managed_account_type {
-            ManagedAccountType::Standard {
-                ..
-            } => None,
-            ManagedAccountType::CoinJoin {
-                addresses,
-                ..
-            }
-            | ManagedAccountType::IdentityRegistration {
-                addresses,
-                ..
-            }
-            | ManagedAccountType::IdentityTopUp {
-                addresses,
-                ..
-            }
-            | ManagedAccountType::IdentityTopUpNotBoundToIdentity {
-                addresses,
-                ..
-            }
-            | ManagedAccountType::IdentityInvitation {
-                addresses,
-                ..
-            }
-            | ManagedAccountType::AssetLockAddressTopUp {
-                addresses,
-                ..
-            }
-            | ManagedAccountType::AssetLockShieldedAddressTopUp {
-                addresses,
-                ..
-            }
-            | ManagedAccountType::ProviderVotingKeys {
-                addresses,
-                ..
-            }
-            | ManagedAccountType::ProviderOwnerKeys {
-                addresses,
-                ..
-            }
-            | ManagedAccountType::ProviderOperatorKeys {
-                addresses,
-                ..
-            }
-            | ManagedAccountType::ProviderPlatformKeys {
-                addresses,
-                ..
-            }
-            | ManagedAccountType::DashpayReceivingFunds {
-                addresses,
-                ..
-            }
-            | ManagedAccountType::DashpayExternalAccount {
-                addresses,
-                ..
-            }
-            | ManagedAccountType::PlatformPayment {
-                addresses,
-                ..
-            } => Some(addresses.gap_limit),
-        }
-    }
 }
 
 impl ManagedAccountTrait for ManagedCoreFundsAccount {
     fn managed_account_type(&self) -> &ManagedAccountType {
-        &self.managed_account_type
+        self.core.managed_account_type()
     }
 
     fn managed_account_type_mut(&mut self) -> &mut ManagedAccountType {
-        &mut self.managed_account_type
+        self.core.managed_account_type_mut()
     }
 
     fn network(&self) -> Network {
-        self.network
+        self.core.network()
     }
 
     fn is_watch_only(&self) -> bool {
-        self.is_watch_only
-    }
-
-    fn balance(&self) -> &WalletCoreBalance {
-        &self.balance
-    }
-
-    fn balance_mut(&mut self) -> &mut WalletCoreBalance {
-        &mut self.balance
+        self.core.is_watch_only()
     }
 
     fn transactions(&self) -> &BTreeMap<Txid, TransactionRecord> {
-        &self.transactions
+        self.core.transactions()
     }
 
     fn transactions_mut(&mut self) -> &mut BTreeMap<Txid, TransactionRecord> {
-        &mut self.transactions
+        self.core.transactions_mut()
     }
 
-    fn utxos(&self) -> &BTreeMap<OutPoint, Utxo> {
-        &self.utxos
+    fn monitor_revision(&self) -> u64 {
+        self.core.monitor_revision()
     }
 
-    fn utxos_mut(&mut self) -> &mut BTreeMap<OutPoint, Utxo> {
-        &mut self.utxos
+    fn bump_monitor_revision(&mut self) {
+        self.core.bump_monitor_revision()
     }
 }
 
@@ -1317,32 +652,26 @@ impl<'de> Deserialize<'de> for ManagedCoreFundsAccount {
     {
         #[derive(Deserialize)]
         struct Helper {
-            managed_account_type: ManagedAccountType,
-            network: Network,
-            is_watch_only: bool,
+            core: ManagedCoreKeysAccount,
             balance: WalletCoreBalance,
-            transactions: BTreeMap<Txid, TransactionRecord>,
             utxos: BTreeMap<OutPoint, Utxo>,
         }
 
         let helper = Helper::deserialize(deserializer)?;
 
         let spent_outpoints = helper
-            .transactions
+            .core
+            .transactions()
             .values()
             .flat_map(|record| &record.transaction.input)
             .map(|input| input.previous_output)
             .collect();
 
         Ok(ManagedCoreFundsAccount {
-            managed_account_type: helper.managed_account_type,
-            network: helper.network,
-            is_watch_only: helper.is_watch_only,
+            core: helper.core,
             balance: helper.balance,
-            transactions: helper.transactions,
             utxos: helper.utxos,
             spent_outpoints,
-            monitor_revision: 0,
         })
     }
 }
