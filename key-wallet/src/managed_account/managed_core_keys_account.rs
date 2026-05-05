@@ -37,8 +37,6 @@ pub struct ManagedCoreKeysAccount {
     managed_account_type: ManagedAccountType,
     /// Network this account belongs to
     network: Network,
-    /// Whether this is a watch-only account
-    is_watch_only: bool,
     /// Transaction history for this account
     transactions: BTreeMap<Txid, TransactionRecord>,
     /// Revision counter incremented when the monitored address set changes
@@ -49,15 +47,10 @@ pub struct ManagedCoreKeysAccount {
 
 impl ManagedCoreKeysAccount {
     /// Create a new managed keys account
-    pub fn new(
-        managed_account_type: ManagedAccountType,
-        network: Network,
-        is_watch_only: bool,
-    ) -> Self {
+    pub fn new(managed_account_type: ManagedAccountType, network: Network) -> Self {
         Self {
             managed_account_type,
             network,
-            is_watch_only,
             transactions: BTreeMap::new(),
             monitor_revision: 0,
         }
@@ -81,7 +74,7 @@ impl ManagedCoreKeysAccount {
             .expect("Should succeed with NoKeySource")
         });
 
-        Self::new(managed_type, account.network, account.is_watch_only)
+        Self::new(managed_type, account.network)
     }
 
     /// Create a `ManagedCoreKeysAccount` from a [`BLSAccount`].
@@ -103,7 +96,7 @@ impl ManagedCoreKeysAccount {
             .expect("Should succeed with NoKeySource")
         });
 
-        Self::new(managed_type, account.network, account.is_watch_only)
+        Self::new(managed_type, account.network)
     }
 
     /// Create a `ManagedCoreKeysAccount` from an [`EdDSAAccount`].
@@ -118,7 +111,7 @@ impl ManagedCoreKeysAccount {
         )
         .expect("Should succeed with NoKeySource");
 
-        Self::new(managed_type, account.network, account.is_watch_only)
+        Self::new(managed_type, account.network)
     }
 }
 
@@ -133,10 +126,6 @@ impl ManagedAccountTrait for ManagedCoreKeysAccount {
 
     fn network(&self) -> Network {
         self.network
-    }
-
-    fn is_watch_only(&self) -> bool {
-        self.is_watch_only
     }
 
     fn transactions(&self) -> &BTreeMap<Txid, TransactionRecord> {

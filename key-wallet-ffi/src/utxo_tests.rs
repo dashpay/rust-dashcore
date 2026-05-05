@@ -205,7 +205,6 @@ mod utxo_tests {
                         .unwrap(),
             },
             Network::Testnet,
-            false,
         );
 
         // Add multiple UTXOs
@@ -308,7 +307,6 @@ mod utxo_tests {
                         .unwrap(),
             },
             Network::Testnet,
-            false,
         );
 
         let utxos = Utxo::dummy_batch(0..2, 10000, 100, false, false);
@@ -334,7 +332,6 @@ mod utxo_tests {
                         .unwrap(),
             },
             Network::Testnet,
-            false,
         );
 
         let utxos = Utxo::dummy_batch(10..11, 20000, 200, false, false);
@@ -353,7 +350,6 @@ mod utxo_tests {
                     .unwrap(),
             },
             Network::Testnet,
-            false,
         );
 
         let utxos = Utxo::dummy_batch(20..22, 30000, 300, false, false);
@@ -412,7 +408,6 @@ mod utxo_tests {
                         .unwrap(),
             },
             Network::Testnet,
-            false,
         );
 
         let utxos = Utxo::dummy_batch(1..2, 10000, 100, false, false);

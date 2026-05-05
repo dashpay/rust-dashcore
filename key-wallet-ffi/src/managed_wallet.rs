@@ -617,7 +617,6 @@ mod tests {
                 internal_addresses: internal_pool,
             },
             network,
-            false,
         );
 
         managed_collection.standard_bip44_accounts.insert(0, managed_account.clone());

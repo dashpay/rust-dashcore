@@ -38,9 +38,6 @@ pub trait ManagedAccountTrait {
     /// Get the network
     fn network(&self) -> Network;
 
-    /// Check if this is a watch-only account
-    fn is_watch_only(&self) -> bool;
-
     /// Get transactions
     fn transactions(&self) -> &BTreeMap<Txid, TransactionRecord>;
 

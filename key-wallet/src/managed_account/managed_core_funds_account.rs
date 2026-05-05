@@ -50,7 +50,7 @@ use std::collections::{BTreeSet, HashSet};
 #[cfg_attr(feature = "serde", derive(Serialize))]
 pub struct ManagedCoreFundsAccount {
     /// Shared keys-account state (address pools, transactions, network,
-    /// is_watch_only, monitor revision).
+    /// monitor revision).
     keys: ManagedCoreKeysAccount,
     /// Account balance information
     pub balance: WalletCoreBalance,
@@ -64,13 +64,9 @@ pub struct ManagedCoreFundsAccount {
 
 impl ManagedCoreFundsAccount {
     /// Create a new managed funds account
-    pub fn new(
-        managed_account_type: ManagedAccountType,
-        network: Network,
-        is_watch_only: bool,
-    ) -> Self {
+    pub fn new(managed_account_type: ManagedAccountType, network: Network) -> Self {
         Self {
-            keys: ManagedCoreKeysAccount::new(managed_account_type, network, is_watch_only),
+            keys: ManagedCoreKeysAccount::new(managed_account_type, network),
             balance: WalletCoreBalance::default(),
             utxos: BTreeMap::new(),
             spent_outpoints: HashSet::new(),
@@ -602,10 +598,6 @@ impl ManagedAccountTrait for ManagedCoreFundsAccount {
 
     fn network(&self) -> Network {
         self.keys.network()
-    }
-
-    fn is_watch_only(&self) -> bool {
-        self.keys.is_watch_only()
     }
 
     fn transactions(&self) -> &BTreeMap<Txid, TransactionRecord> {
