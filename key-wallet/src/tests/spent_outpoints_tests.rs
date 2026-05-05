@@ -4,6 +4,7 @@ use dashcore::blockdata::transaction::{OutPoint, Transaction};
 use dashcore::{TxIn, Txid};
 
 use crate::account::{AccountType, StandardAccountType, TransactionRecord};
+use crate::managed_account::managed_account_trait::ManagedAccountTrait;
 use crate::managed_account::transaction_record::TransactionDirection;
 use crate::managed_account::ManagedCoreFundsAccount;
 use crate::transaction_checking::{TransactionContext, TransactionType};
@@ -55,7 +56,7 @@ fn record_from_tx(tx: &Transaction) -> TransactionRecord {
 #[test]
 fn fresh_account_has_empty_spent_outpoints() {
     let account = ManagedCoreFundsAccount::dummy_bip44();
-    assert!(account.transactions.is_empty());
+    assert!(account.transactions().is_empty());
 
     let probe = OutPoint::new(Txid::from([0xAA; 32]), 0);
     // Accessing spent_outpoints on a fresh account should not panic or misbehave.
@@ -63,7 +64,7 @@ fn fresh_account_has_empty_spent_outpoints() {
     let json = serde_json::to_string(&account).unwrap();
     let deserialized: ManagedCoreFundsAccount = serde_json::from_str(&json).unwrap();
     // No transactions, so spent_outpoints stays empty after round-trip.
-    assert!(deserialized.transactions.is_empty());
+    assert!(deserialized.transactions().is_empty());
     // Confirm the serialized form does not contain spent_outpoints.
     assert!(!json.contains("spent_outpoints"));
     let _ = probe; // used only for clarity of intent
@@ -77,7 +78,7 @@ fn serde_round_trip_rebuilds_spent_outpoints() {
     let outpoint_b = OutPoint::new(Txid::from([0x02; 32]), 1);
     let tx = spending_tx(&[outpoint_a, outpoint_b]);
     let txid = tx.txid();
-    account.transactions.insert(txid, record_from_tx(&tx));
+    account.transactions_mut().insert(txid, record_from_tx(&tx));
 
     // Serialize (spent_outpoints is skipped)
     let json = serde_json::to_string(&account).unwrap();
@@ -85,14 +86,14 @@ fn serde_round_trip_rebuilds_spent_outpoints() {
 
     // Deserialize: spent_outpoints should be rebuilt from transactions
     let deserialized: ManagedCoreFundsAccount = serde_json::from_str(&json).unwrap();
-    assert_eq!(deserialized.transactions.len(), 1);
+    assert_eq!(deserialized.transactions().len(), 1);
 
     // Verify the rebuilt set by serializing again and comparing transactions
     // (spent_outpoints is private, so we test behavior through a second round-trip
     //  to confirm stability)
     let json2 = serde_json::to_string(&deserialized).unwrap();
     let deserialized2: ManagedCoreFundsAccount = serde_json::from_str(&json2).unwrap();
-    assert_eq!(deserialized2.transactions.len(), 1);
+    assert_eq!(deserialized2.transactions().len(), 1);
 }
 
 #[test]
@@ -102,19 +103,19 @@ fn receive_only_account_round_trips_correctly() {
     // Add a receive-only transaction (coinbase-like, no real spent outpoints)
     let tx = receive_only_tx();
     let txid = tx.txid();
-    account.transactions.insert(txid, record_from_tx(&tx));
+    account.transactions_mut().insert(txid, record_from_tx(&tx));
 
-    assert_eq!(account.transactions.len(), 1);
+    assert_eq!(account.transactions().len(), 1);
 
     // Round-trip should work without issues (no rebuild loop)
     let json = serde_json::to_string(&account).unwrap();
     let deserialized: ManagedCoreFundsAccount = serde_json::from_str(&json).unwrap();
-    assert_eq!(deserialized.transactions.len(), 1);
+    assert_eq!(deserialized.transactions().len(), 1);
 
     // A second round-trip should be stable
     let json2 = serde_json::to_string(&deserialized).unwrap();
     let deserialized2: ManagedCoreFundsAccount = serde_json::from_str(&json2).unwrap();
-    assert_eq!(deserialized2.transactions.len(), 1);
+    assert_eq!(deserialized2.transactions().len(), 1);
 }
 
 #[test]
@@ -128,8 +129,8 @@ fn multiple_transactions_all_inputs_tracked_after_round_trip() {
     let tx1 = spending_tx(&[outpoint_1]);
     let tx2 = spending_tx(&[outpoint_2, outpoint_3]);
 
-    account.transactions.insert(tx1.txid(), record_from_tx(&tx1));
-    account.transactions.insert(tx2.txid(), record_from_tx(&tx2));
+    account.transactions_mut().insert(tx1.txid(), record_from_tx(&tx1));
+    account.transactions_mut().insert(tx2.txid(), record_from_tx(&tx2));
 
     let json = serde_json::to_string(&account).unwrap();
     let deserialized: ManagedCoreFundsAccount = serde_json::from_str(&json).unwrap();
@@ -137,7 +138,7 @@ fn multiple_transactions_all_inputs_tracked_after_round_trip() {
     // All three outpoints should be in the rebuilt spent set.
     // We verify by confirming the transaction inputs survived the round-trip.
     let all_spent: Vec<OutPoint> = deserialized
-        .transactions
+        .transactions()
         .values()
         .flat_map(|r| &r.transaction.input)
         .map(|inp| inp.previous_output)

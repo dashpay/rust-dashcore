@@ -12,6 +12,7 @@ use crate::gap_limit::{
     DEFAULT_SPECIAL_GAP_LIMIT, DIP17_GAP_LIMIT,
 };
 use crate::managed_account::address_pool::{AddressPool, AddressPoolType};
+use crate::managed_account::managed_account_trait::ManagedAccountTrait;
 use crate::managed_account::managed_account_type::ManagedAccountType;
 use crate::managed_account::managed_platform_account::ManagedPlatformAccount;
 use crate::managed_account::ManagedCoreFundsAccount;
@@ -72,7 +73,7 @@ macro_rules! get_by_account_type_match_impl {
                 account_index,
                 involved_addresses,
             } => $self.dashpay_receival_accounts.$values().find(|account| {
-                match &account.managed_account_type {
+                match account.managed_account_type() {
                     ManagedAccountType::DashpayReceivingFunds {
                         index,
                         addresses,
@@ -90,7 +91,7 @@ macro_rules! get_by_account_type_match_impl {
                 account_index,
                 involved_addresses,
             } => $self.dashpay_external_accounts.$values().find(|account| {
-                match &account.managed_account_type {
+                match account.managed_account_type() {
                     ManagedAccountType::DashpayExternalAccount {
                         index,
                         addresses,
@@ -269,7 +270,7 @@ impl ManagedAccountCollection {
     pub fn insert(&mut self, account: ManagedCoreFundsAccount) -> Result<(), crate::error::Error> {
         use crate::account::StandardAccountType;
 
-        match &account.managed_account_type {
+        match account.managed_account_type() {
             ManagedAccountType::Standard {
                 index,
                 standard_account_type,

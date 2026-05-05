@@ -75,7 +75,7 @@ pub trait WalletInfoInterface: Sized + WalletTransactionChecker + ManagedAccount
         self.accounts()
             .all_accounts()
             .iter()
-            .map(|acc| (acc.managed_account_type().to_account_type(), *acc.balance()))
+            .map(|acc| (acc.managed_account_type().to_account_type(), acc.balance))
             .collect()
     }
 
@@ -209,7 +209,7 @@ impl WalletInfoInterface for ManagedWalletInfo {
         let last_processed_height = self.last_processed_height();
         for account in self.accounts.all_accounts_mut() {
             account.update_balance(last_processed_height);
-            balance += *account.balance();
+            balance += account.balance;
         }
         self.balance = balance;
     }
@@ -217,7 +217,7 @@ impl WalletInfoInterface for ManagedWalletInfo {
     fn transaction_history(&self) -> Vec<&TransactionRecord> {
         let mut transactions = Vec::new();
         for account in self.accounts.all_accounts() {
-            transactions.extend(account.transactions.values());
+            transactions.extend(account.transactions().values());
         }
         transactions
     }
@@ -245,7 +245,7 @@ impl WalletInfoInterface for ManagedWalletInfo {
         // Get the actual transactions
         let mut transactions = Vec::new();
         for account in self.accounts.all_accounts() {
-            for (txid, record) in &account.transactions {
+            for (txid, record) in account.transactions() {
                 if immature_txids.contains(txid) {
                     transactions.push(record.transaction.clone());
                 }
@@ -274,7 +274,7 @@ impl WalletInfoInterface for ManagedWalletInfo {
         }
         let mut matured = Vec::new();
         for account in self.accounts.all_accounts() {
-            for record in account.transactions.values() {
+            for record in account.transactions().values() {
                 if !record.transaction.is_coin_base() {
                     continue;
                 }

@@ -1,6 +1,7 @@
 //! Tests for provider/masternode transaction handling
 
 use super::helpers::*;
+use crate::managed_account::managed_account_trait::ManagedAccountTrait;
 use crate::transaction_checking::transaction_router::{
     AccountTypeToCheck, TransactionRouter, TransactionType,
 };

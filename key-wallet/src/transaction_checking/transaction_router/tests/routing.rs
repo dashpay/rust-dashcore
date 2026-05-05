@@ -3,6 +3,7 @@
 use super::helpers::{test_addr, test_block_info};
 use crate::account::{AccountType, StandardAccountType};
 use crate::managed_account::address_pool::KeySource;
+use crate::managed_account::managed_account_trait::ManagedAccountTrait;
 use crate::managed_account::managed_account_type::ManagedAccountType;
 use crate::test_utils::TestWalletContext;
 use crate::transaction_checking::transaction_router::{
@@ -183,7 +184,7 @@ async fn test_transaction_routing_to_coinjoin_account() {
             if let ManagedAccountType::CoinJoin {
                 addresses,
                 ..
-            } = &mut managed_account.managed_account_type
+            } = managed_account.managed_account_type_mut()
             {
                 addresses.next_unused(&KeySource::Public(xpub), true).unwrap_or_else(|_| {
                     // If that fails, generate a dummy address for testing

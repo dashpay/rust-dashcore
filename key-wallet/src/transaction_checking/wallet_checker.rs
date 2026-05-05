@@ -6,6 +6,7 @@
 pub(crate) use super::account_checker::TransactionCheckResult;
 use super::transaction_context::TransactionContext;
 use super::transaction_router::TransactionRouter;
+use crate::managed_account::managed_account_trait::ManagedAccountTrait;
 use crate::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
 use crate::wallet::managed_wallet_info::ManagedWalletInfo;
 use crate::{KeySource, Wallet};
@@ -71,7 +72,7 @@ impl WalletTransactionChecker for ManagedWalletInfo {
             if let Some(account) =
                 self.accounts.get_by_account_type_match(&account_match.account_type_match)
             {
-                if account.transactions.contains_key(&txid) {
+                if account.transactions().contains_key(&txid) {
                     is_new = false;
                     break;
                 }
@@ -89,7 +90,7 @@ impl WalletTransactionChecker for ManagedWalletInfo {
                 let already_confirmed = result.affected_accounts.iter().any(|am| {
                     self.accounts
                         .get_by_account_type_match(&am.account_type_match)
-                        .and_then(|a| a.transactions.get(&txid))
+                        .and_then(|a| a.transactions().get(&txid))
                         .map_or(false, |r| r.is_confirmed())
                 });
                 if already_confirmed {
@@ -107,9 +108,9 @@ impl WalletTransactionChecker for ManagedWalletInfo {
                     else {
                         continue;
                     };
-                    if account.transactions.contains_key(&txid) {
+                    if account.transactions().contains_key(&txid) {
                         account.mark_utxos_instant_send(&txid);
-                        if let Some(record) = account.transactions.get_mut(&txid) {
+                        if let Some(record) = account.transactions_mut().get_mut(&txid) {
                             record.update_context(context.clone());
                             result.updated_records.push(record.clone());
                         }
@@ -150,10 +151,10 @@ impl WalletTransactionChecker for ManagedWalletInfo {
                 result.new_records.push(record);
                 result.state_modified = true;
             } else {
-                let existed_before = account.transactions.contains_key(&tx.txid());
+                let existed_before = account.transactions().contains_key(&tx.txid());
                 if account.confirm_transaction(tx, &account_match, context.clone(), tx_type) {
                     result.state_modified = true;
-                    if let Some(record) = account.transactions.get(&tx.txid()) {
+                    if let Some(record) = account.transactions().get(&tx.txid()) {
                         if existed_before {
                             result.updated_records.push(record.clone());
                         } else {
@@ -176,7 +177,7 @@ impl WalletTransactionChecker for ManagedWalletInfo {
 
             let key_source = KeySource::Public(xpub);
             let rev_before = result.new_addresses.len();
-            for pool in account.managed_account_type.address_pools_mut() {
+            for pool in account.managed_account_type_mut().address_pools_mut() {
                 match pool.maintain_gap_limit(&key_source) {
                     Ok(addrs) => result.new_addresses.extend(addrs),
                     Err(e) => {
@@ -436,7 +437,7 @@ mod tests {
         let managed_account =
             managed_wallet.first_bip44_managed_account().expect("Should have managed account");
         assert!(
-            managed_account.transactions.contains_key(&coinbase_tx.txid()),
+            managed_account.transactions().contains_key(&coinbase_tx.txid()),
             "Coinbase should be in regular transactions"
         );
 
@@ -451,7 +452,7 @@ mod tests {
         assert_eq!(immature_txs[0].txid(), coinbase_tx.txid());
 
         // Immature balance should reflect the coinbase value
-        assert_eq!(managed_wallet.balance().immature(), 5_000_000_000);
+        assert_eq!(managed_wallet.balance.immature(), 5_000_000_000);
 
         // Spendable UTXOs should be empty (coinbase not mature)
         let last_processed_height = managed_wallet.last_processed_height();
@@ -538,7 +539,7 @@ mod tests {
         assert!(account.utxos.is_empty(), "Spent UTXO should be removed");
 
         let record = account
-            .transactions
+            .transactions()
             .get(&spend_tx.txid())
             .expect("Spend transaction should be recorded");
         assert_eq!(record.net_amount, -(funding_value as i64));
@@ -596,7 +597,7 @@ mod tests {
         let managed_account =
             managed_wallet.first_bip44_managed_account().expect("Should have managed account");
         assert!(
-            managed_account.transactions.contains_key(&coinbase_tx.txid()),
+            managed_account.transactions().contains_key(&coinbase_tx.txid()),
             "Coinbase should be in regular transactions"
         );
 
@@ -610,7 +611,7 @@ mod tests {
         assert_eq!(immature_txs.len(), 1, "Should have one immature transaction");
 
         // Immature balance should reflect the coinbase value
-        assert_eq!(managed_wallet.balance().immature(), 5_000_000_000);
+        assert_eq!(managed_wallet.balance.immature(), 5_000_000_000);
 
         // Spendable UTXOs should be empty (coinbase not mature yet)
         let last_processed_height = managed_wallet.last_processed_height();
@@ -630,7 +631,7 @@ mod tests {
         let managed_account =
             managed_wallet.first_bip44_managed_account().expect("Should have managed account");
         assert!(
-            managed_account.transactions.contains_key(&coinbase_tx.txid()),
+            managed_account.transactions().contains_key(&coinbase_tx.txid()),
             "Coinbase should still be in regular transactions"
         );
 
@@ -639,7 +640,7 @@ mod tests {
         assert!(immature_txs.is_empty(), "Matured coinbase should not be in immature transactions");
 
         // Immature balance should now be zero
-        let immature_balance = managed_wallet.balance().immature();
+        let immature_balance = managed_wallet.balance.immature();
         assert_eq!(immature_balance, 0, "Immature balance should be zero after maturity");
 
         // Spendable UTXOs should now contain the matured coinbase
@@ -677,7 +678,7 @@ mod tests {
             managed_wallet.first_bip44_managed_account().expect("Should have managed account");
 
         let stored_tx =
-            managed_account.transactions.get(&tx.txid()).expect("Should have stored transaction");
+            managed_account.transactions().get(&tx.txid()).expect("Should have stored transaction");
         assert_eq!(
             stored_tx.context,
             TransactionContext::Mempool,
@@ -718,10 +719,10 @@ mod tests {
         let managed_account =
             managed_wallet.first_bip44_managed_account().expect("Should have managed account");
         assert!(
-            managed_account.transactions.contains_key(&tx.txid()),
+            managed_account.transactions().contains_key(&tx.txid()),
             "Transaction should be stored"
         );
-        let tx_count_before = managed_account.transactions.len();
+        let tx_count_before = managed_account.transactions().len();
 
         // Second processing (simulating rescan) - should be marked as existing
         let result2 =
@@ -738,7 +739,7 @@ mod tests {
         let managed_account =
             managed_wallet.first_bip44_managed_account().expect("Should have managed account");
         assert_eq!(
-            managed_account.transactions.len(),
+            managed_account.transactions().len(),
             tx_count_before,
             "Transaction count should not increase on rescan"
         );
@@ -814,7 +815,7 @@ mod tests {
         // Verify the transaction was stored
         let account = managed_wallet.first_bip44_managed_account().expect("Should have account");
         assert!(
-            account.transactions.contains_key(&spend_tx.txid()),
+            account.transactions().contains_key(&spend_tx.txid()),
             "Spending tx should be stored"
         );
 
@@ -894,9 +895,9 @@ mod tests {
 
         // Stage 1: mempool (already done in setup). Mempool funds land
         // in the unconfirmed bucket but are spendable.
-        assert_eq!(ctx.managed_wallet.balance().unconfirmed(), 200_000);
-        assert_eq!(ctx.managed_wallet.balance().confirmed(), 0);
-        assert_eq!(ctx.managed_wallet.balance().spendable(), 200_000);
+        assert_eq!(ctx.managed_wallet.balance.unconfirmed(), 200_000);
+        assert_eq!(ctx.managed_wallet.balance.confirmed(), 0);
+        assert_eq!(ctx.managed_wallet.balance.spendable(), 200_000);
 
         // Stage 2: IS lock
         let is_lock = InstantLock {
@@ -906,8 +907,8 @@ mod tests {
         let result = ctx.check_transaction(&tx, TransactionContext::InstantSend(is_lock)).await;
         assert!(result.is_relevant);
         assert!(!result.is_new_transaction);
-        assert_eq!(ctx.managed_wallet.balance().spendable(), 200_000);
-        assert_eq!(ctx.managed_wallet.balance().unconfirmed(), 0);
+        assert_eq!(ctx.managed_wallet.balance.spendable(), 200_000);
+        assert_eq!(ctx.managed_wallet.balance.unconfirmed(), 0);
         assert!(ctx.first_utxo().is_instantlocked);
         assert!(!ctx.first_utxo().is_confirmed);
         assert!(ctx.managed_wallet.instant_send_locks.contains(&txid));
@@ -926,7 +927,7 @@ mod tests {
             .await;
         assert!(result_dup.is_relevant);
         assert!(!result_dup.is_new_transaction);
-        assert_eq!(ctx.managed_wallet.balance().spendable(), 200_000);
+        assert_eq!(ctx.managed_wallet.balance.spendable(), 200_000);
 
         // Stage 3: block confirmation
         let block_hash = BlockHash::from_slice(&[10u8; 32]).expect("hash");
@@ -937,23 +938,23 @@ mod tests {
         assert!(ctx.transaction(&txid).is_confirmed());
         assert_eq!(ctx.transaction(&txid).height(), Some(1000));
         assert!(ctx.first_utxo().is_confirmed);
-        assert_eq!(ctx.managed_wallet.balance().spendable(), 200_000);
+        assert_eq!(ctx.managed_wallet.balance.spendable(), 200_000);
 
         // Stage 4: chain-locked block (rescan with stronger context)
         let cl_context =
             TransactionContext::InChainLockedBlock(BlockInfo::new(1000, block_hash, 1700000000));
         let result = ctx.check_transaction(&tx, cl_context).await;
         assert!(!result.is_new_transaction);
-        assert_eq!(ctx.managed_wallet.balance().spendable(), 200_000);
+        assert_eq!(ctx.managed_wallet.balance.spendable(), 200_000);
 
         // Stage 5: late IS lock on already-confirmed tx should be ignored
-        let balance_before = ctx.managed_wallet.balance();
+        let balance_before = ctx.managed_wallet.balance;
         let result = ctx
             .check_transaction(&tx, TransactionContext::InstantSend(InstantLock::default()))
             .await;
         assert!(result.is_relevant);
         assert!(!result.is_new_transaction);
-        assert_eq!(ctx.managed_wallet.balance().spendable(), balance_before.spendable());
+        assert_eq!(ctx.managed_wallet.balance.spendable(), balance_before.spendable());
     }
 
     /// Test that a new transaction arriving directly with IS context populates the dedup set
@@ -973,7 +974,7 @@ mod tests {
 
         // Should be IS-locked and spendable immediately
         assert!(ctx.first_utxo().is_instantlocked);
-        assert_eq!(ctx.managed_wallet.balance().spendable(), 150_000);
+        assert_eq!(ctx.managed_wallet.balance.spendable(), 150_000);
         assert!(ctx.managed_wallet.instant_send_locks.contains(&txid));
 
         // A follow-up IS lock should be a no-op
@@ -981,7 +982,7 @@ mod tests {
             .check_transaction(&tx, TransactionContext::InstantSend(InstantLock::default()))
             .await;
         assert!(!result2.is_new_transaction);
-        assert_eq!(ctx.managed_wallet.balance().spendable(), 150_000);
+        assert_eq!(ctx.managed_wallet.balance.spendable(), 150_000);
     }
 
     /// Test that the InstantSend branch backfills a `TransactionRecord` on accounts
@@ -1056,9 +1057,9 @@ mod tests {
         let account1 = managed_wallet
             .bip44_managed_account_at_index_mut(1)
             .expect("Should have managed account 1");
-        account1.transactions.remove(&txid);
+        account1.transactions_mut().remove(&txid);
         account1.utxos.clear();
-        assert!(!account1.transactions.contains_key(&txid));
+        assert!(!account1.transactions().contains_key(&txid));
         assert!(account1.utxos.is_empty());
 
         let is_result = managed_wallet
@@ -1087,7 +1088,7 @@ mod tests {
                 .bip44_managed_account_at_index(account_index)
                 .expect("Should have account");
             let record = account
-                .transactions
+                .transactions()
                 .get(&txid)
                 .expect("Both accounts should hold the record after IS backfill");
             assert!(matches!(record.context, TransactionContext::InstantSend(_)));
@@ -1113,9 +1114,9 @@ mod tests {
             .managed_wallet
             .first_bip44_managed_account_mut()
             .expect("Should have BIP44 account");
-        assert!(account.transactions.contains_key(&txid));
-        account.transactions.remove(&txid);
-        assert!(!account.transactions.contains_key(&txid));
+        assert!(account.transactions().contains_key(&txid));
+        account.transactions_mut().remove(&txid);
+        assert!(!account.transactions().contains_key(&txid));
 
         // Now process the same tx as a block confirmation.
         // Since the wallet's `check_core_transaction` still sees no record,
@@ -1163,9 +1164,9 @@ mod tests {
             .managed_wallet
             .first_bip44_managed_account_mut()
             .expect("Should have BIP44 account");
-        account.transactions.remove(&txid);
+        account.transactions_mut().remove(&txid);
         account.utxos.clear();
-        assert!(!account.transactions.contains_key(&txid));
+        assert!(!account.transactions().contains_key(&txid));
         assert!(account.utxos.is_empty());
 
         // Call `confirm_transaction` directly — the backfill path should create the record
@@ -1177,7 +1178,7 @@ mod tests {
         assert!(changed, "Should return true when backfilling a missing record");
 
         // Verify the transaction was recorded with block context
-        let record = account.transactions.get(&txid).expect("Should have backfilled record");
+        let record = account.transactions().get(&txid).expect("Should have backfilled record");
         assert!(record.is_confirmed());
         assert_eq!(record.height(), Some(600));
         assert_eq!(record.block_info().unwrap().block_hash, block_hash);
@@ -1203,8 +1204,8 @@ mod tests {
             .managed_wallet
             .first_bip44_managed_account_mut()
             .expect("Should have BIP44 account");
-        assert!(account.transactions.contains_key(&txid));
-        assert!(!account.transactions.get(&txid).unwrap().is_confirmed());
+        assert!(account.transactions().contains_key(&txid));
+        assert!(!account.transactions().get(&txid).unwrap().is_confirmed());
 
         // Build a dummy AccountMatch for the confirm call
         let result = ctx.managed_wallet.accounts.check_transaction(
@@ -1227,7 +1228,7 @@ mod tests {
         let changed = account.confirm_transaction(&tx, &account_match, block_context, tx_type);
         assert!(changed, "Should return true when confirming unconfirmed tx");
 
-        let record = account.transactions.get(&txid).expect("Should have record");
+        let record = account.transactions().get(&txid).expect("Should have record");
         assert!(record.is_confirmed());
         assert_eq!(record.height(), Some(700));
         assert_eq!(record.block_info().unwrap().block_hash, block_hash);
@@ -1628,7 +1629,7 @@ mod tests {
         let coinjoin_address = if let ManagedAccountType::CoinJoin {
             addresses,
             ..
-        } = &mut managed_account.managed_account_type
+        } = managed_account.managed_account_type_mut()
         {
             addresses.next_unused(&KeySource::Public(xpub), true).expect("coinjoin address")
         } else {
@@ -1688,7 +1689,7 @@ mod tests {
         assert!(result.is_relevant, "CoinJoin tx should be relevant");
 
         let account = managed_wallet.first_coinjoin_managed_account().expect("coinjoin account");
-        let record = account.transactions.get(&tx.txid()).expect("should have record");
+        let record = account.transactions().get(&tx.txid()).expect("should have record");
         assert_eq!(record.direction, TransactionDirection::CoinJoin);
         assert_eq!(record.transaction_type, TransactionType::CoinJoin);
         assert!(record.input_details.is_empty(), "CoinJoin test has no funded UTXOs");
@@ -1718,8 +1719,8 @@ mod tests {
             1_700_000_000,
         ));
         ctx.check_transaction(&funding_tx, block_context).await;
-        assert_eq!(ctx.managed_wallet.balance().confirmed(), funding_value);
-        assert_eq!(ctx.managed_wallet.balance().unconfirmed(), 0);
+        assert_eq!(ctx.managed_wallet.balance.confirmed(), funding_value);
+        assert_eq!(ctx.managed_wallet.balance.unconfirmed(), 0);
 
         let change_address = ctx
             .managed_wallet
@@ -1786,9 +1787,9 @@ mod tests {
         assert_eq!(change_utxo.txout.value, change_amount);
 
         // Account-level balance: change lives in `confirmed`, not `unconfirmed`.
-        assert_eq!(ctx.managed_wallet.balance().confirmed(), change_amount);
-        assert_eq!(ctx.managed_wallet.balance().unconfirmed(), 0);
-        assert_eq!(ctx.managed_wallet.balance().spendable(), change_amount);
+        assert_eq!(ctx.managed_wallet.balance.confirmed(), change_amount);
+        assert_eq!(ctx.managed_wallet.balance.unconfirmed(), 0);
+        assert_eq!(ctx.managed_wallet.balance.spendable(), change_amount);
     }
 
     /// Sibling of `test_self_send_change_in_mempool_lands_in_confirmed_balance`:
@@ -1809,7 +1810,7 @@ mod tests {
         let utxo = ctx.first_utxo();
         assert!(!utxo.is_confirmed, "external mempool payment must stay unconfirmed");
         assert!(!utxo.is_trusted, "external payment is not a self-send change");
-        assert_eq!(ctx.managed_wallet.balance().confirmed(), 0);
-        assert_eq!(ctx.managed_wallet.balance().unconfirmed(), payment_value);
+        assert_eq!(ctx.managed_wallet.balance.confirmed(), 0);
+        assert_eq!(ctx.managed_wallet.balance.unconfirmed(), payment_value);
     }
 }

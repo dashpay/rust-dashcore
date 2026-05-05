@@ -12,6 +12,7 @@ use crate::error::{FFIError, FFIErrorCode};
 use crate::types::FFIWallet;
 use crate::{check_ptr, deref_ptr, deref_ptr_mut, unwrap_or_return};
 use key_wallet::managed_account::address_pool::KeySource;
+use key_wallet::managed_account::managed_account_trait::ManagedAccountTrait;
 use key_wallet::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
 use std::ffi::c_void;
@@ -170,7 +171,7 @@ pub unsafe extern "C" fn managed_wallet_get_bip_44_external_address_range(
     let addresses = if let key_wallet::account::ManagedAccountType::Standard {
         external_addresses,
         ..
-    } = &mut managed_account.managed_account_type
+    } = managed_account.managed_account_type_mut()
     {
         unwrap_or_return!(
             external_addresses.address_range(start_index, end_index, &key_source),
@@ -250,7 +251,7 @@ pub unsafe extern "C" fn managed_wallet_get_bip_44_internal_address_range(
     let addresses = if let key_wallet::account::ManagedAccountType::Standard {
         internal_addresses,
         ..
-    } = &mut managed_account.managed_account_type
+    } = managed_account.managed_account_type_mut()
     {
         unwrap_or_return!(
             internal_addresses.address_range(start_index, end_index, &key_source),

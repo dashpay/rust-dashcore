@@ -21,10 +21,10 @@ fn test_balance_with_mixed_utxo_types() {
     account.utxos.insert(utxo3.outpoint, utxo3);
     wallet_info.accounts.insert(account).unwrap();
 
-    assert_eq!(wallet_info.balance(), WalletCoreBalance::default());
+    assert_eq!(wallet_info.balance, WalletCoreBalance::default());
     wallet_info.update_last_processed_height(1100);
     let expected = WalletCoreBalance::new(10_100_000, 0, 20_000_000, 0);
-    assert_eq!(wallet_info.balance(), expected);
+    assert_eq!(wallet_info.balance, expected);
 }
 
 #[test]
@@ -37,16 +37,16 @@ fn test_coinbase_maturity_boundary() {
     account.utxos.insert(utxo.outpoint, utxo);
     wallet_info.accounts.insert(account).unwrap();
 
-    assert_eq!(wallet_info.balance(), WalletCoreBalance::default());
+    assert_eq!(wallet_info.balance, WalletCoreBalance::default());
     // 99 confirmations: immature
     wallet_info.update_last_processed_height(1099);
     let expected_immature = WalletCoreBalance::new(0, 0, 50_000_000, 0);
-    assert_eq!(wallet_info.balance(), expected_immature);
+    assert_eq!(wallet_info.balance, expected_immature);
 
     // 100 confirmations: mature
     wallet_info.update_last_processed_height(1100);
     let expected_mature = WalletCoreBalance::new(50_000_000, 0, 0, 0);
-    assert_eq!(wallet_info.balance(), expected_mature);
+    assert_eq!(wallet_info.balance, expected_mature);
 }
 
 #[test]
@@ -59,10 +59,10 @@ fn test_locked_utxos_in_locked_balance() {
     account.utxos.insert(utxo.outpoint, utxo);
     wallet_info.accounts.insert(account).unwrap();
 
-    assert_eq!(wallet_info.balance(), WalletCoreBalance::default());
+    assert_eq!(wallet_info.balance, WalletCoreBalance::default());
     wallet_info.update_last_processed_height(1100);
     let expected = WalletCoreBalance::new(0, 0, 0, 100_000);
-    assert_eq!(wallet_info.balance(), expected);
+    assert_eq!(wallet_info.balance, expected);
 }
 
 #[test]
@@ -74,8 +74,8 @@ fn test_unconfirmed_utxos_in_unconfirmed_balance() {
     account.utxos.insert(utxo.outpoint, utxo);
     wallet_info.accounts.insert(account).unwrap();
 
-    assert_eq!(wallet_info.balance(), WalletCoreBalance::default());
+    assert_eq!(wallet_info.balance, WalletCoreBalance::default());
     wallet_info.update_last_processed_height(1100);
     let expected = WalletCoreBalance::new(0, 100_000, 0, 0);
-    assert_eq!(wallet_info.balance(), expected);
+    assert_eq!(wallet_info.balance, expected);
 }

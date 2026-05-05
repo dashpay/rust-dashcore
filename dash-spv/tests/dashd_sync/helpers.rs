@@ -2,6 +2,7 @@ use dash_spv::network::NetworkEvent;
 use dash_spv::sync::{ProgressPercentage, SyncEvent, SyncProgress, SyncState};
 use dash_spv::test_utils::DashCoreNode;
 use dashcore::Txid;
+use key_wallet::managed_account::managed_account_trait::ManagedAccountTrait;
 use key_wallet::transaction_checking::TransactionContext;
 use key_wallet::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
@@ -67,8 +68,12 @@ pub(super) async fn count_wallet_transactions(
 ) -> usize {
     let wallet_read = wallet.read().await;
     let wallet_info = wallet_read.get_wallet_info(wallet_id).expect("Wallet info not found");
-    let txids: HashSet<_> =
-        wallet_info.accounts().all_accounts().iter().flat_map(|a| a.transactions.keys()).collect();
+    let txids: HashSet<_> = wallet_info
+        .accounts()
+        .all_accounts()
+        .iter()
+        .flat_map(|a| a.transactions().keys())
+        .collect();
     txids.len()
 }
 

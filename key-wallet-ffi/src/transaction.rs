@@ -16,6 +16,7 @@ use dashcore::{
     consensus, hashes::Hash, sighash::SighashCache, EcdsaSighashType, Network, OutPoint, Script,
     ScriptBuf, Transaction, TxIn, TxOut, Txid,
 };
+use key_wallet::managed_account::managed_account_trait::ManagedAccountTrait;
 use key_wallet::wallet::managed_wallet_info::asset_lock_builder::{
     AssetLockFundingType, CreditOutputFunding,
 };
@@ -194,7 +195,7 @@ pub unsafe extern "C" fn wallet_build_and_sign_transaction(
                 HashMap::new();
 
             // Collect from all address pools (receive, change, etc.)
-            for pool in managed_account.managed_account_type.address_pools() {
+            for pool in managed_account.managed_account_type().address_pools() {
                 for addr_info in pool.addresses.values() {
                     address_to_path.insert(addr_info.address.clone(), addr_info.path.clone());
                 }
