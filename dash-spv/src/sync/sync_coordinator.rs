@@ -24,7 +24,7 @@ use crate::sync::{
     SyncManager, SyncManagerProgress, SyncManagerTaskContext, SyncProgress,
 };
 use crate::SyncError;
-use key_wallet::manager::WalletInterface;
+use key_wallet_manager::WalletInterface;
 
 const TASK_JOIN_TIMEOUT: Duration = Duration::from_secs(5);
 const DEFAULT_SYNC_EVENT_CAPACITY: usize = 10000;

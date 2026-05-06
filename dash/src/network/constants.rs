@@ -18,25 +18,14 @@
 //! Dash network constants.
 //!
 //! This module provides various constants relating to the Dash network
-//! protocol, such as protocol versioning and magic header bytes and the
-//! different network types supported by Dash.
-//!
-//! # Example: encoding a network's magic bytes
-//!
-//! ```rust
-//! use dashcore::Network;
-//! use dashcore::consensus::encode::serialize;
-//!
-//! let network = Network::Mainnet;
-//! let bytes = serialize(&network.magic());
-//!
-//! assert_eq!(&bytes[..], &[0xBF, 0x0C, 0x6B, 0xBD]);
-//! ```
+//! protocol.
 
 use core::convert::From;
 use core::{fmt, ops};
 
 use hashes::Hash;
+
+pub use dash_network::{Network, ParseNetworkError};
 
 use crate::consensus::encode::{self, Decodable, Encodable};
 use crate::{BlockHash, io};
@@ -61,71 +50,16 @@ pub const NODE_HEADERS_COMPRESSED: ServiceFlags = ServiceFlags::NODE_HEADERS_COM
 /// 60001 - Support `pong` message and nonce in `ping` message
 pub const PROTOCOL_VERSION: u32 = 70237;
 
-#[cfg(feature = "bincode")]
-use bincode_derive::{Decode, Encode};
-
-/// The cryptocurrency network to act on.
-#[derive(Copy, PartialEq, Eq, PartialOrd, Ord, Clone, Hash, Debug)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "serde", serde(rename_all = "lowercase"))]
-#[non_exhaustive]
-#[repr(u8)]
-#[cfg_attr(feature = "bincode", derive(Encode, Decode))]
-pub enum Network {
-    /// Dash mainnet, the production network for real transactions.
-    Mainnet,
-    /// Dash public test network for protocol-level testing without real funds.
-    Testnet,
-    /// Dash development network, an isolated environment for feature development and testing.
-    Devnet,
-    /// Local regression testing network for deterministic, offline testing with instant block generation.
-    Regtest,
+pub trait NetworkExt {
+    /// Returns the known genesis block hash for `network`, if one is hardcoded.
+    ///
+    /// `Network::Devnet` returns `None` because devnets use dynamically-generated
+    /// genesis blocks.
+    fn known_genesis_block_hash(&self) -> Option<BlockHash>;
 }
 
-impl Network {
-    /// Creates a `Network` from the magic bytes.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use dashcore::Network;
-    ///
-    /// assert_eq!(Some(Network::Mainnet), Network::from_magic(0xBD6B0CBF));
-    /// assert_eq!(None, Network::from_magic(0xFFFFFFFF));
-    /// ```
-    pub fn from_magic(magic: u32) -> Option<Network> {
-        // Note: any new entries here must be added to `magic` below
-        match magic {
-            0xBD6B0CBF => Some(Network::Mainnet),
-            0xFFCAE2CE => Some(Network::Testnet),
-            0xCEFFCAE2 => Some(Network::Devnet),
-            0xDCB7C1FC => Some(Network::Regtest),
-            _ => None,
-        }
-    }
-
-    /// Return the network magic bytes, which should be encoded little-endian
-    /// at the start of every message
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use dashcore::Network;
-    ///
-    /// let network = Network::Mainnet;
-    /// assert_eq!(network.magic(), 0xBD6B0CBF);
-    /// ```
-    pub fn magic(self) -> u32 {
-        // Note: any new entries here must be added to `from_magic` above
-        match self {
-            Network::Mainnet => 0xBD6B0CBF,
-            Network::Testnet => 0xFFCAE2CE,
-            Network::Devnet => 0xCEFFCAE2,
-            Network::Regtest => 0xDCB7C1FC,
-        }
-    }
-
-    pub fn known_genesis_block_hash(&self) -> Option<BlockHash> {
+impl NetworkExt for Network {
+    fn known_genesis_block_hash(&self) -> Option<BlockHash> {
         match self {
             Network::Mainnet => {
                 let mut block_hash =
@@ -151,42 +85,7 @@ impl Network {
             }
         }
     }
-
-    pub fn v20_activation_height(&self) -> u32 {
-        match self {
-            Network::Mainnet => 1_987_776,
-            Network::Testnet => 905_100,
-            // Devnet and regtest activate V20 immediately
-            _ => 0,
-        }
-    }
 }
-
-impl fmt::Display for Network {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            Network::Mainnet => write!(f, "mainnet"),
-            Network::Testnet => write!(f, "testnet"),
-            Network::Devnet => write!(f, "devnet"),
-            Network::Regtest => write!(f, "regtest"),
-        }
-    }
-}
-
-impl std::str::FromStr for Network {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.to_lowercase().as_str() {
-            "mainnet" | "main" => Ok(Network::Mainnet),
-            "testnet" | "test" => Ok(Network::Testnet),
-            "devnet" | "dev" => Ok(Network::Devnet),
-            "regtest" => Ok(Network::Regtest),
-            _ => Err(format!("Unknown network type: {}", s)),
-        }
-    }
-}
-
 /// Flags to indicate which network services a node supports.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ServiceFlags(u64);

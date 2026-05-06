@@ -1,18 +1,121 @@
 //! Transaction building functionality for managed wallets
 
+use crate::managed_account::managed_account_trait::ManagedAccountTrait;
+use crate::wallet::managed_wallet_info::coin_selection::SelectionStrategy;
+use crate::wallet::managed_wallet_info::fee::FeeRate;
+use crate::wallet::managed_wallet_info::transaction_builder::{BuilderError, TransactionBuilder};
+use crate::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
+use crate::wallet::{ManagedWalletInfo, WalletType};
+use crate::Wallet;
+use dashcore::address::NetworkUnchecked;
+use dashcore::{Address, Transaction};
+
 /// Account type preference for transaction building
 #[derive(Debug, Clone, Copy)]
 pub enum AccountTypePreference {
-    /// Use BIP44 account only
     BIP44,
-    /// Use BIP32 account only
     BIP32,
-    /// Prefer BIP44, fallback to BIP32
-    PreferBIP44,
-    /// Prefer BIP32, fallback to BIP44
-    PreferBIP32,
 }
 
+impl ManagedWalletInfo {
+    pub fn build_and_sign_transaction(
+        &mut self,
+        wallet: &Wallet,
+        account_index: u32,
+        outputs: Vec<(Address<NetworkUnchecked>, u64)>,
+        fee_rate: FeeRate,
+    ) -> Result<(Transaction, u64), BuilderError> {
+        // Get change address through the manager
+        let change_address = self
+            .next_change_address(wallet, account_index, AccountTypePreference::BIP44, true)
+            .ok_or(BuilderError::NoChangeAddress)?;
+
+        let managed_account = self
+            .accounts
+            .standard_bip44_accounts
+            .get_mut(&account_index)
+            .expect("Impossible state, if change address is Some, account must be Some");
+
+        // Convert FFI outputs to Rust outputs
+        let mut tx_builder = TransactionBuilder::new();
+
+        for output in outputs {
+            let checked_address = output.0.require_network(wallet.network).map_err(|e| {
+                BuilderError::InvalidData(format!("Output address network mismatch: {}", e))
+            })?;
+            tx_builder = tx_builder.add_output(&checked_address, output.1)?;
+        }
+
+        tx_builder = tx_builder.set_change_address(change_address).set_fee_rate(fee_rate);
+
+        // Get available UTXOs (collect owned UTXOs, not references)
+        let utxos: Vec<crate::Utxo> = managed_account.utxos.values().cloned().collect();
+
+        // Get the wallet's root extended private key for signing
+        let root_xpriv = match &wallet.wallet_type {
+            WalletType::Mnemonic {
+                root_extended_private_key,
+                ..
+            } => root_extended_private_key,
+            WalletType::Seed {
+                root_extended_private_key,
+                ..
+            } => root_extended_private_key,
+            WalletType::ExtendedPrivKey(root_extended_private_key) => root_extended_private_key,
+            _ => {
+                return Err(BuilderError::InvalidData(
+                    "Cannot sign with watch-only wallet".to_string(),
+                ));
+            }
+        };
+
+        // Build a map of address -> derivation path for all addresses in the account
+        use std::collections::HashMap;
+        let mut address_to_path: HashMap<dashcore::Address, crate::DerivationPath> = HashMap::new();
+
+        // Collect from all address pools (receive, change, etc.)
+        for pool in managed_account.managed_account_type().address_pools() {
+            for addr_info in pool.addresses.values() {
+                address_to_path.insert(addr_info.address.clone(), addr_info.path.clone());
+            }
+        }
+
+        // Select inputs and build transaction
+        let mut tx_builder = tx_builder.select_inputs(
+            &utxos,
+            SelectionStrategy::BranchAndBound,
+            self.last_processed_height(),
+            |utxo| {
+                // Look up the derivation path for this UTXO's address
+                let path = address_to_path.get(&utxo.address)?;
+
+                // Convert root key to ExtendedPrivKey and derive the child key
+                let root_ext_priv = root_xpriv.to_extended_priv_key(wallet.network);
+                let secp = secp256k1::Secp256k1::new();
+                let derived_xpriv = root_ext_priv.derive_priv(&secp, path).ok()?;
+
+                Some(derived_xpriv.private_key)
+            },
+        )?;
+
+        let transaction = tx_builder.build()?;
+
+        // This is tricky, the transaction creation + fee calculation need a little
+        // bit of love to avoid this kind of logic.
+        //
+        // First, we need to know that TransactionBuilder may add an extra output for change
+        // to the final transaction but not to itself, with that knowledge, we can compare the
+        // number of outputs in the transaction with the number of outputs in the TransactionBuilder
+        // to then call the appropriate fee calculation method
+        let fee = if transaction.output.len() > tx_builder.outputs().len() {
+            tx_builder.calculate_fee_with_extra_output()
+        } else {
+            tx_builder.calculate_fee()
+        };
+
+        Ok((transaction, fee))
+    }
+}
 #[cfg(test)]
 mod tests {
     use crate::wallet::managed_wallet_info::coin_selection::SelectionStrategy;

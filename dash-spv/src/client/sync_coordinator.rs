@@ -2,22 +2,21 @@
 
 use std::time::Duration;
 
+use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 use super::event_handler::{spawn_broadcast_monitor, spawn_progress_monitor};
-use super::{DashSpvClient, EventHandler};
+use super::DashSpvClient;
 use crate::error::Result;
 use crate::network::NetworkManager;
 use crate::storage::StorageManager;
 use crate::sync::SyncProgress;
 use crate::SpvError;
-use key_wallet::manager::WalletInterface;
+use key_wallet_manager::WalletInterface;
 
 const SYNC_COORDINATOR_TICK_MS: Duration = Duration::from_millis(100);
 
-impl<W: WalletInterface, N: NetworkManager, S: StorageManager, H: EventHandler>
-    DashSpvClient<W, N, S, H>
-{
+impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, N, S> {
     /// Get current sync progress.
     pub async fn sync_progress(&self) -> SyncProgress {
         self.sync_coordinator.lock().await.progress().clone()
@@ -29,50 +28,61 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager, H: EventHandler>
     /// event handler provided at construction. Calls `start()` internally, runs
     /// continuous network monitoring, and calls `stop()` before returning.
     pub async fn run(&self, token: CancellationToken) -> Result<()> {
-        let handler = self.event_handler.clone();
-
-        if let Err(e) = self.start().await {
-            handler.on_error(&e.to_string());
-            return Err(e);
-        }
-
-        tracing::info!("Starting continuous network monitoring...");
-
+        let handlers = self.event_handlers.clone();
         let monitor_shutdown = CancellationToken::new();
+        let (monitor_failure_tx, mut monitor_failure_rx) = mpsc::channel::<String>(1);
 
-        // Subscribe to channels
+        // Subscribe and spawn monitors before startup so we don't miss early
+        // connection events.
         let sync_event_rx = self.subscribe_sync_events().await;
         let network_event_rx = self.subscribe_network_events().await;
         let progress_rx = self.subscribe_progress().await;
         let wallet_event_rx = self.wallet.read().await.subscribe_events();
 
-        // Spawn monitoring tasks
         let sync_task = spawn_broadcast_monitor(
             "Sync event",
             sync_event_rx,
-            handler.clone(),
+            handlers.clone(),
             monitor_shutdown.clone(),
+            monitor_failure_tx.clone(),
             |h, event| h.on_sync_event(event),
         );
 
         let network_task = spawn_broadcast_monitor(
             "Network event",
             network_event_rx,
-            handler.clone(),
+            handlers.clone(),
             monitor_shutdown.clone(),
+            monitor_failure_tx.clone(),
             |h, event| h.on_network_event(event),
         );
 
         let wallet_task = spawn_broadcast_monitor(
             "Wallet event",
             wallet_event_rx,
-            handler.clone(),
+            handlers.clone(),
             monitor_shutdown.clone(),
+            monitor_failure_tx.clone(),
             |h, event| h.on_wallet_event(event),
         );
 
-        let progress_task =
-            spawn_progress_monitor(progress_rx, handler.clone(), monitor_shutdown.clone());
+        let progress_task = spawn_progress_monitor(
+            progress_rx,
+            handlers.clone(),
+            monitor_shutdown.clone(),
+            monitor_failure_tx,
+        );
+
+        if let Err(e) = self.start().await {
+            monitor_shutdown.cancel();
+            let _ = tokio::join!(sync_task, network_task, wallet_task, progress_task);
+            for handler in handlers.iter() {
+                handler.on_error(&e.to_string());
+            }
+            return Err(e);
+        }
+
+        tracing::info!("Starting continuous network monitoring...");
 
         // Run the sync loop
         let mut sync_coordinator_tick_interval = tokio::time::interval(SYNC_COORDINATOR_TICK_MS);
@@ -93,17 +103,28 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager, H: EventHandler>
                     tracing::debug!("DashSpvClient run loop cancelled");
                     break None
                 }
+                Some(msg) = monitor_failure_rx.recv() => {
+                    break Some(crate::SpvError::ChannelFailure(
+                        "event monitor".into(),
+                        msg,
+                    ))
+                }
             };
 
-            if let Some(ref e) = error {
-                handler.on_error(&e.to_string());
+            if error.is_some() {
                 break error;
             }
         };
 
-        // Cancel monitoring tasks and wait for them
+        // Signal monitors to shut down before channels close
         monitor_shutdown.cancel();
         let _ = tokio::join!(sync_task, network_task, wallet_task, progress_task);
+
+        if let Some(ref e) = error {
+            for handler in handlers.iter() {
+                handler.on_error(&e.to_string());
+            }
+        }
 
         let stop_result = self.stop().await;
 

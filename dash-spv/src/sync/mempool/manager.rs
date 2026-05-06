@@ -10,6 +10,8 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use dashcore::ephemerealdata::instant_lock::InstantLock;
+use dashcore::network::message::NetworkMessage;
 use dashcore::network::message_blockdata::Inventory;
 use dashcore::{Amount, Transaction, Txid};
 use rand::seq::IteratorRandom;
@@ -22,8 +24,8 @@ use crate::error::SyncResult;
 use crate::network::RequestSender;
 use crate::sync::mempool::MempoolProgress;
 use crate::sync::SyncEvent;
-use crate::types::{MempoolState, UnconfirmedTransaction};
-use key_wallet::manager::WalletInterface;
+use crate::types::UnconfirmedTransaction;
+use key_wallet_manager::WalletInterface;
 
 /// Timeout for pruning expired mempool transactions (24 hours).
 pub(super) const MEMPOOL_TX_EXPIRY: Duration = Duration::from_secs(24 * 3600);
@@ -41,6 +43,9 @@ const MAX_PENDING_IS_LOCKS: usize = 1000;
 /// Covers the window where multiple peers respond to the initial `mempool` request.
 const SEEN_TXID_EXPIRY: Duration = Duration::from_secs(180);
 
+/// Per-transaction interval between rebroadcast attempts (10 minutes).
+const REBROADCAST_INTERVAL: Duration = Duration::from_secs(600);
+
 /// Mempool manager that monitors unconfirmed transactions from the P2P network.
 ///
 /// Tracks connected peers via a unified map where:
@@ -49,15 +54,16 @@ const SEEN_TXID_EXPIRY: Duration = Duration::from_secs(180);
 pub(crate) struct MempoolManager<W: WalletInterface> {
     pub(super) progress: MempoolProgress,
     pub(super) wallet: Arc<RwLock<W>>,
-    pub(super) mempool_state: Arc<RwLock<MempoolState>>,
+    pub(super) transactions: HashMap<Txid, UnconfirmedTransaction>,
+    pub(super) recent_sends: HashMap<Txid, Instant>,
     strategy: MempoolStrategy,
     max_transactions: usize,
     /// Txids we have requested via getdata but not yet received, with request time.
     pending_requests: HashMap<Txid, Instant>,
     /// Connected peers and their activation state.
     pub(super) peers: HashMap<SocketAddr, Option<VecDeque<Txid>>>,
-    /// IS lock txids that arrived before their corresponding transaction, with insertion time.
-    pending_is_locks: HashMap<Txid, Instant>,
+    /// IS locks that arrived before their corresponding transaction, with insertion time.
+    pending_is_locks: HashMap<Txid, (InstantLock, Instant)>,
     /// Txids already downloaded, with download timestamp.
     /// Prevents duplicate downloads when multiple peers announce the same transactions.
     /// Entries expire after `SEEN_TXID_EXPIRY`.
@@ -68,11 +74,10 @@ pub(crate) struct MempoolManager<W: WalletInterface> {
 }
 
 impl<W: WalletInterface> MempoolManager<W> {
-    /// Creates a new mempool manager with the given wallet, shared mempool state,
+    /// Creates a new mempool manager with the given wallet,
     /// bloom filter strategy, and transaction capacity limit.
     pub(crate) fn new(
         wallet: Arc<RwLock<W>>,
-        mempool_state: Arc<RwLock<MempoolState>>,
         strategy: MempoolStrategy,
         max_transactions: usize,
         initial_monitor_revision: u64,
@@ -80,7 +85,8 @@ impl<W: WalletInterface> MempoolManager<W> {
         Self {
             progress: MempoolProgress::default(),
             wallet,
-            mempool_state,
+            transactions: HashMap::new(),
+            recent_sends: HashMap::new(),
             strategy,
             max_transactions,
             pending_requests: HashMap::new(),
@@ -196,8 +202,7 @@ impl<W: WalletInterface> MempoolManager<W> {
         peer: SocketAddr,
         requests: &RequestSender,
     ) -> SyncResult<Vec<SyncEvent>> {
-        let mempool_full =
-            self.mempool_state.read().await.transactions.len() >= self.max_transactions;
+        let mempool_full = self.transactions.len() >= self.max_transactions;
         if mempool_full {
             return Ok(vec![]);
         }
@@ -213,7 +218,7 @@ impl<W: WalletInterface> MempoolManager<W> {
             if self.seen_txids.get(txid).is_some_and(|t| t.elapsed() < SEEN_TXID_EXPIRY)
                 || self.pending_requests.contains_key(txid)
                 || self.is_queued(txid)
-                || self.mempool_state.read().await.transactions.contains_key(txid)
+                || self.transactions.contains_key(txid)
             {
                 continue;
             }
@@ -267,7 +272,7 @@ impl<W: WalletInterface> MempoolManager<W> {
                     break;
                 };
                 if self.pending_requests.contains_key(&txid)
-                    || self.mempool_state.read().await.transactions.contains_key(&txid)
+                    || self.transactions.contains_key(&txid)
                 {
                     continue;
                 }
@@ -295,18 +300,37 @@ impl<W: WalletInterface> MempoolManager<W> {
     }
 
     /// Handle a received transaction.
-    pub(super) async fn handle_tx(&mut self, tx: Transaction) -> SyncResult<Vec<SyncEvent>> {
+    ///
+    /// When `peer` is the local sentinel address (`0.0.0.0:0`), the transaction
+    /// is treated as self-originated and recorded in `recent_sends`.
+    pub(super) async fn handle_tx(
+        &mut self,
+        tx: Transaction,
+        peer: SocketAddr,
+    ) -> SyncResult<Vec<SyncEvent>> {
         let txid = tx.txid();
         self.pending_requests.remove(&txid);
+        let is_local = peer.ip().is_unspecified();
+
+        // Skip if already tracked (e.g., locally broadcast then received from a peer)
+        if self.transactions.contains_key(&txid) {
+            self.seen_txids.insert(txid, Instant::now());
+            if is_local {
+                self.recent_sends.insert(txid, Instant::now());
+            }
+            return Ok(vec![]);
+        }
+
         self.seen_txids.insert(txid, Instant::now());
         self.progress.add_received(1);
 
         // Check for a pre-arrived IS lock before wallet processing consumes it
-        let is_locked = self.pending_is_locks.remove(&txid).is_some();
+        let pending_lock = self.pending_is_locks.remove(&txid).map(|(lock, _)| lock);
+        let is_locked = pending_lock.is_some();
 
         let result = {
             let mut wallet = self.wallet.write().await;
-            wallet.process_mempool_transaction(&tx, is_locked).await
+            wallet.process_mempool_transaction(&tx, pending_lock).await
         };
 
         if !result.is_relevant {
@@ -326,82 +350,123 @@ impl<W: WalletInterface> MempoolManager<W> {
             result.addresses,
             result.net_amount,
         );
-        {
-            let mut state = self.mempool_state.write().await;
-            state.add_transaction(unconfirmed_tx);
-            self.progress.set_tracked(state.transactions.len() as u32);
+        self.transactions.insert(txid, unconfirmed_tx);
+        if is_local {
+            self.recent_sends.insert(txid, Instant::now());
         }
+        self.progress.set_tracked(self.transactions.len() as u32);
 
         Ok(vec![])
     }
 
     /// Remove transactions from the mempool that have been confirmed in a block.
-    pub(super) async fn remove_confirmed(&mut self, txids: &[Txid]) {
+    pub(super) fn remove_confirmed(&mut self, txids: &[Txid]) {
         self.seen_txids.retain(|_, t| t.elapsed() < SEEN_TXID_EXPIRY);
         let mut removed = Vec::new();
-        {
-            let mut state = self.mempool_state.write().await;
-            for txid in txids {
-                if state.remove_transaction(txid).is_some() {
-                    removed.push(*txid);
-                }
+        for txid in txids {
+            if self.transactions.remove(txid).is_some() {
+                self.recent_sends.remove(txid);
+                removed.push(*txid);
             }
-            if !removed.is_empty() {
-                self.progress.add_removed(removed.len() as u32);
-                self.progress.set_tracked(state.transactions.len() as u32);
-                tracing::debug!("Removed {} confirmed transactions from mempool", removed.len());
-            }
+        }
+        if !removed.is_empty() {
+            self.progress.add_removed(removed.len() as u32);
+            self.progress.set_tracked(self.transactions.len() as u32);
+            tracing::debug!("Removed {} confirmed transactions from mempool", removed.len());
         }
     }
 
     /// Mark a mempool transaction as InstantSend-locked and notify the wallet.
     ///
-    /// If the transaction hasn't arrived yet, remembers the txid so the lock
+    /// If the transaction hasn't arrived yet, remembers the lock so it
     /// can be applied when the transaction is later received via `handle_tx`.
-    pub(super) async fn mark_instant_send(&mut self, txid: &Txid) {
-        let mut state = self.mempool_state.write().await;
-        let marked = if let Some(tx) = state.transactions.get_mut(txid) {
+    pub(super) async fn process_instant_send(&mut self, instant_lock: InstantLock) {
+        let txid = instant_lock.txid;
+        let instant_lock_opt = if let Some(tx) = self.transactions.get_mut(&txid) {
             tx.is_instant_send = true;
+            self.recent_sends.remove(&txid);
             tracing::debug!("Marked mempool tx {} as InstantSend-locked", txid);
-            true
+            Some(instant_lock)
         } else if self.pending_is_locks.len() < MAX_PENDING_IS_LOCKS {
-            self.pending_is_locks.insert(*txid, Instant::now());
+            self.pending_is_locks.insert(txid, (instant_lock, Instant::now()));
             tracing::debug!("IS lock arrived before tx {}, remembering for later", txid);
-            false
+            None
         } else {
             tracing::warn!(
                 "Pending IS locks at capacity ({}), dropping IS lock for {}",
                 MAX_PENDING_IS_LOCKS,
                 txid
             );
-            false
+            None
         };
-        drop(state);
-        if marked {
+        if let Some(lock) = instant_lock_opt {
             let mut wallet = self.wallet.write().await;
-            wallet.process_instant_send_lock(*txid);
+            wallet.process_instant_send_lock(lock);
         }
     }
 
     /// Prune transactions and pending IS locks older than `timeout`.
-    pub(super) async fn prune_expired(&mut self, timeout: Duration) {
-        let mut state = self.mempool_state.write().await;
-        let pruned = state.prune_expired(timeout);
-        if !pruned.is_empty() {
-            self.progress.add_removed(pruned.len() as u32);
-            self.progress.set_tracked(state.transactions.len() as u32);
-            tracing::debug!("Pruned {} expired mempool transactions", pruned.len());
-            for txid in &pruned {
+    pub(super) fn prune_expired(&mut self, timeout: Duration) {
+        let mut expired_txids = Vec::new();
+        self.transactions.retain(|txid, tx| {
+            if tx.is_expired(timeout) {
+                expired_txids.push(*txid);
+                false
+            } else {
+                true
+            }
+        });
+
+        // Prune old recent sends
+        if let Some(cutoff) = Instant::now().checked_sub(timeout) {
+            self.recent_sends.retain(|_, &mut timestamp| timestamp > cutoff);
+        }
+
+        if !expired_txids.is_empty() {
+            self.progress.add_removed(expired_txids.len() as u32);
+            self.progress.set_tracked(self.transactions.len() as u32);
+            tracing::debug!("Pruned {} expired mempool transactions", expired_txids.len());
+            for txid in &expired_txids {
                 self.pending_is_locks.remove(txid);
             }
         }
 
         // Prune pending IS locks whose transaction never arrived
         let before = self.pending_is_locks.len();
-        self.pending_is_locks.retain(|_, inserted_at| inserted_at.elapsed() < timeout);
+        self.pending_is_locks.retain(|_, (_, inserted_at)| inserted_at.elapsed() < timeout);
         let expired = before - self.pending_is_locks.len();
         if expired > 0 {
             tracing::debug!("Pruned {} expired pending IS locks", expired);
+        }
+    }
+
+    /// Rebroadcast unconfirmed self-sent transactions to all peers.
+    ///
+    /// Each transaction in `recent_sends` tracks when it was last broadcast.
+    /// Transactions whose last broadcast was more than `REBROADCAST_INTERVAL`
+    /// ago are rebroadcast and their timestamp is reset.
+    pub(super) async fn rebroadcast_if_due(&mut self, requests: &RequestSender) {
+        self.rebroadcast_if_due_at(requests, Instant::now()).await
+    }
+
+    /// `now`-injected variant of [`Self::rebroadcast_if_due`]. Tests project `now`
+    /// forward instead of subtracting from `Instant::now()`, which underflows on
+    /// Windows when the QPC-based monotonic clock has a small value at boot.
+    async fn rebroadcast_if_due_at(&mut self, requests: &RequestSender, now: Instant) {
+        let mut count: usize = 0;
+        for (txid, last_broadcast) in &mut self.recent_sends {
+            if now.saturating_duration_since(*last_broadcast) < REBROADCAST_INTERVAL {
+                continue;
+            }
+            if let Some(unconfirmed) = self.transactions.get(txid) {
+                let _ = requests.broadcast(NetworkMessage::Tx(unconfirmed.transaction.clone()));
+                *last_broadcast = now;
+                count += 1;
+            }
+        }
+
+        if count > 0 {
+            tracing::info!("Rebroadcast {} unconfirmed transaction(s) to all peers", count);
         }
     }
 
@@ -497,22 +562,35 @@ mod tests {
     use dashcore::hashes::Hash;
     use dashcore::network::message::NetworkMessage;
     use dashcore::{Address, BlockHash, Network, ScriptBuf, Transaction};
-    use key_wallet::test_utils::MockWallet;
     use key_wallet::transaction_checking::TransactionContext;
+    use key_wallet_manager::test_utils::MockWallet;
 
     use crate::sync::SyncState;
     use crate::test_utils::test_socket_address;
     use tokio::sync::mpsc;
 
+    fn dummy_instant_lock(txid: Txid) -> InstantLock {
+        InstantLock {
+            txid,
+            ..InstantLock::default()
+        }
+    }
+
+    fn rich_instant_lock(txid: Txid) -> InstantLock {
+        InstantLock {
+            txid,
+            cyclehash: BlockHash::from_byte_array([0xab; 32]),
+            ..InstantLock::default()
+        }
+    }
+
     fn create_test_manager(
     ) -> (MempoolManager<MockWallet>, RequestSender, mpsc::UnboundedReceiver<NetworkRequest>) {
         let wallet = Arc::new(RwLock::new(MockWallet::new()));
-        let mempool_state = Arc::new(RwLock::new(MempoolState::default()));
         let (tx, rx) = mpsc::unbounded_channel::<NetworkRequest>();
         let requests = RequestSender::new(tx);
 
-        let mut manager =
-            MempoolManager::new(wallet, mempool_state, MempoolStrategy::FetchAll, 1000, 0);
+        let mut manager = MempoolManager::new(wallet, MempoolStrategy::FetchAll, 1000, 0);
         manager.progress.set_state(SyncState::Synced);
 
         (manager, requests, rx)
@@ -521,12 +599,10 @@ mod tests {
     fn create_bloom_manager(
     ) -> (MempoolManager<MockWallet>, RequestSender, mpsc::UnboundedReceiver<NetworkRequest>) {
         let wallet = Arc::new(RwLock::new(MockWallet::new()));
-        let mempool_state = Arc::new(RwLock::new(MempoolState::default()));
         let (tx, rx) = mpsc::unbounded_channel::<NetworkRequest>();
         let requests = RequestSender::new(tx);
 
-        let manager =
-            MempoolManager::new(wallet, mempool_state, MempoolStrategy::BloomFilter, 1000, 0);
+        let manager = MempoolManager::new(wallet, MempoolStrategy::BloomFilter, 1000, 0);
 
         (manager, requests, rx)
     }
@@ -587,13 +663,11 @@ mod tests {
     #[tokio::test]
     async fn test_handle_inv_capacity_limit() {
         let wallet = Arc::new(RwLock::new(MockWallet::new()));
-        let mempool_state = Arc::new(RwLock::new(MempoolState::default()));
         let (tx, _rx) = mpsc::unbounded_channel::<NetworkRequest>();
         let requests = RequestSender::new(tx);
 
         let mut manager = MempoolManager::new(
             wallet,
-            mempool_state.clone(),
             MempoolStrategy::FetchAll,
             2, // Very small capacity
             0,
@@ -602,25 +676,19 @@ mod tests {
         manager.peers.insert(peer, Some(VecDeque::new()));
 
         // Fill mempool to capacity
-        {
-            let mut state = mempool_state.write().await;
-            for i in 0..2u32 {
-                let tx = Transaction {
-                    version: 1,
-                    lock_time: i,
-                    input: vec![],
-                    output: vec![],
-                    special_transaction_payload: None,
-                };
-                state.add_transaction(UnconfirmedTransaction::new(
-                    tx,
-                    Amount::from_sat(0),
-                    false,
-                    false,
-                    Vec::new(),
-                    0,
-                ));
-            }
+        for i in 0..2u32 {
+            let tx = Transaction {
+                version: 1,
+                lock_time: i,
+                input: vec![],
+                output: vec![],
+                special_transaction_payload: None,
+            };
+            let txid = tx.txid();
+            manager.transactions.insert(
+                txid,
+                UnconfirmedTransaction::new(tx, Amount::from_sat(0), false, false, Vec::new(), 0),
+            );
         }
 
         // New transactions should be filtered out
@@ -634,12 +702,10 @@ mod tests {
     #[tokio::test]
     async fn test_handle_inv_pending_requests_limit() {
         let wallet = Arc::new(RwLock::new(MockWallet::new()));
-        let mempool_state = Arc::new(RwLock::new(MempoolState::default()));
         let (tx, _rx) = mpsc::unbounded_channel::<NetworkRequest>();
         let requests = RequestSender::new(tx);
 
-        let mut manager =
-            MempoolManager::new(wallet, mempool_state, MempoolStrategy::FetchAll, 2, 0);
+        let mut manager = MempoolManager::new(wallet, MempoolStrategy::FetchAll, 2, 0);
         manager.progress.set_state(SyncState::Synced);
         let peer = test_socket_address(1);
         manager.peers.insert(peer, Some(VecDeque::new()));
@@ -660,12 +726,10 @@ mod tests {
     #[test]
     fn test_prune_pending_requests_timeout() {
         let wallet = Arc::new(RwLock::new(MockWallet::new()));
-        let mempool_state = Arc::new(RwLock::new(MempoolState::default()));
         let (tx, _rx) = mpsc::unbounded_channel::<NetworkRequest>();
         let _requests = RequestSender::new(tx);
 
-        let mut manager =
-            MempoolManager::new(wallet, mempool_state, MempoolStrategy::FetchAll, 1000, 0);
+        let mut manager = MempoolManager::new(wallet, MempoolStrategy::FetchAll, 1000, 0);
 
         let fresh_txid = Txid::from_byte_array([1; 32]);
         let stale_txid = Txid::from_byte_array([2; 32]);
@@ -694,14 +758,13 @@ mod tests {
         };
         let txid = tx.txid();
 
-        let events = manager.handle_tx(tx).await.unwrap();
+        let events = manager.handle_tx(tx, test_socket_address(1)).await.unwrap();
         // MockWallet returns is_relevant=false by default
         assert!(events.is_empty());
         assert_eq!(manager.progress.received(), 1);
 
-        // Irrelevant tx should not be stored in mempool state
-        let state = manager.mempool_state.read().await;
-        assert!(!state.transactions.contains_key(&txid));
+        // Irrelevant tx should not be stored
+        assert!(!manager.transactions.contains_key(&txid));
         assert_eq!(manager.progress.relevant(), 0);
     }
 
@@ -722,8 +785,8 @@ mod tests {
         assert_eq!(manager.pending_requests.len(), 1);
     }
 
-    #[tokio::test]
-    async fn test_prune_expired() {
+    #[test]
+    fn test_prune_expired() {
         let (mut manager, _requests, _rx) = create_test_manager();
 
         let fresh_tx = Transaction {
@@ -745,35 +808,26 @@ mod tests {
         let expired_txid = expired_tx.txid();
         let test_timeout = Duration::from_secs(2);
 
-        {
-            let mut state = manager.mempool_state.write().await;
-            state.add_transaction(UnconfirmedTransaction::new(
-                fresh_tx,
-                Amount::from_sat(0),
-                false,
-                false,
-                Vec::new(),
-                0,
-            ));
-            let mut expired_utx = UnconfirmedTransaction::new(
-                expired_tx,
-                Amount::from_sat(0),
-                false,
-                false,
-                Vec::new(),
-                0,
-            );
-            expired_utx.first_seen = Instant::now() - test_timeout - Duration::from_secs(1);
-            state.add_transaction(expired_utx);
-        }
+        manager.transactions.insert(
+            fresh_txid,
+            UnconfirmedTransaction::new(fresh_tx, Amount::from_sat(0), false, false, Vec::new(), 0),
+        );
+        let mut expired_utx = UnconfirmedTransaction::new(
+            expired_tx,
+            Amount::from_sat(0),
+            false,
+            false,
+            Vec::new(),
+            0,
+        );
+        expired_utx.first_seen = Instant::now() - test_timeout - Duration::from_secs(1);
+        manager.transactions.insert(expired_txid, expired_utx);
 
-        manager.prune_expired(test_timeout).await;
+        manager.prune_expired(test_timeout);
 
-        let state = manager.mempool_state.read().await;
-        assert_eq!(state.transactions.len(), 1);
-        assert!(state.transactions.contains_key(&fresh_txid));
-        assert!(!state.transactions.contains_key(&expired_txid));
-        drop(state);
+        assert_eq!(manager.transactions.len(), 1);
+        assert!(manager.transactions.contains_key(&fresh_txid));
+        assert!(!manager.transactions.contains_key(&expired_txid));
         assert_eq!(manager.progress.removed(), 1);
     }
 
@@ -785,17 +839,10 @@ mod tests {
         let mut mock = MockWallet::new();
         mock.set_mempool_relevant(true);
         let wallet = Arc::new(RwLock::new(mock));
-        let mempool_state = Arc::new(RwLock::new(MempoolState::default()));
         let (tx, _rx) = mpsc::unbounded_channel::<NetworkRequest>();
         let requests = RequestSender::new(tx);
 
-        let manager = MempoolManager::new(
-            wallet.clone(),
-            mempool_state,
-            MempoolStrategy::BloomFilter,
-            1000,
-            0,
-        );
+        let manager = MempoolManager::new(wallet.clone(), MempoolStrategy::BloomFilter, 1000, 0);
 
         (manager, requests, wallet)
     }
@@ -813,15 +860,76 @@ mod tests {
         };
         let txid = tx.txid();
 
-        let events = manager.handle_tx(tx).await.unwrap();
+        let events = manager.handle_tx(tx, test_socket_address(1)).await.unwrap();
         assert!(events.is_empty());
 
-        // Verify transaction was stored in mempool state
-        let state = manager.mempool_state.read().await;
-        assert!(state.transactions.contains_key(&txid));
+        // Verify transaction was stored
+        assert!(manager.transactions.contains_key(&txid));
         assert_eq!(manager.progress.received(), 1);
         assert_eq!(manager.progress.relevant(), 1);
         assert_eq!(manager.progress.tracked(), 1);
+
+        // Processing the same transaction again should be a no-op (dedup guard)
+        let tx2 = Transaction {
+            version: 1,
+            lock_time: 0,
+            input: vec![],
+            output: vec![],
+            special_transaction_payload: None,
+        };
+        let events = manager.handle_tx(tx2, test_socket_address(1)).await.unwrap();
+        assert!(events.is_empty());
+
+        assert_eq!(manager.transactions.len(), 1);
+        // Progress counters should not have incremented
+        assert_eq!(manager.progress.received(), 1);
+        assert_eq!(manager.progress.relevant(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_handle_tx_local_records_send() {
+        let (mut manager, _requests, _wallet) = create_relevant_manager();
+
+        let tx = Transaction {
+            version: 2,
+            lock_time: 0,
+            input: vec![],
+            output: vec![],
+            special_transaction_payload: None,
+        };
+        let txid = tx.txid();
+
+        // Use the unspecified address to simulate a locally broadcast transaction
+        let local_addr = SocketAddr::from(([0, 0, 0, 0], 0));
+        manager.handle_tx(tx, local_addr).await.unwrap();
+
+        assert!(manager.transactions.contains_key(&txid));
+        assert!(
+            manager.recent_sends.contains_key(&txid),
+            "locally dispatched transaction should be recorded as a recent send"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_handle_tx_remote_does_not_record_send() {
+        let (mut manager, _requests, _wallet) = create_relevant_manager();
+
+        let tx = Transaction {
+            version: 3,
+            lock_time: 0,
+            input: vec![],
+            output: vec![],
+            special_transaction_payload: None,
+        };
+        let txid = tx.txid();
+
+        manager.handle_tx(tx, test_socket_address(1)).await.unwrap();
+
+        assert!(manager.transactions.contains_key(&txid));
+        assert!(
+            !manager.recent_sends.contains_key(&txid),
+            "peer-received transaction should not be recorded as a recent send"
+        );
     }
 
     #[tokio::test]
@@ -841,13 +949,12 @@ mod tests {
         manager.pending_requests.insert(txid, Instant::now());
         assert!(manager.pending_requests.contains_key(&txid));
 
-        manager.handle_tx(tx).await.unwrap();
+        manager.handle_tx(tx, test_socket_address(1)).await.unwrap();
         // Pending request should be cleared regardless of relevance
         assert!(!manager.pending_requests.contains_key(&txid));
 
         // Since the manager uses BloomFilter strategy (relevant mock), tx should be stored
-        let state = manager.mempool_state.read().await;
-        assert!(state.transactions.contains_key(&txid));
+        assert!(manager.transactions.contains_key(&txid));
     }
 
     fn create_bloom_manager_with_addresses(
@@ -856,12 +963,10 @@ mod tests {
         let mut mock = MockWallet::new();
         mock.set_addresses(addresses);
         let wallet = Arc::new(RwLock::new(mock));
-        let mempool_state = Arc::new(RwLock::new(MempoolState::default()));
         let (tx, rx) = mpsc::unbounded_channel::<NetworkRequest>();
         let requests = RequestSender::new(tx);
 
-        let manager =
-            MempoolManager::new(wallet, mempool_state, MempoolStrategy::BloomFilter, 1000, 0);
+        let manager = MempoolManager::new(wallet, MempoolStrategy::BloomFilter, 1000, 0);
 
         (manager, requests, rx)
     }
@@ -905,31 +1010,27 @@ mod tests {
             special_transaction_payload: None,
         };
         let txid = tx.txid();
-        {
-            let mut state = manager.mempool_state.write().await;
-            state.add_transaction(UnconfirmedTransaction::new(
-                tx,
-                Amount::from_sat(0),
-                false,
-                false,
-                Vec::new(),
-                0,
-            ));
-        }
+        manager.transactions.insert(
+            txid,
+            UnconfirmedTransaction::new(tx, Amount::from_sat(0), false, false, Vec::new(), 0),
+        );
+        manager.recent_sends.insert(txid, Instant::now());
 
-        manager.mark_instant_send(&txid).await;
+        manager.process_instant_send(dummy_instant_lock(txid)).await;
 
-        // Verify mempool state also reflects IS flag
-        let state = manager.mempool_state.read().await;
-        assert!(state.transactions.get(&txid).unwrap().is_instant_send);
-        drop(state);
+        // Verify IS flag and recent_sends cleanup
+        assert!(manager.transactions.get(&txid).unwrap().is_instant_send);
+        assert!(
+            !manager.recent_sends.contains_key(&txid),
+            "IS-locked transaction should be removed from recent_sends"
+        );
 
         let wallet = manager.wallet.read().await;
         let status_changes = wallet.status_changes();
         let changes = status_changes.lock().await;
         assert_eq!(changes.len(), 1);
         assert_eq!(changes[0].0, txid);
-        assert_eq!(changes[0].1, TransactionContext::InstantSend);
+        assert!(matches!(changes[0].1, TransactionContext::InstantSend(_)));
     }
 
     #[tokio::test]
@@ -937,7 +1038,7 @@ mod tests {
         let (mut manager, _requests, _rx) = create_test_manager();
 
         let unknown_txid = Txid::from_byte_array([0xbb; 32]);
-        manager.mark_instant_send(&unknown_txid).await;
+        manager.process_instant_send(dummy_instant_lock(unknown_txid)).await;
 
         // No immediate wallet notification
         let wallet = manager.wallet.read().await;
@@ -1028,18 +1129,11 @@ mod tests {
         // Enqueue the txid on an activated peer
         manager.peers.insert(peer, Some(VecDeque::from([txid])));
 
-        // Simulate the transaction arriving in mempool_state before send
-        {
-            let mut state = manager.mempool_state.write().await;
-            state.add_transaction(UnconfirmedTransaction::new(
-                tx,
-                Amount::from_sat(0),
-                false,
-                false,
-                Vec::new(),
-                0,
-            ));
-        }
+        // Simulate the transaction arriving before send
+        manager.transactions.insert(
+            txid,
+            UnconfirmedTransaction::new(tx, Amount::from_sat(0), false, false, Vec::new(), 0),
+        );
 
         manager.send_queued(&requests).await.unwrap();
         // Txid should have been skipped, not added to pending
@@ -1055,7 +1149,8 @@ mod tests {
         manager
             .peers
             .insert(test_socket_address(1), Some(VecDeque::from([Txid::from_byte_array([2; 32])])));
-        manager.pending_is_locks.insert(Txid::from_byte_array([3; 32]), Instant::now());
+        let txid3 = Txid::from_byte_array([3; 32]);
+        manager.pending_is_locks.insert(txid3, (dummy_instant_lock(txid3), Instant::now()));
 
         manager.clear_pending();
 
@@ -1092,7 +1187,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_instant_send_before_transaction() {
-        let (mut manager, _requests, _wallet) = create_relevant_manager();
+        let (mut manager, _requests, wallet) = create_relevant_manager();
 
         let tx = Transaction {
             version: 1,
@@ -1103,19 +1198,29 @@ mod tests {
         };
         let txid = tx.txid();
 
-        // IS lock arrives before the transaction
-        manager.mark_instant_send(&txid).await;
+        // IS lock arrives before the transaction (with a distinct cyclehash)
+        manager.process_instant_send(rich_instant_lock(txid)).await;
         assert!(manager.pending_is_locks.contains_key(&txid));
 
         // Transaction arrives
-        manager.handle_tx(tx).await.unwrap();
+        manager.handle_tx(tx, test_socket_address(1)).await.unwrap();
 
         // Pending IS lock consumed
         assert!(manager.pending_is_locks.is_empty());
 
         // Transaction stored with IS flag set
-        let state = manager.mempool_state.read().await;
-        assert!(state.transactions.get(&txid).unwrap().is_instant_send);
+        assert!(manager.transactions.get(&txid).unwrap().is_instant_send);
+
+        // Wallet received the IS lock payload with the correct cyclehash
+        let w = wallet.read().await;
+        let locks = w.processed_instant_locks.lock().await;
+        let received = locks.iter().find(|(id, lock)| {
+            *id == txid
+                && lock
+                    .as_ref()
+                    .is_some_and(|l| l.cyclehash == BlockHash::from_byte_array([0xab; 32]))
+        });
+        assert!(received.is_some(), "wallet should have received rich IS lock with cyclehash 0xab");
     }
 
     #[tokio::test]
@@ -1132,18 +1237,17 @@ mod tests {
         let txid = tx.txid();
 
         // IS lock arrives before the transaction
-        manager.mark_instant_send(&txid).await;
+        manager.process_instant_send(dummy_instant_lock(txid)).await;
         assert!(manager.pending_is_locks.contains_key(&txid));
 
         // Transaction arrives but wallet says it's not relevant
-        manager.handle_tx(tx).await.unwrap();
+        manager.handle_tx(tx, test_socket_address(1)).await.unwrap();
 
         // Pending IS lock cleaned up (no leak)
         assert!(manager.pending_is_locks.is_empty());
 
-        // Irrelevant tx should not be stored in mempool state
-        let state = manager.mempool_state.read().await;
-        assert!(!state.transactions.contains_key(&txid));
+        // Irrelevant tx should not be stored
+        assert!(!manager.transactions.contains_key(&txid));
     }
 
     #[tokio::test]
@@ -1154,19 +1258,20 @@ mod tests {
         for i in 0..MAX_PENDING_IS_LOCKS {
             let mut bytes = [0u8; 32];
             bytes[0..8].copy_from_slice(&(i as u64).to_le_bytes());
-            manager.pending_is_locks.insert(Txid::from_byte_array(bytes), Instant::now());
+            let txid = Txid::from_byte_array(bytes);
+            manager.pending_is_locks.insert(txid, (dummy_instant_lock(txid), Instant::now()));
         }
         assert_eq!(manager.pending_is_locks.len(), MAX_PENDING_IS_LOCKS);
 
         // Next IS lock should be dropped
         let overflow_txid = Txid::from_byte_array([0xff; 32]);
-        manager.mark_instant_send(&overflow_txid).await;
+        manager.process_instant_send(dummy_instant_lock(overflow_txid)).await;
         assert!(!manager.pending_is_locks.contains_key(&overflow_txid));
         assert_eq!(manager.pending_is_locks.len(), MAX_PENDING_IS_LOCKS);
     }
 
-    #[tokio::test]
-    async fn test_prune_expired_removes_is_lock_for_expired_tx() {
+    #[test]
+    fn test_prune_expired_removes_is_lock_for_expired_tx() {
         let (mut manager, _requests, _rx) = create_test_manager();
 
         let tx = Transaction {
@@ -1181,20 +1286,19 @@ mod tests {
         let test_timeout = Duration::from_secs(2);
 
         // Add the tx with a timestamp in the past so it expires
-        {
-            let mut state = manager.mempool_state.write().await;
-            let mut utx =
-                UnconfirmedTransaction::new(tx, Amount::from_sat(0), false, false, Vec::new(), 0);
-            utx.first_seen = Instant::now() - test_timeout - Duration::from_secs(1);
-            state.add_transaction(utx);
-        }
+        let mut utx =
+            UnconfirmedTransaction::new(tx, Amount::from_sat(0), false, false, Vec::new(), 0);
+        utx.first_seen = Instant::now() - test_timeout - Duration::from_secs(1);
+        manager.transactions.insert(txid, utx);
 
         // Also store a pending IS lock for this txid and an unrelated one
         let unrelated_txid = Txid::from_byte_array([0xdd; 32]);
-        manager.pending_is_locks.insert(txid, Instant::now());
-        manager.pending_is_locks.insert(unrelated_txid, Instant::now());
+        manager.pending_is_locks.insert(txid, (dummy_instant_lock(txid), Instant::now()));
+        manager
+            .pending_is_locks
+            .insert(unrelated_txid, (dummy_instant_lock(unrelated_txid), Instant::now()));
 
-        manager.prune_expired(test_timeout).await;
+        manager.prune_expired(test_timeout);
 
         // The expired tx's IS lock should be removed
         assert!(
@@ -1208,23 +1312,29 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn test_prune_expired_removes_stale_pending_is_locks() {
+    #[test]
+    fn test_prune_expired_removes_stale_pending_is_locks() {
         let (mut manager, _requests, _rx) = create_test_manager();
 
         let test_timeout = Duration::from_secs(2);
 
         // Insert a pending IS lock that is older than the test timeout
         let stale_txid = Txid::from_byte_array([0xaa; 32]);
-        manager
-            .pending_is_locks
-            .insert(stale_txid, Instant::now() - test_timeout - Duration::from_secs(1));
+        manager.pending_is_locks.insert(
+            stale_txid,
+            (
+                dummy_instant_lock(stale_txid),
+                Instant::now() - test_timeout - Duration::from_secs(1),
+            ),
+        );
 
         // Insert a fresh pending IS lock
         let fresh_txid = Txid::from_byte_array([0xbb; 32]);
-        manager.pending_is_locks.insert(fresh_txid, Instant::now());
+        manager
+            .pending_is_locks
+            .insert(fresh_txid, (dummy_instant_lock(fresh_txid), Instant::now()));
 
-        manager.prune_expired(test_timeout).await;
+        manager.prune_expired(test_timeout);
 
         assert!(
             !manager.pending_is_locks.contains_key(&stale_txid),
@@ -1273,12 +1383,10 @@ mod tests {
         let mut mock = MockWallet::new();
         mock.set_addresses(vec![addr]);
         let wallet = Arc::new(RwLock::new(mock));
-        let mempool_state = Arc::new(RwLock::new(MempoolState::default()));
         let (tx, rx) = mpsc::unbounded_channel::<NetworkRequest>();
         let requests = RequestSender::new(tx);
 
-        let mut manager =
-            MempoolManager::new(wallet, mempool_state, MempoolStrategy::BloomFilter, 1000, 0);
+        let mut manager = MempoolManager::new(wallet, MempoolStrategy::BloomFilter, 1000, 0);
 
         // Drop receiver so send_filter_load fails
         drop(rx);
@@ -1301,16 +1409,17 @@ mod tests {
         };
         let txid = tx.txid();
 
-        // Set effect data on the mock wallet before handle_tx
+        let addr: Address =
+            "yWdXnYxGbouNoo8yMvcbZmZ3Gdp6BpySxL".parse::<Address<_>>().unwrap().assume_checked();
         {
-            let w = wallet.read().await;
-            w.set_effect(txid, 50000, vec!["yWdXnYxGbouNoo8yMvcbZmZ3Gdp6BpySxL".into()]).await;
+            let mut w = wallet.write().await;
+            w.set_mempool_net_amount(50000);
+            w.set_mempool_addresses(vec![addr.clone()]);
         }
 
-        manager.handle_tx(tx).await.unwrap();
+        manager.handle_tx(tx, test_socket_address(1)).await.unwrap();
 
-        let state = manager.mempool_state.read().await;
-        let stored = state.transactions.get(&txid).unwrap();
+        let stored = manager.transactions.get(&txid).unwrap();
         assert_eq!(stored.net_amount, 50000);
         assert!(!stored.is_outgoing);
         assert!(!stored.is_instant_send);
@@ -1332,14 +1441,13 @@ mod tests {
         let txid = tx.txid();
 
         {
-            let w = wallet.read().await;
-            w.set_effect(txid, -30000, vec![]).await;
+            let mut w = wallet.write().await;
+            w.set_mempool_net_amount(-30000);
         }
 
-        manager.handle_tx(tx).await.unwrap();
+        manager.handle_tx(tx, test_socket_address(1)).await.unwrap();
 
-        let state = manager.mempool_state.read().await;
-        let stored = state.transactions.get(&txid).unwrap();
+        let stored = manager.transactions.get(&txid).unwrap();
         assert_eq!(stored.net_amount, -30000);
         assert!(stored.is_outgoing);
         assert!(!stored.is_instant_send);
@@ -1422,57 +1530,52 @@ mod tests {
         assert!(manager.peers.is_empty());
     }
 
-    #[tokio::test]
-    async fn test_remove_confirmed_removes_txids() {
+    #[test]
+    fn test_remove_confirmed_removes_txids() {
         let (mut manager, _requests, _rx) = create_test_manager();
 
         let mut txids = Vec::new();
-        {
-            let mut state = manager.mempool_state.write().await;
-            for i in 0..3u32 {
-                let tx = Transaction {
-                    version: 1,
-                    lock_time: i,
-                    input: vec![],
-                    output: vec![],
-                    special_transaction_payload: None,
-                };
-                let txid = tx.txid();
-                txids.push(txid);
-                state.add_transaction(UnconfirmedTransaction::new(
-                    tx,
-                    Amount::from_sat(0),
-                    false,
-                    false,
-                    Vec::new(),
-                    0,
-                ));
-            }
-            assert_eq!(state.transactions.len(), 3);
+        for i in 0..3u32 {
+            let tx = Transaction {
+                version: 1,
+                lock_time: i,
+                input: vec![],
+                output: vec![],
+                special_transaction_payload: None,
+            };
+            let txid = tx.txid();
+            txids.push(txid);
+            manager.transactions.insert(
+                txid,
+                UnconfirmedTransaction::new(tx, Amount::from_sat(0), false, false, Vec::new(), 0),
+            );
         }
+        assert_eq!(manager.transactions.len(), 3);
+        // Mark two as recent sends
+        manager.recent_sends.insert(txids[0], Instant::now());
+        manager.recent_sends.insert(txids[1], Instant::now());
 
         // Remove 2 of the 3 transactions
-        manager.remove_confirmed(&txids[..2]).await;
+        manager.remove_confirmed(&txids[..2]);
 
-        let state = manager.mempool_state.read().await;
-        assert_eq!(state.transactions.len(), 1);
-        assert!(state.transactions.contains_key(&txids[2]));
-        drop(state);
+        assert_eq!(manager.transactions.len(), 1);
+        assert!(manager.transactions.contains_key(&txids[2]));
+        assert!(!manager.recent_sends.contains_key(&txids[0]));
+        assert!(!manager.recent_sends.contains_key(&txids[1]));
 
         assert_eq!(manager.progress.removed(), 2);
         assert_eq!(manager.progress.tracked(), 1);
     }
 
-    #[tokio::test]
-    async fn test_remove_confirmed_unknown_txids_noop() {
+    #[test]
+    fn test_remove_confirmed_unknown_txids_noop() {
         let (mut manager, _requests, _rx) = create_test_manager();
 
         let unknown = vec![Txid::from_byte_array([0xaa; 32]), Txid::from_byte_array([0xbb; 32])];
 
-        manager.remove_confirmed(&unknown).await;
+        manager.remove_confirmed(&unknown);
 
-        let state = manager.mempool_state.read().await;
-        assert!(state.transactions.is_empty());
+        assert!(manager.transactions.is_empty());
         assert_eq!(manager.progress.removed(), 0);
     }
 
@@ -1532,6 +1635,69 @@ mod tests {
             manager.pending_requests.contains_key(&txid),
             "expired seen txid should be accepted"
         );
+    }
+
+    #[tokio::test]
+    async fn test_rebroadcast_sends_old_recent_sends() {
+        let (mut manager, requests, mut rx) = create_test_manager();
+
+        let tx = Transaction {
+            version: 10,
+            lock_time: 0,
+            input: vec![],
+            output: vec![],
+            special_transaction_payload: None,
+        };
+        let txid = tx.txid();
+
+        let t0 = Instant::now();
+        let later = t0 + REBROADCAST_INTERVAL + Duration::from_secs(1);
+
+        manager.transactions.insert(
+            txid,
+            UnconfirmedTransaction::new(tx, Amount::from_sat(0), false, true, Vec::new(), -100_000),
+        );
+        manager.recent_sends.insert(txid, t0);
+
+        manager.rebroadcast_if_due_at(&requests, later).await;
+
+        // Should have sent a BroadcastMessage for the transaction
+        let msg = rx.try_recv().expect("expected a rebroadcast message");
+        assert!(
+            matches!(msg, NetworkRequest::BroadcastMessage(NetworkMessage::Tx(_))),
+            "expected BroadcastMessage(Tx), got {:?}",
+            msg
+        );
+
+        // Timestamp should be reset to `later`, so a second call at the same instant
+        // must not rebroadcast.
+        manager.rebroadcast_if_due_at(&requests, later).await;
+        assert!(rx.try_recv().is_err(), "should not rebroadcast immediately after reset");
+    }
+
+    #[tokio::test]
+    async fn test_rebroadcast_skips_recent_transactions() {
+        let (mut manager, requests, mut rx) = create_test_manager();
+
+        let tx = Transaction {
+            version: 11,
+            lock_time: 0,
+            input: vec![],
+            output: vec![],
+            special_transaction_payload: None,
+        };
+        let txid = tx.txid();
+
+        // Add a transaction that was just sent (within the rebroadcast interval)
+        manager.transactions.insert(
+            txid,
+            UnconfirmedTransaction::new(tx, Amount::from_sat(0), false, true, Vec::new(), -50_000),
+        );
+        manager.recent_sends.insert(txid, Instant::now());
+
+        manager.rebroadcast_if_due(&requests).await;
+
+        assert!(rx.try_recv().is_err(), "recently sent transactions should not be rebroadcast");
     }
 
     #[test]

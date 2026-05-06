@@ -136,14 +136,16 @@ fn test_wallet_creation_watch_only() {
     assert!(!wallet.has_mnemonic());
     assert!(!wallet.is_external_signable());
 
-    // Verify public key is stored
-    match &wallet.wallet_type {
-        WalletType::WatchOnly(_) => {
-            // Check that it's a watch-only wallet type
-            assert!(wallet.is_watch_only());
-        }
-        _ => panic!("Expected watch-only wallet type"),
-    }
+    // The unit variant carries no key material on the WalletType side
+    assert!(matches!(wallet.wallet_type, WalletType::WatchOnly));
+    assert!(wallet.is_watch_only());
+    assert!(wallet.root_extended_pub_key().is_err());
+
+    // But the wallet id must still equal the hash of the source root xpub
+    // (`from_xpub` derives the id from the xpub at construction time).
+    let expected_id = Wallet::compute_wallet_id_from_root_extended_pub_key(&root_pub_key);
+    assert_eq!(wallet.wallet_id, expected_id);
+    assert_eq!(wallet.compute_wallet_id(), expected_id);
 }
 
 #[test]
@@ -400,10 +402,11 @@ fn test_wallet_external_signable() {
     assert!(wallet.can_sign()); // Can sign with external signer
     assert!(!wallet.is_watch_only()); // Not purely watch-only
 
-    match &wallet.wallet_type {
-        WalletType::ExternalSignable(key) => {
-            assert_eq!(key.root_public_key, root_pub_key.root_public_key);
-        }
-        _ => panic!("Expected external signable wallet type"),
-    }
+    // Unit variant carries no root key material; the wallet id is the hash
+    // of the root xpub fed into `from_external_signable`.
+    assert!(matches!(wallet.wallet_type, WalletType::ExternalSignable));
+    assert!(wallet.root_extended_pub_key().is_err());
+    let expected_id = Wallet::compute_wallet_id_from_root_extended_pub_key(&root_pub_key);
+    assert_eq!(wallet.wallet_id, expected_id);
+    assert_eq!(wallet.compute_wallet_id(), expected_id);
 }

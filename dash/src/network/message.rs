@@ -488,7 +488,7 @@ impl Decodable for RawNetworkMessage {
                 actual,
             }) => {
                 // Include message command and magic in logging to aid diagnostics
-                log::warn!(
+                tracing::warn!(
                     "Invalid payload checksum for network message '{}' (magic {:#x}): expected {:02x?}, actual {:02x?}",
                     cmd.0,
                     magic,

@@ -1,20 +1,20 @@
 //! Tests for transaction routing logic
 
-use super::helpers::test_addr;
+use super::helpers::{test_addr, test_block_info};
 use crate::account::{AccountType, StandardAccountType};
 use crate::managed_account::address_pool::KeySource;
+use crate::managed_account::managed_account_trait::ManagedAccountTrait;
 use crate::managed_account::managed_account_type::ManagedAccountType;
 use crate::test_utils::TestWalletContext;
 use crate::transaction_checking::transaction_router::{
     AccountTypeToCheck, TransactionRouter, TransactionType,
 };
-use crate::transaction_checking::{BlockInfo, TransactionContext, WalletTransactionChecker};
+use crate::transaction_checking::{TransactionContext, WalletTransactionChecker};
 use crate::wallet::initialization::WalletAccountCreationOptions;
 use crate::wallet::{ManagedWalletInfo, Wallet};
 use crate::Network;
 use dashcore::blockdata::transaction::Transaction;
-use dashcore::hashes::Hash;
-use dashcore::{BlockHash, ScriptBuf, TxOut};
+use dashcore::{ScriptBuf, TxOut};
 
 #[test]
 fn test_standard_transaction_routing() {
@@ -45,11 +45,7 @@ async fn test_transaction_routing_to_bip44_account() {
     });
 
     // Check the transaction using the wallet's managed info
-    let context = TransactionContext::InBlock(BlockInfo::new(
-        100000,
-        BlockHash::from_slice(&[0u8; 32]).expect("Failed to create block hash from bytes"),
-        1234567890,
-    ));
+    let context = TransactionContext::InBlock(test_block_info(100000));
 
     // Check the transaction using the managed wallet info
     let result = managed_wallet_info
@@ -82,7 +78,7 @@ async fn test_transaction_routing_to_bip32_account() {
     wallet.add_account(account_type, None).expect("Failed to add account to wallet");
 
     let mut managed_wallet_info =
-        ManagedWalletInfo::from_wallet_with_name(&wallet, "Test".to_string());
+        ManagedWalletInfo::from_wallet_with_name(&wallet, "Test".to_string(), 0);
 
     // Get the account's xpub for address derivation
     let account = wallet
@@ -113,15 +109,12 @@ async fn test_transaction_routing_to_bip32_account() {
     });
 
     // Check the transaction using the managed wallet info
-    let context = TransactionContext::InBlock(BlockInfo::new(
-        100000,
-        BlockHash::from_slice(&[0u8; 32]).expect("Failed to create block hash from bytes"),
-        1234567890,
-    ));
+    let context = TransactionContext::InBlock(test_block_info(100000));
 
     // Check with update_state = false
-    let result =
-        managed_wallet_info.check_core_transaction(&tx, context, &mut wallet, false, true).await;
+    let result = managed_wallet_info
+        .check_core_transaction(&tx, context.clone(), &mut wallet, false, true)
+        .await;
 
     // The transaction should be recognized as relevant
     assert!(result.is_relevant, "Transaction should be relevant to the BIP32 account");
@@ -167,7 +160,7 @@ async fn test_transaction_routing_to_coinjoin_account() {
     wallet.add_account(account_type, None).expect("Failed to add account to wallet");
 
     let mut managed_wallet_info =
-        ManagedWalletInfo::from_wallet_with_name(&wallet, "Test".to_string());
+        ManagedWalletInfo::from_wallet_with_name(&wallet, "Test".to_string(), 0);
 
     // Get the account's xpub
     let account = wallet
@@ -191,7 +184,7 @@ async fn test_transaction_routing_to_coinjoin_account() {
             if let ManagedAccountType::CoinJoin {
                 addresses,
                 ..
-            } = &mut managed_account.account_type
+            } = managed_account.managed_account_type_mut()
             {
                 addresses.next_unused(&KeySource::Public(xpub), true).unwrap_or_else(|_| {
                     // If that fails, generate a dummy address for testing
@@ -233,11 +226,7 @@ async fn test_transaction_routing_to_coinjoin_account() {
         script_pubkey: ScriptBuf::new(),
     });
 
-    let context = TransactionContext::InBlock(BlockInfo::new(
-        100000,
-        BlockHash::from_slice(&[0u8; 32]).expect("Failed to create block hash from bytes"),
-        1234567890,
-    ));
+    let context = TransactionContext::InBlock(test_block_info(100000));
 
     let result =
         managed_wallet_info.check_core_transaction(&tx, context, &mut wallet, true, true).await;
@@ -270,7 +259,7 @@ async fn test_transaction_affects_multiple_accounts() {
     wallet.add_account(account_type, None).expect("Failed to add account to wallet");
 
     let mut managed_wallet_info =
-        ManagedWalletInfo::from_wallet_with_name(&wallet, "Test".to_string());
+        ManagedWalletInfo::from_wallet_with_name(&wallet, "Test".to_string(), 0);
 
     // Get addresses from different accounts
 
@@ -334,17 +323,13 @@ async fn test_transaction_affects_multiple_accounts() {
         script_pubkey: address2.script_pubkey(),
     });
 
-    let context = TransactionContext::InBlock(BlockInfo::new(
-        100000,
-        BlockHash::from_slice(&[0u8; 32]).expect("Failed to create block hash from bytes"),
-        1234567890,
-    ));
+    let context = TransactionContext::InBlock(test_block_info(100000));
 
     // Check the transaction
     let result = managed_wallet_info
         .check_core_transaction(
             &tx,
-            context,
+            context.clone(),
             &mut wallet,
             true, // update state
             true, // update balance
@@ -378,7 +363,7 @@ fn test_next_address_method_restrictions() {
     let wallet = Wallet::new_random(Network::Testnet, WalletAccountCreationOptions::Default)
         .expect("Failed to create wallet with default options");
     let mut managed_wallet_info =
-        ManagedWalletInfo::from_wallet_with_name(&wallet, "Test".to_string());
+        ManagedWalletInfo::from_wallet_with_name(&wallet, "Test".to_string(), 0);
 
     // Test that standard BIP44 accounts reject next_address
     {

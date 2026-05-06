@@ -184,35 +184,6 @@ pub struct FilterMatch {
     pub block_requested: bool,
 }
 
-/// Mempool balance information.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct MempoolBalance {
-    /// Pending balance from mempool transactions (not InstantLocked).
-    pub pending: dashcore::Amount,
-
-    /// Pending balance from InstantLocked mempool transactions.
-    pub pending_instant: dashcore::Amount,
-}
-
-/// Reason for removing a transaction from mempool.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub enum MempoolRemovalReason {
-    /// Transaction expired (exceeded timeout).
-    Expired,
-    /// Transaction was replaced by another transaction.
-    Replaced {
-        by_txid: Txid,
-    },
-    /// Transaction was double-spent.
-    DoubleSpent {
-        conflicting_txid: Txid,
-    },
-    /// Transaction was included in a block.
-    Confirmed,
-    /// Manual removal (e.g., user action).
-    Manual,
-}
-
 /// Unconfirmed transaction in mempool.
 #[derive(Debug, Clone)]
 pub struct UnconfirmedTransaction {
@@ -274,87 +245,5 @@ impl UnconfirmedTransaction {
             return 0.0;
         }
         self.fee.to_sat() as f64 / self.size as f64
-    }
-}
-
-/// Mempool state tracking.
-#[derive(Debug, Clone, Default)]
-pub struct MempoolState {
-    /// Currently tracked unconfirmed transactions.
-    pub transactions: std::collections::HashMap<Txid, UnconfirmedTransaction>,
-    /// Recent sends (txid -> timestamp) for Selective strategy.
-    pub recent_sends: std::collections::HashMap<Txid, Instant>,
-    /// Total pending balance change.
-    pub pending_balance: i64,
-    /// Total pending InstantSend balance.
-    pub pending_instant_balance: i64,
-}
-
-impl MempoolState {
-    /// Add a transaction to mempool.
-    pub fn add_transaction(&mut self, tx: UnconfirmedTransaction) {
-        if tx.is_instant_send {
-            self.pending_instant_balance += tx.net_amount;
-        } else {
-            self.pending_balance += tx.net_amount;
-        }
-
-        let txid = tx.txid();
-        self.transactions.insert(txid, tx);
-    }
-
-    /// Remove a transaction from mempool.
-    pub fn remove_transaction(&mut self, txid: &Txid) -> Option<UnconfirmedTransaction> {
-        if let Some(tx) = self.transactions.remove(txid) {
-            if tx.is_instant_send {
-                self.pending_instant_balance -= tx.net_amount;
-            } else {
-                self.pending_balance -= tx.net_amount;
-            }
-            Some(tx)
-        } else {
-            None
-        }
-    }
-
-    /// Prune expired transactions.
-    pub fn prune_expired(&mut self, timeout: Duration) -> Vec<Txid> {
-        let mut expired = Vec::new();
-
-        self.transactions.retain(|txid, tx| {
-            if tx.is_expired(timeout) {
-                expired.push(*txid);
-                if tx.is_instant_send {
-                    self.pending_instant_balance -= tx.net_amount;
-                } else {
-                    self.pending_balance -= tx.net_amount;
-                }
-                false
-            } else {
-                true
-            }
-        });
-
-        // Also prune old recent sends
-        if let Some(cutoff) = Instant::now().checked_sub(timeout) {
-            self.recent_sends.retain(|_, &mut timestamp| timestamp > cutoff);
-        }
-
-        expired
-    }
-
-    /// Record a recent send.
-    pub fn record_send(&mut self, txid: Txid) {
-        self.recent_sends.insert(txid, Instant::now());
-    }
-
-    /// Check if a transaction was recently sent.
-    pub fn is_recent_send(&self, txid: &Txid, window: Duration) -> bool {
-        self.recent_sends.get(txid).map(|&timestamp| timestamp.elapsed() < window).unwrap_or(false)
-    }
-
-    /// Get total pending balance (regular + InstantSend).
-    pub fn total_pending_balance(&self) -> i64 {
-        self.pending_balance + self.pending_instant_balance
     }
 }

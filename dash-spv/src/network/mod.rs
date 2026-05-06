@@ -47,6 +47,8 @@ pub enum NetworkRequest {
     SendMessage(NetworkMessage),
     /// Send a message to a specific peer.
     SendMessageToPeer(NetworkMessage, SocketAddr),
+    /// Broadcast a message to all connected peers.
+    BroadcastMessage(NetworkMessage),
 }
 
 /// Handle for managers to queue outgoing network requests.
@@ -81,6 +83,13 @@ impl RequestSender {
             .map_err(|e| NetworkError::ProtocolError(e.to_string()))
     }
 
+    /// Queue a message to be broadcast to all connected peers.
+    pub(crate) fn broadcast(&self, msg: NetworkMessage) -> NetworkResult<()> {
+        self.tx
+            .send(NetworkRequest::BroadcastMessage(msg))
+            .map_err(|e| NetworkError::ProtocolError(e.to_string()))
+    }
+
     /// Request inventory from a specific peer.
     pub fn request_inventory(
         &self,
@@ -95,6 +104,20 @@ impl RequestSender {
             vec![start_hash],
             BlockHash::all_zeros(),
         )))
+    }
+
+    pub fn request_block_headers_from_peer(
+        &self,
+        start_hash: BlockHash,
+        address: SocketAddr,
+    ) -> NetworkResult<()> {
+        self.send_message_to_peer(
+            NetworkMessage::GetHeaders(GetHeadersMessage::new(
+                vec![start_hash],
+                BlockHash::all_zeros(),
+            )),
+            address,
+        )
     }
 
     pub fn request_filter_headers(
@@ -166,9 +189,6 @@ impl RequestSender {
 /// Network manager trait for abstracting network operations.
 #[async_trait]
 pub trait NetworkManager: Send + Sync + 'static {
-    /// Convert to Any for downcasting.
-    fn as_any(&self) -> &dyn std::any::Any;
-
     /// Creates and returns a receiver that yields only messages of the matching the provided message types.
     async fn message_receiver(&mut self, types: &[MessageType]) -> UnboundedReceiver<Message>;
 
@@ -222,6 +242,18 @@ pub trait NetworkManager: Send + Sync + 'static {
 
         Ok(())
     }
+
+    /// Broadcast a message to all connected peers.
+    async fn broadcast(&self, _message: NetworkMessage) -> NetworkResult<()>;
+
+    /// Inject a message into the local message dispatcher as if received from a peer.
+    ///
+    /// Used for locally-originated messages (e.g., self-broadcast transactions) that
+    /// should be processed through the same pipeline as peer-received messages.
+    async fn dispatch_local(&self, message: NetworkMessage);
+
+    /// Disconnect a specific peer by address.
+    async fn disconnect_peer(&self, _addr: &SocketAddr, _reason: &str) -> NetworkResult<()>;
 
     /// Subscribe to network events (peer connections, disconnections).
     ///

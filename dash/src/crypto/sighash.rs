@@ -632,7 +632,7 @@ impl<R: Borrow<Transaction>> SighashCache<R> {
         self.tx.borrow().version.consensus_encode(&mut writer)?;
 
         // nTransactionType (2): the nTxType of the transaction.
-        (self.tx.borrow().tx_type() as u16).consensus_encode(&mut writer)?;
+        self.tx.borrow().tx_type().to_u16().consensus_encode(&mut writer)?;
 
         // nLockTime (4): the nLockTime of the transaction.
         self.tx.borrow().lock_time.consensus_encode(&mut writer)?;

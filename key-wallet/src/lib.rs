@@ -35,11 +35,10 @@ pub mod dip9;
 pub mod error;
 pub mod gap_limit;
 pub mod managed_account;
-#[cfg(feature = "manager")]
-pub mod manager;
 pub mod mnemonic;
 pub mod psbt;
 pub mod seed;
+pub mod signer;
 pub mod transaction_checking;
 pub(crate) mod utils;
 pub mod utxo;
@@ -63,6 +62,7 @@ pub use managed_account::managed_platform_account::ManagedPlatformAccount;
 pub use managed_account::platform_address::PlatformP2PKHAddress;
 pub use mnemonic::Mnemonic;
 pub use seed::Seed;
+pub use signer::{Signer, SignerMethod, TransactionCategory};
 pub use utxo::Utxo;
 pub use wallet::{balance::WalletCoreBalance, Wallet};
 

@@ -127,7 +127,7 @@ mod tests {
         .unwrap();
 
         // Get the wallet's root extended public key
-        let root_xpub = wallet.root_extended_pub_key();
+        let root_xpub = wallet.root_extended_pub_key().unwrap();
         let root_xpub_as_extended = root_xpub.to_extended_pub_key(Network::Testnet);
 
         // Create watch-only wallet from the root xpub
@@ -138,12 +138,11 @@ mod tests {
         assert!(!watch_only.has_mnemonic());
         assert_eq!(watch_only.accounts.count(), 0); // None creates no accounts
 
-        // Both wallets should have the same root public key
-        let watch_root_xpub = watch_only.root_extended_pub_key();
-        assert_eq!(root_xpub.root_public_key, watch_root_xpub.root_public_key);
-        assert_eq!(root_xpub.root_chain_code, watch_root_xpub.root_chain_code);
-
-        // And they should have the same wallet ID since it's based on the root public key
+        // Watch-only wallets no longer retain the root xpub — the unit variant
+        // carries no key material. Identity is preserved through wallet_id:
+        // `from_xpub` hashes the provided xpub into the same id the full wallet
+        // computes from its root key.
+        assert!(watch_only.root_extended_pub_key().is_err());
         assert_eq!(wallet.wallet_id, watch_only.wallet_id);
     }
 
@@ -169,8 +168,8 @@ mod tests {
         .unwrap();
 
         // Different passphrases should generate different root keys
-        let root_xpub1 = wallet1.root_extended_pub_key();
-        let root_xpub2 = wallet2.root_extended_pub_key();
+        let root_xpub1 = wallet1.root_extended_pub_key().unwrap();
+        let root_xpub2 = wallet2.root_extended_pub_key().unwrap();
 
         assert_ne!(root_xpub1.root_public_key, root_xpub2.root_public_key);
     }

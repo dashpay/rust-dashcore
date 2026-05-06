@@ -2,11 +2,12 @@ use dash_spv::network::NetworkEvent;
 use dash_spv::sync::{ProgressPercentage, SyncEvent, SyncProgress, SyncState};
 use dash_spv::test_utils::DashCoreNode;
 use dashcore::Txid;
-use key_wallet::manager::WalletEvent;
-use key_wallet::manager::{WalletId, WalletManager};
+use key_wallet::managed_account::managed_account_trait::ManagedAccountTrait;
 use key_wallet::transaction_checking::TransactionContext;
 use key_wallet::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
+use key_wallet_manager::WalletEvent;
+use key_wallet_manager::{WalletId, WalletManager};
 use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
@@ -15,6 +16,21 @@ use tokio::sync::{broadcast, watch, RwLock};
 use dash_spv::test_utils::SYNC_TIMEOUT;
 
 use super::setup::{ClientHandle, TestContext};
+
+/// BIP39 "abandon abandon ... about" mnemonic. No regtest activity, used as
+/// the default empty wallet across multi-wallet tests.
+pub(super) const EMPTY_MNEMONIC: &str =
+    "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
+
+/// Second well-known BIP39 vector mnemonic, used when an additional empty
+/// wallet is needed alongside `EMPTY_MNEMONIC`.
+pub(super) const SECONDARY_MNEMONIC: &str =
+    "legal winner thank year wave sausage worth useful legal winner thank yellow";
+
+/// Read the headers manager's effective height (storage tip plus buffered).
+fn current_header_height(handle: &ClientHandle) -> u32 {
+    handle.progress_receiver.borrow().headers().ok().map(|h| h.current_height()).unwrap_or(0)
+}
 
 /// Wait for sync to reach target height.
 pub(super) async fn wait_for_sync(
@@ -62,8 +78,12 @@ pub(super) async fn count_wallet_transactions(
 ) -> usize {
     let wallet_read = wallet.read().await;
     let wallet_info = wallet_read.get_wallet_info(wallet_id).expect("Wallet info not found");
-    let txids: HashSet<_> =
-        wallet_info.accounts().all_accounts().iter().flat_map(|a| a.transactions.keys()).collect();
+    let txids: HashSet<_> = wallet_info
+        .accounts()
+        .all_accounts()
+        .iter()
+        .flat_map(|a| a.transactions().keys())
+        .collect();
     txids.len()
 }
 
@@ -74,6 +94,50 @@ pub(super) async fn get_spendable_balance(
 ) -> u64 {
     let wallet_read = wallet.read().await;
     wallet_read.get_wallet_balance(wallet_id).expect("Failed to get wallet balance").spendable()
+}
+
+/// Wait for a specific wallet's `synced_height` to reach `target`. Used to
+/// wait for the per-wallet catch-up rescan rather than the manager-wide
+/// progress channel, which only reflects the aggregate.
+///
+/// Subscribes before the upfront height check so an advance racing the
+/// subscription is still observed via the event stream.
+pub(super) async fn wait_for_wallet_synced(
+    wallet: &Arc<RwLock<WalletManager<ManagedWalletInfo>>>,
+    wallet_id: &WalletId,
+    target: u32,
+) {
+    let (mut events, mut synced) = {
+        let reader = wallet.read().await;
+        let events = reader.subscribe_events();
+        let synced = reader.get_wallet_info(wallet_id).expect("wallet info").synced_height();
+        (events, synced)
+    };
+    if synced >= target {
+        return;
+    }
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
+    loop {
+        let recv = tokio::time::timeout_at(deadline, events.recv()).await;
+        match recv {
+            Err(_) => {
+                panic!("wallet did not reach synced_height {} within 30s, got {}", target, synced)
+            }
+            Ok(Err(_)) => {
+                panic!("wallet event channel error before reaching synced_height {}", target);
+            }
+            Ok(Ok(WalletEvent::SyncHeightAdvanced {
+                wallet_id: id,
+                height,
+            })) if id == *wallet_id => {
+                synced = height;
+                if synced >= target {
+                    return;
+                }
+            }
+            Ok(Ok(_)) => {}
+        }
+    }
 }
 
 /// Returns true for sync events that represent meaningful forward progress.
@@ -98,7 +162,7 @@ pub(super) fn is_progress_event(event: &SyncEvent) -> bool {
         SyncEvent::BlockProcessed {
             new_addresses,
             ..
-        } => !new_addresses.is_empty(),
+        } => new_addresses.values().any(|v| !v.is_empty()),
         _ => false,
     }
 }
@@ -126,7 +190,8 @@ pub(super) async fn wait_for_network_event(
     }
 }
 
-/// Wait for a wallet `TransactionReceived` event with mempool status within the given timeout.
+/// Wait for a wallet `TransactionDetected` event within the given timeout.
+/// Accepts both plain mempool and InstantSend-locked mempool arrivals.
 /// Returns `Some(txid)` if received, `None` on timeout.
 pub(super) async fn wait_for_mempool_tx(
     receiver: &mut broadcast::Receiver<WalletEvent>,
@@ -140,7 +205,14 @@ pub(super) async fn wait_for_mempool_tx(
             _ = &mut timeout => return None,
             result = receiver.recv() => {
                 match result {
-                    Ok(WalletEvent::TransactionReceived { txid, status: TransactionContext::Mempool, .. }) => return Some(txid),
+                    Ok(WalletEvent::TransactionDetected { ref record, .. })
+                        if matches!(
+                            record.context,
+                            TransactionContext::Mempool | TransactionContext::InstantSend(_)
+                        ) =>
+                    {
+                        return Some(record.txid);
+                    }
                     Ok(_) => continue,
                     Err(_) => return None,
                 }
@@ -176,13 +248,13 @@ pub(super) async fn wait_for_mempool_synced(
     }
 }
 
-/// Assert that no mempool `TransactionReceived` event arrives within the given duration.
+/// Assert that no mempool `TransactionDetected` event arrives within the given duration.
 pub(super) async fn assert_no_mempool_tx(
     receiver: &mut broadcast::Receiver<WalletEvent>,
     wait: Duration,
 ) {
     if let Some(txid) = wait_for_mempool_tx(receiver, wait).await {
-        panic!("Unexpected mempool TransactionReceived event with txid: {}", txid);
+        panic!("Unexpected TransactionDetected event with txid: {}", txid);
     }
 }
 
@@ -190,7 +262,9 @@ pub(super) async fn assert_no_mempool_tx(
 ///
 /// Waits for progress events, disconnects all peers after every 5th event,
 /// validates disconnect/reconnect network events, and asserts wallet state
-/// after sync completes.
+/// after sync completes. Also asserts header progress (storage tip plus
+/// buffered) is monotonic across each disconnect cycle, so a regression that
+/// drops validated chain state on disconnect is caught.
 pub(super) async fn run_disconnect_loop(
     mut client_handle: ClientHandle,
     node: &DashCoreNode,
@@ -222,6 +296,7 @@ pub(super) async fn run_disconnect_loop(
                                 disconnect_count + 1,
                                 event.description()
                             );
+                            let pre_disconnect_height = current_header_height(&client_handle);
                             node.disconnect_all_peers();
                             disconnect_count += 1;
                             events_since_disconnect = 0;
@@ -241,6 +316,13 @@ pub(super) async fn run_disconnect_loop(
                             ).await;
                             assert!(saw_reconnect, "SPV should reconnect after disconnection");
                             tracing::info!("SPV reconnected (PeerConnected)");
+
+                            let post_reconnect_height = current_header_height(&client_handle);
+                            assert!(
+                                post_reconnect_height >= pre_disconnect_height,
+                                "Header progress regressed across disconnect {}: {} -> {}",
+                                disconnect_count, pre_disconnect_height, post_reconnect_height
+                            );
                         }
                     }
                     Ok(SyncEvent::SyncComplete { .. }) => {
@@ -319,7 +401,7 @@ pub(super) async fn wait_for_mempool_txs_both(
         for _ in 0..count {
             let txid = wait_for_mempool_tx(receiver, timeout)
                 .await
-                .expect("Expected mempool TransactionReceived event");
+                .expect("Expected TransactionDetected event");
             txids.insert(txid);
         }
         txids
@@ -368,12 +450,4 @@ pub(super) async fn wait_for_network_event_both(
         wait_for_network_event(&mut b.network_event_receiver, pred_clone, max_wait),
     );
     r_a && r_b
-}
-
-/// Assert mempool transaction count on both clients.
-pub(super) async fn assert_mempool_count_both(a: &ClientHandle, b: &ClientHandle, expected: usize) {
-    let count_a = a.client.get_mempool_transaction_count().await;
-    let count_b = b.client.get_mempool_transaction_count().await;
-    assert_eq!(count_a, expected, "Client A mempool count: expected {}, got {}", expected, count_a);
-    assert_eq!(count_b, expected, "Client B mempool count: expected {}, got {}", expected, count_b);
 }

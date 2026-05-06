@@ -1,14 +1,15 @@
+use dash_network::ffi::FFINetwork;
+
 #[test]
 fn test_debug_wallet_add() {
     use key_wallet_ffi::error::FFIError;
     use key_wallet_ffi::wallet_manager;
-    use key_wallet_ffi::FFINetwork;
     use std::ffi::CString;
 
-    let mut error = FFIError::success();
+    let mut error = FFIError::default();
     let error = &mut error as *mut FFIError;
 
-    let manager = wallet_manager::wallet_manager_create(FFINetwork::Testnet, error);
+    let manager = unsafe { wallet_manager::wallet_manager_create(FFINetwork::Testnet, error) };
     assert!(!manager.is_null());
     println!("Manager created successfully");
 

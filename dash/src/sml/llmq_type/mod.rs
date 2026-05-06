@@ -115,6 +115,14 @@ pub const DKG_25_67: DKGParams = DKGParams {
     bad_votes_threshold: 22,
 };
 
+pub const DKG_TEST_DIP0024: DKGParams = DKGParams {
+    interval: 24,
+    phase_blocks: 2,
+    mining_window_start: 12,
+    mining_window_end: 20,
+    bad_votes_threshold: 2,
+};
+
 pub const DKG_PLATFORM_TESTNET: DKGParams = DKGParams {
     interval: 24 * 12,
     phase_blocks: 2,
@@ -168,11 +176,11 @@ pub const LLMQ_TEST_DIP00024: LLMQParams = LLMQParams {
     quorum_type: LLMQType::LlmqtypeTestDIP0024,
     name: "llmq_test_dip0024",
     size: 4,
-    min_size: 3,
-    threshold: 2,
-    dkg_params: DKG_TEST,
+    min_size: 4,
+    threshold: 3,
+    dkg_params: DKG_TEST_DIP0024,
     signing_active_quorum_count: 2,
-    keep_old_connections: 3,
+    keep_old_connections: 4,
     recovery_members: 3,
 };
 pub const LLMQ_TEST_INSTANT_SEND: LLMQParams = LLMQParams {
@@ -525,7 +533,7 @@ impl LLMQType {
         let first_possible_cycle =
             ((start.saturating_sub(params.dkg_params.mining_window_end)) / interval) * interval;
 
-        log::trace!(
+        tracing::trace!(
             "get_dkg_windows_in_range for {:?}: start={}, end={}, interval={}, first_cycle={}",
             self,
             start,
@@ -542,7 +550,7 @@ impl LLMQType {
             // Include this window if its mining period overlaps with [start, end]
             if window.mining_end >= start && window.mining_start <= end {
                 windows.push(window.clone());
-                log::trace!(
+                tracing::trace!(
                     "  Added window: cycle={}, mining={}-{}",
                     window.cycle_start,
                     window.mining_start,
@@ -554,7 +562,7 @@ impl LLMQType {
             _cycles_checked += 1;
         }
 
-        log::trace!(
+        tracing::trace!(
             "get_dkg_windows_in_range for {:?}: checked {} cycles, found {} windows",
             self,
             _cycles_checked,

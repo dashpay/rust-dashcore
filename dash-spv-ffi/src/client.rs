@@ -17,10 +17,9 @@ use tokio_util::sync::CancellationToken;
 
 /// FFI wrapper around `DashSpvClient`.
 type InnerClient = DashSpvClient<
-    key_wallet::manager::WalletManager<key_wallet::wallet::managed_wallet_info::ManagedWalletInfo>,
+    key_wallet_manager::WalletManager<key_wallet::wallet::managed_wallet_info::ManagedWalletInfo>,
     dash_spv::network::PeerNetworkManager,
     DiskStorageManager,
-    FFIEventCallbacks,
 >;
 
 pub struct FFIDashSpvClient {
@@ -28,6 +27,15 @@ pub struct FFIDashSpvClient {
     pub(crate) runtime: Arc<Runtime>,
     run_task: Mutex<Option<JoinHandle<()>>>,
     shutdown_token: CancellationToken,
+}
+
+impl FFIDashSpvClient {
+    /// Returns the shared masternode list engine, if initialized.
+    pub fn masternode_list_engine(
+        &self,
+    ) -> Option<Arc<tokio::sync::RwLock<dash_spv::MasternodeListEngine>>> {
+        self.inner.masternode_list_engine().ok()
+    }
 }
 
 /// Create a new SPV client and return an opaque pointer.
@@ -78,15 +86,21 @@ pub unsafe extern "C" fn dash_spv_ffi_client_new(
         // Construct concrete implementations for generics
         let network = dash_spv::network::PeerNetworkManager::new(&client_config).await;
         let storage = DiskStorageManager::new(&client_config).await;
-        let wallet = key_wallet::manager::WalletManager::<
+        let wallet = key_wallet_manager::WalletManager::<
             key_wallet::wallet::managed_wallet_info::ManagedWalletInfo,
         >::new(client_config.network);
         let wallet = std::sync::Arc::new(tokio::sync::RwLock::new(wallet));
 
         match (network, storage) {
             (Ok(network), Ok(storage)) => {
-                DashSpvClient::new(client_config, network, storage, wallet, Arc::new(callbacks))
-                    .await
+                DashSpvClient::new(
+                    client_config,
+                    network,
+                    storage,
+                    wallet,
+                    vec![Arc::new(callbacks)],
+                )
+                .await
             }
             (Err(e), _) => Err(e),
             (_, Err(e)) => Err(dash_spv::SpvError::Storage(e)),
@@ -110,15 +124,33 @@ pub unsafe extern "C" fn dash_spv_ffi_client_new(
     }
 }
 
+/// Maximum time to wait for the run task to exit cooperatively before aborting.
+const RUN_TASK_SHUTDOWN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
 impl FFIDashSpvClient {
-    /// Cancel the run task and wait for it to finish.
-    fn cancel_run_task(&self) {
+    /// Wait for the run task to finish cooperatively, aborting only on timeout.
+    ///
+    /// The caller must cancel `shutdown_token` before calling this so that
+    /// `DashSpvClient::run()` exits its loop and cleans up monitor tasks.
+    /// Only falls back to `abort()` if the task doesn't exit within the timeout.
+    fn wait_for_run_task(&self) {
         let task = self.run_task.lock().unwrap().take();
-        if let Some(task) = task {
-            task.abort();
-            self.runtime.block_on(async {
-                let _ = task.await;
+        if let Some(mut task) = task {
+            let finished = self.runtime.block_on(async {
+                tokio::time::timeout(RUN_TASK_SHUTDOWN_TIMEOUT, &mut task).await
             });
+            match finished {
+                Ok(Ok(())) => {}
+                Ok(Err(e)) => tracing::warn!("Run task exited with join error: {}", e),
+                Err(_) => {
+                    tracing::warn!(
+                        "Run task did not exit within {:?}, aborting",
+                        RUN_TASK_SHUTDOWN_TIMEOUT,
+                    );
+                    task.abort();
+                    let _ = self.runtime.block_on(task);
+                }
+            }
         }
     }
 }
@@ -126,7 +158,7 @@ impl FFIDashSpvClient {
 fn stop_client_internal(client: &mut FFIDashSpvClient) -> Result<(), dash_spv::SpvError> {
     client.shutdown_token.cancel();
 
-    client.cancel_run_task();
+    client.wait_for_run_task();
 
     let result = client.runtime.block_on(async { client.inner.stop().await });
 
@@ -334,16 +366,17 @@ pub unsafe extern "C" fn dash_spv_ffi_client_destroy(client: *mut FFIDashSpvClie
     if !client.is_null() {
         let client = Box::from_raw(client);
 
-        // Cancel shutdown token to stop all tasks
+        // Cancel shutdown token so run() exits its loop and cleans up
         client.shutdown_token.cancel();
 
-        // Stop the SPV client
+        // Wait for the run task to finish (cooperative, with timeout fallback)
+        client.wait_for_run_task();
+
+        // Stop the SPV client (run() calls stop() internally, but this
+        // handles the case where run() was never called or was aborted)
         client.runtime.block_on(async {
             let _ = client.inner.stop().await;
         });
-
-        // Abort and await the run task
-        client.cancel_run_task();
 
         tracing::info!("FFI client destroyed and all tasks cleaned up");
     }

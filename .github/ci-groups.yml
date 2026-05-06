@@ -6,12 +6,15 @@ groups:
     - dashcore
     - dashcore_hashes
     - dashcore-private
+    - dash-network
 
   spv:
     - dash-spv
+    - dash-network-seeds
 
   wallet:
     - key-wallet
+    - key-wallet-manager
 
   ffi:
     - dash-spv-ffi
@@ -25,3 +28,4 @@ groups:
 excluded:
   - integration_test  # Requires live Dash node
   - dash-fuzz  # Honggfuzz binary targets, tested by fuzz.yml
+  - masternode-seeds-fetcher  # Tooling binary; needs live dashd RPC, exercised by update-masternode-seeds.yml

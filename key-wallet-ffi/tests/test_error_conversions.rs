@@ -3,9 +3,8 @@
 use key_wallet_ffi::error::{FFIError, FFIErrorCode};
 
 /// Helper to test an FFIError conversion and clean up the message
-fn assert_ffi_error_code(mut ffi_err: FFIError, expected: FFIErrorCode) {
+fn assert_ffi_error_code(ffi_err: FFIError, expected: FFIErrorCode) {
     assert_eq!(ffi_err.code, expected);
-    unsafe { ffi_err.free_message() };
 }
 
 #[test]
@@ -55,7 +54,7 @@ fn test_key_wallet_error_to_ffi_error() {
 
 #[test]
 fn test_wallet_manager_error_to_ffi_error() {
-    use key_wallet::manager::WalletError;
+    use key_wallet_manager::WalletError;
 
     // Test WalletNotFound conversion
     let wallet_id = [0u8; 32];
@@ -105,8 +104,8 @@ fn test_wallet_manager_error_to_ffi_error() {
 
 #[test]
 fn test_key_wallet_error_to_wallet_manager_error() {
-    use key_wallet::manager::WalletError;
     use key_wallet::Error as KeyWalletError;
+    use key_wallet_manager::WalletError;
 
     // Test InvalidMnemonic conversion
     let err = KeyWalletError::InvalidMnemonic("bad mnemonic".to_string());
@@ -172,8 +171,8 @@ fn test_key_wallet_error_to_wallet_manager_error() {
 
 #[test]
 fn test_error_message_consistency() {
-    use key_wallet::manager::WalletError;
     use key_wallet::Error as KeyWalletError;
+    use key_wallet_manager::WalletError;
 
     // Test that error messages are preserved through conversions
     let original_msg = "This is a test error message";
@@ -192,7 +191,7 @@ fn test_error_message_consistency() {
 #[test]
 fn test_ffi_error_success() {
     // Test creating a success FFIError
-    let err = FFIError::success();
+    let err = FFIError::default();
     assert_eq!(err.code, FFIErrorCode::Success);
     assert!(err.message.is_null());
 }
@@ -200,14 +199,11 @@ fn test_ffi_error_success() {
 #[test]
 fn test_ffi_error_with_message() {
     // Test creating an error with a message
-    let err = FFIError::error(FFIErrorCode::InvalidInput, "Test error".to_string());
+    let mut err = FFIError::default();
+    unsafe {
+        err.set(FFIErrorCode::InvalidInput, "Test error");
+    }
+
     assert_eq!(err.code, FFIErrorCode::InvalidInput);
     assert!(!err.message.is_null());
-
-    // Clean up the allocated message
-    unsafe {
-        if !err.message.is_null() {
-            let _ = std::ffi::CString::from_raw(err.message);
-        }
-    }
 }

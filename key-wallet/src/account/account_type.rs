@@ -2,6 +2,8 @@
 //!
 //! This module contains the various account type enumerations.
 
+use core::fmt::{self, Display, Formatter};
+
 use crate::bip32::{ChildNumber, DerivationPath};
 use crate::dip9::DerivationPathReference;
 use crate::transaction_checking::transaction_router::{
@@ -14,7 +16,7 @@ use bincode_derive::{Decode, Encode};
 use serde::{Deserialize, Serialize};
 
 /// Account types supported by the wallet
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 pub enum StandardAccountType {
@@ -26,7 +28,7 @@ pub enum StandardAccountType {
 }
 
 /// Account types supported by the wallet
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 pub enum AccountType {
@@ -100,6 +102,58 @@ pub enum AccountType {
         /// Key class (hardened) - default 0', 1' reserved for change-like segregation
         key_class: u32,
     },
+}
+
+impl Display for StandardAccountType {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            StandardAccountType::BIP44Account => f.write_str("BIP44"),
+            StandardAccountType::BIP32Account => f.write_str("BIP32"),
+        }
+    }
+}
+
+impl Display for AccountType {
+    /// Compact, log-friendly rendering. Dashpay variants render with their
+    /// account index but elide the 32-byte identity hashes so log lines stay
+    /// readable.
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            AccountType::Standard {
+                index,
+                standard_account_type,
+            } => write!(f, "Standard{{idx:{},{}}}", index, standard_account_type),
+            AccountType::CoinJoin {
+                index,
+            } => write!(f, "CoinJoin{{idx:{}}}", index),
+            AccountType::IdentityRegistration => f.write_str("IdentityRegistration"),
+            AccountType::IdentityTopUp {
+                registration_index,
+            } => write!(f, "IdentityTopUp{{reg:{}}}", registration_index),
+            AccountType::IdentityTopUpNotBoundToIdentity => f.write_str("IdentityTopUpNotBound"),
+            AccountType::IdentityInvitation => f.write_str("IdentityInvitation"),
+            AccountType::AssetLockAddressTopUp => f.write_str("AssetLockAddressTopUp"),
+            AccountType::AssetLockShieldedAddressTopUp => {
+                f.write_str("AssetLockShieldedAddressTopUp")
+            }
+            AccountType::ProviderVotingKeys => f.write_str("ProviderVotingKeys"),
+            AccountType::ProviderOwnerKeys => f.write_str("ProviderOwnerKeys"),
+            AccountType::ProviderOperatorKeys => f.write_str("ProviderOperatorKeys"),
+            AccountType::ProviderPlatformKeys => f.write_str("ProviderPlatformKeys"),
+            AccountType::DashpayReceivingFunds {
+                index,
+                ..
+            } => write!(f, "DashpayReceiving{{idx:{}}}", index),
+            AccountType::DashpayExternalAccount {
+                index,
+                ..
+            } => write!(f, "DashpayExternal{{idx:{}}}", index),
+            AccountType::PlatformPayment {
+                account,
+                key_class,
+            } => write!(f, "PlatformPayment{{acct:{},class:{}}}", account, key_class),
+        }
+    }
 }
 
 impl TryFrom<AccountType> for AccountTypeToCheck {
@@ -307,7 +361,6 @@ impl AccountType {
                     Network::Testnet | Network::Devnet | Network::Regtest => {
                         Ok(DerivationPath::from(crate::dip9::IDENTITY_REGISTRATION_PATH_TESTNET))
                     }
-                    _ => Err(crate::error::Error::InvalidNetwork),
                 }
             }
             Self::IdentityTopUp {
@@ -319,7 +372,6 @@ impl AccountType {
                     Network::Testnet | Network::Devnet | Network::Regtest => {
                         crate::dip9::IDENTITY_TOPUP_PATH_TESTNET
                     }
-                    _ => return Err(crate::error::Error::InvalidNetwork),
                 };
                 let mut path = DerivationPath::from(base_path);
                 path.push(
@@ -337,7 +389,6 @@ impl AccountType {
                     Network::Testnet | Network::Devnet | Network::Regtest => {
                         Ok(DerivationPath::from(crate::dip9::IDENTITY_TOPUP_PATH_TESTNET))
                     }
-                    _ => Err(crate::error::Error::InvalidNetwork),
                 }
             }
             Self::IdentityInvitation => {
@@ -349,7 +400,6 @@ impl AccountType {
                     Network::Testnet | Network::Devnet | Network::Regtest => {
                         Ok(DerivationPath::from(crate::dip9::IDENTITY_INVITATION_PATH_TESTNET))
                     }
-                    _ => Err(crate::error::Error::InvalidNetwork),
                 }
             }
             Self::AssetLockAddressTopUp => {
@@ -361,7 +411,6 @@ impl AccountType {
                     Network::Testnet | Network::Devnet | Network::Regtest => {
                         Ok(DerivationPath::from(crate::dip9::ASSET_LOCK_ADDRESS_TOPUP_PATH_TESTNET))
                     }
-                    _ => Err(crate::error::Error::InvalidNetwork),
                 }
             }
             Self::AssetLockShieldedAddressTopUp => {
@@ -375,7 +424,6 @@ impl AccountType {
                             crate::dip9::ASSET_LOCK_SHIELDED_ADDRESS_TOPUP_PATH_TESTNET,
                         ))
                     }
-                    _ => Err(crate::error::Error::InvalidNetwork),
                 }
             }
             Self::ProviderVotingKeys => {
@@ -431,7 +479,6 @@ impl AccountType {
                     Network::Testnet | Network::Devnet | Network::Regtest => {
                         DerivationPath::from(crate::dip9::DASHPAY_ROOT_PATH_TESTNET)
                     }
-                    _ => return Err(crate::error::Error::InvalidNetwork),
                 };
                 path.push(ChildNumber::from_hardened_idx(0).map_err(crate::error::Error::Bip32)?);
                 path.push(ChildNumber::Normal256 {
@@ -455,7 +502,6 @@ impl AccountType {
                     Network::Testnet | Network::Devnet | Network::Regtest => {
                         DerivationPath::from(crate::dip9::DASHPAY_ROOT_PATH_TESTNET)
                     }
-                    _ => return Err(crate::error::Error::InvalidNetwork),
                 };
                 path.push(ChildNumber::from_hardened_idx(0).map_err(crate::error::Error::Bip32)?);
                 path.push(ChildNumber::Normal256 {
@@ -479,7 +525,6 @@ impl AccountType {
                     Network::Testnet | Network::Devnet | Network::Regtest => {
                         DerivationPath::from(crate::dip9::PLATFORM_PAYMENT_ROOT_PATH_TESTNET)
                     }
-                    _ => return Err(crate::error::Error::InvalidNetwork),
                 };
                 path.push(
                     ChildNumber::from_hardened_idx(*account).map_err(crate::error::Error::Bip32)?,

@@ -6,9 +6,11 @@
 use std::collections::BTreeMap;
 
 use super::transaction_router::AccountTypeToCheck;
-use crate::account::{ManagedAccountCollection, ManagedCoreAccount};
-use crate::managed_account::address_pool::{AddressInfo, PublicKeyType};
+use crate::account::{AccountType, ManagedAccountCollection, ManagedCoreFundsAccount};
+use crate::managed_account::address_pool::{AddressInfo, AddressPoolType, PublicKeyType};
+use crate::managed_account::managed_account_trait::ManagedAccountTrait;
 use crate::managed_account::managed_account_type::ManagedAccountType;
+use crate::managed_account::transaction_record::TransactionRecord;
 use crate::Address;
 use dashcore::address::Payload;
 use dashcore::blockdata::transaction::Transaction;
@@ -24,6 +26,23 @@ pub enum AddressClassification {
     Internal,
     /// Other address type (for non-standard accounts or unknown)
     Other,
+}
+
+/// A freshly-derived address produced as a side effect of gap-limit
+/// maintenance during transaction processing. Carries the originating
+/// [`AccountType`] and [`AddressPoolType`] alongside the rich
+/// [`AddressInfo`] so downstream consumers (e.g. the wallet-manager
+/// event seam) can build a fully self-describing event payload without
+/// re-deriving from the wallet.
+#[derive(Debug, Clone)]
+pub struct DerivedAddressInfo {
+    /// The account that derived this address.
+    pub account_type: AccountType,
+    /// Which pool of the account the address belongs to (External /
+    /// Internal / Absent / AbsentHardened).
+    pub pool_type: AddressPoolType,
+    /// The full address info — derivation index, path, public key, etc.
+    pub info: AddressInfo,
 }
 
 /// Result of checking a transaction against accounts
@@ -43,8 +62,19 @@ pub struct TransactionCheckResult {
     pub total_sent: u64,
     /// Total value received for Platform credit conversion
     pub total_received_for_credit_conversion: u64,
-    /// New addresses generated during gap limit maintenance
-    pub new_addresses: Vec<Address>,
+    /// Addresses derived as a side effect of gap-limit maintenance during
+    /// this check. Each entry carries the originating account type, pool
+    /// type, and full [`AddressInfo`] so downstream emitters can attribute
+    /// the derivation precisely without re-deriving.
+    pub new_addresses: Vec<DerivedAddressInfo>,
+    /// Transaction records created for new transactions. Each record carries
+    /// its owning [`AccountType`] on `record.account_type`, so consumers can
+    /// recover it without an external pairing.
+    pub new_records: Vec<TransactionRecord>,
+    /// Transaction records updated by this check (confirmation or IS-lock
+    /// applied to a previously stored record). Each record carries its owning
+    /// `AccountType` on `record.account_type`.
+    pub updated_records: Vec<TransactionRecord>,
 }
 
 /// Enum representing the type of Core account that matched with embedded data
@@ -124,6 +154,79 @@ pub enum CoreAccountTypeMatch {
 }
 
 impl CoreAccountTypeMatch {
+    /// Get involved receive (external) addresses
+    pub fn involved_receive_addresses(&self) -> &[AddressInfo] {
+        match self {
+            CoreAccountTypeMatch::StandardBIP44 {
+                involved_receive_addresses,
+                ..
+            }
+            | CoreAccountTypeMatch::StandardBIP32 {
+                involved_receive_addresses,
+                ..
+            } => involved_receive_addresses,
+            CoreAccountTypeMatch::CoinJoin {
+                involved_addresses,
+                ..
+            }
+            | CoreAccountTypeMatch::IdentityRegistration {
+                involved_addresses,
+            }
+            | CoreAccountTypeMatch::IdentityTopUp {
+                involved_addresses,
+                ..
+            }
+            | CoreAccountTypeMatch::IdentityTopUpNotBound {
+                involved_addresses,
+            }
+            | CoreAccountTypeMatch::IdentityInvitation {
+                involved_addresses,
+            }
+            | CoreAccountTypeMatch::AssetLockAddressTopUp {
+                involved_addresses,
+            }
+            | CoreAccountTypeMatch::AssetLockShieldedAddressTopUp {
+                involved_addresses,
+            }
+            | CoreAccountTypeMatch::ProviderVotingKeys {
+                involved_addresses,
+            }
+            | CoreAccountTypeMatch::ProviderOwnerKeys {
+                involved_addresses,
+            }
+            | CoreAccountTypeMatch::ProviderOperatorKeys {
+                involved_addresses,
+            }
+            | CoreAccountTypeMatch::ProviderPlatformKeys {
+                involved_addresses,
+            }
+            | CoreAccountTypeMatch::DashpayReceivingFunds {
+                involved_addresses,
+                ..
+            }
+            | CoreAccountTypeMatch::DashpayExternalAccount {
+                involved_addresses,
+                ..
+            } => involved_addresses,
+        }
+    }
+
+    /// Get involved change (internal) addresses
+    pub fn involved_change_addresses(&self) -> &[AddressInfo] {
+        match self {
+            CoreAccountTypeMatch::StandardBIP44 {
+                involved_change_addresses,
+                ..
+            }
+            | CoreAccountTypeMatch::StandardBIP32 {
+                involved_change_addresses,
+                ..
+            } => involved_change_addresses,
+            // Non-standard account types don't have change addresses
+            _ => &[],
+        }
+    }
+
     /// Get all involved addresses (both receive and change combined)
     pub fn all_involved_addresses(&self) -> Vec<AddressInfo> {
         match self {
@@ -299,6 +402,8 @@ impl ManagedAccountCollection {
             total_sent: 0,
             total_received_for_credit_conversion: 0,
             new_addresses: Vec::new(),
+            new_records: Vec::new(),
+            updated_records: Vec::new(),
         };
 
         for account_type in account_types {
@@ -416,7 +521,7 @@ impl ManagedAccountCollection {
 
     /// Check indexed accounts (BTreeMap of accounts)
     fn check_indexed_accounts(
-        accounts: &BTreeMap<u32, ManagedCoreAccount>,
+        accounts: &BTreeMap<u32, ManagedCoreFundsAccount>,
         tx: &Transaction,
     ) -> Vec<AccountMatch> {
         let mut matches = Vec::new();
@@ -429,10 +534,10 @@ impl ManagedAccountCollection {
     }
 }
 
-impl ManagedCoreAccount {
+impl ManagedCoreFundsAccount {
     /// Classify an address within this account
     pub fn classify_address(&self, address: &Address) -> AddressClassification {
-        match &self.account_type {
+        match self.managed_account_type() {
             ManagedAccountType::Standard {
                 external_addresses,
                 internal_addresses,
@@ -468,7 +573,7 @@ impl ManagedCoreAccount {
         // Check if this script pubkey belongs to any address in this account
         if self.contains_script_pub_key(script_pubkey) {
             // Try to create an address from the script pubkey and get its info
-            if let Ok(address) = Address::from_script(script_pubkey, self.network) {
+            if let Ok(address) = Address::from_script(script_pubkey, self.network()) {
                 return self.get_address_info(&address);
             }
         }
@@ -509,7 +614,8 @@ impl ManagedCoreAccount {
                 if let Some(payout_info) = self.check_provider_payout(payout_script) {
                     provider_payout_involved = true;
                     // Classify the payout address
-                    if let Ok(payout_address) = Address::from_script(payout_script, self.network) {
+                    if let Ok(payout_address) = Address::from_script(payout_script, self.network())
+                    {
                         match self.classify_address(&payout_address) {
                             AddressClassification::External => {
                                 involved_receive_addresses.push(payout_info);
@@ -529,7 +635,7 @@ impl ManagedCoreAccount {
         // Check outputs (received)
         for output in &tx.output {
             if self.contains_script_pub_key(&output.script_pubkey) {
-                if let Ok(address) = Address::from_script(&output.script_pubkey, self.network) {
+                if let Ok(address) = Address::from_script(&output.script_pubkey, self.network()) {
                     // Try to find the address info from the account
                     if let Some(address_info) = self.get_address_info(&address) {
                         // Use the new classification method
@@ -581,7 +687,7 @@ impl ManagedCoreAccount {
             || sent > 0;
 
         if has_addresses {
-            let account_type_match = match &self.account_type {
+            let account_type_match = match self.managed_account_type() {
                 ManagedAccountType::Standard {
                     standard_account_type,
                     ..
@@ -714,7 +820,7 @@ impl ManagedCoreAccount {
             for credit_output in &payload.credit_outputs {
                 if self.contains_script_pub_key(&credit_output.script_pubkey) {
                     if let Ok(address) =
-                        Address::from_script(&credit_output.script_pubkey, self.network)
+                        Address::from_script(&credit_output.script_pubkey, self.network())
                     {
                         // Try to find the address info from the account
                         if let Some(address_info) = self.get_address_info(&address) {
@@ -727,7 +833,7 @@ impl ManagedCoreAccount {
 
             if !involved_addresses.is_empty() {
                 // Create the appropriate CoreAccountTypeMatch for identity accounts
-                let account_type_match = match &self.account_type {
+                let account_type_match = match self.managed_account_type() {
                     ManagedAccountType::IdentityRegistration {
                         ..
                     } => CoreAccountTypeMatch::IdentityRegistration {
@@ -785,7 +891,7 @@ impl ManagedCoreAccount {
         // Only check if this is a provider voting keys account
         if let ManagedAccountType::ProviderVotingKeys {
             addresses,
-        } = &self.account_type
+        } = self.managed_account_type()
         {
             if let Some(payload) = &tx.special_transaction_payload {
                 let voting_key_hash = match payload {
@@ -830,7 +936,7 @@ impl ManagedCoreAccount {
         // Only check if this is a provider owner keys account
         if let ManagedAccountType::ProviderOwnerKeys {
             addresses,
-        } = &self.account_type
+        } = self.managed_account_type()
         {
             if let Some(payload) = &tx.special_transaction_payload {
                 let owner_key_hash = match payload {
@@ -870,7 +976,7 @@ impl ManagedCoreAccount {
         // Only check if this is a provider voting keys account
         if let ManagedAccountType::ProviderOperatorKeys {
             addresses,
-        } = &self.account_type
+        } = self.managed_account_type()
         {
             if let Some(payload) = &tx.special_transaction_payload {
                 let operator_public_key = match payload {
@@ -914,7 +1020,7 @@ impl ManagedCoreAccount {
         // Only check if this is a provider voting keys account
         if let ManagedAccountType::ProviderPlatformKeys {
             addresses,
-        } = &self.account_type
+        } = self.managed_account_type()
         {
             if let Some(payload) = &tx.special_transaction_payload {
                 let platform_node_id = match payload {

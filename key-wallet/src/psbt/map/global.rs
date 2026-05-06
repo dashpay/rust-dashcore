@@ -35,7 +35,9 @@ impl Map for PartiallySignedTransaction {
                 // without witnesses.
                 let mut ret = Vec::new();
                 ret.extend(encode::serialize(&self.unsigned_tx.version));
-                (self.unsigned_tx.tx_type() as u16)
+                self.unsigned_tx
+                    .tx_type()
+                    .to_u16()
                     .consensus_encode(&mut ret)
                     .expect("can't encode tx type");
                 let input = encode::serialize(&self.unsigned_tx.input);

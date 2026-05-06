@@ -4,9 +4,9 @@
 mod wallet_tests {
     use crate::account::account_free;
     use crate::error::{FFIError, FFIErrorCode};
-    use crate::types::FFIAccountType;
+    use crate::types::FFIAccountKind;
     use crate::wallet;
-    use crate::FFINetwork;
+    use dash_network::ffi::FFINetwork;
     use std::ffi::CString;
     use std::ptr;
 
@@ -14,7 +14,7 @@ mod wallet_tests {
 
     #[test]
     fn test_wallet_creation_from_mnemonic() {
-        let mut error = FFIError::success();
+        let mut error = FFIError::default();
         let error = &mut error as *mut FFIError;
 
         let mnemonic = CString::new(TEST_MNEMONIC).unwrap();
@@ -35,13 +35,12 @@ mod wallet_tests {
         // Clean up
         unsafe {
             wallet::wallet_free(wallet);
-            (*error).free_message();
         }
     }
 
     #[test]
     fn test_wallet_creation_from_seed() {
-        let mut error = FFIError::success();
+        let mut error = FFIError::default();
         let error = &mut error as *mut FFIError;
 
         let seed = [0x01u8; 64];
@@ -56,13 +55,12 @@ mod wallet_tests {
         // Clean up
         unsafe {
             wallet::wallet_free(wallet);
-            (*error).free_message();
         }
     }
 
     #[test]
     fn test_wallet_creation_methods() {
-        let mut error = FFIError::success();
+        let mut error = FFIError::default();
         let error = &mut error as *mut FFIError;
 
         // Test random wallet creation
@@ -77,13 +75,12 @@ mod wallet_tests {
         // Clean up
         unsafe {
             wallet::wallet_free(random_wallet);
-            (*error).free_message();
         }
     }
 
     #[test]
     fn test_wallet_multiple_accounts() {
-        let mut error = FFIError::success();
+        let mut error = FFIError::default();
         let error = &mut error as *mut FFIError;
 
         let seed = [0x03u8; 64];
@@ -104,14 +101,12 @@ mod wallet_tests {
                 // Clean up
                 wallet::wallet_free(wallet);
             }
-
-            (*error).free_message();
         }
     }
 
     #[test]
     fn test_wallet_with_passphrase() {
-        let mut error = FFIError::success();
+        let mut error = FFIError::default();
         let error = &mut error as *mut FFIError;
 
         let mnemonic = CString::new(TEST_MNEMONIC).unwrap();
@@ -132,13 +127,12 @@ mod wallet_tests {
         // Clean up
         unsafe {
             wallet::wallet_free(wallet);
-            (*error).free_message();
         }
     }
 
     #[test]
     fn test_wallet_error_cases() {
-        let mut error = FFIError::success();
+        let mut error = FFIError::default();
         let error = &mut error as *mut FFIError;
 
         // Test with null mnemonic
@@ -171,13 +165,11 @@ mod wallet_tests {
             unsafe { wallet::wallet_create_from_seed(ptr::null(), 64, FFINetwork::Testnet, error) };
         assert!(wallet.is_null());
         assert_eq!(unsafe { (*error).code }, FFIErrorCode::InvalidInput);
-
-        unsafe { (*error).free_message() };
     }
 
     #[test]
     fn test_wallet_id_operations() {
-        let mut error = FFIError::success();
+        let mut error = FFIError::default();
         let error = &mut error as *mut FFIError;
 
         let wallet = unsafe { wallet::wallet_create_random(FFINetwork::Testnet, error) };
@@ -199,13 +191,12 @@ mod wallet_tests {
         // Clean up
         unsafe {
             wallet::wallet_free(wallet);
-            (*error).free_message();
         }
     }
 
     #[test]
     fn test_wallet_create_from_seed_bytes() {
-        let mut error = FFIError::success();
+        let mut error = FFIError::default();
         let error = &mut error as *mut FFIError;
 
         // Create seed bytes directly
@@ -226,13 +217,12 @@ mod wallet_tests {
         // Clean up
         unsafe {
             wallet::wallet_free(wallet);
-            (*error).free_message();
         }
     }
 
     #[test]
     fn test_wallet_create_from_seed_bytes_null() {
-        let mut error = FFIError::success();
+        let mut error = FFIError::default();
         let error = &mut error as *mut FFIError;
 
         // Test with null seed bytes
@@ -241,13 +231,11 @@ mod wallet_tests {
 
         assert!(wallet.is_null());
         assert_eq!(unsafe { (*error).code }, FFIErrorCode::InvalidInput);
-
-        unsafe { (*error).free_message() };
     }
 
     #[test]
     fn test_wallet_has_mnemonic() {
-        let mut error = FFIError::success();
+        let mut error = FFIError::default();
         let error = &mut error as *mut FFIError;
 
         // Create wallet from mnemonic
@@ -272,26 +260,23 @@ mod wallet_tests {
         // Clean up
         unsafe {
             wallet::wallet_free(wallet_with_mnemonic);
-            (*error).free_message();
         }
     }
 
     #[test]
     fn test_wallet_has_mnemonic_null() {
-        let mut error = FFIError::success();
+        let mut error = FFIError::default();
         let error = &mut error as *mut FFIError;
 
         // Test with null wallet
         let has_mnemonic = unsafe { wallet::wallet_has_mnemonic(ptr::null(), error) };
         assert!(!has_mnemonic);
         assert_eq!(unsafe { (*error).code }, FFIErrorCode::InvalidInput);
-
-        unsafe { (*error).free_message() };
     }
 
     #[test]
     fn test_wallet_add_account() {
-        let mut error = FFIError::success();
+        let mut error = FFIError::default();
         let error = &mut error as *mut FFIError;
 
         let wallet = unsafe { wallet::wallet_create_random(FFINetwork::Testnet, error) };
@@ -299,7 +284,7 @@ mod wallet_tests {
 
         // Test adding account - check if it succeeds or fails gracefully
         let result =
-            unsafe { wallet::wallet_add_account(wallet, FFIAccountType::StandardBIP44, 1) };
+            unsafe { wallet::wallet_add_account(wallet, FFIAccountKind::StandardBIP44, 1) };
         // Some implementations may not support adding accounts, so just verify it doesn't crash
         // and the error code is set appropriately
         assert!(!result.account.is_null() || result.error_code != 0);
@@ -321,7 +306,6 @@ mod wallet_tests {
         // Clean up
         unsafe {
             wallet::wallet_free(wallet);
-            (*error).free_message();
         }
     }
 
@@ -329,7 +313,7 @@ mod wallet_tests {
     fn test_wallet_add_account_null() {
         // Test with null wallet
         let result = unsafe {
-            wallet::wallet_add_account(ptr::null_mut(), FFIAccountType::StandardBIP44, 0)
+            wallet::wallet_add_account(ptr::null_mut(), FFIAccountKind::StandardBIP44, 0)
         };
         assert!(result.account.is_null());
         assert_ne!(result.error_code, 0);
@@ -344,7 +328,7 @@ mod wallet_tests {
 
     #[test]
     fn test_wallet_create_edge_cases() {
-        let mut error = FFIError::success();
+        let mut error = FFIError::default();
         let error = &mut error as *mut FFIError;
 
         // Test creating from normal seed size
@@ -378,13 +362,11 @@ mod wallet_tests {
                 wallet::wallet_free(wallet);
             }
         }
-
-        unsafe { (*error).free_message() };
     }
 
     #[test]
     fn test_wallet_xpub_operations() {
-        let mut error = FFIError::success();
+        let mut error = FFIError::default();
         let error = &mut error as *mut FFIError;
 
         let wallet = unsafe { wallet::wallet_create_random(FFINetwork::Testnet, error) };
@@ -403,21 +385,18 @@ mod wallet_tests {
         unsafe {
             let _ = CString::from_raw(xpub);
             wallet::wallet_free(wallet);
-            (*error).free_message();
         }
     }
 
     #[test]
     fn test_wallet_xpub_null_wallet() {
-        let mut error = FFIError::success();
+        let mut error = FFIError::default();
         let error = &mut error as *mut FFIError;
 
         // Test with null wallet
         let xpub = unsafe { wallet::wallet_get_xpub(ptr::null(), 0, error) };
         assert!(xpub.is_null());
         assert_eq!(unsafe { (*error).code }, FFIErrorCode::InvalidInput);
-
-        unsafe { (*error).free_message() };
     }
 
     #[test]

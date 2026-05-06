@@ -12,10 +12,9 @@ rust-version = "1.89"
 # Core Dash libraries
 dashcore = { path = "../dash", features = ["serde", "core-block-hash-use-x11", "message_verification", "bls", "quorum_validation"] }
 dashcore_hashes = { path = "../hashes" }
-key-wallet = { path = "../key-wallet", features = ["parallel-filters"] }
-
-# BLS signatures
-blsful = { git = "https://github.com/dashpay/agora-blsful", rev = "0c34a7a488a0bd1c9a9a2196e793b303ad35c900" }
+dash-network-seeds = { path = "../dash-network-seeds" }
+key-wallet = { path = "../key-wallet" }
+key-wallet-manager = { path = "../key-wallet-manager", features = ["parallel-filters"] }
 
 # CLI
 clap = { version = "4.0", features = ["derive", "env"] }
@@ -29,12 +28,10 @@ futures = "0.3"
 
 # Error handling
 thiserror = "1.0"
-anyhow = "1.0"
 
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-bincode = "2.0.1"
 
 # Logging
 tracing = "0.1"
@@ -45,7 +42,6 @@ chrono = "0.4.20"
 # Utilities
 rand = "0.8"
 hex = "0.4"
-indexmap = "2.0"
 
 # Parallelization
 rayon = "1.11"
@@ -54,20 +50,14 @@ rayon = "1.11"
 tempfile = { version = "3.0", optional = true }
 dashcore-rpc = { path = "../rpc-client", optional = true }
 
-# DNS (trust-dns-resolver was renamed to hickory_resolver)
-hickory-resolver = "0.25"
-
-# Also add log to main dependencies for consistency
-log = "0.4"
-
 [dev-dependencies]
 dash-spv = { path = ".", features = ["test-utils"] }
 dashcore = { path = "../dash", features = ["test-utils"] }
 key-wallet = { path = "../key-wallet", features = ["test-utils"] }
+key-wallet-manager = { path = "../key-wallet-manager", features = ["test-utils"] }
 criterion = { version = "0.8.1", features = ["async_tokio"] }
 tempfile = "3.0"
 tokio-test = "0.4"
-env_logger = "0.10"
 hex = "0.4"
 test-case = "3.3"
 
@@ -84,4 +74,4 @@ name = "dash_spv"
 path = "src/lib.rs"
 
 [features]
-test-utils = ["dashcore/test-utils", "dep:tempfile", "dep:dashcore-rpc"]
+test-utils = ["dashcore/test-utils", "key-wallet-manager/test-utils", "dep:tempfile", "dep:dashcore-rpc"]

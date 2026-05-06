@@ -1,49 +1,31 @@
 //! Transaction-related client APIs (e.g., broadcasting)
 
-use crate::error::{Result, SpvError};
+use crate::error::{NetworkError, Result, SpvError};
 use crate::network::NetworkManager;
 use crate::storage::StorageManager;
 use dashcore::network::message::NetworkMessage;
-use key_wallet::manager::WalletInterface;
+use key_wallet_manager::WalletInterface;
 
-use super::{DashSpvClient, EventHandler};
+use super::DashSpvClient;
 
-impl<W: WalletInterface, N: NetworkManager, S: StorageManager, H: EventHandler>
-    DashSpvClient<W, N, S, H>
-{
+impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, N, S> {
     /// Broadcast a transaction to all connected peers.
+    ///
+    /// The transaction is also injected into the local message pipeline so that
+    /// the mempool manager processes it immediately.
     pub async fn broadcast_transaction(&self, tx: &dashcore::Transaction) -> Result<()> {
         let network_guard = self.network.lock().await;
-        let network = network_guard
-            .as_any()
-            .downcast_ref::<crate::network::manager::PeerNetworkManager>()
-            .ok_or_else(|| {
-                SpvError::Config("Network manager does not support broadcasting".to_string())
-            })?;
 
-        if network.peer_count() == 0 {
-            return Err(SpvError::Network(crate::error::NetworkError::NotConnected));
+        if network_guard.peer_count() == 0 {
+            return Err(SpvError::Network(NetworkError::NotConnected));
         }
 
         let message = NetworkMessage::Tx(tx.clone());
-        let results = network.broadcast(message).await;
+        network_guard.broadcast(message).await?;
 
-        let mut success = false;
-        let mut errors = Vec::new();
-        for res in results {
-            match res {
-                Ok(_) => success = true,
-                Err(err) => errors.push(err.to_string()),
-            }
-        }
+        // Inject locally so the mempool manager picks it up through handle_tx.
+        network_guard.dispatch_local(NetworkMessage::Tx(tx.clone())).await;
 
-        if success {
-            Ok(())
-        } else {
-            Err(SpvError::Network(crate::error::NetworkError::ProtocolError(format!(
-                "Broadcast failed: {}",
-                errors.join(", ")
-            ))))
-        }
+        Ok(())
     }
 }

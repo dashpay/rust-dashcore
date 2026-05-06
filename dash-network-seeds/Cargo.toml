@@ -1,0 +1,11 @@
+[package]
+name = "dash-network-seeds"
+version = { workspace = true }
+edition = "2024"
+authors = ["Dash Core Team"]
+description = "Hardcoded masternode IP seed lists for Dash mainnet and testnet, differentiated by regular/evo type. Refreshed weekly via CI from the live Dash P2P network."
+license = "MIT"
+repository = "https://github.com/dashpay/rust-dashcore"
+
+[dependencies]
+dash-network = { path = "../dash-network" }

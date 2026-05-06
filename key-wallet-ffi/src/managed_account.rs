@@ -4,38 +4,44 @@
 //! ManagedAccount instances from the key-wallet crate. FFIManagedCoreAccount is a
 //! simple wrapper around `Arc<ManagedAccount>` without additional fields.
 
-use std::os::raw::c_uint;
+use dash_network::ffi::FFINetwork;
+use dashcore::hashes::Hash;
+use std::os::raw::{c_char, c_uint};
+use std::ptr::slice_from_raw_parts_mut;
 use std::sync::Arc;
 
-use dashcore::hashes::Hash;
-
 use crate::address_pool::{FFIAddressPool, FFIAddressPoolType};
+use crate::check_ptr;
 use crate::error::{FFIError, FFIErrorCode};
-use crate::types::FFIAccountType;
+use crate::types::{
+    FFIAccountKind, FFIInputDetail, FFIOutputDetail, FFITransactionContext,
+    FFITransactionDirection, FFITransactionType,
+};
 use crate::wallet_manager::FFIWalletManager;
-use crate::FFINetwork;
 use key_wallet::account::account_collection::{DashpayAccountKey, PlatformPaymentAccountKey};
+use key_wallet::account::TransactionRecord;
 use key_wallet::managed_account::address_pool::AddressPool;
+use key_wallet::managed_account::managed_account_trait::ManagedAccountTrait;
 use key_wallet::managed_account::managed_platform_account::ManagedPlatformAccount;
-use key_wallet::managed_account::ManagedCoreAccount;
+use key_wallet::managed_account::ManagedCoreFundsAccount;
 use key_wallet::AccountType;
 
 /// Opaque managed account handle that wraps ManagedAccount
 pub struct FFIManagedCoreAccount {
     /// The underlying managed account
-    pub(crate) account: Arc<ManagedCoreAccount>,
+    pub(crate) account: Arc<ManagedCoreFundsAccount>,
 }
 
 impl FFIManagedCoreAccount {
     /// Create a new FFI managed account handle
-    pub fn new(account: &ManagedCoreAccount) -> Self {
+    pub fn new(account: &ManagedCoreFundsAccount) -> Self {
         FFIManagedCoreAccount {
             account: Arc::new(account.clone()),
         }
     }
 
     /// Get a reference to the inner managed account
-    pub fn inner(&self) -> &ManagedCoreAccount {
+    pub fn inner(&self) -> &ManagedCoreFundsAccount {
         self.account.as_ref()
     }
 }
@@ -180,7 +186,7 @@ pub unsafe extern "C" fn managed_wallet_get_account(
     manager: *const FFIWalletManager,
     wallet_id: *const u8,
     account_index: c_uint,
-    account_type: FFIAccountType,
+    account_type: FFIAccountKind,
 ) -> FFIManagedCoreAccountResult {
     if manager.is_null() {
         return FFIManagedCoreAccountResult::error(
@@ -197,7 +203,7 @@ pub unsafe extern "C" fn managed_wallet_get_account(
     }
 
     // Get the managed wallet info from the manager
-    let mut error = FFIError::success();
+    let mut error = FFIError::default();
     let managed_wallet_ptr = crate::wallet_manager::wallet_manager_get_managed_wallet_info(
         manager, wallet_id, &mut error,
     );
@@ -315,7 +321,7 @@ pub unsafe extern "C" fn managed_wallet_get_top_up_account_with_registration_ind
     }
 
     // Get the managed wallet info from the manager
-    let mut error = FFIError::success();
+    let mut error = FFIError::default();
     let managed_wallet_ptr = crate::wallet_manager::wallet_manager_get_managed_wallet_info(
         manager, wallet_id, &mut error,
     );
@@ -387,7 +393,7 @@ pub unsafe extern "C" fn managed_wallet_get_dashpay_receiving_account(
         friend_identity_id: friend_id,
     };
 
-    let mut error = FFIError::success();
+    let mut error = FFIError::default();
     let managed_wallet_ptr = crate::wallet_manager::wallet_manager_get_managed_wallet_info(
         manager, wallet_id, &mut error,
     );
@@ -448,7 +454,7 @@ pub unsafe extern "C" fn managed_wallet_get_dashpay_external_account(
         friend_identity_id: friend_id,
     };
 
-    let mut error = FFIError::success();
+    let mut error = FFIError::default();
     let managed_wallet_ptr = crate::wallet_manager::wallet_manager_get_managed_wallet_info(
         manager, wallet_id, &mut error,
     );
@@ -492,7 +498,7 @@ pub unsafe extern "C" fn managed_core_account_get_network(
     }
 
     let account = &*account;
-    account.inner().network.into()
+    account.inner().network().into()
 }
 
 /// Get the parent wallet ID of a managed account
@@ -524,14 +530,14 @@ pub unsafe extern "C" fn managed_core_account_get_parent_wallet_id(
 pub unsafe extern "C" fn managed_core_account_get_account_type(
     account: *const FFIManagedCoreAccount,
     index_out: *mut c_uint,
-) -> FFIAccountType {
+) -> FFIAccountKind {
     if account.is_null() {
-        return FFIAccountType::StandardBIP44; // Default type
+        return FFIAccountKind::StandardBIP44; // Default type
     }
 
     let account = &*account;
     let managed_account = account.inner();
-    let account_type_rust = managed_account.account_type.to_account_type();
+    let account_type_rust = managed_account.managed_account_type().to_account_type();
 
     // Set the index if output pointer is provided
     if !index_out.is_null() {
@@ -546,54 +552,37 @@ pub unsafe extern "C" fn managed_core_account_get_account_type(
         } => {
             use key_wallet::account::StandardAccountType;
             match standard_account_type {
-                StandardAccountType::BIP44Account => FFIAccountType::StandardBIP44,
-                StandardAccountType::BIP32Account => FFIAccountType::StandardBIP32,
+                StandardAccountType::BIP44Account => FFIAccountKind::StandardBIP44,
+                StandardAccountType::BIP32Account => FFIAccountKind::StandardBIP32,
             }
         }
         AccountType::CoinJoin {
             ..
-        } => FFIAccountType::CoinJoin,
-        AccountType::IdentityRegistration => FFIAccountType::IdentityRegistration,
+        } => FFIAccountKind::CoinJoin,
+        AccountType::IdentityRegistration => FFIAccountKind::IdentityRegistration,
         AccountType::IdentityTopUp {
             ..
-        } => FFIAccountType::IdentityTopUp,
+        } => FFIAccountKind::IdentityTopUp,
         AccountType::IdentityTopUpNotBoundToIdentity => {
-            FFIAccountType::IdentityTopUpNotBoundToIdentity
+            FFIAccountKind::IdentityTopUpNotBoundToIdentity
         }
-        AccountType::IdentityInvitation => FFIAccountType::IdentityInvitation,
-        AccountType::AssetLockAddressTopUp => FFIAccountType::AssetLockAddressTopUp,
-        AccountType::AssetLockShieldedAddressTopUp => FFIAccountType::AssetLockShieldedAddressTopUp,
-        AccountType::ProviderVotingKeys => FFIAccountType::ProviderVotingKeys,
-        AccountType::ProviderOwnerKeys => FFIAccountType::ProviderOwnerKeys,
-        AccountType::ProviderOperatorKeys => FFIAccountType::ProviderOperatorKeys,
-        AccountType::ProviderPlatformKeys => FFIAccountType::ProviderPlatformKeys,
+        AccountType::IdentityInvitation => FFIAccountKind::IdentityInvitation,
+        AccountType::AssetLockAddressTopUp => FFIAccountKind::AssetLockAddressTopUp,
+        AccountType::AssetLockShieldedAddressTopUp => FFIAccountKind::AssetLockShieldedAddressTopUp,
+        AccountType::ProviderVotingKeys => FFIAccountKind::ProviderVotingKeys,
+        AccountType::ProviderOwnerKeys => FFIAccountKind::ProviderOwnerKeys,
+        AccountType::ProviderOperatorKeys => FFIAccountKind::ProviderOperatorKeys,
+        AccountType::ProviderPlatformKeys => FFIAccountKind::ProviderPlatformKeys,
         AccountType::DashpayReceivingFunds {
             ..
-        } => FFIAccountType::DashpayReceivingFunds,
+        } => FFIAccountKind::DashpayReceivingFunds,
         AccountType::DashpayExternalAccount {
             ..
-        } => FFIAccountType::DashpayExternalAccount,
+        } => FFIAccountKind::DashpayExternalAccount,
         AccountType::PlatformPayment {
             ..
-        } => FFIAccountType::PlatformPayment,
+        } => FFIAccountKind::PlatformPayment,
     }
-}
-
-/// Check if a managed account is watch-only
-///
-/// # Safety
-///
-/// - `account` must be a valid pointer to an FFIManagedCoreAccount instance
-#[no_mangle]
-pub unsafe extern "C" fn managed_core_account_get_is_watch_only(
-    account: *const FFIManagedCoreAccount,
-) -> bool {
-    if account.is_null() {
-        return false;
-    }
-
-    let account = &*account;
-    account.inner().is_watch_only
 }
 
 /// Get the balance of a managed account
@@ -612,10 +601,10 @@ pub unsafe extern "C" fn managed_core_account_get_balance(
     }
 
     let account = &*account;
-    let balance = &account.inner().balance;
+    let balance = account.inner().balance;
 
     *balance_out = crate::types::FFIBalance {
-        confirmed: balance.spendable(),
+        confirmed: balance.confirmed(),
         unconfirmed: balance.unconfirmed(),
         immature: balance.immature(),
         locked: balance.locked(),
@@ -639,7 +628,7 @@ pub unsafe extern "C" fn managed_core_account_get_transaction_count(
     }
 
     let account = &*account;
-    account.inner().transactions.len() as c_uint
+    account.inner().transactions().len() as c_uint
 }
 
 /// Get the number of UTXOs in a managed account
@@ -659,23 +648,270 @@ pub unsafe extern "C" fn managed_core_account_get_utxo_count(
     account.inner().utxos.len() as c_uint
 }
 
+/// FFI-compatible owning-account descriptor for a [`FFITransactionRecord`].
+///
+/// Mirrors the Rust-side `TransactionRecord::account_type`. `kind` is the
+/// discriminant; `index` is the primary index (`0` for variants that have no
+/// meaningful primary index — identity-singletons, provider-key, asset-lock);
+/// `index_secondary` carries the secondary index (`registration_index` for
+/// `IdentityTopUp`, `key_class` for `PlatformPayment`) or `-1` when not
+/// applicable. The `identity_user` and `identity_friend` pointers are non-null
+/// only for the Dashpay variants and point to 32-byte identity hashes owned by
+/// this struct (freed by its `Drop` impl). `key_class` is `-1` unless
+/// this is a `PlatformPayment` record, in which case it carries the `key_class`
+/// hardened index (also exposed in `index_secondary` for symmetry with the
+/// existing FFI tuple contract).
+#[repr(C)]
+pub struct FFIAccountType {
+    /// Discriminant identifying the owning account variant.
+    pub kind: FFIAccountKind,
+    /// Primary account index for variants that carry one.
+    pub index: u32,
+    /// Secondary account index when applicable, `-1` otherwise.
+    pub index_secondary: i32,
+    /// Pointer to the 32-byte `user_identity_id` of the Dashpay account that
+    /// owns this record, null when the account is not a Dashpay variant. The
+    /// pointee is owned by this struct and freed when it is dropped.
+    pub identity_user: *const [u8; 32],
+    /// Pointer to the 32-byte `friend_identity_id` of the Dashpay account
+    /// that owns this record, null when the account is not a Dashpay variant.
+    /// The pointee is owned by this struct and freed when it is dropped.
+    pub identity_friend: *const [u8; 32],
+    /// `PlatformPayment` `key_class` hardened index, `-1` for any other
+    /// account variant. Mirrors `index_secondary` for `PlatformPayment`.
+    pub key_class: i32,
+}
+
+impl From<&AccountType> for FFIAccountType {
+    fn from(account_type: &AccountType) -> Self {
+        use key_wallet::account::StandardAccountType;
+        let (kind, index, index_secondary) = match *account_type {
+            AccountType::Standard {
+                index,
+                standard_account_type: StandardAccountType::BIP44Account,
+            } => (FFIAccountKind::StandardBIP44, index, -1),
+            AccountType::Standard {
+                index,
+                standard_account_type: StandardAccountType::BIP32Account,
+            } => (FFIAccountKind::StandardBIP32, index, -1),
+            AccountType::CoinJoin {
+                index,
+            } => (FFIAccountKind::CoinJoin, index, -1),
+            AccountType::IdentityRegistration => (FFIAccountKind::IdentityRegistration, 0, -1),
+            AccountType::IdentityTopUp {
+                registration_index,
+            } => (FFIAccountKind::IdentityTopUp, 0, registration_index as i32),
+            AccountType::IdentityTopUpNotBoundToIdentity => {
+                (FFIAccountKind::IdentityTopUpNotBoundToIdentity, 0, -1)
+            }
+            AccountType::IdentityInvitation => (FFIAccountKind::IdentityInvitation, 0, -1),
+            AccountType::AssetLockAddressTopUp => (FFIAccountKind::AssetLockAddressTopUp, 0, -1),
+            AccountType::AssetLockShieldedAddressTopUp => {
+                (FFIAccountKind::AssetLockShieldedAddressTopUp, 0, -1)
+            }
+            AccountType::ProviderVotingKeys => (FFIAccountKind::ProviderVotingKeys, 0, -1),
+            AccountType::ProviderOwnerKeys => (FFIAccountKind::ProviderOwnerKeys, 0, -1),
+            AccountType::ProviderOperatorKeys => (FFIAccountKind::ProviderOperatorKeys, 0, -1),
+            AccountType::ProviderPlatformKeys => (FFIAccountKind::ProviderPlatformKeys, 0, -1),
+            AccountType::DashpayReceivingFunds {
+                index,
+                ..
+            } => (FFIAccountKind::DashpayReceivingFunds, index, -1),
+            AccountType::DashpayExternalAccount {
+                index,
+                ..
+            } => (FFIAccountKind::DashpayExternalAccount, index, -1),
+            AccountType::PlatformPayment {
+                account,
+                key_class,
+            } => (FFIAccountKind::PlatformPayment, account, key_class as i32),
+        };
+
+        let (identity_user, identity_friend) = match *account_type {
+            AccountType::DashpayReceivingFunds {
+                user_identity_id,
+                friend_identity_id,
+                ..
+            }
+            | AccountType::DashpayExternalAccount {
+                user_identity_id,
+                friend_identity_id,
+                ..
+            } => (
+                Box::into_raw(Box::new(user_identity_id)) as *const [u8; 32],
+                Box::into_raw(Box::new(friend_identity_id)) as *const [u8; 32],
+            ),
+            _ => (std::ptr::null(), std::ptr::null()),
+        };
+
+        let key_class = match *account_type {
+            AccountType::PlatformPayment {
+                key_class,
+                ..
+            } => key_class as i32,
+            _ => -1,
+        };
+
+        FFIAccountType {
+            kind,
+            index,
+            index_secondary,
+            identity_user,
+            identity_friend,
+            key_class,
+        }
+    }
+}
+
+impl Drop for FFIAccountType {
+    fn drop(&mut self) {
+        if !self.identity_user.is_null() {
+            let _ = unsafe { Box::from_raw(self.identity_user as *mut [u8; 32]) };
+            self.identity_user = std::ptr::null();
+        }
+        if !self.identity_friend.is_null() {
+            let _ = unsafe { Box::from_raw(self.identity_friend as *mut [u8; 32]) };
+            self.identity_friend = std::ptr::null();
+        }
+    }
+}
+
 /// FFI-compatible transaction record
+///
+/// Heap-allocated fields are freed automatically when the record is dropped
+/// (see `Drop` impl below).
 #[repr(C)]
 pub struct FFITransactionRecord {
     /// Transaction ID (32 bytes)
     pub txid: [u8; 32],
     /// Net amount for this account (positive = received, negative = sent)
     pub net_amount: i64,
-    /// Block height if confirmed, 0 if unconfirmed
-    pub height: u32,
-    /// Block hash if confirmed (32 bytes), all zeros if unconfirmed
-    pub block_hash: [u8; 32],
-    /// Unix timestamp
-    pub timestamp: u64,
+    /// Transaction context (mempool, instant-send, in-block, chain-locked + block info)
+    pub context: FFITransactionContext,
+    /// Classified transaction type
+    pub transaction_type: FFITransactionType,
+    /// Direction of the transaction relative to the wallet
+    pub direction: FFITransactionDirection,
     /// Fee if known, 0 if unknown
     pub fee: u64,
-    /// Whether this is our transaction
-    pub is_ours: bool,
+    /// Owning-account descriptor (discriminant + indices + identity ids).
+    pub account_type: FFIAccountType,
+    /// Input details array
+    pub input_details: *mut FFIInputDetail,
+    /// Number of input details
+    pub input_details_count: usize,
+    /// Output details array
+    pub output_details: *mut FFIOutputDetail,
+    /// Number of output details
+    pub output_details_count: usize,
+    /// Consensus-serialized transaction bytes
+    pub tx_data: *mut u8,
+    /// Length of `tx_data`
+    pub tx_len: usize,
+    /// Optional label (null if not set)
+    pub label: *mut c_char,
+}
+
+impl From<&TransactionRecord> for FFITransactionRecord {
+    fn from(value: &TransactionRecord) -> Self {
+        let txid = value.txid.to_byte_array();
+        let net_amount = value.net_amount;
+        let context = FFITransactionContext::from(value.context.clone());
+        let transaction_type = FFITransactionType::from(value.transaction_type);
+        let direction = FFITransactionDirection::from(value.direction);
+        let fee = value.fee.unwrap_or(0);
+
+        let account_type = FFIAccountType::from(&value.account_type);
+
+        // Serialize transaction bytes
+        let tx_slice = dashcore::consensus::serialize(&value.transaction).into_boxed_slice();
+        let tx_len = tx_slice.len();
+        let tx_data = if tx_slice.is_empty() {
+            std::ptr::null_mut()
+        } else {
+            Box::into_raw(tx_slice) as *mut u8
+        };
+
+        // Input details
+        let input_slice: Box<[FFIInputDetail]> =
+            value.input_details.iter().map(|d| d.into()).collect::<Vec<_>>().into_boxed_slice();
+        let input_details_count = input_slice.len();
+        let input_details = if input_slice.is_empty() {
+            std::ptr::null_mut()
+        } else {
+            Box::into_raw(input_slice) as *mut FFIInputDetail
+        };
+
+        // Label
+        let label = if value.label.is_empty() {
+            std::ptr::null_mut()
+        } else {
+            std::ffi::CString::new(value.label.as_str()).unwrap_or_default().into_raw()
+        };
+
+        // Output details
+        let output_slice: Box<[FFIOutputDetail]> =
+            value.output_details.iter().map(|d| d.into()).collect::<Vec<_>>().into_boxed_slice();
+        let output_details_count = output_slice.len();
+        let output_details = if output_slice.is_empty() {
+            std::ptr::null_mut()
+        } else {
+            Box::into_raw(output_slice) as *mut FFIOutputDetail
+        };
+
+        FFITransactionRecord {
+            txid,
+            net_amount,
+            context,
+            transaction_type,
+            direction,
+            fee,
+            account_type,
+            input_details,
+            input_details_count,
+            output_details,
+            output_details_count,
+            tx_data,
+            tx_len,
+            label,
+        }
+    }
+}
+
+impl Drop for FFITransactionRecord {
+    fn drop(&mut self) {
+        if !self.input_details.is_null() && self.input_details_count > 0 {
+            let slice_ptr =
+                std::ptr::slice_from_raw_parts_mut(self.input_details, self.input_details_count);
+            let _ = unsafe { Box::from_raw(slice_ptr) };
+
+            self.input_details = std::ptr::null_mut();
+            self.input_details_count = 0;
+        }
+
+        if !self.output_details.is_null() && self.output_details_count > 0 {
+            let slice_ptr =
+                std::ptr::slice_from_raw_parts_mut(self.output_details, self.output_details_count);
+            let _ = unsafe { Box::from_raw(slice_ptr) };
+
+            self.output_details = std::ptr::null_mut();
+            self.output_details_count = 0;
+        }
+
+        if !self.tx_data.is_null() && self.tx_len > 0 {
+            let slice_ptr = std::ptr::slice_from_raw_parts_mut(self.tx_data, self.tx_len);
+            let _ = unsafe { Box::from_raw(slice_ptr) };
+
+            self.tx_data = std::ptr::null_mut();
+            self.tx_len = 0;
+        }
+
+        if !self.label.is_null() {
+            let _ = unsafe { std::ffi::CString::from_raw(self.label) };
+
+            self.label = std::ptr::null_mut();
+        }
+    }
 }
 
 /// Get all transactions from a managed account
@@ -699,7 +935,7 @@ pub unsafe extern "C" fn managed_core_account_get_transactions(
     }
 
     let account = &*account;
-    let transactions = &account.inner().transactions;
+    let transactions = account.inner().transactions();
 
     if transactions.is_empty() {
         *transactions_out = std::ptr::null_mut();
@@ -708,49 +944,10 @@ pub unsafe extern "C" fn managed_core_account_get_transactions(
     }
 
     // Allocate array for transaction records
-    let count = transactions.len();
-    let layout = match std::alloc::Layout::array::<FFITransactionRecord>(count) {
-        Ok(layout) => layout,
-        Err(_) => return false,
-    };
-    let ptr = std::alloc::alloc(layout) as *mut FFITransactionRecord;
+    let ffi_tx = transactions.values().map(FFITransactionRecord::from).collect::<Vec<_>>();
 
-    if ptr.is_null() {
-        return false;
-    }
-
-    // Copy transaction data into FFI structures
-    for (i, (_txid, record)) in transactions.iter().enumerate() {
-        let ffi_record = &mut *ptr.add(i);
-
-        // Copy txid
-        ffi_record.txid = record.txid.to_byte_array();
-
-        // Copy net amount
-        ffi_record.net_amount = record.net_amount;
-
-        // Copy height (0 if unconfirmed)
-        ffi_record.height = record.height.unwrap_or(0);
-
-        // Copy block hash (zeros if unconfirmed)
-        if let Some(block_hash) = record.block_hash {
-            ffi_record.block_hash = block_hash.to_byte_array();
-        } else {
-            ffi_record.block_hash = [0u8; 32];
-        }
-
-        // Copy timestamp
-        ffi_record.timestamp = record.timestamp;
-
-        // Copy fee (0 if unknown)
-        ffi_record.fee = record.fee.unwrap_or(0);
-
-        // Copy is_ours flag
-        ffi_record.is_ours = record.is_ours;
-    }
-
-    *transactions_out = ptr;
-    *count_out = count;
+    *count_out = ffi_tx.len();
+    *transactions_out = Box::into_raw(ffi_tx.into_boxed_slice()) as *mut FFITransactionRecord;
     true
 }
 
@@ -766,13 +963,11 @@ pub unsafe extern "C" fn managed_core_account_free_transactions(
     transactions: *mut FFITransactionRecord,
     count: usize,
 ) {
-    if !transactions.is_null() && count > 0 {
-        let layout = match std::alloc::Layout::array::<FFITransactionRecord>(count) {
-            Ok(layout) => layout,
-            Err(_) => return,
-        };
-        std::alloc::dealloc(transactions as *mut u8, layout);
+    if transactions.is_null() || count == 0 {
+        return;
     }
+
+    let _ = Box::from_raw(slice_from_raw_parts_mut(transactions, count));
 }
 
 /// Free a managed account handle
@@ -816,7 +1011,7 @@ pub unsafe extern "C" fn managed_core_account_result_free_error(
 ///
 /// - `manager` must be a valid pointer to an FFIWalletManager instance
 /// - `wallet_id` must be a valid pointer to a 32-byte wallet ID
-/// - `error` must be a valid pointer to an FFIError structure or null
+/// - `error` must be a valid pointer to an FFIError structure
 /// - The caller must ensure all pointers remain valid for the duration of this call
 #[no_mangle]
 pub unsafe extern "C" fn managed_wallet_get_account_count(
@@ -824,22 +1019,16 @@ pub unsafe extern "C" fn managed_wallet_get_account_count(
     wallet_id: *const u8,
     error: *mut FFIError,
 ) -> c_uint {
-    if manager.is_null() || wallet_id.is_null() {
-        FFIError::set_error(error, FFIErrorCode::InvalidInput, "Null pointer provided".to_string());
-        return 0;
-    }
+    check_ptr!(manager, error);
+    check_ptr!(wallet_id, error);
 
-    // Get the wallet from the manager
     let wallet_ptr = crate::wallet_manager::wallet_manager_get_wallet(manager, wallet_id, error);
-
     if wallet_ptr.is_null() {
         // Error already set by wallet_manager_get_wallet
         return 0;
     }
 
     let wallet = &*wallet_ptr;
-
-    FFIError::set_success(error);
     let accounts = &wallet.inner().accounts;
     let count = accounts.standard_bip44_accounts.len()
         + accounts.standard_bip32_accounts.len()
@@ -873,7 +1062,7 @@ pub unsafe extern "C" fn managed_core_account_get_index(
     }
 
     let account = &*account;
-    account.inner().account_type.index_or_default()
+    account.inner().managed_account_type().index_or_default()
 }
 
 /// Get the external address pool from a managed account
@@ -897,7 +1086,7 @@ pub unsafe extern "C" fn managed_core_account_get_external_address_pool(
     let managed_account = account.inner();
 
     // Get external address pool if this is a standard account
-    match &managed_account.account_type {
+    match managed_account.managed_account_type() {
         key_wallet::managed_account::managed_account_type::ManagedAccountType::Standard {
             external_addresses,
             ..
@@ -933,7 +1122,7 @@ pub unsafe extern "C" fn managed_core_account_get_internal_address_pool(
     let managed_account = account.inner();
 
     // Get internal address pool if this is a standard account
-    match &managed_account.account_type {
+    match managed_account.managed_account_type() {
         key_wallet::managed_account::managed_account_type::ManagedAccountType::Standard {
             internal_addresses,
             ..
@@ -977,7 +1166,7 @@ pub unsafe extern "C" fn managed_core_account_get_address_pool(
     match pool_type {
         FFIAddressPoolType::External => {
             // Only standard accounts have external pools
-            match &managed_account.account_type {
+            match managed_account.managed_account_type() {
                 ManagedAccountType::Standard {
                     external_addresses,
                     ..
@@ -993,7 +1182,7 @@ pub unsafe extern "C" fn managed_core_account_get_address_pool(
         }
         FFIAddressPoolType::Internal => {
             // Only standard accounts have internal pools
-            match &managed_account.account_type {
+            match managed_account.managed_account_type() {
                 ManagedAccountType::Standard {
                     internal_addresses,
                     ..
@@ -1009,7 +1198,7 @@ pub unsafe extern "C" fn managed_core_account_get_address_pool(
         }
         FFIAddressPoolType::Single => {
             // Get the single address pool for non-standard accounts
-            let pool_ref = match &managed_account.account_type {
+            let pool_ref = match managed_account.managed_account_type() {
                 ManagedAccountType::Standard {
                     ..
                 } => {
@@ -1109,7 +1298,7 @@ pub unsafe extern "C" fn managed_wallet_get_platform_payment_account(
     }
 
     // Get the managed wallet info from the manager
-    let mut error = FFIError::success();
+    let mut error = FFIError::default();
     let managed_wallet_ptr = crate::wallet_manager::wallet_manager_get_managed_wallet_info(
         manager, wallet_id, &mut error,
     );
@@ -1358,12 +1547,16 @@ pub unsafe extern "C" fn managed_platform_account_result_free_error(
 mod tests {
     use super::*;
     use crate::address_pool::address_pool_free;
-    use crate::types::{FFIAccountCreationOptionType, FFIWalletAccountCreationOptions};
+    use crate::types::{
+        FFIAccountCreationOptionType, FFIBlockInfo, FFIInputDetail, FFIOutputDetail, FFIOutputRole,
+        FFITransactionContext, FFITransactionContextType, FFITransactionDirection,
+        FFITransactionType, FFIWalletAccountCreationOptions,
+    };
     use crate::wallet_manager::{
         wallet_manager_add_wallet_from_mnemonic_with_options, wallet_manager_create,
         wallet_manager_free, wallet_manager_free_wallet_ids, wallet_manager_get_wallet_ids,
     };
-    use crate::FFINetwork;
+    use dash_network::ffi::FFINetwork;
     use std::ffi::CString;
     use std::ptr;
 
@@ -1372,7 +1565,7 @@ mod tests {
     #[test]
     fn test_managed_account_basic() {
         unsafe {
-            let mut error = FFIError::success();
+            let mut error = FFIError::default();
 
             // Create wallet manager
             let manager = wallet_manager_create(FFINetwork::Testnet, &mut error);
@@ -1412,7 +1605,7 @@ mod tests {
                 manager,
                 wallet_ids_out,
                 0,
-                FFIAccountType::StandardBIP44,
+                FFIAccountKind::StandardBIP44,
             );
 
             assert!(!result.account.is_null());
@@ -1420,9 +1613,7 @@ mod tests {
             assert!(result.error_message.is_null());
 
             // Verify the account was created successfully
-            let account = &*result.account;
-            // Account should exist and be valid
-            assert!(!account.inner().is_watch_only);
+            let _account = &*result.account;
 
             // Clean up
             managed_core_account_free(result.account);
@@ -1434,7 +1625,7 @@ mod tests {
     #[test]
     fn test_managed_account_not_found() {
         unsafe {
-            let mut error = FFIError::success();
+            let mut error = FFIError::default();
 
             // Create wallet manager
             let manager = wallet_manager_create(FFINetwork::Testnet, &mut error);
@@ -1474,7 +1665,7 @@ mod tests {
 
             // Try to get a non-existent CoinJoin account
             let mut result =
-                managed_wallet_get_account(manager, wallet_ids_out, 0, FFIAccountType::CoinJoin);
+                managed_wallet_get_account(manager, wallet_ids_out, 0, FFIAccountKind::CoinJoin);
 
             assert!(result.account.is_null());
             assert_ne!(result.error_code, 0);
@@ -1500,7 +1691,7 @@ mod tests {
     #[test]
     fn test_managed_wallet_get_account_count() {
         unsafe {
-            let mut error = FFIError::success();
+            let mut error = FFIError::default();
 
             // Create wallet manager
             let manager = wallet_manager_create(FFINetwork::Testnet, &mut error);
@@ -1561,7 +1752,7 @@ mod tests {
     #[test]
     fn test_managed_account_getters() {
         unsafe {
-            let mut error = FFIError::success();
+            let mut error = FFIError::default();
 
             // Create wallet manager
             let manager = wallet_manager_create(FFINetwork::Testnet, &mut error);
@@ -1601,7 +1792,7 @@ mod tests {
                 manager,
                 wallet_ids_out,
                 0,
-                FFIAccountType::StandardBIP44,
+                FFIAccountKind::StandardBIP44,
             );
 
             assert!(!result.account.is_null());
@@ -1617,12 +1808,8 @@ mod tests {
             // Test get_account_type
             let mut index_out: c_uint = 999; // Initialize with unexpected value
             let account_type = managed_core_account_get_account_type(account, &mut index_out);
-            assert_eq!(account_type, FFIAccountType::StandardBIP44);
+            assert_eq!(account_type, FFIAccountKind::StandardBIP44);
             assert_eq!(index_out, 0);
-
-            // Test get_is_watch_only
-            let is_watch_only = managed_core_account_get_is_watch_only(account);
-            assert!(!is_watch_only);
 
             // Test get_balance
             let mut balance_out = crate::types::FFIBalance {
@@ -1669,10 +1856,7 @@ mod tests {
 
             let mut index_out: c_uint = 0;
             let account_type = managed_core_account_get_account_type(ptr::null(), &mut index_out);
-            assert_eq!(account_type, FFIAccountType::StandardBIP44); // Default type
-
-            let is_watch_only = managed_core_account_get_is_watch_only(ptr::null());
-            assert!(!is_watch_only);
+            assert_eq!(account_type, FFIAccountKind::StandardBIP44); // Default type
 
             let tx_count = managed_core_account_get_transaction_count(ptr::null());
             assert_eq!(tx_count, 0);
@@ -1685,7 +1869,7 @@ mod tests {
             assert_eq!(index, 0);
 
             // Test null balance_out
-            let mut error = FFIError::success();
+            let mut error = FFIError::default();
             let manager = wallet_manager_create(FFINetwork::Testnet, &mut error);
             assert!(!manager.is_null());
 
@@ -1719,7 +1903,7 @@ mod tests {
                 manager,
                 wallet_ids_out,
                 0,
-                FFIAccountType::StandardBIP44,
+                FFIAccountKind::StandardBIP44,
             );
             assert!(!result.account.is_null());
 
@@ -1737,7 +1921,7 @@ mod tests {
     #[test]
     fn test_managed_account_address_pools() {
         unsafe {
-            let mut error = FFIError::success();
+            let mut error = FFIError::default();
 
             // Create wallet manager
             let mut manager = wallet_manager_create(FFINetwork::Testnet, &mut error);
@@ -1777,7 +1961,7 @@ mod tests {
                 manager,
                 wallet_ids_out,
                 0,
-                FFIAccountType::StandardBIP44,
+                FFIAccountKind::StandardBIP44,
             );
 
             assert!(!result.account.is_null());
@@ -1863,7 +2047,7 @@ mod tests {
 
             // Get CoinJoin account
             let cj_result =
-                managed_wallet_get_account(manager, wallet_ids_out, 0, FFIAccountType::CoinJoin);
+                managed_wallet_get_account(manager, wallet_ids_out, 0, FFIAccountKind::CoinJoin);
             assert!(!cj_result.account.is_null());
 
             let cj_account = cj_result.account;
@@ -1893,6 +2077,110 @@ mod tests {
         unsafe {
             // Should not crash when freeing null
             address_pool_free(ptr::null_mut());
+        }
+    }
+
+    #[test]
+    fn test_free_transactions_null_safety() {
+        unsafe {
+            managed_core_account_free_transactions(std::ptr::null_mut(), 0);
+            managed_core_account_free_transactions(std::ptr::null_mut(), 5);
+        }
+    }
+
+    #[test]
+    fn test_ffi_transaction_record_roundtrip() {
+        let mut records = Vec::new();
+
+        // First record: with sub-allocations
+        let output_slice = vec![FFIOutputDetail {
+            index: 0,
+            role: FFIOutputRole::Received,
+            value: 0,
+            address: std::ptr::null_mut(),
+        }]
+        .into_boxed_slice();
+        // Create input details
+        let input_slice = vec![FFIInputDetail {
+            index: 0,
+            value: 0,
+            address: CString::new("XtestAddress123").unwrap().into_raw(),
+        }]
+        .into_boxed_slice();
+        // Create tx data
+        let tx_slice = vec![0u8; 10].into_boxed_slice();
+
+        let r0 = FFITransactionRecord {
+            txid: [0xaa; 32],
+            net_amount: 50000,
+            context: FFITransactionContext {
+                context_type: FFITransactionContextType::Mempool,
+                block_info: FFIBlockInfo::empty(),
+                islock_data: std::ptr::null(),
+                islock_len: 0,
+            },
+            transaction_type: FFITransactionType::Standard,
+            direction: FFITransactionDirection::Incoming,
+            fee: 226,
+            account_type: FFIAccountType {
+                kind: FFIAccountKind::StandardBIP44,
+                index: 0,
+                index_secondary: -1,
+                identity_user: std::ptr::null(),
+                identity_friend: std::ptr::null(),
+                key_class: -1,
+            },
+            input_details_count: input_slice.len(),
+            input_details: Box::into_raw(input_slice) as *mut FFIInputDetail,
+            output_details_count: output_slice.len(),
+            output_details: Box::into_raw(output_slice) as *mut FFIOutputDetail,
+            tx_len: tx_slice.len(),
+            tx_data: Box::into_raw(tx_slice) as *mut u8,
+
+            // Create label
+            label: CString::new("Payment for coffee").unwrap().into_raw(),
+        };
+
+        // Second record: empty sub-arrays
+        let r1 = FFITransactionRecord {
+            txid: [0xbb; 32],
+            net_amount: -10000,
+            context: FFITransactionContext {
+                context_type: FFITransactionContextType::Mempool,
+                block_info: FFIBlockInfo::empty(),
+                islock_data: std::ptr::null(),
+                islock_len: 0,
+            },
+            transaction_type: FFITransactionType::Standard,
+            direction: FFITransactionDirection::Outgoing,
+            fee: 0,
+            account_type: FFIAccountType {
+                kind: FFIAccountKind::StandardBIP44,
+                index: 0,
+                index_secondary: -1,
+                identity_user: std::ptr::null(),
+                identity_friend: std::ptr::null(),
+                key_class: -1,
+            },
+            input_details: std::ptr::null_mut(),
+            input_details_count: 0,
+            output_details: std::ptr::null_mut(),
+            output_details_count: 0,
+            tx_data: std::ptr::null_mut(),
+            tx_len: 0,
+            label: std::ptr::null_mut(),
+        };
+
+        records.push(r0);
+        records.push(r1);
+
+        let count = records.len();
+        let records = records.into_boxed_slice();
+        let records_ptr = Box::into_raw(records) as *mut FFITransactionRecord;
+
+        // Free should not crash
+        unsafe {
+            managed_core_account_free_transactions(records_ptr, count);
         }
     }
 }

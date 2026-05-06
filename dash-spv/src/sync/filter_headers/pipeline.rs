@@ -24,9 +24,6 @@ const MAX_CONCURRENT_CFHEADERS_REQUESTS: usize = 10;
 /// Timeout for CFHeaders requests. Single response but allow time for network latency.
 const FILTER_HEADERS_TIMEOUT: Duration = Duration::from_secs(20);
 
-/// Maximum number of retries for CFHeaders requests.
-const FILTER_HEADERS_MAX_RETRIES: u32 = 3;
-
 /// Pipeline for downloading compact block filter headers.
 ///
 /// Uses DownloadCoordinator<BlockHash> for batch-level tracking (keyed by stop_hash),
@@ -58,8 +55,7 @@ impl FilterHeadersPipeline {
             coordinator: DownloadCoordinator::new(
                 DownloadConfig::default()
                     .with_max_concurrent(MAX_CONCURRENT_CFHEADERS_REQUESTS)
-                    .with_timeout(FILTER_HEADERS_TIMEOUT)
-                    .with_max_retries(FILTER_HEADERS_MAX_RETRIES),
+                    .with_timeout(FILTER_HEADERS_TIMEOUT),
             ),
             batch_starts: HashMap::new(),
             buffered: HashMap::new(),
@@ -265,22 +261,10 @@ impl FilterHeadersPipeline {
     }
 
     /// Re-enqueue timed out requests for retry.
-    ///
-    /// Returns heights that exceeded max retries and were permanently dropped.
-    pub(super) fn handle_timeouts(&mut self) -> Vec<u32> {
-        let mut failed = Vec::new();
+    pub(super) fn handle_timeouts(&mut self) {
         for stop_hash in self.coordinator.check_timeouts() {
-            if !self.coordinator.enqueue_retry(stop_hash) {
-                if let Some(start_height) = self.batch_starts.remove(&stop_hash) {
-                    tracing::warn!(
-                        "CFHeaders batch at height {} exceeded max retries, dropping",
-                        start_height
-                    );
-                    failed.push(start_height);
-                }
-            }
+            self.coordinator.enqueue_retry(stop_hash);
         }
-        failed
     }
 }
 
@@ -402,9 +386,7 @@ mod tests {
 
         let mut pipeline = FilterHeadersPipeline {
             coordinator: DownloadCoordinator::new(
-                DownloadConfig::default()
-                    .with_timeout(Duration::from_millis(1))
-                    .with_max_retries(3),
+                DownloadConfig::default().with_timeout(Duration::from_millis(1)),
             ),
             batch_starts: HashMap::new(),
             buffered: HashMap::new(),
@@ -418,44 +400,8 @@ mod tests {
 
         std::thread::sleep(Duration::from_millis(5));
 
-        let failed = pipeline.handle_timeouts();
-        assert!(failed.is_empty()); // First retry succeeds
+        pipeline.handle_timeouts();
         assert_eq!(pipeline.coordinator.pending_count(), 1);
-    }
-
-    #[test]
-    fn test_handle_timeouts_max_retries_exceeded() {
-        use std::time::Duration;
-
-        let mut pipeline = FilterHeadersPipeline {
-            coordinator: DownloadCoordinator::new(
-                DownloadConfig::default()
-                    .with_timeout(Duration::from_millis(1))
-                    .with_max_retries(1),
-            ),
-            batch_starts: HashMap::new(),
-            buffered: HashMap::new(),
-            next_expected: 100,
-            target_height: 2000,
-        };
-
-        let stop_hash = BlockHash::from_byte_array([0x01; 32]);
-        pipeline.batch_starts.insert(stop_hash, 100);
-
-        // First timeout + retry
-        pipeline.coordinator.mark_sent(&[stop_hash]);
-        std::thread::sleep(Duration::from_millis(5));
-        let failed = pipeline.handle_timeouts();
-        assert!(failed.is_empty());
-
-        // Re-send retry
-        let items = pipeline.coordinator.take_pending(1);
-        pipeline.coordinator.mark_sent(&items);
-
-        // Second timeout exceeds max
-        std::thread::sleep(Duration::from_millis(5));
-        let failed = pipeline.handle_timeouts();
-        assert_eq!(failed, vec![100]);
     }
 
     #[test]
@@ -482,9 +428,7 @@ mod tests {
 
         let mut pipeline = FilterHeadersPipeline {
             coordinator: DownloadCoordinator::new(
-                DownloadConfig::default()
-                    .with_timeout(Duration::from_millis(1))
-                    .with_max_retries(0),
+                DownloadConfig::default().with_timeout(Duration::from_millis(1)),
             ),
             batch_starts: HashMap::new(),
             buffered: HashMap::new(),
@@ -501,10 +445,10 @@ mod tests {
 
         std::thread::sleep(Duration::from_millis(5));
 
-        let mut failed = pipeline.handle_timeouts();
-        failed.sort();
-        assert_eq!(failed.len(), 2);
-        assert!(failed.contains(&1));
-        assert!(failed.contains(&2001));
+        pipeline.handle_timeouts();
+        // Both batches re-queued
+        assert_eq!(pipeline.coordinator.pending_count(), 2);
+        assert!(pipeline.batch_starts.contains_key(&hash1));
+        assert!(pipeline.batch_starts.contains_key(&hash2));
     }
 }

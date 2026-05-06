@@ -10,7 +10,9 @@ use std::ptr;
 
 use crate::error::{FFIError, FFIErrorCode};
 use crate::types::FFIWallet;
+use crate::{check_ptr, deref_ptr, deref_ptr_mut, unwrap_or_return};
 use key_wallet::managed_account::address_pool::KeySource;
+use key_wallet::managed_account::managed_account_trait::ManagedAccountTrait;
 use key_wallet::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
 use std::ffi::c_void;
@@ -57,79 +59,26 @@ pub unsafe extern "C" fn managed_wallet_get_next_bip44_receive_address(
     account_index: std::os::raw::c_uint,
     error: *mut FFIError,
 ) -> *mut c_char {
-    if managed_wallet.is_null() {
-        FFIError::set_error(
-            error,
-            FFIErrorCode::InvalidInput,
-            "Managed wallet is null".to_string(),
-        );
-        return ptr::null_mut();
-    }
-
-    if wallet.is_null() {
-        FFIError::set_error(error, FFIErrorCode::InvalidInput, "Wallet is null".to_string());
-        return ptr::null_mut();
-    }
-
-    let managed_wallet = unsafe { &mut *managed_wallet };
-    let wallet = unsafe { &*wallet };
+    let managed_wallet = deref_ptr_mut!(managed_wallet, error);
+    let wallet = deref_ptr!(wallet, error);
 
     // Get the specific managed account (default to BIP44)
-    let managed_account =
-        match managed_wallet.inner_mut().accounts.standard_bip44_accounts.get_mut(&account_index) {
-            Some(account) => account,
-            None => {
-                FFIError::set_error(
-                    error,
-                    FFIErrorCode::WalletError,
-                    format!("Account {} not found", account_index),
-                );
-                return ptr::null_mut();
-            }
-        };
+    let managed_account = unwrap_or_return!(
+        managed_wallet.inner_mut().accounts.standard_bip44_accounts.get_mut(&account_index),
+        error
+    );
 
     // Get the account from the wallet to get the extended public key
-    let account = match wallet.wallet.accounts.standard_bip44_accounts.get(&account_index) {
-        Some(account) => account,
-        None => {
-            FFIError::set_error(
-                error,
-                FFIErrorCode::WalletError,
-                format!("Account {} not found in wallet", account_index),
-            );
-            return ptr::null_mut();
-        }
-    };
+    let account = unwrap_or_return!(
+        wallet.wallet.accounts.standard_bip44_accounts.get(&account_index),
+        error
+    );
 
     // Generate the next receive address
     let xpub = account.extended_public_key();
-    match managed_account.next_receive_address(Some(&xpub), true) {
-        Ok(address) => {
-            let address_str = address.to_string();
-            match CString::new(address_str) {
-                Ok(c_str) => {
-                    FFIError::set_success(error);
-                    c_str.into_raw()
-                }
-                Err(_) => {
-                    FFIError::set_error(
-                        error,
-                        FFIErrorCode::WalletError,
-                        "Failed to convert address to C string".to_string(),
-                    );
-                    ptr::null_mut()
-                }
-            }
-        }
-        Err(e) => {
-            FFIError::set_error(
-                error,
-                FFIErrorCode::WalletError,
-                format!("Failed to generate receive address: {}", e),
-            );
-            ptr::null_mut()
-        }
-    }
+    let address = unwrap_or_return!(managed_account.next_receive_address(Some(&xpub), true), error)
+        .to_string();
+    unwrap_or_return!(CString::new(address), error).into_raw()
 }
 
 /// Get the next unused change address
@@ -150,79 +99,27 @@ pub unsafe extern "C" fn managed_wallet_get_next_bip44_change_address(
     account_index: std::os::raw::c_uint,
     error: *mut FFIError,
 ) -> *mut c_char {
-    if managed_wallet.is_null() {
-        FFIError::set_error(
-            error,
-            FFIErrorCode::InvalidInput,
-            "Managed wallet is null".to_string(),
-        );
-        return ptr::null_mut();
-    }
-
-    if wallet.is_null() {
-        FFIError::set_error(error, FFIErrorCode::InvalidInput, "Wallet is null".to_string());
-        return ptr::null_mut();
-    }
-
-    let managed_wallet = unsafe { &mut *managed_wallet };
-    let wallet = unsafe { &*wallet };
+    let managed_wallet = deref_ptr_mut!(managed_wallet, error);
+    let wallet = deref_ptr!(wallet, error);
 
     // Get the specific managed account (default to BIP44)
-    let managed_account =
-        match managed_wallet.inner_mut().accounts.standard_bip44_accounts.get_mut(&account_index) {
-            Some(account) => account,
-            None => {
-                FFIError::set_error(
-                    error,
-                    FFIErrorCode::WalletError,
-                    format!("Account {} not found", account_index),
-                );
-                return ptr::null_mut();
-            }
-        };
+    let managed_account = unwrap_or_return!(
+        managed_wallet.inner_mut().accounts.standard_bip44_accounts.get_mut(&account_index),
+        error
+    );
 
     // Get the account from the wallet to get the extended public key
-    let account = match wallet.wallet.accounts.standard_bip44_accounts.get(&account_index) {
-        Some(account) => account,
-        None => {
-            FFIError::set_error(
-                error,
-                FFIErrorCode::WalletError,
-                format!("Account {} not found in wallet", account_index),
-            );
-            return ptr::null_mut();
-        }
-    };
+    let account = unwrap_or_return!(
+        wallet.wallet.accounts.standard_bip44_accounts.get(&account_index),
+        error
+    );
 
     // Generate the next change address
     let xpub = account.extended_public_key();
-    match managed_account.next_change_address(Some(&xpub), true) {
-        Ok(address) => {
-            let address_str = address.to_string();
-            match CString::new(address_str) {
-                Ok(c_str) => {
-                    FFIError::set_success(error);
-                    c_str.into_raw()
-                }
-                Err(_) => {
-                    FFIError::set_error(
-                        error,
-                        FFIErrorCode::WalletError,
-                        "Failed to convert address to C string".to_string(),
-                    );
-                    ptr::null_mut()
-                }
-            }
-        }
-        Err(e) => {
-            FFIError::set_error(
-                error,
-                FFIErrorCode::WalletError,
-                format!("Failed to generate change address: {}", e),
-            );
-            ptr::null_mut()
-        }
-    }
+    let next_change_address =
+        unwrap_or_return!(managed_account.next_change_address(Some(&xpub), true), error)
+            .to_string();
+    unwrap_or_return!(CString::new(next_change_address), error).into_raw()
 }
 
 /// Get BIP44 external (receive) addresses in the specified range
@@ -249,66 +146,22 @@ pub unsafe extern "C" fn managed_wallet_get_bip_44_external_address_range(
     count_out: *mut usize,
     error: *mut FFIError,
 ) -> bool {
-    if addresses_out.is_null() || count_out.is_null() {
-        FFIError::set_error(
-            error,
-            FFIErrorCode::InvalidInput,
-            "Null output pointer provided".to_string(),
-        );
-        return false;
-    }
-
-    if managed_wallet.is_null() {
-        FFIError::set_error(
-            error,
-            FFIErrorCode::InvalidInput,
-            "Managed wallet is null".to_string(),
-        );
-        *count_out = 0;
-        *addresses_out = ptr::null_mut();
-        return false;
-    }
-
-    if wallet.is_null() {
-        FFIError::set_error(error, FFIErrorCode::InvalidInput, "Wallet is null".to_string());
-        *count_out = 0;
-        *addresses_out = ptr::null_mut();
-        return false;
-    }
-
-    let managed_wallet = unsafe { &mut *managed_wallet };
-    let wallet = unsafe { &*wallet };
+    check_ptr!(addresses_out, error);
+    check_ptr!(count_out, error);
+    let managed_wallet = deref_ptr_mut!(managed_wallet, error);
+    let wallet = deref_ptr!(wallet, error);
 
     // Get the specific managed account (BIP44)
-    let managed_account =
-        match managed_wallet.inner_mut().accounts.standard_bip44_accounts.get_mut(&account_index) {
-            Some(account) => account,
-            None => {
-                FFIError::set_error(
-                    error,
-                    FFIErrorCode::WalletError,
-                    format!("BIP44 account {} not found", account_index),
-                );
-                *count_out = 0;
-                *addresses_out = ptr::null_mut();
-                return false;
-            }
-        };
+    let managed_account = unwrap_or_return!(
+        managed_wallet.inner_mut().accounts.standard_bip44_accounts.get_mut(&account_index),
+        error
+    );
 
     // Get the account from the wallet to get the extended public key
-    let account = match wallet.wallet.accounts.standard_bip44_accounts.get(&account_index) {
-        Some(account) => account,
-        None => {
-            FFIError::set_error(
-                error,
-                FFIErrorCode::WalletError,
-                format!("Account {} not found in wallet", account_index),
-            );
-            *count_out = 0;
-            *addresses_out = ptr::null_mut();
-            return false;
-        }
-    };
+    let account = unwrap_or_return!(
+        wallet.wallet.accounts.standard_bip44_accounts.get(&account_index),
+        error
+    );
 
     // Get external addresses in the range
     let xpub = account.extended_public_key();
@@ -318,27 +171,14 @@ pub unsafe extern "C" fn managed_wallet_get_bip_44_external_address_range(
     let addresses = if let key_wallet::account::ManagedAccountType::Standard {
         external_addresses,
         ..
-    } = &mut managed_account.account_type
+    } = managed_account.managed_account_type_mut()
     {
-        match external_addresses.address_range(start_index, end_index, &key_source) {
-            Ok(addrs) => addrs,
-            Err(e) => {
-                FFIError::set_error(
-                    error,
-                    FFIErrorCode::WalletError,
-                    format!("Failed to get address range: {}", e),
-                );
-                *count_out = 0;
-                *addresses_out = ptr::null_mut();
-                return false;
-            }
-        }
+        unwrap_or_return!(
+            external_addresses.address_range(start_index, end_index, &key_source),
+            error
+        )
     } else {
-        FFIError::set_error(
-            error,
-            FFIErrorCode::WalletError,
-            "Account is not a standard BIP44 account".to_string(),
-        );
+        (*error).set(FFIErrorCode::WalletError, "Account is not a standard BIP44 account");
         *count_out = 0;
         *addresses_out = ptr::null_mut();
         return false;
@@ -347,23 +187,8 @@ pub unsafe extern "C" fn managed_wallet_get_bip_44_external_address_range(
     // Convert addresses to C strings
     let mut c_addresses = Vec::with_capacity(addresses.len());
     for address in addresses {
-        match CString::new(address.to_string()) {
-            Ok(c_str) => c_addresses.push(c_str.into_raw()),
-            Err(_) => {
-                // Clean up already allocated strings
-                for ptr in c_addresses {
-                    let _ = CString::from_raw(ptr);
-                }
-                FFIError::set_error(
-                    error,
-                    FFIErrorCode::WalletError,
-                    "Failed to convert address to C string".to_string(),
-                );
-                *count_out = 0;
-                *addresses_out = ptr::null_mut();
-                return false;
-            }
-        }
+        let c_str = unwrap_or_return!(CString::new(address.to_string()), error).into_raw();
+        c_addresses.push(c_str);
     }
 
     // Convert Vec to Box<[*mut c_char]> and leak it properly
@@ -373,7 +198,7 @@ pub unsafe extern "C" fn managed_wallet_get_bip_44_external_address_range(
 
     *count_out = len;
     *addresses_out = ptr;
-    FFIError::set_success(error);
+    (*error).clean();
     true
 }
 
@@ -401,66 +226,22 @@ pub unsafe extern "C" fn managed_wallet_get_bip_44_internal_address_range(
     count_out: *mut usize,
     error: *mut FFIError,
 ) -> bool {
-    if addresses_out.is_null() || count_out.is_null() {
-        FFIError::set_error(
-            error,
-            FFIErrorCode::InvalidInput,
-            "Null output pointer provided".to_string(),
-        );
-        return false;
-    }
-
-    if managed_wallet.is_null() {
-        FFIError::set_error(
-            error,
-            FFIErrorCode::InvalidInput,
-            "Managed wallet is null".to_string(),
-        );
-        *count_out = 0;
-        *addresses_out = ptr::null_mut();
-        return false;
-    }
-
-    if wallet.is_null() {
-        FFIError::set_error(error, FFIErrorCode::InvalidInput, "Wallet is null".to_string());
-        *count_out = 0;
-        *addresses_out = ptr::null_mut();
-        return false;
-    }
-
-    let managed_wallet = unsafe { &mut *managed_wallet };
-    let wallet = unsafe { &*wallet };
+    check_ptr!(addresses_out, error);
+    check_ptr!(count_out, error);
+    let managed_wallet = deref_ptr_mut!(managed_wallet, error);
+    let wallet = deref_ptr!(wallet, error);
 
     // Get the specific managed account (BIP44)
-    let managed_account =
-        match managed_wallet.inner_mut().accounts.standard_bip44_accounts.get_mut(&account_index) {
-            Some(account) => account,
-            None => {
-                FFIError::set_error(
-                    error,
-                    FFIErrorCode::WalletError,
-                    format!("BIP44 account {} not found", account_index),
-                );
-                *count_out = 0;
-                *addresses_out = ptr::null_mut();
-                return false;
-            }
-        };
+    let managed_account = unwrap_or_return!(
+        managed_wallet.inner_mut().accounts.standard_bip44_accounts.get_mut(&account_index),
+        error
+    );
 
     // Get the account from the wallet to get the extended public key
-    let account = match wallet.wallet.accounts.standard_bip44_accounts.get(&account_index) {
-        Some(account) => account,
-        None => {
-            FFIError::set_error(
-                error,
-                FFIErrorCode::WalletError,
-                format!("Account {} not found in wallet", account_index),
-            );
-            *count_out = 0;
-            *addresses_out = ptr::null_mut();
-            return false;
-        }
-    };
+    let account = unwrap_or_return!(
+        wallet.wallet.accounts.standard_bip44_accounts.get(&account_index),
+        error
+    );
 
     // Get internal addresses in the range
     let xpub = account.extended_public_key();
@@ -470,27 +251,14 @@ pub unsafe extern "C" fn managed_wallet_get_bip_44_internal_address_range(
     let addresses = if let key_wallet::account::ManagedAccountType::Standard {
         internal_addresses,
         ..
-    } = &mut managed_account.account_type
+    } = managed_account.managed_account_type_mut()
     {
-        match internal_addresses.address_range(start_index, end_index, &key_source) {
-            Ok(addrs) => addrs,
-            Err(e) => {
-                FFIError::set_error(
-                    error,
-                    FFIErrorCode::WalletError,
-                    format!("Failed to get address range: {}", e),
-                );
-                *count_out = 0;
-                *addresses_out = ptr::null_mut();
-                return false;
-            }
-        }
+        unwrap_or_return!(
+            internal_addresses.address_range(start_index, end_index, &key_source),
+            error
+        )
     } else {
-        FFIError::set_error(
-            error,
-            FFIErrorCode::WalletError,
-            "Account is not a standard BIP44 account".to_string(),
-        );
+        (*error).set(FFIErrorCode::WalletError, "Account is not a standard BIP44 account");
         *count_out = 0;
         *addresses_out = ptr::null_mut();
         return false;
@@ -499,23 +267,8 @@ pub unsafe extern "C" fn managed_wallet_get_bip_44_internal_address_range(
     // Convert addresses to C strings
     let mut c_addresses = Vec::with_capacity(addresses.len());
     for address in addresses {
-        match CString::new(address.to_string()) {
-            Ok(c_str) => c_addresses.push(c_str.into_raw()),
-            Err(_) => {
-                // Clean up already allocated strings
-                for ptr in c_addresses {
-                    let _ = CString::from_raw(ptr);
-                }
-                FFIError::set_error(
-                    error,
-                    FFIErrorCode::WalletError,
-                    "Failed to convert address to C string".to_string(),
-                );
-                *count_out = 0;
-                *addresses_out = ptr::null_mut();
-                return false;
-            }
-        }
+        let c_str = unwrap_or_return!(CString::new(address.to_string()), error).into_raw();
+        c_addresses.push(c_str);
     }
 
     // Convert Vec to Box<[*mut c_char]> and leak it properly
@@ -525,7 +278,7 @@ pub unsafe extern "C" fn managed_wallet_get_bip_44_internal_address_range(
 
     *count_out = len;
     *addresses_out = ptr;
-    FFIError::set_success(error);
+    (*error).clean();
     true
 }
 
@@ -552,67 +305,36 @@ pub unsafe extern "C" fn managed_wallet_get_balance(
     total_out: *mut u64,
     error: *mut FFIError,
 ) -> bool {
-    if managed_wallet.is_null() {
-        FFIError::set_error(
-            error,
-            FFIErrorCode::InvalidInput,
-            "Managed wallet is null".to_string(),
-        );
-        return false;
-    }
+    let managed_wallet = deref_ptr!(managed_wallet, error);
+    check_ptr!(confirmed_out, error);
+    check_ptr!(unconfirmed_out, error);
+    check_ptr!(immature_out, error);
+    check_ptr!(locked_out, error);
+    check_ptr!(total_out, error);
 
-    if confirmed_out.is_null()
-        || unconfirmed_out.is_null()
-        || immature_out.is_null()
-        || locked_out.is_null()
-        || total_out.is_null()
-    {
-        FFIError::set_error(
-            error,
-            FFIErrorCode::InvalidInput,
-            "Output pointer is null".to_string(),
-        );
-        return false;
-    }
-
-    let managed_wallet = unsafe { &*managed_wallet };
     let balance = &managed_wallet.inner().balance;
-
-    unsafe {
-        *confirmed_out = balance.spendable();
-        *unconfirmed_out = balance.unconfirmed();
-        *immature_out = balance.immature();
-        *locked_out = balance.locked();
-        *total_out = balance.total();
-    }
-
-    FFIError::set_success(error);
+    *confirmed_out = balance.confirmed();
+    *unconfirmed_out = balance.unconfirmed();
+    *immature_out = balance.immature();
+    *locked_out = balance.locked();
+    *total_out = balance.total();
     true
 }
 
-/// Get current synced height from wallet info
+/// Get current last processed height from wallet info
 ///
 /// # Safety
 ///
 /// - `managed_wallet` must be a valid pointer to an FFIManagedWalletInfo
-/// - `error` must be a valid pointer to an FFIError structure or null
+/// - `error` must be a valid pointer to an FFIError structure
 /// - The caller must ensure all pointers remain valid for the duration of this call
 #[no_mangle]
-pub unsafe extern "C" fn managed_wallet_synced_height(
+pub unsafe extern "C" fn managed_wallet_last_processed_height(
     managed_wallet: *const FFIManagedWalletInfo,
     error: *mut FFIError,
 ) -> c_uint {
-    if managed_wallet.is_null() {
-        FFIError::set_error(
-            error,
-            FFIErrorCode::InvalidInput,
-            "Managed wallet is null".to_string(),
-        );
-        return 0;
-    }
-    let managed_wallet = unsafe { &*managed_wallet };
-    FFIError::set_success(error);
-    managed_wallet.inner().synced_height()
+    let managed_wallet = deref_ptr!(managed_wallet, error);
+    managed_wallet.inner().last_processed_height()
 }
 
 /// Free managed wallet info
@@ -653,7 +375,7 @@ mod tests {
     use crate::error::{FFIError, FFIErrorCode};
     use crate::managed_wallet::*;
     use crate::wallet;
-    use crate::FFINetwork;
+    use dash_network::ffi::FFINetwork;
     use key_wallet::managed_account::managed_account_type::ManagedAccountType;
     use std::ffi::{CStr, CString};
     use std::ptr;
@@ -673,7 +395,7 @@ mod tests {
 
     #[test]
     fn test_managed_wallet_get_next_receive_address_null_pointers() {
-        let mut error = FFIError::success();
+        let mut error = FFIError::default();
 
         // Test with null managed wallet
         let address = unsafe {
@@ -687,13 +409,11 @@ mod tests {
 
         assert!(address.is_null());
         assert_eq!(error.code, FFIErrorCode::InvalidInput);
-
-        unsafe { error.free_message() };
     }
 
     #[test]
     fn test_managed_wallet_get_next_change_address_null_pointers() {
-        let mut error = FFIError::success();
+        let mut error = FFIError::default();
 
         // Test with null managed wallet
         let address = unsafe {
@@ -707,13 +427,11 @@ mod tests {
 
         assert!(address.is_null());
         assert_eq!(error.code, FFIErrorCode::InvalidInput);
-
-        unsafe { error.free_message() };
     }
 
     #[test]
     fn test_managed_wallet_get_bip_44_external_address_range_null_pointers() {
-        let mut error = FFIError::success();
+        let mut error = FFIError::default();
         let mut addresses_out: *mut *mut c_char = ptr::null_mut();
         let mut count_out: usize = 0;
 
@@ -735,13 +453,11 @@ mod tests {
         assert_eq!(count_out, 0);
         assert!(addresses_out.is_null());
         assert_eq!(error.code, FFIErrorCode::InvalidInput);
-
-        unsafe { error.free_message() };
     }
 
     #[test]
     fn test_managed_wallet_get_bip_44_internal_address_range_null_pointers() {
-        let mut error = FFIError::success();
+        let mut error = FFIError::default();
         let mut addresses_out: *mut *mut c_char = ptr::null_mut();
         let mut count_out: usize = 0;
 
@@ -763,13 +479,11 @@ mod tests {
         assert_eq!(count_out, 0);
         assert!(addresses_out.is_null());
         assert_eq!(error.code, FFIErrorCode::InvalidInput);
-
-        unsafe { error.free_message() };
     }
 
     #[test]
     fn test_managed_wallet_address_generation_with_valid_wallet() {
-        let mut error = FFIError::success();
+        let mut error = FFIError::default();
 
         // Create a wallet
         let mnemonic = CString::new(TEST_MNEMONIC).unwrap();
@@ -788,7 +502,7 @@ mod tests {
 
         // Create managed wallet info from the wallet heap-allocated like C would do
         let wallet_rust = unsafe { &(*wallet).wallet };
-        let managed_info = ManagedWalletInfo::from_wallet(wallet_rust);
+        let managed_info = ManagedWalletInfo::from_wallet(wallet_rust, 0);
         let ffi_managed = Box::into_raw(Box::new(FFIManagedWalletInfo::new(managed_info)));
 
         // Test get_next_receive_address with valid pointers
@@ -835,19 +549,18 @@ mod tests {
         unsafe {
             managed_wallet_free(ffi_managed);
             wallet::wallet_free(wallet);
-            error.free_message();
         }
     }
 
     #[test]
     fn test_comprehensive_address_generation() {
         use key_wallet::account::{
-            ManagedAccountCollection, ManagedCoreAccount, StandardAccountType,
+            ManagedAccountCollection, ManagedCoreFundsAccount, StandardAccountType,
         };
         use key_wallet::bip32::DerivationPath;
         use key_wallet::managed_account::address_pool::{AddressPool, AddressPoolType};
 
-        let mut error = FFIError::success();
+        let mut error = FFIError::default();
 
         // Create a wallet with a known mnemonic
         let mnemonic = CString::new(TEST_MNEMONIC).unwrap();
@@ -869,7 +582,7 @@ mod tests {
 
         // We need to work with the existing wallet structure
         // Create managed wallet info from the existing wallet
-        let mut managed_info = ManagedWalletInfo::from_wallet(wallet_arc);
+        let mut managed_info = ManagedWalletInfo::from_wallet(wallet_arc, 0);
 
         let network = key_wallet::Network::Testnet;
 
@@ -896,7 +609,7 @@ mod tests {
         )
         .expect("Failed to create internal pool");
 
-        let managed_account = ManagedCoreAccount::new(
+        let managed_account = ManagedCoreFundsAccount::new(
             ManagedAccountType::Standard {
                 index: 0,
                 standard_account_type: StandardAccountType::BIP44Account,
@@ -904,7 +617,6 @@ mod tests {
                 internal_addresses: internal_pool,
             },
             network,
-            false,
         );
 
         managed_collection.standard_bip44_accounts.insert(0, managed_account.clone());
@@ -1022,7 +734,6 @@ mod tests {
         unsafe {
             managed_wallet_free(ffi_managed);
             wallet::wallet_free(wallet_ptr);
-            error.free_message();
         }
     }
 
@@ -1030,7 +741,7 @@ mod tests {
     fn test_managed_wallet_get_balance() {
         use key_wallet::wallet::balance::WalletCoreBalance;
 
-        let mut error = FFIError::success();
+        let mut error = FFIError::default();
 
         // Create a wallet
         let mnemonic = CString::new(TEST_MNEMONIC).unwrap();
@@ -1048,7 +759,7 @@ mod tests {
 
         // Create managed wallet info
         let wallet_arc = unsafe { &(*wallet_ptr).wallet };
-        let mut managed_info = ManagedWalletInfo::from_wallet(wallet_arc);
+        let mut managed_info = ManagedWalletInfo::from_wallet(wallet_arc, 0);
 
         // Set some test balance values
         managed_info.balance = WalletCoreBalance::new(1000000, 50000, 10000, 25000);
@@ -1118,13 +829,12 @@ mod tests {
         unsafe {
             managed_wallet_free(ffi_managed_ptr);
             wallet::wallet_free(wallet_ptr);
-            error.free_message();
         }
     }
 
     #[test]
     fn test_managed_wallet_get_address_range_null_outputs() {
-        let mut error = FFIError::success();
+        let mut error = FFIError::default();
 
         // Test with null addresses_out for external range
         let success = unsafe {
@@ -1160,7 +870,9 @@ mod tests {
 
         assert!(!success);
         assert_eq!(error.code, FFIErrorCode::InvalidInput);
-
-        unsafe { error.free_message() };
     }
 }
+
+#[cfg(test)]
+#[path = "managed_wallet_tests.rs"]
+mod managed_wallet_tests;

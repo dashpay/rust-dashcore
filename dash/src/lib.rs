@@ -116,6 +116,7 @@ pub mod string;
 pub mod taproot;
 pub mod util;
 
+#[cfg(feature = "serde")]
 use std::error::Error as StdError;
 
 pub use std::io;
@@ -140,7 +141,7 @@ pub use crate::hash_types::{
     TxMerkleNode, Txid, WPubkeyHash, WScriptHash, Wtxid,
 };
 pub use crate::merkle_tree::MerkleBlock;
-pub use crate::network::constants::Network;
+pub use crate::network::constants::{Network, ParseNetworkError};
 pub use crate::pow::{CompactTarget, Target, Work};
 pub use crate::transaction::outpoint::OutPoint;
 pub use crate::transaction::txin::TxIn;

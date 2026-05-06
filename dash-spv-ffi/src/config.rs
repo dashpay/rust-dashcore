@@ -1,6 +1,7 @@
 use crate::{null_check, set_last_error, FFIErrorCode, FFIMempoolStrategy};
 use dash_spv::{ClientConfig, ValidationMode};
-use key_wallet_ffi::FFINetwork;
+
+use dash_network::ffi::FFINetwork;
 use std::ffi::CStr;
 use std::net::{IpAddr, SocketAddr, ToSocketAddrs};
 use std::os::raw::c_char;
@@ -118,7 +119,6 @@ pub unsafe extern "C" fn dash_spv_ffi_config_add_peer(
         dashcore::Network::Testnet => 19999,
         dashcore::Network::Regtest => 19899,
         dashcore::Network::Devnet => 29999,
-        _ => 9999,
     };
 
     let addr_str = match CStr::from_ptr(addr).to_str() {
@@ -322,23 +322,6 @@ pub unsafe extern "C" fn dash_spv_ffi_config_set_fetch_mempool_transactions(
 
     let config = unsafe { &mut *((*config).inner as *mut ClientConfig) };
     config.fetch_mempool_transactions = fetch;
-    FFIErrorCode::Success as i32
-}
-
-/// Sets whether to persist mempool state to disk
-///
-/// # Safety
-/// - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet
-/// - The caller must ensure the config pointer remains valid for the duration of this call
-#[no_mangle]
-pub unsafe extern "C" fn dash_spv_ffi_config_set_persist_mempool(
-    config: *mut FFIClientConfig,
-    persist: bool,
-) -> i32 {
-    null_check!(config);
-
-    let config = unsafe { &mut *((*config).inner as *mut ClientConfig) };
-    config.persist_mempool = persist;
     FFIErrorCode::Success as i32
 }
 

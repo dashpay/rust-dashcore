@@ -24,7 +24,6 @@ mod tests {
         assert_eq!(config.mempool_strategy, MempoolStrategy::FetchAll);
         assert_eq!(config.max_mempool_transactions, 1000);
         assert!(config.fetch_mempool_transactions);
-        assert!(!config.persist_mempool);
     }
 
     #[test]
@@ -39,8 +38,7 @@ mod tests {
 
         let regtest = ClientConfig::regtest();
         assert_eq!(regtest.network, Network::Regtest);
-        assert_eq!(regtest.peers.len(), 1);
-        assert_eq!(regtest.peers[0].to_string(), "127.0.0.1:19899");
+        assert!(regtest.peers.is_empty());
     }
 
     #[test]
@@ -52,7 +50,6 @@ mod tests {
             .with_validation_mode(ValidationMode::Basic)
             .with_mempool_tracking(MempoolStrategy::BloomFilter)
             .with_max_mempool_transactions(500)
-            .with_mempool_persistence(true)
             .with_start_height(100000);
 
         assert_eq!(config.storage_path, path);
@@ -62,7 +59,6 @@ mod tests {
         assert!(config.enable_mempool_tracking);
         assert_eq!(config.mempool_strategy, MempoolStrategy::BloomFilter);
         assert_eq!(config.max_mempool_transactions, 500);
-        assert!(config.persist_mempool);
         assert_eq!(config.start_from_height, Some(100000));
     }
 

@@ -1,7 +1,7 @@
 //! Managed Platform Account for DIP-17 Platform Payment addresses
 //!
 //! This module provides the `ManagedPlatformAccount` type which is a simplified
-//! account structure for Platform Payment accounts. Unlike `ManagedCoreAccount`,
+//! account structure for Platform Payment accounts. Unlike `ManagedCoreFundsAccount`,
 //! this type:
 //! - Uses a simple `u64` balance instead of `WalletCoreBalance`
 //! - Tracks per-address balances directly
@@ -11,8 +11,7 @@
 
 use std::collections::BTreeMap;
 
-use super::address_pool::{AddressPool, KeySource};
-use super::metadata::AccountMetadata;
+use super::address_pool::{AddressInfo, AddressPool, KeySource};
 use super::platform_address::PlatformP2PKHAddress;
 use crate::error::{Error, Result};
 use crate::Network;
@@ -23,7 +22,7 @@ use serde::{Deserialize, Serialize};
 /// Managed Platform Account for DIP-17 Platform Payment addresses
 ///
 /// This is a simplified account structure designed specifically for Platform
-/// Payment accounts (DIP-17). It differs from `ManagedCoreAccount` in that:
+/// Payment accounts (DIP-17). It differs from `ManagedCoreFundsAccount` in that:
 ///
 /// - **Balance**: Simple `u64` credit balance (1000 credits = 1 duff)
 /// - **Address Balances**: Direct mapping of addresses to their credit balances
@@ -48,8 +47,6 @@ pub struct ManagedPlatformAccount {
     pub address_balances: BTreeMap<PlatformP2PKHAddress, u64>,
     /// Address pool for key derivation and address generation
     pub addresses: AddressPool,
-    /// Account metadata
-    pub metadata: AccountMetadata,
     /// Whether this is a watch-only account
     pub is_watch_only: bool,
 }
@@ -67,7 +64,6 @@ impl ManagedPlatformAccount {
             credit_balance: 0,
             address_balances: BTreeMap::new(),
             addresses,
-            metadata: AccountMetadata::default(),
             is_watch_only,
         }
     }
@@ -85,7 +81,6 @@ impl ManagedPlatformAccount {
     /// Set the total credit balance
     pub fn set_credit_balance(&mut self, credit_balance: u64) {
         self.credit_balance = credit_balance;
-        self.metadata.last_used = Some(Self::current_timestamp());
     }
 
     /// Get the credit balance for a specific address
@@ -113,7 +108,6 @@ impl ManagedPlatformAccount {
         // Apply delta to total: subtract old, add new
         self.credit_balance =
             self.credit_balance.saturating_sub(old_balance).saturating_add(credit_balance);
-        self.metadata.last_used = Some(Self::current_timestamp());
 
         // If address became funded and we have a key source, update address pool
         if was_unfunded && is_now_funded {
@@ -143,7 +137,6 @@ impl ManagedPlatformAccount {
         self.address_balances.insert(address, new_balance);
         // Add the amount to the total (saturating to handle overflow)
         self.credit_balance = self.credit_balance.saturating_add(amount);
-        self.metadata.last_used = Some(Self::current_timestamp());
 
         // If address became funded and we have a key source, update address pool
         if was_unfunded && is_now_funded {
@@ -171,7 +164,6 @@ impl ManagedPlatformAccount {
         self.address_balances.insert(address, new_balance);
         // Subtract only what was actually removed from the total
         self.credit_balance = self.credit_balance.saturating_sub(actual_removed);
-        self.metadata.last_used = Some(Self::current_timestamp());
         new_balance
     }
 
@@ -254,11 +246,7 @@ impl ManagedPlatformAccount {
 
     /// Mark an address as used
     pub fn mark_address_used(&mut self, address: &Address) -> bool {
-        let result = self.addresses.mark_used(address);
-        if result {
-            self.metadata.last_used = Some(Self::current_timestamp());
-        }
-        result
+        self.addresses.mark_used(address)
     }
 
     /// Mark a platform address as used
@@ -288,8 +276,8 @@ impl ManagedPlatformAccount {
     /// Maintain the gap limit for the address pool
     ///
     /// This generates new addresses if needed to maintain the gap limit.
-    /// Returns the newly generated addresses.
-    pub fn maintain_gap_limit(&mut self, key_source: &KeySource) -> Result<Vec<Address>> {
+    /// Returns the newly generated address info entries (in derivation order).
+    pub fn maintain_gap_limit(&mut self, key_source: &KeySource) -> Result<Vec<AddressInfo>> {
         self.addresses
             .maintain_gap_limit(key_source)
             .map_err(|e| Error::InvalidParameter(format!("Failed to maintain gap limit: {}", e)))
@@ -298,14 +286,6 @@ impl ManagedPlatformAccount {
     /// Get address info for a given address
     pub fn get_address_info(&self, address: &Address) -> Option<super::address_pool::AddressInfo> {
         self.addresses.address_info(address).cloned()
-    }
-
-    /// Get the current timestamp
-    fn current_timestamp() -> u64 {
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs()
     }
 
     /// Get pool statistics
@@ -347,7 +327,6 @@ impl bincode::Encode for ManagedPlatformAccount {
         bincode::Encode::encode(&address_balances_vec, encoder)?;
 
         bincode::Encode::encode(&self.addresses, encoder)?;
-        bincode::Encode::encode(&self.metadata, encoder)?;
         bincode::Encode::encode(&self.is_watch_only, encoder)?;
         Ok(())
     }
@@ -370,7 +349,6 @@ impl<Context> bincode::Decode<Context> for ManagedPlatformAccount {
             address_balances_vec.into_iter().collect();
 
         let addresses = bincode::Decode::decode(decoder)?;
-        let metadata = bincode::Decode::decode(decoder)?;
         let is_watch_only = bincode::Decode::decode(decoder)?;
 
         Ok(Self {
@@ -380,7 +358,6 @@ impl<Context> bincode::Decode<Context> for ManagedPlatformAccount {
             credit_balance,
             address_balances,
             addresses,
-            metadata,
             is_watch_only,
         })
     }

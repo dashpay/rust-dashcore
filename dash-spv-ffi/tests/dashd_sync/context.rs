@@ -7,6 +7,10 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Duration;
 
+use super::callbacks::{
+    create_network_callbacks, create_sync_callbacks, create_wallet_callbacks, CallbackTracker,
+};
+use dash_network::ffi::FFINetwork;
 use dash_spv::logging::{LogFileConfig, LoggingConfig, LoggingGuard};
 use dash_spv::test_utils::{retain_test_dir, SYNC_TIMEOUT};
 use dash_spv_ffi::client::{
@@ -31,21 +35,16 @@ use key_wallet_ffi::managed_account::{
 use key_wallet_ffi::managed_wallet::{
     managed_wallet_get_next_bip44_receive_address, managed_wallet_info_free,
 };
-use key_wallet_ffi::types::FFIAccountType;
+use key_wallet_ffi::types::FFIAccountKind;
 use key_wallet_ffi::wallet::wallet_free_const;
 use key_wallet_ffi::wallet_manager::{
     wallet_manager_add_wallet_from_mnemonic, wallet_manager_get_managed_wallet_info,
 };
 use key_wallet_ffi::{
     wallet_manager_free_string, wallet_manager_free_wallet_ids, wallet_manager_get_wallet,
-    wallet_manager_get_wallet_balance, wallet_manager_get_wallet_ids, FFIError, FFINetwork,
-    FFIWalletManager,
+    wallet_manager_get_wallet_balance, wallet_manager_get_wallet_ids, FFIError, FFIWalletManager,
 };
 use tempfile::TempDir;
-
-use super::callbacks::{
-    create_network_callbacks, create_sync_callbacks, create_wallet_callbacks, CallbackTracker,
-};
 
 /// State that stays fixed across client restarts (temp dir, logging, config).
 struct FixedState {
@@ -171,7 +170,7 @@ impl FFITestContext {
     pub(super) unsafe fn add_wallet(&self, mnemonic: &str) -> Vec<u8> {
         let mnemonic_c = CString::new(mnemonic).unwrap();
         let passphrase = CString::new("").unwrap();
-        let mut error = FFIError::success();
+        let mut error = FFIError::default();
         let wm = self.session.wallet_manager as *mut FFIWalletManager;
 
         let success = wallet_manager_add_wallet_from_mnemonic(
@@ -208,7 +207,7 @@ impl FFITestContext {
     pub(super) unsafe fn get_wallet_balance(&self, wallet_id: &[u8]) -> (u64, u64) {
         let mut confirmed: u64 = 0;
         let mut unconfirmed: u64 = 0;
-        let mut error = FFIError::success();
+        let mut error = FFIError::default();
         let wm = self.session.wallet_manager as *mut FFIWalletManager;
 
         let success = wallet_manager_get_wallet_balance(
@@ -279,7 +278,7 @@ impl FFITestContext {
     ///
     /// Calls FFI wallet functions through raw pointers held by the context.
     pub(super) unsafe fn get_receive_address(&self, wallet_id: &[u8]) -> Address {
-        let mut error = FFIError::success();
+        let mut error = FFIError::default();
         let wm = self.session.wallet_manager as *mut FFIWalletManager;
 
         let ffi_wallet = wallet_manager_get_wallet(wm, wallet_id.as_ptr(), &mut error);
@@ -314,7 +313,7 @@ impl FFITestContext {
     ) -> T {
         let wm = self.session.wallet_manager as *const FFIWalletManager;
         let result =
-            managed_wallet_get_account(wm, wallet_id.as_ptr(), 0, FFIAccountType::StandardBIP44);
+            managed_wallet_get_account(wm, wallet_id.as_ptr(), 0, FFIAccountKind::StandardBIP44);
         assert!(
             result.error_code == 0 && !result.account.is_null(),
             "Failed to get BIP44 account 0"

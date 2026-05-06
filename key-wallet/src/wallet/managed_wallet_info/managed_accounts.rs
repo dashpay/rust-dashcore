@@ -7,9 +7,10 @@ use super::{managed_account_operations::ManagedAccountOperations, ManagedWalletI
 use crate::account::BLSAccount;
 #[cfg(feature = "eddsa")]
 use crate::account::EdDSAAccount;
-use crate::account::{Account, AccountType, ManagedCoreAccount};
+use crate::account::{Account, AccountType, ManagedCoreFundsAccount};
 use crate::bip32::ExtendedPubKey;
 use crate::error::{Error, Result};
+use crate::managed_account::managed_account_trait::ManagedAccountTrait;
 use crate::wallet::{Wallet, WalletType};
 
 impl ManagedAccountOperations for ManagedWalletInfo {
@@ -42,7 +43,7 @@ impl ManagedAccountOperations for ManagedWalletInfo {
         })?;
 
         // Create the ManagedAccount from the Account
-        let managed_account = ManagedCoreAccount::from_account(account);
+        let managed_account = ManagedCoreFundsAccount::from_account(account);
 
         // Check if managed account already exists
         if self.accounts.contains_managed_account_type(managed_account.managed_type()) {
@@ -77,14 +78,13 @@ impl ManagedAccountOperations for ManagedWalletInfo {
     ) -> Result<()> {
         // Verify this is a passphrase wallet
         match &wallet.wallet_type {
-            WalletType::MnemonicWithPassphrase { mnemonic, .. } => {
+            WalletType::MnemonicWithPassphrase { mnemonic, root_extended_public_key: wallet_pub } => {
                 // Verify the passphrase by deriving and comparing
                 let seed = mnemonic.to_seed(passphrase);
                 let root_key = crate::wallet::root_extended_keys::RootExtendedPrivKey::new_master(&seed)?;
 
                 // Compare with wallet's stored public key
                 let derived_pub = root_key.to_root_extended_pub_key();
-                let wallet_pub = wallet.root_extended_pub_key();
 
                 if derived_pub.root_public_key != wallet_pub.root_public_key {
                     return Err(Error::InvalidParameter(
@@ -118,7 +118,7 @@ impl ManagedAccountOperations for ManagedWalletInfo {
         let account = Account::new(None, account_type, account_xpub, self.network)?;
 
         // Create the ManagedAccount from the Account
-        let managed_account = ManagedCoreAccount::from_account(&account);
+        let managed_account = ManagedCoreFundsAccount::from_account(&account);
 
         // Check if managed account already exists
         if self.accounts.contains_managed_account_type(managed_account.managed_type()) {
@@ -163,7 +163,7 @@ impl ManagedAccountOperations for ManagedWalletInfo {
         })?;
 
         // Create the ManagedAccount from the BLS Account
-        let managed_account = ManagedCoreAccount::from_bls_account(bls_account);
+        let managed_account = ManagedCoreFundsAccount::from_bls_account(bls_account);
 
         // Check if managed account already exists
         if self.accounts.contains_managed_account_type(managed_account.managed_type()) {
@@ -194,14 +194,13 @@ impl ManagedAccountOperations for ManagedWalletInfo {
 
         // Verify this is a passphrase wallet
         match &wallet.wallet_type {
-            WalletType::MnemonicWithPassphrase { mnemonic, .. } => {
+            WalletType::MnemonicWithPassphrase { mnemonic, root_extended_public_key: wallet_pub } => {
                 // Verify the passphrase by deriving and comparing
                 let seed = mnemonic.to_seed(passphrase);
                 let root_key = crate::wallet::root_extended_keys::RootExtendedPrivKey::new_master(&seed)?;
 
                 // Compare with wallet's stored public key
                 let derived_pub = root_key.to_root_extended_pub_key();
-                let wallet_pub = wallet.root_extended_pub_key();
 
                 if derived_pub.root_public_key != wallet_pub.root_public_key {
                     return Err(Error::InvalidParameter(
@@ -236,7 +235,7 @@ impl ManagedAccountOperations for ManagedWalletInfo {
             BLSAccount::from_public_key_bytes(None, account_type, bls_public_key, self.network)?;
 
         // Create the ManagedAccount from the BLS Account
-        let managed_account = ManagedCoreAccount::from_bls_account(&bls_account);
+        let managed_account = ManagedCoreFundsAccount::from_bls_account(&bls_account);
 
         // Check if managed account already exists
         if self.accounts.contains_managed_account_type(managed_account.managed_type()) {
@@ -282,7 +281,7 @@ impl ManagedAccountOperations for ManagedWalletInfo {
             })?;
 
         // Create the ManagedAccount from the EdDSA Account
-        let managed_account = ManagedCoreAccount::from_eddsa_account(eddsa_account);
+        let managed_account = ManagedCoreFundsAccount::from_eddsa_account(eddsa_account);
 
         // Check if managed account already exists
         if self.accounts.contains_managed_account_type(managed_account.managed_type()) {
@@ -313,14 +312,13 @@ impl ManagedAccountOperations for ManagedWalletInfo {
 
         // Verify this is a passphrase wallet
         match &wallet.wallet_type {
-            WalletType::MnemonicWithPassphrase { mnemonic, .. } => {
+            WalletType::MnemonicWithPassphrase { mnemonic, root_extended_public_key: wallet_pub } => {
                 // Verify the passphrase by deriving and comparing
                 let seed = mnemonic.to_seed(passphrase);
                 let root_key = crate::wallet::root_extended_keys::RootExtendedPrivKey::new_master(&seed)?;
 
                 // Compare with wallet's stored public key
                 let derived_pub = root_key.to_root_extended_pub_key();
-                let wallet_pub = wallet.root_extended_pub_key();
 
                 if derived_pub.root_public_key != wallet_pub.root_public_key {
                     return Err(Error::InvalidParameter(
@@ -359,7 +357,7 @@ impl ManagedAccountOperations for ManagedWalletInfo {
         )?;
 
         // Create the ManagedAccount from the EdDSA Account
-        let managed_account = ManagedCoreAccount::from_eddsa_account(&eddsa_account);
+        let managed_account = ManagedCoreFundsAccount::from_eddsa_account(&eddsa_account);
 
         // Check if managed account already exists
         if self.accounts.contains_managed_account_type(managed_account.managed_type()) {

@@ -8,20 +8,22 @@ use std::os::raw::{c_char, c_uint};
 
 use crate::error::{FFIError, FFIErrorCode};
 use crate::managed_wallet::FFIManagedWalletInfo;
-use crate::types::{FFIAccountType, FFIWallet};
+use crate::types::{FFIAccountKind, FFIWallet};
 use crate::utils::rust_string_to_c;
+use crate::{check_ptr, deref_ptr, deref_ptr_mut, unwrap_or_return};
 use key_wallet::account::ManagedAccountCollection;
 use key_wallet::managed_account::address_pool::{
     AddressInfo, AddressPool, KeySource, PublicKeyType,
 };
-use key_wallet::managed_account::ManagedCoreAccount;
+use key_wallet::managed_account::managed_account_trait::ManagedAccountTrait;
+use key_wallet::managed_account::ManagedCoreFundsAccount;
 use key_wallet::AccountType;
 
 // Helper functions to get managed accounts by type
 fn get_managed_account_by_type<'a>(
     collection: &'a ManagedAccountCollection,
     account_type: &AccountType,
-) -> Option<&'a ManagedCoreAccount> {
+) -> Option<&'a ManagedCoreFundsAccount> {
     match account_type {
         AccountType::Standard {
             index,
@@ -74,7 +76,7 @@ fn get_managed_account_by_type<'a>(
 fn get_managed_account_by_type_mut<'a>(
     collection: &'a mut ManagedAccountCollection,
     account_type: &AccountType,
-) -> Option<&'a mut ManagedCoreAccount> {
+) -> Option<&'a mut ManagedCoreFundsAccount> {
     match account_type {
         AccountType::Standard {
             index,
@@ -280,35 +282,27 @@ pub struct FFIAddressPoolInfo {
 ///
 /// - `managed_wallet` must be a valid pointer to an FFIManagedWalletInfo
 /// - `info_out` must be a valid pointer to store the pool info
-/// - `error` must be a valid pointer to an FFIError or null
+/// - `error` must be a valid pointer to an FFIError
 #[no_mangle]
 pub unsafe extern "C" fn managed_wallet_get_address_pool_info(
     managed_wallet: *const FFIManagedWalletInfo,
-    account_type: FFIAccountType,
+    account_type: FFIAccountKind,
     account_index: c_uint,
     pool_type: FFIAddressPoolType,
     info_out: *mut FFIAddressPoolInfo,
     error: *mut FFIError,
 ) -> bool {
-    if managed_wallet.is_null() || info_out.is_null() {
-        FFIError::set_error(error, FFIErrorCode::InvalidInput, "Null pointer provided".to_string());
-        return false;
-    }
-
-    let wrapper = &*managed_wallet;
+    let wrapper = deref_ptr!(managed_wallet, error);
+    check_ptr!(info_out, error);
     let managed_wallet = wrapper.inner();
 
     let account_type_rust = account_type.to_account_type(account_index);
 
     // Get the specific managed account
-    let managed_account =
-        match get_managed_account_by_type(&managed_wallet.accounts, &account_type_rust) {
-            Some(account) => account,
-            None => {
-                FFIError::set_error(error, FFIErrorCode::NotFound, "Account not found".to_string());
-                return false;
-            }
-        };
+    let managed_account = unwrap_or_return!(
+        get_managed_account_by_type(&managed_wallet.accounts, &account_type_rust),
+        error
+    );
 
     // Get the appropriate address pool
     let pool = match pool_type {
@@ -317,14 +311,10 @@ pub unsafe extern "C" fn managed_wallet_get_address_pool_info(
             if let key_wallet::managed_account::managed_account_type::ManagedAccountType::Standard {
                 external_addresses,
                 ..
-            } = &managed_account.account_type {
+            } = managed_account.managed_account_type() {
                 external_addresses
             } else {
-                FFIError::set_error(
-                    error,
-                    FFIErrorCode::InvalidInput,
-                    "Account type does not have external address pool".to_string(),
-                );
+                (*error).set(FFIErrorCode::InvalidInput, "Account type does not have external address pool");
                 return false;
             }
         }
@@ -333,26 +323,18 @@ pub unsafe extern "C" fn managed_wallet_get_address_pool_info(
             if let key_wallet::managed_account::managed_account_type::ManagedAccountType::Standard {
                 internal_addresses,
                 ..
-            } = &managed_account.account_type {
+            } = managed_account.managed_account_type() {
                 internal_addresses
             } else {
-                FFIError::set_error(
-                    error,
-                    FFIErrorCode::InvalidInput,
-                    "Account type does not have internal address pool".to_string(),
-                );
+                (*error).set(FFIErrorCode::InvalidInput, "Account type does not have internal address pool");
                 return false;
             }
         }
         FFIAddressPoolType::Single => {
             // Get the first (and only) address pool for non-standard accounts
-            let pools = managed_account.account_type.address_pools();
+            let pools = managed_account.managed_account_type().address_pools();
             if pools.is_empty() {
-                FFIError::set_error(
-                    error,
-                    FFIErrorCode::InvalidInput,
-                    "Account has no address pools".to_string(),
-                );
+                (*error).set(FFIErrorCode::InvalidInput, "Account has no address pools");
                 return false;
             }
             pools[0]
@@ -375,7 +357,7 @@ pub unsafe extern "C" fn managed_wallet_get_address_pool_info(
         highest_used_index: pool.highest_used.map(|i| i as i32).unwrap_or(-1),
     };
 
-    FFIError::set_success(error);
+    (*error).clean();
     true
 }
 
@@ -387,34 +369,25 @@ pub unsafe extern "C" fn managed_wallet_get_address_pool_info(
 /// # Safety
 ///
 /// - `managed_wallet` must be a valid pointer to an FFIManagedWalletInfo
-/// - `error` must be a valid pointer to an FFIError or null
+/// - `error` must be a valid pointer to an FFIError
 #[no_mangle]
 pub unsafe extern "C" fn managed_wallet_set_gap_limit(
     managed_wallet: *mut FFIManagedWalletInfo,
-    account_type: FFIAccountType,
+    account_type: FFIAccountKind,
     account_index: c_uint,
     pool_type: FFIAddressPoolType,
     gap_limit: c_uint,
     error: *mut FFIError,
 ) -> bool {
-    if managed_wallet.is_null() {
-        FFIError::set_error(error, FFIErrorCode::InvalidInput, "Null pointer provided".to_string());
-        return false;
-    }
-
-    let managed_wallet = (&mut *managed_wallet).inner_mut();
+    let managed_wallet = deref_ptr_mut!(managed_wallet, error).inner_mut();
 
     let account_type_rust = account_type.to_account_type(account_index);
 
     // Get the specific managed account
-    let managed_account =
-        match get_managed_account_by_type_mut(&mut managed_wallet.accounts, &account_type_rust) {
-            Some(account) => account,
-            None => {
-                FFIError::set_error(error, FFIErrorCode::NotFound, "Account not found".to_string());
-                return false;
-            }
-        };
+    let managed_account = unwrap_or_return!(
+        get_managed_account_by_type_mut(&mut managed_wallet.accounts, &account_type_rust),
+        error
+    );
 
     // Get the appropriate address pool
     let pool = match pool_type {
@@ -423,14 +396,10 @@ pub unsafe extern "C" fn managed_wallet_set_gap_limit(
             if let key_wallet::managed_account::managed_account_type::ManagedAccountType::Standard {
                 external_addresses,
                 ..
-            } = &mut managed_account.account_type {
+            } = managed_account.managed_account_type_mut() {
                 external_addresses
             } else {
-                FFIError::set_error(
-                    error,
-                    FFIErrorCode::InvalidInput,
-                    "Account type does not have external address pool".to_string(),
-                );
+                (*error).set(FFIErrorCode::InvalidInput, "Account type does not have external address pool");
                 return false;
             }
         }
@@ -439,26 +408,18 @@ pub unsafe extern "C" fn managed_wallet_set_gap_limit(
             if let key_wallet::managed_account::managed_account_type::ManagedAccountType::Standard {
                 internal_addresses,
                 ..
-            } = &mut managed_account.account_type {
+            } = managed_account.managed_account_type_mut() {
                 internal_addresses
             } else {
-                FFIError::set_error(
-                    error,
-                    FFIErrorCode::InvalidInput,
-                    "Account type does not have internal address pool".to_string(),
-                );
+                (*error).set(FFIErrorCode::InvalidInput, "Account type does not have internal address pool");
                 return false;
             }
         }
         FFIAddressPoolType::Single => {
             // Get the first (and only) address pool for non-standard accounts
-            let pools = managed_account.account_type.address_pools_mut();
+            let pools = managed_account.managed_account_type_mut().address_pools_mut();
             if pools.is_empty() {
-                FFIError::set_error(
-                    error,
-                    FFIErrorCode::InvalidInput,
-                    "Account has no address pools".to_string(),
-                );
+                (*error).set(FFIErrorCode::InvalidInput, "Account has no address pools");
                 return false;
             }
             pools.into_iter().next().unwrap()
@@ -468,7 +429,7 @@ pub unsafe extern "C" fn managed_wallet_set_gap_limit(
     // Set the gap limit
     pool.gap_limit = gap_limit;
 
-    FFIError::set_success(error);
+    (*error).clean();
     true
 }
 
@@ -482,66 +443,38 @@ pub unsafe extern "C" fn managed_wallet_set_gap_limit(
 ///
 /// - `managed_wallet` must be a valid pointer to an FFIManagedWalletInfo
 /// - `wallet` must be a valid pointer to an FFIWallet (for key derivation)
-/// - `error` must be a valid pointer to an FFIError or null
+/// - `error` must be a valid pointer to an FFIError
 #[no_mangle]
 pub unsafe extern "C" fn managed_wallet_generate_addresses_to_index(
     managed_wallet: *mut FFIManagedWalletInfo,
     wallet: *const FFIWallet,
-    account_type: FFIAccountType,
+    account_type: FFIAccountKind,
     account_index: c_uint,
     pool_type: FFIAddressPoolType,
     target_index: c_uint,
     error: *mut FFIError,
 ) -> bool {
-    if managed_wallet.is_null() || wallet.is_null() {
-        FFIError::set_error(error, FFIErrorCode::InvalidInput, "Null pointer provided".to_string());
-        return false;
-    }
-
-    let managed_wallet = (&mut *managed_wallet).inner_mut();
-    let wallet = &*wallet;
+    let managed_wallet = deref_ptr_mut!(managed_wallet, error).inner_mut();
+    let wallet = deref_ptr!(wallet, error);
 
     let account_type_rust = account_type.to_account_type(account_index);
 
-    let account_type_to_check = match account_type_rust.try_into() {
-        Ok(check_type) => check_type,
-        Err(_) => {
-            FFIError::set_error(
-                error,
-                FFIErrorCode::InvalidInput,
-                "Platform Payment accounts cannot be used for address pool operations".to_string(),
-            );
-            return false;
-        }
-    };
+    let account_type_to_check = unwrap_or_return!(account_type_rust.try_into(), error);
 
-    let xpub_opt = wallet
-        .inner()
-        .extended_public_key_for_account_type(&account_type_to_check, Some(account_index));
-
-    let xpub = match xpub_opt {
-        Some(xpub) => xpub,
-        None => {
-            FFIError::set_error(
-                error,
-                FFIErrorCode::NotFound,
-                "Account not found in wallet".to_string(),
-            );
-            return false;
-        }
-    };
+    let xpub = unwrap_or_return!(
+        wallet
+            .inner()
+            .extended_public_key_for_account_type(&account_type_to_check, Some(account_index)),
+        error
+    );
 
     let key_source = KeySource::Public(xpub);
 
     // Get the specific managed account
-    let managed_account =
-        match get_managed_account_by_type_mut(&mut managed_wallet.accounts, &account_type_rust) {
-            Some(account) => account,
-            None => {
-                FFIError::set_error(error, FFIErrorCode::NotFound, "Account not found".to_string());
-                return false;
-            }
-        };
+    let managed_account = unwrap_or_return!(
+        get_managed_account_by_type_mut(&mut managed_wallet.accounts, &account_type_rust),
+        error
+    );
 
     // Get the appropriate address pool and generate addresses
     let result = match pool_type {
@@ -550,7 +483,7 @@ pub unsafe extern "C" fn managed_wallet_generate_addresses_to_index(
             if let key_wallet::managed_account::managed_account_type::ManagedAccountType::Standard {
                 external_addresses,
                 ..
-            } = &mut managed_account.account_type {
+            } = managed_account.managed_account_type_mut() {
                 {
                     let current = external_addresses.highest_generated.unwrap_or(0);
                     if target_index > current {
@@ -561,11 +494,7 @@ pub unsafe extern "C" fn managed_wallet_generate_addresses_to_index(
                     }
                 }
             } else {
-                FFIError::set_error(
-                    error,
-                    FFIErrorCode::InvalidInput,
-                    "Account type does not have external address pool".to_string(),
-                );
+                (*error).set(FFIErrorCode::InvalidInput, "Account type does not have external address pool");
                 return false;
             }
         }
@@ -574,7 +503,7 @@ pub unsafe extern "C" fn managed_wallet_generate_addresses_to_index(
             if let key_wallet::managed_account::managed_account_type::ManagedAccountType::Standard {
                 internal_addresses,
                 ..
-            } = &mut managed_account.account_type {
+            } = managed_account.managed_account_type_mut() {
                 {
                     let current = internal_addresses.highest_generated.unwrap_or(0);
                     if target_index > current {
@@ -585,23 +514,15 @@ pub unsafe extern "C" fn managed_wallet_generate_addresses_to_index(
                     }
                 }
             } else {
-                FFIError::set_error(
-                    error,
-                    FFIErrorCode::InvalidInput,
-                    "Account type does not have internal address pool".to_string(),
-                );
+                (*error).set(FFIErrorCode::InvalidInput, "Account type does not have internal address pool");
                 return false;
             }
         }
         FFIAddressPoolType::Single => {
             // Get the first (and only) address pool for non-standard accounts
-            let mut pools = managed_account.account_type.address_pools_mut();
+            let mut pools = managed_account.managed_account_type_mut().address_pools_mut();
             if pools.is_empty() {
-                FFIError::set_error(
-                    error,
-                    FFIErrorCode::InvalidInput,
-                    "Account has no address pools".to_string(),
-                );
+                (*error).set(FFIErrorCode::InvalidInput, "Account has no address pools");
                 return false;
             }
             {
@@ -617,20 +538,8 @@ pub unsafe extern "C" fn managed_wallet_generate_addresses_to_index(
         }
     };
 
-    match result {
-        Ok(_) => {
-            FFIError::set_success(error);
-            true
-        }
-        Err(e) => {
-            FFIError::set_error(
-                error,
-                FFIErrorCode::WalletError,
-                format!("Failed to generate addresses: {}", e),
-            );
-            false
-        }
-    }
+    let _ = unwrap_or_return!(result, error);
+    true
 }
 
 /// Mark an address as used in the pool
@@ -642,48 +551,24 @@ pub unsafe extern "C" fn managed_wallet_generate_addresses_to_index(
 ///
 /// - `managed_wallet` must be a valid pointer to an FFIManagedWalletInfo
 /// - `address` must be a valid C string
-/// - `error` must be a valid pointer to an FFIError or null
+/// - `error` must be a valid pointer to an FFIError
 #[no_mangle]
 pub unsafe extern "C" fn managed_wallet_mark_address_used(
     managed_wallet: *mut FFIManagedWalletInfo,
     address: *const c_char,
     error: *mut FFIError,
 ) -> bool {
-    if managed_wallet.is_null() || address.is_null() {
-        FFIError::set_error(error, FFIErrorCode::InvalidInput, "Null pointer provided".to_string());
-        return false;
-    }
+    let managed_wallet = deref_ptr_mut!(managed_wallet, error).inner_mut();
+    let address = deref_ptr!(address, error);
 
-    let managed_wallet = (&mut *managed_wallet).inner_mut();
-
-    // Parse the address string
-    let address_str = match std::ffi::CStr::from_ptr(address).to_str() {
-        Ok(s) => s,
-        Err(_) => {
-            FFIError::set_error(
-                error,
-                FFIErrorCode::InvalidInput,
-                "Invalid UTF-8 in address".to_string(),
-            );
-            return false;
-        }
-    };
+    let address_str = unwrap_or_return!(std::ffi::CStr::from_ptr(address).to_str(), error);
 
     // Parse address as unchecked first, then convert to the correct network
     use core::str::FromStr;
     use dashcore::address::{Address, NetworkUnchecked};
 
-    let unchecked_addr = match Address::<NetworkUnchecked>::from_str(address_str) {
-        Ok(addr) => addr,
-        Err(e) => {
-            FFIError::set_error(
-                error,
-                FFIErrorCode::InvalidInput,
-                format!("Invalid address: {}", e),
-            );
-            return false;
-        }
-    };
+    let unchecked_addr =
+        unwrap_or_return!(Address::<NetworkUnchecked>::from_str(address_str), error);
 
     // Assume the address uses the same network we're working with
     let address = unchecked_addr.assume_checked();
@@ -808,14 +693,10 @@ pub unsafe extern "C" fn managed_wallet_mark_address_used(
     };
 
     if marked {
-        FFIError::set_success(error);
+        (*error).clean();
         true
     } else {
-        FFIError::set_error(
-            error,
-            FFIErrorCode::NotFound,
-            "Address not found in any account".to_string(),
-        );
+        (*error).set(FFIErrorCode::NotFound, "Address not found in any account");
         false
     }
 }
@@ -828,7 +709,7 @@ pub unsafe extern "C" fn managed_wallet_mark_address_used(
 /// # Safety
 ///
 /// - `pool` must be a valid pointer to an FFIAddressPool
-/// - `error` must be a valid pointer to an FFIError or null
+/// - `error` must be a valid pointer to an FFIError
 /// - The returned FFIAddressInfo must be freed using `address_info_free`
 #[no_mangle]
 pub unsafe extern "C" fn address_pool_get_address_at_index(
@@ -836,30 +717,13 @@ pub unsafe extern "C" fn address_pool_get_address_at_index(
     index: u32,
     error: *mut FFIError,
 ) -> *mut FFIAddressInfo {
-    if pool.is_null() {
-        FFIError::set_error(error, FFIErrorCode::InvalidInput, "Null pointer provided".to_string());
-        return std::ptr::null_mut();
-    }
-
-    let pool = &*pool;
+    let pool = deref_ptr!(pool, error);
     let address_pool = &*pool.pool;
 
     // Get the address info at the specified index
-    match address_pool.info_at_index(index) {
-        Some(info) => {
-            let ffi_info = address_info_to_ffi(info);
-            FFIError::set_success(error);
-            Box::into_raw(Box::new(ffi_info))
-        }
-        None => {
-            FFIError::set_error(
-                error,
-                FFIErrorCode::NotFound,
-                format!("No address at index {}", index),
-            );
-            std::ptr::null_mut()
-        }
-    }
+    let info = unwrap_or_return!(address_pool.info_at_index(index), error);
+    let ffi_info = address_info_to_ffi(info);
+    Box::into_raw(Box::new(ffi_info))
 }
 
 /// Get a range of addresses from the pool
@@ -874,7 +738,7 @@ pub unsafe extern "C" fn address_pool_get_address_at_index(
 ///
 /// - `pool` must be a valid pointer to an FFIAddressPool
 /// - `count_out` must be a valid pointer to store the count
-/// - `error` must be a valid pointer to an FFIError or null
+/// - `error` must be a valid pointer to an FFIError
 /// - The returned array must be freed using `address_info_array_free`
 #[no_mangle]
 pub unsafe extern "C" fn address_pool_get_addresses_in_range(
@@ -884,14 +748,10 @@ pub unsafe extern "C" fn address_pool_get_addresses_in_range(
     count_out: *mut usize,
     error: *mut FFIError,
 ) -> *mut *mut FFIAddressInfo {
-    if pool.is_null() || count_out.is_null() {
-        FFIError::set_error(error, FFIErrorCode::InvalidInput, "Null pointer provided".to_string());
-        return std::ptr::null_mut();
-    }
+    let pool = deref_ptr!(pool, error);
+    check_ptr!(count_out, error);
 
     *count_out = 0;
-
-    let pool = &*pool;
     let address_pool = &*pool.pool;
 
     // Collect address infos in the range
@@ -907,11 +767,7 @@ pub unsafe extern "C" fn address_pool_get_addresses_in_range(
     } else {
         // Normal range query
         if end_index <= start_index {
-            FFIError::set_error(
-                error,
-                FFIErrorCode::InvalidInput,
-                "End index must be greater than start index".to_string(),
-            );
+            (*error).set(FFIErrorCode::InvalidInput, "End index must be greater than start index");
             return std::ptr::null_mut();
         }
 
@@ -923,18 +779,14 @@ pub unsafe extern "C" fn address_pool_get_addresses_in_range(
     }
 
     if infos.is_empty() {
-        FFIError::set_error(
-            error,
-            FFIErrorCode::NotFound,
-            "No addresses found in the specified range".to_string(),
-        );
+        (*error).set(FFIErrorCode::NotFound, "No addresses found in the specified range");
         return std::ptr::null_mut();
     }
 
     *count_out = infos.len();
     let array_ptr = Box::into_raw(infos.into_boxed_slice()) as *mut *mut FFIAddressInfo;
 
-    FFIError::set_success(error);
+    (*error).clean();
     array_ptr
 }
 
@@ -996,7 +848,7 @@ pub unsafe extern "C" fn address_info_array_free(infos: *mut *mut FFIAddressInfo
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::FFINetwork;
+    use dash_network::ffi::FFINetwork;
 
     #[test]
     fn test_address_pool_type_values() {
@@ -1086,7 +938,7 @@ mod tests {
             use std::ptr;
 
             let test_mnemonic = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
-            let mut error = FFIError::success();
+            let mut error = FFIError::default();
 
             // Create wallet manager
             let manager = wallet_manager_create(FFINetwork::Testnet, &mut error);
@@ -1126,7 +978,7 @@ mod tests {
                 manager,
                 wallet_ids_out,
                 0,
-                FFIAccountType::StandardBIP44,
+                FFIAccountKind::StandardBIP44,
             );
 
             assert!(!result.account.is_null());
@@ -1167,7 +1019,6 @@ mod tests {
             managed_core_account_free(account);
             wallet_manager_free_wallet_ids(wallet_ids_out, count_out);
             wallet_manager_free(manager);
-            error.free_message();
         }
     }
 
@@ -1186,7 +1037,7 @@ mod tests {
             use std::ptr;
 
             let test_mnemonic = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
-            let mut error = FFIError::success();
+            let mut error = FFIError::default();
 
             // Create wallet manager
             let manager = wallet_manager_create(FFINetwork::Testnet, &mut error);
@@ -1226,7 +1077,7 @@ mod tests {
                 manager,
                 wallet_ids_out,
                 0,
-                FFIAccountType::StandardBIP44,
+                FFIAccountKind::StandardBIP44,
             );
 
             assert!(!result.account.is_null());
@@ -1296,7 +1147,6 @@ mod tests {
             managed_core_account_free(account);
             wallet_manager_free_wallet_ids(wallet_ids_out, count_out);
             wallet_manager_free(manager);
-            error.free_message();
         }
     }
 }

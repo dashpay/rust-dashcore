@@ -158,7 +158,7 @@ impl MasternodeList {
     pub fn hashes_for_merkle_root(&self, block_height: u32) -> Option<Vec<sha256d::Hash>> {
         (block_height != u32::MAX).then_some({
             let mut pro_tx_hashes = self.reversed_pro_reg_tx_hashes();
-            pro_tx_hashes.sort_by(|&s1, &s2| s1.reverse().cmp(&s2.reverse()));
+            pro_tx_hashes.sort_by_key(|&s| s.reverse());
             pro_tx_hashes
                 .into_iter()
                 .map(|hash| self.masternodes[hash].entry_hash)

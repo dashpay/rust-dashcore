@@ -12,12 +12,13 @@ use dash_spv::{
 use dashcore::network::address::AddrV2Message;
 use dashcore::network::constants::ServiceFlags;
 use dashcore::Txid;
+use key_wallet::managed_account::managed_account_trait::ManagedAccountTrait;
 use key_wallet::managed_account::managed_account_type::ManagedAccountType;
-use key_wallet::manager::WalletEvent;
-use key_wallet::manager::{WalletId, WalletManager};
 use key_wallet::wallet::initialization::WalletAccountCreationOptions;
 use key_wallet::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
+use key_wallet_manager::WalletEvent;
+use key_wallet_manager::{WalletId, WalletManager};
 use std::collections::{BTreeSet, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -121,7 +122,7 @@ impl TestContext {
         let wallet_read = self.wallet.read().await;
         let wallet_info =
             wallet_read.get_wallet_info(&self.wallet_id).expect("Wallet info not found");
-        wallet_info.accounts().all_accounts().iter().map(|a| a.transactions.len()).sum()
+        wallet_info.accounts().all_accounts().iter().map(|a| a.transactions().len()).sum()
     }
     /// Retrieves the spendable balance of the wallet.
     pub(super) async fn spendable_balance(&self) -> u64 {
@@ -146,7 +147,7 @@ impl TestContext {
         let ManagedAccountType::Standard {
             external_addresses,
             ..
-        } = &account.account_type
+        } = account.managed_account_type()
         else {
             panic!("Account 0 is not a Standard account type");
         };
@@ -167,7 +168,7 @@ impl TestContext {
             .accounts()
             .all_accounts()
             .iter()
-            .any(|account| account.transactions.contains_key(txid))
+            .any(|account| account.transactions().contains_key(txid))
             || wallet_info.immature_transactions().iter().any(|tx| &tx.txid() == txid)
     }
 
@@ -196,7 +197,7 @@ impl TestContext {
 
         let mut spv_txids = HashSet::new();
         for managed_account in wallet_info.accounts().all_accounts() {
-            for txid in managed_account.transactions.keys() {
+            for txid in managed_account.transactions().keys() {
                 spv_txids.insert(txid.to_string());
             }
         }
@@ -258,12 +259,8 @@ impl Drop for TestContext {
 }
 
 /// Type alias for the SPV client used in tests.
-pub(super) type TestClient = DashSpvClient<
-    WalletManager<ManagedWalletInfo>,
-    PeerNetworkManager,
-    DiskStorageManager,
-    TestEventHandler,
->;
+pub(super) type TestClient =
+    DashSpvClient<WalletManager<ManagedWalletInfo>, PeerNetworkManager, DiskStorageManager>;
 
 /// A `ClientHandle` is a utility structure that manages the state and handles for a `TestClient`
 /// required to interact with the synchronization process, various event channels, and cancellation capabilities.
@@ -308,7 +305,7 @@ pub(super) async fn client_has_transaction(
         .accounts()
         .all_accounts()
         .iter()
-        .any(|account| account.transactions.contains_key(txid))
+        .any(|account| account.transactions().contains_key(txid))
         || wallet_info.immature_transactions().iter().any(|tx| &tx.txid() == txid)
 }
 
@@ -331,7 +328,7 @@ pub(super) async fn create_and_start_client(
     let network_event_receiver = handler.subscribe_network_events();
 
     let client =
-        DashSpvClient::new(config.clone(), network_manager, storage_manager, wallet, handler)
+        DashSpvClient::new(config.clone(), network_manager, storage_manager, wallet, vec![handler])
             .await
             .expect("Failed to create client");
 
@@ -383,7 +380,6 @@ pub(super) fn create_test_wallet(
 /// Create test client config pointing to a specific peer (exclusive mode).
 fn create_test_config(storage_path: PathBuf, peer_addr: std::net::SocketAddr) -> ClientConfig {
     let mut config = ClientConfig::regtest().with_storage_path(storage_path).without_masternodes();
-    config.peers.clear();
     config.add_peer(peer_addr);
     config
 }
@@ -396,9 +392,7 @@ pub(super) async fn create_non_exclusive_test_config(
     storage_path: PathBuf,
     peer_addr: std::net::SocketAddr,
 ) -> ClientConfig {
-    let mut config = ClientConfig::regtest().with_storage_path(storage_path).without_masternodes();
-    // Clear default regtest peers so the manager enters non-exclusive mode
-    config.peers.clear();
+    let config = ClientConfig::regtest().with_storage_path(storage_path).without_masternodes();
     // Seed the peer store so the client can discover our dashd node
     let peer_store = PersistentPeerStorage::open(config.storage_path.clone())
         .await

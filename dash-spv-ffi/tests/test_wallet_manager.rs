@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod tests {
+    use dash_network::ffi::FFINetwork;
     use dash_spv_ffi::*;
-    use key_wallet::manager::WalletManager;
     use key_wallet::wallet::initialization::WalletAccountCreationOptions;
     use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
     use key_wallet_ffi::{
@@ -9,8 +9,9 @@ mod tests {
             wallet_manager_free_wallet_ids, wallet_manager_get_wallet_ids,
             wallet_manager_import_wallet_from_bytes, wallet_manager_wallet_count,
         },
-        FFIError, FFINetwork, FFIWalletManager,
+        FFIError, FFIWalletManager,
     };
+    use key_wallet_manager::WalletManager;
     use std::ffi::{CStr, CString};
     use tempfile::TempDir;
 
@@ -38,7 +39,7 @@ mod tests {
             assert_eq!((*wallet_manager_ptr).network(), FFINetwork::Testnet);
 
             // Get wallet count (should be 0 initially)
-            let mut error = FFIError::success();
+            let mut error = FFIError::default();
             let count = wallet_manager_wallet_count(
                 wallet_manager as *const FFIWalletManager,
                 &mut error as *mut FFIError,
@@ -87,7 +88,7 @@ mod tests {
                 .expect("wallet serialization should succeed");
 
             // Import the serialized wallet through the FFI pointer we retrieved from the client
-            let mut error = FFIError::success();
+            let mut error = FFIError::default();
             let mut imported_wallet_id = [0u8; 32];
             let import_ok = wallet_manager_import_wallet_from_bytes(
                 wallet_manager_ptr,
@@ -117,7 +118,7 @@ mod tests {
             wallet_manager_free_wallet_ids(ids_ptr, id_count);
 
             // Call the describe helper through FFI to ensure the shared instance reports correctly
-            let mut description_error = FFIError::success();
+            let mut description_error = FFIError::default();
             let description_ptr = key_wallet_ffi::wallet_manager_describe(
                 wallet_manager_ptr as *const FFIWalletManager,
                 &mut description_error as *mut FFIError,

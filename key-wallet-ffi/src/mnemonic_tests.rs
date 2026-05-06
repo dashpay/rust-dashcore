@@ -14,7 +14,7 @@ mod tests {
 
     #[test]
     fn test_mnemonic_validation() {
-        let mut error = FFIError::success();
+        let mut error = FFIError::default();
         let error = &mut error as *mut FFIError;
 
         // Test valid 12-word mnemonic
@@ -38,17 +38,15 @@ mod tests {
         let is_valid = unsafe { mnemonic::mnemonic_validate(ptr::null(), error) };
         assert!(!is_valid);
         assert_eq!(unsafe { (*error).code }, FFIErrorCode::InvalidInput);
-
-        unsafe { (*error).free_message() };
     }
 
     #[test]
     fn test_mnemonic_generation() {
-        let mut error = FFIError::success();
+        let mut error = FFIError::default();
         let error = &mut error as *mut FFIError;
 
         // Test 12-word generation
-        let mnemonic_12 = mnemonic::mnemonic_generate(12, error);
+        let mnemonic_12 = unsafe { mnemonic::mnemonic_generate(12, error) };
         assert!(!mnemonic_12.is_null());
         assert_eq!(unsafe { (*error).code }, FFIErrorCode::Success);
 
@@ -65,7 +63,7 @@ mod tests {
         }
 
         // Test 24-word generation
-        let mnemonic_24 = mnemonic::mnemonic_generate(24, error);
+        let mnemonic_24 = unsafe { mnemonic::mnemonic_generate(24, error) };
         assert!(!mnemonic_24.is_null());
 
         let mnemonic_str = unsafe { std::ffi::CStr::from_ptr(mnemonic_24).to_str().unwrap() };
@@ -77,16 +75,14 @@ mod tests {
         }
 
         // Test invalid word count
-        let invalid = mnemonic::mnemonic_generate(13, error);
+        let invalid = unsafe { mnemonic::mnemonic_generate(13, error) };
         assert!(invalid.is_null());
         assert_eq!(unsafe { (*error).code }, FFIErrorCode::InvalidInput);
-
-        unsafe { (*error).free_message() };
     }
 
     #[test]
     fn test_mnemonic_to_seed() {
-        let mut error = FFIError::success();
+        let mut error = FFIError::default();
         let error = &mut error as *mut FFIError;
 
         let mnemonic = CString::new(TEST_MNEMONIC).unwrap();
@@ -125,20 +121,18 @@ mod tests {
 
         assert!(success);
         assert_ne!(seed, seed_with_pass); // Different passphrase should produce different seed
-
-        unsafe { (*error).free_message() };
     }
 
     #[test]
     fn test_mnemonic_word_counts() {
-        let mut error = FFIError::success();
+        let mut error = FFIError::default();
         let error = &mut error as *mut FFIError;
 
         // Test all valid word counts
         let valid_counts = [12, 15, 18, 21, 24];
 
         for count in valid_counts.iter() {
-            let mnemonic = mnemonic::mnemonic_generate(*count, error);
+            let mnemonic = unsafe { mnemonic::mnemonic_generate(*count, error) };
             assert!(!mnemonic.is_null());
 
             let mnemonic_str = unsafe { std::ffi::CStr::from_ptr(mnemonic).to_str().unwrap() };
@@ -149,30 +143,26 @@ mod tests {
                 mnemonic::mnemonic_free(mnemonic);
             }
         }
-
-        unsafe { (*error).free_message() };
     }
 
     #[test]
     fn test_mnemonic_invalid_word_count() {
-        let mut error = FFIError::success();
+        let mut error = FFIError::default();
         let error = &mut error as *mut FFIError;
 
         // Test invalid word counts
         let invalid_counts = [0, 1, 11, 13, 14, 16, 17, 19, 20, 22, 23, 25, 100];
 
         for count in invalid_counts.iter() {
-            let mnemonic = mnemonic::mnemonic_generate(*count, error);
+            let mnemonic = unsafe { mnemonic::mnemonic_generate(*count, error) };
             assert!(mnemonic.is_null());
             assert_eq!(unsafe { (*error).code }, FFIErrorCode::InvalidInput);
         }
-
-        unsafe { (*error).free_message() };
     }
 
     #[test]
     fn test_mnemonic_edge_cases() {
-        let mut error = FFIError::success();
+        let mut error = FFIError::default();
         let error = &mut error as *mut FFIError;
 
         // Test with null mnemonic
@@ -205,13 +195,11 @@ mod tests {
         };
         assert!(success);
         assert_eq!(seed_len, 64);
-
-        unsafe { (*error).free_message() };
     }
 
     #[test]
     fn test_mnemonic_generate_with_language() {
-        let mut error = FFIError::success();
+        let mut error = FFIError::default();
 
         // Test generating with different languages
         let languages = [
@@ -242,13 +230,11 @@ mod tests {
                 mnemonic::mnemonic_free(mnemonic_ptr);
             }
         }
-
-        unsafe { error.free_message() };
     }
 
     #[test]
     fn test_mnemonic_czech_portuguese_languages() {
-        let mut error = FFIError::success();
+        let mut error = FFIError::default();
 
         // Test Czech language specifically
         unsafe {
@@ -283,20 +269,20 @@ mod tests {
 
             mnemonic::mnemonic_free(portuguese_mnemonic);
         }
-
-        unsafe { error.free_message() };
     }
 
     #[test]
     fn test_mnemonic_generate_and_validate_languages() {
-        let mut error = FFIError::success();
+        let mut error = FFIError::default();
 
         // Generate a mnemonic with a specific language
-        let mnemonic_ptr = mnemonic::mnemonic_generate_with_language(
-            12,
-            mnemonic::FFILanguage::Spanish,
-            &mut error,
-        );
+        let mnemonic_ptr = unsafe {
+            mnemonic::mnemonic_generate_with_language(
+                12,
+                mnemonic::FFILanguage::Spanish,
+                &mut error,
+            )
+        };
         assert!(!mnemonic_ptr.is_null());
 
         // Validate it (validation doesn't need language since it checks all word lists)
@@ -307,8 +293,6 @@ mod tests {
         unsafe {
             mnemonic::mnemonic_free(mnemonic_ptr);
         }
-
-        unsafe { error.free_message() };
     }
 
     #[test]
@@ -321,7 +305,7 @@ mod tests {
 
     #[test]
     fn test_seed_from_mnemonic_with_different_passphrases() {
-        let mut error = FFIError::success();
+        let mut error = FFIError::default();
         let mnemonic = CString::new(TEST_MNEMONIC).unwrap();
 
         // Test with empty passphrase
@@ -358,13 +342,11 @@ mod tests {
 
         // Seeds should be different
         assert_ne!(seed1, seed2);
-
-        unsafe { error.free_message() };
     }
 
     #[test]
     fn test_mnemonic_word_count_function() {
-        let mut error = FFIError::success();
+        let mut error = FFIError::default();
 
         // Test different mnemonics
         let test_cases = [
@@ -383,26 +365,22 @@ mod tests {
                 assert_eq!(count, expected_count);
                 assert_eq!(error.code, FFIErrorCode::Success);
             }
-
-            error.free_message();
         }
     }
 
     #[test]
     fn test_mnemonic_word_count_null_input() {
-        let mut error = FFIError::success();
+        let mut error = FFIError::default();
 
         let count = unsafe { mnemonic::mnemonic_word_count(ptr::null(), &mut error) };
 
         assert_eq!(count, 0);
         assert_eq!(error.code, FFIErrorCode::InvalidInput);
-
-        unsafe { error.free_message() };
     }
 
     #[test]
     fn test_mnemonic_word_count_utf8_error() {
-        let mut error = FFIError::success();
+        let mut error = FFIError::default();
 
         // Create invalid UTF-8 string
         let invalid_utf8 = [0xFF, 0xFE, 0xFD, 0x00];
@@ -415,13 +393,11 @@ mod tests {
 
         assert_eq!(count, 0);
         assert_eq!(error.code, FFIErrorCode::InvalidInput);
-
-        unsafe { error.free_message() };
     }
 
     #[test]
     fn test_mnemonic_to_seed_null_inputs() {
-        let mut error = FFIError::success();
+        let mut error = FFIError::default();
         let mut seed = [0u8; 64];
         let mut seed_len = 0usize;
 
@@ -464,13 +440,11 @@ mod tests {
         };
         assert!(!success);
         assert_eq!(error.code, FFIErrorCode::InvalidInput);
-
-        unsafe { error.free_message() };
     }
 
     #[test]
     fn test_mnemonic_to_seed_invalid_mnemonic() {
-        let mut error = FFIError::success();
+        let mut error = FFIError::default();
         let mut seed = [0u8; 64];
         let mut seed_len = 0usize;
 
@@ -487,13 +461,11 @@ mod tests {
 
         assert!(!success);
         assert_eq!(error.code, FFIErrorCode::InvalidMnemonic);
-
-        unsafe { error.free_message() };
     }
 
     #[test]
     fn test_mnemonic_to_seed_utf8_errors() {
-        let mut error = FFIError::success();
+        let mut error = FFIError::default();
         let mut seed = [0u8; 64];
         let mut seed_len = 0usize;
 
@@ -524,13 +496,11 @@ mod tests {
         };
         assert!(!success);
         assert_eq!(error.code, FFIErrorCode::InvalidInput);
-
-        unsafe { error.free_message() };
     }
 
     #[test]
     fn test_mnemonic_validate_utf8_error() {
-        let mut error = FFIError::success();
+        let mut error = FFIError::default();
 
         // Create invalid UTF-8 string
         let invalid_utf8 = [0xFF, 0xFE, 0xFD, 0x00];
@@ -543,40 +513,40 @@ mod tests {
 
         assert!(!is_valid);
         assert_eq!(error.code, FFIErrorCode::InvalidInput);
-
-        unsafe { error.free_message() };
     }
 
     #[test]
     fn test_mnemonic_generate_with_language_invalid_word_count() {
-        let mut error = FFIError::success();
+        let mut error = FFIError::default();
 
         // Test invalid word count with language
-        let mnemonic = mnemonic::mnemonic_generate_with_language(
-            13,
-            mnemonic::FFILanguage::English,
-            &mut error,
-        );
+        let mnemonic = unsafe {
+            mnemonic::mnemonic_generate_with_language(
+                13,
+                mnemonic::FFILanguage::English,
+                &mut error,
+            )
+        };
 
         assert!(mnemonic.is_null());
         assert_eq!(error.code, FFIErrorCode::InvalidInput);
-
-        unsafe { error.free_message() };
     }
 
     #[test]
     fn test_mnemonic_generate_with_language_all_word_counts() {
-        let mut error = FFIError::success();
+        let mut error = FFIError::default();
 
         // Test all valid word counts with language
         let valid_counts = [12, 15, 18, 21, 24];
 
         for word_count in valid_counts {
-            let mnemonic = mnemonic::mnemonic_generate_with_language(
-                word_count,
-                mnemonic::FFILanguage::English,
-                &mut error,
-            );
+            let mnemonic = unsafe {
+                mnemonic::mnemonic_generate_with_language(
+                    word_count,
+                    mnemonic::FFILanguage::English,
+                    &mut error,
+                )
+            };
 
             assert!(!mnemonic.is_null());
             assert_eq!(error.code, FFIErrorCode::Success);
@@ -588,13 +558,11 @@ mod tests {
                 mnemonic::mnemonic_free(mnemonic);
             }
         }
-
-        unsafe { error.free_message() };
     }
 
     #[test]
     fn test_mnemonic_generate_different_languages() {
-        let mut error = FFIError::success();
+        let mut error = FFIError::default();
 
         // Test generating with all supported languages
         let languages = [
@@ -609,7 +577,8 @@ mod tests {
         ];
 
         for lang in languages {
-            let mnemonic_ptr = mnemonic::mnemonic_generate_with_language(12, lang, &mut error);
+            let mnemonic_ptr =
+                unsafe { mnemonic::mnemonic_generate_with_language(12, lang, &mut error) };
 
             // Some languages might not be fully supported by the underlying library
             unsafe {
@@ -627,16 +596,14 @@ mod tests {
                 }
             }
         }
-
-        unsafe { error.free_message() };
     }
 
     #[test]
     fn test_generated_mnemonic_deterministic_seed() {
-        let mut error = FFIError::success();
+        let mut error = FFIError::default();
 
         // Generate mnemonic
-        let mnemonic = mnemonic::mnemonic_generate(12, &mut error);
+        let mnemonic = unsafe { mnemonic::mnemonic_generate(12, &mut error) };
         assert!(!mnemonic.is_null());
 
         // Generate seed twice with same passphrase - should be identical
@@ -674,16 +641,15 @@ mod tests {
 
         unsafe {
             mnemonic::mnemonic_free(mnemonic);
-            error.free_message();
         }
     }
 
     #[test]
     fn test_mnemonic_comprehensive_workflow() {
-        let mut error = FFIError::success();
+        let mut error = FFIError::default();
 
         // Generate -> Validate -> Get word count -> Convert to seed -> Free
-        let mnemonic = mnemonic::mnemonic_generate(15, &mut error);
+        let mnemonic = unsafe { mnemonic::mnemonic_generate(15, &mut error) };
         assert!(!mnemonic.is_null());
         assert_eq!(error.code, FFIErrorCode::Success);
 
@@ -720,7 +686,6 @@ mod tests {
         // Free
         unsafe {
             mnemonic::mnemonic_free(mnemonic);
-            error.free_message();
         }
     }
 }

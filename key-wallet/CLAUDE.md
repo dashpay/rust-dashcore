@@ -58,7 +58,7 @@ Account (Immutable)
 ├── account_xpub: ExtendedPubKey
 └── is_watch_only: bool
 
-ManagedCoreAccount (Mutable)
+ManagedCoreFundsAccount (Mutable)
 ├── account_type: ManagedAccountType (contains address pools)
 ├── metadata: AccountMetadata
 ├── balance: WalletCoreBalance
@@ -202,7 +202,7 @@ Tests are organized by functionality:
 let account_xpriv = derive_account_key(master, account_type)?;
 let account_xpub = ExtendedPubKey::from_priv(&secp, &account_xpriv);
 let account = Account::new(wallet_id, account_type, account_xpub, network)?;
-let managed_account = ManagedCoreAccount::from_account(&account);
+let managed_account = ManagedCoreFundsAccount::from_account(&account);
 ```
 
 ### 2. Address Generation Pattern

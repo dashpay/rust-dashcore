@@ -1,14 +1,15 @@
 //! Account management functions
 
-use std::os::raw::c_uint;
-use std::sync::Arc;
-
+use crate::deref_ptr;
 use crate::error::{FFIError, FFIErrorCode};
-use crate::types::{FFIAccountResult, FFIAccountType, FFINetwork, FFIWallet};
+use crate::types::{FFIAccountKind, FFIAccountResult, FFIWallet};
+use dash_network::ffi::FFINetwork;
 #[cfg(feature = "bls")]
 use key_wallet::account::BLSAccount;
 #[cfg(feature = "eddsa")]
 use key_wallet::account::EdDSAAccount;
+use std::os::raw::c_uint;
+use std::sync::Arc;
 
 /// Opaque account handle
 pub struct FFIAccount {
@@ -82,7 +83,7 @@ impl FFIEdDSAAccount {
 pub unsafe extern "C" fn wallet_get_account(
     wallet: *const FFIWallet,
     account_index: c_uint,
-    account_type: FFIAccountType,
+    account_type: FFIAccountKind,
 ) -> FFIAccountResult {
     if wallet.is_null() {
         return FFIAccountResult::error(FFIErrorCode::InvalidInput, "Wallet is null".to_string());
@@ -269,22 +270,22 @@ pub unsafe extern "C" fn account_get_parent_wallet_id(account: *const FFIAccount
 ///
 /// - `account` must be a valid pointer to an FFIAccount instance
 /// - `out_index` must be a valid pointer to a c_uint where the index will be stored
-/// - Returns FFIAccountType::StandardBIP44 with index 0 if the account is null
+/// - Returns FFIAccountKind::StandardBIP44 with index 0 if the account is null
 #[no_mangle]
 pub unsafe extern "C" fn account_get_account_type(
     account: *const FFIAccount,
     out_index: *mut c_uint,
-) -> FFIAccountType {
+) -> FFIAccountKind {
     if account.is_null() || out_index.is_null() {
         if !out_index.is_null() {
             *out_index = 0;
         }
-        return FFIAccountType::StandardBIP44;
+        return FFIAccountKind::StandardBIP44;
     }
 
     let account = &*account;
     let (account_type, index, registration_index) =
-        FFIAccountType::from_account_type(&account.inner().account_type);
+        FFIAccountKind::from_account_type(&account.inner().account_type);
 
     // For IdentityTopUp, the registration_index is the relevant index
     *out_index = registration_index.unwrap_or(index);
@@ -384,23 +385,23 @@ pub unsafe extern "C" fn bls_account_get_parent_wallet_id(
 ///
 /// - `account` must be a valid pointer to an FFIBLSAccount instance
 /// - `out_index` must be a valid pointer to a c_uint where the index will be stored
-/// - Returns FFIAccountType::StandardBIP44 with index 0 if the account is null
+/// - Returns FFIAccountKind::StandardBIP44 with index 0 if the account is null
 #[cfg(feature = "bls")]
 #[no_mangle]
 pub unsafe extern "C" fn bls_account_get_account_type(
     account: *const FFIBLSAccount,
     out_index: *mut c_uint,
-) -> FFIAccountType {
+) -> FFIAccountKind {
     if account.is_null() || out_index.is_null() {
         if !out_index.is_null() {
             *out_index = 0;
         }
-        return FFIAccountType::StandardBIP44;
+        return FFIAccountKind::StandardBIP44;
     }
 
     let account = &*account;
     let (account_type, index, registration_index) =
-        FFIAccountType::from_account_type(&account.inner().account_type);
+        FFIAccountKind::from_account_type(&account.inner().account_type);
 
     // For IdentityTopUp, the registration_index is the relevant index
     *out_index = registration_index.unwrap_or(index);
@@ -501,23 +502,23 @@ pub unsafe extern "C" fn eddsa_account_get_parent_wallet_id(
 ///
 /// - `account` must be a valid pointer to an FFIEdDSAAccount instance
 /// - `out_index` must be a valid pointer to a c_uint where the index will be stored
-/// - Returns FFIAccountType::StandardBIP44 with index 0 if the account is null
+/// - Returns FFIAccountKind::StandardBIP44 with index 0 if the account is null
 #[cfg(feature = "eddsa")]
 #[no_mangle]
 pub unsafe extern "C" fn eddsa_account_get_account_type(
     account: *const FFIEdDSAAccount,
     out_index: *mut c_uint,
-) -> FFIAccountType {
+) -> FFIAccountKind {
     if account.is_null() || out_index.is_null() {
         if !out_index.is_null() {
             *out_index = 0;
         }
-        return FFIAccountType::StandardBIP44;
+        return FFIAccountKind::StandardBIP44;
     }
 
     let account = &*account;
     let (account_type, index, registration_index) =
-        FFIAccountType::from_account_type(&account.inner().account_type);
+        FFIAccountKind::from_account_type(&account.inner().account_type);
 
     // For IdentityTopUp, the registration_index is the relevant index
     *out_index = registration_index.unwrap_or(index);
@@ -554,14 +555,8 @@ pub unsafe extern "C" fn wallet_get_account_count(
     wallet: *const FFIWallet,
     error: *mut FFIError,
 ) -> c_uint {
-    if wallet.is_null() {
-        FFIError::set_error(error, FFIErrorCode::InvalidInput, "Wallet is null".to_string());
-        return 0;
-    }
-
-    let wallet = &*wallet;
+    let wallet = deref_ptr!(wallet, error);
     let accounts = &wallet.inner().accounts;
-    FFIError::set_success(error);
     let count = accounts.standard_bip44_accounts.len()
         + accounts.standard_bip32_accounts.len()
         + accounts.coinjoin_accounts.len()

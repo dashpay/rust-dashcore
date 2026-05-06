@@ -23,7 +23,7 @@ default = ["secp-recovery", "bincode" ]
 base64 = [ "base64-compat" ]
 rand-std = ["secp256k1/rand"]
 rand = ["secp256k1/rand"]
-serde = ["dep:serde", "dashcore_hashes/serde", "secp256k1/serde"]
+serde = ["dep:serde", "dashcore_hashes/serde", "secp256k1/serde", "dash-network/serde"]
 secp-lowmemory = ["secp256k1/lowmemory"]
 secp-recovery = ["secp256k1/recovery"]
 signer = ["secp-recovery", "rand", "base64"]
@@ -32,7 +32,7 @@ bls = ["blsful"]
 eddsa = ["ed25519-dalek"]
 quorum_validation = ["bls"]
 message_verification = ["bls"]
-bincode = [ "dep:bincode", "dep:bincode_derive", "dashcore_hashes/bincode" ]
+bincode = [ "dep:bincode", "dep:bincode_derive", "dashcore_hashes/bincode", "dash-network/bincode" ]
 test-utils = []
 
 [package.metadata.docs.rs]
@@ -43,6 +43,7 @@ rustdoc-args = ["--cfg", "docsrs"]
 internals = { path = "../internals", package = "dashcore-private" }
 bech32 = { version = "0.9.1" }
 dashcore_hashes = { path = "../hashes" }
+dash-network = { path = "../dash-network" }
 secp256k1 = { features = ["hashes"], version= "0.30.0" }
 rustversion = { version="1.0.20"}
 serde = { version = "1.0.219", default-features = false, features = [ "derive", "alloc" ], optional = true }
@@ -59,19 +60,18 @@ ed25519-dalek = { version = "2.1", features = ["rand_core"], optional = true }
 blake3 = "1.8.1"
 thiserror = "2"
 bitvec = "1.0"
-log = "0.4"
+tracing = "0.1"
 
 [dev-dependencies]
 serde_json = "1.0.140"
 serde_test = "1.0.177"
 serde_derive = "1.0.219"
 secp256k1 = { features = [ "recovery", "rand", "hashes" ], version="0.30.0" }
-bincode = { version = "2.0.1" }
+bincode = { version = "2.0.1", features = ["serde"] }
 assert_matches = "1.5.0"
 dashcore = { path = ".", features = ["core-block-hash-use-x11", "message_verification", "quorum_validation", "signer"] }
 criterion = "0.5"
 key-wallet = { path = "../key-wallet" }
-
 
 [[example]]
 name = "handshake"

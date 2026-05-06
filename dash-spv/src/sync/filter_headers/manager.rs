@@ -37,9 +37,34 @@ pub struct FilterHeadersManager<H: BlockHeaderStorage, FH: FilterHeaderStorage> 
     pub(super) pipeline: FilterHeadersPipeline,
     /// Checkpoint start height - set when syncing from checkpoint to store prev header once.
     pub(super) checkpoint_start_height: Option<u32>,
+    /// Whether block header sync has completed. Gates FilterHeadersSyncComplete emission
+    /// to ensure it never fires before BlockHeaderSyncComplete.
+    pub(super) block_headers_synced: bool,
 }
 
 impl<H: BlockHeaderStorage, FH: FilterHeaderStorage> FilterHeadersManager<H, FH> {
+    /// Transition to `Synced` and return `FilterHeadersSyncComplete` if block headers
+    /// are done and filter headers have reached the target. Returns `None` if already
+    /// `Synced` or conditions are not met.
+    pub(super) fn try_complete_sync(&mut self) -> Option<SyncEvent> {
+        if self.block_headers_synced
+            && self.progress.current_height() >= self.progress.target_height()
+        {
+            if self.state() == SyncState::Synced {
+                return None;
+            }
+            self.set_state(SyncState::Synced);
+            tracing::info!(
+                "Filter header sync complete at height {}",
+                self.progress.current_height()
+            );
+            return Some(SyncEvent::FilterHeadersSyncComplete {
+                tip_height: self.progress.current_height(),
+            });
+        }
+        None
+    }
+
     /// Create a new filter headers manager with the given storage references.
     pub async fn new(
         header_storage: Arc<RwLock<H>>,
@@ -64,6 +89,7 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage> FilterHeadersManager<H, FH>
             filter_header_storage,
             pipeline: FilterHeadersPipeline::default(),
             checkpoint_start_height: None,
+            block_headers_synced: false,
         })
     }
 
@@ -126,26 +152,9 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage> FilterHeadersManager<H, FH>
 
         // Check if already at target (nothing to download)
         if start_height > self.progress.block_header_tip_height() {
-            // Only emit FilterHeadersSyncComplete if we've also reached the chain tip
-            // This prevents premature sync complete while block headers are still syncing
-            if self.progress.current_height() >= self.progress.target_height() {
-                if self.state() == SyncState::Synced {
-                    tracing::debug!(
-                        "Filter headers already synced to {}, no state change",
-                        self.progress.target_height()
-                    );
-                    return Ok(vec![]);
-                }
-                self.set_state(SyncState::Synced);
-                tracing::info!(
-                    "Filter headers synced to {}, emitting sync complete",
-                    self.progress.target_height()
-                );
-                return Ok(vec![SyncEvent::FilterHeadersSyncComplete {
-                    tip_height: self.progress.current_height(),
-                }]);
+            if let Some(event) = self.try_complete_sync() {
+                return Ok(vec![event]);
             }
-            // Caught up to available headers but chain tip not reached yet
             return Ok(vec![]);
         }
 
@@ -192,14 +201,8 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage> FilterHeadersManager<H, FH>
         // Nothing to do if caught up to available headers
         if self.progress.current_height() >= self.progress.block_header_tip_height() {
             let mut events = Vec::new();
-            // Only emit SyncComplete if we've also reached the chain tip
-            if self.state() == SyncState::WaitForEvents
-                && self.progress.current_height() >= self.progress.target_height()
-            {
-                events.push(SyncEvent::FilterHeadersSyncComplete {
-                    tip_height,
-                });
-                self.set_state(SyncState::Synced);
+            if let Some(event) = self.try_complete_sync() {
+                events.push(event);
             }
             return Ok(events);
         }
@@ -264,12 +267,19 @@ mod tests {
             .expect("Failed to create FilterHeadersManager")
     }
 
+    fn create_test_request_sender(
+    ) -> (RequestSender, tokio::sync::mpsc::UnboundedReceiver<crate::network::NetworkRequest>) {
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        (RequestSender::new(tx), rx)
+    }
+
     #[tokio::test]
     async fn test_filter_headers_manager_new() {
         let manager = create_test_manager().await;
         assert_eq!(manager.identifier(), ManagerIdentifier::FilterHeader);
         assert_eq!(manager.state(), SyncState::WaitForEvents);
         assert_eq!(manager.wanted_message_types(), vec![MessageType::CFHeaders]);
+        assert!(!manager.block_headers_synced);
     }
 
     #[tokio::test]
@@ -292,5 +302,95 @@ mod tests {
         } else {
             panic!("Expected SyncManagerProgress::FilterHeaders");
         }
+    }
+
+    #[tokio::test]
+    async fn test_try_complete_sync() {
+        let mut manager = create_test_manager().await;
+        manager.progress.update_current_height(1000);
+        manager.progress.update_target_height(1000);
+        manager.progress.update_block_header_tip_height(1000);
+        manager.set_state(SyncState::Syncing);
+
+        // Gated: returns None when block_headers_synced is false
+        assert!(manager.try_complete_sync().is_none());
+        assert_eq!(manager.state(), SyncState::Syncing);
+
+        // Emits once block_headers_synced is set
+        manager.block_headers_synced = true;
+        assert!(matches!(
+            manager.try_complete_sync(),
+            Some(SyncEvent::FilterHeadersSyncComplete { .. })
+        ));
+        assert_eq!(manager.state(), SyncState::Synced);
+
+        // Idempotent: returns None when already Synced
+        assert!(manager.try_complete_sync().is_none());
+        assert_eq!(manager.state(), SyncState::Synced);
+    }
+
+    #[tokio::test]
+    async fn test_block_headers_synced_event_gating() {
+        let mut manager = create_test_manager().await;
+        let (sender, _rx) = create_test_request_sender();
+
+        // Filter headers caught up to block header tip and target
+        manager.progress.update_current_height(1000);
+        manager.progress.update_target_height(1000);
+        manager.progress.update_block_header_tip_height(1000);
+        manager.set_state(SyncState::WaitForEvents);
+
+        // BlockHeadersStored does NOT set block_headers_synced, no completion emitted
+        let event = SyncEvent::BlockHeadersStored {
+            tip_height: 1000,
+        };
+        let events = manager.handle_sync_event(&event, &sender).await.unwrap();
+        assert!(!manager.block_headers_synced);
+        assert!(!events.iter().any(|e| matches!(e, SyncEvent::FilterHeadersSyncComplete { .. })));
+
+        // BlockHeaderSyncComplete sets the flag and emits completion
+        let event = SyncEvent::BlockHeaderSyncComplete {
+            tip_height: 1000,
+        };
+        let events = manager.handle_sync_event(&event, &sender).await.unwrap();
+        assert!(manager.block_headers_synced);
+        assert!(events.iter().any(|e| matches!(e, SyncEvent::FilterHeadersSyncComplete { .. })));
+        assert_eq!(manager.state(), SyncState::Synced);
+    }
+
+    #[tokio::test]
+    async fn test_block_header_sync_complete_during_active_download() {
+        let mut manager = create_test_manager().await;
+        let (sender, _rx) = create_test_request_sender();
+
+        // Filter headers caught up to block tip, but target is higher (more headers coming)
+        manager.progress.update_current_height(1000);
+        manager.progress.update_target_height(2000);
+        manager.progress.update_block_header_tip_height(1000);
+        manager.set_state(SyncState::WaitForEvents);
+
+        // BlockHeaderSyncComplete arrives but target not reached yet
+        let event = SyncEvent::BlockHeaderSyncComplete {
+            tip_height: 1000,
+        };
+        let events = manager.handle_sync_event(&event, &sender).await.unwrap();
+
+        assert!(manager.block_headers_synced);
+        assert!(!events.iter().any(|e| matches!(e, SyncEvent::FilterHeadersSyncComplete { .. })));
+    }
+
+    #[tokio::test]
+    async fn test_clear_in_flight_state() {
+        let mut manager = create_test_manager().await;
+
+        // Set all fields that clear_in_flight_state resets
+        manager.block_headers_synced = true;
+        manager.checkpoint_start_height = Some(500);
+
+        manager.clear_in_flight_state();
+
+        assert!(!manager.block_headers_synced);
+        assert!(manager.checkpoint_start_height.is_none());
+        assert!(manager.pipeline.is_complete());
     }
 }

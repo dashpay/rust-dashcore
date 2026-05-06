@@ -3,10 +3,10 @@
 #[cfg(feature = "bincode")]
 #[cfg(test)]
 mod tests {
+    use dash_network::ffi::FFINetwork;
     use key_wallet_ffi::error::{FFIError, FFIErrorCode};
     use key_wallet_ffi::wallet::wallet_free_const;
     use key_wallet_ffi::wallet_manager::*;
-    use key_wallet_ffi::FFINetwork;
     use std::os::raw::c_char;
     use std::ptr;
 
@@ -14,7 +14,7 @@ mod tests {
     fn test_import_wallet_from_bytes() {
         unsafe {
             // Create a wallet manager
-            let mut error = FFIError::success();
+            let mut error = FFIError::default();
             let manager = wallet_manager_create(FFINetwork::Testnet, &mut error);
             assert_eq!(error.code, FFIErrorCode::Success);
             assert!(!manager.is_null());
@@ -67,7 +67,6 @@ mod tests {
             assert_eq!(error.code, FFIErrorCode::InvalidInput);
 
             // Clean up
-            error.free_message();
             wallet_free_const(wallet_ptr);
             wallet_manager_free_wallet_ids(wallet_ids_ptr, count);
             wallet_manager_free(manager);

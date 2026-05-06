@@ -10,7 +10,10 @@ use std::slice;
 
 use crate::error::{FFIError, FFIErrorCode};
 use crate::managed_wallet::{managed_wallet_info_free, FFIManagedWalletInfo};
-use crate::types::{block_info_from_ffi, FFITransactionContext, FFIWallet};
+use crate::types::{
+    transaction_context_from_ffi, FFIBlockInfo, FFITransactionContextType, FFIWallet,
+};
+use crate::{check_ptr, deref_ptr_mut, unwrap_or_return};
 use dashcore::consensus::Decodable;
 use dashcore::Transaction;
 use key_wallet::transaction_checking::{
@@ -19,11 +22,11 @@ use key_wallet::transaction_checking::{
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
 
 // Transaction context for checking
-// FFITransactionContext is imported from types module at the top
+// FFITransactionContextType is imported from types module at the top
 /// Account type match result
 #[repr(C)]
 pub struct FFIAccountMatch {
-    /// Account type ID (matches FFIAccountType enum values)
+    /// Account type ID (matches FFIAccountKind enum values)
     pub account_type: c_uint,
     /// Account index (if applicable)
     pub account_index: c_uint,
@@ -60,38 +63,6 @@ pub struct FFITransactionCheckResult {
     pub affected_accounts_count: c_uint,
 }
 
-/// Create a managed wallet from a regular wallet
-///
-/// This creates a ManagedWalletInfo instance from a Wallet, which includes
-/// address pools and transaction checking capabilities.
-///
-/// # Safety
-///
-/// - `wallet` must be a valid pointer to an FFIWallet
-/// - `error` must be a valid pointer to an FFIError or null
-/// - The returned pointer must be freed with `managed_wallet_info_free` (or `ffi_managed_wallet_free` for compatibility)
-#[no_mangle]
-pub unsafe extern "C" fn wallet_create_managed_wallet(
-    wallet: *const FFIWallet,
-    error: *mut FFIError,
-) -> *mut FFIManagedWalletInfo {
-    if wallet.is_null() {
-        FFIError::set_error(error, FFIErrorCode::InvalidInput, "Wallet is null".to_string());
-        return std::ptr::null_mut();
-    }
-
-    let wallet = &*wallet;
-
-    // Create managed wallet info from the wallet
-    let managed_info = ManagedWalletInfo::from_wallet(wallet.inner());
-
-    // Box it and return raw pointer
-    let managed_wallet = Box::new(FFIManagedWalletInfo::new(managed_info));
-
-    FFIError::set_success(error);
-    Box::into_raw(managed_wallet)
-}
-
 /// Check if a transaction belongs to the wallet
 ///
 /// This function checks a transaction against all relevant account types in the wallet
@@ -111,70 +82,37 @@ pub unsafe extern "C" fn managed_wallet_check_transaction(
     wallet: *mut FFIWallet,
     tx_bytes: *const u8,
     tx_len: usize,
-    context_type: FFITransactionContext,
-    block_height: c_uint,
-    block_hash: *const u8, // 32 bytes if not null
-    timestamp: u64,
+    context_type: FFITransactionContextType,
+    block_info: FFIBlockInfo,
+    islock_data: *const u8,
+    islock_len: usize,
     update_state: bool,
     result_out: *mut FFITransactionCheckResult,
     error: *mut FFIError,
 ) -> bool {
-    if managed_wallet.is_null() || tx_bytes.is_null() || result_out.is_null() {
-        FFIError::set_error(error, FFIErrorCode::InvalidInput, "Null pointer provided".to_string());
-        return false;
-    }
+    let managed_wallet: &mut ManagedWalletInfo = deref_ptr_mut!(managed_wallet, error).inner_mut();
+    check_ptr!(tx_bytes, error);
+    check_ptr!(result_out, error);
 
-    let managed_wallet: &mut ManagedWalletInfo = (*managed_wallet).inner_mut();
     let tx_slice = slice::from_raw_parts(tx_bytes, tx_len);
 
-    // Parse the transaction
-    let tx = match Transaction::consensus_decode(&mut &tx_slice[..]) {
-        Ok(tx) => tx,
-        Err(e) => {
-            FFIError::set_error(
-                error,
-                FFIErrorCode::InvalidInput,
-                format!("Failed to decode transaction: {}", e),
-            );
-            return false;
-        }
-    };
+    let tx = unwrap_or_return!(Transaction::consensus_decode(&mut &tx_slice[..]), error);
 
     // Build the transaction context
-    let context = match context_type {
-        FFITransactionContext::Mempool => TransactionContext::Mempool,
-        FFITransactionContext::InBlock => {
-            let info = block_info_from_ffi(block_height, block_hash, timestamp);
-            TransactionContext::InBlock(info)
-        }
-        FFITransactionContext::InChainLockedBlock => {
-            let info = block_info_from_ffi(block_height, block_hash, timestamp);
-            TransactionContext::InChainLockedBlock(info)
-        }
-        FFITransactionContext::InstantSend => TransactionContext::InstantSend,
-    };
+    let context = unwrap_or_return!(
+        transaction_context_from_ffi(context_type, &block_info, islock_data, islock_len,),
+        error
+    );
 
-    // Check the transaction - wallet is now required
-    if wallet.is_null() {
-        FFIError::set_error(
-            error,
-            FFIErrorCode::InvalidInput,
-            "Wallet pointer is required".to_string(),
-        );
-        return false;
-    }
-
-    let wallet_mut = match (*wallet).inner_mut() {
-        Some(w) => w,
-        None => {
-            FFIError::set_error(
-                error,
-                FFIErrorCode::InternalError,
-                "Cannot get mutable wallet reference (Arc has multiple owners)".to_string(),
-            );
+    if let TransactionContext::InstantSend(ref lock) = context {
+        if lock.txid != tx.txid() {
+            (*error).set(FFIErrorCode::InvalidInput, "InstantLock txid does not match transaction");
             return false;
         }
-    };
+    }
+
+    let ff_wallet_mut = deref_ptr_mut!(wallet, error);
+    let wallet_mut = unwrap_or_return!(ff_wallet_mut.inner_mut(), error);
 
     // Block on the async check_transaction call
     let check_result = tokio::runtime::Handle::current().block_on(
@@ -476,7 +414,7 @@ pub unsafe extern "C" fn managed_wallet_check_transaction(
         affected_accounts_count: check_result.affected_accounts.len() as c_uint,
     };
 
-    FFIError::set_success(error);
+    (*error).clean();
     true
 }
 
@@ -523,7 +461,7 @@ pub unsafe extern "C" fn ffi_managed_wallet_free(managed_wallet: *mut FFIManaged
 /// # Safety
 ///
 /// - `tx_bytes` must be a valid pointer to transaction bytes with at least `tx_len` bytes
-/// - `error` must be a valid pointer to an FFIError or null
+/// - `error` must be a valid pointer to an FFIError
 /// - The returned string must be freed by the caller
 #[no_mangle]
 pub unsafe extern "C" fn transaction_classify(
@@ -531,50 +469,13 @@ pub unsafe extern "C" fn transaction_classify(
     tx_len: usize,
     error: *mut FFIError,
 ) -> *mut c_char {
-    if tx_bytes.is_null() {
-        FFIError::set_error(
-            error,
-            FFIErrorCode::InvalidInput,
-            "Transaction bytes are null".to_string(),
-        );
-        return std::ptr::null_mut();
-    }
-
+    check_ptr!(tx_bytes, error);
     let tx_slice = slice::from_raw_parts(tx_bytes, tx_len);
+    let tx = unwrap_or_return!(Transaction::consensus_decode(&mut &tx_slice[..]), error);
 
-    // Parse the transaction
-    let tx = match Transaction::consensus_decode(&mut &tx_slice[..]) {
-        Ok(tx) => tx,
-        Err(e) => {
-            FFIError::set_error(
-                error,
-                FFIErrorCode::InvalidInput,
-                format!("Failed to decode transaction: {}", e),
-            );
-            return std::ptr::null_mut();
-        }
-    };
-
-    // Classify the transaction
     use key_wallet::transaction_checking::transaction_router::TransactionRouter;
     let tx_type = TransactionRouter::classify_transaction(&tx);
-
-    let type_str = format!("{:?}", tx_type);
-
-    match CString::new(type_str) {
-        Ok(c_str) => {
-            FFIError::set_success(error);
-            c_str.into_raw()
-        }
-        Err(_) => {
-            FFIError::set_error(
-                error,
-                FFIErrorCode::InvalidInput,
-                "Failed to convert transaction type to C string".to_string(),
-            );
-            std::ptr::null_mut()
-        }
-    }
+    unwrap_or_return!(CString::new(format!("{:?}", tx_type)), error).into_raw()
 }
 
 #[cfg(test)]
@@ -584,9 +485,9 @@ mod tests {
     #[test]
     fn test_transaction_context_conversion() {
         // Test that FFI transaction context values match expectations
-        assert_eq!(FFITransactionContext::Mempool as u32, 0);
-        assert_eq!(FFITransactionContext::InstantSend as u32, 1);
-        assert_eq!(FFITransactionContext::InBlock as u32, 2);
-        assert_eq!(FFITransactionContext::InChainLockedBlock as u32, 3);
+        assert_eq!(FFITransactionContextType::Mempool as u32, 0);
+        assert_eq!(FFITransactionContextType::InstantSend as u32, 1);
+        assert_eq!(FFITransactionContextType::InBlock as u32, 2);
+        assert_eq!(FFITransactionContextType::InChainLockedBlock as u32, 3);
     }
 }

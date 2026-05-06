@@ -337,6 +337,113 @@ mod tests {
         assert!(tx.out_point_buffer(1).is_none());
     }
 
+    /// Regression test for the bug where `OutPoint::deserialize` errored with
+    /// "invalid type: map, expected an OutPoint" when an OutPoint-bearing
+    /// struct was wrapped by an internally-tagged enum and round-tripped
+    /// through serde's intermediate `ContentDeserializer`. `ContentDeserializer`
+    /// always reports `is_human_readable() == true`, so a value originally
+    /// produced by a non-human-readable encoder ends up replayed into the HR
+    /// branch as a map — which the previous string-only HR visitor rejected.
+    #[cfg(feature = "serde")]
+    #[test]
+    fn serde_round_trip_through_internally_tagged_enum() {
+        use serde_derive::{Deserialize, Serialize};
+
+        #[derive(Debug, PartialEq, Serialize, Deserialize)]
+        struct WithOutPoint {
+            out_point: OutPoint,
+        }
+
+        #[derive(Debug, PartialEq, Serialize, Deserialize)]
+        #[serde(tag = "type")]
+        enum Tagged {
+            A(WithOutPoint),
+        }
+
+        let original = Tagged::A(WithOutPoint {
+            out_point: OutPoint {
+                txid: "5df6e0e2761359d30a8275058e299fcc0381534545f55cf43e41983f5d4c9456"
+                    .parse()
+                    .unwrap(),
+                vout: 7,
+            },
+        });
+
+        // Round-trip through serde_json::Value forces serde to buffer the value
+        // into a Content tree, then replay it through ContentDeserializer when
+        // resolving the internally-tagged enum variant. The canonical HR form
+        // serializes the OutPoint as a string, so this exercises the visit_str
+        // path through ContentDeserializer.
+        let value = serde_json::to_value(&original).unwrap();
+        let restored: Tagged = serde_json::from_value(value).unwrap();
+        assert_eq!(original, restored);
+
+        // Hand-build the struct/map form of the OutPoint inside the tagged
+        // enum and deserialize from it. This is the exact shape that triggered
+        // the original bug downstream (`platform_value::Value` produces struct
+        // shapes for OutPoint because it is non-human-readable, and the tagged
+        // enum then replays those through `ContentDeserializer` with
+        // `is_human_readable() == true`). Before the fix this failed with
+        // `invalid type: map, expected an OutPoint`.
+        let map_form = serde_json::json!({
+            "type": "A",
+            "out_point": {
+                "txid": "5df6e0e2761359d30a8275058e299fcc0381534545f55cf43e41983f5d4c9456",
+                "vout": 7,
+            },
+        });
+        let from_map: Tagged = serde_json::from_value(map_form).unwrap();
+        assert_eq!(original, from_map);
+
+        // The canonical HR string form must still deserialize, so existing
+        // JSON producers do not break.
+        let from_string: OutPoint = serde_json::from_str(
+            "\"5df6e0e2761359d30a8275058e299fcc0381534545f55cf43e41983f5d4c9456:7\"",
+        )
+        .unwrap();
+        assert_eq!(
+            from_string,
+            OutPoint {
+                txid: "5df6e0e2761359d30a8275058e299fcc0381534545f55cf43e41983f5d4c9456"
+                    .parse()
+                    .unwrap(),
+                vout: 7,
+            },
+        );
+
+        // Plain bincode (non-human-readable) round-trip of an `OutPoint`
+        // must still succeed via the struct-shape branch — guards against
+        // breaking the `visit_seq` path. (Note: a bincode round-trip of the
+        // tagged enum above is *not* possible in serde at all — internally-
+        // tagged enum dispatch requires `deserialize_any` on the upstream
+        // deserializer, and bincode is not self-describing. That's a serde
+        // limitation orthogonal to this bug.)
+        let raw = OutPoint {
+            txid: "5df6e0e2761359d30a8275058e299fcc0381534545f55cf43e41983f5d4c9456"
+                .parse()
+                .unwrap(),
+            vout: 7,
+        };
+        let cfg = bincode::config::standard();
+        let bytes = bincode::serde::encode_to_vec(raw, cfg).unwrap();
+        let (decoded, _): (OutPoint, _) = bincode::serde::decode_from_slice(&bytes, cfg).unwrap();
+        assert_eq!(raw, decoded);
+
+        // Duplicate field in the map form must error with `duplicate field`,
+        // not silently keep the last value. Parse from a JSON string (rather
+        // than `serde_json::json!`) because `Value::Object` deduplicates keys
+        // on construction — the duplicate must reach the visitor as separate
+        // map entries, which only happens during streaming parse.
+        let err = serde_json::from_str::<OutPoint>(
+            r#"{"txid":"5df6e0e2761359d30a8275058e299fcc0381534545f55cf43e41983f5d4c9456","txid":"0000000000000000000000000000000000000000000000000000000000000000","vout":7}"#,
+        )
+        .unwrap_err();
+        assert!(
+            err.to_string().contains("duplicate field"),
+            "expected duplicate-field error, got: {err}",
+        );
+    }
+
     // #[test]
     // fn out_point_parse() {
     //     let mut tx = Transaction {

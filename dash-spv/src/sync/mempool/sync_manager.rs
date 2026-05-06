@@ -6,7 +6,7 @@ use crate::sync::{
 };
 use async_trait::async_trait;
 use dashcore::network::message::NetworkMessage;
-use key_wallet::manager::WalletInterface;
+use key_wallet_manager::WalletInterface;
 
 #[async_trait]
 impl<W: WalletInterface + 'static> SyncManager for MempoolManager<W> {
@@ -50,7 +50,7 @@ impl<W: WalletInterface + 'static> SyncManager for MempoolManager<W> {
     ) -> SyncResult<Vec<SyncEvent>> {
         match msg.inner() {
             NetworkMessage::Inv(inv) => self.handle_inv(inv, msg.peer_address(), requests).await,
-            NetworkMessage::Tx(tx) => self.handle_tx(tx.clone()).await,
+            NetworkMessage::Tx(tx) => self.handle_tx(tx.clone(), msg.peer_address()).await,
             _ => Ok(vec![]),
         }
     }
@@ -88,7 +88,7 @@ impl<W: WalletInterface + 'static> SyncManager for MempoolManager<W> {
                 // Remove confirmed transactions from mempool.
                 // Bloom filter rebuild is handled by the tick's revision check.
                 if !confirmed_txids.is_empty() {
-                    self.remove_confirmed(confirmed_txids).await;
+                    self.remove_confirmed(confirmed_txids);
                 }
                 Ok(vec![])
             }
@@ -96,7 +96,7 @@ impl<W: WalletInterface + 'static> SyncManager for MempoolManager<W> {
                 instant_lock,
                 ..
             } => {
-                self.mark_instant_send(&instant_lock.txid).await;
+                self.process_instant_send(instant_lock.clone()).await;
                 Ok(vec![])
             }
             _ => Ok(vec![]),
@@ -109,7 +109,7 @@ impl<W: WalletInterface + 'static> SyncManager for MempoolManager<W> {
         }
 
         // Prune expired transactions periodically
-        self.prune_expired(MEMPOOL_TX_EXPIRY).await;
+        self.prune_expired(MEMPOOL_TX_EXPIRY);
 
         // Prune pending requests that never received a response
         self.prune_pending_requests();
@@ -117,10 +117,13 @@ impl<W: WalletInterface + 'static> SyncManager for MempoolManager<W> {
         // Send queued getdata requests now that slots may have freed up
         self.send_queued(requests).await?;
 
+        // Rebroadcast unconfirmed self-sent transactions on a randomized interval
+        self.rebroadcast_if_due(requests).await;
+
         // Rebuild bloom filter if the wallet's monitored set has changed.
         //
         // We poll the revision counter rather than using push-based wallet events
-        // for simplicity: the revision lives on `ManagedCoreAccount` and auto-bumps
+        // for simplicity: the revision lives on `ManagedCoreFundsAccount` and auto-bumps
         // on address generation and UTXO mutations, giving us a single source of
         // truth without needing event emission after every wallet operation.
         // Adding a push-based approach would require a new `select!` branch in the
@@ -189,21 +192,19 @@ mod tests {
     use crate::client::config::MempoolStrategy;
     use crate::network::NetworkRequest;
     use crate::test_utils::test_socket_address;
-    use crate::types::MempoolState;
     use dashcore::hashes::Hash;
-    use key_wallet::test_utils::MockWallet;
+    use key_wallet_manager::test_utils::MockWallet;
+    use std::collections::{BTreeMap, BTreeSet};
     use std::sync::Arc;
     use tokio::sync::{mpsc, RwLock};
 
     fn create_test_manager(
     ) -> (MempoolManager<MockWallet>, RequestSender, mpsc::UnboundedReceiver<NetworkRequest>) {
         let wallet = Arc::new(RwLock::new(MockWallet::new()));
-        let mempool_state = Arc::new(RwLock::new(MempoolState::default()));
         let (tx, rx) = mpsc::unbounded_channel::<NetworkRequest>();
         let requests = RequestSender::new(tx);
 
-        let manager =
-            MempoolManager::new(wallet, mempool_state, MempoolStrategy::FetchAll, 1000, 0);
+        let manager = MempoolManager::new(wallet, MempoolStrategy::FetchAll, 1000, 0);
 
         (manager, requests, rx)
     }
@@ -360,42 +361,42 @@ mod tests {
         };
         manager.handle_sync_event(&sync, &requests).await.unwrap();
 
-        // Add transactions to mempool state
+        // Add transactions to mempool
         let mut txids = Vec::new();
-        {
-            let mut state = manager.mempool_state.write().await;
-            for i in 0..2u32 {
-                let tx = dashcore::Transaction {
-                    version: 1,
-                    lock_time: i,
-                    input: vec![],
-                    output: vec![],
-                    special_transaction_payload: None,
-                };
-                let txid = tx.txid();
-                txids.push(txid);
-                state.add_transaction(crate::types::UnconfirmedTransaction::new(
+        for i in 0..2u32 {
+            let tx = dashcore::Transaction {
+                version: 1,
+                lock_time: i,
+                input: vec![],
+                output: vec![],
+                special_transaction_payload: None,
+            };
+            let txid = tx.txid();
+            txids.push(txid);
+            manager.transactions.insert(
+                txid,
+                crate::types::UnconfirmedTransaction::new(
                     tx,
                     dashcore::Amount::from_sat(0),
                     false,
                     false,
                     Vec::new(),
                     0,
-                ));
-            }
+                ),
+            );
         }
 
         let event = SyncEvent::BlockProcessed {
             block_hash: dashcore::BlockHash::all_zeros(),
             height: 1001,
-            new_addresses: vec![],
+            wallets: BTreeSet::new(),
+            new_addresses: BTreeMap::new(),
             confirmed_txids: txids.clone(),
         };
         let events = manager.handle_sync_event(&event, &requests).await.unwrap();
         assert!(events.is_empty());
 
-        let state = manager.mempool_state.read().await;
-        assert!(state.transactions.is_empty());
+        assert!(manager.transactions.is_empty());
     }
 
     #[tokio::test]
@@ -419,17 +420,17 @@ mod tests {
             special_transaction_payload: None,
         };
         let txid = tx.txid();
-        {
-            let mut state = manager.mempool_state.write().await;
-            state.add_transaction(crate::types::UnconfirmedTransaction::new(
+        manager.transactions.insert(
+            txid,
+            crate::types::UnconfirmedTransaction::new(
                 tx,
                 dashcore::Amount::from_sat(0),
                 false,
                 false,
                 Vec::new(),
                 0,
-            ));
-        }
+            ),
+        );
 
         // Fire InstantLockReceived with a lock whose txid matches
         let mut is_lock = dashcore::InstantLock::dummy(0..1);
@@ -442,8 +443,7 @@ mod tests {
         let events = manager.handle_sync_event(&event, &requests).await.unwrap();
         assert!(events.is_empty());
 
-        let state = manager.mempool_state.read().await;
-        assert!(state.transactions.get(&txid).unwrap().is_instant_send);
+        assert!(manager.transactions.get(&txid).unwrap().is_instant_send);
     }
 
     #[tokio::test]
@@ -553,12 +553,10 @@ mod tests {
         let addr = dashcore::Address::from_script(&script, dashcore::Network::Testnet).unwrap();
         mock.set_addresses(vec![addr]);
         let wallet = Arc::new(RwLock::new(mock));
-        let mempool_state = Arc::new(RwLock::new(MempoolState::default()));
         let (tx, mut rx) = mpsc::unbounded_channel::<NetworkRequest>();
         let requests = RequestSender::new(tx);
 
-        let mut manager =
-            MempoolManager::new(wallet, mempool_state, MempoolStrategy::BloomFilter, 1000, 0);
+        let mut manager = MempoolManager::new(wallet, MempoolStrategy::BloomFilter, 1000, 0);
 
         let peer = test_socket_address(1);
         manager.handle_peer_connected(peer);
@@ -577,7 +575,8 @@ mod tests {
         let event = SyncEvent::BlockProcessed {
             block_hash: dashcore::BlockHash::all_zeros(),
             height: 1001,
-            new_addresses: vec![],
+            wallets: BTreeSet::new(),
+            new_addresses: BTreeMap::new(),
             confirmed_txids: vec![dashcore::Txid::all_zeros()],
         };
         manager.handle_sync_event(&event, &requests).await.unwrap();
@@ -603,7 +602,8 @@ mod tests {
         let event = SyncEvent::BlockProcessed {
             block_hash: dashcore::BlockHash::all_zeros(),
             height: 1001,
-            new_addresses: vec![],
+            wallets: BTreeSet::new(),
+            new_addresses: BTreeMap::new(),
             confirmed_txids: vec![],
         };
         manager.handle_sync_event(&event, &requests).await.unwrap();
@@ -623,13 +623,11 @@ mod tests {
         mock.set_addresses(vec![addr.clone()]);
         let initial_revision = mock.monitor_revision();
         let wallet = Arc::new(RwLock::new(mock));
-        let mempool_state = Arc::new(RwLock::new(MempoolState::default()));
         let (tx, mut rx) = mpsc::unbounded_channel::<NetworkRequest>();
         let requests = RequestSender::new(tx);
 
         let mut manager = MempoolManager::new(
             wallet.clone(),
-            mempool_state,
             MempoolStrategy::BloomFilter,
             1000,
             initial_revision,
@@ -685,12 +683,10 @@ mod tests {
     #[tokio::test]
     async fn test_tick_skips_rebuild_for_fetch_all_strategy() {
         let wallet = Arc::new(RwLock::new(MockWallet::new()));
-        let mempool_state = Arc::new(RwLock::new(MempoolState::default()));
         let (tx, mut rx) = mpsc::unbounded_channel::<NetworkRequest>();
         let requests = RequestSender::new(tx);
 
-        let mut manager =
-            MempoolManager::new(wallet.clone(), mempool_state, MempoolStrategy::FetchAll, 1000, 0);
+        let mut manager = MempoolManager::new(wallet.clone(), MempoolStrategy::FetchAll, 1000, 0);
 
         let peer = test_socket_address(1);
         manager.handle_peer_connected(peer);
@@ -736,13 +732,11 @@ mod tests {
         mock.set_addresses(vec![addr]);
         let initial_revision = mock.monitor_revision();
         let wallet = Arc::new(RwLock::new(mock));
-        let mempool_state = Arc::new(RwLock::new(MempoolState::default()));
         let (tx, mut rx) = mpsc::unbounded_channel::<NetworkRequest>();
         let requests = RequestSender::new(tx);
 
         let mut manager = MempoolManager::new(
             wallet.clone(),
-            mempool_state,
             MempoolStrategy::BloomFilter,
             1000,
             initial_revision,
@@ -787,13 +781,11 @@ mod tests {
         mock.set_addresses(vec![addr]);
         let initial_revision = mock.monitor_revision();
         let wallet = Arc::new(RwLock::new(mock));
-        let mempool_state = Arc::new(RwLock::new(MempoolState::default()));
         let (tx_chan, mut rx) = mpsc::unbounded_channel::<NetworkRequest>();
         let requests = RequestSender::new(tx_chan);
 
         let mut manager = MempoolManager::new(
             wallet.clone(),
-            mempool_state,
             MempoolStrategy::BloomFilter,
             1000,
             initial_revision,
@@ -816,7 +808,7 @@ mod tests {
             output: vec![],
             special_transaction_payload: None,
         };
-        manager.handle_tx(tx).await.unwrap();
+        manager.handle_tx(tx, test_socket_address(1)).await.unwrap();
 
         let has_filter_load = std::iter::from_fn(|| rx.try_recv().ok()).any(|msg| {
             matches!(msg, NetworkRequest::SendMessageToPeer(NetworkMessage::FilterLoad(_), _))

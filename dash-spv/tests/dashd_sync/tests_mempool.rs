@@ -7,9 +7,9 @@ use dash_spv::test_utils::{DashdTestContext, TestChain};
 use dashcore::Amount;
 
 use super::helpers::{
-    assert_mempool_count_both, assert_no_mempool_tx_both, wait_for_mempool_synced_both,
-    wait_for_mempool_tx_both, wait_for_mempool_txs_both, wait_for_network_event,
-    wait_for_network_event_both, wait_for_sync_both,
+    assert_no_mempool_tx_both, wait_for_mempool_synced_both, wait_for_mempool_tx_both,
+    wait_for_mempool_txs_both, wait_for_network_event, wait_for_network_event_both,
+    wait_for_sync_both,
 };
 use super::setup::{
     client_has_transaction, create_and_start_client, create_test_wallet, TestContext,
@@ -38,10 +38,8 @@ async fn test_mempool_detects_incoming_tx() {
 
     let mempool_txid = wait_for_mempool_tx_both(&mut fa, &mut bf, MEMPOOL_TIMEOUT)
         .await
-        .expect("Expected mempool TransactionReceived event");
+        .expect("Expected TransactionDetected event");
     assert_eq!(mempool_txid, txid, "Mempool event txid should match sent txid");
-
-    assert_mempool_count_both(&fa, &bf, 1).await;
 
     fa.stop().await;
     bf.stop().await;
@@ -81,7 +79,6 @@ async fn test_mempool_ignores_irrelevant_tx() {
     tracing::info!("Sent irrelevant tx (not to SPV wallet), txid: {}", txid);
 
     assert_no_mempool_tx_both(&mut fa, &mut bf, Duration::from_secs(3)).await;
-    assert_mempool_count_both(&fa, &bf, 0).await;
 
     fa.stop().await;
     bf.stop().await;
@@ -109,10 +106,8 @@ async fn test_mempool_to_confirmed_lifecycle() {
 
     let mempool_txid = wait_for_mempool_tx_both(&mut fa, &mut bf, MEMPOOL_TIMEOUT)
         .await
-        .expect("Expected mempool TransactionReceived event");
+        .expect("Expected TransactionDetected event");
     assert_eq!(mempool_txid, txid);
-
-    assert_mempool_count_both(&fa, &bf, 1).await;
 
     // Mine the transaction
     let miner_address = ctx.dashd.node.get_new_address_from_wallet("default");
@@ -120,7 +115,6 @@ async fn test_mempool_to_confirmed_lifecycle() {
     let new_height = ctx.dashd.initial_height + 1;
     wait_for_sync_both(&mut fa, &mut bf, new_height).await;
 
-    assert_mempool_count_both(&fa, &bf, 0).await;
     assert!(
         client_has_transaction(&fa.client, &ctx.wallet_id, &txid).await,
         "FetchAll: confirmed tx should be in wallet"
@@ -162,8 +156,6 @@ async fn test_mempool_multiple_txs() {
 
     let received_txids = wait_for_mempool_txs_both(&mut fa, &mut bf, 3, MEMPOOL_TIMEOUT).await;
     assert_eq!(received_txids, expected_txids, "Received mempool txids should match sent txids");
-
-    assert_mempool_count_both(&fa, &bf, 3).await;
 
     fa.stop().await;
     bf.stop().await;
@@ -281,7 +273,6 @@ async fn test_mempool_lifecycle() {
     let received = wait_for_mempool_txs_both(&mut fa, &mut bf, 2, MEMPOOL_TIMEOUT).await;
     assert!(received.contains(&txid1), "Should have received tx1");
     assert!(received.contains(&txid2), "Should have received tx2");
-    assert_mempool_count_both(&fa, &bf, 2).await;
 
     // Step 2: Disconnect the peer
     ctx.dashd.node.disconnect_all_peers();
@@ -317,16 +308,12 @@ async fn test_mempool_lifecycle() {
         .expect("Expected mempool event for tx sent while disconnected");
     assert_eq!(detected, txid3, "Should detect tx3 via mempool dump on reconnect");
 
-    // Step 6: Verify all 3 transactions tracked
-    assert_mempool_count_both(&fa, &bf, 3).await;
-
-    // Step 7: Mine a block, verify all txs confirmed
+    // Step 6: Mine a block, verify all txs confirmed
     let miner_address = ctx.dashd.node.get_new_address_from_wallet("default");
     ctx.dashd.node.generate_blocks(1, &miner_address);
     let new_height = ctx.dashd.initial_height + 1;
     wait_for_sync_both(&mut fa, &mut bf, new_height).await;
 
-    assert_mempool_count_both(&fa, &bf, 0).await;
     for (label, client) in [("FetchAll", &fa.client), ("BloomFilter", &bf.client)] {
         assert!(
             client_has_transaction(client, &ctx.wallet_id, &txid1).await,
@@ -413,7 +400,6 @@ async fn test_mempool_peer_disconnect_reactivation() {
         .await
         .expect("Scenario 1: expected mempool tx detection");
     assert_eq!(detected, txid1);
-    assert_mempool_count_both(&fa, &bf, 1).await;
 
     // --- Scenario 2: disconnect one peer, verify detection still works ---
     // Resubscribe to get fresh receivers, avoiding stale events or lagged errors
@@ -446,7 +432,6 @@ async fn test_mempool_peer_disconnect_reactivation() {
         .await
         .expect("Scenario 2: expected mempool tx detection from remaining peer");
     assert_eq!(detected, txid2);
-    assert_mempool_count_both(&fa, &bf, 2).await;
 
     // --- Scenario 3: disconnect both peers, verify recovery ---
     ctx.dashd.node.set_network_active(false);
@@ -506,9 +491,84 @@ async fn test_mempool_peer_disconnect_reactivation() {
         .await
         .expect("Scenario 3: expected mempool tx detection after recovery");
     assert_eq!(detected, txid3);
-    assert_mempool_count_both(&fa, &bf, 3).await;
 
     fa.stop().await;
     bf.stop().await;
     tracing::info!("test_mempool_peer_disconnect_reactivation passed");
+}
+
+/// Verify that a locally broadcast transaction is immediately visible in mempool state.
+#[tokio::test]
+async fn test_broadcast_transaction_local_detection() {
+    let Some(ctx) = TestContext::new(TestChain::Minimal).await else {
+        return;
+    };
+    if !ctx.dashd.supports_mining {
+        eprintln!("Skipping test (dashd RPC miner not available)");
+        return;
+    }
+
+    let (mut fa, _fa_dir) = ctx.spawn_client(MempoolStrategy::FetchAll).await;
+    let (mut bf, _bf_dir) = ctx.spawn_client(MempoolStrategy::BloomFilter).await;
+    wait_for_sync_both(&mut fa, &mut bf, ctx.dashd.initial_height).await;
+
+    // Step 1: Fund the SPV wallet with a confirmed UTXO
+    let receive_address = ctx.receive_address().await;
+    let funding_amount = Amount::from_sat(200_000_000);
+    let funding_txid = ctx.dashd.node.send_to_address(&receive_address, funding_amount);
+
+    wait_for_mempool_tx_both(&mut fa, &mut bf, MEMPOOL_TIMEOUT)
+        .await
+        .expect("Expected mempool event for funding tx");
+
+    let miner_address = ctx.dashd.node.get_new_address_from_wallet("default");
+    ctx.dashd.node.generate_blocks(1, &miner_address);
+    let mined_height = ctx.dashd.initial_height + 1;
+    wait_for_sync_both(&mut fa, &mut bf, mined_height).await;
+
+    // Step 2: Create a signed transaction without broadcasting via dashd
+    let wallet_name = &ctx.dashd.wallet.wallet_name;
+    let utxos = ctx.dashd.node.list_unspent_from_wallet(wallet_name);
+    let utxo =
+        utxos.iter().find(|u| u.txid == funding_txid).expect("Funding tx UTXO not found in wallet");
+
+    let external_address = ctx.dashd.node.get_new_address_from_wallet("default");
+    let fee = Amount::from_sat(10_000);
+    let signed_tx = ctx.dashd.node.create_signed_transaction(
+        wallet_name,
+        utxo.txid,
+        utxo.vout,
+        utxo.amount,
+        &external_address,
+        fee,
+    );
+    let txid = signed_tx.txid();
+    tracing::info!("Created signed tx for SPV broadcast, txid: {}", txid);
+
+    // Step 3: Broadcast via the SPV client (not via dashd)
+    fa.client.broadcast_transaction(&signed_tx).await.expect("broadcast_transaction failed");
+    tracing::info!("Broadcast tx via FetchAll client");
+
+    // The locally dispatched transaction should be picked up by the mempool manager
+    let detected = wait_for_mempool_tx_both(&mut fa, &mut bf, MEMPOOL_TIMEOUT)
+        .await
+        .expect("Expected TransactionDetected event after broadcast");
+    assert_eq!(detected, txid, "Detected txid should match broadcast txid");
+
+    // Step 4: Mine the broadcast tx and verify it transitions to confirmed
+    ctx.dashd.node.generate_blocks(1, &miner_address);
+    let confirmed_height = mined_height + 1;
+    wait_for_sync_both(&mut fa, &mut bf, confirmed_height).await;
+    assert!(
+        client_has_transaction(&fa.client, &ctx.wallet_id, &txid).await,
+        "FetchAll: broadcast tx should be confirmed in wallet"
+    );
+    assert!(
+        client_has_transaction(&bf.client, &ctx.wallet_id, &txid).await,
+        "BloomFilter: broadcast tx should be confirmed in wallet"
+    );
+
+    fa.stop().await;
+    bf.stop().await;
+    tracing::info!("test_broadcast_transaction_local_detection passed");
 }

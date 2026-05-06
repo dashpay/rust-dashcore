@@ -67,9 +67,6 @@ pub struct ClientConfig {
     /// Whether to fetch transactions from INV messages immediately.
     pub fetch_mempool_transactions: bool,
 
-    /// Whether to persist mempool transactions.
-    pub persist_mempool: bool,
-
     /// Start syncing from a specific block height.
     /// The client will use the nearest checkpoint at or before this height.
     pub start_from_height: Option<u32>,
@@ -92,7 +89,6 @@ impl Default for ClientConfig {
             mempool_strategy: MempoolStrategy::FetchAll,
             max_mempool_transactions: 1000,
             fetch_mempool_transactions: true,
-            persist_mempool: false,
             start_from_height: None,
         }
     }
@@ -103,7 +99,6 @@ impl ClientConfig {
     pub fn new(network: Network) -> Self {
         Self {
             network,
-            peers: Self::default_peers_for_network(network),
             restrict_to_configured_peers: false,
             ..Self::default()
         }
@@ -180,12 +175,6 @@ impl ClientConfig {
         self
     }
 
-    /// Enable or disable mempool persistence.
-    pub fn with_mempool_persistence(mut self, enabled: bool) -> Self {
-        self.persist_mempool = enabled;
-        self
-    }
-
     /// Set the starting height for synchronization.
     pub fn with_start_height(mut self, height: u32) -> Self {
         self.start_from_height = Some(height);
@@ -215,26 +204,5 @@ impl ClientConfig {
         })?;
 
         Ok(())
-    }
-
-    /// Get default peers for a network.
-    /// Returns empty vector to enable immediate DNS discovery on startup.
-    /// Explicit peers can still be added via add_peer() or configuration.
-    fn default_peers_for_network(network: Network) -> Vec<SocketAddr> {
-        match network {
-            Network::Mainnet | Network::Testnet => {
-                // Return empty to trigger immediate DNS discovery
-                // DNS seeds will be used: dnsseed.dash.org (mainnet), testnet-seed.dashdot.io (testnet)
-                vec![]
-            }
-            Network::Regtest => {
-                // Regtest typically uses local peers
-                vec!["127.0.0.1:19899".parse::<SocketAddr>()]
-                    .into_iter()
-                    .filter_map(Result::ok)
-                    .collect()
-            }
-            _ => vec![],
-        }
     }
 }

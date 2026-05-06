@@ -17,7 +17,7 @@
 //! use dash_spv::storage::DiskStorageManager;
 //! use dashcore::Network;
 //! use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
-//! use key_wallet::manager::WalletManager;
+//! use key_wallet_manager::WalletManager;
 //! use std::sync::Arc;
 //! use tokio::sync::RwLock;
 //! use tokio_util::sync::CancellationToken;
@@ -34,7 +34,13 @@
 //!     let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new(config.network)));
 //!
 //!     // Create and run the client
-//!     let client = DashSpvClient::new(config.clone(), network, storage, wallet, Arc::new(())).await?;
+//!     let client = DashSpvClient::new(
+//!         config.clone(),
+//!         network,
+//!         storage,
+//!         wallet,
+//!         vec![Arc::new(())],
+//!     ).await?;
 //!     let shutdown_token = CancellationToken::new();
 //!
 //!     client.run(shutdown_token).await?;
@@ -60,7 +66,6 @@ pub mod chain;
 pub mod client;
 pub mod error;
 pub mod logging;
-pub mod mempool_filter;
 pub mod network;
 pub mod storage;
 pub mod sync;

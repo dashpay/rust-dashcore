@@ -13,8 +13,13 @@ use dash_spv::network::PeerNetworkManager;
 use dash_spv::storage::DiskStorageManager;
 use dash_spv::types::ValidationMode;
 use dashcore::Network;
-use key_wallet::manager::WalletManager;
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
+use key_wallet_manager::WalletManager;
+
+fn init_test_tracing() {
+    let _ = tracing_subscriber::fmt().with_test_writer().try_init();
+}
+
 /// Create a test configuration with the given network
 fn create_test_config(network: Network) -> ClientConfig {
     let mut config = ClientConfig::new(network);
@@ -32,7 +37,7 @@ fn create_test_config(network: Network) -> ClientConfig {
 #[tokio::test]
 #[ignore] // Requires network access
 async fn test_peer_connection() {
-    let _ = env_logger::builder().is_test(true).try_init();
+    init_test_tracing();
 
     let config = create_test_config(Network::Testnet);
 
@@ -45,9 +50,8 @@ async fn test_peer_connection() {
     // Create wallet manager
     let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new(config.network)));
 
-    let client = DashSpvClient::new(config, network_manager, storage_manager, wallet, Arc::new(()))
-        .await
-        .unwrap();
+    let client =
+        DashSpvClient::new(config, network_manager, storage_manager, wallet, vec![]).await.unwrap();
 
     let token = CancellationToken::new();
     let cancel = token.clone();
@@ -68,7 +72,7 @@ async fn test_peer_connection() {
 #[tokio::test]
 #[ignore] // Requires network access
 async fn test_peer_persistence() {
-    let _ = env_logger::builder().is_test(true).try_init();
+    init_test_tracing();
 
     let config = create_test_config(Network::Testnet);
 
@@ -83,15 +87,10 @@ async fn test_peer_persistence() {
         // Create wallet manager
         let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new(config.network)));
 
-        let client = DashSpvClient::new(
-            config.clone(),
-            network_manager,
-            storage_manager,
-            wallet,
-            Arc::new(()),
-        )
-        .await
-        .unwrap();
+        let client =
+            DashSpvClient::new(config.clone(), network_manager, storage_manager, wallet, vec![])
+                .await
+                .unwrap();
 
         let token = CancellationToken::new();
         let cancel = token.clone();
@@ -118,10 +117,9 @@ async fn test_peer_persistence() {
         // Create wallet manager
         let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new(config.network)));
 
-        let client =
-            DashSpvClient::new(config, network_manager, storage_manager, wallet, Arc::new(()))
-                .await
-                .unwrap();
+        let client = DashSpvClient::new(config, network_manager, storage_manager, wallet, vec![])
+            .await
+            .unwrap();
 
         // Should connect faster due to saved peers
         let token = CancellationToken::new();
@@ -146,7 +144,7 @@ async fn test_peer_persistence() {
 
 #[tokio::test]
 async fn test_peer_disconnection() {
-    let _ = env_logger::builder().is_test(true).try_init();
+    init_test_tracing();
 
     let mut config = create_test_config(Network::Regtest);
 
@@ -162,9 +160,8 @@ async fn test_peer_disconnection() {
     // Create wallet manager
     let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new(config.network)));
 
-    let client = DashSpvClient::new(config, network_manager, storage_manager, wallet, Arc::new(()))
-        .await
-        .unwrap();
+    let client =
+        DashSpvClient::new(config, network_manager, storage_manager, wallet, vec![]).await.unwrap();
 
     // Note: This test would require actual regtest nodes running
     // For now, we just test that the API works
@@ -224,7 +221,7 @@ mod unit_tests {
     #[tokio::test]
     #[ignore] // Requires network access
     async fn test_dns_discovery() {
-        let discovery = DnsDiscovery::new().await.unwrap();
+        let discovery = DnsDiscovery::new();
 
         // Test mainnet discovery
         let peers = discovery.discover_peers(Network::Mainnet).await;

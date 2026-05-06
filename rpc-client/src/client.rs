@@ -33,7 +33,7 @@ use dashcore::{
 use dashcore_rpc_json::dashcore::bls_sig_utils::BLSSignature;
 use dashcore_rpc_json::dashcore::{BlockHash, ChainLock};
 use dashcore_rpc_json::{ProTxInfo, ProTxListType, QuorumType};
-use log::Level::{Debug, Trace, Warn};
+use tracing::Level;
 
 /// Crate-specific Result type, shorthand for `std::result::Result` with our
 /// crate-specific Error type;
@@ -1694,8 +1694,8 @@ impl RpcApi for Client {
         let raw_args_json = serde_json::to_string(args)?;
         let raw_args = Some(serde_json::value::RawValue::from_string(raw_args_json)?);
         let req = self.client.build_request(cmd, raw_args.as_deref());
-        if log_enabled!(Debug) {
-            debug!(target: "dashcore_rpc", "JSON-RPC request: {} {}", cmd, serde_json::Value::from(args));
+        if tracing::enabled!(target: "dashcore_rpc", Level::DEBUG) {
+            tracing::debug!(target: "dashcore_rpc", "JSON-RPC request: {} {}", cmd, serde_json::Value::from(args));
         }
 
         let resp = self.client.send_request(req).map_err(Error::from);
@@ -1705,26 +1705,29 @@ impl RpcApi for Client {
 }
 
 fn log_response(cmd: &str, resp: &Result<jsonrpc::Response>) {
-    if log_enabled!(Warn) || log_enabled!(Debug) || log_enabled!(Trace) {
+    if tracing::enabled!(target: "dashcore_rpc", Level::WARN)
+        || tracing::enabled!(target: "dashcore_rpc", Level::DEBUG)
+        || tracing::enabled!(target: "dashcore_rpc", Level::TRACE)
+    {
         match resp {
             Err(e) => {
-                if log_enabled!(Debug) {
-                    debug!(target: "dashcore_rpc", "JSON-RPC failed parsing reply of {}: {:?}", cmd, e);
+                if tracing::enabled!(target: "dashcore_rpc", Level::DEBUG) {
+                    tracing::debug!(target: "dashcore_rpc", "JSON-RPC failed parsing reply of {}: {:?}", cmd, e);
                 }
             }
             Ok(resp) => {
                 if let Some(e) = &resp.error {
-                    if log_enabled!(Debug) {
-                        debug!(target: "dashcore_rpc", "JSON-RPC error for {}: {:?}", cmd, e);
+                    if tracing::enabled!(target: "dashcore_rpc", Level::DEBUG) {
+                        tracing::debug!(target: "dashcore_rpc", "JSON-RPC error for {}: {:?}", cmd, e);
                     }
-                } else if log_enabled!(Trace) {
+                } else if tracing::enabled!(target: "dashcore_rpc", Level::TRACE) {
                     // we can't use to_raw_value here due to compat with Rust 1.29
                     let def = serde_json::value::RawValue::from_string(
                         serde_json::Value::Null.to_string(),
                     )
                     .unwrap();
                     let result = resp.result.as_ref().unwrap_or(&def);
-                    trace!(target: "dashcore_rpc", "JSON-RPC response for {}: {}", cmd, result);
+                    tracing::trace!(target: "dashcore_rpc", "JSON-RPC response for {}: {}", cmd, result);
                 }
             }
         }

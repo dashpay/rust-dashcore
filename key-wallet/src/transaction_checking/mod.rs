@@ -10,7 +10,9 @@ pub mod transaction_context;
 pub mod transaction_router;
 pub mod wallet_checker;
 
-pub use account_checker::{AccountMatch, AddressClassification, TransactionCheckResult};
+pub use account_checker::{
+    AccountMatch, AddressClassification, DerivedAddressInfo, TransactionCheckResult,
+};
 pub use platform_checker::WalletPlatformChecker;
 pub use transaction_context::{BlockInfo, TransactionContext};
 pub use transaction_router::{PlatformAccountConversionError, TransactionRouter, TransactionType};

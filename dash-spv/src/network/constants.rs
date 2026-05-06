@@ -15,15 +15,6 @@ pub const PING_INTERVAL: Duration = Duration::from_secs(120);
 pub const RECONNECT_DELAY: Duration = Duration::from_secs(5);
 pub const MAX_RECONNECT_ATTEMPTS: u32 = 3;
 
-// DNS seeds for Dash mainnet
-pub const MAINNET_DNS_SEEDS: &[&str] = &[
-    "dnsseed.dash.org",
-    // Note: dnsseed.dashdot.io and dnsseed.masternode.io are currently not resolving
-];
-
-// DNS seeds for Dash testnet
-pub const TESTNET_DNS_SEEDS: &[&str] = &["testnet-seed.dashdot.io"];
-
 // Peer exchange
 pub const MAX_ADDR_TO_SEND: usize = 1000;
 pub const MAX_ADDR_TO_STORE: usize = 2000;

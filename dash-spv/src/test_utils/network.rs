@@ -10,11 +10,11 @@ use dashcore::{
     network::message_blockdata::GetHeadersMessage, BlockHash, Network,
 };
 use dashcore_hashes::Hash;
-use std::any::Any;
-use std::net::SocketAddr;
+use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::time::Duration;
 use tokio::sync::broadcast;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
+use tokio::sync::Mutex;
 
 pub fn test_socket_address(id: u8) -> SocketAddr {
     SocketAddr::from(([127, 0, 0, id], id as u16))
@@ -25,7 +25,7 @@ pub struct MockNetworkManager {
     connected: bool,
     connected_peer: SocketAddr,
     headers_chain: Vec<BlockHeader>,
-    message_dispatcher: MessageDispatcher,
+    message_dispatcher: Mutex<MessageDispatcher>,
     sent_messages: Vec<NetworkMessage>,
     /// Request sender for outgoing messages.
     request_tx: UnboundedSender<NetworkRequest>,
@@ -43,7 +43,7 @@ impl MockNetworkManager {
             connected: true,
             connected_peer: SocketAddr::new(std::net::Ipv4Addr::LOCALHOST.into(), 9999),
             headers_chain: Vec::new(),
-            message_dispatcher: MessageDispatcher::default(),
+            message_dispatcher: Mutex::new(MessageDispatcher::default()),
             sent_messages: Vec::new(),
             request_tx,
             request_rx: Some(request_rx),
@@ -123,12 +123,8 @@ impl Default for MockNetworkManager {
 
 #[async_trait]
 impl NetworkManager for MockNetworkManager {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
     async fn message_receiver(&mut self, types: &[MessageType]) -> UnboundedReceiver<Message> {
-        self.message_dispatcher.message_receiver(types)
+        self.message_dispatcher.lock().await.message_receiver(types)
     }
 
     fn request_sender(&self) -> RequestSender {
@@ -154,8 +150,8 @@ impl NetworkManager for MockNetworkManager {
         if let NetworkMessage::GetHeaders(ref getheaders) = message {
             let headers = self.process_getheaders(getheaders);
             if !headers.is_empty() {
-                let message = Message::new(self.connected_peer, NetworkMessage::Headers(headers));
-                self.message_dispatcher.dispatch(&message);
+                let msg = Message::new(self.connected_peer, NetworkMessage::Headers(headers));
+                self.message_dispatcher.lock().await.dispatch(&msg);
             }
         }
 
@@ -169,6 +165,20 @@ impl NetworkManager for MockNetworkManager {
         } else {
             0
         }
+    }
+
+    async fn broadcast(&self, _message: NetworkMessage) -> NetworkResult<()> {
+        panic!("Broadcast not implemented for MockNetworkManager");
+    }
+
+    async fn dispatch_local(&self, message: NetworkMessage) {
+        let local_addr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0));
+        let msg = Message::new(local_addr, message);
+        self.message_dispatcher.lock().await.dispatch(&msg);
+    }
+
+    async fn disconnect_peer(&self, _addr: &SocketAddr, _reason: &str) -> NetworkResult<()> {
+        panic!("Disconnect peer not implemented for MockNetworkManager");
     }
 
     fn subscribe_network_events(&self) -> broadcast::Receiver<NetworkEvent> {

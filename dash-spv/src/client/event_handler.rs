@@ -6,13 +6,13 @@
 
 use std::sync::Arc;
 
-use tokio::sync::{broadcast, watch};
+use tokio::sync::{broadcast, mpsc, watch};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
 use crate::network::NetworkEvent;
 use crate::sync::{SyncEvent, SyncProgress};
-use key_wallet::manager::WalletEvent;
+use key_wallet_manager::WalletEvent;
 
 /// Trait for receiving SPV client events.
 ///
@@ -35,17 +35,20 @@ pub trait EventHandler: Send + Sync + 'static {
 impl EventHandler for () {}
 
 /// Spawns a task that monitors a broadcast channel and dispatches events to the handler.
-pub(crate) fn spawn_broadcast_monitor<E, H, F>(
+///
+/// On failure, the error message is sent via `on_failure` so the coordinator can report
+/// it as the single source of error handling.
+pub(crate) fn spawn_broadcast_monitor<E, F>(
     name: &'static str,
     mut receiver: broadcast::Receiver<E>,
-    handler: Arc<H>,
+    handlers: Arc<Vec<Arc<dyn EventHandler>>>,
     shutdown: CancellationToken,
+    on_failure: mpsc::Sender<String>,
     dispatch_fn: F,
 ) -> JoinHandle<()>
 where
     E: Clone + Send + 'static,
-    H: EventHandler,
-    F: Fn(&H, &E) + Send + 'static,
+    F: Fn(&dyn EventHandler, &E) + Send + 'static,
 {
     tokio::spawn(async move {
         tracing::debug!("{} monitoring task started", name);
@@ -53,9 +56,25 @@ where
             tokio::select! {
                 result = receiver.recv() => {
                     match result {
-                        Ok(event) => dispatch_fn(&handler, &event),
-                        Err(broadcast::error::RecvError::Closed) => break,
-                        Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                        Ok(event) => {
+                            for handler in handlers.iter() {
+                                dispatch_fn(handler.as_ref(), &event);
+                            }
+                        }
+                        Err(broadcast::error::RecvError::Closed) if shutdown.is_cancelled() => break,
+                        Err(broadcast::error::RecvError::Closed) => {
+                            let msg = format!("{} monitor channel closed unexpectedly", name);
+                            tracing::error!("{}", msg);
+                            let _ = on_failure.try_send(msg);
+                            break;
+                        }
+                        Err(broadcast::error::RecvError::Lagged(_)) if shutdown.is_cancelled() => break,
+                        Err(broadcast::error::RecvError::Lagged(n)) => {
+                            let msg = format!("{} monitor lagged, missed {} events", name, n);
+                            tracing::error!("{}", msg);
+                            let _ = on_failure.try_send(msg);
+                            break;
+                        }
                     }
                 }
                 _ = shutdown.cancelled() => break,
@@ -68,22 +87,35 @@ where
 /// Spawns a task that monitors a watch channel for progress updates.
 ///
 /// Sends the initial progress value, then monitors for changes.
-pub(crate) fn spawn_progress_monitor<H: EventHandler>(
+pub(crate) fn spawn_progress_monitor(
     mut receiver: watch::Receiver<SyncProgress>,
-    handler: Arc<H>,
+    handlers: Arc<Vec<Arc<dyn EventHandler>>>,
     shutdown: CancellationToken,
+    on_failure: mpsc::Sender<String>,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
         tracing::debug!("Progress monitoring task started");
 
-        handler.on_progress(&receiver.borrow_and_update());
+        for handler in handlers.iter() {
+            handler.on_progress(&receiver.borrow_and_update());
+        }
 
         loop {
             tokio::select! {
                 result = receiver.changed() => {
                     match result {
-                        Ok(()) => handler.on_progress(&receiver.borrow_and_update()),
-                        Err(_) => break,
+                        Ok(()) => {
+                            for handler in handlers.iter() {
+                                handler.on_progress(&receiver.borrow_and_update());
+                            }
+                        }
+                        Err(_) if shutdown.is_cancelled() => break,
+                        Err(_) => {
+                            let msg = "Progress monitor channel closed unexpectedly".to_string();
+                            tracing::error!("{}", msg);
+                            let _ = on_failure.try_send(msg);
+                            break;
+                        }
                     }
                 }
                 _ = shutdown.cancelled() => break,
@@ -99,13 +131,13 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
 
-    use tokio::sync::{broadcast, watch};
+    use tokio::sync::{broadcast, mpsc, watch};
     use tokio_util::sync::CancellationToken;
 
     use super::{spawn_broadcast_monitor, spawn_progress_monitor, EventHandler};
     use crate::network::NetworkEvent;
     use crate::sync::{ManagerIdentifier, SyncEvent, SyncProgress};
-    use key_wallet::manager::WalletEvent;
+    use key_wallet_manager::WalletEvent;
 
     struct RecordingHandler {
         sync_count: AtomicUsize,
@@ -145,6 +177,12 @@ mod tests {
         }
     }
 
+    fn handlers(
+        entries: impl IntoIterator<Item = Arc<dyn EventHandler>>,
+    ) -> Arc<Vec<Arc<dyn EventHandler>>> {
+        Arc::new(entries.into_iter().collect())
+    }
+
     #[tokio::test]
     async fn noop_handler_does_not_panic() {
         let handler: () = ();
@@ -166,13 +204,15 @@ mod tests {
         let (tx, rx) = broadcast::channel(16);
         let handler = Arc::new(RecordingHandler::new());
         let shutdown = CancellationToken::new();
+        let (failure_tx, _failure_rx) = mpsc::channel(1);
 
         let task = spawn_broadcast_monitor(
             "test",
             rx,
-            handler.clone(),
+            handlers([handler.clone() as Arc<dyn EventHandler>]),
             shutdown.clone(),
-            |h: &RecordingHandler, event: &SyncEvent| h.on_sync_event(event),
+            failure_tx,
+            |h, event: &SyncEvent| h.on_sync_event(event),
         );
 
         tx.send(SyncEvent::BlockHeadersStored {
@@ -202,13 +242,15 @@ mod tests {
         let (_tx, rx) = broadcast::channel::<SyncEvent>(16);
         let handler = Arc::new(RecordingHandler::new());
         let shutdown = CancellationToken::new();
+        let (failure_tx, _failure_rx) = mpsc::channel(1);
 
         let task = spawn_broadcast_monitor(
             "test",
             rx,
-            handler.clone(),
+            handlers([handler.clone() as Arc<dyn EventHandler>]),
             shutdown.clone(),
-            |h: &RecordingHandler, event: &SyncEvent| h.on_sync_event(event),
+            failure_tx,
+            |h, event: &SyncEvent| h.on_sync_event(event),
         );
 
         shutdown.cancel();
@@ -218,28 +260,36 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn broadcast_monitor_exits_on_channel_close() {
+    async fn broadcast_monitor_fails_on_unexpected_channel_close() {
         let (tx, rx) = broadcast::channel::<SyncEvent>(16);
         let handler = Arc::new(RecordingHandler::new());
         let shutdown = CancellationToken::new();
+        let (failure_tx, mut failure_rx) = mpsc::channel(1);
 
         let task = spawn_broadcast_monitor(
             "test",
             rx,
-            handler.clone(),
+            handlers([handler.clone() as Arc<dyn EventHandler>]),
             shutdown.clone(),
-            |h: &RecordingHandler, event: &SyncEvent| h.on_sync_event(event),
+            failure_tx,
+            |h, event: &SyncEvent| h.on_sync_event(event),
         );
 
+        // Drop sender without cancelling shutdown — this is unexpected
         drop(tx);
         task.await.unwrap();
+
+        let msg = failure_rx.try_recv().expect("should have received failure message");
+        assert!(msg.contains("closed unexpectedly"));
+        assert_eq!(handler.error_count.load(Ordering::SeqCst), 0);
     }
 
     #[tokio::test]
-    async fn broadcast_monitor_handles_lagged_receiver() {
+    async fn broadcast_monitor_exits_on_lagged_receiver() {
         let (tx, rx) = broadcast::channel(2);
         let handler = Arc::new(RecordingHandler::new());
         let shutdown = CancellationToken::new();
+        let (failure_tx, mut failure_rx) = mpsc::channel(1);
 
         // Send more messages than the buffer can hold before spawning the monitor
         tx.send(SyncEvent::BlockHeadersStored {
@@ -258,24 +308,20 @@ mod tests {
         let task = spawn_broadcast_monitor(
             "test",
             rx,
-            handler.clone(),
+            handlers([handler.clone() as Arc<dyn EventHandler>]),
             shutdown.clone(),
-            |h: &RecordingHandler, event: &SyncEvent| h.on_sync_event(event),
+            failure_tx,
+            |h, event: &SyncEvent| h.on_sync_event(event),
         );
 
-        // Send one more after the monitor starts
-        tx.send(SyncEvent::BlockHeadersStored {
-            tip_height: 4,
-        })
-        .unwrap();
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-
-        shutdown.cancel();
+        // The monitor should exit on its own due to the lagged error
         task.await.unwrap();
 
-        // The monitor should have received at least the last message (and possibly
-        // one from the lagged recovery). The key thing is it doesn't crash.
-        assert!(handler.sync_count.load(Ordering::SeqCst) >= 1);
+        // No sync events should have been dispatched, failure sent via channel
+        assert_eq!(handler.sync_count.load(Ordering::SeqCst), 0);
+        assert_eq!(handler.error_count.load(Ordering::SeqCst), 0);
+        let msg = failure_rx.try_recv().expect("should have received failure message");
+        assert!(msg.contains("lagged"));
     }
 
     #[tokio::test]
@@ -283,8 +329,14 @@ mod tests {
         let (tx, rx) = watch::channel(SyncProgress::default());
         let handler = Arc::new(RecordingHandler::new());
         let shutdown = CancellationToken::new();
+        let (failure_tx, _failure_rx) = mpsc::channel(1);
 
-        let task = spawn_progress_monitor(rx, handler.clone(), shutdown.clone());
+        let task = spawn_progress_monitor(
+            rx,
+            handlers([handler.clone() as Arc<dyn EventHandler>]),
+            shutdown.clone(),
+            failure_tx,
+        );
 
         // Give the task time to send initial progress
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
@@ -302,21 +354,31 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn progress_monitor_exits_on_sender_drop() {
+    async fn progress_monitor_fails_on_unexpected_sender_drop() {
         let (tx, rx) = watch::channel(SyncProgress::default());
         let handler = Arc::new(RecordingHandler::new());
         let shutdown = CancellationToken::new();
+        let (failure_tx, mut failure_rx) = mpsc::channel(1);
 
-        let task = spawn_progress_monitor(rx, handler.clone(), shutdown.clone());
+        let task = spawn_progress_monitor(
+            rx,
+            handlers([handler.clone() as Arc<dyn EventHandler>]),
+            shutdown.clone(),
+            failure_tx,
+        );
 
         // Give it time to send initial
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
+        // Drop sender without cancelling shutdown — this is unexpected
         drop(tx);
         task.await.unwrap();
 
-        // At least the initial progress was sent
+        // At least the initial progress was sent, failure sent via channel
         assert!(handler.progress_count.load(Ordering::SeqCst) >= 1);
+        assert_eq!(handler.error_count.load(Ordering::SeqCst), 0);
+        let msg = failure_rx.try_recv().expect("should have received failure message");
+        assert!(msg.contains("closed unexpectedly"));
     }
 
     #[tokio::test]
@@ -324,13 +386,15 @@ mod tests {
         let (tx, rx) = broadcast::channel(16);
         let handler = Arc::new(RecordingHandler::new());
         let shutdown = CancellationToken::new();
+        let (failure_tx, _failure_rx) = mpsc::channel(1);
 
         let task = spawn_broadcast_monitor(
             "network",
             rx,
-            handler.clone(),
+            handlers([handler.clone() as Arc<dyn EventHandler>]),
             shutdown.clone(),
-            |h: &RecordingHandler, event: &NetworkEvent| h.on_network_event(event),
+            failure_tx,
+            |h, event: &NetworkEvent| h.on_network_event(event),
         );
 
         let addr: SocketAddr = "127.0.0.1:9999".parse().unwrap();
@@ -348,5 +412,67 @@ mod tests {
         task.await.unwrap();
 
         assert_eq!(handler.network_count.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn broadcast_monitor_dispatches_to_all_handlers() {
+        let (tx, rx) = broadcast::channel(16);
+        let first = Arc::new(RecordingHandler::new());
+        let second = Arc::new(RecordingHandler::new());
+        let shutdown = CancellationToken::new();
+        let (failure_tx, _failure_rx) = mpsc::channel(1);
+
+        let task = spawn_broadcast_monitor(
+            "test",
+            rx,
+            handlers([
+                first.clone() as Arc<dyn EventHandler>,
+                second.clone() as Arc<dyn EventHandler>,
+            ]),
+            shutdown.clone(),
+            failure_tx,
+            |h, event: &SyncEvent| h.on_sync_event(event),
+        );
+
+        tx.send(SyncEvent::BlockHeadersStored {
+            tip_height: 1,
+        })
+        .unwrap();
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        shutdown.cancel();
+        task.await.unwrap();
+
+        assert_eq!(first.sync_count.load(Ordering::SeqCst), 1);
+        assert_eq!(second.sync_count.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn progress_monitor_dispatches_to_all_handlers() {
+        let (tx, rx) = watch::channel(SyncProgress::default());
+        let first = Arc::new(RecordingHandler::new());
+        let second = Arc::new(RecordingHandler::new());
+        let shutdown = CancellationToken::new();
+        let (failure_tx, _failure_rx) = mpsc::channel(1);
+
+        let task = spawn_progress_monitor(
+            rx,
+            handlers([
+                first.clone() as Arc<dyn EventHandler>,
+                second.clone() as Arc<dyn EventHandler>,
+            ]),
+            shutdown.clone(),
+            failure_tx,
+        );
+
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        tx.send_modify(|_| {});
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        shutdown.cancel();
+        task.await.unwrap();
+
+        assert!(first.progress_count.load(Ordering::SeqCst) >= 2);
+        assert!(second.progress_count.load(Ordering::SeqCst) >= 2);
     }
 }

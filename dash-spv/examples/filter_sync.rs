@@ -4,8 +4,8 @@ use dash_spv::network::PeerNetworkManager;
 use dash_spv::storage::DiskStorageManager;
 use dash_spv::{init_console_logging, ClientConfig, DashSpvClient, LevelFilter};
 use dashcore::Address;
-use key_wallet::manager::WalletManager;
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
+use key_wallet_manager::WalletManager;
 use std::str::FromStr;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -37,7 +37,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Create the client
     let client =
-        DashSpvClient::new(config, network_manager, storage_manager, wallet, Arc::new(())).await?;
+        DashSpvClient::new(config, network_manager, storage_manager, wallet, vec![]).await?;
 
     println!("Starting synchronization with filter support...");
     println!("Watching address: {:?}", watch_address);

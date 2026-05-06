@@ -2,28 +2,34 @@
 //!
 //! This trait allows WalletManager to work with different wallet info implementations
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use super::managed_account_operations::ManagedAccountOperations;
-use crate::account::ManagedAccountTrait;
+use crate::account::{AccountType, ManagedAccountTrait};
 use crate::managed_account::managed_account_collection::ManagedAccountCollection;
+use crate::transaction_checking::TransactionContext;
 use crate::transaction_checking::WalletTransactionChecker;
 use crate::wallet::managed_wallet_info::TransactionRecord;
 use crate::wallet::ManagedWalletInfo;
 use crate::{Network, Utxo, Wallet, WalletCoreBalance};
-
+use dashcore::ephemerealdata::instant_lock::InstantLock;
 use dashcore::prelude::CoreBlockHeight;
 use dashcore::{Address as DashAddress, Transaction, Txid};
 
 /// Trait that wallet info types must implement to work with WalletManager
 pub trait WalletInfoInterface: Sized + WalletTransactionChecker + ManagedAccountOperations {
-    /// Create a wallet info from an existing wallet
-    /// This properly initializes the wallet info from the wallet's state
-    fn from_wallet(wallet: &Wallet) -> Self;
+    /// Create a wallet info from an existing wallet, seeding the sync checkpoint at
+    /// `birth_height`.
+    ///
+    /// Both `synced_height` and `last_processed_height` are seeded to
+    /// `birth_height.saturating_sub(1)` so the next block to scan is `birth_height`.
+    /// Taking `birth_height` at construction makes the sync checkpoint a required
+    /// invariant of the type rather than something callers have to remember to set.
+    fn from_wallet(wallet: &Wallet, birth_height: CoreBlockHeight) -> Self;
 
-    /// Create a wallet info from an existing wallet with proper account initialization
-    /// Default implementation just uses with_name (backward compatibility)
-    fn from_wallet_with_name(wallet: &Wallet, name: String) -> Self;
+    /// Create a wallet info with a name, seeding the sync checkpoint at `birth_height`
+    /// (see `from_wallet` for details).
+    fn from_wallet_with_name(wallet: &Wallet, name: String, birth_height: CoreBlockHeight) -> Self;
 
     /// Get the wallet's network
     fn network(&self) -> Network;
@@ -46,15 +52,6 @@ pub trait WalletInfoInterface: Sized + WalletTransactionChecker + ManagedAccount
     /// Get the birth height of the wallet
     fn birth_height(&self) -> CoreBlockHeight;
 
-    /// Set the birth height
-    fn set_birth_height(&mut self, height: CoreBlockHeight);
-
-    /// Get the timestamp when first loaded
-    fn first_loaded_at(&self) -> u64;
-
-    /// Set the timestamp when first loaded
-    fn set_first_loaded_at(&mut self, timestamp: u64);
-
     /// Update last synced timestamp
     fn update_last_synced(&mut self, timestamp: u64);
 
@@ -73,6 +70,15 @@ pub trait WalletInfoInterface: Sized + WalletTransactionChecker + ManagedAccount
     /// Update the wallet balance
     fn update_balance(&mut self);
 
+    /// Per-account balances keyed by `AccountType`.
+    fn account_balances(&self) -> BTreeMap<AccountType, WalletCoreBalance> {
+        self.accounts()
+            .all_accounts()
+            .iter()
+            .map(|acc| (acc.managed_account_type().to_account_type(), acc.balance))
+            .collect()
+    }
+
     /// Get transaction history
     fn transaction_history(&self) -> Vec<&TransactionRecord>;
 
@@ -86,15 +92,34 @@ pub trait WalletInfoInterface: Sized + WalletTransactionChecker + ManagedAccount
     fn immature_transactions(&self) -> Vec<Transaction>;
 
     /// Return the last fully processed height of the wallet.
+    fn last_processed_height(&self) -> CoreBlockHeight;
+
+    /// Return the durable wallet sync checkpoint height.
     fn synced_height(&self) -> CoreBlockHeight;
 
     /// Update chain state and process any matured transactions
     /// This should be called when the chain tip advances to a new height
+    fn update_last_processed_height(&mut self, current_height: u32);
+
+    /// Record that the durable wallet sync checkpoint has advanced to `current_height`.
     fn update_synced_height(&mut self, current_height: u32);
 
-    /// Mark UTXOs for a transaction as InstantSend-locked across all accounts.
+    /// Records whose coinbase maturity threshold lies in
+    /// `(old_height, new_height]`, i.e. coinbase records that just matured
+    /// during the height advance from `old_height` to `new_height`.
+    ///
+    /// Returns clones of the matured records so the caller can include them
+    /// in atomic events without mutating wallet state.
+    fn matured_coinbase_records(
+        &self,
+        old_height: CoreBlockHeight,
+        new_height: CoreBlockHeight,
+    ) -> Vec<TransactionRecord>;
+
+    /// Mark UTXOs for a transaction as InstantSend-locked across all accounts
+    /// and update the corresponding transaction record context.
     /// Returns `true` if any UTXO was newly marked.
-    fn mark_instant_send_utxos(&mut self, txid: &Txid) -> bool;
+    fn mark_instant_send_utxos(&mut self, txid: &Txid, lock: &InstantLock) -> bool;
 
     /// Return the aggregated monitor revision across all accounts.
     /// Increments whenever the monitored address set changes.
@@ -105,12 +130,12 @@ pub trait WalletInfoInterface: Sized + WalletTransactionChecker + ManagedAccount
 
 /// Default implementation for ManagedWalletInfo
 impl WalletInfoInterface for ManagedWalletInfo {
-    fn from_wallet(wallet: &Wallet) -> Self {
-        Self::from_wallet_with_name(wallet, String::new())
+    fn from_wallet(wallet: &Wallet, birth_height: CoreBlockHeight) -> Self {
+        Self::from_wallet(wallet, birth_height)
     }
 
-    fn from_wallet_with_name(wallet: &Wallet, name: String) -> Self {
-        Self::from_wallet_with_name(wallet, name)
+    fn from_wallet_with_name(wallet: &Wallet, name: String, birth_height: CoreBlockHeight) -> Self {
+        Self::from_wallet_with_name(wallet, name, birth_height)
     }
 
     fn network(&self) -> Network {
@@ -141,20 +166,12 @@ impl WalletInfoInterface for ManagedWalletInfo {
         self.metadata.birth_height
     }
 
-    fn set_birth_height(&mut self, height: CoreBlockHeight) {
-        self.metadata.birth_height = height;
+    fn last_processed_height(&self) -> CoreBlockHeight {
+        self.metadata.last_processed_height
     }
 
     fn synced_height(&self) -> CoreBlockHeight {
         self.metadata.synced_height
-    }
-
-    fn first_loaded_at(&self) -> u64 {
-        self.metadata.first_loaded_at
-    }
-
-    fn set_first_loaded_at(&mut self, timestamp: u64) {
-        self.metadata.first_loaded_at = timestamp;
     }
 
     fn update_last_synced(&mut self, timestamp: u64) {
@@ -177,7 +194,10 @@ impl WalletInfoInterface for ManagedWalletInfo {
         utxos
     }
     fn get_spendable_utxos(&self) -> BTreeSet<&Utxo> {
-        self.utxos().into_iter().filter(|utxo| utxo.is_spendable(self.synced_height())).collect()
+        self.utxos()
+            .into_iter()
+            .filter(|utxo| utxo.is_spendable(self.last_processed_height()))
+            .collect()
     }
 
     fn balance(&self) -> WalletCoreBalance {
@@ -186,10 +206,10 @@ impl WalletInfoInterface for ManagedWalletInfo {
 
     fn update_balance(&mut self) {
         let mut balance = WalletCoreBalance::default();
-        let synced_height = self.synced_height();
+        let last_processed_height = self.last_processed_height();
         for account in self.accounts.all_accounts_mut() {
-            account.update_balance(synced_height);
-            balance += *account.balance();
+            account.update_balance(last_processed_height);
+            balance += account.balance;
         }
         self.balance = balance;
     }
@@ -197,7 +217,7 @@ impl WalletInfoInterface for ManagedWalletInfo {
     fn transaction_history(&self) -> Vec<&TransactionRecord> {
         let mut transactions = Vec::new();
         for account in self.accounts.all_accounts() {
-            transactions.extend(account.transactions.values());
+            transactions.extend(account.transactions().values());
         }
         transactions
     }
@@ -216,7 +236,7 @@ impl WalletInfoInterface for ManagedWalletInfo {
         // Find txids of immature coinbase UTXOs
         for account in self.accounts.all_accounts() {
             for utxo in account.utxos.values() {
-                if utxo.is_coinbase && !utxo.is_mature(self.synced_height()) {
+                if utxo.is_coinbase && !utxo.is_mature(self.last_processed_height()) {
                     immature_txids.insert(utxo.outpoint.txid);
                 }
             }
@@ -225,7 +245,7 @@ impl WalletInfoInterface for ManagedWalletInfo {
         // Get the actual transactions
         let mut transactions = Vec::new();
         for account in self.accounts.all_accounts() {
-            for (txid, record) in &account.transactions {
+            for (txid, record) in account.transactions() {
                 if immature_txids.contains(txid) {
                     transactions.push(record.transaction.clone());
                 }
@@ -234,13 +254,43 @@ impl WalletInfoInterface for ManagedWalletInfo {
         transactions
     }
 
-    fn update_synced_height(&mut self, current_height: u32) {
-        self.metadata.synced_height = current_height;
+    fn update_last_processed_height(&mut self, current_height: u32) {
+        self.metadata.last_processed_height = current_height;
         // Update cached balance
         self.update_balance();
     }
 
-    fn mark_instant_send_utxos(&mut self, txid: &Txid) -> bool {
+    fn update_synced_height(&mut self, current_height: u32) {
+        self.metadata.synced_height = current_height;
+    }
+
+    fn matured_coinbase_records(
+        &self,
+        old_height: CoreBlockHeight,
+        new_height: CoreBlockHeight,
+    ) -> Vec<TransactionRecord> {
+        if new_height <= old_height {
+            return Vec::new();
+        }
+        let mut matured = Vec::new();
+        for account in self.accounts.all_accounts() {
+            for record in account.transactions().values() {
+                if !record.transaction.is_coin_base() {
+                    continue;
+                }
+                let Some(record_height) = record.height() else {
+                    continue;
+                };
+                let maturity_height = record_height.saturating_add(100);
+                if maturity_height > old_height && maturity_height <= new_height {
+                    matured.push(record.clone());
+                }
+            }
+        }
+        matured
+    }
+
+    fn mark_instant_send_utxos(&mut self, txid: &Txid, lock: &InstantLock) -> bool {
         if !self.instant_send_locks.insert(*txid) {
             return false;
         }
@@ -248,6 +298,9 @@ impl WalletInfoInterface for ManagedWalletInfo {
         for account in self.accounts.all_accounts_mut() {
             if account.mark_utxos_instant_send(txid) {
                 any_changed = true;
+            }
+            if let Some(record) = account.transactions_mut().get_mut(txid) {
+                record.update_context(TransactionContext::InstantSend(lock.clone()));
             }
         }
         if any_changed {

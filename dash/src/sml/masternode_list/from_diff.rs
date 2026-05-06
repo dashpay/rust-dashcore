@@ -1,6 +1,7 @@
 use crate::bls_sig_utils::BLSSignature;
 
 use crate::Network;
+use crate::network::constants::NetworkExt;
 use crate::network::message_sml::MnListDiff;
 use crate::sml::error::SmlError;
 use crate::sml::llmq_entry_verification::{

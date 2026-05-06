@@ -32,6 +32,13 @@ pub struct Utxo {
     pub is_instantlocked: bool,
     /// Whether this UTXO is locked (not available for spending)
     pub is_locked: bool,
+    /// Whether this UTXO comes from a "trusted" mempool transaction — one we
+    /// created ourselves, recognised because it spends at least one of our
+    /// own UTXOs and pays this output back to one of our addresses. Such a
+    /// UTXO is treated as already-confirmed funds for balance display, since
+    /// it is just our previously-tracked balance returning to us. Mirrors
+    /// Bitcoin Core's `CWalletTx::IsTrusted` concept.
+    pub is_trusted: bool,
 }
 
 impl Utxo {
@@ -52,6 +59,7 @@ impl Utxo {
             is_confirmed: false,
             is_instantlocked: false,
             is_locked: false,
+            is_trusted: false,
         }
     }
 
@@ -60,19 +68,18 @@ impl Utxo {
         self.txout.value
     }
 
-    /// Check if this UTXO can be spent at the given height
+    /// Check if this UTXO can be spent at the given height.
+    ///
+    /// A UTXO is spendable unless it is locked or (for coinbase)
+    /// immature. Mempool 0-conf outputs are spendable — callers that
+    /// want to restrict to confirmed/InstantLocked UTXOs (e.g. the
+    /// "spendable" balance bucket or conservative coin selection)
+    /// should check `is_confirmed || is_instantlocked` themselves.
     pub fn is_spendable(&self, current_height: u32) -> bool {
         if self.is_locked {
             return false;
         }
-
-        if !self.is_coinbase {
-            // Regular UTXOs need to be confirmed or InstantLocked
-            self.is_confirmed || self.is_instantlocked
-        } else {
-            // Coinbase outputs require 100 confirmations
-            current_height >= self.height + 100
-        }
+        self.is_mature(current_height)
     }
 
     /// Check if this UTXO is mature enough for spending
@@ -126,16 +133,24 @@ mod tests {
     fn test_utxo_spendability() {
         let mut utxo = Utxo::dummy(0, 100000, 100, false, false);
 
-        // Unconfirmed UTXO should not be spendable
-        assert!(!utxo.is_spendable(200));
+        // Non-coinbase UTXOs are spendable even at 0 confs
+        assert!(utxo.is_spendable(200));
 
-        // Confirmed UTXO should be spendable
+        // Setting is_confirmed does not affect spendability
         utxo.is_confirmed = true;
         assert!(utxo.is_spendable(200));
 
         // Locked UTXO should not be spendable
         utxo.lock();
         assert!(!utxo.is_spendable(200));
+        utxo.unlock();
+
+        // Coinbase still requires 100 confirmations
+        let mut cb = Utxo::dummy(0, 100000, 100, true, false);
+        assert!(!cb.is_spendable(150));
+        assert!(cb.is_spendable(200));
+        cb.lock();
+        assert!(!cb.is_spendable(200));
     }
 
     #[test_case(false, 0, 500, 0 ; "unconfirmed utxo has 0 confirmations")]

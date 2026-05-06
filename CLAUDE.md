@@ -103,22 +103,20 @@ DO_FMT=true ./contrib/test.sh
 
 The `dash-spv` and `dash-spv-ffi` crates include integration tests that run against a real `dashd` regtest node. These tests cover SPV sync, wallet operations, restarts, disconnections, and transactions.
 
-**Setup:** `contrib/setup-dashd.py` downloads the dashd binary and regtest blockchain test data, caching them in `~/.rust-dashcore-test/`. It outputs the required environment variables.
+**Setup:** `contrib/setup-dashd.py` downloads the dashd binary and regtest blockchain test data, caching them in `~/.rust-dashcore-test/`. It outputs the required environment variables. Always run this before testing `dash-spv` or `dash-spv-ffi` — integration tests catch critical bugs (restart, resync, disconnection) that unit tests miss.
 
 ```bash
 eval $(python3 contrib/setup-dashd.py)
 ```
 
-**Running:**
+**Running:** Always run with integration tests enabled after setting up dashd. Do not use `SKIP_DASHD_TESTS=1`. Use `DASHD_TEST_RETAIN_DIR` so test logs are available for debugging failures.
 ```bash
-cargo test -p dash-spv dashd_sync
-cargo test -p dash-spv-ffi --test dashd_sync
-SKIP_DASHD_TESTS=1 cargo test   # skip when dashd is unavailable
+DASHD_TEST_RETAIN_DIR=/tmp/dashd-test-logs cargo test -p dash-spv
+DASHD_TEST_RETAIN_DIR=/tmp/dashd-test-logs cargo test -p dash-spv-ffi --test dashd_sync
 ```
 
-**Debugging:**
+**Debugging:** When tests fail, check the retained logs at the path specified by `DASHD_TEST_RETAIN_DIR`. Each test creates a subdirectory with SPV logs (`spv/logs/run.log`) and dashd data.
 - `DASHD_TEST_LOG=1` — enable per-test console logging (use with `--nocapture`)
-- `DASHD_TEST_RETAIN_DIR=<path>` — retain test data directories on failure
 - `DASHD_TEST_RETAIN_ALWAYS=1` — retain even on success
 
 **Key files:**

@@ -18,7 +18,7 @@ typedef enum {
     InstantSend = 1,
     InBlock = 2,
     InChainLockedBlock = 3
-} FFITransactionContext;
+} FFITransactionContextType;
 
 typedef struct {
     bool is_relevant;
@@ -45,7 +45,7 @@ extern bool wallet_check_transaction(
     FFINetwork network,
     const uint8_t* tx_bytes,
     size_t tx_len,
-    FFITransactionContext context_type,
+    FFITransactionContextType context_type,
     uint32_t block_height,
     const uint8_t* block_hash,  // 32 bytes if not null
     uint64_t timestamp,

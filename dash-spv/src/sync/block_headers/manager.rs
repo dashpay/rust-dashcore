@@ -6,7 +6,8 @@
 //! Uses HeadersPipeline for parallel downloads across checkpoint-defined segments
 //! during initial sync. The same pipeline is reused for post-sync updates.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -41,6 +42,9 @@ pub struct BlockHeadersManager<H: BlockHeaderStorage, M: MetadataStorage> {
     pub(super) pipeline: HeadersPipeline,
     /// Pending block announcements waiting for headers message (post-sync).
     pub(super) pending_announcements: HashMap<BlockHash, Instant>,
+    /// Peers we've sent a GetHeaders to after sync, so Dash Core knows our tip
+    /// and can send us header announcements instead of inv.
+    pub(super) announced_peers: HashSet<SocketAddr>,
 }
 
 impl<H: BlockHeaderStorage, M: MetadataStorage> std::fmt::Debug for BlockHeadersManager<H, M> {
@@ -83,6 +87,7 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> BlockHeadersManager<H, M> {
             metadata_storage,
             pipeline: HeadersPipeline::new(checkpoint_manager),
             pending_announcements: HashMap::new(),
+            announced_peers: HashSet::new(),
         })
     }
 
@@ -207,17 +212,19 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> BlockHeadersManager<H, M> {
             }
         }
 
-        self.progress.bump_last_activity();
+        if matched.is_some() {
+            self.progress.bump_last_activity();
+        }
         Ok(events)
     }
 
     /// Handle inventory announcements for new blocks.
     ///
-    /// During initial sync, Dash Core sends inv (not headers2) because it doesn't
-    /// think we have the parent block. We track these announcements so we can
-    /// request headers after sync completes.
+    /// During initial sync, Dash Core sends inv (not header announcements) because
+    /// it doesn't think we have the parent block. We track these announcements so
+    /// we can request headers after sync completes.
     ///
-    /// When synced, we expect unsolicited headers2 announcements. The tick handler
+    /// When synced, we expect unsolicited header announcements. The tick handler
     /// uses a timeout to send fallback GetHeaders if headers don't arrive.
     pub(super) async fn handle_inventory(
         &mut self,
@@ -251,11 +258,12 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> BlockHeadersManager<H, M> {
 mod tests {
     use super::*;
     use crate::chain::checkpoints::testnet_checkpoints;
-    use crate::network::{MessageType, NetworkRequest, RequestSender};
+    use crate::network::{MessageType, NetworkEvent, NetworkRequest, RequestSender};
     use crate::storage::{
         DiskStorageManager, PersistentBlockHeaderStorage, PersistentMetadataStorage, StorageManager,
     };
-    use crate::sync::{ManagerIdentifier, SyncManagerProgress};
+    use crate::sync::{ManagerIdentifier, SyncManager, SyncManagerProgress};
+    use dashcore::network::message::NetworkMessage;
     use tokio::sync::mpsc::unbounded_channel;
 
     type TestBlockHeadersManager =
@@ -274,6 +282,15 @@ mod tests {
         BlockHeadersManager::new(storage.block_headers(), storage.metadata(), checkpoint_manager)
             .await
             .expect("Failed to create BlockHeadersManager")
+    }
+
+    /// Create a manager in synced state with an initialized pipeline.
+    async fn create_synced_manager() -> TestBlockHeadersManager {
+        let mut manager = create_test_manager().await;
+        let tip = manager.tip().await.unwrap();
+        manager.pipeline.init(tip.height(), *tip.hash(), tip.height());
+        manager.progress.set_state(SyncState::Synced);
+        manager
     }
 
     #[tokio::test]
@@ -346,6 +363,197 @@ mod tests {
         assert!(rx.try_recv().is_err());
 
         // Tip segment marked complete again for the next unsolicited header
+        assert!(manager.pipeline.is_tip_complete());
+    }
+
+    #[tokio::test]
+    async fn test_peer_tip_announcement_lifecycle() {
+        let mut manager = create_synced_manager().await;
+        let (requests, mut rx) = create_test_request_sender();
+
+        let addr: SocketAddr = "1.2.3.4:9999".parse().unwrap();
+        let connect = NetworkEvent::PeerConnected {
+            address: addr,
+        };
+
+        // Connect sends a peer-targeted GetHeaders
+        let events = manager.handle_network_event(&connect, &requests).await.unwrap();
+        assert!(events.is_empty());
+        assert!(manager.announced_peers.contains(&addr));
+        match rx.try_recv().unwrap() {
+            NetworkRequest::SendMessageToPeer(_, target_addr) => {
+                assert_eq!(target_addr, addr);
+            }
+            other => panic!("Expected SendMessageToPeer, got {:?}", other),
+        }
+
+        // Same peer again sends nothing (already announced)
+        manager.handle_network_event(&connect, &requests).await.unwrap();
+        assert!(rx.try_recv().is_err());
+
+        // Disconnect removes from announced set
+        let disconnect = NetworkEvent::PeerDisconnected {
+            address: addr,
+        };
+        manager.handle_network_event(&disconnect, &requests).await.unwrap();
+        assert!(!manager.announced_peers.contains(&addr));
+
+        // Reconnect sends GetHeaders again
+        manager.handle_network_event(&connect, &requests).await.unwrap();
+        assert!(manager.announced_peers.contains(&addr));
+        assert!(rx.try_recv().is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_peer_tip_announcement_guards() {
+        // Not synced: peer connect does nothing
+        let mut manager = create_test_manager().await;
+        let (requests, mut rx) = create_test_request_sender();
+        let addr: SocketAddr = "1.2.3.4:9999".parse().unwrap();
+        let connect = NetworkEvent::PeerConnected {
+            address: addr,
+        };
+
+        manager.handle_network_event(&connect, &requests).await.unwrap();
+        assert!(!manager.announced_peers.contains(&addr));
+        assert!(rx.try_recv().is_err());
+
+        // Active catch-up: peer connect skipped while pipeline has pending request
+        let mut manager = create_synced_manager().await;
+        manager.pipeline.reset_tip_segment();
+        manager.pipeline.send_pending(&requests).unwrap();
+        rx.try_recv().unwrap(); // drain the pipeline GetHeaders
+
+        manager.handle_network_event(&connect, &requests).await.unwrap();
+        assert!(!manager.announced_peers.contains(&addr));
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn test_disconnect_preserves_pipeline_and_resumes_from_advanced_tip() {
+        let mut manager = create_test_manager().await;
+        let (requests, mut rx) = create_test_request_sender();
+
+        // Use a target below the first testnet checkpoint (50000) so the
+        // pipeline produces a single open-ended tip segment.
+        let initial_event = NetworkEvent::PeersUpdated {
+            connected_count: 1,
+            best_height: Some(40_000),
+            addresses: vec![],
+        };
+        manager.handle_network_event(&initial_event, &requests).await.unwrap();
+        assert_eq!(manager.state(), SyncState::Syncing);
+        assert!(manager.pipeline.is_initialized());
+        assert_eq!(manager.pipeline.segment_count(), 1);
+
+        let initial_locator = match rx.try_recv().expect("initial GetHeaders not sent") {
+            NetworkRequest::SendMessage(NetworkMessage::GetHeaders(msg)) => msg.locator_hashes[0],
+            other => panic!("Expected GetHeaders, got {:?}", other),
+        };
+        assert!(rx.try_recv().is_err());
+
+        // Simulate a peer response. The single tip segment drains its buffer
+        // through take_ready_to_store, advancing the storage tip and the
+        // segment's current_tip_hash to advanced_hash.
+        let header = Header::dummy_chain(1, initial_locator).remove(0);
+        let advanced_hash = header.block_hash();
+        manager.handle_headers_pipeline(&[header], &requests).await.unwrap();
+
+        // Drain the follow-up GetHeaders that send_pending issued.
+        match rx.try_recv().expect("follow-up GetHeaders not sent") {
+            NetworkRequest::SendMessage(NetworkMessage::GetHeaders(msg)) => {
+                assert_eq!(msg.locator_hashes[0], advanced_hash);
+            }
+            other => panic!("Expected GetHeaders, got {:?}", other),
+        }
+        assert!(rx.try_recv().is_err());
+
+        let disconnect_event = NetworkEvent::PeersUpdated {
+            connected_count: 0,
+            best_height: Some(40_000),
+            addresses: vec![],
+        };
+        manager.handle_network_event(&disconnect_event, &requests).await.unwrap();
+        assert_eq!(manager.state(), SyncState::WaitingForConnections);
+        assert!(
+            manager.pipeline.is_initialized(),
+            "pipeline must survive disconnect so resume can reuse validated state"
+        );
+        assert_eq!(manager.pipeline.segment_count(), 1);
+
+        // Reconnect: start_sync must skip pipeline.init and resume by sending
+        // GetHeaders from each segment's preserved current_tip_hash.
+        manager.handle_network_event(&initial_event, &requests).await.unwrap();
+        assert_eq!(manager.state(), SyncState::Syncing);
+
+        let resumed_locator = match rx.try_recv().expect("resumed GetHeaders not sent") {
+            NetworkRequest::SendMessage(NetworkMessage::GetHeaders(msg)) => msg.locator_hashes[0],
+            other => panic!("Expected GetHeaders, got {:?}", other),
+        };
+        assert_eq!(
+            resumed_locator, advanced_hash,
+            "GetHeaders on reconnect must use the preserved current_tip_hash"
+        );
+        assert_ne!(resumed_locator, initial_locator);
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn test_disconnect_after_sync_resumes_and_catches_up() {
+        let mut manager = create_synced_manager().await;
+        let tip = manager.tip().await.unwrap();
+        let synced_hash = *tip.hash();
+        manager.pipeline.mark_tip_complete();
+        assert!(manager.pipeline.is_tip_complete());
+
+        let (requests, mut rx) = create_test_request_sender();
+
+        let disconnect_event = NetworkEvent::PeersUpdated {
+            connected_count: 0,
+            best_height: Some(tip.height()),
+            addresses: vec![],
+        };
+        manager.handle_network_event(&disconnect_event, &requests).await.unwrap();
+        assert_eq!(manager.state(), SyncState::WaitingForConnections);
+        assert!(manager.pipeline.is_initialized());
+
+        // Reconnect with a higher peer best_height (a new block was mined).
+        let reconnect_event = NetworkEvent::PeersUpdated {
+            connected_count: 1,
+            best_height: Some(tip.height() + 1),
+            addresses: vec![],
+        };
+        manager.handle_network_event(&reconnect_event, &requests).await.unwrap();
+        assert_eq!(manager.state(), SyncState::Syncing);
+
+        let resumed_locator = match rx.try_recv().expect("resumed GetHeaders not sent") {
+            NetworkRequest::SendMessage(NetworkMessage::GetHeaders(msg)) => msg.locator_hashes[0],
+            other => panic!("Expected GetHeaders, got {:?}", other),
+        };
+        assert_eq!(resumed_locator, synced_hash);
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn test_empty_headers_after_tip_announcement_is_harmless() {
+        let mut manager = create_synced_manager().await;
+        manager.pipeline.mark_tip_complete();
+        let (requests, mut rx) = create_test_request_sender();
+
+        // Announce tip to a new peer
+        let addr: SocketAddr = "1.2.3.4:9999".parse().unwrap();
+        let connect = NetworkEvent::PeerConnected {
+            address: addr,
+        };
+        manager.handle_network_event(&connect, &requests).await.unwrap();
+        rx.try_recv().unwrap(); // drain the GetHeaders request
+
+        // Peer responds with empty headers (same height as us)
+        let events = manager.handle_headers_pipeline(&[], &requests).await.unwrap();
+
+        // No events emitted, no requests sent, tip segment stays complete
+        assert!(events.is_empty());
+        assert!(rx.try_recv().is_err());
         assert!(manager.pipeline.is_tip_complete());
     }
 }

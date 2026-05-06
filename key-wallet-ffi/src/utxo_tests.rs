@@ -73,7 +73,7 @@ mod utxo_tests {
 
     #[test]
     fn test_deprecated_wallet_get_utxos() {
-        let mut error = FFIError::success();
+        let mut error = FFIError::default();
         let error = &mut error as *mut FFIError;
         let mut utxos_out: *mut FFIUTXO = ptr::null_mut();
         let mut count_out: usize = 0;
@@ -91,7 +91,7 @@ mod utxo_tests {
 
     #[test]
     fn test_managed_wallet_get_utxos_null() {
-        let mut error = FFIError::success();
+        let mut error = FFIError::default();
         let error = &mut error as *mut FFIError;
         let mut utxos_out: *mut FFIUTXO = ptr::null_mut();
         let mut count_out: usize = 0;
@@ -101,8 +101,6 @@ mod utxo_tests {
             unsafe { managed_wallet_get_utxos(ptr::null(), &mut utxos_out, &mut count_out, error) };
         assert!(!result);
         assert_eq!(unsafe { (*error).code }, FFIErrorCode::InvalidInput);
-
-        unsafe { (*error).free_message() };
     }
 
     #[test]
@@ -111,7 +109,7 @@ mod utxo_tests {
         use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
         use key_wallet::Network;
 
-        let mut error = FFIError::success();
+        let mut error = FFIError::default();
         let error = &mut error as *mut FFIError;
         let mut utxos_out: *mut FFIUTXO = ptr::null_mut();
         let mut count_out: usize = 0;
@@ -177,12 +175,12 @@ mod utxo_tests {
         use dashcore::blockdata::script::ScriptBuf;
         use dashcore::{Address, OutPoint, TxOut, Txid};
         use key_wallet::account::account_type::StandardAccountType;
-        use key_wallet::managed_account::ManagedCoreAccount;
+        use key_wallet::managed_account::ManagedCoreFundsAccount;
         use key_wallet::utxo::Utxo;
         use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
         use key_wallet::Network;
 
-        let mut error = FFIError::success();
+        let mut error = FFIError::default();
         let error = &mut error as *mut FFIError;
         let mut utxos_out: *mut FFIUTXO = ptr::null_mut();
         let mut count_out: usize = 0;
@@ -191,7 +189,7 @@ mod utxo_tests {
         let mut managed_info = ManagedWalletInfo::new(Network::Testnet, [1u8; 32]);
 
         // Create a BIP44 account with UTXOs
-        let mut bip44_account = ManagedCoreAccount::new(
+        let mut bip44_account = ManagedCoreFundsAccount::new(
             ManagedAccountType::Standard {
                 index: 0,
                 standard_account_type: StandardAccountType::BIP44Account,
@@ -207,7 +205,6 @@ mod utxo_tests {
                         .unwrap(),
             },
             Network::Testnet,
-            false,
         );
 
         // Add multiple UTXOs
@@ -235,7 +232,7 @@ mod utxo_tests {
         managed_info.accounts.insert(bip44_account).unwrap();
 
         let ffi_managed_info = Box::into_raw(Box::new(FFIManagedWalletInfo::new(managed_info)));
-        unsafe { (*ffi_managed_info).inner_mut() }.update_synced_height(300);
+        unsafe { (*ffi_managed_info).inner_mut() }.update_last_processed_height(300);
         let result = unsafe {
             managed_wallet_get_utxos(&*ffi_managed_info, &mut utxos_out, &mut count_out, error)
         };
@@ -282,11 +279,11 @@ mod utxo_tests {
     fn test_managed_wallet_get_utxos_multiple_accounts() {
         use crate::managed_wallet::FFIManagedWalletInfo;
         use key_wallet::account::account_type::StandardAccountType;
-        use key_wallet::managed_account::ManagedCoreAccount;
+        use key_wallet::managed_account::ManagedCoreFundsAccount;
         use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
         use key_wallet::Network;
 
-        let mut error = FFIError::success();
+        let mut error = FFIError::default();
         let error = &mut error as *mut FFIError;
         let mut utxos_out: *mut FFIUTXO = ptr::null_mut();
         let mut count_out: usize = 0;
@@ -294,7 +291,7 @@ mod utxo_tests {
         let mut managed_info = ManagedWalletInfo::new(Network::Testnet, [2u8; 32]);
 
         // Create BIP44 account with 2 UTXOs
-        let mut bip44_account = ManagedCoreAccount::new(
+        let mut bip44_account = ManagedCoreFundsAccount::new(
             ManagedAccountType::Standard {
                 index: 0,
                 standard_account_type: StandardAccountType::BIP44Account,
@@ -310,7 +307,6 @@ mod utxo_tests {
                         .unwrap(),
             },
             Network::Testnet,
-            false,
         );
 
         let utxos = Utxo::dummy_batch(0..2, 10000, 100, false, false);
@@ -320,7 +316,7 @@ mod utxo_tests {
         managed_info.accounts.insert(bip44_account).unwrap();
 
         // Create BIP32 account with 1 UTXO
-        let mut bip32_account = ManagedCoreAccount::new(
+        let mut bip32_account = ManagedCoreFundsAccount::new(
             ManagedAccountType::Standard {
                 index: 0,
                 standard_account_type: StandardAccountType::BIP32Account,
@@ -336,7 +332,6 @@ mod utxo_tests {
                         .unwrap(),
             },
             Network::Testnet,
-            false,
         );
 
         let utxos = Utxo::dummy_batch(10..11, 20000, 200, false, false);
@@ -346,7 +341,7 @@ mod utxo_tests {
         managed_info.accounts.insert(bip32_account).unwrap();
 
         // Create CoinJoin account with 2 UTXOs
-        let mut coinjoin_account = ManagedCoreAccount::new(
+        let mut coinjoin_account = ManagedCoreFundsAccount::new(
             ManagedAccountType::CoinJoin {
                 index: 0,
                 addresses: key_wallet::managed_account::address_pool::AddressPoolBuilder::default()
@@ -355,7 +350,6 @@ mod utxo_tests {
                     .unwrap(),
             },
             Network::Testnet,
-            false,
         );
 
         let utxos = Utxo::dummy_batch(20..22, 30000, 300, false, false);
@@ -385,11 +379,11 @@ mod utxo_tests {
     fn test_managed_wallet_get_utxos() {
         use crate::managed_wallet::FFIManagedWalletInfo;
         use key_wallet::account::account_type::StandardAccountType;
-        use key_wallet::managed_account::ManagedCoreAccount;
+        use key_wallet::managed_account::ManagedCoreFundsAccount;
         use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
         use key_wallet::Network;
 
-        let mut error = FFIError::success();
+        let mut error = FFIError::default();
         let error = &mut error as *mut FFIError;
         let mut utxos_out: *mut FFIUTXO = ptr::null_mut();
         let mut count_out: usize = 0;
@@ -398,7 +392,7 @@ mod utxo_tests {
         let mut managed_info = ManagedWalletInfo::new(Network::Testnet, [3u8; 32]);
 
         // Add a UTXO to Testnet account
-        let mut testnet_account = ManagedCoreAccount::new(
+        let mut testnet_account = ManagedCoreFundsAccount::new(
             ManagedAccountType::Standard {
                 index: 0,
                 standard_account_type: StandardAccountType::BIP44Account,
@@ -414,7 +408,6 @@ mod utxo_tests {
                         .unwrap(),
             },
             Network::Testnet,
-            false,
         );
 
         let utxos = Utxo::dummy_batch(1..2, 10000, 100, false, false);
@@ -528,7 +521,7 @@ mod utxo_tests {
         use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
         use key_wallet::Network;
 
-        let mut error = FFIError::success();
+        let mut error = FFIError::default();
         let error = &mut error as *mut FFIError;
         let mut count_out: usize = 0;
 
@@ -552,7 +545,6 @@ mod utxo_tests {
 
         unsafe {
             crate::managed_wallet::managed_wallet_free(ffi_managed_info);
-            (*error).free_message();
         }
     }
 

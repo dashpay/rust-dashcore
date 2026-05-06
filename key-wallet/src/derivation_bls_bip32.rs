@@ -14,14 +14,12 @@ use dashcore_hashes::{sha256, Hash, HashEngine, Hmac, HmacEngine};
 use std::error;
 
 // NOTE: We use Bls12381G2Impl for BLS keys (48-byte public keys)
-use dashcore::blsful::{
-    Bls12381G2Impl, PublicKey as BlsPublicKey, SecretKey as BlsSecretKey, SerializationFormat,
-};
-
-#[cfg(feature = "serde")]
-use serde;
+#[cfg(any(feature = "serde", feature = "bincode"))]
+use dashcore::blsful::SerializationFormat;
+use dashcore::blsful::{Bls12381G2Impl, PublicKey as BlsPublicKey, SecretKey as BlsSecretKey};
 
 use dashcore::Network;
+#[cfg(feature = "serde")]
 use serde::Deserialize;
 
 use crate::bip32::{ChainCode, ChildNumber, DerivationPath, Fingerprint};

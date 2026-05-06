@@ -46,7 +46,7 @@ impl AddrV2Handler {
     /// Handle SendAddrV2 message indicating peer support
     pub async fn handle_sendaddrv2(&self, peer_addr: SocketAddr) {
         self.supports_addrv2.write().await.insert(peer_addr);
-        log::debug!("Peer {} supports AddrV2", peer_addr);
+        tracing::debug!("Peer {} supports AddrV2", peer_addr);
     }
 
     /// Handle incoming AddrV2 messages
@@ -55,7 +55,7 @@ impl AddrV2Handler {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_else(|e| {
-                log::error!("System time error in handle_addrv2: {}", e);
+                tracing::error!("System time error in handle_addrv2: {}", e);
                 Duration::from_secs(0)
             })
             .as_secs() as u32;
@@ -68,7 +68,7 @@ impl AddrV2Handler {
             // Accept addresses seen within the last week. Older addresses are likely stale.
             // Also, reject timestamps more than 10 minutes in the future which are invalid.
             if msg.time < now.saturating_sub(ONE_WEEK) || msg.time > now + TEN_MINUTES {
-                log::trace!("Ignoring AddrV2 with invalid timestamp: {}", msg.time);
+                tracing::trace!("Ignoring AddrV2 with invalid timestamp: {}", msg.time);
                 continue;
             }
 
@@ -87,7 +87,7 @@ impl AddrV2Handler {
 
         evict_if_needed(&mut known_peers);
 
-        log::info!(
+        tracing::info!(
             "Processed AddrV2 messages: received {}, added {}, updated {}, total known peers: {}",
             received,
             added,
@@ -129,7 +129,7 @@ impl AddrV2Handler {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_else(|e| {
-                log::error!("System time error in add_known_address: {}", e);
+                tracing::error!("System time error in add_known_address: {}", e);
                 Duration::from_secs(0)
             })
             .as_secs() as u32;
