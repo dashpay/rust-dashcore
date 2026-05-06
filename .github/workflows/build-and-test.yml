@@ -18,7 +18,7 @@ permissions:
 env:
   DASHVERSION: "23.1.0"
   TEST_DATA_REPO: "dashpay/regtest-blockchain"
-  TEST_DATA_VERSION: "v0.0.3"
+  TEST_DATA_VERSION: "v0.0.4"
 
 jobs:
   test:

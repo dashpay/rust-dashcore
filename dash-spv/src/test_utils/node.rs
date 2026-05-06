@@ -6,6 +6,7 @@ use dashcore::{Address, Amount, BlockHash, Transaction, Txid};
 use dashcore_rpc::json as rpc_json;
 use dashcore_rpc::{Auth, Client, RpcApi};
 use serde::Deserialize;
+use serde_json::Value;
 use std::collections::HashMap;
 use std::fs;
 use std::net::SocketAddr;
@@ -22,7 +23,7 @@ static NEXT_PORT: AtomicU16 = AtomicU16::new(19400);
 const MAX_PORT_ATTEMPTS: usize = 100;
 
 /// Allocate a unique, available TCP port for test use.
-fn find_available_port() -> u16 {
+pub(super) fn find_available_port() -> u16 {
     for _ in 0..MAX_PORT_ATTEMPTS {
         let port = NEXT_PORT.fetch_add(1, Ordering::Relaxed);
         assert!(port >= 1024, "port counter overflowed");
@@ -63,6 +64,7 @@ pub struct DashCoreConfig {
     pub p2p_port: u16,
     /// RPC port for the node
     pub rpc_port: u16,
+    pub extra_args: Vec<String>,
 }
 
 impl DashCoreConfig {
@@ -97,7 +99,13 @@ impl DashCoreConfig {
             wallet: "default".to_string(),
             p2p_port: find_available_port(),
             rpc_port: find_available_port(),
+            extra_args: Vec::new(),
         })
+    }
+
+    pub fn with_extra_args(mut self, args: Vec<String>) -> Self {
+        self.extra_args.extend(args);
+        self
     }
 }
 
@@ -126,7 +134,7 @@ impl DashCoreNode {
 
         fs::create_dir_all(&self.config.datadir).expect("failed to create datadir");
 
-        let args_vec = vec![
+        let mut args_vec = vec![
             "-regtest".to_string(),
             format!("-datadir={}", self.config.datadir.display()),
             format!("-port={}", self.config.p2p_port),
@@ -147,8 +155,11 @@ impl DashCoreNode {
             "-peerbloomfilters=1".to_string(),
             "-whitelist=127.0.0.1".to_string(),
             "-debug=all".to_string(),
-            format!("-wallet={}", self.config.wallet),
         ];
+        if !self.config.wallet.is_empty() {
+            args_vec.push(format!("-wallet={}", self.config.wallet));
+        }
+        args_vec.extend(self.config.extra_args.iter().cloned());
 
         let mut cmd = tokio::process::Command::new(&self.config.dashd_path);
         cmd.args(&args_vec)
@@ -255,6 +266,10 @@ impl DashCoreNode {
                 tracing::info!("Created wallet: {}", wallet_name);
             }
         }
+    }
+
+    pub fn get_new_address(&self) -> Address {
+        self.get_new_address_from_wallet(&self.config.wallet)
     }
 
     /// Get a new address from a specific dashd wallet.
@@ -435,6 +450,23 @@ impl DashCoreNode {
         tracing::info!("Set network active={} on dashd", active);
     }
 
+    /// Set mock time on this node.
+    pub fn set_mocktime(&self, time: u64) {
+        let client = self.rpc_client();
+        let _: Value = client.call("setmocktime", &[time.into()]).expect("setmocktime failed");
+    }
+
+    pub fn get_best_block_hash(&self) -> BlockHash {
+        let client = self.rpc_client();
+        client.get_best_block_hash().expect("getbestblockhash failed")
+    }
+
+    /// Call getblocktemplate to trigger CreateNewBlock (includes quorum commitments).
+    pub fn get_block_template(&self) {
+        let client = self.rpc_client();
+        let _: Result<Value, _> = client.call("getblocktemplate", &[]);
+    }
+
     /// Disconnect all currently connected peers.
     pub fn disconnect_all_peers(&self) {
         let client = self.rpc_client();
@@ -445,6 +477,33 @@ impl DashCoreNode {
             tracing::info!("Disconnected peer {}", addr);
         }
         tracing::info!("Disconnected {} peers", peers.len());
+    }
+
+    /// Execute an RPC call, returning None on failure instead of panicking.
+    ///
+    /// Uses the base URL (no wallet path) which works for all non-wallet RPCs.
+    /// Useful during DKG orchestration where transient failures are expected.
+    pub fn try_rpc_call(&self, method: &str, params: &[serde_json::Value]) -> Option<Value> {
+        let url = format!("http://127.0.0.1:{}", self.config.rpc_port);
+        let cookie_path = self.config.datadir.join("regtest/.cookie");
+        if !cookie_path.exists() {
+            return None;
+        }
+        let auth = Auth::CookieFile(cookie_path);
+        let client = Client::new(&url, auth).ok()?;
+        client.call(method, params).ok()
+    }
+
+    pub fn datadir(&self) -> &Path {
+        &self.config.datadir
+    }
+
+    pub fn p2p_port(&self) -> u16 {
+        self.config.p2p_port
+    }
+
+    pub fn rpc_port(&self) -> u16 {
+        self.config.rpc_port
     }
 }
 

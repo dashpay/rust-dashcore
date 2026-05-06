@@ -23,10 +23,10 @@ pub struct TestEventHandler {
 
 impl TestEventHandler {
     pub fn new() -> Self {
-        let (sync_tx, _) = broadcast::channel(256);
-        let (network_tx, _) = broadcast::channel(256);
+        let (sync_tx, _) = broadcast::channel(10000);
+        let (network_tx, _) = broadcast::channel(10000);
         let (progress_tx, _) = watch::channel(SyncProgress::default());
-        let (wallet_tx, _) = broadcast::channel(256);
+        let (wallet_tx, _) = broadcast::channel(10000);
         Self {
             sync_tx,
             network_tx,

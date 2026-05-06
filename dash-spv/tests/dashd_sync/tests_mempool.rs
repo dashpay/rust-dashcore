@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use dash_spv::client::config::MempoolStrategy;
 use dash_spv::network::NetworkEvent;
-use dash_spv::test_utils::{DashdTestContext, TestChain};
+use dash_spv::test_utils::{create_test_wallet, DashdTestContext, TestChain};
 use dashcore::Amount;
 
 use super::helpers::{
@@ -11,9 +11,7 @@ use super::helpers::{
     wait_for_mempool_txs_both, wait_for_network_event, wait_for_network_event_both,
     wait_for_sync_both,
 };
-use super::setup::{
-    client_has_transaction, create_and_start_client, create_test_wallet, TestContext,
-};
+use super::setup::{client_has_transaction, create_and_start_client, TestContext};
 
 const MEMPOOL_TIMEOUT: Duration = Duration::from_secs(30);
 

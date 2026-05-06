@@ -7,7 +7,7 @@ or evaluating in a shell.
 
 Environment variables:
     DASHVERSION        - Dash Core version (default: 23.1.0)
-    TEST_DATA_VERSION  - Test data release version (default: v0.0.3)
+    TEST_DATA_VERSION  - Test data release version (default: v0.0.4)
     TEST_DATA_REPO     - GitHub repo for test data (default: dashpay/regtest-blockchain)
     CACHE_DIR          - Cache directory (default: ~/.rust-dashcore-test)
 """
@@ -22,7 +22,7 @@ import zipfile
 
 # Keep these defaults in sync with .github/workflows/build-and-test.yml
 DASHVERSION = os.environ.get("DASHVERSION", "23.1.0")
-TEST_DATA_VERSION = os.environ.get("TEST_DATA_VERSION", "v0.0.3")
+TEST_DATA_VERSION = os.environ.get("TEST_DATA_VERSION", "v0.0.4")
 TEST_DATA_REPO = os.environ.get("TEST_DATA_REPO", "dashpay/regtest-blockchain")
 
 
@@ -115,23 +115,26 @@ def setup_dashd(cache_dir):
     return dashd_bin
 
 
-VARIANTS = ["regtest-40000", "regtest-200"]
+# Each entry maps a variant directory name to a marker path (relative to that
+# directory) used as a cache hit / extraction-success check. Single-node
+# variants ship a `regtest/blocks` subdirectory; the masternode network ships a
+# top-level `network.json` plus per-node datadirs.
+VARIANTS = {
+    "regtest-40000": "regtest/blocks",
+    "regtest-200": "regtest/blocks",
+    "regtest-mn": "network.json",
+}
 
 
-def setup_test_data(cache_dir, variant):
-    """Download and extract a single test blockchain variant.
-
-    Args:
-        cache_dir: Root cache directory for all test assets.
-        variant: Directory name of the test data (e.g. "regtest-40000" or "regtest-200").
-    """
+def setup_test_data(cache_dir, variant, marker_relpath):
+    """Download and extract a single test blockchain variant."""
     parent_dir = os.path.join(cache_dir, f"regtest-blockchain-{TEST_DATA_VERSION}")
     test_data_dir = os.path.join(parent_dir, variant)
-    blocks_dir = os.path.join(test_data_dir, "regtest", "blocks")
+    marker_path = os.path.join(test_data_dir, marker_relpath)
 
-    if os.path.isdir(blocks_dir):
+    if os.path.exists(marker_path):
         log(f"Test blockchain data {variant} ({TEST_DATA_VERSION}) already available")
-        return
+        return test_data_dir
 
     log(f"Downloading test blockchain data {variant} ({TEST_DATA_VERSION})...")
     os.makedirs(parent_dir, exist_ok=True)
@@ -143,10 +146,11 @@ def setup_test_data(cache_dir, variant):
     extract(archive_path, parent_dir)
     os.remove(archive_path)
 
-    if not os.path.isdir(blocks_dir):
-        sys.exit(f"Expected blocks directory not found after extraction: {blocks_dir}")
+    if not os.path.exists(marker_path):
+        sys.exit(f"Expected marker not found after extraction: {marker_path}")
 
     log(f"Downloaded test data to {test_data_dir}")
+    return test_data_dir
 
 
 def main():
@@ -154,8 +158,10 @@ def main():
     os.makedirs(cache_dir, exist_ok=True)
 
     dashd_path = setup_dashd(cache_dir)
-    for variant in VARIANTS:
-        setup_test_data(cache_dir, variant)
+    variant_dirs = {
+        variant: setup_test_data(cache_dir, variant, marker)
+        for variant, marker in VARIANTS.items()
+    }
 
     datadir = os.path.join(cache_dir, f"regtest-blockchain-{TEST_DATA_VERSION}")
 
@@ -163,6 +169,7 @@ def main():
     prefix = "" if os.environ.get("GITHUB_ACTIONS") == "true" else "export "
     print(f"{prefix}DASHD_PATH={dashd_path}")
     print(f"{prefix}DASHD_TEST_DATA={datadir}")
+    print(f"{prefix}DASHD_MN_DATADIR={variant_dirs['regtest-mn']}")
 
 
 if __name__ == "__main__":

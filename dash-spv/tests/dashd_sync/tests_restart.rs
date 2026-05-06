@@ -9,8 +9,8 @@ use dash_spv::Network;
 use super::helpers::{get_spendable_balance, is_progress_event, wait_for_sync};
 use dash_spv::test_utils::SYNC_TIMEOUT;
 
-use super::setup::{create_and_start_client, create_test_wallet, TestContext};
-use dash_spv::test_utils::TestChain;
+use super::setup::{create_and_start_client, TestContext};
+use dash_spv::test_utils::{create_test_wallet, TestChain};
 
 /// Verify sync state is identical after stopping and restarting with same storage.
 #[tokio::test]

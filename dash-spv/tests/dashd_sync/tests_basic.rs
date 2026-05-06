@@ -11,8 +11,8 @@ use tokio::sync::RwLock;
 use super::helpers::{
     count_wallet_transactions, get_spendable_balance, wait_for_sync, EMPTY_MNEMONIC,
 };
-use super::setup::{create_and_start_client, create_test_wallet, TestContext};
-use dash_spv::test_utils::TestChain;
+use super::setup::{create_and_start_client, TestContext};
+use dash_spv::test_utils::{create_test_wallet, TestChain};
 
 #[tokio::test]
 async fn test_wallet_sync() {
