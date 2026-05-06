@@ -552,7 +552,7 @@ impl MasternodeListEngine {
             .values()
             .find(|q| q.quorum_entry.quorum_index == Some(0))
             .map(|q| q.quorum_entry.quorum_hash)?;
-        if self.rotated_quorums_per_cycle.contains_key(&cycle_hash) {
+        if self.is_cycle_fully_verified(&cycle_hash) {
             return None;
         }
         let entries: Vec<QualifiedQuorumEntry> = quorums_of_type
@@ -707,6 +707,20 @@ impl MasternodeListEngine {
         hashes
     }
 
+    /// `true` iff `rotated_quorums_per_cycle` already holds a non-empty cycle
+    /// for `cycle_hash` whose every entry is `Verified`. Used by the storage
+    /// gate to refuse downgrading a cycle and by the previous-cycle revalidation
+    /// path to skip work that would not improve trust.
+    #[cfg(feature = "quorum_validation")]
+    fn is_cycle_fully_verified(&self, cycle_hash: &BlockHash) -> bool {
+        self.rotated_quorums_per_cycle.get(cycle_hash).is_some_and(|existing| {
+            !existing.is_empty()
+                && existing
+                    .values()
+                    .all(|q| matches!(q.verified, LLMQEntryVerificationStatus::Verified))
+        })
+    }
+
     /// `rotated_quorums_per_cycle` is the authoritative map for IS lock
     /// verification, so only store a cycle when every entry is `Verified`.
     /// Skipped entries (e.g. from incomplete CL sigs or missing context) cannot
@@ -725,17 +739,10 @@ impl MasternodeListEngine {
         qualified_last_commitment_per_index: Vec<QualifiedQuorumEntry>,
         rotation_quorum_type: LLMQType,
     ) -> Result<Option<CoreBlockHeight>, QuorumValidationError> {
-        let already_fully_verified =
-            self.rotated_quorums_per_cycle.get(&cycle_key).is_some_and(|existing| {
-                !existing.is_empty()
-                    && existing
-                        .values()
-                        .all(|q| matches!(q.verified, LLMQEntryVerificationStatus::Verified))
-            });
         let all_entries_verified = qualified_last_commitment_per_index
             .iter()
             .all(|q| matches!(q.verified, LLMQEntryVerificationStatus::Verified));
-        if !all_entries_verified || already_fully_verified {
+        if !all_entries_verified || self.is_cycle_fully_verified(&cycle_key) {
             return Ok(None);
         }
         let cycle_map =
