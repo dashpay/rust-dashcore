@@ -536,8 +536,8 @@ impl MasternodeListEngine {
     /// the captured CL signatures, and returns them along with the cycle hash
     /// they should be stored under. Returns `None` when prerequisite state is
     /// not yet loaded, when the MN list carries no rotating quorums, or when
-    /// the cycle is already stored. All three cases are expected on a fresh
-    /// sync and not errors.
+    /// the cycle is already fully verified. All three cases are expected on a
+    /// fresh sync and not errors.
     #[cfg(feature = "quorum_validation")]
     fn try_load_previous_cycle_entries(
         &self,
