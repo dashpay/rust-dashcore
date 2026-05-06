@@ -707,6 +707,43 @@ impl MasternodeListEngine {
         hashes
     }
 
+    /// `rotated_quorums_per_cycle` is the authoritative map for IS lock
+    /// verification, so only store a cycle when every entry is `Verified`.
+    /// Skipped entries (e.g. from incomplete CL sigs or missing context) cannot
+    /// sign and must not enter the map. A later QRInfo with complete context
+    /// will store the cycle. Also preserve an already-fully-Verified cycle
+    /// across subsequent QRInfo responses: a thin `mn_list_diff_h` can produce
+    /// Skipped entries, and a `verify_rotated_quorums == false` call can leave
+    /// entries unverified, neither of which must downgrade it.
+    ///
+    /// Returns the height of the stored cycle, or `None` if storage was
+    /// skipped because the gate did not fire.
+    #[cfg(feature = "quorum_validation")]
+    fn store_cycle_if_fully_verified(
+        &mut self,
+        cycle_key: BlockHash,
+        qualified_last_commitment_per_index: Vec<QualifiedQuorumEntry>,
+        rotation_quorum_type: LLMQType,
+    ) -> Result<Option<CoreBlockHeight>, QuorumValidationError> {
+        let already_fully_verified =
+            self.rotated_quorums_per_cycle.get(&cycle_key).is_some_and(|existing| {
+                !existing.is_empty()
+                    && existing
+                        .values()
+                        .all(|q| matches!(q.verified, LLMQEntryVerificationStatus::Verified))
+            });
+        let all_entries_verified = qualified_last_commitment_per_index
+            .iter()
+            .all(|q| matches!(q.verified, LLMQEntryVerificationStatus::Verified));
+        if !all_entries_verified || already_fully_verified {
+            return Ok(None);
+        }
+        let cycle_map =
+            build_cycle_quorum_map(qualified_last_commitment_per_index, rotation_quorum_type)?;
+        *self.rotated_quorums_per_cycle.entry(cycle_key).or_default() = cycle_map;
+        Ok(self.block_container.get_height(&cycle_key))
+    }
+
     /// Processes and applies a QRInfo message to the masternode list engine.
     ///
     /// The caller is expected to pre-populate [`Self::block_container`] with heights
@@ -974,32 +1011,11 @@ impl MasternodeListEngine {
                 .count();
 
             if let Some(key) = cycle_key {
-                // `rotated_quorums_per_cycle` is the authoritative map for IS
-                // lock verification, so only store a cycle when every entry is
-                // `Verified`. Skipped entries (e.g. from incomplete CL sigs or
-                // missing context) cannot sign and must not enter the map. A
-                // later QRInfo with complete context will store the cycle.
-                // Also preserve an already-fully-Verified cycle across
-                // subsequent QRInfo responses: a thin `mn_list_diff_h` can
-                // produce Skipped entries that must not downgrade it.
-                let already_fully_verified =
-                    self.rotated_quorums_per_cycle.get(&key).is_some_and(|existing| {
-                        !existing.is_empty()
-                            && existing.values().all(|q| {
-                                matches!(q.verified, LLMQEntryVerificationStatus::Verified)
-                            })
-                    });
-                let all_entries_verified = qualified_last_commitment_per_index
-                    .iter()
-                    .all(|q| matches!(q.verified, LLMQEntryVerificationStatus::Verified));
-                if all_entries_verified && !already_fully_verified {
-                    let cycle_map = build_cycle_quorum_map(
-                        qualified_last_commitment_per_index,
-                        rotation_quorum_type,
-                    )?;
-                    *self.rotated_quorums_per_cycle.entry(key).or_default() = cycle_map;
-                    stored_cycle_height = self.block_container.get_height(&key);
-                }
+                stored_cycle_height = self.store_cycle_if_fully_verified(
+                    key,
+                    qualified_last_commitment_per_index,
+                    rotation_quorum_type,
+                )?;
             }
 
             // Apply collected updates after iteration to avoid borrow conflicts
@@ -1098,26 +1114,11 @@ impl MasternodeListEngine {
                 .iter()
                 .filter(|q| matches!(q.verified, LLMQEntryVerificationStatus::Verified))
                 .count();
-            // Never overwrite an already-fully-Verified cycle with unverified entries from a
-            // `verify_rotated_quorums == false` call.
-            let already_fully_verified =
-                self.rotated_quorums_per_cycle.get(&cycle_key).is_some_and(|existing| {
-                    !existing.is_empty()
-                        && existing
-                            .values()
-                            .all(|q| matches!(q.verified, LLMQEntryVerificationStatus::Verified))
-                });
-            let all_entries_verified = qualified_last_commitment_per_index
-                .iter()
-                .all(|q| matches!(q.verified, LLMQEntryVerificationStatus::Verified));
-            if all_entries_verified && !already_fully_verified {
-                let cycle_map = build_cycle_quorum_map(
-                    qualified_last_commitment_per_index,
-                    rotation_quorum_type,
-                )?;
-                *self.rotated_quorums_per_cycle.entry(cycle_key).or_default() = cycle_map;
-                stored_cycle_height = self.block_container.get_height(&cycle_key);
-            }
+            stored_cycle_height = self.store_cycle_if_fully_verified(
+                cycle_key,
+                qualified_last_commitment_per_index,
+                rotation_quorum_type,
+            )?;
         }
 
         #[cfg(not(feature = "quorum_validation"))]
