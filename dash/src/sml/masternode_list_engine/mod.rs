@@ -1478,10 +1478,8 @@ mod tests {
         super::build_cycle_quorum_map,
         crate::BlockHash,
         crate::QuorumHash,
-        crate::Transaction,
         crate::bls_sig_utils::{BLSPublicKey, BLSSignature},
         crate::hash_types::QuorumVVecHash,
-        crate::network::message_qrinfo::{MNSkipListMode, QuorumSnapshot},
         crate::transaction::special_transaction::quorum_commitment::QuorumEntry,
     };
 
@@ -2032,134 +2030,61 @@ mod tests {
         );
     }
 
-    /// Anti-clobber: a thin/incomplete second QRInfo where rotated entries
-    /// land as `Skipped` (no rotation CL sigs reachable) must not downgrade
-    /// an already-fully-Verified rotation cycle. Feeds the mainnet fixture
-    /// once to populate `rotated_quorums_per_cycle[K]` with all entries
-    /// `Verified`, then feeds a synthetic self-loop QRInfo whose diffs do
-    /// not carry rotation sigs, with `last_commitment_per_index` matching
-    /// the existing cycle's first quorum hash plus a fresh fake quorum
-    /// that needs new validation. Asserts the existing cycle's entries
-    /// remain `Verified`.
+    /// Direct coverage for the `store_cycle_if_fully_verified` storage gate.
+    /// The gate must short-circuit with `Ok(None)` (and not write) in two
+    /// cases: any input entry is not `Verified`, or the target cycle is
+    /// already fully `Verified`.
     #[cfg(feature = "quorum_validation")]
     #[test]
-    fn feed_qr_info_does_not_downgrade_already_verified_cycle() {
+    fn store_cycle_if_fully_verified_short_circuits() {
         let (mut engine, qr_info) = load_qrinfo_2240504_fixture();
-
         engine.feed_qr_info(qr_info, false, true).expect("first feed should succeed");
 
         let cycle_key = *engine
             .rotated_quorums_per_cycle
             .keys()
             .next()
-            .expect("first feed must have stored at least one rotation cycle");
-
+            .expect("first feed must store at least one rotation cycle");
         let original_cycle =
             engine.rotated_quorums_per_cycle.get(&cycle_key).expect("cycle present").clone();
+        let rotation_quorum_type =
+            original_cycle.values().next().expect("cycle non-empty").quorum_entry.llmq_type;
+
+        let already_verified: Vec<QualifiedQuorumEntry> =
+            original_cycle.values().cloned().collect();
+        let result = engine
+            .store_cycle_if_fully_verified(cycle_key, already_verified, rotation_quorum_type)
+            .expect("gate must not error on already-verified cycle");
         assert!(
-            !original_cycle.is_empty()
-                && original_cycle
-                    .values()
-                    .all(|q| matches!(q.verified, LLMQEntryVerificationStatus::Verified)),
-            "first feed must leave the cycle fully Verified"
+            result.is_none(),
+            "gate must short-circuit when target cycle is already fully Verified, got {:?}",
+            result
         );
-
-        let known_quorum = original_cycle
-            .values()
-            .find(|q| q.quorum_entry.quorum_hash == cycle_key)
-            .expect("cycle map must contain its key entry")
-            .clone();
-        let rotation_quorum_type = known_quorum.quorum_entry.llmq_type;
-        let active_count = rotation_quorum_type.active_quorum_count() as i16;
-
-        // Build `last_commitment_per_index`: first entry is the existing
-        // cycle key (so cycle_key matches, exercising the gate), rest are
-        // fresh fakes that need new validation.
-        let mut last_commitment_per_index = vec![known_quorum.quorum_entry.clone()];
-        for i in 1..active_count {
-            last_commitment_per_index.push(QuorumEntry {
-                version: 2,
-                llmq_type: rotation_quorum_type,
-                quorum_hash: QuorumHash::from_byte_array([0xCC; 32].map(|b| b ^ i as u8)),
-                quorum_index: Some(i),
-                signers: vec![true],
-                valid_members: vec![true],
-                quorum_public_key: BLSPublicKey::from([0; 48]),
-                quorum_vvec_hash: QuorumVVecHash::all_zeros(),
-                threshold_sig: BLSSignature::from([0; 96]),
-                all_commitment_aggregated_signature: BLSSignature::from([0; 96]),
-            });
-        }
-
-        // Self-loop diffs at the engine's current tip make the second feed a
-        // no-op for masternode-list state while still exercising the QRInfo
-        // verification pipeline.
-        let tip_hash = engine
-            .masternode_lists
-            .iter()
-            .next_back()
-            .map(|(_, list)| list.block_hash)
-            .expect("engine has a tip list after first feed");
-        let make_self_loop = |hash: BlockHash| MnListDiff {
-            version: 1,
-            base_block_hash: hash,
-            block_hash: hash,
-            total_transactions: 0,
-            merkle_hashes: vec![],
-            merkle_flags: vec![],
-            coinbase_tx: Transaction {
-                version: 1,
-                lock_time: 0,
-                input: vec![],
-                output: vec![],
-                special_transaction_payload: None,
-            },
-            deleted_masternodes: vec![],
-            new_masternodes: vec![],
-            deleted_quorums: vec![],
-            new_quorums: vec![],
-            quorums_chainlock_signatures: vec![],
-        };
-        let empty_snapshot = || QuorumSnapshot {
-            skip_list_mode: MNSkipListMode::NoSkipping,
-            active_quorum_members: vec![],
-            skip_list: vec![],
-        };
-
-        let thin_qr_info = QRInfo {
-            quorum_snapshot_at_h_minus_c: empty_snapshot(),
-            quorum_snapshot_at_h_minus_2c: empty_snapshot(),
-            quorum_snapshot_at_h_minus_3c: empty_snapshot(),
-            mn_list_diff_tip: make_self_loop(tip_hash),
-            mn_list_diff_h: make_self_loop(tip_hash),
-            mn_list_diff_at_h_minus_c: make_self_loop(tip_hash),
-            mn_list_diff_at_h_minus_2c: make_self_loop(tip_hash),
-            mn_list_diff_at_h_minus_3c: make_self_loop(tip_hash),
-            quorum_snapshot_and_mn_list_diff_at_h_minus_4c: None,
-            last_commitment_per_index,
-            quorum_snapshot_list: vec![],
-            mn_list_diff_list: vec![],
-        };
-
-        let _ = engine.feed_qr_info(thin_qr_info, false, true);
-
-        let after_cycle = engine
-            .rotated_quorums_per_cycle
-            .get(&cycle_key)
-            .expect("cycle must still exist after thin second feed");
         assert_eq!(
-            after_cycle.len(),
-            original_cycle.len(),
-            "thin second feed must not change cycle entry count"
+            engine.rotated_quorums_per_cycle.get(&cycle_key).unwrap(),
+            &original_cycle,
+            "gate must not mutate the stored cycle on the already-verified short-circuit"
         );
-        for (idx, entry) in after_cycle {
-            assert!(
-                matches!(entry.verified, LLMQEntryVerificationStatus::Verified),
-                "cycle quorum at index {} (hash {}) must remain Verified after thin second feed, got {}",
-                idx,
-                entry.quorum_entry.quorum_hash,
-                entry.verified
-            );
-        }
+
+        // Use a fresh cycle_key so the already-verified short-circuit cannot
+        // fire. `make_qualified_quorum_entry` defaults `verified` to `Skipped`,
+        // so the gate must refuse to write a degraded cycle.
+        let fresh_key = BlockHash::from_byte_array([0xAB; 32]);
+        let active_count = rotation_quorum_type.active_quorum_count() as i16;
+        let degraded: Vec<QualifiedQuorumEntry> = (0..active_count)
+            .map(|i| make_qualified_quorum_entry(rotation_quorum_type, Some(i)))
+            .collect();
+        let result = engine
+            .store_cycle_if_fully_verified(fresh_key, degraded, rotation_quorum_type)
+            .expect("gate must not error when no entries are verified");
+        assert!(
+            result.is_none(),
+            "gate must short-circuit when not all entries are Verified, got {:?}",
+            result
+        );
+        assert!(
+            !engine.rotated_quorums_per_cycle.contains_key(&fresh_key),
+            "gate must not write a degraded cycle"
+        );
     }
 }
