@@ -1872,6 +1872,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "quorum_validation")]
     #[test]
     fn feed_qr_info_rejects_post_v20_with_missing_chainlock_signatures() {
         let (mut masternode_list_engine, mut qr_info) = load_qrinfo_2240504_fixture();
