@@ -120,7 +120,8 @@ fn collect_rotation_sigs(
         );
         return None;
     }
-    Some(slots.map(|(sig, _)| sig.expect("all slots checked above")))
+    let [a, b, c, d] = slots.map(|(sig, _)| sig);
+    Some([a?, b?, c?, d?])
 }
 
 #[derive(Clone, Eq, PartialEq, Default)]
