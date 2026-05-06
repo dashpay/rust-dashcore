@@ -6,6 +6,7 @@ mod rotated_quorum_construction;
 #[cfg(feature = "quorum_validation")]
 mod validation;
 
+#[cfg(feature = "quorum_validation")]
 use core::fmt;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -41,6 +42,7 @@ pub const WORK_DIFF_DEPTH: u32 = 8;
 /// Identifies one of the rotation ChainLock signature slots carried by a QRInfo
 /// response. Each slot corresponds to one per-cycle diff in the rotation quorum
 /// formation proof: three historical cycles, the h diff, and the tip.
+#[cfg(feature = "quorum_validation")]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
@@ -52,6 +54,7 @@ pub(crate) enum RotationChainLockSignatureSlot {
     Tip,
 }
 
+#[cfg(feature = "quorum_validation")]
 impl fmt::Display for RotationChainLockSignatureSlot {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let name = match self {
@@ -798,8 +801,11 @@ impl MasternodeListEngine {
 
         self.known_snapshots
             .insert(mn_list_diff_at_h_minus_3c.block_hash, quorum_snapshot_at_h_minus_3c);
+        #[cfg(feature = "quorum_validation")]
         let maybe_sig_h_minus_3c =
             self.apply_diff(mn_list_diff_at_h_minus_3c, None, false, None)?;
+        #[cfg(not(feature = "quorum_validation"))]
+        self.apply_diff(mn_list_diff_at_h_minus_3c, None, false, None)?;
         self.known_snapshots
             .insert(mn_list_diff_at_h_minus_2c.block_hash, quorum_snapshot_at_h_minus_2c);
         let maybe_sig_h_minus_2c =
@@ -811,6 +817,7 @@ impl MasternodeListEngine {
         // in the `(h-c, h]` diff range), not on `masternode_lists[h-c]` where
         // the cycle two back resides; using h here is load-bearing for the
         // sig alignment in `validate_and_store_previous_cycle_quorums`.
+        #[cfg(feature = "quorum_validation")]
         let work_block_hash_h = mn_list_diff_h.block_hash;
         let maybe_sig_h = self.apply_diff(mn_list_diff_h, None, false, None)?;
 
@@ -819,8 +826,11 @@ impl MasternodeListEngine {
             _ => None,
         };
 
+        #[cfg(feature = "quorum_validation")]
         let maybe_sig_tip =
             self.apply_diff(mn_list_diff_tip, None, verify_tip_non_rotated_quorums, sigs)?;
+        #[cfg(not(feature = "quorum_validation"))]
+        self.apply_diff(mn_list_diff_tip, None, verify_tip_non_rotated_quorums, sigs)?;
 
         // The 4 historical sigs `[sig_h_minus_3c..sig_h]` align with the h-c
         // cycle's 4 quarters (work blocks h-4c-8, h-3c-8, h-2c-8, h-c-8).
