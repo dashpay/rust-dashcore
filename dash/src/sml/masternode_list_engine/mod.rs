@@ -1097,7 +1097,10 @@ impl MasternodeListEngine {
                             .values()
                             .all(|q| matches!(q.verified, LLMQEntryVerificationStatus::Verified))
                 });
-            if !already_fully_verified {
+            let all_entries_verified = qualified_last_commitment_per_index
+                .iter()
+                .all(|q| matches!(q.verified, LLMQEntryVerificationStatus::Verified));
+            if all_entries_verified && !already_fully_verified {
                 let cycle_map = build_cycle_quorum_map(
                     qualified_last_commitment_per_index,
                     rotation_quorum_type,
