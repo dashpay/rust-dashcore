@@ -1,0 +1,4 @@
+disallowed-types = [
+    { path = "std::sync::Mutex", reason = "Use tokio::sync::Mutex instead" },
+    { path = "std::sync::RwLock", reason = "Use tokio::sync::RwLock instead" }
+]
