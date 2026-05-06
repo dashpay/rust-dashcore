@@ -28,6 +28,12 @@ clap = { version = "4.5", features = ["derive"] }
 
 [dev-dependencies]
 dash-spv = { path = "../dash-spv", features = ["test-utils"] }
+# Tests inspect per-account transaction history end-to-end (including
+# chainlocked transactions), which requires the `keep-finalized-transactions`
+# feature on `key-wallet-ffi`. Cargo unifies features across the build graph at
+# test time, so this enables the gated FFI accessors in test builds without
+# changing the lib's default feature surface.
+key-wallet-ffi = { path = "../key-wallet-ffi", features = ["keep-finalized-transactions"] }
 serial_test = "3.0"
 tempfile = "3.8"
 
