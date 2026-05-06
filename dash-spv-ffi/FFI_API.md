@@ -4,7 +4,7 @@ This document provides a comprehensive reference for all FFI (Foreign Function I
 
 **Auto-generated**: This documentation is automatically generated from the source code. Do not edit manually.
 
-**Total Functions**: 40
+**Total Functions**: 39
 
 ## Table of Contents
 
@@ -31,7 +31,7 @@ Functions: 3
 
 ### Configuration
 
-Functions: 16
+Functions: 15
 
 | Function | Description | Module |
 |----------|-------------|--------|
