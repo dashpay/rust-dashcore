@@ -19,6 +19,8 @@ use dashcore::Txid;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+#[cfg(not(feature = "keep-finalized-transactions"))]
+use std::collections::HashSet;
 
 /// Managed core keys account with mutable state but no funds tracking.
 ///
@@ -37,8 +39,30 @@ pub struct ManagedCoreKeysAccount {
     managed_account_type: ManagedAccountType,
     /// Network this account belongs to
     network: Network,
-    /// Transaction history for this account
+    /// Transaction history for this account.
+    ///
+    /// With the `keep-finalized-transactions` Cargo feature ON, every
+    /// processed transaction lives here for the wallet's lifetime —
+    /// including ones that have been chainlocked. With the feature OFF
+    /// (the default), records of chainlocked transactions are dropped
+    /// from this map and only their txids are retained in
+    /// `finalized_txids` to bound memory growth.
     transactions: BTreeMap<Txid, TransactionRecord>,
+    /// Txids of transactions that have been finalized in a chainlocked
+    /// block and whose full records have been dropped from
+    /// `transactions` to save memory.
+    ///
+    /// Only present when the `keep-finalized-transactions` Cargo feature
+    /// is OFF — with the feature on, finalized records stay in
+    /// `transactions` and there's no need for a separate set.
+    ///
+    /// Note: an InstantSend lock alone does NOT add a txid here. We
+    /// wait for the surrounding block to be chainlocked so the record
+    /// can absorb the block-confirmation event (height / block hash)
+    /// before being dropped.
+    #[cfg(not(feature = "keep-finalized-transactions"))]
+    #[cfg_attr(feature = "serde", serde(default))]
+    finalized_txids: HashSet<Txid>,
     /// Revision counter incremented when the monitored address set changes
     /// (e.g. new addresses generated). Used to detect bloom filter staleness.
     #[cfg_attr(feature = "serde", serde(skip))]
@@ -52,8 +76,29 @@ impl ManagedCoreKeysAccount {
             managed_account_type,
             network,
             transactions: BTreeMap::new(),
+            #[cfg(not(feature = "keep-finalized-transactions"))]
+            finalized_txids: HashSet::new(),
             monitor_revision: 0,
         }
+    }
+
+    /// Drop the full record for `txid` and remember only its txid.
+    ///
+    /// Only defined when the `keep-finalized-transactions` Cargo feature
+    /// is OFF (the default). Called when a transaction transitions into
+    /// `InChainLockedBlock` — the record's information is no longer
+    /// expected to change, so we save memory by replacing it with a
+    /// txid-only entry. [`Self::has_transaction`] keeps reporting it as
+    /// known, and [`Self::transaction_is_finalized_in_block`] keeps
+    /// returning `true`.
+    ///
+    /// With the feature on the full record stays in `transactions`
+    /// indefinitely, so there's nothing to do — the function does not
+    /// exist in that mode.
+    #[cfg(not(feature = "keep-finalized-transactions"))]
+    pub(crate) fn drop_finalized_transaction(&mut self, txid: &Txid) {
+        self.finalized_txids.insert(*txid);
+        self.transactions.remove(txid);
     }
 
     /// Create a `ManagedCoreKeysAccount` from an [`Account`](super::super::Account).
@@ -134,6 +179,49 @@ impl ManagedAccountTrait for ManagedCoreKeysAccount {
 
     fn transactions_mut(&mut self) -> &mut BTreeMap<Txid, TransactionRecord> {
         &mut self.transactions
+    }
+
+    fn has_transaction(&self, txid: &Txid) -> bool {
+        if self.transactions.contains_key(txid) {
+            return true;
+        }
+        // Under the default feature configuration, the record may have
+        // been pruned; the txid stays in `finalized_txids`. With the
+        // feature on, every record stays in `transactions` so the first
+        // check above is exhaustive.
+        #[cfg(not(feature = "keep-finalized-transactions"))]
+        {
+            return self.finalized_txids.contains(txid);
+        }
+        #[allow(unreachable_code)]
+        false
+    }
+
+    fn transaction_is_finalized(&self, txid: &Txid) -> bool {
+        if let Some(r) = self.transactions.get(txid) {
+            return r.context.is_finalized();
+        }
+        // Record was pruned; only chainlocked txids ever land in
+        // `finalized_txids`, and chainlocked counts as finalized.
+        #[cfg(not(feature = "keep-finalized-transactions"))]
+        {
+            return self.finalized_txids.contains(txid);
+        }
+        #[allow(unreachable_code)]
+        false
+    }
+
+    fn transaction_is_finalized_in_block(&self, txid: &Txid) -> bool {
+        if let Some(r) = self.transactions.get(txid) {
+            return r.context.is_finalized_in_block();
+        }
+        // Same logic — `finalized_txids` only contains chainlocked txs.
+        #[cfg(not(feature = "keep-finalized-transactions"))]
+        {
+            return self.finalized_txids.contains(txid);
+        }
+        #[allow(unreachable_code)]
+        false
     }
 
     fn monitor_revision(&self) -> u64 {

@@ -72,7 +72,7 @@ impl WalletTransactionChecker for ManagedWalletInfo {
             if let Some(account) =
                 self.accounts.get_by_account_type_match(&account_match.account_type_match)
             {
-                if account.transactions().contains_key(&txid) {
+                if account.has_transaction(&txid) {
                     is_new = false;
                     break;
                 }
@@ -86,12 +86,21 @@ impl WalletTransactionChecker for ManagedWalletInfo {
                 if !self.instant_send_locks.insert(txid) {
                     return result;
                 }
-                // Only accept IS transitions for unconfirmed transactions
+                // Only accept IS transitions for unconfirmed transactions.
+                // A chainlocked tx may have had its full record dropped
+                // under the default feature config — `transaction_is_finalized_in_block`
+                // catches that case via `finalized_txids` and the in-map
+                // record check covers `InBlock`.
                 let already_confirmed = result.affected_accounts.iter().any(|am| {
-                    self.accounts
-                        .get_by_account_type_match(&am.account_type_match)
-                        .and_then(|a| a.transactions().get(&txid))
-                        .map_or(false, |r| r.is_confirmed())
+                    let Some(account) =
+                        self.accounts.get_by_account_type_match(&am.account_type_match)
+                    else {
+                        return false;
+                    };
+                    if account.transaction_is_finalized_in_block(&txid) {
+                        return true;
+                    }
+                    account.transactions().get(&txid).is_some_and(|r| r.is_confirmed())
                 });
                 if already_confirmed {
                     return result;
@@ -151,15 +160,15 @@ impl WalletTransactionChecker for ManagedWalletInfo {
                 result.new_records.push(record);
                 result.state_modified = true;
             } else {
-                let existed_before = account.transactions().contains_key(&tx.txid());
-                if account.confirm_transaction(tx, &account_match, context.clone(), tx_type) {
+                let existed_before = account.has_transaction(&tx.txid());
+                if let Some(record) =
+                    account.confirm_transaction(tx, &account_match, context.clone(), tx_type)
+                {
                     result.state_modified = true;
-                    if let Some(record) = account.transactions().get(&tx.txid()) {
-                        if existed_before {
-                            result.updated_records.push(record.clone());
-                        } else {
-                            result.new_records.push(record.clone());
-                        }
+                    if existed_before {
+                        result.updated_records.push(record);
+                    } else {
+                        result.new_records.push(record);
                     }
                 }
             }
@@ -1182,8 +1191,8 @@ mod tests {
         let block_context =
             TransactionContext::InBlock(BlockInfo::new(600, block_hash, 1700000000));
         let tx_type = TransactionRouter::classify_transaction(&tx);
-        let changed = account.confirm_transaction(&tx, &account_match, block_context, tx_type);
-        assert!(changed, "Should return true when backfilling a missing record");
+        let backfilled = account.confirm_transaction(&tx, &account_match, block_context, tx_type);
+        assert!(backfilled.is_some(), "Should return Some when backfilling a missing record");
 
         // Verify the transaction was recorded with block context
         let record = account.transactions().get(&txid).expect("Should have backfilled record");
@@ -1233,8 +1242,8 @@ mod tests {
             .first_bip44_managed_account_mut()
             .expect("Should have BIP44 account");
         let tx_type = TransactionRouter::classify_transaction(&tx);
-        let changed = account.confirm_transaction(&tx, &account_match, block_context, tx_type);
-        assert!(changed, "Should return true when confirming unconfirmed tx");
+        let confirmed = account.confirm_transaction(&tx, &account_match, block_context, tx_type);
+        assert!(confirmed.is_some(), "Should return Some when confirming unconfirmed tx");
 
         let record = account.transactions().get(&txid).expect("Should have record");
         assert!(record.is_confirmed());

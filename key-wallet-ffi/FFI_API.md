@@ -230,7 +230,7 @@ Functions: 108
 | `managed_account_collection_summary_data` | Get structured account collection summary data for managed collection ... | managed_account_collection |
 | `managed_account_collection_summary_free` | Free a managed account collection summary and all its allocated memory  #... | managed_account_collection |
 | `managed_core_account_free` | Free a managed account handle  # Safety  - `account` must be a valid pointer... | managed_account |
-| `managed_core_account_free_transactions` | Free transactions array returned by managed_core_account_get_transactions  #... | managed_account |
+| `managed_core_account_free_transactions` | Free transactions array returned by managed_core_account_get_transactions ... | managed_account |
 | `managed_core_account_get_account_type` | Get the account type of a managed account  # Safety  - `account` must be a... | managed_account |
 | `managed_core_account_get_address_pool` | Get an address pool from a managed account by type  This function returns... | managed_account |
 | `managed_core_account_get_balance` | Get the balance of a managed account  # Safety  - `account` must be a valid... | managed_account |
@@ -238,7 +238,7 @@ Functions: 108
 | `managed_core_account_get_index` | Get the account index from a managed account  Returns the primary account... | managed_account |
 | `managed_core_account_get_internal_address_pool` | Get the internal address pool from a managed account  This function returns... | managed_account |
 | `managed_core_account_get_network` | Get the network of a managed account  # Safety  - `account` must be a valid... | managed_account |
-| `managed_core_account_get_transaction_count` | Get the number of transactions in a managed account  # Safety  - `account`... | managed_account |
+| `managed_core_account_get_transaction_count` | Get the number of transactions in a managed account  Only available with the... | managed_account |
 | `managed_core_account_get_transactions` | Get all transactions from a managed account  Returns an array of... | managed_account |
 | `managed_core_account_get_utxo_count` | Get the number of UTXOs in a managed account  # Safety  - `account` must be... | managed_account |
 | `managed_platform_account_free` | Free a managed platform account handle  # Safety  - `account` must be a... | managed_account |
@@ -3047,7 +3047,7 @@ managed_core_account_free_transactions(transactions: *mut FFITransactionRecord, 
 ```
 
 **Description:**
-Free transactions array returned by managed_core_account_get_transactions  # Safety  - `transactions` must be a pointer returned by `managed_core_account_get_transactions` - `count` must be the count returned by `managed_core_account_get_transactions` - This function must only be called once per allocation
+Free transactions array returned by managed_core_account_get_transactions  Only available with the `keep-finalized-transactions` Cargo feature, in which configuration `managed_core_account_get_transactions` is also available — the two functions are paired.  # Safety  - `transactions` must be a pointer returned by `managed_core_account_get_transactions` - `count` must be the count returned by `managed_core_account_get_transactions` - This function must only be called once per allocation
 
 **Safety:**
 - `transactions` must be a pointer returned by `managed_core_account_get_transactions` - `count` must be the count returned by `managed_core_account_get_transactions` - This function must only be called once per allocation
@@ -3175,7 +3175,7 @@ managed_core_account_get_transaction_count(account: *const FFIManagedCoreAccount
 ```
 
 **Description:**
-Get the number of transactions in a managed account  # Safety  - `account` must be a valid pointer to an FFIManagedCoreAccount instance
+Get the number of transactions in a managed account  Only available with the `keep-finalized-transactions` Cargo feature. With the feature off (the default), records of chainlocked transactions are dropped from the in-memory map, so the count would not reflect the full history — the function is intentionally not exposed.  # Safety  - `account` must be a valid pointer to an FFIManagedCoreAccount instance
 
 **Safety:**
 - `account` must be a valid pointer to an FFIManagedCoreAccount instance
@@ -3191,7 +3191,7 @@ managed_core_account_get_transactions(account: *const FFIManagedCoreAccount, tra
 ```
 
 **Description:**
-Get all transactions from a managed account  Returns an array of FFITransactionRecord structures.  # Safety  - `account` must be a valid pointer to an FFIManagedCoreAccount instance - `transactions_out` must be a valid pointer to receive the transactions array pointer - `count_out` must be a valid pointer to receive the count - The caller must free the returned array using `managed_core_account_free_transactions`
+Get all transactions from a managed account  Returns an array of FFITransactionRecord structures.  Only available with the `keep-finalized-transactions` Cargo feature. With the feature off (the default), records of chainlocked transactions are dropped from the in-memory map, so this would only return a partial history — the function is intentionally not exposed.  # Safety  - `account` must be a valid pointer to an FFIManagedCoreAccount instance - `transactions_out` must be a valid pointer to receive the transactions array pointer - `count_out` must be a valid pointer to receive the count - The caller must free the returned array using `managed_core_account_free_transactions`
 
 **Safety:**
 - `account` must be a valid pointer to an FFIManagedCoreAccount instance - `transactions_out` must be a valid pointer to receive the transactions array pointer - `count_out` must be a valid pointer to receive the count - The caller must free the returned array using `managed_core_account_free_transactions`

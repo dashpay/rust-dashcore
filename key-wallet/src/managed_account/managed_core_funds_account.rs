@@ -229,22 +229,46 @@ impl ManagedCoreFundsAccount {
         }
     }
 
-    /// Re-process an existing transaction with updated context (e.g., mempool→block confirmation)
-    /// and potentially new address matches from gap limit rescans.
+    /// Re-process an existing transaction with updated context (e.g.,
+    /// mempool→block confirmation) and potentially new address matches
+    /// from gap limit rescans.
+    ///
+    /// Returns `Some(record)` when the call results in a state change the
+    /// caller should surface (record newly inserted or context updated).
+    /// The record is cloned BEFORE any chainlock-driven pruning, so the
+    /// caller can always include it in an event even when the
+    /// `keep-finalized-transactions` Cargo feature is off and the record
+    /// is dropped from `transactions` immediately after.
+    ///
+    /// Returns `None` when:
+    /// - the tx is already finalized in a chainlocked block (record is
+    ///   immutable; further events are redundant), or
+    /// - the existing record's context already matches and confirmation
+    ///   status didn't change.
     pub(crate) fn confirm_transaction(
         &mut self,
         tx: &Transaction,
         account_match: &AccountMatch,
         context: TransactionContext,
         transaction_type: TransactionType,
-    ) -> bool {
-        if !self.keys.transactions().contains_key(&tx.txid()) {
-            self.record_transaction(tx, account_match, context, transaction_type);
-            return true;
+    ) -> Option<TransactionRecord> {
+        let txid = tx.txid();
+
+        // Already finalized in a chainlocked block: the tx is immutable —
+        // no record update, no UTXO refresh, no event needed.
+        if self.keys.transaction_is_finalized_in_block(&txid) {
+            return None;
+        }
+
+        if !self.keys.has_transaction(&txid) {
+            // Genuinely new sighting — delegate to record_transaction
+            // (which handles finalize-on-record itself).
+            let record = self.record_transaction(tx, account_match, context, transaction_type);
+            return Some(record);
         }
 
         let mut changed = false;
-        if let Some(tx_record) = self.keys.transactions_mut().get_mut(&tx.txid()) {
+        if let Some(tx_record) = self.keys.transactions_mut().get_mut(&txid) {
             debug_assert_eq!(
                 tx_record.transaction_type,
                 transaction_type,
@@ -261,8 +285,28 @@ impl ManagedCoreFundsAccount {
                 changed = !was_confirmed;
             }
         }
+
+        // Capture the (possibly updated) record before any pruning so the
+        // caller can still emit it in an event.
+        let record_after = if changed {
+            self.keys.transactions().get(&txid).cloned()
+        } else {
+            None
+        };
+
+        // The chainlock is the trigger for dropping the full record under
+        // the default feature configuration; an IS-lock alone is *not*
+        // enough — we keep the record so the surrounding block
+        // confirmation can still write its height / block hash before the
+        // chainlock catches up.
+        #[allow(unused_variables)]
+        let drop_now = context.is_finalized_in_block();
         self.update_utxos(tx, account_match, context);
-        changed
+        #[cfg(not(feature = "keep-finalized-transactions"))]
+        if drop_now {
+            self.keys.drop_finalized_transaction(&txid);
+        }
+        record_after
     }
 
     /// Record a new transaction and update UTXOs for spendable account types
@@ -368,9 +412,21 @@ impl ManagedCoreFundsAccount {
         );
 
         let record = tx_record.clone();
-        self.keys.transactions_mut().insert(tx.txid(), tx_record);
+        let txid = tx.txid();
+        self.keys.transactions_mut().insert(txid, tx_record);
 
+        // If the very first sighting is already chainlocked (e.g.
+        // a wallet rescan from storage), drop the full record now and
+        // keep only the txid in `finalized_txids`. No-op when the
+        // feature is on (we want to keep the full record).
+        #[allow(unused_variables)]
+        let drop_now = context.is_finalized_in_block();
         self.update_utxos(tx, account_match, context);
+        #[cfg(not(feature = "keep-finalized-transactions"))]
+        if drop_now {
+            self.keys.drop_finalized_transaction(&txid);
+        }
+
         record
     }
 
@@ -606,6 +662,18 @@ impl ManagedAccountTrait for ManagedCoreFundsAccount {
 
     fn transactions_mut(&mut self) -> &mut BTreeMap<Txid, TransactionRecord> {
         self.keys.transactions_mut()
+    }
+
+    fn has_transaction(&self, txid: &Txid) -> bool {
+        self.keys.has_transaction(txid)
+    }
+
+    fn transaction_is_finalized(&self, txid: &Txid) -> bool {
+        self.keys.transaction_is_finalized(txid)
+    }
+
+    fn transaction_is_finalized_in_block(&self, txid: &Txid) -> bool {
+        self.keys.transaction_is_finalized_in_block(txid)
     }
 
     fn monitor_revision(&self) -> u64 {

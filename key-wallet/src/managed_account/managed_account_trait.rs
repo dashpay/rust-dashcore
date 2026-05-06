@@ -44,6 +44,35 @@ pub trait ManagedAccountTrait {
     /// Get mutable transactions
     fn transactions_mut(&mut self) -> &mut BTreeMap<Txid, TransactionRecord>;
 
+    /// Returns `true` if this account has already processed `txid`,
+    /// whether it's still mutable in `transactions` or has been
+    /// finalized-and-pruned (under the default feature configuration).
+    /// Used as the dedup signal in `confirm_transaction`.
+    fn has_transaction(&self, txid: &Txid) -> bool;
+
+    /// Returns `true` if `txid` has reached a finalized state — i.e. it
+    /// has either an InstantSend lock or a ChainLock and is no longer
+    /// expected to change.
+    ///
+    /// This is the *soft* finality check (mirrors
+    /// [`crate::transaction_checking::TransactionContext::is_finalized`]).
+    /// Use [`Self::transaction_is_finalized_in_block`] for the stricter
+    /// "fully confirmed in a chainlocked block" answer that drives
+    /// memory-pruning decisions.
+    fn transaction_is_finalized(&self, txid: &Txid) -> bool;
+
+    /// Returns `true` if `txid` has been mined in a block that is itself
+    /// chainlocked — the strongest finality signal (mirrors
+    /// [`crate::transaction_checking::TransactionContext::is_finalized_in_block`]).
+    ///
+    /// `InBlock` alone is not enough (the block can still be reorganized
+    /// out), and `InstantSend` alone is not enough either (the
+    /// surrounding block confirmation may still arrive and write the
+    /// height / block hash before the chainlock catches up). Only
+    /// `InChainLockedBlock` qualifies. This is the trigger for dropping
+    /// the full record under the default feature configuration.
+    fn transaction_is_finalized_in_block(&self, txid: &Txid) -> bool;
+
     /// Return the current monitor revision.
     ///
     /// Bumped whenever the monitored address set changes (e.g. new addresses

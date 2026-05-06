@@ -16,6 +16,19 @@ bip38 = ["scrypt", "aes", "bs58", "rand"]
 eddsa = ["dashcore/eddsa"]
 bls = ["dashcore/bls"]
 test-utils = ["dashcore/test-utils"]
+# Keep the full `TransactionRecord` for transactions that have reached a
+# "finalized in block" state — i.e. they have a ChainLock confirming the
+# block they were mined in. With this feature ON, every processed
+# transaction (including ones already chainlocked) stays in the
+# `transactions` map for the wallet's lifetime; finalization is implicit
+# in the stored `TransactionContext`. With it OFF (the default), records
+# of chainlocked transactions are dropped from the map and a per-account
+# `finalized_txids: HashSet<Txid>` retains only their txids so
+# `has_transaction` / `transaction_is_finalized_in_block` still answer
+# correctly. An InstantSend lock alone does NOT trigger record dropping
+# — we keep the record around so the surrounding block confirmation can
+# still write its height / block hash before the chainlock arrives.
+keep-finalized-transactions = []
 
 [dependencies]
 internals = { path = "../internals", package = "dashcore-private" }

@@ -16,6 +16,8 @@ mod edge_case_tests;
 
 mod integration_tests;
 
+mod keep_finalized_transactions_tests;
+
 mod managed_account_collection_tests;
 
 mod performance_tests;

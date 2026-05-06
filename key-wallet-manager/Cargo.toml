@@ -14,6 +14,13 @@ bincode = ["key-wallet/bincode", "dep:bincode"]
 test-utils = ["key-wallet/test-utils"]
 bls = ["key-wallet/bls"]
 eddsa = ["key-wallet/eddsa"]
+# Forward to `key-wallet/keep-finalized-transactions`. With this on,
+# every processed transaction (including chainlocked ones) stays in
+# the in-memory `transactions` map for the wallet's lifetime. With
+# it off (the default), records of chainlocked transactions are
+# dropped and only their txids are kept (in `finalized_txids`) for
+# dedup. See `key-wallet`'s feature documentation for details.
+keep-finalized-transactions = ["key-wallet/keep-finalized-transactions"]
 
 [dependencies]
 key-wallet = { path = "../key-wallet", default-features = false }

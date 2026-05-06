@@ -7,6 +7,7 @@
 use dash_network::ffi::FFINetwork;
 use dashcore::hashes::Hash;
 use std::os::raw::{c_char, c_uint};
+#[cfg(feature = "keep-finalized-transactions")]
 use std::ptr::slice_from_raw_parts_mut;
 use std::sync::Arc;
 
@@ -614,7 +615,13 @@ pub unsafe extern "C" fn managed_core_account_get_balance(
     true
 }
 
+#[cfg(feature = "keep-finalized-transactions")]
 /// Get the number of transactions in a managed account
+///
+/// Only available with the `keep-finalized-transactions` Cargo feature. With
+/// the feature off (the default), records of chainlocked transactions are
+/// dropped from the in-memory map, so the count would not reflect the full
+/// history — the function is intentionally not exposed.
 ///
 /// # Safety
 ///
@@ -914,9 +921,15 @@ impl Drop for FFITransactionRecord {
     }
 }
 
+#[cfg(feature = "keep-finalized-transactions")]
 /// Get all transactions from a managed account
 ///
 /// Returns an array of FFITransactionRecord structures.
+///
+/// Only available with the `keep-finalized-transactions` Cargo feature. With
+/// the feature off (the default), records of chainlocked transactions are
+/// dropped from the in-memory map, so this would only return a partial
+/// history — the function is intentionally not exposed.
 ///
 /// # Safety
 ///
@@ -951,7 +964,12 @@ pub unsafe extern "C" fn managed_core_account_get_transactions(
     true
 }
 
+#[cfg(feature = "keep-finalized-transactions")]
 /// Free transactions array returned by managed_core_account_get_transactions
+///
+/// Only available with the `keep-finalized-transactions` Cargo feature, in
+/// which configuration `managed_core_account_get_transactions` is also
+/// available — the two functions are paired.
 ///
 /// # Safety
 ///
@@ -1547,10 +1565,13 @@ pub unsafe extern "C" fn managed_platform_account_result_free_error(
 mod tests {
     use super::*;
     use crate::address_pool::address_pool_free;
+    use crate::types::{FFIAccountCreationOptionType, FFIWalletAccountCreationOptions};
+    // These types are only used by the FFITransactionRecord tests, which run
+    // only when transactions stay in memory.
+    #[cfg(feature = "keep-finalized-transactions")]
     use crate::types::{
-        FFIAccountCreationOptionType, FFIBlockInfo, FFIInputDetail, FFIOutputDetail, FFIOutputRole,
-        FFITransactionContext, FFITransactionContextType, FFITransactionDirection,
-        FFITransactionType, FFIWalletAccountCreationOptions,
+        FFIBlockInfo, FFIInputDetail, FFIOutputDetail, FFIOutputRole, FFITransactionContext,
+        FFITransactionContextType, FFITransactionDirection, FFITransactionType,
     };
     use crate::wallet_manager::{
         wallet_manager_add_wallet_from_mnemonic_with_options, wallet_manager_create,
@@ -1828,9 +1849,15 @@ mod tests {
             assert_eq!(balance_out.locked, 0);
             assert_eq!(balance_out.total, 0);
 
-            // Test get_transaction_count
-            let tx_count = managed_core_account_get_transaction_count(account);
-            assert_eq!(tx_count, 0); // Initially no transactions
+            // Test get_transaction_count (only available with the
+            // `keep-finalized-transactions` feature; without it the function
+            // is not exposed because chainlocked records are pruned and the
+            // count would be incomplete)
+            #[cfg(feature = "keep-finalized-transactions")]
+            {
+                let tx_count = managed_core_account_get_transaction_count(account);
+                assert_eq!(tx_count, 0); // Initially no transactions
+            }
 
             // Test get_utxo_count
             let utxo_count = managed_core_account_get_utxo_count(account);
@@ -1858,8 +1885,11 @@ mod tests {
             let account_type = managed_core_account_get_account_type(ptr::null(), &mut index_out);
             assert_eq!(account_type, FFIAccountKind::StandardBIP44); // Default type
 
-            let tx_count = managed_core_account_get_transaction_count(ptr::null());
-            assert_eq!(tx_count, 0);
+            #[cfg(feature = "keep-finalized-transactions")]
+            {
+                let tx_count = managed_core_account_get_transaction_count(ptr::null());
+                assert_eq!(tx_count, 0);
+            }
 
             let utxo_count = managed_core_account_get_utxo_count(ptr::null());
             assert_eq!(utxo_count, 0);
@@ -2080,6 +2110,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "keep-finalized-transactions")]
     #[test]
     fn test_free_transactions_null_safety() {
         unsafe {
@@ -2088,6 +2119,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "keep-finalized-transactions")]
     #[test]
     fn test_ffi_transaction_record_roundtrip() {
         let mut records = Vec::new();
