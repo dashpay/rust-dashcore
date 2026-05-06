@@ -80,9 +80,11 @@ pub struct QRInfoFeedResult {
     /// distinguish cache-hit observability from a trust signal.
     pub newly_qualified_count: usize,
     /// Rotated quorums whose `.verified` is `LLMQEntryVerificationStatus::Verified`
-    /// after this call settled. Always `0` when `verify_rotated_quorums == false`.
-    /// A cycle is only stored in `rotated_quorums_per_cycle` when every entry is
-    /// `Verified`.
+    /// after this call settled. May be non-zero even when
+    /// `verify_rotated_quorums == false` because cached entries returned by
+    /// `known_qualified_quorum_entry` retain their prior `Verified` status.
+    /// A cycle is only stored in `rotated_quorums_per_cycle` when every entry
+    /// is `Verified`.
     pub fully_verified_count: usize,
     /// Height of the cycle from `last_commitment_per_index` if (and only if)
     /// the storage gate fired and the cycle was inserted into
