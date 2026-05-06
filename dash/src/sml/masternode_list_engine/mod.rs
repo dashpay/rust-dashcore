@@ -545,6 +545,13 @@ impl MasternodeListEngine {
         let work_height = self.block_container.get_height(&work_block_hash)?;
         let mn_list = self.masternode_lists.get(&work_height)?;
         let quorums_of_type = mn_list.quorums.get(&isd_type)?;
+        let cycle_hash = quorums_of_type
+            .values()
+            .find(|q| q.quorum_entry.quorum_index == Some(0))
+            .map(|q| q.quorum_entry.quorum_hash)?;
+        if self.rotated_quorums_per_cycle.contains_key(&cycle_hash) {
+            return None;
+        }
         let entries: Vec<QualifiedQuorumEntry> = quorums_of_type
             .values()
             .cloned()
@@ -554,10 +561,6 @@ impl MasternodeListEngine {
                 q
             })
             .collect();
-        let cycle_hash = entries.first().map(|q| q.quorum_entry.quorum_hash)?;
-        if self.rotated_quorums_per_cycle.contains_key(&cycle_hash) {
-            return None;
-        }
         Some((cycle_hash, entries))
     }
 
