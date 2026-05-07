@@ -48,7 +48,7 @@ jobs:
       # Set up dashd and test data for groups that need it
       - name: Cache dashd and test data
         if: matrix.group == 'spv' || matrix.group == 'ffi'
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: .rust-dashcore-test
           key: rust-dashcore-test-${{ inputs.os }}-${{ env.DASHVERSION }}-${{ env.TEST_DATA_REPO }}-${{ env.TEST_DATA_VERSION }}
@@ -75,7 +75,7 @@ jobs:
 
       - name: Upload coverage to Codecov
         if: inputs.coverage && steps.tests.outputs.crate_flags
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@v6
         with:
           files: lcov.info
           flags: ${{ steps.tests.outputs.crate_flags }}
