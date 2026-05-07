@@ -1067,6 +1067,7 @@ fn update_mn_service_addresses(
     let cookie_path = controller.datadir().join("regtest/.cookie");
     let client = Client::new(&url, Auth::CookieFile(cookie_path)).expect("rpc client");
 
+    let mut failures = Vec::new();
     for (mn, mn_info) in masternodes.iter().zip(metadata.masternodes.iter()) {
         let new_addr = format!("127.0.0.1:{}", mn.p2p_port());
         info!("Updating {} service address to {}", mn_info.datadir, new_addr);
@@ -1081,9 +1082,15 @@ fn update_mn_service_addresses(
             ],
         );
         if let Err(e) = result {
-            warn!("protx update_service failed for {}: {}", mn_info.datadir, e);
+            failures.push(format!("{}: {}", mn_info.datadir, e));
         }
     }
+    assert!(
+        failures.is_empty(),
+        "protx update_service failed for {} masternode(s): {:?}",
+        failures.len(),
+        failures
+    );
 
     // Mine a block to confirm the update transactions
     let addr = controller.get_new_address();
