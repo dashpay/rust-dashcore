@@ -10,6 +10,10 @@
 //!   for dedup. IS-locked-but-not-yet-chainlocked records still live in
 //!   the map so we don't lose the block-confirmation event when it
 //!   arrives.
+//!
+//! "Finalized" in this crate means *chainlocked* — see
+//! [`crate::transaction_checking::TransactionContext::is_chain_locked`].
+//! IS-lock alone is **not** finality.
 
 use crate::{
     managed_account::managed_account_trait::ManagedAccountTrait,
@@ -35,7 +39,7 @@ async fn test_chainlocked_record_kept_when_feature_on() {
     assert!(ctx.bip44_account().has_transaction(&txid));
     assert!(ctx.bip44_account().transactions().contains_key(&txid));
 
-    // InBlock → record still there, finalized-in-block stays false
+    // InBlock → record still there, finalization stays false
     let block_hash = BlockHash::from_slice(&[7u8; 32]).expect("hash");
     let _ = ctx
         .check_transaction(
@@ -44,7 +48,7 @@ async fn test_chainlocked_record_kept_when_feature_on() {
         )
         .await;
     assert!(ctx.bip44_account().has_transaction(&txid));
-    assert!(!ctx.bip44_account().transaction_is_finalized_in_block(&txid));
+    assert!(!ctx.bip44_account().transaction_is_finalized(&txid));
 
     // InChainLockedBlock → record MUST still live in the map.
     let _ = ctx
@@ -55,7 +59,6 @@ async fn test_chainlocked_record_kept_when_feature_on() {
         .await;
     assert!(ctx.bip44_account().has_transaction(&txid));
     assert!(ctx.bip44_account().transaction_is_finalized(&txid));
-    assert!(ctx.bip44_account().transaction_is_finalized_in_block(&txid));
     assert!(
         ctx.bip44_account().transactions().contains_key(&txid),
         "with the feature ON the record must stay in the map after chainlock"
@@ -78,7 +81,7 @@ async fn test_chainlocked_record_dropped_when_feature_off() {
     assert!(ctx.bip44_account().transactions().contains_key(&txid));
 
     // InChainLockedBlock → record dropped, but `has_transaction` and
-    // `transaction_is_finalized*` still report the tx via the txid set.
+    // `transaction_is_finalized` still report the tx via the txid set.
     let block_hash = BlockHash::from_slice(&[7u8; 32]).expect("hash");
     let _ = ctx
         .check_transaction(
@@ -92,14 +95,13 @@ async fn test_chainlocked_record_dropped_when_feature_off() {
     );
     assert!(ctx.bip44_account().has_transaction(&txid));
     assert!(ctx.bip44_account().transaction_is_finalized(&txid));
-    assert!(ctx.bip44_account().transaction_is_finalized_in_block(&txid));
 }
 
-/// IS-lock alone is "soft" finalized but not "finalized in block". The
-/// record must NOT be dropped when feature is OFF because we still need
-/// the in-memory record to absorb the eventual block-confirmation
-/// event (height / block hash). This guards against the pre-review bug
-/// where dropping on IS-lock lost block-confirmation tracking.
+/// IS-lock is **not** finalization. The record must NOT be dropped when
+/// the feature is OFF because we still need the in-memory record to
+/// absorb the eventual block-confirmation event (height / block hash).
+/// This guards against the pre-review bug where dropping on IS-lock
+/// lost block-confirmation tracking.
 #[cfg(not(feature = "keep-finalized-transactions"))]
 #[tokio::test]
 async fn test_islocked_record_kept_when_feature_off() {
@@ -113,12 +115,8 @@ async fn test_islocked_record_kept_when_feature_off() {
 
     assert!(ctx.bip44_account().has_transaction(&txid));
     assert!(
-        ctx.bip44_account().transaction_is_finalized(&txid),
-        "IS-lock counts as soft-finalized"
-    );
-    assert!(
-        !ctx.bip44_account().transaction_is_finalized_in_block(&txid),
-        "IS-lock is not the strict block-finalization the drop check uses"
+        !ctx.bip44_account().transaction_is_finalized(&txid),
+        "IS-lock alone is not finalization — only a chainlock counts"
     );
     assert!(
         ctx.bip44_account().transactions().contains_key(&txid),
@@ -129,8 +127,8 @@ async fn test_islocked_record_kept_when_feature_off() {
 
 /// IS-lock first, then a chainlocked block: the record must drop only at
 /// the chainlock step. We also assert that the chainlock event still
-/// "lands" — `transaction_is_finalized_in_block` must report `true` when
-/// asked via the txid set.
+/// "lands" — `transaction_is_finalized` must report `true` when asked
+/// via the txid set.
 #[cfg(not(feature = "keep-finalized-transactions"))]
 #[tokio::test]
 async fn test_islocked_then_chainlocked_drops_at_chainlock() {
@@ -152,5 +150,5 @@ async fn test_islocked_then_chainlocked_drops_at_chainlock() {
         .await;
     assert!(!ctx.bip44_account().transactions().contains_key(&txid), "dropped at chainlock");
     assert!(ctx.bip44_account().has_transaction(&txid));
-    assert!(ctx.bip44_account().transaction_is_finalized_in_block(&txid));
+    assert!(ctx.bip44_account().transaction_is_finalized(&txid));
 }

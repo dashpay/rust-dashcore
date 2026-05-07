@@ -45,25 +45,16 @@ pub trait ManagedAccountTrait {
     fn transactions_mut(&mut self) -> &mut BTreeMap<Txid, TransactionRecord>;
 
     /// Returns `true` if this account has already processed `txid`,
-    /// whether it's still mutable in `transactions` or has been
-    /// finalized-and-pruned (under the default feature configuration).
-    /// Used as the dedup signal in `confirm_transaction`.
+    /// whether it is still represented as a full record in `transactions`
+    /// or has been pruned (under the default feature configuration) and
+    /// is now only retained as a finalized-txid marker. Used by callers
+    /// that need to distinguish a brand-new sighting from a re-processing
+    /// (mempool → block, IS-lock arrival, chainlock, …).
     fn has_transaction(&self, txid: &Txid) -> bool;
 
-    /// Returns `true` if `txid` has reached a finalized state — i.e. it
-    /// has either an InstantSend lock or a ChainLock and is no longer
-    /// expected to change.
-    ///
-    /// This is the *soft* finality check (mirrors
-    /// [`crate::transaction_checking::TransactionContext::is_finalized`]).
-    /// Use [`Self::transaction_is_finalized_in_block`] for the stricter
-    /// "fully confirmed in a chainlocked block" answer that drives
-    /// memory-pruning decisions.
-    fn transaction_is_finalized(&self, txid: &Txid) -> bool;
-
     /// Returns `true` if `txid` has been mined in a block that is itself
-    /// chainlocked — the strongest finality signal (mirrors
-    /// [`crate::transaction_checking::TransactionContext::is_finalized_in_block`]).
+    /// chainlocked — the only finality signal we treat as terminal
+    /// (mirrors [`crate::transaction_checking::TransactionContext::is_chain_locked`]).
     ///
     /// `InBlock` alone is not enough (the block can still be reorganized
     /// out), and `InstantSend` alone is not enough either (the
@@ -71,7 +62,7 @@ pub trait ManagedAccountTrait {
     /// height / block hash before the chainlock catches up). Only
     /// `InChainLockedBlock` qualifies. This is the trigger for dropping
     /// the full record under the default feature configuration.
-    fn transaction_is_finalized_in_block(&self, txid: &Txid) -> bool;
+    fn transaction_is_finalized(&self, txid: &Txid) -> bool;
 
     /// Return the current monitor revision.
     ///

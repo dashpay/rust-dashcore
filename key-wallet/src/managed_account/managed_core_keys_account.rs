@@ -88,8 +88,9 @@ impl ManagedCoreKeysAccount {
     /// is OFF (the default). Called when a transaction transitions into
     /// `InChainLockedBlock` — the record's information is no longer
     /// expected to change, so we save memory by replacing it with a
-    /// txid-only entry. [`Self::has_transaction`] keeps reporting it as
-    /// known, and [`Self::transaction_is_finalized_in_block`] keeps
+    /// txid-only entry. [`ManagedAccountTrait::has_transaction`] keeps
+    /// reporting it as known, and
+    /// [`ManagedAccountTrait::transaction_is_finalized`] keeps
     /// returning `true`.
     ///
     /// With the feature on the full record stays in `transactions`
@@ -181,47 +182,37 @@ impl ManagedAccountTrait for ManagedCoreKeysAccount {
         &mut self.transactions
     }
 
+    /// With the `keep-finalized-transactions` feature ON, every record
+    /// we have ever processed stays in `transactions` — that map is the
+    /// authoritative dedup set.
+    #[cfg(feature = "keep-finalized-transactions")]
     fn has_transaction(&self, txid: &Txid) -> bool {
-        if self.transactions.contains_key(txid) {
-            return true;
-        }
-        // Under the default feature configuration, the record may have
-        // been pruned; the txid stays in `finalized_txids`. With the
-        // feature on, every record stays in `transactions` so the first
-        // check above is exhaustive.
-        #[cfg(not(feature = "keep-finalized-transactions"))]
-        {
-            return self.finalized_txids.contains(txid);
-        }
-        #[allow(unreachable_code)]
-        false
+        self.transactions.contains_key(txid)
     }
 
+    /// With the feature OFF (the default), chainlocked records are
+    /// pruned from `transactions` and only their txids are retained in
+    /// `finalized_txids`. Both sets need to be consulted.
+    #[cfg(not(feature = "keep-finalized-transactions"))]
+    fn has_transaction(&self, txid: &Txid) -> bool {
+        self.transactions.contains_key(txid) || self.finalized_txids.contains(txid)
+    }
+
+    /// With the feature ON, finalized records live in `transactions`,
+    /// so we resolve the answer purely off the live record's context.
+    #[cfg(feature = "keep-finalized-transactions")]
     fn transaction_is_finalized(&self, txid: &Txid) -> bool {
-        if let Some(r) = self.transactions.get(txid) {
-            return r.context.is_finalized();
-        }
-        // Record was pruned; only chainlocked txids ever land in
-        // `finalized_txids`, and chainlocked counts as finalized.
-        #[cfg(not(feature = "keep-finalized-transactions"))]
-        {
-            return self.finalized_txids.contains(txid);
-        }
-        #[allow(unreachable_code)]
-        false
+        self.transactions.get(txid).is_some_and(|r| r.context.is_chain_locked())
     }
 
-    fn transaction_is_finalized_in_block(&self, txid: &Txid) -> bool {
-        if let Some(r) = self.transactions.get(txid) {
-            return r.context.is_finalized_in_block();
-        }
-        // Same logic — `finalized_txids` only contains chainlocked txs.
-        #[cfg(not(feature = "keep-finalized-transactions"))]
-        {
-            return self.finalized_txids.contains(txid);
-        }
-        #[allow(unreachable_code)]
-        false
+    /// With the feature OFF, chainlocked records are dropped from
+    /// `transactions` and only their txids are retained in
+    /// `finalized_txids`. A live record can never satisfy this check
+    /// (it would have been pruned at the chainlock event), so the only
+    /// `true` answer comes from the txid set.
+    #[cfg(not(feature = "keep-finalized-transactions"))]
+    fn transaction_is_finalized(&self, txid: &Txid) -> bool {
+        self.finalized_txids.contains(txid)
     }
 
     fn monitor_revision(&self) -> u64 {

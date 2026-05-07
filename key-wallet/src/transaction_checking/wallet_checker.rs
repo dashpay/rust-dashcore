@@ -88,7 +88,7 @@ impl WalletTransactionChecker for ManagedWalletInfo {
                 }
                 // Only accept IS transitions for unconfirmed transactions.
                 // A chainlocked tx may have had its full record dropped
-                // under the default feature config — `transaction_is_finalized_in_block`
+                // under the default feature config — `transaction_is_finalized`
                 // catches that case via `finalized_txids` and the in-map
                 // record check covers `InBlock`.
                 let already_confirmed = result.affected_accounts.iter().any(|am| {
@@ -97,7 +97,7 @@ impl WalletTransactionChecker for ManagedWalletInfo {
                     else {
                         return false;
                     };
-                    if account.transaction_is_finalized_in_block(&txid) {
+                    if account.transaction_is_finalized(&txid) {
                         return true;
                     }
                     account.transactions().get(&txid).is_some_and(|r| r.is_confirmed())

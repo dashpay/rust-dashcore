@@ -254,9 +254,9 @@ impl ManagedCoreFundsAccount {
     ) -> Option<TransactionRecord> {
         let txid = tx.txid();
 
-        // Already finalized in a chainlocked block: the tx is immutable —
+        // Already finalized via a chainlock: the tx is immutable —
         // no record update, no UTXO refresh, no event needed.
-        if self.keys.transaction_is_finalized_in_block(&txid) {
+        if self.keys.transaction_is_finalized(&txid) {
             return None;
         }
 
@@ -299,8 +299,8 @@ impl ManagedCoreFundsAccount {
         // enough — we keep the record so the surrounding block
         // confirmation can still write its height / block hash before the
         // chainlock catches up.
-        #[allow(unused_variables)]
-        let drop_now = context.is_finalized_in_block();
+        #[cfg(not(feature = "keep-finalized-transactions"))]
+        let drop_now = context.is_chain_locked();
         self.update_utxos(tx, account_match, context);
         #[cfg(not(feature = "keep-finalized-transactions"))]
         if drop_now {
@@ -419,8 +419,8 @@ impl ManagedCoreFundsAccount {
         // a wallet rescan from storage), drop the full record now and
         // keep only the txid in `finalized_txids`. No-op when the
         // feature is on (we want to keep the full record).
-        #[allow(unused_variables)]
-        let drop_now = context.is_finalized_in_block();
+        #[cfg(not(feature = "keep-finalized-transactions"))]
+        let drop_now = context.is_chain_locked();
         self.update_utxos(tx, account_match, context);
         #[cfg(not(feature = "keep-finalized-transactions"))]
         if drop_now {
@@ -670,10 +670,6 @@ impl ManagedAccountTrait for ManagedCoreFundsAccount {
 
     fn transaction_is_finalized(&self, txid: &Txid) -> bool {
         self.keys.transaction_is_finalized(txid)
-    }
-
-    fn transaction_is_finalized_in_block(&self, txid: &Txid) -> bool {
-        self.keys.transaction_is_finalized_in_block(txid)
     }
 
     fn monitor_revision(&self) -> u64 {
