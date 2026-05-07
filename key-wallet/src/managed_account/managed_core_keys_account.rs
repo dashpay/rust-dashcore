@@ -14,13 +14,15 @@ use crate::account::TransactionRecord;
 use crate::managed_account::address_pool;
 use crate::managed_account::managed_account_trait::ManagedAccountTrait;
 use crate::managed_account::managed_account_type::ManagedAccountType;
+use crate::managed_account::transaction_record::{OutputDetail, OutputRole, TransactionDirection};
+use crate::transaction_checking::account_checker::AccountMatch;
+use crate::transaction_checking::transaction_router::TransactionType;
+use crate::transaction_checking::TransactionContext;
 use crate::Network;
-use dashcore::Txid;
+use dashcore::{Address, Transaction, Txid};
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
-#[cfg(not(feature = "keep-finalized-transactions"))]
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 
 /// Managed core keys account with mutable state but no funds tracking.
 ///
@@ -158,6 +160,175 @@ impl ManagedCoreKeysAccount {
         .expect("Should succeed with NoKeySource");
 
         Self::new(managed_type, account.network)
+    }
+
+    /// Record a new transaction for this keys account.
+    ///
+    /// Mirrors [`ManagedCoreFundsAccount::record_transaction`](crate::managed_account::ManagedCoreFundsAccount::record_transaction)
+    /// but performs no UTXO bookkeeping or balance updates. Keys accounts
+    /// (identity, asset-lock, provider) do not track per-account UTXOs, so
+    /// `input_details` is always empty and `has_inputs` is derived purely
+    /// from `account_match.sent`. Output annotation is limited to outputs
+    /// paying to addresses we own.
+    pub(crate) fn record_transaction(
+        &mut self,
+        tx: &Transaction,
+        account_match: &AccountMatch,
+        context: TransactionContext,
+        transaction_type: TransactionType,
+    ) -> TransactionRecord {
+        let net_amount = account_match.received as i64 - account_match.sent as i64;
+
+        let receive_addrs: HashSet<_> = account_match
+            .account_type_match
+            .involved_receive_addresses()
+            .iter()
+            .map(|info| &info.address)
+            .collect();
+        let change_addrs: HashSet<_> = account_match
+            .account_type_match
+            .involved_change_addresses()
+            .iter()
+            .map(|info| &info.address)
+            .collect();
+
+        // Keys accounts have no UTXO state — input details are always empty.
+        let input_details = Vec::new();
+
+        // Without UTXO-based input matching, `account_match.sent > 0` is the
+        // only signal that we contributed to this transaction's inputs.
+        let has_inputs = account_match.sent > 0;
+
+        let resolved_outputs: Vec<Option<Address>> = tx
+            .output
+            .iter()
+            .map(|output| Address::from_script(&output.script_pubkey, self.network).ok())
+            .collect();
+
+        let mut output_details = Vec::new();
+        for (idx, output) in tx.output.iter().enumerate() {
+            let role = match &resolved_outputs[idx] {
+                Some(addr) if receive_addrs.contains(addr) => OutputRole::Received,
+                Some(addr) if change_addrs.contains(addr) => OutputRole::Change,
+                Some(_) if has_inputs => OutputRole::Sent,
+                Some(_) => continue,
+                None => {
+                    if output.script_pubkey.is_provably_unspendable() {
+                        OutputRole::Unspendable
+                    } else if has_inputs {
+                        OutputRole::Sent
+                    } else {
+                        continue;
+                    }
+                }
+            };
+            output_details.push(OutputDetail {
+                index: idx as u32,
+                role,
+                address: resolved_outputs[idx].clone(),
+                value: output.value,
+            });
+        }
+
+        let has_sent = output_details.iter().any(|d| d.role == OutputRole::Sent);
+        let has_our_outputs = output_details
+            .iter()
+            .any(|d| d.role == OutputRole::Received || d.role == OutputRole::Change);
+        let direction = if transaction_type == TransactionType::CoinJoin {
+            TransactionDirection::CoinJoin
+        } else if !has_sent && has_inputs && has_our_outputs {
+            TransactionDirection::Internal
+        } else if has_inputs {
+            TransactionDirection::Outgoing
+        } else {
+            TransactionDirection::Incoming
+        };
+
+        let tx_record = TransactionRecord::new(
+            tx.clone(),
+            self.managed_account_type.to_account_type(),
+            context.clone(),
+            transaction_type,
+            direction,
+            input_details,
+            output_details,
+            net_amount,
+        );
+
+        let record = tx_record.clone();
+        let txid = tx.txid();
+        self.transactions.insert(txid, tx_record);
+
+        // If this first sighting is already chainlocked (e.g. a wallet
+        // rescan from storage), drop the full record now and keep only the
+        // txid in `finalized_txids`. No-op when the feature is on (we want
+        // to keep the full record).
+        #[cfg(not(feature = "keep-finalized-transactions"))]
+        if context.is_chain_locked() {
+            self.drop_finalized_transaction(&txid);
+        }
+
+        record
+    }
+
+    /// Re-process a transaction with updated context for this keys account.
+    ///
+    /// Mirrors [`ManagedCoreFundsAccount::confirm_transaction`](crate::managed_account::ManagedCoreFundsAccount::confirm_transaction)
+    /// but without UTXO updates. Returns the updated record only when the
+    /// confirmation status actually changes (e.g. mempool → in-block).
+    pub(crate) fn confirm_transaction(
+        &mut self,
+        tx: &Transaction,
+        account_match: &AccountMatch,
+        context: TransactionContext,
+        transaction_type: TransactionType,
+    ) -> Option<TransactionRecord> {
+        let txid = tx.txid();
+
+        // Already finalized via a chainlock: the tx is immutable —
+        // no record update, no event needed.
+        if self.transaction_is_finalized(&txid) {
+            return None;
+        }
+
+        if !self.has_transaction(&txid) {
+            // Genuinely new sighting — delegate to record_transaction
+            // (which handles finalize-on-record itself).
+            let record = self.record_transaction(tx, account_match, context, transaction_type);
+            return Some(record);
+        }
+
+        let mut changed = false;
+        if let Some(tx_record) = self.transactions.get_mut(&txid) {
+            debug_assert_eq!(
+                tx_record.transaction_type,
+                transaction_type,
+                "transaction_type changed between recordings for {}",
+                tx.txid()
+            );
+            if tx_record.context != context {
+                let was_confirmed = tx_record.context.confirmed();
+                tx_record.update_context(context.clone());
+                changed = !was_confirmed;
+            }
+        }
+
+        let record_after = if changed {
+            self.transactions.get(&txid).cloned()
+        } else {
+            None
+        };
+
+        // Drop the full record on chainlock when the feature is off; the
+        // surrounding block-confirmation event has already updated context.
+        #[cfg(not(feature = "keep-finalized-transactions"))]
+        if context.is_chain_locked() {
+            self.drop_finalized_transaction(&txid);
+        }
+
+        let _ = account_match;
+
+        record_after
     }
 }
 

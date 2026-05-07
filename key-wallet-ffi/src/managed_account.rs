@@ -24,26 +24,70 @@ use key_wallet::account::TransactionRecord;
 use key_wallet::managed_account::address_pool::AddressPool;
 use key_wallet::managed_account::managed_account_trait::ManagedAccountTrait;
 use key_wallet::managed_account::managed_platform_account::ManagedPlatformAccount;
-use key_wallet::managed_account::ManagedCoreFundsAccount;
+use key_wallet::managed_account::{ManagedCoreFundsAccount, ManagedCoreKeysAccount};
 use key_wallet::AccountType;
 
-/// Opaque managed account handle that wraps ManagedAccount
+/// Internal handle variant: a funds-bearing account or a keys-only account.
+pub(crate) enum FFIManagedCoreAccountInner {
+    Funds(Arc<ManagedCoreFundsAccount>),
+    Keys(Arc<ManagedCoreKeysAccount>),
+}
+
+/// Opaque managed account handle.
+///
+/// Wraps either a [`ManagedCoreFundsAccount`] (Standard, CoinJoin, DashPay)
+/// or a [`ManagedCoreKeysAccount`] (identity, asset-lock, provider). Funds-only
+/// accessors (`get_balance`, `get_utxo_count`, …) return zero / null /
+/// false on the keys variant; trait-shared accessors (`get_network`,
+/// `get_account_type`, address pools, transactions) work on both.
 pub struct FFIManagedCoreAccount {
-    /// The underlying managed account
-    pub(crate) account: Arc<ManagedCoreFundsAccount>,
+    pub(crate) inner: FFIManagedCoreAccountInner,
 }
 
 impl FFIManagedCoreAccount {
-    /// Create a new FFI managed account handle
+    /// Create a new FFI managed account handle wrapping a funds-bearing account.
     pub fn new(account: &ManagedCoreFundsAccount) -> Self {
         FFIManagedCoreAccount {
-            account: Arc::new(account.clone()),
+            inner: FFIManagedCoreAccountInner::Funds(Arc::new(account.clone())),
         }
     }
 
-    /// Get a reference to the inner managed account
-    pub fn inner(&self) -> &ManagedCoreFundsAccount {
-        self.account.as_ref()
+    /// Create a new FFI managed account handle wrapping a keys-only account.
+    pub fn new_keys(account: &ManagedCoreKeysAccount) -> Self {
+        FFIManagedCoreAccount {
+            inner: FFIManagedCoreAccountInner::Keys(Arc::new(account.clone())),
+        }
+    }
+
+    /// Returns the funds-bearing account if this handle wraps one, `None`
+    /// otherwise. Use this in funds-only FFI entry points.
+    pub fn as_funds(&self) -> Option<&ManagedCoreFundsAccount> {
+        match &self.inner {
+            FFIManagedCoreAccountInner::Funds(a) => Some(a.as_ref()),
+            FFIManagedCoreAccountInner::Keys(_) => None,
+        }
+    }
+
+    /// Returns the keys-only account if this handle wraps one, `None`
+    /// otherwise.
+    pub fn as_keys(&self) -> Option<&ManagedCoreKeysAccount> {
+        match &self.inner {
+            FFIManagedCoreAccountInner::Funds(_) => None,
+            FFIManagedCoreAccountInner::Keys(a) => Some(a.as_ref()),
+        }
+    }
+
+    /// Returns the inner [`ManagedCoreKeysAccount`] regardless of variant —
+    /// for [`FFIManagedCoreAccountInner::Funds`], this returns the
+    /// composed-inner keys account; for [`FFIManagedCoreAccountInner::Keys`],
+    /// the account itself. Use this when the desired data lives on the
+    /// shared keys-account state (address pools, transactions, network,
+    /// monitor revision).
+    pub fn keys_account(&self) -> &ManagedCoreKeysAccount {
+        match &self.inner {
+            FFIManagedCoreAccountInner::Funds(a) => a.keys(),
+            FFIManagedCoreAccountInner::Keys(a) => a.as_ref(),
+        }
     }
 }
 
@@ -228,53 +272,76 @@ pub unsafe extern "C" fn managed_wallet_get_account(
         use key_wallet::account::StandardAccountType;
 
         let managed_collection = &managed_wallet.inner().accounts;
-        let managed_account = match account_type_rust {
+        let ffi_account: Option<FFIManagedCoreAccount> = match account_type_rust {
             AccountType::Standard {
                 index,
                 standard_account_type,
             } => match standard_account_type {
-                StandardAccountType::BIP44Account => {
-                    managed_collection.standard_bip44_accounts.get(&index)
-                }
-                StandardAccountType::BIP32Account => {
-                    managed_collection.standard_bip32_accounts.get(&index)
-                }
+                StandardAccountType::BIP44Account => managed_collection
+                    .standard_bip44_accounts
+                    .get(&index)
+                    .map(FFIManagedCoreAccount::new),
+                StandardAccountType::BIP32Account => managed_collection
+                    .standard_bip32_accounts
+                    .get(&index)
+                    .map(FFIManagedCoreAccount::new),
             },
             AccountType::CoinJoin {
                 index,
-            } => managed_collection.coinjoin_accounts.get(&index),
-            AccountType::IdentityRegistration => managed_collection.identity_registration.as_ref(),
+            } => managed_collection.coinjoin_accounts.get(&index).map(FFIManagedCoreAccount::new),
+            AccountType::IdentityRegistration => managed_collection
+                .identity_registration
+                .as_ref()
+                .map(FFIManagedCoreAccount::new_keys),
             AccountType::IdentityTopUp {
                 registration_index,
-            } => managed_collection.identity_topup.get(&registration_index),
-            AccountType::IdentityTopUpNotBoundToIdentity => {
-                managed_collection.identity_topup_not_bound.as_ref()
+            } => managed_collection
+                .identity_topup
+                .get(&registration_index)
+                .map(FFIManagedCoreAccount::new_keys),
+            AccountType::IdentityTopUpNotBoundToIdentity => managed_collection
+                .identity_topup_not_bound
+                .as_ref()
+                .map(FFIManagedCoreAccount::new_keys),
+            AccountType::IdentityInvitation => {
+                managed_collection.identity_invitation.as_ref().map(FFIManagedCoreAccount::new_keys)
             }
-            AccountType::IdentityInvitation => managed_collection.identity_invitation.as_ref(),
-            AccountType::AssetLockAddressTopUp => {
-                managed_collection.asset_lock_address_topup.as_ref()
+            AccountType::AssetLockAddressTopUp => managed_collection
+                .asset_lock_address_topup
+                .as_ref()
+                .map(FFIManagedCoreAccount::new_keys),
+            AccountType::AssetLockShieldedAddressTopUp => managed_collection
+                .asset_lock_shielded_address_topup
+                .as_ref()
+                .map(FFIManagedCoreAccount::new_keys),
+            AccountType::ProviderVotingKeys => managed_collection
+                .provider_voting_keys
+                .as_ref()
+                .map(FFIManagedCoreAccount::new_keys),
+            AccountType::ProviderOwnerKeys => {
+                managed_collection.provider_owner_keys.as_ref().map(FFIManagedCoreAccount::new_keys)
             }
-            AccountType::AssetLockShieldedAddressTopUp => {
-                managed_collection.asset_lock_shielded_address_topup.as_ref()
-            }
-            AccountType::ProviderVotingKeys => managed_collection.provider_voting_keys.as_ref(),
-            AccountType::ProviderOwnerKeys => managed_collection.provider_owner_keys.as_ref(),
-            AccountType::ProviderOperatorKeys => managed_collection.provider_operator_keys.as_ref(),
-            AccountType::ProviderPlatformKeys => managed_collection.provider_platform_keys.as_ref(),
+            AccountType::ProviderOperatorKeys => managed_collection
+                .provider_operator_keys
+                .as_ref()
+                .map(FFIManagedCoreAccount::new_keys),
+            AccountType::ProviderPlatformKeys => managed_collection
+                .provider_platform_keys
+                .as_ref()
+                .map(FFIManagedCoreAccount::new_keys),
             AccountType::DashpayReceivingFunds {
                 ..
-            } => None,
-            AccountType::DashpayExternalAccount {
+            }
+            | AccountType::DashpayExternalAccount {
                 ..
-            } => None,
-            AccountType::PlatformPayment {
+            }
+            | AccountType::PlatformPayment {
                 ..
             } => None,
         };
 
-        match managed_account {
-            Some(account) => {
-                let ffi_account = FFIManagedCoreAccount::new(account);
+        match ffi_account {
+            Some(ffi_account) => {
                 FFIManagedCoreAccountResult::success(Box::into_raw(Box::new(ffi_account)))
             }
             None => FFIManagedCoreAccountResult::error(
@@ -343,7 +410,7 @@ pub unsafe extern "C" fn managed_wallet_get_top_up_account_with_registration_ind
 
     let result = match managed_wallet.inner().accounts.identity_topup.get(&registration_index) {
         Some(account) => {
-            let ffi_account = FFIManagedCoreAccount::new(account);
+            let ffi_account = FFIManagedCoreAccount::new_keys(account);
             FFIManagedCoreAccountResult::success(Box::into_raw(Box::new(ffi_account)))
         }
         None => FFIManagedCoreAccountResult::error(
@@ -499,7 +566,7 @@ pub unsafe extern "C" fn managed_core_account_get_network(
     }
 
     let account = &*account;
-    account.inner().network().into()
+    account.keys_account().network().into()
 }
 
 /// Get the parent wallet ID of a managed account
@@ -537,7 +604,7 @@ pub unsafe extern "C" fn managed_core_account_get_account_type(
     }
 
     let account = &*account;
-    let managed_account = account.inner();
+    let managed_account = account.keys_account();
     let account_type_rust = managed_account.managed_account_type().to_account_type();
 
     // Set the index if output pointer is provided
@@ -586,7 +653,12 @@ pub unsafe extern "C" fn managed_core_account_get_account_type(
     }
 }
 
-/// Get the balance of a managed account
+/// Get the balance of a managed account.
+///
+/// Returns `false` (and leaves `balance_out` untouched) when the handle wraps
+/// a keys-only account (identity / asset-lock / provider) — those don't track
+/// per-account balances. Use [`managed_core_account_get_account_type`] to
+/// disambiguate, or only call this for funds-bearing accounts.
 ///
 /// # Safety
 ///
@@ -602,7 +674,10 @@ pub unsafe extern "C" fn managed_core_account_get_balance(
     }
 
     let account = &*account;
-    let balance = account.inner().balance;
+    let Some(funds) = account.as_funds() else {
+        return false;
+    };
+    let balance = funds.balance;
 
     *balance_out = crate::types::FFIBalance {
         confirmed: balance.confirmed(),
@@ -635,10 +710,13 @@ pub unsafe extern "C" fn managed_core_account_get_transaction_count(
     }
 
     let account = &*account;
-    account.inner().transactions().len() as c_uint
+    account.keys_account().transactions().len() as c_uint
 }
 
-/// Get the number of UTXOs in a managed account
+/// Get the number of UTXOs in a managed account.
+///
+/// Always returns 0 for keys-only accounts (identity / asset-lock / provider),
+/// which do not track per-account UTXOs.
 ///
 /// # Safety
 ///
@@ -652,7 +730,7 @@ pub unsafe extern "C" fn managed_core_account_get_utxo_count(
     }
 
     let account = &*account;
-    account.inner().utxos.len() as c_uint
+    account.as_funds().map_or(0, |f| f.utxos.len() as c_uint)
 }
 
 /// FFI-compatible owning-account descriptor for a [`FFITransactionRecord`].
@@ -948,7 +1026,7 @@ pub unsafe extern "C" fn managed_core_account_get_transactions(
     }
 
     let account = &*account;
-    let transactions = account.inner().transactions();
+    let transactions = account.keys_account().transactions();
 
     if transactions.is_empty() {
         *transactions_out = std::ptr::null_mut();
@@ -1080,7 +1158,7 @@ pub unsafe extern "C" fn managed_core_account_get_index(
     }
 
     let account = &*account;
-    account.inner().managed_account_type().index_or_default()
+    account.keys_account().managed_account_type().index_or_default()
 }
 
 /// Get the external address pool from a managed account
@@ -1101,7 +1179,7 @@ pub unsafe extern "C" fn managed_core_account_get_external_address_pool(
     }
 
     let account = &*account;
-    let managed_account = account.inner();
+    let managed_account = account.keys_account();
 
     // Get external address pool if this is a standard account
     match managed_account.managed_account_type() {
@@ -1137,7 +1215,7 @@ pub unsafe extern "C" fn managed_core_account_get_internal_address_pool(
     }
 
     let account = &*account;
-    let managed_account = account.inner();
+    let managed_account = account.keys_account();
 
     // Get internal address pool if this is a standard account
     match managed_account.managed_account_type() {
@@ -1177,7 +1255,7 @@ pub unsafe extern "C" fn managed_core_account_get_address_pool(
     }
 
     let account = &*account;
-    let managed_account = account.inner();
+    let managed_account = account.keys_account();
 
     use key_wallet::managed_account::managed_account_type::ManagedAccountType;
 

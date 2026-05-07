@@ -16,58 +16,74 @@ use key_wallet::managed_account::address_pool::{
     AddressInfo, AddressPool, KeySource, PublicKeyType,
 };
 use key_wallet::managed_account::managed_account_trait::ManagedAccountTrait;
-use key_wallet::managed_account::ManagedCoreFundsAccount;
+use key_wallet::managed_account::{ManagedAccountRef, ManagedAccountRefMut};
 use key_wallet::AccountType;
 
-// Helper functions to get managed accounts by type
+// Helper functions to get managed accounts by type. Identity / asset-lock /
+// provider variants are stored as keys-only accounts; Standard / CoinJoin
+// stay funds-bearing. The returned [`ManagedAccountRef`] enum exposes the
+// shared trait surface (address pools, managed type, network) used here
+// without forcing callers to dispatch on the variant.
 fn get_managed_account_by_type<'a>(
     collection: &'a ManagedAccountCollection,
     account_type: &AccountType,
-) -> Option<&'a ManagedCoreFundsAccount> {
+) -> Option<ManagedAccountRef<'a>> {
     match account_type {
         AccountType::Standard {
             index,
             standard_account_type,
         } => match standard_account_type {
             key_wallet::account::StandardAccountType::BIP44Account => {
-                collection.standard_bip44_accounts.get(index)
+                collection.standard_bip44_accounts.get(index).map(ManagedAccountRef::Funds)
             }
             key_wallet::account::StandardAccountType::BIP32Account => {
-                collection.standard_bip32_accounts.get(index)
+                collection.standard_bip32_accounts.get(index).map(ManagedAccountRef::Funds)
             }
         },
         AccountType::CoinJoin {
             index,
-        } => collection.coinjoin_accounts.get(index),
-        AccountType::IdentityRegistration => collection.identity_registration.as_ref(),
+        } => collection.coinjoin_accounts.get(index).map(ManagedAccountRef::Funds),
+        AccountType::IdentityRegistration => {
+            collection.identity_registration.as_ref().map(ManagedAccountRef::Keys)
+        }
         AccountType::IdentityTopUp {
             registration_index,
-        } => collection.identity_topup.get(registration_index),
+        } => collection.identity_topup.get(registration_index).map(ManagedAccountRef::Keys),
         AccountType::IdentityTopUpNotBoundToIdentity => {
-            collection.identity_topup_not_bound.as_ref()
+            collection.identity_topup_not_bound.as_ref().map(ManagedAccountRef::Keys)
         }
-        AccountType::IdentityInvitation => collection.identity_invitation.as_ref(),
-        AccountType::AssetLockAddressTopUp => collection.asset_lock_address_topup.as_ref(),
+        AccountType::IdentityInvitation => {
+            collection.identity_invitation.as_ref().map(ManagedAccountRef::Keys)
+        }
+        AccountType::AssetLockAddressTopUp => {
+            collection.asset_lock_address_topup.as_ref().map(ManagedAccountRef::Keys)
+        }
         AccountType::AssetLockShieldedAddressTopUp => {
-            collection.asset_lock_shielded_address_topup.as_ref()
+            collection.asset_lock_shielded_address_topup.as_ref().map(ManagedAccountRef::Keys)
         }
-        AccountType::ProviderVotingKeys => collection.provider_voting_keys.as_ref(),
-        AccountType::ProviderOwnerKeys => collection.provider_owner_keys.as_ref(),
-        AccountType::ProviderOperatorKeys => collection.provider_operator_keys.as_ref(),
-        AccountType::ProviderPlatformKeys => collection.provider_platform_keys.as_ref(),
+        AccountType::ProviderVotingKeys => {
+            collection.provider_voting_keys.as_ref().map(ManagedAccountRef::Keys)
+        }
+        AccountType::ProviderOwnerKeys => {
+            collection.provider_owner_keys.as_ref().map(ManagedAccountRef::Keys)
+        }
+        AccountType::ProviderOperatorKeys => {
+            collection.provider_operator_keys.as_ref().map(ManagedAccountRef::Keys)
+        }
+        AccountType::ProviderPlatformKeys => {
+            collection.provider_platform_keys.as_ref().map(ManagedAccountRef::Keys)
+        }
         AccountType::DashpayReceivingFunds {
             ..
         }
         | AccountType::DashpayExternalAccount {
             ..
-        } => {
-            // DashPay managed accounts are not currently persisted in ManagedAccountCollection
-            None
         }
-        AccountType::PlatformPayment {
+        | AccountType::PlatformPayment {
             ..
         } => {
-            // Platform Payment accounts are not currently persisted in ManagedAccountCollection
+            // DashPay and Platform Payment accounts are not reachable through
+            // this address-pool helper.
             None
         }
     }
@@ -76,38 +92,52 @@ fn get_managed_account_by_type<'a>(
 fn get_managed_account_by_type_mut<'a>(
     collection: &'a mut ManagedAccountCollection,
     account_type: &AccountType,
-) -> Option<&'a mut ManagedCoreFundsAccount> {
+) -> Option<ManagedAccountRefMut<'a>> {
     match account_type {
         AccountType::Standard {
             index,
             standard_account_type,
         } => match standard_account_type {
             key_wallet::account::StandardAccountType::BIP44Account => {
-                collection.standard_bip44_accounts.get_mut(index)
+                collection.standard_bip44_accounts.get_mut(index).map(ManagedAccountRefMut::Funds)
             }
             key_wallet::account::StandardAccountType::BIP32Account => {
-                collection.standard_bip32_accounts.get_mut(index)
+                collection.standard_bip32_accounts.get_mut(index).map(ManagedAccountRefMut::Funds)
             }
         },
         AccountType::CoinJoin {
             index,
-        } => collection.coinjoin_accounts.get_mut(index),
-        AccountType::IdentityRegistration => collection.identity_registration.as_mut(),
+        } => collection.coinjoin_accounts.get_mut(index).map(ManagedAccountRefMut::Funds),
+        AccountType::IdentityRegistration => {
+            collection.identity_registration.as_mut().map(ManagedAccountRefMut::Keys)
+        }
         AccountType::IdentityTopUp {
             registration_index,
-        } => collection.identity_topup.get_mut(registration_index),
+        } => collection.identity_topup.get_mut(registration_index).map(ManagedAccountRefMut::Keys),
         AccountType::IdentityTopUpNotBoundToIdentity => {
-            collection.identity_topup_not_bound.as_mut()
+            collection.identity_topup_not_bound.as_mut().map(ManagedAccountRefMut::Keys)
         }
-        AccountType::IdentityInvitation => collection.identity_invitation.as_mut(),
-        AccountType::AssetLockAddressTopUp => collection.asset_lock_address_topup.as_mut(),
+        AccountType::IdentityInvitation => {
+            collection.identity_invitation.as_mut().map(ManagedAccountRefMut::Keys)
+        }
+        AccountType::AssetLockAddressTopUp => {
+            collection.asset_lock_address_topup.as_mut().map(ManagedAccountRefMut::Keys)
+        }
         AccountType::AssetLockShieldedAddressTopUp => {
-            collection.asset_lock_shielded_address_topup.as_mut()
+            collection.asset_lock_shielded_address_topup.as_mut().map(ManagedAccountRefMut::Keys)
         }
-        AccountType::ProviderVotingKeys => collection.provider_voting_keys.as_mut(),
-        AccountType::ProviderOwnerKeys => collection.provider_owner_keys.as_mut(),
-        AccountType::ProviderOperatorKeys => collection.provider_operator_keys.as_mut(),
-        AccountType::ProviderPlatformKeys => collection.provider_platform_keys.as_mut(),
+        AccountType::ProviderVotingKeys => {
+            collection.provider_voting_keys.as_mut().map(ManagedAccountRefMut::Keys)
+        }
+        AccountType::ProviderOwnerKeys => {
+            collection.provider_owner_keys.as_mut().map(ManagedAccountRefMut::Keys)
+        }
+        AccountType::ProviderOperatorKeys => {
+            collection.provider_operator_keys.as_mut().map(ManagedAccountRefMut::Keys)
+        }
+        AccountType::ProviderPlatformKeys => {
+            collection.provider_platform_keys.as_mut().map(ManagedAccountRefMut::Keys)
+        }
         AccountType::DashpayReceivingFunds {
             ..
         }
@@ -384,7 +414,7 @@ pub unsafe extern "C" fn managed_wallet_set_gap_limit(
     let account_type_rust = account_type.to_account_type(account_index);
 
     // Get the specific managed account
-    let managed_account = unwrap_or_return!(
+    let mut managed_account = unwrap_or_return!(
         get_managed_account_by_type_mut(&mut managed_wallet.accounts, &account_type_rust),
         error
     );
@@ -471,7 +501,7 @@ pub unsafe extern "C" fn managed_wallet_generate_addresses_to_index(
     let key_source = KeySource::Public(xpub);
 
     // Get the specific managed account
-    let managed_account = unwrap_or_return!(
+    let mut managed_account = unwrap_or_return!(
         get_managed_account_by_type_mut(&mut managed_wallet.accounts, &account_type_rust),
         error
     );

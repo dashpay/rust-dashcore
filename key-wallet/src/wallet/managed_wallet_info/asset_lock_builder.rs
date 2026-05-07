@@ -12,7 +12,6 @@ use std::collections::HashMap;
 use std::fmt;
 
 use crate::managed_account::managed_account_trait::ManagedAccountTrait;
-use crate::managed_account::ManagedCoreFundsAccount;
 use crate::signer::{Signer, SignerMethod};
 use crate::wallet::managed_wallet_info::coin_selection::SelectionStrategy;
 use crate::wallet::managed_wallet_info::fee::FeeRate;
@@ -138,11 +137,15 @@ impl From<BuilderError> for AssetLockError {
 }
 
 /// Resolve a funding key account from the managed account collection.
+///
+/// Funding-key accounts (identity / asset-lock) are stored as
+/// [`ManagedCoreKeysAccount`] in the collection — they derive keys for asset
+/// locks but don't track per-account funds.
 fn resolve_funding_account(
     accounts: &mut crate::account::ManagedAccountCollection,
     funding_type: AssetLockFundingType,
     identity_index: u32,
-) -> Result<&mut ManagedCoreFundsAccount, AssetLockError> {
+) -> Result<&mut crate::managed_account::ManagedCoreKeysAccount, AssetLockError> {
     match funding_type {
         AssetLockFundingType::IdentityRegistration => accounts
             .identity_registration

@@ -6,6 +6,7 @@
 pub(crate) use super::account_checker::TransactionCheckResult;
 use super::transaction_context::TransactionContext;
 use super::transaction_router::TransactionRouter;
+#[cfg(test)]
 use crate::managed_account::managed_account_trait::ManagedAccountTrait;
 use crate::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
 use crate::wallet::managed_wallet_info::ManagedWalletInfo;
@@ -111,7 +112,7 @@ impl WalletTransactionChecker for ManagedWalletInfo {
                 // before marking UTXOs so the freshly registered UTXOs get the
                 // IS-lock flag too.
                 for account_match in result.affected_accounts.clone() {
-                    let Some(account) = self
+                    let Some(mut account) = self
                         .accounts
                         .get_by_account_type_match_mut(&account_match.account_type_match)
                     else {
@@ -148,7 +149,7 @@ impl WalletTransactionChecker for ManagedWalletInfo {
 
         // Process each affected account
         for account_match in result.affected_accounts.clone() {
-            let Some(account) =
+            let Some(mut account) =
                 self.accounts.get_by_account_type_match_mut(&account_match.account_type_match)
             else {
                 continue;

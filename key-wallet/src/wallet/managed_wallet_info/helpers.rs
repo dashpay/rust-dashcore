@@ -4,6 +4,7 @@ use super::ManagedWalletInfo;
 use crate::account::account_collection::PlatformPaymentAccountKey;
 use crate::account::ManagedCoreFundsAccount;
 use crate::managed_account::managed_platform_account::ManagedPlatformAccount;
+use crate::managed_account::ManagedCoreKeysAccount;
 
 impl ManagedWalletInfo {
     // BIP44 Account Helpers
@@ -87,12 +88,12 @@ impl ManagedWalletInfo {
     // TopUp Account Helpers
 
     /// Get the first TopUp managed account
-    pub fn first_topup_managed_account(&self) -> Option<&ManagedCoreFundsAccount> {
+    pub fn first_topup_managed_account(&self) -> Option<&ManagedCoreKeysAccount> {
         self.accounts.identity_topup.values().next()
     }
 
     /// Get the first TopUp managed account (mutable)
-    pub fn first_topup_managed_account_mut(&mut self) -> Option<&mut ManagedCoreFundsAccount> {
+    pub fn first_topup_managed_account_mut(&mut self) -> Option<&mut ManagedCoreKeysAccount> {
         self.accounts.identity_topup.values_mut().next()
     }
 
@@ -100,7 +101,7 @@ impl ManagedWalletInfo {
     pub fn topup_managed_account_at_registration_index(
         &self,
         registration_index: u32,
-    ) -> Option<&ManagedCoreFundsAccount> {
+    ) -> Option<&ManagedCoreKeysAccount> {
         self.accounts.identity_topup.get(&registration_index)
     }
 
@@ -108,105 +109,105 @@ impl ManagedWalletInfo {
     pub fn topup_managed_account_at_registration_index_mut(
         &mut self,
         registration_index: u32,
-    ) -> Option<&mut ManagedCoreFundsAccount> {
+    ) -> Option<&mut ManagedCoreKeysAccount> {
         self.accounts.identity_topup.get_mut(&registration_index)
     }
 
     // Identity Registration Account Helper
 
     /// Get the identity registration managed account
-    pub fn identity_registration_managed_account(&self) -> Option<&ManagedCoreFundsAccount> {
+    pub fn identity_registration_managed_account(&self) -> Option<&ManagedCoreKeysAccount> {
         self.accounts.identity_registration.as_ref()
     }
 
     /// Get the identity registration managed account (mutable)
     pub fn identity_registration_managed_account_mut(
         &mut self,
-    ) -> Option<&mut ManagedCoreFundsAccount> {
+    ) -> Option<&mut ManagedCoreKeysAccount> {
         self.accounts.identity_registration.as_mut()
     }
 
     // Identity TopUp Not Bound Account Helper
 
     /// Get the identity top-up not bound managed account
-    pub fn identity_topup_not_bound_managed_account(&self) -> Option<&ManagedCoreFundsAccount> {
+    pub fn identity_topup_not_bound_managed_account(&self) -> Option<&ManagedCoreKeysAccount> {
         self.accounts.identity_topup_not_bound.as_ref()
     }
 
     /// Get the identity top-up not bound managed account (mutable)
     pub fn identity_topup_not_bound_managed_account_mut(
         &mut self,
-    ) -> Option<&mut ManagedCoreFundsAccount> {
+    ) -> Option<&mut ManagedCoreKeysAccount> {
         self.accounts.identity_topup_not_bound.as_mut()
     }
 
     // Identity Invitation Account Helper
 
     /// Get the identity invitation managed account
-    pub fn identity_invitation_managed_account(&self) -> Option<&ManagedCoreFundsAccount> {
+    pub fn identity_invitation_managed_account(&self) -> Option<&ManagedCoreKeysAccount> {
         self.accounts.identity_invitation.as_ref()
     }
 
     /// Get the identity invitation managed account (mutable)
     pub fn identity_invitation_managed_account_mut(
         &mut self,
-    ) -> Option<&mut ManagedCoreFundsAccount> {
+    ) -> Option<&mut ManagedCoreKeysAccount> {
         self.accounts.identity_invitation.as_mut()
     }
 
     // Provider Voting Keys Account Helper
 
     /// Get the provider voting keys managed account
-    pub fn provider_voting_keys_managed_account(&self) -> Option<&ManagedCoreFundsAccount> {
+    pub fn provider_voting_keys_managed_account(&self) -> Option<&ManagedCoreKeysAccount> {
         self.accounts.provider_voting_keys.as_ref()
     }
 
     /// Get the provider voting keys managed account (mutable)
     pub fn provider_voting_keys_managed_account_mut(
         &mut self,
-    ) -> Option<&mut ManagedCoreFundsAccount> {
+    ) -> Option<&mut ManagedCoreKeysAccount> {
         self.accounts.provider_voting_keys.as_mut()
     }
 
     // Provider Owner Keys Account Helper
 
     /// Get the provider owner keys managed account
-    pub fn provider_owner_keys_managed_account(&self) -> Option<&ManagedCoreFundsAccount> {
+    pub fn provider_owner_keys_managed_account(&self) -> Option<&ManagedCoreKeysAccount> {
         self.accounts.provider_owner_keys.as_ref()
     }
 
     /// Get the provider owner keys managed account (mutable)
     pub fn provider_owner_keys_managed_account_mut(
         &mut self,
-    ) -> Option<&mut ManagedCoreFundsAccount> {
+    ) -> Option<&mut ManagedCoreKeysAccount> {
         self.accounts.provider_owner_keys.as_mut()
     }
 
     // Provider Operator Keys Account Helper
 
     /// Get the provider operator keys managed account
-    pub fn provider_operator_keys_managed_account(&self) -> Option<&ManagedCoreFundsAccount> {
+    pub fn provider_operator_keys_managed_account(&self) -> Option<&ManagedCoreKeysAccount> {
         self.accounts.provider_operator_keys.as_ref()
     }
 
     /// Get the provider operator keys managed account (mutable)
     pub fn provider_operator_keys_managed_account_mut(
         &mut self,
-    ) -> Option<&mut ManagedCoreFundsAccount> {
+    ) -> Option<&mut ManagedCoreKeysAccount> {
         self.accounts.provider_operator_keys.as_mut()
     }
 
     // Provider Platform Keys Account Helper
 
     /// Get the provider platform keys managed account
-    pub fn provider_platform_keys_managed_account(&self) -> Option<&ManagedCoreFundsAccount> {
+    pub fn provider_platform_keys_managed_account(&self) -> Option<&ManagedCoreKeysAccount> {
         self.accounts.provider_platform_keys.as_ref()
     }
 
     /// Get the provider platform keys managed account (mutable)
     pub fn provider_platform_keys_managed_account_mut(
         &mut self,
-    ) -> Option<&mut ManagedCoreFundsAccount> {
+    ) -> Option<&mut ManagedCoreKeysAccount> {
         self.accounts.provider_platform_keys.as_mut()
     }
 
@@ -308,8 +309,8 @@ impl ManagedWalletInfo {
         self.accounts.all_accounts().len()
     }
 
-    /// Get all accounts
-    pub fn all_managed_accounts(&self) -> Vec<&ManagedCoreFundsAccount> {
+    /// Get all accounts (mixed funds and keys variants).
+    pub fn all_managed_accounts(&self) -> Vec<crate::managed_account::ManagedAccountRef<'_>> {
         self.accounts.all_accounts()
     }
 }

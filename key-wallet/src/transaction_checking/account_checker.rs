@@ -444,7 +444,7 @@ impl ManagedAccountCollection {
                 .into_iter()
                 .collect(),
             AccountTypeToCheck::IdentityTopUp => {
-                Self::check_indexed_accounts(&self.identity_topup, tx)
+                Self::check_indexed_keys_accounts(&self.identity_topup, tx)
             }
             AccountTypeToCheck::IdentityTopUpNotBound => self
                 .identity_topup_not_bound
@@ -519,9 +519,23 @@ impl ManagedAccountCollection {
         }
     }
 
-    /// Check indexed accounts (BTreeMap of accounts)
+    /// Check indexed funds-bearing accounts.
     fn check_indexed_accounts(
         accounts: &BTreeMap<u32, ManagedCoreFundsAccount>,
+        tx: &Transaction,
+    ) -> Vec<AccountMatch> {
+        let mut matches = Vec::new();
+        for (index, account) in accounts {
+            if let Some(match_info) = account.check_transaction_for_match(tx, Some(*index)) {
+                matches.push(match_info);
+            }
+        }
+        matches
+    }
+
+    /// Check indexed keys-only accounts.
+    fn check_indexed_keys_accounts(
+        accounts: &BTreeMap<u32, crate::managed_account::ManagedCoreKeysAccount>,
         tx: &Transaction,
     ) -> Vec<AccountMatch> {
         let mut matches = Vec::new();
@@ -1154,6 +1168,376 @@ impl ManagedCoreFundsAccount {
             }
         }
 
+        None
+    }
+}
+
+impl crate::managed_account::ManagedCoreKeysAccount {
+    /// Check if a script pubkey is a provider payout that belongs to this account.
+    fn check_provider_payout(&self, script_pubkey: &ScriptBuf) -> Option<AddressInfo> {
+        if self.contains_script_pub_key(script_pubkey) {
+            if let Ok(address) = Address::from_script(script_pubkey, self.network()) {
+                return self.get_address_info(&address);
+            }
+        }
+        None
+    }
+
+    /// Check a single keys account for transaction involvement.
+    ///
+    /// Mirrors [`ManagedCoreFundsAccount::check_transaction_for_match`] but
+    /// skips UTXO-based input matching (`sent` is always 0 for keys accounts).
+    pub fn check_transaction_for_match(
+        &self,
+        tx: &Transaction,
+        index: Option<u32>,
+    ) -> Option<AccountMatch> {
+        let mut involved_other_addresses = Vec::new();
+        let mut received = 0u64;
+        let mut provider_payout_involved = false;
+
+        // Provider payouts in special transactions
+        if let Some(payload) = &tx.special_transaction_payload {
+            let script_payout = match payload {
+                TransactionPayload::ProviderRegistrationPayloadType(reg) => {
+                    Some(&reg.script_payout)
+                }
+                TransactionPayload::ProviderUpdateRegistrarPayloadType(update) => {
+                    Some(&update.script_payout)
+                }
+                TransactionPayload::ProviderUpdateServicePayloadType(update) => {
+                    Some(&update.script_payout)
+                }
+                _ => None,
+            };
+
+            if let Some(payout_script) = script_payout {
+                if let Some(payout_info) = self.check_provider_payout(payout_script) {
+                    provider_payout_involved = true;
+                    if Address::from_script(payout_script, self.network()).is_ok() {
+                        involved_other_addresses.push(payout_info);
+                    }
+                }
+            }
+        }
+
+        // Outputs (received) — keys accounts never own change addresses,
+        // so every match goes into `involved_other_addresses`.
+        for output in &tx.output {
+            if self.contains_script_pub_key(&output.script_pubkey) {
+                if let Ok(address) = Address::from_script(&output.script_pubkey, self.network()) {
+                    if let Some(address_info) = self.get_address_info(&address) {
+                        involved_other_addresses.push(address_info);
+                    }
+                }
+                received += output.value;
+            }
+        }
+
+        let has_addresses = !involved_other_addresses.is_empty() || provider_payout_involved;
+        if !has_addresses {
+            return None;
+        }
+
+        let account_type_match = match self.managed_account_type() {
+            ManagedAccountType::IdentityRegistration {
+                ..
+            } => CoreAccountTypeMatch::IdentityRegistration {
+                involved_addresses: involved_other_addresses,
+            },
+            ManagedAccountType::IdentityTopUp {
+                ..
+            } => CoreAccountTypeMatch::IdentityTopUp {
+                account_index: index.unwrap_or(0),
+                involved_addresses: involved_other_addresses,
+            },
+            ManagedAccountType::IdentityTopUpNotBoundToIdentity {
+                ..
+            } => CoreAccountTypeMatch::IdentityTopUpNotBound {
+                involved_addresses: involved_other_addresses,
+            },
+            ManagedAccountType::IdentityInvitation {
+                ..
+            } => CoreAccountTypeMatch::IdentityInvitation {
+                involved_addresses: involved_other_addresses,
+            },
+            ManagedAccountType::AssetLockAddressTopUp {
+                ..
+            } => CoreAccountTypeMatch::AssetLockAddressTopUp {
+                involved_addresses: involved_other_addresses,
+            },
+            ManagedAccountType::AssetLockShieldedAddressTopUp {
+                ..
+            } => CoreAccountTypeMatch::AssetLockShieldedAddressTopUp {
+                involved_addresses: involved_other_addresses,
+            },
+            ManagedAccountType::ProviderVotingKeys {
+                ..
+            } => CoreAccountTypeMatch::ProviderVotingKeys {
+                involved_addresses: involved_other_addresses,
+            },
+            ManagedAccountType::ProviderOwnerKeys {
+                ..
+            } => CoreAccountTypeMatch::ProviderOwnerKeys {
+                involved_addresses: involved_other_addresses,
+            },
+            ManagedAccountType::ProviderOperatorKeys {
+                ..
+            } => CoreAccountTypeMatch::ProviderOperatorKeys {
+                involved_addresses: involved_other_addresses,
+            },
+            ManagedAccountType::ProviderPlatformKeys {
+                ..
+            } => CoreAccountTypeMatch::ProviderPlatformKeys {
+                involved_addresses: involved_other_addresses,
+            },
+            // Funds-bearing variants are not expected on keys accounts.
+            _ => return None,
+        };
+
+        Some(AccountMatch {
+            account_type_match,
+            received,
+            sent: 0,
+            received_for_credit_conversion: 0,
+        })
+    }
+
+    /// Check AssetLock transaction credit_outputs for involvement of this
+    /// keys account. Mirrors the funds-account version verbatim — neither
+    /// implementation touches UTXO state.
+    pub fn check_asset_lock_transaction_for_match(
+        &self,
+        tx: &Transaction,
+        index: Option<u32>,
+    ) -> Option<AccountMatch> {
+        if let Some(TransactionPayload::AssetLockPayloadType(ref payload)) =
+            tx.special_transaction_payload
+        {
+            let mut involved_addresses = Vec::new();
+            let mut received = 0u64;
+
+            for credit_output in &payload.credit_outputs {
+                if self.contains_script_pub_key(&credit_output.script_pubkey) {
+                    if let Ok(address) =
+                        Address::from_script(&credit_output.script_pubkey, self.network())
+                    {
+                        if let Some(address_info) = self.get_address_info(&address) {
+                            involved_addresses.push(address_info.clone());
+                        }
+                    }
+                    received += credit_output.value;
+                }
+            }
+
+            if !involved_addresses.is_empty() {
+                let account_type_match = match self.managed_account_type() {
+                    ManagedAccountType::IdentityRegistration {
+                        ..
+                    } => CoreAccountTypeMatch::IdentityRegistration {
+                        involved_addresses,
+                    },
+                    ManagedAccountType::IdentityTopUp {
+                        ..
+                    } => CoreAccountTypeMatch::IdentityTopUp {
+                        account_index: index.unwrap_or(0),
+                        involved_addresses,
+                    },
+                    ManagedAccountType::IdentityTopUpNotBoundToIdentity {
+                        ..
+                    } => CoreAccountTypeMatch::IdentityTopUpNotBound {
+                        involved_addresses,
+                    },
+                    ManagedAccountType::IdentityInvitation {
+                        ..
+                    } => CoreAccountTypeMatch::IdentityInvitation {
+                        involved_addresses,
+                    },
+                    ManagedAccountType::AssetLockAddressTopUp {
+                        ..
+                    } => CoreAccountTypeMatch::AssetLockAddressTopUp {
+                        involved_addresses,
+                    },
+                    ManagedAccountType::AssetLockShieldedAddressTopUp {
+                        ..
+                    } => CoreAccountTypeMatch::AssetLockShieldedAddressTopUp {
+                        involved_addresses,
+                    },
+                    _ => return None,
+                };
+
+                return Some(AccountMatch {
+                    account_type_match,
+                    received: 0,
+                    sent: 0,
+                    received_for_credit_conversion: received,
+                });
+            }
+        }
+
+        None
+    }
+
+    /// Check if the transaction contains a provider voting key from this account.
+    pub fn check_provider_voting_key_in_transaction_for_match(
+        &self,
+        tx: &Transaction,
+    ) -> Option<AccountMatch> {
+        if let ManagedAccountType::ProviderVotingKeys {
+            addresses,
+        } = self.managed_account_type()
+        {
+            if let Some(payload) = &tx.special_transaction_payload {
+                let voting_key_hash = match payload {
+                    TransactionPayload::ProviderRegistrationPayloadType(reg) => {
+                        &reg.voting_key_hash
+                    }
+                    TransactionPayload::ProviderUpdateRegistrarPayloadType(update) => {
+                        &update.voting_key_hash
+                    }
+                    _ => return None,
+                };
+
+                for (address, &addr_index) in &addresses.address_index {
+                    if let Payload::PubkeyHash(addr_hash) = address.payload() {
+                        if addr_hash == voting_key_hash {
+                            if let Some(address_info) = addresses.addresses.get(&addr_index) {
+                                return Some(AccountMatch {
+                                    account_type_match: CoreAccountTypeMatch::ProviderVotingKeys {
+                                        involved_addresses: vec![address_info.clone()],
+                                    },
+                                    received: 0,
+                                    sent: 0,
+                                    received_for_credit_conversion: 0,
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    /// Check if the transaction contains a provider owner key from this account.
+    pub fn check_provider_owner_key_in_transaction_for_match(
+        &self,
+        tx: &Transaction,
+    ) -> Option<AccountMatch> {
+        if let ManagedAccountType::ProviderOwnerKeys {
+            addresses,
+        } = self.managed_account_type()
+        {
+            if let Some(payload) = &tx.special_transaction_payload {
+                let owner_key_hash = match payload {
+                    TransactionPayload::ProviderRegistrationPayloadType(reg) => &reg.owner_key_hash,
+                    _ => return None,
+                };
+
+                for (address, &addr_index) in &addresses.address_index {
+                    if let Payload::PubkeyHash(addr_hash) = address.payload() {
+                        if addr_hash == owner_key_hash {
+                            if let Some(address_info) = addresses.addresses.get(&addr_index) {
+                                return Some(AccountMatch {
+                                    account_type_match: CoreAccountTypeMatch::ProviderOwnerKeys {
+                                        involved_addresses: vec![address_info.clone()],
+                                    },
+                                    received: 0,
+                                    sent: 0,
+                                    received_for_credit_conversion: 0,
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    /// Check if the transaction contains a provider operator key from this account.
+    pub fn check_provider_operator_key_in_transaction_for_match(
+        &self,
+        tx: &Transaction,
+    ) -> Option<AccountMatch> {
+        if let ManagedAccountType::ProviderOperatorKeys {
+            addresses,
+        } = self.managed_account_type()
+        {
+            #[cfg(feature = "bls")]
+            if let Some(payload) = &tx.special_transaction_payload {
+                let operator_public_key = match payload {
+                    TransactionPayload::ProviderRegistrationPayloadType(reg) => {
+                        &reg.operator_public_key
+                    }
+                    TransactionPayload::ProviderUpdateRegistrarPayloadType(reg) => {
+                        &reg.operator_public_key
+                    }
+                    _ => return None,
+                };
+
+                for address_info in addresses.addresses.values() {
+                    if let Some(PublicKeyType::BLS(bls_key)) = &address_info.public_key {
+                        let operator_key_bytes: &[u8; 48] = operator_public_key.as_ref();
+                        if bls_key.len() == 48 && bls_key.as_slice() == operator_key_bytes {
+                            return Some(AccountMatch {
+                                account_type_match: CoreAccountTypeMatch::ProviderOperatorKeys {
+                                    involved_addresses: vec![address_info.clone()],
+                                },
+                                received: 0,
+                                sent: 0,
+                                received_for_credit_conversion: 0,
+                            });
+                        }
+                    }
+                }
+            }
+            #[cfg(not(feature = "bls"))]
+            let _ = (tx, addresses);
+        }
+        None
+    }
+
+    /// Check if the transaction contains a provider platform key from this account.
+    pub fn check_provider_platform_key_in_transaction_for_match(
+        &self,
+        tx: &Transaction,
+    ) -> Option<AccountMatch> {
+        if let ManagedAccountType::ProviderPlatformKeys {
+            addresses,
+        } = self.managed_account_type()
+        {
+            if let Some(payload) = &tx.special_transaction_payload {
+                let platform_node_id = match payload {
+                    TransactionPayload::ProviderRegistrationPayloadType(reg) => {
+                        if let Some(platform_node_id) = &reg.platform_node_id {
+                            platform_node_id
+                        } else {
+                            return None;
+                        }
+                    }
+                    _ => return None,
+                };
+
+                for (address, &addr_index) in &addresses.address_index {
+                    if let Payload::PubkeyHash(addr_hash) = address.payload() {
+                        if addr_hash == platform_node_id {
+                            if let Some(address_info) = addresses.addresses.get(&addr_index) {
+                                return Some(AccountMatch {
+                                    account_type_match:
+                                        CoreAccountTypeMatch::ProviderPlatformKeys {
+                                            involved_addresses: vec![address_info.clone()],
+                                        },
+                                    received: 0,
+                                    sent: 0,
+                                    received_for_credit_conversion: 0,
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+        }
         None
     }
 }

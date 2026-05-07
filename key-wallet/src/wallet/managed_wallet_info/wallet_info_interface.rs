@@ -71,11 +71,19 @@ pub trait WalletInfoInterface: Sized + WalletTransactionChecker + ManagedAccount
     fn update_balance(&mut self);
 
     /// Per-account balances keyed by `AccountType`.
+    ///
+    /// Only funds-bearing accounts (Standard, CoinJoin, DashPay) carry a
+    /// balance — keys-only accounts (identity, asset-lock, provider) are
+    /// excluded from the result entirely rather than reported with a zero
+    /// balance.
     fn account_balances(&self) -> BTreeMap<AccountType, WalletCoreBalance> {
         self.accounts()
             .all_accounts()
             .iter()
-            .map(|acc| (acc.managed_account_type().to_account_type(), acc.balance))
+            .filter_map(|acc| {
+                let funds = acc.as_funds()?;
+                Some((funds.managed_account_type().to_account_type(), funds.balance))
+            })
             .collect()
     }
 
@@ -189,7 +197,9 @@ impl WalletInfoInterface for ManagedWalletInfo {
     fn utxos(&self) -> BTreeSet<&Utxo> {
         let mut utxos = BTreeSet::new();
         for account in self.accounts.all_accounts() {
-            utxos.extend(account.utxos.values());
+            if let Some(funds) = account.as_funds() {
+                utxos.extend(funds.utxos.values());
+            }
         }
         utxos
     }
@@ -207,9 +217,12 @@ impl WalletInfoInterface for ManagedWalletInfo {
     fn update_balance(&mut self) {
         let mut balance = WalletCoreBalance::default();
         let last_processed_height = self.last_processed_height();
-        for account in self.accounts.all_accounts_mut() {
-            account.update_balance(last_processed_height);
-            balance += account.balance;
+        for mut account in self.accounts.all_accounts_mut() {
+            // Only funds-bearing accounts contribute to the wallet balance.
+            if let Some(funds) = account.as_funds_mut() {
+                funds.update_balance(last_processed_height);
+                balance += funds.balance;
+            }
         }
         self.balance = balance;
     }
@@ -233,19 +246,25 @@ impl WalletInfoInterface for ManagedWalletInfo {
     fn immature_transactions(&self) -> Vec<Transaction> {
         let mut immature_txids: BTreeSet<Txid> = BTreeSet::new();
 
-        // Find txids of immature coinbase UTXOs
+        // Coinbase UTXOs only live on funds-bearing accounts.
         for account in self.accounts.all_accounts() {
-            for utxo in account.utxos.values() {
+            let Some(funds) = account.as_funds() else {
+                continue;
+            };
+            for utxo in funds.utxos.values() {
                 if utxo.is_coinbase && !utxo.is_mature(self.last_processed_height()) {
                     immature_txids.insert(utxo.outpoint.txid);
                 }
             }
         }
 
-        // Get the actual transactions
+        // Look up the matching transaction records on the same funds accounts.
         let mut transactions = Vec::new();
         for account in self.accounts.all_accounts() {
-            for (txid, record) in account.transactions() {
+            let Some(funds) = account.as_funds() else {
+                continue;
+            };
+            for (txid, record) in funds.transactions() {
                 if immature_txids.contains(txid) {
                     transactions.push(record.transaction.clone());
                 }
@@ -274,7 +293,11 @@ impl WalletInfoInterface for ManagedWalletInfo {
         }
         let mut matured = Vec::new();
         for account in self.accounts.all_accounts() {
-            for record in account.transactions().values() {
+            // Coinbase records only land on funds-bearing accounts.
+            let Some(funds) = account.as_funds() else {
+                continue;
+            };
+            for record in funds.transactions().values() {
                 if !record.transaction.is_coin_base() {
                     continue;
                 }
@@ -295,7 +318,7 @@ impl WalletInfoInterface for ManagedWalletInfo {
             return false;
         }
         let mut any_changed = false;
-        for account in self.accounts.all_accounts_mut() {
+        for mut account in self.accounts.all_accounts_mut() {
             if account.mark_utxos_instant_send(txid) {
                 any_changed = true;
             }
