@@ -219,8 +219,8 @@ impl ManagedAccountCollection {
         account: impl Into<OwnedManagedCoreAccount>,
     ) -> Result<(), crate::error::Error> {
         match account.into() {
-            OwnedManagedCoreAccount::Funds(a) => self.insert_funds(a),
-            OwnedManagedCoreAccount::Keys(a) => self.insert_keys(a),
+            OwnedManagedCoreAccount::Funds(a) => self.insert_funds_bearing_account(a),
+            OwnedManagedCoreAccount::Keys(a) => self.insert_keys_bearing_account(a),
         }
     }
 
@@ -229,8 +229,8 @@ impl ManagedAccountCollection {
     /// Errors if the account's [`ManagedAccountType`] does not correspond to
     /// a funds-bearing variant (Standard / CoinJoin / DashPay) — identity,
     /// asset-lock, and provider variants must be inserted as
-    /// [`ManagedCoreKeysAccount`] via [`Self::insert_keys`].
-    pub fn insert_funds(
+    /// [`ManagedCoreKeysAccount`] via [`Self::insert_keys_bearing_account`].
+    pub fn insert_funds_bearing_account(
         &mut self,
         account: ManagedCoreFundsAccount,
     ) -> Result<(), crate::error::Error> {
@@ -290,7 +290,7 @@ impl ManagedAccountCollection {
             }
             other => {
                 return Err(crate::error::Error::InvalidParameter(format!(
-                    "Account type {:?} cannot be stored as ManagedCoreFundsAccount; use insert_keys instead",
+                    "Account type {:?} cannot be stored as ManagedCoreFundsAccount; use insert_keys_bearing_account instead",
                     other.to_account_type(),
                 )));
             }
@@ -303,8 +303,8 @@ impl ManagedAccountCollection {
     /// Errors if the account's [`ManagedAccountType`] does not correspond to
     /// a keys-only variant (identity / asset-lock / provider) — Standard,
     /// CoinJoin, and DashPay variants must be inserted as
-    /// [`ManagedCoreFundsAccount`] via [`Self::insert_funds`].
-    pub fn insert_keys(
+    /// [`ManagedCoreFundsAccount`] via [`Self::insert_funds_bearing_account`].
+    pub fn insert_keys_bearing_account(
         &mut self,
         account: ManagedCoreKeysAccount,
     ) -> Result<(), crate::error::Error> {
@@ -362,7 +362,7 @@ impl ManagedAccountCollection {
             }
             other => {
                 return Err(crate::error::Error::InvalidParameter(format!(
-                    "Account type {:?} cannot be stored as ManagedCoreKeysAccount; use insert_funds instead",
+                    "Account type {:?} cannot be stored as ManagedCoreKeysAccount; use insert_funds_bearing_account instead",
                     other.to_account_type(),
                 )));
             }
