@@ -132,12 +132,14 @@ pub unsafe extern "C" fn wallet_build_and_sign_transaction(
             let mut manager = manager_ref.manager.write().await;
 
             let (transaction, fee) = unwrap_or_return!(
-                manager.build_and_sign_transaction(
-                    &wallet_id,
-                    account_index,
-                    outputs,
-                    FeeRate::new(fee_per_kb)
-                ),
+                manager
+                    .build_and_sign_transaction(
+                        &wallet_id,
+                        account_index,
+                        outputs,
+                        FeeRate::new(fee_per_kb)
+                    )
+                    .await,
                 error
             );
             *fee_out = fee;
@@ -837,7 +839,7 @@ pub unsafe extern "C" fn wallet_build_and_sign_asset_lock_transaction(
                 account_index,
                 fundings,
                 fee_per_kb,
-            ), error);
+            ).await, error);
 
             // Write outputs
             *fee_out = result.fee;

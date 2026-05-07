@@ -602,7 +602,7 @@ impl WalletManager<ManagedWalletInfo> {
         managed_info.next_change_address(wallet, account_index, account_type_pref, mark_as_used)
     }
 
-    pub fn build_and_sign_transaction(
+    pub async fn build_and_sign_transaction(
         &mut self,
         wallet_id: &WalletId,
         account_index: u32,
@@ -616,6 +616,7 @@ impl WalletManager<ManagedWalletInfo> {
 
         managed_wallet
             .build_and_sign_transaction(wallet, account_index, outputs, fee_rate)
+            .await
             .map_err(|e| WalletError::TransactionBuild(e.to_string()))
     }
 }

@@ -3,31 +3,22 @@
 //! This module provides high-level transaction building functionality
 //! using types from the dashcore crate.
 
-use core::fmt;
-
-use dashcore::blockdata::script::{Builder, PushBytes, ScriptBuf};
-use dashcore::blockdata::transaction::special_transaction::{
-    asset_lock::AssetLockPayload,
-    coinbase::CoinbasePayload,
-    provider_registration::{ProviderMasternodeType, ProviderRegistrationPayload},
-    provider_update_registrar::ProviderUpdateRegistrarPayload,
-    provider_update_revocation::ProviderUpdateRevocationPayload,
-    provider_update_service::ProviderUpdateServicePayload,
-    TransactionPayload,
-};
-use dashcore::blockdata::transaction::Transaction;
-use dashcore::bls_sig_utils::{BLSPublicKey, BLSSignature};
-use dashcore::hash_types::{InputsHash, MerkleRootMasternodeList, MerkleRootQuorums, PubkeyHash};
-use dashcore::sighash::{EcdsaSighashType, SighashCache};
-use dashcore::Address;
-use dashcore::{OutPoint, TxIn, TxOut, Txid};
-use dashcore_hashes::Hash;
-use secp256k1::{Message, Secp256k1, SecretKey};
-use std::net::SocketAddr;
-
+use crate::managed_account::ManagedCoreFundsAccount;
 use crate::wallet::managed_wallet_info::coin_selection::{CoinSelector, SelectionStrategy};
 use crate::wallet::managed_wallet_info::fee::FeeRate;
-use crate::Utxo;
+use crate::{Account, DerivationPath, Signer, Utxo, Wallet};
+use core::fmt;
+use dashcore::blockdata::script::{Builder, PushBytes, ScriptBuf};
+use dashcore::blockdata::transaction::special_transaction::TransactionPayload;
+use dashcore::blockdata::transaction::Transaction;
+use dashcore::consensus::Encodable;
+use dashcore::sighash::{EcdsaSighashType, LegacySighash, SighashCache};
+use dashcore::Address;
+use dashcore::{TxIn, TxOut};
+use dashcore_hashes::Hash;
+use secp256k1::ecdsa::Signature;
+use secp256k1::{Message, PublicKey, Secp256k1};
+use std::cmp::Ordering;
 
 /// Calculate varint size for a given number
 fn varint_size(n: usize) -> usize {
@@ -45,25 +36,14 @@ fn varint_size(n: usize) -> usize {
 /// to ensure deterministic ordering and improve privacy by preventing information leakage
 /// through predictable input/output ordering patterns.
 pub struct TransactionBuilder {
-    /// Selected UTXOs with their private keys
-    inputs: Vec<(Utxo, Option<SecretKey>)>,
-    /// Outputs to create
+    inputs: Vec<Utxo>,
+    change_addr: Option<Address>,
     outputs: Vec<TxOut>,
-    /// Change address
-    change_address: Option<Address>,
-    /// Fee rate (satoshis per kilobyte)
     fee_rate: FeeRate,
-    /// Lock time
-    lock_time: u32,
-    /// Transaction version
-    version: u16,
+    current_height: u32,
+    selection_strategy: SelectionStrategy,
     /// Special transaction payload for Dash-specific transactions
     special_payload: Option<TransactionPayload>,
-    /// When `true`, skip BIP-69 output sorting in [`Self::build`] so
-    /// callers that need position-dependent outputs (e.g. AssetLockTx,
-    /// whose payload validation requires `tx.output[0]` to be the
-    /// OP_RETURN burn) keep outputs in the order they were added.
-    skip_bip69_sort: bool,
 }
 
 impl Default for TransactionBuilder {
@@ -77,85 +57,39 @@ impl TransactionBuilder {
     pub fn new() -> Self {
         Self {
             inputs: Vec::new(),
+            change_addr: None,
             outputs: Vec::new(),
-            change_address: None,
             fee_rate: FeeRate::normal(),
-            lock_time: 0,
-            version: 2, // Default to version 2 for Dash
+            current_height: 0,
+            selection_strategy: SelectionStrategy::BranchAndBound,
             special_payload: None,
-            skip_bip69_sort: false,
         }
     }
 
-    /// Disable BIP-69 output sorting. Required for transactions whose
-    /// payload validation depends on output position — e.g. AssetLockTx
-    /// requires `tx.output[0]` to be the OP_RETURN burn carrying the
-    /// total locked amount.
-    pub fn skip_bip69_sort(mut self) -> Self {
-        self.skip_bip69_sort = true;
+    pub fn set_current_height(mut self, current_height: u32) -> Self {
+        self.current_height = current_height;
         self
     }
 
-    pub fn outputs(&self) -> &Vec<TxOut> {
-        &self.outputs
-    }
-
-    /// Add a UTXO input with optional private key for signing
-    pub fn add_input(mut self, utxo: Utxo, key: Option<SecretKey>) -> Self {
-        self.inputs.push((utxo, key));
+    pub fn set_selection_strategy(mut self, strategy: SelectionStrategy) -> Self {
+        self.selection_strategy = strategy;
         self
     }
 
-    /// Add multiple inputs
-    pub fn add_inputs(mut self, inputs: Vec<(Utxo, Option<SecretKey>)>) -> Self {
+    pub fn set_funding(mut self, funds_acc: &mut ManagedCoreFundsAccount, acc: &Account) -> Self {
+        self.inputs = funds_acc.utxos.values().cloned().collect();
+        self.change_addr = funds_acc.next_change_address(Some(&acc.account_xpub), true).ok();
+        self
+    }
+
+    pub fn set_change_address(mut self, change_addr: Address) -> Self {
+        self.change_addr = Some(change_addr);
+        self
+    }
+
+    pub fn add_inputs(mut self, inputs: impl IntoIterator<Item = Utxo>) -> Self {
         self.inputs.extend(inputs);
         self
-    }
-
-    /// Select inputs automatically using coin selection
-    ///
-    /// This method requires outputs to be added first so it knows how much to select.
-    /// For special transactions without regular outputs, add the required inputs manually.
-    pub fn select_inputs(
-        mut self,
-        available_utxos: &[Utxo],
-        strategy: SelectionStrategy,
-        current_height: u32,
-        keys: impl Fn(&Utxo) -> Option<SecretKey>,
-    ) -> Result<Self, BuilderError> {
-        // Calculate target amount from outputs
-        let target_amount = self.total_output_value();
-
-        if target_amount == 0 && self.special_payload.is_none() {
-            return Err(BuilderError::NoOutputs);
-        }
-
-        // Calculate the base transaction size including existing outputs and special payload
-        let base_size = self.calculate_base_size();
-        let input_size = 148; // Size per P2PKH input
-
-        let fee_rate = self.fee_rate;
-
-        // Use the CoinSelector with the proper size context
-        let selector = CoinSelector::new(strategy);
-        let selection = selector
-            .select_coins_with_size(
-                available_utxos,
-                target_amount,
-                fee_rate,
-                current_height,
-                base_size,
-                input_size,
-            )
-            .map_err(BuilderError::CoinSelection)?;
-
-        // Add selected UTXOs with their keys
-        for utxo in selection.selected {
-            let key = keys(&utxo);
-            self.inputs.push((utxo, key));
-        }
-
-        Ok(self)
     }
 
     /// Add an output to a specific address
@@ -163,86 +97,33 @@ impl TransactionBuilder {
     /// Note: Outputs will be sorted according to BIP-69 when the transaction is built:
     /// - First by amount (ascending)
     /// - Then by scriptPubKey (lexicographically)
-    pub fn add_output(mut self, address: &Address, amount: u64) -> Result<Self, BuilderError> {
-        if amount == 0 {
-            return Err(BuilderError::InvalidAmount("Output amount cannot be zero".into()));
-        }
-
+    pub fn add_output(mut self, address: &Address, amount: u64) -> Self {
         let script_pubkey = address.script_pubkey();
         self.outputs.push(TxOut {
             value: amount,
             script_pubkey,
         });
-        Ok(self)
-    }
-
-    /// Add a raw TxOut as an output.
-    ///
-    /// Used for special transactions (e.g., asset locks) where outputs are
-    /// constructed from script bytes rather than addresses.
-    pub fn add_raw_output(mut self, output: TxOut) -> Self {
-        self.outputs.push(output);
         self
     }
 
-    /// Add a data output (OP_RETURN)
-    ///
-    /// Note: Outputs will be sorted according to BIP-69 when the transaction is built:
-    /// - First by amount (ascending) - data outputs have 0 value
-    /// - Then by scriptPubKey (lexicographically)
-    pub fn add_data_output(mut self, data: Vec<u8>) -> Result<Self, BuilderError> {
-        if data.len() > 80 {
-            return Err(BuilderError::InvalidData("Data output too large (max 80 bytes)".into()));
-        }
-
-        let script = Builder::new()
-            .push_opcode(dashcore::blockdata::opcodes::all::OP_RETURN)
-            .push_slice(
-                <&PushBytes>::try_from(data.as_slice())
-                    .map_err(|_| BuilderError::InvalidData("Invalid data length".into()))?,
-            )
-            .into_script();
-
-        self.outputs.push(TxOut {
-            value: 0,
-            script_pubkey: script,
-        });
-        Ok(self)
-    }
-
-    /// Set the change address
-    pub fn set_change_address(mut self, address: Address) -> Self {
-        self.change_address = Some(address);
-        self
-    }
-
-    /// Set the fee rate
     pub fn set_fee_rate(mut self, fee_rate: FeeRate) -> Self {
         self.fee_rate = fee_rate;
         self
     }
 
-    /// Set the lock time
-    pub fn set_lock_time(mut self, lock_time: u32) -> Self {
-        self.lock_time = lock_time;
-        self
-    }
-
-    /// Set the transaction version
-    pub fn set_version(mut self, version: u16) -> Self {
-        self.version = version;
-        self
-    }
-
-    /// Set the special transaction payload
     pub fn set_special_payload(mut self, payload: TransactionPayload) -> Self {
         self.special_payload = Some(payload);
         self
     }
 
-    /// Get the total value of all outputs added so far
-    pub fn total_output_value(&self) -> u64 {
-        self.outputs.iter().map(|out| out.value).sum()
+    /// Effective `tx.output` count: for AssetLock the only on-chain output is
+    /// the OP_RETURN burn (credit outputs live in the payload), otherwise it's
+    /// the user-provided outputs.
+    fn effective_outputs_count(&self) -> usize {
+        match &self.special_payload {
+            Some(TransactionPayload::AssetLockPayloadType(_)) => 1,
+            _ => self.outputs.len(),
+        }
     }
 
     /// Calculate the base transaction size excluding inputs
@@ -254,10 +135,12 @@ impl TransactionBuilder {
         // Add varint for input count (will be added later, typically 1 byte)
         size += 1;
 
+        let outputs_count = self.effective_outputs_count();
+
         // Add varint for output count
         size += varint_size(
-            self.outputs.len()
-                + if self.change_address.is_some() {
+            outputs_count
+                + if self.change_addr.is_some() {
                     1
                 } else {
                     0
@@ -265,10 +148,10 @@ impl TransactionBuilder {
         );
 
         // Add outputs size (TX_OUTPUT_SIZE = 34 bytes per P2PKH output)
-        size += self.outputs.len() * 34;
+        size += outputs_count * 34;
 
         // Add change output if we have a change address
-        if self.change_address.is_some() {
+        if self.change_addr.is_some() {
             size += 34; // TX_OUTPUT_SIZE
         }
 
@@ -357,467 +240,260 @@ impl TransactionBuilder {
         size
     }
 
-    /// Calculates the transaction fee for the current number of outputs and inputs
-    pub fn calculate_fee(&self) -> u64 {
-        let fee_rate = self.fee_rate;
-        let estimated_size = self.estimate_transaction_size(self.inputs.len(), self.outputs.len());
-        fee_rate.calculate_fee(estimated_size)
-    }
-
-    /// Calculates the transaction fee adding an extra output
-    ///
-    /// This is useful when you need to calculate the transaction fee to be
-    /// able to calculate the change amount to later add it as a new output.
-    /// Basically we are calculating the fee with that extra change output before
-    /// adding it
-    pub fn calculate_fee_with_extra_output(&self) -> u64 {
-        let fee_rate = self.fee_rate;
-        let estimated_size =
-            self.estimate_transaction_size(self.inputs.len(), self.outputs.len() + 1);
-        fee_rate.calculate_fee(estimated_size)
-    }
-
-    /// Build the transaction
-    pub fn build(&mut self) -> Result<Transaction, BuilderError> {
-        if self.inputs.is_empty() {
-            return Err(BuilderError::NoInputs);
-        }
-
-        if self.outputs.is_empty() {
+    fn assemble_unsigned(self) -> Result<(Transaction, Vec<Utxo>), BuilderError> {
+        if let Some(TransactionPayload::AssetLockPayloadType(p)) = &self.special_payload {
+            if p.credit_outputs.is_empty() {
+                return Err(BuilderError::NoOutputs);
+            }
+        } else if self.outputs.is_empty() && self.special_payload.is_none() {
             return Err(BuilderError::NoOutputs);
         }
 
-        // Calculate total input value
-        let total_input: u64 = self.inputs.iter().map(|(utxo, _)| utxo.value()).sum();
+        // For AssetLock the on-chain spend equals the OP_RETURN burn, which
+        // mirrors the sum of the credit_outputs carried in the payload. For
+        // every other tx type, it's just the sum of user-provided outputs.
+        let total_output: u64 = match &self.special_payload {
+            Some(TransactionPayload::AssetLockPayloadType(p)) => {
+                p.credit_outputs.iter().map(|o| o.value).sum()
+            }
+            _ => self.outputs.iter().map(|o| o.value).sum(),
+        };
 
-        // Calculate total output value
-        let total_output: u64 = self.outputs.iter().map(|out| out.value).sum();
+        let selection = CoinSelector::new(self.selection_strategy)
+            .select_coins_with_size(
+                self.inputs.iter(),
+                total_output,
+                self.fee_rate,
+                self.current_height,
+                self.calculate_base_size(),
+                148, // Size per P2PKH input
+            )
+            .map_err(BuilderError::CoinSelection)?;
 
-        if total_input < total_output {
+        let mut selected_inputs = selection.selected;
+        let total_input: u64 = selected_inputs.iter().map(|u| u.value()).sum();
+
+        if total_input < total_output + selection.estimated_fee {
             return Err(BuilderError::InsufficientFunds {
                 available: total_input,
-                required: total_output,
+                required: total_output + selection.estimated_fee,
             });
         }
 
-        // BIP-69: Sort inputs by transaction hash (reversed) and then by output index
-        // We need to maintain the association between UTXOs and their keys
-        let mut sorted_inputs = self.inputs.clone();
-        sorted_inputs.sort_by(|a, b| {
-            // First compare by transaction hash (reversed byte order)
-            let tx_hash_a = a.0.outpoint.txid.to_byte_array();
-            let tx_hash_b = b.0.outpoint.txid.to_byte_array();
+        let change_amount =
+            total_input.saturating_sub(total_output).saturating_sub(selection.estimated_fee);
+        let mut tx_outputs = match &self.special_payload {
+            Some(TransactionPayload::AssetLockPayloadType(_)) => vec![TxOut {
+                value: total_output,
+                script_pubkey: ScriptBuf::new_op_return(&[]),
+            }],
+            _ => self.outputs,
+        };
 
-            match tx_hash_a.cmp(&tx_hash_b) {
-                std::cmp::Ordering::Equal => {
-                    // If transaction hashes match, compare by output index
-                    a.0.outpoint.vout.cmp(&b.0.outpoint.vout)
-                }
-                other => other,
-            }
-        });
+        // Add change output if above dust threshold
+        if change_amount > 546 {
+            let Some(change_addr) = self.change_addr else {
+                return Err(BuilderError::NoChangeAddress);
+            };
+            tx_outputs.push(TxOut {
+                value: change_amount,
+                script_pubkey: change_addr.script_pubkey(),
+            });
+        }
 
-        // Create transaction inputs from sorted inputs
-        // Dash doesn't use RBF, so we use the standard sequence number
-        let sequence = 0xffffffff;
+        if !matches!(self.special_payload, Some(TransactionPayload::AssetLockPayloadType(_))) {
+            tx_outputs.sort_by(bip69_output_sorter);
+        }
 
-        let tx_inputs: Vec<TxIn> = sorted_inputs
+        selected_inputs.sort_by(bip69_input_sorter);
+        let tx_inputs: Vec<TxIn> = selected_inputs
             .iter()
-            .map(|(utxo, _)| TxIn {
+            .map(|utxo| TxIn {
                 previous_output: utxo.outpoint,
                 script_sig: ScriptBuf::new(),
-                sequence,
+                sequence: 0xffffffff, // Dash doesn't use RBF, so we use the standard sequence number
                 witness: dashcore::blockdata::witness::Witness::new(),
             })
             .collect();
 
-        let mut tx_outputs = self.outputs.clone();
-
-        let fee = self.calculate_fee_with_extra_output();
-
-        let change_amount = total_input.saturating_sub(total_output).saturating_sub(fee);
-
-        // Add change output if needed
-        if change_amount > 546 {
-            // Above dust threshold
-            if let Some(change_addr) = &self.change_address {
-                let change_script = change_addr.script_pubkey();
-                tx_outputs.push(TxOut {
-                    value: change_amount,
-                    script_pubkey: change_script,
-                });
-            } else {
-                return Err(BuilderError::NoChangeAddress);
-            }
-        }
-
-        // BIP-69: Sort outputs by amount first, then by scriptPubKey
-        // lexicographically. Opt-out via `skip_bip69_sort` for
-        // transactions whose payload validation requires
-        // position-dependent outputs (e.g. AssetLockTx, whose
-        // `tx.output[0]` must be the OP_RETURN burn).
-        if !self.skip_bip69_sort {
-            tx_outputs.sort_by(|a, b| {
-                match a.value.cmp(&b.value) {
-                    std::cmp::Ordering::Equal => {
-                        // If amounts match, compare scriptPubKeys lexicographically
-                        a.script_pubkey.as_bytes().cmp(b.script_pubkey.as_bytes())
-                    }
-                    other => other,
-                }
-            });
-        }
-
-        // Create unsigned transaction with optional special payload
-        // Update sorted_inputs to maintain the key association after sorting
-        let mut transaction = Transaction {
-            version: self.version,
-            lock_time: self.lock_time,
+        let transaction = Transaction {
+            version: 3,
+            lock_time: 0,
             input: tx_inputs,
             output: tx_outputs,
-            special_transaction_payload: self.special_payload.clone(),
+            special_transaction_payload: self.special_payload,
         };
 
-        // Sign inputs if keys are provided
-        if sorted_inputs.iter().any(|(_, key)| key.is_some()) {
-            transaction = self.sign_transaction_with_sorted_inputs(transaction, sorted_inputs)?;
+        return Ok((transaction, selected_inputs));
+
+        // BIP-69: Sort outputs by amount first, then by scriptPubKey
+        // lexicographically.
+        fn bip69_output_sorter(a: &TxOut, b: &TxOut) -> Ordering {
+            match a.value.cmp(&b.value) {
+                Ordering::Equal => a.script_pubkey.as_bytes().cmp(b.script_pubkey.as_bytes()),
+                other => other,
+            }
         }
 
-        Ok(transaction)
-    }
+        // BIP-69: Sort inputs by transaction hash and then by output index.
+        fn bip69_input_sorter(a: &Utxo, b: &Utxo) -> Ordering {
+            let tx_hash_a = a.outpoint.txid.to_byte_array();
+            let tx_hash_b = b.outpoint.txid.to_byte_array();
 
-    /// Build a Provider Registration Transaction (ProRegTx)
-    ///
-    /// Used to register a new masternode on the network
-    ///
-    /// Note: This method intentionally takes many parameters rather than a single
-    /// payload object to make the API more explicit and allow callers to construct
-    /// transactions without needing to build intermediate payload types.
-    #[allow(clippy::too_many_arguments)]
-    pub fn build_provider_registration(
-        self,
-        masternode_type: ProviderMasternodeType,
-        masternode_mode: u16,
-        collateral_outpoint: OutPoint,
-        service_address: SocketAddr,
-        owner_key_hash: PubkeyHash,
-        operator_public_key: BLSPublicKey,
-        voting_key_hash: PubkeyHash,
-        operator_reward: u16,
-        script_payout: ScriptBuf,
-        inputs_hash: InputsHash,
-        signature: Vec<u8>,
-        platform_node_id: Option<PubkeyHash>,
-        platform_p2p_port: Option<u16>,
-        platform_http_port: Option<u16>,
-    ) -> Result<Transaction, BuilderError> {
-        let payload = ProviderRegistrationPayload {
-            version: 2,
-            masternode_type,
-            masternode_mode,
-            collateral_outpoint,
-            service_address,
-            owner_key_hash,
-            operator_public_key,
-            voting_key_hash,
-            operator_reward,
-            script_payout,
-            inputs_hash,
-            signature,
-            platform_node_id,
-            platform_p2p_port,
-            platform_http_port,
-        };
-
-        self.set_special_payload(TransactionPayload::ProviderRegistrationPayloadType(payload))
-            .build()
-    }
-
-    /// Build a Provider Update Service Transaction (ProUpServTx)
-    ///
-    /// Used to update the service details of an existing masternode
-    ///
-    /// Note: This method intentionally takes many parameters rather than a single
-    /// payload object to make the API more explicit and allow callers to construct
-    /// transactions without needing to build intermediate payload types.
-    #[allow(clippy::too_many_arguments)]
-    pub fn build_provider_update_service(
-        self,
-        mn_type: Option<u16>,
-        pro_tx_hash: Txid,
-        ip_address: u128,
-        port: u16,
-        script_payout: ScriptBuf,
-        inputs_hash: InputsHash,
-        platform_node_id: Option<[u8; 20]>,
-        platform_p2p_port: Option<u16>,
-        platform_http_port: Option<u16>,
-        payload_sig: BLSSignature,
-    ) -> Result<Transaction, BuilderError> {
-        let payload = ProviderUpdateServicePayload {
-            version: 2,
-            mn_type,
-            pro_tx_hash,
-            ip_address,
-            port,
-            script_payout,
-            inputs_hash,
-            platform_node_id,
-            platform_p2p_port,
-            platform_http_port,
-            payload_sig,
-        };
-        self.set_special_payload(TransactionPayload::ProviderUpdateServicePayloadType(payload))
-            .build()
-    }
-
-    /// Build a Provider Update Registrar Transaction (ProUpRegTx)
-    ///
-    /// Used to update the registrar details of an existing masternode
-    ///
-    /// Note: This method intentionally takes many parameters rather than a single
-    /// payload object to make the API more explicit and allow callers to construct
-    /// transactions without needing to build intermediate payload types.
-    #[allow(clippy::too_many_arguments)]
-    pub fn build_provider_update_registrar(
-        self,
-        pro_tx_hash: Txid,
-        provider_mode: u16,
-        operator_public_key: BLSPublicKey,
-        voting_key_hash: PubkeyHash,
-        script_payout: ScriptBuf,
-        inputs_hash: InputsHash,
-        payload_sig: Vec<u8>,
-    ) -> Result<Transaction, BuilderError> {
-        let payload = ProviderUpdateRegistrarPayload {
-            version: 2,
-            pro_tx_hash,
-            provider_mode,
-            operator_public_key,
-            voting_key_hash,
-            script_payout,
-            inputs_hash,
-            payload_sig,
-        };
-        self.set_special_payload(TransactionPayload::ProviderUpdateRegistrarPayloadType(payload))
-            .build()
-    }
-
-    /// Build a Provider Update Revocation Transaction (ProUpRevTx)
-    ///
-    /// Used to revoke an existing masternode
-    pub fn build_provider_update_revocation(
-        self,
-        pro_tx_hash: Txid,
-        reason: u16,
-        inputs_hash: InputsHash,
-        payload_sig: BLSSignature,
-    ) -> Result<Transaction, BuilderError> {
-        let payload = ProviderUpdateRevocationPayload {
-            version: 2,
-            pro_tx_hash,
-            reason,
-            inputs_hash,
-            payload_sig,
-        };
-        self.set_special_payload(TransactionPayload::ProviderUpdateRevocationPayloadType(payload))
-            .build()
-    }
-
-    /// Build a Coinbase Transaction
-    ///
-    /// Used for block rewards and includes additional coinbase-specific data
-    pub fn build_coinbase(
-        self,
-        height: u32,
-        merkle_root_masternode_list: MerkleRootMasternodeList,
-        merkle_root_quorums: MerkleRootQuorums,
-        best_cl_height: Option<u32>,
-        best_cl_signature: Option<BLSSignature>,
-        asset_locked_amount: Option<u64>,
-    ) -> Result<Transaction, BuilderError> {
-        let payload = CoinbasePayload {
-            version: 3, // Current coinbase version
-            height,
-            merkle_root_masternode_list,
-            merkle_root_quorums,
-            best_cl_height,
-            best_cl_signature,
-            asset_locked_amount,
-        };
-        self.set_special_payload(TransactionPayload::CoinbasePayloadType(payload)).build()
-    }
-
-    /// Build an Asset Lock Transaction
-    ///
-    /// Used to lock Dash for use in Platform (creates Platform credits).
-    /// Per DIP-00X, the AssetLockPayload version is `1`, the credit
-    /// outputs live in the payload (not in `tx.output`), and the
-    /// Dash special transaction wire version is `3`. The caller must
-    /// have already added the OP_RETURN burn output to this builder
-    /// before calling `build_asset_lock`; BIP-69 output sorting is
-    /// disabled so the burn stays at `tx.output[0]`.
-    pub fn build_asset_lock(
-        mut self,
-        credit_outputs: Vec<TxOut>,
-    ) -> Result<Transaction, BuilderError> {
-        let payload = AssetLockPayload {
-            version: 1,
-            credit_outputs,
-        };
-        self.version = 3;
-        self.skip_bip69_sort = true;
-        self.set_special_payload(TransactionPayload::AssetLockPayloadType(payload)).build()
-    }
-
-    /// Estimate transaction size in bytes
-    fn estimate_transaction_size(&self, input_count: usize, output_count: usize) -> usize {
-        // Base: version (2) + type (2) + locktime (4) = 8 bytes
-        let mut size = 8;
-
-        // Add varints for input/output counts
-        size += varint_size(input_count);
-        size += varint_size(output_count);
-
-        // Add inputs (TX_INPUT_SIZE = 148 bytes per P2PKH input)
-        size += input_count * 148;
-
-        // Add outputs (TX_OUTPUT_SIZE = 34 bytes per P2PKH output)
-        size += output_count * 34;
-
-        // Add special payload size if present (same logic as calculate_base_size)
-        if let Some(ref payload) = self.special_payload {
-            let payload_size = match payload {
-                TransactionPayload::CoinbasePayloadType(p) => {
-                    let mut size = 2 + 4 + 32 + 32;
-                    if p.best_cl_height.is_some() {
-                        size += 4 + 96;
-                    }
-                    if p.asset_locked_amount.is_some() {
-                        size += 8;
-                    }
-                    size
-                }
-                TransactionPayload::ProviderRegistrationPayloadType(p) => {
-                    let script_size = p.script_payout.len();
-                    let base = 2
-                        + 2
-                        + 2
-                        + 32
-                        + 4
-                        + 16
-                        + 2
-                        + 20
-                        + 20
-                        + 20
-                        + 2
-                        + varint_size(script_size)
-                        + script_size
-                        + 32;
-                    base + varint_size(75) + 75
-                }
-                TransactionPayload::ProviderUpdateServicePayloadType(p) => {
-                    let script_size = p.script_payout.len();
-                    let mut size =
-                        2 + 32 + 16 + 2 + varint_size(script_size) + script_size + 32 + 96;
-                    if p.mn_type.is_some() {
-                        size += 2;
-                    }
-                    if p.platform_node_id.is_some() {
-                        size += 20 + 2 + 2;
-                    }
-                    size
-                }
-                TransactionPayload::ProviderUpdateRegistrarPayloadType(p) => {
-                    let script_size = p.script_payout.len();
-                    2 + 32 + 2 + 48 + 20 + varint_size(script_size) + script_size + 32 + 75
-                }
-                TransactionPayload::ProviderUpdateRevocationPayloadType(_) => 2 + 32 + 2 + 32 + 96,
-                TransactionPayload::AssetLockPayloadType(p) => {
-                    1 + varint_size(p.credit_outputs.len()) + p.credit_outputs.len() * 34
-                }
-                TransactionPayload::AssetUnlockPayloadType(_) => 1 + 8 + 4 + 4 + 32 + 96,
-                _ => 100,
-            };
-
-            size += varint_size(payload_size) + payload_size;
+            match tx_hash_a.cmp(&tx_hash_b) {
+                Ordering::Equal => a.outpoint.vout.cmp(&b.outpoint.vout),
+                other => other,
+            }
         }
-
-        size
     }
 
-    /// Sign the transaction with sorted inputs (for BIP-69 compliance)
-    fn sign_transaction_with_sorted_inputs(
+    pub fn build_unsigned(self) -> Result<(Transaction, u64), BuilderError> {
+        let fee_rate = self.fee_rate;
+
+        let (tx, _) = self.assemble_unsigned()?;
+
+        let mut tx_bytes = Vec::new();
+        tx.consensus_encode(&mut tx_bytes).unwrap();
+
+        let fee = fee_rate.calculate_fee(tx_bytes.len());
+
+        Ok((tx, fee))
+    }
+
+    /// Build and sign the transaction. The `path_resolver` maps each input
+    /// address to the derivation path the signer should use for that input.
+    /// The returned fee is computed from the encoded size of the signed tx.
+    pub async fn build_signed<S, P>(
+        self,
+        signer: &S,
+        path_resolver: P,
+    ) -> Result<(Transaction, u64), BuilderError>
+    where
+        S: TransactionSigner + ?Sized + Sync,
+        P: Fn(Address) -> Option<DerivationPath> + Send,
+    {
+        let fee_rate = self.fee_rate;
+
+        let (tx, inputs) = self.assemble_unsigned()?;
+        let tx = signer.sign_tx(tx, inputs, path_resolver).await?;
+
+        let mut tx_bytes = Vec::new();
+        tx.consensus_encode(&mut tx_bytes).unwrap();
+
+        let fee = fee_rate.calculate_fee(tx_bytes.len());
+
+        Ok((tx, fee))
+    }
+}
+
+#[async_trait::async_trait]
+pub trait TransactionSigner {
+    async fn sign_tx(
         &self,
         mut tx: Transaction,
-        sorted_inputs: Vec<(Utxo, Option<SecretKey>)>,
+        inputs: Vec<Utxo>,
+        path_resolver: impl Fn(Address) -> Option<DerivationPath> + Send,
     ) -> Result<Transaction, BuilderError> {
-        let secp = Secp256k1::new();
-
-        // Collect all signatures first, then apply them
-        let mut signatures = Vec::new();
-        {
+        let tasks: Vec<(LegacySighash, DerivationPath)> = {
             let cache = SighashCache::new(&tx);
+            let mut tasks = Vec::with_capacity(inputs.len());
+            for (index, utxo) in inputs.iter().enumerate() {
+                let path = path_resolver(utxo.address.clone()).ok_or_else(|| {
+                    BuilderError::SigningFailed(format!(
+                        "no derivation path for input address {}",
+                        utxo.address
+                    ))
+                })?;
 
-            for (index, (utxo, key_opt)) in sorted_inputs.iter().enumerate() {
-                if let Some(key) = key_opt {
-                    // Get the script pubkey from the UTXO
-                    let script_pubkey = &utxo.txout.script_pubkey;
+                let sighash = cache
+                    .legacy_signature_hash(
+                        index,
+                        &utxo.txout.script_pubkey,
+                        EcdsaSighashType::All.to_u32(),
+                    )
+                    .map_err(|e| {
+                        BuilderError::SigningFailed(format!("Failed to compute sighash: {}", e))
+                    })?;
 
-                    // Create signature hash for P2PKH
-                    let sighash = cache
-                        .legacy_signature_hash(index, script_pubkey, EcdsaSighashType::All.to_u32())
-                        .map_err(|e| {
-                            BuilderError::SigningFailed(format!("Failed to compute sighash: {}", e))
-                        })?;
-
-                    // Sign the hash
-                    let message = Message::from_digest(*sighash.as_byte_array());
-                    let signature = secp.sign_ecdsa(&message, key);
-
-                    // Create script signature (P2PKH)
-                    let mut sig_bytes = signature.serialize_der().to_vec();
-                    sig_bytes.push(EcdsaSighashType::All.to_u32() as u8);
-
-                    let pubkey = secp256k1::PublicKey::from_secret_key(&secp, key);
-
-                    let script_sig = Builder::new()
-                        .push_slice(<&PushBytes>::try_from(sig_bytes.as_slice()).map_err(|_| {
-                            BuilderError::SigningFailed("Invalid signature length".into())
-                        })?)
-                        .push_slice(pubkey.serialize())
-                        .into_script();
-
-                    signatures.push((index, script_sig));
-                } else {
-                    signatures.push((index, ScriptBuf::new()));
-                }
+                tasks.push((sighash, path));
             }
-        } // cache goes out of scope here
+            tasks
+        };
 
-        // Apply signatures
-        for (index, script_sig) in signatures {
+        let mut signatures = Vec::with_capacity(tasks.len());
+        for (sighash, path) in tasks {
+            let (sig, pubkey) = self.sig_and_pubkey(sighash, path).await?;
+
+            let mut sig_bytes = sig.serialize_der().to_vec();
+            sig_bytes.push(EcdsaSighashType::All.to_u32() as u8);
+
+            let script_sig =
+                Builder::new()
+                    .push_slice(<&PushBytes>::try_from(sig_bytes.as_slice()).map_err(|_| {
+                        BuilderError::SigningFailed("invalid signature length".into())
+                    })?)
+                    .push_slice(pubkey.serialize())
+                    .into_script();
+
+            signatures.push(script_sig);
+        }
+
+        for (index, script_sig) in signatures.into_iter().enumerate() {
             tx.input[index].script_sig = script_sig;
         }
 
         Ok(tx)
     }
 
-    /// Sign the transaction (legacy method for backward compatibility)
-    pub fn sign_transaction(&self, tx: Transaction) -> Result<Transaction, BuilderError> {
-        // For backward compatibility, we sort the inputs according to BIP-69 before signing
-        let mut sorted_inputs = self.inputs.clone();
-        sorted_inputs.sort_by(|a, b| {
-            let tx_hash_a = a.0.outpoint.txid.to_byte_array();
-            let tx_hash_b = b.0.outpoint.txid.to_byte_array();
+    async fn sig_and_pubkey(
+        &self,
+        sighash: LegacySighash,
+        path: DerivationPath,
+    ) -> Result<(Signature, PublicKey), BuilderError>;
+}
 
-            match tx_hash_a.cmp(&tx_hash_b) {
-                std::cmp::Ordering::Equal => a.0.outpoint.vout.cmp(&b.0.outpoint.vout),
-                other => other,
-            }
-        });
+#[async_trait::async_trait]
+impl TransactionSigner for Wallet {
+    async fn sig_and_pubkey(
+        &self,
+        sighash: LegacySighash,
+        path: DerivationPath,
+    ) -> Result<(Signature, PublicKey), BuilderError> {
+        let secp = Secp256k1::new();
 
-        self.sign_transaction_with_sorted_inputs(tx, sorted_inputs)
+        let root_xpriv =
+            self.root_extended_priv_key().map_err(|_| BuilderError::WatchOnlyWallet)?;
+
+        let root_ext_priv = root_xpriv.to_extended_priv_key(self.network);
+        let derived_xpriv = root_ext_priv.derive_priv(&secp, &path).map_err(|e| {
+            BuilderError::SigningFailed(format!("couldn't derive extended priv key: {}", e))
+        })?;
+        let key = derived_xpriv.private_key;
+
+        let message = Message::from_digest(*sighash.as_byte_array());
+        let signature = secp.sign_ecdsa(&message, &key);
+        let pubkey = PublicKey::from_secret_key(&secp, &key);
+
+        Ok((signature, pubkey))
+    }
+}
+
+#[async_trait::async_trait]
+impl<S: Signer> TransactionSigner for S {
+    async fn sig_and_pubkey(
+        &self,
+        sighash: LegacySighash,
+        path: DerivationPath,
+    ) -> Result<(Signature, PublicKey), BuilderError> {
+        if !self.supports(crate::signer::SignerMethod::Digest) {
+            return Err(BuilderError::SigningFailed(format!(
+                "signer does not support required method {:?}",
+                crate::signer::SignerMethod::Digest
+            )));
+        }
+        self.sign_ecdsa(&path, *sighash.as_byte_array())
+            .await
+            .map_err(|e| BuilderError::SigningFailed(e.to_string()))
     }
 }
 
@@ -843,6 +519,8 @@ pub enum BuilderError {
     SigningFailed(String),
     /// Coin selection error
     CoinSelection(crate::wallet::managed_wallet_info::coin_selection::SelectionError),
+    /// Signing was attempted with a watch-only wallet
+    WatchOnlyWallet,
 }
 
 impl fmt::Display for BuilderError {
@@ -861,6 +539,7 @@ impl fmt::Display for BuilderError {
             Self::InvalidData(msg) => write!(f, "Invalid data: {}", msg),
             Self::SigningFailed(msg) => write!(f, "Signing failed: {}", msg),
             Self::CoinSelection(err) => write!(f, "Coin selection error: {}", err),
+            Self::WatchOnlyWallet => write!(f, "Cannot sign with a watch-only wallet"),
         }
     }
 }
@@ -872,6 +551,7 @@ mod tests {
     use super::*;
     use crate::Network;
     use dashcore::blockdata::transaction::special_transaction::asset_lock::AssetLockPayload;
+    use dashcore::{OutPoint, Txid};
     use dashcore_hashes::{sha256d, Hash};
     use hex;
 
@@ -882,11 +562,12 @@ mod tests {
         let change = Address::dummy(Network::Testnet, 0);
 
         let tx = TransactionBuilder::new()
-            .add_input(utxo, None)
+            .set_current_height(200)
+            .add_inputs([utxo])
             .add_output(&destination, 50000)
-            .unwrap()
             .set_change_address(change)
-            .build();
+            .build_unsigned()
+            .map(|(tx, _)| tx);
 
         assert!(tx.is_ok());
         let transaction = tx.unwrap();
@@ -900,12 +581,16 @@ mod tests {
         let destination = Address::dummy(Network::Testnet, 0);
 
         let result = TransactionBuilder::new()
-            .add_input(utxo, None)
+            .set_current_height(200)
+            .add_inputs([utxo])
             .add_output(&destination, 50000)
-            .unwrap()
-            .build();
+            .build_unsigned();
 
-        assert!(matches!(result, Err(BuilderError::InsufficientFunds { .. })));
+        // Insufficient funds now surface via the coin selector wrapper too.
+        assert!(matches!(
+            result,
+            Err(BuilderError::InsufficientFunds { .. }) | Err(BuilderError::CoinSelection(_))
+        ));
     }
 
     #[test]
@@ -971,11 +656,11 @@ mod tests {
         let change_address = Address::dummy(Network::Testnet, 0);
 
         let builder = TransactionBuilder::new()
+            .set_current_height(200)
             .set_fee_rate(FeeRate::normal())
             .set_change_address(change_address.clone())
             .add_output(&recipient_address, 150000)
-            .unwrap()
-            .add_inputs(utxos.into_iter().map(|u| (u, None)).collect());
+            .add_inputs(utxos);
 
         // Test calculate_base_size
         let base_size = builder.calculate_base_size();
@@ -986,14 +671,8 @@ mod tests {
             base_size
         );
 
-        // Test estimate_transaction_size
-        let estimated_size = builder.estimate_transaction_size(2, 2);
-        // Base (8) + varints (2) + 2 inputs (296) + 2 outputs (68) = ~374 bytes
-        assert!(
-            estimated_size > 370 && estimated_size < 380,
-            "Estimated size should be around 374 bytes, got {}",
-            estimated_size
-        );
+        // estimate_transaction_size was removed in the new builder API; if a
+        // future test needs full-size estimation, derive it from a real build.
     }
 
     #[test]
@@ -1005,13 +684,14 @@ mod tests {
         let change_address = Address::dummy(Network::Testnet, 0);
 
         let tx = TransactionBuilder::new()
+            .set_current_height(200)
             .set_fee_rate(FeeRate::normal()) // 1 duff per byte
             .set_change_address(change_address.clone())
-            .add_inputs(utxos.into_iter().map(|u| (u, None)).collect())
+            .add_inputs(utxos)
             .add_output(&recipient_address, 500000)
+            .build_unsigned()
             .unwrap()
-            .build()
-            .unwrap();
+            .0;
 
         // Total input: 1000000
         // Output to recipient: 500000
@@ -1032,13 +712,15 @@ mod tests {
         let change_address = Address::dummy(Network::Testnet, 0);
 
         let tx = TransactionBuilder::new()
+            .set_current_height(200)
+            .set_selection_strategy(SelectionStrategy::SmallestFirst)
             .set_fee_rate(FeeRate::normal())
             .set_change_address(change_address.clone())
-            .add_inputs(utxos.into_iter().map(|u| (u, None)).collect())
+            .add_inputs(utxos)
             .add_output(&recipient_address, 150000)
+            .build_unsigned()
             .unwrap()
-            .build()
-            .unwrap();
+            .0;
 
         // Should only have 1 output (no change) because change is below dust threshold
         assert_eq!(tx.output.len(), 1);
@@ -1070,9 +752,9 @@ mod tests {
         };
 
         let builder = TransactionBuilder::new()
-            .add_input(utxo.clone(), None)
+            .set_current_height(200)
+            .add_inputs([utxo.clone()])
             .add_output(&destination, 50000)
-            .unwrap()
             .set_change_address(change.clone())
             .set_special_payload(TransactionPayload::AssetLockPayloadType(asset_lock_payload));
 
@@ -1099,9 +781,9 @@ mod tests {
         };
 
         let builder2 = TransactionBuilder::new()
-            .add_input(utxo, None)
+            .set_current_height(200)
+            .add_inputs([utxo])
             .add_output(&destination, 50000)
-            .unwrap()
             .set_change_address(change)
             .set_special_payload(TransactionPayload::CoinbasePayloadType(coinbase_payload));
 
@@ -1127,18 +809,17 @@ mod tests {
         let change_address = Address::dummy(Network::Testnet, 0);
 
         let tx = TransactionBuilder::new()
+            .set_current_height(200)
             .set_fee_rate(FeeRate::normal())
             .set_change_address(change_address)
-            .add_input(utxo, None)
+            .add_inputs([utxo])
             // Add outputs in non-sorted order
-            .add_output(&address1, 300000)
-            .unwrap() // Higher amount
-            .add_output(&address2, 100000)
-            .unwrap() // Lower amount
-            .add_output(&address1, 200000)
-            .unwrap() // Middle amount
-            .build()
-            .unwrap();
+            .add_output(&address1, 300000) // Higher amount
+            .add_output(&address2, 100000) // Lower amount
+            .add_output(&address1, 200000) // Middle amount
+            .build_unsigned()
+            .unwrap()
+            .0;
 
         // Verify outputs are sorted by amount (ascending)
         assert!(tx.output[0].value <= tx.output[1].value);
@@ -1151,7 +832,7 @@ mod tests {
     #[test]
     fn test_bip69_input_ordering() {
         // Test that inputs are sorted according to BIP-69
-        let utxo1 = Utxo::new(
+        let mut utxo1 = Utxo::new(
             OutPoint {
                 txid: Txid::from_raw_hash(sha256d::Hash::from_slice(&[2u8; 32]).unwrap()),
                 vout: 1,
@@ -1164,8 +845,9 @@ mod tests {
             100,
             false,
         );
+        utxo1.is_confirmed = true;
 
-        let utxo2 = Utxo::new(
+        let mut utxo2 = Utxo::new(
             OutPoint {
                 txid: Txid::from_raw_hash(sha256d::Hash::from_slice(&[1u8; 32]).unwrap()),
                 vout: 2,
@@ -1178,8 +860,9 @@ mod tests {
             100,
             false,
         );
+        utxo2.is_confirmed = true;
 
-        let utxo3 = Utxo::new(
+        let mut utxo3 = Utxo::new(
             OutPoint {
                 txid: Txid::from_raw_hash(sha256d::Hash::from_slice(&[1u8; 32]).unwrap()),
                 vout: 0,
@@ -1192,21 +875,23 @@ mod tests {
             100,
             false,
         );
+        utxo3.is_confirmed = true;
 
         let destination = Address::dummy(Network::Testnet, 0);
         let change = Address::dummy(Network::Testnet, 0);
 
         let tx = TransactionBuilder::new()
+            .set_current_height(200)
             .set_fee_rate(FeeRate::normal())
             .set_change_address(change)
             // Add inputs in non-sorted order
-            .add_input(utxo1.clone(), None)
-            .add_input(utxo2.clone(), None)
-            .add_input(utxo3.clone(), None)
+            .add_inputs([utxo1.clone()])
+            .add_inputs([utxo2.clone()])
+            .add_inputs([utxo3.clone()])
             .add_output(&destination, 500000)
+            .build_unsigned()
             .unwrap()
-            .build()
-            .unwrap();
+            .0;
 
         // Verify inputs are sorted by txid first, then by vout
         // Expected order: [1u8; 32]:0, [1u8; 32]:2, [2u8; 32]:1
@@ -1262,17 +947,17 @@ mod tests {
             credit_outputs,
         };
 
-        let result = TransactionBuilder::new()
+        let tx = TransactionBuilder::new()
+            .set_current_height(200)
+            .set_selection_strategy(SelectionStrategy::SmallestFirst)
             .set_fee_rate(FeeRate::normal())
             .set_change_address(change_address)
             .set_special_payload(TransactionPayload::AssetLockPayloadType(asset_lock_payload))
             .add_output(&recipient_address, 50000)
+            .add_inputs(utxos)
+            .build_unsigned()
             .unwrap()
-            .select_inputs(&utxos, SelectionStrategy::SmallestFirst, 200, |_| None);
-
-        assert!(result.is_ok());
-        let mut builder = result.unwrap();
-        let tx = builder.build().unwrap();
+            .0;
 
         // Should have selected enough inputs to cover output + fees for larger transaction
         assert!(

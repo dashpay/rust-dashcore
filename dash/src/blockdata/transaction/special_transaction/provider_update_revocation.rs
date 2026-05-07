@@ -61,6 +61,25 @@ pub struct ProviderUpdateRevocationPayload {
 }
 
 impl ProviderUpdateRevocationPayload {
+    /// Latest spec version of the ProUpRevTx payload.
+    pub const CURRENT_VERSION: u16 = 2;
+
+    /// Create a new ProUpRevTx payload at [`Self::CURRENT_VERSION`].
+    pub fn new(
+        pro_tx_hash: Txid,
+        reason: u16,
+        inputs_hash: InputsHash,
+        payload_sig: BLSSignature,
+    ) -> Self {
+        Self {
+            version: Self::CURRENT_VERSION,
+            pro_tx_hash,
+            reason,
+            inputs_hash,
+            payload_sig,
+        }
+    }
+
     /// The size of the payload in bytes.
     pub fn size(&self) -> usize {
         2 + 32 + 2 + 32 + 96

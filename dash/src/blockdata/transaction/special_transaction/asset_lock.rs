@@ -46,6 +46,17 @@ pub struct AssetLockPayload {
 }
 
 impl AssetLockPayload {
+    /// Latest spec version of the AssetLock payload.
+    pub const CURRENT_VERSION: u8 = 1;
+
+    /// Create a new AssetLock payload at [`Self::CURRENT_VERSION`].
+    pub fn new(credit_outputs: Vec<TxOut>) -> Self {
+        Self {
+            version: Self::CURRENT_VERSION,
+            credit_outputs,
+        }
+    }
+
     /// The size of the payload in bytes.
     pub fn size(&self) -> usize {
         let size = 1 + VarInt(self.credit_outputs.len() as u64).len();

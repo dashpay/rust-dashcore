@@ -76,6 +76,38 @@ pub struct ProviderUpdateServicePayload {
 }
 
 impl ProviderUpdateServicePayload {
+    /// Latest spec version of the ProUpServTx payload (BasicBLS).
+    pub const CURRENT_VERSION: u16 = 2;
+
+    /// Create a new ProUpServTx payload at [`Self::CURRENT_VERSION`].
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        mn_type: Option<u16>,
+        pro_tx_hash: Txid,
+        ip_address: u128,
+        port: u16,
+        script_payout: ScriptBuf,
+        inputs_hash: InputsHash,
+        platform_node_id: Option<[u8; 20]>,
+        platform_p2p_port: Option<u16>,
+        platform_http_port: Option<u16>,
+        payload_sig: BLSSignature,
+    ) -> Self {
+        Self {
+            version: Self::CURRENT_VERSION,
+            mn_type,
+            pro_tx_hash,
+            ip_address,
+            port,
+            script_payout,
+            inputs_hash,
+            platform_node_id,
+            platform_p2p_port,
+            platform_http_port,
+            payload_sig,
+        }
+    }
+
     /// The size of the payload in bytes.
     pub fn size(&self) -> usize {
         let mut size = 2 + 32 + 16 + 2 + 32 + 96; // 180
