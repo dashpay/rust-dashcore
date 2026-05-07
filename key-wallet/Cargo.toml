@@ -24,7 +24,7 @@ test-utils = ["dashcore/test-utils"]
 # in the stored `TransactionContext`. With it OFF (the default), records
 # of chainlocked transactions are dropped from the map and a per-account
 # `finalized_txids: HashSet<Txid>` retains only their txids so
-# `has_transaction` / `transaction_is_finalized_in_block` still answer
+# `has_transaction` / `transaction_is_finalized` still answer
 # correctly. An InstantSend lock alone does NOT trigger record dropping
 # — we keep the record around so the surrounding block confirmation can
 # still write its height / block hash before the chainlock arrives.
