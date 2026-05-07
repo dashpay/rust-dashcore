@@ -1129,7 +1129,36 @@ pub unsafe extern "C" fn managed_wallet_get_account_count(
         + accounts.standard_bip32_accounts.len()
         + accounts.coinjoin_accounts.len()
         + accounts.identity_registration.is_some() as usize
-        + accounts.identity_topup.len();
+        + accounts.identity_topup.len()
+        + accounts.identity_topup_not_bound.is_some() as usize
+        + accounts.identity_invitation.is_some() as usize
+        + accounts.asset_lock_address_topup.is_some() as usize
+        + accounts.asset_lock_shielded_address_topup.is_some() as usize
+        + accounts.provider_voting_keys.is_some() as usize
+        + accounts.provider_owner_keys.is_some() as usize
+        + {
+            #[cfg(feature = "bls")]
+            {
+                accounts.provider_operator_keys.is_some() as usize
+            }
+            #[cfg(not(feature = "bls"))]
+            {
+                0
+            }
+        }
+        + {
+            #[cfg(feature = "eddsa")]
+            {
+                accounts.provider_platform_keys.is_some() as usize
+            }
+            #[cfg(not(feature = "eddsa"))]
+            {
+                0
+            }
+        }
+        + accounts.dashpay_receival_accounts.len()
+        + accounts.dashpay_external_accounts.len()
+        + accounts.platform_payment_accounts.len();
 
     // Clean up the wallet pointer
     crate::wallet::wallet_free_const(wallet_ptr);
