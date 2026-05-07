@@ -78,11 +78,10 @@ impl FFIManagedCoreAccount {
     }
 
     /// Returns the inner [`ManagedCoreKeysAccount`] regardless of variant —
-    /// for [`FFIManagedCoreAccountInner::Funds`], this returns the
-    /// composed-inner keys account; for [`FFIManagedCoreAccountInner::Keys`],
-    /// the account itself. Use this when the desired data lives on the
-    /// shared keys-account state (address pools, transactions, network,
-    /// monitor revision).
+    /// for the funds-bearing variant this returns the composed-inner keys
+    /// account; for the keys-only variant it returns the account itself.
+    /// Use this when the desired data lives on the shared keys-account state
+    /// (address pools, transactions, network, monitor revision).
     pub fn keys_account(&self) -> &ManagedCoreKeysAccount {
         match &self.inner {
             FFIManagedCoreAccountInner::Funds(a) => a.keys(),

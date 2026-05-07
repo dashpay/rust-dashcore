@@ -233,14 +233,14 @@ Functions: 108
 | `managed_core_account_free_transactions` | Free transactions array returned by managed_core_account_get_transactions ... | managed_account |
 | `managed_core_account_get_account_type` | Get the account type of a managed account  # Safety  - `account` must be a... | managed_account |
 | `managed_core_account_get_address_pool` | Get an address pool from a managed account by type  This function returns... | managed_account |
-| `managed_core_account_get_balance` | Get the balance of a managed account  # Safety  - `account` must be a valid... | managed_account |
+| `managed_core_account_get_balance` | Get the balance of a managed account | managed_account |
 | `managed_core_account_get_external_address_pool` | Get the external address pool from a managed account  This function returns... | managed_account |
 | `managed_core_account_get_index` | Get the account index from a managed account  Returns the primary account... | managed_account |
 | `managed_core_account_get_internal_address_pool` | Get the internal address pool from a managed account  This function returns... | managed_account |
 | `managed_core_account_get_network` | Get the network of a managed account  # Safety  - `account` must be a valid... | managed_account |
 | `managed_core_account_get_transaction_count` | Get the number of transactions in a managed account  Only available with the... | managed_account |
 | `managed_core_account_get_transactions` | Get all transactions from a managed account  Returns an array of... | managed_account |
-| `managed_core_account_get_utxo_count` | Get the number of UTXOs in a managed account  # Safety  - `account` must be... | managed_account |
+| `managed_core_account_get_utxo_count` | Get the number of UTXOs in a managed account | managed_account |
 | `managed_platform_account_free` | Free a managed platform account handle  # Safety  - `account` must be a... | managed_account |
 | `managed_platform_account_get_account_index` | Get the account index of a managed platform account  # Safety  - `account`... | managed_account |
 | `managed_platform_account_get_address_pool` | Get the address pool from a managed platform account  Platform accounts only... | managed_account |
@@ -3095,7 +3095,7 @@ managed_core_account_get_balance(account: *const FFIManagedCoreAccount, balance_
 ```
 
 **Description:**
-Get the balance of a managed account  # Safety  - `account` must be a valid pointer to an FFIManagedCoreAccount instance - `balance_out` must be a valid pointer to an FFIBalance structure
+Get the balance of a managed account.  Returns `false` (and leaves `balance_out` untouched) when the handle wraps a keys-only account (identity / asset-lock / provider) — those don't track per-account balances. Use [`managed_core_account_get_account_type`] to disambiguate, or only call this for funds-bearing accounts.  # Safety  - `account` must be a valid pointer to an FFIManagedCoreAccount instance - `balance_out` must be a valid pointer to an FFIBalance structure
 
 **Safety:**
 - `account` must be a valid pointer to an FFIManagedCoreAccount instance - `balance_out` must be a valid pointer to an FFIBalance structure
@@ -3207,7 +3207,7 @@ managed_core_account_get_utxo_count(account: *const FFIManagedCoreAccount,) -> c
 ```
 
 **Description:**
-Get the number of UTXOs in a managed account  # Safety  - `account` must be a valid pointer to an FFIManagedCoreAccount instance
+Get the number of UTXOs in a managed account.  Always returns 0 for keys-only accounts (identity / asset-lock / provider), which do not track per-account UTXOs.  # Safety  - `account` must be a valid pointer to an FFIManagedCoreAccount instance
 
 **Safety:**
 - `account` must be a valid pointer to an FFIManagedCoreAccount instance
