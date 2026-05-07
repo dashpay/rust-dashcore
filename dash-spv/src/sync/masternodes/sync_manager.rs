@@ -25,7 +25,8 @@ use std::time::Duration;
 /// `sum(QRINFO_TIMEOUT_SCHEDULE_SECS) = 100s`.
 const QRINFO_TIMEOUT_SCHEDULE_SECS: [u64; 3] = [10, 30, 60];
 
-/// Maximum number of retry attempts before giving up.
+/// Maximum number of in-flight attempts (initial send plus retries) before
+/// giving up. Equal to `QRINFO_TIMEOUT_SCHEDULE_SECS.len()`.
 const MAX_RETRY_ATTEMPTS: u8 = QRINFO_TIMEOUT_SCHEDULE_SECS.len() as u8;
 
 /// Returns the timeout for the in-flight QRInfo attempt with the given retry count.
@@ -600,7 +601,7 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
             if let Some(wait_start) = self.sync_state.qrinfo_wait_start {
                 let timeout = qrinfo_timeout_for(self.sync_state.qrinfo_retry_count);
                 if wait_start.elapsed() > timeout {
-                    if self.sync_state.qrinfo_retry_count < MAX_RETRY_ATTEMPTS {
+                    if self.sync_state.qrinfo_retry_count < MAX_RETRY_ATTEMPTS - 1 {
                         tracing::warn!(
                             timeout_secs = timeout.as_secs(),
                             retry_count = self.sync_state.qrinfo_retry_count,
