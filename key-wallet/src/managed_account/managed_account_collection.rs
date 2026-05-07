@@ -191,20 +191,6 @@ impl ManagedAccountCollection {
         }
     }
 
-    /// Whether `managed_type` should be stored as a funds-bearing account
-    /// ([`ManagedCoreFundsAccount`]) — i.e. Standard, CoinJoin, or DashPay.
-    /// Identity, asset-lock, and provider variants use the keys-only
-    /// [`ManagedCoreKeysAccount`] instead.
-    fn is_funds_bearing_account_type(managed_type: &ManagedAccountType) -> bool {
-        matches!(
-            managed_type,
-            ManagedAccountType::Standard { .. }
-                | ManagedAccountType::CoinJoin { .. }
-                | ManagedAccountType::DashpayReceivingFunds { .. }
-                | ManagedAccountType::DashpayExternalAccount { .. }
-        )
-    }
-
     /// Insert a managed account into the collection.
     ///
     /// Accepts either a [`ManagedCoreFundsAccount`] or a
@@ -385,102 +371,104 @@ impl ManagedAccountCollection {
         let mut managed_collection = Self::new();
 
         // Convert standard BIP44 accounts
-        for account in account_collection.standard_bip44_accounts.values() {
-            if let Ok(managed_account) = Self::create_managed_account_from_account(account) {
-                let _ = managed_collection.insert(managed_account);
+        for (index, account) in &account_collection.standard_bip44_accounts {
+            if let Ok(managed_account) = Self::create_managed_funds_account_from_account(account) {
+                managed_collection.standard_bip44_accounts.insert(*index, managed_account);
             }
         }
 
         // Convert standard BIP32 accounts
-        for account in account_collection.standard_bip32_accounts.values() {
-            if let Ok(managed_account) = Self::create_managed_account_from_account(account) {
-                let _ = managed_collection.insert(managed_account);
+        for (index, account) in &account_collection.standard_bip32_accounts {
+            if let Ok(managed_account) = Self::create_managed_funds_account_from_account(account) {
+                managed_collection.standard_bip32_accounts.insert(*index, managed_account);
             }
         }
 
         // Convert CoinJoin accounts
-        for account in account_collection.coinjoin_accounts.values() {
-            if let Ok(managed_account) = Self::create_managed_account_from_account(account) {
-                let _ = managed_collection.insert(managed_account);
+        for (index, account) in &account_collection.coinjoin_accounts {
+            if let Ok(managed_account) = Self::create_managed_funds_account_from_account(account) {
+                managed_collection.coinjoin_accounts.insert(*index, managed_account);
             }
         }
 
-        // Convert special purpose accounts
+        // Convert special purpose accounts (identity / asset-lock / provider) —
+        // keys-only variants (no balance / UTXO state).
         if let Some(account) = &account_collection.identity_registration {
-            if let Ok(managed_account) = Self::create_managed_account_from_account(account) {
-                let _ = managed_collection.insert(managed_account);
+            if let Ok(managed_account) = Self::create_managed_keys_account_from_account(account) {
+                managed_collection.identity_registration = Some(managed_account);
             }
         }
 
-        for account in account_collection.identity_topup.values() {
-            if let Ok(managed_account) = Self::create_managed_account_from_account(account) {
-                let _ = managed_collection.insert(managed_account);
+        for (index, account) in &account_collection.identity_topup {
+            if let Ok(managed_account) = Self::create_managed_keys_account_from_account(account) {
+                managed_collection.identity_topup.insert(*index, managed_account);
             }
         }
 
         if let Some(account) = &account_collection.identity_topup_not_bound {
-            if let Ok(managed_account) = Self::create_managed_account_from_account(account) {
-                let _ = managed_collection.insert(managed_account);
+            if let Ok(managed_account) = Self::create_managed_keys_account_from_account(account) {
+                managed_collection.identity_topup_not_bound = Some(managed_account);
             }
         }
 
         if let Some(account) = &account_collection.identity_invitation {
-            if let Ok(managed_account) = Self::create_managed_account_from_account(account) {
-                let _ = managed_collection.insert(managed_account);
+            if let Ok(managed_account) = Self::create_managed_keys_account_from_account(account) {
+                managed_collection.identity_invitation = Some(managed_account);
             }
         }
 
         if let Some(account) = &account_collection.asset_lock_address_topup {
-            if let Ok(managed_account) = Self::create_managed_account_from_account(account) {
-                let _ = managed_collection.insert(managed_account);
+            if let Ok(managed_account) = Self::create_managed_keys_account_from_account(account) {
+                managed_collection.asset_lock_address_topup = Some(managed_account);
             }
         }
 
         if let Some(account) = &account_collection.asset_lock_shielded_address_topup {
-            if let Ok(managed_account) = Self::create_managed_account_from_account(account) {
-                let _ = managed_collection.insert(managed_account);
+            if let Ok(managed_account) = Self::create_managed_keys_account_from_account(account) {
+                managed_collection.asset_lock_shielded_address_topup = Some(managed_account);
             }
         }
 
         if let Some(account) = &account_collection.provider_voting_keys {
-            if let Ok(managed_account) = Self::create_managed_account_from_account(account) {
-                let _ = managed_collection.insert(managed_account);
+            if let Ok(managed_account) = Self::create_managed_keys_account_from_account(account) {
+                managed_collection.provider_voting_keys = Some(managed_account);
             }
         }
 
         if let Some(account) = &account_collection.provider_owner_keys {
-            if let Ok(managed_account) = Self::create_managed_account_from_account(account) {
-                let _ = managed_collection.insert(managed_account);
+            if let Ok(managed_account) = Self::create_managed_keys_account_from_account(account) {
+                managed_collection.provider_owner_keys = Some(managed_account);
             }
         }
 
         #[cfg(feature = "bls")]
         if let Some(account) = &account_collection.provider_operator_keys {
-            if let Ok(managed_account) = Self::create_managed_account_from_bls_account(account) {
-                let _ = managed_collection.insert(managed_account);
+            if let Ok(managed_account) = Self::create_managed_keys_account_from_bls_account(account)
+            {
+                managed_collection.provider_operator_keys = Some(managed_account);
             }
         }
 
         #[cfg(feature = "eddsa")]
         if let Some(account) = &account_collection.provider_platform_keys {
             if let Ok(managed_account) =
-                Self::create_managed_account_from_eddsa_account(account, None)
+                Self::create_managed_keys_account_from_eddsa_account(account, None)
             {
-                let _ = managed_collection.insert(managed_account);
+                managed_collection.provider_platform_keys = Some(managed_account);
             }
         }
 
         // Convert DashPay receiving accounts
-        for account in account_collection.dashpay_receival_accounts.values() {
-            if let Ok(managed_account) = Self::create_managed_account_from_account(account) {
-                let _ = managed_collection.insert(managed_account);
+        for (key, account) in &account_collection.dashpay_receival_accounts {
+            if let Ok(managed_account) = Self::create_managed_funds_account_from_account(account) {
+                managed_collection.dashpay_receival_accounts.insert(*key, managed_account);
             }
         }
 
         // Convert DashPay external accounts
-        for account in account_collection.dashpay_external_accounts.values() {
-            if let Ok(managed_account) = Self::create_managed_account_from_account(account) {
-                let _ = managed_collection.insert(managed_account);
+        for (key, account) in &account_collection.dashpay_external_accounts {
+            if let Ok(managed_account) = Self::create_managed_funds_account_from_account(account) {
+                managed_collection.dashpay_external_accounts.insert(*key, managed_account);
             }
         }
 
@@ -496,57 +484,63 @@ impl ManagedAccountCollection {
         managed_collection
     }
 
-    /// Create a managed account (funds-bearing or keys-only) from an Account.
-    fn create_managed_account_from_account(
+    /// Create a funds-bearing managed account from an [`Account`].
+    fn create_managed_funds_account_from_account(
         account: &Account,
-    ) -> Result<OwnedManagedCoreAccount, crate::error::Error> {
+    ) -> Result<ManagedCoreFundsAccount, crate::error::Error> {
         let key_source = KeySource::Public(account.account_xpub);
-        Self::create_managed_account_from_account_type(
-            account.account_type,
-            account.network,
-            &key_source,
-        )
+        let managed_type =
+            Self::build_managed_account_type(account.account_type, account.network, &key_source)?;
+        Ok(ManagedCoreFundsAccount::new(managed_type, account.network))
     }
 
-    /// Create a managed account from a BLS Account (provider operator keys).
+    /// Create a keys-only managed account from an [`Account`].
+    fn create_managed_keys_account_from_account(
+        account: &Account,
+    ) -> Result<ManagedCoreKeysAccount, crate::error::Error> {
+        let key_source = KeySource::Public(account.account_xpub);
+        let managed_type =
+            Self::build_managed_account_type(account.account_type, account.network, &key_source)?;
+        Ok(ManagedCoreKeysAccount::new(managed_type, account.network))
+    }
+
+    /// Create a keys-only managed account from a BLS provider-operator-keys
+    /// account. ProviderOperatorKeys is always keys-only.
     #[cfg(feature = "bls")]
-    fn create_managed_account_from_bls_account(
+    fn create_managed_keys_account_from_bls_account(
         account: &crate::account::BLSAccount,
-    ) -> Result<OwnedManagedCoreAccount, crate::error::Error> {
+    ) -> Result<ManagedCoreKeysAccount, crate::error::Error> {
         let key_source = KeySource::BLSPublic(account.bls_public_key.clone());
-        Self::create_managed_account_from_account_type(
-            account.account_type,
-            account.network,
-            &key_source,
-        )
+        let managed_type =
+            Self::build_managed_account_type(account.account_type, account.network, &key_source)?;
+        Ok(ManagedCoreKeysAccount::new(managed_type, account.network))
     }
 
-    /// Create a managed account from an EdDSA Account (provider platform keys).
+    /// Create a keys-only managed account from an EdDSA provider-platform-keys
+    /// account. ProviderPlatformKeys is always keys-only.
     #[cfg(feature = "eddsa")]
-    fn create_managed_account_from_eddsa_account(
+    fn create_managed_keys_account_from_eddsa_account(
         account: &crate::account::EdDSAAccount,
         xpriv: Option<crate::derivation_slip10::ExtendedEd25519PrivKey>,
-    ) -> Result<OwnedManagedCoreAccount, crate::error::Error> {
+    ) -> Result<ManagedCoreKeysAccount, crate::error::Error> {
         let key_source = match xpriv {
             Some(priv_key) => KeySource::EdDSAPrivate(priv_key),
             None => KeySource::NoKeySource,
         };
-        Self::create_managed_account_from_account_type(
-            account.account_type,
-            account.network,
-            &key_source,
-        )
+        let managed_type =
+            Self::build_managed_account_type(account.account_type, account.network, &key_source)?;
+        Ok(ManagedCoreKeysAccount::new(managed_type, account.network))
     }
 
-    /// Create a managed account (funds-bearing or keys-only) from an account
-    /// type and network. The variant is chosen based on whether the account
-    /// type is funds-bearing (Standard / CoinJoin / DashPay) or keys-only
-    /// (identity / asset-lock / provider).
-    fn create_managed_account_from_account_type(
+    /// Build the [`ManagedAccountType`] (address pools + variant data) for an
+    /// account type and network. Shared between the funds-bearing and
+    /// keys-only construction helpers above — the wrap into one variant or
+    /// the other happens in the caller.
+    fn build_managed_account_type(
         account_type: AccountType,
         network: Network,
         key_source: &KeySource,
-    ) -> Result<OwnedManagedCoreAccount, crate::error::Error> {
+    ) -> Result<ManagedAccountType, crate::error::Error> {
         // Get the derivation path for this account type
         let base_path = account_type
             .derivation_path(network)
@@ -774,11 +768,7 @@ impl ManagedAccountCollection {
             }
         };
 
-        if Self::is_funds_bearing_account_type(&managed_type) {
-            Ok(OwnedManagedCoreAccount::Funds(ManagedCoreFundsAccount::new(managed_type, network)))
-        } else {
-            Ok(OwnedManagedCoreAccount::Keys(ManagedCoreKeysAccount::new(managed_type, network)))
-        }
+        Ok(managed_type)
     }
 
     /// Create a ManagedPlatformAccount from an Account for Platform Payment accounts
