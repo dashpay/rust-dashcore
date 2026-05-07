@@ -43,6 +43,19 @@ pub(super) async fn wait_for_masternode_sync(
     progress_receiver: &mut watch::Receiver<SyncProgress>,
     timeout_secs: u64,
 ) -> MasternodesProgress {
+    {
+        let progress = progress_receiver.borrow_and_update();
+        if let Ok(mn_progress) = progress.masternodes() {
+            if mn_progress.state() == SyncState::Synced {
+                tracing::info!(
+                    "Masternode sync already complete at height {}",
+                    mn_progress.current_height()
+                );
+                return mn_progress.clone();
+            }
+        }
+    }
+
     let timeout = time::sleep(Duration::from_secs(timeout_secs));
     tokio::pin!(timeout);
 
