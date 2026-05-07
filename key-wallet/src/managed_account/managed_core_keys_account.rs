@@ -14,15 +14,17 @@ use crate::account::TransactionRecord;
 use crate::managed_account::address_pool;
 use crate::managed_account::managed_account_trait::ManagedAccountTrait;
 use crate::managed_account::managed_account_type::ManagedAccountType;
-use crate::managed_account::transaction_record::{OutputDetail, OutputRole, TransactionDirection};
+use crate::managed_account::transaction_record::TransactionDirection;
 use crate::transaction_checking::account_checker::AccountMatch;
 use crate::transaction_checking::transaction_router::TransactionType;
 use crate::transaction_checking::TransactionContext;
 use crate::Network;
-use dashcore::{Address, Transaction, Txid};
+use dashcore::{Transaction, Txid};
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, HashSet};
+use std::collections::BTreeMap;
+#[cfg(not(feature = "keep-finalized-transactions"))]
+use std::collections::HashSet;
 
 /// Managed core keys account with mutable state but no funds tracking.
 ///
@@ -164,21 +166,22 @@ impl ManagedCoreKeysAccount {
 
     /// Record a new transaction for this keys account.
     ///
-    /// Specialized for the keys-account data model:
+    /// The keys-account record is intentionally a thin marker: it captures
+    /// "this tx involved this keys account" plus the `net_amount` flowing
+    /// to our addresses, and no more. The wallet-level details
+    /// (per-input UTXO origins, per-output roles) live on the **funding
+    /// account's** record — keys-account flows (identity registration,
+    /// asset lock, provider-key registration / update) are typically
+    /// funded from a Standard or CoinJoin account in the same wallet,
+    /// and that account's `record_transaction` already populates
+    /// `input_details` (from its UTXO set) and `output_details`
+    /// (classified into receive / change / sent). Duplicating that work
+    /// on the keys-account side would double-count and de-sync if the
+    /// classification ever changes.
     ///
-    /// - **No UTXO bookkeeping or balance update** (keys accounts don't
-    ///   track per-account UTXOs).
-    /// - **No external/internal split**: identity / asset-lock / provider
-    ///   account types own a single address pool with no notion of
-    ///   "receive" vs "change", so [`OutputRole::Change`] never applies
-    ///   here. Every output paying to an address we own is classified as
-    ///   [`OutputRole::Received`].
-    /// - **No spend-from-account path**: keys accounts cannot detect that
-    ///   they contributed inputs to a transaction (`account_match.sent`
-    ///   is always 0 for them — see
-    ///   [`ManagedCoreKeysAccount::check_transaction_for_match`]), so
-    ///   [`OutputRole::Sent`] never applies and the direction is always
-    ///   [`TransactionDirection::Incoming`].
+    /// Direction is [`TransactionDirection::Internal`]: from the wallet's
+    /// perspective these txs move funds from one of its accounts to
+    /// another, even when only the keys account is matched here.
     pub(crate) fn record_transaction(
         &mut self,
         tx: &Transaction,
@@ -188,50 +191,14 @@ impl ManagedCoreKeysAccount {
     ) -> TransactionRecord {
         let net_amount = account_match.received as i64 - account_match.sent as i64;
 
-        // For non-Standard variants `involved_receive_addresses()` returns
-        // the single `involved_addresses` list and `involved_change_addresses()`
-        // is `&[]` — there's no receive/change split. Treat every matched
-        // address as simply "an address we own".
-        let owned_addrs: HashSet<_> = account_match
-            .account_type_match
-            .involved_receive_addresses()
-            .iter()
-            .map(|info| &info.address)
-            .collect();
-
-        let mut output_details = Vec::new();
-        for (idx, output) in tx.output.iter().enumerate() {
-            let resolved = Address::from_script(&output.script_pubkey, self.network).ok();
-            let role = match &resolved {
-                Some(addr) if owned_addrs.contains(addr) => OutputRole::Received,
-                Some(_) => continue,
-                None if output.script_pubkey.is_provably_unspendable() => OutputRole::Unspendable,
-                None => continue,
-            };
-            output_details.push(OutputDetail {
-                index: idx as u32,
-                role,
-                address: resolved,
-                value: output.value,
-            });
-        }
-
-        let direction = if transaction_type == TransactionType::CoinJoin {
-            TransactionDirection::CoinJoin
-        } else {
-            TransactionDirection::Incoming
-        };
-
         let tx_record = TransactionRecord::new(
             tx.clone(),
             self.managed_account_type.to_account_type(),
             context.clone(),
             transaction_type,
-            direction,
-            // Keys accounts don't track per-account UTXOs — no input
-            // details to attach.
+            TransactionDirection::Internal,
             Vec::new(),
-            output_details,
+            Vec::new(),
             net_amount,
         );
 
