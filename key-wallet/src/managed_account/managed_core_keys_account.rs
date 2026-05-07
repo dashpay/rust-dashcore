@@ -164,12 +164,21 @@ impl ManagedCoreKeysAccount {
 
     /// Record a new transaction for this keys account.
     ///
-    /// Mirrors [`ManagedCoreFundsAccount::record_transaction`](crate::managed_account::ManagedCoreFundsAccount::record_transaction)
-    /// but performs no UTXO bookkeeping or balance updates. Keys accounts
-    /// (identity, asset-lock, provider) do not track per-account UTXOs, so
-    /// `input_details` is always empty and `has_inputs` is derived purely
-    /// from `account_match.sent`. Output annotation is limited to outputs
-    /// paying to addresses we own.
+    /// Specialized for the keys-account data model:
+    ///
+    /// - **No UTXO bookkeeping or balance update** (keys accounts don't
+    ///   track per-account UTXOs).
+    /// - **No external/internal split**: identity / asset-lock / provider
+    ///   account types own a single address pool with no notion of
+    ///   "receive" vs "change", so [`OutputRole::Change`] never applies
+    ///   here. Every output paying to an address we own is classified as
+    ///   [`OutputRole::Received`].
+    /// - **No spend-from-account path**: keys accounts cannot detect that
+    ///   they contributed inputs to a transaction (`account_match.sent`
+    ///   is always 0 for them — see
+    ///   [`ManagedCoreKeysAccount::check_transaction_for_match`]), so
+    ///   [`OutputRole::Sent`] never applies and the direction is always
+    ///   [`TransactionDirection::Incoming`].
     pub(crate) fn record_transaction(
         &mut self,
         tx: &Transaction,
@@ -179,67 +188,36 @@ impl ManagedCoreKeysAccount {
     ) -> TransactionRecord {
         let net_amount = account_match.received as i64 - account_match.sent as i64;
 
-        let receive_addrs: HashSet<_> = account_match
+        // For non-Standard variants `involved_receive_addresses()` returns
+        // the single `involved_addresses` list and `involved_change_addresses()`
+        // is `&[]` — there's no receive/change split. Treat every matched
+        // address as simply "an address we own".
+        let owned_addrs: HashSet<_> = account_match
             .account_type_match
             .involved_receive_addresses()
             .iter()
             .map(|info| &info.address)
             .collect();
-        let change_addrs: HashSet<_> = account_match
-            .account_type_match
-            .involved_change_addresses()
-            .iter()
-            .map(|info| &info.address)
-            .collect();
-
-        // Keys accounts have no UTXO state — input details are always empty.
-        let input_details = Vec::new();
-
-        // Without UTXO-based input matching, `account_match.sent > 0` is the
-        // only signal that we contributed to this transaction's inputs.
-        let has_inputs = account_match.sent > 0;
-
-        let resolved_outputs: Vec<Option<Address>> = tx
-            .output
-            .iter()
-            .map(|output| Address::from_script(&output.script_pubkey, self.network).ok())
-            .collect();
 
         let mut output_details = Vec::new();
         for (idx, output) in tx.output.iter().enumerate() {
-            let role = match &resolved_outputs[idx] {
-                Some(addr) if receive_addrs.contains(addr) => OutputRole::Received,
-                Some(addr) if change_addrs.contains(addr) => OutputRole::Change,
-                Some(_) if has_inputs => OutputRole::Sent,
+            let resolved = Address::from_script(&output.script_pubkey, self.network).ok();
+            let role = match &resolved {
+                Some(addr) if owned_addrs.contains(addr) => OutputRole::Received,
                 Some(_) => continue,
-                None => {
-                    if output.script_pubkey.is_provably_unspendable() {
-                        OutputRole::Unspendable
-                    } else if has_inputs {
-                        OutputRole::Sent
-                    } else {
-                        continue;
-                    }
-                }
+                None if output.script_pubkey.is_provably_unspendable() => OutputRole::Unspendable,
+                None => continue,
             };
             output_details.push(OutputDetail {
                 index: idx as u32,
                 role,
-                address: resolved_outputs[idx].clone(),
+                address: resolved,
                 value: output.value,
             });
         }
 
-        let has_sent = output_details.iter().any(|d| d.role == OutputRole::Sent);
-        let has_our_outputs = output_details
-            .iter()
-            .any(|d| d.role == OutputRole::Received || d.role == OutputRole::Change);
         let direction = if transaction_type == TransactionType::CoinJoin {
             TransactionDirection::CoinJoin
-        } else if !has_sent && has_inputs && has_our_outputs {
-            TransactionDirection::Internal
-        } else if has_inputs {
-            TransactionDirection::Outgoing
         } else {
             TransactionDirection::Incoming
         };
@@ -250,7 +228,9 @@ impl ManagedCoreKeysAccount {
             context.clone(),
             transaction_type,
             direction,
-            input_details,
+            // Keys accounts don't track per-account UTXOs — no input
+            // details to attach.
+            Vec::new(),
             output_details,
             net_amount,
         );
