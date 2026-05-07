@@ -433,6 +433,16 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
             if self.state() == SyncState::Synced
                 && self.progress.current_height() < self.progress.block_header_tip_height()
             {
+                // A previous pipeline (QRInfo + draining historical MnListDiffs, or an
+                // earlier incremental update) may still be in flight. Starting a new
+                // pipeline here would overwrite `pipeline_mode` and append into the same
+                // queue, so when the shared pipeline completes the wrong completion path
+                // runs and any pending `qr_info_result` is discarded. The `tick` handler
+                // re-fires once the pipeline drains.
+                if self.sync_state.has_pending_requests() {
+                    return Ok(vec![]);
+                }
+
                 match self.next_pipeline_mode(*tip_height) {
                     PipelineMode::QuorumValidation {
                         ..
@@ -510,6 +520,12 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
                 //   already freshly-validated and the tip should just be refreshed
                 //   with a targeted mnlistdiff.
                 if self.state() == SyncState::Synced {
+                    // Same guard as the `BlockHeadersStored` Synced arm above: never
+                    // start a new pipeline while an earlier one is still draining,
+                    // otherwise the shared queue and `pipeline_mode` get clobbered.
+                    if self.sync_state.has_pending_requests() {
+                        return Ok(vec![]);
+                    }
                     tracing::debug!(
                         "Headers sync complete at {}, updating masternode list",
                         self.progress.block_header_tip_height()
