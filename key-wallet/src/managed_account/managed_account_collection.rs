@@ -1152,6 +1152,34 @@ impl ManagedAccountCollection {
         accounts
     }
 
+    /// Get all funds-bearing accounts (Standard BIP44/32, CoinJoin, DashPay).
+    ///
+    /// Use this from callsites that operate on balance / UTXO state — keys-only
+    /// accounts (identity, asset-lock, provider) don't track those, so iterating
+    /// [`Self::all_accounts`] and filtering via [`ManagedAccountRef::as_funds`]
+    /// in those callsites is just noise.
+    pub fn all_funding_accounts(&self) -> Vec<&ManagedCoreFundsAccount> {
+        let mut accounts = Vec::new();
+        accounts.extend(self.standard_bip44_accounts.values());
+        accounts.extend(self.standard_bip32_accounts.values());
+        accounts.extend(self.coinjoin_accounts.values());
+        accounts.extend(self.dashpay_receival_accounts.values());
+        accounts.extend(self.dashpay_external_accounts.values());
+        accounts
+    }
+
+    /// Get all funds-bearing accounts mutably. See [`Self::all_funding_accounts`]
+    /// for which account types are visited.
+    pub fn all_funding_accounts_mut(&mut self) -> Vec<&mut ManagedCoreFundsAccount> {
+        let mut accounts = Vec::new();
+        accounts.extend(self.standard_bip44_accounts.values_mut());
+        accounts.extend(self.standard_bip32_accounts.values_mut());
+        accounts.extend(self.coinjoin_accounts.values_mut());
+        accounts.extend(self.dashpay_receival_accounts.values_mut());
+        accounts.extend(self.dashpay_external_accounts.values_mut());
+        accounts
+    }
+
     /// Get the count of accounts
     pub fn count(&self) -> usize {
         self.all_accounts().len()

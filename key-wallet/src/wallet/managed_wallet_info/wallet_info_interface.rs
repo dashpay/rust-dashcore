@@ -78,12 +78,9 @@ pub trait WalletInfoInterface: Sized + WalletTransactionChecker + ManagedAccount
     /// balance.
     fn account_balances(&self) -> BTreeMap<AccountType, WalletCoreBalance> {
         self.accounts()
-            .all_accounts()
+            .all_funding_accounts()
             .iter()
-            .filter_map(|acc| {
-                let funds = acc.as_funds()?;
-                Some((funds.managed_account_type().to_account_type(), funds.balance))
-            })
+            .map(|funds| (funds.managed_account_type().to_account_type(), funds.balance))
             .collect()
     }
 
@@ -196,10 +193,8 @@ impl WalletInfoInterface for ManagedWalletInfo {
 
     fn utxos(&self) -> BTreeSet<&Utxo> {
         let mut utxos = BTreeSet::new();
-        for account in self.accounts.all_accounts() {
-            if let Some(funds) = account.as_funds() {
-                utxos.extend(funds.utxos.values());
-            }
+        for account in self.accounts.all_funding_accounts() {
+            utxos.extend(account.utxos.values());
         }
         utxos
     }
@@ -215,14 +210,12 @@ impl WalletInfoInterface for ManagedWalletInfo {
     }
 
     fn update_balance(&mut self) {
+        // Only funds-bearing accounts contribute to the wallet balance.
         let mut balance = WalletCoreBalance::default();
         let last_processed_height = self.last_processed_height();
-        for mut account in self.accounts.all_accounts_mut() {
-            // Only funds-bearing accounts contribute to the wallet balance.
-            if let Some(funds) = account.as_funds_mut() {
-                funds.update_balance(last_processed_height);
-                balance += funds.balance;
-            }
+        for funds in self.accounts.all_funding_accounts_mut() {
+            funds.update_balance(last_processed_height);
+            balance += funds.balance;
         }
         self.balance = balance;
     }
@@ -244,14 +237,10 @@ impl WalletInfoInterface for ManagedWalletInfo {
     }
 
     fn immature_transactions(&self) -> Vec<Transaction> {
-        let mut immature_txids: BTreeSet<Txid> = BTreeSet::new();
-
         // Coinbase UTXOs only live on funds-bearing accounts.
-        for account in self.accounts.all_accounts() {
-            let Some(funds) = account.as_funds() else {
-                continue;
-            };
-            for utxo in funds.utxos.values() {
+        let mut immature_txids: BTreeSet<Txid> = BTreeSet::new();
+        for account in self.accounts.all_funding_accounts() {
+            for utxo in account.utxos.values() {
                 if utxo.is_coinbase && !utxo.is_mature(self.last_processed_height()) {
                     immature_txids.insert(utxo.outpoint.txid);
                 }
@@ -260,11 +249,8 @@ impl WalletInfoInterface for ManagedWalletInfo {
 
         // Look up the matching transaction records on the same funds accounts.
         let mut transactions = Vec::new();
-        for account in self.accounts.all_accounts() {
-            let Some(funds) = account.as_funds() else {
-                continue;
-            };
-            for (txid, record) in funds.transactions() {
+        for account in self.accounts.all_funding_accounts() {
+            for (txid, record) in account.transactions() {
                 if immature_txids.contains(txid) {
                     transactions.push(record.transaction.clone());
                 }
@@ -291,13 +277,10 @@ impl WalletInfoInterface for ManagedWalletInfo {
         if new_height <= old_height {
             return Vec::new();
         }
+        // Coinbase records only land on funds-bearing accounts.
         let mut matured = Vec::new();
-        for account in self.accounts.all_accounts() {
-            // Coinbase records only land on funds-bearing accounts.
-            let Some(funds) = account.as_funds() else {
-                continue;
-            };
-            for record in funds.transactions().values() {
+        for account in self.accounts.all_funding_accounts() {
+            for record in account.transactions().values() {
                 if !record.transaction.is_coin_base() {
                     continue;
                 }
