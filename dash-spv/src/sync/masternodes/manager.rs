@@ -64,6 +64,17 @@ impl Default for PipelineMode {
     }
 }
 
+/// In-flight QRInfo request: tip hash that was requested and when the request fired.
+/// Held inside `MasternodeSyncState::qrinfo_in_flight` while a QRInfo is outstanding.
+#[derive(Debug, Clone, Copy)]
+pub(super) struct QRInfoInFlight {
+    /// Tip block hash of the request. Used to reject late responses for a previously
+    /// requested tip after a timeout retry has rotated the active tip.
+    pub(super) tip: BlockHash,
+    /// When the request was fired. Used by the timeout check.
+    pub(super) wait_start: Instant,
+}
+
 /// Sync state for masternode list synchronization.
 #[derive(Debug, Default)]
 pub(super) struct MasternodeSyncState {
@@ -73,10 +84,10 @@ pub(super) struct MasternodeSyncState {
     pub(super) mnlistdiff_pipeline: MnListDiffPipeline,
     /// What the pipeline is currently being used for. See [`PipelineMode`].
     pub(super) pipeline_mode: PipelineMode,
-    /// Whether we are waiting for a QRInfo response.
-    pub(super) waiting_for_qrinfo: bool,
-    /// When we started waiting for QRInfo response.
-    pub(super) qrinfo_wait_start: Option<Instant>,
+    /// Active QRInfo request, if any. `Some` between firing the request and either
+    /// processing the response or timing out. Carries the requested tip so a late
+    /// straggler from a previously requested tip can be rejected after a retry.
+    pub(super) qrinfo_in_flight: Option<QRInfoInFlight>,
     /// Current retry count for QRInfo.
     pub(super) qrinfo_retry_count: u8,
     /// Block hash of the latest masternode list the engine holds. Initialized from
@@ -101,9 +112,9 @@ pub(super) struct MasternodeSyncState {
     pub(super) last_window_qrinfo_tip: Option<u32>,
     /// Block hash of the most recently successfully processed QRInfo's `mn_list_diff_tip`.
     /// A response carrying the same tip hash as the last successful processing is dropped
-    /// at handler entry. This defends against the case where the `waiting_for_qrinfo` gate
-    /// is open (because a new request was already fired for a newer tip) but a late
-    /// straggler from a previous tip's request still arrives.
+    /// at handler entry. This defends against the case where `qrinfo_in_flight` is set
+    /// (because a new request was already fired for a newer tip) but a late straggler from
+    /// a previous tip's request still arrives.
     pub(super) last_processed_qrinfo_tip: Option<BlockHash>,
 }
 
@@ -140,13 +151,12 @@ impl MasternodeSyncState {
     }
 
     pub(super) fn has_pending_requests(&self) -> bool {
-        !self.mnlistdiff_pipeline.is_complete() || self.waiting_for_qrinfo
+        !self.mnlistdiff_pipeline.is_complete() || self.qrinfo_in_flight.is_some()
     }
 
     pub(super) fn clear_pending(&mut self) {
         self.mnlistdiff_pipeline.clear();
-        self.waiting_for_qrinfo = false;
-        self.qrinfo_wait_start = None;
+        self.qrinfo_in_flight = None;
         self.pipeline_mode = PipelineMode::default();
     }
 
@@ -159,14 +169,15 @@ impl MasternodeSyncState {
         self.current_cycle_attempts = self.current_cycle_attempts.saturating_add(1);
     }
 
-    fn start_waiting_for_qrinfo(&mut self) {
-        self.waiting_for_qrinfo = true;
-        self.qrinfo_wait_start = Some(Instant::now());
+    fn start_waiting_for_qrinfo(&mut self, expected_tip: BlockHash) {
+        self.qrinfo_in_flight = Some(QRInfoInFlight {
+            tip: expected_tip,
+            wait_start: Instant::now(),
+        });
     }
 
     pub(super) fn qrinfo_received(&mut self) {
-        self.waiting_for_qrinfo = false;
-        self.qrinfo_wait_start = None;
+        self.qrinfo_in_flight = None;
     }
 
     /// Decide whether an incoming QRInfo should be processed by the handler.
@@ -175,6 +186,9 @@ impl MasternodeSyncState {
     /// - Duplicates of the last successfully processed tip (late straggler from a
     ///   previous request whose response already won).
     /// - Unsolicited responses (no QRInfo request currently in flight).
+    /// - Responses whose tip does not match the active in-flight request tip
+    ///   (late straggler from a previous tip whose request was rotated by a
+    ///   timeout retry).
     pub(super) fn should_process_qrinfo(&self, qr_info: &QRInfo) -> bool {
         let tip = qr_info.mn_list_diff_tip.block_hash;
         if self.last_processed_qrinfo_tip == Some(tip) {
@@ -184,10 +198,18 @@ impl MasternodeSyncState {
             );
             return false;
         }
-        if !self.waiting_for_qrinfo {
+        let Some(in_flight) = self.qrinfo_in_flight else {
             tracing::debug!(
                 tip = %tip,
                 "Ignoring unsolicited/late QRInfo"
+            );
+            return false;
+        };
+        if in_flight.tip != tip {
+            tracing::debug!(
+                tip = %tip,
+                expected = %in_flight.tip,
+                "Dropping QRInfo for non-active request tip"
             );
             return false;
         }
@@ -485,7 +507,7 @@ impl<H: BlockHeaderStorage> MasternodesManager<H> {
         self.progress.add_qr_infos_requested(1);
         self.sync_state.record_qrinfo_attempt(tip_height);
 
-        self.sync_state.start_waiting_for_qrinfo();
+        self.sync_state.start_waiting_for_qrinfo(tip_block_hash);
 
         Ok(vec![])
     }

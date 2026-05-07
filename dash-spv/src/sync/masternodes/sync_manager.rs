@@ -448,7 +448,7 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
                     PipelineMode::QuorumValidation {
                         ..
                     } => {
-                        if self.sync_state.waiting_for_qrinfo {
+                        if self.sync_state.qrinfo_in_flight.is_some() {
                             tracing::debug!(
                                 "New headers stored (tip: {}), QRInfo already in flight",
                                 tip_height,
@@ -535,7 +535,7 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
                         PipelineMode::QuorumValidation {
                             ..
                         } => {
-                            if self.sync_state.waiting_for_qrinfo {
+                            if self.sync_state.qrinfo_in_flight.is_some() {
                                 tracing::debug!(
                                     "Headers sync complete at {}, QRInfo already in flight",
                                     self.progress.block_header_tip_height()
@@ -582,7 +582,7 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
                     PipelineMode::QuorumValidation {
                         ..
                     } => {
-                        if !self.sync_state.waiting_for_qrinfo {
+                        if self.sync_state.qrinfo_in_flight.is_none() {
                             self.sync_state.qrinfo_retry_count = 0;
                             self.sync_state.clear_pending();
                             return self.send_qrinfo_for_tip(requests).await;
@@ -597,27 +597,25 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
         }
 
         // Check for QRInfo timeout
-        if self.sync_state.waiting_for_qrinfo {
-            if let Some(wait_start) = self.sync_state.qrinfo_wait_start {
-                let timeout = qrinfo_timeout_for(self.sync_state.qrinfo_retry_count);
-                if wait_start.elapsed() > timeout {
-                    if self.sync_state.qrinfo_retry_count < MAX_RETRY_ATTEMPTS - 1 {
-                        tracing::warn!(
-                            timeout_secs = timeout.as_secs(),
-                            retry_count = self.sync_state.qrinfo_retry_count,
-                            "Timeout waiting for QRInfo response, retrying..."
-                        );
-                        self.sync_state.qrinfo_retry_count += 1;
-                        self.sync_state.clear_pending();
-                        return self.send_qrinfo_for_tip(requests).await;
-                    } else {
-                        tracing::warn!(
-                            "QRInfo timeout after {} retries, skipping masternode sync",
-                            MAX_RETRY_ATTEMPTS
-                        );
-                        self.sync_state.clear_pending();
-                        return self.complete_pipeline().await;
-                    }
+        if let Some(in_flight) = self.sync_state.qrinfo_in_flight {
+            let timeout = qrinfo_timeout_for(self.sync_state.qrinfo_retry_count);
+            if in_flight.wait_start.elapsed() > timeout {
+                if self.sync_state.qrinfo_retry_count < MAX_RETRY_ATTEMPTS - 1 {
+                    tracing::warn!(
+                        timeout_secs = timeout.as_secs(),
+                        retry_count = self.sync_state.qrinfo_retry_count,
+                        "Timeout waiting for QRInfo response, retrying..."
+                    );
+                    self.sync_state.qrinfo_retry_count += 1;
+                    self.sync_state.clear_pending();
+                    return self.send_qrinfo_for_tip(requests).await;
+                } else {
+                    tracing::warn!(
+                        "QRInfo timeout after {} retries, skipping masternode sync",
+                        MAX_RETRY_ATTEMPTS
+                    );
+                    self.sync_state.clear_pending();
+                    return self.complete_pipeline().await;
                 }
             }
             return Ok(vec![]);
@@ -647,7 +645,7 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
 
 #[cfg(test)]
 mod tests {
-    use super::super::manager::MasternodeSyncState;
+    use super::super::manager::{MasternodeSyncState, QRInfoInFlight};
     use super::{
         feed_qrinfo_heights_to_engine, qrinfo_timeout_for, MAX_RETRY_ATTEMPTS,
         QRINFO_TIMEOUT_SCHEDULE_SECS,
@@ -668,6 +666,7 @@ mod tests {
     use dashcore_hashes::Hash;
     use std::collections::HashMap;
     use std::ops::Range;
+    use std::time::Instant;
 
     struct MockHeaderStorage(HashMap<BlockHash, u32>);
 
@@ -882,18 +881,25 @@ mod tests {
     /// must:
     /// 1. Drop a response carrying the same `mn_list_diff_tip.block_hash` as the
     ///    last successfully processed one (defends against a late straggler from
-    ///    a previous request whose response already won, even when the
-    ///    `waiting_for_qrinfo` gate is open for a newer request).
+    ///    a previous request whose response already won, even when the in-flight
+    ///    gate is open for a newer request).
     /// 2. Drop an unsolicited response (no QRInfo currently in flight).
-    /// 3. Allow a fresh response that targets a new tip while a request is
-    ///    actually in flight.
+    /// 3. Allow a fresh response that matches the active in-flight request tip.
+    /// 4. Drop a response whose tip does not match the active in-flight request
+    ///    tip (late straggler from a previous tip whose request was rotated by a
+    ///    timeout retry).
     #[test]
     fn test_should_process_qrinfo_dedup_gate() {
         let tip_a = BlockHash::from_slice(&[0xAA; 32]).unwrap();
+        let tip_b = BlockHash::from_slice(&[0xBB; 32]).unwrap();
+        let in_flight_b = QRInfoInFlight {
+            tip: tip_b,
+            wait_start: Instant::now(),
+        };
 
         // Same-tip duplicate is dropped even when a request is in flight.
         let state = MasternodeSyncState {
-            waiting_for_qrinfo: true,
+            qrinfo_in_flight: Some(in_flight_b),
             last_processed_qrinfo_tip: Some(tip_a),
             ..Default::default()
         };
@@ -905,34 +911,47 @@ mod tests {
         // Unsolicited response (no request in flight) is dropped, even for a
         // fresh tip.
         let state = MasternodeSyncState::default();
-        assert!(!state.waiting_for_qrinfo);
+        assert!(state.qrinfo_in_flight.is_none());
         assert!(
             !state.should_process_qrinfo(&qrinfo_with_tip(0xBB)),
             "unsolicited response must be dropped"
         );
 
-        // Fresh tip with a request in flight is accepted.
+        // Response matching the active in-flight tip is accepted.
         let state = MasternodeSyncState {
-            waiting_for_qrinfo: true,
+            qrinfo_in_flight: Some(in_flight_b),
             last_processed_qrinfo_tip: Some(tip_a),
             ..Default::default()
         };
         assert!(
-            state.should_process_qrinfo(&qrinfo_with_tip(0xCC)),
-            "fresh tip with request in flight must be accepted"
+            state.should_process_qrinfo(&qrinfo_with_tip(0xBB)),
+            "response matching the active request tip must be accepted"
         );
 
         // Same-tip dedup wins over the in-flight check: even if the flag has
         // already been cleared (e.g. a sibling response just flipped it), the
         // straggler must not be processed twice.
         let state = MasternodeSyncState {
-            waiting_for_qrinfo: false,
+            qrinfo_in_flight: None,
             last_processed_qrinfo_tip: Some(tip_a),
             ..Default::default()
         };
         assert!(
             !state.should_process_qrinfo(&qrinfo_with_tip(0xAA)),
-            "duplicate must be dropped even when waiting_for_qrinfo is false"
+            "duplicate must be dropped even when no request is in flight"
+        );
+
+        // Late straggler from a previous tip whose request was rotated by a
+        // timeout retry: the in-flight gate is open for tip B, but tip C
+        // arrives. Dropped because the tip does not match the active request.
+        let state = MasternodeSyncState {
+            qrinfo_in_flight: Some(in_flight_b),
+            last_processed_qrinfo_tip: Some(tip_a),
+            ..Default::default()
+        };
+        assert!(
+            !state.should_process_qrinfo(&qrinfo_with_tip(0xCC)),
+            "response for non-active request tip must be dropped"
         );
     }
 }
