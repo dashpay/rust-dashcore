@@ -449,14 +449,14 @@ Free a managed platform account result's error message (if any) Note: This does 
 #### `wallet_manager_add_wallet_from_mnemonic`
 
 ```c
-wallet_manager_add_wallet_from_mnemonic(manager: *mut FFIWalletManager, mnemonic: *const c_char, passphrase: *const c_char, error: *mut FFIError,) -> bool
+wallet_manager_add_wallet_from_mnemonic(manager: *mut FFIWalletManager, mnemonic: *const c_char, error: *mut FFIError,) -> bool
 ```
 
 **Description:**
-Add a wallet from mnemonic to the manager (backward compatibility)  # Safety  - `manager` must be a valid pointer to an FFIWalletManager instance - `mnemonic` must be a valid pointer to a null-terminated C string - `passphrase` must be a valid pointer to a null-terminated C string or null - `error` must be a valid pointer to an FFIError structure - The caller must ensure all pointers remain valid for the duration of this call
+Add a wallet from mnemonic to the manager (backward compatibility)  # Safety  - `manager` must be a valid pointer to an FFIWalletManager instance - `mnemonic` must be a valid pointer to a null-terminated C string - `error` must be a valid pointer to an FFIError structure - The caller must ensure all pointers remain valid for the duration of this call
 
 **Safety:**
-- `manager` must be a valid pointer to an FFIWalletManager instance - `mnemonic` must be a valid pointer to a null-terminated C string - `passphrase` must be a valid pointer to a null-terminated C string or null - `error` must be a valid pointer to an FFIError structure - The caller must ensure all pointers remain valid for the duration of this call
+- `manager` must be a valid pointer to an FFIWalletManager instance - `mnemonic` must be a valid pointer to a null-terminated C string - `error` must be a valid pointer to an FFIError structure - The caller must ensure all pointers remain valid for the duration of this call
 
 **Module:** `wallet_manager`
 
@@ -465,7 +465,7 @@ Add a wallet from mnemonic to the manager (backward compatibility)  # Safety  - 
 #### `wallet_manager_add_wallet_from_mnemonic_return_serialized_bytes`
 
 ```c
-wallet_manager_add_wallet_from_mnemonic_return_serialized_bytes(manager: *mut FFIWalletManager, mnemonic: *const c_char, passphrase: *const c_char, birth_height: c_uint, account_options: *const crate::types::FFIWalletAccountCreationOptions, downgrade_to_pubkey_wallet: bool, allow_external_signing: bool, wallet_bytes_out: *mut *mut u8, wallet_bytes_len_out: *mut usize, wallet_id_out: *mut u8, error: *mut FFIError,) -> bool
+wallet_manager_add_wallet_from_mnemonic_return_serialized_bytes(manager: *mut FFIWalletManager, mnemonic: *const c_char, birth_height: c_uint, account_options: *const crate::types::FFIWalletAccountCreationOptions, downgrade_to_pubkey_wallet: bool, allow_external_signing: bool, wallet_bytes_out: *mut *mut u8, wallet_bytes_len_out: *mut usize, wallet_id_out: *mut u8, error: *mut FFIError,) -> bool
 ```
 
 **Module:** `wallet_manager`
@@ -475,14 +475,14 @@ wallet_manager_add_wallet_from_mnemonic_return_serialized_bytes(manager: *mut FF
 #### `wallet_manager_add_wallet_from_mnemonic_with_options`
 
 ```c
-wallet_manager_add_wallet_from_mnemonic_with_options(manager: *mut FFIWalletManager, mnemonic: *const c_char, passphrase: *const c_char, account_options: *const crate::types::FFIWalletAccountCreationOptions, error: *mut FFIError,) -> bool
+wallet_manager_add_wallet_from_mnemonic_with_options(manager: *mut FFIWalletManager, mnemonic: *const c_char, account_options: *const crate::types::FFIWalletAccountCreationOptions, error: *mut FFIError,) -> bool
 ```
 
 **Description:**
-Add a wallet from mnemonic to the manager with options  # Safety  - `manager` must be a valid pointer to an FFIWalletManager instance - `mnemonic` must be a valid pointer to a null-terminated C string - `passphrase` must be a valid pointer to a null-terminated C string or null - `account_options` must be a valid pointer to FFIWalletAccountCreationOptions or null - `error` must be a valid pointer to an FFIError structure - The caller must ensure all pointers remain valid for the duration of this call
+Add a wallet from mnemonic to the manager with options  # Safety  - `manager` must be a valid pointer to an FFIWalletManager instance - `mnemonic` must be a valid pointer to a null-terminated C string - `account_options` must be a valid pointer to FFIWalletAccountCreationOptions or null - `error` must be a valid pointer to an FFIError structure - The caller must ensure all pointers remain valid for the duration of this call
 
 **Safety:**
-- `manager` must be a valid pointer to an FFIWalletManager instance - `mnemonic` must be a valid pointer to a null-terminated C string - `passphrase` must be a valid pointer to a null-terminated C string or null - `account_options` must be a valid pointer to FFIWalletAccountCreationOptions or null - `error` must be a valid pointer to an FFIError structure - The caller must ensure all pointers remain valid for the duration of this call
+- `manager` must be a valid pointer to an FFIWalletManager instance - `mnemonic` must be a valid pointer to a null-terminated C string - `account_options` must be a valid pointer to FFIWalletAccountCreationOptions or null - `error` must be a valid pointer to an FFIError structure - The caller must ensure all pointers remain valid for the duration of this call
 
 **Module:** `wallet_manager`
 
@@ -1333,14 +1333,14 @@ Check if a transaction belongs to the wallet using ManagedWalletInfo  # Safety  
 #### `wallet_create_from_mnemonic`
 
 ```c
-wallet_create_from_mnemonic(mnemonic: *const c_char, passphrase: *const c_char, network: FFINetwork, error: *mut FFIError,) -> *mut FFIWallet
+wallet_create_from_mnemonic(mnemonic: *const c_char, network: FFINetwork, error: *mut FFIError,) -> *mut FFIWallet
 ```
 
 **Description:**
-Create a new wallet from mnemonic (backward compatibility - single network)  # Safety  - `mnemonic` must be a valid pointer to a null-terminated C string - `passphrase` must be a valid pointer to a null-terminated C string or null - `error` must be a valid pointer to an FFIError structure - The caller must ensure all pointers remain valid for the duration of this call - The returned pointer must be freed with `wallet_free` when no longer needed
+Create a new wallet from mnemonic (backward compatibility - single network)  # Safety  - `mnemonic` must be a valid pointer to a null-terminated C string - `error` must be a valid pointer to an FFIError structure - The caller must ensure all pointers remain valid for the duration of this call - The returned pointer must be freed with `wallet_free` when no longer needed
 
 **Safety:**
-- `mnemonic` must be a valid pointer to a null-terminated C string - `passphrase` must be a valid pointer to a null-terminated C string or null - `error` must be a valid pointer to an FFIError structure - The caller must ensure all pointers remain valid for the duration of this call - The returned pointer must be freed with `wallet_free` when no longer needed
+- `mnemonic` must be a valid pointer to a null-terminated C string - `error` must be a valid pointer to an FFIError structure - The caller must ensure all pointers remain valid for the duration of this call - The returned pointer must be freed with `wallet_free` when no longer needed
 
 **Module:** `wallet`
 
@@ -1349,14 +1349,14 @@ Create a new wallet from mnemonic (backward compatibility - single network)  # S
 #### `wallet_create_from_mnemonic_with_options`
 
 ```c
-wallet_create_from_mnemonic_with_options(mnemonic: *const c_char, passphrase: *const c_char, network: FFINetwork, account_options: *const FFIWalletAccountCreationOptions, error: *mut FFIError,) -> *mut FFIWallet
+wallet_create_from_mnemonic_with_options(mnemonic: *const c_char, network: FFINetwork, account_options: *const FFIWalletAccountCreationOptions, error: *mut FFIError,) -> *mut FFIWallet
 ```
 
 **Description:**
-Create a new wallet from mnemonic with options  # Safety  - `mnemonic` must be a valid pointer to a null-terminated C string - `passphrase` must be a valid pointer to a null-terminated C string or null - `account_options` must be a valid pointer to FFIWalletAccountCreationOptions or null - `error` must be a valid pointer to an FFIError structure - The caller must ensure all pointers remain valid for the duration of this call - The returned pointer must be freed with `wallet_free` when no longer needed
+Create a new wallet from mnemonic with options  # Safety  - `mnemonic` must be a valid pointer to a null-terminated C string - `account_options` must be a valid pointer to FFIWalletAccountCreationOptions or null - `error` must be a valid pointer to an FFIError structure - The caller must ensure all pointers remain valid for the duration of this call - The returned pointer must be freed with `wallet_free` when no longer needed
 
 **Safety:**
-- `mnemonic` must be a valid pointer to a null-terminated C string - `passphrase` must be a valid pointer to a null-terminated C string or null - `account_options` must be a valid pointer to FFIWalletAccountCreationOptions or null - `error` must be a valid pointer to an FFIError structure - The caller must ensure all pointers remain valid for the duration of this call - The returned pointer must be freed with `wallet_free` when no longer needed
+- `mnemonic` must be a valid pointer to a null-terminated C string - `account_options` must be a valid pointer to FFIWalletAccountCreationOptions or null - `error` must be a valid pointer to an FFIError structure - The caller must ensure all pointers remain valid for the duration of this call - The returned pointer must be freed with `wallet_free` when no longer needed
 
 **Module:** `wallet`
 
