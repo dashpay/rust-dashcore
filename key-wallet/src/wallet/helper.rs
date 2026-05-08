@@ -355,7 +355,12 @@ impl Wallet {
                 ..
             } => root_extended_private_key.to_extended_priv_key(self.network),
             WalletType::ExtendedPrivKey(root_priv) => root_priv.to_extended_priv_key(self.network),
-            WalletType::ExternalSignable | WalletType::WatchOnly => {
+            WalletType::ExternalSignable => {
+                return Err(Error::InvalidParameter(
+                    "External signable wallet has no private key".to_string(),
+                ));
+            }
+            WalletType::WatchOnly => {
                 return Err(Error::InvalidParameter(
                     "Cannot derive private keys from watch-only wallet".to_string(),
                 ));

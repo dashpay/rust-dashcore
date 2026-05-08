@@ -78,9 +78,7 @@ mod tests {
         let manager = unsafe { wallet_manager::wallet_manager_create(FFINetwork::Testnet, error) };
         assert!(!manager.is_null());
 
-        // Add multiple wallets
-        // Note: We use different mnemonics instead of different passphrases
-        // because the library has a bug with passphrase wallets (see line 140-146 in wallet_manager/mod.rs)
+        // Use distinct mnemonics so each wallet has a unique ID.
         let mnemonics = [TEST_MNEMONIC, TEST_MNEMONIC_2, TEST_MNEMONIC_3];
         unsafe {
             for (i, mnemonic_str) in mnemonics.iter().enumerate() {
@@ -88,7 +86,7 @@ mod tests {
 
                 let success = wallet_manager::wallet_manager_add_wallet_from_mnemonic(
                     manager,
-                    mnemonic.as_ptr(), // No passphrase
+                    mnemonic.as_ptr(),
                     error,
                 );
                 if !success {

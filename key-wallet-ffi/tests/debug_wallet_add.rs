@@ -15,7 +15,7 @@ fn test_debug_wallet_add() {
 
     let mnemonic = CString::new("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about").unwrap();
 
-    println!("Adding wallet with passphrase 'pass1'");
+    println!("Adding wallet from mnemonic");
     let success = unsafe {
         wallet_manager::wallet_manager_add_wallet_from_mnemonic(manager, mnemonic.as_ptr(), error)
     };
@@ -29,7 +29,7 @@ fn test_debug_wallet_add() {
             }
         }
     } else {
-        println!("Successfully added wallet with passphrase");
+        println!("Successfully added wallet from mnemonic");
     }
 
     assert!(success);
