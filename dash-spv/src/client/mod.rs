@@ -76,4 +76,28 @@ mod tests {
         let wallet_ref = client.wallet();
         let _wallet_guard = wallet_ref.read().await;
     }
+
+    #[tokio::test]
+    async fn client_attaches_builtin_logging_handler() {
+        let config = ClientConfig::mainnet()
+            .without_filters()
+            .without_masternodes()
+            .with_mempool_tracking(MempoolStrategy::FetchAll)
+            .with_storage_path(TempDir::new().unwrap().path());
+
+        let network_manager = MockNetworkManager::new();
+        let storage =
+            DiskStorageManager::with_temp_dir().await.expect("Failed to create tmp storage");
+        let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new(config.network)));
+
+        let client = DashSpvClient::new(config, network_manager, storage, wallet, Vec::new())
+            .await
+            .expect("client construction must succeed");
+
+        assert_eq!(
+            client.event_handlers.len(),
+            1,
+            "constructor should auto-attach the built-in logging handler",
+        );
+    }
 }

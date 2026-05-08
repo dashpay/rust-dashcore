@@ -34,6 +34,36 @@ pub trait EventHandler: Send + Sync + 'static {
 /// No-op implementation for consumers that don't need event notifications.
 impl EventHandler for () {}
 
+/// Built-in handler that mirrors all events into `tracing` so consumers get
+/// log output once they install a tracing subscriber (e.g., via `init_logging`).
+///
+/// Attached automatically by `DashSpvClient::new` ahead of consumer-supplied
+/// handlers. To silence event logs without affecting other subscribers, set a
+/// per-target filter such as `dash_spv::client::event_handler=warn`.
+pub(crate) struct LoggingEventHandler;
+
+impl EventHandler for LoggingEventHandler {
+    fn on_sync_event(&self, event: &SyncEvent) {
+        tracing::info!("SyncEvent: {}", event.description());
+    }
+
+    fn on_network_event(&self, event: &NetworkEvent) {
+        tracing::info!("NetworkEvent: {}", event.description());
+    }
+
+    fn on_progress(&self, progress: &SyncProgress) {
+        tracing::info!("SyncProgress: {}", progress);
+    }
+
+    fn on_wallet_event(&self, event: &WalletEvent) {
+        tracing::info!("WalletEvent: {}", event.description());
+    }
+
+    fn on_error(&self, error: &str) {
+        tracing::error!("{}", error);
+    }
+}
+
 /// Spawns a task that monitors a broadcast channel and dispatches events to the handler.
 ///
 /// On failure, the error message is sent via `on_failure` so the coordinator can report
