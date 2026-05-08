@@ -152,27 +152,14 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletManager<T> {
     pub fn create_wallet_from_mnemonic(
         &mut self,
         mnemonic: &str,
-        passphrase: &str,
         birth_height: CoreBlockHeight,
         account_creation_options: key_wallet::wallet::initialization::WalletAccountCreationOptions,
     ) -> Result<WalletId, WalletError> {
         let mnemonic_obj = Mnemonic::from_phrase(mnemonic, key_wallet::mnemonic::Language::English)
             .map_err(|e| WalletError::InvalidMnemonic(e.to_string()))?;
 
-        // Use appropriate wallet creation method based on whether a passphrase is provided
-        let wallet = if passphrase.is_empty() {
-            Wallet::from_mnemonic(mnemonic_obj, self.network, account_creation_options)
-                .map_err(|e| WalletError::WalletCreation(e.to_string()))?
-        } else {
-            // For wallets with passphrase, use the provided options
-            Wallet::from_mnemonic_with_passphrase(
-                mnemonic_obj,
-                passphrase.to_string(),
-                self.network,
-                account_creation_options,
-            )
-            .map_err(|e| WalletError::WalletCreation(e.to_string()))?
-        };
+        let wallet = Wallet::from_mnemonic(mnemonic_obj, self.network, account_creation_options)
+            .map_err(|e| WalletError::WalletCreation(e.to_string()))?;
 
         // Compute wallet ID from the wallet's root public key
         let wallet_id = wallet.compute_wallet_id();
@@ -187,7 +174,6 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletManager<T> {
         let managed_info = T::from_wallet(&wallet, birth_height);
 
         // The wallet already has accounts created according to the provided options
-        // No need to manually add accounts here since that's handled by from_mnemonic/from_mnemonic_with_passphrase
         let wallet_mut = wallet.clone();
 
         // Add the account to managed info and generate initial addresses
@@ -207,7 +193,6 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletManager<T> {
     ///
     /// # Arguments
     /// * `mnemonic` - The mnemonic phrase
-    /// * `passphrase` - Optional BIP39 passphrase (empty string for no passphrase)
     /// * `birth_height` - Birth height for wallet scanning (0 to sync from genesis)
     /// * `account_creation_options` - Which accounts to create initially
     /// * `downgrade_to_pubkey_wallet` - If true, creates a wallet without private keys
@@ -222,11 +207,9 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletManager<T> {
     /// When `downgrade_to_pubkey_wallet` is true, the returned wallet contains NO private key material,
     /// making it safe to use on potentially compromised systems or for creating watch-only wallets.
     #[cfg(feature = "bincode")]
-    #[allow(clippy::too_many_arguments)]
     pub fn create_wallet_from_mnemonic_return_serialized_bytes(
         &mut self,
         mnemonic: &str,
-        passphrase: &str,
         birth_height: CoreBlockHeight,
         account_creation_options: key_wallet::wallet::initialization::WalletAccountCreationOptions,
         downgrade_to_pubkey_wallet: bool,
@@ -237,19 +220,9 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletManager<T> {
         let mnemonic_obj = Mnemonic::from_phrase(mnemonic, key_wallet::mnemonic::Language::English)
             .map_err(|e| WalletError::InvalidMnemonic(e.to_string()))?;
 
-        // Create the initial wallet from mnemonic
-        let mut wallet = if passphrase.is_empty() {
+        let mut wallet =
             Wallet::from_mnemonic(mnemonic_obj, self.network, account_creation_options)
-                .map_err(|e| WalletError::WalletCreation(e.to_string()))?
-        } else {
-            Wallet::from_mnemonic_with_passphrase(
-                mnemonic_obj,
-                passphrase.to_string(),
-                self.network,
-                account_creation_options,
-            )
-            .map_err(|e| WalletError::WalletCreation(e.to_string()))?
-        };
+                .map_err(|e| WalletError::WalletCreation(e.to_string()))?;
 
         // Downgrade to pubkey-only wallet if requested
         let final_wallet = if downgrade_to_pubkey_wallet {

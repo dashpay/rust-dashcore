@@ -10,9 +10,10 @@ use crate::account::EdDSAAccount;
 use crate::account::{Account, AccountType, ManagedCoreFundsAccount};
 use crate::bip32::ExtendedPubKey;
 use crate::error::{Error, Result};
+#[cfg(any(feature = "bls", feature = "eddsa"))]
 use crate::managed_account::managed_account_trait::ManagedAccountTrait;
 use crate::managed_account::{ManagedCoreKeysAccount, OwnedManagedCoreAccount};
-use crate::wallet::{Wallet, WalletType};
+use crate::wallet::Wallet;
 
 /// Wrap an [`Account`] as the right [`OwnedManagedCoreAccount`] variant for
 /// its [`AccountType`] — funds-bearing for Standard / CoinJoin / DashPay,
@@ -78,49 +79,6 @@ impl ManagedAccountOperations for ManagedWalletInfo {
         // Insert into the collection
         self.accounts.insert(managed_account)?;
         Ok(())
-    }
-
-    /// Add a new managed account with passphrase verification
-    ///
-    /// This function verifies the passphrase and creates a ManagedAccount.
-    /// It only works with wallets created with a passphrase.
-    ///
-    /// # Arguments
-    /// * `wallet` - The wallet containing the account (must be MnemonicWithPassphrase type)
-    /// * `account_type` - The type of account to manage
-    /// * `passphrase` - The passphrase to verify
-    ///
-    /// # Returns
-    /// Ok(()) if the managed account was successfully added
-    fn add_managed_account_with_passphrase(
-        &mut self,
-        wallet: &Wallet,
-        account_type: AccountType,
-        passphrase: &str,
-    ) -> Result<()> {
-        // Verify this is a passphrase wallet
-        match &wallet.wallet_type {
-            WalletType::MnemonicWithPassphrase { mnemonic, root_extended_public_key: wallet_pub } => {
-                // Verify the passphrase by deriving and comparing
-                let seed = mnemonic.to_seed(passphrase);
-                let root_key = crate::wallet::root_extended_keys::RootExtendedPrivKey::new_master(&seed)?;
-
-                // Compare with wallet's stored public key
-                let derived_pub = root_key.to_root_extended_pub_key();
-
-                if derived_pub.root_public_key != wallet_pub.root_public_key {
-                    return Err(Error::InvalidParameter(
-                        "Invalid passphrase".to_string()
-                    ));
-                }
-
-                // Passphrase is valid, proceed with adding the managed account
-                self.add_managed_account(wallet, account_type)
-            }
-            _ => Err(Error::InvalidParameter(
-                "add_managed_account_with_passphrase can only be used with wallets created with a passphrase".to_string()
-            )),
-        }
     }
 
     fn add_managed_account_from_xpub(
@@ -201,45 +159,6 @@ impl ManagedAccountOperations for ManagedWalletInfo {
     }
 
     #[cfg(feature = "bls")]
-    fn add_managed_bls_account_with_passphrase(
-        &mut self,
-        wallet: &Wallet,
-        account_type: AccountType,
-        passphrase: &str,
-    ) -> Result<()> {
-        // Validate account type
-        if !matches!(account_type, AccountType::ProviderOperatorKeys) {
-            return Err(Error::InvalidParameter(
-                "BLS accounts can only be ProviderOperatorKeys".to_string(),
-            ));
-        }
-
-        // Verify this is a passphrase wallet
-        match &wallet.wallet_type {
-            WalletType::MnemonicWithPassphrase { mnemonic, root_extended_public_key: wallet_pub } => {
-                // Verify the passphrase by deriving and comparing
-                let seed = mnemonic.to_seed(passphrase);
-                let root_key = crate::wallet::root_extended_keys::RootExtendedPrivKey::new_master(&seed)?;
-
-                // Compare with wallet's stored public key
-                let derived_pub = root_key.to_root_extended_pub_key();
-
-                if derived_pub.root_public_key != wallet_pub.root_public_key {
-                    return Err(Error::InvalidParameter(
-                        "Invalid passphrase".to_string()
-                    ));
-                }
-
-                // Passphrase is valid, proceed with adding the managed BLS account
-                self.add_managed_bls_account(wallet, account_type)
-            }
-            _ => Err(Error::InvalidParameter(
-                "add_managed_bls_account_with_passphrase can only be used with wallets created with a passphrase".to_string()
-            )),
-        }
-    }
-
-    #[cfg(feature = "bls")]
     fn add_managed_bls_account_from_public_key(
         &mut self,
         account_type: AccountType,
@@ -316,45 +235,6 @@ impl ManagedAccountOperations for ManagedWalletInfo {
         // Insert into the collection
         self.accounts.insert(managed_account)?;
         Ok(())
-    }
-
-    #[cfg(feature = "eddsa")]
-    fn add_managed_eddsa_account_with_passphrase(
-        &mut self,
-        wallet: &Wallet,
-        account_type: AccountType,
-        passphrase: &str,
-    ) -> Result<()> {
-        // Validate account type
-        if !matches!(account_type, AccountType::ProviderPlatformKeys) {
-            return Err(Error::InvalidParameter(
-                "EdDSA accounts can only be ProviderPlatformKeys".to_string(),
-            ));
-        }
-
-        // Verify this is a passphrase wallet
-        match &wallet.wallet_type {
-            WalletType::MnemonicWithPassphrase { mnemonic, root_extended_public_key: wallet_pub } => {
-                // Verify the passphrase by deriving and comparing
-                let seed = mnemonic.to_seed(passphrase);
-                let root_key = crate::wallet::root_extended_keys::RootExtendedPrivKey::new_master(&seed)?;
-
-                // Compare with wallet's stored public key
-                let derived_pub = root_key.to_root_extended_pub_key();
-
-                if derived_pub.root_public_key != wallet_pub.root_public_key {
-                    return Err(Error::InvalidParameter(
-                        "Invalid passphrase".to_string()
-                    ));
-                }
-
-                // Passphrase is valid, proceed with adding the managed EdDSA account
-                self.add_managed_eddsa_account(wallet, account_type)
-            }
-            _ => Err(Error::InvalidParameter(
-                "add_managed_eddsa_account_with_passphrase can only be used with wallets created with a passphrase".to_string()
-            )),
-        }
     }
 
     #[cfg(feature = "eddsa")]

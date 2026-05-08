@@ -21,25 +21,6 @@ pub trait ManagedAccountOperations {
     /// Ok(()) if the managed account was successfully added
     fn add_managed_account(&mut self, wallet: &Wallet, account_type: AccountType) -> Result<()>;
 
-    /// Add a new managed account with passphrase verification
-    ///
-    /// This function verifies the passphrase and creates a ManagedAccount.
-    /// It only works with wallets created with a passphrase.
-    ///
-    /// # Arguments
-    /// * `wallet` - The wallet containing the account (must be MnemonicWithPassphrase type)
-    /// * `account_type` - The type of account to manage
-    /// * `passphrase` - The passphrase to verify
-    ///
-    /// # Returns
-    /// Ok(()) if the managed account was successfully added
-    fn add_managed_account_with_passphrase(
-        &mut self,
-        wallet: &Wallet,
-        account_type: AccountType,
-        passphrase: &str,
-    ) -> Result<()>;
-
     /// Create and add a managed account directly with extended public key
     ///
     /// This allows creating a managed account without requiring it to exist in the wallet first.
@@ -70,26 +51,6 @@ pub trait ManagedAccountOperations {
     #[cfg(feature = "bls")]
     fn add_managed_bls_account(&mut self, wallet: &Wallet, account_type: AccountType)
         -> Result<()>;
-
-    /// Add a new managed BLS account with passphrase verification
-    ///
-    /// This function verifies the passphrase and creates a managed BLS account.
-    /// It only works with wallets created with a passphrase.
-    ///
-    /// # Arguments
-    /// * `wallet` - The wallet containing the BLS account (must be MnemonicWithPassphrase type)
-    /// * `account_type` - The type of account (must be ProviderOperatorKeys)
-    /// * `passphrase` - The passphrase to verify
-    ///
-    /// # Returns
-    /// Ok(()) if the managed BLS account was successfully added
-    #[cfg(feature = "bls")]
-    fn add_managed_bls_account_with_passphrase(
-        &mut self,
-        wallet: &Wallet,
-        account_type: AccountType,
-        passphrase: &str,
-    ) -> Result<()>;
 
     /// Create and add a managed BLS account directly with BLS public key
     ///
@@ -123,26 +84,6 @@ pub trait ManagedAccountOperations {
         &mut self,
         wallet: &Wallet,
         account_type: AccountType,
-    ) -> Result<()>;
-
-    /// Add a new managed EdDSA account with passphrase verification
-    ///
-    /// This function verifies the passphrase and creates a managed EdDSA account.
-    /// It only works with wallets created with a passphrase.
-    ///
-    /// # Arguments
-    /// * `wallet` - The wallet containing the EdDSA account (must be MnemonicWithPassphrase type)
-    /// * `account_type` - The type of account (must be ProviderPlatformKeys)
-    /// * `passphrase` - The passphrase to verify
-    ///
-    /// # Returns
-    /// Ok(()) if the managed EdDSA account was successfully added
-    #[cfg(feature = "eddsa")]
-    fn add_managed_eddsa_account_with_passphrase(
-        &mut self,
-        wallet: &Wallet,
-        account_type: AccountType,
-        passphrase: &str,
     ) -> Result<()>;
 
     /// Create and add a managed EdDSA account directly with Ed25519 public key

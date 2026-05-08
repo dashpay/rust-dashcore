@@ -149,41 +149,6 @@ fn test_wallet_creation_watch_only() {
 }
 
 #[test]
-fn test_wallet_creation_with_passphrase() {
-    let mnemonic = Mnemonic::from_phrase(TEST_MNEMONIC, Language::English).unwrap();
-    let passphrase = "test_passphrase";
-    let seed = mnemonic.to_seed(passphrase);
-    let root_priv_key = RootExtendedPrivKey::new_master(&seed).unwrap();
-    let root_pub_key = root_priv_key.to_root_extended_pub_key();
-
-    let wallet = Wallet::from_mnemonic_with_passphrase(
-        mnemonic.clone(),
-        passphrase.to_string(),
-        Network::Testnet,
-        crate::wallet::initialization::WalletAccountCreationOptions::None,
-    )
-    .unwrap();
-
-    // Verify wallet properties
-    assert!(wallet.has_mnemonic());
-    assert!(wallet.needs_passphrase());
-    assert!(wallet.can_sign()); // Can sign but needs passphrase
-    assert!(!wallet.is_watch_only());
-
-    // Verify mnemonic and public key are stored
-    match &wallet.wallet_type {
-        WalletType::MnemonicWithPassphrase {
-            mnemonic: wallet_mnemonic,
-            root_extended_public_key,
-        } => {
-            assert_eq!(wallet_mnemonic.to_string(), mnemonic.to_string());
-            assert_eq!(root_extended_public_key.root_public_key, root_pub_key.root_public_key);
-        }
-        _ => panic!("Expected mnemonic with passphrase wallet type"),
-    }
-}
-
-#[test]
 fn test_wallet_id_computation() {
     let mnemonic = Mnemonic::from_phrase(TEST_MNEMONIC, Language::English).unwrap();
     let seed = mnemonic.to_seed("");

@@ -30,14 +30,8 @@ mod tests {
         assert!(!manager.is_null());
 
         let mnemonic = CString::new(TEST_MNEMONIC).unwrap();
-        let passphrase = CString::new("").unwrap();
 
-        let added = wallet_manager_add_wallet_from_mnemonic(
-            manager,
-            mnemonic.as_ptr(),
-            passphrase.as_ptr(),
-            error,
-        );
+        let added = wallet_manager_add_wallet_from_mnemonic(manager, mnemonic.as_ptr(), error);
         assert!(added);
         assert_eq!(error.code, FFIErrorCode::Success);
 

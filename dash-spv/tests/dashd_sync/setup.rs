@@ -372,7 +372,7 @@ pub(super) fn create_test_wallet(
 ) -> (Arc<RwLock<WalletManager<ManagedWalletInfo>>>, WalletId) {
     let mut wallet_manager = WalletManager::<ManagedWalletInfo>::new(network);
     let wallet_id = wallet_manager
-        .create_wallet_from_mnemonic(mnemonic, "", 0, test_account_options())
+        .create_wallet_from_mnemonic(mnemonic, 0, test_account_options())
         .expect("Failed to create wallet from mnemonic");
     (Arc::new(RwLock::new(wallet_manager)), wallet_id)
 }

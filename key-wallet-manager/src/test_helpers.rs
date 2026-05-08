@@ -22,7 +22,7 @@ pub(crate) fn dummy_instant_lock(txid: Txid) -> InstantLock {
 pub(crate) fn setup_manager_with_wallet() -> (WalletManager<ManagedWalletInfo>, WalletId, Address) {
     let mut manager = WalletManager::new(Network::Testnet);
     let wallet_id = manager
-        .create_wallet_from_mnemonic(TEST_MNEMONIC, "", 0, WalletAccountCreationOptions::Default)
+        .create_wallet_from_mnemonic(TEST_MNEMONIC, 0, WalletAccountCreationOptions::Default)
         .unwrap();
     let addresses = manager.monitored_addresses();
     assert!(!addresses.is_empty(), "wallet should have monitored addresses");

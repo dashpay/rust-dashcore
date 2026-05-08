@@ -48,13 +48,11 @@ mod tests {
 
         // Add a wallet from mnemonic
         let mnemonic = CString::new(TEST_MNEMONIC).unwrap();
-        let passphrase = CString::new("").unwrap();
 
         let success = unsafe {
             wallet_manager::wallet_manager_add_wallet_from_mnemonic(
                 manager,
                 mnemonic.as_ptr(),
-                passphrase.as_ptr(),
                 error,
             )
         };
@@ -90,8 +88,7 @@ mod tests {
 
                 let success = wallet_manager::wallet_manager_add_wallet_from_mnemonic(
                     manager,
-                    mnemonic.as_ptr(),
-                    ptr::null(), // No passphrase
+                    mnemonic.as_ptr(), // No passphrase
                     error,
                 );
                 if !success {
@@ -161,7 +158,6 @@ mod tests {
             wallet_manager::wallet_manager_add_wallet_from_mnemonic(
                 manager,
                 mnemonic.as_ptr(),
-                ptr::null(),
                 error,
             )
         };
@@ -225,7 +221,6 @@ mod tests {
             wallet_manager::wallet_manager_add_wallet_from_mnemonic(
                 manager,
                 invalid_mnemonic.as_ptr(),
-                ptr::null(),
                 error,
             )
         };
@@ -248,13 +243,11 @@ mod tests {
 
         // Add a wallet with account count
         let mnemonic = CString::new(TEST_MNEMONIC).unwrap();
-        let passphrase = CString::new("").unwrap();
 
         let success = unsafe {
             wallet_manager::wallet_manager_add_wallet_from_mnemonic(
                 manager,
                 mnemonic.as_ptr(),
-                passphrase.as_ptr(),
                 error,
             )
         };
@@ -280,12 +273,10 @@ mod tests {
 
         // Add a wallet
         let mnemonic = CString::new(TEST_MNEMONIC).unwrap();
-        let passphrase = CString::new("").unwrap();
         let success = unsafe {
             wallet_manager::wallet_manager_add_wallet_from_mnemonic(
                 manager,
                 mnemonic.as_ptr(),
-                passphrase.as_ptr(),
                 error,
             )
         };
@@ -332,12 +323,10 @@ mod tests {
 
         // Add wallet
         let mnemonic = CString::new(TEST_MNEMONIC).unwrap();
-        let passphrase = CString::new("").unwrap();
         let success = unsafe {
             wallet_manager::wallet_manager_add_wallet_from_mnemonic(
                 manager,
                 mnemonic.as_ptr(),
-                passphrase.as_ptr(),
                 error,
             )
         };
@@ -410,12 +399,10 @@ mod tests {
 
         // Test adding wallet with null manager
         let mnemonic = CString::new(TEST_MNEMONIC).unwrap();
-        let passphrase = CString::new("").unwrap();
         let success = unsafe {
             wallet_manager::wallet_manager_add_wallet_from_mnemonic(
                 ptr::null_mut(),
                 mnemonic.as_ptr(),
-                passphrase.as_ptr(),
                 error,
             )
         };
@@ -474,13 +461,11 @@ mod tests {
 
         // Add a wallet from mnemonic
         let mnemonic = CString::new(TEST_MNEMONIC).unwrap();
-        let passphrase = CString::new("").unwrap();
 
         let success = unsafe {
             wallet_manager::wallet_manager_add_wallet_from_mnemonic(
                 manager,
                 mnemonic.as_ptr(),
-                passphrase.as_ptr(),
                 error,
             )
         };
@@ -593,13 +578,11 @@ mod tests {
 
         // Add a wallet from mnemonic
         let mnemonic = CString::new(TEST_MNEMONIC).unwrap();
-        let passphrase = CString::new("").unwrap();
 
         let success = unsafe {
             wallet_manager::wallet_manager_add_wallet_from_mnemonic(
                 manager,
                 mnemonic.as_ptr(),
-                passphrase.as_ptr(),
                 error,
             )
         };
@@ -748,13 +731,11 @@ mod tests {
 
         // Add a wallet from mnemonic
         let mnemonic = CString::new(TEST_MNEMONIC).unwrap();
-        let passphrase = CString::new("").unwrap();
 
         let success = unsafe {
             wallet_manager::wallet_manager_add_wallet_from_mnemonic(
                 manager,
                 mnemonic.as_ptr(),
-                passphrase.as_ptr(),
                 error,
             )
         };
@@ -858,7 +839,6 @@ mod tests {
 
         // Test basic wallet creation and serialization
         let mnemonic = CString::new(TEST_MNEMONIC).unwrap();
-        let passphrase = CString::new("").unwrap();
 
         let mut wallet_bytes_out: *mut u8 = ptr::null_mut();
         let mut wallet_bytes_len_out: usize = 0;
@@ -868,7 +848,6 @@ mod tests {
             crate::wallet_manager::wallet_manager_add_wallet_from_mnemonic_return_serialized_bytes(
                 manager,
                 mnemonic.as_ptr(),
-                passphrase.as_ptr(),
                 0,           // birth_height
                 ptr::null(), // default account options
                 false,       // don't downgrade to pubkey wallet
@@ -909,7 +888,6 @@ mod tests {
             crate::wallet_manager::wallet_manager_add_wallet_from_mnemonic_return_serialized_bytes(
                 manager2,
                 mnemonic.as_ptr(),
-                passphrase.as_ptr(),
                 0,
                 ptr::null(),
                 true,  // downgrade to pubkey wallet
@@ -979,7 +957,6 @@ mod tests {
             crate::wallet_manager::wallet_manager_add_wallet_from_mnemonic_return_serialized_bytes(
                 manager4,
                 mnemonic.as_ptr(),
-                passphrase.as_ptr(),
                 0,
                 ptr::null(),
                 true, // downgrade to pubkey wallet
@@ -1018,7 +995,6 @@ mod tests {
             crate::wallet_manager::wallet_manager_add_wallet_from_mnemonic_return_serialized_bytes(
                 manager5,
                 invalid_mnemonic.as_ptr(),
-                passphrase.as_ptr(),
                 0,
                 ptr::null(),
                 false,
@@ -1054,7 +1030,6 @@ mod tests {
         assert!(!manager1.is_null());
 
         let mnemonic = CString::new(TEST_MNEMONIC).unwrap();
-        let passphrase = CString::new("").unwrap();
 
         let mut wallet_bytes_out: *mut u8 = ptr::null_mut();
         let mut wallet_bytes_len_out: usize = 0;
@@ -1065,7 +1040,6 @@ mod tests {
             crate::wallet_manager::wallet_manager_add_wallet_from_mnemonic_return_serialized_bytes(
                 manager1,
                 mnemonic.as_ptr(),
-                passphrase.as_ptr(),
                 100,         // birth_height
                 ptr::null(), // default account options
                 false,       // don't downgrade to pubkey wallet

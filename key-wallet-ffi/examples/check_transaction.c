@@ -35,7 +35,6 @@ typedef struct {
 // External function declarations
 extern void* wallet_create_from_mnemonic(
     const char* mnemonic,
-    const char* passphrase,
     FFINetwork network,
     FFIError* error
 );
@@ -64,7 +63,7 @@ int main() {
     FFINetwork network = Testnet;
 
     // Create wallet
-    void* wallet = wallet_create_from_mnemonic(mnemonic, NULL, network, &error);
+    void* wallet = wallet_create_from_mnemonic(mnemonic, network, &error);
     if (!wallet) {
         printf("Failed to create wallet: %s\n", error.message);
         return 1;

@@ -588,7 +588,6 @@ mod tests {
         let wallet_id2 = manager
             .create_wallet_from_mnemonic(
                 &mnemonic2.to_string(),
-                "",
                 0,
                 WalletAccountCreationOptions::Default,
             )
@@ -656,12 +655,7 @@ mod tests {
 
         // create_wallet_from_mnemonic bumps
         let wallet_id = manager
-            .create_wallet_from_mnemonic(
-                TEST_MNEMONIC,
-                "",
-                0,
-                WalletAccountCreationOptions::Default,
-            )
+            .create_wallet_from_mnemonic(TEST_MNEMONIC, 0, WalletAccountCreationOptions::Default)
             .unwrap();
         expected_rev += 1;
         assert_eq!(manager.monitor_revision(), expected_rev, "after create_wallet_from_mnemonic");

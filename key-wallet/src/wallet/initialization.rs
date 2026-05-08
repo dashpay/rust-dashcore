@@ -145,10 +145,6 @@ impl Wallet {
             | WalletType::ExtendedPrivKey(root_extended_private_key) => {
                 root_extended_private_key.to_root_extended_pub_key()
             }
-            WalletType::MnemonicWithPassphrase {
-                root_extended_public_key,
-                ..
-            } => root_extended_public_key.clone(),
             WalletType::ExternalSignable | WalletType::WatchOnly => {
                 panic!(
                     "Wallet::from_wallet_type cannot be used with WalletType::WatchOnly or \
@@ -237,41 +233,6 @@ impl Wallet {
         );
 
         wallet.create_accounts_from_options(account_creation_options.clone())?;
-
-        Ok(wallet)
-    }
-
-    /// Create a wallet from a mnemonic phrase with passphrase
-    /// The passphrase is used only to derive the master public key, then discarded
-    ///
-    /// # Arguments
-    /// * `mnemonic` - The mnemonic phrase
-    /// * `passphrase` - The BIP39 passphrase
-    /// * `network` - Network to create accounts for
-    /// * `account_creation_options` - Specifies which accounts to create during initialization
-    pub fn from_mnemonic_with_passphrase(
-        mnemonic: Mnemonic,
-        passphrase: String,
-        network: Network,
-        account_creation_options: WalletAccountCreationOptions,
-    ) -> Result<Self> {
-        let seed = mnemonic.to_seed(&passphrase);
-        let root_extended_private_key = RootExtendedPrivKey::new_master(&seed)?;
-        let root_extended_public_key = root_extended_private_key.to_root_extended_pub_key();
-
-        // Store only mnemonic and public key, not the passphrase or private key
-        let mut wallet = Self::from_wallet_type(
-            network,
-            WalletType::MnemonicWithPassphrase {
-                mnemonic,
-                root_extended_public_key,
-            },
-        );
-
-        wallet.create_accounts_with_passphrase_from_options(
-            account_creation_options.clone(),
-            passphrase.as_str(),
-        )?;
 
         Ok(wallet)
     }

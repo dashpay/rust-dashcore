@@ -292,7 +292,6 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let mut wallet_manager = WalletManager::<ManagedWalletInfo>::new(config.network);
     wallet_manager.create_wallet_from_mnemonic(
         mnemonic_phrase.as_str(),
-        "",
         0,
         key_wallet::wallet::initialization::WalletAccountCreationOptions::default(),
     )?;

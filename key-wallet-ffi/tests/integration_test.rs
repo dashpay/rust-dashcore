@@ -31,13 +31,9 @@ fn test_full_wallet_workflow() {
     assert!(!manager.is_null());
 
     // 4. Add wallet to manager
-    let passphrase = CString::new("").unwrap();
     let success = unsafe {
         key_wallet_ffi::wallet_manager::wallet_manager_add_wallet_from_mnemonic(
-            manager,
-            mnemonic,
-            passphrase.as_ptr(),
-            error,
+            manager, mnemonic, error,
         )
     };
     assert!(success);
@@ -89,7 +85,7 @@ fn test_seed_to_wallet_workflow() {
 
     // 1. Convert mnemonic to seed
     let mnemonic = CString::new(TEST_MNEMONIC).unwrap();
-    let passphrase = CString::new("test passphrase").unwrap();
+    let passphrase = CString::new("").unwrap();
 
     let mut seed = [0u8; 64];
     let mut seed_len: usize = 0;
@@ -185,7 +181,6 @@ fn test_error_handling() {
     let wallet = unsafe {
         key_wallet_ffi::wallet::wallet_create_from_mnemonic(
             invalid_mnemonic.as_ptr(),
-            ptr::null(),
             FFINetwork::Testnet,
             error,
         )
@@ -195,12 +190,7 @@ fn test_error_handling() {
 
     // 2. Null pointer errors
     let wallet = unsafe {
-        key_wallet_ffi::wallet::wallet_create_from_mnemonic(
-            ptr::null(),
-            ptr::null(),
-            FFINetwork::Testnet,
-            error,
-        )
+        key_wallet_ffi::wallet::wallet_create_from_mnemonic(ptr::null(), FFINetwork::Testnet, error)
     };
     assert!(wallet.is_null());
     assert_eq!(unsafe { (*error).code }, FFIErrorCode::InvalidInput);

@@ -84,7 +84,7 @@ async fn test_wallet_added_at_runtime_catches_up() {
     let w1_id = {
         let mut wallet_guard = client_handle.client.wallet().write().await;
         wallet_guard
-            .create_wallet_from_mnemonic(&ctx.dashd.wallet.mnemonic, "", 0, test_account_options())
+            .create_wallet_from_mnemonic(&ctx.dashd.wallet.mnemonic, 0, test_account_options())
             .expect("add pre-funded W1 at runtime")
     };
     wait_for_wallet_synced(client_handle.client.wallet(), &w1_id, initial_height).await;
@@ -115,7 +115,7 @@ async fn test_wallet_added_at_runtime_catches_up() {
     let w2_id = {
         let mut wallet_guard = client_handle.client.wallet().write().await;
         wallet_guard
-            .create_wallet_from_mnemonic(EMPTY_MNEMONIC, "", initial_height, test_account_options())
+            .create_wallet_from_mnemonic(EMPTY_MNEMONIC, initial_height, test_account_options())
             .expect("add W2 at runtime")
     };
 
@@ -167,12 +167,7 @@ async fn test_wallet_added_at_runtime_catches_up() {
     let w3_id = {
         let mut wallet_guard = client_handle.client.wallet().write().await;
         wallet_guard
-            .create_wallet_from_mnemonic(
-                SECONDARY_MNEMONIC,
-                "",
-                future_height,
-                test_account_options(),
-            )
+            .create_wallet_from_mnemonic(SECONDARY_MNEMONIC, future_height, test_account_options())
             .expect("add W3 at runtime")
     };
 
@@ -278,18 +273,13 @@ async fn test_runtime_add_shared_block_two_wallets() {
     let w1_id = {
         let mut wallet_guard = client_handle.client.wallet().write().await;
         wallet_guard
-            .create_wallet_from_mnemonic(EMPTY_MNEMONIC, "", initial_height, test_account_options())
+            .create_wallet_from_mnemonic(EMPTY_MNEMONIC, initial_height, test_account_options())
             .expect("add W1 at runtime")
     };
     let w2_id = {
         let mut wallet_guard = client_handle.client.wallet().write().await;
         wallet_guard
-            .create_wallet_from_mnemonic(
-                SECONDARY_MNEMONIC,
-                "",
-                initial_height,
-                test_account_options(),
-            )
+            .create_wallet_from_mnemonic(SECONDARY_MNEMONIC, initial_height, test_account_options())
             .expect("add W2 at runtime")
     };
 
@@ -371,7 +361,7 @@ async fn test_runtime_add_during_initial_sync() {
     let w1_id = {
         let mut wallet_guard = wallet.write().await;
         wallet_guard
-            .create_wallet_from_mnemonic(&ctx.dashd.wallet.mnemonic, "", 0, test_account_options())
+            .create_wallet_from_mnemonic(&ctx.dashd.wallet.mnemonic, 0, test_account_options())
             .expect("add W1 before start")
     };
 
@@ -423,7 +413,7 @@ async fn test_runtime_add_during_initial_sync() {
     let w2_id = {
         let mut wallet_guard = client_handle.client.wallet().write().await;
         wallet_guard
-            .create_wallet_from_mnemonic(EMPTY_MNEMONIC, "", 0, test_account_options())
+            .create_wallet_from_mnemonic(EMPTY_MNEMONIC, 0, test_account_options())
             .expect("add W2 mid-flight")
     };
 
@@ -506,7 +496,7 @@ async fn test_runtime_add_with_tip_advance_during_rescan() {
     let w2_id = {
         let mut wallet_guard = client_handle.client.wallet().write().await;
         wallet_guard
-            .create_wallet_from_mnemonic(EMPTY_MNEMONIC, "", 0, test_account_options())
+            .create_wallet_from_mnemonic(EMPTY_MNEMONIC, 0, test_account_options())
             .expect("add W2 at runtime")
     };
 

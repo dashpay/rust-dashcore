@@ -1701,12 +1701,10 @@ mod tests {
 
             // Add a wallet with default accounts
             let mnemonic = CString::new(TEST_MNEMONIC).unwrap();
-            let passphrase = CString::new("").unwrap();
 
             let success = wallet_manager_add_wallet_from_mnemonic_with_options(
                 manager,
                 mnemonic.as_ptr(),
-                passphrase.as_ptr(),
                 ptr::null(),
                 &mut error,
             );
@@ -1760,7 +1758,6 @@ mod tests {
 
             // Add a wallet with minimal accounts
             let mnemonic = CString::new(TEST_MNEMONIC).unwrap();
-            let passphrase = CString::new("").unwrap();
 
             let mut options = FFIWalletAccountCreationOptions::default_options();
             options.option_type = FFIAccountCreationOptionType::BIP44AccountsOnly;
@@ -1771,7 +1768,6 @@ mod tests {
             let success = wallet_manager_add_wallet_from_mnemonic_with_options(
                 manager,
                 mnemonic.as_ptr(),
-                passphrase.as_ptr(),
                 &options,
                 &mut error,
             );
@@ -1826,7 +1822,6 @@ mod tests {
 
             // Add a wallet with multiple accounts
             let mnemonic = CString::new(TEST_MNEMONIC).unwrap();
-            let passphrase = CString::new("").unwrap();
 
             let mut options = FFIWalletAccountCreationOptions::default_options();
             options.option_type = FFIAccountCreationOptionType::AllAccounts;
@@ -1845,7 +1840,6 @@ mod tests {
             let success = wallet_manager_add_wallet_from_mnemonic_with_options(
                 manager,
                 mnemonic.as_ptr(),
-                passphrase.as_ptr(),
                 &options,
                 &mut error,
             );
@@ -1888,12 +1882,10 @@ mod tests {
 
             // Add a wallet with default accounts
             let mnemonic = CString::new(TEST_MNEMONIC).unwrap();
-            let passphrase = CString::new("").unwrap();
 
             let success = wallet_manager_add_wallet_from_mnemonic_with_options(
                 manager,
                 mnemonic.as_ptr(),
-                passphrase.as_ptr(),
                 ptr::null(),
                 &mut error,
             );
@@ -2011,12 +2003,10 @@ mod tests {
 
             // Add a wallet
             let mnemonic = CString::new(TEST_MNEMONIC).unwrap();
-            let passphrase = CString::new("").unwrap();
 
             let success = wallet_manager_add_wallet_from_mnemonic_with_options(
                 manager,
                 mnemonic.as_ptr(),
-                passphrase.as_ptr(),
                 ptr::null(),
                 &mut error,
             );
@@ -2066,12 +2056,10 @@ mod tests {
 
             // Add a wallet with default accounts
             let mnemonic = CString::new(TEST_MNEMONIC).unwrap();
-            let passphrase = CString::new("").unwrap();
 
             let success = wallet_manager_add_wallet_from_mnemonic_with_options(
                 manager,
                 mnemonic.as_ptr(),
-                passphrase.as_ptr(),
                 ptr::null(),
                 &mut error,
             );
@@ -2161,11 +2149,9 @@ mod tests {
             options.coinjoin_count = coinjoin_indices.len();
 
             let mnemonic2 = CString::new(TEST_MNEMONIC).unwrap();
-            let passphrase2 = CString::new("").unwrap();
             let success = wallet_manager_add_wallet_from_mnemonic_with_options(
                 manager,
                 mnemonic2.as_ptr(),
-                passphrase2.as_ptr(),
                 &options,
                 &mut error,
             );

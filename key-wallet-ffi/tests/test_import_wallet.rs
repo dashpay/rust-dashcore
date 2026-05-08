@@ -21,12 +21,10 @@ mod tests {
 
             // First, create a wallet from mnemonic
             let mnemonic = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about\0";
-            let passphrase = "\0";
 
             let success = wallet_manager_add_wallet_from_mnemonic(
                 manager,
                 mnemonic.as_ptr() as *const c_char,
-                passphrase.as_ptr() as *const c_char,
                 &mut error,
             );
             assert!(success);

@@ -23,12 +23,7 @@ mod tests {
 
         // Create wallet on testnet with default accounts
         let wallet = unsafe {
-            wallet::wallet_create_from_mnemonic(
-                mnemonic.as_ptr(),
-                passphrase.as_ptr(),
-                FFINetwork::Testnet,
-                &mut error,
-            )
+            wallet::wallet_create_from_mnemonic(mnemonic.as_ptr(), FFINetwork::Testnet, &mut error)
         };
         assert!(!wallet.is_null());
         assert_eq!(error.code, FFIErrorCode::Success);
@@ -122,12 +117,7 @@ mod tests {
 
         // Create wallet on testnet with default accounts
         let wallet = unsafe {
-            wallet::wallet_create_from_mnemonic(
-                mnemonic.as_ptr(),
-                passphrase.as_ptr(),
-                FFINetwork::Testnet,
-                &mut error,
-            )
+            wallet::wallet_create_from_mnemonic(mnemonic.as_ptr(), FFINetwork::Testnet, &mut error)
         };
         assert!(!wallet.is_null());
 
@@ -177,12 +167,7 @@ mod tests {
 
         // Create wallet and get account 0
         let wallet = unsafe {
-            wallet::wallet_create_from_mnemonic(
-                mnemonic.as_ptr(),
-                passphrase.as_ptr(),
-                FFINetwork::Testnet,
-                &mut error,
-            )
+            wallet::wallet_create_from_mnemonic(mnemonic.as_ptr(), FFINetwork::Testnet, &mut error)
         };
         assert!(!wallet.is_null());
         let account = unsafe {

@@ -606,8 +606,9 @@ mod tests {
         let mnemonic = unsafe { mnemonic::mnemonic_generate(12, &mut error) };
         assert!(!mnemonic.is_null());
 
+        let passphrase = CString::new("").unwrap();
+
         // Generate seed twice with same passphrase - should be identical
-        let passphrase = CString::new("test").unwrap();
         let mut seed1 = [0u8; 64];
         let mut seed_len1 = 0usize;
         let mut seed2 = [0u8; 64];
@@ -653,6 +654,8 @@ mod tests {
         assert!(!mnemonic.is_null());
         assert_eq!(error.code, FFIErrorCode::Success);
 
+        let passphrase = CString::new("").unwrap();
+
         // Validate
         let is_valid = unsafe { mnemonic::mnemonic_validate(mnemonic, &mut error) };
         assert!(is_valid);
@@ -666,7 +669,6 @@ mod tests {
         // Convert to seed
         let mut seed = [0u8; 64];
         let mut seed_len = 0usize;
-        let passphrase = CString::new("workflow_test").unwrap();
 
         let success = unsafe {
             mnemonic::mnemonic_to_seed(

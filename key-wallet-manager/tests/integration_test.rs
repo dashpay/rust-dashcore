@@ -32,7 +32,6 @@ fn test_wallet_manager_from_mnemonic() {
     // Create a wallet from mnemonic
     let wallet_result = manager.create_wallet_from_mnemonic(
         &mnemonic.to_string(),
-        "",
         0,
         WalletAccountCreationOptions::Default,
     );
@@ -152,7 +151,6 @@ fn test_block_height_tracking() {
     let wallet_id1 = manager
         .create_wallet_from_mnemonic(
             &mnemonic1.to_string(),
-            "",
             0,
             WalletAccountCreationOptions::Default,
         )
@@ -162,7 +160,6 @@ fn test_block_height_tracking() {
     let wallet_id2 = manager
         .create_wallet_from_mnemonic(
             &mnemonic2.to_string(),
-            "",
             5000,
             WalletAccountCreationOptions::Default,
         )

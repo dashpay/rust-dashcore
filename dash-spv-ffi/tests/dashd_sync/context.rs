@@ -169,16 +169,10 @@ impl FFITestContext {
     /// Calls FFI wallet functions through raw pointers held by the context.
     pub(super) unsafe fn add_wallet(&self, mnemonic: &str) -> Vec<u8> {
         let mnemonic_c = CString::new(mnemonic).unwrap();
-        let passphrase = CString::new("").unwrap();
         let mut error = FFIError::default();
         let wm = self.session.wallet_manager as *mut FFIWalletManager;
 
-        let success = wallet_manager_add_wallet_from_mnemonic(
-            wm,
-            mnemonic_c.as_ptr(),
-            passphrase.as_ptr(),
-            &mut error,
-        );
+        let success = wallet_manager_add_wallet_from_mnemonic(wm, mnemonic_c.as_ptr(), &mut error);
         if !success {
             let error_msg = if !error.message.is_null() {
                 CStr::from_ptr(error.message).to_str().unwrap_or("Unknown error")

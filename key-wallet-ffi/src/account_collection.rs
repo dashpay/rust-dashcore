@@ -1070,7 +1070,6 @@ mod tests {
             // Create wallet with default accounts
             let wallet = wallet_create_from_mnemonic_with_options(
                 mnemonic.as_ptr(),
-                ptr::null(),
                 FFINetwork::Testnet,
                 ptr::null(),
                 error,
@@ -1125,7 +1124,6 @@ mod tests {
 
             let wallet = wallet_create_from_mnemonic_with_options(
                 mnemonic.as_ptr(),
-                ptr::null(),
                 FFINetwork::Testnet,
                 &options,
                 error,
@@ -1172,7 +1170,6 @@ mod tests {
 
             let wallet = wallet_create_from_mnemonic_with_options(
                 mnemonic.as_ptr(),
-                ptr::null(),
                 FFINetwork::Testnet,
                 &options,
                 error,
@@ -1243,7 +1240,6 @@ mod tests {
 
             let wallet = wallet_create_from_mnemonic_with_options(
                 mnemonic.as_ptr(),
-                ptr::null(),
                 FFINetwork::Testnet,
                 &options,
                 error,
@@ -1296,7 +1292,6 @@ mod tests {
 
             let wallet = wallet_create_from_mnemonic_with_options(
                 mnemonic.as_ptr(),
-                ptr::null(),
                 FFINetwork::Testnet,
                 &options,
                 error,
@@ -1381,7 +1376,6 @@ mod tests {
 
             let wallet = wallet_create_from_mnemonic_with_options(
                 mnemonic.as_ptr(),
-                ptr::null(),
                 FFINetwork::Testnet,
                 &options,
                 error,
@@ -1468,7 +1462,6 @@ mod tests {
 
             let wallet = wallet_create_from_mnemonic_with_options(
                 mnemonic.as_ptr(),
-                ptr::null(),
                 FFINetwork::Testnet,
                 &options,
                 error,
@@ -1539,7 +1532,6 @@ mod tests {
             // Create wallet with default accounts (which should have at least BIP44 account 0)
             let wallet = wallet_create_from_mnemonic_with_options(
                 mnemonic.as_ptr(),
-                ptr::null(),
                 FFINetwork::Testnet,
                 ptr::null(),
                 error,

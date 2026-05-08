@@ -78,10 +78,7 @@ impl Wallet {
 
     /// Check if wallet has a mnemonic
     pub fn has_mnemonic(&self) -> bool {
-        matches!(
-            self.wallet_type,
-            WalletType::Mnemonic { .. } | WalletType::MnemonicWithPassphrase { .. }
-        )
+        matches!(self.wallet_type, WalletType::Mnemonic { .. })
     }
 
     /// Check if wallet is watch-only
@@ -99,11 +96,6 @@ impl Wallet {
         !matches!(self.wallet_type, WalletType::WatchOnly)
     }
 
-    /// Check if wallet needs a passphrase for signing
-    pub fn needs_passphrase(&self) -> bool {
-        matches!(self.wallet_type, WalletType::MnemonicWithPassphrase { .. })
-    }
-
     /// Check if wallet has a seed
     pub fn has_seed(&self) -> bool {
         matches!(self.wallet_type, WalletType::Seed { .. } | WalletType::Mnemonic { .. })
@@ -114,11 +106,6 @@ impl Wallet {
         &mut self,
         options: WalletAccountCreationOptions,
     ) -> Result<()> {
-        if matches!(self.wallet_type, WalletType::MnemonicWithPassphrase { .. }) {
-            return Err(Error::InvalidParameter(
-                "create_accounts_from_options can not be used on wallets with a mnemonic and a passphrase".to_string()
-            ));
-        }
         match options {
             WalletAccountCreationOptions::Default => {
                 // Create default BIP32 account 0
@@ -314,212 +301,6 @@ impl Wallet {
         Ok(())
     }
 
-    /// Create accounts based on the provided creation options with passphrase
-    pub fn create_accounts_with_passphrase_from_options(
-        &mut self,
-        options: WalletAccountCreationOptions,
-        passphrase: &str,
-    ) -> Result<()> {
-        if !matches!(self.wallet_type, WalletType::MnemonicWithPassphrase { .. }) {
-            return Err(Error::InvalidParameter(
-                "create_accounts_with_passphrase_from_options can only be used with wallets created with a passphrase".to_string()
-            ));
-        }
-        match options {
-            WalletAccountCreationOptions::Default => {
-                // Create default BIP32 account 0
-                self.add_account_with_passphrase(
-                    AccountType::Standard {
-                        index: 0,
-                        standard_account_type: StandardAccountType::BIP32Account,
-                    },
-                    passphrase,
-                )?;
-
-                // Create default BIP44 account 0
-                self.add_account_with_passphrase(
-                    AccountType::Standard {
-                        index: 0,
-                        standard_account_type: StandardAccountType::BIP44Account,
-                    },
-                    passphrase,
-                )?;
-
-                // Create default CoinJoin account 0
-                self.add_account_with_passphrase(
-                    AccountType::CoinJoin {
-                        index: 0,
-                    },
-                    passphrase,
-                )?;
-
-                // Create all special purpose accounts
-                self.create_special_purpose_accounts_with_passphrase(passphrase)?;
-
-                // Create default PlatformPayment account (account=0, key_class=0)
-                self.add_account_with_passphrase(
-                    AccountType::PlatformPayment {
-                        account: 0,
-                        key_class: 0,
-                    },
-                    passphrase,
-                )?;
-            }
-
-            WalletAccountCreationOptions::AllAccounts(
-                bip44_indices,
-                bip32_indices,
-                coinjoin_indices,
-                top_up_accounts,
-                platform_payment_specs,
-            ) => {
-                // Create specified BIP44 accounts
-                for index in bip44_indices {
-                    self.add_account_with_passphrase(
-                        AccountType::Standard {
-                            index,
-                            standard_account_type: StandardAccountType::BIP44Account,
-                        },
-                        passphrase,
-                    )?;
-                }
-
-                // Create specified BIP32 accounts
-                for index in bip32_indices {
-                    self.add_account_with_passphrase(
-                        AccountType::Standard {
-                            index,
-                            standard_account_type: StandardAccountType::BIP32Account,
-                        },
-                        passphrase,
-                    )?;
-                }
-
-                // Create specified CoinJoin accounts
-                for index in coinjoin_indices {
-                    self.add_account_with_passphrase(
-                        AccountType::CoinJoin {
-                            index,
-                        },
-                        passphrase,
-                    )?;
-                }
-
-                // Create specified IdentityTopUp accounts
-                for registration_index in top_up_accounts {
-                    self.add_account_with_passphrase(
-                        AccountType::IdentityTopUp {
-                            registration_index,
-                        },
-                        passphrase,
-                    )?;
-                }
-
-                // Create specified PlatformPayment accounts
-                for spec in platform_payment_specs {
-                    self.add_account_with_passphrase(
-                        AccountType::PlatformPayment {
-                            account: spec.account,
-                            key_class: spec.key_class,
-                        },
-                        passphrase,
-                    )?;
-                }
-
-                // Create all special purpose accounts
-                self.create_special_purpose_accounts_with_passphrase(passphrase)?;
-            }
-
-            WalletAccountCreationOptions::BIP44AccountsOnly(bip44_indices) => {
-                // Create BIP44 account 0 if not exists
-                for index in bip44_indices {
-                    self.add_account_with_passphrase(
-                        AccountType::Standard {
-                            index,
-                            standard_account_type: StandardAccountType::BIP44Account,
-                        },
-                        passphrase,
-                    )?;
-                }
-            }
-
-            WalletAccountCreationOptions::SpecificAccounts(
-                bip44_indices,
-                bip32_indices,
-                coinjoin_indices,
-                topup_indices,
-                platform_payment_specs,
-                special_accounts,
-            ) => {
-                // Create specified BIP44 accounts
-                for index in bip44_indices {
-                    self.add_account_with_passphrase(
-                        AccountType::Standard {
-                            index,
-                            standard_account_type: StandardAccountType::BIP44Account,
-                        },
-                        passphrase,
-                    )?;
-                }
-
-                // Create specified BIP32 accounts
-                for index in bip32_indices {
-                    self.add_account_with_passphrase(
-                        AccountType::Standard {
-                            index,
-                            standard_account_type: StandardAccountType::BIP32Account,
-                        },
-                        passphrase,
-                    )?;
-                }
-
-                // Create specified CoinJoin accounts
-                for index in coinjoin_indices {
-                    self.add_account_with_passphrase(
-                        AccountType::CoinJoin {
-                            index,
-                        },
-                        passphrase,
-                    )?;
-                }
-
-                // Create identity top-up accounts
-                for registration_index in topup_indices {
-                    self.add_account_with_passphrase(
-                        AccountType::IdentityTopUp {
-                            registration_index,
-                        },
-                        passphrase,
-                    )?;
-                }
-
-                // Create specified PlatformPayment accounts
-                for spec in platform_payment_specs {
-                    self.add_account_with_passphrase(
-                        AccountType::PlatformPayment {
-                            account: spec.account,
-                            key_class: spec.key_class,
-                        },
-                        passphrase,
-                    )?;
-                }
-
-                // Create any additional special accounts if provided
-                if let Some(special_types) = special_accounts {
-                    for account_type in special_types {
-                        self.add_account_with_passphrase(account_type, passphrase)?;
-                    }
-                }
-            }
-
-            WalletAccountCreationOptions::None => {
-                // Don't create any accounts - useful for tests
-            }
-        }
-
-        Ok(())
-    }
-
     /// Create all special purpose accounts
     fn create_special_purpose_accounts(&mut self) -> Result<()> {
         // Identity registration account
@@ -548,70 +329,27 @@ impl Wallet {
         Ok(())
     }
 
-    /// Create all special purpose accounts
-    fn create_special_purpose_accounts_with_passphrase(&mut self, passphrase: &str) -> Result<()> {
-        // Identity registration account
-        self.add_account_with_passphrase(AccountType::IdentityRegistration, passphrase)?;
-
-        // Identity invitation account
-        self.add_account_with_passphrase(AccountType::IdentityInvitation, passphrase)?;
-
-        // Identity top-up not bound to identity
-        self.add_account_with_passphrase(AccountType::IdentityTopUpNotBoundToIdentity, passphrase)?;
-
-        // Asset lock address top-up
-        self.add_account_with_passphrase(AccountType::AssetLockAddressTopUp, passphrase)?;
-
-        // Asset lock shielded address top-up
-        self.add_account_with_passphrase(AccountType::AssetLockShieldedAddressTopUp, passphrase)?;
-
-        // Provider keys accounts
-        self.add_account_with_passphrase(AccountType::ProviderVotingKeys, passphrase)?;
-        self.add_account_with_passphrase(AccountType::ProviderOwnerKeys, passphrase)?;
-        #[cfg(feature = "bls")]
-        self.add_bls_account_with_passphrase(AccountType::ProviderOperatorKeys, passphrase)?;
-        #[cfg(feature = "eddsa")]
-        self.add_eddsa_account_with_passphrase(AccountType::ProviderPlatformKeys, passphrase)?;
-
-        Ok(())
-    }
-
     /// Derive an extended private key at a specific derivation path
     ///
     /// This will return the extended private key for the given derivation path.
     /// Only works for wallets that have access to the private keys (not watch-only).
-    /// For MnemonicWithPassphrase wallets, you must provide the passphrase.
     ///
     /// # Arguments
     /// * `path` - The derivation path (e.g., "m/44'/5'/0'/0/0")
-    /// * `passphrase` - Optional passphrase for MnemonicWithPassphrase wallets
     ///
     /// # Returns
     /// The extended private key, or an error if the wallet is watch-only or path is invalid
-    pub fn derive_extended_private_key_with_passphrase(
+    pub fn derive_extended_private_key(
         &self,
         path: &crate::DerivationPath,
-        passphrase: Option<&str>,
     ) -> Result<crate::bip32::ExtendedPrivKey> {
-        use crate::bip32::ExtendedPrivKey;
         use secp256k1::Secp256k1;
 
-        // Get the master private key based on wallet type
         let master = match &self.wallet_type {
             WalletType::Mnemonic {
                 root_extended_private_key,
                 ..
             } => root_extended_private_key.to_extended_priv_key(self.network),
-            WalletType::MnemonicWithPassphrase {
-                mnemonic,
-                ..
-            } => {
-                let pass = passphrase.ok_or(Error::InvalidParameter(
-                    "Passphrase required for this wallet type".to_string(),
-                ))?;
-                let seed = mnemonic.to_seed(pass);
-                ExtendedPrivKey::new_master(self.network, &seed)?
-            }
             WalletType::Seed {
                 root_extended_private_key,
                 ..
@@ -624,34 +362,14 @@ impl Wallet {
             }
         };
 
-        // Derive the private key at the specified path
         let secp = Secp256k1::new();
         master.derive_priv(&secp, path).map_err(|e| e.into())
-    }
-
-    /// Derive an extended private key at a specific derivation path
-    ///
-    /// This will return the extended private key for the given derivation path.
-    /// Only works for wallets that have access to the private keys (not watch-only).
-    /// For MnemonicWithPassphrase wallets, this will fail.
-    ///
-    /// # Arguments
-    /// * `path` - The derivation path (e.g., "m/44'/5'/0'/0/0")
-    ///
-    /// # Returns
-    /// The extended private key, or an error if the wallet is watch-only or path is invalid
-    pub fn derive_extended_private_key(
-        &self,
-        path: &crate::DerivationPath,
-    ) -> Result<crate::bip32::ExtendedPrivKey> {
-        self.derive_extended_private_key_with_passphrase(path, None)
     }
 
     /// Derive a private key at a specific derivation path
     ///
     /// This will return the private key (SecretKey) for the given derivation path.
     /// Only works for wallets that have access to the private keys (not watch-only).
-    /// For MnemonicWithPassphrase wallets, this will fail.
     ///
     /// # Arguments
     /// * `path` - The derivation path (e.g., "m/44'/5'/0'/0/0")
@@ -667,7 +385,6 @@ impl Wallet {
     ///
     /// This will return the private key in WIF format for the given derivation path.
     /// Only works for wallets that have access to the private keys (not watch-only).
-    /// For MnemonicWithPassphrase wallets, this will fail.
     ///
     /// # Arguments
     /// * `path` - The derivation path (e.g., "m/44'/5'/0'/0/0")
@@ -691,9 +408,6 @@ impl Wallet {
     ///
     /// # Behavior by wallet type
     /// * `Mnemonic`, `Seed`, `ExtendedPrivKey`: works for both hardened and non-hardened paths.
-    /// * `MnemonicWithPassphrase`: works for non-hardened paths only (hardened paths require
-    ///   the passphrase to reconstruct the root private key; use
-    ///   [`Wallet::derive_extended_private_key_with_passphrase`] for those).
     /// * `WatchOnly` / `ExternalSignable`: **cannot derive from the root at all** — these
     ///   unit variants carry no root key material. Hardened paths fail because there's no
     ///   private key on hand, and non-hardened paths fail because there's no root xpub

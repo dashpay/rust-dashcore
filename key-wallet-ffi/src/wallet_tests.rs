@@ -18,15 +18,9 @@ mod wallet_tests {
         let error = &mut error as *mut FFIError;
 
         let mnemonic = CString::new(TEST_MNEMONIC).unwrap();
-        let passphrase = CString::new("").unwrap();
 
         let wallet = unsafe {
-            wallet::wallet_create_from_mnemonic(
-                mnemonic.as_ptr(),
-                passphrase.as_ptr(),
-                FFINetwork::Testnet,
-                error,
-            )
+            wallet::wallet_create_from_mnemonic(mnemonic.as_ptr(), FFINetwork::Testnet, error)
         };
 
         assert!(!wallet.is_null());
@@ -105,45 +99,13 @@ mod wallet_tests {
     }
 
     #[test]
-    fn test_wallet_with_passphrase() {
-        let mut error = FFIError::default();
-        let error = &mut error as *mut FFIError;
-
-        let mnemonic = CString::new(TEST_MNEMONIC).unwrap();
-        let passphrase = CString::new("test passphrase").unwrap();
-
-        let wallet = unsafe {
-            wallet::wallet_create_from_mnemonic(
-                mnemonic.as_ptr(),
-                passphrase.as_ptr(),
-                FFINetwork::Testnet,
-                error,
-            )
-        };
-
-        assert!(!wallet.is_null());
-        assert_eq!(unsafe { (*error).code }, FFIErrorCode::Success);
-
-        // Clean up
-        unsafe {
-            wallet::wallet_free(wallet);
-        }
-    }
-
-    #[test]
     fn test_wallet_error_cases() {
         let mut error = FFIError::default();
         let error = &mut error as *mut FFIError;
 
         // Test with null mnemonic
-        let wallet = unsafe {
-            wallet::wallet_create_from_mnemonic(
-                ptr::null(),
-                ptr::null(),
-                FFINetwork::Testnet,
-                error,
-            )
-        };
+        let wallet =
+            unsafe { wallet::wallet_create_from_mnemonic(ptr::null(), FFINetwork::Testnet, error) };
         assert!(wallet.is_null());
         assert_eq!(unsafe { (*error).code }, FFIErrorCode::InvalidInput);
 
@@ -152,7 +114,6 @@ mod wallet_tests {
         let wallet = unsafe {
             wallet::wallet_create_from_mnemonic(
                 invalid_mnemonic.as_ptr(),
-                ptr::null(),
                 FFINetwork::Testnet,
                 error,
             )
@@ -240,15 +201,9 @@ mod wallet_tests {
 
         // Create wallet from mnemonic
         let mnemonic = CString::new(TEST_MNEMONIC).unwrap();
-        let passphrase = CString::new("").unwrap();
 
         let wallet_with_mnemonic = unsafe {
-            wallet::wallet_create_from_mnemonic(
-                mnemonic.as_ptr(),
-                passphrase.as_ptr(),
-                FFINetwork::Testnet,
-                error,
-            )
+            wallet::wallet_create_from_mnemonic(mnemonic.as_ptr(), FFINetwork::Testnet, error)
         };
         assert!(!wallet_with_mnemonic.is_null());
 

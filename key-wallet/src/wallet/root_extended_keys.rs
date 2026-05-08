@@ -364,10 +364,6 @@ impl Wallet {
                 root_extended_private_key,
                 ..
             } => Ok(root_extended_private_key.to_root_extended_pub_key()),
-            WalletType::MnemonicWithPassphrase {
-                root_extended_public_key,
-                ..
-            } => Ok(root_extended_public_key.clone()),
             WalletType::Seed {
                 root_extended_private_key,
                 ..
@@ -391,10 +387,6 @@ impl Wallet {
                 root_extended_private_key,
                 ..
             } => Ok(Cow::Owned(root_extended_private_key.to_root_extended_pub_key())),
-            WalletType::MnemonicWithPassphrase {
-                root_extended_public_key,
-                ..
-            } => Ok(Cow::Borrowed(root_extended_public_key)),
             WalletType::Seed {
                 root_extended_private_key,
                 ..
@@ -418,52 +410,11 @@ impl Wallet {
                 root_extended_private_key,
                 ..
             } => Ok(root_extended_private_key),
-            WalletType::MnemonicWithPassphrase {
-                ..
-            } => Err(Error::InvalidParameter(
-                "Mnemonic with passphrase requires passphrase to derive private key".into(),
-            )),
             WalletType::Seed {
                 root_extended_private_key,
                 ..
             } => Ok(root_extended_private_key),
             WalletType::ExtendedPrivKey(key) => Ok(key),
-            WalletType::ExternalSignable => {
-                Err(Error::InvalidParameter("External signable wallet has no private key".into()))
-            }
-            WalletType::WatchOnly => {
-                Err(Error::InvalidParameter("Watch-only wallet has no private key".into()))
-            }
-        }
-    }
-
-    /// Get the root extended private key with passphrase callback for MnemonicWithPassphrase
-    pub fn root_extended_priv_key_with_callback<F>(
-        &self,
-        passphrase_callback: F,
-    ) -> crate::Result<RootExtendedPrivKey>
-    where
-        F: FnOnce() -> Result<String, Error>,
-    {
-        match &self.wallet_type {
-            WalletType::Mnemonic {
-                root_extended_private_key,
-                ..
-            } => Ok(root_extended_private_key.clone()),
-            WalletType::MnemonicWithPassphrase {
-                mnemonic,
-                ..
-            } => {
-                // Request passphrase via callback
-                let passphrase = passphrase_callback()?;
-                let seed = mnemonic.to_seed(&passphrase);
-                Ok(RootExtendedPrivKey::new_master(&seed)?)
-            }
-            WalletType::Seed {
-                root_extended_private_key,
-                ..
-            } => Ok(root_extended_private_key.clone()),
-            WalletType::ExtendedPrivKey(key) => Ok(key.clone()),
             WalletType::ExternalSignable => {
                 Err(Error::InvalidParameter("External signable wallet has no private key".into()))
             }

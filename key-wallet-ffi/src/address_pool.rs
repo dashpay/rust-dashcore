@@ -977,12 +977,10 @@ mod tests {
 
             // Add a wallet with default accounts
             let mnemonic = CString::new(test_mnemonic).unwrap();
-            let passphrase = CString::new("").unwrap();
 
             let success = wallet_manager_add_wallet_from_mnemonic_with_options(
                 manager,
                 mnemonic.as_ptr(),
-                passphrase.as_ptr(),
                 ptr::null(),
                 &mut error,
             );
@@ -1076,12 +1074,10 @@ mod tests {
 
             // Add a wallet with default accounts
             let mnemonic = CString::new(test_mnemonic).unwrap();
-            let passphrase = CString::new("").unwrap();
 
             let success = wallet_manager_add_wallet_from_mnemonic_with_options(
                 manager,
                 mnemonic.as_ptr(),
-                passphrase.as_ptr(),
                 ptr::null(),
                 &mut error,
             );

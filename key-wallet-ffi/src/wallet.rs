@@ -23,7 +23,6 @@ use key_wallet::Network;
 /// # Safety
 ///
 /// - `mnemonic` must be a valid pointer to a null-terminated C string
-/// - `passphrase` must be a valid pointer to a null-terminated C string or null
 /// - `account_options` must be a valid pointer to FFIWalletAccountCreationOptions or null
 /// - `error` must be a valid pointer to an FFIError structure
 /// - The caller must ensure all pointers remain valid for the duration of this call
@@ -31,7 +30,6 @@ use key_wallet::Network;
 #[no_mangle]
 pub unsafe extern "C" fn wallet_create_from_mnemonic_with_options(
     mnemonic: *const c_char,
-    passphrase: *const c_char,
     network: FFINetwork,
     account_options: *const FFIWalletAccountCreationOptions,
     error: *mut FFIError,
@@ -40,12 +38,6 @@ pub unsafe extern "C" fn wallet_create_from_mnemonic_with_options(
 
     let mnemonic = deref_ptr!(mnemonic, error);
     let mnemonic_str = unwrap_or_return!(CStr::from_ptr(mnemonic).to_str(), error);
-
-    let passphrase_str = if passphrase.is_null() {
-        ""
-    } else {
-        unwrap_or_return!(CStr::from_ptr(passphrase).to_str(), error)
-    };
 
     let mnemonic = unwrap_or_return!(Mnemonic::from_phrase(mnemonic_str, Language::English), error);
 
@@ -56,19 +48,8 @@ pub unsafe extern "C" fn wallet_create_from_mnemonic_with_options(
         (*account_options).to_wallet_options()
     };
 
-    let wallet = if passphrase_str.is_empty() {
-        unwrap_or_return!(Wallet::from_mnemonic(mnemonic, network_rust, creation_options), error)
-    } else {
-        unwrap_or_return!(
-            Wallet::from_mnemonic_with_passphrase(
-                mnemonic,
-                passphrase_str.to_string(),
-                network_rust,
-                creation_options,
-            ),
-            error
-        )
-    };
+    let wallet =
+        unwrap_or_return!(Wallet::from_mnemonic(mnemonic, network_rust, creation_options), error);
 
     Box::into_raw(Box::new(FFIWallet::new(wallet)))
 }
@@ -78,20 +59,17 @@ pub unsafe extern "C" fn wallet_create_from_mnemonic_with_options(
 /// # Safety
 ///
 /// - `mnemonic` must be a valid pointer to a null-terminated C string
-/// - `passphrase` must be a valid pointer to a null-terminated C string or null
 /// - `error` must be a valid pointer to an FFIError structure
 /// - The caller must ensure all pointers remain valid for the duration of this call
 /// - The returned pointer must be freed with `wallet_free` when no longer needed
 #[no_mangle]
 pub unsafe extern "C" fn wallet_create_from_mnemonic(
     mnemonic: *const c_char,
-    passphrase: *const c_char,
     network: FFINetwork,
     error: *mut FFIError,
 ) -> *mut FFIWallet {
     wallet_create_from_mnemonic_with_options(
         mnemonic,
-        passphrase,
         network,
         ptr::null(), // Use default options
         error,

@@ -146,34 +146,6 @@ mod tests {
         assert_eq!(wallet.wallet_id, watch_only.wallet_id);
     }
 
-    #[test]
-    fn test_wallet_with_passphrase() {
-        let mnemonic = Mnemonic::from_phrase(TEST_MNEMONIC, Language::English).unwrap();
-
-        // Create wallet without passphrase - use regular from_mnemonic for empty passphrase
-        let wallet1 = Wallet::from_mnemonic(
-            mnemonic.clone(),
-            Network::Testnet,
-            crate::wallet::initialization::WalletAccountCreationOptions::Default,
-        )
-        .unwrap();
-
-        // Create wallet with passphrase
-        let wallet2 = Wallet::from_mnemonic_with_passphrase(
-            mnemonic,
-            "TREZOR".to_string(),
-            Network::Testnet,
-            crate::wallet::initialization::WalletAccountCreationOptions::None,
-        )
-        .unwrap();
-
-        // Different passphrases should generate different root keys
-        let root_xpub1 = wallet1.root_extended_pub_key().unwrap();
-        let root_xpub2 = wallet2.root_extended_pub_key().unwrap();
-
-        assert_ne!(root_xpub1.root_public_key, root_xpub2.root_public_key);
-    }
-
     // ============================================================================
     // TODO: Advanced tests need to be reimplemented with ManagedAccount
     // ============================================================================

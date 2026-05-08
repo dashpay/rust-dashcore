@@ -120,7 +120,6 @@ pub unsafe extern "C" fn wallet_manager_create(
 ///
 /// - `manager` must be a valid pointer to an FFIWalletManager instance
 /// - `mnemonic` must be a valid pointer to a null-terminated C string
-/// - `passphrase` must be a valid pointer to a null-terminated C string or null
 /// - `account_options` must be a valid pointer to FFIWalletAccountCreationOptions or null
 /// - `error` must be a valid pointer to an FFIError structure
 /// - The caller must ensure all pointers remain valid for the duration of this call
@@ -128,18 +127,12 @@ pub unsafe extern "C" fn wallet_manager_create(
 pub unsafe extern "C" fn wallet_manager_add_wallet_from_mnemonic_with_options(
     manager: *mut FFIWalletManager,
     mnemonic: *const c_char,
-    passphrase: *const c_char,
     account_options: *const crate::types::FFIWalletAccountCreationOptions,
     error: *mut FFIError,
 ) -> bool {
     let manager_ref = deref_ptr!(manager, error);
     let mnemonic = deref_ptr!(mnemonic, error);
     let mnemonic_str = unwrap_or_return!(CStr::from_ptr(mnemonic).to_str(), error);
-    let passphrase_str = if passphrase.is_null() {
-        ""
-    } else {
-        unwrap_or_return!(CStr::from_ptr(passphrase).to_str(), error)
-    };
 
     let creation_options = if account_options.is_null() {
         key_wallet::wallet::initialization::WalletAccountCreationOptions::Default
@@ -149,7 +142,7 @@ pub unsafe extern "C" fn wallet_manager_add_wallet_from_mnemonic_with_options(
 
     let result = manager_ref.runtime.block_on(async {
         let mut manager_guard = manager_ref.manager.write().await;
-        manager_guard.create_wallet_from_mnemonic(mnemonic_str, passphrase_str, 0, creation_options)
+        manager_guard.create_wallet_from_mnemonic(mnemonic_str, 0, creation_options)
     });
     let _ = unwrap_or_return!(result, error);
     true
@@ -161,20 +154,17 @@ pub unsafe extern "C" fn wallet_manager_add_wallet_from_mnemonic_with_options(
 ///
 /// - `manager` must be a valid pointer to an FFIWalletManager instance
 /// - `mnemonic` must be a valid pointer to a null-terminated C string
-/// - `passphrase` must be a valid pointer to a null-terminated C string or null
 /// - `error` must be a valid pointer to an FFIError structure
 /// - The caller must ensure all pointers remain valid for the duration of this call
 #[no_mangle]
 pub unsafe extern "C" fn wallet_manager_add_wallet_from_mnemonic(
     manager: *mut FFIWalletManager,
     mnemonic: *const c_char,
-    passphrase: *const c_char,
     error: *mut FFIError,
 ) -> bool {
     wallet_manager_add_wallet_from_mnemonic_with_options(
         manager,
         mnemonic,
-        passphrase,
         ptr::null(), // Use default options
         error,
     )
@@ -189,7 +179,6 @@ pub unsafe extern "C" fn wallet_manager_add_wallet_from_mnemonic(
 ///
 /// - `manager` must be a valid pointer to an FFIWalletManager instance
 /// - `mnemonic` must be a valid pointer to a null-terminated C string
-/// - `passphrase` must be a valid pointer to a null-terminated C string or null
 /// - `birth_height` is the block height to start syncing from (0 = sync from genesis)
 /// - `account_options` must be a valid pointer to FFIWalletAccountCreationOptions or null
 /// - `downgrade_to_pubkey_wallet` if true, creates a watch-only or externally signable wallet
@@ -202,10 +191,10 @@ pub unsafe extern "C" fn wallet_manager_add_wallet_from_mnemonic(
 /// - The caller must free the returned wallet_bytes using wallet_manager_free_wallet_bytes()
 #[cfg(feature = "bincode")]
 #[no_mangle]
+#[allow(clippy::too_many_arguments)]
 pub unsafe extern "C" fn wallet_manager_add_wallet_from_mnemonic_return_serialized_bytes(
     manager: *mut FFIWalletManager,
     mnemonic: *const c_char,
-    passphrase: *const c_char,
     birth_height: c_uint,
     account_options: *const crate::types::FFIWalletAccountCreationOptions,
     downgrade_to_pubkey_wallet: bool,
@@ -222,11 +211,6 @@ pub unsafe extern "C" fn wallet_manager_add_wallet_from_mnemonic_return_serializ
     check_ptr!(wallet_id_out, error);
 
     let mnemonic_str = unwrap_or_return!(CStr::from_ptr(mnemonic).to_str(), error);
-    let passphrase_str = if passphrase.is_null() {
-        ""
-    } else {
-        unwrap_or_return!(CStr::from_ptr(passphrase).to_str(), error)
-    };
 
     let creation_options = if account_options.is_null() {
         key_wallet::wallet::initialization::WalletAccountCreationOptions::Default
@@ -239,7 +223,6 @@ pub unsafe extern "C" fn wallet_manager_add_wallet_from_mnemonic_return_serializ
 
         manager_guard.create_wallet_from_mnemonic_return_serialized_bytes(
             mnemonic_str,
-            passphrase_str,
             birth_height,
             creation_options,
             downgrade_to_pubkey_wallet,

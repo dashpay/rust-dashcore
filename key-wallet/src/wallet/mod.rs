@@ -40,12 +40,6 @@ pub enum WalletType {
         mnemonic: Mnemonic,
         root_extended_private_key: RootExtendedPrivKey,
     },
-    /// Mnemonic wallet with BIP39 passphrase (passphrase requested via callback when needed)
-    MnemonicWithPassphrase {
-        mnemonic: Mnemonic,
-        /// Extended public key derived with the passphrase (for address generation)
-        root_extended_public_key: RootExtendedPubKey,
-    },
     /// Wallet from seed bytes
     Seed {
         seed: Seed,
@@ -173,15 +167,6 @@ impl Zeroize for Wallet {
                 root_extended_private_key.zeroize();
                 // Note: root_extended_private_key.root_private_key (SecretKey) doesn't implement Zeroize
             }
-            WalletType::MnemonicWithPassphrase {
-                mnemonic,
-                root_extended_public_key,
-            } => {
-                // Zeroize the mnemonic
-                mnemonic.zeroize();
-                // Zeroize the public key structure (best effort)
-                root_extended_public_key.zeroize();
-            }
             WalletType::Seed {
                 seed,
                 root_extended_private_key,
@@ -205,9 +190,6 @@ impl Zeroize for Wallet {
         self.accounts.clear();
     }
 }
-
-#[cfg(test)]
-mod passphrase_test;
 
 #[cfg(test)]
 mod tests {
@@ -478,39 +460,6 @@ mod tests {
         assert_eq!(watch_only.accounts.count(), 1);
         let watch_only_account = watch_only.get_bip44_account(0).unwrap();
         assert_eq!(watch_only_account.extended_public_key(), account_xpub);
-    }
-
-    // ✓ Test wallet with passphrase (from BIP39 tests)
-    #[test]
-    fn test_wallet_with_passphrase() {
-        let mnemonic = Mnemonic::from_phrase(
-            "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
-            Language::English,
-        ).unwrap();
-
-        let network = Network::Testnet;
-
-        // Create wallet without passphrase - use regular from_mnemonic for empty passphrase
-        let wallet1 = Wallet::from_mnemonic(
-            mnemonic.clone(),
-            network,
-            initialization::WalletAccountCreationOptions::Default,
-        )
-        .unwrap();
-
-        // Create wallet with passphrase "TREZOR"
-        let wallet2 = Wallet::from_mnemonic_with_passphrase(
-            mnemonic,
-            "TREZOR".to_string(),
-            network,
-            initialization::WalletAccountCreationOptions::None,
-        )
-        .unwrap();
-
-        // Different passphrases should generate different root keys
-        let root_xpub1 = wallet1.root_extended_pub_key().unwrap();
-        let root_xpub2 = wallet2.root_extended_pub_key().unwrap();
-        assert_ne!(root_xpub1.root_public_key, root_xpub2.root_public_key);
     }
 
     // ✓ Test account retrieval and management

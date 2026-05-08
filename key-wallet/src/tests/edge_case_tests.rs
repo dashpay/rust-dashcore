@@ -272,48 +272,6 @@ fn test_concurrent_access_simulation() {
 }
 
 #[test]
-fn test_passphrase_edge_cases() {
-    let mnemonic = Mnemonic::from_phrase(
-        "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
-        Language::English,
-    )
-    .unwrap();
-
-    // Test with empty passphrase - use regular from_mnemonic for empty passphrase
-    let wallet1 = Wallet::from_mnemonic(
-        mnemonic.clone(),
-        Network::Testnet,
-        crate::wallet::initialization::WalletAccountCreationOptions::None,
-    )
-    .unwrap();
-
-    // Test with very long passphrase
-    let long_passphrase = "a".repeat(1000);
-    let wallet2 = Wallet::from_mnemonic_with_passphrase(
-        mnemonic.clone(),
-        long_passphrase,
-        Network::Testnet,
-        crate::wallet::initialization::WalletAccountCreationOptions::None,
-    )
-    .unwrap();
-
-    // Test with special characters
-    let special_passphrase = "!@#$%^&*()_+-=[]{}|;':\",./<>?";
-    let wallet3 = Wallet::from_mnemonic_with_passphrase(
-        mnemonic,
-        special_passphrase.to_string(),
-        Network::Testnet,
-        crate::wallet::initialization::WalletAccountCreationOptions::None,
-    )
-    .unwrap();
-
-    // All wallets should have different IDs due to different passphrases
-    assert_ne!(wallet1.wallet_id, wallet2.wallet_id);
-    assert_ne!(wallet2.wallet_id, wallet3.wallet_id);
-    assert_ne!(wallet1.wallet_id, wallet3.wallet_id);
-}
-
-#[test]
 fn test_derivation_path_depth_limits() {
     // Test maximum derivation path depth
     let mut path = DerivationPath::master();

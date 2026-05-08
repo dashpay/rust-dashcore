@@ -537,7 +537,6 @@ fn main() {
             let success = wallet_manager_add_wallet_from_mnemonic(
                 wallet_manager as *mut _,
                 mnemonic_c.as_ptr(),
-                ptr::null(), // no passphrase
                 &mut error,
             );
 

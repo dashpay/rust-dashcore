@@ -26,12 +26,10 @@ fn test_managed_account_collection_basic() {
 
         // Add a wallet with default accounts
         let mnemonic = CString::new(TEST_MNEMONIC).unwrap();
-        let passphrase = CString::new("").unwrap();
 
         let success = wallet_manager_add_wallet_from_mnemonic_with_options(
             manager,
             mnemonic.as_ptr(),
-            passphrase.as_ptr(),
             ptr::null(), // Use default options
             &mut error,
         );
@@ -94,7 +92,6 @@ fn test_managed_account_collection_with_special_accounts() {
 
         // Create wallet with special accounts
         let mnemonic = CString::new(TEST_MNEMONIC).unwrap();
-        let passphrase = CString::new("").unwrap();
 
         let mut options = FFIWalletAccountCreationOptions::default_options();
         options.option_type = FFIAccountCreationOptionType::AllAccounts;
@@ -130,7 +127,6 @@ fn test_managed_account_collection_with_special_accounts() {
         let success = wallet_manager_add_wallet_from_mnemonic_with_options(
             manager,
             mnemonic.as_ptr(),
-            passphrase.as_ptr(),
             &options,
             &mut error,
         );
@@ -222,7 +218,6 @@ fn test_managed_account_collection_summary() {
 
         // Create wallet with multiple account types
         let mnemonic = CString::new(TEST_MNEMONIC).unwrap();
-        let passphrase = CString::new("").unwrap();
 
         let mut options = FFIWalletAccountCreationOptions::default_options();
         options.option_type = FFIAccountCreationOptionType::AllAccounts;
@@ -249,7 +244,6 @@ fn test_managed_account_collection_summary() {
         let success = wallet_manager_add_wallet_from_mnemonic_with_options(
             manager,
             mnemonic.as_ptr(),
-            passphrase.as_ptr(),
             &options,
             &mut error,
         );
@@ -303,7 +297,6 @@ fn test_managed_account_collection_summary_data() {
 
         // Create wallet with various account types
         let mnemonic = CString::new(TEST_MNEMONIC).unwrap();
-        let passphrase = CString::new("").unwrap();
 
         let mut options = FFIWalletAccountCreationOptions::default_options();
         options.option_type = FFIAccountCreationOptionType::AllAccounts;
@@ -337,7 +330,6 @@ fn test_managed_account_collection_summary_data() {
         let success = wallet_manager_add_wallet_from_mnemonic_with_options(
             manager,
             mnemonic.as_ptr(),
-            passphrase.as_ptr(),
             &options,
             &mut error,
         );
@@ -428,12 +420,10 @@ fn test_managed_account_collection_nonexistent_accounts() {
 
         // Create wallet with minimal accounts
         let mnemonic = CString::new(TEST_MNEMONIC).unwrap();
-        let passphrase = CString::new("").unwrap();
 
         let success = wallet_manager_add_wallet_from_mnemonic_with_options(
             manager,
             mnemonic.as_ptr(),
-            passphrase.as_ptr(),
             ptr::null(), // Default options
             &mut error,
         );

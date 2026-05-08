@@ -43,7 +43,6 @@ fn main() {
 
     let result = manager.create_wallet_from_mnemonic(
         test_mnemonic,
-        "", // No passphrase
         100_000,
         key_wallet::wallet::initialization::WalletAccountCreationOptions::Default,
     );

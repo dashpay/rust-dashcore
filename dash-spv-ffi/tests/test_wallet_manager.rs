@@ -79,7 +79,6 @@ mod tests {
             let (serialized_wallet, expected_wallet_id) = native_manager
                 .create_wallet_from_mnemonic_return_serialized_bytes(
                     "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
-                    "",
                     0,
                     WalletAccountCreationOptions::Default,
                     false,

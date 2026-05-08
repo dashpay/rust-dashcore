@@ -37,7 +37,6 @@ fn test_account_collection_comprehensive() {
 
         let wallet = wallet_create_from_mnemonic_with_options(
             mnemonic.as_ptr(),
-            ptr::null(),
             FFINetwork::Testnet,
             &account_options,
             error,
@@ -155,7 +154,6 @@ fn test_account_collection_minimal() {
         // Create wallet with minimal accounts (default)
         let wallet = wallet_create_from_mnemonic_with_options(
             mnemonic.as_ptr(),
-            ptr::null(),
             FFINetwork::Testnet,
             ptr::null(), // Use default options
             test,
