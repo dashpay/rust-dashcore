@@ -154,11 +154,7 @@ async fn test_spend_unconfirmed_change_balance() {
 
     // Step 1: fund the SPV wallet with a confirmed UTXO from dashd's
     // default wallet (an external sender, since it uses a different
-    // mnemonic). We then send a *second* small tx in a separate block so
-    // the wallet's `last_processed_height` advances past the funding UTXO's
-    // height — the coin selector filter `current_height - utxo.height >=
-    // min_confirmations` (default 1) silently skips UTXOs whose height
-    // equals the wallet's tip, even though they're visibly confirmed.
+    // mnemonic).
     let receive_address = reserve_first_address(EMPTY_MNEMONIC).await;
     let funding_amount = Amount::from_sat(500_000_000);
     let funding_txid = ctx.dashd.node.send_to_address(&receive_address, funding_amount);
@@ -166,35 +162,15 @@ async fn test_spend_unconfirmed_change_balance() {
 
     let miner_address = ctx.dashd.node.get_new_address_from_wallet("default");
     ctx.dashd.node.generate_blocks(1, &miner_address);
-    let h_funded = ctx.dashd.initial_height + 1;
-    wait_for_sync(&mut client_handle.progress_receiver, h_funded).await;
-    wait_for_wallet_synced(&wallet, &wallet_id, h_funded).await;
-
-    // Second tx + block so `last_processed_height` ticks past `h_funded`.
-    // SPV only "processes" blocks whose filter matches one of our addresses,
-    // so an empty miner block alone won't advance `last_processed_height`.
-    // Sending a small follow-up payment to the wallet's next receive
-    // address gives block N+1 a wallet-relevant filter match, which forces
-    // process_block to run and advance the height.
-    let receive_address_2 = {
-        let mut wallet_lock = wallet.write().await;
-        let (w_ref, info) = wallet_lock.get_wallet_and_info_mut(&wallet_id).expect("wallet");
-        let xpub = w_ref.get_bip44_account(0).expect("bip44 0").account_xpub;
-        let acc = info.accounts_mut().standard_bip44_accounts.get_mut(&0).expect("acc 0");
-        acc.next_receive_address(Some(&xpub), true).expect("derive next receive address")
-    };
-    let _bump_txid =
-        ctx.dashd.node.send_to_address(&receive_address_2, Amount::from_sat(20_000_000));
-    ctx.dashd.node.generate_blocks(1, &miner_address);
-    let funded_height = h_funded + 1;
+    let funded_height = ctx.dashd.initial_height + 1;
     wait_for_sync(&mut client_handle.progress_receiver, funded_height).await;
     wait_for_wallet_synced(&wallet, &wallet_id, funded_height).await;
 
     let initial_spendable = reported_spendable(&wallet, &wallet_id).await;
-    assert!(
-        initial_spendable >= funding_amount.to_sat(),
-        "wallet should report at least the funding amount as spendable, got {}",
-        initial_spendable
+    assert_eq!(
+        initial_spendable,
+        funding_amount.to_sat(),
+        "wallet should report exactly the funding amount as spendable"
     );
 
     // Step 2: build + sign + broadcast a tx that sends part of the funding

@@ -79,32 +79,21 @@ pub struct SelectionResult {
 /// - High-frequency receivers: **SmallestFirstTill(10)** (balanced approach)
 pub struct CoinSelector {
     strategy: SelectionStrategy,
-    min_confirmations: u32,
-    include_unconfirmed: bool,
     dust_threshold: u64,
 }
 
 impl CoinSelector {
-    /// Create a new coin selector
+    /// Create a new coin selector with defaults that match the wallet's
+    /// spendable-balance semantics: confirmed, InstantSend-locked, trusted
+    /// self-send change, and untrusted unconfirmed incoming are all
+    /// candidates. Callers that want stricter filtering (e.g. exclude
+    /// mempool incoming, or require N confirmations) opt in via
+    /// [`with_min_confirmations`] / [`exclude_unconfirmed`].
     pub fn new(strategy: SelectionStrategy) -> Self {
         Self {
             strategy,
-            min_confirmations: 1,
-            include_unconfirmed: false,
             dust_threshold: 546, // Standard dust threshold
         }
-    }
-
-    /// Set minimum confirmations required
-    pub fn with_min_confirmations(mut self, confirmations: u32) -> Self {
-        self.min_confirmations = confirmations;
-        self
-    }
-
-    /// Include unconfirmed UTXOs
-    pub fn include_unconfirmed(mut self) -> Self {
-        self.include_unconfirmed = true;
-        self
     }
 
     /// Set dust threshold
@@ -159,15 +148,8 @@ impl CoinSelector {
             | SelectionStrategy::BranchAndBound
             | SelectionStrategy::OptimalConsolidation => {
                 // These strategies need all UTXOs to sort/analyze
-                let mut available: Vec<&'a Utxo> = utxos
-                    .into_iter()
-                    .filter(|u| {
-                        u.is_spendable(current_height)
-                            && (self.include_unconfirmed || u.is_confirmed || u.is_instantlocked)
-                            && (current_height.saturating_sub(u.height) >= self.min_confirmations
-                                || u.height == 0)
-                    })
-                    .collect();
+                let mut available: Vec<&'a Utxo> =
+                    utxos.into_iter().filter(|u| u.is_spendable(current_height)).collect();
 
                 if available.is_empty() {
                     return Err(SelectionError::NoUtxosAvailable);
@@ -261,12 +243,7 @@ impl CoinSelector {
             }
             SelectionStrategy::Random => {
                 // Random can work with iterators directly
-                let filtered = utxos.into_iter().filter(|u| {
-                    u.is_spendable(current_height)
-                        && (self.include_unconfirmed || u.is_confirmed || u.is_instantlocked)
-                        && (current_height.saturating_sub(u.height) >= self.min_confirmations
-                            || u.height == 0)
-                });
+                let filtered = utxos.into_iter().filter(|u| u.is_spendable(current_height));
 
                 // For Random (currently just uses accumulate as-is)
                 // TODO: Implement proper random selection for privacy
