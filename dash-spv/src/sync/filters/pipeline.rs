@@ -251,6 +251,15 @@ impl FiltersPipeline {
             self.coordinator.enqueue_retry(start);
         }
     }
+
+    /// Move in-flight `getcfilters` requests back to pending after a peer
+    /// disconnect so the next `send_pending` reissues them to the new peer.
+    /// Per-batch trackers and any partially-received filters within them are
+    /// preserved — `BatchTracker::insert_filter` is idempotent, so duplicates
+    /// from the new peer are harmless.
+    pub(super) fn requeue_in_flight(&mut self) {
+        self.coordinator.requeue_in_flight();
+    }
 }
 
 #[cfg(test)]
@@ -453,6 +462,32 @@ mod tests {
     // =========================================================================
     // Receive Tests
     // =========================================================================
+
+    #[test]
+    fn test_requeue_in_flight_preserves_partial_batch_receipts() {
+        let mut pipeline = FiltersPipeline::new();
+        pipeline.target_height = 99;
+
+        // One batch in-flight (start_height 0). Receive a filter so the
+        // tracker has partial state.
+        pipeline.batch_trackers.insert(0, BatchTracker::new(99));
+        pipeline.coordinator.mark_sent(&[0]);
+        let hash = Header::dummy(50).block_hash();
+        pipeline.receive_with_data(50, hash, &dummy_filter_data(50));
+        assert_eq!(pipeline.filters_received, 1);
+        assert_eq!(pipeline.coordinator.active_count(), 1);
+
+        pipeline.requeue_in_flight();
+
+        // Batch is back in pending; tracker (and the partial filter inside it)
+        // is preserved so the new peer's response merges idempotently.
+        assert_eq!(pipeline.coordinator.active_count(), 0);
+        assert_eq!(pipeline.coordinator.pending_count(), 1);
+        let tracker = pipeline.batch_trackers.get(&0).expect("tracker preserved");
+        assert_eq!(tracker.received(), 1);
+        assert_eq!(pipeline.filters_received, 1);
+        assert_eq!(pipeline.highest_received, 50);
+    }
 
     #[test]
     fn test_receive_single_filter() {

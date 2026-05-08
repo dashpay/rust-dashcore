@@ -327,4 +327,41 @@ mod tests {
             "wallet_out was not in the routed set, must not be processed"
         );
     }
+
+    /// `on_disconnect` for `BlocksManager` keeps the downloaded buffer, the
+    /// per-block wallet routing, and the `filters_sync_complete` flag, and
+    /// moves any in-flight `getdata`s back to pending so the next
+    /// `send_pending` reissues them. Without this preservation, blocks waiting
+    /// in `downloaded` for height ordering would be dropped, leaving
+    /// `FiltersManager.tracker` entries that never get decremented.
+    #[tokio::test]
+    async fn test_on_disconnect_preserves_pipeline_work() {
+        use dashcore::block::Header;
+        use dashcore::{Block, TxMerkleNode};
+        use dashcore_hashes::Hash;
+
+        let mut manager = create_test_manager().await;
+        manager.filters_sync_complete = true;
+
+        let header = Header {
+            version: dashcore::blockdata::block::Version::from_consensus(1),
+            prev_blockhash: dashcore::BlockHash::all_zeros(),
+            merkle_root: TxMerkleNode::all_zeros(),
+            time: 0,
+            bits: dashcore::CompactTarget::from_consensus(0),
+            nonce: 0,
+        };
+        let block = Block {
+            header,
+            txdata: vec![],
+        };
+
+        // Already-downloaded block sitting in the pipeline.
+        manager.pipeline.add_from_storage(block.clone(), 200, BTreeSet::from([MOCK_WALLET_ID]));
+
+        manager.on_disconnect();
+
+        assert!(!manager.pipeline.is_complete(), "downloaded buffer must survive on_disconnect");
+        assert!(manager.filters_sync_complete);
+    }
 }

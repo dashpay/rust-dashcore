@@ -25,7 +25,7 @@ impl SyncManager for InstantSendManager {
         &[MessageType::ISLock, MessageType::Inv]
     }
 
-    fn clear_in_flight_state(&mut self) {
+    fn on_disconnect(&mut self) {
         self.pending_instantlocks.clear();
     }
 

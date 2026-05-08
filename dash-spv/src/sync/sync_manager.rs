@@ -117,12 +117,21 @@ pub trait SyncManager: Send + Sync + std::fmt::Debug {
     /// Called when the network manager loses its peers.
     fn stop_sync(&mut self) {
         self.set_state(SyncState::WaitingForConnections);
-        self.clear_in_flight_state();
+        self.on_disconnect();
     }
 
-    /// Clear all in-flight requests, pipelines, and retry state.
-    /// Called on disconnect when pending network requests become invalid.
-    fn clear_in_flight_state(&mut self);
+    /// Drop peer-bound in-flight state on disconnect.
+    ///
+    /// Each manager keeps as much progress as it can across a disconnect, and
+    /// only invalidates state that was tied to the now-dead peer. Anything
+    /// derivable from durable storage (block headers, filter headers, the
+    /// masternode engine) or from preserved per-batch bookkeeping should
+    /// survive so reconnect resumes instead of restarting.
+    ///
+    /// `BlocksManager` and `FiltersManager` go further and requeue their
+    /// in-flight network slots so the next `send_pending` reissues them
+    /// immediately to the new peer.
+    fn on_disconnect(&mut self);
 
     /// Handle an incoming network message.
     ///
@@ -369,7 +378,7 @@ mod tests {
             &[]
         }
 
-        fn clear_in_flight_state(&mut self) {}
+        fn on_disconnect(&mut self) {}
 
         async fn handle_message(
             &mut self,

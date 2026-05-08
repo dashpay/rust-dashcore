@@ -1,7 +1,6 @@
 use crate::error::{SyncError, SyncResult};
 use crate::network::{Message, MessageType, RequestSender};
 use crate::storage::{BlockHeaderStorage, FilterHeaderStorage, FilterStorage};
-use crate::sync::filters::pipeline::FiltersPipeline;
 use crate::sync::progress::ProgressPercentage;
 use crate::sync::sync_manager::ensure_not_started;
 use crate::sync::{
@@ -39,15 +38,29 @@ impl<
         &[MessageType::CFilter]
     }
 
-    fn clear_in_flight_state(&mut self) {
-        self.active_batches.clear();
-        self.tracker.clear();
-        self.pending_batches.clear();
-        self.filter_pipeline = FiltersPipeline::new();
+    /// Keep `active_batches`, the block-match tracker, pending verified
+    /// batches, and the filter pipeline's per-batch trackers. Move in-flight
+    /// `getcfilters` slots back to pending so the next `send_pending` reissues
+    /// them to the new peer immediately. Without this preservation, a re-scan
+    /// after reconnect would re-track the same block hashes and leak
+    /// `pending_blocks` counters that never reach zero.
+    fn on_disconnect(&mut self) {
+        self.filter_pipeline.requeue_in_flight();
     }
 
     async fn start_sync(&mut self, requests: &RequestSender) -> SyncResult<Vec<SyncEvent>> {
         ensure_not_started(self.state(), self.identifier())?;
+
+        // Resume in-progress work preserved across a disconnect cycle.
+        // `on_disconnect` keeps `active_batches`, the block-match tracker, and
+        // any pending verified batches; calling `start_download` here would
+        // insert a fresh batch at `scan_start` and clobber the existing one,
+        // leaking its `pending_blocks` counter forever.
+        if !self.active_batches.is_empty() {
+            self.filter_pipeline.send_pending(requests, &*self.header_storage.read().await).await?;
+            self.set_state(SyncState::Syncing);
+            return Ok(vec![]);
+        }
 
         // Check if there are already stored filters we need to process
         // This handles restart where filters are persisted but wallet state isn't
@@ -216,7 +229,7 @@ impl<
                     stale_min_synced,
                     committed
                 );
-                self.clear_in_flight_state();
+                self.reset_for_rescan();
                 self.progress.update_committed_height(stale_min_synced);
                 return self.start_download(requests).await;
             }

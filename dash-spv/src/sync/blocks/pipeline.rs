@@ -191,6 +191,15 @@ impl BlocksPipeline {
     pub(super) fn handle_timeouts(&mut self) {
         self.coordinator.check_and_retry_timeouts();
     }
+
+    /// Move in-flight `getdata` requests back to pending after a peer
+    /// disconnect so the next `send_pending` reissues them to the new peer.
+    /// `pending_heights`, `downloaded`, `hash_to_height`, and `hash_to_wallets`
+    /// are preserved so already-received blocks are not re-fetched and the
+    /// per-block wallet routing stays intact.
+    pub(super) fn requeue_in_flight(&mut self) {
+        self.coordinator.requeue_in_flight();
+    }
 }
 
 #[cfg(test)]
@@ -306,6 +315,34 @@ mod tests {
         assert_eq!(pipeline.coordinator.active_count(), MAX_CONCURRENT_BLOCK_DOWNLOADS);
         assert_eq!(pipeline.coordinator.pending_count(), 1);
         assert!(!pipeline.has_pending_requests());
+    }
+
+    #[test]
+    fn test_requeue_in_flight_preserves_downloaded_and_pending_heights() {
+        let mut pipeline = BlocksPipeline::new();
+        let block_a = make_test_block(1);
+        let block_b = make_test_block(2);
+        let hash_a = block_a.block_hash();
+        let hash_b = block_b.block_hash();
+
+        // A: queued and sent — will be requeued.
+        pipeline.queue([(FilterMatchKey::new(100, hash_a), BTreeSet::from([[1u8; 32]]))]);
+        let sent = pipeline.coordinator.take_pending(1);
+        pipeline.coordinator.mark_sent(&sent);
+        assert_eq!(pipeline.coordinator.active_count(), 1);
+
+        // B: already received, sitting in `downloaded` — must survive requeue.
+        pipeline.add_from_storage(block_b.clone(), 200, BTreeSet::from([[2u8; 32]]));
+
+        pipeline.requeue_in_flight();
+
+        assert_eq!(pipeline.coordinator.active_count(), 0);
+        assert_eq!(pipeline.coordinator.pending_count(), 1);
+        assert!(pipeline.pending_heights.contains(&100));
+        assert_eq!(pipeline.hash_to_height.get(&hash_a), Some(&100));
+        assert!(pipeline.hash_to_wallets.contains_key(&hash_a));
+        assert!(pipeline.downloaded.contains_key(&200));
+        assert!(pipeline.hash_to_wallets.contains_key(&hash_b));
     }
 
     #[test]

@@ -31,7 +31,7 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage> SyncManager for FilterHeade
         &[MessageType::CFHeaders]
     }
 
-    fn clear_in_flight_state(&mut self) {
+    fn on_disconnect(&mut self) {
         self.pipeline = FilterHeadersPipeline::default();
         self.checkpoint_start_height = None;
         self.block_headers_synced = false;

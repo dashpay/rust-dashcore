@@ -36,7 +36,7 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> SyncManager for BlockHeadersMana
         &[MessageType::Headers, MessageType::Inv]
     }
 
-    fn clear_in_flight_state(&mut self) {
+    fn on_disconnect(&mut self) {
         // Drop only per-peer in-flight bookkeeping. Segment topology and
         // validated chain state per segment (current_tip_hash, current_height,
         // buffered_headers, complete) are preserved so a reconnect can resume

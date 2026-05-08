@@ -92,6 +92,23 @@ impl<K: Hash + Eq + Clone> DownloadCoordinator<K> {
         self.last_progress = Instant::now();
     }
 
+    /// Move all in-flight items back to the front of the pending queue.
+    ///
+    /// Used on peer disconnect: the requests went to a now-dead peer, but the
+    /// items themselves are still wanted. Retry counts are preserved so a peer
+    /// that consistently fails to deliver an item still trips the normal retry
+    /// budget. Without this hook, items would only be retried once their
+    /// timeout elapsed.
+    pub(crate) fn requeue_in_flight(&mut self) {
+        let items: Vec<K> = self.in_flight.drain().map(|(k, _)| k).collect();
+        if items.is_empty() {
+            return;
+        }
+        for item in items.into_iter().rev() {
+            self.pending.push_front(item);
+        }
+    }
+
     /// Queue items for download.
     pub(crate) fn enqueue(&mut self, items: impl IntoIterator<Item = K>) {
         for item in items {
@@ -313,6 +330,50 @@ mod tests {
         let timed_out = coord.check_timeouts();
         assert_eq!(timed_out.len(), 2);
         assert!(coord.in_flight.is_empty());
+    }
+
+    #[test]
+    fn test_requeue_in_flight_moves_items_to_pending_front() {
+        let mut coord: DownloadCoordinator<u32> = DownloadCoordinator::default();
+        coord.enqueue([10, 11]);
+        coord.mark_sent(&[1, 2, 3]);
+
+        coord.requeue_in_flight();
+
+        assert_eq!(coord.active_count(), 0);
+        // Requeued items go to the front, original pending follows.
+        let items = coord.take_pending(5);
+        assert_eq!(items.len(), 5);
+        assert_eq!(&items[3..], &[10, 11]);
+        let mut requeued = items[..3].to_vec();
+        requeued.sort();
+        assert_eq!(requeued, vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn test_requeue_in_flight_preserves_retry_counts() {
+        let mut coord: DownloadCoordinator<u32> = DownloadCoordinator::default();
+        coord.enqueue_retry(7);
+        let items = coord.take_pending(1);
+        coord.mark_sent(&items);
+        assert_eq!(coord.retry_counts.get(&7), Some(&1));
+
+        coord.requeue_in_flight();
+
+        assert_eq!(coord.retry_counts.get(&7), Some(&1));
+        assert!(!coord.is_in_flight(&7));
+        assert_eq!(coord.pending_count(), 1);
+    }
+
+    #[test]
+    fn test_requeue_in_flight_no_op_when_empty() {
+        let mut coord: DownloadCoordinator<u32> = DownloadCoordinator::default();
+        coord.enqueue([1, 2]);
+
+        coord.requeue_in_flight();
+
+        assert_eq!(coord.pending_count(), 2);
+        assert_eq!(coord.active_count(), 0);
     }
 
     #[test]

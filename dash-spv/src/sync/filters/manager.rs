@@ -126,6 +126,18 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
             && self.filter_pipeline.is_idle()
     }
 
+    /// Drop all in-flight processing state so a fresh scan can begin from a
+    /// rolled-back `committed_height`. Used by the wallet-rescan trigger in
+    /// `tick` when a wallet's `synced_height` falls below the manager's
+    /// current scan progress. Distinct from `on_disconnect`, which keeps
+    /// in-progress work intact.
+    pub(super) fn reset_for_rescan(&mut self) {
+        self.active_batches.clear();
+        self.tracker.clear();
+        self.pending_batches.clear();
+        self.filter_pipeline = FiltersPipeline::new();
+    }
+
     async fn load_filters(
         &self,
         start_height: u32,
@@ -506,7 +518,7 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
             // Drop processed-wallet records for the committed range. Below the
             // new committed_height a new wallet can only get here via the
             // `tick` rescan trigger, which already wipes the map via
-            // `clear_in_flight_state`, so older entries can never be consulted.
+            // `reset_for_rescan`, so older entries can never be consulted.
             self.tracker.prune_at_or_below(end);
             self.processing_height = end + 1;
 
@@ -883,6 +895,14 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
                 }
             }
             SyncState::WaitingForConnections | SyncState::WaitForEvents => {
+                // In-progress work preserved across a disconnect cycle. Don't
+                // re-init via `start_download` — that would clobber existing
+                // batches. Instead extend the target and let the eventual
+                // `start_sync` (driven by `PeersUpdated`) resume from here.
+                if !self.active_batches.is_empty() {
+                    self.filter_pipeline.extend_target(tip_height);
+                    return Ok(vec![]);
+                }
                 return self.start_download(requests).await;
             }
             _ => {}
@@ -1584,7 +1604,7 @@ mod tests {
 
     /// `try_commit_batches` prunes `processed_blocks_per_wallet` entries at
     /// or below the new committed_height, since they cannot be reached again
-    /// without `clear_in_flight_state` wiping the map outright.
+    /// without `reset_for_rescan` wiping the map outright.
     #[tokio::test]
     async fn test_commit_prunes_processed_blocks_per_wallet() {
         let mut manager = create_test_manager().await;
@@ -1838,7 +1858,7 @@ mod tests {
         assert!(!manager.is_idle());
         manager.filter_pipeline = FiltersPipeline::new();
 
-        // Populate all fields, then clear_in_flight_state restores idleness
+        // Populate all fields, then reset_for_rescan restores idleness
         manager.active_batches.insert(0, FiltersBatch::new(0, 999, HashMap::new()));
         manager.tracker.track(&key, 0, BTreeSet::from([wallet_id]));
         manager.tracker.record_processed(100, hash, &BTreeSet::from([wallet_id]));
@@ -1846,7 +1866,7 @@ mod tests {
         manager.filter_pipeline.init(2000, 2999);
         assert!(!manager.is_idle());
 
-        manager.clear_in_flight_state();
+        manager.reset_for_rescan();
         assert!(manager.is_idle());
     }
 
@@ -2054,7 +2074,7 @@ mod tests {
         manager.progress.update_filter_header_tip_height(100);
         manager.progress.update_target_height(100);
 
-        // Pre-populate in-flight state so we can verify clear_in_flight_state runs.
+        // Pre-populate in-flight state so we can verify reset_for_rescan runs.
         manager.active_batches.insert(101, FiltersBatch::new(101, 200, HashMap::new()));
         let stale_hash = dashcore::block::Header::dummy(0).block_hash();
         let stale_key = FilterMatchKey::new(150, stale_hash);
@@ -2083,7 +2103,7 @@ mod tests {
         // Old in-flight state was cleared and a fresh batch was created at scan_start=0.
         assert!(!manager.active_batches.contains_key(&101));
         assert!(manager.active_batches.contains_key(&0));
-        // The stale pre-populated record was wiped by `clear_in_flight_state`:
+        // The stale pre-populated record was wiped by `reset_for_rescan`:
         // a fresh `track` for the same wallet now returns `NewlyTracked`.
         assert!(matches!(
             manager.tracker.track(&stale_key, 0, BTreeSet::from([MOCK_WALLET_ID])),
@@ -2178,5 +2198,51 @@ mod tests {
         assert_eq!(manager.progress.committed_height(), 100);
         assert_eq!(manager.state(), SyncState::WaitingForConnections);
         assert!(manager.active_batches.is_empty());
+    }
+
+    /// `on_disconnect` for `FiltersManager` keeps the block-match tracker,
+    /// active batches (with their `pending_blocks` counters), pending verified
+    /// batches, and per-batch filter receipts, and moves any in-flight
+    /// `getcfilters` slots back to pending so the next `send_pending` reissues
+    /// them. This keeps `FiltersManager.tracker` in lockstep with
+    /// `BlocksManager`'s preserved pipeline so already-counted matches do not
+    /// leak into a permanent non-zero `pending_blocks`.
+    #[tokio::test]
+    async fn test_on_disconnect_preserves_in_progress_work() {
+        let mut manager = create_test_manager().await;
+
+        let key = FilterMatchKey::new(100, dashcore::block::Header::dummy(0).block_hash());
+        let wallet_id = MOCK_WALLET_ID;
+
+        let mut batch = FiltersBatch::new(0, 999, HashMap::new());
+        batch.set_pending_blocks(1);
+        manager.active_batches.insert(0, batch);
+        manager.tracker.track(&key, 0, BTreeSet::from([wallet_id]));
+        manager.pending_batches.insert(FiltersBatch::new(1000, 1999, HashMap::new()));
+        manager.filter_pipeline.init(0, 1999);
+
+        manager.on_disconnect();
+
+        assert!(manager.active_batches.contains_key(&0));
+        assert_eq!(
+            manager.active_batches.get(&0).unwrap().pending_blocks(),
+            1,
+            "active batch's pending_blocks counter must not be reset"
+        );
+        assert_eq!(
+            manager.tracker.track(&key, 0, BTreeSet::from([wallet_id])),
+            BlockTrackResult::InFlight {
+                wallets: BTreeSet::from([wallet_id])
+            },
+            "tracker must still see the hash as in-flight"
+        );
+        assert_eq!(manager.pending_batches.len(), 1);
+
+        // Sanity check: the full-reset path (`reset_for_rescan`) does wipe
+        // everything — the two paths must remain distinct.
+        manager.reset_for_rescan();
+        assert!(manager.active_batches.is_empty());
+        assert!(manager.pending_batches.is_empty());
+        assert!(manager.tracker.is_empty());
     }
 }

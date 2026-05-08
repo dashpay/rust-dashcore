@@ -380,14 +380,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_clear_in_flight_state() {
+    async fn test_on_disconnect() {
         let mut manager = create_test_manager().await;
 
-        // Set all fields that clear_in_flight_state resets
+        // Set all fields that on_disconnect resets
         manager.block_headers_synced = true;
         manager.checkpoint_start_height = Some(500);
 
-        manager.clear_in_flight_state();
+        manager.on_disconnect();
 
         assert!(!manager.block_headers_synced);
         assert!(manager.checkpoint_start_height.is_none());

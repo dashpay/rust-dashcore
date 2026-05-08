@@ -39,7 +39,7 @@ impl<W: WalletInterface + 'static> SyncManager for MempoolManager<W> {
         Ok(vec![])
     }
 
-    fn clear_in_flight_state(&mut self) {
+    fn on_disconnect(&mut self) {
         self.clear_pending();
     }
 

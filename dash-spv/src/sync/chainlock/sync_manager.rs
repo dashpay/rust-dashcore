@@ -26,7 +26,7 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> SyncManager for ChainLockManager
         &[MessageType::CLSig, MessageType::Inv]
     }
 
-    fn clear_in_flight_state(&mut self) {
+    fn on_disconnect(&mut self) {
         self.requested_chainlocks.clear();
         self.masternode_ready = false;
     }
