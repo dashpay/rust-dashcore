@@ -321,7 +321,7 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
 
                 // If no pending requests, complete
                 if !self.sync_state.has_pending_requests() {
-                    return self.complete_pipeline().await;
+                    return self.complete_pipeline(requests).await;
                 }
             }
 
@@ -399,7 +399,7 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
                         return Ok(vec![]);
                     }
                     tracing::info!("All MnListDiff responses received");
-                    return self.complete_pipeline().await;
+                    return self.complete_pipeline(requests).await;
                 }
             }
 
@@ -615,7 +615,7 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
                         MAX_RETRY_ATTEMPTS
                     );
                     self.sync_state.clear_pending();
-                    return self.complete_pipeline().await;
+                    return self.complete_pipeline(requests).await;
                 }
             }
             return Ok(vec![]);
@@ -631,7 +631,7 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
             // Check if complete after handling timeouts
             if self.sync_state.mnlistdiff_pipeline.is_complete() {
                 tracing::info!("MnListDiff pipeline complete");
-                return self.complete_pipeline().await;
+                return self.complete_pipeline(requests).await;
             }
         }
 
