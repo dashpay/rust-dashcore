@@ -165,6 +165,18 @@ impl<K: Hash + Eq + Clone> DownloadCoordinator<K> {
         }
     }
 
+    /// Drop a key from the pending queue without touching in-flight state.
+    ///
+    /// Used when a pending item is satisfied through a side channel: a late
+    /// response from a disconnected peer can complete a batch that
+    /// `requeue_in_flight` just moved from in-flight back to pending. Without
+    /// this hook, the key would stay in `pending` with no tracker, and the
+    /// next `take_pending` would resurrect a finished batch.
+    pub(crate) fn cancel_pending(&mut self, key: &K) {
+        self.pending.retain(|k| k != key);
+        self.retry_counts.remove(key);
+    }
+
     /// Check if an item is currently in-flight.
     pub(crate) fn is_in_flight(&self, key: &K) -> bool {
         self.in_flight.contains_key(key)
@@ -374,6 +386,36 @@ mod tests {
 
         assert_eq!(coord.pending_count(), 2);
         assert_eq!(coord.active_count(), 0);
+    }
+
+    #[test]
+    fn test_cancel_pending_removes_from_pending_only() {
+        let mut coord: DownloadCoordinator<u32> = DownloadCoordinator::default();
+        coord.enqueue([1, 2, 3]);
+        coord.mark_sent(&[10]);
+        coord.enqueue_retry(2);
+        assert_eq!(coord.retry_counts.get(&2), Some(&1));
+
+        coord.cancel_pending(&2);
+
+        assert_eq!(coord.pending_count(), 2);
+        assert!(coord.is_in_flight(&10));
+        assert_eq!(coord.retry_counts.get(&2), None);
+
+        let items = coord.take_pending(2);
+        assert_eq!(items, vec![1, 3]);
+    }
+
+    #[test]
+    fn test_cancel_pending_unknown_key_is_noop() {
+        let mut coord: DownloadCoordinator<u32> = DownloadCoordinator::default();
+        coord.enqueue([1, 2]);
+        coord.mark_sent(&[5]);
+
+        coord.cancel_pending(&99);
+
+        assert_eq!(coord.pending_count(), 2);
+        assert_eq!(coord.active_count(), 1);
     }
 
     #[test]
