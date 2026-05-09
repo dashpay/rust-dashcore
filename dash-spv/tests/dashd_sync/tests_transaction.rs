@@ -7,8 +7,8 @@ use tokio::sync::RwLock;
 use super::helpers::{
     wait_for_mempool_tx, wait_for_sync, wait_for_wallet_synced, EMPTY_MNEMONIC, SECONDARY_MNEMONIC,
 };
-use super::setup::{create_and_start_client, create_test_wallet, TestContext};
-use dash_spv::test_utils::TestChain;
+use super::setup::{create_and_start_client, TestContext};
+use dash_spv::test_utils::{create_test_wallet, TestChain};
 use dashcore::address::NetworkUnchecked;
 use key_wallet::account::ManagedAccountTrait;
 use key_wallet::wallet::managed_wallet_info::transaction_builder::{
