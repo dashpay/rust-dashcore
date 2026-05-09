@@ -10,4 +10,3 @@ mod tests_mempool;
 mod tests_multi_wallet;
 mod tests_restart;
 mod tests_transaction;
-mod tests_transaction_builder;

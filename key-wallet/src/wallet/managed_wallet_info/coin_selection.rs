@@ -83,12 +83,6 @@ pub struct CoinSelector {
 }
 
 impl CoinSelector {
-    /// Create a new coin selector with defaults that match the wallet's
-    /// spendable-balance semantics: confirmed, InstantSend-locked, trusted
-    /// self-send change, and untrusted unconfirmed incoming are all
-    /// candidates. Callers that want stricter filtering (e.g. exclude
-    /// mempool incoming, or require N confirmations) opt in via
-    /// [`with_min_confirmations`] / [`exclude_unconfirmed`].
     pub fn new(strategy: SelectionStrategy) -> Self {
         Self {
             strategy,

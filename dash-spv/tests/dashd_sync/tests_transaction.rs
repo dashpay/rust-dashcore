@@ -1,9 +1,23 @@
 use dash_spv::sync::ProgressPercentage;
-use dashcore::Amount;
+use dashcore::{Address, Amount, Network};
+use std::sync::Arc;
+use std::time::Duration;
+use tokio::sync::RwLock;
 
-use super::helpers::wait_for_sync;
-use super::setup::TestContext;
+use super::helpers::{
+    wait_for_mempool_tx, wait_for_sync, wait_for_wallet_synced, EMPTY_MNEMONIC, SECONDARY_MNEMONIC,
+};
+use super::setup::{create_and_start_client, create_test_wallet, TestContext};
 use dash_spv::test_utils::TestChain;
+use dashcore::address::NetworkUnchecked;
+use key_wallet::account::ManagedAccountTrait;
+use key_wallet::wallet::managed_wallet_info::transaction_builder::{
+    BuilderError, TransactionBuilder,
+};
+use key_wallet::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
+use key_wallet::wallet::ManagedWalletInfo;
+use key_wallet::ManagedAccountType;
+use key_wallet_manager::{WalletId, WalletManager};
 
 /// Verify incremental sync works by generating blocks after initial sync.
 ///
@@ -229,4 +243,145 @@ async fn test_multiple_transactions_across_blocks() {
         final_balance,
         fees_paid
     );
+}
+
+const MEMPOOL_TIMEOUT: Duration = Duration::from_secs(30);
+
+async fn reserve_first_address(mnemonic: &str) -> Address {
+    let (temp_mgr, temp_id) = create_test_wallet(mnemonic, Network::Regtest);
+
+    let reader = temp_mgr.read().await;
+    let info = reader.get_wallet_info(&temp_id).expect("wallet info");
+    let account = info.accounts().standard_bip44_accounts.get(&0).expect("BIP44 account 0");
+
+    let ManagedAccountType::Standard {
+        external_addresses,
+        ..
+    } = &account.managed_account_type()
+    else {
+        panic!("not a Standard account");
+    };
+
+    external_addresses.unused_addresses().into_iter().next().expect("unused address")
+}
+
+async fn build_and_sign(
+    wallet: &Arc<RwLock<WalletManager<ManagedWalletInfo>>>,
+    wallet_id: &WalletId,
+    destination: &Address,
+    amount: u64,
+) -> Result<(dashcore::Transaction, u64), BuilderError> {
+    let dest_unchecked: Address<NetworkUnchecked> =
+        destination.to_string().parse().expect("destination address");
+
+    let mut wallet_lock = wallet.write().await;
+    let (w, info) = wallet_lock.get_wallet_and_info_mut(wallet_id).expect("wallet present");
+
+    let height = info.last_processed_height();
+    let network = w.network;
+    let account = w.get_bip44_account(0).expect("account 0").clone();
+    let funds_account = info.accounts.standard_bip44_accounts.get_mut(&0).expect("account 0");
+    let dest = dest_unchecked.require_network(network).expect("destination network");
+
+    TransactionBuilder::new()
+        .set_current_height(height)
+        .set_funding(funds_account, &account)
+        .add_output(&dest, amount)
+        .build_signed(w, |a| funds_account.address_derivation_path(&a))
+        .await
+}
+
+/// Build, sign and broadcast a tx via `TransactionBuilder`, then re-spend
+/// the resulting mempool change UTXO before its parent confirms.
+#[tokio::test]
+async fn test_spend_change_balance() {
+    let Some(ctx) = TestContext::new(TestChain::Minimal).await else {
+        return;
+    };
+    if !ctx.dashd.supports_mining {
+        eprintln!("Skipping test (dashd RPC miner not available)");
+        return;
+    }
+
+    let (wallet, wallet_id) = create_test_wallet(EMPTY_MNEMONIC, Network::Regtest);
+    let mut client_handle = create_and_start_client(&ctx.client_config, Arc::clone(&wallet)).await;
+    wait_for_sync(&mut client_handle.progress_receiver, ctx.dashd.initial_height).await;
+
+    let receive_address = reserve_first_address(EMPTY_MNEMONIC).await;
+    let funding_amount = Amount::from_sat(500_000_000);
+    ctx.dashd.node.send_to_address(&receive_address, funding_amount);
+
+    let miner_address = ctx.dashd.node.get_new_address_from_wallet("default");
+    ctx.dashd.node.generate_blocks(1, &miner_address);
+    let funded_height = ctx.dashd.initial_height + 1;
+    wait_for_sync(&mut client_handle.progress_receiver, funded_height).await;
+    wait_for_wallet_synced(&wallet, &wallet_id, funded_height).await;
+
+    let dest_a = Address::dummy(Network::Regtest, 1);
+    let (tx_a, _) =
+        build_and_sign(&wallet, &wallet_id, &dest_a, 100_000_000).await.expect("build tx_a");
+
+    client_handle.client.broadcast_transaction(&tx_a).await.expect("broadcast tx_a");
+    wait_for_mempool_tx(&mut client_handle.wallet_event_receiver, MEMPOOL_TIMEOUT)
+        .await
+        .expect("detect tx_a");
+
+    // The wallet's only UTXO now is the mempool change from tx_a, so a
+    // successful build proves coin selection used it.
+    let dest_b = Address::dummy(Network::Regtest, 2);
+    let (tx_b, _) = build_and_sign(&wallet, &wallet_id, &dest_b, 50_000_000)
+        .await
+        .expect("spend mempool change");
+    assert!(
+        tx_b.input.iter().any(|i| i.previous_output.txid == tx_a.txid()),
+        "tx_b must spend tx_a's mempool change UTXO",
+    );
+
+    client_handle.client.broadcast_transaction(&tx_b).await.expect("broadcast tx_b");
+    wait_for_mempool_tx(&mut client_handle.wallet_event_receiver, MEMPOOL_TIMEOUT)
+        .await
+        .expect("detect tx_b");
+
+    client_handle.stop().await;
+}
+
+/// Spend an incoming mempool UTXO (we own the output, none of the inputs)
+/// before it confirms.
+#[tokio::test]
+async fn test_spend_incoming_balance() {
+    let Some(ctx) = TestContext::new(TestChain::Minimal).await else {
+        return;
+    };
+    if !ctx.dashd.supports_mining {
+        eprintln!("Skipping test (dashd RPC miner not available)");
+        return;
+    }
+
+    let (wallet, wallet_id) = create_test_wallet(SECONDARY_MNEMONIC, Network::Regtest);
+    let mut client_handle = create_and_start_client(&ctx.client_config, Arc::clone(&wallet)).await;
+    wait_for_sync(&mut client_handle.progress_receiver, ctx.dashd.initial_height).await;
+
+    let receive_address = reserve_first_address(SECONDARY_MNEMONIC).await;
+    let incoming_amount = Amount::from_sat(300_000_000);
+    let incoming_txid = ctx.dashd.node.send_to_address(&receive_address, incoming_amount);
+
+    wait_for_mempool_tx(&mut client_handle.wallet_event_receiver, MEMPOOL_TIMEOUT)
+        .await
+        .expect("detect incoming");
+
+    let dest = Address::dummy(Network::Regtest, 3);
+    let (tx, _) = build_and_sign(&wallet, &wallet_id, &dest, 150_000_000)
+        .await
+        .expect("spend unconfirmed incoming");
+    assert!(
+        tx.input.iter().any(|i| i.previous_output.txid == incoming_txid),
+        "spend must reference the unconfirmed incoming txid",
+    );
+
+    client_handle.client.broadcast_transaction(&tx).await.expect("broadcast spend");
+    wait_for_mempool_tx(&mut client_handle.wallet_event_receiver, MEMPOOL_TIMEOUT)
+        .await
+        .expect("detect spend");
+
+    client_handle.stop().await;
 }
