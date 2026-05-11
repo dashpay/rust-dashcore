@@ -1089,7 +1089,7 @@ impl PeerNetworkManager {
                     event = network_events.recv() => {
                         match event {
                             Ok(event) => {
-                                tracing::debug!("Network event in maintenance loop: {}", event.description());
+                                tracing::debug!("Network event in maintenance loop: {}", event);
                                 dns_interval.reset();
                                 this.maintenance_tick().await;
                             }

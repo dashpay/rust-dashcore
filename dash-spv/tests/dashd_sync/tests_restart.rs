@@ -127,11 +127,11 @@ async fn test_sync_with_multiple_restarts() {
                         Ok(ref event) if is_progress_event(event) => {
                             events_seen += 1;
                             if events_seen % 2 == 0 {
-                                tracing::info!("Restarting on: {}", event.description());
+                                tracing::info!("Restarting on: {}", event);
                                 should_restart = true;
                                 break;
                             }
-                            tracing::info!("Skipped: {}", event.description());
+                            tracing::info!("Skipped: {}", event);
                         }
                         Ok(SyncEvent::SyncComplete { .. }) => break,
                         Ok(_) => continue,

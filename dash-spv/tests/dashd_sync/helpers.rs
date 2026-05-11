@@ -293,7 +293,7 @@ pub(super) async fn run_disconnect_loop(
                             tracing::info!(
                                 "Disconnection {}: disconnecting peers after: {}",
                                 disconnect_count + 1,
-                                event.description()
+                                event
                             );
                             let pre_disconnect_height = current_header_height(&client_handle);
                             node.disconnect_all_peers();

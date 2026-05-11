@@ -332,9 +332,10 @@ impl WalletEvent {
             } => *wallet_id,
         }
     }
+}
 
-    /// Short description for logging.
-    pub fn description(&self) -> String {
+impl fmt::Display for WalletEvent {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             WalletEvent::TransactionDetected {
                 record,
@@ -342,29 +343,27 @@ impl WalletEvent {
                 account_balances,
                 addresses_derived,
                 ..
-            } => {
-                format!(
-                    "TransactionDetected(txid={}, context={}, balance={}, account_balances={}, derived={})",
-                    record.txid,
-                    record.context,
-                    balance,
-                    format_account_balances(account_balances),
-                    addresses_derived.len(),
-                )
-            }
+            } => write!(
+                f,
+                "TransactionDetected(txid={}, context={}, balance={}, account_balances={}, derived={})",
+                record.txid,
+                record.context,
+                balance,
+                format_account_balances(account_balances),
+                addresses_derived.len(),
+            ),
             WalletEvent::TransactionInstantLocked {
                 txid,
                 balance,
                 account_balances,
                 ..
-            } => {
-                format!(
-                    "TransactionInstantLocked(txid={}, balance={}, account_balances={})",
-                    txid,
-                    balance,
-                    format_account_balances(account_balances),
-                )
-            }
+            } => write!(
+                f,
+                "TransactionInstantLocked(txid={}, balance={}, account_balances={})",
+                txid,
+                balance,
+                format_account_balances(account_balances),
+            ),
             WalletEvent::BlockProcessed {
                 height,
                 chain_lock,
@@ -375,24 +374,23 @@ impl WalletEvent {
                 account_balances,
                 addresses_derived,
                 ..
-            } => {
-                format!(
-                    "BlockProcessed(height={}, chainlocked={}, inserted={}, updated={}, matured={}, balance={}, account_balances={}, derived={})",
-                    height,
+            } => write!(
+                f,
+                "BlockProcessed(height={}, chainlocked={}, inserted={}, updated={}, matured={}, balance={}, account_balances={}, derived={})",
+                height,
                     chain_lock.is_some(),
-                    inserted.len(),
-                    updated.len(),
-                    matured.len(),
-                    balance,
-                    format_account_balances(account_balances),
-                    addresses_derived.len(),
-                )
-            }
+                inserted.len(),
+                updated.len(),
+                matured.len(),
+                balance,
+                format_account_balances(account_balances),
+                addresses_derived.len(),
+            ),
             WalletEvent::SyncHeightAdvanced {
                 height,
                 ..
             } => {
-                format!("SyncHeightAdvanced(height={})", height)
+                write!(f, "SyncHeightAdvanced(height={})", height)
             }
             WalletEvent::TransactionsChainlocked {
                 chain_lock,
@@ -400,7 +398,7 @@ impl WalletEvent {
                 ..
             } => {
                 let total_txids: usize = per_account.values().map(|v| v.len()).sum();
-                format!(
+                write!(f,
                     "TransactionsChainlocked(chainlock_height={}, accounts={}, finalized_txids={})",
                     chain_lock.block_height,
                     per_account.len(),
@@ -408,12 +406,6 @@ impl WalletEvent {
                 )
             }
         }
-    }
-}
-
-impl fmt::Display for WalletEvent {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.description())
     }
 }
 

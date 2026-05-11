@@ -178,66 +178,54 @@ pub enum SyncEvent {
     },
 }
 
-impl SyncEvent {
-    /// Get a short description of this event for logging.
-    pub fn description(&self) -> String {
+impl fmt::Display for SyncEvent {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             SyncEvent::SyncStart {
                 identifier,
-            } => {
-                format!("SyncStart(identifier={})", identifier)
-            }
+            } => write!(f, "SyncStart(identifier={})", identifier),
             SyncEvent::BlockHeadersStored {
                 tip_height,
-            } => {
-                format!("BlockHeadersStored(tip={})", tip_height)
-            }
+            } => write!(f, "BlockHeadersStored(tip={})", tip_height),
             SyncEvent::BlockHeaderSyncComplete {
                 tip_height,
-            } => {
-                format!("BlockHeaderSyncComplete(tip={})", tip_height)
-            }
+            } => write!(f, "BlockHeaderSyncComplete(tip={})", tip_height),
             SyncEvent::FilterHeadersStored {
                 start_height,
                 end_height,
                 tip_height,
-            } => {
-                format!("FilterHeadersStored({}-{}, tip={})", start_height, end_height, tip_height)
-            }
+            } => write!(
+                f,
+                "FilterHeadersStored({}-{}, tip={})",
+                start_height, end_height, tip_height
+            ),
             SyncEvent::FilterHeadersSyncComplete {
                 tip_height,
-            } => {
-                format!("FilterHeadersSyncComplete(tip={})", tip_height)
-            }
+            } => write!(f, "FilterHeadersSyncComplete(tip={})", tip_height),
             SyncEvent::FiltersStored {
                 start_height,
                 end_height,
-            } => {
-                format!("FiltersStored({}-{})", start_height, end_height)
-            }
+            } => write!(f, "FiltersStored({}-{})", start_height, end_height),
             SyncEvent::FiltersSyncComplete {
                 tip_height,
-            } => {
-                format!("FiltersSyncComplete(tip={})", tip_height)
-            }
+            } => write!(f, "FiltersSyncComplete(tip={})", tip_height),
             SyncEvent::BlocksNeeded {
                 blocks,
-            } => {
-                format!("BlocksNeeded(count={})", blocks.len())
-            }
+            } => write!(f, "BlocksNeeded(count={})", blocks.len()),
             SyncEvent::BlockProcessed {
                 height,
                 new_addresses,
                 ..
             } => {
                 let total: usize = new_addresses.values().map(|v| v.len()).sum();
-                format!("BlockProcessed(height={}, new_addrs={})", height, total)
+                write!(f, "BlockProcessed(height={}, new_addrs={})", height, total)
             }
             SyncEvent::MasternodeStateUpdated {
                 height,
                 qr_info_result,
             } => match qr_info_result {
-                Some(s) => format!(
+                Some(s) => write!(
+                    f,
                     "MasternodeStateUpdated(height={}, qr_info={{stored_cycle_height={:?}, verified={}/{}, newly_qualified={}}})",
                     height,
                     s.stored_cycle_height,
@@ -245,42 +233,33 @@ impl SyncEvent {
                     s.rotated_quorum_count,
                     s.newly_qualified_count,
                 ),
-                None => format!("MasternodeStateUpdated(height={})", height),
+                None => write!(f, "MasternodeStateUpdated(height={})", height),
             },
             SyncEvent::ManagerError {
                 manager,
                 error,
                 ..
-            } => {
-                format!("ManagerError({}, {})", manager, error)
-            }
+            } => write!(f, "ManagerError({}, {})", manager, error),
             SyncEvent::ChainLockReceived {
                 chain_lock,
                 validated,
-            } => {
-                format!(
-                    "ChainLockReceived(height={}, validated={})",
-                    chain_lock.block_height, validated
-                )
-            }
+            } => write!(
+                f,
+                "ChainLockReceived(height={}, validated={})",
+                chain_lock.block_height, validated
+            ),
             SyncEvent::InstantLockReceived {
                 instant_lock,
                 validated,
-            } => {
-                format!("InstantLockReceived(txid={}, validated={})", instant_lock.txid, validated)
-            }
+            } => write!(
+                f,
+                "InstantLockReceived(txid={}, validated={})",
+                instant_lock.txid, validated
+            ),
             SyncEvent::SyncComplete {
                 header_tip,
                 cycle,
-            } => {
-                format!("SyncComplete(tip={}, cycle={})", header_tip, cycle)
-            }
+            } => write!(f, "SyncComplete(tip={}, cycle={})", header_tip, cycle),
         }
-    }
-}
-
-impl fmt::Display for SyncEvent {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.description())
     }
 }

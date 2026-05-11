@@ -38,37 +38,25 @@ pub enum NetworkEvent {
     },
 }
 
-impl NetworkEvent {
-    /// Get a short description of this event for logging.
-    pub fn description(&self) -> String {
+impl fmt::Display for NetworkEvent {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             NetworkEvent::PeerConnected {
                 address,
-            } => {
-                format!("PeerConnected({})", address)
-            }
+            } => write!(f, "PeerConnected({})", address),
             NetworkEvent::PeerDisconnected {
                 address,
-            } => {
-                format!("PeerDisconnected({})", address)
-            }
+            } => write!(f, "PeerDisconnected({})", address),
             NetworkEvent::PeersUpdated {
                 connected_count,
                 addresses: _,
                 best_height,
-            } => {
-                format!(
-                    "PeersUpdated(connected={}, best_height={})",
-                    connected_count,
-                    best_height.unwrap_or(0)
-                )
-            }
+            } => write!(
+                f,
+                "PeersUpdated(connected={}, best_height={})",
+                connected_count,
+                best_height.unwrap_or(0)
+            ),
         }
-    }
-}
-
-impl fmt::Display for NetworkEvent {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.description())
     }
 }

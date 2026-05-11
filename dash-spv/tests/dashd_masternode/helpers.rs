@@ -313,7 +313,7 @@ pub(super) async fn wait_for_wallet_txs_chainlocked(
                         }
                     }
                     Ok(other) => {
-                        tracing::debug!("Ignoring wallet event: {}", other.description());
+                        tracing::debug!("Ignoring wallet event: {}", other);
                     }
                     Err(err) => {
                         panic!("Wallet event receiver failed: {}", err);
@@ -376,7 +376,7 @@ pub(super) async fn wait_for_wallet_tx_chainlocked(
                             .unwrap_or_default();
                     }
                     Ok(other) => {
-                        tracing::debug!("Ignoring wallet event: {}", other.description());
+                        tracing::debug!("Ignoring wallet event: {}", other);
                         continue;
                     }
                     Err(err) => {
@@ -436,7 +436,7 @@ where
                         continue;
                     }
                     Ok(other) => {
-                        tracing::debug!("Ignoring wallet event: {}", other.description());
+                        tracing::debug!("Ignoring wallet event: {}", other);
                         continue;
                     }
                     Err(broadcast::error::RecvError::Lagged(n)) => {

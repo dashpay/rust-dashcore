@@ -241,7 +241,7 @@ pub trait SyncManager: Send + Sync + std::fmt::Debug {
                         Ok(events) => {
                             if !events.is_empty() {
                                 for event in &events {
-                                    tracing::debug!("{} emitting: {}", identifier, event.description());
+                                    tracing::debug!("{} emitting: {}", identifier, event);
                                 }
                                 context.emit_sync_events(events);
                             }
@@ -261,13 +261,13 @@ pub trait SyncManager: Send + Sync + std::fmt::Debug {
                 result = sync_event_receiver.recv() => {
                     match result {
                         Ok(event) => {
-                            tracing::trace!("{} received event: {}", identifier, event.description());
+                            tracing::trace!("{} received event: {}", identifier, event);
                             let progress_before = self.progress();
                             match self.handle_sync_event(&event, &context.requests).await {
                                 Ok(events) => {
                                     if !events.is_empty() {
                                         for e in &events {
-                                            tracing::trace!("{} emitting: {}", identifier, e.description());
+                                            tracing::trace!("{} emitting: {}", identifier, e);
                                         }
                                         context.emit_sync_events(events);
                                     }
@@ -288,13 +288,13 @@ pub trait SyncManager: Send + Sync + std::fmt::Debug {
                 result = context.network_event_receiver.recv() => {
                     match result {
                         Ok(event) => {
-                            tracing::debug!("{} received network event: {}", identifier, event.description());
+                            tracing::debug!("{} received network event: {}", identifier, event);
                             let progress_before = self.progress();
                             match self.handle_network_event(&event, &context.requests).await {
                                 Ok(events) => {
                                     if !events.is_empty() {
                                         for e in &events {
-                                            tracing::debug!("{} emitting: {}", identifier, e.description());
+                                            tracing::debug!("{} emitting: {}", identifier, e);
                                         }
                                         context.emit_sync_events(events);
                                     }
