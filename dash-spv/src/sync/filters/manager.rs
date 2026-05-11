@@ -875,7 +875,7 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
 
         match self.state() {
             SyncState::Syncing | SyncState::Synced
-                if self.progress.stored_height() < self.progress.filter_header_tip_height() =>
+                if self.progress.committed_height() < self.progress.filter_header_tip_height() =>
             {
                 // Transition back to Syncing so is_synced() returns false
                 // until all new filters and matched blocks are fully processed.
@@ -884,7 +884,7 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
                 }
 
                 self.filter_pipeline.extend_target(tip_height);
-                {
+                if self.progress.stored_height() < self.progress.filter_header_tip_height() {
                     let header_storage = self.header_storage.read().await;
                     self.filter_pipeline.send_pending(requests, &*header_storage).await?;
                 }
@@ -1961,7 +1961,7 @@ mod tests {
         let (tx, _rx) = unbounded_channel();
         let requests = RequestSender::new(tx);
 
-        // New filter headers arrive at 150: stored(100) < tip(150)
+        // New filter headers arrive at 150: committed(100) < tip(150)
         let events = manager.handle_new_filter_headers(150, &requests).await.unwrap();
 
         assert!(events.is_empty());
@@ -2244,5 +2244,66 @@ mod tests {
         assert!(manager.active_batches.is_empty());
         assert!(manager.pending_batches.is_empty());
         assert!(manager.tracker.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_handle_new_filter_headers_starts_scan_when_stored_equals_tip() {
+        let mut manager = create_test_manager().await;
+
+        let headers = dashcore::block::Header::dummy_batch(0..101);
+        manager.header_storage.write().await.store_headers(&headers).await.unwrap();
+
+        // Populate filter storage so load_filters succeeds during lookahead
+        {
+            let dummy_filter = BlockFilter::new(&[0u8; 32]);
+            let mut fs = manager.filter_storage.write().await;
+            for h in 0..=100 {
+                fs.store_filter(h, &dummy_filter.content).await.unwrap();
+            }
+        }
+
+        // Filters stored but not yet committed (restart scenario).
+        manager.set_state(SyncState::Synced);
+        manager.progress.update_filter_header_tip_height(100);
+        manager.progress.update_stored_height(100);
+        manager.progress.update_committed_height(0);
+        manager.progress.update_target_height(1000);
+        manager.filter_pipeline.init(101, 100);
+
+        let (tx, _rx) = unbounded_channel();
+        let requests = RequestSender::new(tx);
+
+        // committed(0) < tip(100) fires the guard even though stored == tip.
+        // Because stored >= tip, send_pending is skipped (no downloads needed).
+        let _events = manager.handle_new_filter_headers(100, &requests).await.unwrap();
+
+        assert_eq!(manager.state(), SyncState::Syncing);
+        assert!(
+            manager.active_batches.contains_key(&0),
+            "expected lookahead batch at processing_height=0, got keys: {:?}",
+            manager.active_batches.keys().collect::<Vec<_>>()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_handle_new_filter_headers_skips_when_fully_committed() {
+        let mut manager = create_test_manager().await;
+
+        // Everything committed, stored, and at tip. No work to do.
+        manager.set_state(SyncState::Synced);
+        manager.progress.update_committed_height(100);
+        manager.progress.update_stored_height(100);
+        manager.progress.update_filter_header_tip_height(100);
+        manager.progress.update_target_height(1000);
+        manager.filter_pipeline.init(101, 100);
+
+        let (tx, _rx) = unbounded_channel();
+        let requests = RequestSender::new(tx);
+
+        let events = manager.handle_new_filter_headers(100, &requests).await.unwrap();
+
+        assert_eq!(manager.state(), SyncState::Synced);
+        assert!(events.is_empty());
+        assert!(manager.active_batches.is_empty());
     }
 }
