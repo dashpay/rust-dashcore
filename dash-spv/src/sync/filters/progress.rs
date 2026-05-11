@@ -112,9 +112,12 @@ impl FiltersProgress {
     }
 
     /// Update the filter header tip height (called when new filter headers are stored).
+    /// Only updates if the new height is greater than the current tip (monotonic increase).
     pub fn update_filter_header_tip_height(&mut self, height: u32) {
-        self.filter_header_tip_height = height;
-        self.bump_last_activity();
+        if height > self.filter_header_tip_height {
+            self.filter_header_tip_height = height;
+            self.bump_last_activity();
+        }
     }
 
     /// Add a number to the downloaded counter.

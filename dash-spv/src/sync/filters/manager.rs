@@ -1072,6 +1072,25 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_filter_header_tip_height_is_monotonic() {
+        let mut manager = create_test_manager().await;
+        manager.progress.update_filter_header_tip_height(500);
+        assert_eq!(manager.progress.filter_header_tip_height(), 500);
+
+        // Lower value is rejected
+        manager.progress.update_filter_header_tip_height(200);
+        assert_eq!(manager.progress.filter_header_tip_height(), 500);
+
+        // Equal value is rejected (no spurious activity bump)
+        manager.progress.update_filter_header_tip_height(500);
+        assert_eq!(manager.progress.filter_header_tip_height(), 500);
+
+        // Higher value is accepted
+        manager.progress.update_filter_header_tip_height(600);
+        assert_eq!(manager.progress.filter_header_tip_height(), 600);
+    }
+
+    #[tokio::test]
     async fn test_max_lookahead_constant() {
         // Verify the constant is set to expected value
         assert_eq!(MAX_LOOKAHEAD_BATCHES, 3);
