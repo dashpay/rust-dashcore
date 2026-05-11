@@ -40,7 +40,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
         let wallet_event_rx = self.wallet.read().await.subscribe_events();
 
         let sync_task = spawn_broadcast_monitor(
-            "Sync event",
+            "SyncEvent",
             sync_event_rx,
             handlers.clone(),
             monitor_shutdown.clone(),
@@ -49,7 +49,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
         );
 
         let network_task = spawn_broadcast_monitor(
-            "Network event",
+            "NetworkEvent",
             network_event_rx,
             handlers.clone(),
             monitor_shutdown.clone(),
@@ -58,7 +58,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
         );
 
         let wallet_task = spawn_broadcast_monitor(
-            "Wallet event",
+            "WalletEvent",
             wallet_event_rx,
             handlers.clone(),
             monitor_shutdown.clone(),

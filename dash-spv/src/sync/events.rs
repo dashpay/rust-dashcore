@@ -5,6 +5,7 @@ use dashcore::sml::masternode_list_engine::QRInfoFeedResult;
 use dashcore::{Address, BlockHash, Txid};
 use key_wallet_manager::{FilterMatchKey, WalletId};
 use std::collections::{BTreeMap, BTreeSet};
+use std::fmt;
 
 /// Events that managers can emit and subscribe to.
 ///
@@ -275,5 +276,11 @@ impl SyncEvent {
                 format!("SyncComplete(tip={}, cycle={})", header_tip, cycle)
             }
         }
+    }
+}
+
+impl fmt::Display for SyncEvent {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.description())
     }
 }

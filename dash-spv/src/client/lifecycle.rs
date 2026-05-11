@@ -8,7 +8,6 @@
 //! - Genesis block initialization
 //! - Wallet data loading
 
-use super::event_handler::LoggingEventHandler;
 use super::{ClientConfig, DashSpvClient, EventHandler};
 use crate::chain::checkpoints::{mainnet_checkpoints, testnet_checkpoints, CheckpointManager};
 use crate::error::{Result, SpvError};
@@ -37,10 +36,6 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
         wallet: Arc<RwLock<W>>,
         event_handlers: Vec<Arc<dyn EventHandler>>,
     ) -> Result<Self> {
-        let event_handlers: Vec<Arc<dyn EventHandler>> =
-            std::iter::once(Arc::new(LoggingEventHandler) as Arc<dyn EventHandler>)
-                .chain(event_handlers)
-                .collect();
         // Validate configuration
         config.validate().map_err(SpvError::Config)?;
 

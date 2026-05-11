@@ -5,6 +5,7 @@
 //! persist the transaction(s) and balance atomically off a single event.
 
 use std::collections::BTreeMap;
+use std::fmt;
 
 use dashcore::ephemerealdata::instant_lock::InstantLock;
 use dashcore::prelude::CoreBlockHeight;
@@ -349,6 +350,12 @@ impl WalletEvent {
                 format!("SyncHeightAdvanced(height={})", height)
             }
         }
+    }
+}
+
+impl fmt::Display for WalletEvent {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.description())
     }
 }
 

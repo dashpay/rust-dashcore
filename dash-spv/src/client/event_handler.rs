@@ -4,6 +4,7 @@
 //! consumers override to receive push-based event notifications. The monitoring
 //! infrastructure subscribes to internal channels and dispatches to the handler.
 
+use std::fmt::Display;
 use std::sync::Arc;
 
 use tokio::sync::{broadcast, mpsc, watch};
@@ -34,37 +35,13 @@ pub trait EventHandler: Send + Sync + 'static {
 /// No-op implementation for consumers that don't need event notifications.
 impl EventHandler for () {}
 
-/// Built-in handler that mirrors all events into `tracing` so consumers get
-/// log output once they install a tracing subscriber (e.g., via `init_logging`).
-///
-/// Attached automatically by `DashSpvClient::new` ahead of consumer-supplied
-/// handlers. To silence event logs without affecting other subscribers, set a
-/// per-target filter such as `dash_spv::client::event_handler=warn`.
-pub(crate) struct LoggingEventHandler;
-
-impl EventHandler for LoggingEventHandler {
-    fn on_sync_event(&self, event: &SyncEvent) {
-        tracing::info!("SyncEvent: {}", event.description());
-    }
-
-    fn on_network_event(&self, event: &NetworkEvent) {
-        tracing::info!("NetworkEvent: {}", event.description());
-    }
-
-    fn on_progress(&self, progress: &SyncProgress) {
-        tracing::info!("SyncProgress: {}", progress);
-    }
-
-    fn on_wallet_event(&self, event: &WalletEvent) {
-        tracing::info!("WalletEvent: {}", event.description());
-    }
-
-    fn on_error(&self, error: &str) {
-        tracing::error!("{}", error);
-    }
-}
-
 /// Spawns a task that monitors a broadcast channel and dispatches events to the handler.
+///
+/// Every received event is mirrored into `tracing::info!` as `"<name>: <event>"`
+/// before consumer handlers run, so installing a tracing subscriber is enough to
+/// get event log output. To silence event logs without affecting other
+/// subscribers, set a per-target filter such as
+/// `dash_spv::client::event_handler=warn`.
 ///
 /// On failure, the error message is sent via `on_failure` so the coordinator can report
 /// it as the single source of error handling.
@@ -77,7 +54,7 @@ pub(crate) fn spawn_broadcast_monitor<E, F>(
     dispatch_fn: F,
 ) -> JoinHandle<()>
 where
-    E: Clone + Send + 'static,
+    E: Clone + Display + Send + 'static,
     F: Fn(&dyn EventHandler, &E) + Send + 'static,
 {
     tokio::spawn(async move {
@@ -87,6 +64,7 @@ where
                 result = receiver.recv() => {
                     match result {
                         Ok(event) => {
+                            tracing::info!("{}: {}", name, event);
                             for handler in handlers.iter() {
                                 dispatch_fn(handler.as_ref(), &event);
                             }
@@ -116,7 +94,9 @@ where
 
 /// Spawns a task that monitors a watch channel for progress updates.
 ///
-/// Sends the initial progress value, then monitors for changes.
+/// Sends the initial progress value, then monitors for changes. Every value is
+/// mirrored into `tracing::info!` before consumer handlers run, matching
+/// `spawn_broadcast_monitor`'s behavior.
 pub(crate) fn spawn_progress_monitor(
     mut receiver: watch::Receiver<SyncProgress>,
     handlers: Arc<Vec<Arc<dyn EventHandler>>>,
@@ -126,8 +106,13 @@ pub(crate) fn spawn_progress_monitor(
     tokio::spawn(async move {
         tracing::debug!("Progress monitoring task started");
 
-        for handler in handlers.iter() {
-            handler.on_progress(&receiver.borrow_and_update());
+        {
+            let guard = receiver.borrow_and_update();
+            let progress: &SyncProgress = &guard;
+            tracing::info!("SyncProgress: {}", progress);
+            for handler in handlers.iter() {
+                handler.on_progress(progress);
+            }
         }
 
         loop {
@@ -135,8 +120,11 @@ pub(crate) fn spawn_progress_monitor(
                 result = receiver.changed() => {
                     match result {
                         Ok(()) => {
+                            let guard = receiver.borrow_and_update();
+                            let progress: &SyncProgress = &guard;
+                            tracing::info!("SyncProgress: {}", progress);
                             for handler in handlers.iter() {
-                                handler.on_progress(&receiver.borrow_and_update());
+                                handler.on_progress(progress);
                             }
                         }
                         Err(_) if shutdown.is_cancelled() => break,

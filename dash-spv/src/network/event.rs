@@ -4,6 +4,7 @@
 //! need to react to, such as peer connections and disconnections.
 
 use dashcore::prelude::CoreBlockHeight;
+use std::fmt;
 use std::net::SocketAddr;
 
 /// Events emitted by the network layer.
@@ -63,5 +64,11 @@ impl NetworkEvent {
                 )
             }
         }
+    }
+}
+
+impl fmt::Display for NetworkEvent {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.description())
     }
 }
