@@ -423,7 +423,11 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
         // Phase 2: Scan any ready batches where filters are available
         events.extend(self.scan_ready_batches().await?);
 
-        // Phase 3: Create lookahead batches up to MAX_LOOKAHEAD_BATCHES
+        // Phase 3: Commit newly scanned batches that are ready
+        // (avoids a one-tick delay between scan and commit for small batches)
+        events.extend(self.try_commit_batches().await?);
+
+        // Phase 4: Create lookahead batches up to MAX_LOOKAHEAD_BATCHES
         events.extend(self.try_create_lookahead_batches().await?);
 
         // If no active batches and all filters downloaded, emit FiltersSyncComplete.
@@ -2324,5 +2328,51 @@ mod tests {
         assert_eq!(manager.state(), SyncState::Synced);
         assert!(events.is_empty());
         assert!(manager.active_batches.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_try_process_batch_commits_after_scan_in_same_call() {
+        let mut manager = create_test_manager().await;
+
+        let headers = dashcore::block::Header::dummy_batch(0..101);
+        manager.header_storage.write().await.store_headers(&headers).await.unwrap();
+        {
+            let dummy_filter = BlockFilter::new(&[0u8; 32]);
+            let mut fs = manager.filter_storage.write().await;
+            for h in 0..=100 {
+                fs.store_filter(h, &dummy_filter.content).await.unwrap();
+            }
+        }
+
+        manager.set_state(SyncState::Syncing);
+        manager.progress.update_stored_height(100);
+        manager.progress.update_filter_header_tip_height(100);
+        manager.progress.update_committed_height(0);
+        manager.progress.update_target_height(100);
+        manager.processing_height = 0;
+
+        // Create a batch that has all filters stored but is not yet scanned.
+        // Phase 1 (commit) skips it because it's not scanned.
+        // Phase 2 (scan) marks it scanned.
+        // Phase 3 (second commit) commits it immediately.
+        let mut batch = FiltersBatch::new(0, 100, manager.load_filters(0, 100).await.unwrap());
+        batch.mark_verified();
+        manager.active_batches.insert(0, batch);
+
+        let events = manager.try_process_batch().await.unwrap();
+
+        // Batch was scanned and committed in a single try_process_batch call.
+        assert!(manager.active_batches.is_empty());
+        assert_eq!(manager.progress.committed_height(), 100);
+        assert!(
+            events.iter().any(|e| matches!(
+                e,
+                SyncEvent::FiltersSyncComplete {
+                    tip_height: 100
+                }
+            )),
+            "expected FiltersSyncComplete, got {:?}",
+            events
+        );
     }
 }

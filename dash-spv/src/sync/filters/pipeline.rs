@@ -153,16 +153,32 @@ impl FiltersPipeline {
                 }
             };
 
-            // Get stop hash for this batch
-            let stop_hash = storage
-                .get_header(batch_end)
-                .await?
-                .ok_or_else(|| {
-                    SyncError::Storage(format!("Missing header at height {}", batch_end))
-                })?
-                .block_hash();
+            // Get stop hash for this batch. If the header isn't available yet,
+            // re-queue for the next tick instead of losing the batch permanently.
+            let header = match storage.get_header(batch_end).await {
+                Ok(Some(h)) => h,
+                Ok(None) => {
+                    tracing::debug!(
+                        "Header at height {} not yet available, re-queuing filter batch {}",
+                        batch_end,
+                        start_height
+                    );
+                    self.coordinator.enqueue([start_height]);
+                    continue;
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "Error reading header at height {}, re-queuing filter batch {}: {}",
+                        batch_end,
+                        start_height,
+                        e
+                    );
+                    self.coordinator.enqueue([start_height]);
+                    continue;
+                }
+            };
 
-            requests.request_filters(start_height, stop_hash)?;
+            requests.request_filters(start_height, header.block_hash())?;
 
             self.coordinator.mark_sent(&[start_height]);
 
@@ -1065,5 +1081,44 @@ mod tests {
             2500,
             "deferred batch should use its original end height"
         );
+    }
+
+    #[tokio::test]
+    async fn test_send_pending_requeues_on_missing_header() {
+        // Headers 0..999 exist, but NOT 1999 (stop hash for batch 1000-1999).
+        let headers = Header::dummy_batch(0..1000);
+        let tmp_dir = TempDir::new().unwrap();
+        let mut storage = PersistentBlockHeaderStorage::open(tmp_dir.path()).await.unwrap();
+        storage.store_headers(&headers).await.unwrap();
+
+        let mut pipeline = FiltersPipeline::new();
+        pipeline.init(0, 1999);
+        assert_eq!(pipeline.coordinator.pending_count(), 2);
+
+        let (sender, mut rx) = create_test_request_sender();
+
+        // Batch 0 succeeds (header 999 exists), batch 1000 re-queued (header 1999 missing)
+        let sent = pipeline.send_pending(&sender, &storage).await.unwrap();
+        assert_eq!(sent, 1);
+        assert_eq!(pipeline.coordinator.active_count(), 1);
+        assert_eq!(pipeline.coordinator.pending_count(), 1);
+
+        let request = rx.try_recv().unwrap();
+        match request {
+            NetworkRequest::SendMessage(NetworkMessage::GetCFilters(gcf)) => {
+                assert_eq!(gcf.start_height, 0);
+            }
+            other => panic!("Expected GetCFilters, got {:?}", other),
+        }
+        assert!(rx.try_recv().is_err(), "should not have sent second request");
+
+        // Store the missing headers and retry
+        let more_headers = Header::dummy_batch(1000..2000);
+        storage.store_headers(&more_headers).await.unwrap();
+
+        let sent = pipeline.send_pending(&sender, &storage).await.unwrap();
+        assert_eq!(sent, 1);
+        assert_eq!(pipeline.coordinator.active_count(), 2);
+        assert_eq!(pipeline.coordinator.pending_count(), 0);
     }
 }
