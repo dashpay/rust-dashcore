@@ -78,16 +78,28 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> SyncManager for ChainLockManager
         event: &SyncEvent,
         _requests: &RequestSender,
     ) -> SyncResult<Vec<SyncEvent>> {
-        // Enable ChainLock validation when masternode state is available
-        if let SyncEvent::MasternodeStateUpdated {
-            ..
-        } = event
-        {
-            self.set_masternode_ready();
-            if matches!(self.state(), SyncState::Syncing | SyncState::WaitForEvents) {
-                self.set_state(SyncState::Synced);
-                tracing::info!("ChainLock manager synced (masternode data available)");
-            }
+        // `MasternodeStateUpdated` fires on every MnListDiff / QRInfo
+        // update; the work below is strictly one-shot startup work, so
+        // gate the entire branch on the not-ready transition.
+        if !matches!(event, SyncEvent::MasternodeStateUpdated { .. }) || self.masternode_ready {
+            return Ok(vec![]);
+        }
+
+        let chainlock = self.on_masternode_ready().await;
+        self.set_state(SyncState::Synced);
+        tracing::info!("ChainLock manager synced (masternode data available)");
+
+        // Re-broadcast the best chainlock we know about so downstream
+        // consumers (e.g. the wallet manager's record promotion) learn
+        // pre-ready state without waiting for a fresh CLSig from the
+        // network. Covers both the persisted-from-disk case and a
+        // chainlock that arrived during initial sync but couldn't be
+        // validated until now.
+        if let Some(chain_lock) = chainlock {
+            return Ok(vec![SyncEvent::ChainLockReceived {
+                chain_lock,
+                validated: true,
+            }]);
         }
 
         Ok(vec![])

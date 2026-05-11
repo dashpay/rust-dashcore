@@ -5,7 +5,9 @@ use std::time::Duration;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
-use super::event_handler::{spawn_broadcast_monitor, spawn_progress_monitor};
+use super::event_handler::{
+    spawn_broadcast_monitor, spawn_chainlock_wallet_dispatch, spawn_progress_monitor,
+};
 use super::DashSpvClient;
 use crate::error::Result;
 use crate::network::NetworkManager;
@@ -35,6 +37,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
         // Subscribe and spawn monitors before startup so we don't miss early
         // connection events.
         let sync_event_rx = self.subscribe_sync_events().await;
+        let chainlock_dispatch_rx = self.subscribe_sync_events().await;
         let network_event_rx = self.subscribe_network_events().await;
         let progress_rx = self.subscribe_progress().await;
         let wallet_event_rx = self.wallet.read().await.subscribe_events();
@@ -46,6 +49,13 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
             monitor_shutdown.clone(),
             monitor_failure_tx.clone(),
             |h, event| h.on_sync_event(event),
+        );
+
+        let chainlock_dispatch_task = spawn_chainlock_wallet_dispatch(
+            chainlock_dispatch_rx,
+            self.wallet.clone(),
+            monitor_shutdown.clone(),
+            monitor_failure_tx.clone(),
         );
 
         let network_task = spawn_broadcast_monitor(
@@ -75,7 +85,13 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
 
         if let Err(e) = self.start().await {
             monitor_shutdown.cancel();
-            let _ = tokio::join!(sync_task, network_task, wallet_task, progress_task);
+            let _ = tokio::join!(
+                sync_task,
+                chainlock_dispatch_task,
+                network_task,
+                wallet_task,
+                progress_task
+            );
             for handler in handlers.iter() {
                 handler.on_error(&e.to_string());
             }
@@ -118,7 +134,13 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
 
         // Signal monitors to shut down before channels close
         monitor_shutdown.cancel();
-        let _ = tokio::join!(sync_task, network_task, wallet_task, progress_task);
+        let _ = tokio::join!(
+            sync_task,
+            chainlock_dispatch_task,
+            network_task,
+            wallet_task,
+            progress_task
+        );
 
         if let Some(ref e) = error {
             for handler in handlers.iter() {

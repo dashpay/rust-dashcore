@@ -15,6 +15,7 @@ use super::helpers::{
     mine_dkg_cycle_and_wait, wait_for_chainlock_height_at_least, wait_for_instant_lock_received,
     wait_for_instantsend_valid_at_least, wait_for_masternode_sync,
     wait_for_mn_state_with_stored_cycle_above, wait_for_wallet_tx_status,
+    wait_for_wallet_txs_chainlocked,
 };
 use super::setup::{
     create_and_start_client, create_mn_test_config, create_wallet_from_controller, receive_address,
@@ -128,6 +129,16 @@ async fn test_instantsend_full_lifecycle() {
     .await;
     assert!(cl_sync_height >= cl_height);
     tracing::info!("SPV synced to ChainLocked height {}", cl_sync_height);
+
+    // Wallet-side assertion: every previously-IS-locked tx must now be
+    // surfaced as chainlock-finalized. A single `BlockProcessed
+    // { chain_lock: Some(..) }` event can cover all of them at once
+    // when they confirm in the same chainlocked block, so use the
+    // plural helper rather than a per-txid wait that would only
+    // consume the first event.
+    wait_for_wallet_txs_chainlocked(&mut client_handle.wallet_event_receiver, &txids, SYNC_TIMEOUT)
+        .await;
+    tracing::info!("All {} txs wallet-finalized via chainlock", NUM_TXS);
 
     client_handle.stop().await;
 }

@@ -249,14 +249,23 @@ extern "C" fn on_wallet_block_processed(
     account_balances_count: u32,
     _addresses_derived: *const dash_spv_ffi::FFIDerivedAddress,
     addresses_derived_count: u32,
+    cl_height: u32,
+    cl_hash: *const [u8; 32],
+    _cl_signature: *const [u8; 96],
     _user_data: *mut c_void,
 ) {
     let wallet_short = short_wallet(wallet_id);
     let b = read_balance(balance);
+    let chainlocked = if cl_hash.is_null() {
+        "no".to_string()
+    } else {
+        format!("yes@{}", cl_height)
+    };
     println!(
-        "[Wallet] Block processed: wallet={}..., height={}, inserted={}, updated={}, matured={}, balance[confirmed={}, unconfirmed={}, immature={}, locked={}], changed_accounts={}, derived={}",
+        "[Wallet] Block processed: wallet={}..., height={}, chainlock={}, inserted={}, updated={}, matured={}, balance[confirmed={}, unconfirmed={}, immature={}, locked={}], changed_accounts={}, derived={}",
         wallet_short,
         height,
+        chainlocked,
         inserted_count,
         updated_count,
         matured_count,
@@ -266,6 +275,22 @@ extern "C" fn on_wallet_block_processed(
         b.locked,
         account_balances_count,
         addresses_derived_count,
+    );
+}
+
+extern "C" fn on_wallet_transactions_chainlocked(
+    wallet_id: *const c_char,
+    cl_height: u32,
+    _cl_hash: *const [u8; 32],
+    _cl_signature: *const [u8; 96],
+    _finalized: *const dash_spv_ffi::FFIChainlockedTxid,
+    finalized_count: u32,
+    _user_data: *mut c_void,
+) {
+    let wallet_short = short_wallet(wallet_id);
+    println!(
+        "[Wallet] Transactions chainlocked: wallet={}..., cl_height={}, finalized={}",
+        wallet_short, cl_height, finalized_count,
     );
 }
 
@@ -503,6 +528,7 @@ fn main() {
                 on_transaction_instant_locked: Some(on_transaction_instant_locked),
                 on_block_processed: Some(on_wallet_block_processed),
                 on_sync_height_advanced: Some(on_sync_height_advanced),
+                on_transactions_chainlocked: Some(on_wallet_transactions_chainlocked),
                 user_data: ptr::null_mut(),
             },
             error: FFIClientErrorCallback {

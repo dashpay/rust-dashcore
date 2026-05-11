@@ -497,6 +497,9 @@ extern "C" fn on_wallet_block_processed(
     account_balances_count: u32,
     _addresses_derived: *const dash_spv_ffi::FFIDerivedAddress,
     _addresses_derived_count: u32,
+    _cl_height: u32,
+    _cl_hash: *const [u8; 32],
+    _cl_signature: *const [u8; 96],
     user_data: *mut c_void,
 ) {
     let Some(tracker) = (unsafe { tracker_from(user_data) }) else {
@@ -617,6 +620,7 @@ pub(super) fn create_wallet_callbacks(tracker: &Arc<CallbackTracker>) -> FFIWall
         on_transaction_instant_locked: Some(on_transaction_instant_locked),
         on_block_processed: Some(on_wallet_block_processed),
         on_sync_height_advanced: Some(on_sync_height_advanced),
+        on_transactions_chainlocked: None,
         user_data: Arc::as_ptr(tracker) as *mut c_void,
     }
 }

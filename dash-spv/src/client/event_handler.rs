@@ -6,13 +6,14 @@
 
 use std::sync::Arc;
 
-use tokio::sync::{broadcast, mpsc, watch};
+use tokio::sync::{broadcast, mpsc, watch, RwLock};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
 use crate::network::NetworkEvent;
 use crate::sync::{SyncEvent, SyncProgress};
-use key_wallet_manager::WalletEvent;
+use dashcore::ephemerealdata::chain_lock::ChainLock;
+use key_wallet_manager::{WalletEvent, WalletInterface};
 
 /// Trait for receiving SPV client events.
 ///
@@ -152,6 +153,79 @@ pub(crate) fn spawn_progress_monitor(
             }
         }
         tracing::debug!("Progress monitoring task exiting");
+    })
+}
+
+/// Spawns a task that drives chainlock-driven wallet promotion.
+///
+/// Subscribes to [`SyncEvent::ChainLockReceived`] and
+/// [`SyncEvent::SyncComplete`], serializing all `apply_chain_lock`
+/// calls on a single task. During the initial sync cycle (cycle 0)
+/// chainlock arrivals are buffered as the latest-seen height rather
+/// than applied. At `SyncComplete { cycle: 0 }` the buffered height
+/// is applied once, then every subsequent validated chainlock is
+/// applied directly. Only validated chainlocks advance the wallet.
+///
+/// This is the single-writer point that the architecture relies on:
+/// promotions never interleave with each other.
+pub(crate) fn spawn_chainlock_wallet_dispatch<W>(
+    mut sync_event_rx: broadcast::Receiver<SyncEvent>,
+    wallet: Arc<RwLock<W>>,
+    shutdown: CancellationToken,
+    on_failure: mpsc::Sender<String>,
+) -> JoinHandle<()>
+where
+    W: WalletInterface + 'static,
+{
+    const NAME: &str = "ChainLock→wallet dispatch";
+    tokio::spawn(async move {
+        tracing::debug!("{} task started", NAME);
+        let mut initial_sync_complete = false;
+        let mut deferred_chain_lock: Option<ChainLock> = None;
+        loop {
+            tokio::select! {
+                result = sync_event_rx.recv() => {
+                    match result {
+                        Ok(SyncEvent::ChainLockReceived { chain_lock, validated }) => {
+                            if !validated {
+                                continue;
+                            }
+                            if initial_sync_complete {
+                                wallet.write().await.apply_chain_lock(chain_lock);
+                            } else if deferred_chain_lock
+                                .as_ref()
+                                .is_none_or(|buffered| chain_lock.block_height > buffered.block_height)
+                            {
+                                deferred_chain_lock = Some(chain_lock);
+                            }
+                        }
+                        Ok(SyncEvent::SyncComplete { cycle: 0, .. }) => {
+                            initial_sync_complete = true;
+                            if let Some(chain_lock) = deferred_chain_lock.take() {
+                                wallet.write().await.apply_chain_lock(chain_lock);
+                            }
+                        }
+                        Ok(_) => {}
+                        Err(broadcast::error::RecvError::Closed) if shutdown.is_cancelled() => break,
+                        Err(broadcast::error::RecvError::Closed) => {
+                            let msg = format!("{} channel closed unexpectedly", NAME);
+                            tracing::error!("{}", msg);
+                            let _ = on_failure.try_send(msg);
+                            break;
+                        }
+                        Err(broadcast::error::RecvError::Lagged(_)) if shutdown.is_cancelled() => break,
+                        Err(broadcast::error::RecvError::Lagged(n)) => {
+                            let msg = format!("{} lagged, missed {} events", NAME, n);
+                            tracing::error!("{}", msg);
+                            let _ = on_failure.try_send(msg);
+                            break;
+                        }
+                    }
+                }
+                _ = shutdown.cancelled() => break,
+            }
+        }
+        tracing::debug!("{} task exiting", NAME);
     })
 }
 

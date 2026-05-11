@@ -16,14 +16,24 @@
 //! IS-lock alone is **not** finality.
 
 use crate::{
+    account::{AccountType, StandardAccountType},
     managed_account::managed_account_trait::ManagedAccountTrait,
     test_utils::TestWalletContext,
     transaction_checking::{BlockInfo, TransactionContext},
+    wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface,
 };
+use dashcore::ephemerealdata::chain_lock::ChainLock;
 #[cfg(not(feature = "keep-finalized-transactions"))]
 use dashcore::ephemerealdata::instant_lock::InstantLock;
 use dashcore::hashes::Hash;
 use dashcore::{BlockHash, Transaction};
+
+fn bip44_account_type() -> AccountType {
+    AccountType::Standard {
+        index: 0,
+        standard_account_type: StandardAccountType::BIP44Account,
+    }
+}
 
 /// Walks a single transaction through Mempool → InBlock → InChainLockedBlock
 /// and asserts that the record survives the chainlock when the feature is ON.
@@ -123,6 +133,75 @@ async fn test_islocked_record_kept_when_feature_off() {
         "IS-locked records must survive so a later InBlock event can populate \
          block-confirmation info"
     );
+}
+
+/// `apply_chain_lock` at a height covering an `InBlock` record
+/// promotes its context. With the feature OFF the record is dropped
+/// from the map. With the feature ON it stays with the new context.
+#[tokio::test]
+async fn test_apply_chain_lock_promotes_in_block_records() {
+    let mut ctx = TestWalletContext::new_random();
+    let tx = Transaction::dummy(&ctx.receive_address, 0..1, &[150_000]);
+    let txid = tx.txid();
+    let block_hash = BlockHash::from_slice(&[9u8; 32]).expect("hash");
+
+    let _ = ctx
+        .check_transaction(
+            &tx,
+            TransactionContext::InBlock(BlockInfo::new(50, block_hash, 1_700_000_000)),
+        )
+        .await;
+    assert!(ctx.bip44_account().transactions().contains_key(&txid));
+
+    ctx.managed_wallet.update_last_processed_height(50);
+    let per_account = ctx.managed_wallet.apply_chain_lock(ChainLock::dummy(50));
+    let promoted = per_account
+        .get(&bip44_account_type())
+        .expect("BIP44 account should have a promotion entry");
+    assert_eq!(promoted, &vec![txid]);
+    assert!(ctx.bip44_account().transaction_is_finalized(&txid));
+
+    #[cfg(feature = "keep-finalized-transactions")]
+    {
+        let record = ctx.bip44_account().transactions().get(&txid).expect("record kept");
+        assert!(matches!(record.context, TransactionContext::InChainLockedBlock(_)));
+    }
+    #[cfg(not(feature = "keep-finalized-transactions"))]
+    {
+        assert!(
+            !ctx.bip44_account().transactions().contains_key(&txid),
+            "with the feature OFF the record must be dropped after promotion"
+        );
+    }
+}
+
+/// `apply_chain_lock` only promotes records at or below `cl_height` and
+/// never touches `Mempool` / `InstantSend` records (those have not been
+/// mined yet, and chainlock-finality requires a block).
+#[tokio::test]
+async fn test_apply_chain_lock_skips_unmined_and_above_height() {
+    let mut ctx = TestWalletContext::new_random();
+    let mempool_tx = Transaction::dummy(&ctx.receive_address, 0..1, &[120_000]);
+    let block_tx = Transaction::dummy(&ctx.receive_address, 1..2, &[150_000]);
+    let mempool_txid = mempool_tx.txid();
+    let block_txid = block_tx.txid();
+    let block_hash = BlockHash::from_slice(&[1u8; 32]).expect("hash");
+
+    let _ = ctx.check_transaction(&mempool_tx, TransactionContext::Mempool).await;
+    let _ = ctx
+        .check_transaction(
+            &block_tx,
+            TransactionContext::InBlock(BlockInfo::new(200, block_hash, 1_700_000_000)),
+        )
+        .await;
+
+    // Chainlock at 100 sits below the InBlock-at-200 record and above
+    // the mempool record's (absent) height, so neither promotes.
+    ctx.managed_wallet.update_last_processed_height(200);
+    let per_account = ctx.managed_wallet.apply_chain_lock(ChainLock::dummy(100));
+    assert!(per_account.is_empty());
+    assert!(!ctx.bip44_account().transaction_is_finalized(&mempool_txid));
+    assert!(!ctx.bip44_account().transaction_is_finalized(&block_txid));
 }
 
 /// IS-lock first, then a chainlocked block: the record must drop only at

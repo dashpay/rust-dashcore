@@ -28,6 +28,7 @@ use crate::utxo::Utxo;
 use crate::wallet::balance::WalletCoreBalance;
 use crate::{ExtendedPubKey, Network};
 use dashcore::blockdata::transaction::OutPoint;
+use dashcore::prelude::CoreBlockHeight;
 use dashcore::{Address, Transaction, Txid};
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
@@ -278,10 +279,11 @@ impl ManagedCoreFundsAccount {
             if tx_record.context != context {
                 let was_confirmed = tx_record.context.confirmed();
                 tx_record.update_context(context.clone());
-                // Only signal a change when confirmation status actually changes,
-                // not for upgrades within the confirmed state (e.g. InBlock → InChainLockedBlock).
-                // TODO: emit a change event for InBlock → InChainLockedBlock once chainlock
-                // wallet transaction events are properly handled
+                // Confirm-time upgrades within the confirmed state (e.g.
+                // InBlock → InChainLockedBlock) are not signaled here.
+                // Chainlock-driven promotions go through the dedicated
+                // `apply_chain_lock` path which emits a single batched
+                // TransactionsChainlocked event.
                 changed = !was_confirmed;
             }
         }
@@ -452,14 +454,29 @@ impl ManagedCoreFundsAccount {
         self.utxos.values().filter(|utxo| utxo.is_spendable(last_processed_height)).collect()
     }
 
+    /// Promote any `InBlock` records at height `<= cl_height` to
+    /// [`TransactionContext::InChainLockedBlock`] and return the
+    /// promoted txids.
+    ///
+    /// Delegates the per-record promotion to
+    /// [`ManagedCoreKeysAccount::apply_chain_lock`] (which under the
+    /// default `keep-finalized-transactions=OFF` feature drops the
+    /// full records and retains only txids). UTXO state and account
+    /// balance are unaffected: a chainlock does not change a UTXO's
+    /// spentness or maturity, only the certainty of its parent
+    /// transaction.
+    pub(crate) fn apply_chain_lock(&mut self, cl_height: CoreBlockHeight) -> Vec<Txid> {
+        self.keys.apply_chain_lock(cl_height)
+    }
+
     /// Update the account balance.
     ///
     /// Mature, non-locked UTXOs land in either the `confirmed` bucket
     /// (in a block, InstantSend-locked, or trusted mempool change) or
     /// the `unconfirmed` bucket (untrusted mempool only). Trusted
     /// mempool change is surfaced as confirmed because it is just our
-    /// previously-tracked funds returning — see [`Utxo::is_trusted`].
-    /// Both buckets are spendable per [`Utxo::is_spendable`]; the split
+    /// previously-tracked funds returning, see [`Utxo::is_trusted`].
+    /// Both buckets are spendable per [`Utxo::is_spendable`]. The split
     /// is only for display.
     pub fn update_balance(&mut self, last_processed_height: u32) {
         let mut confirmed = 0;

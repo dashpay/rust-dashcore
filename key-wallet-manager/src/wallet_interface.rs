@@ -4,6 +4,7 @@
 
 use crate::{WalletEvent, WalletId};
 use async_trait::async_trait;
+use dashcore::ephemerealdata::chain_lock::ChainLock;
 use dashcore::ephemerealdata::instant_lock::InstantLock;
 use dashcore::prelude::CoreBlockHeight;
 use dashcore::{Address, Block, OutPoint, Transaction, Txid};
@@ -146,6 +147,21 @@ pub trait WalletInterface: Send + Sync + 'static {
     /// Process an InstantSend lock for a transaction already in the wallet.
     /// Marks UTXOs as IS-locked, emits status change and balance update events.
     fn process_instant_send_lock(&mut self, _instant_lock: InstantLock) {}
+
+    /// Apply a validated `chain_lock` to every wallet, promoting any
+    /// `InBlock` records at height `<= chain_lock.block_height` to
+    /// `InChainLockedBlock` and advancing each wallet's
+    /// `last_applied_chain_lock`.
+    ///
+    /// Emits one [`WalletEvent::TransactionsChainlocked`] per wallet that
+    /// had at least one net-new promotion, carrying the full `ChainLock`
+    /// so consumers can persist the signing proof alongside the
+    /// promotions.
+    ///
+    /// Implementations must serialize calls relative to
+    /// `process_block_for_wallets` to avoid interleaving promotions with
+    /// in-flight block processing.
+    fn apply_chain_lock(&mut self, chain_lock: ChainLock);
 
     /// Provide a human-readable description of the wallet implementation.
     ///

@@ -6,6 +6,7 @@
 
 use std::collections::BTreeMap;
 
+use dashcore::ephemerealdata::chain_lock::ChainLock;
 use dashcore::ephemerealdata::instant_lock::InstantLock;
 use dashcore::prelude::CoreBlockHeight;
 use dashcore::Txid;
@@ -232,6 +233,16 @@ pub enum WalletEvent {
         wallet_id: WalletId,
         /// Height of the block that was processed.
         height: CoreBlockHeight,
+        /// `Some(chain_lock)` iff the wallet's finality boundary at
+        /// processing time covers `height`, meaning every record in
+        /// this event has a [`key_wallet::transaction_checking::TransactionContext::InChainLockedBlock`]
+        /// context and the transactions are already finalized. The
+        /// chainlock carried here is the proof that established the
+        /// boundary, retained so consumers can persist the signing
+        /// proof alongside the block. By construction
+        /// `chain_lock.block_height >= height` whenever `Some`. The
+        /// per-record `context` is the source of truth and will agree.
+        chain_lock: Option<ChainLock>,
         /// Records first stored for this wallet in this block.
         inserted: Vec<TransactionRecord>,
         /// Previously-known records confirmed by this block.
@@ -264,6 +275,34 @@ pub enum WalletEvent {
         /// New scanned height for the wallet.
         height: CoreBlockHeight,
     },
+    /// Previously-recorded `InBlock` transactions were promoted to
+    /// [`key_wallet::transaction_checking::TransactionContext::InChainLockedBlock`] because a chainlock now
+    /// covers their height. Emitted by the wallet manager after the
+    /// coordinator applies a chainlock. Carries only net-new
+    /// promotions, grouped per account.
+    ///
+    /// Transactions born directly in a chainlocked block (block at
+    /// height `<= last_applied_chain_lock.block_height` at processing
+    /// time) are surfaced via [`WalletEvent::BlockProcessed`] with
+    /// `chain_lock = Some(..)` and their records already in
+    /// `InChainLockedBlock` context. They do not appear here, since no
+    /// promotion took place.
+    TransactionsChainlocked {
+        /// ID of the affected wallet.
+        wallet_id: WalletId,
+        /// The chainlock that drove this batch of promotions. Carries
+        /// the signing proof (`block_height`, `block_hash`,
+        /// `signature`) so consumers can persist it alongside the
+        /// promotions. The wallet's `last_applied_chain_lock` is
+        /// advanced to this chainlock (clamped forward by height).
+        chain_lock: ChainLock,
+        /// Per-account net-new finalized txids: records that flipped
+        /// from `InBlock` to `InChainLockedBlock` in this promotion.
+        /// Accounts with no net-new promotions are omitted. No balance
+        /// is carried because a chainlock does not change UTXO state
+        /// (only the certainty of the parent transaction).
+        per_account: BTreeMap<AccountType, Vec<Txid>>,
+    },
 }
 
 impl WalletEvent {
@@ -283,6 +322,10 @@ impl WalletEvent {
                 ..
             }
             | WalletEvent::SyncHeightAdvanced {
+                wallet_id,
+                ..
+            }
+            | WalletEvent::TransactionsChainlocked {
                 wallet_id,
                 ..
             } => *wallet_id,
@@ -323,6 +366,7 @@ impl WalletEvent {
             }
             WalletEvent::BlockProcessed {
                 height,
+                chain_lock,
                 inserted,
                 updated,
                 matured,
@@ -332,8 +376,9 @@ impl WalletEvent {
                 ..
             } => {
                 format!(
-                    "BlockProcessed(height={}, inserted={}, updated={}, matured={}, balance={}, account_balances={}, derived={})",
+                    "BlockProcessed(height={}, chainlocked={}, inserted={}, updated={}, matured={}, balance={}, account_balances={}, derived={})",
                     height,
+                    chain_lock.is_some(),
                     inserted.len(),
                     updated.len(),
                     matured.len(),
@@ -347,6 +392,19 @@ impl WalletEvent {
                 ..
             } => {
                 format!("SyncHeightAdvanced(height={})", height)
+            }
+            WalletEvent::TransactionsChainlocked {
+                chain_lock,
+                per_account,
+                ..
+            } => {
+                let total_txids: usize = per_account.values().map(|v| v.len()).sum();
+                format!(
+                    "TransactionsChainlocked(chainlock_height={}, accounts={}, finalized_txids={})",
+                    chain_lock.block_height,
+                    per_account.len(),
+                    total_txids,
+                )
             }
         }
     }

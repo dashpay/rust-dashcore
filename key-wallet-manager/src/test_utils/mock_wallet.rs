@@ -1,6 +1,7 @@
 use crate::{
     BlockProcessingResult, MempoolTransactionResult, WalletEvent, WalletId, WalletInterface,
 };
+use dashcore::ephemerealdata::chain_lock::ChainLock;
 use dashcore::ephemerealdata::instant_lock::InstantLock;
 use dashcore::prelude::CoreBlockHeight;
 use dashcore::{Address, Block, OutPoint, Transaction, Txid};
@@ -252,6 +253,10 @@ impl WalletInterface for MockWallet {
             self.status_changes.try_lock().expect("status_changes lock contention in test helper");
         changes.push((txid, TransactionContext::InstantSend(instant_lock)));
     }
+
+    fn apply_chain_lock(&mut self, _chain_lock: ChainLock) {
+        panic!("apply_chain_lock not supported for MockWallet");
+    }
 }
 
 /// Mock wallet that returns false for filter checks
@@ -356,6 +361,10 @@ impl WalletInterface for NonMatchingMockWallet {
 
     fn subscribe_events(&self) -> broadcast::Receiver<WalletEvent> {
         self.event_sender.subscribe()
+    }
+
+    fn apply_chain_lock(&mut self, _chain_lock: ChainLock) {
+        panic!("apply_chain_lock not supported for NonMatchingMockWallet");
     }
 
     async fn describe(&self) -> String {
@@ -499,6 +508,10 @@ impl WalletInterface for MultiMockWallet {
 
     fn subscribe_events(&self) -> broadcast::Receiver<WalletEvent> {
         self.event_sender.subscribe()
+    }
+
+    fn apply_chain_lock(&mut self, _chain_lock: ChainLock) {
+        panic!("apply_chain_lock not supported for MultiMockWallet");
     }
 
     async fn describe(&self) -> String {

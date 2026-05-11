@@ -42,6 +42,12 @@ pub struct ChainLockManager<H: BlockHeaderStorage, M: MetadataStorage> {
     pub(super) requested_chainlocks: HashSet<ChainLockHash>,
     /// Whether masternode sync is complete and we can validate signatures.
     pub(super) masternode_ready: bool,
+    /// Highest chainlock that arrived before `masternode_ready` and
+    /// therefore could not be validated yet. Re-validated on the
+    /// not-ready → ready transition (see [`Self::on_masternode_ready`])
+    /// so we don't lose a chainlock that landed during the gap between
+    /// the chainlock manager starting and masternode sync completing.
+    pending_validation: Option<ChainLock>,
 }
 
 impl<H: BlockHeaderStorage, M: MetadataStorage> ChainLockManager<H, M> {
@@ -59,6 +65,7 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> ChainLockManager<H, M> {
             best_chainlock: None,
             requested_chainlocks: HashSet::new(),
             masternode_ready: false,
+            pending_validation: None,
         };
 
         // TODO: Move load_best_chainlock() and save_best_chainlock() to MetadataStorage trait.
@@ -67,9 +74,29 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> ChainLockManager<H, M> {
         manager
     }
 
-    /// Notify the manager that masternode sync is complete.
-    pub(super) fn set_masternode_ready(&mut self) {
+    /// Apply the masternode-ready transition.
+    ///
+    /// Validates any chainlock cached in `pending_validation` (i.e. a
+    /// chainlock that arrived before masternode state was available)
+    /// and promotes it to `best_chainlock` on success. Returns the
+    /// chainlock that should be re-broadcast to downstream consumers,
+    /// preferring a freshly-promoted one over the persisted-from-disk
+    /// `best_chainlock`. Returns `None` if there's nothing to surface.
+    pub(super) async fn on_masternode_ready(&mut self) -> Option<ChainLock> {
         self.masternode_ready = true;
+
+        if let Some(pending) = self.pending_validation.take() {
+            if self.validate_signature(&pending).await {
+                self.progress.add_valid(1);
+                self.progress.update_best_validated_height(pending.block_height);
+                self.best_chainlock = Some(pending);
+                self.save_best_chainlock().await;
+            } else {
+                self.progress.add_invalid(1);
+            }
+        }
+
+        self.best_chainlock.clone()
     }
 
     /// Process an incoming ChainLock message.
@@ -100,12 +127,22 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> ChainLockManager<H, M> {
             return Ok(vec![]);
         }
 
-        // Only validate if masternode sync is complete
+        // Only validate if masternode sync is complete. Cache the
+        // highest pre-ready chainlock so the masternode-ready
+        // transition can retry validation rather than discarding it
+        // (`on_masternode_ready`).
         if !self.masternode_ready {
             tracing::debug!(
-                "Skipping ChainLock validation at height {} (masternode sync not complete)",
+                "Caching ChainLock at height {} for validation once masternode sync completes",
                 height
             );
+            let replace = self
+                .pending_validation
+                .as_ref()
+                .is_none_or(|existing| height > existing.block_height);
+            if replace {
+                self.pending_validation = Some(chainlock.clone());
+            }
             return Ok(vec![SyncEvent::ChainLockReceived {
                 chain_lock: chainlock.clone(),
                 validated: false,
@@ -301,12 +338,46 @@ mod tests {
         assert_eq!(manager.progress.valid(), 0);
         assert_eq!(manager.progress.invalid(), 0);
         assert!(manager.best_chainlock().is_none());
+        // But the chainlock must be cached for retry once masternode
+        // state arrives, rather than discarded.
+        assert!(manager.pending_validation.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_pending_validation_keeps_highest() {
+        let mut manager = create_test_manager().await;
+
+        // Lower height first, then higher — pending_validation tracks
+        // the highest seen pre-ready chainlock so the retry on
+        // masternode-ready always validates the most recent.
+        let _ = manager.process_chainlock(&create_test_chainlock(100)).await.unwrap();
+        let _ = manager.process_chainlock(&create_test_chainlock(200)).await.unwrap();
+        let _ = manager.process_chainlock(&create_test_chainlock(150)).await.unwrap();
+
+        assert_eq!(manager.pending_validation.as_ref().map(|cl| cl.block_height), Some(200));
+    }
+
+    #[tokio::test]
+    async fn test_on_masternode_ready_retries_pending_validation() {
+        let mut manager = create_test_manager().await;
+        let _ = manager.process_chainlock(&create_test_chainlock(100)).await.unwrap();
+        assert!(manager.pending_validation.is_some());
+
+        // With the default empty engine, validation fails — the
+        // pending chainlock is consumed (cleared) and counted as
+        // invalid; `best_chainlock` stays `None`.
+        let rebroadcast = manager.on_masternode_ready().await;
+        assert!(rebroadcast.is_none());
+        assert!(manager.pending_validation.is_none());
+        assert!(manager.best_chainlock().is_none());
+        assert_eq!(manager.progress.invalid(), 1);
+        assert!(manager.masternode_ready);
     }
 
     #[tokio::test]
     async fn test_chainlock_validates_after_masternode_ready() {
         let mut manager = create_test_manager().await;
-        manager.set_masternode_ready();
+        let _ = manager.on_masternode_ready().await;
 
         // After masternode sync, ChainLocks should be validated (will fail with empty engine)
         let chainlock = create_test_chainlock(100);

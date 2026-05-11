@@ -6,6 +6,7 @@ use dashcore::blockdata::script::Builder;
 use dashcore::blockdata::transaction::special_transaction::asset_lock::AssetLockPayload;
 use dashcore::blockdata::transaction::special_transaction::TransactionPayload;
 use dashcore::bls_sig_utils::BLSSignature;
+use dashcore::ephemerealdata::chain_lock::ChainLock;
 use dashcore::ephemerealdata::instant_lock::InstantLock;
 use dashcore::hash_types::CycleHash;
 use dashcore::hashes::Hash;
@@ -17,6 +18,7 @@ use key_wallet::account::StandardAccountType;
 use key_wallet::managed_account::address_pool::AddressPoolType;
 use key_wallet::managed_account::managed_account_trait::ManagedAccountTrait;
 use key_wallet::managed_account::managed_account_type::ManagedAccountType;
+use key_wallet::wallet::managed_wallet_info::transaction_building::AccountTypePreference;
 use key_wallet::AccountType;
 use std::collections::BTreeSet;
 
@@ -344,6 +346,7 @@ async fn test_block_with_new_tx_emits_inserted_record() {
             balance,
             account_balances,
             addresses_derived: _,
+            chain_lock: _,
         } => {
             assert_eq!(*wid, wallet_id);
             assert_eq!(*height, 100);
@@ -409,6 +412,7 @@ async fn test_block_confirming_known_mempool_tx_emits_updated_record() {
             balance,
             account_balances,
             addresses_derived: _,
+            chain_lock: _,
         } => {
             assert_eq!(*wid, wallet_id);
             assert_eq!(*height, 200);
@@ -1040,5 +1044,165 @@ async fn test_instant_send_lock_event_does_not_carry_addresses_derived_field() {
             assert_eq!(*txid, tx.txid());
         }
         _ => unreachable!(),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// ChainLock path
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn test_apply_chain_lock_promotes_in_block_record_and_emits_event() {
+    let (mut manager, wallet_id, addr) = setup_manager_with_wallet();
+    let tx = create_tx_paying_to(&addr, 0xa1);
+    let block = make_block(vec![tx.clone()], 0xa1, 1000);
+    let wallets = BTreeSet::from([wallet_id]);
+    manager.process_block_for_wallets(&block, 100, &wallets).await;
+
+    let mut rx = manager.subscribe_events();
+    manager.apply_chain_lock(ChainLock::dummy(100));
+
+    let events = drain_events(&mut rx);
+    assert_eq!(events.len(), 1, "exactly one TransactionsChainlocked event expected");
+    match &events[0] {
+        WalletEvent::TransactionsChainlocked {
+            wallet_id: wid,
+            chain_lock,
+            per_account,
+        } => {
+            assert_eq!(*wid, wallet_id);
+            assert_eq!(chain_lock.block_height, 100);
+            let receiving = AccountType::Standard {
+                index: 0,
+                standard_account_type: StandardAccountType::BIP44Account,
+            };
+            let txids = per_account
+                .get(&receiving)
+                .expect("the receiving account should have a promotion entry");
+            assert_eq!(txids, &vec![tx.txid()]);
+        }
+        other => panic!("expected TransactionsChainlocked, got {:?}", other),
+    }
+}
+
+#[tokio::test]
+async fn test_apply_chain_lock_with_no_records_emits_no_event_but_advances_boundary() {
+    let (mut manager, wallet_id, _addr) = setup_manager_with_wallet();
+    let mut rx = manager.subscribe_events();
+    manager.apply_chain_lock(ChainLock::dummy(500));
+
+    assert_no_events(&mut rx);
+
+    // Subsequent block below the new finality boundary must be born chainlocked.
+    let addr = manager
+        .next_receive_address(&wallet_id, 0, AccountTypePreference::BIP44, true)
+        .expect("address generation");
+    let tx = create_tx_paying_to(&addr, 0xa2);
+    let block = make_block(vec![tx.clone()], 0xa2, 1100);
+    let wallets = BTreeSet::from([wallet_id]);
+    manager.process_block_for_wallets(&block, 100, &wallets).await;
+
+    let events = drain_events(&mut rx);
+    let bp = events
+        .iter()
+        .find(|e| matches!(e, WalletEvent::BlockProcessed { .. }))
+        .expect("BlockProcessed expected after late block below finality boundary");
+    match bp {
+        WalletEvent::BlockProcessed {
+            chain_lock,
+            inserted,
+            ..
+        } => {
+            assert!(chain_lock.is_some(), "block below finality boundary must carry the chainlock");
+            assert!(
+                matches!(inserted[0].context, TransactionContext::InChainLockedBlock(_)),
+                "late-block path must record the tx as InChainLockedBlock, got {:?}",
+                inserted[0].context
+            );
+        }
+        _ => unreachable!(),
+    }
+    let chainlock_event_count =
+        events.iter().filter(|e| matches!(e, WalletEvent::TransactionsChainlocked { .. })).count();
+    assert_eq!(
+        chainlock_event_count, 0,
+        "late-block path must not double-emit TransactionsChainlocked for newly-born chainlocked txs"
+    );
+}
+
+#[tokio::test]
+async fn test_apply_chain_lock_is_idempotent_on_already_finalized() {
+    let (mut manager, wallet_id, addr) = setup_manager_with_wallet();
+    let tx = create_tx_paying_to(&addr, 0xa3);
+    let block = make_block(vec![tx.clone()], 0xa3, 1200);
+    let wallets = BTreeSet::from([wallet_id]);
+    manager.process_block_for_wallets(&block, 50, &wallets).await;
+
+    let mut rx = manager.subscribe_events();
+    manager.apply_chain_lock(ChainLock::dummy(50));
+    let first = drain_events(&mut rx);
+    assert_eq!(
+        first.iter().filter(|e| matches!(e, WalletEvent::TransactionsChainlocked { .. })).count(),
+        1,
+        "first chainlock must emit exactly one TransactionsChainlocked"
+    );
+
+    // Replaying the same chainlock, or applying a higher one with no
+    // outstanding InBlock records below it, must not re-emit.
+    manager.apply_chain_lock(ChainLock::dummy(50));
+    manager.apply_chain_lock(ChainLock::dummy(80));
+
+    assert_no_events(&mut rx);
+}
+
+#[tokio::test]
+async fn test_block_processed_chainlocked_flag_matches_record_context() {
+    let (mut manager, wallet_id, addr) = setup_manager_with_wallet();
+
+    // Below the finality boundary: chain_lock=Some, records InChainLockedBlock.
+    manager.apply_chain_lock(ChainLock::dummy(1000));
+    let tx_below = create_tx_paying_to(&addr, 0xa4);
+    let block_below = make_block(vec![tx_below.clone()], 0xa4, 1300);
+    let wallets = BTreeSet::from([wallet_id]);
+    let mut rx = manager.subscribe_events();
+    manager.process_block_for_wallets(&block_below, 500, &wallets).await;
+
+    let events_below = drain_events(&mut rx);
+    let bp_below = events_below
+        .iter()
+        .find(|e| matches!(e, WalletEvent::BlockProcessed { .. }))
+        .expect("BlockProcessed expected");
+    if let WalletEvent::BlockProcessed {
+        chain_lock,
+        inserted,
+        ..
+    } = bp_below
+    {
+        let cl = chain_lock.as_ref().expect("block below finality boundary must carry chainlock");
+        assert_eq!(cl.block_height, 1000);
+        assert!(matches!(inserted[0].context, TransactionContext::InChainLockedBlock(_)));
+    }
+
+    // Above the finality boundary: chain_lock=None, records InBlock.
+    let addr2 = manager
+        .next_receive_address(&wallet_id, 0, AccountTypePreference::BIP44, true)
+        .expect("address generation");
+    let tx_above = create_tx_paying_to(&addr2, 0xa5);
+    let block_above = make_block(vec![tx_above.clone()], 0xa5, 1400);
+    manager.process_block_for_wallets(&block_above, 2000, &wallets).await;
+
+    let events_above = drain_events(&mut rx);
+    let bp_above = events_above
+        .iter()
+        .find(|e| matches!(e, WalletEvent::BlockProcessed { .. }))
+        .expect("BlockProcessed expected");
+    if let WalletEvent::BlockProcessed {
+        chain_lock,
+        inserted,
+        ..
+    } = bp_above
+    {
+        assert!(chain_lock.is_none());
+        assert!(matches!(inserted[0].context, TransactionContext::InBlock(_)));
     }
 }

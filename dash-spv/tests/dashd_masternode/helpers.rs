@@ -5,6 +5,7 @@ use dashcore::sml::masternode_list_engine::MasternodeListEngine;
 use dashcore::Txid;
 use key_wallet::transaction_checking::TransactionContext;
 use key_wallet_manager::WalletEvent;
+use std::collections::HashSet;
 use std::time::Duration;
 use tokio::sync::{broadcast, watch};
 use tokio::time;
@@ -244,6 +245,142 @@ pub(super) async fn wait_for_instant_lock_received(
                     }
                     Err(broadcast::error::RecvError::Closed) => {
                         panic!("Sync event channel closed");
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Wait for every txid in `txids` to be surfaced by the wallet as
+/// chainlock-finalized, via either a
+/// [`WalletEvent::TransactionsChainlocked`] event whose `per_account`
+/// includes the txid (across any account) or a
+/// [`WalletEvent::BlockProcessed`] event with `chain_lock = Some(..)`
+/// whose `inserted` / `updated` list includes the txid.
+///
+/// A single event can cover multiple txids at once (e.g. one chainlock
+/// promotes several `InBlock` records into `InChainLockedBlock` in one
+/// pass, or one chainlocked block contains several IS-locked txs that
+/// confirm together), which is why this consumes the receiver in a
+/// loop until every txid has been observed.
+pub(super) async fn wait_for_wallet_txs_chainlocked(
+    event_receiver: &mut broadcast::Receiver<WalletEvent>,
+    txids: &[Txid],
+    timeout_secs: u64,
+) {
+    let mut pending: HashSet<Txid> = txids.iter().copied().collect();
+    let timeout = time::sleep(Duration::from_secs(timeout_secs));
+    tokio::pin!(timeout);
+
+    while !pending.is_empty() {
+        tokio::select! {
+            _ = &mut timeout => {
+                panic!(
+                    "Timeout waiting for chainlock finalization, {} txids still pending: {:?}",
+                    pending.len(), pending,
+                );
+            }
+            result = event_receiver.recv() => {
+                match result {
+                    Ok(WalletEvent::TransactionsChainlocked {
+                        chain_lock,
+                        per_account,
+                        ..
+                    }) => {
+                        for finalized in per_account.values().flatten() {
+                            if pending.remove(finalized) {
+                                tracing::info!(
+                                    "Wallet TransactionsChainlocked(chainlock_height={}, txid={})",
+                                    chain_lock.block_height, finalized,
+                                );
+                            }
+                        }
+                    }
+                    Ok(WalletEvent::BlockProcessed {
+                        chain_lock: Some(cl),
+                        inserted,
+                        updated,
+                        ..
+                    }) => {
+                        for record in inserted.iter().chain(updated.iter()) {
+                            if pending.remove(&record.txid) {
+                                tracing::info!(
+                                    "Wallet BlockProcessed(chainlock_height={}, txid={})",
+                                    cl.block_height, record.txid,
+                                );
+                            }
+                        }
+                    }
+                    Ok(other) => {
+                        tracing::debug!("Ignoring wallet event: {}", other.description());
+                    }
+                    Err(err) => {
+                        panic!("Wallet event receiver failed: {}", err);
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Single-txid variant of [`wait_for_wallet_txs_chainlocked`] that
+/// also returns the chainlock height that drove the promotion. Use
+/// this when the test asserts on the promotion height. Otherwise
+/// prefer the plural form which consumes events more robustly.
+pub(super) async fn wait_for_wallet_tx_chainlocked(
+    event_receiver: &mut broadcast::Receiver<WalletEvent>,
+    txid: Txid,
+    timeout_secs: u64,
+) -> u32 {
+    let timeout = time::sleep(Duration::from_secs(timeout_secs));
+    tokio::pin!(timeout);
+
+    loop {
+        tokio::select! {
+            _ = &mut timeout => {
+                panic!("Timeout waiting for TransactionsChainlocked carrying txid {}", txid);
+            }
+            result = event_receiver.recv() => {
+                match result {
+                    Ok(WalletEvent::TransactionsChainlocked {
+                        chain_lock,
+                        per_account,
+                        ..
+                    }) if per_account
+                        .values()
+                        .any(|txids| txids.contains(&txid)) =>
+                    {
+                        tracing::info!(
+                            "Wallet TransactionsChainlocked(chainlock_height={}, txid={})",
+                            chain_lock.block_height, txid
+                        );
+                        return chain_lock.block_height;
+                    }
+                    Ok(WalletEvent::BlockProcessed {
+                        chain_lock: Some(_),
+                        inserted,
+                        updated,
+                        ..
+                    }) if inserted.iter().chain(updated.iter()).any(|r| r.txid == txid) =>
+                    {
+                        tracing::info!(
+                            "Wallet BlockProcessed(chainlocked, txid={})",
+                            txid
+                        );
+                        return inserted
+                            .iter()
+                            .chain(updated.iter())
+                            .find(|r| r.txid == txid)
+                            .and_then(|r| r.context.block_info().map(|i| i.height()))
+                            .unwrap_or_default();
+                    }
+                    Ok(other) => {
+                        tracing::debug!("Ignoring wallet event: {}", other.description());
+                        continue;
+                    }
+                    Err(err) => {
+                        panic!("Wallet event receiver failed: {}", err);
                     }
                 }
             }

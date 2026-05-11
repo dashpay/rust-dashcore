@@ -4,6 +4,7 @@
 
 use std::collections::BTreeMap;
 
+use dashcore::ephemerealdata::chain_lock::ChainLock;
 use dashcore::prelude::CoreBlockHeight;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
@@ -18,6 +19,14 @@ pub struct WalletMetadata {
     pub last_processed_height: CoreBlockHeight,
     /// Sync checkpoint height
     pub synced_height: CoreBlockHeight,
+    /// Highest chainlock that has been applied to this wallet,
+    /// establishing the finality boundary: every block at or below
+    /// `chain_lock.block_height` is final for this wallet. `None` until
+    /// the first chainlock arrives. Persisted so consumers (e.g.
+    /// Platform) with external transaction persistence can reason about
+    /// which transactions have already been finalized, and retain the
+    /// signing proof.
+    pub last_applied_chain_lock: Option<ChainLock>,
     /// Last sync timestamp
     pub last_synced: Option<u64>,
     /// Wallet version

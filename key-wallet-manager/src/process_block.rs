@@ -3,6 +3,7 @@ use crate::wallet_interface::{BlockProcessingResult, MempoolTransactionResult, W
 use crate::{WalletEvent, WalletId, WalletManager};
 use async_trait::async_trait;
 use core::fmt::Write as _;
+use dashcore::ephemerealdata::chain_lock::ChainLock;
 use dashcore::ephemerealdata::instant_lock::InstantLock;
 use dashcore::prelude::CoreBlockHeight;
 use dashcore::{Address, Block, Transaction};
@@ -28,14 +29,37 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
         }
         let info = BlockInfo::new(height, block.block_hash(), block.header.time);
 
+        // Late-block: when every wallet in scope already has its
+        // finality boundary at or above this height, the block is
+        // born chainlocked from each wallet's perspective. Record the
+        // tx directly with `InChainLockedBlock` so the inserted
+        // `TransactionRecord` carries the right context, the
+        // `BlockProcessed` event then surfaces this with
+        // `chain_lock: Some(..)`, and no follow-up
+        // `TransactionsChainlocked` event is needed for these txs.
+        //
+        // Heterogeneous boundaries (e.g. a wallet added mid-flight at
+        // a stale boundary) fall back to `InBlock` for the whole
+        // call; the lagging wallet is brought current by the next
+        // chainlock that arrives.
+        let all_chainlocked = !wallets.is_empty()
+            && wallets.iter().filter_map(|wid| self.wallet_infos.get(wid)).all(|info| {
+                info.last_applied_chain_lock().is_some_and(|cl| height <= cl.block_height)
+            });
+        let block_context = if all_chainlocked {
+            TransactionContext::InChainLockedBlock(info)
+        } else {
+            TransactionContext::InBlock(info)
+        };
+
         let mut per_wallet_inserted: BTreeMap<WalletId, Vec<TransactionRecord>> = BTreeMap::new();
         let mut per_wallet_updated: BTreeMap<WalletId, Vec<TransactionRecord>> = BTreeMap::new();
         let mut per_wallet_derived: BTreeMap<WalletId, Vec<DerivedAddressInfo>> = BTreeMap::new();
 
         for tx in &block.txdata {
-            let context = TransactionContext::InBlock(info);
-            let check_result =
-                self.check_transaction_in_wallets(tx, context, wallets, true, false).await;
+            let check_result = self
+                .check_transaction_in_wallets(tx, block_context.clone(), wallets, true, false)
+                .await;
 
             if !check_result.affected_wallets.is_empty() {
                 if check_result.is_new_transaction {
@@ -267,6 +291,21 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
         self.event_sender.subscribe()
     }
 
+    fn apply_chain_lock(&mut self, chain_lock: ChainLock) {
+        for (wallet_id, info) in self.wallet_infos.iter_mut() {
+            let per_account = info.apply_chain_lock(chain_lock.clone());
+            if per_account.is_empty() {
+                continue;
+            }
+            let event = WalletEvent::TransactionsChainlocked {
+                wallet_id: *wallet_id,
+                chain_lock: chain_lock.clone(),
+                per_account,
+            };
+            let _ = self.event_sender.send(event);
+        }
+    }
+
     fn process_instant_send_lock(&mut self, instant_lock: InstantLock) {
         let txid = instant_lock.txid;
 
@@ -416,6 +455,8 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletManager<T> {
             let derived_for_wallet = per_wallet_derived.remove(wallet_id).unwrap_or_default();
             let addresses_derived: Vec<DerivedAddress> =
                 project_derived_addresses(derived_for_wallet);
+            let chain_lock =
+                info.last_applied_chain_lock().filter(|cl| height <= cl.block_height).cloned();
 
             if !inserted.is_empty()
                 || !updated.is_empty()
@@ -426,6 +467,7 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletManager<T> {
                 let event = WalletEvent::BlockProcessed {
                     wallet_id: *wallet_id,
                     height,
+                    chain_lock,
                     inserted,
                     updated,
                     matured,
