@@ -82,11 +82,21 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> ChainLockManager<H, M> {
     /// chainlock that should be re-broadcast to downstream consumers,
     /// preferring a freshly-promoted one over the persisted-from-disk
     /// `best_chainlock`. Returns `None` if there's nothing to surface.
+    ///
+    /// Re-runs `verify_block_hash` on the pending chainlock before
+    /// validating the BLS signature: at the time the chainlock was
+    /// cached the header for that height may still have been missing
+    /// (in which case `verify_block_hash` returned `true` permissively),
+    /// but by the time masternode state is ready the header has
+    /// usually arrived. If the resolved header's hash now disagrees
+    /// with the chainlock's claimed block hash, the chainlock is
+    /// dropped instead of moving the finality boundary onto a block
+    /// the local chain doesn't match.
     pub(super) async fn on_masternode_ready(&mut self) -> Option<ChainLock> {
         self.masternode_ready = true;
 
         if let Some(pending) = self.pending_validation.take() {
-            if self.validate_signature(&pending).await {
+            if self.verify_block_hash(&pending).await && self.validate_signature(&pending).await {
                 self.progress.add_valid(1);
                 self.progress.update_best_validated_height(pending.block_height);
                 self.best_chainlock = Some(pending);
@@ -355,6 +365,38 @@ mod tests {
         let _ = manager.process_chainlock(&create_test_chainlock(150)).await.unwrap();
 
         assert_eq!(manager.pending_validation.as_ref().map(|cl| cl.block_height), Some(200));
+    }
+
+    #[tokio::test]
+    async fn test_on_masternode_ready_rejects_pending_chainlock_on_block_hash_mismatch() {
+        let storage = DiskStorageManager::with_temp_dir().await.unwrap();
+        let mut manager = create_test_manager_with_storage(&storage).await;
+
+        // Cache a chainlock for height 100 BEFORE any header exists.
+        // `process_chainlock`'s permissive `verify_block_hash` lets it
+        // through and it lands in `pending_validation`.
+        let _ = manager.process_chainlock(&create_test_chainlock(100)).await.unwrap();
+        assert!(manager.pending_validation.is_some());
+
+        // Header for height 100 resolves later with a hash that differs
+        // from the cached chainlock's `BlockHash::all_zeros()`. The
+        // readiness transition must re-check `verify_block_hash` and
+        // drop the chainlock instead of moving the finality boundary.
+        let header = dashcore::block::Header::dummy(100);
+        storage
+            .block_headers()
+            .write()
+            .await
+            .store_headers_at_height(&[header], 100)
+            .await
+            .expect("store header at 100");
+
+        let rebroadcast = manager.on_masternode_ready().await;
+        assert!(rebroadcast.is_none(), "mismatched chainlock must not be re-broadcast");
+        assert!(manager.best_chainlock().is_none(), "mismatched chainlock must not be persisted");
+        assert!(manager.pending_validation.is_none(), "pending_validation must be consumed");
+        assert_eq!(manager.progress.invalid(), 1);
+        assert_eq!(manager.progress.valid(), 0);
     }
 
     #[tokio::test]
