@@ -67,7 +67,7 @@ impl TestWalletContext {
 
     /// Returns the first UTXO from the first BIP44 account.
     pub fn first_utxo(&self) -> &Utxo {
-        self.bip44_account().utxos.values().next().expect("Should have UTXO")
+        self.bip44_account().utxos().values().next().expect("Should have UTXO")
     }
 
     /// Processes a transaction: runs `check_core_transaction` with `update_state = true`.

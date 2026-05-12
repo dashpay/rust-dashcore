@@ -729,7 +729,7 @@ pub unsafe extern "C" fn managed_core_account_get_utxo_count(
     }
 
     let account = &*account;
-    account.as_funds().map_or(0, |f| f.utxos.len() as c_uint)
+    account.as_funds().map_or(0, |f| f.utxos().len() as c_uint)
 }
 
 /// FFI-compatible owning-account descriptor for a [`FFITransactionRecord`].

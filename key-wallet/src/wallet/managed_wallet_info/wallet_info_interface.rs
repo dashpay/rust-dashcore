@@ -268,7 +268,7 @@ impl WalletInfoInterface for ManagedWalletInfo {
     fn utxos(&self) -> BTreeSet<&Utxo> {
         let mut utxos = BTreeSet::new();
         for account in self.accounts.all_funding_accounts() {
-            utxos.extend(account.utxos.values());
+            utxos.extend(account.utxos().values());
         }
         utxos
     }
@@ -314,7 +314,7 @@ impl WalletInfoInterface for ManagedWalletInfo {
         // Coinbase UTXOs only live on funds-bearing accounts.
         let mut immature_txids: BTreeSet<Txid> = BTreeSet::new();
         for account in self.accounts.all_funding_accounts() {
-            for utxo in account.utxos.values() {
+            for utxo in account.utxos().values() {
                 if utxo.is_coinbase && !utxo.is_mature(self.last_processed_height()) {
                     immature_txids.insert(utxo.outpoint.txid);
                 }

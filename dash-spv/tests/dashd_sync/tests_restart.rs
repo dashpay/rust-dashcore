@@ -12,6 +12,13 @@ use dash_spv::test_utils::SYNC_TIMEOUT;
 use super::setup::{create_and_start_client, TestContext};
 use dash_spv::test_utils::{create_test_wallet, TestChain};
 
+use dashcore::Amount;
+use key_wallet::managed_account::address_pool::KeySource;
+use key_wallet::managed_account::managed_account_trait::ManagedAccountTrait;
+use key_wallet::managed_account::managed_account_type::ManagedAccountType;
+use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
+use key_wallet::wallet::Wallet;
+
 /// Verify sync state is identical after stopping and restarting with same storage.
 #[tokio::test]
 async fn test_sync_restart_consistency() {
@@ -127,11 +134,11 @@ async fn test_sync_with_multiple_restarts() {
                         Ok(ref event) if is_progress_event(event) => {
                             events_seen += 1;
                             if events_seen % 2 == 0 {
-                                tracing::info!("Restarting on: {}", event.description());
+                                tracing::info!("Restarting on: {}", event);
                                 should_restart = true;
                                 break;
                             }
-                            tracing::info!("Skipped: {}", event.description());
+                            tracing::info!("Skipped: {}", event);
                         }
                         Ok(SyncEvent::SyncComplete { .. }) => break,
                         Ok(_) => continue,
@@ -190,4 +197,142 @@ async fn test_sync_with_random_restarts() {
     client_handle.stop().await;
     ctx.assert_synced(&client_handle.client.progress().await).await;
     tracing::info!("Sync completed after {} random restarts (seed={})", num_restarts, seed);
+}
+
+/// When a wallet is rebuilt from xpubs alone (the platform persister
+/// flow) and snapshotted UTXOs are re-inserted via [`insert_utxo`],
+/// the address pool must reconcile any UTXO whose address lives past
+/// the initial gap limit — otherwise signing fails with "no
+/// derivation path for input address …".
+#[tokio::test]
+async fn test_persisted_utxo_outside_initial_gap_limit_resolves_after_reload() {
+    let Some(ctx) = TestContext::new(TestChain::Minimal).await else {
+        return;
+    };
+    if !ctx.dashd.supports_mining {
+        eprintln!("Skipping test (dashd RPC miner not available)");
+        return;
+    }
+
+    let mut client_handle = ctx.spawn_new_client().await;
+    wait_for_sync(&mut client_handle.progress_receiver, ctx.dashd.initial_height).await;
+
+    // Pick an address well past the initial gap limit so the
+    // rebuild's default pool can't coincidentally cover it.
+    const TARGET_INDEX: u32 = 50;
+
+    let high_index_address: dashcore::Address = {
+        let mut wallet_write = ctx.wallet.write().await;
+        let (wallet, info) =
+            wallet_write.get_wallet_and_info_mut(&ctx.wallet_id).expect("wallet under test exists");
+
+        let xpub = wallet
+            .accounts
+            .standard_bip44_accounts
+            .get(&0)
+            .expect("BIP-44 account 0 on Wallet")
+            .account_xpub;
+
+        let funds_acc = info
+            .accounts
+            .standard_bip44_accounts
+            .get_mut(&0)
+            .expect("BIP-44 account 0 on ManagedWalletInfo");
+
+        let ManagedAccountType::Standard {
+            external_addresses,
+            ..
+        } = funds_acc.managed_account_type_mut()
+        else {
+            panic!("BIP-44 account 0 is not Standard");
+        };
+
+        let key_source = KeySource::Public(xpub);
+        let highest = external_addresses.highest_generated.unwrap_or(0);
+        if TARGET_INDEX > highest {
+            external_addresses
+                .generate_addresses(TARGET_INDEX - highest, &key_source, true)
+                .expect("extend external pool");
+        }
+        external_addresses
+            .info_at_index(TARGET_INDEX)
+            .expect("address at TARGET_INDEX after extension")
+            .address
+            .clone()
+    };
+
+    tracing::info!(
+        "Faucet target: index={} address={} (initial gap-limit = 30)",
+        TARGET_INDEX,
+        high_index_address
+    );
+
+    let miner_address = ctx.dashd.node.get_new_address_from_wallet("default");
+    let send_amount = Amount::from_sat(100_000_000);
+    let _txid = ctx.dashd.node.send_to_address(&high_index_address, send_amount);
+    ctx.dashd.node.generate_blocks(1, &miner_address);
+    wait_for_sync(&mut client_handle.progress_receiver, ctx.dashd.initial_height + 1).await;
+    client_handle.stop().await;
+
+    {
+        let wallet_read = ctx.wallet.read().await;
+        let info = wallet_read.get_wallet_info(&ctx.wallet_id).expect("wallet info");
+        let funds_acc = info.accounts.standard_bip44_accounts.get(&0).expect("BIP-44 account 0");
+        assert!(
+            funds_acc.utxos().values().any(|u| u.address == high_index_address),
+            "live wallet should have tracked the faucet UTXO"
+        );
+        assert!(
+            funds_acc.address_derivation_path(&high_index_address).is_some(),
+            "live pool should resolve the address before any reload"
+        );
+    }
+
+    // Mirror the platform persister: snapshot xpubs + UTXOs, then
+    // rebuild a wallet from xpubs alone and replay the UTXOs.
+    let (accounts_snapshot, utxos_snapshot) = {
+        let wallet_read = ctx.wallet.read().await;
+        let wallet = wallet_read.get_wallet(&ctx.wallet_id).expect("wallet snapshot");
+        let info = wallet_read.get_wallet_info(&ctx.wallet_id).expect("wallet info snapshot");
+        let accounts = wallet.accounts.clone();
+        let utxos: Vec<_> = info
+            .accounts
+            .standard_bip44_accounts
+            .get(&0)
+            .expect("BIP-44 account 0")
+            .utxos()
+            .values()
+            .cloned()
+            .collect();
+        (accounts, utxos)
+    };
+
+    let rebuilt_wallet =
+        Wallet::new_external_signable(Network::Regtest, ctx.wallet_id, accounts_snapshot);
+    let mut rebuilt_info = ManagedWalletInfo::from_wallet(&rebuilt_wallet, 0);
+    let rebuilt_xpub = rebuilt_wallet
+        .accounts
+        .standard_bip44_accounts
+        .get(&0)
+        .expect("rebuilt BIP-44 account 0 xpub")
+        .account_xpub;
+    let rebuilt_funds = rebuilt_info
+        .accounts
+        .standard_bip44_accounts
+        .get_mut(&0)
+        .expect("rebuilt BIP-44 account 0");
+    for utxo in utxos_snapshot {
+        rebuilt_funds
+            .insert_utxo(utxo, &KeySource::Public(rebuilt_xpub))
+            .expect("insert_utxo reconciles the pool past the initial gap limit");
+    }
+
+    assert!(
+        rebuilt_funds.utxos().values().any(|u| u.address == high_index_address),
+        "rebuilt funds account should still track the snapshotted UTXO"
+    );
+    assert!(
+        rebuilt_funds.address_derivation_path(&high_index_address).is_some(),
+        "rebuilt pool should resolve the derivation path for index {TARGET_INDEX}"
+    );
 }

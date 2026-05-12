@@ -601,8 +601,8 @@ mod tests {
             .standard_bip44_accounts
             .get_mut(&0)
             .unwrap()
-            .utxos
-            .insert(utxo.outpoint, utxo);
+            .insert_utxo(utxo, &crate::managed_account::address_pool::KeySource::NoKeySource)
+            .unwrap();
         info.update_last_processed_height(1100);
 
         let signer = InMemorySigner {

@@ -2,6 +2,7 @@
 mod utxo_tests {
     use super::super::*;
     use crate::error::{FFIError, FFIErrorCode};
+    use key_wallet::managed_account::address_pool::KeySource;
     use key_wallet::managed_account::managed_account_type::ManagedAccountType;
     use key_wallet::Utxo;
     use std::ffi::CStr;
@@ -226,7 +227,7 @@ mod utxo_tests {
             let mut utxo = Utxo::new(outpoint, txout, address, 100 + i as u32, false);
             utxo.is_confirmed = true;
 
-            bip44_account.utxos.insert(outpoint, utxo);
+            bip44_account.insert_utxo(utxo, &KeySource::NoKeySource).unwrap();
         }
 
         managed_info.accounts.insert(bip44_account).unwrap();
@@ -311,7 +312,7 @@ mod utxo_tests {
 
         let utxos = Utxo::dummy_batch(0..2, 10000, 100, false, false);
         for utxo in utxos {
-            bip44_account.utxos.insert(utxo.outpoint, utxo);
+            bip44_account.insert_utxo(utxo, &KeySource::NoKeySource).unwrap();
         }
         managed_info.accounts.insert(bip44_account).unwrap();
 
@@ -336,7 +337,7 @@ mod utxo_tests {
 
         let utxos = Utxo::dummy_batch(10..11, 20000, 200, false, false);
         for utxo in utxos {
-            bip32_account.utxos.insert(utxo.outpoint, utxo);
+            bip32_account.insert_utxo(utxo, &KeySource::NoKeySource).unwrap();
         }
         managed_info.accounts.insert(bip32_account).unwrap();
 
@@ -354,7 +355,7 @@ mod utxo_tests {
 
         let utxos = Utxo::dummy_batch(20..22, 30000, 300, false, false);
         for utxo in utxos {
-            coinjoin_account.utxos.insert(utxo.outpoint, utxo);
+            coinjoin_account.insert_utxo(utxo, &KeySource::NoKeySource).unwrap();
         }
         managed_info.accounts.insert(coinjoin_account).unwrap();
 
@@ -412,7 +413,7 @@ mod utxo_tests {
 
         let utxos = Utxo::dummy_batch(1..2, 10000, 100, false, false);
         for utxo in utxos {
-            testnet_account.utxos.insert(utxo.outpoint, utxo);
+            testnet_account.insert_utxo(utxo, &KeySource::NoKeySource).unwrap();
         }
         managed_info.accounts.insert(testnet_account).unwrap();
 

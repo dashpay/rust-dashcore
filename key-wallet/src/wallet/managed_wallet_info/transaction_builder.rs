@@ -77,7 +77,7 @@ impl TransactionBuilder {
     }
 
     pub fn set_funding(mut self, funds_acc: &mut ManagedCoreFundsAccount, acc: &Account) -> Self {
-        self.inputs = funds_acc.utxos.values().cloned().collect();
+        self.inputs = funds_acc.utxos().values().cloned().collect();
         self.change_addr = funds_acc.next_change_address(Some(&acc.account_xpub), true).ok();
         self
     }

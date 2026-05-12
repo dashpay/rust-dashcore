@@ -1,5 +1,6 @@
 //! Tests for update_balance() UTXO categorization.
 
+use crate::managed_account::address_pool::KeySource;
 use crate::managed_account::ManagedCoreFundsAccount;
 use crate::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
 use crate::wallet::managed_wallet_info::ManagedWalletInfo;
@@ -12,13 +13,13 @@ fn test_balance_with_mixed_utxo_types() {
 
     // Regular confirmed UTXO
     let utxo1 = Utxo::dummy(1, 100_000, 1000, false, true);
-    account.utxos.insert(utxo1.outpoint, utxo1);
+    account.insert_utxo(utxo1, &KeySource::NoKeySource).unwrap();
     // Mature coinbase (100+ confirmations at height 1100)
     let utxo2 = Utxo::dummy(2, 10_000_000, 1000, true, true);
-    account.utxos.insert(utxo2.outpoint, utxo2);
+    account.insert_utxo(utxo2, &KeySource::NoKeySource).unwrap();
     // Immature coinbase (<100 confirmations at height 1100)
     let utxo3 = Utxo::dummy(3, 20_000_000, 1050, true, true);
-    account.utxos.insert(utxo3.outpoint, utxo3);
+    account.insert_utxo(utxo3, &KeySource::NoKeySource).unwrap();
     wallet_info.accounts.insert(account).unwrap();
 
     assert_eq!(wallet_info.balance, WalletCoreBalance::default());
@@ -34,7 +35,7 @@ fn test_coinbase_maturity_boundary() {
 
     // Coinbase at height 1000
     let utxo = Utxo::dummy(1, 50_000_000, 1000, true, true);
-    account.utxos.insert(utxo.outpoint, utxo);
+    account.insert_utxo(utxo, &KeySource::NoKeySource).unwrap();
     wallet_info.accounts.insert(account).unwrap();
 
     assert_eq!(wallet_info.balance, WalletCoreBalance::default());
@@ -56,7 +57,7 @@ fn test_locked_utxos_in_locked_balance() {
 
     let mut utxo = Utxo::dummy(1, 100_000, 1000, false, true);
     utxo.is_locked = true;
-    account.utxos.insert(utxo.outpoint, utxo);
+    account.insert_utxo(utxo, &KeySource::NoKeySource).unwrap();
     wallet_info.accounts.insert(account).unwrap();
 
     assert_eq!(wallet_info.balance, WalletCoreBalance::default());
@@ -71,7 +72,7 @@ fn test_unconfirmed_utxos_in_unconfirmed_balance() {
     let mut account = ManagedCoreFundsAccount::dummy_bip44();
 
     let utxo = Utxo::dummy(1, 100_000, 0, false, false);
-    account.utxos.insert(utxo.outpoint, utxo);
+    account.insert_utxo(utxo, &KeySource::NoKeySource).unwrap();
     wallet_info.accounts.insert(account).unwrap();
 
     assert_eq!(wallet_info.balance, WalletCoreBalance::default());

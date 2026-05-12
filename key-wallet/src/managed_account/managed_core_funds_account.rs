@@ -16,6 +16,7 @@ use crate::account::BLSAccount;
 use crate::account::EdDSAAccount;
 use crate::account::TransactionRecord;
 use crate::managed_account::address_pool;
+use crate::managed_account::address_pool::KeySource;
 use crate::managed_account::managed_account_trait::ManagedAccountTrait;
 use crate::managed_account::managed_account_type::ManagedAccountType;
 use crate::managed_account::managed_core_keys_account::ManagedCoreKeysAccount;
@@ -41,12 +42,10 @@ use std::collections::{BTreeSet, HashSet};
 /// state) and adds the funds-specific bookkeeping used by accounts that hold
 /// and spend Dash directly (Standard, CoinJoin, DashPay).
 ///
-/// Most read/write surface comes from [`ManagedAccountTrait`] default methods
-/// — which delegate to the inner keys account via the primitive accessors —
-/// so this struct only carries the funds-specific inherent methods (transaction
-/// recording, the Standard-account receive/change paths, etc.). The
-/// funds-specific state (`balance`, `utxos`) is reachable as a public field
-/// directly.
+/// The UTXO set is private; all insertions must go through
+/// [`ManagedCoreFundsAccount::insert_utxo`] so the account can reconcile the
+/// owning address into its address pool before tracking the UTXO. Reads are
+/// available via [`ManagedCoreFundsAccount::utxos`].
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize))]
 pub struct ManagedCoreFundsAccount {
@@ -56,7 +55,7 @@ pub struct ManagedCoreFundsAccount {
     /// Account balance information
     pub balance: WalletCoreBalance,
     /// UTXO set for this account
-    pub utxos: BTreeMap<OutPoint, Utxo>,
+    utxos: BTreeMap<OutPoint, Utxo>,
     /// Outpoints spent by recorded transactions.
     /// Rebuilt from `transactions` during deserialization.
     #[cfg_attr(feature = "serde", serde(skip_serializing))]
@@ -108,6 +107,71 @@ impl ManagedCoreFundsAccount {
     /// Get a mutable reference to the inner keys-account state.
     pub fn keys_mut(&mut self) -> &mut ManagedCoreKeysAccount {
         &mut self.keys
+    }
+
+    /// Read-only view of this account's tracked UTXO set.
+    pub fn utxos(&self) -> &BTreeMap<OutPoint, Utxo> {
+        &self.utxos
+    }
+
+    /// Track a UTXO, ensuring its address is indexed in one of this account's
+    /// pools first.
+    ///
+    /// If the address is already in a pool, the UTXO is recorded directly. If
+    /// not, the pools are extended (one index at a time, interleaved) using
+    /// `key_source` until the address is derived. Pass
+    /// [`KeySource::NoKeySource`] to skip pool reconciliation — used by tests
+    /// with dummy addresses and by internal flows where the address is known
+    /// to already be indexed.
+    pub fn insert_utxo(&mut self, utxo: Utxo, key_source: &KeySource) -> crate::error::Result<()> {
+        let already_indexed = self
+            .keys
+            .managed_account_type()
+            .address_pools()
+            .iter()
+            .any(|pool| pool.contains_address(&utxo.address));
+
+        if !already_indexed && !matches!(key_source, KeySource::NoKeySource) {
+            self.ensure_address_indexed(&utxo.address, key_source)?;
+        }
+
+        self.utxos.insert(utxo.outpoint, utxo);
+        self.keys.bump_monitor_revision();
+        Ok(())
+    }
+
+    /// Drop all tracked UTXOs. Test-only helper.
+    #[cfg(test)]
+    pub(crate) fn clear_utxos(&mut self) {
+        if !self.utxos.is_empty() {
+            self.utxos.clear();
+            self.keys.bump_monitor_revision();
+        }
+    }
+
+    /// Walk this account's address pools index by index, deriving new
+    /// entries until `address` shows up. Bounded so a foreign address
+    /// doesn't pollute pools indefinitely.
+    fn ensure_address_indexed(
+        &mut self,
+        address: &Address,
+        key_source: &KeySource,
+    ) -> crate::error::Result<()> {
+        const MAX_SCAN: u32 = 10_000;
+        let pool_count = self.keys.managed_account_type().address_pools().len();
+        for index in 0..MAX_SCAN {
+            for pool_idx in 0..pool_count {
+                let pool = &mut self.keys.managed_account_type_mut().address_pools_mut()[pool_idx];
+                let derived = pool.generate_address_at_index(index, key_source, true)?;
+                if &derived == address {
+                    return Ok(());
+                }
+            }
+        }
+        Err(crate::error::Error::InvalidAddress(format!(
+            "address {} not derivable within scan window for this account",
+            address
+        )))
     }
 
     /// Check if an outpoint was spent by a previously recorded transaction.

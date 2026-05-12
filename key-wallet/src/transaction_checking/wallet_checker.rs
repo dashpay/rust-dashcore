@@ -460,8 +460,8 @@ mod tests {
         );
 
         // UTXO should be created with is_coinbase = true
-        assert!(!managed_account.utxos.is_empty(), "UTXO should be created for coinbase");
-        let utxo = managed_account.utxos.values().next().expect("Should have UTXO");
+        assert!(!managed_account.utxos().is_empty(), "UTXO should be created for coinbase");
+        let utxo = managed_account.utxos().values().next().expect("Should have UTXO");
         assert!(utxo.is_coinbase, "UTXO should be marked as coinbase");
 
         // Coinbase should be in immature_transactions() since it hasn't matured
@@ -554,7 +554,7 @@ mod tests {
             .get(&0)
             .expect("Should have managed BIP44 account");
 
-        assert!(account.utxos.is_empty(), "Spent UTXO should be removed");
+        assert!(account.utxos().is_empty(), "Spent UTXO should be removed");
 
         let record = account
             .transactions()
@@ -619,8 +619,8 @@ mod tests {
             "Coinbase should be in regular transactions"
         );
 
-        assert!(!managed_account.utxos.is_empty(), "UTXO should be created for coinbase");
-        let utxo = managed_account.utxos.values().next().expect("Should have UTXO");
+        assert!(!managed_account.utxos().is_empty(), "UTXO should be created for coinbase");
+        let utxo = managed_account.utxos().values().next().expect("Should have UTXO");
         assert!(utxo.is_coinbase, "UTXO should be marked as coinbase");
         assert_eq!(utxo.height, block_height);
 
@@ -763,8 +763,8 @@ mod tests {
         );
 
         // Verify UTXO state is unchanged after rescan
-        assert_eq!(managed_account.utxos.len(), 1, "Should still have exactly one UTXO");
-        let utxo = managed_account.utxos.values().next().expect("Should have UTXO");
+        assert_eq!(managed_account.utxos().len(), 1, "Should still have exactly one UTXO");
+        let utxo = managed_account.utxos().values().next().expect("Should have UTXO");
         assert!(utxo.is_confirmed);
         assert_eq!(utxo.txout.value, 100_000);
     }
@@ -838,7 +838,7 @@ mod tests {
         );
 
         // One UTXO should exist (the change output from spend_tx)
-        assert_eq!(account.utxos.len(), 1, "Should have one UTXO (change output)");
+        assert_eq!(account.utxos().len(), 1, "Should have one UTXO (change output)");
 
         // Now process the funding tx (which was spent by spend_tx that we already stored)
         let fund_context = TransactionContext::InBlock(BlockInfo::new(
@@ -861,13 +861,13 @@ mod tests {
 
         // Should still only have one UTXO (the change from spend_tx)
         assert_eq!(
-            account.utxos.len(),
+            account.utxos().len(),
             1,
             "Should still have only one UTXO (change), funding UTXO should not be added"
         );
 
         // The one UTXO should be the change output, not the funding output
-        let utxo = account.utxos.values().next().expect("Should have UTXO");
+        let utxo = account.utxos().values().next().expect("Should have UTXO");
         assert_eq!(
             utxo.outpoint.txid,
             spend_tx.txid(),
@@ -1076,9 +1076,9 @@ mod tests {
             .bip44_managed_account_at_index_mut(1)
             .expect("Should have managed account 1");
         account1.transactions_mut().remove(&txid);
-        account1.utxos.clear();
+        account1.clear_utxos();
         assert!(!account1.transactions().contains_key(&txid));
-        assert!(account1.utxos.is_empty());
+        assert!(account1.utxos().is_empty());
 
         let is_result = managed_wallet
             .check_core_transaction(
@@ -1111,7 +1111,7 @@ mod tests {
                 .expect("Both accounts should hold the record after IS backfill");
             assert!(matches!(record.context, TransactionContext::InstantSend(_)));
             assert!(
-                account.utxos.values().any(|u| u.outpoint.txid == txid && u.is_instantlocked),
+                account.utxos().values().any(|u| u.outpoint.txid == txid && u.is_instantlocked),
                 "Account {account_index} should have an IS-locked UTXO from this tx"
             );
         }
@@ -1183,9 +1183,9 @@ mod tests {
             .first_bip44_managed_account_mut()
             .expect("Should have BIP44 account");
         account.transactions_mut().remove(&txid);
-        account.utxos.clear();
+        account.clear_utxos();
         assert!(!account.transactions().contains_key(&txid));
-        assert!(account.utxos.is_empty());
+        assert!(account.utxos().is_empty());
 
         // Call `confirm_transaction` directly — the backfill path should create the record
         let block_hash = BlockHash::from_slice(&[9u8; 32]).expect("hash");
@@ -1204,8 +1204,8 @@ mod tests {
         assert_eq!(record.net_amount, 250_000);
 
         // Verify UTXO was also created
-        assert_eq!(account.utxos.len(), 1);
-        let utxo = account.utxos.values().next().expect("Should have UTXO");
+        assert_eq!(account.utxos().len(), 1);
+        let utxo = account.utxos().values().next().expect("Should have UTXO");
         assert_eq!(utxo.outpoint.txid, txid);
         assert_eq!(utxo.txout.value, 250_000);
         assert!(utxo.is_confirmed);
@@ -1795,7 +1795,7 @@ mod tests {
             vout: 1,
         };
         let change_utxo =
-            ctx.bip44_account().utxos.get(&change_outpoint).expect("change UTXO recorded");
+            ctx.bip44_account().utxos().get(&change_outpoint).expect("change UTXO recorded");
         // The parent transaction is still in the mempool, so `is_confirmed`
         // stays false; the trust signal is what shifts the UTXO into the
         // confirmed balance bucket.
