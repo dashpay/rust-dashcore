@@ -20,6 +20,18 @@ import time
 import urllib.request
 import zipfile
 
+# Minimum Python version: `tarfile.extractall(..., filter="data")` was added
+# in Python 3.12. Fail fast with a clear message instead of letting the
+# extraction step crash mid-download with a cryptic `TypeError`.
+MIN_PYTHON = (3, 12)
+if sys.version_info < MIN_PYTHON:
+    sys.stderr.write(
+        "setup-dashd.py requires Python "
+        f"{MIN_PYTHON[0]}.{MIN_PYTHON[1]}+ "
+        f"(found {sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}).\n"
+    )
+    sys.exit(1)
+
 # Keep these defaults in sync with .github/workflows/build-and-test.yml
 DASHVERSION = os.environ.get("DASHVERSION", "23.1.0")
 TEST_DATA_VERSION = os.environ.get("TEST_DATA_VERSION", "v0.0.4")
