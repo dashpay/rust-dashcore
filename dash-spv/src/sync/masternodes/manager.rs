@@ -528,11 +528,6 @@ impl<H: BlockHeaderStorage> MasternodesManager<H> {
             return Ok(vec![]);
         }
 
-        // Only transition to Syncing if not already Synced (incremental updates stay Synced)
-        if self.state() != SyncState::Synced {
-            self.set_state(SyncState::Syncing);
-        }
-
         let base_hashes = {
             let engine = self.engine.read().await;
             match compute_qrinfo_anchor_hash(&engine, self.network, tip_height) {
@@ -546,11 +541,19 @@ impl<H: BlockHeaderStorage> MasternodesManager<H> {
             tip_height,
             base_hashes.len()
         );
+        // Send before mutating state. If the request errors (e.g. no peers
+        // connected during a reconnect race), the `?` propagates and we leave
+        // `WaitingForConnections` intact instead of stranding the manager in
+        // `Syncing` with `qrinfo_in_flight = None`, which `tick` cannot recover.
         requests.request_qr_info(base_hashes, tip_block_hash, true)?;
         self.progress.add_qr_infos_requested(1);
         self.sync_state.record_qrinfo_attempt(tip_height);
-
         self.sync_state.start_waiting_for_qrinfo(tip_block_hash);
+
+        // Only transition to Syncing if not already Synced (incremental updates stay Synced)
+        if self.state() != SyncState::Synced {
+            self.set_state(SyncState::Syncing);
+        }
 
         Ok(vec![])
     }
@@ -956,6 +959,28 @@ mod tests {
             "the queued request must be a `GetQRInfo`, got {:?}",
             queued
         );
+    }
+
+    /// `send_qrinfo_for_tip` must not strand the manager in `Syncing` when
+    /// the network send fails. A buffered `BlockHeaderSyncComplete` consumed
+    /// during `WaitingForConnections` reaches `send_qrinfo_for_tip` while no
+    /// peers are connected. If state transitions before the failing send,
+    /// `tick` cannot recover because it gates on `qrinfo_in_flight.is_some()`.
+    #[tokio::test]
+    async fn test_send_qrinfo_for_tip_preserves_state_when_send_fails() {
+        let (mut manager, requests, rx) = make_synced_incremental_manager(70).await;
+        manager.set_state(SyncState::WaitingForConnections);
+        drop(rx);
+
+        let err = manager
+            .send_qrinfo_for_tip(&requests)
+            .await
+            .expect_err("send must fail when the receiver is dropped");
+        assert!(matches!(err, SyncError::Network(_)), "expected Network error, got {:?}", err);
+
+        assert_eq!(manager.state(), SyncState::WaitingForConnections);
+        assert!(manager.sync_state.qrinfo_in_flight.is_none());
+        assert_eq!(manager.progress.qr_infos_requested(), 0);
     }
 
     /// When the cycle gate picks `Incremental` after an `Incremental`
