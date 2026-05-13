@@ -29,6 +29,7 @@ use crate::WalletId;
 /// stand-alone event) is what lets consumers store
 /// `Wallet → Account → CoreAddress → Txo` without breaking the
 /// `CoreAddress` link for UTXOs landing on freshly derived addresses.
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DerivedAddress {
     /// The account that derived this address.

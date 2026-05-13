@@ -20,6 +20,7 @@ use crate::wallet::Wallet;
 use crate::DerivationPath;
 
 /// Which funding account to derive the one-time key from.
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AssetLockFundingType {
     /// Identity registration: m/9'/coinType'/5'/0'/index'

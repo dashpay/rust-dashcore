@@ -10,6 +10,7 @@ license = "CC0-1.0"
 [features]
 default = []
 parallel-filters = ["dep:rayon"]
+serde = ["dep:serde", "key-wallet/serde", "dashcore/serde"]
 bincode = ["key-wallet/bincode", "dep:bincode"]
 test-utils = ["key-wallet/test-utils"]
 bls = ["key-wallet/bls"]
@@ -31,6 +32,7 @@ tracing = "0.1"
 zeroize = { version = "1.8", features = ["derive"] }
 rayon = { version = "1.11", optional = true }
 bincode = { version = "2.0.1", optional = true }
+serde = { version = "1.0", default-features = false, features = ["derive"], optional = true }
 
 [dev-dependencies]
 key-wallet = { path = "../key-wallet", features = ["test-utils", "bincode"] }
