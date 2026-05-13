@@ -316,6 +316,30 @@ mod tests {
         assert_eq!(manager.wanted_message_types(), vec![MessageType::ISLock, MessageType::Inv]);
     }
 
+    /// Buffered `MasternodeStateUpdated` events delivered during
+    /// `WaitingForConnections` must not run validation or transition state.
+    /// `pending_instantlocks` is cleared on disconnect and
+    /// `MasternodesManager` re-emits the event after reconnect.
+    #[tokio::test]
+    async fn test_handle_sync_event_drops_masternode_state_updated_in_waiting_for_connections() {
+        use crate::network::RequestSender;
+        use crate::sync::SyncEvent;
+        use tokio::sync::mpsc::unbounded_channel;
+
+        let mut manager = create_test_manager();
+        manager.set_state(SyncState::WaitingForConnections);
+
+        let event = SyncEvent::MasternodeStateUpdated {
+            height: 100,
+            qr_info_result: None,
+        };
+        let (tx, _rx) = unbounded_channel();
+        let events = manager.handle_sync_event(&event, &RequestSender::new(tx)).await.unwrap();
+
+        assert!(events.is_empty());
+        assert_eq!(manager.state(), SyncState::WaitingForConnections);
+    }
+
     #[tokio::test]
     async fn test_instantsend_duplicate_handling() {
         let mut manager = create_test_manager();

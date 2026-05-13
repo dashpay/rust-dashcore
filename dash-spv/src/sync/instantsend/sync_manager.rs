@@ -62,6 +62,14 @@ impl SyncManager for InstantSendManager {
         event: &SyncEvent,
         _requests: &RequestSender,
     ) -> SyncResult<Vec<SyncEvent>> {
+        // Drop buffered events that arrive between `stop_sync` and the next
+        // `start_sync`. `pending_instantlocks` is cleared on disconnect, and
+        // `MasternodesManager` re-emits `MasternodeStateUpdated` once it
+        // completes a sync cycle after reconnect.
+        if self.state() == SyncState::WaitingForConnections {
+            return Ok(vec![]);
+        }
+
         // Validate pending InstantLocks when masternode state is updated
         if let SyncEvent::MasternodeStateUpdated {
             ..
