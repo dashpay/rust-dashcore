@@ -358,22 +358,17 @@ pub(super) async fn wait_for_wallet_tx_chainlocked(
                         return chain_lock.block_height;
                     }
                     Ok(WalletEvent::BlockProcessed {
-                        chain_lock: Some(_),
+                        chain_lock: Some(cl),
                         inserted,
                         updated,
                         ..
                     }) if inserted.iter().chain(updated.iter()).any(|r| r.txid == txid) =>
                     {
                         tracing::info!(
-                            "Wallet BlockProcessed(chainlocked, txid={})",
-                            txid
+                            "Wallet BlockProcessed(chainlock_height={}, txid={})",
+                            cl.block_height, txid
                         );
-                        return inserted
-                            .iter()
-                            .chain(updated.iter())
-                            .find(|r| r.txid == txid)
-                            .and_then(|r| r.context.block_info().map(|i| i.height()))
-                            .unwrap_or_default();
+                        return cl.block_height;
                     }
                     Ok(other) => {
                         tracing::debug!("Ignoring wallet event: {}", other.description());
