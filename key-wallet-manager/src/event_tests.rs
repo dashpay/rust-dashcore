@@ -12,10 +12,11 @@ use dashcore::hash_types::CycleHash;
 use dashcore::hashes::Hash;
 use dashcore::opcodes;
 use dashcore::{
-    BlockHash, CompactTarget, OutPoint, ScriptBuf, TxIn, TxMerkleNode, TxOut, Txid, Witness,
+    BlockHash, CompactTarget, OutPoint, PublicKey, ScriptBuf, TxIn, TxMerkleNode, TxOut, Txid,
+    Witness,
 };
 use key_wallet::account::StandardAccountType;
-use key_wallet::managed_account::address_pool::AddressPoolType;
+use key_wallet::managed_account::address_pool::{AddressPoolType, PublicKeyType};
 use key_wallet::managed_account::managed_account_trait::ManagedAccountTrait;
 use key_wallet::managed_account::managed_account_type::ManagedAccountType;
 use key_wallet::wallet::managed_wallet_info::transaction_building::AccountTypePreference;
@@ -820,17 +821,13 @@ async fn test_mempool_tx_to_highest_external_carries_addresses_derived() {
             derived.derivation_index
         );
         let stored_pubkey = match stored.public_key.as_ref().expect("ECDSA pool stores pubkey") {
-            key_wallet::managed_account::address_pool::PublicKeyType::ECDSA(b) => b,
+            PublicKeyType::ECDSA(b) => b,
             other => panic!("BIP44 external pool produced non-ECDSA key: {:?}", other),
         };
+        let expected = PublicKey::from_slice(stored_pubkey)
+            .expect("BIP44 external pool must store a valid compressed ECDSA key");
         assert_eq!(
-            stored_pubkey.len(),
-            33,
-            "BIP44 external pool must store 33-byte compressed keys"
-        );
-        assert_eq!(
-            &derived.public_key[..],
-            stored_pubkey.as_slice(),
+            derived.public_key, expected,
             "public key mismatch at index {}",
             derived.derivation_index
         );

@@ -10,7 +10,7 @@ use std::fmt;
 use dashcore::ephemerealdata::chain_lock::ChainLock;
 use dashcore::ephemerealdata::instant_lock::InstantLock;
 use dashcore::prelude::CoreBlockHeight;
-use dashcore::Txid;
+use dashcore::{PublicKey, Txid};
 use key_wallet::account::AccountType;
 use key_wallet::managed_account::address_pool::{AddressPoolType, PublicKeyType};
 use key_wallet::managed_account::transaction_record::TransactionRecord;
@@ -45,20 +45,20 @@ pub struct DerivedAddress {
     pub derivation_index: u32,
     /// The derived address.
     pub address: dashcore::Address,
-    /// Compressed ECDSA public key (33 bytes). Non-ECDSA pools
+    /// ECDSA public key for the derived address. Non-ECDSA pools
     /// (BLS / EdDSA) are skipped during projection.
-    pub public_key: [u8; 33],
+    pub public_key: PublicKey,
 }
 
 impl DerivedAddress {
     /// Project a [`DerivedAddressInfo`] from key-wallet into a
     /// `DerivedAddress` event payload. Returns `None` for non-ECDSA pools
-    /// (BLS / EdDSA) since the event field carries a 33-byte compressed
-    /// key — those pools don't trigger gap-limit extension on Core
-    /// transactions in practice, but skip rather than panic if they do.
-    /// Drops are logged so a future change that wires gap-limit extension
-    /// into a BLS / EdDSA pool surfaces in traces rather than silently
-    /// orphaning UTXOs at the persister.
+    /// (BLS / EdDSA) since the event field carries an ECDSA key. Those
+    /// pools don't trigger gap-limit extension on Core transactions in
+    /// practice, but skip rather than panic if they do. Drops are logged
+    /// so a future change that wires gap-limit extension into a BLS /
+    /// EdDSA pool surfaces in traces rather than silently orphaning UTXOs
+    /// at the persister.
     pub(crate) fn from_info(derived: DerivedAddressInfo) -> Option<Self> {
         let account_type = derived.account_type;
         let pool_type = derived.pool_type;
@@ -73,31 +73,29 @@ impl DerivedAddress {
                 );
                 return None;
             }
-            Some(PublicKeyType::ECDSA(bytes)) => {
-                if bytes.len() != 33 {
+            Some(PublicKeyType::ECDSA(bytes)) => match PublicKey::from_slice(bytes) {
+                Ok(pk) => pk,
+                Err(err) => {
                     // Producer (`generate_address_at_index`) always stores
-                    // 33-byte compressed keys, so a length mismatch is a
-                    // bug, not an expected drop.
+                    // valid compressed keys, so a parse failure is a bug,
+                    // not an expected drop.
                     tracing::warn!(
                         ?account_type,
                         ?pool_type,
                         index,
-                        len = bytes.len(),
-                        "dropping derived address: ECDSA public key is not 33 bytes"
+                        %err,
+                        "dropping derived address: ECDSA public key failed to parse"
                     );
                     return None;
                 }
-                let mut arr = [0u8; 33];
-                arr.copy_from_slice(bytes);
-                arr
-            }
+            },
             Some(PublicKeyType::BLS(_)) | Some(PublicKeyType::EdDSA(_)) => {
                 tracing::debug!(
                     ?account_type,
                     ?pool_type,
                     index,
                     "dropping non-ECDSA derived address from event projection \
-                     (event field is 33-byte compressed ECDSA only)"
+                     (event field is ECDSA only)"
                 );
                 return None;
             }
@@ -425,30 +423,34 @@ mod project_derived_addresses_tests {
     use key_wallet::managed_account::address_pool::AddressInfo;
     use std::collections::BTreeMap;
 
-    /// Compressed encoding of the secp256k1 generator point — a known
-    /// on-curve 33-byte value `dashcore::PublicKey::from_slice` accepts.
-    /// Tests don't care which key it is; they care that projection
-    /// preserves the bytes round-trip.
+    /// Compressed encoding of the secp256k1 generator point (G).
     const TEST_PUBKEY_G: [u8; 33] = [
         0x02, 0x79, 0xbe, 0x66, 0x7e, 0xf9, 0xdc, 0xbb, 0xac, 0x55, 0xa0, 0x62, 0x95, 0xce, 0x87,
         0x0b, 0x07, 0x02, 0x9b, 0xfc, 0xdb, 0x2d, 0xce, 0x28, 0xd9, 0x59, 0xf2, 0x81, 0x5b, 0x16,
         0xf8, 0x17, 0x98,
     ];
 
+    /// Compressed encoding of 2G. A second well-known on-curve point,
+    /// used to distinguish two `DerivedAddressInfo` entries when testing
+    /// dedup behavior. The point must be on-curve so the projection's
+    /// `PublicKey::from_slice` parse succeeds.
+    const TEST_PUBKEY_2G: [u8; 33] = [
+        0x02, 0xc6, 0x04, 0x7f, 0x94, 0x41, 0xed, 0x7d, 0x6d, 0x30, 0x45, 0x40, 0x6e, 0x95, 0xc0,
+        0x7c, 0xd8, 0x5c, 0x77, 0x8e, 0x4b, 0x8c, 0xef, 0x3c, 0xa7, 0xab, 0xac, 0x09, 0xb9, 0x5c,
+        0x70, 0x9e, 0xe5,
+    ];
+
     /// Build a stub `DerivedAddressInfo` for unit-testing the projection
-    /// without spinning up a wallet. `tag` differentiates the
-    /// `public_key` so "first-seen wins" can be observed across
-    /// duplicates; pass `None` to use the default valid key.
+    /// without spinning up a wallet. `alt_key` toggles between G and 2G
+    /// so "first-seen wins" can be observed across duplicates.
     fn make_derived(
         account_type: AccountType,
         pool_type: AddressPoolType,
         index: u32,
-        tag: Option<u8>,
+        alt_key: bool,
     ) -> DerivedAddressInfo {
-        // Take a real compressed pubkey and tweak only the `public_key`
-        // bytes via `tag` (which the projection passes through verbatim).
-        // We don't actually re-derive the address from the tagged bytes —
-        // tests don't depend on address↔pubkey consistency, only on
+        // Always derive the address from `G` regardless of `alt_key`.
+        // Tests don't depend on address↔pubkey consistency, only on
         // dedup keys and pubkey round-trip.
         let pubkey =
             dashcore::PublicKey::from_slice(&TEST_PUBKEY_G).expect("generator point is valid");
@@ -458,12 +460,11 @@ mod project_derived_addresses_tests {
             ChildNumber::from_normal_idx(0).unwrap(),
             ChildNumber::from_normal_idx(index).unwrap(),
         ]);
-        let mut pubkey_bytes = TEST_PUBKEY_G.to_vec();
-        if let Some(t) = tag {
-            // Tag a non-prefix byte so `[u8; 33]` round-trip is observable
-            // without affecting the leading `0x02` compressed marker.
-            pubkey_bytes[32] = t;
-        }
+        let pubkey_bytes = if alt_key {
+            TEST_PUBKEY_2G.to_vec()
+        } else {
+            TEST_PUBKEY_G.to_vec()
+        };
         DerivedAddressInfo {
             account_type,
             pool_type,
@@ -501,21 +502,16 @@ mod project_derived_addresses_tests {
     #[test]
     fn project_dedups_overlapping_keys() {
         let acct = standard_account_0();
-        let first = make_derived(acct, AddressPoolType::External, 5, Some(0xaa));
-        let first_bytes = match first.info.public_key.as_ref().expect("ECDSA pubkey") {
-            PublicKeyType::ECDSA(b) => b.clone(),
-            _ => unreachable!(),
-        };
-        let second = make_derived(acct, AddressPoolType::External, 5, Some(0xbb));
+        let first = make_derived(acct, AddressPoolType::External, 5, false);
+        let second = make_derived(acct, AddressPoolType::External, 5, true);
 
         let projected = project_derived_addresses(vec![first, second]);
         assert_eq!(projected.len(), 1, "duplicate (account, pool, index) must dedup to one entry");
         assert_eq!(projected[0].account_type, acct);
         assert_eq!(projected[0].pool_type, AddressPoolType::External);
         assert_eq!(projected[0].derivation_index, 5);
-        // First-seen wins: surviving pubkey matches `first`, not `second`.
-        assert_eq!(&projected[0].public_key[..], first_bytes.as_slice());
-        assert_eq!(projected[0].public_key[32], 0xaa);
+        let expected = PublicKey::from_slice(&TEST_PUBKEY_G).expect("G is valid");
+        assert_eq!(projected[0].public_key, expected);
     }
 
     /// Different indices on the same pool must NOT dedup.
@@ -523,9 +519,9 @@ mod project_derived_addresses_tests {
     fn project_keeps_distinct_indices_on_same_pool() {
         let acct = standard_account_0();
         let infos = vec![
-            make_derived(acct, AddressPoolType::External, 5, None),
-            make_derived(acct, AddressPoolType::External, 6, None),
-            make_derived(acct, AddressPoolType::External, 7, None),
+            make_derived(acct, AddressPoolType::External, 5, false),
+            make_derived(acct, AddressPoolType::External, 6, false),
+            make_derived(acct, AddressPoolType::External, 7, false),
         ];
         let projected = project_derived_addresses(infos);
         assert_eq!(projected.len(), 3);
@@ -540,8 +536,8 @@ mod project_derived_addresses_tests {
     fn project_keeps_same_index_across_different_pools() {
         let acct = standard_account_0();
         let projected = project_derived_addresses(vec![
-            make_derived(acct, AddressPoolType::External, 5, None),
-            make_derived(acct, AddressPoolType::Internal, 5, None),
+            make_derived(acct, AddressPoolType::External, 5, false),
+            make_derived(acct, AddressPoolType::Internal, 5, false),
         ]);
         assert_eq!(projected.len(), 2);
         let pools: std::collections::BTreeSet<AddressPoolType> =
@@ -555,8 +551,18 @@ mod project_derived_addresses_tests {
     /// length 0 is the contract — no panic.
     #[test]
     fn project_drops_entry_with_missing_pubkey() {
-        let mut info = make_derived(standard_account_0(), AddressPoolType::External, 5, None);
+        let mut info = make_derived(standard_account_0(), AddressPoolType::External, 5, false);
         info.info.public_key = None;
+        let projected = project_derived_addresses(vec![info]);
+        assert!(projected.is_empty());
+    }
+
+    /// 33 bytes that don't parse as a valid compressed secp256k1 point
+    /// must drop rather than panic.
+    #[test]
+    fn project_drops_entry_with_invalid_curve_point() {
+        let mut info = make_derived(standard_account_0(), AddressPoolType::External, 5, false);
+        info.info.public_key = Some(PublicKeyType::ECDSA(vec![0xff; 33]));
         let projected = project_derived_addresses(vec![info]);
         assert!(projected.is_empty());
     }
