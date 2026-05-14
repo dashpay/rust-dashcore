@@ -38,6 +38,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: "test-${{ inputs.os }}-${{ matrix.group }}"
+          prefix-key: "v1-rust"
+          cache-bin: false
 
       - name: Install cargo-llvm-cov
         if: inputs.coverage
