@@ -25,5 +25,4 @@ pub const PEER_DISCOVERY_INTERVAL: Duration = Duration::from_secs(60); // Discov
 
 // DNS and polling intervals
 pub const DNS_DISCOVERY_DELAY: Duration = Duration::from_secs(10);
-pub const MESSAGE_POLL_INTERVAL: Duration = Duration::from_millis(10);
 pub const MESSAGE_RECEIVE_TIMEOUT: Duration = Duration::from_millis(100);

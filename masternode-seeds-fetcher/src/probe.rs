@@ -54,7 +54,7 @@ pub async fn probe_core(
 }
 
 async fn probe_core_inner(peer_addr: SocketAddr, network: DashNetwork) -> Result<Option<u32>> {
-    let mut peer = Peer::connect(peer_addr, CONNECT_TIMEOUT.as_secs(), network).await?;
+    let peer = Peer::connect(peer_addr, CONNECT_TIMEOUT.as_secs(), network).await?;
 
     let version = VersionMessage::new(
         ServiceFlags::NONE,
