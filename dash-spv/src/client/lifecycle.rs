@@ -26,6 +26,7 @@ use dashcore_hashes::Hash;
 use key_wallet_manager::WalletInterface;
 use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
+use tokio_util::sync::CancellationToken;
 
 impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, N, S> {
     /// Create a new SPV client with the given configuration, network, storage, and wallet.
@@ -145,6 +146,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
             sync_coordinator: Arc::new(Mutex::new(sync_coordinator)),
             running: Arc::new(RwLock::new(false)),
             event_handlers: Arc::new(event_handlers),
+            cancel_token: CancellationToken::new(),
         };
 
         // Load wallet data from storage

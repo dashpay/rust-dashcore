@@ -8,7 +8,6 @@ use clap::{Parser, ValueEnum};
 use dash_spv::{ClientConfig, DashSpvClient, LevelFilter, MempoolStrategy, Network};
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
 use key_wallet_manager::WalletManager;
-use tokio_util::sync::CancellationToken;
 
 /// Network selection for CLI
 #[derive(Clone, Copy, Debug, ValueEnum)]
@@ -315,22 +314,17 @@ async fn run_client<S: dash_spv::storage::StorageManager>(
             }
         };
 
-    let shutdown_token = CancellationToken::new();
-    let ctrl_c_token = shutdown_token.clone();
+    let stop_client = client.clone();
     tokio::spawn(async move {
-        tokio::select! {
-            result = tokio::signal::ctrl_c() => {
-                result.ok();
-                tracing::debug!("Shutdown signal received");
-            }
-            _ = ctrl_c_token.cancelled() => {
-                tracing::debug!("Shutdown token cancelled");
+        if tokio::signal::ctrl_c().await.is_ok() {
+            tracing::debug!("Shutdown signal received");
+            if let Err(e) = stop_client.stop().await {
+                tracing::warn!("Error during ctrl-c stop: {}", e);
             }
         }
-        ctrl_c_token.cancel();
     });
 
-    client.run(shutdown_token).await?;
+    client.run().await?;
 
     Ok(())
 }

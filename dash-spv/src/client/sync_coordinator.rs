@@ -24,12 +24,12 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
         self.sync_coordinator.lock().await.progress().clone()
     }
 
-    /// Start the client and run the sync loop until the token is cancelled.
+    /// Start the client and run the sync loop until `stop()` is called.
     ///
     /// Subscribes to all event channels internally and dispatches events to the
     /// event handler provided at construction. Calls `start()` internally, runs
     /// continuous network monitoring, and calls `stop()` before returning.
-    pub async fn run(&self, token: CancellationToken) -> Result<()> {
+    pub async fn run(&self) -> Result<()> {
         let handlers = self.event_handlers.clone();
         let monitor_shutdown = CancellationToken::new();
         let (monitor_failure_tx, mut monitor_failure_rx) = mpsc::channel::<String>(1);
@@ -115,7 +115,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
                 _ = sync_coordinator_tick_interval.tick() => {
                     self.sync_coordinator.lock().await.tick().await.err().map(Into::into)
                 }
-                _ = token.cancelled() => {
+                _ = self.cancel_token.cancelled() => {
                     tracing::debug!("DashSpvClient run loop cancelled");
                     break None
                 }

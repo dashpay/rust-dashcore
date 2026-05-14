@@ -9,7 +9,6 @@ use key_wallet_manager::WalletManager;
 use std::str::FromStr;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tokio_util::sync::CancellationToken;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -42,9 +41,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Starting synchronization with filter support...");
     println!("Watching address: {:?}", watch_address);
 
-    let shutdown_token = CancellationToken::new();
-
-    client.run(shutdown_token).await?;
+    client.run().await?;
 
     println!("Done!");
     Ok(())

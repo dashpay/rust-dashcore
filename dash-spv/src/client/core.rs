@@ -11,6 +11,7 @@
 use dashcore::sml::masternode_list_engine::MasternodeListEngine;
 use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
+use tokio_util::sync::CancellationToken;
 
 use super::ClientConfig;
 use crate::error::{Result, SpvError};
@@ -113,6 +114,7 @@ pub struct DashSpvClient<W: WalletInterface, N: NetworkManager, S: StorageManage
     pub(super) sync_coordinator: Arc<Mutex<PersistentSyncCoordinator<W>>>,
     pub(super) running: Arc<RwLock<bool>>,
     pub(super) event_handlers: Arc<Vec<Arc<dyn super::EventHandler>>>,
+    pub(super) cancel_token: CancellationToken,
 }
 
 impl<W: WalletInterface, N: NetworkManager, S: StorageManager> Clone for DashSpvClient<W, N, S> {
@@ -126,6 +128,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> Clone for DashSpv
             sync_coordinator: Arc::clone(&self.sync_coordinator),
             running: Arc::clone(&self.running),
             event_handlers: Arc::clone(&self.event_handlers),
+            cancel_token: self.cancel_token.clone(),
         }
     }
 }

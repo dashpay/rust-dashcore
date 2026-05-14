@@ -23,7 +23,6 @@ use tempfile::TempDir;
 use tokio::sync::{broadcast, watch, RwLock};
 use tokio::task::JoinHandle;
 use tokio::time;
-use tokio_util::sync::CancellationToken;
 
 /// Timeout for masternode sync tests (masternode sync takes longer than wallet sync).
 pub(super) const SYNC_TIMEOUT: u64 = 60;
@@ -38,14 +37,13 @@ pub(super) struct ClientHandle {
     pub(super) sync_event_receiver: broadcast::Receiver<SyncEvent>,
     pub(super) wallet_event_receiver: broadcast::Receiver<WalletEvent>,
     pub(super) _network_event_receiver: broadcast::Receiver<NetworkEvent>,
-    pub(super) cancel_token: CancellationToken,
     pub(super) engine: Arc<RwLock<MasternodeListEngine>>,
 }
 
 impl ClientHandle {
     pub(super) async fn stop(&mut self) {
-        tracing::info!("Cancelling client run loop...");
-        self.cancel_token.cancel();
+        tracing::info!("Stopping client run loop...");
+        self.client.stop().await.expect("client stop failed");
         if let Some(handle) = self.run_handle.take() {
             handle.await.expect("Run task panicked").expect("Run task returned error");
         }
@@ -185,11 +183,9 @@ pub(super) async fn create_and_start_client(
 
     let engine =
         client.masternode_list_engine().expect("Engine should be initialized after creation");
-    let cancel_token = CancellationToken::new();
-    let run_token = cancel_token.clone();
     let run_client = client.clone();
 
-    let run_handle = tokio::task::spawn(async move { run_client.run(run_token).await });
+    let run_handle = tokio::task::spawn(async move { run_client.run().await });
 
     ClientHandle {
         client,
@@ -198,7 +194,6 @@ pub(super) async fn create_and_start_client(
         sync_event_receiver,
         wallet_event_receiver,
         _network_event_receiver,
-        cancel_token,
         engine,
     }
 }

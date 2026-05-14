@@ -9,7 +9,6 @@ use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
 use key_wallet_manager::WalletManager;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tokio_util::sync::CancellationToken;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -40,9 +39,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // - Reorgs via handle_reorg()
     // - Compact filter checks via check_compact_filter()
 
-    let shutdown_token = CancellationToken::new();
-
-    client.run(shutdown_token).await?;
+    client.run().await?;
 
     println!("Done!");
     Ok(())

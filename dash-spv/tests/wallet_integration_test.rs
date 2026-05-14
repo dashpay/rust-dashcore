@@ -6,7 +6,6 @@ use std::sync::Arc;
 use std::time::Duration;
 use tempfile::TempDir;
 use tokio::sync::RwLock;
-use tokio_util::sync::CancellationToken;
 
 use dash_spv::network::PeerNetworkManager;
 use dash_spv::storage::DiskStorageManager;
@@ -49,11 +48,8 @@ async fn test_spv_client_creation() {
 async fn test_spv_client_run_stop() {
     let client = create_test_client().await;
 
-    let token = CancellationToken::new();
-    let cancel = token.clone();
-
     let run_client = client.clone();
-    let handle = tokio::spawn(async move { run_client.run(token).await });
+    let handle = tokio::spawn(async move { run_client.run().await });
 
     tokio::time::timeout(Duration::from_secs(5), async {
         while !client.is_running().await {
@@ -63,7 +59,7 @@ async fn test_spv_client_run_stop() {
     .await
     .expect("client failed to start");
 
-    cancel.cancel();
+    client.stop().await.unwrap();
     handle.await.unwrap().unwrap();
 
     assert!(!client.is_running().await);
