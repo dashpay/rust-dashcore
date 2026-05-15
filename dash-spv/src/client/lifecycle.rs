@@ -36,6 +36,8 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
         wallet: Arc<RwLock<W>>,
         event_handlers: Vec<Arc<dyn EventHandler>>,
     ) -> Result<Self> {
+        tracing::info!("{}", crate::version_info());
+
         // Validate configuration
         config.validate().map_err(SpvError::Config)?;
 

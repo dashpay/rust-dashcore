@@ -101,3 +101,64 @@ pub use dashcore::sml::llmq_type::LLMQType;
 
 /// Current version of the dash-spv library.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// Short git commit the library was built from, empty if it could not be determined.
+pub const GIT_HASH: &str = env!("DASH_SPV_GIT_HASH");
+
+/// Whether the working tree had uncommitted tracked changes at build time.
+pub const GIT_DIRTY: bool = const_str_eq(env!("DASH_SPV_GIT_DIRTY"), "true");
+
+/// Whether the build was made from a commit pointed at by a `v*` release tag.
+pub const GIT_TAGGED: bool = const_str_eq(env!("DASH_SPV_GIT_TAGGED"), "true");
+
+const fn const_str_eq(a: &str, b: &str) -> bool {
+    let (a, b) = (a.as_bytes(), b.as_bytes());
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut i = 0;
+    while i < a.len() {
+        if a[i] != b[i] {
+            return false;
+        }
+        i += 1;
+    }
+    true
+}
+
+/// Human readable version.
+///
+/// A release build (the commit is pointed at by a `v*` tag and the tree is clean)
+/// renders just `dash-spv 0.42.0`. Any development build surfaces the commit so it
+/// is recognizable as non-release: `dash-spv 0.42.0 (a1b2c3d4e5f6)`, or
+/// `dash-spv 0.42.0 (a1b2c3d4e5f6-dirty)` with uncommitted changes. Builds with no
+/// git context (e.g. a packaged source tarball) render just `dash-spv 0.42.0`.
+pub fn version_info() -> String {
+    if GIT_HASH.is_empty() || (GIT_TAGGED && !GIT_DIRTY) {
+        format!("dash-spv {VERSION}")
+    } else if GIT_DIRTY {
+        format!("dash-spv {VERSION} ({GIT_HASH}-dirty)")
+    } else {
+        format!("dash-spv {VERSION} ({GIT_HASH})")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{version_info, GIT_DIRTY, GIT_HASH, GIT_TAGGED, VERSION};
+
+    #[test]
+    fn version_info_format() {
+        let info = version_info();
+        assert!(info.starts_with("dash-spv "));
+        assert!(info.contains(VERSION));
+
+        let is_release = GIT_HASH.is_empty() || (GIT_TAGGED && !GIT_DIRTY);
+        if is_release {
+            assert_eq!(info, format!("dash-spv {VERSION}"));
+        } else {
+            assert!(info.contains(GIT_HASH));
+            assert_eq!(info.ends_with("-dirty)"), GIT_DIRTY);
+        }
+    }
+}
