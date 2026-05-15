@@ -529,6 +529,7 @@ fn main() {
                 on_block_processed: Some(on_wallet_block_processed),
                 on_sync_height_advanced: Some(on_sync_height_advanced),
                 on_transactions_chainlocked: Some(on_wallet_transactions_chainlocked),
+                on_chain_lock_applied: None,
                 user_data: ptr::null_mut(),
             },
             error: FFIClientErrorCallback {

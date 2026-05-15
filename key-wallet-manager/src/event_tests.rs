@@ -1060,8 +1060,22 @@ async fn test_apply_chain_lock_promotes_in_block_record_and_emits_event() {
     manager.apply_chain_lock(ChainLock::dummy(100));
 
     let events = drain_events(&mut rx);
-    assert_eq!(events.len(), 1, "exactly one TransactionsChainlocked event expected");
+    // First chainlock advances the wallet's metadata AND promotes a
+    // record, so both events fire — `ChainLockApplied` first (so
+    // persisters write the durable metadata before the promotion),
+    // then `TransactionsChainlocked`.
+    assert_eq!(events.len(), 2, "ChainLockApplied + TransactionsChainlocked expected, got {events:?}");
     match &events[0] {
+        WalletEvent::ChainLockApplied {
+            wallet_id: wid,
+            chain_lock,
+        } => {
+            assert_eq!(*wid, wallet_id);
+            assert_eq!(chain_lock.block_height, 100);
+        }
+        other => panic!("expected ChainLockApplied first, got {:?}", other),
+    }
+    match &events[1] {
         WalletEvent::TransactionsChainlocked {
             wallet_id: wid,
             chain_lock,
@@ -1078,17 +1092,32 @@ async fn test_apply_chain_lock_promotes_in_block_record_and_emits_event() {
                 .expect("the receiving account should have a promotion entry");
             assert_eq!(txids, &vec![tx.txid()]);
         }
-        other => panic!("expected TransactionsChainlocked, got {:?}", other),
+        other => panic!("expected TransactionsChainlocked second, got {:?}", other),
     }
 }
 
 #[tokio::test]
-async fn test_apply_chain_lock_with_no_records_emits_no_event_but_advances_boundary() {
+async fn test_apply_chain_lock_with_no_records_emits_chain_lock_applied_and_advances_boundary() {
     let (mut manager, wallet_id, _addr) = setup_manager_with_wallet();
     let mut rx = manager.subscribe_events();
     manager.apply_chain_lock(ChainLock::dummy(500));
 
-    assert_no_events(&mut rx);
+    // Even though no record was promoted, the wallet's
+    // `last_applied_chain_lock` advanced from `None` to `Some(500)` —
+    // durable consumers (e.g. asset-lock persisters) must observe a
+    // single `ChainLockApplied` to know the metadata moved.
+    let advance_events = drain_events(&mut rx);
+    assert_eq!(advance_events.len(), 1, "exactly one ChainLockApplied expected, got {advance_events:?}");
+    match &advance_events[0] {
+        WalletEvent::ChainLockApplied {
+            wallet_id: wid,
+            chain_lock,
+        } => {
+            assert_eq!(*wid, wallet_id);
+            assert_eq!(chain_lock.block_height, 500);
+        }
+        other => panic!("expected ChainLockApplied, got {:?}", other),
+    }
 
     // Subsequent block below the new finality boundary must be born chainlocked.
     let addr = manager
@@ -1143,13 +1172,32 @@ async fn test_apply_chain_lock_is_idempotent_on_already_finalized() {
         1,
         "first chainlock must emit exactly one TransactionsChainlocked"
     );
+    assert_eq!(
+        first.iter().filter(|e| matches!(e, WalletEvent::ChainLockApplied { .. })).count(),
+        1,
+        "first chainlock must also emit ChainLockApplied (None -> Some(50))"
+    );
 
-    // Replaying the same chainlock, or applying a higher one with no
-    // outstanding InBlock records below it, must not re-emit.
+    // Replaying the same chainlock must not re-emit anything: no
+    // promotions and no metadata advance.
     manager.apply_chain_lock(ChainLock::dummy(50));
-    manager.apply_chain_lock(ChainLock::dummy(80));
-
     assert_no_events(&mut rx);
+
+    // A higher chainlock with no outstanding InBlock records below it
+    // still advances the metadata boundary, so emits exactly one
+    // `ChainLockApplied` (no `TransactionsChainlocked`).
+    manager.apply_chain_lock(ChainLock::dummy(80));
+    let advance = drain_events(&mut rx);
+    assert_eq!(
+        advance.iter().filter(|e| matches!(e, WalletEvent::TransactionsChainlocked { .. })).count(),
+        0,
+        "no records to promote => no TransactionsChainlocked"
+    );
+    assert_eq!(
+        advance.iter().filter(|e| matches!(e, WalletEvent::ChainLockApplied { .. })).count(),
+        1,
+        "metadata advance from 50 -> 80 must emit exactly one ChainLockApplied"
+    );
 }
 
 #[tokio::test]

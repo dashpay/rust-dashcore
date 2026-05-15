@@ -275,6 +275,46 @@ pub enum WalletEvent {
         /// New scanned height for the wallet.
         height: CoreBlockHeight,
     },
+    /// The wallet's `last_applied_chain_lock` metadata advanced because
+    /// the wallet manager applied a chainlock whose height strictly
+    /// exceeded the previously-stored chainlock (or moved it from
+    /// `None` to `Some`).
+    ///
+    /// Fires once per wallet, every time the finality boundary
+    /// advances forward, INDEPENDENTLY of whether any records were
+    /// promoted in the same call. It is paired with — and emitted
+    /// immediately before — a [`WalletEvent::TransactionsChainlocked`]
+    /// event when the same chainlock also promoted records; consumers
+    /// that listen to both will see this event first so the durable
+    /// `last_applied_chain_lock` is written before the promotion is
+    /// persisted.
+    ///
+    /// The two events have distinct audiences:
+    ///
+    /// - Consumers that persist `last_applied_chain_lock` (so they can
+    ///   reconstruct chainlock-derived state across restarts — e.g. a
+    ///   platform-wallet bridge that builds a `ChainAssetLockProof`
+    ///   for an `InBlock` asset-lock TX from the persisted chainlock)
+    ///   listen here. Listening only to `TransactionsChainlocked`
+    ///   misses every chainlock whose height advanced the wallet's
+    ///   metadata without promoting any record — a chainlock at a
+    ///   height ahead of the wallet's recorded history still
+    ///   establishes the finality boundary for future late-arriving
+    ///   blocks but emits no promotion.
+    /// - Consumers that only care about per-tx promotions keep
+    ///   subscribing to `TransactionsChainlocked` and can ignore this
+    ///   event.
+    ///
+    /// Carries the full `ChainLock` (signing proof: `block_height`,
+    /// `block_hash`, `signature`) so consumers can persist the proof
+    /// alongside the height.
+    ChainLockApplied {
+        /// ID of the affected wallet.
+        wallet_id: WalletId,
+        /// The chainlock whose application advanced the wallet's
+        /// `last_applied_chain_lock`. Carries the signing proof.
+        chain_lock: ChainLock,
+    },
     /// Previously-recorded `InBlock` transactions were promoted to
     /// [`key_wallet::transaction_checking::TransactionContext::InChainLockedBlock`] because a chainlock now
     /// covers their height. Emitted by the wallet manager after the
@@ -287,6 +327,12 @@ pub enum WalletEvent {
     /// `chain_lock = Some(..)` and their records already in
     /// `InChainLockedBlock` context. They do not appear here, since no
     /// promotion took place.
+    ///
+    /// When this event fires for a chainlock that also advanced the
+    /// wallet's `last_applied_chain_lock`, it is preceded by a
+    /// [`WalletEvent::ChainLockApplied`] event for the same chainlock.
+    /// Consumers that need both metadata persistence and the promotion
+    /// list should subscribe to both events.
     TransactionsChainlocked {
         /// ID of the affected wallet.
         wallet_id: WalletId,
@@ -322,6 +368,10 @@ impl WalletEvent {
                 ..
             }
             | WalletEvent::SyncHeightAdvanced {
+                wallet_id,
+                ..
+            }
+            | WalletEvent::ChainLockApplied {
                 wallet_id,
                 ..
             }
@@ -390,6 +440,12 @@ impl fmt::Display for WalletEvent {
                 ..
             } => {
                 write!(f, "SyncHeightAdvanced(height={})", height)
+            }
+            WalletEvent::ChainLockApplied {
+                chain_lock,
+                ..
+            } => {
+                write!(f, "ChainLockApplied(chainlock_height={})", chain_lock.block_height)
             }
             WalletEvent::TransactionsChainlocked {
                 chain_lock,

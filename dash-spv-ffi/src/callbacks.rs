@@ -841,6 +841,33 @@ pub type OnWalletTransactionsChainlockedCallback = Option<
     ),
 >;
 
+/// Callback for `WalletEvent::ChainLockApplied`.
+///
+/// Fires once per wallet every time the wallet's
+/// `last_applied_chain_lock` advances forward by height (or moves from
+/// `None` to `Some`), independently of whether any record was
+/// promoted. Carries the full signing proof so durable consumers can
+/// persist the chainlock alongside the height — important for SDKs
+/// that need to reconstruct chainlock-derived state across restarts
+/// (e.g. building a `ChainAssetLockProof` for an `InBlock` asset-lock
+/// TX from the persisted chainlock).
+///
+/// When the same chainlock also promoted records, this callback fires
+/// BEFORE `on_transactions_chainlocked` so persisters can write the
+/// durable metadata before the promotion record.
+///
+/// All pointers are borrowed and only valid for the duration of the
+/// callback.
+pub type OnWalletChainLockAppliedCallback = Option<
+    extern "C" fn(
+        wallet_id: *const c_char,
+        cl_height: u32,
+        cl_hash: *const [u8; 32],
+        cl_signature: *const [u8; 96],
+        user_data: *mut c_void,
+    ),
+>;
+
 /// Wallet event callbacks - one callback per WalletEvent variant.
 ///
 /// Set only the callbacks you're interested in; unset callbacks will be ignored.
@@ -856,6 +883,10 @@ pub struct FFIWalletEventCallbacks {
     pub on_block_processed: OnWalletBlockProcessedCallback,
     pub on_sync_height_advanced: OnSyncHeightAdvancedCallback,
     pub on_transactions_chainlocked: OnWalletTransactionsChainlockedCallback,
+    /// Appended after `on_transactions_chainlocked` (before `user_data`)
+    /// so existing field offsets stay stable for any C-side consumers
+    /// that allocated this struct from older headers.
+    pub on_chain_lock_applied: OnWalletChainLockAppliedCallback,
     pub user_data: *mut c_void,
 }
 
@@ -871,6 +902,7 @@ impl Default for FFIWalletEventCallbacks {
             on_block_processed: None,
             on_sync_height_advanced: None,
             on_transactions_chainlocked: None,
+            on_chain_lock_applied: None,
             user_data: std::ptr::null_mut(),
         }
     }
@@ -1166,6 +1198,22 @@ impl FFIWalletEventCallbacks {
                     );
 
                     drop(ffi_finalized);
+                }
+            }
+            WalletEvent::ChainLockApplied {
+                wallet_id,
+                chain_lock,
+            } => {
+                if let Some(cb) = self.on_chain_lock_applied {
+                    let wallet_id_hex = hex::encode(wallet_id);
+                    let c_wallet_id = CString::new(wallet_id_hex).unwrap_or_default();
+                    cb(
+                        c_wallet_id.as_ptr(),
+                        chain_lock.block_height,
+                        chain_lock.block_hash.as_byte_array() as *const [u8; 32],
+                        chain_lock.signature.as_bytes() as *const [u8; 96],
+                        self.user_data,
+                    );
                 }
             }
         }
