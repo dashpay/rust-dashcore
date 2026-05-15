@@ -254,8 +254,8 @@ pub(super) async fn wait_for_instant_lock_received(
 
 /// Wait for every txid in `txids` to be surfaced by the wallet as
 /// chainlock-finalized, via either a
-/// [`WalletEvent::TransactionsChainlocked`] event whose `per_account`
-/// includes the txid (across any account) or a
+/// [`WalletEvent::ChainLockProcessed`] event whose
+/// `locked_transactions` includes the txid (across any account) or a
 /// [`WalletEvent::BlockProcessed`] event with `chain_lock = Some(..)`
 /// whose `inserted` / `updated` list includes the txid.
 ///
@@ -283,15 +283,15 @@ pub(super) async fn wait_for_wallet_txs_chainlocked(
             }
             result = event_receiver.recv() => {
                 match result {
-                    Ok(WalletEvent::TransactionsChainlocked {
+                    Ok(WalletEvent::ChainLockProcessed {
                         chain_lock,
-                        per_account,
+                        locked_transactions,
                         ..
                     }) => {
-                        for finalized in per_account.values().flatten() {
+                        for finalized in locked_transactions.values().flatten() {
                             if pending.remove(finalized) {
                                 tracing::info!(
-                                    "Wallet TransactionsChainlocked(chainlock_height={}, txid={})",
+                                    "Wallet ChainLockProcessed(chainlock_height={}, txid={})",
                                     chain_lock.block_height, finalized,
                                 );
                             }
@@ -339,20 +339,20 @@ pub(super) async fn wait_for_wallet_tx_chainlocked(
     loop {
         tokio::select! {
             _ = &mut timeout => {
-                panic!("Timeout waiting for TransactionsChainlocked carrying txid {}", txid);
+                panic!("Timeout waiting for ChainLockProcessed carrying txid {}", txid);
             }
             result = event_receiver.recv() => {
                 match result {
-                    Ok(WalletEvent::TransactionsChainlocked {
+                    Ok(WalletEvent::ChainLockProcessed {
                         chain_lock,
-                        per_account,
+                        locked_transactions,
                         ..
-                    }) if per_account
+                    }) if locked_transactions
                         .values()
                         .any(|txids| txids.contains(&txid)) =>
                     {
                         tracing::info!(
-                            "Wallet TransactionsChainlocked(chainlock_height={}, txid={})",
+                            "Wallet ChainLockProcessed(chainlock_height={}, txid={})",
                             chain_lock.block_height, txid
                         );
                         return chain_lock.block_height;

@@ -278,7 +278,7 @@ extern "C" fn on_wallet_block_processed(
     );
 }
 
-extern "C" fn on_wallet_transactions_chainlocked(
+extern "C" fn on_wallet_chain_lock_processed(
     wallet_id: *const c_char,
     cl_height: u32,
     _cl_hash: *const [u8; 32],
@@ -289,7 +289,7 @@ extern "C" fn on_wallet_transactions_chainlocked(
 ) {
     let wallet_short = short_wallet(wallet_id);
     println!(
-        "[Wallet] Transactions chainlocked: wallet={}..., cl_height={}, finalized={}",
+        "[Wallet] ChainLock processed: wallet={}..., cl_height={}, finalized={}",
         wallet_short, cl_height, finalized_count,
     );
 }
@@ -528,8 +528,7 @@ fn main() {
                 on_transaction_instant_locked: Some(on_transaction_instant_locked),
                 on_block_processed: Some(on_wallet_block_processed),
                 on_sync_height_advanced: Some(on_sync_height_advanced),
-                on_transactions_chainlocked: Some(on_wallet_transactions_chainlocked),
-                on_chain_lock_applied: None,
+                on_chain_lock_processed: Some(on_wallet_chain_lock_processed),
                 user_data: ptr::null_mut(),
             },
             error: FFIClientErrorCallback {

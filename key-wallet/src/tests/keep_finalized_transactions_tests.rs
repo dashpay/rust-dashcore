@@ -160,7 +160,7 @@ async fn test_apply_chain_lock_promotes_in_block_records() {
         "first chainlock must advance metadata from None to Some(50)"
     );
     let promoted = outcome
-        .per_account
+        .locked_transactions
         .get(&bip44_account_type())
         .expect("BIP44 account should have a promotion entry");
     assert_eq!(promoted, &vec![txid]);
@@ -204,7 +204,7 @@ async fn test_apply_chain_lock_skips_unmined_and_above_height() {
     // the mempool record's (absent) height, so neither promotes.
     ctx.managed_wallet.update_last_processed_height(200);
     let outcome = ctx.managed_wallet.apply_chain_lock(ChainLock::dummy(100));
-    assert!(outcome.per_account.is_empty());
+    assert!(outcome.locked_transactions.is_empty());
     assert!(
         outcome.metadata_advanced,
         "metadata must still advance to the new finality boundary even when no record promotes"

@@ -7,7 +7,7 @@
 //! chainlocks and applies one at `SyncComplete { cycle: 0 }`, after
 //! which every validated chainlock immediately promotes the relevant
 //! transactions and fires
-//! [`key_wallet_manager::WalletEvent::TransactionsChainlocked`].
+//! [`key_wallet_manager::WalletEvent::ChainLockProcessed`].
 
 use std::sync::Arc;
 
@@ -24,7 +24,7 @@ use super::setup::{
 };
 
 /// Live arrival: send a tx into a block, mine through to a chainlock,
-/// and assert the wallet emits [`WalletEvent::TransactionsChainlocked`]
+/// and assert the wallet emits [`WalletEvent::ChainLockProcessed`]
 /// carrying the tx's txid.
 ///
 /// Drives the full live path: the tx lands as `InBlock` during normal

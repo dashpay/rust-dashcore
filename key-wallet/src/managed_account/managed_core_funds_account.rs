@@ -283,7 +283,7 @@ impl ManagedCoreFundsAccount {
                 // InBlock → InChainLockedBlock) are not signaled here.
                 // Chainlock-driven promotions go through the dedicated
                 // `apply_chain_lock` path which emits a single batched
-                // TransactionsChainlocked event.
+                // ChainLockProcessed event.
                 changed = !was_confirmed;
             }
         }

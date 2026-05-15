@@ -295,22 +295,16 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
         for (wallet_id, info) in self.wallet_infos.iter_mut() {
             let outcome = info.apply_chain_lock(chain_lock.clone());
 
-            // Emit `ChainLockApplied` BEFORE `TransactionsChainlocked` so
-            // persisters that listen to both can write the durable
-            // `last_applied_chain_lock` first, then persist any promotions
-            // atomically with the metadata they imply. The ordering is a
-            // contract relied on by downstream consumers.
+            // Emit a single atomic `ChainLockProcessed` whenever the
+            // wallet's `last_applied_chain_lock` advanced — carrying any
+            // net-new promotions (possibly empty when the advance
+            // promoted nothing). Replays of the same chainlock (no
+            // metadata advance) are silent.
             if outcome.metadata_advanced {
-                let _ = self.event_sender.send(WalletEvent::ChainLockApplied {
+                let _ = self.event_sender.send(WalletEvent::ChainLockProcessed {
                     wallet_id: *wallet_id,
                     chain_lock: chain_lock.clone(),
-                });
-            }
-            if !outcome.per_account.is_empty() {
-                let _ = self.event_sender.send(WalletEvent::TransactionsChainlocked {
-                    wallet_id: *wallet_id,
-                    chain_lock: chain_lock.clone(),
-                    per_account: outcome.per_account,
+                    locked_transactions: outcome.locked_transactions,
                 });
             }
         }

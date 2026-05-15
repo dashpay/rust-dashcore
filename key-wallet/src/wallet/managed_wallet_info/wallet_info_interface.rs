@@ -20,14 +20,12 @@ use dashcore::{Address as DashAddress, Transaction, Txid};
 
 /// Outcome of [`WalletInfoInterface::apply_chain_lock`].
 ///
-/// Separates the two independent effects of applying a chainlock so the
-/// manager-level emitter (in `key-wallet-manager`) can fire one event
-/// per effect: a `WalletEvent::TransactionsChainlocked` event when
-/// records were promoted (carries `per_account`), and a
-/// `WalletEvent::ChainLockApplied` event whenever the wallet's
-/// `last_applied_chain_lock` metadata advanced (independent of whether
-/// any record was promoted — a quiescent wallet's metadata still
-/// advances forward).
+/// Captures both effects of applying a chainlock so the manager-level
+/// emitter (in `key-wallet-manager`) can fire a single atomic
+/// `WalletEvent::ChainLockProcessed` whenever the wallet's
+/// `last_applied_chain_lock` metadata advanced — carrying any net-new
+/// promotions in `locked_transactions` (empty when the metadata
+/// advance promoted nothing).
 #[derive(Debug, Clone, Default)]
 pub struct ApplyChainLockOutcome {
     /// Per-account net-new finalized txids: records that flipped from
@@ -35,7 +33,7 @@ pub struct ApplyChainLockOutcome {
     /// with no net-new promotions are omitted. Empty when the chainlock
     /// landed on a wallet that has no `InBlock` records at heights
     /// `<= chain_lock.block_height`.
-    pub per_account: BTreeMap<AccountType, Vec<Txid>>,
+    pub locked_transactions: BTreeMap<AccountType, Vec<Txid>>,
     /// `true` iff the wallet's `last_applied_chain_lock` strictly
     /// advanced (or moved from `None` to `Some`) as a result of this
     /// call. `false` when the incoming chainlock's height did not
@@ -141,33 +139,32 @@ pub trait WalletInfoInterface: Sized + WalletTransactionChecker + ManagedAccount
     /// accounts whose block height is `<= chain_lock.block_height` to
     /// `TransactionContext::InChainLockedBlock`, advance the wallet's
     /// `last_applied_chain_lock` to `chain_lock` (clamped forward by
-    /// height), and return both effects independently in an
+    /// height), and return both effects in a single
     /// [`ApplyChainLockOutcome`].
     ///
-    /// The two effects fire independently and either, both, or neither
-    /// may be observed for a given call:
+    /// Field semantics:
     ///
-    /// - `per_account` is populated when records were promoted. Accounts
-    ///   with no net-new promotions are omitted. Empty when no record was
-    ///   `InBlock` at a height `<= chain_lock.block_height`. The manager
-    ///   (in `key-wallet-manager`) emits one
-    ///   `WalletEvent::TransactionsChainlocked` when this is non-empty.
+    /// - `locked_transactions` is populated when records were promoted.
+    ///   Accounts with no net-new promotions are omitted. Empty when no
+    ///   record was `InBlock` at a height `<= chain_lock.block_height`.
     /// - `metadata_advanced` is `true` when the wallet's
     ///   `last_applied_chain_lock` strictly advanced (or moved from
-    ///   `None` to `Some`) as a result of this call. The manager emits
-    ///   one `WalletEvent::ChainLockApplied` when this is `true`. This
-    ///   fires INDEPENDENTLY of promotion: a chainlock that lands above
-    ///   a wallet's currently recorded history still establishes the
-    ///   finality boundary for future blocks that arrive in that range
-    ///   via the late-block path in block processing, and durable
-    ///   consumers must persist the new `last_applied_chain_lock` to
-    ///   benefit from that boundary across restarts.
+    ///   `None` to `Some`) as a result of this call. The manager (in
+    ///   `key-wallet-manager`) emits one
+    ///   `WalletEvent::ChainLockProcessed` per wallet when this is
+    ///   `true`, regardless of whether `locked_transactions` is empty —
+    ///   a chainlock that lands above a wallet's currently recorded
+    ///   history still establishes the finality boundary for future
+    ///   blocks that arrive in that range via the late-block path in
+    ///   block processing, and durable consumers must persist the new
+    ///   `last_applied_chain_lock` to benefit from that boundary across
+    ///   restarts.
     ///
     /// Under the default `keep-finalized-transactions=OFF` feature the
     /// promoted records are dropped and only their txids are retained —
-    /// the txids are still surfaced in `per_account` so the caller can
-    /// emit the `TransactionsChainlocked` event before the records
-    /// disappear.
+    /// the txids are still surfaced in `locked_transactions` so the
+    /// caller can emit the `ChainLockProcessed` event before the
+    /// records disappear.
     fn apply_chain_lock(&mut self, _chain_lock: ChainLock) -> ApplyChainLockOutcome {
         ApplyChainLockOutcome::default()
     }
@@ -255,7 +252,7 @@ impl WalletInfoInterface for ManagedWalletInfo {
 
     fn apply_chain_lock(&mut self, chain_lock: ChainLock) -> ApplyChainLockOutcome {
         let cl_height = chain_lock.block_height;
-        let mut per_account: BTreeMap<AccountType, Vec<Txid>> = BTreeMap::new();
+        let mut locked_transactions: BTreeMap<AccountType, Vec<Txid>> = BTreeMap::new();
 
         // Promote across every account: funds-bearing (Standard,
         // CoinJoin, DashPay) and keys-only (identity, asset-lock,
@@ -276,7 +273,7 @@ impl WalletInfoInterface for ManagedWalletInfo {
                 ),
             };
             if !finalized_txids.is_empty() {
-                per_account.insert(account_type, finalized_txids);
+                locked_transactions.insert(account_type, finalized_txids);
             }
         }
 
@@ -290,7 +287,7 @@ impl WalletInfoInterface for ManagedWalletInfo {
         }
 
         ApplyChainLockOutcome {
-            per_account,
+            locked_transactions,
             metadata_advanced: advance,
         }
     }

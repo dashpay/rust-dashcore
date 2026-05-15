@@ -787,7 +787,7 @@ pub type OnSyncHeightAdvancedCallback =
     Option<extern "C" fn(wallet_id: *const c_char, height: u32, user_data: *mut c_void)>;
 
 /// One net-new chainlock-finalized txid, scoped to the account it was
-/// promoted on. `WalletEvent::TransactionsChainlocked` delivers an
+/// promoted on. `WalletEvent::ChainLockProcessed` delivers an
 /// array of these — one entry per (account, txid) pair promoted by
 /// the chainlock.
 ///
@@ -819,17 +819,26 @@ impl FFIChainlockedTxid {
     }
 }
 
-/// Callback for `WalletEvent::TransactionsChainlocked`.
+/// Callback for `WalletEvent::ChainLockProcessed`.
 ///
-/// Fires once per wallet when a chainlock promotes one or more
-/// previously-`InBlock` records to `InChainLockedBlock`. Carries the
-/// signing proof and the net-new finalized txids grouped per account
-/// in a flat array. No balance is delivered because a chainlock does
-/// not change UTXO state, so the wallet balance is unchanged.
+/// Fires once per wallet whenever the wallet's
+/// `last_applied_chain_lock` advances forward by height (or moves from
+/// `None` to `Some`). Carries the full signing proof so durable
+/// consumers can persist the chainlock alongside the height — important
+/// for SDKs that need to reconstruct chainlock-derived state across
+/// restarts (e.g. building a `ChainAssetLockProof` for an `InBlock`
+/// asset-lock TX from the persisted chainlock).
+///
+/// `finalized` carries the per-(account, txid) promotions when the
+/// same chainlock also flipped one or more `InBlock` records to
+/// `InChainLockedBlock`. `finalized_count == 0` (and `finalized ==
+/// NULL`) when the chainlock advanced the wallet's metadata without
+/// promoting any record — consumers that persist the chainlock proof
+/// must still observe these empty-promotion events.
 ///
 /// All pointers are borrowed and only valid for the duration of the
 /// callback.
-pub type OnWalletTransactionsChainlockedCallback = Option<
+pub type OnWalletChainLockProcessedCallback = Option<
     extern "C" fn(
         wallet_id: *const c_char,
         cl_height: u32,
@@ -837,33 +846,6 @@ pub type OnWalletTransactionsChainlockedCallback = Option<
         cl_signature: *const [u8; 96],
         finalized: *const FFIChainlockedTxid,
         finalized_count: u32,
-        user_data: *mut c_void,
-    ),
->;
-
-/// Callback for `WalletEvent::ChainLockApplied`.
-///
-/// Fires once per wallet every time the wallet's
-/// `last_applied_chain_lock` advances forward by height (or moves from
-/// `None` to `Some`), independently of whether any record was
-/// promoted. Carries the full signing proof so durable consumers can
-/// persist the chainlock alongside the height — important for SDKs
-/// that need to reconstruct chainlock-derived state across restarts
-/// (e.g. building a `ChainAssetLockProof` for an `InBlock` asset-lock
-/// TX from the persisted chainlock).
-///
-/// When the same chainlock also promoted records, this callback fires
-/// BEFORE `on_transactions_chainlocked` so persisters can write the
-/// durable metadata before the promotion record.
-///
-/// All pointers are borrowed and only valid for the duration of the
-/// callback.
-pub type OnWalletChainLockAppliedCallback = Option<
-    extern "C" fn(
-        wallet_id: *const c_char,
-        cl_height: u32,
-        cl_hash: *const [u8; 32],
-        cl_signature: *const [u8; 96],
         user_data: *mut c_void,
     ),
 >;
@@ -882,14 +864,8 @@ pub struct FFIWalletEventCallbacks {
     pub on_transaction_instant_locked: OnTransactionInstantLockedCallback,
     pub on_block_processed: OnWalletBlockProcessedCallback,
     pub on_sync_height_advanced: OnSyncHeightAdvancedCallback,
-    pub on_transactions_chainlocked: OnWalletTransactionsChainlockedCallback,
+    pub on_chain_lock_processed: OnWalletChainLockProcessedCallback,
     pub user_data: *mut c_void,
-    /// Appended strictly after `user_data` so every prior field — most
-    /// importantly `user_data` itself, whose offset C-side consumers
-    /// hand-allocating this struct from older headers may depend on —
-    /// keeps its previous byte offset. New consumers regenerated via
-    /// cbindgen pick this field up automatically.
-    pub on_chain_lock_applied: OnWalletChainLockAppliedCallback,
 }
 
 // SAFETY: Same rationale as FFISyncEventCallbacks
@@ -903,9 +879,8 @@ impl Default for FFIWalletEventCallbacks {
             on_transaction_instant_locked: None,
             on_block_processed: None,
             on_sync_height_advanced: None,
-            on_transactions_chainlocked: None,
+            on_chain_lock_processed: None,
             user_data: std::ptr::null_mut(),
-            on_chain_lock_applied: None,
         }
     }
 }
@@ -1174,15 +1149,15 @@ impl FFIWalletEventCallbacks {
                     cb(c_wallet_id.as_ptr(), *height, self.user_data);
                 }
             }
-            WalletEvent::TransactionsChainlocked {
+            WalletEvent::ChainLockProcessed {
                 wallet_id,
                 chain_lock,
-                per_account,
+                locked_transactions,
             } => {
-                if let Some(cb) = self.on_transactions_chainlocked {
+                if let Some(cb) = self.on_chain_lock_processed {
                     let wallet_id_hex = hex::encode(wallet_id);
                     let c_wallet_id = CString::new(wallet_id_hex).unwrap_or_default();
-                    let ffi_finalized = FFIChainlockedTxid::from_map(per_account);
+                    let ffi_finalized = FFIChainlockedTxid::from_map(locked_transactions);
                     let finalized_ptr = if ffi_finalized.is_empty() {
                         ptr::null()
                     } else {
@@ -1200,22 +1175,6 @@ impl FFIWalletEventCallbacks {
                     );
 
                     drop(ffi_finalized);
-                }
-            }
-            WalletEvent::ChainLockApplied {
-                wallet_id,
-                chain_lock,
-            } => {
-                if let Some(cb) = self.on_chain_lock_applied {
-                    let wallet_id_hex = hex::encode(wallet_id);
-                    let c_wallet_id = CString::new(wallet_id_hex).unwrap_or_default();
-                    cb(
-                        c_wallet_id.as_ptr(),
-                        chain_lock.block_height,
-                        chain_lock.block_hash.as_byte_array() as *const [u8; 32],
-                        chain_lock.signature.as_bytes() as *const [u8; 96],
-                        self.user_data,
-                    );
                 }
             }
         }
@@ -1303,31 +1262,112 @@ mod tests {
         assert_eq!(NEW_ADDR_COUNT.load(Ordering::SeqCst), 3);
     }
 
-    /// `ChainLockApplied` dispatch must invoke the registered callback
-    /// with the chainlock's height — the durable signal SDKs use to
-    /// know the wallet's `last_applied_chain_lock` advanced.
+    /// `ChainLockProcessed` dispatch must hand every wired field
+    /// through to the FFI callback unchanged: hex-encoded wallet_id,
+    /// height, 32-byte block hash, 96-byte signature, and the count of
+    /// per-(account, txid) promotions. A regression that miswires any
+    /// of these (e.g. height/hash swap, signature truncation, empty vs.
+    /// non-empty promotion handling) shows up as a single assertion
+    /// failure here.
     #[test]
-    fn test_chain_lock_applied_dispatch_passes_height() {
-        static CL_HEIGHT: AtomicU32 = AtomicU32::new(u32::MAX);
-        extern "C" fn cb(
-            _wallet_id: *const c_char,
+    fn test_chain_lock_processed_dispatch_round_trips_every_field() {
+        struct Captured {
+            wallet_id_hex: String,
             cl_height: u32,
-            _cl_hash: *const [u8; 32],
-            _cl_signature: *const [u8; 96],
+            cl_hash: [u8; 32],
+            cl_signature: [u8; 96],
+            finalized_count: u32,
+        }
+        static CAPTURED: std::sync::Mutex<Option<Captured>> = std::sync::Mutex::new(None);
+
+        extern "C" fn cb(
+            wallet_id: *const c_char,
+            cl_height: u32,
+            cl_hash: *const [u8; 32],
+            cl_signature: *const [u8; 96],
+            _finalized: *const FFIChainlockedTxid,
+            finalized_count: u32,
             _user: *mut c_void,
         ) {
-            CL_HEIGHT.store(cl_height, Ordering::SeqCst);
+            let wid = unsafe { std::ffi::CStr::from_ptr(wallet_id) }
+                .to_str()
+                .expect("wallet_id must be valid UTF-8 hex")
+                .to_string();
+            *CAPTURED.lock().unwrap() = Some(Captured {
+                wallet_id_hex: wid,
+                cl_height,
+                cl_hash: unsafe { *cl_hash },
+                cl_signature: unsafe { *cl_signature },
+                finalized_count,
+            });
         }
 
         let callbacks = FFIWalletEventCallbacks {
-            on_chain_lock_applied: Some(cb),
+            on_chain_lock_processed: Some(cb),
             ..FFIWalletEventCallbacks::default()
         };
 
-        callbacks.dispatch(&WalletEvent::ChainLockApplied {
-            wallet_id: [3u8; 32],
-            chain_lock: ChainLock::dummy(777),
+        let chain_lock = ChainLock::dummy(777);
+        let expected_hash = *chain_lock.block_hash.as_byte_array();
+        let expected_sig = *chain_lock.signature.as_bytes();
+        let wallet_id: WalletId = [3u8; 32];
+
+        // Two promotions to verify `finalized_count` reflects total
+        // (account, txid) pairs, not the number of accounts.
+        let account_a = AccountType::Standard {
+            index: 0,
+            standard_account_type: key_wallet::account::StandardAccountType::BIP44Account,
+        };
+        let account_b = AccountType::Standard {
+            index: 1,
+            standard_account_type: key_wallet::account::StandardAccountType::BIP44Account,
+        };
+        let mut locked: BTreeMap<AccountType, Vec<Txid>> = BTreeMap::new();
+        locked.insert(account_a, vec![Txid::from_byte_array([0xaa; 32])]);
+        locked.insert(account_b, vec![Txid::from_byte_array([0xbb; 32])]);
+
+        callbacks.dispatch(&WalletEvent::ChainLockProcessed {
+            wallet_id,
+            chain_lock,
+            locked_transactions: locked,
         });
-        assert_eq!(CL_HEIGHT.load(Ordering::SeqCst), 777);
+
+        let captured = CAPTURED.lock().unwrap().take().expect("callback fired");
+        assert_eq!(captured.wallet_id_hex, hex::encode(wallet_id), "wallet_id hex-encoding");
+        assert_eq!(captured.cl_height, 777, "cl_height");
+        assert_eq!(captured.cl_hash, expected_hash, "cl_hash round-trip");
+        assert_eq!(captured.cl_signature, expected_sig, "cl_signature round-trip");
+        assert_eq!(captured.finalized_count, 2, "finalized_count counts (account, txid) pairs");
+    }
+
+    /// `ChainLockProcessed` with empty `locked_transactions` must still
+    /// fire the callback (durable consumers persist the chainlock proof
+    /// even when no record was promoted) with `finalized_count == 0`.
+    #[test]
+    fn test_chain_lock_processed_dispatch_fires_with_empty_promotions() {
+        static FIRED: AtomicU32 = AtomicU32::new(u32::MAX);
+        extern "C" fn cb(
+            _wallet_id: *const c_char,
+            _cl_height: u32,
+            _cl_hash: *const [u8; 32],
+            _cl_signature: *const [u8; 96],
+            _finalized: *const FFIChainlockedTxid,
+            finalized_count: u32,
+            _user: *mut c_void,
+        ) {
+            FIRED.store(finalized_count, Ordering::SeqCst);
+        }
+
+        let callbacks = FFIWalletEventCallbacks {
+            on_chain_lock_processed: Some(cb),
+            ..FFIWalletEventCallbacks::default()
+        };
+
+        callbacks.dispatch(&WalletEvent::ChainLockProcessed {
+            wallet_id: [4u8; 32],
+            chain_lock: ChainLock::dummy(900),
+            locked_transactions: BTreeMap::new(),
+        });
+        assert_eq!(FIRED.load(Ordering::SeqCst), 0);
     }
 }
