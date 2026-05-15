@@ -883,11 +883,13 @@ pub struct FFIWalletEventCallbacks {
     pub on_block_processed: OnWalletBlockProcessedCallback,
     pub on_sync_height_advanced: OnSyncHeightAdvancedCallback,
     pub on_transactions_chainlocked: OnWalletTransactionsChainlockedCallback,
-    /// Appended after `on_transactions_chainlocked` (before `user_data`)
-    /// so existing field offsets stay stable for any C-side consumers
-    /// that allocated this struct from older headers.
-    pub on_chain_lock_applied: OnWalletChainLockAppliedCallback,
     pub user_data: *mut c_void,
+    /// Appended strictly after `user_data` so every prior field — most
+    /// importantly `user_data` itself, whose offset C-side consumers
+    /// hand-allocating this struct from older headers may depend on —
+    /// keeps its previous byte offset. New consumers regenerated via
+    /// cbindgen pick this field up automatically.
+    pub on_chain_lock_applied: OnWalletChainLockAppliedCallback,
 }
 
 // SAFETY: Same rationale as FFISyncEventCallbacks
@@ -902,8 +904,8 @@ impl Default for FFIWalletEventCallbacks {
             on_block_processed: None,
             on_sync_height_advanced: None,
             on_transactions_chainlocked: None,
-            on_chain_lock_applied: None,
             user_data: std::ptr::null_mut(),
+            on_chain_lock_applied: None,
         }
     }
 }
@@ -1224,7 +1226,7 @@ impl FFIWalletEventCallbacks {
 mod tests {
     use super::*;
     use dashcore::hashes::Hash;
-    use dashcore::{Address, BlockHash, Network, Txid};
+    use dashcore::{Address, BlockHash, ChainLock, Network, Txid};
     use key_wallet_manager::{FilterMatchKey, WalletId};
     use std::collections::{BTreeMap, BTreeSet};
     use std::sync::atomic::{AtomicU32, Ordering};
@@ -1299,5 +1301,33 @@ mod tests {
             confirmed_txids: vec![Txid::from_byte_array([9u8; 32])],
         });
         assert_eq!(NEW_ADDR_COUNT.load(Ordering::SeqCst), 3);
+    }
+
+    /// `ChainLockApplied` dispatch must invoke the registered callback
+    /// with the chainlock's height — the durable signal SDKs use to
+    /// know the wallet's `last_applied_chain_lock` advanced.
+    #[test]
+    fn test_chain_lock_applied_dispatch_passes_height() {
+        static CL_HEIGHT: AtomicU32 = AtomicU32::new(u32::MAX);
+        extern "C" fn cb(
+            _wallet_id: *const c_char,
+            cl_height: u32,
+            _cl_hash: *const [u8; 32],
+            _cl_signature: *const [u8; 96],
+            _user: *mut c_void,
+        ) {
+            CL_HEIGHT.store(cl_height, Ordering::SeqCst);
+        }
+
+        let callbacks = FFIWalletEventCallbacks {
+            on_chain_lock_applied: Some(cb),
+            ..FFIWalletEventCallbacks::default()
+        };
+
+        callbacks.dispatch(&WalletEvent::ChainLockApplied {
+            wallet_id: [3u8; 32],
+            chain_lock: ChainLock::dummy(777),
+        });
+        assert_eq!(CL_HEIGHT.load(Ordering::SeqCst), 777);
     }
 }
