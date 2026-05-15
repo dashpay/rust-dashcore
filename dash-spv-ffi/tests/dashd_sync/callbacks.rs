@@ -621,6 +621,7 @@ pub(super) fn create_wallet_callbacks(tracker: &Arc<CallbackTracker>) -> FFIWall
         on_block_processed: Some(on_wallet_block_processed),
         on_sync_height_advanced: Some(on_sync_height_advanced),
         on_transactions_chainlocked: None,
+        on_chain_lock_applied: None,
         user_data: Arc::as_ptr(tracker) as *mut c_void,
     }
 }
