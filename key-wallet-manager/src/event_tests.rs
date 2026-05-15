@@ -1064,7 +1064,11 @@ async fn test_apply_chain_lock_promotes_in_block_record_and_emits_event() {
     // record, so both events fire — `ChainLockApplied` first (so
     // persisters write the durable metadata before the promotion),
     // then `TransactionsChainlocked`.
-    assert_eq!(events.len(), 2, "ChainLockApplied + TransactionsChainlocked expected, got {events:?}");
+    assert_eq!(
+        events.len(),
+        2,
+        "ChainLockApplied + TransactionsChainlocked expected, got {events:?}"
+    );
     match &events[0] {
         WalletEvent::ChainLockApplied {
             wallet_id: wid,
@@ -1107,7 +1111,11 @@ async fn test_apply_chain_lock_with_no_records_emits_chain_lock_applied_and_adva
     // durable consumers (e.g. asset-lock persisters) must observe a
     // single `ChainLockApplied` to know the metadata moved.
     let advance_events = drain_events(&mut rx);
-    assert_eq!(advance_events.len(), 1, "exactly one ChainLockApplied expected, got {advance_events:?}");
+    assert_eq!(
+        advance_events.len(),
+        1,
+        "exactly one ChainLockApplied expected, got {advance_events:?}"
+    );
     match &advance_events[0] {
         WalletEvent::ChainLockApplied {
             wallet_id: wid,
