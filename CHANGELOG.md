@@ -4,6 +4,393 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## 0.42.0 - 2026-05-15
+
+### Highlights
+
+This is a large release that reworks the SPV client, wallet, and FFI surface. The most impactful changes:
+
+- **Sync architecture rewrite:** the block, filter, and masternode sync pipelines were rewritten end-to-end, with explicit state machines, hardened reconnect and resume paths, deadlock fixes, and a long tail of correctness fixes around filter batching, in-flight state on disconnect, and post-sync header handling (#411, #440, #451, #452, #738).
+- **`dashd` integration tests:** end-to-end SPV sync tests against a real regtest `dashd` covering sync, restarts, disconnections, transactions, masternodes, and multi-wallet, gating the `spv` and `ffi` CI groups (#464, #697, #740).
+- **Mempool support:** a real mempool path through the SPV client with a `--mempool-strategy` CLI argument, plus a `CoinSelector` that can spend mempool UTXOs, driving a new transaction confirmation lifecycle (#558, #540, #552, #748).
+- **Hardcoded masternode seeds:** vendored masternode seed files with weekly CI auto-refresh so cold-start bootstrapping no longer waits for a full `QRInfo` sync (#678).
+- **Wallet manager extraction and atomic events:** core transaction building and signing moved into a dedicated wallet manager, wallet events are now atomic, and per-account balance diffs are carried on events (#594, #727, #696, #706).
+- **FFI surface expansion:** full `TransactionRecord` exposed through FFI and wallet events, asset-lock builder, `MasternodeListEngine` accessor, transaction broadcast, error callback registration, and an async `Signer` trait for iOS workflows (#614, #600, #608, #458, #661).
+- **Platform and Asset Lock:** a new `PlatformPayment` managed account to track Platform balances, plus Asset Lock derivation subfeatures 4 and 5 and a corrected `AssetLockTx` structure (#365, #368, #454, #659).
+- **`no-std` support dropped:** incomplete `no-std` support was removed across `dashcore`, `hashes`, `internals`, and `key-wallet` to simplify the codebase (#518, #519, #520, #521).
+
+### Added
+
+- Bump `rs-x11-hash` to `0.1.9` for windows support (#319) @xdustinface
+- Track `synced_height` per `ManagedWalletInfo` (#305) @xdustinface
+- Capture new addresses from `maintain_gap_limit` (#287) @xdustinface
+- Store block hashes along with the headers in segments (#351) @ZocoLini
+- Add `wallet_manager_network` FFI function (#360) @QuantumExplorer
+- Add PlatformPayment account specifications and creation logic (#365) @QuantumExplorer
+- Introduce `BlockHeaderStorage.get_tip` helper (#359) @xdustinface
+- Introduce `MessageDispatcher` in network manager (#383) @xdustinface
+- Implement parallel filter matching (#303) @xdustinface
+- Include module names in the log output (#391) @xdustinface
+- Add synced height to the wallet interface (#396) @xdustinface
+- Introduce `PersistentBlockStorage` (#397) @xdustinface
+- New managed platform account to track platform balances (#368) @QuantumExplorer
+- Add `--mnemonic-file`, `--data-dir` and logfiles to ffi-cli (#408) @xdustinface
+- Add logging for InstantLock quorum lookup (#412) @xdustinface
+- Hardcoded checkpoints every 50k blocks (#410) @xdustinface
+- Rewrite, fix and improve the sync architecture (#411) @xdustinface
+- Add more InstantSend debug logs (#413) @xdustinface
+- Collect addresses from connected peers (#421) @xdustinface
+- Persist best `ChainLock` to disk via `MetadataStorage` (#419) @xdustinface
+- Validate received headers were actually requested (#438) @xdustinface
+- React to network events in maintenance loop (#433) @xdustinface
+- Add Asset Lock derivation path subfeatures 4 and 5 (#454) @QuantumExplorer
+- Transaction broadcast ffi function (#458) @ZocoLini
+- Add `cycle` to `SyncEvent::SyncComplete` (#459) @xdustinface
+- Report/propagate client start/run failures (#432) @xdustinface
+- Persist and restore target height via `MetadataStorage` (#476) @xdustinface
+- Dispatch progress callback on registration (#473) @xdustinface
+- Add `thread-local` logging support for parallel test isolation (#485) @xdustinface
+- Add `dashd` integration tests for SPV sync (#464) @xdustinface
+- Add `--mempool-strategy` CLI argument (#526) @xdustinface
+- Log wallet events in the client's run loop (#525) @xdustinface
+- Format wallet event amounts as DASH (#530) @xdustinface
+- Wallet transaction confirmation lifecycle (#540) @xdustinface
+- Add `TransactionStatusChanged` event and emit wallet events (#552) @xdustinface
+- Add mempool support (#558) @xdustinface
+- Expose asset lock transaction builder (#600) @QuantumExplorer
+- Expose MasternodeListEngine accessor on FFIDashSpvClient (#608) @QuantumExplorer
+- Track input/output details and direction in `TransactionRecord` (#605) @xdustinface
+- Expose full `TransactionRecord` through FFI and wallet events (#614) @xdustinface
+- Validate transaction label size (#617) @xdustinface
+- Include `InstantLock` in `TransactionContext::InstantSend` variant (#615) @xdustinface
+- Add address and value fields to FFIOutputDetail (#640) @llbartekll
+- Enabled and updated key-wallet-ffi unit tests defined out of scope (#644) @ZocoLini
+- Rebroadcast unconfirmed self-sent transactions (#627) @xdustinface
+- Add async Signer trait and build_asset_lock_with_signer (#661) @QuantumExplorer
+- Enforce required peer capabilities (#671) @xdustinface
+- New more ergonomic FFIError implementation (#670) @ZocoLini
+- Implement From and Drop traits for FFITransactionRecord and its members if needed (#676) @ZocoLini
+- Hardcoded masternode seed files + weekly auto-refresh (#678) @QuantumExplorer
+- Support multiple spv event handlers (#682) @xdustinface
+- Make wallet events atomic (#696) @xdustinface
+- Add mutable-pair accessors + insert_wallet (#685) @QuantumExplorer
+- Expose bls and eddsa features (#700) @QuantumExplorer
+- Per-wallet filter scan and runtime wallet catch-up (#694) @xdustinface
+- Carry per-account balance diff on WalletEvent (#706) @QuantumExplorer
+- Expose `instant_send_locks` accessor on `ManagedWalletInfo` (#712) @QuantumExplorer
+- Carry addresses_derived on TransactionDetected / BlockProcessed (#725) @QuantumExplorer
+- Add keep-finalized-transactions Cargo feature (#733) @QuantumExplorer
+- Drive masternode sync via `PipelineMode` state machine (#738) @xdustinface
+- Add `build_and_sign_transaction_with_signer` (#735) @ZocoLini
+- Add `managed_core_account_set_transaction_label` FFI function (#618) @xdustinface
+- Add chainlock handling to the wallet (#756) @xdustinface
+- Add serde derives for AssetLockFundingType and DerivedAddress (#761) @lklimek
+- Always emit `ChainLockProcessed` on chainlock advance (#769) @shumkov
+- Log version with git commit for dev builds (#770) @xdustinface
+
+### Changed
+
+- Add explicit UTF-8 encoding for FFI doc generation (#322) @xdustinface
+- Add `.gitattributes` to enforce LF line endings (#321) @xdustinface
+- Exclude `dash-fuzz` from clippy on Windows (#320) @xdustinface
+- Update `pre-commit` hooks to latest versions (#315) @xdustinface
+- Rework storage to periodically persist (#278) @ZocoLini
+- Instant lock validation cleanup/simplify (#329) @ZocoLini
+- Move `Send + Sync + 'static` bounds into trait definitions (#331) @xdustinface
+- Use separate target dirs for pre-commit (#330) @xdustinface
+- Overhaul CI (#253) @xdustinface
+- Cleanup `WalletBalance` (#335) @xdustinface
+- Consolidate balance calculations (#338) @xdustinface
+- Consolidate UTXO helpers in `test_utils` module (#334) @xdustinface
+- Ignore bincode unmaintained advisory `RUSTSEC-2025-0141` (#343) @xdustinface
+- Simplify immature transactions handling (#307) @xdustinface
+- Storage manager trait splitted into multiple subtraits (#311) @ZocoLini
+- Cleanup unused config parameters (#346) @xdustinface
+- Cleanup message handler re-enable skipped tests (#352) @ZocoLini
+- Add `test_utils` modules (#347) @ZocoLini
+- Move `Headers2` processing into network layer (#369) @xdustinface
+- Move storage tests into unit tests and drop duplicated tests (#371) @ZocoLini
+- Unify validation with a `Validator` trait (#355) @ZocoLini
+- Move sync system into `sync/legacy` (#379) @xdustinface
+- Streamline peer related data storage (#327) @ZocoLini
+- Replace some test helpers with test-utils dummy helpers (#389) @ZocoLini
+- Unify all `MockNetworkManager` into one (#388) @ZocoLini
+- Build `DiskStorageManager` from config path (#366) @ZocoLini
+- Move `get_peer_best_height` into `PeerPool` (#392) @xdustinface
+- Rename `storage::blocks` to `storage::block_headers` (#393) @xdustinface
+- One storage type per file (#395) @xdustinface
+- Cleanup `WalletTransactionChecker::check_core_transaction` (#402) @xdustinface
+- Cleanup storage usage in `DashSpvClient` constructor (#418) @xdustinface
+- Simplify DNS discovery fallback (#423) @xdustinface
+- Move manager clone into `start_maintenance_loop` task (#426) @xdustinface
+- Introduce `ProgressPercentage` trait (#431) @xdustinface
+- Split network maintenance loop into smaller functions (#430) @xdustinface
+- Fix formatting in `start_maintenance_loop` (#445) @xdustinface
+- Split `FiltersProgress.current_height` into committed/stored (#446) @xdustinface
+- Simplify `FiltersManager.start_download` (#450) @xdustinface
+- Make `DashSpvClient` cloneable (#453) @xdustinface
+- Replace FFI OS threads with tokio tasks (#456) @xdustinface
+- Extract methods for fee calculation (#461) @ZocoLini
+- Cleanup `DashSpvClient` to have single `run()` entry point (#457) @xdustinface
+- Add `ensure_not_started()` guard (#466) @xdustinface
+- Change wallet_build_and_sign_transaction signature to be used in iOS (#463) @ZocoLini
+- Add `RUST_BACKTRACE=1` to CI test runs (#478) @xdustinface
+- Fix ffi api docs (#479) @xdustinface
+- Improve ASAN stack trace and symbolization (#475) @xdustinface
+- Move manager initialization from trait method to constructors (#467) @xdustinface
+- Add `clear_in_flight_state()` to `SyncManager` trait (#484) @xdustinface
+- Extract shared `send_message_to_peer` helper (#488) @xdustinface
+- Add codecov coverage tracking (#493) @xdustinface
+- Fix codecov uploads (#494) @xdustinface
+- Add `__pycache__/` to `.gitignore` (#495) @xdustinface
+- Move `Network` struct into  `dashcore` crate (#497) @ZocoLini
+- Make `codecov/patch` informational (#506) @xdustinface
+- Use target 0% for `codecov/patch` (#510) @xdustinface
+- Make `codecov/project` wait for all uploads (#508) @xdustinface
+- Fix `PeerPool.get_best_height()` logs (#505) @xdustinface
+- Move `fuzz` profile settings to workspace root (#501) @xdustinface
+- Update docs of `Network` entries (#499) @xdustinface
+- Replace `ServiceFlags::from(1)` with `NETWORK` (#507) @xdustinface
+- Address CodeRabbit feedback from #493 (#516) @PastaPastaPasta
+- Rename `Dash` network entries to `Mainnet` (#500) @xdustinface
+- Update key-wallet documentation to match current codebase (#524) @shumkov
+- Disable `carryforward` flags to flush stale data (#543) @xdustinface
+- Enable CodeRabbit `request_changes_workflow` (#531) @xdustinface
+- Re-enable `carryforward` flags (#543) (#544) @xdustinface
+- Re-disable `carryforward` flags (#545) @xdustinface
+- Consolidate fuzz CI to nightly schedule (#549) @xdustinface
+- Add `ready-for-review` label automation on CodeRabbit approval (#550) @xdustinface
+- Add polling wait for wallet callbacks in FFI test (#546) @xdustinface
+- Move counter increments after payload writes in FFI callbacks (#547) @xdustinface
+- Extract `snapshot_balances`/`emit_balance_changes` helpers (#542) @xdustinface
+- Add 200 block regtest blockchain support (#537) @xdustinface
+- Default to `relay=false` in P2P handshake (#536) @xdustinface
+- Extract wallet setup into `TestWalletContext` (#539) @xdustinface
+- Consolidate test transaction creation (#538) @xdustinface
+- Extract capability lookup into `PeerPool` helpers (#509) @xdustinface
+- Gate `ready-for-review` label on CodeRabbit approval + CI passing (#561) @xdustinface
+- Add PR title prefix enforcement (#532) @xdustinface
+- Use `runner.temp` for dashd log path instead of hardcoded `/tmp` (#563) @xdustinface
+- Wrap test execution in `try`/`finally` (#564) @xdustinface
+- Decouple `verify-groups` from test matrix (#562) @xdustinface
+- Fix `gh api` review-state query in `ready-for-review` workflow (#566) @xdustinface
+- Merge `key-wallet-manager` crate into `key-wallet` (#503) @ZocoLini
+- Guard `ready-for-review` label against draft PRs and handle undraft (#570) @xdustinface
+- Move event callback dispatch into `DashSpvClient` (#572) @xdustinface
+- Extract `BlockInfo` from `TransactionContext` (#578) @xdustinface
+- Gate manager module behind feature flag (#584) @QuantumExplorer
+- Extract `key-wallet-manager` crate from `key-wallet` (#594) @xdustinface
+- Move header files generation to the target directory (#579) @ZocoLini
+- Extract WalletManager accessors and error types (#599) @QuantumExplorer
+- Adjust `CLAUDE.md` that `dashd` integration tests should be run (#601) @xdustinface
+- Add generated FFI header directories to `.gitignore` (#603) @xdustinface
+- Store `TransactionContext` in `TransactionRecord` (#582) @xdustinface
+- Rename FFI context structs to match `key-wallet` naming (#612) @xdustinface
+- Update stale `wallet_check_transaction` docs (#613) @xdustinface
+- Add FFI header validation step (#609) @ZocoLini
+- Move `broadcast`/`disconnect_peer` to `NetworkManager` trait (#623) @xdustinface
+- Use clap derive in CLI (#620) @xdustinface
+- Use `String` for `TransactionRecord::label` (#624) @xdustinface
+- Cleanup unused dependencies (#633) @xdustinface
+- Unify logging on tracing (#635) @xdustinface
+- Ignore `RUSTSEC-2026-0097` until `blsful` updates `rand` (#639) @xdustinface
+- Inline `MempoolState` into `MempoolManager` (#628) @xdustinface
+- Move spendable_utxos from wallet to account (#643) @QuantumExplorer
+- Consolidate `FFINetwork` in dashcore new `ffi` feature (#642) @ZocoLini
+- Make WatchOnly / ExternalSignable unit variants (#654) @QuantumExplorer
+- Bump pinned Rust toolchain to `1.94.1` (#648) @xdustinface
+- Bump pinned Rust toolchain to 1.95.0 (#662) @QuantumExplorer
+- Loosen wallet recovery perf threshold to 70ms (#663) @QuantumExplorer
+- Fix `setup-dashd.py` script env var export (#677) @ZocoLini
+- Extract Network into standalone dash-network crate (#679) @QuantumExplorer
+- Rename wallet heights to reflect their meaning better (#683) @xdustinface
+- Replace match patterns where we can use `error.rs` macros (#691) @ZocoLini
+- Track wallet heights per wallet (#689) @xdustinface
+- Cleanup useless statements in `cbindgen.toml` (#629) @ZocoLini
+- Rename `ManagedCoreAccount.account_type` (#704) @xdustinface
+- Format wallet amounts as DASH in logs (#703) @xdustinface
+- Split `ManagedCoreAccount` into funds + keys variants (#711) @QuantumExplorer
+- Fix ffi docs (#737) @xdustinface
+- Move core tx building and signing into the key-wallet-manager crate (#727) @ZocoLini
+- Add multi-wallet integration tests (#697) @xdustinface
+- Forbid `std::sync::Mutex` / `RwLock` via clippy (#739) @ZocoLini
+- Wire ManagedCoreKeysAccount into the collection (#742) @QuantumExplorer
+- Bump `actions/cache` to v5 and `codecov/codecov-action` to v6 (#741) @xdustinface
+- Refactor TransactionBuilder to centralize as much logic as possible (#744) @ZocoLini
+- Add masternode integration tests (#740) @xdustinface
+- Fix `create_test_wallet` import in `tests_transaction` (#751) @xdustinface
+- Make logging a built-in event handler (#745) @xdustinface
+- Inline event logging into monitor tasks (#757) @xdustinface
+- Change `DerivedAddress::public_key` to `PublicKey` (#765) @xdustinface
+- Stop caching `~/.cargo/bin` (#767) @xdustinface
+- Return chainlock height from `wait_for_wallet_tx_chainlocked` (#766) @xdustinface
+- Replace `run` token and `running` flag with `watch` (#772) @xdustinface
+
+### Fixed
+
+- Avoid X11 hash with wrong input size in tests (#324) @xdustinface
+- Single file handle in `atomic_write` (#317) @xdustinface
+- Use `from_byte_array` for dummy block hash in tests (#310) @xdustinface
+- Qualify `Hash` trait in macros for `--no-default-features` (#313) @xdustinface
+- Add missing license fields for cargo-deny audit (#314) @xdustinface
+- Add test-only `LockFile::read_pid` for cross-platform testing (#316) @xdustinface
+- Prevent memory leaks in FFI tests (#323) @xdustinface
+- Use RFC 5737 TEST-NET-1 IP for timeout testing (#308) @xdustinface
+- Address Windows filename issues (#312) @xdustinface
+- Reject empty hostname in peer address in FFI (#318) @xdustinface
+- Update wallet heights when processing blocks (#309) @xdustinface
+- Fail sync on timeout (#342) @xdustinface
+- Correct confirmations for UTXOs in wallet FFI (#306) @xdustinface
+- Store checkpoints at checkpoint height not 0 (#345) @xdustinface
+- Unify immature balance tracking with remaining balances (#341) @xdustinface
+- Distinguish between new and existing transactions in wallet (#378) @xdustinface
+- Add missing `Devnet` and `Regtest` for `PlatformPayment` (#390) @xdustinface
+- Store checkpoint filter header at the correct height (#399) @xdustinface
+- Add missing transaction types in serialization (#401) @xdustinface
+- Look up quorum by actual `quorum_index` not by array position (#406) @xdustinface
+- Use `borrow_and_update` to avoid duplicate progress dispatches in ffi (#415) @ZocoLini
+- Require chainlock signatures only after V20 activation (#405) @xdustinface
+- Use `masternode_lists_around_height` for quorum lookups (#407) @PastaPastaPasta
+- Store all peers in storage (#420) @xdustinface
+- Make use of stored peers (#422) @xdustinface
+- Clear up failed connection attempts (#425) @xdustinface
+- Avoid panic for sentinel blocks in debug builds (#427) @xdustinface
+- Avoid re-inserting previous filter header on sync resume (#428) @xdustinface
+- Prevent invalid header response routing (#439) @xdustinface
+- Maintenance loop stops connecting at 1 peer (#437) @xdustinface
+- Ensure `PeerDisconnected` is emitted on write-path disconnects (#435) @xdustinface
+- Handle missing fields in `ProUpServTx` v2 encode (#417) @xdustinface
+- Use `Interval` for maintenance tick and delay the first dns tick (#434) @xdustinface
+- Emit `FiltersSyncComplete` for incremental updates (#443) @xdustinface
+- Separate filter scan height from synced height (#442) @xdustinface
+- Reset `FilterManager` in flight state when all peers disconnect (#441) @xdustinface
+- Correct state and `PeerDisconnected` events in removal paths (#436) @xdustinface
+- Fix shutdown deadlock and ordering (#440) @lklimek
+- Create filter batches at queue time to fix overlaps/gaps (#452) @xdustinface
+- Correct wrong transaction data pointer creation (#462) @ZocoLini
+- Correct state transitions in filter sync manager (#451) @xdustinface
+- Disconnect peers after pong timeout (#424) @xdustinface
+- Correct initial percentage to only average active managers (#471) @xdustinface
+- Consolidate duplicate `FFISyncProgress` destroy functions (#474) @xdustinface
+- Avoid extra `GetHeaders` after post-sync header processing (#486) @xdustinface
+- Align bloom filter size/hash calculation with Dash Core (#529) @xdustinface
+- Make `DMNState.service` and `MasternodeStatus.service` optional for Core v24 (#523) @PastaPastaPasta
+- Route `getdata` requests to the peer that sent the `inv` (#527) @xdustinface
+- Dashify the units (#250) @kxcd
+- Cap `Vec::with_capacity` in `Headers2Message` deserialization (#63) (#581) @xdustinface
+- Clean up `key-wallet` feature flags after `no-std` removal (#588) @xdustinface
+- Disable key-wallet default features (#596) @shumkov
+- Initialize everything correctly in `FiltersManager::new` (#598) @xdustinface
+- Replace `abort()` with cooperative wait in `wait_for_run_task` (#576) @xdustinface
+- Handle and propagate errors in event channel monitors (#573) @xdustinface
+- Detect coinbase by input pattern in `classify_transaction` (#606) @xdustinface
+- Extract asset lock builder into key-wallet (#604) @QuantumExplorer
+- Register error callback in FFI CLI binary (#575) @xdustinface
+- Make `broadcast` not return an error on success (#625) @xdustinface
+- Gate `FilterHeadersSyncComplete` on block header sync completion (#631) @xdustinface
+- Process broadcast transactions via `dispatch_local` (#626) @xdustinface
+- Subscribe to SPV event monitors before startup (#636) @xdustinface
+- Announce tip to new peers when synced (#490) @xdustinface
+- Drop `max_retries` from `DownloadCoordinator` to prevent sync stall (#632) @xdustinface
+- Index rotated quorums by `quorum_index` and rebuild per cycle (#637) @xdustinface
+- Correct AssetLockTx structure per DIP-00X (#659) @QuantumExplorer
+- Address<NetworkChecked> serde deserialize no longer hardcodes Mainnet (#657) @QuantumExplorer
+- Remove overly-strict is_synced gate from broadcast (#656) @QuantumExplorer
+- Feed `last_commitment_per_index` heights to engine (#665) @xdustinface
+- Use platform LLMQ type for regtest in `platform_type()` (#667) @xdustinface
+- Align `LLMQ_TEST_DIP0024` params with Dash Core (#666) @xdustinface
+- Use single historical anchor for `QRInfo` base hashes (#668) @xdustinface
+- Replace `hickory-resolver` with `tokio::net::lookup_host` (#690) @ZocoLini
+- Gate serde-only imports in BLS derivation (#701) @QuantumExplorer
+- Seed sync checkpoints from `birth_height` in `ManagedWalletInfo` ctors (#692) @xdustinface
+- Track self-send change in confirmed balance (#707) @QuantumExplorer
+- Ignore special transactions on block version 0 (pre DIP-0002) (#675) @owl352
+- Preserve buffered block headers across disconnect (#702) @xdustinface
+- Preserve raw nTxType bytes on pre-DIP-0002 (version 0) transactions (#726) @QuantumExplorer
+- Classify missing infrastructure errors as `Skipped` (#721) @xdustinface
+- Make SerdeHash tolerant of ContentDeserializer's HR-quirk (#729) @shumkov
+- Make OutPoint serde tolerant of ContentDeserializer's HR-quirk (#708) @shumkov
+- Make `feed_qr_info` resilient to missing rotation CL sigs (#736) @xdustinface
+- Fire catch-up QRInfo past `Incremental` mining window (#743) @xdustinface
+- Let `CoinSelector` spend mempool UTXOs (#748) @ZocoLini
+- Preserve in-progress sync state on peer disconnect (#746) @xdustinface
+- Prevent filter sync stalls from stale progress guards (#754) @xdustinface
+
+### Removed
+
+- Drop unused `utxo.rs` in `key-wallet` crate (#304) @xdustinface
+- Remove `headers` from `ChainState` (#292) @ZocoLini
+- Drop pointless `utxo_tests.rs` (#333) @xdustinface
+- Remove more unused `ClientConfig` fields (#348) @ZocoLini
+- Remove an empty file (#354) @ZocoLini
+- Drop redundant block processing (#349) @xdustinface
+- Remove pointless `skip_mock_implementation_incomplete` feature (#340) @ZocoLini
+- Remove unused `bloom` module (#280) @ZocoLini
+- Drop unused integration tests (#362) @xdustinface
+- Drop headers2 stats (#367) @xdustinface
+- Drop useless `DashSpvClient.sync_to_tip` (#363) @xdustinface
+- Remove mempool tracking config mutation method (#373) @ZocoLini
+- Drop redundant network message logs (#380) @xdustinface
+- Drop incomplete dsq preference updates (#382) @xdustinface
+- Remove not needed `PeerInfo` struct (#386) @ZocoLini
+- Drop unused "peer sent headers2" tracking (#387) @xdustinface
+- Drop `SpvStats` statistics (#394) @xdustinface
+- Unused ffi functions removed from dash-spv-ffi crate (#377) @ZocoLini
+- Remove legacy sync code (#414) @xdustinface
+- Drop unused ffi functions (#449) @ZocoLini
+- Remove duplicate `get_peer_count` method (#455) @xdustinface
+- Drop unused transaction ffi functions (#460) @ZocoLini
+- Remove broken ffi integration tests (#468) @ZocoLini
+- Remove `SyncState::Initializing` variant (#465) @xdustinface
+- Remove unified sdk references (#302) @xdustinface
+- Drop unused `completed_count` in `BlocksPipeline` (#477) @xdustinface
+- Drop unused `_TestCallbackData` (#472) @xdustinface
+- Drop `FeeEstimator` (#480) @ZocoLini
+- Remove some unused files (#296) @xdustinface
+- Drop `FeeLevel` (#481) @ZocoLini
+- Drop unsigned transactions creation in `WalletManager` and in `ManagedWalletInfo` (#483) @ZocoLini
+- Drop `dashcore::FeeRate` (#482) @ZocoLini
+- Drop unused `UtxoSet` struct (#491) @ZocoLini
+- Drop unused `NetworkManager` functions (#504) @xdustinface
+- Removed `hkdf` dependency (#512) @ZocoLini
+- Remove unnecessary code in `internals::macros` (#513) @ZocoLini
+- Drop `no-std` CI jobs (#522) @ZocoLini
+- Drop unused modules in `dashcore` crate (#534) @ZocoLini
+- Drop out-of-scope crates inside `hashes` crate (#535) @ZocoLini
+- Drop `tools` CI test group (#548) @xdustinface
+- Remove `current_sync_peer` from network manager (#511) @xdustinface
+- Drop unused `update_wallet_balance` from `WalletManager` (#560) @xdustinface
+- Drop `no-std` support in internals (#519) @ZocoLini
+- Drop `no-std` support for `hashes` (#520) @ZocoLini
+- Drop `no-std` support in `dashcore` (#521) @ZocoLini
+- Remove orphaned `key-wallet-manager` directory (#568) @xdustinface
+- Remove FFI header generation from `pre-commit` FFI step (#565) @xdustinface
+- Remove `ready-for-review` label when `merge-conflict` is added (#571) @xdustinface
+- Remove flaky `handshake_test.rs` integration tests (#574) @xdustinface
+- Drop out of date c tests (#583) @ZocoLini
+- Revert "fix(rpc-json): make `DMNState.service` and `MasternodeStatus.service`…" (#586) @QuantumExplorer
+- Drop incomplete `no-std` support for `key-wallet` (#518) @ZocoLini
+- Remove `default_peers_for_network` from `ClientConfig` (#592) @xdustinface
+- Remove dead `transaction_effect` from `WalletInterface` (#621) @xdustinface
+- Remove legacy mempool leftovers (#619) @xdustinface
+- Remove and replaced FFIExtendedPrivateKey with FFIExtendedPrivKey (#645) @ZocoLini
+- Remove and replace `FFIExtendedPublicKey` with `FFIExtendedPubKey` (#646) @ZocoLini
+- Drop random tests (#653) @ZocoLini
+- Remove unused dev-dependencies (#652) @ZocoLini
+- Remove redundant `HDWallet` + `AccountDerivation` struct (#674) @QuantumExplorer
+- Drop unused `Option<FH>` callback from `feed_qr_info` (#669) @xdustinface
+- Remove unused `consecutive_resyncs` counter on `Peer` (#705) @xdustinface
+- Drop unused `AccountMetadata` struct (#717) @QuantumExplorer
+- Drop unused `first_loaded_at` and `total_transactions` from `WalletMetadata` (#719) @QuantumExplorer
+- Remove `wallet_create_managed_wallet` (#710) @xdustinface
+- Drop unused `is_watch_only` from `ManagedCoreAccount` (#718) @QuantumExplorer
+- Remove unused error variants (#364) @ZocoLini
+- Revert "feat(ffi): add dash_spv_ffi_config_clear_peers (#591)" (#593) @xdustinface
+- Remove `MnemonicWithPassphrase` wallet type (#747) @QuantumExplorer
+- Drop `description()`, use `Display` for events (#758) @xdustinface
+- Drop unreachable `WouldBlock`/`TimedOut` (#753) @xdustinface
+- Remove dead `dash/embedded` crate and unused `fuzz/Cargo.lock` (#773) @xdustinface
+
 ## 0.41.1 - 2026-01-23
 
 ### Changed
