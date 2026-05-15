@@ -25,6 +25,13 @@ fn main() {
     println!("cargo:rustc-env=DASH_SPV_GIT_TAGGED={tagged}");
 
     println!("cargo:rerun-if-changed=build.rs");
+    // `.git/HEAD` only changes when switching branches, not when committing on
+    // the current one, so also watch the symbolic target's ref file.
+    if let Some(head_ref) = git(&["symbolic-ref", "--quiet", "HEAD"]) {
+        if let Some(p) = git(&["rev-parse", "--git-path", &head_ref]) {
+            println!("cargo:rerun-if-changed={p}");
+        }
+    }
     for path in ["HEAD", "index", "packed-refs"] {
         if let Some(p) = git(&["rev-parse", "--git-path", path]) {
             println!("cargo:rerun-if-changed={p}");
