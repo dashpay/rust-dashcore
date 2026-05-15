@@ -154,8 +154,13 @@ async fn test_apply_chain_lock_promotes_in_block_records() {
     assert!(ctx.bip44_account().transactions().contains_key(&txid));
 
     ctx.managed_wallet.update_last_processed_height(50);
-    let per_account = ctx.managed_wallet.apply_chain_lock(ChainLock::dummy(50));
-    let promoted = per_account
+    let outcome = ctx.managed_wallet.apply_chain_lock(ChainLock::dummy(50));
+    assert!(
+        outcome.metadata_advanced,
+        "first chainlock must advance metadata from None to Some(50)"
+    );
+    let promoted = outcome
+        .per_account
         .get(&bip44_account_type())
         .expect("BIP44 account should have a promotion entry");
     assert_eq!(promoted, &vec![txid]);
@@ -198,8 +203,12 @@ async fn test_apply_chain_lock_skips_unmined_and_above_height() {
     // Chainlock at 100 sits below the InBlock-at-200 record and above
     // the mempool record's (absent) height, so neither promotes.
     ctx.managed_wallet.update_last_processed_height(200);
-    let per_account = ctx.managed_wallet.apply_chain_lock(ChainLock::dummy(100));
-    assert!(per_account.is_empty());
+    let outcome = ctx.managed_wallet.apply_chain_lock(ChainLock::dummy(100));
+    assert!(outcome.per_account.is_empty());
+    assert!(
+        outcome.metadata_advanced,
+        "metadata must still advance to the new finality boundary even when no record promotes"
+    );
     assert!(!ctx.bip44_account().transaction_is_finalized(&mempool_txid));
     assert!(!ctx.bip44_account().transaction_is_finalized(&block_txid));
 }
