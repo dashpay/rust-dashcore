@@ -6,7 +6,6 @@ use std::sync::Arc;
 use std::time::Duration;
 use tempfile::TempDir;
 use tokio::sync::RwLock;
-use tokio_util::sync::CancellationToken;
 
 use dash_spv::network::PeerNetworkManager;
 use dash_spv::storage::DiskStorageManager;
@@ -49,24 +48,33 @@ async fn test_spv_client_creation() {
 async fn test_spv_client_run_stop() {
     let client = create_test_client().await;
 
-    let token = CancellationToken::new();
-    let cancel = token.clone();
+    // Run twice on the same instance: the watch must re-arm after stop(), so a
+    // second run() succeeds.
+    for _ in 0..2 {
+        let run_client = client.clone();
+        let handle = tokio::spawn(async move { run_client.run().await });
 
-    let run_client = client.clone();
-    let handle = tokio::spawn(async move { run_client.run(token).await });
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while !client.is_running() {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("client failed to start");
 
-    tokio::time::timeout(Duration::from_secs(5), async {
-        while !client.is_running().await {
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-    })
-    .await
-    .expect("client failed to start");
+        client.stop().await.unwrap();
 
-    cancel.cancel();
-    handle.await.unwrap().unwrap();
+        // stop() wakes the run loop immediately via the watch rather than only
+        // on the next 100ms coordinator tick, so the join completes far inside
+        // this bound. A hang (e.g. a missed wakeup) would trip the timeout.
+        tokio::time::timeout(Duration::from_secs(2), handle)
+            .await
+            .expect("run task did not exit promptly after stop")
+            .unwrap()
+            .unwrap();
 
-    assert!(!client.is_running().await);
+        assert!(!client.is_running());
+    }
 }
 
 #[tokio::test]

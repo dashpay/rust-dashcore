@@ -25,7 +25,7 @@ use dashcore::sml::masternode_list_engine::MasternodeListEngine;
 use dashcore_hashes::Hash;
 use key_wallet_manager::WalletInterface;
 use std::sync::Arc;
-use tokio::sync::{Mutex, RwLock};
+use tokio::sync::{watch, Mutex, RwLock};
 
 impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, N, S> {
     /// Create a new SPV client with the given configuration, network, storage, and wallet.
@@ -143,7 +143,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
             wallet,
             masternode_engine,
             sync_coordinator: Arc::new(Mutex::new(sync_coordinator)),
-            running: Arc::new(RwLock::new(false)),
+            running: Arc::new(watch::Sender::new(false)),
             event_handlers: Arc::new(event_handlers),
         };
 
@@ -161,11 +161,8 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
 
     /// Start the SPV client: spawn sync tasks and connect to the network.
     pub(super) async fn start(&self) -> Result<()> {
-        {
-            let running = self.running.read().await;
-            if *running {
-                return Err(SpvError::Config("Client already running".to_string()));
-            }
+        if self.is_running() {
+            return Err(SpvError::Config("Client already running".to_string()));
         }
 
         // Start all sync tasks before connecting to the network to make sure initial connection
@@ -180,11 +177,10 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
         // Connect to network
         self.network.lock().await.connect().await?;
 
-        // Only mark as running after all startup operations succeed
-        {
-            let mut running = self.running.write().await;
-            *running = true;
-        }
+        // Only mark as running after all startup operations succeed.
+        // `send_replace` always stores the value regardless of receiver count,
+        // so this is correct even when `run()` has not subscribed yet.
+        self.running.send_replace(true);
 
         Ok(())
     }
@@ -192,12 +188,15 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
     /// Stop the SPV client.
     pub async fn stop(&self) -> Result<()> {
         // Check if already stopped
-        {
-            let running = self.running.read().await;
-            if !*running {
-                return Ok(());
-            }
+        if !*self.running.borrow() {
+            return Ok(());
         }
+
+        // Flip the running state before tearing anything down so a concurrent
+        // `run()` loop wakes immediately and breaks out before it can lock the
+        // sync coordinator again. This prevents a tick from racing against the
+        // shutdown below.
+        self.running.send_replace(false);
 
         // Shut down sync coordinator: signals cancellation and waits for manager
         // tasks to drain before we tear down the network and storage layers.
@@ -214,10 +213,6 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
             storage.shutdown().await;
             tracing::info!("Storage shutdown completed - all data persisted");
         }
-
-        // Mark as stopped
-        let mut running = self.running.write().await;
-        *running = false;
 
         Ok(())
     }

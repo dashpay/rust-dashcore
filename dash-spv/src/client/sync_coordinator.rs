@@ -24,15 +24,20 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
         self.sync_coordinator.lock().await.progress().clone()
     }
 
-    /// Start the client and run the sync loop until the token is cancelled.
+    /// Start the client and run the sync loop until `stop()` is called.
     ///
     /// Subscribes to all event channels internally and dispatches events to the
     /// event handler provided at construction. Calls `start()` internally, runs
     /// continuous network monitoring, and calls `stop()` before returning.
-    pub async fn run(&self, token: CancellationToken) -> Result<()> {
+    pub async fn run(&self) -> Result<()> {
         let handlers = self.event_handlers.clone();
         let monitor_shutdown = CancellationToken::new();
         let (monitor_failure_tx, mut monitor_failure_rx) = mpsc::channel::<String>(1);
+
+        // Subscribe before `start()` so a `stop()` that races startup is never
+        // missed: the receiver records the version at subscription time, so any
+        // later state change is observed even if it lands before the loop runs.
+        let mut stop_rx = self.running.subscribe();
 
         // Subscribe and spawn monitors before startup so we don't miss early
         // connection events.
@@ -98,25 +103,29 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
             return Err(e);
         }
 
+        // `start()` flipped the state to `true`. Consume that edge so `changed()`
+        // only fires on the subsequent transition to `false` (the stop request).
+        // If a `stop()` already raced in, this reads `false` and the loop's first
+        // guard breaks immediately.
+        stop_rx.borrow_and_update();
+
         tracing::info!("Starting continuous network monitoring...");
 
         // Run the sync loop
         let mut sync_coordinator_tick_interval = tokio::time::interval(SYNC_COORDINATOR_TICK_MS);
 
         let error: Option<SpvError> = loop {
-            let running = self.running.read().await;
-            if !*running {
+            if !self.is_running() {
                 tracing::info!("Stopping network monitoring");
                 break None;
             }
-            drop(running);
 
             let error: Option<SpvError> = tokio::select! {
                 _ = sync_coordinator_tick_interval.tick() => {
                     self.sync_coordinator.lock().await.tick().await.err().map(Into::into)
                 }
-                _ = token.cancelled() => {
-                    tracing::debug!("DashSpvClient run loop cancelled");
+                _ = stop_rx.changed() => {
+                    tracing::debug!("DashSpvClient run loop stop requested");
                     break None
                 }
                 Some(msg) = monitor_failure_rx.recv() => {

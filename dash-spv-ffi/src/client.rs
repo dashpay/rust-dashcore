@@ -13,7 +13,6 @@ use std::mem::forget;
 use std::sync::{Arc, Mutex};
 use tokio::runtime::Runtime;
 use tokio::task::JoinHandle;
-use tokio_util::sync::CancellationToken;
 
 /// FFI wrapper around `DashSpvClient`.
 type InnerClient = DashSpvClient<
@@ -26,7 +25,6 @@ pub struct FFIDashSpvClient {
     pub(crate) inner: InnerClient,
     pub(crate) runtime: Arc<Runtime>,
     run_task: Mutex<Option<JoinHandle<()>>>,
-    shutdown_token: CancellationToken,
 }
 
 impl FFIDashSpvClient {
@@ -113,7 +111,6 @@ pub unsafe extern "C" fn dash_spv_ffi_client_new(
                 inner: client,
                 runtime,
                 run_task: Mutex::new(None),
-                shutdown_token: CancellationToken::new(),
             };
             Box::into_raw(Box::new(ffi_client))
         }
@@ -130,9 +127,10 @@ const RUN_TASK_SHUTDOWN_TIMEOUT: std::time::Duration = std::time::Duration::from
 impl FFIDashSpvClient {
     /// Wait for the run task to finish cooperatively, aborting only on timeout.
     ///
-    /// The caller must cancel `shutdown_token` before calling this so that
-    /// `DashSpvClient::run()` exits its loop and cleans up monitor tasks.
-    /// Only falls back to `abort()` if the task doesn't exit within the timeout.
+    /// `DashSpvClient::stop()` must have been called first (it flips the client's
+    /// internal running state, which makes `run()` exit its loop and clean up
+    /// monitor tasks). This only falls back to `abort()` if the task doesn't
+    /// exit within the timeout.
     fn wait_for_run_task(&self) {
         let task = self.run_task.lock().unwrap().take();
         if let Some(mut task) = task {
@@ -153,18 +151,6 @@ impl FFIDashSpvClient {
             }
         }
     }
-}
-
-fn stop_client_internal(client: &mut FFIDashSpvClient) -> Result<(), dash_spv::SpvError> {
-    client.shutdown_token.cancel();
-
-    client.wait_for_run_task();
-
-    let result = client.runtime.block_on(async { client.inner.stop().await });
-
-    client.shutdown_token = CancellationToken::new();
-
-    result
 }
 
 /// Update the running client's configuration.
@@ -203,8 +189,14 @@ pub unsafe extern "C" fn dash_spv_ffi_client_update_config(
 pub unsafe extern "C" fn dash_spv_ffi_client_stop(client: *mut FFIDashSpvClient) -> i32 {
     null_check!(client);
 
-    let client = &mut (*client);
-    match stop_client_internal(client) {
+    let client = &(*client);
+
+    // `stop()` flips the client's internal running state, making `run()` break
+    // out of its loop. Wait for the spawned run task only after that.
+    let result = client.runtime.block_on(async { client.inner.stop().await });
+    client.wait_for_run_task();
+
+    match result {
         Ok(()) => FFIErrorCode::Success as i32,
         Err(e) => {
             set_last_error(&e.to_string());
@@ -231,13 +223,12 @@ pub unsafe extern "C" fn dash_spv_ffi_client_run(client: *mut FFIDashSpvClient) 
 
     tracing::info!("dash_spv_ffi_client_run: starting sync");
 
-    let shutdown_token = client.shutdown_token.clone();
     let spv_client = client.inner.clone();
 
     let task = client.runtime.spawn(async move {
         tracing::debug!("Sync task: starting run");
 
-        if let Err(e) = spv_client.run(shutdown_token).await {
+        if let Err(e) = spv_client.run().await {
             tracing::error!("Sync task: error: {}", e);
         }
 
@@ -366,17 +357,14 @@ pub unsafe extern "C" fn dash_spv_ffi_client_destroy(client: *mut FFIDashSpvClie
     if !client.is_null() {
         let client = Box::from_raw(client);
 
-        // Cancel shutdown token so run() exits its loop and cleans up
-        client.shutdown_token.cancel();
-
-        // Wait for the run task to finish (cooperative, with timeout fallback)
-        client.wait_for_run_task();
-
         // Stop the SPV client (run() calls stop() internally, but this
-        // handles the case where run() was never called or was aborted)
+        // handles the case where run() was never called or was aborted).
         client.runtime.block_on(async {
             let _ = client.inner.stop().await;
         });
+
+        // Wait for the run task to finish (cooperative, with timeout fallback)
+        client.wait_for_run_task();
 
         tracing::info!("FFI client destroyed and all tasks cleaned up");
     }

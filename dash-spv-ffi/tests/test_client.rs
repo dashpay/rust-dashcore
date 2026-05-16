@@ -48,7 +48,11 @@ mod tests {
             let (config, _temp_dir) = create_test_config();
             let client = dash_spv_ffi_client_new(config, FFIEventCallbacks::default());
 
-            // Pass default (no-op) callbacks — start/stop may fail without network
+            // Pass default (no-op) callbacks. Start/stop may fail without network.
+            // Run twice on the same pointer: the client's internal watch must
+            // re-arm after stop() so a second run() works.
+            let _result = dash_spv_ffi_client_run(client);
+            let _result = dash_spv_ffi_client_stop(client);
             let _result = dash_spv_ffi_client_run(client);
             let _result = dash_spv_ffi_client_stop(client);
 

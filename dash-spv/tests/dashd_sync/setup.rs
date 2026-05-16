@@ -24,7 +24,6 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tempfile::TempDir;
 use tokio::sync::{broadcast, watch, RwLock};
-use tokio_util::sync::CancellationToken;
 
 /// SPV-specific test context wrapping the shared dashd infrastructure.
 ///
@@ -231,7 +230,7 @@ pub(super) type TestClient =
     DashSpvClient<WalletManager<ManagedWalletInfo>, PeerNetworkManager, DiskStorageManager>;
 
 /// A `ClientHandle` is a utility structure that manages the state and handles for a `TestClient`
-/// required to interact with the synchronization process, various event channels, and cancellation capabilities.
+/// required to interact with the synchronization process and event channels.
 pub(super) struct ClientHandle {
     /// The underlying SPV client instance.
     pub(super) client: TestClient,
@@ -245,16 +244,13 @@ pub(super) struct ClientHandle {
     pub(super) network_event_receiver: broadcast::Receiver<NetworkEvent>,
     /// A channel for receiving wallet events.
     pub(super) wallet_event_receiver: broadcast::Receiver<WalletEvent>,
-    /// A cancellation token for the client's run loop.
-    pub(super) cancel_token: CancellationToken,
 }
 
 impl ClientHandle {
-    /// Stops the execution of the client run loop by canceling its associated token and awaiting the
-    /// termination of the background task.
+    /// Stops the SPV client and awaits the termination of the background run task.
     pub(super) async fn stop(&mut self) {
-        tracing::info!("Cancelling client run loop...");
-        self.cancel_token.cancel();
+        tracing::info!("Stopping client run loop...");
+        self.client.stop().await.expect("client stop failed");
         if let Some(handle) = self.run_handle.take() {
             handle.await.expect("Run task panicked").expect("Run task returned error");
         }
@@ -304,11 +300,9 @@ pub(super) async fn create_and_start_client(
         let w = client.wallet().read().await;
         w.subscribe_events()
     };
-    let cancel_token = CancellationToken::new();
-    let run_token = cancel_token.clone();
     let run_client = client.clone();
 
-    let run_handle = tokio::task::spawn(async move { run_client.run(run_token).await });
+    let run_handle = tokio::task::spawn(async move { run_client.run().await });
 
     ClientHandle {
         client,
@@ -317,7 +311,6 @@ pub(super) async fn create_and_start_client(
         sync_event_receiver,
         network_event_receiver,
         wallet_event_receiver,
-        cancel_token,
     }
 }
 

@@ -13,14 +13,6 @@
 //! - `queries.rs` - Peer, masternode, and balance queries
 //! - `transactions.rs` - Transaction operations (e.g., broadcast)
 //! - `sync_coordinator.rs` - Sync orchestration and network monitoring
-//!
-//! ## Lock Ordering
-//!
-//! When acquiring multiple locks, always use this order:
-//! 1. running (`Arc<RwLock<bool>>`)
-//! 2. storage (`Arc<Mutex<S>>`)
-//!
-//! Never acquire locks in reverse order or deadlock will occur!
 
 pub mod config;
 pub mod event_handler;

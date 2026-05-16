@@ -10,7 +10,7 @@
 
 use dashcore::sml::masternode_list_engine::MasternodeListEngine;
 use std::sync::Arc;
-use tokio::sync::{Mutex, RwLock};
+use tokio::sync::{watch, Mutex, RwLock};
 
 use super::ClientConfig;
 use crate::error::{Result, SpvError};
@@ -111,7 +111,9 @@ pub struct DashSpvClient<W: WalletInterface, N: NetworkManager, S: StorageManage
     pub(super) wallet: Arc<RwLock<W>>,
     pub(super) masternode_engine: Option<Arc<RwLock<MasternodeListEngine>>>,
     pub(super) sync_coordinator: Arc<Mutex<PersistentSyncCoordinator<W>>>,
-    pub(super) running: Arc<RwLock<bool>>,
+    /// `true` while running, `false` once a stop is requested. Stored as a
+    /// `watch` so a stop is observed immediately rather than polled.
+    pub(super) running: Arc<watch::Sender<bool>>,
     pub(super) event_handlers: Arc<Vec<Arc<dyn super::EventHandler>>>,
 }
 
@@ -151,8 +153,8 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
     // ============ State Queries ============
 
     /// Check if the client is running.
-    pub async fn is_running(&self) -> bool {
-        *self.running.read().await
+    pub fn is_running(&self) -> bool {
+        *self.running.borrow()
     }
 
     /// Returns the current chain tip hash if available.
