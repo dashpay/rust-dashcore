@@ -4,6 +4,10 @@
 
 use crate::account::{Account, AccountType, StandardAccountType};
 use crate::bip32::{ExtendedPrivKey, ExtendedPubKey};
+use crate::gap_limit::{AccountGapConfig, DEFAULT_GAP_LIMIT};
+use crate::managed_account::address_pool::AddressPoolType;
+use crate::managed_account::managed_account_trait::ManagedAccountTrait;
+use crate::managed_account::{ManagedCoreFundsAccount, ManagedCoreKeysAccount};
 use crate::mnemonic::{Language, Mnemonic};
 use crate::Network;
 use secp256k1::Secp256k1;
@@ -525,5 +529,68 @@ fn test_account_derivation_path_uniqueness() {
         assert!(!paths.contains(&path_str), "Duplicate derivation path: {}", path_str);
 
         paths.push(path_str);
+    }
+}
+
+#[test]
+fn test_configurable_gap_limit_propagates_to_pools() {
+    let network = Network::Testnet;
+    let master = create_test_extended_priv_key(network);
+    let secp = Secp256k1::new();
+
+    let make_account = |account_type: AccountType| {
+        let path = account_type.derivation_path(network).unwrap();
+        let xpriv = master.derive_priv(&secp, &path).unwrap();
+        Account::from_xpriv(Some([0u8; 32]), account_type, xpriv, network).unwrap()
+    };
+
+    let std_type = AccountType::Standard {
+        index: 0,
+        standard_account_type: StandardAccountType::BIP44Account,
+    };
+
+    // A Standard account's external and internal pools each carry their
+    // configured gap and pre-generate exactly that many addresses.
+    let managed = ManagedCoreFundsAccount::from_account_with_gap_config(
+        &make_account(std_type),
+        AccountGapConfig::standard(100, 50),
+    );
+    assert_eq!(managed.external_gap_limit(), Some(100));
+    assert_eq!(managed.internal_gap_limit(), Some(50));
+    for pool in managed.managed_account_type().address_pools() {
+        let expected = match pool.pool_type {
+            AddressPoolType::External => 100,
+            AddressPoolType::Internal => 50,
+            other => panic!("unexpected pool type for Standard account: {:?}", other),
+        };
+        assert_eq!(pool.gap_limit, expected);
+        assert_eq!(pool.addresses.len() as u32, expected);
+    }
+
+    // A single-pool account applies the `single` field to its one pool.
+    let managed = ManagedCoreFundsAccount::from_account_with_gap_config(
+        &make_account(AccountType::CoinJoin {
+            index: 0,
+        }),
+        AccountGapConfig {
+            single: 75,
+            ..AccountGapConfig::default()
+        },
+    );
+    let pools = managed.managed_account_type().address_pools();
+    assert_eq!(pools.len(), 1);
+    assert_eq!(pools[0].gap_limit, 75);
+    assert_eq!(pools[0].addresses.len() as u32, 75);
+
+    // The default constructor applies DEFAULT_GAP_LIMIT to every pool, for
+    // both Standard (external/internal) and single-pool account types.
+    let managed = ManagedCoreFundsAccount::from_account(&make_account(std_type));
+    assert_eq!(managed.external_gap_limit(), Some(DEFAULT_GAP_LIMIT));
+    assert_eq!(managed.internal_gap_limit(), Some(DEFAULT_GAP_LIMIT));
+
+    let identity =
+        ManagedCoreKeysAccount::from_account(&make_account(AccountType::IdentityRegistration));
+    for pool in identity.managed_account_type().address_pools() {
+        assert_eq!(pool.gap_limit, DEFAULT_GAP_LIMIT);
     }
 }

@@ -149,20 +149,32 @@ impl ManagedCoreKeysAccount {
         promoted
     }
 
-    /// Create a `ManagedCoreKeysAccount` from an [`Account`](super::super::Account).
+    /// Create a `ManagedCoreKeysAccount` from an [`Account`](super::super::Account)
+    /// using the per-pool default gap limits.
     pub fn from_account(account: &super::super::Account) -> Self {
+        Self::from_account_with_gap_config(account, crate::gap_limit::AccountGapConfig::default())
+    }
+
+    /// Create a `ManagedCoreKeysAccount` from an [`Account`](super::super::Account)
+    /// with caller-supplied gap limits for the underlying address pools.
+    pub fn from_account_with_gap_config(
+        account: &super::super::Account,
+        gap_config: crate::gap_limit::AccountGapConfig,
+    ) -> Self {
         let key_source = address_pool::KeySource::Public(account.account_xpub);
-        let managed_type = ManagedAccountType::from_account_type(
+        let managed_type = ManagedAccountType::from_account_type_with_gap_config(
             account.account_type,
             account.network,
             &key_source,
+            gap_config,
         )
         .unwrap_or_else(|_| {
             let no_key_source = address_pool::KeySource::NoKeySource;
-            ManagedAccountType::from_account_type(
+            ManagedAccountType::from_account_type_with_gap_config(
                 account.account_type,
                 account.network,
                 &no_key_source,
+                gap_config,
             )
             .expect("Should succeed with NoKeySource")
         });

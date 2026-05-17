@@ -7,10 +7,7 @@ use std::collections::BTreeMap;
 
 use crate::account::account_collection::{DashpayAccountKey, PlatformPaymentAccountKey};
 use crate::account::account_type::AccountType;
-use crate::gap_limit::{
-    DEFAULT_COINJOIN_GAP_LIMIT, DEFAULT_EXTERNAL_GAP_LIMIT, DEFAULT_INTERNAL_GAP_LIMIT,
-    DEFAULT_SPECIAL_GAP_LIMIT, DIP17_GAP_LIMIT,
-};
+use crate::gap_limit::DEFAULT_GAP_LIMIT;
 use crate::managed_account::address_pool::{AddressPool, AddressPoolType};
 use crate::managed_account::managed_account_ref::{
     ManagedAccountRef, ManagedAccountRefMut, OwnedManagedCoreAccount,
@@ -558,7 +555,7 @@ impl ManagedAccountCollection {
                 let external_pool = AddressPool::new(
                     external_path,
                     AddressPoolType::External,
-                    DEFAULT_EXTERNAL_GAP_LIMIT,
+                    DEFAULT_GAP_LIMIT,
                     network,
                     key_source,
                 )?;
@@ -568,7 +565,7 @@ impl ManagedAccountCollection {
                 let internal_pool = AddressPool::new(
                     internal_path,
                     AddressPoolType::Internal,
-                    DEFAULT_INTERNAL_GAP_LIMIT,
+                    DEFAULT_GAP_LIMIT,
                     network,
                     key_source,
                 )?;
@@ -588,7 +585,7 @@ impl ManagedAccountCollection {
                 let addresses = AddressPool::new(
                     base_path,
                     AddressPoolType::Absent,
-                    DEFAULT_COINJOIN_GAP_LIMIT,
+                    DEFAULT_GAP_LIMIT,
                     network,
                     key_source,
                 )?;
@@ -601,7 +598,7 @@ impl ManagedAccountCollection {
                 let addresses = AddressPool::new(
                     base_path,
                     AddressPoolType::Absent,
-                    DEFAULT_SPECIAL_GAP_LIMIT,
+                    DEFAULT_GAP_LIMIT,
                     network,
                     key_source,
                 )?;
@@ -615,7 +612,7 @@ impl ManagedAccountCollection {
                 let addresses = AddressPool::new(
                     base_path,
                     AddressPoolType::Absent,
-                    DEFAULT_SPECIAL_GAP_LIMIT,
+                    DEFAULT_GAP_LIMIT,
                     network,
                     key_source,
                 )?;
@@ -628,7 +625,7 @@ impl ManagedAccountCollection {
                 let addresses = AddressPool::new(
                     base_path,
                     AddressPoolType::Absent,
-                    DEFAULT_SPECIAL_GAP_LIMIT,
+                    DEFAULT_GAP_LIMIT,
                     network,
                     key_source,
                 )?;
@@ -640,7 +637,7 @@ impl ManagedAccountCollection {
                 let addresses = AddressPool::new(
                     base_path,
                     AddressPoolType::Absent,
-                    DEFAULT_SPECIAL_GAP_LIMIT,
+                    DEFAULT_GAP_LIMIT,
                     network,
                     key_source,
                 )?;
@@ -652,7 +649,7 @@ impl ManagedAccountCollection {
                 let addresses = AddressPool::new(
                     base_path,
                     AddressPoolType::Absent,
-                    DEFAULT_SPECIAL_GAP_LIMIT,
+                    DEFAULT_GAP_LIMIT,
                     network,
                     key_source,
                 )?;
@@ -664,7 +661,7 @@ impl ManagedAccountCollection {
                 let addresses = AddressPool::new(
                     base_path,
                     AddressPoolType::Absent,
-                    DEFAULT_SPECIAL_GAP_LIMIT,
+                    DEFAULT_GAP_LIMIT,
                     network,
                     key_source,
                 )?;
@@ -676,7 +673,7 @@ impl ManagedAccountCollection {
                 let addresses = AddressPool::new(
                     base_path,
                     AddressPoolType::Absent,
-                    DEFAULT_SPECIAL_GAP_LIMIT,
+                    DEFAULT_GAP_LIMIT,
                     network,
                     key_source,
                 )?;
@@ -688,7 +685,7 @@ impl ManagedAccountCollection {
                 let addresses = AddressPool::new(
                     base_path,
                     AddressPoolType::Absent,
-                    DEFAULT_SPECIAL_GAP_LIMIT,
+                    DEFAULT_GAP_LIMIT,
                     network,
                     key_source,
                 )?;
@@ -700,7 +697,7 @@ impl ManagedAccountCollection {
                 let addresses = AddressPool::new(
                     base_path,
                     AddressPoolType::Absent,
-                    DEFAULT_SPECIAL_GAP_LIMIT,
+                    DEFAULT_GAP_LIMIT,
                     network,
                     key_source,
                 )?;
@@ -712,7 +709,7 @@ impl ManagedAccountCollection {
                 let addresses = AddressPool::new(
                     base_path,
                     AddressPoolType::AbsentHardened,
-                    DEFAULT_SPECIAL_GAP_LIMIT,
+                    DEFAULT_GAP_LIMIT,
                     network,
                     key_source,
                 )?;
@@ -756,7 +753,7 @@ impl ManagedAccountCollection {
                 let addresses = AddressPool::new(
                     base_path,
                     AddressPoolType::Absent,
-                    DIP17_GAP_LIMIT,
+                    DEFAULT_GAP_LIMIT,
                     network,
                     key_source,
                 )?;
@@ -789,7 +786,7 @@ impl ManagedAccountCollection {
         let addresses = AddressPool::new(
             base_path,
             AddressPoolType::Absent,
-            DIP17_GAP_LIMIT,
+            DEFAULT_GAP_LIMIT,
             account.network,
             &key_source,
         )?;

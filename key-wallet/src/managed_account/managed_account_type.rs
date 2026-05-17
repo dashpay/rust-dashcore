@@ -1,9 +1,6 @@
 use crate::account::account_collection::{DashpayContactIdentityId, DashpayOurUserIdentityId};
 use crate::account::StandardAccountType;
-use crate::gap_limit::{
-    DEFAULT_COINJOIN_GAP_LIMIT, DEFAULT_EXTERNAL_GAP_LIMIT, DEFAULT_INTERNAL_GAP_LIMIT,
-    DEFAULT_SPECIAL_GAP_LIMIT, DIP17_GAP_LIMIT,
-};
+use crate::gap_limit::AccountGapConfig;
 
 use crate::{AccountType, AddressPool, DerivationPath};
 #[cfg(feature = "bincode")]
@@ -475,11 +472,34 @@ impl ManagedAccountType {
         }
     }
 
-    /// Create a ManagedAccountType from an AccountType with address pools
+    /// Create a [`ManagedAccountType`] from an [`AccountType`] using the per-pool
+    /// default gap limits. See [`Self::from_account_type_with_gap_config`] to
+    /// override the gap limits at creation/import time.
     pub fn from_account_type(
         account_type: AccountType,
         network: crate::Network,
         key_source: &crate::KeySource,
+    ) -> Result<Self, crate::error::Error> {
+        Self::from_account_type_with_gap_config(
+            account_type,
+            network,
+            key_source,
+            AccountGapConfig::default(),
+        )
+    }
+
+    /// Create a [`ManagedAccountType`] from an [`AccountType`] with explicit
+    /// gap limits for the underlying address pools.
+    ///
+    /// `gap_config` carries the gap limit for each pool kind: `external` /
+    /// `internal` for Standard accounts, or `single` for every other
+    /// (single-pool) account type. Use [`AccountGapConfig::default`] for the
+    /// uniform [`DEFAULT_GAP_LIMIT`](crate::gap_limit::DEFAULT_GAP_LIMIT).
+    pub fn from_account_type_with_gap_config(
+        account_type: AccountType,
+        network: crate::Network,
+        key_source: &crate::KeySource,
+        gap_config: AccountGapConfig,
     ) -> Result<Self, crate::error::Error> {
         use crate::bip32::DerivationPath;
         use crate::managed_account::address_pool::{AddressPool, AddressPoolType};
@@ -499,7 +519,7 @@ impl ManagedAccountType {
                 let external_pool = AddressPool::new(
                     external_path,
                     AddressPoolType::External,
-                    DEFAULT_EXTERNAL_GAP_LIMIT,
+                    gap_config.external,
                     network,
                     key_source,
                 )?;
@@ -509,7 +529,7 @@ impl ManagedAccountType {
                 let internal_pool = AddressPool::new(
                     internal_path,
                     AddressPoolType::Internal,
-                    DEFAULT_INTERNAL_GAP_LIMIT,
+                    gap_config.internal,
                     network,
                     key_source,
                 )?;
@@ -530,7 +550,7 @@ impl ManagedAccountType {
                 let pool = AddressPool::new(
                     path,
                     AddressPoolType::Absent,
-                    DEFAULT_COINJOIN_GAP_LIMIT,
+                    gap_config.single,
                     network,
                     key_source,
                 )?;
@@ -547,7 +567,7 @@ impl ManagedAccountType {
                 let pool = AddressPool::new(
                     path,
                     AddressPoolType::Absent,
-                    DEFAULT_SPECIAL_GAP_LIMIT,
+                    gap_config.single,
                     network,
                     key_source,
                 )?;
@@ -565,7 +585,7 @@ impl ManagedAccountType {
                 let pool = AddressPool::new(
                     path,
                     AddressPoolType::Absent,
-                    DEFAULT_SPECIAL_GAP_LIMIT,
+                    gap_config.single,
                     network,
                     key_source,
                 )?;
@@ -582,7 +602,7 @@ impl ManagedAccountType {
                 let pool = AddressPool::new(
                     path,
                     AddressPoolType::Absent,
-                    DEFAULT_SPECIAL_GAP_LIMIT,
+                    gap_config.single,
                     network,
                     key_source,
                 )?;
@@ -598,7 +618,7 @@ impl ManagedAccountType {
                 let pool = AddressPool::new(
                     path,
                     AddressPoolType::Absent,
-                    DEFAULT_SPECIAL_GAP_LIMIT,
+                    gap_config.single,
                     network,
                     key_source,
                 )?;
@@ -614,7 +634,7 @@ impl ManagedAccountType {
                 let pool = AddressPool::new(
                     path,
                     AddressPoolType::Absent,
-                    DEFAULT_SPECIAL_GAP_LIMIT,
+                    gap_config.single,
                     network,
                     key_source,
                 )?;
@@ -630,7 +650,7 @@ impl ManagedAccountType {
                 let pool = AddressPool::new(
                     path,
                     AddressPoolType::Absent,
-                    DEFAULT_SPECIAL_GAP_LIMIT,
+                    gap_config.single,
                     network,
                     key_source,
                 )?;
@@ -646,7 +666,7 @@ impl ManagedAccountType {
                 let pool = AddressPool::new(
                     path,
                     AddressPoolType::Absent,
-                    DEFAULT_SPECIAL_GAP_LIMIT,
+                    gap_config.single,
                     network,
                     key_source,
                 )?;
@@ -662,7 +682,7 @@ impl ManagedAccountType {
                 let pool = AddressPool::new(
                     path,
                     AddressPoolType::Absent,
-                    DEFAULT_SPECIAL_GAP_LIMIT,
+                    gap_config.single,
                     network,
                     key_source,
                 )?;
@@ -678,7 +698,7 @@ impl ManagedAccountType {
                 let pool = AddressPool::new(
                     path,
                     AddressPoolType::Absent,
-                    DEFAULT_SPECIAL_GAP_LIMIT,
+                    gap_config.single,
                     network,
                     key_source,
                 )?;
@@ -694,7 +714,7 @@ impl ManagedAccountType {
                 let pool = AddressPool::new(
                     path,
                     AddressPoolType::AbsentHardened,
-                    DEFAULT_SPECIAL_GAP_LIMIT,
+                    gap_config.single,
                     network,
                     key_source,
                 )?;
@@ -714,7 +734,7 @@ impl ManagedAccountType {
                 let pool = AddressPool::new(
                     path,
                     crate::managed_account::address_pool::AddressPoolType::Absent,
-                    20,
+                    gap_config.single,
                     network,
                     key_source,
                 )?;
@@ -736,7 +756,7 @@ impl ManagedAccountType {
                 let pool = AddressPool::new(
                     path,
                     crate::managed_account::address_pool::AddressPoolType::Absent,
-                    20,
+                    gap_config.single,
                     network,
                     key_source,
                 )?;
@@ -759,7 +779,7 @@ impl ManagedAccountType {
                 let pool = AddressPool::new(
                     path,
                     crate::managed_account::address_pool::AddressPoolType::Absent,
-                    DIP17_GAP_LIMIT,
+                    gap_config.single,
                     network,
                     key_source,
                 )?;

@@ -10,23 +10,57 @@ use core::cmp;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
-/// Standard gap limit for external addresses (BIP44 recommendation)
-pub const DEFAULT_EXTERNAL_GAP_LIMIT: u32 = 30;
-
-/// Standard gap limit for internal (change) addresses
-pub const DEFAULT_INTERNAL_GAP_LIMIT: u32 = 30;
-
-/// Standard gap limit for CoinJoin addresses
-pub const DEFAULT_COINJOIN_GAP_LIMIT: u32 = 30;
-
-/// Standard gap limit for special purpose keys (identity, provider keys)
-pub const DEFAULT_SPECIAL_GAP_LIMIT: u32 = 5;
-
-/// Gap limit for DIP-17 platform payment addresses
-pub const DIP17_GAP_LIMIT: u32 = 20;
+/// Default gap limit applied to every address pool (BIP44 recommendation is
+/// 20, this library uses a more conservative 30). Used for external, internal,
+/// and every single-pool account type unless overridden via
+/// [`AccountGapConfig`].
+pub const DEFAULT_GAP_LIMIT: u32 = 30;
 
 /// Maximum gap limit to prevent excessive address generation
 pub const MAX_GAP_LIMIT: u32 = 1000;
+
+/// Gap limits to apply at account creation or import.
+///
+/// Decoupled from [`GapLimitManager`] (a runtime tracker with mutable usage
+/// state). This struct only carries the *configuration* the caller wants to
+/// persist on the account's address pools. Every field has a concrete value,
+/// [`Default`] populating each with [`DEFAULT_GAP_LIMIT`], so callers override
+/// only the fields they care about (e.g. via [`AccountGapConfig::standard`] or
+/// struct-update syntax over `..Default::default()`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "bincode", derive(Encode, Decode))]
+pub struct AccountGapConfig {
+    /// External (receive) chain gap limit for Standard accounts.
+    pub external: u32,
+    /// Internal (change) chain gap limit for Standard accounts.
+    pub internal: u32,
+    /// Gap limit for single-pool accounts (CoinJoin, identity, provider,
+    /// asset-lock, DashPay, platform payment).
+    pub single: u32,
+}
+
+impl Default for AccountGapConfig {
+    fn default() -> Self {
+        Self {
+            external: DEFAULT_GAP_LIMIT,
+            internal: DEFAULT_GAP_LIMIT,
+            single: DEFAULT_GAP_LIMIT,
+        }
+    }
+}
+
+impl AccountGapConfig {
+    /// Build a config overriding the Standard external and internal limits,
+    /// leaving the single-pool limit at [`DEFAULT_GAP_LIMIT`].
+    pub fn standard(external: u32, internal: u32) -> Self {
+        Self {
+            external,
+            internal,
+            ..Self::default()
+        }
+    }
+}
 
 /// Stages of gap limit processing
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -261,8 +295,8 @@ impl GapLimitManager {
     /// Create a new gap limit manager with default limits
     pub fn new_default() -> Self {
         Self {
-            external: GapLimit::new(DEFAULT_EXTERNAL_GAP_LIMIT),
-            internal: GapLimit::new(DEFAULT_INTERNAL_GAP_LIMIT),
+            external: GapLimit::new(DEFAULT_GAP_LIMIT),
+            internal: GapLimit::new(DEFAULT_GAP_LIMIT),
             coinjoin: None,
         }
     }
@@ -425,6 +459,27 @@ mod tests {
         }
 
         assert!(manager.is_discovery_complete());
+    }
+
+    #[test]
+    fn test_account_gap_config_defaults_and_overrides() {
+        let default = AccountGapConfig::default();
+        assert_eq!(default.external, DEFAULT_GAP_LIMIT);
+        assert_eq!(default.internal, DEFAULT_GAP_LIMIT);
+        assert_eq!(default.single, DEFAULT_GAP_LIMIT);
+
+        let overridden = AccountGapConfig::standard(200, 50);
+        assert_eq!(overridden.external, 200);
+        assert_eq!(overridden.internal, 50);
+        // `single` stays at the default when standard() is used.
+        assert_eq!(overridden.single, DEFAULT_GAP_LIMIT);
+
+        let single_only = AccountGapConfig {
+            single: 42,
+            ..AccountGapConfig::default()
+        };
+        assert_eq!(single_only.single, 42);
+        assert_eq!(single_only.external, DEFAULT_GAP_LIMIT);
     }
 
     #[test]

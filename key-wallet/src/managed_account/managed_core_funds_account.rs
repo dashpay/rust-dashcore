@@ -74,9 +74,19 @@ impl ManagedCoreFundsAccount {
         }
     }
 
-    /// Create a `ManagedCoreFundsAccount` from an [`Account`](super::super::Account).
+    /// Create a `ManagedCoreFundsAccount` from an [`Account`](super::super::Account)
+    /// using the per-pool default gap limits.
     pub fn from_account(account: &super::super::Account) -> Self {
         Self::wrap(ManagedCoreKeysAccount::from_account(account))
+    }
+
+    /// Create a `ManagedCoreFundsAccount` from an [`Account`](super::super::Account)
+    /// with caller-supplied gap limits for the underlying address pools.
+    pub fn from_account_with_gap_config(
+        account: &super::super::Account,
+        gap_config: crate::gap_limit::AccountGapConfig,
+    ) -> Self {
+        Self::wrap(ManagedCoreKeysAccount::from_account_with_gap_config(account, gap_config))
     }
 
     /// Create a `ManagedCoreFundsAccount` from a [`BLSAccount`].

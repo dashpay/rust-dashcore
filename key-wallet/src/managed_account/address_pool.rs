@@ -13,7 +13,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 
 use crate::bip32::{ChildNumber, DerivationPath, ExtendedPrivKey, ExtendedPubKey};
 use crate::error::{Error, Result};
-use crate::gap_limit::DEFAULT_EXTERNAL_GAP_LIMIT;
+use crate::gap_limit::DEFAULT_GAP_LIMIT;
 use crate::Network;
 use dashcore::{Address, AddressType, ScriptBuf};
 
@@ -1046,7 +1046,7 @@ impl AddressPoolBuilder {
         Self {
             base_path: None,
             pool_type: AddressPoolType::External,
-            gap_limit: DEFAULT_EXTERNAL_GAP_LIMIT,
+            gap_limit: DEFAULT_GAP_LIMIT,
             network: Network::Mainnet,
             address_type: AddressType::P2pkh,
             key_source: None,
