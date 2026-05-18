@@ -13,7 +13,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 
 use crate::bip32::{ChildNumber, DerivationPath, ExtendedPrivKey, ExtendedPubKey};
 use crate::error::{Error, Result};
-use crate::gap_limit::DEFAULT_GAP_LIMIT;
+use crate::gap_limit::{DEFAULT_GAP_LIMIT, MAX_GAP_LIMIT};
 use crate::Network;
 use dashcore::{Address, AddressType, ScriptBuf};
 
@@ -348,6 +348,19 @@ pub struct AddressPool {
     pub address_type: AddressType,
 }
 
+/// Reject gap limits that would break pool maintenance. A `0` gap underflows
+/// the `gap_limit - 1` target computation in [`AddressPool::maintain_gap_limit`]
+/// and `prune_unused`, and a value past [`MAX_GAP_LIMIT`] would pre-generate a
+/// pathological number of addresses.
+fn validate_gap_limit(gap_limit: u32) -> Result<()> {
+    if gap_limit == 0 || gap_limit > MAX_GAP_LIMIT {
+        return Err(Error::InvalidParameter(format!(
+            "gap limit must be in 1..={MAX_GAP_LIMIT}, got {gap_limit}"
+        )));
+    }
+    Ok(())
+}
+
 impl AddressPool {
     /// Create a new address pool and generate addresses up to the gap limit
     pub fn new(
@@ -357,6 +370,7 @@ impl AddressPool {
         network: Network,
         key_source: &KeySource,
     ) -> Result<Self> {
+        validate_gap_limit(gap_limit)?;
         let mut pool = Self::new_without_generation(base_path, pool_type, gap_limit, network);
 
         // Generate addresses up to the gap limit if we have a key source
@@ -886,7 +900,7 @@ impl AddressPool {
     /// public key) for downstream persisters without re-deriving it.
     pub fn maintain_gap_limit(&mut self, key_source: &KeySource) -> Result<Vec<AddressInfo>> {
         let target = match self.highest_used {
-            None => self.gap_limit - 1,
+            None => self.gap_limit.saturating_sub(1),
             Some(highest) => highest + self.gap_limit,
         };
 
@@ -965,7 +979,7 @@ impl AddressPool {
     /// Prune unused addresses beyond the gap limit
     pub fn prune_unused(&mut self) -> u32 {
         let keep_until = match self.highest_used {
-            None => self.gap_limit - 1, // Keep indices 0 to gap_limit-1
+            None => self.gap_limit.saturating_sub(1), // Keep indices 0 to gap_limit-1
             Some(highest) => highest + self.gap_limit, // Keep up to highest + gap_limit
         };
 
@@ -1103,6 +1117,7 @@ impl AddressPoolBuilder {
     pub fn build(self) -> Result<AddressPool> {
         let base_path =
             self.base_path.ok_or(Error::InvalidParameter("base_path required".into()))?;
+        validate_gap_limit(self.gap_limit)?;
 
         let mut pool = AddressPool::new_without_generation(
             base_path,
