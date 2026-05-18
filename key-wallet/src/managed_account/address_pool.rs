@@ -1293,6 +1293,21 @@ mod tests {
         assert!(pool.is_internal());
         assert_eq!(pool.gap_limit, 10);
         assert_eq!(pool.network, Network::Testnet);
+
+        // The builder rejects an out-of-range gap limit at build time.
+        let base = DerivationPath::from(vec![ChildNumber::from_normal_idx(0).unwrap()]);
+        assert!(AddressPoolBuilder::new()
+            .base_path(base.clone())
+            .gap_limit(0)
+            .network(Network::Testnet)
+            .build()
+            .is_err());
+        assert!(AddressPoolBuilder::new()
+            .base_path(base)
+            .gap_limit(MAX_GAP_LIMIT + 1)
+            .network(Network::Testnet)
+            .build()
+            .is_err());
     }
 
     #[test]

@@ -4,6 +4,8 @@
 
 use crate::account::{AccountType, StandardAccountType};
 use crate::bip32::{ChildNumber, DerivationPath};
+use crate::gap_limit::MAX_GAP_LIMIT;
+use crate::managed_account::address_pool::KeySource;
 use crate::mnemonic::{Language, Mnemonic};
 use crate::wallet::Wallet;
 use crate::Network;
@@ -175,14 +177,45 @@ fn test_extreme_gap_limit() {
     // Should handle large gap limits without issues
     assert_eq!(pool.gap_limit, 10000);
 
-    // Test with zero gap limit
-    let zero_gap_pool = AddressPool::new_without_generation(
-        base_path,
+    // A zero gap limit is still constructible via the infallible
+    // `new_without_generation`, and pool maintenance on it must not underflow
+    // `gap_limit - 1`: it generates nothing rather than panicking or wrapping.
+    let mut zero_gap_pool = AddressPool::new_without_generation(
+        base_path.clone(),
         AddressPoolType::External,
         0,
         Network::Testnet,
     );
     assert_eq!(zero_gap_pool.gap_limit, 0);
+    let generated = zero_gap_pool.maintain_gap_limit(&KeySource::NoKeySource).unwrap();
+    assert!(generated.is_empty());
+    assert_eq!(zero_gap_pool.prune_unused(), 0);
+
+    // The generating constructor rejects out-of-range gap limits up front.
+    assert!(AddressPool::new(
+        base_path.clone(),
+        AddressPoolType::External,
+        0,
+        Network::Testnet,
+        &KeySource::NoKeySource,
+    )
+    .is_err());
+    assert!(AddressPool::new(
+        base_path.clone(),
+        AddressPoolType::External,
+        MAX_GAP_LIMIT + 1,
+        Network::Testnet,
+        &KeySource::NoKeySource,
+    )
+    .is_err());
+    assert!(AddressPool::new(
+        base_path,
+        AddressPoolType::External,
+        MAX_GAP_LIMIT,
+        Network::Testnet,
+        &KeySource::NoKeySource,
+    )
+    .is_ok());
 }
 
 #[test]
