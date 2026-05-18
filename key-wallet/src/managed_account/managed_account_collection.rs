@@ -722,8 +722,13 @@ impl ManagedAccountCollection {
                 user_identity_id,
                 friend_identity_id,
             } => {
-                let addresses =
-                    AddressPool::new(base_path, AddressPoolType::Absent, 20, network, key_source)?;
+                let addresses = AddressPool::new(
+                    base_path,
+                    AddressPoolType::Absent,
+                    DEFAULT_GAP_LIMIT,
+                    network,
+                    key_source,
+                )?;
                 ManagedAccountType::DashpayReceivingFunds {
                     index,
                     user_identity_id,
@@ -736,8 +741,13 @@ impl ManagedAccountCollection {
                 user_identity_id,
                 friend_identity_id,
             } => {
-                let addresses =
-                    AddressPool::new(base_path, AddressPoolType::Absent, 20, network, key_source)?;
+                let addresses = AddressPool::new(
+                    base_path,
+                    AddressPoolType::Absent,
+                    DEFAULT_GAP_LIMIT,
+                    network,
+                    key_source,
+                )?;
                 ManagedAccountType::DashpayExternalAccount {
                     index,
                     user_identity_id,
