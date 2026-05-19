@@ -8,8 +8,6 @@ on:
       - 'v**-dev'
   pull_request:
     paths:
-      - 'key-wallet-ffi/**'
-      - 'dash-spv-ffi/**'
       - 'dashcore/**'
       - 'dashcore_hashes/**'
       - 'key-wallet/**'
@@ -40,10 +38,6 @@ jobs:
           LSAN_OPTIONS: "fast_unwind_on_malloc=0"
           SKIP_DASHD_TESTS: 1
         run: |
-          # FFI crates (C interop)
-          cargo +nightly test -Zbuild-std --target x86_64-unknown-linux-gnu \
-            -p key-wallet-ffi -p dash-spv-ffi --lib --tests
-
           # Core crypto crates (unsafe optimizations)
           cargo +nightly test -Zbuild-std --target x86_64-unknown-linux-gnu \
             -p dashcore -p dashcore_hashes --lib --tests

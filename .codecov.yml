@@ -1,7 +1,7 @@
 codecov:
   notify:
-    # Must match the number of coverage-uploading groups (core, spv, wallet, ffi, rpc)
-    after_n_builds: 5
+    # Must match the number of coverage-uploading groups (core, spv, wallet, rpc)
+    after_n_builds: 4
 
 coverage:
   status:
@@ -36,10 +36,6 @@ flags:
     paths:
       - key-wallet/src/
       - key-wallet-manager/src/
-  ffi:
-    paths:
-      - dash-spv-ffi/src/
-      - key-wallet-ffi/src/
   rpc:
     paths:
       - rpc-client/src/

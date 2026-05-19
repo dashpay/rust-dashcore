@@ -16,10 +16,6 @@ groups:
     - key-wallet
     - key-wallet-manager
 
-  ffi:
-    - dash-spv-ffi
-    - key-wallet-ffi
-
   rpc:
     - dashcore-rpc
     - dashcore-rpc-json
