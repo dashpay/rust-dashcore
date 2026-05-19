@@ -2,7 +2,7 @@
 //!
 //! Provides `DashdTestContext` which encapsulates the common setup logic for
 //! launching a dashd node with a pre-built blockchain and loading wallet data.
-//! Used by both `dash-spv` and `dash-spv-ffi` integration tests.
+//! Used by `dash-spv` integration tests.
 
 use std::net::SocketAddr;
 

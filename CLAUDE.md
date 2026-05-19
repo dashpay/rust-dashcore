@@ -10,7 +10,6 @@ rust-dashcore is a Rust implementation of the Dash cryptocurrency protocol libra
 - Network protocol implementation
 - SPV (Simplified Payment Verification) client
 - HD wallet functionality (BIP32/BIP39/DIP9)
-- FFI bindings for C and Swift integration
 - JSON-RPC client for Dash Core nodes
 
 **IMPORTANT**: This library should NOT be used for consensus code. The exact behavior of the consensus-critical parts of Dash Core cannot be replicated without an exact copy of the C++ code.
@@ -24,11 +23,9 @@ rust-dashcore is a Rust implementation of the Dash cryptocurrency protocol libra
 
 ### SPV
 - `dash-spv/` - SPV client implementation
-- `dash-spv-ffi/` - C-compatible FFI bindings for SPV client
 
 ### Wallet & Keys
 - `key-wallet/` - Comprehensive HD wallet implementation with multi-account support, address pools, and transaction management (see key-wallet/CLAUDE.md for detailed architecture)
-- `key-wallet-ffi/` - C-compatible FFI bindings for wallet functionality
 
 ### RPC & Integration
 - `rpc-client/` - JSON-RPC client for Dash Core nodes
@@ -50,12 +47,6 @@ cargo build --release
 
 # Build specific crate
 cargo build -p dash-spv
-```
-
-### FFI Library Build
-```bash
-# Build iOS libraries for key-wallet-ffi
-cd key-wallet-ffi && ./build-ios.sh
 ```
 
 ### iOS/macOS Targets
@@ -101,9 +92,9 @@ DO_FMT=true ./contrib/test.sh
 
 ### Integration Tests (dashd)
 
-The `dash-spv` and `dash-spv-ffi` crates include integration tests that run against a real `dashd` regtest node. These tests cover SPV sync, wallet operations, restarts, disconnections, and transactions.
+The `dash-spv` crate includes integration tests that run against a real `dashd` regtest node. These tests cover SPV sync, wallet operations, restarts, disconnections, and transactions.
 
-**Setup:** `contrib/setup-dashd.py` downloads the dashd binary and regtest blockchain test data, caching them in `~/.rust-dashcore-test/`. It outputs the required environment variables. Always run this before testing `dash-spv` or `dash-spv-ffi` — integration tests catch critical bugs (restart, resync, disconnection) that unit tests miss.
+**Setup:** `contrib/setup-dashd.py` downloads the dashd binary and regtest blockchain test data, caching them in `~/.rust-dashcore-test/`. It outputs the required environment variables. Always run this before testing `dash-spv`. Integration tests catch critical bugs (restart, resync, disconnection) that unit tests miss.
 
 ```bash
 eval $(python3 contrib/setup-dashd.py)
@@ -112,7 +103,6 @@ eval $(python3 contrib/setup-dashd.py)
 **Running:** Always run with integration tests enabled after setting up dashd. Do not use `SKIP_DASHD_TESTS=1`. Use `DASHD_TEST_RETAIN_DIR` so test logs are available for debugging failures.
 ```bash
 DASHD_TEST_RETAIN_DIR=/tmp/dashd-test-logs cargo test -p dash-spv
-DASHD_TEST_RETAIN_DIR=/tmp/dashd-test-logs cargo test -p dash-spv-ffi --test dashd_sync
 ```
 
 **Debugging:** When tests fail, check the retained logs at the path specified by `DASHD_TEST_RETAIN_DIR`. Each test creates a subdirectory with SPV logs (`spv/logs/run.log`) and dashd data.
@@ -121,9 +111,8 @@ DASHD_TEST_RETAIN_DIR=/tmp/dashd-test-logs cargo test -p dash-spv-ffi --test das
 
 **Key files:**
 - `dash-spv/tests/dashd_sync/` — test modules (basic, restart, disconnect, transaction)
-- `dash-spv-ffi/tests/dashd_sync/` — FFI test modules (basic, restart, transaction, callback)
 - `dash-spv/src/test_utils/` — shared infrastructure (`DashdTestContext`, `DashCoreNode`)
-- `.github/ci-groups.yml` — CI test group definitions (`spv` and `ffi` groups run dashd tests)
+- `.github/ci-groups.yml` — CI test group definitions (`spv` group runs dashd tests)
 
 ## Development Commands
 
@@ -162,7 +151,6 @@ cargo doc --open
 ### Architecture Highlights
 - **Workspace-based**: Multiple crates with clear separation of concerns
 - **Async/Await**: Modern async Rust throughout
-- **FFI Support**: C and Swift bindings for cross-platform usage
 - **Comprehensive Testing**: Unit, integration, and fuzz testing
 - **MSRV**: Rust 1.89 minimum supported version
 
@@ -172,7 +160,6 @@ cargo doc --open
 - **No Hardcoded Values**: Never hardcode network parameters, addresses, or keys
 - **Error Handling**: Use proper error types (thiserror) and propagate errors appropriately
 - **Async Code**: Use tokio runtime for async operations
-- **Memory Safety**: Careful handling in FFI boundaries
 - **Feature Flags**: Use conditional compilation for optional features
 
 ### Testing Requirements
@@ -188,7 +175,6 @@ cargo doc --open
 ## Current Status
 
 The project is actively developing:
-- FFI bindings improvements
 - Support for Dash Core versions 0.18.0 - 0.23.x
 
 ## Security Considerations
@@ -197,7 +183,6 @@ The project is actively developing:
 - Always validate inputs from untrusted sources
 - Use secure random number generation for keys
 - Never log or expose private keys
-- Be careful with FFI memory management
 
 ## API Stability
 
@@ -207,5 +192,4 @@ The API is currently unstable (version 0.x.x). Breaking changes may occur in min
 
 - Cannot replicate exact consensus behavior of Dash Core
 - Not suitable for mining or consensus validation
-- FFI bindings have limited error propagation
 - Some Dash Core RPC methods not yet implemented

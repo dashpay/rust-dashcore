@@ -27,7 +27,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        group: ["core", "spv", "wallet", "ffi", "rpc"]
+        group: ["core", "spv", "wallet", "rpc"]
     env:
       RUST_BACKTRACE: 1
     steps:
@@ -49,14 +49,14 @@ jobs:
 
       # Set up dashd and test data for groups that need it
       - name: Cache dashd and test data
-        if: matrix.group == 'spv' || matrix.group == 'ffi'
+        if: matrix.group == 'spv'
         uses: actions/cache@v5
         with:
           path: .rust-dashcore-test
           key: rust-dashcore-test-${{ inputs.os }}-${{ env.DASHVERSION }}-${{ env.TEST_DATA_REPO }}-${{ env.TEST_DATA_VERSION }}
 
       - name: Setup dashd for integration tests
-        if: matrix.group == 'spv' || matrix.group == 'ffi'
+        if: matrix.group == 'spv'
         env:
           CACHE_DIR: ${{ github.workspace }}/.rust-dashcore-test
         shell: bash
@@ -65,7 +65,7 @@ jobs:
       - name: Run tests
         id: tests
         env:
-          DASHD_TEST_RETAIN_DIR: ${{ (matrix.group == 'spv' || matrix.group == 'ffi') && format('{0}/dashd-test-logs', runner.temp) || '' }}
+          DASHD_TEST_RETAIN_DIR: ${{ matrix.group == 'spv' && format('{0}/dashd-test-logs', runner.temp) || '' }}
         run: >
           python .github/scripts/ci_config.py run-group ${{ matrix.group }}
           --os ${{ inputs.os }}
@@ -85,15 +85,10 @@ jobs:
           fail_ci_if_error: true
 
       - name: Upload failed dashd test logs
-        if: failure() && (matrix.group == 'spv' || matrix.group == 'ffi')
+        if: failure() && matrix.group == 'spv'
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.group }}-test-logs-${{ inputs.os }}
           path: ${{ runner.temp }}/dashd-test-logs/
           retention-days: 7
           if-no-files-found: ignore
-      - name: Validate headers
-        if: matrix.group == 'ffi' && inputs.os == 'ubuntu-latest'
-        run: |
-          sudo apt update && sudo apt install -y build-essential
-          bash ffi-c-tests/validate-headers.sh ./target/llvm-cov-target/debug/include
