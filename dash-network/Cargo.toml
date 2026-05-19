@@ -18,8 +18,6 @@ default = []
 serde = ["dep:serde"]
 # bincode::{Encode, Decode} impls for Network.
 bincode = ["dep:bincode", "dep:bincode_derive"]
-# C-ABI `FFINetwork` mirror + `dashcore_network_get_name` extern fn.
-ffi = []
 
 [dependencies]
 dash-params = { workspace = true }
@@ -29,6 +27,3 @@ bincode_derive = { workspace = true, optional = true }
 
 [dev-dependencies]
 test-case = "3.3"
-
-[build-dependencies]
-cbindgen = "0.29"
