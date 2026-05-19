@@ -15,6 +15,7 @@ dashcore_hashes = { path = "../hashes" }
 dash-network-seeds = { path = "../dash-network-seeds" }
 key-wallet = { path = "../key-wallet" }
 key-wallet-manager = { path = "../key-wallet-manager", features = ["parallel-filters"] }
+git-state = { path = "../git-state" }
 
 # CLI
 clap = { version = "4.0", features = ["derive", "env"] }

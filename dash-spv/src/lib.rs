@@ -105,8 +105,14 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 /// Short git commit the library was built from, empty if it could not be determined.
 pub const GIT_HASH: &str = env!("DASH_SPV_GIT_HASH");
 
-/// Whether the working tree had uncommitted tracked changes at build time.
-pub const GIT_DIRTY: bool = const_str_eq(env!("DASH_SPV_GIT_DIRTY"), "true");
+/// Whether the source tree has uncommitted tracked changes.
+///
+/// Resolved by [`git_state::git_dirty`] while this crate is compiled, so it
+/// re-evaluates whenever the crate is rebuilt. An unstaged edit that triggers
+/// a rebuild is reflected without staging or committing, which a build script
+/// cannot achieve for the unbounded working tree. Builds with no git context
+/// (e.g. a packaged source tarball) report `false`.
+pub const GIT_DIRTY: bool = git_state::git_dirty!();
 
 /// Whether the build was made from a commit pointed at by a `v*` release tag.
 pub const GIT_TAGGED: bool = const_str_eq(env!("DASH_SPV_GIT_TAGGED"), "true");

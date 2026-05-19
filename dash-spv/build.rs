@@ -15,16 +15,17 @@ fn git(args: &[&str]) -> Option<String> {
 
 fn main() {
     let hash = git(&["rev-parse", "--short=12", "HEAD"]).unwrap_or_default();
-    let dirty = git(&["status", "--porcelain", "--untracked-files=no"])
-        .map(|s| !s.is_empty())
-        .unwrap_or(false);
     let tagged = git(&["describe", "--exact-match", "--tags", "--match", "v*", "HEAD"]).is_some();
 
     println!("cargo:rustc-env=DASH_SPV_GIT_HASH={hash}");
-    println!("cargo:rustc-env=DASH_SPV_GIT_DIRTY={dirty}");
     println!("cargo:rustc-env=DASH_SPV_GIT_TAGGED={tagged}");
 
     println!("cargo:rerun-if-changed=build.rs");
+    // Watching these git files keeps the hash current, and also keeps the
+    // `git_dirty!` macro correct on commit: a commit moves a watched ref, which
+    // reruns this script and forces the crate (and the macro) to recompile.
+    // Narrowing this set would let the dirty flag go stale across a commit.
+    //
     // `.git/HEAD` only changes when switching branches, not when committing on
     // the current one, so also watch the symbolic target's ref file.
     if let Some(head_ref) = git(&["symbolic-ref", "--quiet", "HEAD"]) {
