@@ -11,7 +11,6 @@ The key-wallet crate is a core component of the rust-dashcore ecosystem, offerin
 - Multiple cryptographic schemes (ECDSA, BLS, EdDSA)
 - Advanced account and address management with gap limit tracking
 - Transaction checking and UTXO management
-- FFI bindings for cross-platform integration
 - No-std support for embedded systems
 
 ## Architecture
