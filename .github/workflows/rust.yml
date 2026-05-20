@@ -2,8 +2,8 @@ on:
   workflow_dispatch:
   push:
     branches:
-      - master
-      - 'v**-dev'
+      - main
+      - dev
   pull_request:
 
 name: Continuous integration

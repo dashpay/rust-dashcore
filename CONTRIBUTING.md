@@ -2,7 +2,7 @@
 
 **Branching model (important)**
 
-Feature work targets the active `v**-dev` branch (development). Submit hotfixes and documentation-only changes to `master` unless maintainers direct otherwise.
+Feature work targets the `dev` branch (development). Submit hotfixes and documentation-only changes to `main` unless maintainers direct otherwise.
 
 :+1::tada: First off, thanks for taking the time to contribute! :tada::+1:
 
@@ -65,9 +65,9 @@ PR titles must use one of the following prefixes (enforced by CI):
 
 ## Preparing PRs
 
-Active development happens on `v**-dev` branches. Feature work should target the current `v**-dev`. The `master` branch is kept stable; submit hotfixes and documentation changes to `master` unless directed otherwise. All PRs must compile without errors (verified by GitHub CI).
+Active development happens on the `dev` branch. Feature work should target `dev`. The `main` branch is kept stable and tracks the latest tagged release. Submit hotfixes and documentation changes to `main` unless directed otherwise. Release branches (`chore/release-vX.Y.Z`) are cut from `dev` per release and merged back. All PRs must compile without errors (verified by GitHub CI).
 
-Prerequisites that a PR must satisfy for merging into the `master` branch:
+Prerequisites that a PR must satisfy for merging into the `main` branch:
 * each commit within a PR should compile and pass unit tests with no errors, with
   relevant feature combinations (including building fuzz tests where applicable);
 * the tip of any PR branch must also compile and pass tests with no errors on

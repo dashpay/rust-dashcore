@@ -9,10 +9,10 @@
 
   <p>
     <a href="https://crates.io/crates/dash"><img alt="Crate Info" src="https://img.shields.io/crates/v/dash.svg"/></a>
-    <a href="https://github.com/dashpay/rust-dashcore/blob/master/LICENSE"><img alt="MIT or Apache-2.0 Licensed" src="https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg"/></a>
+    <a href="https://github.com/dashpay/rust-dashcore/blob/main/LICENSE"><img alt="MIT or Apache-2.0 Licensed" src="https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg"/></a>
     <a href="https://github.com/dashpay/rust-dashcore/actions?query=workflow%3AContinuous%20integration"><img alt="CI Status" src="https://github.com/dashpay/rust-dashcore/workflows/Continuous%20integration/badge.svg"></a>
-    <a href="https://codecov.io/gh/dashpay/rust-dashcore/branch/master"><img alt="Coverage (master)" src="https://codecov.io/gh/dashpay/rust-dashcore/branch/master/graph/badge.svg"/></a>
-    <a href="https://codecov.io/gh/dashpay/rust-dashcore/branch/v0.42-dev"><img alt="Coverage (develop)" src="https://codecov.io/gh/dashpay/rust-dashcore/branch/v0.42-dev/graph/badge.svg"/></a>
+    <a href="https://codecov.io/gh/dashpay/rust-dashcore/branch/main"><img alt="Coverage (main)" src="https://codecov.io/gh/dashpay/rust-dashcore/branch/main/graph/badge.svg"/></a>
+    <a href="https://codecov.io/gh/dashpay/rust-dashcore/branch/dev"><img alt="Coverage (dev)" src="https://codecov.io/gh/dashpay/rust-dashcore/branch/dev/graph/badge.svg"/></a>
     <a href="https://docs.rs"><img alt="API Docs" src="https://img.shields.io/badge/docs.rs-rust--dashcore-green"/></a>
     <a href="#minimum-supported-rust-version-msrv"><img alt="Rustc Version 1.89+" src="https://img.shields.io/badge/rustc-1.89%2B-lightgrey.svg"/></a>
     <img alt="Lines of code" src="https://img.shields.io/tokei/lines/github/dashpay/rust-dashcore">
@@ -127,7 +127,7 @@ architectural mismatches.
 
 ## Branching Model
 
-Feature work targets the active `v**-dev` branch. Submit hotfixes and documentation-only changes to `master` unless maintainers direct otherwise.
+Feature work targets the `dev` branch. Submit hotfixes and documentation-only changes to `main` unless maintainers direct otherwise. The `main` branch tracks the latest tagged release. Release branches (`chore/release-vX.Y.Z`) are short-lived, cut from `dev` per release.
 
 ## Installing Rust
 

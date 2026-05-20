@@ -26,7 +26,7 @@
 
 ## Commit & Pull Request Guidelines
 - Prefer Conventional Commits: `feat:`, `fix:`, `refactor:`, `chore:`, `docs:`. Keep subject ≤72 chars with clear scope and rationale.
-- Target branches: feature work to `v**-dev` (development), hotfixes/docs to `master` unless directed otherwise.
+- Target branches: feature work to `dev` (development), hotfixes/docs to `main` unless directed otherwise.
 - Pre‑PR checks: `cargo fmt`, `cargo clippy`, `cargo test` (workspace). Update docs/CHANGELOG if user-facing.
 - Include in PRs: description, linked issues, test evidence (commands/output), and notes on features/FFI impacts.
 

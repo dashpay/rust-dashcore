@@ -3,8 +3,8 @@ name: Merge Conflict Check
 on:
   push:
     branches:
-      - master
-      - 'v*-dev'
+      - main
+      - dev
   pull_request_target:
     types: [opened, synchronize, reopened]
 

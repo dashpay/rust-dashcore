@@ -4,8 +4,8 @@ on:
   workflow_dispatch:
   push:
     branches:
-      - master
-      - 'v**-dev'
+      - main
+      - dev
   pull_request:
     paths:
       - 'key-wallet-ffi/**'

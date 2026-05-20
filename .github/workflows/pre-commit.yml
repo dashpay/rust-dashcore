@@ -3,8 +3,8 @@ name: Pre-commit Checks
 on:
   push:
     branches:
-      - master
-      - 'v**-dev'
+      - main
+      - dev
   pull_request:
 
 concurrency:

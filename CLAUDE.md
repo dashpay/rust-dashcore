@@ -182,8 +182,9 @@ cargo doc --open
 - Use proptest for property-based testing where appropriate
 
 ### Git Workflow
-- Current development branch: `v0.42-dev`
-- Main branch: `master`
+- Default branch: `dev` (active development, target for new PRs)
+- Stable branch: `main` (tracks latest tagged release)
+- Release branches: `chore/release-vX.Y.Z` (short-lived, cut from `dev` per release)
 
 ## Current Status
 
