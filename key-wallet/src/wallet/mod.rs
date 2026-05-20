@@ -31,7 +31,7 @@ use serde::{Deserialize, Serialize};
 use zeroize::Zeroize;
 
 /// Type of wallet based on how it was created
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Zeroize)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 pub enum WalletType {
@@ -152,42 +152,13 @@ impl fmt::Display for Wallet {
 // Manual implementation of Zeroize for Wallet
 impl Zeroize for Wallet {
     fn zeroize(&mut self) {
-        // Zeroize the wallet ID
-        self.wallet_id.zeroize();
+        self.wallet_type.zeroize();
+    }
+}
 
-        // Zeroize the wallet type - handle each variant's sensitive data
-        match &mut self.wallet_type {
-            WalletType::Mnemonic {
-                mnemonic,
-                root_extended_private_key,
-            } => {
-                // Zeroize the mnemonic (now possible since it implements Zeroize)
-                mnemonic.zeroize();
-                // We can't zeroize SecretKey directly, but we can zeroize the chain code
-                root_extended_private_key.zeroize();
-                // Note: root_extended_private_key.root_private_key (SecretKey) doesn't implement Zeroize
-            }
-            WalletType::Seed {
-                seed,
-                root_extended_private_key,
-            } => {
-                // We can't zeroize Seed directly as it doesn't implement Zeroize yet
-                // But we can zeroize the RootExtendedPrivKey
-                root_extended_private_key.zeroize();
-                seed.zeroize();
-            }
-            WalletType::ExtendedPrivKey(root_extended_private_key) => {
-                // Zeroize the chain code
-                root_extended_private_key.zeroize();
-                // Note: root_private_key (SecretKey) doesn't implement Zeroize
-            }
-            WalletType::ExternalSignable | WalletType::WatchOnly => {
-                // Unit variants carry no key material; nothing sensitive to zeroize.
-            }
-        }
-
-        // Clear the accounts map, only public keys here so no need to go hardcore on zeroization
-        self.accounts.clear();
+impl Drop for Wallet {
+    fn drop(&mut self) {
+        self.zeroize();
     }
 }
 

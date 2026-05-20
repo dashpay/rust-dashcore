@@ -13,6 +13,7 @@ use dashcore_hashes::{sha512, Hash, HashEngine, Hmac, HmacEngine};
 use secp256k1::Secp256k1;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
+use zeroize::Zeroize;
 
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
@@ -21,10 +22,16 @@ pub struct RootExtendedPrivKey {
     pub root_chain_code: ChainCode,
 }
 
-impl zeroize::Zeroize for RootExtendedPrivKey {
+impl Zeroize for RootExtendedPrivKey {
     fn zeroize(&mut self) {
         self.root_private_key.non_secure_erase();
         self.root_chain_code.zeroize();
+    }
+}
+
+impl Drop for RootExtendedPrivKey {
+    fn drop(&mut self) {
+        self.zeroize();
     }
 }
 
