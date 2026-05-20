@@ -203,6 +203,11 @@ pub trait ManagedAccountTrait {
         self.managed_account_type().all_addresses()
     }
 
+    /// Get cached scriptPubKey bytes for every address across all pools.
+    fn all_script_pubkeys(&self) -> Vec<ScriptBuf> {
+        self.managed_account_type().all_script_pubkeys()
+    }
+
     /// Check if an address belongs to this account
     fn contains_address(&self, address: &Address) -> bool {
         self.managed_account_type().contains_address(address)

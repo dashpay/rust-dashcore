@@ -159,9 +159,9 @@ pub(super) fn is_progress_event(event: &SyncEvent) -> bool {
             ..
         } => true,
         SyncEvent::BlockProcessed {
-            new_addresses,
+            new_scripts,
             ..
-        } => new_addresses.values().any(|v| !v.is_empty()),
+        } => new_scripts.values().any(|v| !v.is_empty()),
         _ => false,
     }
 }

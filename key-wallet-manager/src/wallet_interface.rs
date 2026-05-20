@@ -7,7 +7,7 @@ use async_trait::async_trait;
 use dashcore::ephemerealdata::chain_lock::ChainLock;
 use dashcore::ephemerealdata::instant_lock::InstantLock;
 use dashcore::prelude::CoreBlockHeight;
-use dashcore::{Address, Block, OutPoint, Transaction, Txid};
+use dashcore::{Address, Block, OutPoint, ScriptBuf, Transaction, Txid};
 use std::collections::{BTreeMap, BTreeSet};
 use tokio::sync::broadcast;
 
@@ -18,8 +18,9 @@ pub struct BlockProcessingResult {
     pub new_txids: Vec<Txid>,
     /// Transaction IDs that were already in wallet history
     pub existing_txids: Vec<Txid>,
-    /// New addresses generated per wallet during gap-limit maintenance.
-    pub new_addresses: BTreeMap<WalletId, Vec<Address>>,
+    /// Cached scriptPubKeys of addresses freshly generated per wallet during
+    /// gap-limit maintenance.
+    pub new_scripts: BTreeMap<WalletId, Vec<ScriptBuf>>,
 }
 
 /// Result of processing a mempool transaction through the wallet
@@ -48,9 +49,10 @@ impl BlockProcessingResult {
         self.new_txids.len() + self.existing_txids.len()
     }
 
-    /// Iterate over every newly generated address regardless of wallet attribution.
-    pub fn all_new_addresses(&self) -> impl Iterator<Item = &Address> {
-        self.new_addresses.values().flatten()
+    /// Iterate over every newly generated scriptPubKey regardless of wallet
+    /// attribution.
+    pub fn all_new_scripts(&self) -> impl Iterator<Item = &ScriptBuf> {
+        self.new_scripts.values().flatten()
     }
 }
 
@@ -82,8 +84,8 @@ pub trait WalletInterface: Send + Sync + 'static {
     /// Get all addresses the wallet is monitoring for incoming transactions
     fn monitored_addresses(&self) -> Vec<Address>;
 
-    /// Get monitored addresses for a specific wallet.
-    fn monitored_addresses_for(&self, wallet_id: &WalletId) -> Vec<Address>;
+    /// Get cached scriptPubKeys for every address monitored by `wallet_id`.
+    fn monitored_script_pubkeys_for(&self, wallet_id: &WalletId) -> Vec<ScriptBuf>;
 
     /// Get all outpoints the wallet is watching (unspent outputs).
     /// Used for bloom filter construction to detect spends of our UTXOs.

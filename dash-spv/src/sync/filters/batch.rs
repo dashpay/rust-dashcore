@@ -1,5 +1,5 @@
 use dashcore::bip158::BlockFilter;
-use dashcore::Address;
+use dashcore::ScriptBuf;
 use key_wallet_manager::{FilterMatchKey, WalletId};
 use std::collections::{BTreeSet, HashMap, HashSet};
 
@@ -28,10 +28,10 @@ pub(super) struct FiltersBatch {
     /// therefore need their `synced_height` advanced when the batch commits.
     /// Already-synced wallets must not be touched.
     scanned_wallets: BTreeSet<WalletId>,
-    /// Addresses discovered during block processing that still need rescan,
-    /// attributed per wallet so we can rerun matching only against the wallet
-    /// that produced each new address.
-    collected_addresses: HashMap<WalletId, HashSet<Address>>,
+    /// Cached scriptPubKeys discovered during block processing that still
+    /// need rescan, attributed per wallet so we can rerun matching only
+    /// against the wallet that produced each new script.
+    collected_scripts: HashMap<WalletId, HashSet<ScriptBuf>>,
 }
 
 impl FiltersBatch {
@@ -50,7 +50,7 @@ impl FiltersBatch {
             pending_blocks: 0,
             rescan_complete: false,
             scanned_wallets: BTreeSet::new(),
-            collected_addresses: HashMap::new(),
+            collected_scripts: HashMap::new(),
         }
     }
     /// Start height of this batch (inclusive).
@@ -106,17 +106,17 @@ impl FiltersBatch {
     pub(super) fn mark_rescan_complete(&mut self) {
         self.rescan_complete = true;
     }
-    /// Add addresses discovered during block processing for later rescan.
-    pub(super) fn add_addresses_for_wallet(
+    /// Add scriptPubKeys discovered during block processing for later rescan.
+    pub(super) fn add_scripts_for_wallet(
         &mut self,
         wallet_id: WalletId,
-        addresses: impl IntoIterator<Item = Address>,
+        scripts: impl IntoIterator<Item = ScriptBuf>,
     ) {
-        self.collected_addresses.entry(wallet_id).or_default().extend(addresses);
+        self.collected_scripts.entry(wallet_id).or_default().extend(scripts);
     }
-    /// Take collected per-wallet addresses for rescan, leaving the map empty.
-    pub(super) fn take_collected_addresses(&mut self) -> HashMap<WalletId, HashSet<Address>> {
-        std::mem::take(&mut self.collected_addresses)
+    /// Take collected per-wallet scripts for rescan, leaving the map empty.
+    pub(super) fn take_collected_scripts(&mut self) -> HashMap<WalletId, HashSet<ScriptBuf>> {
+        std::mem::take(&mut self.collected_scripts)
     }
     /// Record the set of wallets that were behind for this batch at scan time.
     pub(super) fn set_scanned_wallets(&mut self, wallets: BTreeSet<WalletId>) {

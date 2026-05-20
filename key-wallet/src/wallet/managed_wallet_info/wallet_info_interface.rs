@@ -16,7 +16,7 @@ use crate::{Network, Utxo, Wallet, WalletCoreBalance};
 use dashcore::ephemerealdata::chain_lock::ChainLock;
 use dashcore::ephemerealdata::instant_lock::InstantLock;
 use dashcore::prelude::CoreBlockHeight;
-use dashcore::{Address as DashAddress, Transaction, Txid};
+use dashcore::{Address as DashAddress, ScriptBuf, Transaction, Txid};
 
 /// Outcome of [`WalletInfoInterface::apply_chain_lock`].
 ///
@@ -82,6 +82,9 @@ pub trait WalletInfoInterface: Sized + WalletTransactionChecker + ManagedAccount
 
     /// Get all monitored addresses
     fn monitored_addresses(&self) -> Vec<DashAddress>;
+
+    /// Get cached scriptPubKeys for every monitored address.
+    fn monitored_script_pubkeys(&self) -> Vec<ScriptBuf>;
 
     /// Get all UTXOs for the wallet
     fn utxos(&self) -> BTreeSet<&Utxo>;
@@ -302,6 +305,14 @@ impl WalletInfoInterface for ManagedWalletInfo {
             addresses.extend(account.all_addresses());
         }
         addresses
+    }
+
+    fn monitored_script_pubkeys(&self) -> Vec<ScriptBuf> {
+        let mut scripts = Vec::new();
+        for account in self.accounts.all_accounts() {
+            scripts.extend(account.all_script_pubkeys());
+        }
+        scripts
     }
 
     fn utxos(&self) -> BTreeSet<&Utxo> {

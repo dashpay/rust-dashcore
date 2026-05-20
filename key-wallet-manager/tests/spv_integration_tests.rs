@@ -3,7 +3,7 @@
 use dashcore::blockdata::block::Block;
 use dashcore::blockdata::transaction::Transaction;
 use dashcore::constants::COINBASE_MATURITY;
-use dashcore::Address;
+use dashcore::{Address, ScriptBuf};
 use key_wallet::wallet::initialization::WalletAccountCreationOptions;
 use key_wallet::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
@@ -47,15 +47,16 @@ async fn test_block_processing() {
     assert!(!result.new_txids.contains(&tx3.txid()));
     // No existing transactions during initial processing
     assert!(result.existing_txids.is_empty());
-    let new_addresses: Vec<_> = result.all_new_addresses().cloned().collect();
-    assert_eq!(new_addresses.len(), 2);
+    let new_scripts: Vec<_> = result.all_new_scripts().cloned().collect();
+    assert_eq!(new_scripts.len(), 2);
 
     let addresses_after = manager.monitored_addresses();
     let actual_increase = addresses_after.len() - addresses_before.len();
-    assert_eq!(new_addresses.len(), actual_increase);
+    assert_eq!(new_scripts.len(), actual_increase);
 
-    for new_addr in &new_addresses {
-        assert!(addresses_after.contains(new_addr));
+    let scripts_after: Vec<ScriptBuf> = addresses_after.iter().map(|a| a.script_pubkey()).collect();
+    for new_script in &new_scripts {
+        assert!(scripts_after.contains(new_script));
     }
 }
 
@@ -75,7 +76,7 @@ async fn test_block_processing_result_empty() {
 
     assert!(result.new_txids.is_empty());
     assert!(result.existing_txids.is_empty());
-    assert!(result.new_addresses.is_empty());
+    assert!(result.new_scripts.is_empty());
 }
 
 fn assert_wallet_heights(manager: &WalletManager<ManagedWalletInfo>, expected_height: u32) {

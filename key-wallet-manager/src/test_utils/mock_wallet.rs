@@ -4,7 +4,7 @@ use crate::{
 use dashcore::ephemerealdata::chain_lock::ChainLock;
 use dashcore::ephemerealdata::instant_lock::InstantLock;
 use dashcore::prelude::CoreBlockHeight;
-use dashcore::{Address, Block, OutPoint, Transaction, Txid};
+use dashcore::{Address, Block, OutPoint, ScriptBuf, Transaction, Txid};
 use key_wallet::transaction_checking::TransactionContext;
 use std::collections::BTreeSet;
 use std::sync::Arc;
@@ -143,7 +143,7 @@ impl WalletInterface for MockWallet {
         BlockProcessingResult {
             new_txids: block.txdata.iter().map(|tx| tx.txid()).collect(),
             existing_txids: Vec::new(),
-            new_addresses: Default::default(),
+            new_scripts: Default::default(),
         }
     }
 
@@ -180,9 +180,9 @@ impl WalletInterface for MockWallet {
         self.addresses.clone()
     }
 
-    fn monitored_addresses_for(&self, wallet_id: &WalletId) -> Vec<Address> {
+    fn monitored_script_pubkeys_for(&self, wallet_id: &WalletId) -> Vec<ScriptBuf> {
         if wallet_id == &self.wallet_id {
-            self.addresses.clone()
+            self.addresses.iter().map(|a| a.script_pubkey()).collect()
         } else {
             Vec::new()
         }
@@ -311,7 +311,7 @@ impl WalletInterface for NonMatchingMockWallet {
         Vec::new()
     }
 
-    fn monitored_addresses_for(&self, _wallet_id: &WalletId) -> Vec<Address> {
+    fn monitored_script_pubkeys_for(&self, _wallet_id: &WalletId) -> Vec<ScriptBuf> {
         Vec::new()
     }
 
@@ -453,8 +453,11 @@ impl WalletInterface for MultiMockWallet {
         self.wallets.values().flat_map(|s| s.addresses.iter().cloned()).collect()
     }
 
-    fn monitored_addresses_for(&self, wallet_id: &WalletId) -> Vec<Address> {
-        self.wallets.get(wallet_id).map(|s| s.addresses.clone()).unwrap_or_default()
+    fn monitored_script_pubkeys_for(&self, wallet_id: &WalletId) -> Vec<ScriptBuf> {
+        self.wallets
+            .get(wallet_id)
+            .map(|s| s.addresses.iter().map(|a| a.script_pubkey()).collect())
+            .unwrap_or_default()
     }
 
     fn watched_outpoints(&self) -> Vec<OutPoint> {

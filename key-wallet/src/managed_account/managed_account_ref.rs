@@ -154,6 +154,15 @@ impl<'a> ManagedAccountRef<'a> {
             ManagedAccountRef::Keys(a) => a.all_addresses(),
         }
     }
+
+    /// Return cached scriptPubKey bytes for every address tracked by this
+    /// account, across all pools.
+    pub fn all_script_pubkeys(self) -> Vec<ScriptBuf> {
+        match self {
+            ManagedAccountRef::Funds(a) => a.all_script_pubkeys(),
+            ManagedAccountRef::Keys(a) => a.all_script_pubkeys(),
+        }
+    }
 }
 
 impl<'a> ManagedAccountRefMut<'a> {

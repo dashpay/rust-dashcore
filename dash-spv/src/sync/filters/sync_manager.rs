@@ -169,7 +169,7 @@ impl<
                 block_hash,
                 height,
                 wallets,
-                new_addresses,
+                new_scripts,
                 ..
             } => {
                 // Record per-wallet processing so a future scan can give a
@@ -190,13 +190,13 @@ impl<
                         );
                     }
 
-                    // Collect per-wallet new addresses for deferred rescan at commit time.
-                    for (wallet_id, addrs) in new_addresses {
-                        if addrs.is_empty() {
+                    // Collect per-wallet new scripts for deferred rescan at commit time.
+                    for (wallet_id, scripts) in new_scripts {
+                        if scripts.is_empty() {
                             continue;
                         }
                         if let Some(batch) = self.active_batches.get_mut(&batch_start) {
-                            batch.add_addresses_for_wallet(*wallet_id, addrs.iter().cloned());
+                            batch.add_scripts_for_wallet(*wallet_id, scripts.iter().cloned());
                         }
                     }
 

@@ -89,30 +89,30 @@ impl<H: BlockHeaderStorage, B: BlockStorage, W: WalletInterface> BlocksManager<H
             drop(wallet);
 
             let total_relevant = result.relevant_tx_count();
-            let new_addresses_total: usize = result.new_addresses.values().map(|v| v.len()).sum();
+            let new_scripts_total: usize = result.new_scripts.values().map(|v| v.len()).sum();
             if total_relevant > 0 {
                 tracing::info!(
-                    "Found {} relevant transactions ({} new, {} existing) {} at height {}, new addresses: {}",
+                    "Found {} relevant transactions ({} new, {} existing) {} at height {}, new scripts: {}",
                     total_relevant,
                     result.new_txids.len(),
                     result.existing_txids.len(),
                     hash,
                     height,
-                    new_addresses_total
+                    new_scripts_total
                 );
             }
 
-            // Collect confirmed txids before moving new_addresses out of result
+            // Collect confirmed txids before moving new_scripts out of result
             let confirmed_txids: Vec<_> = result.relevant_txids().cloned().collect();
 
-            // Collect new addresses for gap limit rescanning
-            let new_addresses = result.new_addresses;
-            if new_addresses_total > 0 {
+            // Collect new scripts for gap limit rescanning
+            let new_scripts = result.new_scripts;
+            if new_scripts_total > 0 {
                 tracing::debug!(
-                    "Block {} generated {} new addresses for gap limit maintenance across {} wallets",
+                    "Block {} generated {} new scripts for gap limit maintenance across {} wallets",
                     height,
-                    new_addresses_total,
-                    new_addresses.len()
+                    new_scripts_total,
+                    new_scripts.len()
                 );
             }
 
@@ -128,7 +128,7 @@ impl<H: BlockHeaderStorage, B: BlockStorage, W: WalletInterface> BlocksManager<H
                 block_hash: hash,
                 height,
                 wallets: interested,
-                new_addresses,
+                new_scripts,
                 confirmed_txids,
             });
         }

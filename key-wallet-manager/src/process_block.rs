@@ -6,7 +6,7 @@ use core::fmt::Write as _;
 use dashcore::ephemerealdata::chain_lock::ChainLock;
 use dashcore::ephemerealdata::instant_lock::InstantLock;
 use dashcore::prelude::CoreBlockHeight;
-use dashcore::{Address, Block, Transaction};
+use dashcore::{Address, Block, ScriptBuf, Transaction};
 use key_wallet::account::AccountType;
 use key_wallet::managed_account::transaction_record::TransactionRecord;
 use key_wallet::transaction_checking::{BlockInfo, DerivedAddressInfo, TransactionContext};
@@ -70,8 +70,9 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
             }
 
             for (wallet_id, derived) in check_result.new_addresses {
-                let addresses = derived.iter().map(|d| d.info.address.clone()).collect::<Vec<_>>();
-                result.new_addresses.entry(wallet_id).or_default().extend(addresses);
+                let scripts =
+                    derived.iter().map(|d| d.info.script_pubkey.clone()).collect::<Vec<_>>();
+                result.new_scripts.entry(wallet_id).or_default().extend(scripts);
                 per_wallet_derived.entry(wallet_id).or_default().extend(derived);
             }
             for (wallet_id, records) in check_result.per_wallet_new_records {
@@ -219,8 +220,11 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
         self.monitored_addresses()
     }
 
-    fn monitored_addresses_for(&self, wallet_id: &WalletId) -> Vec<Address> {
-        self.wallet_infos.get(wallet_id).map(|info| info.monitored_addresses()).unwrap_or_default()
+    fn monitored_script_pubkeys_for(&self, wallet_id: &WalletId) -> Vec<ScriptBuf> {
+        self.wallet_infos
+            .get(wallet_id)
+            .map(|info| info.monitored_script_pubkeys())
+            .unwrap_or_default()
     }
 
     fn watched_outpoints(&self) -> Vec<dashcore::OutPoint> {

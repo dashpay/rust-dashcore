@@ -394,6 +394,11 @@ impl ManagedAccountType {
         self.address_pools().iter().flat_map(|pool| pool.all_addresses()).collect()
     }
 
+    /// Get cached scriptPubKey bytes for every address across all pools.
+    pub fn all_script_pubkeys(&self) -> Vec<ScriptBuf> {
+        self.address_pools().iter().flat_map(|pool| pool.all_script_pubkeys()).collect()
+    }
+
     /// Get the account type as the original enum
     pub fn to_account_type(&self) -> AccountType {
         match self {

@@ -1,6 +1,6 @@
 use dashcore::bip158::BlockFilter;
 use dashcore::prelude::CoreBlockHeight;
-use dashcore::{Address, BlockHash};
+use dashcore::{BlockHash, ScriptBuf};
 #[cfg(feature = "parallel-filters")]
 use rayon::prelude::{IntoParallelIterator, ParallelIterator};
 use std::collections::{BTreeSet, HashMap};
@@ -26,23 +26,21 @@ impl FilterMatchKey {
     }
 }
 
-/// Check compact filters for addresses and return the keys that matched.
+/// Check compact filters against a set of scriptPubKeys and return the keys
+/// that matched.
 ///
 /// Entries with `key.height() <= min_height` are skipped. Pass `0` to test
 /// every filter in the input.
-pub fn check_compact_filters_for_addresses(
+pub fn check_compact_filters_for_script_pubkeys(
     input: &HashMap<FilterMatchKey, BlockFilter>,
-    addresses: Vec<Address>,
+    script_pubkeys: &[ScriptBuf],
     min_height: CoreBlockHeight,
 ) -> BTreeSet<FilterMatchKey> {
-    let script_pubkey_bytes: Vec<Vec<u8>> =
-        addresses.iter().map(|address| address.script_pubkey().to_bytes()).collect();
-
     let match_filter = |(key, filter): (&FilterMatchKey, &BlockFilter)| {
         if key.height() <= min_height {
             return None;
         }
-        match filter.match_any(key.hash(), script_pubkey_bytes.iter().map(|v| v.as_slice())) {
+        match filter.match_any(key.hash(), script_pubkeys.iter().map(|s| s.as_bytes())) {
             Ok(true) => Some(key.clone()),
             Ok(false) => None,
             Err(e) => {
@@ -70,12 +68,16 @@ pub fn check_compact_filters_for_addresses(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dashcore::{Block, Transaction};
+    use dashcore::{Address, Block, Transaction};
     use key_wallet::Network;
+
+    fn scripts_for(addresses: &[Address]) -> Vec<ScriptBuf> {
+        addresses.iter().map(|a| a.script_pubkey()).collect()
+    }
 
     #[test]
     fn test_empty_input_returns_empty() {
-        let result = check_compact_filters_for_addresses(&HashMap::new(), vec![], 0);
+        let result = check_compact_filters_for_script_pubkeys(&HashMap::new(), &[], 0);
         assert!(result.is_empty());
     }
 
@@ -90,7 +92,7 @@ mod tests {
         let mut input = HashMap::new();
         input.insert(key.clone(), filter);
 
-        let output = check_compact_filters_for_addresses(&input, vec![], 0);
+        let output = check_compact_filters_for_script_pubkeys(&input, &[], 0);
         assert!(!output.contains(&key));
     }
 
@@ -105,7 +107,8 @@ mod tests {
         let mut input = HashMap::new();
         input.insert(key.clone(), filter);
 
-        let output = check_compact_filters_for_addresses(&input, vec![address], 0);
+        let scripts = scripts_for(&[address]);
+        let output = check_compact_filters_for_script_pubkeys(&input, &scripts, 0);
         assert!(output.contains(&key));
     }
 
@@ -122,7 +125,8 @@ mod tests {
         let mut input = HashMap::new();
         input.insert(key.clone(), filter);
 
-        let output = check_compact_filters_for_addresses(&input, vec![address], 0);
+        let scripts = scripts_for(&[address]);
+        let output = check_compact_filters_for_script_pubkeys(&input, &scripts, 0);
         assert!(!output.contains(&key));
     }
 
@@ -152,7 +156,8 @@ mod tests {
         input.insert(key_2.clone(), filter_2);
         input.insert(key_3.clone(), filter_3);
 
-        let output = check_compact_filters_for_addresses(&input, vec![address_1, address_2], 0);
+        let scripts = scripts_for(&[address_1, address_2]);
+        let output = check_compact_filters_for_script_pubkeys(&input, &scripts, 0);
         assert_eq!(output.len(), 2);
         assert!(output.contains(&key_1));
         assert!(output.contains(&key_2));
@@ -175,7 +180,8 @@ mod tests {
             input.insert(key, filter);
         }
 
-        let output = check_compact_filters_for_addresses(&input, vec![address], 0);
+        let scripts = scripts_for(&[address]);
+        let output = check_compact_filters_for_script_pubkeys(&input, &scripts, 0);
 
         // Verify output is sorted by height (ascending)
         let heights_out: Vec<CoreBlockHeight> = output.iter().map(|k| k.height()).collect();

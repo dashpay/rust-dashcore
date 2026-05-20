@@ -390,7 +390,7 @@ mod tests {
             block_hash: dashcore::BlockHash::all_zeros(),
             height: 1001,
             wallets: BTreeSet::new(),
-            new_addresses: BTreeMap::new(),
+            new_scripts: BTreeMap::new(),
             confirmed_txids: txids.clone(),
         };
         let events = manager.handle_sync_event(&event, &requests).await.unwrap();
@@ -576,7 +576,7 @@ mod tests {
             block_hash: dashcore::BlockHash::all_zeros(),
             height: 1001,
             wallets: BTreeSet::new(),
-            new_addresses: BTreeMap::new(),
+            new_scripts: BTreeMap::new(),
             confirmed_txids: vec![dashcore::Txid::all_zeros()],
         };
         manager.handle_sync_event(&event, &requests).await.unwrap();
@@ -603,7 +603,7 @@ mod tests {
             block_hash: dashcore::BlockHash::all_zeros(),
             height: 1001,
             wallets: BTreeSet::new(),
-            new_addresses: BTreeMap::new(),
+            new_scripts: BTreeMap::new(),
             confirmed_txids: vec![],
         };
         manager.handle_sync_event(&event, &requests).await.unwrap();

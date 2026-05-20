@@ -2,7 +2,7 @@ use crate::sync::ManagerIdentifier;
 use dashcore::ephemerealdata::chain_lock::ChainLock;
 use dashcore::ephemerealdata::instant_lock::InstantLock;
 use dashcore::sml::masternode_list_engine::QRInfoFeedResult;
-use dashcore::{Address, BlockHash, Txid};
+use dashcore::{BlockHash, ScriptBuf, Txid};
 use key_wallet_manager::{FilterMatchKey, WalletId};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -105,9 +105,9 @@ pub enum SyncEvent {
         height: u32,
         /// Wallets the block was actually processed for.
         wallets: BTreeSet<WalletId>,
-        /// New addresses discovered from wallet gap limit maintenance, attributed
-        /// to the wallet that produced them.
-        new_addresses: BTreeMap<WalletId, Vec<Address>>,
+        /// Cached scriptPubKeys for addresses freshly derived via wallet
+        /// gap-limit maintenance, attributed to the wallet that produced them.
+        new_scripts: BTreeMap<WalletId, Vec<ScriptBuf>>,
         /// Transaction IDs confirmed in this block that are relevant to the wallet
         confirmed_txids: Vec<Txid>,
     },
@@ -214,11 +214,11 @@ impl fmt::Display for SyncEvent {
             } => write!(f, "BlocksNeeded(count={})", blocks.len()),
             SyncEvent::BlockProcessed {
                 height,
-                new_addresses,
+                new_scripts,
                 ..
             } => {
-                let total: usize = new_addresses.values().map(|v| v.len()).sum();
-                write!(f, "BlockProcessed(height={}, new_addrs={})", height, total)
+                let total: usize = new_scripts.values().map(|v| v.len()).sum();
+                write!(f, "BlockProcessed(height={}, new_scripts={})", height, total)
             }
             SyncEvent::MasternodeStateUpdated {
                 height,

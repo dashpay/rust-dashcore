@@ -362,7 +362,7 @@ impl FFISyncEventCallbacks {
             SyncEvent::BlockProcessed {
                 block_hash,
                 height,
-                new_addresses,
+                new_scripts,
                 confirmed_txids,
                 ..
             } => {
@@ -370,11 +370,11 @@ impl FFISyncEventCallbacks {
                     let hash_bytes = block_hash.as_byte_array();
                     let txid_bytes: Vec<[u8; 32]> =
                         confirmed_txids.iter().map(|txid| *txid.as_byte_array()).collect();
-                    let total_new_addresses: usize = new_addresses.values().map(|v| v.len()).sum();
+                    let total_new_scripts: usize = new_scripts.values().map(|v| v.len()).sum();
                     cb(
                         *height,
                         hash_bytes as *const [u8; 32],
-                        total_new_addresses as u32,
+                        total_new_scripts as u32,
                         txid_bytes.as_ptr(),
                         txid_bytes.len() as u32,
                         self.user_data,
@@ -1185,7 +1185,7 @@ impl FFIWalletEventCallbacks {
 mod tests {
     use super::*;
     use dashcore::hashes::Hash;
-    use dashcore::{Address, BlockHash, ChainLock, Network, Txid};
+    use dashcore::{Address, BlockHash, ChainLock, Network, ScriptBuf, Txid};
     use key_wallet_manager::{FilterMatchKey, WalletId};
     use std::collections::{BTreeMap, BTreeSet};
     use std::sync::atomic::{AtomicU32, Ordering};
@@ -1247,16 +1247,16 @@ mod tests {
         let addr_a = Address::dummy(Network::Regtest, 1);
         let addr_b = Address::dummy(Network::Regtest, 2);
         let addr_c = Address::dummy(Network::Regtest, 3);
-        let mut new_addresses: BTreeMap<WalletId, Vec<Address>> = BTreeMap::new();
-        // Wallet 1 contributes 2 new addresses, wallet 2 contributes 1. Total = 3.
-        new_addresses.insert([1u8; 32], vec![addr_a, addr_b]);
-        new_addresses.insert([2u8; 32], vec![addr_c]);
+        let mut new_scripts: BTreeMap<WalletId, Vec<ScriptBuf>> = BTreeMap::new();
+        // Wallet 1 contributes 2 new scripts, wallet 2 contributes 1. Total = 3.
+        new_scripts.insert([1u8; 32], vec![addr_a.script_pubkey(), addr_b.script_pubkey()]);
+        new_scripts.insert([2u8; 32], vec![addr_c.script_pubkey()]);
 
         callbacks.dispatch(&SyncEvent::BlockProcessed {
             block_hash: BlockHash::from_byte_array([7u8; 32]),
             height: 100,
             wallets: BTreeSet::new(),
-            new_addresses,
+            new_scripts,
             confirmed_txids: vec![Txid::from_byte_array([9u8; 32])],
         });
         assert_eq!(NEW_ADDR_COUNT.load(Ordering::SeqCst), 3);

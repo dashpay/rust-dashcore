@@ -8,7 +8,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
 
 use dashcore::bip158::BlockFilter;
-use dashcore::Address;
+use dashcore::ScriptBuf;
 
 use super::batch::FiltersBatch;
 use super::block_match_tracker::{BlockMatchTracker, BlockTrackResult};
@@ -23,7 +23,7 @@ use crate::validation::{FilterValidationInput, FilterValidator, Validator};
 use crate::sync::progress::ProgressPercentage;
 use dashcore::hash_types::FilterHeader;
 use key_wallet_manager::WalletInterface;
-use key_wallet_manager::{check_compact_filters_for_addresses, FilterMatchKey, WalletId};
+use key_wallet_manager::{check_compact_filters_for_script_pubkeys, FilterMatchKey, WalletId};
 use tokio::sync::RwLock;
 
 /// Batch size for processing filters.
@@ -467,16 +467,16 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
 
             // Check if rescan is needed and not done
             if !batch.rescan_complete() {
-                // Take per-wallet collected addresses from the batch
-                let addresses_by_wallet = self
+                // Take per-wallet collected scripts from the batch
+                let scripts_by_wallet = self
                     .active_batches
                     .get_mut(&batch_start)
-                    .map(|b| b.take_collected_addresses())
+                    .map(|b| b.take_collected_scripts())
                     .unwrap_or_default();
 
-                if !addresses_by_wallet.is_empty() {
+                if !scripts_by_wallet.is_empty() {
                     // Rescan current batch
-                    events.extend(self.rescan_batch(batch_start, &addresses_by_wallet).await?);
+                    events.extend(self.rescan_batch(batch_start, &scripts_by_wallet).await?);
 
                     // Also rescan later batches that are already scanned
                     let later_batches: Vec<u32> = self
@@ -487,7 +487,7 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
                         .collect();
 
                     for later_start in later_batches {
-                        events.extend(self.rescan_batch(later_start, &addresses_by_wallet).await?);
+                        events.extend(self.rescan_batch(later_start, &scripts_by_wallet).await?);
                     }
 
                     // Check if rescan found more blocks
@@ -608,15 +608,15 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
         Ok(events)
     }
 
-    /// Rescan a specific batch for newly discovered addresses, attributed per
-    /// wallet so each new address is matched only against the filters relevant
-    /// to its owning wallet.
+    /// Rescan a specific batch for newly discovered scriptPubKeys, attributed
+    /// per wallet so each new script is matched only against the filters
+    /// relevant to its owning wallet.
     pub(super) async fn rescan_batch(
         &mut self,
         batch_start: u32,
-        new_addresses: &HashMap<WalletId, HashSet<Address>>,
+        new_scripts: &HashMap<WalletId, HashSet<ScriptBuf>>,
     ) -> SyncResult<Vec<SyncEvent>> {
-        if new_addresses.is_empty() {
+        if new_scripts.is_empty() {
             return Ok(vec![]);
         }
 
@@ -625,10 +625,10 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
         };
 
         tracing::info!(
-            "Rescan filters ({}-{}) for new addresses across {} wallets",
+            "Rescan filters ({}-{}) for new scripts across {} wallets",
             batch.start_height(),
             batch.end_height(),
-            new_addresses.len()
+            new_scripts.len()
         );
 
         if batch.filters().is_empty() {
@@ -640,18 +640,18 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
         // own progress are skipped during the rescan.
         let synced_heights: HashMap<WalletId, u32> = {
             let wallet = self.wallet.read().await;
-            new_addresses.keys().map(|id| (*id, wallet.wallet_synced_height(id))).collect()
+            new_scripts.keys().map(|id| (*id, wallet.wallet_synced_height(id))).collect()
         };
 
         let mut block_to_wallets: BTreeMap<FilterMatchKey, BTreeSet<WalletId>> = BTreeMap::new();
-        for (wallet_id, addresses) in new_addresses {
-            if addresses.is_empty() {
+        for (wallet_id, scripts) in new_scripts {
+            if scripts.is_empty() {
                 continue;
             }
-            let addresses_vec: Vec<_> = addresses.iter().cloned().collect();
+            let scripts_vec: Vec<ScriptBuf> = scripts.iter().cloned().collect();
             let min_synced = synced_heights.get(wallet_id).copied().unwrap_or(0);
             let matches =
-                check_compact_filters_for_addresses(batch_filters, addresses_vec, min_synced);
+                check_compact_filters_for_script_pubkeys(batch_filters, &scripts_vec, min_synced);
             for key in matches {
                 block_to_wallets.entry(key).or_default().insert(*wallet_id);
             }
@@ -724,16 +724,16 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
 
         // Snapshot per-wallet state for the wallets behind this batch's range.
         // A wallet whose `synced_height >= batch_end` is fully covered and is
-        // skipped entirely, its addresses never even get tested against these
+        // skipped entirely, its scripts never even get tested against these
         // filters.
         let wallet = self.wallet.read().await;
         let behind = wallet.wallets_behind(batch_end);
-        let mut wallet_states: Vec<(WalletId, u32, Vec<Address>)> = Vec::new();
+        let mut wallet_states: Vec<(WalletId, u32, Vec<ScriptBuf>)> = Vec::new();
         for wallet_id in &behind {
             let synced = wallet.wallet_synced_height(wallet_id);
-            let addresses = wallet.monitored_addresses_for(wallet_id);
-            if !addresses.is_empty() {
-                wallet_states.push((*wallet_id, synced, addresses));
+            let scripts = wallet.monitored_script_pubkeys_for(wallet_id);
+            if !scripts.is_empty() {
+                wallet_states.push((*wallet_id, synced, scripts));
             }
         }
         drop(wallet);
@@ -762,11 +762,11 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
             return Ok(events);
         }
 
-        // Single-pass union-then-attribute: build the union of all addresses
+        // Single-pass union-then-attribute: build the union of all scripts
         // across behind wallets, run the filters once, then for each matched
         // block re-test per-wallet scripts to attribute the match correctly.
-        let union_addresses: Vec<Address> =
-            wallet_states.iter().flat_map(|(_, _, addrs)| addrs.iter().cloned()).collect();
+        let union_scripts: Vec<ScriptBuf> =
+            wallet_states.iter().flat_map(|(_, _, scripts)| scripts.iter().cloned()).collect();
         let min_synced = wallet_states.iter().map(|(_, synced, _)| *synced).min().unwrap_or(0);
 
         let block_to_wallets = {
@@ -776,7 +776,7 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
             let batch_filters = batch.filters();
 
             let matches =
-                check_compact_filters_for_addresses(batch_filters, union_addresses, min_synced);
+                check_compact_filters_for_script_pubkeys(batch_filters, &union_scripts, min_synced);
             let mut block_to_wallets: BTreeMap<FilterMatchKey, BTreeSet<WalletId>> =
                 BTreeMap::new();
             for key in matches {
@@ -788,14 +788,12 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
                     );
                     continue;
                 };
-                for (wallet_id, wallet_synced, addresses) in &wallet_states {
+                for (wallet_id, wallet_synced, scripts) in &wallet_states {
                     if key.height() <= *wallet_synced {
                         continue;
                     }
-                    let scripts: Vec<Vec<u8>> =
-                        addresses.iter().map(|a| a.script_pubkey().to_bytes()).collect();
                     let matched = match filter
-                        .match_any(key.hash(), scripts.iter().map(|v| v.as_slice()))
+                        .match_any(key.hash(), scripts.iter().map(|s| s.as_bytes()))
                     {
                         Ok(matched) => matched,
                         Err(e) => {
@@ -1288,8 +1286,8 @@ mod tests {
         assert!(!attr_70.contains(&wallet_high));
     }
 
-    /// `rescan_batch` with multiple wallets in `addresses_by_wallet`:
-    /// each wallet's new addresses are matched independently and the
+    /// `rescan_batch` with multiple wallets in `scripts_by_wallet`:
+    /// each wallet's new scripts are matched independently and the
     /// attribution is correct in the emitted `BlocksNeeded`.
     #[tokio::test]
     async fn test_rescan_batch_attributes_per_wallet_addresses() {
@@ -1318,11 +1316,11 @@ mod tests {
         batch.mark_verified();
         manager.active_batches.insert(0, batch);
 
-        let mut new_addresses: HashMap<WalletId, HashSet<Address>> = HashMap::new();
-        new_addresses.insert(wallet_a, HashSet::from([address_a]));
-        new_addresses.insert(wallet_b, HashSet::from([address_b]));
+        let mut new_scripts: HashMap<WalletId, HashSet<ScriptBuf>> = HashMap::new();
+        new_scripts.insert(wallet_a, HashSet::from([address_a.script_pubkey()]));
+        new_scripts.insert(wallet_b, HashSet::from([address_b.script_pubkey()]));
 
-        let events = manager.rescan_batch(0, &new_addresses).await.unwrap();
+        let events = manager.rescan_batch(0, &new_scripts).await.unwrap();
 
         let blocks = events
             .iter()
@@ -1394,14 +1392,17 @@ mod tests {
         batch.mark_verified();
         manager.active_batches.insert(0, batch);
 
-        // wallet_high also "discovers" address_low to demonstrate that even
-        // when a new address would match a low height, the per-wallet
+        // wallet_high also "discovers" address_low's script to demonstrate
+        // that even when a new script would match a low height, the per-wallet
         // synced_height filter prevents emitting it.
-        let mut new_addresses: HashMap<WalletId, HashSet<Address>> = HashMap::new();
-        new_addresses.insert(wallet_low, HashSet::from([address_low.clone()]));
-        new_addresses.insert(wallet_high, HashSet::from([address_low.clone(), address_high]));
+        let mut new_scripts: HashMap<WalletId, HashSet<ScriptBuf>> = HashMap::new();
+        new_scripts.insert(wallet_low, HashSet::from([address_low.script_pubkey()]));
+        new_scripts.insert(
+            wallet_high,
+            HashSet::from([address_low.script_pubkey(), address_high.script_pubkey()]),
+        );
 
-        let events = manager.rescan_batch(0, &new_addresses).await.unwrap();
+        let events = manager.rescan_batch(0, &new_scripts).await.unwrap();
 
         let blocks = events
             .iter()
@@ -1894,30 +1895,30 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_batch_collects_addresses() {
+    async fn test_batch_collects_scripts() {
         use crate::sync::filters::batch::FiltersBatch;
         use dashcore::Network;
 
         let mut batch = FiltersBatch::new(0, 4999, HashMap::new());
 
         // Initially empty
-        assert!(batch.take_collected_addresses().is_empty());
+        assert!(batch.take_collected_scripts().is_empty());
 
-        // Add addresses using test utility
-        let addr1 = dashcore::Address::dummy(Network::Testnet, 1);
-        let addr2 = dashcore::Address::dummy(Network::Testnet, 2);
+        // Add scripts using test utility
+        let script1 = dashcore::Address::dummy(Network::Testnet, 1).script_pubkey();
+        let script2 = dashcore::Address::dummy(Network::Testnet, 2).script_pubkey();
         let wallet_id: WalletId = [7; 32];
 
-        batch.add_addresses_for_wallet(wallet_id, [addr1.clone(), addr2.clone()]);
+        batch.add_scripts_for_wallet(wallet_id, [script1.clone(), script2.clone()]);
 
-        let collected = batch.take_collected_addresses();
+        let collected = batch.take_collected_scripts();
         let for_wallet = collected.get(&wallet_id).expect("wallet entry");
         assert_eq!(for_wallet.len(), 2);
-        assert!(for_wallet.contains(&addr1));
-        assert!(for_wallet.contains(&addr2));
+        assert!(for_wallet.contains(&script1));
+        assert!(for_wallet.contains(&script2));
 
         // After take, should be empty
-        assert!(batch.take_collected_addresses().is_empty());
+        assert!(batch.take_collected_scripts().is_empty());
     }
 
     #[tokio::test]

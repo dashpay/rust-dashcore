@@ -782,6 +782,11 @@ impl AddressPool {
         self.addresses.values().map(|info| info.address.clone()).collect()
     }
 
+    /// Get cached scriptPubKeys for every address in the pool.
+    pub fn all_script_pubkeys(&self) -> Vec<ScriptBuf> {
+        self.addresses.values().map(|info| info.script_pubkey.clone()).collect()
+    }
+
     /// Get only used addresses
     pub fn used_addresses(&self) -> Vec<Address> {
         self.addresses.values().filter(|info| info.used).map(|info| info.address.clone()).collect()
