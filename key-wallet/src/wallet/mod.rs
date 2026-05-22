@@ -125,6 +125,10 @@ impl Wallet {
             ),
         }
     }
+
+    pub fn downgrade_to_external_signable(&mut self) {
+        self.wallet_type = WalletType::ExternalSignable;
+    }
 }
 
 impl fmt::Display for Wallet {
