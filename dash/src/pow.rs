@@ -314,18 +314,19 @@ impl Decodable for CompactTarget {
 // (high, low): u.0 contains the high bits, u.1 contains the low bits.
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
-struct U256(u128, u128);
+pub struct U256(u128, u128);
 
 impl U256 {
     const MAX: U256 =
         U256(0xffff_ffff_ffff_ffff_ffff_ffff_ffff_ffff, 0xffff_ffff_ffff_ffff_ffff_ffff_ffff_ffff);
 
-    const ZERO: U256 = U256(0, 0);
+    /// The zero value.
+    pub const ZERO: U256 = U256(0, 0);
 
     const ONE: U256 = U256(0, 1);
 
     /// Creates [`U256`] from a big-endian array of `u8`s.
-    fn from_be_bytes(a: [u8; 32]) -> U256 {
+    pub fn from_be_bytes(a: [u8; 32]) -> U256 {
         let (high, low) = split_in_half(a);
         let big = u128::from_be_bytes(high);
         let little = u128::from_be_bytes(low);
@@ -341,7 +342,7 @@ impl U256 {
     }
 
     /// Converts `Self` to a big-endian array of `u8`s.
-    fn to_be_bytes(self) -> [u8; 32] {
+    pub fn to_be_bytes(self) -> [u8; 32] {
         let mut out = [0; 32];
         out[..16].copy_from_slice(&self.0.to_be_bytes());
         out[16..].copy_from_slice(&self.1.to_be_bytes());

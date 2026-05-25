@@ -63,9 +63,22 @@ impl SegmentState {
         !self.complete && !self.coordinator.is_in_flight(&self.current_tip_hash)
     }
 
-    /// Send a GetHeaders request for this segment.
-    pub(super) fn send_request(&mut self, requests: &RequestSender) -> SyncResult<()> {
-        requests.request_block_headers(self.current_tip_hash)?;
+    /// Send a GetHeaders request for this segment using the provided locator.
+    ///
+    /// The locator's first entry must equal `current_tip_hash`. The full
+    /// locator lets peers on forks find the most recent common ancestor.
+    pub(super) fn send_request(
+        &mut self,
+        requests: &RequestSender,
+        locator: Vec<BlockHash>,
+    ) -> SyncResult<()> {
+        debug_assert!(
+            !locator.is_empty() && locator[0] == self.current_tip_hash,
+            "segment {} locator must start at current_tip_hash {}",
+            self.segment_id,
+            self.current_tip_hash
+        );
+        requests.request_block_headers(locator)?;
         self.coordinator.mark_sent(&[self.current_tip_hash]);
         tracing::debug!(
             "Segment {}: sent GetHeaders from height {} hash {}",

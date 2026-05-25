@@ -141,6 +141,9 @@ pub enum SyncError {
     #[error("Storage error: {0}")]
     Storage(String),
 
+    #[error("Fork chain break: {0}")]
+    ForkChainBreak(String),
+
     /// Masternode sync failed (QRInfo or MnListDiff processing error)
     #[error("Masternode sync failed: {0}")]
     MasternodeSyncFailed(String),

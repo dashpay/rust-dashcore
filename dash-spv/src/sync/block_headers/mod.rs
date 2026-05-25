@@ -1,3 +1,4 @@
+mod fork_buffer;
 mod manager;
 mod pipeline;
 mod progress;

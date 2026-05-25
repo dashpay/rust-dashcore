@@ -1,18 +1,13 @@
-//! Chain management module with reorganization support
-//!
-//! This module provides functionality for managing blockchain state including:
-//! - Chain reorganization
-//! - Multiple chain tip tracking
-//! - Chain work calculation
-//! - Transaction rollback during reorgs
+//! Chain primitives: cumulative work, checkpoints, DGW v3 difficulty, and the fork-candidate carrier.
 
-pub mod chain_tip;
-pub mod chain_work;
+pub(crate) mod chain_tip;
+pub(crate) mod chain_work;
 pub mod checkpoints;
+pub(crate) mod difficulty;
 
 #[cfg(test)]
 mod checkpoint_test;
 
-pub use chain_tip::{ChainTip, ChainTipManager};
+pub(crate) use chain_tip::ForkCandidate;
 pub use chain_work::ChainWork;
 pub use checkpoints::{Checkpoint, CheckpointManager};

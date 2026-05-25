@@ -118,16 +118,33 @@ impl HeadersPipeline {
     }
 
     /// Send pending requests for active segments.
+    ///
+    /// `tip_locator` is used for the tip segment (target_height = None) when
+    /// its first entry matches the segment's current tip hash, so the peer can
+    /// find a common ancestor when its chain has forked. Mid-sync, the segment
+    /// advances in memory ahead of storage so the storage-derived locator
+    /// would not match. In that case, and for checkpoint segments, fall back
+    /// to a single-entry locator anchored at the segment's current tip hash.
     /// Returns the number of requests sent.
-    pub fn send_pending(&mut self, requests: &RequestSender) -> SyncResult<usize> {
+    pub fn send_pending(
+        &mut self,
+        requests: &RequestSender,
+        tip_locator: &[BlockHash],
+    ) -> SyncResult<usize> {
         let mut sent = 0;
         for segment in &mut self.segments {
-            // Skip completed segments
             if segment.complete {
                 continue;
             }
             while segment.can_send() {
-                segment.send_request(requests)?;
+                let locator = if segment.target_height.is_none()
+                    && tip_locator.first() == Some(&segment.current_tip_hash)
+                {
+                    tip_locator.to_vec()
+                } else {
+                    vec![segment.current_tip_hash]
+                };
+                segment.send_request(requests, locator)?;
                 sent += 1;
             }
         }
@@ -407,7 +424,7 @@ mod tests {
 
         let (sender, mut rx) = create_test_request_sender();
 
-        let sent = pipeline.send_pending(&sender).unwrap();
+        let sent = pipeline.send_pending(&sender, &[]).unwrap();
 
         // Should send at least one request per segment
         assert!(sent >= pipeline.segment_count());
@@ -625,5 +642,54 @@ mod tests {
         // mark_tip_complete restores the state after storing headers
         pipeline.mark_tip_complete();
         assert!(pipeline.is_tip_complete());
+    }
+
+    #[test]
+    fn send_pending_uses_full_locator_when_storage_matches_tip_and_single_entry_otherwise() {
+        use crate::network::NetworkRequest;
+        use dashcore::network::message::NetworkMessage;
+
+        let tip_hash = BlockHash::dummy(77);
+        let mut tip_seg = SegmentState::new(0, 100, tip_hash, None, None);
+        tip_seg.current_tip_hash = tip_hash;
+
+        let cm = create_test_checkpoint_manager(true);
+        let mut pipeline = HeadersPipeline::new(cm);
+        pipeline.initialized = true;
+        pipeline.segments = vec![tip_seg];
+
+        let (sender, mut rx) = create_test_request_sender();
+        let full_locator = vec![tip_hash, BlockHash::dummy(1), BlockHash::dummy(0)];
+
+        // Storage-caught-up case: tip_locator[0] == segment.current_tip_hash.
+        // Expect the full locator to be sent.
+        pipeline.send_pending(&sender, &full_locator).unwrap();
+        match rx.try_recv().unwrap() {
+            NetworkRequest::SendMessage(NetworkMessage::GetHeaders(msg)) => {
+                assert_eq!(
+                    msg.locator_hashes, full_locator,
+                    "full locator when storage matches segment tip"
+                );
+            }
+            other => panic!("unexpected request: {:?}", other),
+        }
+
+        // Mid-sync case: segment has advanced past storage, so tip_locator[0]
+        // no longer matches segment.current_tip_hash. Expect single-entry fallback.
+        let advanced_hash = BlockHash::dummy(88);
+        pipeline.segments[0].current_tip_hash = advanced_hash;
+        pipeline.segments[0].clear_in_flight();
+
+        pipeline.send_pending(&sender, &full_locator).unwrap();
+        match rx.try_recv().unwrap() {
+            NetworkRequest::SendMessage(NetworkMessage::GetHeaders(msg)) => {
+                assert_eq!(
+                    msg.locator_hashes,
+                    vec![advanced_hash],
+                    "single-entry fallback when storage lags segment tip"
+                );
+            }
+            other => panic!("unexpected request: {:?}", other),
+        }
     }
 }
