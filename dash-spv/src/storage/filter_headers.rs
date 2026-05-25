@@ -17,6 +17,11 @@ pub trait FilterHeaderStorage: Send + Sync + 'static {
         height: u32,
     ) -> StorageResult<()>;
 
+    /// Load a contiguous range of filter headers by height.
+    ///
+    /// Returns `StorageError::InvalidArgument` when the range extends into a
+    /// segment queued for deletion by a prior `truncate_above` (before the next
+    /// `persist`). Callers must clamp the range to at most `get_filter_tip_height`.
     async fn load_filter_headers(&self, range: Range<u32>) -> StorageResult<Vec<FilterHeader>>;
 
     async fn get_filter_header(&self, height: u32) -> StorageResult<Option<FilterHeader>> {
@@ -42,6 +47,17 @@ pub trait FilterHeaderStorage: Send + Sync + 'static {
     async fn get_filter_tip_height(&self) -> StorageResult<Option<u32>>;
 
     async fn get_filter_start_height(&self) -> Option<u32>;
+
+    /// Drop all filter headers with `height > target_height`.
+    ///
+    /// Truncating above the current tip is a no-op, truncating below
+    /// `start_height` returns an error. Changes are applied in-memory and
+    /// flushed on the next `persist`.
+    ///
+    /// The truncation is not durable until the next successful `persist` call.
+    /// A crash between `truncate_above` and `persist` may leave orphaned segment
+    /// files on disk and cause the storage to reopen at the pre-truncation tip.
+    async fn truncate_above(&mut self, target_height: u32) -> StorageResult<()>;
 }
 
 pub struct PersistentFilterHeaderStorage {
@@ -99,5 +115,70 @@ impl FilterHeaderStorage for PersistentFilterHeaderStorage {
 
     async fn get_filter_start_height(&self) -> Option<u32> {
         self.filter_headers.read().await.start_height()
+    }
+
+    async fn truncate_above(&mut self, target_height: u32) -> StorageResult<()> {
+        self.filter_headers.write().await.truncate_above(target_height).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    #[tokio::test]
+    async fn test_truncate_above_and_restore() {
+        let tmp_dir = TempDir::new().unwrap();
+        let mut storage = PersistentFilterHeaderStorage::open(tmp_dir.path()).await.unwrap();
+
+        let headers = FilterHeader::dummy_batch(0..10);
+        storage.store_filter_headers(&headers).await.unwrap();
+        assert_eq!(storage.get_filter_tip_height().await.unwrap(), Some(9));
+
+        storage.truncate_above(4).await.unwrap();
+        assert_eq!(storage.get_filter_tip_height().await.unwrap(), Some(4));
+
+        let kept = storage.load_filter_headers(0..5).await.unwrap();
+        assert_eq!(kept, headers[0..5]);
+
+        let replacement = FilterHeader::dummy_batch(100..105);
+        storage.store_filter_headers_at_height(&replacement, 5).await.unwrap();
+        assert_eq!(storage.get_filter_tip_height().await.unwrap(), Some(9));
+
+        let reloaded = storage.load_filter_headers(5..10).await.unwrap();
+        assert_eq!(reloaded, replacement);
+    }
+
+    #[tokio::test]
+    async fn test_truncate_above_persist_reopen_filter_headers() {
+        let tmp_dir = TempDir::new().unwrap();
+        {
+            let mut storage = PersistentFilterHeaderStorage::open(tmp_dir.path()).await.unwrap();
+            let headers = FilterHeader::dummy_batch(0..10);
+            storage.store_filter_headers(&headers).await.unwrap();
+            storage.truncate_above(4).await.unwrap();
+            storage.persist(tmp_dir.path()).await.unwrap();
+        }
+
+        let storage = PersistentFilterHeaderStorage::open(tmp_dir.path()).await.unwrap();
+        assert_eq!(storage.get_filter_tip_height().await.unwrap(), Some(4));
+        let kept = storage.load_filter_headers(0..5).await.unwrap();
+        assert_eq!(kept, FilterHeader::dummy_batch(0..5));
+        for h in 5..10 {
+            assert_eq!(storage.get_filter_header(h).await.unwrap(), None);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_truncate_above_tip_noop() {
+        let tmp_dir = TempDir::new().unwrap();
+        let mut storage = PersistentFilterHeaderStorage::open(tmp_dir.path()).await.unwrap();
+
+        let headers = FilterHeader::dummy_batch(0..5);
+        storage.store_filter_headers(&headers).await.unwrap();
+
+        storage.truncate_above(100).await.unwrap();
+        assert_eq!(storage.get_filter_tip_height().await.unwrap(), Some(4));
     }
 }

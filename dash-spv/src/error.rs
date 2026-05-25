@@ -80,6 +80,9 @@ pub enum StorageError {
     #[error("Read failed: {0}")]
     ReadFailed(String),
 
+    #[error("Invalid argument: {0}")]
+    InvalidArgument(String),
+
     #[error("IO error: {0}")]
     Io(#[from] io::Error),
 

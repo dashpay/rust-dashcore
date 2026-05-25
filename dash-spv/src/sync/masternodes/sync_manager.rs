@@ -710,6 +710,10 @@ mod tests {
         async fn get_header_height_by_hash(&self, hash: &BlockHash) -> StorageResult<Option<u32>> {
             Ok(self.0.get(hash).copied())
         }
+        async fn truncate_above(&mut self, target_height: u32) -> StorageResult<()> {
+            self.0.retain(|_, h| *h <= target_height);
+            Ok(())
+        }
     }
 
     fn make_diff(base_byte: u8, tip_byte: u8) -> MnListDiff {
