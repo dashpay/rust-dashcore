@@ -40,6 +40,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
 
         // Validate configuration
         config.validate().map_err(SpvError::Config)?;
+        config.apply_global_overrides().map_err(SpvError::Config)?;
 
         // Initialize genesis block or checkpoint before creating managers,
         // so they can read the tip from storage during construction.

@@ -138,6 +138,10 @@ struct Args {
     /// Devnet name (required when --network=devnet). Embedded in user agent so devnet peers accept the connection.
     #[arg(long, value_name = "NAME")]
     devnet_name: Option<String>,
+
+    /// Override `LLMQ_DEVNET` size and threshold (matches Dash Core's `-llmqdevnetparams=<size>:<threshold>`).
+    #[arg(long, value_name = "SIZE:THRESHOLD")]
+    llmq_devnet_params: Option<String>,
 }
 
 #[tokio::main]
@@ -219,16 +223,33 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         .with_validation_mode(validation_mode);
 
     if network == Network::Devnet {
-        let devnet_name = args
-            .devnet_name
-            .as_deref()
-            .ok_or("--devnet-name is required when --network=devnet")?;
+        let devnet_name =
+            args.devnet_name.as_deref().ok_or("--devnet-name is required when --network=devnet")?;
         let user_agent =
             format!("/rust-dash-spv:{}(devnet.devnet-{})/", dash_spv::VERSION, devnet_name);
         tracing::info!("Devnet user agent: {}", user_agent);
         config = config.with_user_agent(user_agent);
-    } else if args.devnet_name.is_some() {
-        return Err("--devnet-name is only valid with --network=devnet".into());
+
+        if let Some(raw) = args.llmq_devnet_params.as_deref() {
+            let (size_str, threshold_str) = raw.split_once(':').ok_or_else(|| {
+                format!("--llmq-devnet-params expects SIZE:THRESHOLD, got '{}'", raw)
+            })?;
+            let size: u32 = size_str
+                .parse()
+                .map_err(|e| format!("invalid LLMQ_DEVNET size '{}': {}", size_str, e))?;
+            let threshold: u32 = threshold_str
+                .parse()
+                .map_err(|e| format!("invalid LLMQ_DEVNET threshold '{}': {}", threshold_str, e))?;
+            config = config.with_llmq_devnet_params(size, threshold);
+            tracing::info!("LLMQ_DEVNET params overridden: size={} threshold={}", size, threshold);
+        }
+    } else {
+        if args.devnet_name.is_some() {
+            return Err("--devnet-name is only valid with --network=devnet".into());
+        }
+        if args.llmq_devnet_params.is_some() {
+            return Err("--llmq-devnet-params is only valid with --network=devnet".into());
+        }
     }
 
     // Add custom peers if specified

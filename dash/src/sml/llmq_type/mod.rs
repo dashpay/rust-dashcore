@@ -3,6 +3,7 @@ pub mod rotation;
 
 use std::fmt::{Display, Formatter};
 use std::io;
+use std::sync::OnceLock;
 
 #[cfg(feature = "bincode")]
 use bincode::{Decode, Encode};
@@ -207,6 +208,27 @@ pub const LLMQ_DEVNET: LLMQParams = LLMQParams {
     recovery_members: 6,
 };
 
+/// Runtime override for `LLMQ_DEVNET` params, matching Dash Core's `-llmqdevnetparams`.
+static LLMQ_DEVNET_OVERRIDE: OnceLock<(u32, u32)> = OnceLock::new();
+
+/// Override the `LLMQ_DEVNET` quorum size and threshold (matches Dash Core's
+/// `-llmqdevnetparams=<size>:<threshold>`). May only be called once per process.
+pub fn set_llmq_devnet_params(size: u32, threshold: u32) -> Result<(), &'static str> {
+    LLMQ_DEVNET_OVERRIDE.set((size, threshold)).map_err(|_| "LLMQ_DEVNET params already set")
+}
+
+/// Get the effective `LLMQ_DEVNET` params, applying any runtime override.
+pub fn llmq_devnet_params() -> LLMQParams {
+    let mut params = LLMQ_DEVNET;
+    if let Some(&(size, threshold)) = LLMQ_DEVNET_OVERRIDE.get() {
+        params.size = size;
+        params.min_size = threshold;
+        params.threshold = threshold;
+        params.dkg_params.bad_votes_threshold = threshold;
+    }
+    params
+}
+
 pub const LLMQ_50_60: LLMQParams = LLMQParams {
     quorum_type: LLMQType::Llmqtype50_60,
     name: "llmq_50_60",
@@ -358,14 +380,14 @@ impl LLMQType {
             LLMQType::Llmqtype60_75 => LLMQ_60_75,
             LLMQType::Llmqtype25_67 => LLMQ_25_67,
             LLMQType::LlmqtypeTest => LLMQ_TEST,
-            LLMQType::LlmqtypeDevnet => LLMQ_DEVNET,
+            LLMQType::LlmqtypeDevnet => llmq_devnet_params(),
             LLMQType::LlmqtypeTestV17 => LLMQ_V017,
             LLMQType::LlmqtypeTestDIP0024 => LLMQ_TEST_DIP00024,
             LLMQType::LlmqtypeTestInstantSend => LLMQ_TEST_INSTANT_SEND,
             LLMQType::LlmqtypeDevnetDIP0024 => LLMQ_0024,
             LLMQType::LlmqtypeTestnetPlatform => LLMQ_TEST_PLATFORM,
             LLMQType::LlmqtypeDevnetPlatform => LLMQ_DEV_PLATFORM,
-            LLMQType::LlmqtypeUnknown => LLMQ_DEVNET,
+            LLMQType::LlmqtypeUnknown => llmq_devnet_params(),
         }
     }
     pub fn size(&self) -> u32 {
