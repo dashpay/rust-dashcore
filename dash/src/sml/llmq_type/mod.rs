@@ -212,9 +212,16 @@ pub const LLMQ_DEVNET: LLMQParams = LLMQParams {
 static LLMQ_DEVNET_OVERRIDE: OnceLock<(u32, u32)> = OnceLock::new();
 
 /// Override the `LLMQ_DEVNET` quorum size and threshold (matches Dash Core's
-/// `-llmqdevnetparams=<size>:<threshold>`). May only be called once per process.
+/// `-llmqdevnetparams=<size>:<threshold>`). Idempotent for identical values,
+/// returns an error if a conflicting override was already set.
 pub fn set_llmq_devnet_params(size: u32, threshold: u32) -> Result<(), &'static str> {
-    LLMQ_DEVNET_OVERRIDE.set((size, threshold)).map_err(|_| "LLMQ_DEVNET params already set")
+    match LLMQ_DEVNET_OVERRIDE.get() {
+        Some(&existing) if existing == (size, threshold) => Ok(()),
+        Some(_) => Err("LLMQ_DEVNET params already set to a different value"),
+        None => LLMQ_DEVNET_OVERRIDE
+            .set((size, threshold))
+            .map_err(|_| "LLMQ_DEVNET params already set to a different value"),
+    }
 }
 
 /// Get the effective `LLMQ_DEVNET` params, applying any runtime override.
