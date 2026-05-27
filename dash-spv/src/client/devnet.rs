@@ -4,8 +4,8 @@
 //! "presence iff `Network::Devnet`" is expressible at the `ClientConfig` level.
 
 use dashcore::sml::llmq_type::{
-    LLMQType, LlmqDevnetParams, set_devnet_chain_locks_type, set_devnet_isd_type,
-    set_devnet_platform_type, set_llmq_devnet_params,
+    set_devnet_chain_locks_type, set_devnet_isd_type, set_devnet_platform_type,
+    set_llmq_devnet_params, LLMQType, LlmqDevnetParams,
 };
 
 /// Configuration values that only apply on `Network::Devnet`.

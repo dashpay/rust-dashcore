@@ -295,9 +295,8 @@ fn build_client_config(args: &Args, data_dir: PathBuf) -> Result<ClientConfig, S
     if !args.peer.is_empty() {
         config.peers.clear();
         for peer in &args.peer {
-            let addr = peer
-                .parse()
-                .map_err(|e| format!("Invalid peer address '{}': {}", peer, e))?;
+            let addr =
+                peer.parse().map_err(|e| format!("Invalid peer address '{}': {}", peer, e))?;
             config.add_peer(addr);
         }
     }
@@ -348,8 +347,7 @@ fn build_devnet_config(args: &Args, network: Network) -> Result<Option<DevnetCon
         return Ok(None);
     }
 
-    let name =
-        args.devnet_name.clone().ok_or("--devnet-name is required when --network=devnet")?;
+    let name = args.devnet_name.clone().ok_or("--devnet-name is required when --network=devnet")?;
     let mut devnet = DevnetConfig::new(name);
 
     if let Some(raw) = args.llmq_devnet_params.as_deref() {
@@ -371,9 +369,8 @@ fn parse_llmq_devnet_params(raw: &str) -> Result<LlmqDevnetParams, String> {
     let (size_str, threshold_str) = raw
         .split_once(':')
         .ok_or_else(|| format!("--llmq-devnet-params expects SIZE:THRESHOLD, got '{}'", raw))?;
-    let size: u32 = size_str
-        .parse()
-        .map_err(|e| format!("invalid LLMQ_DEVNET size '{}': {}", size_str, e))?;
+    let size: u32 =
+        size_str.parse().map_err(|e| format!("invalid LLMQ_DEVNET size '{}': {}", size_str, e))?;
     let threshold: u32 = threshold_str
         .parse()
         .map_err(|e| format!("invalid LLMQ_DEVNET threshold '{}': {}", threshold_str, e))?;
@@ -420,4 +417,131 @@ async fn run_client<S: dash_spv::storage::StorageManager>(
     client.run().await?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse(argv: &[&str]) -> Result<Args, clap::Error> {
+        let mut full = vec!["dash-spv"];
+        full.extend_from_slice(argv);
+        Args::try_parse_from(full)
+    }
+
+    fn args(extra: &[&str]) -> Args {
+        let mut argv = vec!["--mnemonic-file", "/dev/null"];
+        argv.extend_from_slice(extra);
+        parse(&argv).expect("parse")
+    }
+
+    #[test]
+    fn devnet_requires_name() {
+        let args = args(&["--network", "devnet"]);
+        let err = build_devnet_config(&args, Network::Devnet).expect_err("must require name");
+        assert!(err.contains("--devnet-name is required"), "got: {}", err);
+    }
+
+    #[test]
+    fn devnet_flags_rejected_on_non_devnet_networks() {
+        for flag in &[
+            "--devnet-name",
+            "--llmq-devnet-params",
+            "--llmq-chainlocks",
+            "--llmq-instantsend-dip0024",
+            "--llmq-platform",
+        ] {
+            let value = if *flag == "--llmq-devnet-params" {
+                "8:5"
+            } else if *flag == "--devnet-name" {
+                "alpha"
+            } else {
+                "llmq_devnet"
+            };
+            for network in [Network::Mainnet, Network::Testnet, Network::Regtest] {
+                let args = args(&[flag, value]);
+                let err = build_devnet_config(&args, network)
+                    .expect_err("non-devnet network must reject the flag");
+                assert!(err.contains(flag), "expected error to name flag {}, got: {}", flag, err);
+            }
+        }
+    }
+
+    #[test]
+    fn devnet_minimal_builds_config_with_no_overrides() {
+        let args = args(&["--network", "devnet", "--devnet-name", "alpha"]);
+        let devnet =
+            build_devnet_config(&args, Network::Devnet).expect("must succeed").expect("some");
+        assert_eq!(devnet.name, "alpha");
+        assert!(devnet.llmq_params.is_none());
+        assert!(devnet.llmq_chainlocks_type.is_none());
+        assert!(devnet.llmq_instantsend_dip0024_type.is_none());
+        assert!(devnet.llmq_platform_type.is_none());
+    }
+
+    #[test]
+    fn devnet_full_compose() {
+        let args = args(&[
+            "--network",
+            "devnet",
+            "--devnet-name",
+            "alpha",
+            "--llmq-devnet-params",
+            "8:5",
+            "--llmq-chainlocks",
+            "llmq_devnet",
+            "--llmq-instantsend-dip0024",
+            "llmq_devnet_dip0024",
+            "--llmq-platform",
+            "llmq_devnet_platform",
+        ]);
+        let devnet =
+            build_devnet_config(&args, Network::Devnet).expect("must succeed").expect("some");
+        assert_eq!(devnet.name, "alpha");
+        assert_eq!(
+            devnet.llmq_params,
+            Some(LlmqDevnetParams {
+                size: 8,
+                threshold: 5
+            })
+        );
+        assert_eq!(devnet.llmq_chainlocks_type, Some(dash_spv::LLMQType::LlmqtypeDevnet));
+        assert_eq!(
+            devnet.llmq_instantsend_dip0024_type,
+            Some(dash_spv::LLMQType::LlmqtypeDevnetDIP0024)
+        );
+        assert_eq!(devnet.llmq_platform_type, Some(dash_spv::LLMQType::LlmqtypeDevnetPlatform));
+    }
+
+    #[test]
+    fn llmq_devnet_params_parse_errors() {
+        assert!(parse_llmq_devnet_params("8").is_err(), "missing colon");
+        assert!(parse_llmq_devnet_params("abc:5").is_err(), "non-numeric size");
+        assert!(parse_llmq_devnet_params("8:abc").is_err(), "non-numeric threshold");
+        assert!(parse_llmq_devnet_params(":").is_err(), "empty parts");
+    }
+
+    #[test]
+    fn unknown_quorum_name_is_rejected() {
+        let args = args(&[
+            "--network",
+            "devnet",
+            "--devnet-name",
+            "alpha",
+            "--llmq-chainlocks",
+            "not_a_quorum",
+        ]);
+        let err = build_devnet_config(&args, Network::Devnet).expect_err("must reject");
+        assert!(err.contains("Invalid LLMQ type"), "got: {}", err);
+    }
+
+    #[test]
+    fn build_client_config_returns_devnet_on_devnet() {
+        let args = args(&["--network", "devnet", "--devnet-name", "alpha"]);
+        let tmp = tempfile::TempDir::new().unwrap();
+        let config = build_client_config(&args, tmp.path().to_path_buf()).expect("ok");
+        let devnet = config.devnet.as_ref().expect("devnet must be set");
+        assert_eq!(devnet.name, "alpha");
+        assert_eq!(config.network, Network::Devnet);
+    }
 }

@@ -313,16 +313,10 @@ fn set_devnet_routing_override(
     let rotates = llmq_type.is_rotating_quorum_type();
     match constraint {
         RotationConstraint::MustNotRotate if rotates => {
-            return Err(format!(
-                "LLMQ type specified for -{} must NOT use rotation",
-                flag_name
-            ));
+            return Err(format!("LLMQ type specified for -{} must NOT use rotation", flag_name));
         }
         RotationConstraint::MustRotate if !rotates => {
-            return Err(format!(
-                "LLMQ type specified for -{} must use rotation",
-                flag_name
-            ));
+            return Err(format!("LLMQ type specified for -{} must use rotation", flag_name));
         }
         _ => {}
     }
