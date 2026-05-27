@@ -441,6 +441,7 @@ impl From<u8> for LLMQType {
             104 => LLMQType::LlmqtypeTestInstantSend,
             105 => LLMQType::LlmqtypeDevnetDIP0024,
             106 => LLMQType::LlmqtypeTestnetPlatform,
+            107 => LLMQType::LlmqtypeDevnetPlatform,
             _ => LLMQType::LlmqtypeUnknown,
         }
     }
