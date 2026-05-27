@@ -5,8 +5,11 @@ use std::process;
 use std::sync::Arc;
 
 use clap::{Parser, ValueEnum};
-use dash_spv::{ClientConfig, DashSpvClient, LevelFilter, MempoolStrategy, Network};
-use dashcore::sml::llmq_type::LlmqDevnetParams;
+use dash_spv::{
+    ClientConfig, DashSpvClient, DevnetConfig, LevelFilter, LlmqDevnetParams, MempoolStrategy,
+    Network,
+};
+use dashcore::sml::llmq_type::devnet_llmq_type_from_name;
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
 use key_wallet_manager::WalletManager;
 
@@ -143,6 +146,23 @@ struct Args {
     /// Override `LLMQ_DEVNET` size and threshold (matches Dash Core's `-llmqdevnetparams=<size>:<threshold>`).
     #[arg(long, value_name = "SIZE:THRESHOLD")]
     llmq_devnet_params: Option<String>,
+
+    /// Reroute ChainLocks onto the given devnet quorum (matches Dash Core's
+    /// `-llmqchainlocks=<quorum name>`). Type must be devnet-registered and
+    /// non-rotating.
+    #[arg(long, value_name = "QUORUM_NAME")]
+    llmq_chainlocks: Option<String>,
+
+    /// Reroute InstantSend DIP24 onto the given devnet quorum (matches Dash Core's
+    /// `-llmqinstantsenddip0024=<quorum name>`). Type must be devnet-registered
+    /// and rotating.
+    #[arg(long, value_name = "QUORUM_NAME")]
+    llmq_instantsend_dip0024: Option<String>,
+
+    /// Reroute Platform quorums onto the given devnet quorum (matches Dash Core's
+    /// `-llmqplatform=<quorum name>`). Type must be devnet-registered.
+    #[arg(long, value_name = "QUORUM_NAME")]
+    llmq_platform: Option<String>,
 }
 
 #[tokio::main]
@@ -218,95 +238,15 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     tracing::info!("Data directory: {}", data_dir.display());
     tracing::info!("Validation mode: {:?}", validation_mode);
 
-    // Create configuration
-    let mut config = ClientConfig::new(network)
-        .with_storage_path(data_dir.clone())
-        .with_validation_mode(validation_mode);
-
-    if network == Network::Devnet {
-        let devnet_name =
-            args.devnet_name.as_deref().ok_or("--devnet-name is required when --network=devnet")?;
-        let user_agent =
-            format!("/rust-dash-spv:{}(devnet.devnet-{})/", dash_spv::VERSION, devnet_name);
-        tracing::info!("Devnet user agent: {}", user_agent);
-        config = config.with_user_agent(user_agent);
-
-        if let Some(raw) = args.llmq_devnet_params.as_deref() {
-            let (size_str, threshold_str) = raw.split_once(':').ok_or_else(|| {
-                format!("--llmq-devnet-params expects SIZE:THRESHOLD, got '{}'", raw)
-            })?;
-            let size: u32 = size_str
-                .parse()
-                .map_err(|e| format!("invalid LLMQ_DEVNET size '{}': {}", size_str, e))?;
-            let threshold: u32 = threshold_str
-                .parse()
-                .map_err(|e| format!("invalid LLMQ_DEVNET threshold '{}': {}", threshold_str, e))?;
-            let params = LlmqDevnetParams {
-                size,
-                threshold,
-            };
-            config = config.with_llmq_devnet_params(params);
-            tracing::info!(
-                "LLMQ_DEVNET params overridden: size={} threshold={}",
-                params.size,
-                params.threshold
-            );
-        }
-    } else {
-        if args.devnet_name.is_some() {
-            return Err("--devnet-name is only valid with --network=devnet".into());
-        }
-        if args.llmq_devnet_params.is_some() {
-            return Err("--llmq-devnet-params is only valid with --network=devnet".into());
-        }
-    }
-
-    // Add custom peers if specified
-    if !args.peer.is_empty() {
-        config.peers.clear();
-        for peer in &args.peer {
-            match peer.parse() {
-                Ok(addr) => config.add_peer(addr),
-                Err(e) => {
-                    tracing::error!("Invalid peer address '{}': {}", peer, e);
-                    process::exit(1);
-                }
-            };
-        }
-    }
-
-    // Configure features
-    if args.no_filters {
-        config = config.without_filters();
-    }
-    if args.no_masternodes {
-        config = config.without_masternodes();
-    }
-    if args.no_mempool {
-        config.enable_mempool_tracking = false;
-    } else {
-        config = config.with_mempool_tracking(args.mempool_strategy);
-    }
-
-    // Set start height if specified
-    if let Some(ref start_height_str) = args.start_height {
-        if start_height_str == "now" {
-            // Use a very high number to get the latest checkpoint
-            config.start_from_height = Some(u32::MAX);
-            tracing::info!("Will start syncing from the latest available checkpoint");
-        } else {
-            let start_height = start_height_str
-                .parse::<u32>()
-                .map_err(|e| format!("Invalid start height '{}': {}", start_height_str, e))?;
-            config.start_from_height = Some(start_height);
-            tracing::info!("Will start syncing from height: {}", start_height);
-        }
-    }
-
-    // Validate configuration
+    let mut config = build_client_config(&args, data_dir.clone())?;
     if let Err(e) = config.validate() {
         tracing::error!("Configuration error: {}", e);
         process::exit(1);
+    }
+    if let Some(devnet) = &config.devnet {
+        let user_agent = devnet.user_agent(dash_spv::VERSION);
+        tracing::info!("Devnet user agent: {}", user_agent);
+        config = config.with_user_agent(user_agent);
     }
 
     // Create the wallet manager
@@ -337,6 +277,110 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     run_client(config, network_manager, storage_manager, wallet).await?;
 
     Ok(())
+}
+
+fn build_client_config(args: &Args, data_dir: PathBuf) -> Result<ClientConfig, String> {
+    let network: Network = args.network.into();
+    let validation_mode: dash_spv::ValidationMode = args.validation_mode.into();
+
+    let mut config = ClientConfig::new(network)
+        .with_storage_path(data_dir)
+        .with_validation_mode(validation_mode);
+
+    let devnet = build_devnet_config(args, network)?;
+    if let Some(devnet) = devnet {
+        config = config.with_devnet(devnet);
+    }
+
+    if !args.peer.is_empty() {
+        config.peers.clear();
+        for peer in &args.peer {
+            let addr = peer
+                .parse()
+                .map_err(|e| format!("Invalid peer address '{}': {}", peer, e))?;
+            config.add_peer(addr);
+        }
+    }
+
+    if args.no_filters {
+        config = config.without_filters();
+    }
+    if args.no_masternodes {
+        config = config.without_masternodes();
+    }
+    if args.no_mempool {
+        config.enable_mempool_tracking = false;
+    } else {
+        config = config.with_mempool_tracking(args.mempool_strategy);
+    }
+
+    if let Some(ref start_height_str) = args.start_height {
+        if start_height_str == "now" {
+            config.start_from_height = Some(u32::MAX);
+        } else {
+            let start_height = start_height_str
+                .parse::<u32>()
+                .map_err(|e| format!("Invalid start height '{}': {}", start_height_str, e))?;
+            config.start_from_height = Some(start_height);
+        }
+    }
+
+    Ok(config)
+}
+
+fn build_devnet_config(args: &Args, network: Network) -> Result<Option<DevnetConfig>, String> {
+    if network != Network::Devnet {
+        if args.devnet_name.is_some() {
+            return Err("--devnet-name is only valid with --network=devnet".into());
+        }
+        if args.llmq_devnet_params.is_some() {
+            return Err("--llmq-devnet-params is only valid with --network=devnet".into());
+        }
+        if args.llmq_chainlocks.is_some() {
+            return Err("--llmq-chainlocks is only valid with --network=devnet".into());
+        }
+        if args.llmq_instantsend_dip0024.is_some() {
+            return Err("--llmq-instantsend-dip0024 is only valid with --network=devnet".into());
+        }
+        if args.llmq_platform.is_some() {
+            return Err("--llmq-platform is only valid with --network=devnet".into());
+        }
+        return Ok(None);
+    }
+
+    let name =
+        args.devnet_name.clone().ok_or("--devnet-name is required when --network=devnet")?;
+    let mut devnet = DevnetConfig::new(name);
+
+    if let Some(raw) = args.llmq_devnet_params.as_deref() {
+        devnet = devnet.with_llmq_params(parse_llmq_devnet_params(raw)?);
+    }
+    if let Some(name) = args.llmq_chainlocks.as_deref() {
+        devnet = devnet.with_chainlocks_type(devnet_llmq_type_from_name(name)?);
+    }
+    if let Some(name) = args.llmq_instantsend_dip0024.as_deref() {
+        devnet = devnet.with_instantsend_dip0024_type(devnet_llmq_type_from_name(name)?);
+    }
+    if let Some(name) = args.llmq_platform.as_deref() {
+        devnet = devnet.with_platform_type(devnet_llmq_type_from_name(name)?);
+    }
+    Ok(Some(devnet))
+}
+
+fn parse_llmq_devnet_params(raw: &str) -> Result<LlmqDevnetParams, String> {
+    let (size_str, threshold_str) = raw
+        .split_once(':')
+        .ok_or_else(|| format!("--llmq-devnet-params expects SIZE:THRESHOLD, got '{}'", raw))?;
+    let size: u32 = size_str
+        .parse()
+        .map_err(|e| format!("invalid LLMQ_DEVNET size '{}': {}", size_str, e))?;
+    let threshold: u32 = threshold_str
+        .parse()
+        .map_err(|e| format!("invalid LLMQ_DEVNET threshold '{}': {}", threshold_str, e))?;
+    Ok(LlmqDevnetParams {
+        size,
+        threshold,
+    })
 }
 
 async fn run_client<S: dash_spv::storage::StorageManager>(

@@ -15,6 +15,7 @@
 //! - `sync_coordinator.rs` - Sync orchestration and network monitoring
 
 pub mod config;
+pub mod devnet;
 pub mod event_handler;
 
 mod core;
@@ -26,6 +27,7 @@ mod transactions;
 
 // Re-export public types from extracted modules
 pub use config::ClientConfig;
+pub use devnet::DevnetConfig;
 pub use event_handler::EventHandler;
 
 // Re-export the main client struct

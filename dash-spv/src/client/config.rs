@@ -4,10 +4,10 @@ use clap::ValueEnum;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 
-use dashcore::sml::llmq_type::{set_llmq_devnet_params, LlmqDevnetParams};
 use dashcore::Network;
 // Serialization removed due to complex Address types
 
+use crate::client::devnet::DevnetConfig;
 use crate::types::ValidationMode;
 
 /// Strategy for handling mempool (unconfirmed) transactions.
@@ -72,9 +72,8 @@ pub struct ClientConfig {
     /// The client will use the nearest checkpoint at or before this height.
     pub start_from_height: Option<u32>,
 
-    /// Override for `LLMQ_DEVNET` quorum size and threshold, applied at startup.
-    /// Mirrors Dash Core's `-llmqdevnetparams=<size>:<threshold>`. Only meaningful on devnet.
-    pub llmq_devnet_params: Option<LlmqDevnetParams>,
+    /// Devnet-only configuration. Must be `Some` iff `network == Network::Devnet`.
+    pub devnet: Option<DevnetConfig>,
 }
 
 impl Default for ClientConfig {
@@ -95,7 +94,7 @@ impl Default for ClientConfig {
             max_mempool_transactions: 1000,
             fetch_mempool_transactions: true,
             start_from_height: None,
-            llmq_devnet_params: None,
+            devnet: None,
         }
     }
 }
@@ -187,10 +186,10 @@ impl ClientConfig {
         self
     }
 
-    /// Override `LLMQ_DEVNET` quorum size and threshold for a devnet.
-    /// Mirrors Dash Core's `-llmqdevnetparams=<size>:<threshold>`.
-    pub fn with_llmq_devnet_params(mut self, params: LlmqDevnetParams) -> Self {
-        self.llmq_devnet_params = Some(params);
+    /// Attach a [`DevnetConfig`]. The network must be `Network::Devnet`;
+    /// [`validate`](Self::validate) enforces the biconditional.
+    pub fn with_devnet(mut self, devnet: DevnetConfig) -> Self {
+        self.devnet = Some(devnet);
         self
     }
 
@@ -209,8 +208,18 @@ impl ClientConfig {
             );
         }
 
-        if self.llmq_devnet_params.is_some() && self.network != Network::Devnet {
-            return Err("llmq_devnet_params is only valid on devnet".to_string());
+        match (self.network == Network::Devnet, &self.devnet) {
+            (true, Some(devnet)) => devnet.validate()?,
+            (true, None) => {
+                return Err("network is Devnet but no DevnetConfig was provided".to_string());
+            }
+            (false, Some(_)) => {
+                return Err(format!(
+                    "DevnetConfig is only valid on Devnet, but network is {:?}",
+                    self.network
+                ));
+            }
+            (false, None) => {}
         }
 
         std::fs::create_dir_all(&self.storage_path).map_err(|e| {
@@ -226,8 +235,8 @@ impl ClientConfig {
     /// Apply process-wide settings derived from this config. Idempotent for the
     /// same values, returns an error if a conflicting setting was already applied.
     pub(crate) fn apply_global_overrides(&self) -> Result<(), String> {
-        if let Some(params) = self.llmq_devnet_params {
-            set_llmq_devnet_params(params).map_err(|e| e.to_string())?;
+        if let Some(devnet) = &self.devnet {
+            devnet.apply_global_overrides()?;
         }
         Ok(())
     }

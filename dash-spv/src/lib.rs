@@ -74,7 +74,7 @@ pub mod validation;
 
 // Re-export main types for convenience
 pub use client::config::MempoolStrategy;
-pub use client::{ClientConfig, DashSpvClient, EventHandler};
+pub use client::{ClientConfig, DashSpvClient, DevnetConfig, EventHandler};
 pub use error::{
     LoggingError, LoggingResult, NetworkError, SpvError, StorageError, SyncError, ValidationError,
 };
@@ -95,7 +95,7 @@ pub use dashcore::sml::masternode_list_engine::{
 };
 
 // Re-export LLMQ types
-pub use dashcore::sml::llmq_type::LLMQType;
+pub use dashcore::sml::llmq_type::{LLMQType, LlmqDevnetParams};
 
 /// Current version of the dash-spv library.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
