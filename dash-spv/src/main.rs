@@ -6,6 +6,7 @@ use std::sync::Arc;
 
 use clap::{Parser, ValueEnum};
 use dash_spv::{ClientConfig, DashSpvClient, LevelFilter, MempoolStrategy, Network};
+use dashcore::sml::llmq_type::LlmqDevnetParams;
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
 use key_wallet_manager::WalletManager;
 
@@ -240,8 +241,16 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
             let threshold: u32 = threshold_str
                 .parse()
                 .map_err(|e| format!("invalid LLMQ_DEVNET threshold '{}': {}", threshold_str, e))?;
-            config = config.with_llmq_devnet_params(size, threshold);
-            tracing::info!("LLMQ_DEVNET params overridden: size={} threshold={}", size, threshold);
+            let params = LlmqDevnetParams {
+                size,
+                threshold,
+            };
+            config = config.with_llmq_devnet_params(params);
+            tracing::info!(
+                "LLMQ_DEVNET params overridden: size={} threshold={}",
+                params.size,
+                params.threshold
+            );
         }
     } else {
         if args.devnet_name.is_some() {

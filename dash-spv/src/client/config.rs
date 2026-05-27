@@ -4,7 +4,7 @@ use clap::ValueEnum;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 
-use dashcore::sml::llmq_type::set_llmq_devnet_params;
+use dashcore::sml::llmq_type::{set_llmq_devnet_params, LlmqDevnetParams};
 use dashcore::Network;
 // Serialization removed due to complex Address types
 
@@ -74,7 +74,7 @@ pub struct ClientConfig {
 
     /// Override for `LLMQ_DEVNET` quorum size and threshold, applied at startup.
     /// Mirrors Dash Core's `-llmqdevnetparams=<size>:<threshold>`. Only meaningful on devnet.
-    pub llmq_devnet_params: Option<(u32, u32)>,
+    pub llmq_devnet_params: Option<LlmqDevnetParams>,
 }
 
 impl Default for ClientConfig {
@@ -189,8 +189,8 @@ impl ClientConfig {
 
     /// Override `LLMQ_DEVNET` quorum size and threshold for a devnet.
     /// Mirrors Dash Core's `-llmqdevnetparams=<size>:<threshold>`.
-    pub fn with_llmq_devnet_params(mut self, size: u32, threshold: u32) -> Self {
-        self.llmq_devnet_params = Some((size, threshold));
+    pub fn with_llmq_devnet_params(mut self, params: LlmqDevnetParams) -> Self {
+        self.llmq_devnet_params = Some(params);
         self
     }
 
@@ -226,8 +226,8 @@ impl ClientConfig {
     /// Apply process-wide settings derived from this config. Idempotent for the
     /// same values, returns an error if a conflicting setting was already applied.
     pub(crate) fn apply_global_overrides(&self) -> Result<(), String> {
-        if let Some((size, threshold)) = self.llmq_devnet_params {
-            set_llmq_devnet_params(size, threshold).map_err(|e| e.to_string())?;
+        if let Some(params) = self.llmq_devnet_params {
+            set_llmq_devnet_params(params).map_err(|e| e.to_string())?;
         }
         Ok(())
     }

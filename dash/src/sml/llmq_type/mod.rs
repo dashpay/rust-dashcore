@@ -208,18 +208,29 @@ pub const LLMQ_DEVNET: LLMQParams = LLMQParams {
     recovery_members: 6,
 };
 
+/// Runtime override values for `LLMQ_DEVNET`, matching Dash Core's
+/// `-llmqdevnetparams=<size>:<threshold>`.
+#[repr(C)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
+pub struct LlmqDevnetParams {
+    /// Quorum size (total members).
+    pub size: u32,
+    /// Signing threshold (also used as min_size and bad_votes_threshold).
+    pub threshold: u32,
+}
+
 /// Runtime override for `LLMQ_DEVNET` params, matching Dash Core's `-llmqdevnetparams`.
-static LLMQ_DEVNET_OVERRIDE: OnceLock<(u32, u32)> = OnceLock::new();
+static LLMQ_DEVNET_OVERRIDE: OnceLock<LlmqDevnetParams> = OnceLock::new();
 
 /// Override the `LLMQ_DEVNET` quorum size and threshold (matches Dash Core's
 /// `-llmqdevnetparams=<size>:<threshold>`). Idempotent for identical values,
 /// returns an error if a conflicting override was already set.
-pub fn set_llmq_devnet_params(size: u32, threshold: u32) -> Result<(), &'static str> {
+pub fn set_llmq_devnet_params(params: LlmqDevnetParams) -> Result<(), &'static str> {
     match LLMQ_DEVNET_OVERRIDE.get() {
-        Some(&existing) if existing == (size, threshold) => Ok(()),
+        Some(&existing) if existing == params => Ok(()),
         Some(_) => Err("LLMQ_DEVNET params already set to a different value"),
         None => LLMQ_DEVNET_OVERRIDE
-            .set((size, threshold))
+            .set(params)
             .map_err(|_| "LLMQ_DEVNET params already set to a different value"),
     }
 }
@@ -227,7 +238,11 @@ pub fn set_llmq_devnet_params(size: u32, threshold: u32) -> Result<(), &'static 
 /// Get the effective `LLMQ_DEVNET` params, applying any runtime override.
 pub fn llmq_devnet_params() -> LLMQParams {
     let mut params = LLMQ_DEVNET;
-    if let Some(&(size, threshold)) = LLMQ_DEVNET_OVERRIDE.get() {
+    if let Some(&LlmqDevnetParams {
+        size,
+        threshold,
+    }) = LLMQ_DEVNET_OVERRIDE.get()
+    {
         params.size = size;
         params.min_size = threshold;
         params.threshold = threshold;
@@ -696,7 +711,11 @@ mod tests {
         // LLMQ_DEVNET_OVERRIDE is a process-global OnceLock, so the three contract
         // checks (initial set, idempotent re-set, conflicting re-set) all run in
         // this single test to avoid races between tests sharing the same lock.
-        set_llmq_devnet_params(8, 5).expect("initial override should succeed");
+        set_llmq_devnet_params(LlmqDevnetParams {
+            size: 8,
+            threshold: 5,
+        })
+        .expect("initial override should succeed");
 
         let params = llmq_devnet_params();
         assert_eq!(params.size, 8);
@@ -704,8 +723,19 @@ mod tests {
         assert_eq!(params.threshold, 5);
         assert_eq!(params.dkg_params.bad_votes_threshold, 5);
 
-        set_llmq_devnet_params(8, 5).expect("re-setting identical values should be idempotent");
-        assert!(set_llmq_devnet_params(12, 6).is_err(), "conflicting override must error");
+        set_llmq_devnet_params(LlmqDevnetParams {
+            size: 8,
+            threshold: 5,
+        })
+        .expect("re-setting identical values should be idempotent");
+        assert!(
+            set_llmq_devnet_params(LlmqDevnetParams {
+                size: 12,
+                threshold: 6,
+            })
+            .is_err(),
+            "conflicting override must error"
+        );
 
         let params_after = llmq_devnet_params();
         assert_eq!(params_after.size, 8);
