@@ -75,6 +75,8 @@ impl NetworkLLMQExt for Network {
                 // Note: 400_60 and 400_85 are included but may not mine on testnet
                 LLMQType::Llmqtype25_67, // Platform consensus (smaller for testnet)
             ],
+            // Setters reject any LLMQ type outside this default list, so it
+            // already covers every possible override value — no extension needed.
             Network::Devnet => vec![
                 LLMQType::Llmqtype50_60,
                 LLMQType::Llmqtype60_75,
