@@ -134,6 +134,10 @@ struct Args {
     /// Path to file containing BIP39 mnemonic phrase
     #[arg(long, value_name = "PATH")]
     mnemonic_file: String,
+
+    /// Devnet name (required when --network=devnet). Embedded in user agent so devnet peers accept the connection.
+    #[arg(long, value_name = "NAME")]
+    devnet_name: Option<String>,
 }
 
 #[tokio::main]
@@ -213,6 +217,19 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let mut config = ClientConfig::new(network)
         .with_storage_path(data_dir.clone())
         .with_validation_mode(validation_mode);
+
+    if network == Network::Devnet {
+        let devnet_name = args
+            .devnet_name
+            .as_deref()
+            .ok_or("--devnet-name is required when --network=devnet")?;
+        let user_agent =
+            format!("/rust-dash-spv:{}(devnet.devnet-{})/", dash_spv::VERSION, devnet_name);
+        tracing::info!("Devnet user agent: {}", user_agent);
+        config = config.with_user_agent(user_agent);
+    } else if args.devnet_name.is_some() {
+        return Err("--devnet-name is only valid with --network=devnet".into());
+    }
 
     // Add custom peers if specified
     if !args.peer.is_empty() {
