@@ -251,6 +251,147 @@ pub fn llmq_devnet_params() -> LLMQParams {
     params
 }
 
+/// Runtime override for the LLMQ type used for ChainLocks on devnet,
+/// matching Dash Core's `-llmqchainlocks=<quorum name>`.
+static DEVNET_CHAIN_LOCKS_OVERRIDE: OnceLock<LLMQType> = OnceLock::new();
+/// Runtime override for the LLMQ type used for InstantSend DIP24 on devnet,
+/// matching Dash Core's `-llmqinstantsenddip0024=<quorum name>`.
+static DEVNET_ISD_OVERRIDE: OnceLock<LLMQType> = OnceLock::new();
+/// Runtime override for the LLMQ type used for Platform on devnet,
+/// matching Dash Core's `-llmqplatform=<quorum name>`.
+static DEVNET_PLATFORM_OVERRIDE: OnceLock<LLMQType> = OnceLock::new();
+
+/// LLMQ types registered on devnet by Dash Core (`chainparams.cpp` `CDevNetParams`
+/// `AddLLMQ` calls). Routing overrides accept any of these as a target.
+const DEVNET_REGISTERED_LLMQ_TYPES: [LLMQType; 8] = [
+    LLMQType::Llmqtype50_60,
+    LLMQType::Llmqtype60_75,
+    LLMQType::Llmqtype400_60,
+    LLMQType::Llmqtype400_85,
+    LLMQType::Llmqtype100_67,
+    LLMQType::LlmqtypeDevnet,
+    LLMQType::LlmqtypeDevnetDIP0024,
+    LLMQType::LlmqtypeDevnetPlatform,
+];
+
+/// Parse a Dash-Core LLMQ name into an `LLMQType`. Mirrors the name set Dash Core
+/// registers on devnet so `-llmqchainlocks` / `-llmqinstantsenddip0024` /
+/// `-llmqplatform` accept the same strings as `dashd`.
+///
+/// `llmq_dev_platform` is accepted as an alias for `llmq_devnet_platform` because
+/// this crate's own `LLMQ_DEV_PLATFORM` constant uses the shorter spelling.
+pub fn devnet_llmq_type_from_name(name: &str) -> Result<LLMQType, String> {
+    match name {
+        "llmq_50_60" => Ok(LLMQType::Llmqtype50_60),
+        "llmq_60_75" => Ok(LLMQType::Llmqtype60_75),
+        "llmq_400_60" => Ok(LLMQType::Llmqtype400_60),
+        "llmq_400_85" => Ok(LLMQType::Llmqtype400_85),
+        "llmq_100_67" => Ok(LLMQType::Llmqtype100_67),
+        "llmq_devnet" => Ok(LLMQType::LlmqtypeDevnet),
+        "llmq_devnet_dip0024" => Ok(LLMQType::LlmqtypeDevnetDIP0024),
+        "llmq_devnet_platform" | "llmq_dev_platform" => Ok(LLMQType::LlmqtypeDevnetPlatform),
+        _ => Err(format!("Invalid LLMQ type: {}", name)),
+    }
+}
+
+/// Constraint a devnet routing override must satisfy beyond being a devnet-registered type.
+enum RotationConstraint {
+    MustNotRotate,
+    MustRotate,
+    Any,
+}
+
+fn set_devnet_routing_override(
+    slot: &'static OnceLock<LLMQType>,
+    flag_name: &str,
+    constraint: RotationConstraint,
+    llmq_type: LLMQType,
+) -> Result<(), String> {
+    if !DEVNET_REGISTERED_LLMQ_TYPES.contains(&llmq_type) {
+        return Err(format!("Invalid LLMQ type specified for -{}.", flag_name));
+    }
+    let rotates = llmq_type.is_rotating_quorum_type();
+    match constraint {
+        RotationConstraint::MustNotRotate if rotates => {
+            return Err(format!(
+                "LLMQ type specified for -{} must NOT use rotation",
+                flag_name
+            ));
+        }
+        RotationConstraint::MustRotate if !rotates => {
+            return Err(format!(
+                "LLMQ type specified for -{} must use rotation",
+                flag_name
+            ));
+        }
+        _ => {}
+    }
+    match slot.get() {
+        Some(&existing) if existing == llmq_type => Ok(()),
+        Some(_) => Err(format!("-{} already set to a different value", flag_name)),
+        None => slot
+            .set(llmq_type)
+            .map_err(|_| format!("-{} already set to a different value", flag_name)),
+    }
+}
+
+/// Override the LLMQ type used for ChainLocks (matches Dash Core's
+/// `-llmqchainlocks=<quorum name>`). Type must be devnet-registered and
+/// non-rotating, per Dash Core. Idempotent for identical values, errors on
+/// conflicting re-set.
+pub fn set_devnet_chain_locks_type(llmq_type: LLMQType) -> Result<(), String> {
+    set_devnet_routing_override(
+        &DEVNET_CHAIN_LOCKS_OVERRIDE,
+        "llmqchainlocks",
+        RotationConstraint::MustNotRotate,
+        llmq_type,
+    )
+}
+
+/// Override the LLMQ type used for InstantSend DIP24 (matches Dash Core's
+/// `-llmqinstantsenddip0024=<quorum name>`). Type must be devnet-registered
+/// and rotating, per Dash Core. Idempotent for identical values, errors on
+/// conflicting re-set.
+pub fn set_devnet_isd_type(llmq_type: LLMQType) -> Result<(), String> {
+    set_devnet_routing_override(
+        &DEVNET_ISD_OVERRIDE,
+        "llmqinstantsenddip0024",
+        RotationConstraint::MustRotate,
+        llmq_type,
+    )
+}
+
+/// Override the LLMQ type used for Platform (matches Dash Core's
+/// `-llmqplatform=<quorum name>`). Type must be devnet-registered. Dash Core
+/// imposes no rotation constraint for Platform. Idempotent for identical
+/// values, errors on conflicting re-set.
+pub fn set_devnet_platform_type(llmq_type: LLMQType) -> Result<(), String> {
+    set_devnet_routing_override(
+        &DEVNET_PLATFORM_OVERRIDE,
+        "llmqplatform",
+        RotationConstraint::Any,
+        llmq_type,
+    )
+}
+
+/// Returns the ChainLocks LLMQ override if one was set via
+/// [`set_devnet_chain_locks_type`]. Only meaningful on devnet.
+pub fn devnet_chain_locks_type_override() -> Option<LLMQType> {
+    DEVNET_CHAIN_LOCKS_OVERRIDE.get().copied()
+}
+
+/// Returns the InstantSend DIP24 LLMQ override if one was set via
+/// [`set_devnet_isd_type`]. Only meaningful on devnet.
+pub fn devnet_isd_type_override() -> Option<LLMQType> {
+    DEVNET_ISD_OVERRIDE.get().copied()
+}
+
+/// Returns the Platform LLMQ override if one was set via
+/// [`set_devnet_platform_type`]. Only meaningful on devnet.
+pub fn devnet_platform_type_override() -> Option<LLMQType> {
+    DEVNET_PLATFORM_OVERRIDE.get().copied()
+}
+
 pub const LLMQ_50_60: LLMQParams = LLMQParams {
     quorum_type: LLMQType::Llmqtype50_60,
     name: "llmq_50_60",
@@ -707,11 +848,13 @@ mod tests {
         assert_eq!(params.signing_active_quorum_count, 24);
     }
 
+    // Each devnet override below is backed by a process-global `OnceLock`, so its
+    // full contract (initial set, idempotent re-set, conflicting re-set rejected,
+    // routing wired through `NetworkLLMQExt`) must be exercised in a single test
+    // per lock to avoid races between tests sharing the same lock.
+
     #[test]
     fn test_llmq_devnet_override_lifecycle() {
-        // LLMQ_DEVNET_OVERRIDE is a process-global OnceLock, so the three contract
-        // checks (initial set, idempotent re-set, conflicting re-set) all run in
-        // this single test to avoid races between tests sharing the same lock.
         set_llmq_devnet_params(LlmqDevnetParams {
             size: 8,
             threshold: 5,
@@ -741,5 +884,141 @@ mod tests {
         let params_after = llmq_devnet_params();
         assert_eq!(params_after.size, 8);
         assert_eq!(params_after.threshold, 5);
+    }
+
+    #[test]
+    fn test_devnet_llmq_type_from_name_accepts_all_devnet_types() {
+        assert_eq!(devnet_llmq_type_from_name("llmq_50_60").unwrap(), LLMQType::Llmqtype50_60);
+        assert_eq!(devnet_llmq_type_from_name("llmq_60_75").unwrap(), LLMQType::Llmqtype60_75);
+        assert_eq!(devnet_llmq_type_from_name("llmq_400_60").unwrap(), LLMQType::Llmqtype400_60);
+        assert_eq!(devnet_llmq_type_from_name("llmq_400_85").unwrap(), LLMQType::Llmqtype400_85);
+        assert_eq!(devnet_llmq_type_from_name("llmq_100_67").unwrap(), LLMQType::Llmqtype100_67);
+        assert_eq!(devnet_llmq_type_from_name("llmq_devnet").unwrap(), LLMQType::LlmqtypeDevnet);
+        assert_eq!(
+            devnet_llmq_type_from_name("llmq_devnet_dip0024").unwrap(),
+            LLMQType::LlmqtypeDevnetDIP0024
+        );
+        assert_eq!(
+            devnet_llmq_type_from_name("llmq_devnet_platform").unwrap(),
+            LLMQType::LlmqtypeDevnetPlatform
+        );
+        assert_eq!(
+            devnet_llmq_type_from_name("llmq_dev_platform").unwrap(),
+            LLMQType::LlmqtypeDevnetPlatform,
+            "shorter alias must resolve to the same type as `llmq_devnet_platform`"
+        );
+    }
+
+    #[test]
+    fn test_devnet_llmq_type_from_name_rejects_unknown_names() {
+        assert!(devnet_llmq_type_from_name("").is_err());
+        assert!(devnet_llmq_type_from_name("llmq_test").is_err());
+        assert!(devnet_llmq_type_from_name("not_a_quorum").is_err());
+    }
+
+    #[test]
+    fn test_devnet_routing_setters_reject_invalid_types() {
+        // Regtest-only types are not registered on devnet in Dash Core, so the
+        // setters must refuse them on all three slots before any OnceLock state
+        // is touched, leaving the locks free for the lifecycle tests below.
+        for &llmq_type in &[
+            LLMQType::LlmqtypeTest,
+            LLMQType::LlmqtypeTestDIP0024,
+            LLMQType::LlmqtypeTestInstantSend,
+            LLMQType::LlmqtypeTestnetPlatform,
+        ] {
+            assert!(set_devnet_chain_locks_type(llmq_type).is_err());
+            assert!(set_devnet_isd_type(llmq_type).is_err());
+            assert!(set_devnet_platform_type(llmq_type).is_err());
+        }
+
+        // ChainLocks must NOT use a rotating quorum (Dash Core
+        // `chainparams.cpp` `UpdateDevnetLLMQChainLocksFromArgs`).
+        let err =
+            set_devnet_chain_locks_type(LLMQType::LlmqtypeDevnetDIP0024).expect_err("must reject");
+        assert!(err.contains("must NOT use rotation"), "got: {}", err);
+
+        // InstantSend DIP24 MUST use a rotating quorum (Dash Core
+        // `UpdateDevnetLLMQInstantSendDIP0024FromArgs`).
+        let err = set_devnet_isd_type(LLMQType::LlmqtypeDevnet).expect_err("must reject");
+        assert!(err.contains("must use rotation"), "got: {}", err);
+
+        // Sanity: a registered + correctly-rotating value would pass the
+        // pre-OnceLock validation. Don't actually set it here, the lifecycle
+        // tests own the locks.
+    }
+
+    #[test]
+    fn test_devnet_chain_locks_override_lifecycle() {
+        use crate::sml::llmq_type::network::NetworkLLMQExt;
+
+        assert!(devnet_chain_locks_type_override().is_none());
+        assert_eq!(
+            Network::Devnet.chain_locks_type(),
+            LLMQType::LlmqtypeDevnet,
+            "default ChainLocks routing before override"
+        );
+
+        set_devnet_chain_locks_type(LLMQType::Llmqtype50_60)
+            .expect("non-rotating registered type should be accepted");
+
+        assert_eq!(devnet_chain_locks_type_override(), Some(LLMQType::Llmqtype50_60));
+        assert_eq!(Network::Devnet.chain_locks_type(), LLMQType::Llmqtype50_60);
+        assert_eq!(
+            Network::Mainnet.chain_locks_type(),
+            LLMQType::Llmqtype400_60,
+            "other networks must be unaffected"
+        );
+
+        set_devnet_chain_locks_type(LLMQType::Llmqtype50_60)
+            .expect("idempotent re-set with same value");
+        assert!(
+            set_devnet_chain_locks_type(LLMQType::Llmqtype400_60).is_err(),
+            "conflicting re-set must error"
+        );
+        assert_eq!(Network::Devnet.chain_locks_type(), LLMQType::Llmqtype50_60);
+    }
+
+    #[test]
+    fn test_devnet_isd_override_lifecycle() {
+        use crate::sml::llmq_type::network::NetworkLLMQExt;
+
+        assert!(devnet_isd_type_override().is_none());
+        assert_eq!(Network::Devnet.isd_llmq_type(), LLMQType::LlmqtypeDevnetDIP0024);
+
+        set_devnet_isd_type(LLMQType::Llmqtype60_75).expect("rotating registered type accepted");
+
+        assert_eq!(devnet_isd_type_override(), Some(LLMQType::Llmqtype60_75));
+        assert_eq!(Network::Devnet.isd_llmq_type(), LLMQType::Llmqtype60_75);
+        assert_eq!(
+            Network::Mainnet.isd_llmq_type(),
+            LLMQType::Llmqtype60_75,
+            "mainnet's default for ISD24 is independent of the devnet override"
+        );
+
+        set_devnet_isd_type(LLMQType::Llmqtype60_75).expect("idempotent");
+        assert!(set_devnet_isd_type(LLMQType::LlmqtypeDevnetDIP0024).is_err());
+    }
+
+    #[test]
+    fn test_devnet_platform_override_lifecycle() {
+        use crate::sml::llmq_type::network::NetworkLLMQExt;
+
+        assert!(devnet_platform_type_override().is_none());
+        assert_eq!(Network::Devnet.platform_type(), LLMQType::LlmqtypeDevnetPlatform);
+
+        set_devnet_platform_type(LLMQType::Llmqtype100_67)
+            .expect("non-rotating registered type accepted (no rotation constraint for Platform)");
+
+        assert_eq!(devnet_platform_type_override(), Some(LLMQType::Llmqtype100_67));
+        assert_eq!(Network::Devnet.platform_type(), LLMQType::Llmqtype100_67);
+        assert_eq!(
+            Network::Regtest.platform_type(),
+            LLMQType::LlmqtypeTestnetPlatform,
+            "regtest platform routing must be unaffected"
+        );
+
+        set_devnet_platform_type(LLMQType::Llmqtype100_67).expect("idempotent");
+        assert!(set_devnet_platform_type(LLMQType::LlmqtypeDevnet).is_err());
     }
 }
