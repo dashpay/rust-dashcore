@@ -45,7 +45,7 @@ impl NetworkLLMQExt for Network {
         match self {
             Network::Mainnet => LLMQType::Llmqtype100_67,
             Network::Testnet => LLMQType::Llmqtype25_67,
-            Network::Devnet => LLMQType::LlmqtypeDevnet,
+            Network::Devnet => LLMQType::LlmqtypeDevnetPlatform,
             Network::Regtest => LLMQType::LlmqtypeTestnetPlatform,
         }
     }
