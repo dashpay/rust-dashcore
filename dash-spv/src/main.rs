@@ -14,6 +14,7 @@ use key_wallet_manager::WalletManager;
 enum NetworkArg {
     Mainnet,
     Testnet,
+    Devnet,
     Regtest,
 }
 
@@ -22,6 +23,7 @@ impl From<NetworkArg> for Network {
         match arg {
             NetworkArg::Mainnet => Network::Mainnet,
             NetworkArg::Testnet => Network::Testnet,
+            NetworkArg::Devnet => Network::Devnet,
             NetworkArg::Regtest => Network::Regtest,
         }
     }
