@@ -690,4 +690,25 @@ mod tests {
         assert_eq!(params.threshold, 67);
         assert_eq!(params.signing_active_quorum_count, 24);
     }
+
+    #[test]
+    fn test_llmq_devnet_override_lifecycle() {
+        // LLMQ_DEVNET_OVERRIDE is a process-global OnceLock, so the three contract
+        // checks (initial set, idempotent re-set, conflicting re-set) all run in
+        // this single test to avoid races between tests sharing the same lock.
+        set_llmq_devnet_params(8, 5).expect("initial override should succeed");
+
+        let params = llmq_devnet_params();
+        assert_eq!(params.size, 8);
+        assert_eq!(params.min_size, 5);
+        assert_eq!(params.threshold, 5);
+        assert_eq!(params.dkg_params.bad_votes_threshold, 5);
+
+        set_llmq_devnet_params(8, 5).expect("re-setting identical values should be idempotent");
+        assert!(set_llmq_devnet_params(12, 6).is_err(), "conflicting override must error");
+
+        let params_after = llmq_devnet_params();
+        assert_eq!(params_after.size, 8);
+        assert_eq!(params_after.threshold, 5);
+    }
 }
