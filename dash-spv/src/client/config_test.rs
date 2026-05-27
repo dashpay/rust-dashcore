@@ -5,7 +5,10 @@ mod tests {
     use crate::client::config::{ClientConfig, MempoolStrategy};
     use crate::client::devnet::DevnetConfig;
     use crate::types::ValidationMode;
-    use dashcore::sml::llmq_type::{LLMQType, LlmqDevnetParams};
+    use dashcore::sml::llmq_type::{
+        devnet_chain_locks_type_override, devnet_isd_type_override, devnet_platform_type_override,
+        llmq_devnet_params, LLMQType, LlmqDevnetParams,
+    };
     use dashcore::Network;
     use std::net::SocketAddr;
     use std::path::PathBuf;
@@ -201,16 +204,10 @@ mod tests {
         assert!(config.apply_global_overrides().is_ok());
     }
 
-    // The four `dashcore` OnceLocks each only accept one value per process. This
-    // single test exercises all four slots so it cannot conflict with itself; no
-    // other test in this binary may touch these overrides.
+    // Each `dashcore` `OnceLock` accepts only one value per process; all four
+    // slots are exercised here in one shot.
     #[test]
     fn test_apply_global_overrides_forwards_all_slots() {
-        use dashcore::sml::llmq_type::{
-            devnet_chain_locks_type_override, devnet_isd_type_override,
-            devnet_platform_type_override, llmq_devnet_params,
-        };
-
         let tmp = TempDir::new().unwrap();
         let devnet = DevnetConfig::new("alpha")
             .with_llmq_params(LlmqDevnetParams {

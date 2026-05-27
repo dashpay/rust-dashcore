@@ -7,7 +7,7 @@ use std::sync::Arc;
 use clap::{Parser, ValueEnum};
 use dash_spv::{
     ClientConfig, DashSpvClient, DevnetConfig, LevelFilter, LlmqDevnetParams, MempoolStrategy,
-    Network,
+    Network, ValidationMode,
 };
 use dashcore::sml::llmq_type::devnet_llmq_type_from_name;
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
@@ -281,7 +281,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
 
 fn build_client_config(args: &Args, data_dir: PathBuf) -> Result<ClientConfig, String> {
     let network: Network = args.network.into();
-    let validation_mode: dash_spv::ValidationMode = args.validation_mode.into();
+    let validation_mode: ValidationMode = args.validation_mode.into();
 
     let mut config = ClientConfig::new(network)
         .with_storage_path(data_dir)
@@ -422,6 +422,8 @@ async fn run_client<S: dash_spv::storage::StorageManager>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use dash_spv::LLMQType;
+    use tempfile::TempDir;
 
     fn parse(argv: &[&str]) -> Result<Args, clap::Error> {
         let mut full = vec!["dash-spv"];
@@ -505,12 +507,9 @@ mod tests {
                 threshold: 5
             })
         );
-        assert_eq!(devnet.llmq_chainlocks_type, Some(dash_spv::LLMQType::LlmqtypeDevnet));
-        assert_eq!(
-            devnet.llmq_instantsend_dip0024_type,
-            Some(dash_spv::LLMQType::LlmqtypeDevnetDIP0024)
-        );
-        assert_eq!(devnet.llmq_platform_type, Some(dash_spv::LLMQType::LlmqtypeDevnetPlatform));
+        assert_eq!(devnet.llmq_chainlocks_type, Some(LLMQType::LlmqtypeDevnet));
+        assert_eq!(devnet.llmq_instantsend_dip0024_type, Some(LLMQType::LlmqtypeDevnetDIP0024));
+        assert_eq!(devnet.llmq_platform_type, Some(LLMQType::LlmqtypeDevnetPlatform));
     }
 
     #[test]
@@ -538,7 +537,7 @@ mod tests {
     #[test]
     fn build_client_config_returns_devnet_on_devnet() {
         let args = args(&["--network", "devnet", "--devnet-name", "alpha"]);
-        let tmp = tempfile::TempDir::new().unwrap();
+        let tmp = TempDir::new().unwrap();
         let config = build_client_config(&args, tmp.path().to_path_buf()).expect("ok");
         let devnet = config.devnet.as_ref().expect("devnet must be set");
         assert_eq!(devnet.name, "alpha");

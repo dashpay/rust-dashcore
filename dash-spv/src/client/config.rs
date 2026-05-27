@@ -186,7 +186,7 @@ impl ClientConfig {
         self
     }
 
-    /// Attach a [`DevnetConfig`]. The network must be `Network::Devnet`;
+    /// Attach a [`DevnetConfig`]. The network must be `Network::Devnet`.
     /// [`validate`](Self::validate) enforces the biconditional.
     pub fn with_devnet(mut self, devnet: DevnetConfig) -> Self {
         self.devnet = Some(devnet);

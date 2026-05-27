@@ -756,6 +756,7 @@ impl LLMQType {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sml::llmq_type::network::NetworkLLMQExt;
 
     #[test]
     fn test_get_cycle_base_height() {
@@ -842,10 +843,8 @@ mod tests {
         assert_eq!(params.signing_active_quorum_count, 24);
     }
 
-    // Each devnet override below is backed by a process-global `OnceLock`, so its
-    // full contract (initial set, idempotent re-set, conflicting re-set rejected,
-    // routing wired through `NetworkLLMQExt`) must be exercised in a single test
-    // per lock to avoid races between tests sharing the same lock.
+    // Each devnet `OnceLock` accepts only one value per process; the full contract
+    // must be exercised in a single test per lock.
 
     #[test]
     fn test_llmq_devnet_override_lifecycle() {
@@ -881,7 +880,7 @@ mod tests {
     }
 
     #[test]
-    fn test_devnet_llmq_type_from_name_accepts_all_devnet_types() {
+    fn test_devnet_llmq_type_from_name() {
         assert_eq!(devnet_llmq_type_from_name("llmq_50_60").unwrap(), LLMQType::Llmqtype50_60);
         assert_eq!(devnet_llmq_type_from_name("llmq_60_75").unwrap(), LLMQType::Llmqtype60_75);
         assert_eq!(devnet_llmq_type_from_name("llmq_400_60").unwrap(), LLMQType::Llmqtype400_60);
@@ -901,10 +900,7 @@ mod tests {
             LLMQType::LlmqtypeDevnetPlatform,
             "shorter alias must resolve to the same type as `llmq_devnet_platform`"
         );
-    }
 
-    #[test]
-    fn test_devnet_llmq_type_from_name_rejects_unknown_names() {
         assert!(devnet_llmq_type_from_name("").is_err());
         assert!(devnet_llmq_type_from_name("llmq_test").is_err());
         assert!(devnet_llmq_type_from_name("not_a_quorum").is_err());
@@ -913,8 +909,7 @@ mod tests {
     #[test]
     fn test_devnet_routing_setters_reject_invalid_types() {
         // Regtest-only types are not registered on devnet in Dash Core, so the
-        // setters must refuse them on all three slots before any OnceLock state
-        // is touched, leaving the locks free for the lifecycle tests below.
+        // setters must refuse them before touching any `OnceLock` state.
         for &llmq_type in &[
             LLMQType::LlmqtypeTest,
             LLMQType::LlmqtypeTestDIP0024,
@@ -936,16 +931,10 @@ mod tests {
         // `UpdateDevnetLLMQInstantSendDIP0024FromArgs`).
         let err = set_devnet_isd_type(LLMQType::LlmqtypeDevnet).expect_err("must reject");
         assert!(err.contains("must use rotation"), "got: {}", err);
-
-        // Sanity: a registered + correctly-rotating value would pass the
-        // pre-OnceLock validation. Don't actually set it here, the lifecycle
-        // tests own the locks.
     }
 
     #[test]
     fn test_devnet_chain_locks_override_lifecycle() {
-        use crate::sml::llmq_type::network::NetworkLLMQExt;
-
         assert!(devnet_chain_locks_type_override().is_none());
         assert_eq!(
             Network::Devnet.chain_locks_type(),
@@ -975,8 +964,6 @@ mod tests {
 
     #[test]
     fn test_devnet_isd_override_lifecycle() {
-        use crate::sml::llmq_type::network::NetworkLLMQExt;
-
         assert!(devnet_isd_type_override().is_none());
         assert_eq!(Network::Devnet.isd_llmq_type(), LLMQType::LlmqtypeDevnetDIP0024);
 
@@ -996,8 +983,6 @@ mod tests {
 
     #[test]
     fn test_devnet_platform_override_lifecycle() {
-        use crate::sml::llmq_type::network::NetworkLLMQExt;
-
         assert!(devnet_platform_type_override().is_none());
         assert_eq!(Network::Devnet.platform_type(), LLMQType::LlmqtypeDevnetPlatform);
 
