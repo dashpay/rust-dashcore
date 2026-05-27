@@ -52,9 +52,6 @@ pub const PROTOCOL_VERSION: u32 = 70237;
 
 pub trait NetworkExt {
     /// Returns the known genesis block hash for `network`, if one is hardcoded.
-    ///
-    /// `Network::Devnet` returns `None` because devnets use dynamically-generated
-    /// genesis blocks.
     fn known_genesis_block_hash(&self) -> Option<BlockHash>;
 }
 
@@ -75,7 +72,13 @@ impl NetworkExt for Network {
                 block_hash.reverse();
                 Some(BlockHash::from_byte_array(block_hash.try_into().expect("expected 32 bytes")))
             }
-            Network::Devnet => None,
+            Network::Devnet => {
+                let mut block_hash =
+                    hex::decode("000008ca1832a4baf228eb1553c03d3a2c8e02399550dd6ea8d65cec3ef23d2e")
+                        .expect("expected valid hex");
+                block_hash.reverse();
+                Some(BlockHash::from_byte_array(block_hash.try_into().expect("expected 32 bytes")))
+            }
             Network::Regtest => {
                 let mut block_hash =
                     hex::decode("000008ca1832a4baf228eb1553c03d3a2c8e02399550dd6ea8d65cec3ef23d2e")
