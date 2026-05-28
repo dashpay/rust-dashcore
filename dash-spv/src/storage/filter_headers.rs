@@ -128,57 +128,16 @@ mod tests {
     use tempfile::TempDir;
 
     #[tokio::test]
-    async fn test_truncate_above_and_restore() {
-        let tmp_dir = TempDir::new().unwrap();
-        let mut storage = PersistentFilterHeaderStorage::open(tmp_dir.path()).await.unwrap();
-
-        let headers = FilterHeader::dummy_batch(0..10);
-        storage.store_filter_headers(&headers).await.unwrap();
-        assert_eq!(storage.get_filter_tip_height().await.unwrap(), Some(9));
-
-        storage.truncate_above(4).await.unwrap();
-        assert_eq!(storage.get_filter_tip_height().await.unwrap(), Some(4));
-
-        let kept = storage.load_filter_headers(0..5).await.unwrap();
-        assert_eq!(kept, headers[0..5]);
-
-        let replacement = FilterHeader::dummy_batch(100..105);
-        storage.store_filter_headers_at_height(&replacement, 5).await.unwrap();
-        assert_eq!(storage.get_filter_tip_height().await.unwrap(), Some(9));
-
-        let reloaded = storage.load_filter_headers(5..10).await.unwrap();
-        assert_eq!(reloaded, replacement);
-    }
-
-    #[tokio::test]
-    async fn test_truncate_above_persist_reopen_filter_headers() {
-        let tmp_dir = TempDir::new().unwrap();
-        {
-            let mut storage = PersistentFilterHeaderStorage::open(tmp_dir.path()).await.unwrap();
-            let headers = FilterHeader::dummy_batch(0..10);
-            storage.store_filter_headers(&headers).await.unwrap();
-            storage.truncate_above(4).await.unwrap();
-            storage.persist(tmp_dir.path()).await.unwrap();
-        }
-
-        let storage = PersistentFilterHeaderStorage::open(tmp_dir.path()).await.unwrap();
-        assert_eq!(storage.get_filter_tip_height().await.unwrap(), Some(4));
-        let kept = storage.load_filter_headers(0..5).await.unwrap();
-        assert_eq!(kept, FilterHeader::dummy_batch(0..5));
-        for h in 5..10 {
-            assert_eq!(storage.get_filter_header(h).await.unwrap(), None);
-        }
-    }
-
-    #[tokio::test]
-    async fn test_truncate_above_tip_noop() {
+    async fn test_truncate_above_wrapper_smoke() {
         let tmp_dir = TempDir::new().unwrap();
         let mut storage = PersistentFilterHeaderStorage::open(tmp_dir.path()).await.unwrap();
 
         let headers = FilterHeader::dummy_batch(0..5);
         storage.store_filter_headers(&headers).await.unwrap();
 
-        storage.truncate_above(100).await.unwrap();
-        assert_eq!(storage.get_filter_tip_height().await.unwrap(), Some(4));
+        storage.truncate_above(2).await.unwrap();
+
+        assert_eq!(storage.get_filter_tip_height().await.unwrap(), Some(2));
+        assert_eq!(storage.get_filter_header(3).await.unwrap(), None);
     }
 }

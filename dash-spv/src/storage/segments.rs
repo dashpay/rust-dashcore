@@ -992,26 +992,24 @@ mod tests {
         // The boundary segment is not in `to_delete`, but reading past the
         // truncated tip would land in its sentinel tail. Fail fast instead of
         // panicking on the `last_valid_offset` debug_assert.
-        assert!(matches!(
-            cache.get_items(0..15).await,
-            Err(StorageError::InvalidArgument(_))
-        ));
-        assert!(matches!(
-            cache.get_items(8..11).await,
-            Err(StorageError::InvalidArgument(_))
-        ));
+        assert!(matches!(cache.get_items(0..15).await, Err(StorageError::InvalidArgument(_))));
+        assert!(matches!(cache.get_items(8..11).await, Err(StorageError::InvalidArgument(_))));
 
         let kept = cache.get_items(0..10).await.unwrap();
         assert_eq!(kept, items[0..10]);
     }
 
     #[tokio::test]
-    async fn test_truncate_above_tip_is_noop() {
+    async fn test_truncate_above_noop_cases() {
         let tmp_dir = TempDir::new().unwrap();
 
-        let items = FilterHeader::dummy_batch(0..10);
-
         let mut cache = SegmentCache::<FilterHeader>::load_or_new(tmp_dir.path()).await.unwrap();
+
+        cache.truncate_above(0).await.unwrap();
+        cache.truncate_above(100).await.unwrap();
+        assert_eq!(cache.tip_height(), None);
+
+        let items = FilterHeader::dummy_batch(0..10);
         cache.store_items_at_height(&items, 0).await.unwrap();
 
         cache.truncate_above(9).await.unwrap();
@@ -1022,17 +1020,6 @@ mod tests {
 
         let kept = cache.get_items(0..10).await.unwrap();
         assert_eq!(kept, items);
-    }
-
-    #[tokio::test]
-    async fn test_truncate_empty_cache_is_noop() {
-        let tmp_dir = TempDir::new().unwrap();
-
-        let mut cache = SegmentCache::<FilterHeader>::load_or_new(tmp_dir.path()).await.unwrap();
-
-        cache.truncate_above(0).await.unwrap();
-        cache.truncate_above(100).await.unwrap();
-        assert_eq!(cache.tip_height(), None);
     }
 
     #[tokio::test]

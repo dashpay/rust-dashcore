@@ -300,6 +300,13 @@ mod tests {
         let orphaned_hash = headers[7].block_hash();
         assert_eq!(storage.get_header_height_by_hash(&orphaned_hash).await.unwrap(), Some(7));
 
+        storage.truncate_above(100).await.unwrap();
+        assert_eq!(storage.get_tip_height().await, Some(9));
+        assert_eq!(
+            storage.get_header_height_by_hash(&headers[4].block_hash()).await.unwrap(),
+            Some(4)
+        );
+
         storage.truncate_above(5).await.unwrap();
 
         assert_eq!(storage.get_tip_height().await, Some(5));
@@ -328,21 +335,5 @@ mod tests {
         assert_eq!(reopened.get_header_height_by_hash(&orphaned_hash).await.unwrap(), None);
         assert_eq!(reopened.get_header_height_by_hash(&kept_hash).await.unwrap(), Some(3));
         assert_eq!(reopened.get_header_height_by_hash(&new_hash).await.unwrap(), Some(6));
-    }
-
-    #[tokio::test]
-    async fn test_truncate_above_tip_is_noop_block_headers() {
-        let tmp_dir = TempDir::new().unwrap();
-        let mut storage = PersistentBlockHeaderStorage::open(tmp_dir.path()).await.unwrap();
-
-        let headers = BlockHeader::dummy_batch(0..5);
-        storage.store_headers(&headers).await.unwrap();
-
-        storage.truncate_above(100).await.unwrap();
-        assert_eq!(storage.get_tip_height().await, Some(4));
-
-        let still_indexed =
-            storage.get_header_height_by_hash(&headers[4].block_hash()).await.unwrap();
-        assert_eq!(still_indexed, Some(4));
     }
 }
