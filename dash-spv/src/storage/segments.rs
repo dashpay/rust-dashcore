@@ -216,6 +216,16 @@ impl<I: Persistable> SegmentCache<I> {
         let start = height_range.start;
         let end = height_range.end;
 
+        // Reject ranges that extend past the current tip. After a within-segment
+        // `truncate_above`, the boundary segment is not in `to_delete` so the
+        // loop guard below cannot catch overruns into its sentinel tail.
+        if end > self.next_height() {
+            return Err(StorageError::InvalidArgument(format!(
+                "get_items range {height_range:?} extends above tip {:?}",
+                self.tip_height
+            )));
+        }
+
         let mut items = Vec::with_capacity((end - start) as usize);
 
         let start_segment = Self::height_to_segment_id(start);
@@ -967,6 +977,32 @@ mod tests {
 
         cache.persist(tmp_dir.path()).await;
         assert!(!dropped_segment_file.exists());
+    }
+
+    #[tokio::test]
+    async fn test_get_items_above_truncated_tip_within_segment_errors() {
+        let tmp_dir = TempDir::new().unwrap();
+
+        let items = FilterHeader::dummy_batch(0..20);
+
+        let mut cache = SegmentCache::<FilterHeader>::load_or_new(tmp_dir.path()).await.unwrap();
+        cache.store_items_at_height(&items, 0).await.unwrap();
+        cache.truncate_above(9).await.unwrap();
+
+        // The boundary segment is not in `to_delete`, but reading past the
+        // truncated tip would land in its sentinel tail. Fail fast instead of
+        // panicking on the `last_valid_offset` debug_assert.
+        assert!(matches!(
+            cache.get_items(0..15).await,
+            Err(StorageError::InvalidArgument(_))
+        ));
+        assert!(matches!(
+            cache.get_items(8..11).await,
+            Err(StorageError::InvalidArgument(_))
+        ));
+
+        let kept = cache.get_items(0..10).await.unwrap();
+        assert_eq!(kept, items[0..10]);
     }
 
     #[tokio::test]
