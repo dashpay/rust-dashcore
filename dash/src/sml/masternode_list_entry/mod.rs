@@ -111,10 +111,17 @@ impl PartialOrd for MasternodeListEntry {
     }
 }
 
-impl Encodable for MasternodeListEntry {
-    fn consensus_encode<W: Write + ?Sized>(&self, writer: &mut W) -> Result<usize, std::io::Error> {
+impl MasternodeListEntry {
+    /// Encodes everything after the leading `version`, shared by the wire format and the hash
+    /// pre-image. Core's `CSimplifiedMNListEntry::CalcHash` uses `CHashWriter(SER_GETHASH, ...)`,
+    /// and `SER_GETHASH` does not set `SER_NETWORK`, so the leading `version` (which is
+    /// `SER_NETWORK`-gated in Core's `SERIALIZE_METHODS`) is excluded from the hash but present on
+    /// the wire. Every remaining field keys off the `version` member, identical in both contexts.
+    fn consensus_encode_body<W: Write + ?Sized>(
+        &self,
+        writer: &mut W,
+    ) -> Result<usize, std::io::Error> {
         let mut len = 0;
-        len += self.version.consensus_encode(writer)?;
         len += self.pro_reg_tx_hash.consensus_encode(writer)?;
         if let Some(confirmed_hash) = self.confirmed_hash {
             len += confirmed_hash.consensus_encode(writer)?;
@@ -128,6 +135,15 @@ impl Encodable for MasternodeListEntry {
         if self.version >= 2 {
             len += self.mn_type.consensus_encode(writer)?;
         }
+        Ok(len)
+    }
+}
+
+impl Encodable for MasternodeListEntry {
+    fn consensus_encode<W: Write + ?Sized>(&self, writer: &mut W) -> Result<usize, std::io::Error> {
+        let mut len = 0;
+        len += self.version.consensus_encode(writer)?;
+        len += self.consensus_encode_body(writer)?;
         Ok(len)
     }
 }
