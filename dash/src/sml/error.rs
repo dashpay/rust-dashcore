@@ -3,6 +3,7 @@ use bincode::{Decode, Encode};
 use thiserror::Error;
 
 use crate::BlockHash;
+use crate::hash_types::MerkleRootMasternodeList;
 
 #[derive(Debug, Error, Clone, PartialEq, Eq, Ord, PartialOrd, Hash)]
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
@@ -50,4 +51,16 @@ pub enum SmlError {
     /// Error indicating the quorum signature set is incomplete (some slots were not filled).
     #[error("Incomplete quorum signature set; not all slots were filled")]
     IncompleteSignatureSet,
+
+    /// The recomputed masternode list Merkle root does not match the root committed in the
+    /// coinbase transaction, so the diff must be rejected and the list must not advance.
+    #[error(
+        "Masternode list Merkle root mismatch at height {block_height} (block {block_hash}): coinbase committed {expected}, recomputed {calculated}"
+    )]
+    MasternodeListRootMismatch {
+        block_hash: BlockHash,
+        block_height: u32,
+        expected: MerkleRootMasternodeList,
+        calculated: MerkleRootMasternodeList,
+    },
 }

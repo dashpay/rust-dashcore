@@ -161,29 +161,68 @@ impl MasternodeList {
             diff_end_height,
         );
 
-        Ok((builder.build(), rotating_sig))
+        let updated_list = builder.build();
+
+        updated_list.validate_mn_list_root(&diff.coinbase_tx, diff_end_height)?;
+
+        Ok((updated_list, rotating_sig))
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
     use super::*;
     use crate::consensus::deserialize;
     use crate::sml::masternode_list::from_diff::TryFromWithBlockHashLookup;
 
-    #[test]
-    fn apply_diff_post_v20_requires_chainlock_signatures() {
-        // Create base list from first diff
+    /// Builds a base list from the from-genesis capture fixture, rewriting its coinbase root so it
+    /// passes production validation (the captured subset does not reproduce the mainnet full-list
+    /// root the fixture commits to).
+    fn consistent_base_list(height: u32) -> MasternodeList {
         let base_diff_bytes: &[u8] =
             include_bytes!("../../../tests/data/test_DML_diffs/mn_list_diff_0_2227096.bin");
-        let base_diff: MnListDiff = deserialize(base_diff_bytes).expect("expected to deserialize");
-
-        let base_list = MasternodeList::try_from_with_block_hash_lookup(
+        let mut base_diff: MnListDiff =
+            deserialize(base_diff_bytes).expect("expected to deserialize");
+        let masternodes = base_diff
+            .new_masternodes
+            .iter()
+            .map(|entry| (entry.pro_reg_tx_hash.reverse(), entry.clone().into()))
+            .collect();
+        let assembled =
+            MasternodeList::build(masternodes, BTreeMap::new(), base_diff.block_hash, height)
+                .build();
+        MasternodeList::rewrite_coinbase_mn_list_root(
+            &mut base_diff.coinbase_tx,
+            &assembled,
+            height,
+        );
+        MasternodeList::try_from_with_block_hash_lookup(
             base_diff,
-            |_| Some(2_227_096),
+            |_| Some(height),
             Network::Mainnet,
         )
-        .expect("expected to create base list");
+        .expect("expected to create base list")
+    }
+
+    /// Rewrites a diff's coinbase root to the value applying it on top of `base` produces.
+    fn make_diff_consistent(base: &MasternodeList, diff: &mut MnListDiff, height: u32) {
+        let mut masternodes = base.masternodes.clone();
+        for pro_tx_hash in &diff.deleted_masternodes {
+            masternodes.remove(&pro_tx_hash.reverse());
+        }
+        for new_mn in &diff.new_masternodes {
+            masternodes.insert(new_mn.pro_reg_tx_hash.reverse(), new_mn.clone().into());
+        }
+        let assembled =
+            MasternodeList::build(masternodes, BTreeMap::new(), diff.block_hash, height).build();
+        MasternodeList::rewrite_coinbase_mn_list_root(&mut diff.coinbase_tx, &assembled, height);
+    }
+
+    #[test]
+    fn apply_diff_post_v20_requires_chainlock_signatures() {
+        let base_list = consistent_base_list(2_227_096);
 
         // Load second diff and clear signatures
         let diff_bytes: &[u8] =
@@ -205,18 +244,8 @@ mod tests {
 
     #[test]
     fn apply_diff_pre_v20_allows_missing_chainlock_signatures() {
-        // Create base list from first diff at pre-V20 height
-        let base_diff_bytes: &[u8] =
-            include_bytes!("../../../tests/data/test_DML_diffs/mn_list_diff_0_2227096.bin");
-        let base_diff: MnListDiff = deserialize(base_diff_bytes).expect("expected to deserialize");
-
         let base_height = 1_800_000u32;
-        let base_list = MasternodeList::try_from_with_block_hash_lookup(
-            base_diff,
-            |_| Some(base_height),
-            Network::Mainnet,
-        )
-        .expect("expected to create base list");
+        let base_list = consistent_base_list(base_height);
 
         // Load second diff and clear signatures
         let diff_bytes: &[u8] =
@@ -231,12 +260,34 @@ mod tests {
         let pre_v20_height = 1_900_000u32;
         assert!(pre_v20_height < Network::Mainnet.v20_activation_height());
 
+        make_diff_consistent(&base_list, &mut diff, pre_v20_height);
+
         let result = base_list.apply_diff(diff, pre_v20_height, None, Network::Mainnet);
 
         assert!(
             result.is_ok(),
             "Pre-V20 apply_diff should allow missing chainlock signatures: {:?}",
             result.err()
+        );
+    }
+
+    #[test]
+    fn apply_diff_rejects_coinbase_mn_list_root_mismatch() {
+        let base_list = consistent_base_list(1_900_000);
+
+        let diff_bytes: &[u8] =
+            include_bytes!("../../../tests/data/test_DML_diffs/mn_list_diff_2227096_2241332.bin");
+        let mut diff: MnListDiff = deserialize(diff_bytes).expect("expected to deserialize");
+        diff.base_block_hash = base_list.block_hash;
+        diff.quorums_chainlock_signatures.clear();
+
+        // No coinbase-root rewrite: the fixture's committed root must not match the assembled list.
+        let result = base_list.apply_diff(diff, 1_900_000, None, Network::Mainnet);
+
+        assert!(
+            matches!(result, Err(SmlError::MasternodeListRootMismatch { .. })),
+            "apply_diff must reject a diff whose coinbase root disagrees with the assembled list: {:?}",
+            result
         );
     }
 }

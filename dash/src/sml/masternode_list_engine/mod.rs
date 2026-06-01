@@ -1324,6 +1324,87 @@ impl MasternodeListEngine {
         Ok(rotation_sig)
     }
 
+    /// Rewrites a diff's coinbase masternode list Merkle root to the value that applying it on top
+    /// of the engine's current state would produce, so the historical capture fixtures in this
+    /// crate pass production root validation when used to drive unrelated quorum and chainlock
+    /// tests. The base list is resolved exactly as [`Self::apply_diff`] would: an empty list for a
+    /// from-genesis diff, otherwise the stored list at the base block.
+    #[cfg(test)]
+    pub(crate) fn make_diff_coinbase_root_consistent(
+        &self,
+        diff: &mut MnListDiff,
+        diff_end_height: CoreBlockHeight,
+    ) {
+        let from_genesis = self
+            .network
+            .known_genesis_block_hash()
+            .or_else(|| self.block_container.get_hash(&0).cloned())
+            .is_some_and(|genesis| {
+                diff.base_block_hash == genesis || diff.base_block_hash.as_byte_array() == &[0; 32]
+            });
+
+        let mut masternodes = if from_genesis {
+            BTreeMap::new()
+        } else {
+            let base_height = self
+                .block_container
+                .get_height(&diff.base_block_hash)
+                .expect("base height present for non-genesis diff in test fixture");
+            self.masternode_lists
+                .get(&base_height)
+                .expect("base masternode list present in test fixture")
+                .masternodes
+                .clone()
+        };
+
+        for pro_tx_hash in &diff.deleted_masternodes {
+            masternodes.remove(&pro_tx_hash.reverse());
+        }
+        for new_mn in &diff.new_masternodes {
+            masternodes.insert(new_mn.pro_reg_tx_hash.reverse(), new_mn.clone().into());
+        }
+
+        let assembled =
+            MasternodeList::build(masternodes, BTreeMap::new(), diff.block_hash, diff_end_height)
+                .build();
+
+        MasternodeList::rewrite_coinbase_mn_list_root(
+            &mut diff.coinbase_tx,
+            &assembled,
+            diff_end_height,
+        );
+    }
+
+    /// Rewrites the coinbase masternode list roots of every diff carried by a `QRInfo` so the whole
+    /// response passes production root validation when fed to [`Self::feed_qr_info`]. Each diff is
+    /// made consistent against the engine state that `feed_qr_info` would have when it applies that
+    /// diff, by replaying the same apply order on a clone of this engine.
+    #[cfg(test)]
+    pub(crate) fn make_qr_info_coinbase_roots_consistent(&self, qr_info: &mut QRInfo) {
+        let mut replay = self.clone();
+
+        let patch = |replay: &mut Self, diff: &mut MnListDiff| {
+            let height = replay
+                .block_container
+                .get_height(&diff.block_hash)
+                .expect("diff block height present in test fixture");
+            replay.make_diff_coinbase_root_consistent(diff, height);
+            replay.apply_diff(diff.clone(), Some(height), false, None).expect("replay apply_diff");
+        };
+
+        for diff in &mut qr_info.mn_list_diff_list {
+            patch(&mut replay, diff);
+        }
+        if let Some((_, diff)) = &mut qr_info.quorum_snapshot_and_mn_list_diff_at_h_minus_4c {
+            patch(&mut replay, diff);
+        }
+        patch(&mut replay, &mut qr_info.mn_list_diff_at_h_minus_3c);
+        patch(&mut replay, &mut qr_info.mn_list_diff_at_h_minus_2c);
+        patch(&mut replay, &mut qr_info.mn_list_diff_at_h_minus_c);
+        patch(&mut replay, &mut qr_info.mn_list_diff_h);
+        patch(&mut replay, &mut qr_info.mn_list_diff_tip);
+    }
+
     /// Verifies non-rotating quorums in a masternode list at a specific block height.
     ///
     /// This function is only available when the `quorum_validation` feature is enabled.
@@ -1475,6 +1556,27 @@ mod tests {
     use crate::sml::quorum_validation_error::QuorumValidationError;
     use std::collections::BTreeMap;
 
+    /// Initializes an engine from the from-genesis capture fixture, rewriting the diff's coinbase
+    /// masternode list root to the value its own entry set produces. The fixture commits a root
+    /// over the full mainnet list which the captured subset does not reproduce, so without this the
+    /// production root validation would reject it before any quorum or chainlock logic runs.
+    fn engine_from_consistent_genesis_diff(height: CoreBlockHeight) -> MasternodeListEngine {
+        let mn_list_diff_bytes: &[u8] =
+            include_bytes!("../../../tests/data/test_DML_diffs/mn_list_diff_0_2227096.bin");
+        let mut diff: MnListDiff =
+            deserialize(mn_list_diff_bytes).expect("expected to deserialize");
+        let masternodes = diff
+            .new_masternodes
+            .iter()
+            .map(|entry| (entry.pro_reg_tx_hash.reverse(), entry.clone().into()))
+            .collect();
+        let assembled =
+            MasternodeList::build(masternodes, BTreeMap::new(), diff.block_hash, height).build();
+        MasternodeList::rewrite_coinbase_mn_list_root(&mut diff.coinbase_tx, &assembled, height);
+        MasternodeListEngine::initialize_with_diff_to_height(diff, height, Network::Mainnet)
+            .expect("expected to start engine")
+    }
+
     #[cfg(feature = "quorum_validation")]
     use {
         super::build_cycle_quorum_map,
@@ -1593,19 +1695,15 @@ mod tests {
 
     #[test]
     fn validate_from_mn_list_diff_chain_locks() {
-        let mn_list_diff_bytes: &[u8] =
-            include_bytes!("../../../tests/data/test_DML_diffs/mn_list_diff_0_2227096.bin");
-        // This one is serialized not with bincode, but with core consensus
-        let diff: MnListDiff = deserialize(mn_list_diff_bytes).expect("expected to deserialize");
-        let mut masternode_list_engine =
-            MasternodeListEngine::initialize_with_diff_to_height(diff, 2227096, Network::Mainnet)
-                .expect("expected to start engine");
+        let mut masternode_list_engine = engine_from_consistent_genesis_diff(2227096);
 
         let mn_list_diff_bytes_2: &[u8] =
             include_bytes!("../../../tests/data/test_DML_diffs/mn_list_diff_2227096_2241332.bin");
         // This one is serialized not with bincode, but with core consensus
-        let diff_2: MnListDiff =
+        let mut diff_2: MnListDiff =
             deserialize(mn_list_diff_bytes_2).expect("expected to deserialize");
+
+        masternode_list_engine.make_diff_coinbase_root_consistent(&mut diff_2, 2241332);
 
         masternode_list_engine
             .apply_diff(diff_2, Some(2241332), false, None)
@@ -1679,12 +1777,7 @@ mod tests {
 
     #[cfg(feature = "quorum_validation")]
     fn load_qrinfo_2240504_fixture() -> (MasternodeListEngine, QRInfo) {
-        let mn_list_diff_bytes: &[u8] =
-            include_bytes!("../../../tests/data/test_DML_diffs/mn_list_diff_0_2227096.bin");
-        let diff: MnListDiff = deserialize(mn_list_diff_bytes).expect("expected to deserialize");
-        let mut engine =
-            MasternodeListEngine::initialize_with_diff_to_height(diff, 2227096, Network::Mainnet)
-                .expect("expected to start engine");
+        let mut engine = engine_from_consistent_genesis_diff(2227096);
 
         let block_container_bytes: &[u8] =
             include_bytes!("../../../tests/data/test_DML_diffs/block_container_2240504.dat");
@@ -1700,15 +1793,20 @@ mod tests {
                 .0;
         let qr_info_bytes: &[u8] =
             include_bytes!("../../../tests/data/test_DML_diffs/qrinfo_2240504.dat");
-        let qr_info: QRInfo =
+        let mut qr_info: QRInfo =
             bincode::decode_from_slice(qr_info_bytes, bincode::config::standard())
                 .expect("expected to decode")
                 .0;
 
         engine.block_container = block_container;
-        for ((_start_height, height), diff) in mn_list_diffs.into_iter() {
+        // The capture fixtures predate root validation; rewrite each diff's coinbase root to the
+        // value it produces against the running state before applying, in ascending height order.
+        for ((_start_height, height), mut diff) in mn_list_diffs.into_iter() {
+            engine.make_diff_coinbase_root_consistent(&mut diff, height);
             engine.apply_diff(diff, Some(height), false, None).expect("expected to apply diff");
         }
+
+        engine.make_qr_info_coinbase_roots_consistent(&mut qr_info);
 
         (engine, qr_info)
     }
