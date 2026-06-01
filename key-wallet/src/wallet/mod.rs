@@ -715,21 +715,31 @@ mod tests {
         assert_eq!(first, wallet2.compute_wallet_id());
     }
 
-    // (d) Known-answer test locking in the network-independent (`None`) digest so
-    // it can never silently shift.
+    // (d) Known-answer tests locking the wire format so the digests can never
+    // silently shift. The `None` digest pins the network-independent preimage;
+    // the `Some(Mainnet)` digest pins the domain tag + discriminant byte that
+    // make up the network-scoped (default) wire-stable contract.
     #[test]
-    fn test_network_independent_wallet_id_known_answer() {
+    fn test_wallet_id_known_answers() {
         let root = fixture_root_pub_key(Network::Mainnet);
-        let none = Wallet::compute_wallet_id_from_root_extended_pub_key(&root, None);
 
-        // Known answer for the "abandon ... about" fixture mnemonic. The raw root
-        // pubkey + chain code are network-independent, so this value is fixed
+        // Known answers for the "abandon ... about" fixture mnemonic. The raw root
+        // pubkey + chain code are network-independent, so these values are fixed
         // regardless of the network passed to from_mnemonic.
-        let expected = "93401f55c5bc17629140344a2098ebdeb204dfdf1576e87605fbc7b655c86f08";
+        let none = Wallet::compute_wallet_id_from_root_extended_pub_key(&root, None);
         assert_eq!(
             hex_lower(&none),
-            expected,
+            "93401f55c5bc17629140344a2098ebdeb204dfdf1576e87605fbc7b655c86f08",
             "network-independent wallet id digest must remain byte-for-byte stable"
+        );
+
+        let mainnet =
+            Wallet::compute_wallet_id_from_root_extended_pub_key(&root, Some(Network::Mainnet));
+        assert_eq!(
+            hex_lower(&mainnet),
+            "0b91f36de2613a410303e8309b4f92a150738ae018695d2030b33e64ccea7b2e",
+            "network-scoped (mainnet) wallet id digest must remain byte-for-byte stable; \
+             a change here means DOMAIN_TAG or a discriminant byte shifted"
         );
     }
 
