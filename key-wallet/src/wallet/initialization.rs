@@ -153,7 +153,7 @@ impl Wallet {
                 );
             }
         };
-        let wallet_id = Self::compute_wallet_id_from_root_extended_pub_key(&root_pub_key);
+        let wallet_id = Self::compute_wallet_id_from_root_extended_pub_key(&root_pub_key, None);
 
         Self {
             network,
@@ -264,7 +264,7 @@ impl Wallet {
     ) -> Result<Self> {
         let root_extended_public_key = RootExtendedPubKey::from_extended_pub_key(&master_xpub);
         let wallet_id =
-            Self::compute_wallet_id_from_root_extended_pub_key(&root_extended_public_key);
+            Self::compute_wallet_id_from_root_extended_pub_key(&root_extended_public_key, None);
         let wallet = if can_sign_externally {
             Self::new_external_signable(master_xpub.network, wallet_id, accounts)
         } else {
@@ -289,7 +289,7 @@ impl Wallet {
     ) -> Result<Self> {
         let root_extended_public_key = RootExtendedPubKey::from_extended_pub_key(&master_xpub);
         let wallet_id =
-            Self::compute_wallet_id_from_root_extended_pub_key(&root_extended_public_key);
+            Self::compute_wallet_id_from_root_extended_pub_key(&root_extended_public_key, None);
         Ok(Self::new_external_signable(master_xpub.network, wallet_id, accounts))
     }
 

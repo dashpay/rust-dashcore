@@ -143,7 +143,7 @@ fn test_wallet_creation_watch_only() {
 
     // But the wallet id must still equal the hash of the source root xpub
     // (`from_xpub` derives the id from the xpub at construction time).
-    let expected_id = Wallet::compute_wallet_id_from_root_extended_pub_key(&root_pub_key);
+    let expected_id = Wallet::compute_wallet_id_from_root_extended_pub_key(&root_pub_key, None);
     assert_eq!(wallet.wallet_id, expected_id);
     assert_eq!(wallet.compute_wallet_id(), expected_id);
 }
@@ -155,10 +155,10 @@ fn test_wallet_id_computation() {
     let root_priv_key = RootExtendedPrivKey::new_master(&seed).unwrap();
     let root_pub_key = root_priv_key.to_root_extended_pub_key();
 
-    let wallet_id = Wallet::compute_wallet_id_from_root_extended_pub_key(&root_pub_key);
+    let wallet_id = Wallet::compute_wallet_id_from_root_extended_pub_key(&root_pub_key, None);
 
     // Wallet ID should be deterministic
-    let wallet_id_2 = Wallet::compute_wallet_id_from_root_extended_pub_key(&root_pub_key);
+    let wallet_id_2 = Wallet::compute_wallet_id_from_root_extended_pub_key(&root_pub_key, None);
     assert_eq!(wallet_id, wallet_id_2);
 
     // Create wallet and verify ID matches
@@ -371,7 +371,7 @@ fn test_wallet_external_signable() {
     // of the root xpub fed into `from_external_signable`.
     assert!(matches!(wallet.wallet_type, WalletType::ExternalSignable));
     assert!(wallet.root_extended_pub_key().is_err());
-    let expected_id = Wallet::compute_wallet_id_from_root_extended_pub_key(&root_pub_key);
+    let expected_id = Wallet::compute_wallet_id_from_root_extended_pub_key(&root_pub_key, None);
     assert_eq!(wallet.wallet_id, expected_id);
     assert_eq!(wallet.compute_wallet_id(), expected_id);
 }

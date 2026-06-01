@@ -95,13 +95,45 @@ pub struct WalletScanResult {
 }
 
 impl Wallet {
-    /// Compute wallet ID from root public key
+    /// Compute a wallet ID from a root public key.
+    ///
+    /// `network` controls scoping and backwards compatibility:
+    ///
+    /// * `None` → the **legacy network-independent id**. The preimage is exactly
+    ///   `root_public_key.serialize() || root_chain_code`. This is the original,
+    ///   stable derivation; all previously persisted ids use it, so passing `None`
+    ///   reproduces them byte-for-byte.
+    /// * `Some(network)` → a **network-scoped id** that folds an explicit network
+    ///   discriminant into the hash, so the same mnemonic maps to distinct ids per
+    ///   network. The preimage is:
+    ///
+    ///   ```text
+    ///   root_public_key.serialize() || root_chain_code || DOMAIN_TAG || network_byte
+    ///   ```
+    ///
+    ///   where `DOMAIN_TAG` is the private `NETWORK_SCOPED_WALLET_ID_DOMAIN`
+    ///   constant and `network_byte` comes from the private
+    ///   `network_scoped_wallet_id_discriminant` mapping (wire-stable, *not*
+    ///   `Network as u8`). The tag guarantees a `Some(_)` digest can never collide
+    ///   with the legacy/`None` digest.
+    ///
+    /// Callers comparing a `Some(network)` id against a legacy/`None` id for the
+    /// same wallet must **not** expect equality — those are intentionally
+    /// different digests.
     pub fn compute_wallet_id_from_root_extended_pub_key(
         root_pub_key: &RootExtendedPubKey,
+        network: Option<Network>,
     ) -> [u8; 32] {
         let mut data = Vec::new();
         data.extend_from_slice(&root_pub_key.root_public_key.serialize());
         data.extend_from_slice(&root_pub_key.root_chain_code[..]);
+        // Backwards compatibility: with no network, the preimage stops here and
+        // the digest is the legacy unscoped id. Only a concrete network appends
+        // the domain tag + discriminant byte.
+        if let Some(network) = network {
+            data.extend_from_slice(Self::NETWORK_SCOPED_WALLET_ID_DOMAIN);
+            data.push(Self::network_scoped_wallet_id_discriminant(network));
+        }
 
         // Compute SHA256 hash
         let hash = sha256::Hash::hash(&data);
@@ -122,6 +154,7 @@ impl Wallet {
                 &self
                     .root_extended_pub_key_cow()
                     .expect("signing wallet types always have a root public key"),
+                None,
             ),
         }
     }
@@ -165,57 +198,11 @@ impl Wallet {
         }
     }
 
-    /// Compute a **network-scoped** wallet ID from a root public key.
-    ///
-    /// `network` is optional and controls backwards compatibility:
-    ///
-    /// * `None` → **identical to the legacy unscoped id** from
-    ///   [`Wallet::compute_wallet_id_from_root_extended_pub_key`]. The preimage is
-    ///   exactly `root_public_key.serialize() || root_chain_code`, so passing
-    ///   `None` is a drop-in for the legacy derivation.
-    /// * `Some(network)` → a network-scoped digest that folds an explicit network
-    ///   discriminant into the hash, so the same mnemonic maps to distinct ids per
-    ///   network. The preimage is:
-    ///
-    ///   ```text
-    ///   root_public_key.serialize() || root_chain_code || DOMAIN_TAG || network_byte
-    ///   ```
-    ///
-    ///   where `DOMAIN_TAG` is the private `NETWORK_SCOPED_WALLET_ID_DOMAIN`
-    ///   constant and `network_byte` comes from the private
-    ///   `network_scoped_wallet_id_discriminant` mapping (wire-stable, *not*
-    ///   `Network as u8`). The domain tag guarantees a `Some(_)` digest can never
-    ///   collide with the legacy/`None` digest.
-    ///
-    /// **Compatibility:** this is purely additive. `None` reproduces the legacy
-    /// id exactly; only a `Some(network)` result differs. Callers that compare a
-    /// `Some(network)` scoped id against a legacy/`None` id for the same wallet
-    /// must **not** expect equality — those are intentionally different digests.
-    pub fn compute_network_scoped_wallet_id_from_root_extended_pub_key(
-        root_pub_key: &RootExtendedPubKey,
-        network: Option<Network>,
-    ) -> [u8; 32] {
-        let mut data = Vec::new();
-        data.extend_from_slice(&root_pub_key.root_public_key.serialize());
-        data.extend_from_slice(&root_pub_key.root_chain_code[..]);
-        // Backwards compatibility: with no network, the preimage stops here and
-        // the digest is byte-for-byte identical to the legacy unscoped id. Only a
-        // concrete network appends the domain tag + discriminant byte.
-        if let Some(network) = network {
-            data.extend_from_slice(Self::NETWORK_SCOPED_WALLET_ID_DOMAIN);
-            data.push(Self::network_scoped_wallet_id_discriminant(network));
-        }
-
-        // Compute SHA256 hash
-        let hash = sha256::Hash::hash(&data);
-        hash.to_byte_array()
-    }
-
     /// Compute a network-scoped wallet ID for this wallet.
     ///
     /// Mirrors [`Wallet::compute_wallet_id`] but folds `self.network` into the
     /// digest via
-    /// [`Wallet::compute_network_scoped_wallet_id_from_root_extended_pub_key`].
+    /// [`Wallet::compute_wallet_id_from_root_extended_pub_key`]`(.., Some(self.network))`.
     /// For the [`WalletType::WatchOnly`] and [`WalletType::ExternalSignable`] unit
     /// variants there is no root key on hand, so the id fed in at construction
     /// time (`self.wallet_id`) is returned as-is.
@@ -227,7 +214,7 @@ impl Wallet {
     pub fn compute_network_scoped_wallet_id(&self) -> [u8; 32] {
         match &self.wallet_type {
             WalletType::WatchOnly | WalletType::ExternalSignable => self.wallet_id,
-            _ => Self::compute_network_scoped_wallet_id_from_root_extended_pub_key(
+            _ => Self::compute_wallet_id_from_root_extended_pub_key(
                 &self
                     .root_extended_pub_key_cow()
                     .expect("signing wallet types always have a root public key"),
@@ -667,23 +654,15 @@ mod tests {
         // four different ways (plus the unscoped `None` case).
         let root = fixture_root_pub_key(Network::Mainnet);
 
-        let mainnet = Wallet::compute_network_scoped_wallet_id_from_root_extended_pub_key(
-            &root,
-            Some(Network::Mainnet),
-        );
-        let testnet = Wallet::compute_network_scoped_wallet_id_from_root_extended_pub_key(
-            &root,
-            Some(Network::Testnet),
-        );
-        let devnet = Wallet::compute_network_scoped_wallet_id_from_root_extended_pub_key(
-            &root,
-            Some(Network::Devnet),
-        );
-        let regtest = Wallet::compute_network_scoped_wallet_id_from_root_extended_pub_key(
-            &root,
-            Some(Network::Regtest),
-        );
-        let none = Wallet::compute_network_scoped_wallet_id_from_root_extended_pub_key(&root, None);
+        let mainnet =
+            Wallet::compute_wallet_id_from_root_extended_pub_key(&root, Some(Network::Mainnet));
+        let testnet =
+            Wallet::compute_wallet_id_from_root_extended_pub_key(&root, Some(Network::Testnet));
+        let devnet =
+            Wallet::compute_wallet_id_from_root_extended_pub_key(&root, Some(Network::Devnet));
+        let regtest =
+            Wallet::compute_wallet_id_from_root_extended_pub_key(&root, Some(Network::Regtest));
+        let none = Wallet::compute_wallet_id_from_root_extended_pub_key(&root, None);
 
         let ids = [mainnet, testnet, devnet, regtest, none];
         for i in 0..ids.len() {
@@ -714,10 +693,8 @@ mod tests {
 
         // The instance method must fold in self.network and match the free function.
         let root = wallet.root_extended_pub_key_cow().unwrap();
-        let expected = Wallet::compute_network_scoped_wallet_id_from_root_extended_pub_key(
-            &root,
-            Some(Network::Testnet),
-        );
+        let expected =
+            Wallet::compute_wallet_id_from_root_extended_pub_key(&root, Some(Network::Testnet));
         assert_eq!(first, expected);
 
         // A second wallet from the same mnemonic on the same network yields the
@@ -737,7 +714,7 @@ mod tests {
     #[test]
     fn test_legacy_wallet_id_known_answer() {
         let root = fixture_root_pub_key(Network::Mainnet);
-        let legacy = Wallet::compute_wallet_id_from_root_extended_pub_key(&root);
+        let legacy = Wallet::compute_wallet_id_from_root_extended_pub_key(&root, None);
 
         // Known answer for the "abandon ... about" fixture mnemonic. The raw root
         // pubkey + chain code are network-independent, so this value is fixed
@@ -755,31 +732,15 @@ mod tests {
     #[test]
     fn test_scoped_id_differs_from_legacy() {
         let root = fixture_root_pub_key(Network::Mainnet);
-        let legacy = Wallet::compute_wallet_id_from_root_extended_pub_key(&root);
+        let legacy = Wallet::compute_wallet_id_from_root_extended_pub_key(&root, None);
 
         for network in [Network::Mainnet, Network::Testnet, Network::Devnet, Network::Regtest] {
-            let scoped = Wallet::compute_network_scoped_wallet_id_from_root_extended_pub_key(
-                &root,
-                Some(network),
-            );
+            let scoped = Wallet::compute_wallet_id_from_root_extended_pub_key(&root, Some(network));
             assert_ne!(
                 scoped, legacy,
                 "scoped id ({network:?}) must never collide with the legacy unscoped id"
             );
         }
-    }
-
-    // Backwards compatibility: passing `None` must be byte-for-byte identical to
-    // the legacy unscoped derivation, so the new function is a drop-in.
-    #[test]
-    fn test_no_network_matches_legacy_id() {
-        let root = fixture_root_pub_key(Network::Mainnet);
-        let legacy = Wallet::compute_wallet_id_from_root_extended_pub_key(&root);
-        let none = Wallet::compute_network_scoped_wallet_id_from_root_extended_pub_key(&root, None);
-        assert_eq!(
-            none, legacy,
-            "with no network the scoped derivation must equal the legacy unscoped id"
-        );
     }
 
     // The instance method has no root key to work from for the unit-variant
