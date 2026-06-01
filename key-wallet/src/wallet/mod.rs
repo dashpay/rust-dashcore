@@ -180,10 +180,11 @@ impl Wallet {
     /// root_public_key.serialize() || root_chain_code || DOMAIN_TAG || network_byte
     /// ```
     ///
-    /// where `DOMAIN_TAG` is [`Self::NETWORK_SCOPED_WALLET_ID_DOMAIN`] and
-    /// `network_byte` comes from [`Self::network_scoped_wallet_id_discriminant`]
-    /// (a wire-stable mapping, *not* `Network as u8`). The domain tag guarantees
-    /// this digest can never collide with the legacy unscoped id.
+    /// where `DOMAIN_TAG` is the private `NETWORK_SCOPED_WALLET_ID_DOMAIN`
+    /// constant and `network_byte` comes from the private
+    /// `network_scoped_wallet_id_discriminant` mapping (wire-stable, *not*
+    /// `Network as u8`). The domain tag guarantees this digest can never collide
+    /// with the legacy unscoped id.
     ///
     /// `network` is optional: pass `None` for a deliberately network-agnostic
     /// scoped id (still distinct from the legacy unscoped digest and from any
