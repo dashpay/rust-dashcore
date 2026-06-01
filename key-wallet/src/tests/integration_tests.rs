@@ -115,9 +115,11 @@ fn test_separate_wallets_per_network() {
     assert_eq!(devnet_wallet.network, Network::Devnet);
     assert_eq!(devnet_wallet.accounts.standard_bip44_accounts.len(), 2);
 
-    // All share the same wallet_id
-    assert_eq!(testnet_wallet.wallet_id, mainnet_wallet.wallet_id);
-    assert_eq!(testnet_wallet.wallet_id, devnet_wallet.wallet_id);
+    // The wallet id is network-scoped, so the same mnemonic yields a distinct
+    // wallet_id on each network.
+    assert_ne!(testnet_wallet.wallet_id, mainnet_wallet.wallet_id);
+    assert_ne!(testnet_wallet.wallet_id, devnet_wallet.wallet_id);
+    assert_ne!(mainnet_wallet.wallet_id, devnet_wallet.wallet_id);
 }
 
 #[test]

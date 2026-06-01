@@ -97,15 +97,12 @@ pub struct WalletScanResult {
 impl Wallet {
     /// Compute a wallet ID from a root public key.
     ///
-    /// `network` controls scoping and backwards compatibility:
+    /// `network` controls scoping:
     ///
-    /// * `None` → the **legacy network-independent id**. The preimage is exactly
-    ///   `root_public_key.serialize() || root_chain_code`. This is the original,
-    ///   stable derivation; all previously persisted ids use it, so passing `None`
-    ///   reproduces them byte-for-byte.
-    /// * `Some(network)` → a **network-scoped id** that folds an explicit network
-    ///   discriminant into the hash, so the same mnemonic maps to distinct ids per
-    ///   network. The preimage is:
+    /// * `Some(network)` → the **network-scoped id** (the default; this is what
+    ///   wallet construction stamps into [`Wallet::wallet_id`]). It folds an
+    ///   explicit network discriminant into the hash, so the same seed maps to
+    ///   distinct ids per network. The preimage is:
     ///
     ///   ```text
     ///   root_public_key.serialize() || root_chain_code || DOMAIN_TAG || network_byte
@@ -115,11 +112,14 @@ impl Wallet {
     ///   constant and `network_byte` comes from the private
     ///   `network_scoped_wallet_id_discriminant` mapping (wire-stable, *not*
     ///   `Network as u8`). The tag guarantees a `Some(_)` digest can never collide
-    ///   with the legacy/`None` digest.
+    ///   with the `None` digest.
+    /// * `None` → a **network-independent id**. The preimage is exactly
+    ///   `root_public_key.serialize() || root_chain_code` (no tag, no discriminant)
+    ///   — useful when a caller deliberately wants one id shared across networks.
     ///
-    /// Callers comparing a `Some(network)` id against a legacy/`None` id for the
-    /// same wallet must **not** expect equality — those are intentionally
-    /// different digests.
+    /// Callers comparing a `Some(network)` id against a `None` id (or against a
+    /// `Some(other_network)` id) for the same key must **not** expect equality —
+    /// those are intentionally different digests.
     pub fn compute_wallet_id_from_root_extended_pub_key(
         root_pub_key: &RootExtendedPubKey,
         network: Option<Network>,
@@ -127,9 +127,8 @@ impl Wallet {
         let mut data = Vec::new();
         data.extend_from_slice(&root_pub_key.root_public_key.serialize());
         data.extend_from_slice(&root_pub_key.root_chain_code[..]);
-        // Backwards compatibility: with no network, the preimage stops here and
-        // the digest is the legacy unscoped id. Only a concrete network appends
-        // the domain tag + discriminant byte.
+        // A concrete network appends the domain tag + discriminant byte; with no
+        // network the preimage stops here, giving a network-independent digest.
         if let Some(network) = network {
             data.extend_from_slice(Self::NETWORK_SCOPED_WALLET_ID_DOMAIN);
             data.push(Self::network_scoped_wallet_id_discriminant(network));
@@ -140,7 +139,13 @@ impl Wallet {
         hash.to_byte_array()
     }
 
-    /// Compute wallet ID.
+    /// Compute this wallet's ID.
+    ///
+    /// The id is **network-scoped**: it folds `self.network` into the digest via
+    /// [`Wallet::compute_wallet_id_from_root_extended_pub_key`]`(.., Some(self.network))`,
+    /// so the same seed yields distinct ids on different networks. This is what
+    /// construction stamps into `self.wallet_id`, so for full wallets the two
+    /// agree.
     ///
     /// For wallet types that carry a root public key (directly or derivable from a
     /// stored root private key), this recomputes the id from that key. For the
@@ -154,7 +159,7 @@ impl Wallet {
                 &self
                     .root_extended_pub_key_cow()
                     .expect("signing wallet types always have a root public key"),
-                None,
+                Some(self.network),
             ),
         }
     }
@@ -164,9 +169,9 @@ impl Wallet {
     }
 
     /// Domain-separation tag appended (with the network discriminant) when a
-    /// concrete network is supplied, so a scoped id can never collide with the
-    /// legacy unscoped digest. Not added for the `None` case, which is
-    /// byte-for-byte identical to the legacy id.
+    /// concrete network is supplied, so a network-scoped id can never collide
+    /// with the network-independent (`None`) digest. Not added for the `None`
+    /// case.
     const NETWORK_SCOPED_WALLET_ID_DOMAIN: &'static [u8] = b"N";
 
     /// Stable, wire-stable discriminant for a network used when deriving a
@@ -186,40 +191,15 @@ impl Wallet {
     /// | `Regtest`  | `0x03` |
     ///
     /// There is intentionally no entry for "no network": when no network is
-    /// supplied the digest is the legacy unscoped id, which carries neither the
-    /// domain tag nor a discriminant byte. Any future [`Network`] variant must be
-    /// assigned a new, never-before-used byte here.
+    /// supplied the digest is the network-independent id, which carries neither
+    /// the domain tag nor a discriminant byte. Any future [`Network`] variant must
+    /// be assigned a new, never-before-used byte here.
     const fn network_scoped_wallet_id_discriminant(network: Network) -> u8 {
         match network {
             Network::Mainnet => 0x00,
             Network::Testnet => 0x01,
             Network::Devnet => 0x02,
             Network::Regtest => 0x03,
-        }
-    }
-
-    /// Compute a network-scoped wallet ID for this wallet.
-    ///
-    /// Mirrors [`Wallet::compute_wallet_id`] but folds `self.network` into the
-    /// digest via
-    /// [`Wallet::compute_wallet_id_from_root_extended_pub_key`]`(.., Some(self.network))`.
-    /// For the [`WalletType::WatchOnly`] and [`WalletType::ExternalSignable`] unit
-    /// variants there is no root key on hand, so the id fed in at construction
-    /// time (`self.wallet_id`) is returned as-is.
-    ///
-    /// **Compatibility:** this is opt-in and does not affect `self.wallet_id`,
-    /// which is still stamped with the legacy unscoped id at construction. Do not
-    /// compare the value returned here against a legacy unscoped id for the same
-    /// wallet — they are intentionally different digests.
-    pub fn compute_network_scoped_wallet_id(&self) -> [u8; 32] {
-        match &self.wallet_type {
-            WalletType::WatchOnly | WalletType::ExternalSignable => self.wallet_id,
-            _ => Self::compute_wallet_id_from_root_extended_pub_key(
-                &self
-                    .root_extended_pub_key_cow()
-                    .expect("signing wallet types always have a root public key"),
-                Some(self.network),
-            ),
         }
     }
 }
@@ -645,13 +625,13 @@ mod tests {
         wallet.root_extended_pub_key_cow().unwrap().into_owned()
     }
 
-    // (a) Same seed + different networks => different scoped ids. The `None`
-    // (legacy/unscoped) digest is also distinct from every concrete-network id,
-    // so all five values are pairwise distinct.
+    // (a) Same seed + different networks => different ids. The network-independent
+    // (`None`) digest is also distinct from every concrete-network id, so all five
+    // values are pairwise distinct.
     #[test]
-    fn test_network_scoped_wallet_id_differs_by_network() {
+    fn test_wallet_id_differs_by_network() {
         // The raw root key is network-independent, so derive it once and scope it
-        // four different ways (plus the unscoped `None` case).
+        // four different ways (plus the network-independent `None` case).
         let root = fixture_root_pub_key(Network::Mainnet);
 
         let mainnet =
@@ -669,16 +649,51 @@ mod tests {
             for j in (i + 1)..ids.len() {
                 assert_ne!(
                     ids[i], ids[j],
-                    "scoped ids for distinct network discriminants must differ ({i} vs {j})"
+                    "ids for distinct network discriminants must differ ({i} vs {j})"
                 );
             }
         }
     }
 
-    // (b) Same seed + same network => stable scoped id across calls, and the
-    // instance method agrees with the free function.
+    // (b) The wallet id is network-scoped by default: the same mnemonic on
+    // different networks produces different `wallet_id`s, and each stamped id
+    // equals the explicit `Some(network)` derivation.
     #[test]
-    fn test_network_scoped_wallet_id_is_stable() {
+    fn test_wallet_id_is_network_scoped_by_default() {
+        let make = |network| {
+            let mnemonic = Mnemonic::from_phrase(FIXTURE_MNEMONIC, Language::English).unwrap();
+            Wallet::from_mnemonic(
+                mnemonic,
+                network,
+                initialization::WalletAccountCreationOptions::None,
+            )
+            .unwrap()
+        };
+
+        let mainnet = make(Network::Mainnet);
+        let testnet = make(Network::Testnet);
+
+        // Same seed, different network => different stamped ids.
+        assert_ne!(mainnet.wallet_id, testnet.wallet_id);
+
+        // Each stamped id matches the explicit Some(network) derivation, and the
+        // instance accessor recomputes the same value.
+        let root = mainnet.root_extended_pub_key_cow().unwrap();
+        assert_eq!(
+            mainnet.wallet_id,
+            Wallet::compute_wallet_id_from_root_extended_pub_key(&root, Some(Network::Mainnet))
+        );
+        assert_eq!(mainnet.compute_wallet_id(), mainnet.wallet_id);
+        assert_eq!(
+            testnet.wallet_id,
+            Wallet::compute_wallet_id_from_root_extended_pub_key(&root, Some(Network::Testnet))
+        );
+        assert_eq!(testnet.compute_wallet_id(), testnet.wallet_id);
+    }
+
+    // (c) Same seed + same network => stable id across calls and across wallets.
+    #[test]
+    fn test_wallet_id_is_stable() {
         let mnemonic = Mnemonic::from_phrase(FIXTURE_MNEMONIC, Language::English).unwrap();
         let wallet = Wallet::from_mnemonic(
             mnemonic,
@@ -687,18 +702,9 @@ mod tests {
         )
         .unwrap();
 
-        let first = wallet.compute_network_scoped_wallet_id();
-        let second = wallet.compute_network_scoped_wallet_id();
-        assert_eq!(first, second, "scoped id must be stable across calls");
+        let first = wallet.compute_wallet_id();
+        assert_eq!(first, wallet.compute_wallet_id(), "id must be stable across calls");
 
-        // The instance method must fold in self.network and match the free function.
-        let root = wallet.root_extended_pub_key_cow().unwrap();
-        let expected =
-            Wallet::compute_wallet_id_from_root_extended_pub_key(&root, Some(Network::Testnet));
-        assert_eq!(first, expected);
-
-        // A second wallet from the same mnemonic on the same network yields the
-        // same scoped id.
         let mnemonic2 = Mnemonic::from_phrase(FIXTURE_MNEMONIC, Language::English).unwrap();
         let wallet2 = Wallet::from_mnemonic(
             mnemonic2,
@@ -706,60 +712,56 @@ mod tests {
             initialization::WalletAccountCreationOptions::None,
         )
         .unwrap();
-        assert_eq!(first, wallet2.compute_network_scoped_wallet_id());
+        assert_eq!(first, wallet2.compute_wallet_id());
     }
 
-    // (c) Known-answer test locking in the legacy unscoped digest so it can never
-    // silently shift (which would invalidate persisted ids).
+    // (d) Known-answer test locking in the network-independent (`None`) digest so
+    // it can never silently shift.
     #[test]
-    fn test_legacy_wallet_id_known_answer() {
+    fn test_network_independent_wallet_id_known_answer() {
         let root = fixture_root_pub_key(Network::Mainnet);
-        let legacy = Wallet::compute_wallet_id_from_root_extended_pub_key(&root, None);
+        let none = Wallet::compute_wallet_id_from_root_extended_pub_key(&root, None);
 
         // Known answer for the "abandon ... about" fixture mnemonic. The raw root
         // pubkey + chain code are network-independent, so this value is fixed
         // regardless of the network passed to from_mnemonic.
         let expected = "93401f55c5bc17629140344a2098ebdeb204dfdf1576e87605fbc7b655c86f08";
         assert_eq!(
-            hex_lower(&legacy),
+            hex_lower(&none),
             expected,
-            "legacy unscoped wallet id digest must remain byte-for-byte stable"
+            "network-independent wallet id digest must remain byte-for-byte stable"
         );
     }
 
-    // (d) A `Some(network)` scoped id must differ from the legacy unscoped id
-    // derived from the same key, while `None` must reproduce it exactly.
+    // (e) A `Some(network)` scoped id must differ from the network-independent
+    // (`None`) id derived from the same key.
     #[test]
-    fn test_scoped_id_differs_from_legacy() {
+    fn test_scoped_id_differs_from_network_independent() {
         let root = fixture_root_pub_key(Network::Mainnet);
-        let legacy = Wallet::compute_wallet_id_from_root_extended_pub_key(&root, None);
+        let none = Wallet::compute_wallet_id_from_root_extended_pub_key(&root, None);
 
         for network in [Network::Mainnet, Network::Testnet, Network::Devnet, Network::Regtest] {
             let scoped = Wallet::compute_wallet_id_from_root_extended_pub_key(&root, Some(network));
             assert_ne!(
-                scoped, legacy,
-                "scoped id ({network:?}) must never collide with the legacy unscoped id"
+                scoped, none,
+                "scoped id ({network:?}) must never collide with the network-independent id"
             );
         }
     }
 
-    // The instance method has no root key to work from for the unit-variant
-    // wallet types, so it must return the construction-time id verbatim — exactly
-    // like `compute_wallet_id`. (For these wallets `self.wallet_id` is whatever the
-    // caller persisted, today the legacy unscoped id.)
+    // (f) Keyless wallet types carry no root key, so `compute_wallet_id` returns
+    // the construction-time id verbatim.
     #[test]
-    fn test_scoped_id_for_keyless_wallets_returns_stored_id() {
+    fn test_wallet_id_for_keyless_wallets_returns_stored_id() {
         let stored_id = [0x42u8; 32];
 
         let watch_only =
             Wallet::new_watch_only(Network::Testnet, stored_id, AccountCollection::new());
-        assert_eq!(watch_only.compute_network_scoped_wallet_id(), stored_id);
-        assert_eq!(watch_only.compute_network_scoped_wallet_id(), watch_only.compute_wallet_id());
+        assert_eq!(watch_only.compute_wallet_id(), stored_id);
 
         let external =
             Wallet::new_external_signable(Network::Mainnet, stored_id, AccountCollection::new());
-        assert_eq!(external.compute_network_scoped_wallet_id(), stored_id);
-        assert_eq!(external.compute_network_scoped_wallet_id(), external.compute_wallet_id());
+        assert_eq!(external.compute_wallet_id(), stored_id);
     }
 
     fn hex_lower(bytes: &[u8]) -> String {

@@ -97,10 +97,11 @@ fn test_network_mismatch_handling() {
     )
     .unwrap();
 
-    // Wallet IDs should be the same (derived from same root key)
-    assert_eq!(testnet_wallet.wallet_id, mainnet_wallet.wallet_id);
+    // Wallet IDs are network-scoped, so the same mnemonic yields different ids
+    // on different networks.
+    assert_ne!(testnet_wallet.wallet_id, mainnet_wallet.wallet_id);
 
-    // But networks should be different
+    // And networks should be different
     assert_eq!(testnet_wallet.network, Network::Testnet);
     assert_eq!(mainnet_wallet.network, Network::Mainnet);
 }
