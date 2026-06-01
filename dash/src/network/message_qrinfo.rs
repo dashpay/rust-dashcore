@@ -5,7 +5,9 @@ use std::{fmt, io};
 use bincode::{Decode, Encode};
 
 use crate::BlockHash;
-use crate::consensus::encode::{read_compact_size, read_fixed_bitset, write_fixed_bitset};
+use crate::consensus::encode::{
+    read_compact_size, read_fixed_bitset, write_compact_size, write_fixed_bitset,
+};
 use crate::consensus::{Decodable, Encodable, encode};
 use crate::internal_macros::impl_consensus_encoding;
 use crate::network::message_sml::MnListDiff;
@@ -186,10 +188,11 @@ impl Encodable for QuorumSnapshot {
     fn consensus_encode<W: io::Write + ?Sized>(&self, w: &mut W) -> Result<usize, io::Error> {
         let mut len = 0;
         len += self.skip_list_mode.consensus_encode(w)?;
+        len += write_compact_size(w, self.active_quorum_members.len() as u32)?;
         len += write_fixed_bitset(
             w,
             self.active_quorum_members.as_slice(),
-            self.active_quorum_members.iter().len(),
+            self.active_quorum_members.len(),
         )?;
         len += self.skip_list.consensus_encode(w)?;
         Ok(len)
@@ -299,8 +302,25 @@ impl Decodable for MNSkipListMode {
 
 #[cfg(test)]
 mod tests {
-    use crate::consensus::deserialize;
+    use super::{MNSkipListMode, QuorumSnapshot};
+    use crate::consensus::{deserialize, serialize};
     use crate::network::message::{NetworkMessage, RawNetworkMessage};
+
+    #[test]
+    fn quorum_snapshot_encode_decode_roundtrip() {
+        let snapshot = QuorumSnapshot {
+            skip_list_mode: MNSkipListMode::SkipFirst,
+            active_quorum_members: vec![
+                true, false, true, true, false, false, false, true, true, false,
+            ],
+            skip_list: vec![3, -1, 7],
+        };
+
+        let bytes = serialize(&snapshot);
+        let decoded: QuorumSnapshot = deserialize(&bytes).expect("deserialize QuorumSnapshot");
+
+        assert_eq!(snapshot, decoded);
+    }
 
     #[test]
     fn deserialize_qr_info() {
