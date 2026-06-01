@@ -130,17 +130,11 @@ impl Wallet {
         self.wallet_type = WalletType::ExternalSignable;
     }
 
-    /// Domain-separation tag mixed into a network-scoped wallet id whenever a
-    /// concrete network is supplied.
-    ///
-    /// Prepending this tag (followed by the network discriminant) before hashing
-    /// guarantees a *scoped* id can never collide with the legacy unscoped digest
-    /// produced by [`Wallet::compute_wallet_id_from_root_extended_pub_key`], which
-    /// hashes only `root_public_key || root_chain_code`. The tag is **not** added
-    /// for the `None` (network-agnostic) case — see
-    /// [`Wallet::compute_network_scoped_wallet_id_from_root_extended_pub_key`],
-    /// which is intentionally byte-for-byte identical to the legacy digest there.
-    const NETWORK_SCOPED_WALLET_ID_DOMAIN: &'static [u8] = b"DASH_WALLET_ID_NET_V1";
+    /// Domain-separation tag appended (with the network discriminant) when a
+    /// concrete network is supplied, so a scoped id can never collide with the
+    /// legacy unscoped digest. Not added for the `None` case, which is
+    /// byte-for-byte identical to the legacy id.
+    const NETWORK_SCOPED_WALLET_ID_DOMAIN: &'static [u8] = b"N";
 
     /// Stable, wire-stable discriminant for a network used when deriving a
     /// network-scoped wallet id.
