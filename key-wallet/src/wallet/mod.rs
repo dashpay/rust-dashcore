@@ -767,6 +767,25 @@ mod tests {
         }
     }
 
+    // The instance method has no root key to work from for the unit-variant
+    // wallet types, so it must return the construction-time id verbatim — exactly
+    // like `compute_wallet_id`. (For these wallets `self.wallet_id` is whatever the
+    // caller persisted, today the legacy unscoped id.)
+    #[test]
+    fn test_scoped_id_for_keyless_wallets_returns_stored_id() {
+        let stored_id = [0x42u8; 32];
+
+        let watch_only =
+            Wallet::new_watch_only(Network::Testnet, stored_id, AccountCollection::new());
+        assert_eq!(watch_only.compute_network_scoped_wallet_id(), stored_id);
+        assert_eq!(watch_only.compute_network_scoped_wallet_id(), watch_only.compute_wallet_id());
+
+        let external =
+            Wallet::new_external_signable(Network::Mainnet, stored_id, AccountCollection::new());
+        assert_eq!(external.compute_network_scoped_wallet_id(), stored_id);
+        assert_eq!(external.compute_network_scoped_wallet_id(), external.compute_wallet_id());
+    }
+
     fn hex_lower(bytes: &[u8]) -> String {
         bytes.iter().map(|b| format!("{:02x}", b)).collect()
     }
