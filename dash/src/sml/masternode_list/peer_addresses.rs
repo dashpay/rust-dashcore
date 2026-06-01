@@ -53,10 +53,10 @@ impl MasternodeList {
             .take(max_count.min(self.masternodes.len()))
             .filter_map(|hash| {
                 self.masternodes.get(&hash).and_then(|entry| {
-                    entry
-                        .masternode_list_entry
-                        .is_valid
-                        .then_some(entry.masternode_list_entry.service_address)
+                    if !entry.masternode_list_entry.is_valid {
+                        return None;
+                    }
+                    entry.masternode_list_entry.service_address.primary_service_address()
                 })
             })
             .collect()

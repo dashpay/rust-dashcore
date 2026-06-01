@@ -415,7 +415,9 @@ fn collect_seeds(diff: &MnListDiff, args: &Args) -> CollectedSeeds {
         if !args.include_invalid && !mn.is_valid {
             continue;
         }
-        let addr = mn.service_address;
+        let Some(addr) = mn.service_address.primary_service_address() else {
+            continue;
+        };
         if addr.port() == 0 {
             continue;
         }
