@@ -130,12 +130,16 @@ impl Wallet {
         self.wallet_type = WalletType::ExternalSignable;
     }
 
-    /// Domain-separation tag mixed into every network-scoped wallet id.
+    /// Domain-separation tag mixed into a network-scoped wallet id whenever a
+    /// concrete network is supplied.
     ///
     /// Prepending this tag (followed by the network discriminant) before hashing
-    /// guarantees a scoped id can never collide with the legacy unscoped digest
+    /// guarantees a *scoped* id can never collide with the legacy unscoped digest
     /// produced by [`Wallet::compute_wallet_id_from_root_extended_pub_key`], which
-    /// hashes only `root_public_key || root_chain_code`.
+    /// hashes only `root_public_key || root_chain_code`. The tag is **not** added
+    /// for the `None` (network-agnostic) case — see
+    /// [`Wallet::compute_network_scoped_wallet_id_from_root_extended_pub_key`],
+    /// which is intentionally byte-for-byte identical to the legacy digest there.
     const NETWORK_SCOPED_WALLET_ID_DOMAIN: &'static [u8] = b"DASH_WALLET_ID_NET_V1";
 
     /// Stable, wire-stable discriminant for a network used when deriving a
@@ -149,50 +153,50 @@ impl Wallet {
     ///
     /// | network    | byte   |
     /// |------------|--------|
-    /// | `None`     | `0xFF` |
     /// | `Mainnet`  | `0x00` |
     /// | `Testnet`  | `0x01` |
     /// | `Devnet`   | `0x02` |
     /// | `Regtest`  | `0x03` |
     ///
-    /// `None` maps to a sentinel (`0xFF`) so a deliberately network-agnostic
-    /// scoped id is distinct from any concrete network's id while still carrying
-    /// the domain-separation tag. Any future [`Network`] variant must be assigned
-    /// a new, never-before-used byte here.
-    const fn network_scoped_wallet_id_discriminant(network: Option<Network>) -> u8 {
+    /// There is intentionally no entry for "no network": when no network is
+    /// supplied the digest is the legacy unscoped id, which carries neither the
+    /// domain tag nor a discriminant byte. Any future [`Network`] variant must be
+    /// assigned a new, never-before-used byte here.
+    const fn network_scoped_wallet_id_discriminant(network: Network) -> u8 {
         match network {
-            None => 0xFF,
-            Some(Network::Mainnet) => 0x00,
-            Some(Network::Testnet) => 0x01,
-            Some(Network::Devnet) => 0x02,
-            Some(Network::Regtest) => 0x03,
+            Network::Mainnet => 0x00,
+            Network::Testnet => 0x01,
+            Network::Devnet => 0x02,
+            Network::Regtest => 0x03,
         }
     }
 
     /// Compute a **network-scoped** wallet ID from a root public key.
     ///
-    /// Unlike [`Wallet::compute_wallet_id_from_root_extended_pub_key`], whose
-    /// output is identical across networks for a given seed, this folds an
-    /// explicit network discriminant into the digest so the same mnemonic maps to
-    /// distinct ids per network. The hash preimage is:
+    /// `network` is optional and controls backwards compatibility:
     ///
-    /// ```text
-    /// root_public_key.serialize() || root_chain_code || DOMAIN_TAG || network_byte
-    /// ```
+    /// * `None` → **identical to the legacy unscoped id** from
+    ///   [`Wallet::compute_wallet_id_from_root_extended_pub_key`]. The preimage is
+    ///   exactly `root_public_key.serialize() || root_chain_code`, so passing
+    ///   `None` is a drop-in for the legacy derivation.
+    /// * `Some(network)` → a network-scoped digest that folds an explicit network
+    ///   discriminant into the hash, so the same mnemonic maps to distinct ids per
+    ///   network. The preimage is:
     ///
-    /// where `DOMAIN_TAG` is the private `NETWORK_SCOPED_WALLET_ID_DOMAIN`
-    /// constant and `network_byte` comes from the private
-    /// `network_scoped_wallet_id_discriminant` mapping (wire-stable, *not*
-    /// `Network as u8`). The domain tag guarantees this digest can never collide
-    /// with the legacy unscoped id.
+    ///   ```text
+    ///   root_public_key.serialize() || root_chain_code || DOMAIN_TAG || network_byte
+    ///   ```
     ///
-    /// `network` is optional: pass `None` for a deliberately network-agnostic
-    /// scoped id (still distinct from the legacy unscoped digest and from any
-    /// concrete network's scoped id).
+    ///   where `DOMAIN_TAG` is the private `NETWORK_SCOPED_WALLET_ID_DOMAIN`
+    ///   constant and `network_byte` comes from the private
+    ///   `network_scoped_wallet_id_discriminant` mapping (wire-stable, *not*
+    ///   `Network as u8`). The domain tag guarantees a `Some(_)` digest can never
+    ///   collide with the legacy/`None` digest.
     ///
-    /// **Compatibility:** this is purely additive and opt-in. Callers that mix
-    /// scoped and unscoped ids for the same wallet must **not** compare the two
-    /// for equality — they are intentionally different digests.
+    /// **Compatibility:** this is purely additive. `None` reproduces the legacy
+    /// id exactly; only a `Some(network)` result differs. Callers that compare a
+    /// `Some(network)` scoped id against a legacy/`None` id for the same wallet
+    /// must **not** expect equality — those are intentionally different digests.
     pub fn compute_network_scoped_wallet_id_from_root_extended_pub_key(
         root_pub_key: &RootExtendedPubKey,
         network: Option<Network>,
@@ -200,8 +204,13 @@ impl Wallet {
         let mut data = Vec::new();
         data.extend_from_slice(&root_pub_key.root_public_key.serialize());
         data.extend_from_slice(&root_pub_key.root_chain_code[..]);
-        data.extend_from_slice(Self::NETWORK_SCOPED_WALLET_ID_DOMAIN);
-        data.push(Self::network_scoped_wallet_id_discriminant(network));
+        // Backwards compatibility: with no network, the preimage stops here and
+        // the digest is byte-for-byte identical to the legacy unscoped id. Only a
+        // concrete network appends the domain tag + discriminant byte.
+        if let Some(network) = network {
+            data.extend_from_slice(Self::NETWORK_SCOPED_WALLET_ID_DOMAIN);
+            data.push(Self::network_scoped_wallet_id_discriminant(network));
+        }
 
         // Compute SHA256 hash
         let hash = sha256::Hash::hash(&data);
@@ -655,11 +664,13 @@ mod tests {
         wallet.root_extended_pub_key_cow().unwrap().into_owned()
     }
 
-    // (a) Same seed + different networks => different scoped ids.
+    // (a) Same seed + different networks => different scoped ids. The `None`
+    // (legacy/unscoped) digest is also distinct from every concrete-network id,
+    // so all five values are pairwise distinct.
     #[test]
     fn test_network_scoped_wallet_id_differs_by_network() {
         // The raw root key is network-independent, so derive it once and scope it
-        // four different ways.
+        // four different ways (plus the unscoped `None` case).
         let root = fixture_root_pub_key(Network::Mainnet);
 
         let mainnet = Wallet::compute_network_scoped_wallet_id_from_root_extended_pub_key(
@@ -745,27 +756,36 @@ mod tests {
         );
     }
 
-    // (d) Scoped id (for any network discriminant, including None) must differ
-    // from the legacy unscoped id derived from the same key.
+    // (d) A `Some(network)` scoped id must differ from the legacy unscoped id
+    // derived from the same key, while `None` must reproduce it exactly.
     #[test]
     fn test_scoped_id_differs_from_legacy() {
         let root = fixture_root_pub_key(Network::Mainnet);
         let legacy = Wallet::compute_wallet_id_from_root_extended_pub_key(&root);
 
-        for network in [
-            None,
-            Some(Network::Mainnet),
-            Some(Network::Testnet),
-            Some(Network::Devnet),
-            Some(Network::Regtest),
-        ] {
-            let scoped =
-                Wallet::compute_network_scoped_wallet_id_from_root_extended_pub_key(&root, network);
+        for network in [Network::Mainnet, Network::Testnet, Network::Devnet, Network::Regtest] {
+            let scoped = Wallet::compute_network_scoped_wallet_id_from_root_extended_pub_key(
+                &root,
+                Some(network),
+            );
             assert_ne!(
                 scoped, legacy,
                 "scoped id ({network:?}) must never collide with the legacy unscoped id"
             );
         }
+    }
+
+    // Backwards compatibility: passing `None` must be byte-for-byte identical to
+    // the legacy unscoped derivation, so the new function is a drop-in.
+    #[test]
+    fn test_no_network_matches_legacy_id() {
+        let root = fixture_root_pub_key(Network::Mainnet);
+        let legacy = Wallet::compute_wallet_id_from_root_extended_pub_key(&root);
+        let none = Wallet::compute_network_scoped_wallet_id_from_root_extended_pub_key(&root, None);
+        assert_eq!(
+            none, legacy,
+            "with no network the scoped derivation must equal the legacy unscoped id"
+        );
     }
 
     // The instance method has no root key to work from for the unit-variant
