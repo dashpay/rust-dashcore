@@ -2,6 +2,7 @@ use hashes::{Hash, sha256d};
 
 use crate::Transaction;
 use crate::hash_types::{MerkleRootMasternodeList, MerkleRootQuorums};
+use crate::sml::error::SmlError;
 use crate::sml::masternode_list::MasternodeList;
 use crate::transaction::special_transaction::TransactionPayload;
 
@@ -44,31 +45,68 @@ pub fn merkle_root_from_hashes(hashes: Vec<sha256d::Hash>) -> Option<sha256d::Ha
 }
 
 impl MasternodeList {
-    /// Validates whether the stored masternode list Merkle root matches the one in the coinbase transaction.
+    /// Extracts the masternode list Merkle root committed in a coinbase transaction's payload.
+    fn coinbase_mn_list_root(
+        coinbase_transaction: &Transaction,
+    ) -> Option<MerkleRootMasternodeList> {
+        match &coinbase_transaction.special_transaction_payload {
+            Some(TransactionPayload::CoinbasePayloadType(coinbase_payload)) => {
+                Some(coinbase_payload.merkle_root_masternode_list)
+            }
+            _ => None,
+        }
+    }
+
+    /// Recomputes the masternode list Merkle root over the fully assembled list and verifies it
+    /// against the root committed in the coinbase transaction. The list must never be advanced on
+    /// mismatch.
     ///
-    /// This function compares the calculated masternode Merkle root with the one provided
-    /// in the coinbase transaction payload to verify the integrity of the masternode list.
-    ///
-    /// # Parameters
-    ///
-    /// - `coinbase_transaction`: The coinbase transaction containing the expected Merkle root.
-    ///
-    /// # Returns
-    ///
-    /// - `true` if the Merkle root matches.
-    /// - `false` otherwise.
-    pub fn has_valid_mn_list_root(&self, coinbase_transaction: &Transaction) -> bool {
-        let Some(TransactionPayload::CoinbasePayloadType(coinbase_payload)) =
-            &coinbase_transaction.special_transaction_payload
-        else {
-            return false;
-        };
-        // we need to check that the coinbase is in the transaction hashes we got back
-        // and is in the merkle block
-        if let Some(mn_merkle_root) = self.masternode_merkle_root {
-            coinbase_payload.merkle_root_masternode_list == mn_merkle_root
+    /// The recomputation is done from scratch over the current entry set rather than trusting any
+    /// stored root, so this is the authoritative check applied right after a list is built from a
+    /// diff.
+    pub fn validate_mn_list_root(
+        &self,
+        coinbase_transaction: &Transaction,
+        block_height: u32,
+    ) -> Result<(), SmlError> {
+        let expected = Self::coinbase_mn_list_root(coinbase_transaction)
+            .ok_or(SmlError::IncompleteMnListDiff)?;
+
+        let calculated = self
+            .calculate_masternodes_merkle_root(block_height)
+            .unwrap_or_else(|| MerkleRootMasternodeList::from_raw_hash(sha256d::Hash::all_zeros()));
+
+        if expected == calculated {
+            Ok(())
         } else {
-            false
+            Err(SmlError::MasternodeListRootMismatch {
+                block_hash: self.block_hash,
+                block_height,
+                expected,
+                calculated,
+            })
+        }
+    }
+
+    /// Overwrites the masternode list Merkle root committed in a diff's coinbase transaction with
+    /// the value that recomputing over `assembled` produces. The historical capture fixtures in
+    /// this crate carry coinbase roots that were computed by Dash Core over a full list which the
+    /// captured `new_masternodes` set does not reproduce, so they would otherwise be rejected by
+    /// the production root validation. This makes such a fixture self-consistent for tests that
+    /// exercise unrelated quorum and chainlock logic.
+    #[cfg(test)]
+    pub(crate) fn rewrite_coinbase_mn_list_root(
+        coinbase_transaction: &mut Transaction,
+        assembled: &MasternodeList,
+        block_height: u32,
+    ) {
+        let root = assembled
+            .calculate_masternodes_merkle_root(block_height)
+            .unwrap_or_else(|| MerkleRootMasternodeList::from_raw_hash(sha256d::Hash::all_zeros()));
+        if let Some(TransactionPayload::CoinbasePayloadType(payload)) =
+            &mut coinbase_transaction.special_transaction_payload
+        {
+            payload.merkle_root_masternode_list = root;
         }
     }
 

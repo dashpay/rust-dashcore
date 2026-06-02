@@ -87,6 +87,8 @@ impl TryFromWithBlockHashLookup<MnListDiff> for MasternodeList {
             return Err(SmlError::IncompleteMnListDiff);
         }
 
+        let coinbase_tx = diff.coinbase_tx.clone();
+
         // Populate masternode and quorum maps
         let masternodes = diff
             .new_masternodes
@@ -143,15 +145,14 @@ impl TryFromWithBlockHashLookup<MnListDiff> for MasternodeList {
             },
         );
 
-        // Construct `MasternodeList`
-        Ok(MasternodeList {
-            block_hash: diff.block_hash,
-            known_height,
-            masternode_merkle_root: diff.merkle_hashes.first().cloned(),
-            llmq_merkle_root: None, // Adjust based on real data availability
-            masternodes,
-            quorums,
-        })
+        // Construct `MasternodeList`, recomputing the Merkle roots over the assembled entry set
+        // instead of trusting any value carried in the diff.
+        let masternode_list =
+            MasternodeList::build(masternodes, quorums, diff.block_hash, known_height).build();
+
+        masternode_list.validate_mn_list_root(&coinbase_tx, known_height)?;
+
+        Ok(masternode_list)
     }
 }
 
@@ -159,6 +160,22 @@ impl TryFromWithBlockHashLookup<MnListDiff> for MasternodeList {
 mod tests {
     use super::*;
     use crate::consensus::deserialize;
+
+    /// Rewrites the diff's coinbase masternode list root to match the list its own
+    /// `new_masternodes` set produces. The from-genesis capture fixture commits a root over the
+    /// full mainnet list which the captured subset does not reproduce, so without this it would be
+    /// rejected by root validation even though the unrelated chainlock-signature behaviour under
+    /// test is correct.
+    fn make_from_genesis_diff_consistent(diff: &mut MnListDiff, height: u32) {
+        let masternodes = diff
+            .new_masternodes
+            .iter()
+            .map(|entry| (entry.pro_reg_tx_hash.reverse(), entry.clone().into()))
+            .collect();
+        let assembled =
+            MasternodeList::build(masternodes, BTreeMap::new(), diff.block_hash, height).build();
+        MasternodeList::rewrite_coinbase_mn_list_root(&mut diff.coinbase_tx, &assembled, height);
+    }
 
     #[test]
     fn post_v20_requires_chainlock_signatures() {
@@ -200,6 +217,8 @@ mod tests {
         let pre_v20_height = 1_900_000;
         assert!(pre_v20_height < Network::Mainnet.v20_activation_height());
 
+        make_from_genesis_diff_consistent(&mut diff, pre_v20_height);
+
         let result = MasternodeList::try_from_with_block_hash_lookup(
             diff,
             |_| Some(pre_v20_height),
@@ -210,6 +229,27 @@ mod tests {
             result.is_ok(),
             "Pre-V20 blocks should allow missing chainlock signatures: {:?}",
             result.err()
+        );
+    }
+
+    #[test]
+    fn rejects_coinbase_mn_list_root_mismatch() {
+        let mn_list_diff_bytes: &[u8] =
+            include_bytes!("../../../tests/data/test_DML_diffs/mn_list_diff_0_2227096.bin");
+        let diff: MnListDiff = deserialize(mn_list_diff_bytes).expect("expected to deserialize");
+
+        // The capture fixture's coinbase commits a root over the full mainnet list that the
+        // captured `new_masternodes` subset does not reproduce, so building it must hard-reject.
+        let result = MasternodeList::try_from_with_block_hash_lookup(
+            diff,
+            |_| Some(1_900_000),
+            Network::Mainnet,
+        );
+
+        assert!(
+            matches!(result, Err(SmlError::MasternodeListRootMismatch { .. })),
+            "a diff whose coinbase root disagrees with its entry set must be rejected: {:?}",
+            result
         );
     }
 }
