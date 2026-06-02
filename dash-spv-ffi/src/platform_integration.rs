@@ -101,53 +101,25 @@ pub unsafe extern "C" fn ffi_dash_spv_get_quorum_public_key(
     };
 
     let engine_guard = engine.blocking_read();
-    let (before, _after) = engine_guard.masternode_lists_around_height(core_chain_locked_height);
-    let ml = match before {
-        Some(ml) => ml,
-        None => {
-            return FFIResult::error(
-                FFIErrorCode::ValidationError,
-                &format!(
-                    "No masternode list found at or before height {}",
-                    core_chain_locked_height
-                ),
-            );
-        }
-    };
+    match engine_guard.quorum_entry_for_hash_at_or_before_height(
+        llmq_type,
+        quorum_hash,
+        core_chain_locked_height,
+    ) {
+        Some((_list_height, quorum)) => {
+            let pubkey_bytes: &[u8; 48] = quorum.quorum_entry.quorum_public_key.as_ref();
+            std::ptr::copy_nonoverlapping(pubkey_bytes.as_ptr(), out_pubkey, QUORUM_PUBKEY_SIZE);
 
-    let list_height = ml.known_height;
-    match ml.quorums.get(&llmq_type) {
-        Some(quorums) => match quorums.get(&quorum_hash) {
-            Some(quorum) => {
-                let pubkey_bytes: &[u8; 48] = quorum.quorum_entry.quorum_public_key.as_ref();
-                std::ptr::copy_nonoverlapping(
-                    pubkey_bytes.as_ptr(),
-                    out_pubkey,
-                    QUORUM_PUBKEY_SIZE,
-                );
-
-                FFIResult {
-                    error_code: 0,
-                    error_message: ptr::null(),
-                }
+            FFIResult {
+                error_code: 0,
+                error_message: ptr::null(),
             }
-            None => FFIResult::error(
-                FFIErrorCode::ValidationError,
-                &format!(
-                    "Quorum not found: type {} at list height {} (requested {}) with hash {:x} (masternode list exists with {} quorums of this type)",
-                    quorum_type,
-                    list_height,
-                    core_chain_locked_height,
-                    quorum_hash,
-                    quorums.len()
-                ),
-            ),
-        },
+        }
         None => FFIResult::error(
             FFIErrorCode::ValidationError,
             &format!(
-                "No quorums of type {} found at list height {} (requested {})",
-                quorum_type, list_height, core_chain_locked_height
+                "Quorum not found: type {} at or before height {} with hash {:x}",
+                quorum_type, core_chain_locked_height, quorum_hash
             ),
         ),
     }
