@@ -16,7 +16,7 @@ fn test_p2pkh_address_creation() {
     // Create P2PKH address
     let address = Address::p2pkh(&dash_pubkey, DashNetwork::Mainnet);
 
-    assert_eq!(*address.network(), DashNetwork::Mainnet);
+    assert!(address.as_unchecked().is_valid_for_network(DashNetwork::Mainnet));
     assert_eq!(address.address_type(), Some(AddressType::P2pkh));
 
     // Check that it generates a valid Dash address (starts with 'X')
@@ -33,7 +33,7 @@ fn test_p2sh_address_creation() {
     // Create P2SH address
     let address = Address::p2sh(&script, DashNetwork::Mainnet).unwrap();
 
-    assert_eq!(*address.network(), DashNetwork::Mainnet);
+    assert!(address.as_unchecked().is_valid_for_network(DashNetwork::Mainnet));
     assert_eq!(address.address_type(), Some(AddressType::P2sh));
 
     // Check that it generates a valid Dash P2SH address (starts with '7')
@@ -53,7 +53,7 @@ fn test_testnet_address() {
     // Create testnet P2PKH address
     let address = Address::p2pkh(&dash_pubkey, DashNetwork::Testnet);
 
-    assert_eq!(*address.network(), DashNetwork::Testnet);
+    assert!(address.as_unchecked().is_valid_for_network(DashNetwork::Testnet));
     assert_eq!(address.address_type(), Some(AddressType::P2pkh));
 
     // Check that it generates a valid testnet address (starts with 'y')
@@ -85,7 +85,7 @@ fn test_address_parsing() {
     let parsed_mainnet =
         Address::<dashcore::address::NetworkUnchecked>::from_str(&mainnet_str).unwrap();
     let checked_mainnet = parsed_mainnet.require_network(DashNetwork::Mainnet).unwrap();
-    assert_eq!(*checked_mainnet.network(), DashNetwork::Mainnet);
+    assert!(checked_mainnet.as_unchecked().is_valid_for_network(DashNetwork::Mainnet));
     assert_eq!(checked_mainnet.address_type(), Some(AddressType::P2pkh));
 
     // Create a testnet address
@@ -104,7 +104,7 @@ fn test_address_parsing() {
     let parsed_testnet =
         Address::<dashcore::address::NetworkUnchecked>::from_str(&testnet_str).unwrap();
     let checked_testnet = parsed_testnet.require_network(DashNetwork::Testnet).unwrap();
-    assert_eq!(*checked_testnet.network(), DashNetwork::Testnet);
+    assert!(checked_testnet.as_unchecked().is_valid_for_network(DashNetwork::Testnet));
     assert_eq!(checked_testnet.address_type(), Some(AddressType::P2pkh));
 }
 

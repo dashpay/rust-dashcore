@@ -108,8 +108,6 @@ pub enum Error {
     NetworkValidation {
         /// Network that was required.
         required: Network,
-        /// Network on which the address was found to be valid.
-        found: Network,
         /// The address itself
         address: Address<NetworkUnchecked>,
     },
@@ -131,10 +129,10 @@ impl fmt::Display for Error {
             Error::ExcessiveScriptSize => write!(f, "script size exceed 520 bytes"),
             Error::UnrecognizedScript => write!(f, "script is not a p2pkh, p2sh or witness program"),
             Error::UnknownAddressType(ref s) => write!(f, "unknown address type: '{}' is either invalid or not supported in rust-dash", s),
-            Error::NetworkValidation { required, found, ref address } => {
+            Error::NetworkValidation { required, ref address } => {
                 write!(f, "address ")?;
                 address.fmt_internal(f)?; // Using fmt_internal in order to remove the "Address<NetworkUnchecked>(..)" wrapper
-                write!(f, " belongs to network {} which is different from required {}", found, required)
+                write!(f, " is not valid for the required network {}", required)
             }
         }
     }
@@ -607,6 +605,10 @@ impl Payload {
         Payload::WitnessProgram(prog)
     }
 
+    fn is_legacy(&self) -> bool {
+        matches!(self, Payload::PubkeyHash(_) | Payload::ScriptHash(_))
+    }
+
     /// Returns a byte slice of the inner program of the payload. If the payload
     /// is a script hash or pubkey hash, a reference to the hash is returned.
     fn inner_prog_as_bytes(&self) -> &[u8] {
@@ -695,6 +697,39 @@ impl NetworkValidation for NetworkUnchecked {
     const IS_CHECKED: bool = false;
 }
 
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
+enum AddressPrefix {
+    /// Mainnet — base58 `X`/`7`, or bech32 `ds`.
+    Mainnet,
+    /// Testnet, devnet, and legacy (base58) regtest — base58 `y`/`8`, or bech32 `tb
+    Testnet,
+    /// Regtest witness programs — bech32 `dsrt` only.
+    RegtestBech32,
+}
+
+impl AddressPrefix {
+    /// Determines the prefix an address built for `network` with `payload` is encoded with.
+    fn for_address(network: Network, payload: &Payload) -> Self {
+        match network {
+            Network::Mainnet => AddressPrefix::Mainnet,
+            Network::Testnet | Network::Devnet => AddressPrefix::Testnet,
+            Network::Regtest if payload.is_legacy() => AddressPrefix::Testnet,
+            Network::Regtest => AddressPrefix::RegtestBech32,
+        }
+    }
+
+    fn is_valid_for_network(self, network: Network, payload: &Payload) -> bool {
+        match self {
+            AddressPrefix::Mainnet => network == Network::Mainnet,
+            AddressPrefix::Testnet => {
+                matches!(network, Network::Testnet | Network::Devnet)
+                    || (payload.is_legacy() && network == Network::Regtest)
+            }
+            AddressPrefix::RegtestBech32 => network == Network::Regtest,
+        }
+    }
+}
+
 /// The inner representation of an address, without the network validation tag.
 ///
 /// An `Address` is composed of a payload and a network. This struct represents the inner
@@ -703,7 +738,7 @@ impl NetworkValidation for NetworkUnchecked {
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 struct AddressInner {
     payload: Payload,
-    network: Network,
+    prefix: AddressPrefix,
 }
 
 /// A Dash address.
@@ -946,24 +981,10 @@ impl<V: NetworkValidation> Address<V> {
         &self.0.payload
     }
 
-    /// Returns a reference to the network of this address.
-    pub fn network(&self) -> &Network {
-        &self.0.network
-    }
-
     /// Returns a reference to the unchecked address, which is dangerous to use if the address
     /// is invalid in the context of `NetworkUnchecked`.
     pub fn as_unchecked(&self) -> &Address<NetworkUnchecked> {
         unsafe { &*(self as *const Address<V> as *const Address<NetworkUnchecked>) }
-    }
-
-    /// Extracts and returns the network and payload components of the `Address`.
-    pub fn into_parts(self) -> (Network, Payload) {
-        let AddressInner {
-            payload,
-            network,
-        } = self.0;
-        (network, payload)
     }
 
     /// Gets the address type of the address.
@@ -997,18 +1018,18 @@ impl<V: NetworkValidation> Address<V> {
 
     /// Format the address for the usage by `Debug` and `Display` implementations.
     fn fmt_internal(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-        let p2pkh_prefix = match self.network() {
-            Network::Mainnet => PUBKEY_ADDRESS_PREFIX_MAIN,
-            Network::Testnet | Network::Devnet | Network::Regtest => PUBKEY_ADDRESS_PREFIX_TEST,
+        let p2pkh_prefix = match self.0.prefix {
+            AddressPrefix::Mainnet => PUBKEY_ADDRESS_PREFIX_MAIN,
+            _ => PUBKEY_ADDRESS_PREFIX_TEST,
         };
-        let p2sh_prefix = match self.network() {
-            Network::Mainnet => SCRIPT_ADDRESS_PREFIX_MAIN,
-            Network::Testnet | Network::Devnet | Network::Regtest => SCRIPT_ADDRESS_PREFIX_TEST,
+        let p2sh_prefix = match self.0.prefix {
+            AddressPrefix::Mainnet => SCRIPT_ADDRESS_PREFIX_MAIN,
+            _ => SCRIPT_ADDRESS_PREFIX_TEST,
         };
-        let bech32_hrp = match self.network() {
-            Network::Mainnet => "ds",
-            Network::Testnet | Network::Devnet => "tb",
-            Network::Regtest => "dsrt",
+        let bech32_hrp = match self.0.prefix {
+            AddressPrefix::Mainnet => "ds",
+            AddressPrefix::Testnet => "tb",
+            AddressPrefix::RegtestBech32 => "dsrt",
         };
         let encoding = AddressEncoding {
             payload: self.payload(),
@@ -1026,9 +1047,11 @@ impl<V: NetworkValidation> Address<V> {
     /// marker type of the address.
     #[inline]
     pub fn new(network: Network, payload: Payload) -> Self {
+        let prefix = AddressPrefix::for_address(network, &payload);
+
         Self(
             AddressInner {
-                network,
+                prefix,
                 payload,
             },
             PhantomData,
@@ -1246,17 +1269,7 @@ impl Address<NetworkUnchecked> {
     /// assert_eq!(address.is_valid_for_network(Network::Testnet), false);
     /// ```
     pub fn is_valid_for_network(&self, network: Network) -> bool {
-        let is_legacy = matches!(
-            self.address_type_internal(),
-            Some(AddressType::P2pkh) | Some(AddressType::P2sh)
-        );
-
-        match (self.network(), network) {
-            (a, b) if *a == b => true,
-            (Network::Mainnet, _) | (_, Network::Mainnet) => false,
-            (Network::Regtest, _) | (_, Network::Regtest) if !is_legacy => false,
-            (Network::Testnet, _) | (Network::Regtest, _) | (Network::Devnet, _) => true,
-        }
+        self.0.prefix.is_valid_for_network(network, &self.0.payload)
     }
 
     /// Checks whether network of this address is as required.
@@ -1269,7 +1282,6 @@ impl Address<NetworkUnchecked> {
             Ok(self.assume_checked())
         } else {
             Err(Error::NetworkValidation {
-                found: *self.network(),
                 required,
                 address: self,
             })
@@ -1284,8 +1296,7 @@ impl Address<NetworkUnchecked> {
     /// on [`Address`].
     #[inline]
     pub fn assume_checked(self) -> Address {
-        let (network, payload) = self.into_parts();
-        Address::new(network, payload)
+        Address(self.0, PhantomData)
     }
 
     /// Returns the payload as a vector.
@@ -1297,7 +1308,7 @@ impl Address<NetworkUnchecked> {
 // For NetworkUnchecked , it compare Addresses and if network and payload matches then return true.
 impl PartialEq<Address<NetworkUnchecked>> for Address {
     fn eq(&self, other: &Address<NetworkUnchecked>) -> bool {
-        self.network() == other.network() && self.payload() == other.payload()
+        self.0.prefix == other.0.prefix && self.payload() == other.payload()
     }
 }
 
@@ -1478,8 +1489,13 @@ mod tests {
             "string round-trip failed for {}",
             addr,
         );
+        let network = match addr.0.prefix {
+            AddressPrefix::Mainnet => Network::Mainnet,
+            AddressPrefix::Testnet => Network::Testnet,
+            AddressPrefix::RegtestBech32 => Network::Regtest,
+        };
         assert_eq!(
-            Address::from_script(&addr.script_pubkey(), *addr.network()).as_ref(),
+            Address::from_script(&addr.script_pubkey(), network).as_ref(),
             Ok(addr),
             "script round-trip failed for {}",
             addr,

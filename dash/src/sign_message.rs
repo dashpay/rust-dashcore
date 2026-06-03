@@ -39,7 +39,7 @@ mod message_signing {
     use secp256k1;
     use secp256k1::ecdsa::{RecoverableSignature, RecoveryId};
 
-    use crate::address::{Address, AddressType};
+    use crate::address::{Address, AddressType, Payload};
     use crate::crypto::key::PublicKey;
     #[cfg(feature = "base64")]
     use crate::prelude::*;
@@ -172,7 +172,7 @@ mod message_signing {
             match address.address_type() {
                 Some(AddressType::P2pkh) => {
                     let pubkey = self.recover_pubkey(secp_ctx, msg_hash)?;
-                    Ok(*address == Address::p2pkh(&pubkey, *address.network()))
+                    Ok(*address.payload() == Payload::p2pkh(&pubkey))
                 }
                 Some(address_type) => {
                     Err(MessageSignatureError::UnsupportedAddressType(address_type))

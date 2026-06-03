@@ -688,7 +688,7 @@ pub unsafe extern "C" fn address_to_pubkey_hash(
 
     match address_str.parse::<dashcore::Address<_>>() {
         Ok(addr) => {
-            if *addr.network() != expected_network {
+            if !addr.is_valid_for_network(expected_network) {
                 return -1;
             }
 
