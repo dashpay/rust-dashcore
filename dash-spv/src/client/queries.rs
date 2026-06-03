@@ -75,7 +75,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
                     height,
                     hex::encode(quorum_hash)
                 );
-                tracing::warn!(message);
+                tracing::warn!("{}", message);
                 Err(SpvError::QuorumLookupError(message))
             }
         }
