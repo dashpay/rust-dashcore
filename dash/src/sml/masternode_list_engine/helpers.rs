@@ -94,11 +94,11 @@ mod tests {
     use hashes::Hash;
 
     use super::*;
+    use crate::BlockHash;
     use crate::bls_sig_utils::{BLSPublicKey, BLSSignature};
     use crate::hash_types::QuorumVVecHash;
     use crate::sml::quorum_validation_error::QuorumValidationError;
     use crate::transaction::special_transaction::quorum_commitment::QuorumEntry;
-    use crate::{BlockHash, QuorumHash};
 
     const PLATFORM_TYPE: LLMQType = LLMQType::LlmqtypeDevnetPlatform;
 
