@@ -1,10 +1,11 @@
 use std::io;
 use std::io::{Read, Write};
+use std::mem;
 
 #[cfg(feature = "bincode")]
 use bincode::{Decode, Encode};
 
-use crate::consensus::encode::{Error, VarInt};
+use crate::consensus::encode::{Error, MAX_VEC_SIZE, VarInt};
 use crate::consensus::{Decodable, Encodable};
 
 const EXTNETINFO_CURRENT_VERSION: u8 = 1;
@@ -229,11 +230,14 @@ impl ExtNetInfo {
             });
         }
         let n_purposes = VarInt::consensus_decode(reader)?.0;
-        let mut purposes = Vec::with_capacity(n_purposes as usize);
+        // Cap speculative allocation so a malicious count cannot trigger an unbounded reserve.
+        let max_purposes = MAX_VEC_SIZE / 4 / mem::size_of::<(NetInfoPurpose, Vec<NetInfoEntry>)>();
+        let mut purposes = Vec::with_capacity(core::cmp::min(n_purposes as usize, max_purposes));
         for _ in 0..n_purposes {
             let purpose = NetInfoPurpose::from_u8(Decodable::consensus_decode(reader)?)?;
             let n_entries = VarInt::consensus_decode(reader)?.0;
-            let mut entries = Vec::with_capacity(n_entries as usize);
+            let max_entries = MAX_VEC_SIZE / 4 / mem::size_of::<NetInfoEntry>();
+            let mut entries = Vec::with_capacity(core::cmp::min(n_entries as usize, max_entries));
             for _ in 0..n_entries {
                 entries.push(NetInfoEntry::consensus_decode_ext(reader)?);
             }
