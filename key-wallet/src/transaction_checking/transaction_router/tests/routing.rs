@@ -14,7 +14,7 @@ use crate::wallet::initialization::WalletAccountCreationOptions;
 use crate::wallet::{ManagedWalletInfo, Wallet};
 use crate::Network;
 use dashcore::blockdata::transaction::Transaction;
-use dashcore::{ScriptBuf, TxOut};
+use dashcore::TxOut;
 
 #[test]
 fn test_standard_transaction_routing() {
@@ -23,6 +23,10 @@ fn test_standard_transaction_routing() {
 
     assert!(accounts.contains(&AccountTypeToCheck::StandardBIP44));
     assert!(accounts.contains(&AccountTypeToCheck::StandardBIP32));
+    // A standard-shaped tx can still spend or fund a CoinJoin UTXO (small denomination spends
+    // classify as Standard), so the CoinJoin account must be checked too. Discovery is
+    // membership-based, like Dash Core's `IsMine`, not gated on the tx shape.
+    assert!(accounts.contains(&AccountTypeToCheck::CoinJoin));
 }
 
 #[tokio::test]
@@ -170,71 +174,57 @@ async fn test_transaction_routing_to_coinjoin_account() {
         .expect("Expected CoinJoin account at index 0 to exist");
     let xpub = account.account_xpub;
 
-    let managed_account = managed_wallet_info
-        .first_coinjoin_managed_account_mut()
-        .expect("Failed to get first CoinJoin managed account");
-
-    // Get an address from the CoinJoin account
-    // Note: CoinJoin accounts may have special address generation logic
-    // This might fail if next_receive_address is not supported for CoinJoin accounts
-    let address = match managed_account.get_next_address_index() {
-        Some(_) => {
-            // For CoinJoin accounts, we might need different address generation
-            // Let's try to get an address from the pool directly
-            if let ManagedAccountType::CoinJoin {
-                addresses,
-                ..
-            } = managed_account.managed_account_type_mut()
-            {
-                addresses.next_unused(&KeySource::Public(xpub), true).unwrap_or_else(|_| {
-                    // If that fails, generate a dummy address for testing
-                    dashcore::Address::p2pkh(
-                        &dashcore::PublicKey::from_slice(&[0x02; 33])
-                            .expect("Failed to create public key from bytes"),
-                        Network::Testnet,
-                    )
-                })
-            } else {
-                panic!("Expected CoinJoin account type");
-            }
-        }
-        None => {
-            // Generate a dummy address for testing
-            dashcore::Address::p2pkh(
-                &dashcore::PublicKey::from_slice(&[0x02; 33])
-                    .expect("Failed to create public key from bytes"),
-                Network::Testnet,
-            )
-        }
+    // Derive a real address owned by the CoinJoin account so ownership is genuine.
+    let address = {
+        let managed_account = managed_wallet_info
+            .first_coinjoin_managed_account_mut()
+            .expect("Failed to get first CoinJoin managed account");
+        let ManagedAccountType::CoinJoin {
+            addresses,
+            ..
+        } = managed_account.managed_account_type_mut()
+        else {
+            panic!("Expected CoinJoin account type");
+        };
+        addresses
+            .next_unused(&KeySource::Public(xpub), true)
+            .expect("Failed to derive CoinJoin address")
     };
 
-    // Create a CoinJoin-like transaction (multiple inputs/outputs with same denominations)
+    // A small 2-in/2-out CoinJoin denomination spend classifies as `Standard` (the CoinJoin
+    // heuristic needs >= 3 inputs and outputs), yet one output pays our CoinJoin address. Routing
+    // must still attribute it to the CoinJoin account because discovery is membership-based.
     let addr = test_addr();
-    let mut tx = Transaction::dummy(&addr, 0..1, &[100_001]);
-
-    // Add multiple outputs with CoinJoin denominations
+    let mut tx = Transaction::dummy(&addr, 0..2, &[100_001]);
+    tx.output.clear();
     tx.output.push(TxOut {
-        value: 100_001, // 0.001 DASH + per-round fee (standard CoinJoin denomination)
+        value: 100_001, // 0.001 DASH + per-round fee, paid to our CoinJoin address
         script_pubkey: address.script_pubkey(),
     });
     tx.output.push(TxOut {
-        value: 100_001, // Same denomination for other participants
-        script_pubkey: ScriptBuf::new(),
+        value: 100_001, // counterparty output, not ours
+        script_pubkey: test_addr().script_pubkey(),
     });
-    tx.output.push(TxOut {
-        value: 100_001,
-        script_pubkey: ScriptBuf::new(),
-    });
+
+    assert_eq!(
+        TransactionRouter::classify_transaction(&tx),
+        TransactionType::Standard,
+        "2-in/2-out denomination spend should classify as Standard"
+    );
 
     let context = TransactionContext::InBlock(test_block_info(100000));
 
     let result =
         managed_wallet_info.check_core_transaction(&tx, context, &mut wallet, true, true).await;
 
-    // This test may fail if CoinJoin detection is not properly implemented
-    println!(
-        "CoinJoin transaction result: is_relevant={}, received={}",
-        result.is_relevant, result.total_received
+    assert!(result.is_relevant, "CoinJoin spend paying our CoinJoin address should be relevant");
+
+    let coinjoin_account = managed_wallet_info
+        .first_coinjoin_managed_account()
+        .expect("CoinJoin managed account should exist");
+    assert!(
+        coinjoin_account.transactions().contains_key(&tx.txid()),
+        "tx should be attributed to the CoinJoin account"
     );
 }
 
@@ -428,8 +418,13 @@ fn test_coinjoin_transaction_routing() {
     let tx_type = TransactionType::CoinJoin;
     let accounts = TransactionRouter::get_relevant_account_types(&tx_type);
 
-    assert_eq!(accounts.len(), 1);
-    assert_eq!(accounts[0], AccountTypeToCheck::CoinJoin);
+    // A CoinJoin tx checks every fund-bearing account, since it can also touch standard funds
+    // (collateral, funding/change). Discovery is membership-based, not gated on the tx shape.
+    assert!(accounts.contains(&AccountTypeToCheck::CoinJoin));
+    assert!(accounts.contains(&AccountTypeToCheck::StandardBIP44));
+    assert!(accounts.contains(&AccountTypeToCheck::StandardBIP32));
+    assert!(accounts.contains(&AccountTypeToCheck::DashpayReceivingFunds));
+    assert!(accounts.contains(&AccountTypeToCheck::DashpayExternalAccount));
 }
 
 #[test]

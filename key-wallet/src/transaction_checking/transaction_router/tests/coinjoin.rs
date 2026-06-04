@@ -26,9 +26,15 @@ fn test_coinjoin_mixing_round() {
     let tx_type = TransactionRouter::classify_transaction(&tx);
     assert_eq!(tx_type, TransactionType::CoinJoin);
 
+    // The CoinJoin label does not narrow discovery: ownership is membership-based, so a CoinJoin
+    // tx checks every fund-bearing account (it commonly touches standard funds for collateral,
+    // funding, and change too).
     let accounts = TransactionRouter::get_relevant_account_types(&tx_type);
-    assert_eq!(accounts.len(), 1);
-    assert_eq!(accounts[0], AccountTypeToCheck::CoinJoin);
+    assert!(accounts.contains(&AccountTypeToCheck::CoinJoin));
+    assert!(accounts.contains(&AccountTypeToCheck::StandardBIP44));
+    assert!(accounts.contains(&AccountTypeToCheck::StandardBIP32));
+    assert!(accounts.contains(&AccountTypeToCheck::DashpayReceivingFunds));
+    assert!(accounts.contains(&AccountTypeToCheck::DashpayExternalAccount));
 }
 
 #[test]
@@ -54,7 +60,8 @@ fn test_coinjoin_with_multiple_denominations() {
     assert_eq!(tx_type, TransactionType::CoinJoin);
 
     let accounts = TransactionRouter::get_relevant_account_types(&tx_type);
-    assert_eq!(accounts[0], AccountTypeToCheck::CoinJoin);
+    assert!(accounts.contains(&AccountTypeToCheck::CoinJoin));
+    assert!(accounts.contains(&AccountTypeToCheck::StandardBIP44));
 }
 
 #[test]

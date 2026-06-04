@@ -397,9 +397,11 @@ mod tests {
             let result =
                 managed_wallet.check_core_transaction(&tx, context, &mut wallet, true, true).await;
 
-            // Since this is not a coinjoin looking transaction, we should not pick up on it.
-            assert!(!result.is_relevant);
-            assert_eq!(result.total_received, 0);
+            // The tx does not look like CoinJoin (it classifies as Standard), but routing checks
+            // every fund-bearing account, so a payment to our CoinJoin address is still picked up.
+            // Discovery is membership-based, like Dash Core's `IsMine`, not gated on the tx shape.
+            assert!(result.is_relevant);
+            assert_eq!(result.total_received, 75_000);
         }
     }
 
