@@ -529,12 +529,15 @@ impl ManagedAccountType {
             AccountType::CoinJoin {
                 index,
             } => {
-                let path = account_type
+                // CoinJoin addresses live on the external branch (m/9'/coin'/4'/account'/0/index)
+                // to match Dash Core, so derive through the `External` pool which uses [0, index].
+                let mut path = account_type
                     .derivation_path(network)
                     .unwrap_or_else(|_| DerivationPath::master());
+                path.push(crate::bip32::ChildNumber::from_normal_idx(0)?);
                 let pool = AddressPool::new(
                     path,
-                    AddressPoolType::Absent,
+                    AddressPoolType::External,
                     DEFAULT_COINJOIN_GAP_LIMIT,
                     network,
                     key_source,

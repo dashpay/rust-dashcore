@@ -1655,7 +1655,7 @@ mod tests {
         };
 
         // Build a CoinJoin-like tx: 3+ inputs, 3+ outputs with denomination amounts
-        let denomination = 100_000u64; // 0.001 DASH
+        let denomination = 100_001u64; // 0.001 DASH + per-round fee
         let external_addr = Address::dummy(Network::Testnet, 99);
         let tx = Transaction {
             version: 2,

@@ -33,11 +33,11 @@ fn test_classify_coinjoin_transaction() {
         &addr,
         0..5,
         &[
-            100_000_000, // 1 DASH denomination
-            100_000_000, // 1 DASH denomination
-            10_000_000,  // 0.1 DASH denomination
-            10_000_000,  // 0.1 DASH denomination
-            1_000_000,   // 0.01 DASH denomination
+            100_001_000, // 1 DASH denomination (+ fee)
+            100_001_000, // 1 DASH denomination (+ fee)
+            10_000_100,  // 0.1 DASH denomination (+ fee)
+            10_000_100,  // 0.1 DASH denomination (+ fee)
+            1_000_010,   // 0.01 DASH denomination (+ fee)
         ],
     );
     assert_eq!(TransactionRouter::classify_transaction(&tx), TransactionType::CoinJoin);

@@ -210,19 +210,19 @@ async fn test_transaction_routing_to_coinjoin_account() {
 
     // Create a CoinJoin-like transaction (multiple inputs/outputs with same denominations)
     let addr = test_addr();
-    let mut tx = Transaction::dummy(&addr, 0..1, &[100_000]);
+    let mut tx = Transaction::dummy(&addr, 0..1, &[100_001]);
 
     // Add multiple outputs with CoinJoin denominations
     tx.output.push(TxOut {
-        value: 100_000, // 0.001 DASH (standard CoinJoin denomination)
+        value: 100_001, // 0.001 DASH + per-round fee (standard CoinJoin denomination)
         script_pubkey: address.script_pubkey(),
     });
     tx.output.push(TxOut {
-        value: 100_000, // Same denomination for other participants
+        value: 100_001, // Same denomination for other participants
         script_pubkey: ScriptBuf::new(),
     });
     tx.output.push(TxOut {
-        value: 100_000,
+        value: 100_001,
         script_pubkey: ScriptBuf::new(),
     });
 

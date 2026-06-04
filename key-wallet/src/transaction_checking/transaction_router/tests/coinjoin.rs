@@ -14,12 +14,12 @@ fn test_coinjoin_mixing_round() {
         &addr,
         0..6, // Multiple participants
         &[
-            10_000_000, // 0.1 DASH denomination
-            10_000_000, // 0.1 DASH denomination
-            10_000_000, // 0.1 DASH denomination
-            10_000_000, // 0.1 DASH denomination
-            10_000_000, // 0.1 DASH denomination
-            10_000_000, // 0.1 DASH denomination
+            10_000_100, // 0.1 DASH denomination (+ fee)
+            10_000_100, // 0.1 DASH denomination (+ fee)
+            10_000_100, // 0.1 DASH denomination (+ fee)
+            10_000_100, // 0.1 DASH denomination (+ fee)
+            10_000_100, // 0.1 DASH denomination (+ fee)
+            10_000_100, // 0.1 DASH denomination (+ fee)
         ],
     );
 
@@ -39,14 +39,14 @@ fn test_coinjoin_with_multiple_denominations() {
         &addr,
         0..8,
         &[
-            100_000_000, // 1 DASH
-            100_000_000, // 1 DASH
-            10_000_000,  // 0.1 DASH
-            10_000_000,  // 0.1 DASH
-            1_000_000,   // 0.01 DASH
-            1_000_000,   // 0.01 DASH
-            100_000,     // 0.001 DASH
-            100_000,     // 0.001 DASH
+            100_001_000, // 1 DASH (+ fee)
+            100_001_000, // 1 DASH (+ fee)
+            10_000_100,  // 0.1 DASH (+ fee)
+            10_000_100,  // 0.1 DASH (+ fee)
+            1_000_010,   // 0.01 DASH (+ fee)
+            1_000_010,   // 0.01 DASH (+ fee)
+            100_001,     // 0.001 DASH (+ fee)
+            100_001,     // 0.001 DASH (+ fee)
         ],
     );
 
@@ -65,8 +65,8 @@ fn test_coinjoin_threshold_exactly_half_denominations() {
         &addr,
         0..4,
         &[
-            100_000_000, // Denomination
-            100_000_000, // Denomination
+            100_001_000, // Denomination
+            100_001_000, // Denomination
             50_000_000,  // Non-denomination
             50_000_000,  // Non-denomination
         ],
@@ -85,7 +85,7 @@ fn test_not_coinjoin_just_under_threshold() {
         &addr,
         0..3,
         &[
-            100_000_000, // Denomination
+            100_001_000, // Denomination
             50_000_000,  // Non-denomination
             75_000_000,  // Non-denomination
             25_000_000,  // Non-denomination

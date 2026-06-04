@@ -344,10 +344,13 @@ impl AccountType {
             Self::CoinJoin {
                 index,
             } => {
-                // m/9'/coin_type'/account'
+                // m/9'/coin_type'/4'/account'
                 Ok(DerivationPath::from(vec![
-                    ChildNumber::from_hardened_idx(9).map_err(crate::error::Error::Bip32)?,
+                    ChildNumber::from_hardened_idx(crate::dip9::FEATURE_PURPOSE)
+                        .map_err(crate::error::Error::Bip32)?,
                     ChildNumber::from_hardened_idx(coin_type)
+                        .map_err(crate::error::Error::Bip32)?,
+                    ChildNumber::from_hardened_idx(crate::dip9::FEATURE_PURPOSE_COINJOIN)
                         .map_err(crate::error::Error::Bip32)?,
                     ChildNumber::from_hardened_idx(*index).map_err(crate::error::Error::Bip32)?,
                 ]))

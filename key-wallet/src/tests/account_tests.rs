@@ -4,6 +4,8 @@
 
 use crate::account::{Account, AccountType, StandardAccountType};
 use crate::bip32::{ExtendedPrivKey, ExtendedPubKey};
+use crate::managed_account::address_pool::KeySource;
+use crate::managed_account::managed_account_type::ManagedAccountType;
 use crate::mnemonic::{Language, Mnemonic};
 use crate::Network;
 use secp256k1::Secp256k1;
@@ -128,8 +130,28 @@ fn test_coinjoin_account_creation() {
             _ => panic!("Expected CoinJoin account type"),
         }
 
-        // Verify derivation path for CoinJoin: m/9'/1'/index' (testnet coin type)
-        assert_eq!(derivation_path.to_string(), format!("m/9'/1'/{}'", index));
+        // Verify the CoinJoin account derivation path matches Dash Core:
+        // m/9'/1'/4'/account' (testnet coin type, FEATURE_PURPOSE_COINJOIN = 4').
+        assert_eq!(derivation_path.to_string(), format!("m/9'/1'/4'/{}'", index));
+
+        // The managed CoinJoin pool must derive addresses on the external (`/0`)
+        // branch, so the first address sits at m/9'/1'/4'/account'/0/0.
+        let key_source = KeySource::Public(account.account_xpub);
+        let managed_type =
+            ManagedAccountType::from_account_type(account.account_type, network, &key_source)
+                .unwrap();
+        let pool = match &managed_type {
+            ManagedAccountType::CoinJoin {
+                addresses,
+                ..
+            } => addresses,
+            _ => panic!("Expected CoinJoin managed account type"),
+        };
+        let first_address =
+            pool.address_at_index(0).expect("CoinJoin pool should pre-generate address 0");
+        let first_info =
+            pool.address_info(&first_address).expect("address info for index 0 should exist");
+        assert_eq!(first_info.path.to_string(), format!("m/9'/1'/4'/{}'/0/0", index));
     }
 }
 
@@ -498,7 +520,7 @@ fn test_account_derivation_path_uniqueness() {
             AccountType::CoinJoin {
                 index: 0,
             },
-            "m/9'/1'/0'".to_string(),
+            "m/9'/1'/4'/0'".to_string(),
         ),
         (AccountType::IdentityRegistration, "m/9'/1'/5'/1'".to_string()),
         (
