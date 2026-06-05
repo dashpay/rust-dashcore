@@ -61,7 +61,7 @@ impl MasternodeListEngine {
     ///
     /// The returned `CoreBlockHeight` is the height of the list the entry was resolved from. The
     /// first match is the highest list still holding the quorum, so a hit stops a few cycles back at
-    /// most. The walk is floored at [`QUORUM_WALK_BACK_ACTIVE_WINDOWS`] active windows below `height`
+    /// most. The walk is floored at `QUORUM_WALK_BACK_ACTIVE_WINDOWS` active windows below `height`
     /// (derived from the type's DKG interval and active quorum count): a legitimately referenced
     /// signing quorum cannot be older than that, so flooring it bounds a miss to a fixed span of
     /// lists rather than scanning every list the engine has accumulated.
