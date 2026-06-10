@@ -190,6 +190,30 @@ impl Mnemonic {
     pub fn validate(phrase: &str, language: Language) -> bool {
         bip39_crate::Mnemonic::parse_in(language.into(), phrase).is_ok()
     }
+
+    /// Normalize a phrase for lenient validation / wordlist-membership input:
+    /// NFKD + lowercase + collapse every whitespace run to a single ASCII
+    /// space (ends trimmed). This is **input tolerance** for user-typed
+    /// phrases, NOT BIP39 seed normalization — [`Self::to_seed`] performs the
+    /// BIP39 (NFKD-only) normalization required for seed derivation.
+    pub fn normalize_phrase(input: &str) -> String {
+        use unicode_normalization::UnicodeNormalization;
+        input
+            .nfkd()
+            .collect::<String>()
+            .to_lowercase()
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+
+    /// Returns `true` if `word` is an exact member of `language`'s BIP39
+    /// wordlist. Membership is exact (no normalization); pre-normalize the
+    /// input via [`Self::normalize_phrase`] for case/accent tolerance.
+    pub fn is_word_in_language(word: &str, language: Language) -> bool {
+        let lang: bip39_crate::Language = language.into();
+        lang.word_list().contains(&word)
+    }
 }
 
 impl FromStr for Mnemonic {
@@ -567,5 +591,44 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn test_normalize_phrase() {
+        assert_eq!(
+            Mnemonic::normalize_phrase("  ABANDON\tabout \n legal  "),
+            "abandon about legal"
+        );
+        assert_eq!(Mnemonic::normalize_phrase(""), "");
+        assert_eq!(Mnemonic::normalize_phrase("   "), "");
+        // Idempotent.
+        let once = Mnemonic::normalize_phrase("  ABANDON\tAbout ");
+        assert_eq!(Mnemonic::normalize_phrase(&once), once);
+    }
+
+    #[test]
+    fn test_normalize_phrase_unicode_forms_converge() {
+        use unicode_normalization::UnicodeNormalization;
+        // NFC and NFD of the same accented text both normalize (NFKD) identically.
+        let nfc = "café au lait";
+        let nfd: String = nfc.nfd().collect();
+        assert_ne!(nfc, nfd.as_str());
+        assert_eq!(Mnemonic::normalize_phrase(nfc), Mnemonic::normalize_phrase(&nfd));
+    }
+
+    #[test]
+    fn test_is_word_in_language() {
+        assert!(Mnemonic::is_word_in_language("abandon", Language::English));
+        assert!(!Mnemonic::is_word_in_language("notaword", Language::English));
+        // A Japanese wordlist entry is valid in Japanese, not in English.
+        let jp = bip39_crate::Language::Japanese.word_list()[0];
+        assert!(Mnemonic::is_word_in_language(jp, Language::Japanese));
+        assert!(!Mnemonic::is_word_in_language(jp, Language::English));
+        // Exact membership: raw uppercase fails until normalized.
+        assert!(!Mnemonic::is_word_in_language("ABANDON", Language::English));
+        assert!(Mnemonic::is_word_in_language(
+            &Mnemonic::normalize_phrase("ABANDON"),
+            Language::English
+        ));
     }
 }
