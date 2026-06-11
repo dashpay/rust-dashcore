@@ -665,7 +665,11 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
             self.progress.add_matched(block_to_wallets.len() as u32);
         }
         for (key, wallets) in block_to_wallets {
-            match self.tracker.track(&key, batch_start, wallets) {
+            // Matches here are driven by scripts that did not exist when the
+            // block was first processed, so a processed record must not
+            // suppress the re-download: the block has to be re-applied
+            // against the extended pools.
+            match self.tracker.track_for_new_scripts(&key, batch_start, wallets) {
                 BlockTrackResult::NewlyTracked {
                     wallets,
                 } => {
@@ -679,6 +683,7 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
                     // pipeline's pending wallet set via a fresh BlocksNeeded.
                     blocks_needed.insert(key, wallets);
                 }
+                // Never returned by track_for_new_scripts.
                 BlockTrackResult::AlreadyProcessed => {}
             }
         }
@@ -930,7 +935,7 @@ mod tests {
     };
     use crate::sync::{ManagerIdentifier, SyncManagerProgress};
     use dashcore::bip158::BlockFilter;
-    use dashcore::Header;
+    use dashcore::{Address, Header};
     use dashcore::{Block, Network, Transaction};
     use dashcore_hashes::Hash;
     use key_wallet_manager::test_utils::{
@@ -1339,6 +1344,49 @@ mod tests {
         let attr_b = blocks.get(&key_b).expect("entry for wallet_b's match");
         assert!(attr_b.contains(&wallet_b));
         assert!(!attr_b.contains(&wallet_a));
+    }
+
+    /// A block that was already processed for a wallet is re-queued by
+    /// `rescan_batch` when newly derived scripts match it: the prior
+    /// processing predates those scripts, so the block must be re-applied
+    /// against the extended pools. Plain scans keep skipping processed
+    /// blocks.
+    #[tokio::test]
+    async fn test_rescan_batch_reprocesses_already_processed_block() {
+        let address = Address::dummy(Network::Regtest, 33);
+        let mut manager = create_test_manager().await;
+        manager.set_state(SyncState::Syncing);
+
+        let (key, filter) = filter_for_address(20, &address);
+        let mut filters: HashMap<FilterMatchKey, BlockFilter> = HashMap::new();
+        filters.insert(key.clone(), filter);
+        let mut batch = FiltersBatch::new(0, 99, filters);
+        batch.mark_verified();
+        manager.active_batches.insert(0, batch);
+
+        // The block was downloaded and processed for the wallet before the
+        // rescan script existed.
+        manager.tracker.record_processed(20, *key.hash(), &BTreeSet::from([MOCK_WALLET_ID]));
+
+        let mut new_scripts: HashMap<WalletId, HashSet<ScriptBuf>> = HashMap::new();
+        new_scripts.insert(MOCK_WALLET_ID, HashSet::from([address.script_pubkey()]));
+
+        let events = manager.rescan_batch(0, &new_scripts).await.unwrap();
+
+        let blocks = events
+            .iter()
+            .find_map(|e| match e {
+                SyncEvent::BlocksNeeded {
+                    blocks,
+                } => Some(blocks),
+                _ => None,
+            })
+            .expect("BlocksNeeded event for the re-queued block");
+        assert!(blocks.get(&key).expect("re-queued block entry").contains(&MOCK_WALLET_ID));
+
+        // The re-queued block is accounted exactly once so the batch cannot
+        // commit before its re-processing completes.
+        assert_eq!(manager.active_batches.get(&0).unwrap().pending_blocks(), 1);
     }
 
     /// `rescan_batch` honours each wallet's own `synced_height`: a new

@@ -92,6 +92,28 @@ impl BlockMatchTracker {
         }
     }
 
+    /// Like [`Self::track`], but for matches driven by newly derived
+    /// scripts: the prior processing of this block predates those scripts,
+    /// so processed records do not cover them and the block must be
+    /// re-applied to the full candidate set. Never returns
+    /// `AlreadyProcessed`.
+    pub(super) fn track_for_new_scripts(
+        &mut self,
+        key: &FilterMatchKey,
+        batch_start: u32,
+        candidate_wallets: BTreeSet<WalletId>,
+    ) -> BlockTrackResult {
+        if self.blocks_remaining.contains_key(key.hash()) {
+            return BlockTrackResult::InFlight {
+                wallets: candidate_wallets,
+            };
+        }
+        self.blocks_remaining.insert(*key.hash(), (key.height(), batch_start));
+        BlockTrackResult::NewlyTracked {
+            wallets: candidate_wallets,
+        }
+    }
+
     /// Record that `wallets` have had the block at `(height, hash)` applied
     /// to their state. Idempotent: existing entries merge, never shrink.
     pub(super) fn record_processed(
@@ -209,6 +231,23 @@ mod tests {
         assert_eq!(
             tracker.track(&key, 5000, BTreeSet::from([wallet_a, wallet_b])),
             BlockTrackResult::AlreadyProcessed
+        );
+
+        // A match on newly derived scripts re-queues the fully-processed
+        // block anyway: the prior processing predates those scripts.
+        assert_eq!(
+            tracker.track_for_new_scripts(&key, 5000, BTreeSet::from([wallet_a])),
+            BlockTrackResult::NewlyTracked {
+                wallets: BTreeSet::from([wallet_a])
+            }
+        );
+        // While re-queued the block reports InFlight, preserving the
+        // one-increment-one-decrement pending accounting.
+        assert_eq!(
+            tracker.track_for_new_scripts(&key, 5000, BTreeSet::from([wallet_a])),
+            BlockTrackResult::InFlight {
+                wallets: BTreeSet::from([wallet_a])
+            }
         );
     }
 
