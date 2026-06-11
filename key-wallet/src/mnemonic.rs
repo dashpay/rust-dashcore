@@ -381,6 +381,37 @@ mod tests {
 
     // ✓ Test multiple languages (basic test that languages are supported)
     #[test]
+    fn test_validate_real_phrase_each_language() {
+        // A real 12-word phrase in each bundled language validates in that
+        // language. Closes the gap where validate() was exercised only for
+        // English (test_mnemonic_validation) and Portuguese
+        // (test_portuguese_mnemonic); the other languages were only built via
+        // from_entropy in test_multiple_languages, never validate()'d.
+        let entropy = Vec::from_hex("00000000000000000000000000000000").unwrap();
+        for language in [
+            Language::French,
+            Language::Spanish,
+            Language::Italian,
+            Language::Japanese,
+            Language::Korean,
+            Language::Czech,
+            Language::ChineseSimplified,
+            Language::ChineseTraditional,
+        ] {
+            let phrase = Mnemonic::from_entropy(&entropy, language).unwrap().phrase();
+            assert!(
+                Mnemonic::validate(&phrase, language),
+                "{language:?} phrase should validate in its own language"
+            );
+        }
+
+        // Cross-language negative: a French phrase is not valid as Japanese
+        // (disjoint wordlists).
+        let french = Mnemonic::from_entropy(&entropy, Language::French).unwrap().phrase();
+        assert!(!Mnemonic::validate(&french, Language::Japanese));
+    }
+
+    #[test]
     fn test_multiple_languages() {
         // English
         let phrase_en = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
