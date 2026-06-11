@@ -6,7 +6,7 @@ use dashcore::{Address, Amount, BlockHash, Transaction, Txid};
 use dashcore_rpc::json as rpc_json;
 use dashcore_rpc::{Auth, Client, RpcApi};
 use serde::Deserialize;
-use serde_json::Value;
+use serde_json::{Map, Value};
 use std::collections::HashMap;
 use std::fs;
 use std::net::SocketAddr;
@@ -313,6 +313,22 @@ impl DashCoreNode {
             .send_to_address(address, amount, None, None, None, None, None, None, None, None)
             .expect("failed to send to address");
         tracing::info!("Sent {} to {}, txid: {}", amount, address, txid);
+        txid
+    }
+
+    /// Send DASH to many addresses in a single transaction from the primary
+    /// wallet, so one transaction carries one output per `(address, amount)`
+    /// pair.
+    pub fn send_many(&self, payments: &[(Address, Amount)]) -> Txid {
+        let client = self.rpc_client();
+        let amounts: Map<String, Value> = payments
+            .iter()
+            .map(|(address, amount)| (address.to_string(), serde_json::json!(amount.to_dash())))
+            .collect();
+        let txid: Txid = client
+            .call("sendmany", &[serde_json::json!(""), Value::Object(amounts)])
+            .expect("failed to sendmany");
+        tracing::info!("Sent {} outputs in one transaction, txid: {}", payments.len(), txid);
         txid
     }
 

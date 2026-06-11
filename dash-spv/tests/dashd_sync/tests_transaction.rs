@@ -5,12 +5,18 @@ use std::time::Duration;
 use tokio::sync::RwLock;
 
 use super::helpers::{
-    wait_for_mempool_tx, wait_for_sync, wait_for_wallet_synced, EMPTY_MNEMONIC, SECONDARY_MNEMONIC,
+    count_wallet_transactions, get_spendable_balance, wait_for_mempool_tx, wait_for_sync,
+    wait_for_wallet_synced, EMPTY_MNEMONIC, SECONDARY_MNEMONIC,
 };
 use super::setup::{create_and_start_client, TestContext};
 use dash_spv::test_utils::{create_test_wallet, TestChain};
 use dashcore::address::NetworkUnchecked;
+use dashcore::secp256k1::Secp256k1;
+use dashcore::PublicKey;
 use key_wallet::account::ManagedAccountTrait;
+use key_wallet::bip32::{ChildNumber, ExtendedPrivKey};
+use key_wallet::gap_limit::DEFAULT_EXTERNAL_GAP_LIMIT;
+use key_wallet::mnemonic::{Language, Mnemonic};
 use key_wallet::wallet::managed_wallet_info::transaction_builder::{
     BuilderError, TransactionBuilder,
 };
@@ -246,6 +252,79 @@ async fn test_multiple_transactions_across_blocks() {
 }
 
 const MEMPOOL_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Derive the first `count` BIP44 external addresses of `mnemonic` directly,
+/// independently of any wallet state, so a test can pay addresses far beyond
+/// the pre-generated pool window.
+fn derive_external_addresses(mnemonic: &str, count: u32) -> Vec<Address> {
+    let mnemonic = Mnemonic::from_phrase(mnemonic, Language::English).expect("mnemonic");
+    let seed = mnemonic.to_seed("");
+    let secp = Secp256k1::new();
+    let master = ExtendedPrivKey::new_master(Network::Regtest, &seed).expect("master key");
+    let chain = [
+        ChildNumber::from_hardened_idx(44).expect("purpose"),
+        ChildNumber::from_hardened_idx(1).expect("coin type"),
+        ChildNumber::from_hardened_idx(0).expect("account"),
+        ChildNumber::from_normal_idx(0).expect("external branch"),
+    ];
+    (0..count)
+        .map(|index| {
+            let mut path = chain.to_vec();
+            path.push(ChildNumber::from_normal_idx(index).expect("index"));
+            let xprv = master.derive_priv(&secp, &path).expect("derive");
+            let pk = PublicKey::new(xprv.private_key.public_key(&secp));
+            Address::p2pkh(&pk, Network::Regtest)
+        })
+        .collect()
+}
+
+/// A single transaction paying a run of consecutive fresh addresses reaching
+/// far beyond the gap window (the shape of a CreateDenominations burst),
+/// mined before the client ever starts. A sync from scratch must recognize
+/// every output: the block is scanned to fixpoint against the extending
+/// pool, so outputs past the initial look-ahead are still credited.
+#[tokio::test]
+async fn test_burst_payment_beyond_gap_window_synced_from_scratch() {
+    let Some(ctx) = TestContext::new(TestChain::Minimal).await else {
+        return;
+    };
+    if !ctx.dashd.supports_mining {
+        eprintln!("Skipping test (dashd RPC miner not available)");
+        return;
+    }
+
+    let burst = DEFAULT_EXTERNAL_GAP_LIMIT + 21;
+    let addresses = derive_external_addresses(EMPTY_MNEMONIC, burst);
+    let per_output = Amount::from_sat(100_000);
+    let payments: Vec<(Address, Amount)> =
+        addresses.into_iter().map(|address| (address, per_output)).collect();
+    let burst_txid = ctx.dashd.node.send_many(&payments);
+
+    let miner_address = ctx.dashd.node.get_new_address_from_wallet("default");
+    ctx.dashd.node.generate_blocks(1, &miner_address);
+    let funded_height = ctx.dashd.initial_height + 1;
+
+    // Only now create the wallet and start the client, so discovery has to
+    // climb the whole burst during the historical scan.
+    let (wallet, wallet_id) = create_test_wallet(EMPTY_MNEMONIC, Network::Regtest);
+    let mut client_handle = create_and_start_client(&ctx.client_config, Arc::clone(&wallet)).await;
+    wait_for_sync(&mut client_handle.progress_receiver, funded_height).await;
+    wait_for_wallet_synced(&wallet, &wallet_id, funded_height).await;
+
+    assert_eq!(
+        count_wallet_transactions(&wallet, &wallet_id).await,
+        1,
+        "burst tx {} must be discovered",
+        burst_txid
+    );
+    assert_eq!(
+        get_spendable_balance(&wallet, &wallet_id).await,
+        burst as u64 * per_output.to_sat(),
+        "every burst output must be credited, not only those inside the initial gap window"
+    );
+
+    client_handle.stop().await;
+}
 
 async fn reserve_first_address(mnemonic: &str) -> Address {
     let (temp_mgr, temp_id) = create_test_wallet(mnemonic, Network::Regtest);
