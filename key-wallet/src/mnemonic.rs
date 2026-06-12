@@ -53,9 +53,10 @@ impl Language {
     ///
     /// Low-level primitive for callers that need direct wordlist access —
     /// e.g. building membership sets for recover-flow word validation.
-    /// Membership against these lists is exact (no normalization);
-    /// pre-normalize user input via [`Mnemonic::normalize_phrase`] for
-    /// case/accent tolerance.
+    /// Membership against these lists is exact (no normalization).
+    /// [`Mnemonic::normalize_phrase`] helps with case folding, whitespace
+    /// normalization, and NFC/NFD equivalence, but it does not remove
+    /// diacritics — so a caller checking "cafe" against "café" still misses.
     pub fn word_list(&self) -> &'static [&'static str] {
         bip39_crate::Language::from(*self).word_list()
     }
@@ -289,8 +290,22 @@ impl Mnemonic {
             .filter(|&c| c.is_alphabetic() || is_combining_mark(c) || c.is_whitespace())
             .collect();
 
-        // (2) newlines -> spaces
-        s = s.replace('\n', " ");
+        // (2) canonicalize every Unicode whitespace to an ASCII space — not
+        //     just '\n'. Step (1) keeps all whitespace, and the valid-phrase
+        //     early return below returns this string verbatim, so a pasted
+        //     CRLF/tab-delimited phrase would otherwise come back with '\r' /
+        //     '\t' still in it. (Seed-equivalent: BIP-39 NFKD maps U+3000 and
+        //     friends to U+0020 anyway.)
+        s = s
+            .chars()
+            .map(|c| {
+                if c.is_whitespace() {
+                    ' '
+                } else {
+                    c
+                }
+            })
+            .collect();
 
         // (3) collapse "  " -> " "
         while s.contains("  ") {
@@ -847,6 +862,22 @@ mod tests {
         assert!(!cleaned.contains('!'));
         // valid branch returns a string that normalizes to the valid phrase
         assert!(phrase_is_valid_any(&Mnemonic::normalize_phrase(&cleaned)));
+    }
+
+    #[test]
+    fn cleanup_canonicalizes_crlf_and_tabs() {
+        // A valid English phrase pasted with CRLF / tab separators must come
+        // back as a single-space phrase — control whitespace must not survive
+        // into the returned string via the valid-phrase early return.
+        let phrase = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
+        let words: Vec<&str> = phrase.split(' ').collect();
+        for dirty in [words.join("\r\n"), words.join("\t"), words.join(" \t ")] {
+            let cleaned = Mnemonic::cleanup_phrase(&dirty);
+            assert!(!cleaned.contains('\r'), "no CR survives: {cleaned:?}");
+            assert!(!cleaned.contains('\t'), "no tab survives: {cleaned:?}");
+            assert!(!cleaned.contains('\n'), "no LF survives: {cleaned:?}");
+            assert_eq!(cleaned, phrase, "canonicalizes to the single-space phrase");
+        }
     }
 
     #[test]
