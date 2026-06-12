@@ -2067,6 +2067,13 @@ pub struct MasternodeAddresses {
     pub platform_https: Vec<String>,
 }
 
+impl MasternodeAddresses {
+    /// First valid (non-zero, parseable) port from a `"host:port"` array, if any.
+    fn first_valid_port(addrs: &[String]) -> Option<u32> {
+        addrs.iter().filter_map(|a| parse_port(a)).find(|&p| p != 0)
+    }
+}
+
 /// Extracts the trailing `:port` from a `"host:port"` string as a `u32`.
 ///
 /// Uses [`str::rsplit_once`] so it works for IPv4 and unbracketed IPv6 hosts —
@@ -2076,18 +2083,9 @@ fn parse_port(addr: &str) -> Option<u32> {
     addr.rsplit_once(':').and_then(|(_, port)| port.parse().ok())
 }
 
-/// Backfills a legacy port field from the matching `addresses` array.
-///
-/// Keeps a non-zero legacy port as-is; otherwise takes the port of the first entry
-/// in `addrs`. This preserves pre-23 behavior exactly while reading Core 23 entries.
-fn backfill_port(legacy: Option<u32>, addrs: &[String]) -> Option<u32> {
-    legacy.filter(|&p| p != 0).or_else(|| addrs.first().and_then(|a| parse_port(a)))
-}
-
 #[serde_as]
 #[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
-#[serde(from = "DMNStateIntermediate")]
 pub struct DMNState {
     #[serde_as(as = "DisplayFromStr")]
     pub service: SocketAddr,
@@ -2121,85 +2119,29 @@ pub struct DMNState {
     pub addresses: Option<MasternodeAddresses>,
 }
 
-#[serde_as]
-#[derive(Clone, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct DMNStateIntermediate {
-    #[serde_as(as = "DisplayFromStr")]
-    service: SocketAddr,
-    registered_height: u32,
-    #[serde(default, rename = "PoSeRevivedHeight", deserialize_with = "deserialize_u32_opt")]
-    pose_revived_height: Option<u32>,
-    #[serde(default, rename = "PoSeBanHeight", deserialize_with = "deserialize_u32_opt")]
-    pose_ban_height: Option<u32>,
-    revocation_reason: u32,
-    #[serde(deserialize_with = "deserialize_address")]
-    owner_address: [u8; 20],
-    #[serde(deserialize_with = "deserialize_address")]
-    voting_address: [u8; 20],
-    #[serde(deserialize_with = "deserialize_address")]
-    payout_address: [u8; 20],
-    #[serde(with = "hex")]
-    pub_key_operator: Vec<u8>,
-    #[serde(default, deserialize_with = "deserialize_address_optional")]
-    operator_payout_address: Option<[u8; 20]>,
-    #[serde(
-        default,
-        deserialize_with = "deserialize_hex_to_address_optional",
-        rename = "platformNodeID"
-    )]
-    platform_node_id: Option<[u8; 20]>,
-    #[serde(default, rename = "platformP2PPort")]
-    platform_p2p_port: Option<u32>,
-    #[serde(default, rename = "platformHTTPPort")]
-    platform_http_port: Option<u32>,
-    #[serde(default)]
-    addresses: Option<MasternodeAddresses>,
-}
+impl DMNState {
+    /// Resolved platform P2P port.
+    ///
+    /// Prefers the Core 23+ nested `addresses.platform_p2p` port; falls back to the
+    /// deprecated top-level `platformP2PPort`. Read this instead of the raw
+    /// `platform_p2p_port` field, which is `0`/absent on Core 23+ entries.
+    pub fn resolved_platform_p2p_port(&self) -> Option<u32> {
+        self.addresses
+            .as_ref()
+            .and_then(|a| MasternodeAddresses::first_valid_port(&a.platform_p2p))
+            .or(self.platform_p2p_port)
+    }
 
-impl From<DMNStateIntermediate> for DMNState {
-    fn from(value: DMNStateIntermediate) -> Self {
-        let DMNStateIntermediate {
-            service,
-            registered_height,
-            pose_revived_height,
-            pose_ban_height,
-            revocation_reason,
-            owner_address,
-            voting_address,
-            payout_address,
-            pub_key_operator,
-            operator_payout_address,
-            platform_node_id,
-            platform_p2p_port,
-            platform_http_port,
-            addresses,
-        } = value;
-
-        let (platform_p2p_port, platform_http_port) = match &addresses {
-            Some(addr) => (
-                backfill_port(platform_p2p_port, &addr.platform_p2p),
-                backfill_port(platform_http_port, &addr.platform_https),
-            ),
-            None => (platform_p2p_port, platform_http_port),
-        };
-
-        DMNState {
-            service,
-            registered_height,
-            pose_revived_height,
-            pose_ban_height,
-            revocation_reason,
-            owner_address,
-            voting_address,
-            payout_address,
-            pub_key_operator,
-            operator_payout_address,
-            platform_node_id,
-            platform_p2p_port,
-            platform_http_port,
-            addresses,
-        }
+    /// Resolved platform HTTPS port.
+    ///
+    /// Prefers the Core 23+ nested `addresses.platform_https` port; falls back to the
+    /// deprecated top-level `platformHTTPPort`. Read this instead of the raw
+    /// `platform_http_port` field, which is `0`/absent on Core 23+ entries.
+    pub fn resolved_platform_http_port(&self) -> Option<u32> {
+        self.addresses
+            .as_ref()
+            .and_then(|a| MasternodeAddresses::first_valid_port(&a.platform_https))
+            .or(self.platform_http_port)
     }
 }
 
@@ -2247,14 +2189,6 @@ impl TryFrom<DMNStateDiffIntermediate> for DMNStateDiff {
             pub_key_operator,
             addresses,
         } = value;
-
-        let (platform_p2p_port, platform_http_port) = match &addresses {
-            Some(addr) => (
-                backfill_port(platform_p2p_port, &addr.platform_p2p),
-                backfill_port(platform_http_port, &addr.platform_https),
-            ),
-            None => (platform_p2p_port, platform_http_port),
-        };
 
         let owner_address = owner_address
             .map(|address| {
@@ -2319,6 +2253,32 @@ impl TryFrom<DMNStateDiffIntermediate> for DMNStateDiff {
             platform_http_port,
             addresses,
         })
+    }
+}
+
+impl DMNStateDiff {
+    /// Resolved platform P2P port carried by this diff, if any.
+    ///
+    /// Prefers the Core 23+ nested `addresses.platform_p2p` port; falls back to the
+    /// deprecated top-level `platformP2PPort`. Read this instead of the raw
+    /// `platform_p2p_port` field, which is `0`/absent on Core 23+ diffs.
+    pub fn resolved_platform_p2p_port(&self) -> Option<u32> {
+        self.addresses
+            .as_ref()
+            .and_then(|a| MasternodeAddresses::first_valid_port(&a.platform_p2p))
+            .or(self.platform_p2p_port)
+    }
+
+    /// Resolved platform HTTPS port carried by this diff, if any.
+    ///
+    /// Prefers the Core 23+ nested `addresses.platform_https` port; falls back to the
+    /// deprecated top-level `platformHTTPPort`. Read this instead of the raw
+    /// `platform_http_port` field, which is `0`/absent on Core 23+ diffs.
+    pub fn resolved_platform_http_port(&self) -> Option<u32> {
+        self.addresses
+            .as_ref()
+            .and_then(|a| MasternodeAddresses::first_valid_port(&a.platform_https))
+            .or(self.platform_http_port)
     }
 }
 
@@ -2440,6 +2400,7 @@ impl DMNState {
             platform_node_id,
             platform_p2p_port,
             platform_http_port,
+            addresses,
             ..
         } = diff;
         self.pose_revived_height = pose_revived_height;
@@ -2478,6 +2439,10 @@ impl DMNState {
 
         if let Some(platform_http_port) = platform_http_port {
             self.platform_http_port = Some(platform_http_port);
+        }
+
+        if addresses.is_some() {
+            self.addresses = addresses;
         }
     }
 }
@@ -3573,9 +3538,9 @@ mod tests {
     }
 
     #[test]
-    fn dmn_state_core23_addresses_backfills_platform_ports() {
-        // Core 23 simplified entry: platformP2PPort/platformHTTPPort removed,
-        // ports now live in the nested `addresses` object as "host:port" arrays.
+    fn dmn_state_core23_addresses_resolve_platform_ports() {
+        // Core 23 entry: legacy platformP2PPort/platformHTTPPort absent, ports live
+        // in the nested `addresses` object. Raw fields stay None; accessors resolve.
         let json = r#"{
             "service": "192.0.2.1:9999",
             "registeredHeight": 123456,
@@ -3592,12 +3557,14 @@ mod tests {
             }
         }"#;
         let state: DMNState = serde_json::from_str(json).expect("expected to deserialize json");
-        assert_eq!(state.platform_p2p_port, Some(36656), "platform_p2p_port from addresses");
-        assert_eq!(state.platform_http_port, Some(443), "platform_http_port from addresses");
+        assert_eq!(state.platform_p2p_port, None, "raw legacy field deserialized as-is");
+        assert_eq!(state.platform_http_port, None, "raw legacy field deserialized as-is");
+        assert_eq!(state.resolved_platform_p2p_port(), Some(36656), "p2p resolved from addresses");
+        assert_eq!(state.resolved_platform_http_port(), Some(443), "http resolved from addresses");
     }
 
     #[test]
-    fn dmn_state_diff_core23_addresses_backfills_platform_ports() {
+    fn dmn_state_diff_core23_addresses_resolve_platform_ports() {
         // updatedMNs entry carrying only the new `addresses` object.
         let json = r#"{
             "addresses": {
@@ -3606,13 +3573,23 @@ mod tests {
             }
         }"#;
         let diff: DMNStateDiff = serde_json::from_str(json).expect("expected to deserialize json");
-        assert_eq!(diff.platform_p2p_port, Some(36656), "diff platform_p2p_port from addresses");
-        assert_eq!(diff.platform_http_port, Some(443), "diff platform_http_port from addresses");
+        assert_eq!(diff.platform_p2p_port, None, "raw legacy diff field deserialized as-is");
+        assert_eq!(diff.platform_http_port, None, "raw legacy diff field deserialized as-is");
+        assert_eq!(
+            diff.resolved_platform_p2p_port(),
+            Some(36656),
+            "diff p2p resolved from addresses"
+        );
+        assert_eq!(
+            diff.resolved_platform_http_port(),
+            Some(443),
+            "diff http resolved from addresses"
+        );
     }
 
     #[test]
-    fn dmn_state_legacy_platform_ports_preserved() {
-        // Pre-23 entry: legacy top-level keys, no `addresses`. Behavior must not change.
+    fn dmn_state_legacy_platform_ports_resolve_to_legacy() {
+        // Pre-23 entry: legacy top-level keys, no `addresses`. Accessors fall back to legacy.
         let json = r#"{
             "service": "192.0.2.1:9999",
             "registeredHeight": 123456,
@@ -3626,13 +3603,14 @@ mod tests {
             "platformHTTPPort": 443
         }"#;
         let state: DMNState = serde_json::from_str(json).expect("expected to deserialize json");
-        assert_eq!(state.platform_p2p_port, Some(26656), "legacy platform_p2p_port preserved");
-        assert_eq!(state.platform_http_port, Some(443), "legacy platform_http_port preserved");
+        assert!(state.addresses.is_none(), "no addresses object present");
+        assert_eq!(state.resolved_platform_p2p_port(), Some(26656), "p2p resolved from legacy");
+        assert_eq!(state.resolved_platform_http_port(), Some(443), "http resolved from legacy");
     }
 
     #[test]
-    fn dmn_state_zero_legacy_port_yields_to_addresses() {
-        // Transitional entry: legacy port present but zero -> addresses wins.
+    fn dmn_state_zero_legacy_port_resolves_to_addresses() {
+        // Transitional entry: legacy port present but zero -> addresses wins (new-first).
         let json = r#"{
             "service": "192.0.2.1:9999",
             "registeredHeight": 123456,
@@ -3648,7 +3626,30 @@ mod tests {
             }
         }"#;
         let state: DMNState = serde_json::from_str(json).expect("expected to deserialize json");
-        assert_eq!(state.platform_p2p_port, Some(36656), "zero legacy port replaced by addresses");
+        assert_eq!(state.platform_p2p_port, Some(0), "raw legacy zero deserialized as-is");
+        assert_eq!(
+            state.resolved_platform_p2p_port(),
+            Some(36656),
+            "zero legacy yields to addresses"
+        );
+    }
+
+    #[test]
+    fn dmn_state_no_ports_resolve_to_none() {
+        // No addresses and no legacy ports -> accessors return None.
+        let json = r#"{
+            "service": "192.0.2.1:9999",
+            "registeredHeight": 123456,
+            "revocationReason": 0,
+            "ownerAddress": "yPBWCdMRY5PsS3hJzs7csbdWQVRR85yxUz",
+            "votingAddress": "ySM11LUD65Bi4p1gm68XLkdWc65TBKRzvQ",
+            "payoutAddress": "yX4Ve7Q8Y4jscV4LZJD8HVCHKyePzR3MhA",
+            "pubKeyOperator": "8ed3f0c208efbcfc815cbfb94490dc68cf2e29d44dd9f8a91e20e06057aa110d7062c8ab7ccc85a9ff0c88760157f563",
+            "platformNodeID": "f2dbd9b0a1f541a7c44d34a58674d0262f5feca5"
+        }"#;
+        let state: DMNState = serde_json::from_str(json).expect("expected to deserialize json");
+        assert_eq!(state.resolved_platform_p2p_port(), None, "no source -> None");
+        assert_eq!(state.resolved_platform_http_port(), None, "no source -> None");
     }
 
     #[test]
