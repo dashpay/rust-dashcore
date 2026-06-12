@@ -10,6 +10,8 @@ use bincode_derive::{Decode, Encode};
 use bip39 as bip39_crate;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
+use unicode_normalization::char::is_combining_mark;
+use unicode_normalization::UnicodeNormalization;
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
 /// Language for mnemonic generation
@@ -44,6 +46,55 @@ impl From<Language> for bip39_crate::Language {
             Language::Spanish => bip39_crate::Language::Spanish,
         }
     }
+}
+
+impl Language {
+    /// Raw BIP-39 wordlist (2048 words) for this language.
+    ///
+    /// Low-level primitive for callers that need direct wordlist access —
+    /// e.g. building membership sets for recover-flow word validation.
+    /// Membership against these lists is exact (no normalization).
+    /// [`Mnemonic::normalize_phrase`] helps with case folding, whitespace
+    /// normalization, and NFC/NFD equivalence, but it does not remove
+    /// diacritics — so a caller checking "cafe" against "café" still misses.
+    pub fn word_list(&self) -> &'static [&'static str] {
+        bip39_crate::Language::from(*self).word_list()
+    }
+}
+
+/// Ideographic space (U+3000), inserted between CJK words by
+/// [`Mnemonic::cleanup_phrase`].
+const IDEO_SP: &str = "\u{3000}";
+
+/// All wordlist languages key-wallet supports; [`word_in_any_list`] and
+/// [`phrase_is_valid_any`] check their union.
+const ALL_LANGUAGES: [Language; 10] = [
+    Language::English,
+    Language::ChineseSimplified,
+    Language::ChineseTraditional,
+    Language::Czech,
+    Language::French,
+    Language::Italian,
+    Language::Japanese,
+    Language::Korean,
+    Language::Portuguese,
+    Language::Spanish,
+];
+
+/// `true` if `word` is a member of *any* supported language's wordlist.
+/// Exact membership; caller pre-normalizes.
+fn word_in_any_list(word: &str) -> bool {
+    ALL_LANGUAGES.iter().any(|l| l.word_list().contains(&word))
+}
+
+/// `true` if the (already-normalized) phrase decodes (all words present +
+/// valid checksum) in *some* supported language. Per-language loop, never
+/// autodetect. [`Mnemonic::validate`] re-runs NFKD internally (idempotent on
+/// an already-normalized phrase). Note this enforces the BIP-39 ≥12-word
+/// floor; inert here — its only caller is [`Mnemonic::cleanup_phrase`]'s
+/// early-return gate.
+fn phrase_is_valid_any(normalized: &str) -> bool {
+    ALL_LANGUAGES.iter().any(|&l| Mnemonic::validate(normalized, l))
 }
 
 /// BIP39 Mnemonic phrase
@@ -189,6 +240,139 @@ impl Mnemonic {
     /// Validate a mnemonic phrase
     pub fn validate(phrase: &str, language: Language) -> bool {
         bip39_crate::Mnemonic::parse_in(language.into(), phrase).is_ok()
+    }
+
+    /// Normalize a phrase for lenient validation / wordlist-membership input:
+    /// NFKD + lowercase + collapse every whitespace run to a single ASCII
+    /// space (ends trimmed). This is **input tolerance** for user-typed
+    /// phrases, NOT BIP39 seed normalization — [`Self::to_seed`] performs the
+    /// BIP39 (NFKD-only) normalization required for seed derivation.
+    pub fn normalize_phrase(input: &str) -> String {
+        input
+            .nfkd()
+            .collect::<String>()
+            .to_lowercase()
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+
+    /// Minimal cleanup of user-typed recover input for display/editing, plus
+    /// CJK ideographic auto-splitting (parity with DashSync's
+    /// `cleanupPhrase:`): strips characters outside (letter ∪ combining mark
+    /// ∪ whitespace), converts newlines to spaces, collapses double spaces and
+    /// trims leading whitespace; then, if the phrase doesn't already validate
+    /// in some supported language, splits no-space CJK input by wrapping
+    /// wordlist matches in ideographic spaces (U+3000). Returns the cleaned,
+    /// pre-[`Self::normalize_phrase`] string.
+    ///
+    /// Index note: DashSync indexes UTF-16 units (`characterAtIndex:`); we use
+    /// Unicode scalars (`char`). Every BIP-39 CJK word is in the BMP (1 char =
+    /// 1 UTF-16 unit), so the two indexings agree.
+    pub fn cleanup_phrase(phrase: &str) -> String {
+        // (0) Bound pathological input: a real BIP-39 phrase is <= 24 words,
+        //     well under 1 KiB. Past a generous byte cap, skip the superlinear
+        //     CJK scan and return the input verbatim — a long no-space CJK
+        //     paste would otherwise drive large allocations on the caller's
+        //     (typically UI) thread. The UI enforces the real phrase length.
+        const MAX_CLEANUP_BYTES: usize = 4096;
+        if phrase.len() > MAX_CLEANUP_BYTES {
+            return phrase.to_string();
+        }
+
+        // (1) remove chars not in (letter ∪ mark ∪ whitespace). DashSync uses
+        //     `letterCharacterSet` (Unicode L* AND M*) ∪ whitespaceAndNewline,
+        //     inverted. We mirror M* via `is_combining_mark` so NFKD-decomposed
+        //     input keeps its combining marks (e.g. Japanese voiced kana か+゙,
+        //     Latin diacritics) instead of being corrupted.
+        let mut s: String = phrase
+            .chars()
+            .filter(|&c| c.is_alphabetic() || is_combining_mark(c) || c.is_whitespace())
+            .collect();
+
+        // (2) canonicalize every Unicode whitespace to an ASCII space — not
+        //     just '\n'. Step (1) keeps all whitespace, and the valid-phrase
+        //     early return below returns this string verbatim, so a pasted
+        //     CRLF/tab-delimited phrase would otherwise come back with '\r' /
+        //     '\t' still in it. (Seed-equivalent: BIP-39 NFKD maps U+3000 and
+        //     friends to U+0020 anyway.)
+        s = s
+            .chars()
+            .map(|c| {
+                if c.is_whitespace() {
+                    ' '
+                } else {
+                    c
+                }
+            })
+            .collect();
+
+        // (3) collapse "  " -> " "
+        while s.contains("  ") {
+            s = s.replace("  ", " ");
+        }
+
+        // (4) trim leading whitespace only (DashSync deletes index-0 ws in a loop)
+        let mut s = s.trim_start().to_string();
+
+        // (5) normalize + validity check; if valid, return the cleaned (pre-
+        //     normalize) string verbatim — DashSync `return s;`
+        let normalized = Self::normalize_phrase(&s);
+        if phrase_is_valid_any(&normalized) {
+            return s;
+        }
+
+        // (6) CJK auto-split: walk the words of the *normalized* phrase; for
+        //     each word starting at/after U+3000 that isn't already a whole
+        //     valid word, scan substrings (len ≤ 8) and wrap valid matches in
+        //     `s` with U+3000.
+        //
+        //     `s` still holds the caller's original Unicode form (e.g. NFC,
+        //     which iOS Japanese IMEs emit), but the candidates below are
+        //     sliced from `normalized` (NFKD). `String::replace` is exact-byte,
+        //     so an NFKD candidate never matches an NFC `s` and nothing would
+        //     be wrapped — the no-space phrase would come back unsplit. NFKD
+        //     `s` here so the replace can hit. NFKD is the BIP-39 canonical
+        //     form (the wordlist + `to_seed` use it), so emitting it from the
+        //     split path is correct. (DSBIP39Mnemonic has the same
+        //     original-vs-NFKD mismatch; this fixes it.)
+        s = s.nfkd().collect::<String>();
+
+        let dbl_ideo = format!("{IDEO_SP}{IDEO_SP}");
+        for word in normalized.split(' ') {
+            let wchars: Vec<char> = word.chars().collect();
+            if wchars.is_empty() {
+                continue;
+            }
+            if (wchars[0] as u32) < 0x3000 || word_in_any_list(word) {
+                continue;
+            }
+
+            let wlen = wchars.len();
+            let mut i = 0usize;
+            while i < wlen {
+                let mut j = core::cmp::min(8, wlen - i);
+                while j >= 1 {
+                    let candidate: String = wchars[i..i + j].iter().collect();
+                    if word_in_any_list(&candidate) {
+                        let wrapped = format!("{IDEO_SP}{candidate}{IDEO_SP}");
+                        s = s.replace(&candidate, &wrapped);
+                        while s.contains(&dbl_ideo) {
+                            s = s.replace(&dbl_ideo, IDEO_SP);
+                        }
+                        // CFStringTrimWhitespace strips leading/trailing ws,
+                        // incl. U+3000 (which `str::trim` also treats as ws).
+                        s = s.trim().to_string();
+                        i += j - 1; // outer `i += 1` advances past the match
+                        break;
+                    }
+                    j -= 1;
+                }
+                i += 1;
+            }
+        }
+
+        s
     }
 }
 
@@ -356,6 +540,37 @@ mod tests {
     }
 
     // ✓ Test multiple languages (basic test that languages are supported)
+    #[test]
+    fn test_validate_real_phrase_each_language() {
+        // A real 12-word phrase in each bundled language validates in that
+        // language. Closes the gap where validate() was exercised only for
+        // English (test_mnemonic_validation) and Portuguese
+        // (test_portuguese_mnemonic); the other languages were only built via
+        // from_entropy in test_multiple_languages, never validate()'d.
+        let entropy = Vec::from_hex("00000000000000000000000000000000").unwrap();
+        for language in [
+            Language::French,
+            Language::Spanish,
+            Language::Italian,
+            Language::Japanese,
+            Language::Korean,
+            Language::Czech,
+            Language::ChineseSimplified,
+            Language::ChineseTraditional,
+        ] {
+            let phrase = Mnemonic::from_entropy(&entropy, language).unwrap().phrase();
+            assert!(
+                Mnemonic::validate(&phrase, language),
+                "{language:?} phrase should validate in its own language"
+            );
+        }
+
+        // Cross-language negative: a French phrase is not valid as Japanese
+        // (disjoint wordlists).
+        let french = Mnemonic::from_entropy(&entropy, Language::French).unwrap().phrase();
+        assert!(!Mnemonic::validate(&french, Language::Japanese));
+    }
+
     #[test]
     fn test_multiple_languages() {
         // English
@@ -567,5 +782,238 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn test_normalize_phrase() {
+        assert_eq!(
+            Mnemonic::normalize_phrase("  ABANDON\tabout \n legal  "),
+            "abandon about legal"
+        );
+        assert_eq!(Mnemonic::normalize_phrase(""), "");
+        assert_eq!(Mnemonic::normalize_phrase("   "), "");
+        // Idempotent.
+        let once = Mnemonic::normalize_phrase("  ABANDON\tAbout ");
+        assert_eq!(Mnemonic::normalize_phrase(&once), once);
+    }
+
+    #[test]
+    fn test_normalize_phrase_unicode_forms_converge() {
+        use unicode_normalization::UnicodeNormalization;
+        // NFC and NFD of the same accented text both normalize (NFKD) identically.
+        let nfc = "café au lait";
+        let nfd: String = nfc.nfd().collect();
+        assert_ne!(nfc, nfd.as_str());
+        assert_eq!(Mnemonic::normalize_phrase(nfc), Mnemonic::normalize_phrase(&nfd));
+    }
+
+    // --- word_list + cleanup_phrase (recover-flow primitives) ---
+
+    /// First word of a language's all-zero-entropy 12-word phrase — a real
+    /// wordlist entry for that language.
+    fn first_word(lang: Language) -> String {
+        Mnemonic::from_entropy(&[0u8; 16], lang)
+            .unwrap()
+            .phrase()
+            .split(' ')
+            .next()
+            .unwrap()
+            .to_string()
+    }
+
+    fn word_in_english(w: &str) -> bool {
+        Language::English.word_list().contains(&w)
+    }
+
+    #[test]
+    fn word_list_has_expected_shape() {
+        // Every supported language exposes the full 2048-word BIP-39 list.
+        for lang in ALL_LANGUAGES {
+            assert_eq!(lang.word_list().len(), 2048, "{lang:?} wordlist must be 2048 words");
+        }
+        // Known English endpoints (BIP-39 English is the canonical reference).
+        let en = Language::English.word_list();
+        assert_eq!(en[0], "abandon");
+        assert_eq!(en[2047], "zoo");
+        // Cross-script disjointness: a Japanese entry isn't an English word.
+        let jp0 = Language::Japanese.word_list()[0];
+        assert!(!en.contains(&jp0));
+    }
+
+    #[test]
+    fn every_language_word_validates_in_union() {
+        // A representative word from each supported language is a member of the
+        // all-language union; only English words are English-local.
+        for lang in ALL_LANGUAGES {
+            let w = first_word(lang);
+            assert!(word_in_any_list(&w), "{lang:?} word should be in the union");
+        }
+        assert!(word_in_english(&first_word(Language::English)));
+        assert!(!word_in_english(&first_word(Language::Japanese)));
+        assert!(!word_in_english(&first_word(Language::ChineseSimplified)));
+    }
+
+    #[test]
+    fn cleanup_strips_punctuation_and_passes_valid_through() {
+        let dirty = "abandon, abandon. abandon abandon abandon abandon abandon abandon abandon abandon abandon about!";
+        let cleaned = Mnemonic::cleanup_phrase(dirty);
+        assert!(!cleaned.contains(','));
+        assert!(!cleaned.contains('.'));
+        assert!(!cleaned.contains('!'));
+        // valid branch returns a string that normalizes to the valid phrase
+        assert!(phrase_is_valid_any(&Mnemonic::normalize_phrase(&cleaned)));
+    }
+
+    #[test]
+    fn cleanup_canonicalizes_crlf_and_tabs() {
+        // A valid English phrase pasted with CRLF / tab separators must come
+        // back as a single-space phrase — control whitespace must not survive
+        // into the returned string via the valid-phrase early return.
+        let phrase = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
+        let words: Vec<&str> = phrase.split(' ').collect();
+        for dirty in [words.join("\r\n"), words.join("\t"), words.join(" \t ")] {
+            let cleaned = Mnemonic::cleanup_phrase(&dirty);
+            assert!(!cleaned.contains('\r'), "no CR survives: {cleaned:?}");
+            assert!(!cleaned.contains('\t'), "no tab survives: {cleaned:?}");
+            assert!(!cleaned.contains('\n'), "no LF survives: {cleaned:?}");
+            assert_eq!(cleaned, phrase, "canonicalizes to the single-space phrase");
+        }
+    }
+
+    #[test]
+    fn cjk_passthrough_and_autosplit() {
+        // Distinct-word valid Japanese phrase (varied entropy avoids the
+        // repeated-word ambiguity that defeats any greedy re-splitter).
+        let entropy = [
+            0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0, 0x0f, 0x1e, 0x2d, 0x3c, 0x4b, 0x5a,
+            0x69, 0x78,
+        ];
+        let spaced = Mnemonic::from_entropy(&entropy, Language::Japanese).unwrap().phrase();
+        assert!(
+            phrase_is_valid_any(&Mnemonic::normalize_phrase(&spaced)),
+            "fixture must be a valid Japanese phrase"
+        );
+
+        // (a) a space-separated valid CJK phrase passes the valid branch through
+        assert!(phrase_is_valid_any(&Mnemonic::normalize_phrase(&Mnemonic::cleanup_phrase(
+            &spaced
+        ))));
+
+        // (b) a no-space CJK phrase gets ideographic spaces inserted
+        let nospace: String = spaced.split(' ').collect();
+        assert!(
+            Mnemonic::cleanup_phrase(&nospace).contains(IDEO_SP),
+            "cleanup should insert ideographic spaces into a no-space CJK phrase"
+        );
+    }
+
+    #[test]
+    fn nfc_japanese_no_space_autosplit() {
+        // Regression guard for the NFC/NFKD mismatch in cleanup_phrase: iOS
+        // Japanese IMEs emit precomposed (NFC) text, the BIP-39 wordlist is
+        // NFKD. A no-space NFC Japanese phrase must still auto-split — the CJK
+        // loop NFKDs the working buffer so the exact-byte replace can hit.
+        use unicode_normalization::UnicodeNormalization;
+        let entropy = [
+            0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0, 0x0f, 0x1e, 0x2d, 0x3c, 0x4b, 0x5a,
+            0x69, 0x78,
+        ];
+        let phrase = Mnemonic::from_entropy(&entropy, Language::Japanese).unwrap().phrase();
+        let nfkd_nospace: String = phrase.split(' ').collect();
+        let nfc_nospace: String = nfkd_nospace.nfc().collect();
+        // The fixture must actually be NFC (different bytes) to exercise the bug.
+        assert_ne!(
+            nfc_nospace, nfkd_nospace,
+            "fixture must be NFC (distinct from NFKD) to cover the bug"
+        );
+
+        let from_nfc = Mnemonic::cleanup_phrase(&nfc_nospace);
+        let from_nfkd = Mnemonic::cleanup_phrase(&nfkd_nospace);
+        assert!(
+            from_nfc.contains(IDEO_SP),
+            "NFC no-space Japanese phrase should still get ideographic spaces"
+        );
+        // NFC input must auto-split *identically* to the equivalent NFKD input;
+        // `.contains(IDEO_SP)` alone is too weak (unvoiced words split anyway).
+        assert_eq!(from_nfc, from_nfkd, "NFC input must auto-split the same as NFKD input");
+    }
+
+    #[test]
+    fn chinese_no_space_autosplit() {
+        // Simplified-Chinese words are single ideographs; a no-space phrase
+        // must get ideographic spaces inserted by cleanup.
+        let entropy = [
+            0xa1, 0xb2, 0xc3, 0xd4, 0xe5, 0xf6, 0x07, 0x18, 0x29, 0x3a, 0x4b, 0x5c, 0x6d, 0x7e,
+            0x8f, 0x90,
+        ];
+        let nospace: String = Mnemonic::from_entropy(&entropy, Language::ChineseSimplified)
+            .unwrap()
+            .phrase()
+            .split(' ')
+            .collect();
+        assert!(
+            Mnemonic::cleanup_phrase(&nospace).contains(IDEO_SP),
+            "no-space Chinese phrase should get ideographic spaces"
+        );
+    }
+
+    #[test]
+    fn cleanup_strips_punctuation_around_cjk() {
+        // Punctuation removal and CJK auto-split must both fire on a no-space
+        // CJK phrase that arrives with ASCII punctuation interleaved.
+        let entropy = [
+            0xa1, 0xb2, 0xc3, 0xd4, 0xe5, 0xf6, 0x07, 0x18, 0x29, 0x3a, 0x4b, 0x5c, 0x6d, 0x7e,
+            0x8f, 0x90,
+        ];
+        let phrase =
+            Mnemonic::from_entropy(&entropy, Language::ChineseSimplified).unwrap().phrase();
+        let dirty = phrase.split(' ').collect::<Vec<_>>().join(",");
+        let cleaned = Mnemonic::cleanup_phrase(&dirty);
+        assert!(!cleaned.contains(','), "punctuation must be stripped: {cleaned:?}");
+        assert!(
+            cleaned.contains(IDEO_SP),
+            "CJK split should insert ideographic spaces: {cleaned:?}"
+        );
+    }
+
+    #[test]
+    fn cleanup_wraps_all_occurrences_of_repeated_cjk_word() {
+        // The CJK split uses a global String::replace, so every occurrence of a
+        // repeated word is wrapped; the loop must terminate without panic.
+        let cw = first_word(Language::ChineseSimplified); // a single valid ideograph
+        let nospace = format!("{cw}{cw}{cw}");
+        let cleaned = Mnemonic::cleanup_phrase(&nospace);
+        assert!(
+            cleaned.contains(IDEO_SP),
+            "repeated CJK word should get ideographic spaces: {cleaned:?}"
+        );
+        assert_eq!(
+            cleaned.matches(cw.as_str()).count(),
+            3,
+            "all occurrences preserved (wrap-all, no loss/dup): {cleaned:?}"
+        );
+    }
+
+    #[test]
+    fn cleanup_phrase_caps_pathological_input() {
+        // Past the byte cap, input is returned verbatim instead of driving the
+        // superlinear CJK scan.
+        let huge = "あ".repeat(5000); // ~15 KB, well over MAX_CLEANUP_BYTES
+        assert_eq!(
+            Mnemonic::cleanup_phrase(&huge),
+            huge,
+            "input past the cap is returned unchanged"
+        );
+        // A normal-length phrase is still processed (not capped).
+        let entropy = [
+            0xa1, 0xb2, 0xc3, 0xd4, 0xe5, 0xf6, 0x07, 0x18, 0x29, 0x3a, 0x4b, 0x5c, 0x6d, 0x7e,
+            0x8f, 0x90,
+        ];
+        let nospace: String = Mnemonic::from_entropy(&entropy, Language::ChineseSimplified)
+            .unwrap()
+            .phrase()
+            .split(' ')
+            .collect();
+        assert!(Mnemonic::cleanup_phrase(&nospace).contains(IDEO_SP));
     }
 }
