@@ -2178,7 +2178,9 @@ pub struct DMNStateDiff {
     pub pub_key_operator: Option<Vec<u8>>,
     pub operator_payout_address: Option<Option<[u8; 20]>>,
     pub platform_node_id: Option<[u8; 20]>,
+    #[deprecated(note = "Core 23+ nested addresses.platform_p2p should be used instead")]
     pub legacy_platform_p2p_port: Option<u32>,
+    #[deprecated(note = "Core 23+ nested addresses.platform_https should be used instead")]
     pub legacy_platform_http_port: Option<u32>,
     /// Three-state nested addresses: `None` = unchanged, `Some(None)` = cleared,
     /// `Some(Some(_))` = set. Mirrors [`pose_ban_height`](Self::pose_ban_height).
@@ -2267,7 +2269,9 @@ impl TryFrom<DMNStateDiffIntermediate> for DMNStateDiff {
             pub_key_operator,
             operator_payout_address,
             platform_node_id,
+            #[allow(deprecated)]
             legacy_platform_p2p_port,
+            #[allow(deprecated)]
             legacy_platform_http_port,
             addresses,
         })
@@ -2380,6 +2384,7 @@ impl DMNState {
             } else {
                 None
             },
+            #[allow(deprecated)]
             legacy_platform_p2p_port: if self.legacy_platform_p2p_port
                 != newer.legacy_platform_p2p_port
             {
@@ -2388,6 +2393,7 @@ impl DMNState {
             } else {
                 None
             },
+            #[allow(deprecated)]
             legacy_platform_http_port: if self.legacy_platform_http_port
                 != newer.legacy_platform_http_port
             {
@@ -2422,7 +2428,9 @@ impl DMNState {
             pub_key_operator,
             operator_payout_address,
             platform_node_id,
+            #[allow(deprecated)]
             legacy_platform_p2p_port,
+            #[allow(deprecated)]
             legacy_platform_http_port,
             addresses,
             ..
@@ -3611,6 +3619,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn dmn_state_diff_core23_addresses_resolve_platform_ports() {
         // updatedMNs entry carrying only the new `addresses` object.
         let json = r#"{
@@ -3788,7 +3797,9 @@ mod tests {
             pub_key_operator: None,
             operator_payout_address: None,
             platform_node_id: None,
+            #[allow(deprecated)]
             legacy_platform_p2p_port: None,
+            #[allow(deprecated)]
             legacy_platform_http_port: None,
             addresses: Some(Some(MasternodeAddresses {
                 core_p2p: vec![],
