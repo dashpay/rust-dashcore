@@ -2079,13 +2079,17 @@ impl MasternodeAddresses {
 
 /// Splits a `"host:port"` string into `(host, port)` with a non-fabricated host.
 ///
-/// Uses [`str::rsplit_once`] so only the final `:port` segment is parsed, which
-/// keeps IPv4 and unbracketed IPv6 hosts intact. The port is parsed through
-/// [`u16`] then widened to `u32`, rejecting values outside the TCP/UDP port range
-/// (e.g. `"host:70000"`). Returns `None` when no colon is present or the suffix is
-/// not a valid `u16`.
+/// Supports IPv4 (`1.2.3.4:9999`) and bracketed IPv6 (`[2001:db8::1]:9999`). The
+/// final `:port` segment is parsed through [`u16`] then widened to `u32`, rejecting
+/// values outside the TCP/UDP port range (e.g. `"host:70000"`). Unbracketed
+/// multi-colon hosts (bare IPv6) are rejected rather than silently mangled. Returns
+/// `None` when no colon is present, the host is ambiguous, or the suffix is not a
+/// valid `u16`.
 fn parse_host_port(addr: &str) -> Option<(String, u32)> {
     let (host, port) = addr.rsplit_once(':')?;
+    if host.contains(':') && !(host.starts_with('[') && host.ends_with(']')) {
+        return None;
+    }
     let port = port.parse::<u16>().ok()?;
     Some((host.to_string(), u32::from(port)))
 }
@@ -2118,8 +2122,10 @@ pub struct DMNState {
         rename = "platformNodeID"
     )]
     pub platform_node_id: Option<[u8; 20]>,
+    #[deprecated(note = "Core 23+ nested addresses.platform_p2p should be used instead")]
     #[serde(default, rename = "platformP2PPort")]
     pub legacy_platform_p2p_port: Option<u32>,
+    #[deprecated(note = "Core 23+ nested addresses.platform_https should be used instead")]
     #[serde(default, rename = "platformHTTPPort")]
     pub legacy_platform_http_port: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -2134,6 +2140,7 @@ impl DMNState {
     /// `platformP2PPort`, pairing it with the node IP from [`service`](Self::service)
     /// because Dash deploys platform services on the masternode's core IP. Returns
     /// `None` when no source yields a non-zero in-range port.
+    #[allow(deprecated)]
     pub fn platform_p2p_address(&self) -> Option<(String, u32)> {
         self.addresses
             .as_ref()
@@ -2148,6 +2155,7 @@ impl DMNState {
     /// `platformHTTPPort`, pairing it with the node IP from [`service`](Self::service)
     /// because Dash deploys platform services on the masternode's core IP. Returns
     /// `None` when no source yields a non-zero in-range port.
+    #[allow(deprecated)]
     pub fn platform_http_address(&self) -> Option<(String, u32)> {
         self.addresses
             .as_ref()
@@ -2155,9 +2163,12 @@ impl DMNState {
             .or_else(|| self.legacy_platform_address(self.legacy_platform_http_port))
     }
 
-    /// Pairs a legacy platform port with the node IP, dropping zero/absent ports.
+    /// Pairs a legacy platform port with the node IP, dropping zero, absent, and
+    /// out-of-`u16`-range ports so the result honors the TCP/UDP port range.
     fn legacy_platform_address(&self, port: Option<u32>) -> Option<(String, u32)> {
-        port.filter(|&p| p != 0).map(|p| (self.service.ip().to_string(), p))
+        port.and_then(|p| u16::try_from(p).ok())
+            .filter(|&p| p != 0)
+            .map(|p| (self.service.ip().to_string(), u32::from(p)))
     }
 }
 
@@ -2465,10 +2476,12 @@ impl DMNState {
             self.platform_node_id = Some(platform_node_id);
         }
 
+        #[allow(deprecated)]
         if let Some(legacy_platform_p2p_port) = legacy_platform_p2p_port {
             self.legacy_platform_p2p_port = Some(legacy_platform_p2p_port);
         }
 
+        #[allow(deprecated)]
         if let Some(legacy_platform_http_port) = legacy_platform_http_port {
             self.legacy_platform_http_port = Some(legacy_platform_http_port);
         }
@@ -3407,7 +3420,7 @@ mod tests {
 
     use crate::{
         DMNState, DMNStateDiff, ExtendedQuorumListResult, MasternodeAddresses, MasternodeListDiff,
-        MnSyncStatus, QuorumType, deserialize_u32_opt,
+        MnSyncStatus, QuorumType, deserialize_u32_opt, parse_host_port,
     };
 
     #[test]
@@ -3585,6 +3598,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn dmn_state_core23_addresses_resolve_platform_ports() {
         // Core 23 entry: legacy platformP2PPort/platformHTTPPort absent, ports live
         // in the nested `addresses` object. Raw fields stay None; accessors resolve.
@@ -3677,6 +3691,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn dmn_state_zero_legacy_port_resolves_to_addresses() {
         // Transitional entry: legacy port present but zero -> addresses wins (new-first).
         let json = r#"{
@@ -3703,6 +3718,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn dmn_state_zero_legacy_port_no_addresses_resolves_to_none() {
         // Legacy port present but zero and no `addresses` -> accessor returns None,
         // never `(host, 0)`.
@@ -3740,6 +3756,25 @@ mod tests {
         }"#;
         let state: DMNState = serde_json::from_str(json).expect("expected to deserialize json");
         assert_eq!(state.platform_p2p_address(), None, "out-of-range port rejected");
+    }
+
+    #[test]
+    fn dmn_state_legacy_out_of_range_port_rejected() {
+        // A legacy port above the u16 range must be rejected, matching the addresses
+        // path, so the accessor honors its documented in-range invariant.
+        let json = r#"{
+            "service": "192.0.2.1:9999",
+            "registeredHeight": 123456,
+            "revocationReason": 0,
+            "ownerAddress": "yPBWCdMRY5PsS3hJzs7csbdWQVRR85yxUz",
+            "votingAddress": "ySM11LUD65Bi4p1gm68XLkdWc65TBKRzvQ",
+            "payoutAddress": "yX4Ve7Q8Y4jscV4LZJD8HVCHKyePzR3MhA",
+            "pubKeyOperator": "8ed3f0c208efbcfc815cbfb94490dc68cf2e29d44dd9f8a91e20e06057aa110d7062c8ab7ccc85a9ff0c88760157f563",
+            "platformNodeID": "f2dbd9b0a1f541a7c44d34a58674d0262f5feca5",
+            "platformP2PPort": 70000
+        }"#;
+        let state: DMNState = serde_json::from_str(json).expect("expected to deserialize json");
+        assert_eq!(state.platform_p2p_address(), None, "out-of-range legacy port rejected");
     }
 
     #[test]
@@ -3835,6 +3870,35 @@ mod tests {
         let mut applied = newer;
         applied.apply_diff(diff);
         assert!(applied.addresses.is_none(), "Some(None) diff clears stored addresses");
+    }
+
+    #[test]
+    fn dmn_state_diff_addresses_null_wire_clears() {
+        // Wire-level three-state: `null` -> Some(None) (clear), absent -> None
+        // (unchanged). Exercises `deserialize_addresses_2opt` through the intermediate.
+        let diff: DMNStateDiff =
+            serde_json::from_str(r#"{"addresses": null}"#).expect("expected to deserialize json");
+        assert_eq!(diff.addresses, Some(None), "null wire -> Some(None) (clear)");
+
+        let diff: DMNStateDiff =
+            serde_json::from_str(r#"{}"#).expect("expected to deserialize json");
+        assert_eq!(diff.addresses, None, "absent wire -> None (unchanged)");
+    }
+
+    #[test]
+    fn parse_host_port_ipv6() {
+        // Bracketed IPv6 keeps host intact; unbracketed (ambiguous) is rejected.
+        assert_eq!(
+            parse_host_port("[2001:db8::1]:9999"),
+            Some(("[2001:db8::1]".to_string(), 9999)),
+            "bracketed IPv6 parses host + port"
+        );
+        assert_eq!(parse_host_port("2001:db8::1"), None, "unbracketed IPv6 rejected");
+        assert_eq!(
+            parse_host_port("192.0.2.1:9999"),
+            Some(("192.0.2.1".to_string(), 9999)),
+            "IPv4 still parses"
+        );
     }
 
     #[test]
