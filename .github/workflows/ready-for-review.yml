@@ -73,6 +73,10 @@ jobs:
 
   evaluate:
     runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+      checks: read
+      issues: write
     # Skip non-CodeRabbit reviews
     if: >-
       github.event_name != 'pull_request_review' ||
