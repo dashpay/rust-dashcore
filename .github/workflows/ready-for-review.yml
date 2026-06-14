@@ -14,14 +14,15 @@ concurrency:
   cancel-in-progress: true
 
 permissions:
-  pull-requests: write
-  checks: read
+  contents: read
 
 jobs:
   # Ensure all pull_request-triggered workflows are monitored by workflow_run
   validate-triggers:
     runs-on: ubuntu-latest
     if: github.event_name == 'workflow_run'
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
         with:
@@ -73,6 +74,11 @@ jobs:
 
   evaluate:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+      checks: read
     # Skip non-CodeRabbit reviews
     if: >-
       github.event_name != 'pull_request_review' ||
@@ -154,7 +160,7 @@ jobs:
             echo "CI status: $CI_STATUS"
             if [ "$CI_STATUS" = "all_passed" ]; then
               echo "All conditions met. Adding ready-for-review label."
-              gh pr edit "$PR_NUMBER" --repo "$REPO" --add-label "ready-for-review"
+              gh pr edit "$PR_NUMBER" --repo "$REPO" --add-label "ready-for-review" || true
             else
               echo "CI checks not all passing ($CI_STATUS). Removing label if present."
               gh pr edit "$PR_NUMBER" --repo "$REPO" --remove-label "ready-for-review" || true
