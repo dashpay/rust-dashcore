@@ -2082,11 +2082,14 @@ impl MasternodeAddresses {
 /// Supports IPv4 (`1.2.3.4:9999`) and bracketed IPv6 (`[2001:db8::1]:9999`). The
 /// final `:port` segment is parsed through [`u16`] then widened to `u32`, rejecting
 /// values outside the TCP/UDP port range (e.g. `"host:70000"`). Unbracketed
-/// multi-colon hosts (bare IPv6) are rejected rather than silently mangled. Returns
-/// `None` when no colon is present, the host is ambiguous, or the suffix is not a
-/// valid `u16`.
+/// multi-colon hosts (bare IPv6) are rejected rather than silently mangled. An empty
+/// host (e.g. `":36656"`) is also rejected. Returns `None` when no colon is present,
+/// the host is empty or ambiguous, or the suffix is not a valid `u16`.
 fn parse_host_port(addr: &str) -> Option<(String, u32)> {
     let (host, port) = addr.rsplit_once(':')?;
+    if host.is_empty() {
+        return None;
+    }
     if host.contains(':') && !(host.starts_with('[') && host.ends_with(']')) {
         return None;
     }
@@ -2201,6 +2204,7 @@ pub struct DMNStateDiff {
 impl TryFrom<DMNStateDiffIntermediate> for DMNStateDiff {
     type Error = encode::Error;
 
+    #[allow(deprecated)]
     fn try_from(value: DMNStateDiffIntermediate) -> Result<Self, Self::Error> {
         let DMNStateDiffIntermediate {
             service,
@@ -3029,8 +3033,10 @@ pub struct DMNStateDiffIntermediate {
     pub voting_address: Option<String>,
     #[serde(default, rename = "platformNodeID")]
     pub platform_node_id: Option<String>,
+    #[deprecated(note = "Core 23+ nested addresses.platform_p2p should be used instead")]
     #[serde(default, rename = "platformP2PPort")]
     pub legacy_platform_p2p_port: Option<u32>,
+    #[deprecated(note = "Core 23+ nested addresses.platform_https should be used instead")]
     #[serde(default, rename = "platformHTTPPort")]
     pub legacy_platform_http_port: Option<u32>,
     #[serde(default)]
@@ -3899,6 +3905,9 @@ mod tests {
             Some(("192.0.2.1".to_string(), 9999)),
             "IPv4 still parses"
         );
+        // Empty host must be rejected.
+        assert_eq!(parse_host_port(":36656"), None, "empty host rejected");
+        assert_eq!(parse_host_port(":443"), None, "empty host rejected");
     }
 
     #[test]
