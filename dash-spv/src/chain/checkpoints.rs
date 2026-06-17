@@ -6,7 +6,7 @@
 //! - Protect against deep reorganizations
 //! - Bootstrap masternode lists at specific heights
 
-use dashcore::{BlockHash, CompactTarget, Target};
+use dashcore::{BlockHash, CompactTarget, Network, Target};
 use dashcore_hashes::{hex, Hash};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -66,6 +66,18 @@ pub struct CheckpointManager {
 }
 
 impl CheckpointManager {
+    /// Create a checkpoint manager seeded with the hardcoded checkpoints for `network`.
+    ///
+    /// Networks without bundled checkpoints (devnet, regtest) yield an empty manager.
+    pub fn for_network(network: Network) -> Self {
+        let checkpoints = match network {
+            Network::Mainnet => mainnet_checkpoints(),
+            Network::Testnet => testnet_checkpoints(),
+            _ => vec![],
+        };
+        Self::new(checkpoints)
+    }
+
     /// Create a new checkpoint manager from a list of checkpoints
     pub fn new(checkpoints: Vec<Checkpoint>) -> Self {
         let mut checkpoint_map = HashMap::new();

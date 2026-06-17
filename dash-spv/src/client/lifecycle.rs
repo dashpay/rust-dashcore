@@ -9,7 +9,7 @@
 //! - Wallet data loading
 
 use super::{ClientConfig, DashSpvClient, EventHandler};
-use crate::chain::checkpoints::{mainnet_checkpoints, testnet_checkpoints, CheckpointManager};
+use crate::chain::checkpoints::CheckpointManager;
 use crate::error::{Result, SpvError};
 use crate::network::NetworkManager;
 use crate::storage::{
@@ -20,8 +20,12 @@ use crate::sync::{
     BlockHeadersManager, BlocksManager, ChainLockManager, FilterHeadersManager, FiltersManager,
     InstantSendManager, Managers, MasternodesManager, MempoolManager, SyncCoordinator,
 };
+use crate::types::HashedBlockHeader;
+use dashcore::block::{Header as BlockHeader, Version};
 use dashcore::network::constants::NetworkExt;
+use dashcore::pow::CompactTarget;
 use dashcore::sml::masternode_list_engine::MasternodeListEngine;
+use dashcore::TxMerkleNode;
 use dashcore_hashes::Hash;
 use key_wallet_manager::WalletInterface;
 use std::sync::Arc;
@@ -42,9 +46,20 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
         config.validate().map_err(SpvError::Config)?;
         config.apply_global_overrides().map_err(SpvError::Config)?;
 
+        // Resolve where to anchor the chain. An explicit `start_from_height` always
+        // wins. Otherwise fall back to the wallet birth height so we don't sync headers
+        // and filter headers from genesis when the wallet only cares about recent blocks.
+        let start_from_height = match config.start_from_height {
+            Some(height) => Some(height),
+            None => {
+                let birth_height = wallet.read().await.earliest_required_height().await;
+                (birth_height > 0).then_some(birth_height)
+            }
+        };
+
         // Initialize genesis block or checkpoint before creating managers,
         // so they can read the tip from storage during construction.
-        Self::initialize_genesis_block(&config, &mut storage).await?;
+        Self::initialize_genesis_block(&config, start_from_height, &mut storage).await?;
 
         let masternode_engine = {
             if config.enable_masternodes {
@@ -65,12 +80,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
             W,
         > = Managers::default();
 
-        let checkpoints = match config.network {
-            dashcore::Network::Mainnet => mainnet_checkpoints(),
-            dashcore::Network::Testnet => testnet_checkpoints(),
-            _ => Vec::new(),
-        };
-        let checkpoint_manager = Arc::new(CheckpointManager::new(checkpoints));
+        let checkpoint_manager = Arc::new(CheckpointManager::for_network(config.network));
         managers.block_headers = Some(
             BlockHeadersManager::new(
                 storage.block_headers(),
@@ -228,7 +238,11 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
     /// Initialize genesis block or checkpoint in storage.
     ///
     /// Called before creating managers so they can read the tip during construction.
-    async fn initialize_genesis_block(config: &ClientConfig, storage: &mut S) -> Result<()> {
+    async fn initialize_genesis_block(
+        config: &ClientConfig,
+        start_from_height: Option<u32>,
+        storage: &mut S,
+    ) -> Result<()> {
         // Check if we already have any headers in storage
         let current_tip = storage.get_tip_height().await;
 
@@ -239,16 +253,8 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
         }
 
         // Check if we should use a checkpoint instead of genesis
-        if let Some(start_height) = config.start_from_height {
-            // Get checkpoints for this network
-            let checkpoints = match config.network {
-                dashcore::Network::Mainnet => crate::chain::checkpoints::mainnet_checkpoints(),
-                dashcore::Network::Testnet => crate::chain::checkpoints::testnet_checkpoints(),
-                _ => vec![],
-            };
-
-            // Create checkpoint manager
-            let checkpoint_manager = crate::chain::checkpoints::CheckpointManager::new(checkpoints);
+        if let Some(start_height) = start_from_height {
+            let checkpoint_manager = CheckpointManager::for_network(config.network);
 
             // Find the best checkpoint at or before the requested height
             if let Some(checkpoint) = checkpoint_manager.last_checkpoint_before_height(start_height)
@@ -260,51 +266,37 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
                         start_height
                     );
 
-                    // Build header from checkpoint
-                    use dashcore::{
-                        block::{Header as BlockHeader, Version},
-                        pow::CompactTarget,
-                    };
-
+                    // The checkpoint stores the trusted block hash but not the block version,
+                    // so a reconstructed header cannot be hashed back to that value. Anchor on
+                    // the trusted hash directly: chain linkage compares against the stored hash,
+                    // and `time`/`bits` (used for difficulty checks of later headers) come from
+                    // the checkpoint. The version is irrelevant since the hash is never recomputed.
                     let checkpoint_header = BlockHeader {
-                        version: Version::from_consensus(536870912), // Version 0x20000000 is common for modern blocks
+                        version: Version::from_consensus(0),
                         prev_blockhash: checkpoint.prev_blockhash,
                         merkle_root: checkpoint
                             .merkle_root
-                            .map(|h| dashcore::TxMerkleNode::from_byte_array(*h.as_byte_array()))
-                            .unwrap_or_else(dashcore::TxMerkleNode::all_zeros),
+                            .map(|h| TxMerkleNode::from_byte_array(*h.as_byte_array()))
+                            .unwrap_or_else(TxMerkleNode::all_zeros),
                         time: checkpoint.timestamp,
                         bits: CompactTarget::from_consensus(
                             checkpoint.target.to_compact_lossy().to_consensus(),
                         ),
                         nonce: checkpoint.nonce,
                     };
+                    let anchor = HashedBlockHeader::with_trusted_hash(
+                        checkpoint_header,
+                        checkpoint.block_hash,
+                    );
+                    storage.store_headers_at_height(&[anchor], checkpoint.height).await?;
 
-                    // Verify hash matches
-                    let calculated_hash = checkpoint_header.block_hash();
-                    if calculated_hash != checkpoint.block_hash {
-                        tracing::warn!(
-                            "Checkpoint header hash mismatch at height {}: expected {}, calculated {}",
-                            checkpoint.height,
-                            checkpoint.block_hash,
-                            calculated_hash
-                        );
-                    } else {
-                        storage
-                            .store_headers_at_height(
-                                &[crate::types::HashedBlockHeader::from(checkpoint_header)],
-                                checkpoint.height,
-                            )
-                            .await?;
+                    tracing::info!(
+                        "✅ Initialized from checkpoint at height {}, skipping {} headers",
+                        checkpoint.height,
+                        checkpoint.height
+                    );
 
-                        tracing::info!(
-                            "✅ Initialized from checkpoint at height {}, skipping {} headers",
-                            checkpoint.height,
-                            checkpoint.height
-                        );
-
-                        return Ok(());
-                    }
+                    return Ok(());
                 }
             }
         }
