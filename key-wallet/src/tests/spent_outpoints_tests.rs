@@ -1,14 +1,15 @@
 //! Tests for spent_outpoints deserialization and tracking.
 
 use dashcore::blockdata::transaction::{OutPoint, Transaction};
-use dashcore::{TxIn, Txid};
+use dashcore::hashes::Hash;
+use dashcore::{BlockHash, TxIn, Txid};
 
 use crate::account::{AccountType, StandardAccountType, TransactionRecord};
 use crate::managed_account::managed_account_trait::ManagedAccountTrait;
 use crate::managed_account::transaction_record::TransactionDirection;
 use crate::managed_account::ManagedCoreFundsAccount;
 use crate::test_utils::TestWalletContext;
-use crate::transaction_checking::{TransactionContext, TransactionType};
+use crate::transaction_checking::{BlockInfo, TransactionContext, TransactionType};
 
 /// Create a transaction that spends the given outpoints.
 fn spending_tx(spent: &[OutPoint]) -> Transaction {
@@ -103,6 +104,29 @@ async fn processing_a_spend_releases_its_reservation() {
 
     let account = ctx.managed_wallet.first_bip44_managed_account().expect("BIP44 account");
     assert!(!account.reservations().reserved(0).contains(&funded));
+
+    // The confirmed path releases reservations too: a separate funding tx with
+    // a distinct input range yields a second outpoint that is reserved and then
+    // spent in a block.
+    let second_funding = Transaction::dummy(&ctx.receive_address, 1..2, &[120_000]);
+    ctx.check_transaction(&second_funding, TransactionContext::Mempool).await;
+    let second_funded = OutPoint::new(second_funding.txid(), 0);
+
+    let account = ctx.managed_wallet.first_bip44_managed_account_mut().expect("BIP44 account");
+    assert!(account.utxos.contains_key(&second_funded));
+    account.reservations().reserve(&[second_funded], 0);
+    assert!(account.reservations().reserved(0).contains(&second_funded));
+
+    let block_hash = BlockHash::from_slice(&[7u8; 32]).expect("hash");
+    let confirmed_spend = spending_tx(&[second_funded]);
+    ctx.check_transaction(
+        &confirmed_spend,
+        TransactionContext::InBlock(BlockInfo::new(100, block_hash, 1_700_000_000)),
+    )
+    .await;
+
+    let account = ctx.managed_wallet.first_bip44_managed_account().expect("BIP44 account");
+    assert!(!account.reservations().reserved(0).contains(&second_funded));
 }
 
 #[test]
