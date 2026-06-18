@@ -25,6 +25,15 @@ use std::cmp::Ordering;
 /// bytes/signed input) and be rejected by the network
 const MAX_STANDARD_TX_INPUTS: usize = 500;
 
+/// Consensus-encoded byte length of `tx`, used to compute the fee from the real
+/// serialized size. Surfaces an encode error instead of panicking so the caller
+/// can release any reservations it took rather than stranding the inputs.
+fn encoded_size(tx: &Transaction) -> Result<usize, BuilderError> {
+    let mut bytes = Vec::new();
+    tx.consensus_encode(&mut bytes)
+        .map_err(|err| BuilderError::InvalidData(format!("failed to encode transaction: {}", err)))
+}
+
 /// Calculate varint size for a given number
 fn varint_size(n: usize) -> usize {
     match n {
@@ -405,13 +414,19 @@ impl TransactionBuilder {
 
     pub fn build_unsigned(self) -> Result<(Transaction, u64), BuilderError> {
         let fee_rate = self.fee_rate;
+        let reservations = self.reservations.clone();
 
-        let (tx, _) = self.assemble_unsigned()?;
+        let (tx, inputs) = self.assemble_unsigned()?;
 
-        let mut tx_bytes = Vec::new();
-        tx.consensus_encode(&mut tx_bytes).unwrap();
-
-        let fee = fee_rate.calculate_fee(tx_bytes.len());
+        let fee = match encoded_size(&tx) {
+            Ok(size) => fee_rate.calculate_fee(size),
+            Err(err) => {
+                if let Some(reservations) = &reservations {
+                    reservations.release(inputs.iter().map(|utxo| &utxo.outpoint));
+                }
+                return Err(err);
+            }
+        };
 
         Ok((tx, fee))
     }
@@ -447,10 +462,15 @@ impl TransactionBuilder {
             }
         };
 
-        let mut tx_bytes = Vec::new();
-        tx.consensus_encode(&mut tx_bytes).unwrap();
-
-        let fee = fee_rate.calculate_fee(tx_bytes.len());
+        let fee = match encoded_size(&tx) {
+            Ok(size) => fee_rate.calculate_fee(size),
+            Err(err) => {
+                if let Some(reservations) = &reservations {
+                    reservations.release(reserved.iter());
+                }
+                return Err(err);
+            }
+        };
 
         Ok((tx, fee))
     }
