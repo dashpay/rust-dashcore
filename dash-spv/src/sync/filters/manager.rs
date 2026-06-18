@@ -191,6 +191,13 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
         }
         .max(header_start_height);
 
+        // Record the scan frontier even when we return early below. A wallet
+        // that boots already synced takes the early return, and a later new
+        // block would otherwise create a lookahead batch from a stale
+        // processing_height of 0, reading filters from height 0 that were
+        // never stored.
+        self.processing_height = scan_start;
+
         // Check if already at target (nothing to download)
         if scan_start > self.progress.filter_header_tip_height() {
             // Only emit FiltersSyncComplete if we've also reached the chain tip
@@ -218,7 +225,6 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
         };
 
         self.next_batch_to_store = download_start;
-        self.processing_height = scan_start;
 
         tracing::info!(
             "Starting filter download (scan_start={}, download_start={}, stored_filters_tip={}, target={})",
@@ -2027,6 +2033,50 @@ mod tests {
             events
         );
         assert!(manager.active_batches.is_empty());
+    }
+
+    /// A node that boots already synced takes the `start_download` early
+    /// return. That path must still record the scan frontier in
+    /// `processing_height`, otherwise the next block creates a lookahead batch
+    /// from a stale 0 and reads filters at height 0 that were never stored
+    /// (panicking on the empty leading segment).
+    #[tokio::test]
+    async fn test_handle_new_filter_headers_new_block_starts_at_frontier() {
+        let mut manager = create_test_manager().await;
+
+        // Headers cover the synced tip plus the new block. Filter storage is
+        // intentionally left empty: with the old behavior the lookahead batch
+        // reads from height 0 and trips the empty-segment guard.
+        let headers = dashcore::block::Header::dummy_batch(0..102);
+        manager.header_storage.write().await.store_headers(&headers).await.unwrap();
+
+        manager.set_state(SyncState::WaitForEvents);
+        manager.wallet.write().await.update_wallet_synced_height(&MOCK_WALLET_ID, 100);
+        manager.progress.update_committed_height(100);
+        manager.progress.update_stored_height(100);
+        manager.progress.update_filter_header_tip_height(100);
+        manager.progress.update_target_height(100);
+
+        let (tx, _rx) = unbounded_channel();
+        let requests = RequestSender::new(tx);
+
+        // Boot already synced: start_download detects the synced state and
+        // returns early, but must still advance the scan frontier.
+        let events = manager.start_download(&requests).await.unwrap();
+        assert_eq!(manager.state(), SyncState::Synced);
+        assert!(events.iter().any(|e| matches!(
+            e,
+            SyncEvent::FiltersSyncComplete {
+                tip_height: 100
+            }
+        )));
+        assert_eq!(manager.processing_height, 101);
+
+        // A new block extends the chain; the lookahead batch must start at the
+        // frontier, not at height 0.
+        manager.handle_new_filter_headers(101, &requests).await.unwrap();
+        assert!(!manager.active_batches.contains_key(&0));
+        assert_eq!(manager.active_batches.keys().next(), Some(&101));
     }
 
     #[tokio::test]
