@@ -31,8 +31,7 @@ use dashcore::blockdata::transaction::OutPoint;
 /// the very double-spend this guards against.
 const RESERVATION_TTL_BLOCKS: u32 = 24;
 
-/// Ephemeral, in-memory set of reserved outpoints keyed by the block height at
-/// which each was reserved (used for the TTL backstop). Cloning shares the
+/// Ephemeral, in-memory set of reserved outpoints. Cloning shares the
 /// underlying state, which is what lets a build's reservation outlive the
 /// wallet lock and be seen by the next build.
 #[derive(Debug, Clone, Default)]
@@ -41,17 +40,19 @@ pub(crate) struct ReservationSet {
 }
 
 impl ReservationSet {
-    /// Lock the inner map, recovering from a poisoned mutex instead of
-    /// panicking. The guarded data is a plain `HashMap` with no invariant a
-    /// partial write could break, and panicking here would brick all later coin
-    /// selection in a long-running node.
+    /// Recovers from a poisoned mutex rather than panicking: the guarded data is
+    /// a plain `HashMap` with no invariant a partial write could break, and
+    /// panicking here would strand all later coin selection in a long-running
+    /// node.
     fn lock(&self) -> MutexGuard<'_, HashMap<OutPoint, u32>> {
         self.inner.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
     fn sweep(reserved: &mut HashMap<OutPoint, u32>, current_height: u32) {
         // Height 0 means the wallet has no processed height yet, so the elapsed
-        // span is unknown and no entry can be reliably judged stale.
+        // span is unknown and no entry can be reliably judged stale. An entry
+        // stamped at height 0 therefore relies on a later non-zero height being
+        // presented before it can ever be reclaimed by the TTL backstop.
         if current_height == 0 {
             return;
         }
