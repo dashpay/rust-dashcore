@@ -101,7 +101,10 @@ impl TransactionBuilder {
     /// This call and the later `assemble_unsigned` that reserves the chosen
     /// inputs must run under one uninterrupted hold of the wallet lock. If two
     /// builds interleave between here and their reservation, both can observe the
-    /// same UTXO as free and select it, defeating the reservation.
+    /// same UTXO as free and select it, defeating the reservation. The builder
+    /// must therefore not be held across an `await` between `set_funding` and
+    /// `build_signed` or `assemble_unsigned`, since suspending there reopens the
+    /// read-then-reserve window for a concurrent build.
     pub fn set_funding(mut self, funds_acc: &mut ManagedCoreFundsAccount, acc: &Account) -> Self {
         let reserved = funds_acc.reservations().reserved(self.current_height);
         self.inputs = funds_acc
