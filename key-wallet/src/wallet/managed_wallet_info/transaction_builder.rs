@@ -3,6 +3,7 @@
 //! This module provides high-level transaction building functionality
 //! using types from the dashcore crate.
 
+use crate::managed_account::reservation::ReservationSet;
 use crate::managed_account::ManagedCoreFundsAccount;
 use crate::wallet::managed_wallet_info::coin_selection::{CoinSelector, SelectionStrategy};
 use crate::wallet::managed_wallet_info::fee::FeeRate;
@@ -10,7 +11,7 @@ use crate::{Account, DerivationPath, Signer, Utxo, Wallet};
 use core::fmt;
 use dashcore::blockdata::script::{Builder, PushBytes, ScriptBuf};
 use dashcore::blockdata::transaction::special_transaction::TransactionPayload;
-use dashcore::blockdata::transaction::Transaction;
+use dashcore::blockdata::transaction::{OutPoint, Transaction};
 use dashcore::consensus::Encodable;
 use dashcore::sighash::{EcdsaSighashType, LegacySighash, SighashCache};
 use dashcore::Address;
@@ -48,6 +49,10 @@ pub struct TransactionBuilder {
     selection_strategy: SelectionStrategy,
     /// Special transaction payload for Dash-specific transactions
     special_payload: Option<TransactionPayload>,
+    /// Reservation set of the funding account, captured by `set_funding`. The
+    /// inputs chosen during assembly are reserved here so a concurrent build
+    /// skips them until the broadcast transaction is processed.
+    reservations: Option<ReservationSet>,
 }
 
 impl Default for TransactionBuilder {
@@ -67,6 +72,7 @@ impl TransactionBuilder {
             current_height: 0,
             selection_strategy: SelectionStrategy::BranchAndBound,
             special_payload: None,
+            reservations: None,
         }
     }
 
@@ -80,8 +86,22 @@ impl TransactionBuilder {
         self
     }
 
+    /// Seed the builder with the funding account's spendable UTXOs, skipping any
+    /// already reserved by another in-flight build.
+    ///
+    /// This call and the later `assemble_unsigned` that reserves the chosen
+    /// inputs must run under one uninterrupted hold of the wallet lock. If two
+    /// builds interleave between here and their reservation, both can observe the
+    /// same UTXO as free and select it, defeating the reservation.
     pub fn set_funding(mut self, funds_acc: &mut ManagedCoreFundsAccount, acc: &Account) -> Self {
-        self.inputs = funds_acc.utxos.values().cloned().collect();
+        let reserved = funds_acc.reservations().reserved(self.current_height);
+        self.inputs = funds_acc
+            .utxos
+            .values()
+            .filter(|utxo| !reserved.contains(&utxo.outpoint))
+            .cloned()
+            .collect();
+        self.reservations = Some(funds_acc.reservations().clone());
         self.change_addr = funds_acc.next_change_address(Some(&acc.account_xpub), true).ok();
         self
     }
@@ -351,6 +371,15 @@ impl TransactionBuilder {
             special_transaction_payload: self.special_payload,
         };
 
+        // Reserve the chosen inputs so a concurrent build skips them until the
+        // broadcast transaction is processed back into the wallet (which
+        // releases the reservation) or the TTL backstop reclaims it.
+        if let Some(reservations) = &self.reservations {
+            let outpoints: Vec<OutPoint> =
+                selected_inputs.iter().map(|utxo| utxo.outpoint).collect();
+            reservations.reserve(&outpoints, self.current_height);
+        }
+
         return Ok((transaction, selected_inputs));
 
         // BIP-69: Sort outputs by amount first, then by scriptPubKey
@@ -400,9 +429,23 @@ impl TransactionBuilder {
         P: Fn(Address) -> Option<DerivationPath> + Send,
     {
         let fee_rate = self.fee_rate;
+        let reservations = self.reservations.clone();
 
         let (tx, inputs) = self.assemble_unsigned()?;
-        let tx = signer.sign_tx(tx, inputs, path_resolver).await?;
+        // Signing never reaches the network for a local key, but an external
+        // signer can fail. A failed sign means the reserved inputs are still
+        // spendable, so release them now instead of stranding the funds until
+        // the TTL backstop reclaims them.
+        let reserved: Vec<OutPoint> = inputs.iter().map(|utxo| utxo.outpoint).collect();
+        let tx = match signer.sign_tx(tx, inputs, path_resolver).await {
+            Ok(tx) => tx,
+            Err(err) => {
+                if let Some(reservations) = &reservations {
+                    reservations.release(reserved.iter());
+                }
+                return Err(err);
+            }
+        };
 
         let mut tx_bytes = Vec::new();
         tx.consensus_encode(&mut tx_bytes).unwrap();
@@ -590,6 +633,7 @@ impl std::error::Error for BuilderError {}
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_utils::TestWalletContext;
     use crate::Network;
     use dashcore::blockdata::transaction::special_transaction::asset_lock::AssetLockPayload;
     use dashcore::{OutPoint, Txid};
@@ -1005,5 +1049,84 @@ mod tests {
             tx.input.len() >= 2,
             "Should select multiple inputs to cover fees for special payload"
         );
+    }
+
+    #[test]
+    fn set_funding_skips_reserved_utxos() {
+        let ctx = TestWalletContext::new_random();
+        let account =
+            ctx.wallet.accounts.standard_bip44_accounts.get(&0).expect("BIP44 account").clone();
+
+        let mut funds = ManagedCoreFundsAccount::dummy_bip44();
+        let reserved = Utxo::dummy(0x01, 100_000, 100, false, true);
+        let free = Utxo::dummy(0x02, 200_000, 100, false, true);
+        funds.utxos.insert(reserved.outpoint, reserved.clone());
+        funds.utxos.insert(free.outpoint, free.clone());
+
+        funds.reservations().reserve(&[reserved.outpoint], 200);
+
+        let builder =
+            TransactionBuilder::new().set_current_height(200).set_funding(&mut funds, &account);
+
+        let candidates: Vec<OutPoint> = builder.inputs.iter().map(|utxo| utxo.outpoint).collect();
+        assert!(!candidates.contains(&reserved.outpoint));
+        assert!(candidates.contains(&free.outpoint));
+    }
+
+    #[tokio::test]
+    async fn build_signed_releases_reservation_on_signing_failure() {
+        let ctx = TestWalletContext::new_random();
+        let account =
+            ctx.wallet.accounts.standard_bip44_accounts.get(&0).expect("BIP44 account").clone();
+
+        let mut funds = ManagedCoreFundsAccount::dummy_bip44();
+        let utxo = Utxo::dummy(0x01, 1_000_000, 100, false, true);
+        funds.utxos.insert(utxo.outpoint, utxo.clone());
+
+        let destination = Address::dummy(Network::Testnet, 0);
+        let builder = TransactionBuilder::new()
+            .set_current_height(200)
+            .set_fee_rate(FeeRate::normal())
+            .set_funding(&mut funds, &account)
+            .set_change_address(Address::dummy(Network::Testnet, 1))
+            .add_output(&destination, 500_000);
+
+        // A resolver that never finds a derivation path forces signing to fail
+        // after the inputs have already been reserved by `assemble_unsigned`.
+        let result = builder.build_signed(&ctx.wallet, |_addr| None).await;
+        assert!(result.is_err());
+
+        // The failed sign must leave no reservation behind, so the UTXO stays
+        // selectable instead of being stranded until the TTL backstop.
+        assert!(funds.reservations().reserved(200).is_empty());
+    }
+
+    #[test]
+    fn build_unsigned_reserves_selected_inputs() {
+        let ctx = TestWalletContext::new_random();
+        let account =
+            ctx.wallet.accounts.standard_bip44_accounts.get(&0).expect("BIP44 account").clone();
+
+        let mut funds = ManagedCoreFundsAccount::dummy_bip44();
+        let utxo = Utxo::dummy(0x01, 1_000_000, 100, false, true);
+        funds.utxos.insert(utxo.outpoint, utxo.clone());
+
+        let destination = Address::dummy(Network::Testnet, 0);
+        let (tx, _) = TransactionBuilder::new()
+            .set_current_height(200)
+            .set_fee_rate(FeeRate::normal())
+            .set_funding(&mut funds, &account)
+            .set_change_address(Address::dummy(Network::Testnet, 1))
+            .add_output(&destination, 500_000)
+            .build_unsigned()
+            .expect("build unsigned");
+
+        // Every input the build selected is reserved, so a later build observes
+        // them as taken and skips them.
+        let reserved = funds.reservations().reserved(200);
+        assert!(!reserved.is_empty());
+        for input in &tx.input {
+            assert!(reserved.contains(&input.previous_output));
+        }
     }
 }
