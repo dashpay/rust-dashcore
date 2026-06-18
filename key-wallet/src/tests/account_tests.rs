@@ -549,3 +549,82 @@ fn test_account_derivation_path_uniqueness() {
         paths.push(path_str);
     }
 }
+
+#[test]
+fn test_dashpay_account_index_in_derivation_path() {
+    use crate::bip32::ChildNumber;
+
+    // The DashPay friendship path is m/9'/coin'/15'/account'/<id>/<id> (DIP-15 "Account
+    // Reference" + DIP-14 256-bit indices). The account segment is the sender's DashPay
+    // account and MUST reflect the account index carried on the account type — not a fixed
+    // 0'. A multi-account wallet that derived every relationship under account 0 would
+    // watch the wrong addresses and miss funds paid to a non-zero account. Account 0 must
+    // stay byte-identical to the legacy single-account path (backward compatibility).
+    let network = Network::Testnet;
+    let user_id = [0x11u8; 32];
+    let friend_id = [0x22u8; 32];
+
+    for account in [0u32, 1, 7, 42] {
+        // Receiving funds: identity ids ordered user/friend.
+        let recv = AccountType::DashpayReceivingFunds {
+            index: account,
+            user_identity_id: user_id,
+            friend_identity_id: friend_id,
+        };
+        let recv_path = recv.derivation_path(network).unwrap();
+        let recv_comps: Vec<ChildNumber> = recv_path.clone().into();
+        assert_eq!(recv_comps.len(), 6, "root(3) + account' + two 256-bit ids");
+        assert_eq!(
+            recv_comps[3],
+            ChildNumber::Hardened {
+                index: account
+            },
+            "receiving account segment must honor the account index"
+        );
+        assert_eq!(
+            recv_comps[4],
+            ChildNumber::Normal256 {
+                index: user_id
+            }
+        );
+        assert_eq!(
+            recv_comps[5],
+            ChildNumber::Normal256 {
+                index: friend_id
+            }
+        );
+        assert!(
+            recv_path.to_string().starts_with(&format!("m/9'/1'/15'/{}'/", account)),
+            "receiving path should carry account {}': got {}",
+            account,
+            recv_path
+        );
+
+        // External account: the reverse channel, ids ordered friend/user.
+        let ext = AccountType::DashpayExternalAccount {
+            index: account,
+            user_identity_id: user_id,
+            friend_identity_id: friend_id,
+        };
+        let ext_comps: Vec<ChildNumber> = ext.derivation_path(network).unwrap().into();
+        assert_eq!(
+            ext_comps[3],
+            ChildNumber::Hardened {
+                index: account
+            },
+            "external account segment must honor the account index"
+        );
+        assert_eq!(
+            ext_comps[4],
+            ChildNumber::Normal256 {
+                index: friend_id
+            }
+        );
+        assert_eq!(
+            ext_comps[5],
+            ChildNumber::Normal256 {
+                index: user_id
+            }
+        );
+    }
+}

@@ -470,11 +470,13 @@ impl AccountType {
                 ]))
             }
             Self::DashpayReceivingFunds {
+                index: account_index,
                 user_identity_id,
                 friend_identity_id,
-                ..
             } => {
-                // Base DashPay root + account 0' + user_id/friend_id (non-hardened per DIP-14/DIP-15)
+                // Base DashPay root + account' + user_id/friend_id (non-hardened per DIP-14/DIP-15).
+                // The account is the sender's DashPay account (DIP-15 "Account Reference"),
+                // hardened; defaults to 0 but may differ for multi-account wallets.
                 let mut path = match network {
                     Network::Mainnet => {
                         DerivationPath::from(crate::dip9::DASHPAY_ROOT_PATH_MAINNET)
@@ -483,7 +485,10 @@ impl AccountType {
                         DerivationPath::from(crate::dip9::DASHPAY_ROOT_PATH_TESTNET)
                     }
                 };
-                path.push(ChildNumber::from_hardened_idx(0).map_err(crate::error::Error::Bip32)?);
+                path.push(
+                    ChildNumber::from_hardened_idx(*account_index)
+                        .map_err(crate::error::Error::Bip32)?,
+                );
                 path.push(ChildNumber::Normal256 {
                     index: *user_identity_id,
                 });
@@ -493,11 +498,13 @@ impl AccountType {
                 Ok(path)
             }
             Self::DashpayExternalAccount {
+                index: account_index,
                 user_identity_id,
                 friend_identity_id,
-                ..
             } => {
-                // Base DashPay root + account 0' + friend_id/user_id (non-hardened per DIP-14/DIP-15)
+                // Base DashPay root + account' + friend_id/user_id (non-hardened per DIP-14/DIP-15).
+                // The account is the sender's DashPay account (DIP-15 "Account Reference"),
+                // hardened; defaults to 0 but may differ for multi-account wallets.
                 let mut path = match network {
                     Network::Mainnet => {
                         DerivationPath::from(crate::dip9::DASHPAY_ROOT_PATH_MAINNET)
@@ -506,7 +513,10 @@ impl AccountType {
                         DerivationPath::from(crate::dip9::DASHPAY_ROOT_PATH_TESTNET)
                     }
                 };
-                path.push(ChildNumber::from_hardened_idx(0).map_err(crate::error::Error::Bip32)?);
+                path.push(
+                    ChildNumber::from_hardened_idx(*account_index)
+                        .map_err(crate::error::Error::Bip32)?,
+                );
                 path.push(ChildNumber::Normal256 {
                     index: *friend_identity_id,
                 });
