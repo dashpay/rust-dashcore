@@ -1151,5 +1151,10 @@ mod tests {
         for input in &tx.input {
             assert!(reserved.contains(&input.previous_output));
         }
+
+        // Abandoning the build releases its inputs immediately rather than
+        // stranding them until the TTL backstop reclaims them.
+        funds.release_reservation(&tx);
+        assert!(funds.reservations().reserved(200).is_empty());
     }
 }

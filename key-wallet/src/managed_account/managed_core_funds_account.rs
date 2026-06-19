@@ -121,6 +121,15 @@ impl ManagedCoreFundsAccount {
         &self.reservations
     }
 
+    /// Release the reservations held for `tx`'s inputs. Call this when a built
+    /// transaction will not be broadcast, e.g. the user cancelled, so its inputs
+    /// become selectable again immediately instead of waiting out the TTL
+    /// backstop. Broadcast transactions release on their own once the spend is
+    /// processed back into the wallet, so this is only for abandoned builds.
+    pub fn release_reservation(&self, tx: &Transaction) {
+        self.reservations.release(tx.input.iter().map(|input| &input.previous_output));
+    }
+
     /// Get a reference to the inner keys-account state.
     pub fn keys(&self) -> &ManagedCoreKeysAccount {
         &self.keys
