@@ -264,9 +264,9 @@ fn address_info_to_ffi(info: &AddressInfo) -> FFIAddressInfo {
         public_key_len,
         index: info.index,
         path: path_str,
-        used: info.used,
+        used: info.is_used(),
         generated_at: info.generated_at,
-        used_at: info.used_at.unwrap_or(0),
+        used_at: info.used_at().unwrap_or(0),
         tx_count: info.tx_count,
         total_received: info.total_received,
         total_sent: info.total_sent,
@@ -879,6 +879,7 @@ pub unsafe extern "C" fn address_info_array_free(infos: *mut *mut FFIAddressInfo
 mod tests {
     use super::*;
     use dash_network::ffi::FFINetwork;
+    use key_wallet::managed_account::address_pool::AddressState;
 
     #[test]
     fn test_address_pool_type_values() {
@@ -914,9 +915,8 @@ mod tests {
             public_key: Some(PublicKeyType::ECDSA(vec![0x02, 0x03, 0x04])),
             index: 0,
             path: test_path,
-            used: false,
+            state: AddressState::Available,
             generated_at: 1234567890,
-            used_at: None,
             tx_count: 0,
             total_received: 0,
             total_sent: 0,
