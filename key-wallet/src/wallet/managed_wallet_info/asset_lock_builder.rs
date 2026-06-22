@@ -469,6 +469,19 @@ mod tests {
                 .map_err(|e| e.to_string())?;
             Ok(secp256k1::PublicKey::from_secret_key(&secp, &xpriv.private_key))
         }
+
+        async fn extended_public_key(
+            &self,
+            path: &DerivationPath,
+        ) -> Result<crate::bip32::ExtendedPubKey, Self::Error> {
+            let secp = secp256k1::Secp256k1::new();
+            let xpriv = self
+                .root
+                .to_extended_priv_key(self.network)
+                .derive_priv(&secp, path)
+                .map_err(|e| e.to_string())?;
+            Ok(crate::bip32::ExtendedPubKey::from_priv(&secp, &xpriv))
+        }
     }
 
     #[tokio::test]
@@ -535,6 +548,12 @@ mod tests {
                 unreachable!("should be rejected before any signing is attempted")
             }
             async fn public_key(&self, _: &DerivationPath) -> Result<PublicKey, Self::Error> {
+                unreachable!()
+            }
+            async fn extended_public_key(
+                &self,
+                _: &DerivationPath,
+            ) -> Result<crate::bip32::ExtendedPubKey, Self::Error> {
                 unreachable!()
             }
         }
