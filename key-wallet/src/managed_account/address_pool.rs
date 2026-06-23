@@ -671,12 +671,15 @@ impl AddressPool {
         // `generate_address_at_index` with `add_to_state = true` always inserts
         // at `next_index`. If `highest_generated` ever drifts out of sync with
         // `addresses` a silent lookup miss would return an unreserved address,
-        // reintroducing the hand-out race this method exists to close, so fail
-        // hard in release rather than fail open.
-        let info = self
-            .addresses
-            .get_mut(&next_index)
-            .expect("generate_address_at_index(add_to_state=true) must insert at next_index");
+        // reintroducing the hand-out race this method exists to close, so report
+        // the broken invariant as an error rather than fail open.
+        let info = self.addresses.get_mut(&next_index).ok_or_else(|| {
+            Error::InvalidState(format!(
+                "next_unused_and_reserve: generate_address_at_index({}) succeeded but \
+                 the entry was not stored; pool invariant broken",
+                next_index
+            ))
+        })?;
         debug_assert!(info.is_available());
         info.state = AddressState::Reserved {
             at: now,
@@ -1088,17 +1091,17 @@ impl AddressPool {
             let next_index = self.highest_generated.map(|h| h + 1).unwrap_or(0);
             self.generate_address_at_index(next_index, key_source, true)?;
             // `generate_address_at_index` with `add_to_state = true` always
-            // inserts at `next_index`. Asserting the invariant explicitly
-            // here turns a regression that breaks it (e.g. a refactor that
-            // hits the early-return branch on a re-derivation) into a loud
-            // panic instead of an infinite loop on the outer `while`.
-            let info = self.addresses.get(&next_index).cloned().unwrap_or_else(|| {
-                panic!(
+            // inserts at `next_index`. Surfacing a regression that breaks it
+            // (e.g. a refactor that hits the early-return branch on a
+            // re-derivation) as an error keeps the outer `while` from spinning
+            // into an infinite loop.
+            let info = self.addresses.get(&next_index).cloned().ok_or_else(|| {
+                Error::InvalidState(format!(
                     "maintain_gap_limit: generate_address_at_index({}) succeeded but \
                      the entry was not stored; pool invariant broken",
                     next_index
-                )
-            });
+                ))
+            })?;
             new_addresses.push(info);
         }
 
