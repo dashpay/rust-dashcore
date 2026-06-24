@@ -20,6 +20,10 @@ use secp256k1::ecdsa::Signature;
 use secp256k1::{Message, PublicKey, Secp256k1};
 use std::cmp::Ordering;
 
+/// A transaction with more inputs would exceed the relay standard-size cap (~100 KB at ~148
+/// bytes/signed input) and be rejected by the network
+const MAX_STANDARD_TX_INPUTS: usize = 500;
+
 /// Calculate varint size for a given number
 fn varint_size(n: usize) -> usize {
     match n {
@@ -240,13 +244,19 @@ impl TransactionBuilder {
         size
     }
 
-    fn assemble_unsigned(self) -> Result<(Transaction, Vec<Utxo>), BuilderError> {
+    fn assemble_unsigned(mut self) -> Result<(Transaction, Vec<Utxo>), BuilderError> {
         if let Some(TransactionPayload::AssetLockPayloadType(p)) = &self.special_payload {
             if p.credit_outputs.is_empty() {
                 return Err(BuilderError::NoOutputs);
             }
         } else if self.outputs.is_empty() && self.special_payload.is_none() {
             return Err(BuilderError::NoOutputs);
+        }
+
+        // A drain (`All`) never emits change; drop the change address before sizing so the fee
+        // estimate doesn't include a phantom (~34-byte) change output.
+        if self.selection_strategy == SelectionStrategy::All {
+            self.change_addr = None;
         }
 
         // For AssetLock the on-chain spend equals the OP_RETURN burn, which
@@ -271,6 +281,14 @@ impl TransactionBuilder {
             .map_err(BuilderError::CoinSelection)?;
 
         let mut selected_inputs = selection.selected;
+
+        if selected_inputs.len() > MAX_STANDARD_TX_INPUTS {
+            return Err(BuilderError::TooManyInputs {
+                count: selected_inputs.len(),
+                max: MAX_STANDARD_TX_INPUTS,
+            });
+        }
+
         let total_input: u64 = selected_inputs.iter().map(|u| u.value()).sum();
 
         if total_input < total_output + selection.estimated_fee {
@@ -290,8 +308,17 @@ impl TransactionBuilder {
             _ => self.outputs,
         };
 
-        // Add change output if above dust threshold
-        if change_amount > 546 {
+        if self.selection_strategy == SelectionStrategy::All {
+            // Drain: the single output takes the whole balance minus fee (the caller's amount is
+            // ignored); no change.
+            let [out] = tx_outputs.as_mut_slice() else {
+                return Err(BuilderError::InvalidData(
+                    "SelectionStrategy::All requires exactly one output (the destination)".into(),
+                ));
+            };
+            out.value = total_input.saturating_sub(selection.estimated_fee);
+        } else if change_amount > 546 {
+            // Add change output if above dust threshold
             let Some(change_addr) = self.change_addr else {
                 return Err(BuilderError::NoChangeAddress);
             };
@@ -506,6 +533,8 @@ pub enum BuilderError {
     NoOutputs,
     /// No change address provided
     NoChangeAddress,
+    /// The requested funding account does not exist
+    AccountNotFound(String),
     /// Insufficient funds
     InsufficientFunds {
         available: u64,
@@ -521,6 +550,11 @@ pub enum BuilderError {
     CoinSelection(crate::wallet::managed_wallet_info::coin_selection::SelectionError),
     /// Signing was attempted with a watch-only wallet
     WatchOnlyWallet,
+    /// More inputs than fit in a single standard transaction
+    TooManyInputs {
+        count: usize,
+        max: usize,
+    },
 }
 
 impl fmt::Display for BuilderError {
@@ -529,6 +563,7 @@ impl fmt::Display for BuilderError {
             Self::NoInputs => write!(f, "No inputs provided"),
             Self::NoOutputs => write!(f, "No outputs provided"),
             Self::NoChangeAddress => write!(f, "No change address provided"),
+            Self::AccountNotFound(msg) => write!(f, "Account not found: {msg}"),
             Self::InsufficientFunds {
                 available,
                 required,
@@ -540,6 +575,12 @@ impl fmt::Display for BuilderError {
             Self::SigningFailed(msg) => write!(f, "Signing failed: {}", msg),
             Self::CoinSelection(err) => write!(f, "Coin selection error: {}", err),
             Self::WatchOnlyWallet => write!(f, "Cannot sign with a watch-only wallet"),
+            Self::TooManyInputs {
+                count,
+                max,
+            } => {
+                write!(f, "Too many inputs for a standard transaction: {count} (max {max})")
+            }
         }
     }
 }

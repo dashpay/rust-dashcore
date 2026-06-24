@@ -36,6 +36,9 @@ pub enum SelectionStrategy {
     OptimalConsolidation,
     /// Random selection for privacy
     Random,
+    /// Select EVERY spendable UTXO (drain / sweep an account empty). There is no change: the
+    /// single deliverable output is worth the total minus the fee to spend them all
+    All,
 }
 
 /// Result of UTXO selection
@@ -248,6 +251,38 @@ impl CoinSelector {
                     base_size,
                     input_size,
                 )
+            }
+            SelectionStrategy::All => {
+                let selected: Vec<Utxo> =
+                    utxos.into_iter().filter(|u| u.is_spendable(current_height)).cloned().collect();
+
+                if selected.is_empty() {
+                    return Err(SelectionError::NoUtxosAvailable);
+                }
+
+                let total_value: u64 = selected.iter().map(|u| u.value()).sum();
+                let estimated_size = base_size + selected.len() * input_size;
+                let estimated_fee = fee_rate.calculate_fee(estimated_size);
+
+                // The caller's `target_amount` is ignored: a drain spends everything, there is no
+                // target to satisfy
+                let deliverable = total_value
+                    .checked_sub(estimated_fee)
+                    .filter(|d| *d > self.dust_threshold)
+                    .ok_or(SelectionError::InsufficientFunds {
+                        available: total_value,
+                        required: estimated_fee + self.dust_threshold + 1,
+                    })?;
+
+                Ok(SelectionResult {
+                    selected,
+                    total_value,
+                    target_amount: deliverable,
+                    change_amount: 0,
+                    estimated_size,
+                    estimated_fee,
+                    exact_match: true,
+                })
             }
         }
     }
@@ -659,6 +694,32 @@ impl std::error::Error for SelectionError {}
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_select_all_drains_everything() {
+        let utxos = vec![
+            Utxo::dummy(0, 10000, 100, false, true),
+            Utxo::dummy(0, 20000, 100, false, true),
+            Utxo::dummy(0, 30000, 100, false, true),
+        ];
+        let selector = CoinSelector::new(SelectionStrategy::All);
+        // Pass a non-zero target to prove it is IGNORED: a drain takes everything regardless.
+        let result = selector.select_coins(&utxos, 12_345, FeeRate::new(1000), 200).unwrap();
+
+        assert_eq!(result.selected.len(), 3, "All selects every spendable UTXO");
+        assert_eq!(result.total_value, 60000);
+        assert!(result.estimated_fee > 0);
+        assert_eq!(result.target_amount, 60000 - result.estimated_fee, "deliverable = total - fee");
+        assert_eq!(result.change_amount, 0, "a drain leaves no change");
+        assert!(result.exact_match, "no change output for a drain");
+    }
+
+    #[test]
+    fn test_select_all_empty_is_error() {
+        let selector = CoinSelector::new(SelectionStrategy::All);
+        let result = selector.select_coins(&[], 0, FeeRate::new(1000), 200);
+        assert!(matches!(result, Err(SelectionError::NoUtxosAvailable)));
+    }
 
     #[test]
     fn test_smallest_first_selection() {

@@ -29,6 +29,7 @@ use dashcore::prelude::CoreBlockHeight;
 use key_wallet::account::AccountCollection;
 use key_wallet::managed_account::transaction_record::TransactionRecord;
 use key_wallet::transaction_checking::{DerivedAddressInfo, TransactionContext};
+use key_wallet::wallet::managed_wallet_info::coin_selection::SelectionStrategy;
 use key_wallet::wallet::managed_wallet_info::transaction_building::AccountTypePreference;
 use key_wallet::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
@@ -578,9 +579,11 @@ impl WalletManager<ManagedWalletInfo> {
     pub async fn build_and_sign_transaction(
         &mut self,
         wallet_id: &WalletId,
-        account_index: u32,
+        source: AccountTypePreference,
+        source_index: u32,
         outputs: Vec<(Address<NetworkUnchecked>, u64)>,
         fee_rate: FeeRate,
+        strategy: SelectionStrategy,
     ) -> Result<(Transaction, u64), WalletError> {
         // Get the managed account for UTXOs and signing data
         let (wallet, managed_wallet) = self
@@ -588,7 +591,7 @@ impl WalletManager<ManagedWalletInfo> {
             .ok_or(WalletError::WalletNotFound(*wallet_id))?;
 
         managed_wallet
-            .build_and_sign_transaction(wallet, account_index, outputs, fee_rate)
+            .build_and_sign_transaction(wallet, source, source_index, outputs, fee_rate, strategy)
             .await
             .map_err(|e| WalletError::TransactionBuild(e.to_string()))
     }

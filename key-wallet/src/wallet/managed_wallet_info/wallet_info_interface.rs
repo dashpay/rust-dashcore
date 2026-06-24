@@ -8,8 +8,10 @@ use super::managed_account_operations::ManagedAccountOperations;
 use crate::account::{AccountType, ManagedAccountTrait};
 use crate::managed_account::managed_account_collection::ManagedAccountCollection;
 use crate::managed_account::managed_account_ref::ManagedAccountRefMut;
+use crate::managed_account::ManagedCoreFundsAccount;
 use crate::transaction_checking::TransactionContext;
 use crate::transaction_checking::WalletTransactionChecker;
+use crate::wallet::managed_wallet_info::transaction_building::AccountTypePreference;
 use crate::wallet::managed_wallet_info::TransactionRecord;
 use crate::wallet::ManagedWalletInfo;
 use crate::{Network, Utxo, Wallet, WalletCoreBalance};
@@ -110,6 +112,29 @@ pub trait WalletInfoInterface: Sized + WalletTransactionChecker + ManagedAccount
             .iter()
             .map(|funds| (funds.managed_account_type().to_account_type(), funds.balance))
             .collect()
+    }
+
+    /// The funds-bearing account selected by `(preference, index)`, if it exists.
+    fn funds_account(
+        &self,
+        preference: AccountTypePreference,
+        index: u32,
+    ) -> Option<&ManagedCoreFundsAccount> {
+        let accounts = self.accounts();
+        match preference {
+            AccountTypePreference::BIP44 => accounts.standard_bip44_accounts.get(&index),
+            AccountTypePreference::BIP32 => accounts.standard_bip32_accounts.get(&index),
+            AccountTypePreference::CoinJoin => accounts.coinjoin_accounts.get(&index),
+        }
+    }
+
+    /// Balance of the funds-bearing account selected by `(preference, index)`, if it exists.
+    fn account_balance(
+        &self,
+        preference: AccountTypePreference,
+        index: u32,
+    ) -> Option<WalletCoreBalance> {
+        self.funds_account(preference, index).map(|account| account.balance)
     }
 
     /// Get transaction history

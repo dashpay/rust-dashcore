@@ -174,6 +174,10 @@ impl ManagedWalletInfo {
 
                 address
             }
+            AccountTypePreference::CoinJoin => {
+                debug_assert!(false, "CoinJoin accounts are spend-only in our current use cases");
+                None
+            }
         };
 
         address
@@ -216,6 +220,10 @@ impl ManagedWalletInfo {
                 }
 
                 address
+            }
+            AccountTypePreference::CoinJoin => {
+                debug_assert!(false, "CoinJoin accounts are spend-only in our current use cases");
+                None
             }
         };
 

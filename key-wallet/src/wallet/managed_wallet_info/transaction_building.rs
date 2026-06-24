@@ -2,6 +2,7 @@
 
 use crate::managed_account::managed_account_trait::ManagedAccountTrait;
 use crate::signer::Signer;
+use crate::wallet::managed_wallet_info::coin_selection::SelectionStrategy;
 use crate::wallet::managed_wallet_info::fee::FeeRate;
 use crate::wallet::managed_wallet_info::transaction_builder::{BuilderError, TransactionBuilder};
 use crate::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
@@ -15,32 +16,47 @@ use dashcore::{Address, Transaction};
 pub enum AccountTypePreference {
     BIP44,
     BIP32,
+    CoinJoin,
 }
 
 impl ManagedWalletInfo {
     pub async fn build_and_sign_transaction(
         &mut self,
         wallet: &Wallet,
-        account_index: u32,
+        source: AccountTypePreference,
+        source_index: u32,
         outputs: Vec<(Address<NetworkUnchecked>, u64)>,
         fee_rate: FeeRate,
+        strategy: SelectionStrategy,
     ) -> Result<(Transaction, u64), BuilderError> {
         let height = self.last_processed_height();
 
-        let managed_account = self
-            .accounts
-            .standard_bip44_accounts
-            .get_mut(&account_index)
-            .ok_or(BuilderError::NoChangeAddress)?;
-
-        let account = wallet
-            .accounts
-            .standard_bip44_accounts
-            .get(&account_index)
-            .ok_or(BuilderError::NoChangeAddress)?;
+        let managed_account = match source {
+            AccountTypePreference::BIP44 => {
+                self.accounts.standard_bip44_accounts.get_mut(&source_index)
+            }
+            AccountTypePreference::BIP32 => {
+                self.accounts.standard_bip32_accounts.get_mut(&source_index)
+            }
+            AccountTypePreference::CoinJoin => {
+                self.accounts.coinjoin_accounts.get_mut(&source_index)
+            }
+        }
+        .ok_or_else(|| {
+            BuilderError::AccountNotFound(format!("managed account {source:?} #{source_index}"))
+        })?;
+        let account = match source {
+            AccountTypePreference::BIP44 => wallet.get_bip44_account(source_index),
+            AccountTypePreference::BIP32 => wallet.get_bip32_account(source_index),
+            AccountTypePreference::CoinJoin => wallet.get_coinjoin_account(source_index),
+        }
+        .ok_or_else(|| {
+            BuilderError::AccountNotFound(format!("wallet account {source:?} #{source_index}"))
+        })?;
 
         let mut tx_builder = TransactionBuilder::new()
             .set_fee_rate(fee_rate)
+            .set_selection_strategy(strategy)
             .set_current_height(height)
             .set_funding(managed_account, account);
 
@@ -54,30 +70,45 @@ impl ManagedWalletInfo {
         tx_builder.build_signed(wallet, |addr| managed_account.address_derivation_path(&addr)).await
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn build_and_sign_transaction_with_signer<S: Signer>(
         &mut self,
         wallet: &Wallet,
-        account_index: u32,
+        source: AccountTypePreference,
+        source_index: u32,
         outputs: Vec<(Address<NetworkUnchecked>, u64)>,
         fee_rate: FeeRate,
+        strategy: SelectionStrategy,
         signer: &S,
     ) -> Result<(Transaction, u64), BuilderError> {
         let height = self.last_processed_height();
 
-        let managed_account = self
-            .accounts
-            .standard_bip44_accounts
-            .get_mut(&account_index)
-            .ok_or(BuilderError::NoChangeAddress)?;
-
-        let account = wallet
-            .accounts
-            .standard_bip44_accounts
-            .get(&account_index)
-            .ok_or(BuilderError::NoChangeAddress)?;
+        let managed_account = match source {
+            AccountTypePreference::BIP44 => {
+                self.accounts.standard_bip44_accounts.get_mut(&source_index)
+            }
+            AccountTypePreference::BIP32 => {
+                self.accounts.standard_bip32_accounts.get_mut(&source_index)
+            }
+            AccountTypePreference::CoinJoin => {
+                self.accounts.coinjoin_accounts.get_mut(&source_index)
+            }
+        }
+        .ok_or_else(|| {
+            BuilderError::AccountNotFound(format!("managed account {source:?} #{source_index}"))
+        })?;
+        let account = match source {
+            AccountTypePreference::BIP44 => wallet.get_bip44_account(source_index),
+            AccountTypePreference::BIP32 => wallet.get_bip32_account(source_index),
+            AccountTypePreference::CoinJoin => wallet.get_coinjoin_account(source_index),
+        }
+        .ok_or_else(|| {
+            BuilderError::AccountNotFound(format!("wallet account {source:?} #{source_index}"))
+        })?;
 
         let mut tx_builder = TransactionBuilder::new()
             .set_fee_rate(fee_rate)
+            .set_selection_strategy(strategy)
             .set_current_height(height)
             .set_funding(managed_account, account);
 
@@ -93,6 +124,7 @@ impl ManagedWalletInfo {
 }
 #[cfg(test)]
 mod tests {
+    use super::AccountTypePreference;
     use crate::wallet::managed_wallet_info::coin_selection::SelectionStrategy;
     use crate::wallet::managed_wallet_info::fee::FeeRate;
     use crate::wallet::managed_wallet_info::transaction_builder::TransactionBuilder;
@@ -141,6 +173,37 @@ mod tests {
         // The other output should be the change
         let change_output = tx.output.iter().find(|o| o.value != 150000);
         assert!(change_output.is_some(), "Should have change output");
+    }
+
+    #[test]
+    fn test_sweep_builder_drains_to_single_output() {
+        let utxos = vec![
+            Utxo::dummy(0, 100000, 100, false, true),
+            Utxo::dummy(0, 200000, 100, false, true),
+            Utxo::dummy(0, 300000, 100, false, true),
+        ];
+        let dest = Address::from_str("yTb47qEBpNmgXvYYsHEN4nh8yJwa5iC4Cs")
+            .unwrap()
+            .require_network(Network::Testnet)
+            .unwrap();
+
+        // `All` selects every input and pays total - fee to `dest` as one output, no change
+        let total = 600_000u64;
+        let fee = FeeRate::normal().calculate_fee(8 + 1 + 1 + 34 + 3 * 148);
+        let deliverable = total - fee;
+        let (tx, _fee) = TransactionBuilder::new()
+            .set_fee_rate(FeeRate::normal())
+            .set_current_height(200)
+            .set_selection_strategy(SelectionStrategy::All)
+            .add_inputs(utxos)
+            .add_output(&dest, deliverable)
+            .build_unsigned()
+            .unwrap();
+
+        assert_eq!(tx.input.len(), 3, "sweep spends every input");
+        assert_eq!(tx.output.len(), 1, "sweep has one real output and no change");
+        assert_eq!(tx.output[0].value, deliverable);
+        assert_eq!(tx.output[0].script_pubkey, dest.script_pubkey());
     }
 
     #[test]
@@ -437,8 +500,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_signer_invalid_account_index() {
-        // No BIP44 account 99 exists, so next_change_address returns None
-        // and we surface NoChangeAddress before any signing happens.
+        // No BIP44 account 99 exists, so account resolution fails with AccountNotFound
+        // before any funding or signing happens.
         let (wallet, mut info) = test_wallet_and_info();
         let signer = InMemorySigner {
             root: root_from(&wallet),
@@ -447,13 +510,16 @@ mod tests {
         let result = info
             .build_and_sign_transaction_with_signer(
                 &wallet,
+                AccountTypePreference::BIP44,
                 99,
                 dest_outputs(100_000),
                 FeeRate::normal(),
+                SelectionStrategy::BranchAndBound,
                 &signer,
             )
             .await;
-        assert!(matches!(result, Err(BuilderError::NoChangeAddress)));
+
+        assert!(matches!(result, Err(BuilderError::AccountNotFound(_))));
     }
 
     #[tokio::test]
@@ -489,9 +555,11 @@ mod tests {
         let result = info
             .build_and_sign_transaction_with_signer(
                 &wallet,
+                AccountTypePreference::BIP44,
                 0,
                 dest_outputs(100_000),
                 FeeRate::normal(),
+                SelectionStrategy::BranchAndBound,
                 &NoDigestSigner,
             )
             .await;
@@ -553,9 +621,11 @@ mod tests {
         let (tx, fee) = info
             .build_and_sign_transaction_with_signer(
                 &wallet,
+                AccountTypePreference::BIP44,
                 0,
                 dest_outputs(send_amount),
                 FeeRate::normal(),
+                SelectionStrategy::BranchAndBound,
                 &signer,
             )
             .await
@@ -592,9 +662,11 @@ mod tests {
         let result = info
             .build_and_sign_transaction_with_signer(
                 &wallet,
+                AccountTypePreference::BIP44,
                 0,
                 dest_outputs(500_000),
                 FeeRate::normal(),
+                SelectionStrategy::BranchAndBound,
                 &signer,
             )
             .await;
@@ -639,7 +711,15 @@ mod tests {
         let outputs = vec![(mainnet_dest, 100_000u64)];
 
         let result = info
-            .build_and_sign_transaction_with_signer(&wallet, 0, outputs, FeeRate::normal(), &signer)
+            .build_and_sign_transaction_with_signer(
+                &wallet,
+                AccountTypePreference::BIP44,
+                0,
+                outputs,
+                FeeRate::normal(),
+                SelectionStrategy::BranchAndBound,
+                &signer,
+            )
             .await;
         assert!(
             matches!(result, Err(BuilderError::InvalidData(_))),

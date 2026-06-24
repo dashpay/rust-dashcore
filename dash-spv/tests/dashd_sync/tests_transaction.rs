@@ -17,13 +17,18 @@ use key_wallet::account::ManagedAccountTrait;
 use key_wallet::bip32::{ChildNumber, ExtendedPrivKey};
 use key_wallet::gap_limit::DEFAULT_EXTERNAL_GAP_LIMIT;
 use key_wallet::mnemonic::{Language, Mnemonic};
+use key_wallet::wallet::initialization::WalletAccountCreationOptions;
+use key_wallet::wallet::managed_wallet_info::coin_selection::SelectionStrategy;
+use key_wallet::wallet::managed_wallet_info::fee::FeeRate;
 use key_wallet::wallet::managed_wallet_info::transaction_builder::{
     BuilderError, TransactionBuilder,
 };
+use key_wallet::wallet::managed_wallet_info::transaction_building::AccountTypePreference;
 use key_wallet::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
 use key_wallet::wallet::ManagedWalletInfo;
 use key_wallet::ManagedAccountType;
 use key_wallet_manager::{WalletId, WalletManager};
+use std::collections::BTreeSet;
 
 /// Verify incremental sync works by generating blocks after initial sync.
 ///
@@ -461,6 +466,108 @@ async fn test_spend_incoming_balance() {
     wait_for_mempool_tx(&mut client_handle.wallet_event_receiver, MEMPOOL_TIMEOUT)
         .await
         .expect("detect spend");
+
+    client_handle.stop().await;
+}
+
+/// Drain every UTXO of one account into another account of the same wallet.
+///
+/// Funds a BIP32 account with 3 UTXOs, then drains it into a BIP44 receive address with
+/// `SelectionStrategy::All` (spend every UTXO; single output = total - fee, no change)
+#[tokio::test]
+async fn test_drain_account_into_another() {
+    let Some(ctx) = TestContext::new(TestChain::Minimal).await else {
+        return;
+    };
+    if !ctx.dashd.supports_mining {
+        eprintln!("Skipping test (dashd RPC miner not available)");
+        return;
+    }
+
+    const FUNDING: u64 = 50_000_000;
+    const FEE: u64 = 488;
+
+    // Fresh wallet with a BIP32 account 0 (drain source) and a BIP44 account 0 (destination).
+    // The default test options only create the BIP44 account.
+    let (wallet, wallet_id) = {
+        let mut manager = WalletManager::<ManagedWalletInfo>::new(Network::Regtest);
+        let id = manager
+            .create_wallet_from_mnemonic(
+                EMPTY_MNEMONIC,
+                0,
+                WalletAccountCreationOptions::SpecificAccounts(
+                    BTreeSet::from([0]), // BIP44 account 0
+                    BTreeSet::from([0]), // BIP32 account 0
+                    BTreeSet::new(),
+                    BTreeSet::new(),
+                    BTreeSet::new(),
+                    None,
+                ),
+            )
+            .expect("create wallet with bip32 + bip44 accounts");
+        (Arc::new(RwLock::new(manager)), id)
+    };
+
+    let mut client_handle = create_and_start_client(&ctx.client_config, Arc::clone(&wallet)).await;
+    wait_for_sync(&mut client_handle.progress_receiver, ctx.dashd.initial_height).await;
+
+    let (fund_addresses, dest) = {
+        let mut lock = wallet.write().await;
+        let (w, info) = lock.get_wallet_and_info_mut(&wallet_id).expect("wallet");
+        let fund: Vec<Address> = (0..3)
+            .map(|_| info.next_receive_address(w, 0, AccountTypePreference::BIP32, true).unwrap())
+            .collect();
+        let dest = info.next_receive_address(w, 0, AccountTypePreference::BIP44, true).unwrap();
+        (fund, dest)
+    };
+
+    let miner = ctx.dashd.node.get_new_address_from_wallet("default");
+    for address in &fund_addresses {
+        ctx.dashd.node.send_to_address(address, Amount::from_sat(FUNDING));
+    }
+    ctx.dashd.node.generate_blocks(1, &miner);
+
+    let funded_height = ctx.dashd.initial_height + 1;
+    wait_for_sync(&mut client_handle.progress_receiver, funded_height).await;
+    wait_for_wallet_synced(&wallet, &wallet_id, funded_height).await;
+
+    // Drain the BIP32 account into the BIP44 destination (amount ignored under `All`).
+    let (tx, _) = {
+        let mut lock = wallet.write().await;
+
+        let (w, info) = lock.get_wallet_and_info_mut(&wallet_id).expect("wallet");
+        info.build_and_sign_transaction(
+            w,
+            AccountTypePreference::BIP32,
+            0,
+            vec![(dest.as_unchecked().clone(), 0)],
+            FeeRate::normal(),
+            SelectionStrategy::All,
+        )
+        .await
+        .expect("drain")
+    };
+
+    client_handle.client.broadcast_transaction(&tx).await.expect("broadcast");
+    wait_for_mempool_tx(&mut client_handle.wallet_event_receiver, MEMPOOL_TIMEOUT)
+        .await
+        .expect("mempool");
+    ctx.dashd.node.generate_blocks(1, &miner);
+
+    let drained_height = funded_height + 1;
+    wait_for_sync(&mut client_handle.progress_receiver, drained_height).await;
+    wait_for_wallet_synced(&wallet, &wallet_id, drained_height).await;
+
+    // Final state: BIP32 emptied, BIP44 holds the single drained UTXO.
+    let reader = wallet.read().await;
+    let info = reader.get_wallet_info(&wallet_id).expect("wallet");
+    let balance = |pref| info.account_balance(pref, 0).unwrap().total();
+    let utxos = |pref| info.funds_account(pref, 0).unwrap().utxos.len();
+
+    assert_eq!(balance(AccountTypePreference::BIP32), 0);
+    assert_eq!(utxos(AccountTypePreference::BIP32), 0);
+    assert_eq!(balance(AccountTypePreference::BIP44), FUNDING * 3 - FEE);
+    assert_eq!(utxos(AccountTypePreference::BIP44), 1);
 
     client_handle.stop().await;
 }

@@ -14,7 +14,9 @@ use dashcore::{
 use key_wallet::wallet::managed_wallet_info::asset_lock_builder::{
     AssetLockFundingType, CreditOutputFunding,
 };
+use key_wallet::wallet::managed_wallet_info::coin_selection::SelectionStrategy::BranchAndBound;
 use key_wallet::wallet::managed_wallet_info::fee::FeeRate;
+use key_wallet::wallet::managed_wallet_info::transaction_building::AccountTypePreference;
 use secp256k1::{Message, Secp256k1, SecretKey};
 use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
@@ -135,9 +137,11 @@ pub unsafe extern "C" fn wallet_build_and_sign_transaction(
                 manager
                     .build_and_sign_transaction(
                         &wallet_id,
+                        AccountTypePreference::BIP44,
                         account_index,
                         outputs,
-                        FeeRate::new(fee_per_kb)
+                        FeeRate::new(fee_per_kb),
+                        BranchAndBound
                     )
                     .await,
                 error
