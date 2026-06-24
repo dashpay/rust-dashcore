@@ -556,21 +556,16 @@ impl ManagedCoreFundsAccount {
                 external_addresses,
                 internal_addresses,
                 ..
+            }
+            | ManagedAccountType::CoinJoin {
+                external_addresses,
+                internal_addresses,
+                ..
             } => {
                 if external_addresses.contains_address(address) {
                     AddressClassification::External
                 } else if internal_addresses.contains_address(address) {
                     AddressClassification::Internal
-                } else {
-                    AddressClassification::Other
-                }
-            }
-            ManagedAccountType::CoinJoin {
-                addresses,
-                ..
-            } => {
-                if addresses.contains_address(address) {
-                    AddressClassification::External
                 } else {
                     AddressClassification::Other
                 }
@@ -725,10 +720,9 @@ impl ManagedCoreFundsAccount {
                     ..
                 } => CoreAccountTypeMatch::CoinJoin {
                     account_index: index.unwrap_or(0),
-                    // For CoinJoin, use both receive addresses and other addresses
-                    // since CoinJoin addresses can be classified as either
                     involved_addresses: {
                         let mut all_addresses = involved_receive_addresses.clone();
+                        all_addresses.extend(involved_change_addresses.clone());
                         all_addresses.extend(involved_other_addresses.clone());
                         all_addresses
                     },

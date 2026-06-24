@@ -1645,13 +1645,15 @@ mod tests {
         let managed_account =
             managed_wallet.first_coinjoin_managed_account_mut().expect("managed coinjoin");
 
-        // Get an address from the CoinJoin pool
+        // Get an address from the CoinJoin external (receive) pool
         let coinjoin_address = if let ManagedAccountType::CoinJoin {
-            addresses,
+            external_addresses,
             ..
         } = managed_account.managed_account_type_mut()
         {
-            addresses.next_unused(&KeySource::Public(xpub), true).expect("coinjoin address")
+            external_addresses
+                .next_unused(&KeySource::Public(xpub), true)
+                .expect("coinjoin address")
         } else {
             panic!("Expected CoinJoin account type");
         };

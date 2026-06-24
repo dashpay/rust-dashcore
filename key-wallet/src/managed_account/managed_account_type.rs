@@ -29,12 +29,18 @@ pub enum ManagedAccountType {
         /// Internal (change) address pool
         internal_addresses: AddressPool,
     },
-    /// CoinJoin account for private transactions
+    /// CoinJoin account for private transactions.
+    ///
+    /// Dual-pool like `Standard`: Dash Core receives mixed coins on the external branch
+    /// (m/9'/coin'/4'/account'/0/index), while DashSync also uses the internal branch
+    /// (.../1/index) for mixing-change, so both chains must be watched to see all funds.
     CoinJoin {
         /// Account index
         index: u32,
-        /// CoinJoin address pool
-        addresses: AddressPool,
+        /// External (mixed-coin receive) address pool — .../0/index
+        external_addresses: AddressPool,
+        /// Internal (mixing-change) address pool — .../1/index
+        internal_addresses: AddressPool,
     },
     /// Identity registration funding
     IdentityRegistration {
@@ -211,14 +217,15 @@ impl ManagedAccountType {
                 external_addresses,
                 internal_addresses,
                 ..
+            }
+            | Self::CoinJoin {
+                external_addresses,
+                internal_addresses,
+                ..
             } => {
                 vec![external_addresses, internal_addresses]
             }
-            Self::CoinJoin {
-                addresses,
-                ..
-            }
-            | Self::IdentityRegistration {
+            Self::IdentityRegistration {
                 addresses,
                 ..
             }
@@ -282,14 +289,15 @@ impl ManagedAccountType {
                 external_addresses,
                 internal_addresses,
                 ..
+            }
+            | Self::CoinJoin {
+                external_addresses,
+                internal_addresses,
+                ..
             } => {
                 vec![external_addresses, internal_addresses]
             }
-            Self::CoinJoin {
-                addresses,
-                ..
-            }
-            | Self::IdentityRegistration {
+            Self::IdentityRegistration {
                 addresses,
                 ..
             }
@@ -529,15 +537,28 @@ impl ManagedAccountType {
             AccountType::CoinJoin {
                 index,
             } => {
-                // CoinJoin addresses live on the external branch (m/9'/coin'/4'/account'/0/index)
-                // to match Dash Core, so derive through the `External` pool which uses [0, index].
-                let mut path = account_type
+                // Dual-pool: Dash Core receives mixed coins on the external branch
+                // (m/9'/coin'/4'/account'/0/index); DashSync also uses the internal branch
+                // (.../1/index) for mixing-change. Watch both so no funds are missed.
+                let base_path = account_type
                     .derivation_path(network)
                     .unwrap_or_else(|_| DerivationPath::master());
-                path.push(crate::bip32::ChildNumber::from_normal_idx(0)?);
-                let pool = AddressPool::new(
-                    path,
+
+                let mut external_path = base_path.clone();
+                external_path.push(crate::bip32::ChildNumber::from_normal_idx(0)?);
+                let external_pool = AddressPool::new(
+                    external_path,
                     AddressPoolType::External,
+                    DEFAULT_COINJOIN_GAP_LIMIT,
+                    network,
+                    key_source,
+                )?;
+
+                let mut internal_path = base_path;
+                internal_path.push(crate::bip32::ChildNumber::from_normal_idx(1)?);
+                let internal_pool = AddressPool::new(
+                    internal_path,
+                    AddressPoolType::Internal,
                     DEFAULT_COINJOIN_GAP_LIMIT,
                     network,
                     key_source,
@@ -545,7 +566,8 @@ impl ManagedAccountType {
 
                 Ok(Self::CoinJoin {
                     index,
-                    addresses: pool,
+                    external_addresses: external_pool,
+                    internal_addresses: internal_pool,
                 })
             }
             AccountType::IdentityRegistration => {

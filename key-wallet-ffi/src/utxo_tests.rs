@@ -344,10 +344,16 @@ mod utxo_tests {
         let mut coinjoin_account = ManagedCoreFundsAccount::new(
             ManagedAccountType::CoinJoin {
                 index: 0,
-                addresses: key_wallet::managed_account::address_pool::AddressPoolBuilder::default()
-                    .base_path(key_wallet::DerivationPath::from(vec![]))
-                    .build()
-                    .unwrap(),
+                external_addresses:
+                    key_wallet::managed_account::address_pool::AddressPoolBuilder::default()
+                        .base_path(key_wallet::DerivationPath::from(vec![]))
+                        .build()
+                        .unwrap(),
+                internal_addresses:
+                    key_wallet::managed_account::address_pool::AddressPoolBuilder::default()
+                        .base_path(key_wallet::DerivationPath::from(vec![]))
+                        .build()
+                        .unwrap(),
             },
             Network::Testnet,
         );

@@ -133,7 +133,7 @@ pub trait ManagedAccountTrait {
                 ..
             } => self.get_next_receive_address_index(),
             ManagedAccountType::CoinJoin {
-                addresses,
+                external_addresses: addresses,
                 ..
             }
             | ManagedAccountType::IdentityRegistration {
@@ -237,7 +237,7 @@ pub trait ManagedAccountTrait {
                 ..
             } => Err("Standard accounts must use next_receive_address or next_change_address"),
             ManagedAccountType::CoinJoin {
-                addresses,
+                external_addresses: addresses,
                 ..
             }
             | ManagedAccountType::IdentityRegistration {
@@ -320,7 +320,7 @@ pub trait ManagedAccountTrait {
                 "Standard accounts must use next_receive_address_with_info or next_change_address_with_info",
             ),
             ManagedAccountType::CoinJoin {
-                addresses,
+                external_addresses: addresses,
                 ..
             }
             | ManagedAccountType::IdentityRegistration {
@@ -559,7 +559,7 @@ pub trait ManagedAccountTrait {
                 ..
             } => None,
             ManagedAccountType::CoinJoin {
-                addresses,
+                external_addresses: addresses,
                 ..
             }
             | ManagedAccountType::IdentityRegistration {

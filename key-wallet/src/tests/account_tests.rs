@@ -142,9 +142,9 @@ fn test_coinjoin_account_creation() {
                 .unwrap();
         let pool = match &managed_type {
             ManagedAccountType::CoinJoin {
-                addresses,
+                external_addresses,
                 ..
-            } => addresses,
+            } => external_addresses,
             _ => panic!("Expected CoinJoin managed account type"),
         };
         let first_address =

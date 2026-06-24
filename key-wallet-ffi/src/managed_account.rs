@@ -25,7 +25,7 @@ use key_wallet::managed_account::address_pool::AddressPool;
 use key_wallet::managed_account::managed_account_trait::ManagedAccountTrait;
 use key_wallet::managed_account::managed_platform_account::ManagedPlatformAccount;
 use key_wallet::managed_account::{ManagedCoreFundsAccount, ManagedCoreKeysAccount};
-use key_wallet::AccountType;
+use key_wallet::{AccountType, ManagedAccountType};
 
 /// Internal handle variant: a funds-bearing account or a keys-only account.
 pub(crate) enum FFIManagedCoreAccountInner {
@@ -1285,9 +1285,13 @@ pub unsafe extern "C" fn managed_core_account_get_external_address_pool(
     let account = &*account;
     let managed_account = account.keys_account();
 
-    // Get external address pool if this is a standard account
+    // External pool exists for the dual-pool account types (Standard and CoinJoin).
     match managed_account.managed_account_type() {
-        key_wallet::managed_account::managed_account_type::ManagedAccountType::Standard {
+        ManagedAccountType::Standard {
+            external_addresses,
+            ..
+        }
+        | ManagedAccountType::CoinJoin {
             external_addresses,
             ..
         } => {
@@ -1321,9 +1325,14 @@ pub unsafe extern "C" fn managed_core_account_get_internal_address_pool(
     let account = &*account;
     let managed_account = account.keys_account();
 
-    // Get internal address pool if this is a standard account
+    // Internal pool exists for the dual-pool account types (Standard and CoinJoin).
+    use key_wallet::managed_account::managed_account_type::ManagedAccountType;
     match managed_account.managed_account_type() {
-        key_wallet::managed_account::managed_account_type::ManagedAccountType::Standard {
+        ManagedAccountType::Standard {
+            internal_addresses,
+            ..
+        }
+        | ManagedAccountType::CoinJoin {
             internal_addresses,
             ..
         } => {
@@ -1363,21 +1372,19 @@ pub unsafe extern "C" fn managed_core_account_get_address_pool(
 
     use key_wallet::managed_account::managed_account_type::ManagedAccountType;
 
-    match pool_type {
+    let pool = match pool_type {
         FFIAddressPoolType::External => {
             // Only standard accounts have external pools
             match managed_account.managed_account_type() {
                 ManagedAccountType::Standard {
                     external_addresses,
                     ..
-                } => {
-                    let ffi_pool = FFIAddressPool {
-                        pool: external_addresses as *const AddressPool as *mut AddressPool,
-                        pool_type: FFIAddressPoolType::External,
-                    };
-                    Box::into_raw(Box::new(ffi_pool))
-                }
-                _ => std::ptr::null_mut(),
+                } => external_addresses,
+                ManagedAccountType::CoinJoin {
+                    external_addresses,
+                    ..
+                } => external_addresses,
+                _ => return std::ptr::null_mut(),
             }
         }
         FFIAddressPoolType::Internal => {
@@ -1386,19 +1393,17 @@ pub unsafe extern "C" fn managed_core_account_get_address_pool(
                 ManagedAccountType::Standard {
                     internal_addresses,
                     ..
-                } => {
-                    let ffi_pool = FFIAddressPool {
-                        pool: internal_addresses as *const AddressPool as *mut AddressPool,
-                        pool_type: FFIAddressPoolType::Internal,
-                    };
-                    Box::into_raw(Box::new(ffi_pool))
-                }
-                _ => std::ptr::null_mut(),
+                } => internal_addresses,
+                ManagedAccountType::CoinJoin {
+                    internal_addresses,
+                    ..
+                } => internal_addresses,
+                _ => return std::ptr::null_mut(),
             }
         }
         FFIAddressPoolType::Single => {
             // Get the single address pool for non-standard accounts
-            let pool_ref = match managed_account.managed_account_type() {
+            match managed_account.managed_account_type() {
                 ManagedAccountType::Standard {
                     ..
                 } => {
@@ -1406,9 +1411,11 @@ pub unsafe extern "C" fn managed_core_account_get_address_pool(
                     return std::ptr::null_mut();
                 }
                 ManagedAccountType::CoinJoin {
-                    addresses,
                     ..
-                } => addresses,
+                } => {
+                    // Conjoin accounts don't have a "single" pool
+                    return std::ptr::null_mut();
+                }
                 ManagedAccountType::IdentityRegistration {
                     addresses,
                 } => addresses,
@@ -1452,15 +1459,15 @@ pub unsafe extern "C" fn managed_core_account_get_address_pool(
                     addresses,
                     ..
                 } => addresses,
-            };
-
-            let ffi_pool = FFIAddressPool {
-                pool: pool_ref as *const AddressPool as *mut AddressPool,
-                pool_type: FFIAddressPoolType::Single,
-            };
-            Box::into_raw(Box::new(ffi_pool))
+            }
         }
-    }
+    };
+
+    let ffi_pool = FFIAddressPool {
+        pool: pool as *const AddressPool as *mut AddressPool,
+        pool_type,
+    };
+    Box::into_raw(Box::new(ffi_pool))
 }
 
 // ==================== Platform Payment Account Functions ====================
@@ -2256,20 +2263,19 @@ mod tests {
 
             let cj_account = cj_result.account;
 
-            // Test that external/internal return null for CoinJoin account
             let cj_external = managed_core_account_get_external_address_pool(cj_account);
-            assert!(cj_external.is_null());
+            assert!(!cj_external.is_null());
 
             let cj_internal = managed_core_account_get_internal_address_pool(cj_account);
-            assert!(cj_internal.is_null());
+            assert!(!cj_internal.is_null());
 
-            // Test that Single pool works for CoinJoin account
             let cj_single =
                 managed_core_account_get_address_pool(cj_account, FFIAddressPoolType::Single);
-            assert!(!cj_single.is_null());
+            assert!(cj_single.is_null());
 
             // Clean up
-            address_pool_free(cj_single);
+            address_pool_free(cj_external);
+            address_pool_free(cj_internal);
             managed_core_account_free(cj_account);
             wallet_manager_free_wallet_ids(wallet_ids_out, count_out);
             wallet_manager_free(manager);

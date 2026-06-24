@@ -180,13 +180,13 @@ async fn test_transaction_routing_to_coinjoin_account() {
             .first_coinjoin_managed_account_mut()
             .expect("Failed to get first CoinJoin managed account");
         let ManagedAccountType::CoinJoin {
-            addresses,
+            external_addresses,
             ..
         } = managed_account.managed_account_type_mut()
         else {
             panic!("Expected CoinJoin account type");
         };
-        addresses
+        external_addresses
             .next_unused(&KeySource::Public(xpub), true)
             .expect("Failed to derive CoinJoin address")
     };
