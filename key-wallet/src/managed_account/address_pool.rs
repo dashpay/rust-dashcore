@@ -882,6 +882,19 @@ impl AddressPool {
         unused_count < self.gap_limit
     }
 
+    /// Raise the gap limit and generate the addresses the wider limit now requires.
+    ///
+    /// The new limit is capped at [`crate::gap_limit::MAX_GAP_LIMIT`]. Returns the freshly
+    /// generated [`AddressInfo`] entries
+    pub fn set_gap_limit(
+        &mut self,
+        gap_limit: u32,
+        key_source: &KeySource,
+    ) -> Result<Vec<AddressInfo>> {
+        self.gap_limit = gap_limit.clamp(1, crate::gap_limit::MAX_GAP_LIMIT);
+        self.maintain_gap_limit(key_source)
+    }
+
     /// Generate addresses to maintain the gap limit.
     ///
     /// Returns the freshly generated [`AddressInfo`] entries (in derivation
@@ -1216,6 +1229,36 @@ mod tests {
         pool.mark_used(&addr1);
         let addr3 = pool.next_unused(&key_source, true).unwrap();
         assert_ne!(addr1, addr3); // Should return different address after marking used
+    }
+
+    #[test]
+    fn test_set_gap_limit_widens_and_generates() {
+        let base_path = DerivationPath::from(vec![ChildNumber::from_normal_idx(0).unwrap()]);
+        let key_source = test_key_source();
+
+        // Start with a small gap limit (5 pre-generated addresses).
+        let mut pool = AddressPool::new(
+            base_path,
+            AddressPoolType::External,
+            5,
+            Network::Testnet,
+            &key_source,
+        )
+        .unwrap();
+        assert_eq!(pool.gap_limit, 5);
+        assert_eq!(pool.addresses.len(), 5);
+
+        // Widening generates the extra addresses up front and returns them.
+        let new = pool.set_gap_limit(20, &key_source).unwrap();
+        assert_eq!(pool.gap_limit, 20);
+        assert_eq!(new.len(), 15);
+        assert_eq!(pool.addresses.len(), 20);
+        assert_eq!(pool.highest_generated, Some(19));
+
+        // The new limit is capped at MAX_GAP_LIMIT.
+        pool.set_gap_limit(crate::gap_limit::MAX_GAP_LIMIT + 500, &key_source).unwrap();
+        assert_eq!(pool.gap_limit, crate::gap_limit::MAX_GAP_LIMIT);
+        assert_eq!(pool.addresses.len(), crate::gap_limit::MAX_GAP_LIMIT as usize);
     }
 
     #[test]

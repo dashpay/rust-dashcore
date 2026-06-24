@@ -552,6 +552,39 @@ pub trait ManagedAccountTrait {
             .sum()
     }
 
+    /// Widen the gap limit for every address pool of this account.
+    /// Returns every freshly generated address (across all pools)
+    fn set_gap_limit(
+        &mut self,
+        gap_limit: u32,
+        key_source: &address_pool::KeySource,
+    ) -> crate::error::Result<Vec<address_pool::AddressInfo>> {
+        let mut generated = Vec::new();
+        let mut first_error = None;
+
+        for pool in self.managed_account_type_mut().address_pools_mut() {
+            match pool.set_gap_limit(gap_limit, key_source) {
+                Ok(new) => generated.extend(new),
+                Err(e) => {
+                    first_error = Some(e);
+                    break;
+                }
+            }
+        }
+
+        // Bump the monitor revision if any pool actually generated addresses, even when a later
+        // pool failed — otherwise the revision would stay stale despite changed monitored state.
+        if !generated.is_empty() {
+            self.bump_monitor_revision();
+        }
+
+        if let Some(e) = first_error {
+            return Err(e);
+        }
+
+        Ok(generated)
+    }
+
     /// Get the gap limit for non-standard (single-pool) accounts
     fn gap_limit(&self) -> Option<u32> {
         match self.managed_account_type() {
