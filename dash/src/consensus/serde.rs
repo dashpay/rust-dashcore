@@ -10,13 +10,12 @@
 use core::fmt;
 use core::marker::PhantomData;
 
-use serde::de::{SeqAccess, Unexpected, Visitor};
-use serde::ser::SerializeSeq;
-use serde::{Deserializer, Serializer};
-
 use super::encode::Error as ConsensusError;
 use super::{Decodable, Encodable};
 use crate::io;
+use serde::de::{SeqAccess, Unexpected, Visitor};
+use serde::ser::SerializeSeq;
+use serde::{Deserializer, Serializer};
 
 /// Hex-encoding strategy
 pub struct Hex<Case = hex::Lower>(PhantomData<Case>)
@@ -194,6 +193,7 @@ impl<'a, T: 'a + Encodable, E: ByteEncoder> fmt::Display for DisplayWrapper<'a, 
                     );
                 }
             }
+            let _ = error;
             fmt::Error
         })?;
         let result = writer.actually_flush();
@@ -220,6 +220,7 @@ impl<W: fmt::Write> ErrorTrackingWriter<W> {
     }
 
     #[track_caller]
+    #[cfg_attr(not(debug_assertions), allow(unused_variables))]
     fn assert_no_error(&self, fun: &str) {
         #[cfg(debug_assertions)]
         {
@@ -238,6 +239,7 @@ impl<W: fmt::Write> ErrorTrackingWriter<W> {
         }
     }
 
+    #[cfg_attr(not(debug_assertions), allow(unused_variables))]
     fn set_error(&mut self, was: bool) {
         #[cfg(debug_assertions)]
         {

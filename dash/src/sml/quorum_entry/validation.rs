@@ -3,6 +3,7 @@ use crate::sml::quorum_entry::qualified_quorum_entry::QualifiedQuorumEntry;
 use crate::sml::quorum_validation_error::QuorumValidationError;
 use blsful::{Bls12381G2Impl, PublicKey, SerializationFormat, Signature};
 use hashes::Hash;
+use tracing::error;
 
 impl QualifiedQuorumEntry {
     /// Verifies the aggregated commitment signature for the quorum.
@@ -50,9 +51,7 @@ impl QualifiedQuorumEntry {
                 match result {
                     Ok(public_key) => Some(public_key),
                     Err(e) => {
-                        // Log error in debug builds
-                        #[cfg(debug_assertions)]
-                        eprintln!("Failed to deserialize operator key: {:?}", e);
+                        error!("Failed to deserialize operator key: {}", e);
                         None
                     }
                 }
