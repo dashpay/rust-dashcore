@@ -30,6 +30,35 @@ fn varint_size(n: usize) -> usize {
     }
 }
 
+/// Maximum serialized size of a compressed-P2PKH input (bytes): 36 outpoint + 1
+/// script-len + 108 scriptSig (1 + 73-byte max low-S DER signature + 1 + 33-byte
+/// pubkey) + 4 sequence. Sweep ("drain") builds size the fee with this maximum
+/// so it never undershoots the real signed transaction at the 1 duff/byte relay
+/// minimum; the single output absorbs any over-estimate.
+const SWEEP_MAX_INPUT_SIZE: usize = 149;
+
+/// Outputs at or below this many duffs are dust and rejected by relay.
+const DUST_THRESHOLD: u64 = 546;
+
+// BIP-69: Sort outputs by amount first, then by scriptPubKey lexicographically.
+fn bip69_output_sorter(a: &TxOut, b: &TxOut) -> Ordering {
+    match a.value.cmp(&b.value) {
+        Ordering::Equal => a.script_pubkey.as_bytes().cmp(b.script_pubkey.as_bytes()),
+        other => other,
+    }
+}
+
+// BIP-69: Sort inputs by transaction hash and then by output index.
+fn bip69_input_sorter(a: &Utxo, b: &Utxo) -> Ordering {
+    let tx_hash_a = a.outpoint.txid.to_byte_array();
+    let tx_hash_b = b.outpoint.txid.to_byte_array();
+
+    match tx_hash_a.cmp(&tx_hash_b) {
+        Ordering::Equal => a.outpoint.vout.cmp(&b.outpoint.vout),
+        other => other,
+    }
+}
+
 /// Transaction builder for creating Dash transactions
 ///
 /// This builder implements BIP-69 (Lexicographical Indexing of Transaction Inputs and Outputs)
@@ -44,6 +73,9 @@ pub struct TransactionBuilder {
     selection_strategy: SelectionStrategy,
     /// Special transaction payload for Dash-specific transactions
     special_payload: Option<TransactionPayload>,
+    /// When set, build a sweep ("drain"): consume every input into a single
+    /// no-change output paying this address (see [`TransactionBuilder::sweep_to`]).
+    sweep_dest: Option<Address>,
 }
 
 impl Default for TransactionBuilder {
@@ -63,6 +95,7 @@ impl TransactionBuilder {
             current_height: 0,
             selection_strategy: SelectionStrategy::BranchAndBound,
             special_payload: None,
+            sweep_dest: None,
         }
     }
 
@@ -113,6 +146,21 @@ impl TransactionBuilder {
 
     pub fn set_special_payload(mut self, payload: TransactionPayload) -> Self {
         self.special_payload = Some(payload);
+        self
+    }
+
+    /// Build this transaction as a **sweep** ("drain"): consume *every* added
+    /// input into a single output paying `dest`, with no change. The output
+    /// amount is computed at build time as `total_input − fee`, so coin
+    /// selection is skipped entirely — unlike a normal build, which selects only
+    /// a covering subset and can leave inputs behind.
+    ///
+    /// Add the inputs with [`add_inputs`](Self::add_inputs); any
+    /// [`add_output`](Self::add_output) calls and the change address are ignored
+    /// in sweep mode. The build fails with [`BuilderError::InsufficientFunds`]
+    /// if the inputs can't cover the fee plus the dust threshold.
+    pub fn sweep_to(mut self, dest: &Address) -> Self {
+        self.sweep_dest = Some(dest.clone());
         self
     }
 
@@ -241,6 +289,12 @@ impl TransactionBuilder {
     }
 
     fn assemble_unsigned(self) -> Result<(Transaction, Vec<Utxo>), BuilderError> {
+        // Sweep ("drain") mode bypasses coin selection entirely: every input is
+        // consumed into a single no-change output (see `sweep_to`).
+        if self.sweep_dest.is_some() {
+            return self.assemble_sweep();
+        }
+
         if let Some(TransactionPayload::AssetLockPayloadType(p)) = &self.special_payload {
             if p.credit_outputs.is_empty() {
                 return Err(BuilderError::NoOutputs);
@@ -291,7 +345,7 @@ impl TransactionBuilder {
         };
 
         // Add change output if above dust threshold
-        if change_amount > 546 {
+        if change_amount > DUST_THRESHOLD {
             let Some(change_addr) = self.change_addr else {
                 return Err(BuilderError::NoChangeAddress);
             };
@@ -324,27 +378,68 @@ impl TransactionBuilder {
             special_transaction_payload: self.special_payload,
         };
 
-        return Ok((transaction, selected_inputs));
+        Ok((transaction, selected_inputs))
+    }
 
-        // BIP-69: Sort outputs by amount first, then by scriptPubKey
-        // lexicographically.
-        fn bip69_output_sorter(a: &TxOut, b: &TxOut) -> Ordering {
-            match a.value.cmp(&b.value) {
-                Ordering::Equal => a.script_pubkey.as_bytes().cmp(b.script_pubkey.as_bytes()),
-                other => other,
-            }
+    /// Assemble a sweep ("drain") transaction: every input consumed into one
+    /// output paying `sweep_dest`, with no change. The fee is sized from the
+    /// maximum serialized input size so it never undershoots the real signed tx
+    /// at the relay minimum; the single output absorbs any over-estimate. Fails
+    /// if the inputs can't cover the fee plus the dust threshold.
+    fn assemble_sweep(self) -> Result<(Transaction, Vec<Utxo>), BuilderError> {
+        let dest = self.sweep_dest.clone().expect("assemble_sweep requires sweep_dest");
+        if self.inputs.is_empty() {
+            return Err(BuilderError::NoInputs);
         }
 
-        // BIP-69: Sort inputs by transaction hash and then by output index.
-        fn bip69_input_sorter(a: &Utxo, b: &Utxo) -> Ordering {
-            let tx_hash_a = a.outpoint.txid.to_byte_array();
-            let tx_hash_b = b.outpoint.txid.to_byte_array();
+        let inputs = self.inputs;
+        let total_input: u64 = inputs.iter().map(|u| u.value()).sum();
+        let input_count = inputs.len();
 
-            match tx_hash_a.cmp(&tx_hash_b) {
-                Ordering::Equal => a.outpoint.vout.cmp(&b.outpoint.vout),
-                other => other,
+        // (input_count inputs, exactly one P2PKH output, no change):
+        // version+locktime (8) + input-count varint + output-count varint (1)
+        // + one P2PKH output (34) + inputs * max-P2PKH-input.
+        let tx_size = 8 + varint_size(input_count) + 1 + 34 + input_count * SWEEP_MAX_INPUT_SIZE;
+        let fee = self.fee_rate.calculate_fee(tx_size);
+
+        // Reject a sweep that can't clear the fee plus a non-dust output —
+        // otherwise the single output would be dust and the tx unrelayable.
+        let output_amount = match total_input.checked_sub(fee) {
+            Some(amount) if amount > DUST_THRESHOLD => amount,
+            _ => {
+                return Err(BuilderError::InsufficientFunds {
+                    available: total_input,
+                    required: fee + DUST_THRESHOLD + 1,
+                })
             }
-        }
+        };
+
+        // Preserve the caller's input order — do NOT BIP-69 sort. A sweep
+        // consumes every input regardless of order, and keeping the supplied
+        // order makes the built transaction deterministic w.r.t. the caller's
+        // UTXO set (the CoinJoin sweep relies on this).
+        let tx_inputs: Vec<TxIn> = inputs
+            .iter()
+            .map(|utxo| TxIn {
+                previous_output: utxo.outpoint,
+                script_sig: ScriptBuf::new(),
+                sequence: 0xffffffff, // Dash doesn't use RBF
+                witness: dashcore::blockdata::witness::Witness::new(),
+            })
+            .collect();
+
+        let transaction = Transaction {
+            version: 3,
+            lock_time: 0,
+            input: tx_inputs,
+            output: vec![TxOut {
+                value: output_amount,
+                script_pubkey: dest.script_pubkey(),
+            }],
+            special_transaction_payload: self.special_payload,
+        };
+
+        Ok((transaction, inputs))
     }
 
     pub fn build_unsigned(self) -> Result<(Transaction, u64), BuilderError> {
@@ -725,6 +820,45 @@ mod tests {
         // Should only have 1 output (no change) because change is below dust threshold
         assert_eq!(tx.output.len(), 1);
         assert_eq!(tx.output[0].value, 150000);
+    }
+
+    #[test]
+    fn test_sweep_consumes_all_inputs_no_change() {
+        let utxos = vec![
+            Utxo::dummy(0, 100000, 100, false, true),
+            Utxo::dummy(0, 50000, 100, false, true),
+            Utxo::dummy(0, 25000, 100, false, true),
+        ];
+        let dest = Address::dummy(Network::Testnet, 0);
+
+        let (tx, _fee) = TransactionBuilder::new()
+            .set_fee_rate(FeeRate::normal())
+            .add_inputs(utxos)
+            .sweep_to(&dest)
+            .build_unsigned()
+            .unwrap();
+
+        // Every input consumed, exactly one output (no change), fully drained.
+        assert_eq!(tx.input.len(), 3);
+        assert_eq!(tx.output.len(), 1);
+        assert_eq!(tx.output[0].script_pubkey, dest.script_pubkey());
+        let total = 100000 + 50000 + 25000;
+        assert!(tx.output[0].value > 0 && tx.output[0].value < total);
+    }
+
+    #[test]
+    fn test_sweep_rejects_below_fee_plus_dust() {
+        // A lone tiny UTXO can't clear the fee plus a non-dust output.
+        let utxos = vec![Utxo::dummy(0, 200, 100, false, true)];
+        let dest = Address::dummy(Network::Testnet, 0);
+
+        let result = TransactionBuilder::new()
+            .set_fee_rate(FeeRate::normal())
+            .add_inputs(utxos)
+            .sweep_to(&dest)
+            .build_unsigned();
+
+        assert!(matches!(result, Err(BuilderError::InsufficientFunds { .. })));
     }
 
     #[test]
