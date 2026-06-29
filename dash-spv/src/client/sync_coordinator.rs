@@ -64,11 +64,6 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
             monitor_failure_tx.clone(),
         );
 
-        let reservation_sweep_task =
-            self.config.read().await.reservation_sweep_ttl_secs.map(|ttl| {
-                spawn_reservation_sweep(self.wallet.clone(), ttl, monitor_shutdown.clone())
-            });
-
         let network_task = spawn_broadcast_monitor(
             "NetworkEvent",
             network_event_rx,
@@ -103,14 +98,19 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
                 wallet_task,
                 progress_task
             );
-            if let Some(task) = reservation_sweep_task {
-                let _ = task.await;
-            }
             for handler in handlers.iter() {
                 handler.on_error(&e.to_string());
             }
             return Err(e);
         }
+
+        // Spawn the reservation sweep only after startup succeeds: it mutates
+        // wallet state, so a slow or failing `start()` must not let it reclaim
+        // reservations while `run()` is still on its way to returning an error.
+        let reservation_sweep_task =
+            self.config.read().await.reservation_sweep_ttl_secs.map(|ttl| {
+                spawn_reservation_sweep(self.wallet.clone(), ttl, monitor_shutdown.clone())
+            });
 
         // `start()` flipped the state to `true`. Consume that edge so `changed()`
         // only fires on the subsequent transition to `false` (the stop request).
