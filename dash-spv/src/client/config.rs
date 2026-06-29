@@ -230,6 +230,10 @@ impl ClientConfig {
             );
         }
 
+        if self.reservation_sweep_ttl_secs == Some(0) {
+            return Err("reservation_sweep_ttl_secs must be > 0 when set; use without_reservation_sweep() to disable the sweep".to_string());
+        }
+
         match (self.network == Network::Devnet, &self.devnet) {
             (true, Some(devnet)) => devnet.validate()?,
             (true, None) => {
