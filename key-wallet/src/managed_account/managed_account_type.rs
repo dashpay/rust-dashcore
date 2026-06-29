@@ -5,6 +5,7 @@ use crate::gap_limit::{
     DEFAULT_SPECIAL_GAP_LIMIT, DIP17_GAP_LIMIT,
 };
 
+use crate::managed_account::address_pool::AddressPoolType;
 use crate::{AccountType, AddressPool, DerivationPath};
 #[cfg(feature = "bincode")]
 use bincode_derive::{Decode, Encode};
@@ -492,7 +493,7 @@ impl ManagedAccountType {
     /// is the account's derivation path
     pub(crate) fn single_pool(
         account_type: AccountType,
-        pool_type: crate::managed_account::address_pool::AddressPoolType,
+        pool_type: AddressPoolType,
         gap_limit: u32,
         network: crate::Network,
         key_source: &crate::KeySource,
@@ -512,8 +513,6 @@ impl ManagedAccountType {
         network: crate::Network,
         key_source: &crate::KeySource,
     ) -> Result<(AddressPool, AddressPool), crate::error::Error> {
-        use crate::managed_account::address_pool::{AddressPool, AddressPoolType};
-
         let base_path =
             account_type.derivation_path(network).unwrap_or_else(|_| DerivationPath::master());
 
@@ -546,8 +545,6 @@ impl ManagedAccountType {
         network: crate::Network,
         key_source: &crate::KeySource,
     ) -> Result<Self, crate::error::Error> {
-        use crate::managed_account::address_pool::AddressPoolType;
-
         match account_type {
             AccountType::Standard {
                 index,
