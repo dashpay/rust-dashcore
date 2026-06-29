@@ -489,20 +489,18 @@ impl ManagedAccountType {
     }
 
     /// Build a single address pool for `account_type` (single-pool account types). The pool path
-    /// is the account's derivation path; `pool_type`/`gap_limit` vary per account kind.
+    /// is the account's derivation path
     pub(crate) fn single_pool(
         account_type: AccountType,
         pool_type: crate::managed_account::address_pool::AddressPoolType,
         gap_limit: u32,
         network: crate::Network,
         key_source: &crate::KeySource,
-    ) -> Result<crate::managed_account::address_pool::AddressPool, crate::error::Error> {
-        let path = account_type
-            .derivation_path(network)
-            .unwrap_or_else(|_| crate::bip32::DerivationPath::master());
-        crate::managed_account::address_pool::AddressPool::new(
-            path, pool_type, gap_limit, network, key_source,
-        )
+    ) -> Result<AddressPool, crate::error::Error> {
+        let path =
+            account_type.derivation_path(network).unwrap_or_else(|_| DerivationPath::master());
+
+        AddressPool::new(path, pool_type, gap_limit, network, key_source)
     }
 
     /// Build the external (`.../0/index`) and internal (`.../1/index`) pools for a dual-pool
@@ -513,18 +511,11 @@ impl ManagedAccountType {
         internal_gap_limit: u32,
         network: crate::Network,
         key_source: &crate::KeySource,
-    ) -> Result<
-        (
-            crate::managed_account::address_pool::AddressPool,
-            crate::managed_account::address_pool::AddressPool,
-        ),
-        crate::error::Error,
-    > {
+    ) -> Result<(AddressPool, AddressPool), crate::error::Error> {
         use crate::managed_account::address_pool::{AddressPool, AddressPoolType};
 
-        let base_path = account_type
-            .derivation_path(network)
-            .unwrap_or_else(|_| crate::bip32::DerivationPath::master());
+        let base_path =
+            account_type.derivation_path(network).unwrap_or_else(|_| DerivationPath::master());
 
         let mut external_path = base_path.clone();
         external_path.push(crate::bip32::ChildNumber::from_normal_idx(0)?);
