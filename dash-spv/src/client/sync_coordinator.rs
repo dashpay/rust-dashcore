@@ -7,6 +7,7 @@ use tokio_util::sync::CancellationToken;
 
 use super::event_handler::{
     spawn_broadcast_monitor, spawn_chainlock_wallet_dispatch, spawn_progress_monitor,
+    spawn_reservation_sweep,
 };
 use super::DashSpvClient;
 use crate::error::Result;
@@ -63,6 +64,11 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
             monitor_failure_tx.clone(),
         );
 
+        let reservation_sweep_task =
+            self.config.read().await.reservation_sweep_ttl_secs.map(|ttl| {
+                spawn_reservation_sweep(self.wallet.clone(), ttl, monitor_shutdown.clone())
+            });
+
         let network_task = spawn_broadcast_monitor(
             "NetworkEvent",
             network_event_rx,
@@ -97,6 +103,9 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
                 wallet_task,
                 progress_task
             );
+            if let Some(task) = reservation_sweep_task {
+                let _ = task.await;
+            }
             for handler in handlers.iter() {
                 handler.on_error(&e.to_string());
             }
@@ -150,6 +159,9 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
             wallet_task,
             progress_task
         );
+        if let Some(task) = reservation_sweep_task {
+            let _ = task.await;
+        }
 
         if let Some(ref e) = error {
             for handler in handlers.iter() {

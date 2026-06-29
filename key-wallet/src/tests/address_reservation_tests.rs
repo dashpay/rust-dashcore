@@ -10,6 +10,7 @@ use crate::managed_account::managed_account_type::ManagedAccountType;
 use crate::mnemonic::{Language, Mnemonic};
 use crate::test_utils::TestWalletContext;
 use crate::transaction_checking::TransactionContext;
+use crate::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
 use crate::{ExtendedPrivKey, Network};
 use dashcore::{Address, Transaction};
 use secp256k1::Secp256k1;
@@ -138,4 +139,30 @@ fn test_sweep_expired_receive_reservations_reclaims_through_account() {
     assert_eq!(acc.sweep_expired_receive_reservations(2_000, 500), 1);
     assert!(acc.monitor_revision() > revision_after_reserve);
     assert!(!acc.release_receive_reservation(&reserved));
+}
+
+#[test]
+fn test_sweep_expired_reservations_reclaims_across_wallet() {
+    let mut ctx = TestWalletContext::new_random();
+    let xpub = ctx.xpub;
+
+    let reserved = ctx
+        .managed_wallet
+        .first_bip44_managed_account_mut()
+        .expect("managed account")
+        .next_receive_address_and_reserve(Some(&xpub), 1_000)
+        .expect("reserve");
+
+    // The wallet-level wrapper fans out over every funding account. Before the
+    // ttl elapses nothing is reclaimed.
+    assert_eq!(ctx.managed_wallet.sweep_expired_reservations(1_000, 500), 0);
+
+    // Once the reservation ages past the ttl the wrapper reclaims it and the
+    // address is available again, so releasing it is a no-op.
+    assert_eq!(ctx.managed_wallet.sweep_expired_reservations(2_000, 500), 1);
+    assert!(!ctx
+        .managed_wallet
+        .first_bip44_managed_account_mut()
+        .expect("managed account")
+        .release_receive_reservation(&reserved));
 }

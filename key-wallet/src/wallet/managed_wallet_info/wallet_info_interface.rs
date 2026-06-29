@@ -137,6 +137,20 @@ pub trait WalletInfoInterface: Sized + WalletTransactionChecker + ManagedAccount
         self.funds_account(preference, index).map(|account| account.balance)
     }
 
+    /// Reclaim expired receive-address reservations across every funding
+    /// account, returning the total number reclaimed.
+    ///
+    /// `now` and `ttl` are caller-supplied (seconds); the wallet keeps no
+    /// clock. Delegates to `ManagedCoreFundsAccount::sweep_expired_receive_reservations`
+    /// for each funding account.
+    fn sweep_expired_reservations(&mut self, now: u64, ttl: u64) -> usize {
+        self.accounts_mut()
+            .all_funding_accounts_mut()
+            .into_iter()
+            .map(|account| account.sweep_expired_receive_reservations(now, ttl))
+            .sum()
+    }
+
     /// Get transaction history
     fn transaction_history(&self) -> Vec<&TransactionRecord>;
 

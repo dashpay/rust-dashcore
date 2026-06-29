@@ -296,6 +296,10 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
         self.event_sender.subscribe()
     }
 
+    fn sweep_expired_reservations(&mut self, now: u64, ttl: u64) -> usize {
+        self.wallet_infos.values_mut().map(|info| info.sweep_expired_reservations(now, ttl)).sum()
+    }
+
     fn apply_chain_lock(&mut self, chain_lock: ChainLock) {
         for (wallet_id, info) in self.wallet_infos.iter_mut() {
             let outcome = info.apply_chain_lock(chain_lock.clone());
@@ -528,6 +532,29 @@ mod tests {
         let unknown: WalletId = [0xff; 32];
         manager.update_wallet_last_processed_height(&unknown, 1000);
         assert_eq!(manager.last_processed_height(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_sweep_expired_reservations_fans_out_over_wallets() {
+        let (mut manager, wallet_id, _addr) = setup_manager_with_wallet();
+
+        // Reserve a receive address on the wallet's funding account.
+        manager
+            .get_wallet_info_mut(&wallet_id)
+            .expect("wallet info")
+            .first_bip44_managed_account_mut()
+            .expect("managed account")
+            .next_receive_address_and_reserve(None, 1_000)
+            .expect("reserve");
+
+        // The manager fans out across every managed wallet. Before the ttl
+        // elapses nothing is reclaimed.
+        assert_eq!(manager.sweep_expired_reservations(1_000, 500), 0);
+
+        // Once the reservation ages past the ttl the manager reclaims it, and a
+        // follow-up sweep finds nothing left.
+        assert_eq!(manager.sweep_expired_reservations(2_000, 500), 1);
+        assert_eq!(manager.sweep_expired_reservations(3_000, 500), 0);
     }
 
     #[tokio::test]

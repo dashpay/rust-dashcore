@@ -144,6 +144,17 @@ pub trait WalletInterface: Send + Sync + 'static {
         0
     }
 
+    /// Reclaim expired receive-address reservations across every managed
+    /// wallet, returning the total number reclaimed.
+    ///
+    /// `now` and `ttl` are caller-supplied (seconds); the wallet keeps no
+    /// clock. A reservation is reclaimed when `now - reserved_at >= ttl`. The
+    /// default returns `0` for wallet implementations that do not track
+    /// reservations.
+    fn sweep_expired_reservations(&mut self, _now: u64, _ttl: u64) -> usize {
+        0
+    }
+
     /// Subscribe to wallet events (e.g. transactions received, balance changes).
     fn subscribe_events(&self) -> broadcast::Receiver<WalletEvent>;
 
