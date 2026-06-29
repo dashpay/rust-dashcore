@@ -488,50 +488,92 @@ impl ManagedAccountType {
         }
     }
 
+    /// Build a single address pool for `account_type` (single-pool account types). The pool path
+    /// is the account's derivation path; `pool_type`/`gap_limit` vary per account kind.
+    pub(crate) fn single_pool(
+        account_type: AccountType,
+        pool_type: crate::managed_account::address_pool::AddressPoolType,
+        gap_limit: u32,
+        network: crate::Network,
+        key_source: &crate::KeySource,
+    ) -> Result<crate::managed_account::address_pool::AddressPool, crate::error::Error> {
+        let path = account_type
+            .derivation_path(network)
+            .unwrap_or_else(|_| crate::bip32::DerivationPath::master());
+        crate::managed_account::address_pool::AddressPool::new(
+            path, pool_type, gap_limit, network, key_source,
+        )
+    }
+
+    /// Build the external (`.../0/index`) and internal (`.../1/index`) pools for a dual-pool
+    /// account type. Both branches derive from the account's path.
+    pub(crate) fn dual_pools(
+        account_type: AccountType,
+        external_gap_limit: u32,
+        internal_gap_limit: u32,
+        network: crate::Network,
+        key_source: &crate::KeySource,
+    ) -> Result<
+        (
+            crate::managed_account::address_pool::AddressPool,
+            crate::managed_account::address_pool::AddressPool,
+        ),
+        crate::error::Error,
+    > {
+        use crate::managed_account::address_pool::{AddressPool, AddressPoolType};
+
+        let base_path = account_type
+            .derivation_path(network)
+            .unwrap_or_else(|_| crate::bip32::DerivationPath::master());
+
+        let mut external_path = base_path.clone();
+        external_path.push(crate::bip32::ChildNumber::from_normal_idx(0)?);
+        let external = AddressPool::new(
+            external_path,
+            AddressPoolType::External,
+            external_gap_limit,
+            network,
+            key_source,
+        )?;
+
+        let mut internal_path = base_path;
+        internal_path.push(crate::bip32::ChildNumber::from_normal_idx(1)?);
+        let internal = AddressPool::new(
+            internal_path,
+            AddressPoolType::Internal,
+            internal_gap_limit,
+            network,
+            key_source,
+        )?;
+
+        Ok((external, internal))
+    }
+
     /// Create a ManagedAccountType from an AccountType with address pools
     pub fn from_account_type(
         account_type: AccountType,
         network: crate::Network,
         key_source: &crate::KeySource,
     ) -> Result<Self, crate::error::Error> {
-        use crate::bip32::DerivationPath;
-        use crate::managed_account::address_pool::{AddressPool, AddressPoolType};
+        use crate::managed_account::address_pool::AddressPoolType;
 
         match account_type {
             AccountType::Standard {
                 index,
                 standard_account_type,
             } => {
-                // Create external and internal address pools for standard accounts
-                let base_path = account_type
-                    .derivation_path(network)
-                    .unwrap_or_else(|_| DerivationPath::master());
-
-                let mut external_path = base_path.clone();
-                external_path.push(crate::bip32::ChildNumber::from_normal_idx(0).unwrap());
-                let external_pool = AddressPool::new(
-                    external_path,
-                    AddressPoolType::External,
+                let (external_addresses, internal_addresses) = Self::dual_pools(
+                    account_type,
                     DEFAULT_EXTERNAL_GAP_LIMIT,
-                    network,
-                    key_source,
-                )?;
-
-                let mut internal_path = base_path;
-                internal_path.push(crate::bip32::ChildNumber::from_normal_idx(1).unwrap());
-                let internal_pool = AddressPool::new(
-                    internal_path,
-                    AddressPoolType::Internal,
                     DEFAULT_INTERNAL_GAP_LIMIT,
                     network,
                     key_source,
                 )?;
-
                 Ok(Self::Standard {
                     index,
                     standard_account_type,
-                    external_addresses: external_pool,
-                    internal_addresses: internal_pool,
+                    external_addresses,
+                    internal_addresses,
                 })
             }
             AccountType::CoinJoin {
@@ -540,42 +582,22 @@ impl ManagedAccountType {
                 // Dual-pool: Dash Core receives mixed coins on the external branch
                 // (m/9'/coin'/4'/account'/0/index); DashSync also uses the internal branch
                 // (.../1/index) for mixing-change. Watch both so no funds are missed.
-                let base_path = account_type
-                    .derivation_path(network)
-                    .unwrap_or_else(|_| DerivationPath::master());
-
-                let mut external_path = base_path.clone();
-                external_path.push(crate::bip32::ChildNumber::from_normal_idx(0)?);
-                let external_pool = AddressPool::new(
-                    external_path,
-                    AddressPoolType::External,
+                let (external_addresses, internal_addresses) = Self::dual_pools(
+                    account_type,
+                    DEFAULT_COINJOIN_GAP_LIMIT,
                     DEFAULT_COINJOIN_GAP_LIMIT,
                     network,
                     key_source,
                 )?;
-
-                let mut internal_path = base_path;
-                internal_path.push(crate::bip32::ChildNumber::from_normal_idx(1)?);
-                let internal_pool = AddressPool::new(
-                    internal_path,
-                    AddressPoolType::Internal,
-                    DEFAULT_COINJOIN_GAP_LIMIT,
-                    network,
-                    key_source,
-                )?;
-
                 Ok(Self::CoinJoin {
                     index,
-                    external_addresses: external_pool,
-                    internal_addresses: internal_pool,
+                    external_addresses,
+                    internal_addresses,
                 })
             }
             AccountType::IdentityRegistration => {
-                let path = account_type
-                    .derivation_path(network)
-                    .unwrap_or_else(|_| DerivationPath::master());
-                let pool = AddressPool::new(
-                    path,
+                let pool = Self::single_pool(
+                    account_type,
                     AddressPoolType::Absent,
                     DEFAULT_SPECIAL_GAP_LIMIT,
                     network,
@@ -589,11 +611,8 @@ impl ManagedAccountType {
             AccountType::IdentityTopUp {
                 registration_index,
             } => {
-                let path = account_type
-                    .derivation_path(network)
-                    .unwrap_or_else(|_| DerivationPath::master());
-                let pool = AddressPool::new(
-                    path,
+                let pool = Self::single_pool(
+                    account_type,
                     AddressPoolType::Absent,
                     DEFAULT_SPECIAL_GAP_LIMIT,
                     network,
@@ -606,11 +625,8 @@ impl ManagedAccountType {
                 })
             }
             AccountType::IdentityTopUpNotBoundToIdentity => {
-                let path = account_type
-                    .derivation_path(network)
-                    .unwrap_or_else(|_| DerivationPath::master());
-                let pool = AddressPool::new(
-                    path,
+                let pool = Self::single_pool(
+                    account_type,
                     AddressPoolType::Absent,
                     DEFAULT_SPECIAL_GAP_LIMIT,
                     network,
@@ -622,11 +638,8 @@ impl ManagedAccountType {
                 })
             }
             AccountType::IdentityInvitation => {
-                let path = account_type
-                    .derivation_path(network)
-                    .unwrap_or_else(|_| DerivationPath::master());
-                let pool = AddressPool::new(
-                    path,
+                let pool = Self::single_pool(
+                    account_type,
                     AddressPoolType::Absent,
                     DEFAULT_SPECIAL_GAP_LIMIT,
                     network,
@@ -638,11 +651,8 @@ impl ManagedAccountType {
                 })
             }
             AccountType::AssetLockAddressTopUp => {
-                let path = account_type
-                    .derivation_path(network)
-                    .unwrap_or_else(|_| DerivationPath::master());
-                let pool = AddressPool::new(
-                    path,
+                let pool = Self::single_pool(
+                    account_type,
                     AddressPoolType::Absent,
                     DEFAULT_SPECIAL_GAP_LIMIT,
                     network,
@@ -654,11 +664,8 @@ impl ManagedAccountType {
                 })
             }
             AccountType::AssetLockShieldedAddressTopUp => {
-                let path = account_type
-                    .derivation_path(network)
-                    .unwrap_or_else(|_| DerivationPath::master());
-                let pool = AddressPool::new(
-                    path,
+                let pool = Self::single_pool(
+                    account_type,
                     AddressPoolType::Absent,
                     DEFAULT_SPECIAL_GAP_LIMIT,
                     network,
@@ -670,11 +677,8 @@ impl ManagedAccountType {
                 })
             }
             AccountType::ProviderVotingKeys => {
-                let path = account_type
-                    .derivation_path(network)
-                    .unwrap_or_else(|_| DerivationPath::master());
-                let pool = AddressPool::new(
-                    path,
+                let pool = Self::single_pool(
+                    account_type,
                     AddressPoolType::Absent,
                     DEFAULT_SPECIAL_GAP_LIMIT,
                     network,
@@ -686,11 +690,8 @@ impl ManagedAccountType {
                 })
             }
             AccountType::ProviderOwnerKeys => {
-                let path = account_type
-                    .derivation_path(network)
-                    .unwrap_or_else(|_| DerivationPath::master());
-                let pool = AddressPool::new(
-                    path,
+                let pool = Self::single_pool(
+                    account_type,
                     AddressPoolType::Absent,
                     DEFAULT_SPECIAL_GAP_LIMIT,
                     network,
@@ -702,11 +703,8 @@ impl ManagedAccountType {
                 })
             }
             AccountType::ProviderOperatorKeys => {
-                let path = account_type
-                    .derivation_path(network)
-                    .unwrap_or_else(|_| DerivationPath::master());
-                let pool = AddressPool::new(
-                    path,
+                let pool = Self::single_pool(
+                    account_type,
                     AddressPoolType::Absent,
                     DEFAULT_SPECIAL_GAP_LIMIT,
                     network,
@@ -718,11 +716,8 @@ impl ManagedAccountType {
                 })
             }
             AccountType::ProviderPlatformKeys => {
-                let path = account_type
-                    .derivation_path(network)
-                    .unwrap_or_else(|_| DerivationPath::master());
-                let pool = AddressPool::new(
-                    path,
+                let pool = Self::single_pool(
+                    account_type,
                     AddressPoolType::AbsentHardened,
                     DEFAULT_SPECIAL_GAP_LIMIT,
                     network,
@@ -738,12 +733,9 @@ impl ManagedAccountType {
                 user_identity_id,
                 friend_identity_id,
             } => {
-                let path = account_type
-                    .derivation_path(network)
-                    .unwrap_or_else(|_| DerivationPath::master());
-                let pool = AddressPool::new(
-                    path,
-                    crate::managed_account::address_pool::AddressPoolType::Absent,
+                let pool = Self::single_pool(
+                    account_type,
+                    AddressPoolType::Absent,
                     20,
                     network,
                     key_source,
@@ -760,12 +752,9 @@ impl ManagedAccountType {
                 user_identity_id,
                 friend_identity_id,
             } => {
-                let path = account_type
-                    .derivation_path(network)
-                    .unwrap_or_else(|_| DerivationPath::master());
-                let pool = AddressPool::new(
-                    path,
-                    crate::managed_account::address_pool::AddressPoolType::Absent,
+                let pool = Self::single_pool(
+                    account_type,
+                    AddressPoolType::Absent,
                     20,
                     network,
                     key_source,
@@ -782,13 +771,9 @@ impl ManagedAccountType {
                 key_class,
             } => {
                 // DIP-17: m/9'/coin_type'/17'/account'/key_class'/index
-                // The leaf index is non-hardened
-                let path = account_type
-                    .derivation_path(network)
-                    .unwrap_or_else(|_| DerivationPath::master());
-                let pool = AddressPool::new(
-                    path,
-                    crate::managed_account::address_pool::AddressPoolType::Absent,
+                let pool = Self::single_pool(
+                    account_type,
+                    AddressPoolType::Absent,
                     DIP17_GAP_LIMIT,
                     network,
                     key_source,
