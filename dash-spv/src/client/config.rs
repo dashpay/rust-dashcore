@@ -86,7 +86,7 @@ impl Default for ClientConfig {
             validation_mode: ValidationMode::Full,
             enable_filters: true,
             enable_masternodes: true,
-            max_peers: 8,
+            max_peers: 3,
             user_agent: None,
             // Mempool defaults
             enable_mempool_tracking: true,
