@@ -4,6 +4,23 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## 0.44.0 - 2026-07-01
+
+### Added
+
+- Storage truncation primitives for reorg support in `dash-spv` (#790) @xdustinface
+- Decode SML ProTx v3 entries (#797) @xdustinface
+- `normalize_phrase` and `is_word_in_language` helpers in `key-wallet` (#806) @llbartekll
+
+### Changed
+
+- **Breaking:** remove `Address::network()` and replace `Network` with `AddressPrefix` for address prefix handling (#802) @ZocoLini
+
+### Fixed
+
+- Write the compact-size count in `QuorumSnapshot` encode (#796) @xdustinface
+- Correct CoinJoin discovery in `key-wallet` (#804) @xdustinface
+
 ## 0.43.0 - 2026-06-01
 
 ### Added
