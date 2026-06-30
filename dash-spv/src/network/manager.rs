@@ -16,9 +16,7 @@ use crate::network::addrv2::AddrV2Handler;
 use crate::network::constants::*;
 use crate::network::discovery::DnsDiscovery;
 use crate::network::pool::PeerPool;
-use crate::network::reputation::{
-    misbehavior_scores, positive_scores, PeerReputationManager, ReputationAware,
-};
+use crate::network::reputation::{ChangeReason, PeerReputationManager, ReputationAware};
 use crate::network::{
     HandshakeManager, Message, MessageDispatcher, MessageType, NetworkEvent, NetworkManager,
     NetworkRequest, Peer, RequestSender,
@@ -356,11 +354,7 @@ impl PeerNetworkManager {
                             pool.remove_peer(&addr).await;
                             // Update reputation for handshake failure
                             reputation_manager
-                                .update_reputation(
-                                    addr,
-                                    misbehavior_scores::INVALID_MESSAGE,
-                                    "Handshake failed",
-                                )
+                                .update_reputation(addr, ChangeReason::HandshakeFailed)
                                 .await;
                             // For handshake failures, try again later
                             tokio::time::sleep(RECONNECT_DELAY).await;
@@ -373,11 +367,7 @@ impl PeerNetworkManager {
                     pool.remove_peer(&addr).await;
                     // Minor reputation penalty for connection failure
                     reputation_manager
-                        .update_reputation(
-                            addr,
-                            misbehavior_scores::TIMEOUT / 2,
-                            "Connection failed",
-                        )
+                        .update_reputation(addr, ChangeReason::ConnectionFailed)
                         .await;
                 }
             }
@@ -634,8 +624,7 @@ impl PeerNetworkManager {
                                         reputation_manager
                                             .update_reputation(
                                                 addr,
-                                                misbehavior_scores::INVALID_MESSAGE,
-                                                "Headers2 decompression failed",
+                                                ChangeReason::Headers2DecompressionFailed,
                                             )
                                             .await;
                                         continue; // Don't forward corrupted message
@@ -694,11 +683,7 @@ impl PeerNetworkManager {
                                 tracing::debug!("Timeout reading from {}, continuing...", addr);
                                 // Minor reputation penalty for timeout
                                 reputation_manager
-                                    .update_reputation(
-                                        addr,
-                                        misbehavior_scores::TIMEOUT,
-                                        "Read timeout",
-                                    )
+                                    .update_reputation(addr, ChangeReason::ReadTimeout)
                                     .await;
                                 continue;
                             }
@@ -718,8 +703,7 @@ impl PeerNetworkManager {
                                         reputation_manager
                                             .update_reputation(
                                                 addr,
-                                                misbehavior_scores::INVALID_TRANSACTION,
-                                                "Invalid transaction type in block",
+                                                ChangeReason::InvalidTransactionInBlock,
                                             )
                                             .await;
                                     } else if error_msg
@@ -780,9 +764,7 @@ impl PeerNetworkManager {
             let conn_duration = Duration::from_secs(60 * loop_iteration); // Rough estimate
             if conn_duration > Duration::from_secs(3600) {
                 // 1 hour
-                reputation_manager
-                    .update_reputation(addr, positive_scores::LONG_UPTIME, "Long connection uptime")
-                    .await;
+                reputation_manager.update_reputation(addr, ChangeReason::LongUptime).await;
             }
         });
     }
@@ -1009,9 +991,7 @@ impl PeerNetworkManager {
                 if let Err(e) = peer_guard.send_ping().await {
                     tracing::error!("Failed to ping {}: {}", addr, e);
                     // Update reputation for ping failure
-                    self.reputation_manager
-                        .update_reputation(addr, misbehavior_scores::TIMEOUT, "Ping failed")
-                        .await;
+                    self.reputation_manager.update_reputation(addr, ChangeReason::PingFailed).await;
                 }
             }
             let has_expired = peer_guard.remove_expired_pings();
@@ -1312,13 +1292,7 @@ impl PeerNetworkManager {
         self.disconnect_peer(addr, reason).await?;
 
         // Update reputation to trigger ban
-        self.reputation_manager
-            .update_reputation(
-                *addr,
-                misbehavior_scores::INVALID_HEADER * 2, // Severe penalty
-                reason,
-            )
-            .await;
+        self.reputation_manager.update_reputation(*addr, ChangeReason::ManuallyBanned).await;
 
         Ok(())
     }
