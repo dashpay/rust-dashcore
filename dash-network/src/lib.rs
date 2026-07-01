@@ -26,14 +26,13 @@ pub mod ffi;
 use bincode_derive::{Decode, Encode};
 
 /// The Dash network to act on.
-#[derive(Copy, PartialEq, Eq, PartialOrd, Ord, Clone, Hash, Debug, Default)]
+#[derive(Copy, PartialEq, Eq, PartialOrd, Ord, Clone, Hash, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "lowercase"))]
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 #[repr(u8)]
 pub enum Network {
     /// Dash mainnet, the production network for real transactions.
-    #[default]
     Mainnet,
     /// Dash public test network for protocol-level testing without real funds.
     Testnet,

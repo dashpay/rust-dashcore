@@ -371,7 +371,7 @@ impl zeroize::Zeroize for ExtendedPrivKey {
         self.child_number = ChildNumber::Normal {
             index: 0,
         };
-        self.network = Network::default();
+        self.network = Network::Mainnet; // repr(u8)=0 discriminant, the "zero" value
     }
 }
 
