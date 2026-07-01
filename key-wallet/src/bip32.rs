@@ -356,6 +356,17 @@ pub struct ExtendedPrivKey {
     pub chain_code: ChainCode,
 }
 
+// Hand-written (not `#[derive(Zeroize)]`): `secp256k1::SecretKey` has no
+// `Zeroize` impl, only `non_secure_erase()`, so a derive would not compile.
+// `ExtendedPrivKey` is `Copy`, so it cannot also `impl Drop` — wrap values in
+// `zeroize::Zeroizing` at call sites to wipe on drop. Cf. `RootExtendedPrivKey`.
+impl zeroize::Zeroize for ExtendedPrivKey {
+    fn zeroize(&mut self) {
+        self.private_key.non_secure_erase();
+        self.chain_code.zeroize();
+    }
+}
+
 #[cfg(feature = "bincode")]
 impl bincode::Encode for ExtendedPrivKey {
     fn encode<E: bincode::enc::Encoder>(
