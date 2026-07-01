@@ -362,8 +362,16 @@ pub struct ExtendedPrivKey {
 // `zeroize::Zeroizing` at call sites to wipe on drop. Cf. `RootExtendedPrivKey`.
 impl zeroize::Zeroize for ExtendedPrivKey {
     fn zeroize(&mut self) {
+        // Secret key material.
         self.private_key.non_secure_erase();
         self.chain_code.zeroize();
+        // Derivation metadata — cleared too so the whole value is wiped.
+        self.depth.zeroize();
+        self.parent_fingerprint.0.zeroize();
+        self.child_number = ChildNumber::Normal {
+            index: 0,
+        };
+        self.network = Network::default();
     }
 }
 
