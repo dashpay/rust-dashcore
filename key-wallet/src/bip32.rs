@@ -45,6 +45,7 @@ use base58ck;
 #[cfg(feature = "bincode")]
 use bincode_derive::{Decode, Encode};
 use dashcore::Network;
+use zeroize::Zeroize;
 
 /// XpubIdentifier as a hash160 result
 type XpubIdentifier = hash160::Hash;
@@ -340,7 +341,7 @@ impl<'de> serde::Deserialize<'de> for Fingerprint {
 }
 
 /// Extended private key
-#[derive(Copy, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct ExtendedPrivKey {
     /// The network this key is to be used on
     pub network: Network,
@@ -358,8 +359,8 @@ pub struct ExtendedPrivKey {
 
 // Hand-written (not `#[derive(Zeroize)]`): `secp256k1::SecretKey` has no
 // `Zeroize` impl, only `non_secure_erase()`, so a derive would not compile.
-// `ExtendedPrivKey` is `Copy`, so it cannot also `impl Drop` — wrap values in
-// `zeroize::Zeroizing` at call sites to wipe on drop. Cf. `RootExtendedPrivKey`.
+// `Drop` (below) calls this, so the value is wiped automatically on scope exit
+// with no caller action required. Cf. `RootExtendedPrivKey`.
 impl zeroize::Zeroize for ExtendedPrivKey {
     fn zeroize(&mut self) {
         // Secret key material.
@@ -372,6 +373,12 @@ impl zeroize::Zeroize for ExtendedPrivKey {
             index: 0,
         };
         self.network = Network::Mainnet; // repr(u8)=0 discriminant, the "zero" value
+    }
+}
+
+impl Drop for ExtendedPrivKey {
+    fn drop(&mut self) {
+        self.zeroize();
     }
 }
 
@@ -1541,7 +1548,7 @@ impl ExtendedPrivKey {
         secp: &Secp256k1<C>,
         path: &P,
     ) -> Result<ExtendedPrivKey, Error> {
-        let mut sk: ExtendedPrivKey = *self;
+        let mut sk: ExtendedPrivKey = self.clone();
         for cnum in path.as_ref() {
             sk = sk.ckd_priv(secp, *cnum)?;
         }
