@@ -283,7 +283,7 @@ async fn test_late_instant_send_lock_after_block_confirmation_emits_event() {
     // Confirm the transaction in a block first.
     let block = make_block(vec![tx.clone()], 0xe3, 4000);
     let wallets = BTreeSet::from([wallet_id]);
-    manager.process_block_for_wallets(&block, 300, &wallets).await;
+    manager.process_block_for_wallets(&block, block.block_hash(), 300, &wallets).await;
 
     let mut rx = manager.subscribe_events();
     let lock = InstantLock {
@@ -332,7 +332,7 @@ async fn test_block_with_new_tx_emits_inserted_record() {
     let block = make_block(vec![tx.clone()], 0xcc, 1000);
 
     let wallets = BTreeSet::from([wallet_id]);
-    let result = manager.process_block_for_wallets(&block, 100, &wallets).await;
+    let result = manager.process_block_for_wallets(&block, block.block_hash(), 100, &wallets).await;
     assert_eq!(result.new_txids.len(), 1);
 
     let events = drain_events(&mut rx);
@@ -399,7 +399,7 @@ async fn test_block_confirming_known_mempool_tx_emits_updated_record() {
     let mut rx = manager.subscribe_events();
     let block = make_block(vec![tx.clone()], 0xdd, 2000);
     let wallets = BTreeSet::from([wallet_id]);
-    manager.process_block_for_wallets(&block, 200, &wallets).await;
+    manager.process_block_for_wallets(&block, block.block_hash(), 200, &wallets).await;
 
     let events = drain_events(&mut rx);
     assert_eq!(events.len(), 1, "one BlockProcessed expected, got {:?}", events);
@@ -502,7 +502,7 @@ async fn test_block_with_index_less_account_tx_carries_account_type() {
     let mut rx = manager.subscribe_events();
     let block = make_block(vec![tx.clone()], 0xee, 9999);
     let wallets = BTreeSet::from([wallet_id]);
-    manager.process_block_for_wallets(&block, 9000, &wallets).await;
+    manager.process_block_for_wallets(&block, block.block_hash(), 9000, &wallets).await;
 
     let events = drain_events(&mut rx);
     let block_event = events
@@ -540,7 +540,7 @@ async fn test_empty_block_for_idle_wallet_emits_nothing() {
     let block = make_block(Vec::new(), 0x55, 3000);
 
     let wallets = BTreeSet::from([wallet_id]);
-    manager.process_block_for_wallets(&block, 50, &wallets).await;
+    manager.process_block_for_wallets(&block, block.block_hash(), 50, &wallets).await;
     assert_no_events(&mut rx);
 }
 
@@ -555,13 +555,27 @@ async fn test_block_processed_carries_matured_coinbase_record() {
     let coinbase_height = 100;
     let coinbase_block = make_block(vec![coinbase_tx.clone()], 0xc0, 4000);
     let wallets = BTreeSet::from([wallet_id]);
-    manager.process_block_for_wallets(&coinbase_block, coinbase_height, &wallets).await;
+    manager
+        .process_block_for_wallets(
+            &coinbase_block,
+            coinbase_block.block_hash(),
+            coinbase_height,
+            &wallets,
+        )
+        .await;
 
     // Advance to maturity height. With coinbase_height = 100, maturity is at
     // height 200. Processing block 200 must surface the matured record.
     let mut rx = manager.subscribe_events();
     let mature_block = make_block(Vec::new(), 0xc1, 5000);
-    manager.process_block_for_wallets(&mature_block, coinbase_height + 100, &wallets).await;
+    manager
+        .process_block_for_wallets(
+            &mature_block,
+            mature_block.block_hash(),
+            coinbase_height + 100,
+            &wallets,
+        )
+        .await;
 
     let events = drain_events(&mut rx);
     let block_event = events
@@ -903,7 +917,7 @@ async fn test_block_with_external_and_internal_high_index_extends_both_pools() {
 
     let mut rx = manager.subscribe_events();
     let wallets = BTreeSet::from([wallet_id]);
-    manager.process_block_for_wallets(&block, 700, &wallets).await;
+    manager.process_block_for_wallets(&block, block.block_hash(), 700, &wallets).await;
 
     let events = drain_events(&mut rx);
     let block_event = events
@@ -967,7 +981,7 @@ async fn test_block_with_two_records_pushing_external_boundary_dedupes() {
 
     let mut rx = manager.subscribe_events();
     let wallets = BTreeSet::from([wallet_id]);
-    manager.process_block_for_wallets(&block, 800, &wallets).await;
+    manager.process_block_for_wallets(&block, block.block_hash(), 800, &wallets).await;
 
     let events = drain_events(&mut rx);
     let block_event = events
@@ -1054,7 +1068,7 @@ async fn test_apply_chain_lock_promotes_in_block_record_and_emits_event() {
     let tx = create_tx_paying_to(&addr, 0xa1);
     let block = make_block(vec![tx.clone()], 0xa1, 1000);
     let wallets = BTreeSet::from([wallet_id]);
-    manager.process_block_for_wallets(&block, 100, &wallets).await;
+    manager.process_block_for_wallets(&block, block.block_hash(), 100, &wallets).await;
 
     let mut rx = manager.subscribe_events();
     manager.apply_chain_lock(ChainLock::dummy(100));
@@ -1125,7 +1139,7 @@ async fn test_apply_chain_lock_with_no_records_emits_chain_lock_processed_and_ad
     let tx = create_tx_paying_to(&addr, 0xa2);
     let block = make_block(vec![tx.clone()], 0xa2, 1100);
     let wallets = BTreeSet::from([wallet_id]);
-    manager.process_block_for_wallets(&block, 100, &wallets).await;
+    manager.process_block_for_wallets(&block, block.block_hash(), 100, &wallets).await;
 
     let events = drain_events(&mut rx);
     let bp = events
@@ -1161,7 +1175,7 @@ async fn test_apply_chain_lock_is_idempotent_on_already_finalized() {
     let tx = create_tx_paying_to(&addr, 0xa3);
     let block = make_block(vec![tx.clone()], 0xa3, 1200);
     let wallets = BTreeSet::from([wallet_id]);
-    manager.process_block_for_wallets(&block, 50, &wallets).await;
+    manager.process_block_for_wallets(&block, block.block_hash(), 50, &wallets).await;
 
     let mut rx = manager.subscribe_events();
     manager.apply_chain_lock(ChainLock::dummy(50));
@@ -1228,7 +1242,7 @@ async fn test_block_processed_chainlocked_flag_matches_record_context() {
     let block_below = make_block(vec![tx_below.clone()], 0xa4, 1300);
     let wallets = BTreeSet::from([wallet_id]);
     let mut rx = manager.subscribe_events();
-    manager.process_block_for_wallets(&block_below, 500, &wallets).await;
+    manager.process_block_for_wallets(&block_below, block_below.block_hash(), 500, &wallets).await;
 
     let events_below = drain_events(&mut rx);
     let bp_below = events_below
@@ -1252,7 +1266,7 @@ async fn test_block_processed_chainlocked_flag_matches_record_context() {
         .expect("address generation");
     let tx_above = create_tx_paying_to(&addr2, 0xa5);
     let block_above = make_block(vec![tx_above.clone()], 0xa5, 1400);
-    manager.process_block_for_wallets(&block_above, 2000, &wallets).await;
+    manager.process_block_for_wallets(&block_above, block_above.block_hash(), 2000, &wallets).await;
 
     let events_above = drain_events(&mut rx);
     let bp_above = events_above

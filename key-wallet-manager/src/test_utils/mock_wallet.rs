@@ -128,6 +128,7 @@ impl WalletInterface for MockWallet {
     async fn process_block_for_wallets(
         &mut self,
         block: &Block,
+        _block_hash: dashcore::BlockHash,
         height: u32,
         wallets: &BTreeSet<WalletId>,
     ) -> BlockProcessingResult {
@@ -290,6 +291,7 @@ impl WalletInterface for NonMatchingMockWallet {
     async fn process_block_for_wallets(
         &mut self,
         _block: &Block,
+        _block_hash: dashcore::BlockHash,
         height: u32,
         wallets: &BTreeSet<WalletId>,
     ) -> BlockProcessingResult {
@@ -425,6 +427,7 @@ impl WalletInterface for MultiMockWallet {
     async fn process_block_for_wallets(
         &mut self,
         block: &Block,
+        _block_hash: dashcore::BlockHash,
         height: CoreBlockHeight,
         wallets: &BTreeSet<WalletId>,
     ) -> BlockProcessingResult {

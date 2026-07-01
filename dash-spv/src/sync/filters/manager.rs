@@ -154,7 +154,7 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
             loaded_filters.iter().zip(loaded_headers.iter()).enumerate()
         {
             let height = start_height + idx as u32;
-            let key = FilterMatchKey::new(height, header.block_hash());
+            let key = FilterMatchKey::new(height, *header.hash());
             let filter = BlockFilter::new(filter_data);
             filters.insert(key, filter);
         }
@@ -1031,7 +1031,18 @@ mod tests {
 
         // Pre-populate block header storage with 300 headers for target_height
         let block_headers = Header::dummy_batch(0..300);
-        storage.block_headers().write().await.store_headers(&block_headers).await.unwrap();
+        storage
+            .block_headers()
+            .write()
+            .await
+            .store_headers(
+                &block_headers
+                    .iter()
+                    .map(crate::types::HashedBlockHeader::from)
+                    .collect::<Vec<_>>(),
+            )
+            .await
+            .unwrap();
 
         // Pre-populate filter header storage with headers at heights 1..=200
         let filter_headers = storage.filter_headers();
@@ -1737,7 +1748,15 @@ mod tests {
 
         // Headers must exist in storage so start_download can resolve them.
         let headers = dashcore::block::Header::dummy_batch(0..301);
-        manager.header_storage.write().await.store_headers(&headers).await.unwrap();
+        manager
+            .header_storage
+            .write()
+            .await
+            .store_headers(
+                &headers.iter().map(crate::types::HashedBlockHeader::from).collect::<Vec<_>>(),
+            )
+            .await
+            .unwrap();
 
         let (tx, _rx) = unbounded_channel();
         let _ = manager.tick(&RequestSender::new(tx)).await.unwrap();
@@ -2002,7 +2021,15 @@ mod tests {
 
         // Store headers so send_pending can resolve stop hashes
         let headers = dashcore::block::Header::dummy_batch(0..101);
-        manager.header_storage.write().await.store_headers(&headers).await.unwrap();
+        manager
+            .header_storage
+            .write()
+            .await
+            .store_headers(
+                &headers.iter().map(crate::types::HashedBlockHeader::from).collect::<Vec<_>>(),
+            )
+            .await
+            .unwrap();
 
         // Filter headers available up to 100, wallet at genesis (scan_start = 0)
         manager.progress.update_filter_header_tip_height(100);
@@ -2053,7 +2080,15 @@ mod tests {
 
         // Store block headers so start_download can resolve heights
         let headers = dashcore::block::Header::dummy_batch(0..101);
-        manager.header_storage.write().await.store_headers(&headers).await.unwrap();
+        manager
+            .header_storage
+            .write()
+            .await
+            .store_headers(
+                &headers.iter().map(crate::types::HashedBlockHeader::from).collect::<Vec<_>>(),
+            )
+            .await
+            .unwrap();
 
         // Simulate restart where everything is already synced but state is WaitForEvents.
         // committed == stored == filter_header_tip — start_download detects synced state.
@@ -2096,7 +2131,15 @@ mod tests {
         // intentionally left empty: with the old behavior the lookahead batch
         // reads from height 0 and trips the empty-segment guard.
         let headers = dashcore::block::Header::dummy_batch(0..102);
-        manager.header_storage.write().await.store_headers(&headers).await.unwrap();
+        manager
+            .header_storage
+            .write()
+            .await
+            .store_headers(
+                &headers.iter().map(crate::types::HashedBlockHeader::from).collect::<Vec<_>>(),
+            )
+            .await
+            .unwrap();
 
         manager.set_state(SyncState::WaitForEvents);
         manager.wallet.write().await.update_wallet_synced_height(&MOCK_WALLET_ID, 100);
@@ -2171,7 +2214,15 @@ mod tests {
         // header; the rest are dummies and never get matched against.
         let mut headers: Vec<dashcore::Header> = dashcore::block::Header::dummy_batch(0..201);
         headers[50] = block_at_50.header;
-        manager.header_storage.write().await.store_headers(&headers).await.unwrap();
+        manager
+            .header_storage
+            .write()
+            .await
+            .store_headers(
+                &headers.iter().map(crate::types::HashedBlockHeader::from).collect::<Vec<_>>(),
+            )
+            .await
+            .unwrap();
 
         // Persist a filter at every height in 0..=100 so `load_filters` over
         // the initial batch range succeeds. Non-matching heights get a
@@ -2373,7 +2424,15 @@ mod tests {
         let mut manager = create_test_manager().await;
 
         let headers = dashcore::block::Header::dummy_batch(0..101);
-        manager.header_storage.write().await.store_headers(&headers).await.unwrap();
+        manager
+            .header_storage
+            .write()
+            .await
+            .store_headers(
+                &headers.iter().map(crate::types::HashedBlockHeader::from).collect::<Vec<_>>(),
+            )
+            .await
+            .unwrap();
 
         // Populate filter storage so load_filters succeeds during lookahead
         {
@@ -2434,7 +2493,15 @@ mod tests {
         let mut manager = create_test_manager().await;
 
         let headers = dashcore::block::Header::dummy_batch(0..101);
-        manager.header_storage.write().await.store_headers(&headers).await.unwrap();
+        manager
+            .header_storage
+            .write()
+            .await
+            .store_headers(
+                &headers.iter().map(crate::types::HashedBlockHeader::from).collect::<Vec<_>>(),
+            )
+            .await
+            .unwrap();
         {
             let dummy_filter = BlockFilter::new(&[0u8; 32]);
             let mut fs = manager.filter_storage.write().await;

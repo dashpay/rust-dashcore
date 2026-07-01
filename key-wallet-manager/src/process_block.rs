@@ -6,7 +6,7 @@ use core::fmt::Write as _;
 use dashcore::ephemerealdata::chain_lock::ChainLock;
 use dashcore::ephemerealdata::instant_lock::InstantLock;
 use dashcore::prelude::CoreBlockHeight;
-use dashcore::{Address, Block, ScriptBuf, Transaction};
+use dashcore::{Address, Block, BlockHash, ScriptBuf, Transaction};
 use key_wallet::account::AccountType;
 use key_wallet::managed_account::transaction_record::TransactionRecord;
 use key_wallet::transaction_checking::{BlockInfo, DerivedAddressInfo, TransactionContext};
@@ -20,6 +20,7 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
     async fn process_block_for_wallets(
         &mut self,
         block: &Block,
+        block_hash: BlockHash,
         height: CoreBlockHeight,
         wallets: &BTreeSet<WalletId>,
     ) -> BlockProcessingResult {
@@ -27,7 +28,7 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
         if wallets.is_empty() {
             return result;
         }
-        let info = BlockInfo::new(height, block.block_hash(), block.header.time);
+        let info = BlockInfo::new(height, block_hash, block.header.time);
 
         // Late-block: when every wallet in scope already has its
         // finality boundary at or above this height, the block is
@@ -587,7 +588,7 @@ mod tests {
 
         let mut rx = manager.subscribe_events();
         let wallets = BTreeSet::from([wallet_id]);
-        manager.process_block_for_wallets(&block, 100, &wallets).await;
+        manager.process_block_for_wallets(&block, block.block_hash(), 100, &wallets).await;
 
         let mut found = false;
         while let Ok(event) = rx.try_recv() {
@@ -646,18 +647,18 @@ mod tests {
         let block = make_block(vec![]);
 
         let only_w1 = BTreeSet::from([wallet_id1]);
-        manager.process_block_for_wallets(&block, 200, &only_w1).await;
+        manager.process_block_for_wallets(&block, block.block_hash(), 200, &only_w1).await;
         assert_eq!(manager.get_wallet_info(&wallet_id1).unwrap().last_processed_height(), 200);
         assert_eq!(manager.get_wallet_info(&wallet_id2).unwrap().last_processed_height(), 0);
 
         let only_w2 = BTreeSet::from([wallet_id2]);
-        manager.process_block_for_wallets(&block, 300, &only_w2).await;
+        manager.process_block_for_wallets(&block, block.block_hash(), 300, &only_w2).await;
         assert_eq!(manager.get_wallet_info(&wallet_id1).unwrap().last_processed_height(), 200);
         assert_eq!(manager.get_wallet_info(&wallet_id2).unwrap().last_processed_height(), 300);
 
         // Empty wallet set is a no-op even though the height is past both wallets.
         let none = BTreeSet::new();
-        manager.process_block_for_wallets(&block, 1000, &none).await;
+        manager.process_block_for_wallets(&block, block.block_hash(), 1000, &none).await;
         assert_eq!(manager.get_wallet_info(&wallet_id1).unwrap().last_processed_height(), 200);
         assert_eq!(manager.get_wallet_info(&wallet_id2).unwrap().last_processed_height(), 300);
     }
@@ -773,7 +774,9 @@ mod tests {
         let tx2 = create_tx_paying_to(&addr, 0xd1);
         let block = make_block(vec![tx2]);
         let block_wallets = BTreeSet::from([wallet_id]);
-        let _result = manager.process_block_for_wallets(&block, 100, &block_wallets).await;
+        let _result = manager
+            .process_block_for_wallets(&block, block.block_hash(), 100, &block_wallets)
+            .await;
         assert!(
             manager.monitor_revision() > rev_before_block,
             "block with tx paying to our address should bump revision (UTXO added)"

@@ -9,7 +9,7 @@ use std::time::Duration;
 use crate::error::SyncResult;
 use crate::network::RequestSender;
 use crate::sync::download_coordinator::{DownloadConfig, DownloadCoordinator};
-use dashcore::blockdata::block::Block;
+use crate::types::HashedBlock;
 use dashcore::BlockHash;
 use key_wallet_manager::{FilterMatchKey, WalletId};
 
@@ -32,8 +32,8 @@ pub(super) struct BlocksPipeline {
     coordinator: DownloadCoordinator<BlockHash>,
     /// Heights queued or in-flight (waiting for download).
     pending_heights: BTreeSet<u32>,
-    /// Downloaded blocks ready to process (height -> Block).
-    downloaded: BTreeMap<u32, Block>,
+    /// Downloaded blocks ready to process (height -> block, with its cached hash).
+    downloaded: BTreeMap<u32, HashedBlock>,
     /// Map hash -> height for looking up height when block arrives.
     hash_to_height: HashMap<BlockHash, u32>,
     /// Per-block interested wallets, populated when the block is queued.
@@ -138,8 +138,8 @@ impl BlocksPipeline {
     /// Looks up the height from the internal hash_to_height map and stores
     /// the block in the downloaded buffer for height-ordered processing.
     /// Returns `true` if this was a tracked block, `false` if unrequested.
-    pub(super) fn receive_block(&mut self, block: &Block) -> bool {
-        let hash = block.block_hash();
+    pub(super) fn receive_block(&mut self, block: &HashedBlock) -> bool {
+        let hash = *block.hash();
         if !self.coordinator.receive(&hash) {
             tracing::debug!("Ignoring unrequested block: {}", hash);
             return false;
@@ -158,7 +158,9 @@ impl BlocksPipeline {
     /// Returns None if:
     /// - No downloaded blocks available, or
     /// - Waiting for a lower-height block still pending
-    pub(super) fn take_next_ordered_block(&mut self) -> Option<(Block, u32, BTreeSet<WalletId>)> {
+    pub(super) fn take_next_ordered_block(
+        &mut self,
+    ) -> Option<(HashedBlock, u32, BTreeSet<WalletId>)> {
         let lowest_downloaded = *self.downloaded.keys().next()?;
 
         // Check if any pending blocks have lower heights
@@ -169,7 +171,7 @@ impl BlocksPipeline {
         }
 
         let block = self.downloaded.remove(&lowest_downloaded).unwrap();
-        let wallets = self.hash_to_wallets.remove(&block.block_hash()).unwrap_or_default();
+        let wallets = self.hash_to_wallets.remove(block.hash()).unwrap_or_default();
         Some((block, lowest_downloaded, wallets))
     }
 
@@ -178,11 +180,11 @@ impl BlocksPipeline {
     /// Used when blocks are already persisted from a previous sync.
     pub(super) fn add_from_storage(
         &mut self,
-        block: Block,
+        block: HashedBlock,
         height: u32,
         wallets: BTreeSet<WalletId>,
     ) {
-        let hash = block.block_hash();
+        let hash = *block.hash();
         self.hash_to_wallets.entry(hash).or_default().extend(wallets);
         self.downloaded.insert(height, block);
     }
@@ -204,6 +206,7 @@ impl BlocksPipeline {
 
 #[cfg(test)]
 mod tests {
+    use dashcore::blockdata::block::Block;
     use dashcore_hashes::Hash;
 
     use super::*;
@@ -281,11 +284,11 @@ mod tests {
         assert_eq!(pipeline.coordinator.active_count(), 1);
 
         // Receive block
-        assert!(pipeline.receive_block(&block));
+        assert!(pipeline.receive_block(&HashedBlock::from(&block)));
         assert_eq!(pipeline.coordinator.active_count(), 0);
         assert_eq!(pipeline.downloaded.len(), 1);
         assert!(pipeline.pending_heights.is_empty());
-        assert_eq!(pipeline.downloaded.get(&100).unwrap().block_hash(), hash);
+        assert_eq!(*pipeline.downloaded.get(&100).unwrap().hash(), hash);
     }
 
     #[test]
@@ -293,7 +296,7 @@ mod tests {
         let mut pipeline = BlocksPipeline::new();
         let block = make_test_block(1);
 
-        assert!(!pipeline.receive_block(&block));
+        assert!(!pipeline.receive_block(&HashedBlock::from(&block)));
         assert!(pipeline.downloaded.is_empty());
     }
 
@@ -332,7 +335,7 @@ mod tests {
         assert_eq!(pipeline.coordinator.active_count(), 1);
 
         // B: already received, sitting in `downloaded` — must survive requeue.
-        pipeline.add_from_storage(block_b.clone(), 200, BTreeSet::from([[2u8; 32]]));
+        pipeline.add_from_storage(HashedBlock::from(&block_b), 200, BTreeSet::from([[2u8; 32]]));
 
         pipeline.requeue_in_flight();
 
@@ -385,7 +388,7 @@ mod tests {
 
         // Use add_from_storage to test ordering logic without network
         // Add block 2 first (out of order)
-        pipeline.add_from_storage(block2.clone(), 101, BTreeSet::new());
+        pipeline.add_from_storage(HashedBlock::from(&block2), 101, BTreeSet::new());
         // Also track height 100 as pending to simulate waiting
         pipeline.pending_heights.insert(100);
 
@@ -394,17 +397,17 @@ mod tests {
 
         // Add block 1
         pipeline.pending_heights.remove(&100);
-        pipeline.add_from_storage(block1.clone(), 100, BTreeSet::new());
+        pipeline.add_from_storage(HashedBlock::from(&block1), 100, BTreeSet::new());
 
         // Now block 1 is ready (lowest height)
         let (block, height, _) = pipeline.take_next_ordered_block().unwrap();
         assert_eq!(height, 100);
-        assert_eq!(block.block_hash(), hash1);
+        assert_eq!(*block.hash(), hash1);
 
         // Block 2 is now ready
         let (block, height, _) = pipeline.take_next_ordered_block().unwrap();
         assert_eq!(height, 101);
-        assert_eq!(block.block_hash(), hash2);
+        assert_eq!(*block.hash(), hash2);
 
         // No more blocks
         assert!(pipeline.take_next_ordered_block().is_none());
@@ -417,7 +420,7 @@ mod tests {
 
         // Add block at height 101, but height 100 is still pending
         pipeline.pending_heights.insert(100);
-        pipeline.add_from_storage(block2.clone(), 101, BTreeSet::new());
+        pipeline.add_from_storage(HashedBlock::from(&block2), 101, BTreeSet::new());
 
         // Cannot take block 2 - block at height 100 is still pending
         assert!(pipeline.take_next_ordered_block().is_none());
@@ -436,13 +439,13 @@ mod tests {
         let block = make_test_block(1);
         let hash = block.block_hash();
 
-        pipeline.add_from_storage(block.clone(), 100, BTreeSet::new());
+        pipeline.add_from_storage(HashedBlock::from(&block), 100, BTreeSet::new());
 
         assert_eq!(pipeline.downloaded.len(), 1);
 
         let (taken_block, height, _) = pipeline.take_next_ordered_block().unwrap();
         assert_eq!(height, 100);
-        assert_eq!(taken_block.block_hash(), hash);
+        assert_eq!(*taken_block.hash(), hash);
     }
 
     #[test]
@@ -452,7 +455,7 @@ mod tests {
 
         // Adding to downloaded makes it incomplete
         let block = make_test_block(1);
-        pipeline.add_from_storage(block, 100, BTreeSet::new());
+        pipeline.add_from_storage(HashedBlock::from(&block), 100, BTreeSet::new());
         assert!(!pipeline.is_complete());
 
         // Take the block
@@ -487,10 +490,10 @@ mod tests {
         // Drive the block through receive_block to land it in `downloaded`.
         let hashes = pipeline.coordinator.take_pending(1);
         pipeline.coordinator.mark_sent(&hashes);
-        assert!(pipeline.receive_block(&block));
+        assert!(pipeline.receive_block(&HashedBlock::from(&block)));
 
         let (taken_block, height, taken_wallets) = pipeline.take_next_ordered_block().unwrap();
-        assert_eq!(taken_block.block_hash(), hash);
+        assert_eq!(*taken_block.hash(), hash);
         assert_eq!(height, 100);
         assert_eq!(taken_wallets, wallets);
     }
@@ -516,7 +519,7 @@ mod tests {
         let hashes = pipeline.coordinator.take_pending(1);
         assert_eq!(hashes.len(), 1);
         pipeline.coordinator.mark_sent(&hashes);
-        assert!(pipeline.receive_block(&block));
+        assert!(pipeline.receive_block(&HashedBlock::from(&block)));
 
         let (_, _, taken_wallets) = pipeline.take_next_ordered_block().unwrap();
         let mut expected = wallets_a;
@@ -550,7 +553,7 @@ mod tests {
         assert_eq!(pipeline.coordinator.active_count(), 1);
 
         // Late wallet ids are still merged for when the block arrives.
-        assert!(pipeline.receive_block(&block));
+        assert!(pipeline.receive_block(&HashedBlock::from(&block)));
         let (_, _, taken_wallets) = pipeline.take_next_ordered_block().unwrap();
         let mut expected = wallets_a;
         expected.extend(wallets_b);
@@ -571,7 +574,7 @@ mod tests {
         pipeline.queue([(FilterMatchKey::new(100, hash), wallets_a.clone())]);
         let hashes = pipeline.coordinator.take_pending(1);
         pipeline.coordinator.mark_sent(&hashes);
-        assert!(pipeline.receive_block(&block));
+        assert!(pipeline.receive_block(&HashedBlock::from(&block)));
         assert_eq!(pipeline.downloaded.len(), 1);
         assert_eq!(pipeline.coordinator.pending_count(), 0);
         assert_eq!(pipeline.coordinator.active_count(), 0);
@@ -598,8 +601,8 @@ mod tests {
         let wallets_a: BTreeSet<WalletId> = BTreeSet::from([[1u8; 32]]);
         let wallets_b: BTreeSet<WalletId> = BTreeSet::from([[2u8; 32]]);
 
-        pipeline.add_from_storage(block.clone(), 100, wallets_a.clone());
-        pipeline.add_from_storage(block.clone(), 100, wallets_b.clone());
+        pipeline.add_from_storage(HashedBlock::from(&block), 100, wallets_a.clone());
+        pipeline.add_from_storage(HashedBlock::from(&block), 100, wallets_b.clone());
 
         let (_, _, taken_wallets) = pipeline.take_next_ordered_block().unwrap();
         let mut expected = wallets_a;
@@ -618,12 +621,12 @@ mod tests {
         pipeline.coordinator.mark_sent(&hashes);
 
         // First receive
-        let result = pipeline.receive_block(&block);
+        let result = pipeline.receive_block(&HashedBlock::from(&block));
         assert!(result);
         assert_eq!(pipeline.downloaded.len(), 1);
 
         // Duplicate receive (not tracked anymore since already completed)
-        let result = pipeline.receive_block(&block);
+        let result = pipeline.receive_block(&HashedBlock::from(&block));
         assert!(!result);
         assert_eq!(pipeline.downloaded.len(), 1);
     }

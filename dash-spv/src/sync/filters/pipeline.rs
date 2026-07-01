@@ -155,8 +155,8 @@ impl FiltersPipeline {
 
             // Get stop hash for this batch. If the header isn't available yet,
             // re-queue for the next tick instead of losing the batch permanently.
-            let header = match storage.get_header(batch_end).await {
-                Ok(Some(h)) => h,
+            let stop_hash = match storage.get_header(batch_end).await {
+                Ok(Some(h)) => *h.hash(),
                 Ok(None) => {
                     tracing::debug!(
                         "Header at height {} not yet available, re-queuing filter batch {}",
@@ -178,7 +178,7 @@ impl FiltersPipeline {
                 }
             };
 
-            requests.request_filters(start_height, header.block_hash())?;
+            requests.request_filters(start_height, stop_hash)?;
 
             self.coordinator.mark_sent(&[start_height]);
 
@@ -431,7 +431,12 @@ mod tests {
         let headers = Header::dummy_batch(0..6000);
         let tmp_dir = TempDir::new().unwrap();
         let mut storage = PersistentBlockHeaderStorage::open(tmp_dir.path()).await.unwrap();
-        storage.store_headers(&headers).await.unwrap();
+        storage
+            .store_headers(
+                &headers.iter().map(crate::types::HashedBlockHeader::from).collect::<Vec<_>>(),
+            )
+            .await
+            .unwrap();
 
         let mut pipeline = FiltersPipeline::new();
         pipeline.init(0, 3500);
@@ -829,7 +834,12 @@ mod tests {
         let headers = Header::dummy_batch(0..1000);
         let tmp_dir = TempDir::new().unwrap();
         let mut storage = PersistentBlockHeaderStorage::open(tmp_dir.path()).await.unwrap();
-        storage.store_headers(&headers).await.unwrap();
+        storage
+            .store_headers(
+                &headers.iter().map(crate::types::HashedBlockHeader::from).collect::<Vec<_>>(),
+            )
+            .await
+            .unwrap();
 
         let mut pipeline = FiltersPipeline::new();
         pipeline.init(0, 999);
@@ -863,7 +873,12 @@ mod tests {
         let headers = Header::dummy_batch(0..25000);
         let tmp_dir = TempDir::new().unwrap();
         let mut storage = PersistentBlockHeaderStorage::open(tmp_dir.path()).await.unwrap();
-        storage.store_headers(&headers).await.unwrap();
+        storage
+            .store_headers(
+                &headers.iter().map(crate::types::HashedBlockHeader::from).collect::<Vec<_>>(),
+            )
+            .await
+            .unwrap();
 
         let mut pipeline = FiltersPipeline::new();
         pipeline.init(0, 24999);
@@ -884,7 +899,12 @@ mod tests {
         let headers = Header::dummy_batch(0..1500);
         let tmp_dir = TempDir::new().unwrap();
         let mut storage = PersistentBlockHeaderStorage::open(tmp_dir.path()).await.unwrap();
-        storage.store_headers(&headers).await.unwrap();
+        storage
+            .store_headers(
+                &headers.iter().map(crate::types::HashedBlockHeader::from).collect::<Vec<_>>(),
+            )
+            .await
+            .unwrap();
 
         let mut pipeline = FiltersPipeline::new();
         // Target is 1200, so second batch ends at 1200 not 1999
@@ -910,7 +930,12 @@ mod tests {
         let headers = Header::dummy_batch(0..3000);
         let tmp_dir = TempDir::new().unwrap();
         let mut storage = PersistentBlockHeaderStorage::open(tmp_dir.path()).await.unwrap();
-        storage.store_headers(&headers).await.unwrap();
+        storage
+            .store_headers(
+                &headers.iter().map(crate::types::HashedBlockHeader::from).collect::<Vec<_>>(),
+            )
+            .await
+            .unwrap();
 
         let mut pipeline = FiltersPipeline::new();
         pipeline.init(0, 2500);
@@ -930,7 +955,12 @@ mod tests {
         let headers = Header::dummy_batch(0..100);
         let tmp_dir = TempDir::new().unwrap();
         let mut storage = PersistentBlockHeaderStorage::open(tmp_dir.path()).await.unwrap();
-        storage.store_headers(&headers).await.unwrap();
+        storage
+            .store_headers(
+                &headers.iter().map(crate::types::HashedBlockHeader::from).collect::<Vec<_>>(),
+            )
+            .await
+            .unwrap();
 
         let mut pipeline = FiltersPipeline::new();
         pipeline.init(0, 50);
@@ -955,7 +985,12 @@ mod tests {
         let headers = Header::dummy_batch(0..100);
         let tmp_dir = TempDir::new().unwrap();
         let mut storage = PersistentBlockHeaderStorage::open(tmp_dir.path()).await.unwrap();
-        storage.store_headers(&headers).await.unwrap();
+        storage
+            .store_headers(
+                &headers.iter().map(crate::types::HashedBlockHeader::from).collect::<Vec<_>>(),
+            )
+            .await
+            .unwrap();
 
         let mut pipeline = FiltersPipeline::new();
         pipeline.init(0, 99);
@@ -990,7 +1025,12 @@ mod tests {
         let headers = Header::dummy_batch(0..1000);
         let tmp_dir = TempDir::new().unwrap();
         let mut storage = PersistentBlockHeaderStorage::open(tmp_dir.path()).await.unwrap();
-        storage.store_headers(&headers).await.unwrap();
+        storage
+            .store_headers(
+                &headers.iter().map(crate::types::HashedBlockHeader::from).collect::<Vec<_>>(),
+            )
+            .await
+            .unwrap();
 
         let mut pipeline = create_pipeline_with_short_timeout();
         pipeline.init(0, 999);
@@ -1053,7 +1093,12 @@ mod tests {
         let headers = Header::dummy_batch(0..5000);
         let tmp_dir = TempDir::new().unwrap();
         let mut storage = PersistentBlockHeaderStorage::open(tmp_dir.path()).await.unwrap();
-        storage.store_headers(&headers).await.unwrap();
+        storage
+            .store_headers(
+                &headers.iter().map(crate::types::HashedBlockHeader::from).collect::<Vec<_>>(),
+            )
+            .await
+            .unwrap();
 
         let mut pipeline = create_pipeline_with_low_concurrency();
         pipeline.init(0, 2500);
@@ -1089,7 +1134,12 @@ mod tests {
         let headers = Header::dummy_batch(0..1000);
         let tmp_dir = TempDir::new().unwrap();
         let mut storage = PersistentBlockHeaderStorage::open(tmp_dir.path()).await.unwrap();
-        storage.store_headers(&headers).await.unwrap();
+        storage
+            .store_headers(
+                &headers.iter().map(crate::types::HashedBlockHeader::from).collect::<Vec<_>>(),
+            )
+            .await
+            .unwrap();
 
         let mut pipeline = FiltersPipeline::new();
         pipeline.init(0, 1999);
@@ -1114,7 +1164,12 @@ mod tests {
 
         // Store the missing headers and retry
         let more_headers = Header::dummy_batch(1000..2000);
-        storage.store_headers(&more_headers).await.unwrap();
+        storage
+            .store_headers(
+                &more_headers.iter().map(crate::types::HashedBlockHeader::from).collect::<Vec<_>>(),
+            )
+            .await
+            .unwrap();
 
         let sent = pipeline.send_pending(&sender, &storage).await.unwrap();
         assert_eq!(sent, 1);

@@ -89,7 +89,7 @@ pub(super) async fn build_mnlistdiff_request_pairs<S: BlockHeaderStorage>(
 
         let base_hash = if let Some(height) = base_height {
             match storage.get_header(height).await {
-                Ok(Some(h)) => h.block_hash(),
+                Ok(Some(h)) => *h.hash(),
                 Ok(None) => {
                     tracing::warn!("Base header not found at height {}, using all-zeros", height);
                     BlockHash::all_zeros()
@@ -109,7 +109,7 @@ pub(super) async fn build_mnlistdiff_request_pairs<S: BlockHeaderStorage>(
         };
 
         let target_hash = match storage.get_header(validation_height).await {
-            Ok(Some(h)) => h.block_hash(),
+            Ok(Some(h)) => *h.hash(),
             Ok(None) => {
                 tracing::warn!("Target header not found at height {}, skipping", validation_height);
                 continue;
@@ -187,7 +187,7 @@ pub(super) async fn feed_qrinfo_heights_to_engine<S: BlockHeaderStorage>(
             let cycle_boundary_height = work_block_height + WORK_DIFF_DEPTH;
             if let Ok(Some(cycle_boundary_header)) = storage.get_header(cycle_boundary_height).await
             {
-                let cycle_boundary_hash = cycle_boundary_header.block_hash();
+                let cycle_boundary_hash = *cycle_boundary_header.hash();
                 engine.feed_block_height(cycle_boundary_height, cycle_boundary_hash);
                 fed_count += 1;
                 tracing::debug!(
@@ -654,7 +654,6 @@ mod tests {
     use crate::storage::{BlockHeaderStorage, BlockHeaderTip};
     use crate::types::HashedBlockHeader;
     use async_trait::async_trait;
-    use dashcore::block::Header as BlockHeader;
     use dashcore::bls_sig_utils::{BLSPublicKey, BLSSignature};
     use dashcore::hash_types::QuorumVVecHash;
     use dashcore::network::message_qrinfo::{MNSkipListMode, QRInfo, QuorumSnapshot};
@@ -672,27 +671,17 @@ mod tests {
 
     #[async_trait]
     impl BlockHeaderStorage for MockHeaderStorage {
-        async fn store_headers(&mut self, _: &[BlockHeader]) -> StorageResult<()> {
+        async fn store_headers(&mut self, _: &[HashedBlockHeader]) -> StorageResult<()> {
             Ok(())
         }
         async fn store_headers_at_height(
-            &mut self,
-            _: &[BlockHeader],
-            _: u32,
-        ) -> StorageResult<()> {
-            Ok(())
-        }
-        async fn store_hashed_headers(&mut self, _: &[HashedBlockHeader]) -> StorageResult<()> {
-            Ok(())
-        }
-        async fn store_hashed_headers_at_height(
             &mut self,
             _: &[HashedBlockHeader],
             _: u32,
         ) -> StorageResult<()> {
             Ok(())
         }
-        async fn load_headers(&self, _: Range<u32>) -> StorageResult<Vec<BlockHeader>> {
+        async fn load_headers(&self, _: Range<u32>) -> StorageResult<Vec<HashedBlockHeader>> {
             Ok(vec![])
         }
         async fn get_tip_height(&self) -> Option<u32> {

@@ -7,7 +7,7 @@ use async_trait::async_trait;
 use dashcore::ephemerealdata::chain_lock::ChainLock;
 use dashcore::ephemerealdata::instant_lock::InstantLock;
 use dashcore::prelude::CoreBlockHeight;
-use dashcore::{Address, Block, OutPoint, ScriptBuf, Transaction, Txid};
+use dashcore::{Address, Block, BlockHash, OutPoint, ScriptBuf, Transaction, Txid};
 use std::collections::{BTreeMap, BTreeSet};
 use tokio::sync::broadcast;
 
@@ -68,6 +68,7 @@ pub trait WalletInterface: Send + Sync + 'static {
     async fn process_block_for_wallets(
         &mut self,
         block: &Block,
+        block_hash: BlockHash,
         height: CoreBlockHeight,
         wallets: &BTreeSet<WalletId>,
     ) -> BlockProcessingResult;
