@@ -54,7 +54,7 @@ pub struct BlockHeadersManager<H: BlockHeaderStorage, M: MetadataStorage> {
     pending_fork_candidate: Option<ForkCandidate>,
     /// Maps the last-known fork branch tip hash to its ancestor height.
     /// Populated whenever a fork batch is buffered so that subsequent batches
-    /// extending the same branch are routed to `ingest_fork` correctly.
+    /// extending the same branch are routed to `extend_fork` correctly.
     fork_tip_index: HashMap<BlockHash, u32>,
 }
 

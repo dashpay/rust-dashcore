@@ -40,10 +40,8 @@ pub enum SyncEvent {
         tip_height: u32,
     },
 
-    /// A buffered fork branch outweighed the active chain.
-    ///
-    /// Announces staged fork detection. Promotion (truncating the active chain
-    /// and adopting the fork) is a later phase that subscribes to this.
+    /// A buffered fork branch's extension work exceeded the active chain's
+    /// extension from the same common ancestor.
     ///
     /// Emitted by: `BlockHeadersManager`
     ForkDetected {
@@ -51,7 +49,8 @@ pub enum SyncEvent {
         ancestor_height: u32,
         /// Number of headers the fork adds past the ancestor.
         header_count: usize,
-        /// Cumulative work at the fork tip.
+        /// The branch's extension work past the common ancestor (accumulated
+        /// over the fork headers only, not including the shared prefix).
         total_work: ChainWork,
     },
 
