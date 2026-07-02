@@ -211,8 +211,8 @@ impl KeySource {
 ///
 /// The three states are mutually exclusive by construction, so the invariant
 /// "a used address is never reserved" holds structurally rather than being
-/// maintained by hand. Timestamps are caller-supplied (seconds), and `0` means
-/// the caller had no clock available.
+/// maintained by hand. The reservation timestamp is caller-supplied (seconds),
+/// and `0` means the caller had no clock available.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
@@ -225,11 +225,8 @@ pub enum AddressState {
         /// Reservation timestamp.
         at: u64,
     },
-    /// Funds have been seen at this address. `at` is when it was first used.
-    Used {
-        /// First-used timestamp.
-        at: u64,
-    },
+    /// Funds have been seen at this address.
+    Used,
 }
 
 /// Information about a single address in the pool
@@ -249,8 +246,6 @@ pub struct AddressInfo {
     pub path: DerivationPath,
     /// Lifecycle state: available, reserved, or used
     pub state: AddressState,
-    /// When the address was first generated (timestamp)
-    pub generated_at: u64,
     /// Transaction count for this address
     pub tx_count: u32,
     /// Total received amount
@@ -281,7 +276,6 @@ impl AddressInfo {
             index,
             path,
             state: AddressState::Available,
-            generated_at: 0, // Should use actual timestamp
             tx_count: 0,
             total_received: 0,
             total_sent: 0,
@@ -314,7 +308,6 @@ impl AddressInfo {
             index,
             path,
             state: AddressState::Available,
-            generated_at: 0, // Should use actual timestamp
             tx_count: 0,
             total_received: 0,
             total_sent: 0,
@@ -328,14 +321,9 @@ impl AddressInfo {
     ///
     /// Transitions to [`AddressState::Used`], which structurally drops any
     /// reservation so the invariant "a used address is never reserved" holds
-    /// even when a reserved address is promoted directly to used. Idempotent:
-    /// a re-mark keeps the original used timestamp.
+    /// even when a reserved address is promoted directly to used.
     fn mark_used(&mut self) {
-        if !self.is_used() {
-            self.state = AddressState::Used {
-                at: 0,
-            }; // Should use actual timestamp
-        }
+        self.state = AddressState::Used;
     }
 
     /// Whether this address is available to be handed out: neither used nor
@@ -351,17 +339,7 @@ impl AddressInfo {
 
     /// Whether this address has been used.
     pub fn is_used(&self) -> bool {
-        matches!(self.state, AddressState::Used { .. })
-    }
-
-    /// Timestamp the address was first used, or `None` if not used.
-    pub fn used_at(&self) -> Option<u64> {
-        match self.state {
-            AddressState::Used {
-                at,
-            } => Some(at),
-            _ => None,
-        }
+        matches!(self.state, AddressState::Used)
     }
 
     /// Timestamp the address was reserved, or `None` if not reserved.

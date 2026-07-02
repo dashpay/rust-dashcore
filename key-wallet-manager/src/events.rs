@@ -489,7 +489,6 @@ mod project_derived_addresses_tests {
                 index,
                 path,
                 state: AddressState::Available,
-                generated_at: 0,
                 tx_count: 0,
                 total_received: 0,
                 total_sent: 0,
