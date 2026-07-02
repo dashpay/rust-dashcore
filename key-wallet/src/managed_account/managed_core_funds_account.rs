@@ -19,6 +19,7 @@ use crate::managed_account::address_pool;
 use crate::managed_account::managed_account_trait::ManagedAccountTrait;
 use crate::managed_account::managed_account_type::ManagedAccountType;
 use crate::managed_account::managed_core_keys_account::ManagedCoreKeysAccount;
+use crate::managed_account::reservation::ReservationSet;
 use crate::managed_account::transaction_record::{
     InputDetail, OutputDetail, OutputRole, TransactionDirection,
 };
@@ -61,6 +62,12 @@ pub struct ManagedCoreFundsAccount {
     /// Rebuilt from `transactions` during deserialization.
     #[cfg_attr(feature = "serde", serde(skip_serializing))]
     spent_outpoints: HashSet<OutPoint>,
+    /// Outpoints reserved by in-flight transaction builds so concurrent builds
+    /// do not select the same UTXO before the first build's transaction is
+    /// processed. Empty after a restart, where chain and mempool sync
+    /// re-establish which coins are spent.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    reservations: ReservationSet,
 }
 
 impl ManagedCoreFundsAccount {
@@ -71,6 +78,7 @@ impl ManagedCoreFundsAccount {
             balance: WalletCoreBalance::default(),
             utxos: BTreeMap::new(),
             spent_outpoints: HashSet::new(),
+            reservations: ReservationSet::default(),
         }
     }
 
@@ -97,7 +105,29 @@ impl ManagedCoreFundsAccount {
             balance: WalletCoreBalance::default(),
             utxos: BTreeMap::new(),
             spent_outpoints: HashSet::new(),
+            reservations: ReservationSet::default(),
         }
+    }
+
+    /// Reservation set tracking outpoints chosen by in-flight transaction
+    /// builds, consulted by coin selection so concurrent builds do not pick the
+    /// same UTXO.
+    ///
+    /// The reservation is only effective when each build runs `set_funding`
+    /// through `assemble_unsigned` under a single uninterrupted hold of the
+    /// wallet lock. If two builds interleave between observing the UTXO set and
+    /// reserving their inputs, both can see the same UTXO as free and select it.
+    pub(crate) fn reservations(&self) -> &ReservationSet {
+        &self.reservations
+    }
+
+    /// Release the reservations held for `tx`'s inputs. Call this when a built
+    /// transaction will not be broadcast, e.g. the user cancelled, so its inputs
+    /// become selectable again immediately instead of waiting out the TTL
+    /// backstop. Broadcast transactions release on their own once the spend is
+    /// processed back into the wallet, so this is only for abandoned builds.
+    pub fn release_reservation(&self, tx: &Transaction) {
+        self.reservations.release(tx.input.iter().map(|input| &input.previous_output));
     }
 
     /// Get a reference to the inner keys-account state.
@@ -208,7 +238,11 @@ impl ManagedCoreFundsAccount {
                     }
                 }
 
-                // Remove UTXOs spent by this transaction and track spent outpoints
+                // Remove UTXOs spent by this transaction and track spent outpoints.
+                // Processing the spend also hands the inputs off from the
+                // ephemeral build reservation to the durable spent set, so the
+                // reservation taken when this transaction was built is released.
+                self.reservations.release(tx.input.iter().map(|input| &input.previous_output));
                 for input in &tx.input {
                     self.spent_outpoints.insert(input.previous_output);
 
@@ -726,6 +760,7 @@ impl<'de> Deserialize<'de> for ManagedCoreFundsAccount {
             balance: helper.balance,
             utxos: helper.utxos,
             spent_outpoints,
+            reservations: ReservationSet::default(),
         })
     }
 }
