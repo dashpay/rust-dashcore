@@ -342,11 +342,11 @@ fn test_account_extended_key_generation() {
     let derivation_path = account_type.derivation_path(network).unwrap();
     let account_key = master.derive_priv(&secp, &derivation_path).unwrap();
 
+    let expected_xpub = ExtendedPubKey::from_priv(&secp, &account_key);
     let account = Account::from_xpriv(Some([0u8; 32]), account_type, account_key, network).unwrap();
 
     // Verify extended public key can be derived
     let xpub = account.extended_public_key();
-    let expected_xpub = ExtendedPubKey::from_priv(&secp, &account_key);
     assert_eq!(xpub, expected_xpub);
 
     // Verify the account can be created as watch-only
@@ -400,7 +400,8 @@ fn test_account_network_consistency() {
     let derivation_path = account_type.derivation_path(network).unwrap();
     let account_key = master.derive_priv(&secp, &derivation_path).unwrap();
 
-    let account = Account::from_xpriv(Some([0u8; 32]), account_type, account_key, network).unwrap();
+    let account =
+        Account::from_xpriv(Some([0u8; 32]), account_type, account_key.clone(), network).unwrap();
 
     // Verify account stores the correct network
     assert_eq!(account.network, network);
