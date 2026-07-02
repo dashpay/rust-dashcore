@@ -72,6 +72,18 @@ impl ForkBuffer {
         if headers.is_empty() {
             return Ok(());
         }
+        // dashd selects the retargeting algorithm by height: DGW v3 applies only
+        // at or above `pow_dgw_height`, with KGW or the pre-KGW rule below it.
+        // Only DGW is ported here, so a fork whose lowest validated header sits
+        // below that activation cannot be checked correctly and is rejected.
+        // Networks with retargeting disabled short-circuit DGW to `pow_limit`,
+        // so they stay valid at any height.
+        if !self.params.no_pow_retargeting && ancestor_height + 1 < self.params.pow_dgw_height {
+            return Err(SyncError::Validation(format!(
+                "fork ancestor at height {} is below the DGW activation height {}",
+                ancestor_height, self.params.pow_dgw_height
+            )));
+        }
         if headers.len() > MAX_FORK_HEADERS_PER_PEER {
             return Err(SyncError::Validation(format!(
                 "Fork branch too large: {} headers (max {})",
@@ -287,6 +299,33 @@ mod tests {
         buf.ingest(peer, &fork, ancestor_height, ancestor, &active)
             .expect("pre-DGW-window fork must be accepted");
         assert_eq!(buf.len(), 1);
+    }
+
+    #[test]
+    fn ingest_rejects_fork_below_dgw_activation_on_retargeting_network() {
+        // On a retargeting network the fork's lowest validated header must sit
+        // at or above the DGW activation height, since only DGW is ported. A
+        // testnet fork anchored below `pow_dgw_height` (4002) is rejected before
+        // any header validation. The dummy header never needs valid PoW because
+        // the height gate fires first.
+        let peer: SocketAddr = "1.2.3.4:9999".parse().unwrap();
+        let params = Params::new(Network::Testnet);
+        assert!(!params.no_pow_retargeting);
+        let mut buf = ForkBuffer::new(params);
+
+        let ancestor_height = 100;
+        let ancestor = easy_header(BlockHash::all_zeros(), 1_700_000_000, 0);
+        let fork_header = easy_header(ancestor.block_hash(), 1_700_000_600, 0);
+
+        let err = buf
+            .ingest(peer, &[fork_header], ancestor_height, ancestor, &[ancestor])
+            .expect_err("fork below DGW activation must be rejected");
+        assert!(
+            matches!(&err, SyncError::Validation(msg) if msg.contains("DGW activation height")),
+            "expected DGW activation gate error, got: {:?}",
+            err
+        );
+        assert_eq!(buf.len(), 0);
     }
 
     #[test]

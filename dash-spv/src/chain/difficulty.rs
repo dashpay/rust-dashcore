@@ -1,9 +1,11 @@
 //! Difficulty retargeting for Dash.
 //!
 //! Ports the Dark Gravity Wave v3 algorithm from `dashd`'s `pow.cpp`. Only the
-//! DGW v3 branch is implemented because the staged-fork pipeline only ingests
-//! forks at heights well past `nPowDGWHeight` on every network (34140 on
-//! mainnet, 4001/4002 on testnet/regtest/devnet).
+//! DGW v3 branch is implemented. The staged-fork pipeline enforces this by
+//! rejecting forks anchored below `Params::pow_dgw_height` on retargeting
+//! networks (34140 on mainnet, 4002 on testnet, 4001 on devnet), so the KGW and
+//! pre-KGW branches are never reached. Networks with retargeting disabled
+//! (regtest) short-circuit to `pow_limit` and are exempt from the gate.
 
 use dashcore::consensus::Params;
 use dashcore::pow::U256;
