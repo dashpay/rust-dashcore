@@ -110,15 +110,18 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> BlockHeadersManager<H, M> {
     /// can trigger from an unauthenticated peer.
     const MAX_FORK_DEPTH: u32 = 2000;
 
-    /// Consume the fork candidate set when a buffered branch overtook the
-    /// active chain.
+    /// Take the staged fork candidate, if one was detected. Detection only: the
+    /// candidate is surfaced through [`SyncEvent::ForkDetected`] and its headers
+    /// are not applied to the active chain here.
     fn take_pending_fork_candidate(&mut self) -> Option<ForkCandidate> {
         self.pending_fork_candidate.take()
     }
 
-    /// Announce a detected fork candidate as a [`SyncEvent::ForkDetected`] so
-    /// the coordinator observes staged detection through the event stream
-    /// instead of the candidate being dropped by periodic maintenance.
+    /// Surface a detected fork candidate as a [`SyncEvent::ForkDetected`] so the
+    /// coordinator observes staged detection through the event stream. The event
+    /// carries the ancestor height, header count, and work only. Applying the
+    /// branch to reorg the chain is future work, so its headers are re-derived
+    /// from peers when promotion lands rather than retained here.
     fn drain_fork_detection(&mut self) -> Vec<SyncEvent> {
         match self.take_pending_fork_candidate() {
             Some(candidate) => vec![SyncEvent::ForkDetected {
