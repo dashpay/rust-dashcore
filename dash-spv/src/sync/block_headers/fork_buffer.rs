@@ -125,15 +125,17 @@ impl ForkBuffer {
                 )));
             }
 
-            // DGW v3 retarget anchored at the ancestor's window.
+            // Mirror dashd's `GetNextWorkRequired`: exactly one value is
+            // required. When the min-difficulty exception applies it replaces
+            // the DGW output rather than joining it, otherwise DGW is required.
             let expected_bits =
                 next_work_required_dgw_v3(&rolling_history, height - 1, &self.params);
-            let min_diff = min_difficulty_bits(&self.params, prev.time, prev.bits, header.time);
-            let bits_ok = header.bits == expected_bits || min_diff == Some(header.bits);
-            if !bits_ok {
+            let required = min_difficulty_bits(&self.params, prev.time, prev.bits, header.time)
+                .unwrap_or(expected_bits);
+            if header.bits != required {
                 return Err(SyncError::Validation(format!(
                     "Fork header at height {} bad bits: got {:?}, expected {:?}",
-                    height, header.bits, expected_bits
+                    height, header.bits, required
                 )));
             }
 
@@ -544,10 +546,10 @@ mod tests {
     fn ingest_accepts_valid_min_difficulty_fork_header() {
         // Regtest has `allow_min_difficulty_blocks = true` and a pow_limit that
         // matches `EASY_BITS`. A fork header whose time gap from its predecessor
-        // exceeds 4×spacing triggers the min-difficulty exception: `bits` may
-        // equal `min_difficulty_bits(...)` rather than the strict DGW output.
-        // This exercises the `min_diff == Some(header.bits)` acceptance branch
-        // that rejection tests do not reach.
+        // exceeds 4×spacing triggers the min-difficulty exception, so the
+        // required `bits` become `min_difficulty_bits(...)` in place of the DGW
+        // output. This exercises the exception path that rejection tests do not
+        // reach.
         let peer: SocketAddr = "1.2.3.4:9999".parse().unwrap();
         let params = regtest_params();
         let mut buf = ForkBuffer::new(params.clone());
