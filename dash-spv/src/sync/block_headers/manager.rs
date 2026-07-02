@@ -108,7 +108,7 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> BlockHeadersManager<H, M> {
         BlockHeaderValidator::new().validate(headers)?;
 
         // Store headers
-        self.header_storage.write().await.store_hashed_headers(headers).await?;
+        self.header_storage.write().await.store_headers(headers).await?;
 
         let tip = self.tip().await?;
 
@@ -277,7 +277,12 @@ mod tests {
         let mut storage = DiskStorageManager::with_temp_dir().await.unwrap();
         // Store a genesis header so the manager can initialize
         let genesis = Header::dummy_batch(0..1);
-        storage.store_headers(&genesis).await.unwrap();
+        storage
+            .store_headers(
+                &genesis.iter().map(crate::types::HashedBlockHeader::from).collect::<Vec<_>>(),
+            )
+            .await
+            .unwrap();
         let checkpoint_manager = create_test_checkpoint_manager();
         BlockHeadersManager::new(storage.block_headers(), storage.metadata(), checkpoint_manager)
             .await

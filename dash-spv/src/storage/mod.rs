@@ -19,7 +19,6 @@ use crate::ClientConfig;
 use async_trait::async_trait;
 use dashcore::hash_types::FilterHeader;
 use dashcore::prelude::CoreBlockHeight;
-use dashcore::Header as BlockHeader;
 use std::ops::Range;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -269,31 +268,19 @@ impl StorageManager for DiskStorageManager {
 
 #[async_trait]
 impl BlockHeaderStorage for DiskStorageManager {
-    async fn store_headers(&mut self, headers: &[BlockHeader]) -> StorageResult<()> {
+    async fn store_headers(&mut self, headers: &[HashedBlockHeader]) -> StorageResult<()> {
         self.block_headers.write().await.store_headers(headers).await
     }
 
     async fn store_headers_at_height(
         &mut self,
-        headers: &[BlockHeader],
+        headers: &[HashedBlockHeader],
         height: u32,
     ) -> StorageResult<()> {
         self.block_headers.write().await.store_headers_at_height(headers, height).await
     }
 
-    async fn store_hashed_headers(&mut self, headers: &[HashedBlockHeader]) -> StorageResult<()> {
-        self.block_headers.write().await.store_hashed_headers(headers).await
-    }
-
-    async fn store_hashed_headers_at_height(
-        &mut self,
-        headers: &[HashedBlockHeader],
-        height: u32,
-    ) -> StorageResult<()> {
-        self.block_headers.write().await.store_hashed_headers_at_height(headers, height).await
-    }
-
-    async fn load_headers(&self, range: Range<u32>) -> StorageResult<Vec<BlockHeader>> {
+    async fn load_headers(&self, range: Range<u32>) -> StorageResult<Vec<HashedBlockHeader>> {
         self.block_headers.read().await.load_headers(range).await
     }
 
@@ -426,6 +413,10 @@ mod tests {
     use dashcore::Header as BlockHeader;
     use tempfile::TempDir;
 
+    fn hashed_batch(r: std::ops::Range<u32>) -> Vec<HashedBlockHeader> {
+        BlockHeader::dummy_batch(r).into_iter().map(HashedBlockHeader::from).collect()
+    }
+
     #[tokio::test]
     async fn test_store_load_headers() -> Result<(), Box<dyn std::error::Error>> {
         // Create a temporary directory for the test
@@ -433,7 +424,7 @@ mod tests {
         let config = ClientConfig::testnet().with_storage_path(temp_dir.path());
         let mut storage = DiskStorageManager::new(&config).await.expect("Unable to create storage");
 
-        let headers = BlockHeader::dummy_batch(0..60_000);
+        let headers = hashed_batch(0..60_000);
 
         storage.store_headers(&headers[0..0]).await.expect("Should handle empty header batch");
         assert_eq!(storage.get_tip_height().await, None);
@@ -478,8 +469,8 @@ mod tests {
 
         // Create test headers starting from checkpoint height
         const CHECKPOINT_HEIGHT: u32 = 1_100_000;
-        let headers: Vec<BlockHeader> =
-            BlockHeader::dummy_batch(CHECKPOINT_HEIGHT..CHECKPOINT_HEIGHT + 100);
+        let headers: Vec<HashedBlockHeader> =
+            hashed_batch(CHECKPOINT_HEIGHT..CHECKPOINT_HEIGHT + 100);
 
         storage.store_headers_at_height(&headers, CHECKPOINT_HEIGHT).await?;
 
@@ -496,18 +487,18 @@ mod tests {
 
         async fn check_storage(
             storage: &DiskStorageManager,
-            headers: &[BlockHeader],
+            headers: &[HashedBlockHeader],
         ) -> StorageResult<()> {
             assert_eq!(storage.get_stored_headers_len().await, headers.len() as u32);
 
             let header_at_base = storage.get_header(CHECKPOINT_HEIGHT).await?;
-            assert_eq!(header_at_base, Some(headers[0]));
+            assert_eq!(header_at_base, Some(headers[0].clone()));
 
             let header_at_ending = storage.get_header(CHECKPOINT_HEIGHT + 99).await?;
-            assert_eq!(header_at_ending, Some(headers[99]));
+            assert_eq!(header_at_ending, Some(headers[99].clone()));
 
             // Test the reverse index (hash -> blockchain height)
-            let hash_0 = headers[0].block_hash();
+            let hash_0 = *headers[0].hash();
             let height_0 = storage.get_header_height_by_hash(&hash_0).await?;
             assert_eq!(
                 height_0,
@@ -515,7 +506,7 @@ mod tests {
                 "Hash should map to blockchain height 1,100,000"
             );
 
-            let hash_99 = headers[99].block_hash();
+            let hash_99 = *headers[99].hash();
             let height_99 = storage.get_header_height_by_hash(&hash_99).await?;
             assert_eq!(
                 height_99,
@@ -536,13 +527,13 @@ mod tests {
             let mut storage = DiskStorageManager::new(&config).await.unwrap();
 
             // Create and store headers
-            let headers = BlockHeader::dummy_batch(0..10);
+            let headers = hashed_batch(0..10);
 
             storage.store_headers(&headers).await.unwrap();
 
             // Test reverse lookups
             for (i, header) in headers.iter().enumerate() {
-                let hash = header.block_hash();
+                let hash = *header.hash();
                 let height = storage.get_header_height_by_hash(&hash).await.unwrap();
                 assert_eq!(height, Some(i as u32), "Height mismatch for header {}", i);
             }
@@ -558,7 +549,7 @@ mod tests {
             // We need to get the actual headers that were stored to test properly
             for i in 0..10 {
                 let stored_header = storage.get_header(i).await.unwrap().unwrap();
-                let hash = stored_header.block_hash();
+                let hash = *stored_header.hash();
                 let height = storage.get_header_height_by_hash(&hash).await.unwrap();
                 assert_eq!(height, Some(i), "Height mismatch after reload for header {}", i);
             }
@@ -571,10 +562,10 @@ mod tests {
             DiskStorageManager::with_temp_dir().await.expect("Failed to create tmp storage");
 
         // Store some headers
-        let header = BlockHeader::dummy_batch(0..1);
+        let header = hashed_batch(0..1);
         storage.store_headers(&header).await.unwrap();
 
-        let hash = header[0].block_hash();
+        let hash = *header[0].hash();
         assert!(storage.get_header_height_by_hash(&hash).await.unwrap().is_some());
 
         // Clear storage
@@ -590,10 +581,10 @@ mod tests {
         let config = ClientConfig::regtest().with_storage_path(temp_dir.path());
         let mut mgr = DiskStorageManager::new(&config).await.unwrap();
 
-        let headers = BlockHeader::dummy_batch(0..10);
+        let headers = hashed_batch(0..10);
         mgr.store_headers(&headers).await.unwrap();
 
-        let orphaned_hash = headers[7].block_hash();
+        let orphaned_hash = *headers[7].hash();
         assert_eq!(mgr.get_header_height_by_hash(&orphaned_hash).await.unwrap(), Some(7));
 
         <DiskStorageManager as BlockHeaderStorage>::truncate_above(&mut mgr, 5).await.unwrap();
@@ -601,7 +592,7 @@ mod tests {
         assert_eq!(mgr.get_tip_height().await, Some(5));
         assert_eq!(mgr.get_header_height_by_hash(&orphaned_hash).await.unwrap(), None);
 
-        let kept_hash = headers[3].block_hash();
+        let kept_hash = *headers[3].hash();
         assert_eq!(mgr.get_header_height_by_hash(&kept_hash).await.unwrap(), Some(3));
     }
 
