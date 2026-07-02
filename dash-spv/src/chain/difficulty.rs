@@ -59,6 +59,9 @@ pub(crate) fn next_work_required_dgw_v3(
     }
 
     let window = &previous_headers[previous_headers.len() - DGW_PAST_BLOCKS as usize..];
+    let (Some(first), Some(last)) = (window.first(), window.last()) else {
+        return pow_limit_bits;
+    };
 
     let mut past_target_avg = U256::ZERO;
     for (i, header) in window.iter().rev().enumerate() {
@@ -77,8 +80,6 @@ pub(crate) fn next_work_required_dgw_v3(
         }
     }
 
-    let last = window.last().expect("window length checked above");
-    let first = window.first().expect("window length checked above");
     let actual = (last.time as i64 - first.time as i64).max(0) as u64;
     let target_timespan = (DGW_PAST_BLOCKS as u64) * DASH_TARGET_SPACING;
 

@@ -119,7 +119,12 @@ impl ForkBuffer {
 
         let branch_work = ChainWork::accumulate(ChainWork::zero(), headers);
 
-        let key = (peer, hashed.last().expect("non-empty fork branch").hash().to_owned());
+        let tip_hash = hashed
+            .last()
+            .ok_or_else(|| SyncError::Validation("fork branch produced no headers".to_string()))?
+            .hash()
+            .to_owned();
+        let key = (peer, tip_hash);
         self.branches.insert(
             key,
             BufferedBranch {
@@ -164,17 +169,34 @@ impl ForkBuffer {
 
         let mut rolling_history: Vec<Header> = active_history.to_vec();
         rolling_history.extend(branch.headers.iter().map(|h| *h.header()));
-        let tip = *branch.headers.last().expect("buffered branch is non-empty").header();
+        let tip = *branch
+            .headers
+            .last()
+            .ok_or_else(|| {
+                SyncError::ForkChainBreak(format!("buffered branch for tip {} is empty", key.1))
+            })?
+            .header();
         let first_height = branch.ancestor_height + branch.headers.len() as u32 + 1;
 
         let new_hashed =
             validate_extension(&self.params, headers, first_height, tip, &mut rolling_history)?;
 
-        let mut branch = self.branches.remove(&key).expect("branch existed above");
+        let new_tip = new_hashed
+            .last()
+            .ok_or_else(|| {
+                SyncError::ForkChainBreak(format!(
+                    "fork continuation for tip {} produced no headers",
+                    key.1
+                ))
+            })?
+            .hash()
+            .to_owned();
+        let mut branch = self.branches.remove(&key).ok_or_else(|| {
+            SyncError::ForkChainBreak(format!("no buffered branch for tip {}", key.1))
+        })?;
         branch.total_work = ChainWork::accumulate(branch.total_work, headers);
         branch.headers.extend(new_hashed);
         branch.arrived_at = Instant::now();
-        let new_tip = branch.headers.last().expect("branch is non-empty").hash().to_owned();
         self.branches.insert((key.0, new_tip), branch);
         Ok(new_tip)
     }
