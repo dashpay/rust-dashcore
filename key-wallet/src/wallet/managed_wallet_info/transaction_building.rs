@@ -387,7 +387,7 @@ mod tests {
 
     use super::super::transaction_builder::BuilderError;
     use super::super::wallet_info_interface::WalletInfoInterface;
-    use crate::signer::{Signer, SignerMethod};
+    use crate::signer::{ExtendedPubKeySigner, Signer, SignerMethod};
     use crate::wallet::initialization::WalletAccountCreationOptions;
     use crate::wallet::ManagedWalletInfo;
     use crate::DerivationPath;
@@ -447,7 +447,10 @@ mod tests {
                 .map_err(|e| e.to_string())?;
             Ok(secp256k1::PublicKey::from_secret_key(&secp, &xpriv.private_key))
         }
+    }
 
+    #[async_trait::async_trait]
+    impl ExtendedPubKeySigner for InMemorySigner {
         async fn extended_public_key(
             &self,
             path: &DerivationPath,
@@ -541,12 +544,6 @@ mod tests {
                 unreachable!("should be rejected before any signing is attempted")
             }
             async fn public_key(&self, _: &DerivationPath) -> Result<PublicKey, Self::Error> {
-                unreachable!()
-            }
-            async fn extended_public_key(
-                &self,
-                _: &DerivationPath,
-            ) -> Result<crate::bip32::ExtendedPubKey, Self::Error> {
                 unreachable!()
             }
         }
