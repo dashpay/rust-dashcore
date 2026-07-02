@@ -488,6 +488,33 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn in_memory_signer_extended_public_key_matches_wallet_derivation() {
+        use std::str::FromStr;
+        let (wallet, _info) = test_wallet_and_info();
+        let root = match &wallet.wallet_type {
+            crate::wallet::WalletType::Mnemonic {
+                root_extended_private_key,
+                ..
+            } => root_extended_private_key.clone(),
+            _ => unreachable!("test_wallet_and_info produces a mnemonic wallet"),
+        };
+        let signer = InMemorySigner {
+            root,
+            network: Network::Testnet,
+        };
+        // A hardened path — only derivable with the private key, which is the
+        // whole point of exposing extended-pubkey export on the signer.
+        let path = DerivationPath::from_str("m/9'/1'/15'/0'").expect("valid path");
+        let from_signer =
+            signer.extended_public_key(&path).await.expect("signer extended_public_key");
+        let from_wallet = wallet.derive_extended_public_key(&path).expect("wallet extended pubkey");
+        assert_eq!(
+            from_signer, from_wallet,
+            "signer xpub at a hardened path must equal the wallet's own derivation"
+        );
+    }
+
+    #[tokio::test]
     async fn test_signer_empty_credit_outputs_rejected() {
         let (wallet, mut info) = test_wallet_and_info();
         let root = match &wallet.wallet_type {
