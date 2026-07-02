@@ -48,13 +48,11 @@ pub(crate) fn next_work_required_dgw_v3(
         return pow_limit_bits;
     }
 
-    // dashd's `fPowAllowMinDifficultyBlocks` branch (testnet/devnet/regtest)
-    // reverts to `pow_limit` when the candidate block is too far in the future
-    // of the tip. The staged-fork pipeline does not yet have the candidate
-    // block's own time at this call site, so it falls through to the standard
-    // DGW average, which is strictly stricter, never looser, than dashd's
-    // rule. Fork acceptance can therefore only be over-cautious on those
-    // networks, not under-cautious.
+    // dashd's `fPowAllowMinDifficultyBlocks` branch (testnet/devnet) reverts to
+    // `pow_limit` when the candidate block is too far in the future of the tip.
+    // That exception is applied by the caller via `min_difficulty_bits`, which
+    // replaces this DGW output, mirroring dashd's `GetNextWorkRequired`
+    // composition. This function returns the standard DGW average.
 
     if (previous_headers.len() as u32) < DGW_PAST_BLOCKS {
         return pow_limit_bits;

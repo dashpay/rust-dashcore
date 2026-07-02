@@ -483,7 +483,7 @@ mod tests {
         buf.ingest(peer_b, &fork, ancestor_height, ancestor, &active).unwrap();
         // Keys differ by peer so both entries exist.
         assert_eq!(buf.len(), 2);
-        // But the SAME fork tip hash is keyed under (peer, hash). A repeated
+        // But the same fork tip hash is keyed under (peer, hash). A repeated
         // ingest from the same peer with the same tip hash overwrites.
         buf.ingest(peer_a, &fork, ancestor_height, ancestor, &active).unwrap();
         assert_eq!(buf.len(), 2);

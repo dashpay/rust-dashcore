@@ -840,7 +840,7 @@ mod tests {
 
     #[tokio::test]
     async fn lagging_peer_sending_tip_extension_is_not_classified_as_fork() {
-        // A header whose prev_blockhash IS our tip (equal height, not strictly
+        // A header whose prev_blockhash equals our tip (equal height, not strictly
         // less) must flow through the normal pipeline path, never the fork
         // buffer. This guards against treating slow peers (or our own next
         // block arriving after a catch-up) as a reorg.
@@ -1039,7 +1039,7 @@ mod tests {
         .unwrap();
 
         // Ancestor sits three blocks above the floor, so the DGW window reaches
-        // below it. The old code walked below the floor here.
+        // below it.
         let ancestor_height = FLOOR + 3;
         let ancestor = chain[3];
         let fork = mine_header(ancestor.block_hash(), ancestor.time + 11 * 600 + 1, easy_bits);
@@ -1170,8 +1170,8 @@ mod tests {
         // The continuation batch is routed through fork_tip_index to ingest_fork.
         // The ingest fails the chain-continuity check (second batch anchors at the
         // active-chain ancestor, not the buffered fork tip), but the ForkChainBreak
-        // error is swallowed so the peer is not penalized. The fork buffer stays
-        // at one branch; proper multi-batch continuation is deferred to Phase 3.
+        // error is swallowed so the peer is not penalized, and the fork buffer stays
+        // at one branch.
         let result2 = manager.handle_headers_pipeline(&[second_fork_header], peer, &sender).await;
         assert!(result2.is_ok(), "continuation must not propagate error to caller: {:?}", result2);
         assert_eq!(
