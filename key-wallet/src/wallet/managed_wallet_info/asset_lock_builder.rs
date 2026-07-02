@@ -213,6 +213,7 @@ impl ManagedWalletInfo {
                 credit_outputs,
             )))
             .set_funding(funds_acc, acc)
+            .require_final_inputs()
             .build_signed(wallet, |addr| funds_acc.address_derivation_path(&addr))
             .await?;
 
@@ -283,6 +284,7 @@ impl ManagedWalletInfo {
                 credit_outputs,
             )))
             .set_funding(funds_acc, &acc)
+            .require_final_inputs()
             .build_signed(signer, |addr| funds_acc.address_derivation_path(&addr))
             .await?;
 
@@ -346,8 +348,9 @@ mod tests {
     use super::*;
     use crate::signer::{ExtendedPubKeySigner, SignerMethod};
     use crate::wallet::initialization::WalletAccountCreationOptions;
-    use crate::Network;
-    use dashcore::ScriptBuf;
+    use crate::{Network, Utxo};
+    use dashcore::{OutPoint, ScriptBuf, Txid};
+    use dashcore_hashes::Hash;
 
     fn test_credit_outputs(amounts: &[u64]) -> Vec<CreditOutputFunding> {
         amounts
@@ -372,6 +375,40 @@ mod tests {
             Wallet::new_random(Network::Testnet, WalletAccountCreationOptions::Default).unwrap();
         let info = ManagedWalletInfo::from_wallet_with_name(&wallet, "Test".to_string(), 0);
         (wallet, info)
+    }
+
+    /// Fund account 0 with a UTXO at a fresh receive address and return its
+    /// outpoint.
+    fn insert_funded_utxo(
+        info: &mut ManagedWalletInfo,
+        wallet: &Wallet,
+        txid_byte: u8,
+        value: u64,
+        is_confirmed: bool,
+    ) -> OutPoint {
+        let account_xpub = wallet.get_bip44_account(0).unwrap().account_xpub;
+        let account = info.accounts.standard_bip44_accounts.get_mut(&0).unwrap();
+        let funding_address = account.next_receive_address(Some(&account_xpub), true).unwrap();
+        let outpoint = OutPoint {
+            txid: Txid::from_byte_array([txid_byte; 32]),
+            vout: 0,
+        };
+        let utxo = Utxo {
+            outpoint,
+            txout: TxOut {
+                value,
+                script_pubkey: funding_address.script_pubkey(),
+            },
+            address: funding_address,
+            height: 1000,
+            is_coinbase: false,
+            is_confirmed,
+            is_instantlocked: false,
+            is_locked: false,
+            is_trusted: false,
+        };
+        account.utxos.insert(outpoint, utxo);
+        outpoint
     }
 
     // -- Error type tests --
@@ -420,6 +457,46 @@ mod tests {
             "Expected Builder error for insufficient funds, got: {:?}",
             result.err()
         );
+    }
+
+    /// An account whose only funds are an unconfirmed mempool UTXO must not
+    /// produce an asset lock: a non-final input is not InstantSend-eligible
+    /// per DIP-0010, so the funding transaction could never receive the lock
+    /// Platform requires.
+    #[tokio::test]
+    async fn test_rejects_non_final_funding() {
+        let (wallet, mut info) = test_wallet_and_info();
+        insert_funded_utxo(&mut info, &wallet, 0x11, 1_000_000, false);
+        info.update_last_processed_height(1100);
+
+        let result = info.build_asset_lock(&wallet, 0, test_credit_outputs(&[200_000]), 1000).await;
+        assert!(
+            matches!(result, Err(AssetLockError::Builder(_))),
+            "asset lock must not be built on unconfirmed funds, got: {:?}",
+            result.err()
+        );
+    }
+
+    /// With a mix of confirmed and unconfirmed funds, coin selection must only
+    /// spend the confirmed UTXO, even though the unconfirmed one is larger.
+    #[tokio::test]
+    async fn test_selects_only_final_funding() {
+        let (wallet, mut info) = test_wallet_and_info();
+        let confirmed_outpoint = insert_funded_utxo(&mut info, &wallet, 0x22, 1_000_000, true);
+        insert_funded_utxo(&mut info, &wallet, 0x33, 5_000_000, false);
+        info.update_last_processed_height(1100);
+
+        let result = info
+            .build_asset_lock(&wallet, 0, test_credit_outputs(&[200_000]), 1000)
+            .await
+            .expect("confirmed funds should cover the asset lock");
+        assert!(!result.transaction.input.is_empty());
+        for txin in &result.transaction.input {
+            assert_eq!(
+                txin.previous_output, confirmed_outpoint,
+                "asset lock spent a non-final input"
+            );
+        }
     }
 
     // -- Signer-variant tests --
@@ -599,10 +676,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_signer_happy_path_end_to_end() {
-        use crate::Utxo;
-        use dashcore::{OutPoint, TxOut, Txid};
-        use dashcore_hashes::Hash;
-
         let (wallet, mut info) = test_wallet_and_info();
         let root = match &wallet.wallet_type {
             crate::wallet::WalletType::Mnemonic {
@@ -612,41 +685,9 @@ mod tests {
             _ => unreachable!(),
         };
 
-        // Generate a receive address on account 0 and fund it with a
-        // real UTXO at that address — coin selection needs a confirmed,
-        // spendable output the signer can sign for.
-        let account_xpub = wallet.get_bip44_account(0).unwrap().account_xpub;
-        let funding_address = info
-            .accounts
-            .standard_bip44_accounts
-            .get_mut(&0)
-            .unwrap()
-            .next_receive_address(Some(&account_xpub), true)
-            .unwrap();
-
-        let utxo = Utxo {
-            outpoint: OutPoint {
-                txid: Txid::from_byte_array([0x11; 32]),
-                vout: 0,
-            },
-            txout: TxOut {
-                value: 1_000_000,
-                script_pubkey: funding_address.script_pubkey(),
-            },
-            address: funding_address,
-            height: 1000,
-            is_coinbase: false,
-            is_confirmed: true,
-            is_instantlocked: false,
-            is_locked: false,
-            is_trusted: false,
-        };
-        info.accounts
-            .standard_bip44_accounts
-            .get_mut(&0)
-            .unwrap()
-            .utxos
-            .insert(utxo.outpoint, utxo);
+        // Coin selection needs a confirmed, spendable output the signer can
+        // sign for.
+        insert_funded_utxo(&mut info, &wallet, 0x11, 1_000_000, true);
         info.update_last_processed_height(1100);
 
         let signer = InMemorySigner {

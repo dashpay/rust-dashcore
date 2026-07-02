@@ -175,6 +175,32 @@ mod tests {
         assert!(change_output.is_some(), "Should have change output");
     }
 
+    /// Ordinary spends deliberately admit unconfirmed inputs: only builders
+    /// that opt in via `require_final_inputs` (e.g. asset locks) restrict
+    /// selection to confirmed or InstantSend-locked UTXOs.
+    #[test]
+    fn test_ordinary_spend_admits_unconfirmed_inputs() {
+        let utxos = vec![Utxo::dummy(0, 300000, 100, false, false)];
+        let recipient_address = Address::from_str("yTb47qEBpNmgXvYYsHEN4nh8yJwa5iC4Cs")
+            .unwrap()
+            .require_network(Network::Testnet)
+            .unwrap();
+        let change_address = Address::from_str("yXfXh3jFYHHxnJZVsXnPcktCENqPaAhcX1")
+            .unwrap()
+            .require_network(Network::Testnet)
+            .unwrap();
+
+        let (tx, _fee) = TransactionBuilder::new()
+            .set_fee_rate(FeeRate::normal())
+            .set_current_height(200)
+            .set_change_address(change_address)
+            .add_output(&recipient_address, 150000)
+            .add_inputs(utxos)
+            .build_unsigned()
+            .expect("ordinary spend of an unconfirmed UTXO must succeed");
+        assert!(!tx.input.is_empty());
+    }
+
     #[test]
     fn test_sweep_builder_drains_to_single_output() {
         let utxos = vec![
