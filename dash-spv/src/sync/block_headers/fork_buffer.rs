@@ -11,7 +11,7 @@
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use dashcore::consensus::Params;
 use dashcore::{BlockHash, Header};
@@ -23,6 +23,10 @@ use crate::types::HashedBlockHeader;
 
 /// Number of blocks median-time-past is computed over (BIP113).
 const MTP_WINDOW: usize = 11;
+
+/// Upper bound on how far a header's timestamp may lead wall-clock time,
+/// mirroring dashd's `MAX_FUTURE_BLOCK_TIME` (2 hours).
+const MAX_FUTURE_BLOCK_TIME: u64 = 2 * 60 * 60;
 
 /// Cap on simultaneous fork branches buffered per peer to keep memory bounded.
 pub(super) const MAX_FORK_HEADERS_PER_PEER: usize = 4096;
@@ -233,6 +237,7 @@ fn validate_extension(
     prev: Header,
     rolling_history: &mut Vec<Header>,
 ) -> SyncResult<Vec<HashedBlockHeader>> {
+    let now = current_unix_time();
     let mut prev = prev;
     let mut hashed: Vec<HashedBlockHeader> = Vec::with_capacity(headers.len());
     for (offset, header) in headers.iter().enumerate() {
@@ -251,6 +256,18 @@ fn validate_extension(
             return Err(SyncError::Validation(format!(
                 "Fork header at height {} failed PoW target",
                 height
+            )));
+        }
+
+        // Contextual future-drift ceiling: reject headers claiming a time more
+        // than 2h ahead of wall clock. On min-difficulty networks this stops a
+        // peer stepping timestamps far apart to keep unlocking `pow_limit` bits.
+        if header.time as u64 > now + MAX_FUTURE_BLOCK_TIME {
+            return Err(SyncError::Validation(format!(
+                "Fork header at height {} time {} exceeds future drift limit {}",
+                height,
+                header.time,
+                now + MAX_FUTURE_BLOCK_TIME
             )));
         }
 
@@ -282,6 +299,10 @@ fn validate_extension(
         prev = *header;
     }
     Ok(hashed)
+}
+
+fn current_unix_time() -> u64 {
+    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
 }
 
 fn median_time_past(history: &[Header]) -> u64 {
@@ -527,6 +548,32 @@ mod tests {
         assert!(
             matches!(&err, SyncError::Validation(msg) if msg.contains("MTP rule")),
             "expected MTP failure, got: {:?}",
+            err
+        );
+        assert_eq!(buf.len(), 0);
+    }
+
+    #[test]
+    fn ingest_rejects_fork_header_beyond_future_drift() {
+        // A fork header timestamped more than 2h ahead of wall clock is rejected
+        // before the MTP and bits checks, closing the min-difficulty timestamp
+        // exploit.
+        let peer: SocketAddr = "1.2.3.4:9999".parse().unwrap();
+        let mut buf = ForkBuffer::new(regtest_params());
+
+        let active = build_chain(1_700_000_000, 11, BlockHash::all_zeros());
+        let ancestor_height = (active.len() as u32) - 1;
+        let ancestor = *active.last().unwrap();
+
+        let future_time = (current_unix_time() + 3 * 60 * 60) as u32;
+        let fork_header = easy_header(ancestor.block_hash(), future_time, 0);
+
+        let err = buf
+            .ingest(peer, &[fork_header], ancestor_height, ancestor, &active)
+            .expect_err("future-dated fork header must be rejected");
+        assert!(
+            matches!(&err, SyncError::Validation(msg) if msg.contains("future drift")),
+            "expected future-drift failure, got: {:?}",
             err
         );
         assert_eq!(buf.len(), 0);
