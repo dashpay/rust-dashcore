@@ -215,9 +215,17 @@ impl ForkBuffer {
         })
     }
 
-    /// Return the set of branch tip hashes currently buffered.
-    pub(super) fn branch_tip_hashes(&self) -> impl Iterator<Item = &BlockHash> {
-        self.branches.keys().map(|(_, tip)| tip)
+    /// Return the ancestor height of the branch from `peer` whose current tip
+    /// is `tip_hash`, if one is buffered. Lets a continuation whose
+    /// `prev_blockhash` matches a buffered tip be routed to `extend_branch`
+    /// under that peer's own key, so two peers serving the same branch each
+    /// grow independently.
+    pub(super) fn branch_ancestor_height(
+        &self,
+        peer: SocketAddr,
+        tip_hash: BlockHash,
+    ) -> Option<u32> {
+        self.branches.get(&(peer, tip_hash)).map(|b| b.ancestor_height)
     }
 
     #[cfg(test)]

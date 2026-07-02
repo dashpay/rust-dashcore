@@ -131,7 +131,6 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> SyncManager for BlockHeadersMana
         let evicted = self.fork_buffer.expire_stale(FORK_BUFFER_TTL);
         if evicted > 0 {
             tracing::debug!("Expired {} stale fork branches", evicted);
-            self.prune_fork_tip_index();
         }
 
         // During initial sync, send more requests and log progress. A retry that
@@ -210,7 +209,6 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> SyncManager for BlockHeadersMana
             } => {
                 self.announced_peers.remove(address);
                 self.fork_buffer.remove_peer(*address);
-                self.prune_fork_tip_index();
             }
             NetworkEvent::PeersUpdated {
                 connected_count,

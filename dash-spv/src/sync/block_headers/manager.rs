@@ -52,10 +52,6 @@ pub struct BlockHeadersManager<H: BlockHeaderStorage, M: MetadataStorage> {
     /// Fork branch that has beaten the active chain on work and is ready for
     /// promotion by the sync coordinator.
     pending_fork_candidate: Option<ForkCandidate>,
-    /// Maps the last-known fork branch tip hash to its ancestor height.
-    /// Populated whenever a fork batch is buffered so that subsequent batches
-    /// extending the same branch are routed to `extend_fork` correctly.
-    fork_tip_index: HashMap<BlockHash, u32>,
 }
 
 impl<H: BlockHeaderStorage, M: MetadataStorage> std::fmt::Debug for BlockHeadersManager<H, M> {
@@ -102,7 +98,6 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> BlockHeadersManager<H, M> {
             announced_peers: HashSet::new(),
             fork_buffer: ForkBuffer::new(Params::new(network)),
             pending_fork_candidate: None,
-            fork_tip_index: HashMap::new(),
         })
     }
 
@@ -200,13 +195,6 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> BlockHeadersManager<H, M> {
         // cheap remote memory amplification via crafted low-ancestor forks.
         self.fork_buffer.ingest(peer, headers, ancestor_height, ancestor, &history)?;
 
-        // Track the new fork tip so subsequent batches extending this branch
-        // can be routed here even though their prev_blockhash won't be found
-        // on the active chain.
-        if let Some(last) = headers.last() {
-            self.fork_tip_index.insert(last.block_hash(), ancestor_height);
-        }
-
         self.judge_fork_winner(peer).await
     }
 
@@ -221,11 +209,7 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> BlockHeadersManager<H, M> {
     ) -> SyncResult<()> {
         let (_ancestor, history) = self.load_fork_history(ancestor_height).await?;
 
-        let new_tip = self.fork_buffer.extend_branch((peer, tip_hash), headers, &history)?;
-
-        // Re-key the branch's tip so the next continuation still routes here.
-        self.fork_tip_index.remove(&tip_hash);
-        self.fork_tip_index.insert(new_tip, ancestor_height);
+        self.fork_buffer.extend_branch((peer, tip_hash), headers, &history)?;
 
         self.judge_fork_winner(peer).await
     }
@@ -290,16 +274,9 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> BlockHeadersManager<H, M> {
                     peer
                 );
                 self.pending_fork_candidate = Some(candidate);
-                self.prune_fork_tip_index();
             }
         }
         Ok(())
-    }
-
-    /// Remove `fork_tip_index` entries whose branch no longer exists in the buffer.
-    pub(super) fn prune_fork_tip_index(&mut self) {
-        let live_tips: HashSet<BlockHash> = self.fork_buffer.branch_tip_hashes().copied().collect();
-        self.fork_tip_index.retain(|tip, _| live_tips.contains(tip));
     }
 
     pub(super) async fn tip(&self) -> SyncResult<BlockHeaderTip> {
@@ -447,13 +424,15 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> BlockHeadersManager<H, M> {
                 // Headers past the shared prefix extend our tip. Hand only that
                 // new tail to the pipeline.
                 pipeline_start = shared;
-            } else if let Some(&ancestor_height) = self.fork_tip_index.get(&first.prev_blockhash) {
+            } else if let Some(ancestor_height) =
+                self.fork_buffer.branch_ancestor_height(peer, first.prev_blockhash)
+            {
                 drop(storage);
-                // prev_blockhash is a buffered fork tip, not on the active
-                // chain. Extend that branch so a fork announced across several
-                // headers messages accumulates work. A continuation whose tip
-                // belongs to another peer's branch has no entry under this
-                // peer's key and is dropped.
+                // prev_blockhash is this peer's buffered fork tip, not on the
+                // active chain. Extend that branch so a fork announced across
+                // several headers messages accumulates work. A continuation
+                // whose tip belongs to another peer's branch has no entry under
+                // this peer's key and is dropped.
                 let tip_hash = first.prev_blockhash;
                 let result = self.extend_fork(peer, ancestor_height, tip_hash, headers).await;
                 self.absorb_fork_error(peer, result)?;
@@ -1210,10 +1189,11 @@ mod tests {
         assert!(manager.take_pending_fork_candidate().is_none());
 
         // Second batch extending the fork: prev_blockhash is the first fork
-        // header's hash, not on the active chain. The fork_tip_index routes it
-        // into extend_fork, which extends the buffered branch rather than
-        // dropping it. The branch now has two blocks and beats the single active
-        // block, firing a ForkDetected event with the combined header count.
+        // header's hash, not on the active chain. The buffer's peer-aware
+        // lookup routes it into extend_fork, which extends the buffered branch
+        // rather than dropping it. The branch now has two blocks and beats the
+        // single active block, firing a ForkDetected event with the combined
+        // header count.
         let fork_tip = fork_header.block_hash();
         let second_fork_time = fork_time + 700;
         let second_fork_header = mine_header(fork_tip, second_fork_time, easy_bits);
@@ -1229,6 +1209,67 @@ mod tests {
             }
         )));
         // The winning branch was taken for promotion, so the buffer is empty.
+        assert_eq!(manager.fork_buffer.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn second_peer_on_identical_fork_branch_is_not_stranded() {
+        // Two peers buffer the same one-block fork off height 3. After peer A
+        // sends a continuation and its branch is promoted, peer B sending the
+        // same continuation must still extend B's own buffered branch, keyed by
+        // B, rather than falling through and being dropped.
+        let easy_bits = CompactTarget::from_consensus(0x207fffff);
+        let (mut manager, chain) = create_regtest_manager_with_chain(5).await;
+        let tip = manager.tip().await.unwrap();
+        let tip_hash = *tip.hash();
+
+        manager.pipeline.init(0, tip_hash, tip.height());
+        manager.pipeline.mark_tip_complete();
+        manager.progress.set_state(SyncState::Synced);
+
+        let peer_a: SocketAddr = "1.2.3.4:9999".parse().unwrap();
+        let peer_b: SocketAddr = "5.6.7.8:9999".parse().unwrap();
+        let (sender, _rx) = create_test_request_sender();
+
+        // Both peers announce the same one-block fork off height 3. A single
+        // fork block ties the single active block, so both branches stay
+        // buffered under distinct per-peer keys.
+        let ancestor = chain[3];
+        let fork_time = ancestor.time + 11 * 600 + 1;
+        let fork_header = mine_header(ancestor.block_hash(), fork_time, easy_bits);
+        manager.handle_headers_pipeline(&[fork_header], peer_a, &sender).await.unwrap();
+        manager.handle_headers_pipeline(&[fork_header], peer_b, &sender).await.unwrap();
+        assert_eq!(manager.fork_buffer.len(), 2);
+
+        // Peer A extends first. Its two-block branch beats the single active
+        // block and is promoted, leaving only peer B's branch buffered.
+        let fork_tip = fork_header.block_hash();
+        let second_fork_header = mine_header(fork_tip, fork_time + 700, easy_bits);
+        let events_a =
+            manager.handle_headers_pipeline(&[second_fork_header], peer_a, &sender).await.unwrap();
+        assert!(events_a.iter().any(|e| matches!(
+            e,
+            SyncEvent::ForkDetected {
+                header_count: 2,
+                ..
+            }
+        )));
+        assert_eq!(manager.fork_buffer.len(), 1);
+
+        // Peer B sends the same continuation. It must extend B's own branch and
+        // fire its own detection, not fall through to the pipeline and vanish.
+        let events_b =
+            manager.handle_headers_pipeline(&[second_fork_header], peer_b, &sender).await.unwrap();
+        assert!(
+            events_b.iter().any(|e| matches!(
+                e,
+                SyncEvent::ForkDetected {
+                    header_count: 2,
+                    ..
+                }
+            )),
+            "peer B's continuation must extend its branch, not be dropped"
+        );
         assert_eq!(manager.fork_buffer.len(), 0);
     }
 
