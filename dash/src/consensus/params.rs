@@ -110,7 +110,7 @@ impl Params {
                 pow_limit: Work::DEVNET_MIN,
                 pow_target_spacing: 10 * 60,            // 10 minutes.
                 pow_target_timespan: 14 * 24 * 60 * 60, // 2 weeks.
-                allow_min_difficulty_blocks: false,
+                allow_min_difficulty_blocks: true,
                 no_pow_retargeting: false,
                 pow_dgw_height: 4001,
             },

@@ -206,6 +206,23 @@ mod tests {
     }
 
     #[test]
+    fn min_difficulty_exception_enabled_on_devnet() {
+        // Devnet sets `fPowAllowMinDifficultyBlocks`, so a large inter-block gap
+        // unlocks the min-difficulty exception and returns `pow_limit` bits.
+        // Mainnet leaves the exception disabled.
+        let devnet = Params::new(Network::Devnet);
+        let prev_bits = pow_limit_compact(&devnet);
+        let far_future = 1_700_000_000 + 2 * 60 * 60 + 1;
+        assert_eq!(
+            min_difficulty_bits(&devnet, 1_700_000_000, prev_bits, far_future),
+            Some(pow_limit_compact(&devnet)),
+        );
+
+        let mainnet = Params::new(Network::Mainnet);
+        assert_eq!(min_difficulty_bits(&mainnet, 1_700_000_000, prev_bits, far_future), None);
+    }
+
+    #[test]
     fn pow_limit_returned_below_window() {
         let params = Params::new(Network::Mainnet);
         let bits = next_work_required_dgw_v3(&[], 10, &params);
