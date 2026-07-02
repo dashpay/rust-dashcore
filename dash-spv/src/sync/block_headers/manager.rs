@@ -110,9 +110,23 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> BlockHeadersManager<H, M> {
     const DGW_HISTORY: u32 = 24;
 
     /// Consume the fork candidate set when a buffered branch overtook the
-    /// active chain. The sync coordinator calls this to perform the actual reorg.
-    pub(crate) fn take_pending_fork_candidate(&mut self) -> Option<ForkCandidate> {
+    /// active chain.
+    fn take_pending_fork_candidate(&mut self) -> Option<ForkCandidate> {
         self.pending_fork_candidate.take()
+    }
+
+    /// Announce a detected fork candidate as a [`SyncEvent::ForkDetected`] so
+    /// the coordinator observes staged detection through the event stream
+    /// instead of the candidate being dropped by periodic maintenance.
+    fn drain_fork_detection(&mut self) -> Vec<SyncEvent> {
+        match self.take_pending_fork_candidate() {
+            Some(candidate) => vec![SyncEvent::ForkDetected {
+                ancestor_height: candidate.ancestor_height,
+                header_count: candidate.headers.len(),
+                total_work: candidate.total_work,
+            }],
+            None => Vec::new(),
+        }
     }
 
     /// Buffer a fork extension whose ancestor is on the active chain at a
@@ -319,7 +333,7 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> BlockHeadersManager<H, M> {
                     // Diverges at height `prev_h + 1 + shared`, anchored at the
                     // last header the batch and the active chain share.
                     self.ingest_fork(peer, &headers[shared..], prev_h + shared as u32).await?;
-                    return Ok(Vec::new());
+                    return Ok(self.drain_fork_detection());
                 }
                 if shared == headers.len() {
                     // Entire batch is already on the active chain: a duplicate.
@@ -343,7 +357,7 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> BlockHeadersManager<H, M> {
                     }
                     Err(e) => return Err(e),
                 }
-                return Ok(Vec::new());
+                return Ok(self.drain_fork_detection());
             }
         }
         let headers = &headers[pipeline_start..];
@@ -1113,6 +1127,40 @@ mod tests {
 
         // The deep branch is heaviest but still loses on its own baseline, so
         // nothing is promoted.
+        assert!(manager.take_pending_fork_candidate().is_none());
+    }
+
+    #[tokio::test]
+    async fn winning_fork_emits_fork_detected_event() {
+        // A fork that outweighs the active chain from its own ancestor is
+        // promoted and announced as a `ForkDetected` event, so detection is
+        // delivered through the event stream rather than dropped.
+        let easy_bits = CompactTarget::from_consensus(0x207fffff);
+        let (mut manager, chain) = create_regtest_manager_with_chain(5).await;
+        let tip = manager.tip().await.unwrap();
+        manager.pipeline.init(0, *tip.hash(), tip.height());
+        manager.pipeline.mark_tip_complete();
+        manager.progress.set_state(SyncState::Synced);
+
+        let peer: SocketAddr = "1.2.3.4:9999".parse().unwrap();
+        let (sender, _rx) = create_test_request_sender();
+
+        // Fork at height 3, whose active extension is only height 4 (one block),
+        // with two blocks, so it outweighs that single active block.
+        let fork_a = mine_header(chain[3].block_hash(), chain[3].time + 11 * 600 + 1, easy_bits);
+        let fork_b = mine_header(fork_a.block_hash(), fork_a.time + 700, easy_bits);
+        let events =
+            manager.handle_headers_pipeline(&[fork_a, fork_b], peer, &sender).await.unwrap();
+
+        assert!(events.iter().any(|e| matches!(
+            e,
+            SyncEvent::ForkDetected {
+                ancestor_height: 3,
+                header_count: 2,
+                ..
+            }
+        )));
+        // The candidate was delivered via the event, not left pending.
         assert!(manager.take_pending_fork_candidate().is_none());
     }
 

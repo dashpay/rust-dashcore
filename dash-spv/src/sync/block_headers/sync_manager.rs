@@ -131,17 +131,6 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> SyncManager for BlockHeadersMana
             tracing::debug!("Expired {} stale fork branches", evicted);
             self.prune_fork_tip_index();
         }
-        if let Some(candidate) = self.take_pending_fork_candidate() {
-            // Reorg promotion is not yet wired into the coordinator. Log here
-            // so detection can be confirmed end-to-end before that lands.
-            tracing::warn!(
-                "Fork candidate ready (ancestor={} headers={} work_bytes={:?}), \
-                 reorg promotion not yet wired",
-                candidate.ancestor_height,
-                candidate.headers.len(),
-                candidate.total_work.as_bytes()
-            );
-        }
 
         // During initial sync, send more requests and log progress.
         // The segment tip is always ahead of storage during active sync so the

@@ -1,3 +1,4 @@
+use crate::chain::ChainWork;
 use crate::sync::mempool::BroadcastResult;
 use crate::sync::ManagerIdentifier;
 use dashcore::ephemerealdata::chain_lock::ChainLock;
@@ -37,6 +38,21 @@ pub enum SyncEvent {
     BlockHeaderSyncComplete {
         /// Tip height when sync completed
         tip_height: u32,
+    },
+
+    /// A buffered fork branch outweighed the active chain.
+    ///
+    /// Announces staged fork detection. Promotion (truncating the active chain
+    /// and adopting the fork) is a later phase that subscribes to this.
+    ///
+    /// Emitted by: `BlockHeadersManager`
+    ForkDetected {
+        /// Height of the common ancestor on the active chain.
+        ancestor_height: u32,
+        /// Number of headers the fork adds past the ancestor.
+        header_count: usize,
+        /// Cumulative work at the fork tip.
+        total_work: ChainWork,
     },
 
     /// New filter headers have been stored.
@@ -205,6 +221,17 @@ impl fmt::Display for SyncEvent {
             SyncEvent::BlockHeaderSyncComplete {
                 tip_height,
             } => write!(f, "BlockHeaderSyncComplete(tip={})", tip_height),
+            SyncEvent::ForkDetected {
+                ancestor_height,
+                header_count,
+                total_work,
+            } => write!(
+                f,
+                "ForkDetected(ancestor={}, headers={}, work_bytes={:?})",
+                ancestor_height,
+                header_count,
+                total_work.as_bytes()
+            ),
             SyncEvent::FilterHeadersStored {
                 start_height,
                 end_height,

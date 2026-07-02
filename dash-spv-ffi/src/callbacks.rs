@@ -485,6 +485,9 @@ impl FFISyncEventCallbacks {
                     cb(txid_bytes as *const [u8; 32], status, relayed_by, self.user_data);
                 }
             }
+            SyncEvent::ForkDetected {
+                ..
+            } => {}
         }
     }
 }
