@@ -6,12 +6,8 @@
 use std::collections::BTreeMap;
 
 use crate::account::account_collection::{DashpayAccountKey, PlatformPaymentAccountKey};
-use crate::account::account_type::AccountType;
-use crate::gap_limit::{
-    DEFAULT_COINJOIN_GAP_LIMIT, DEFAULT_EXTERNAL_GAP_LIMIT, DEFAULT_INTERNAL_GAP_LIMIT,
-    DEFAULT_SPECIAL_GAP_LIMIT, DIP17_GAP_LIMIT,
-};
-use crate::managed_account::address_pool::{AddressPool, AddressPoolType};
+use crate::gap_limit::DIP17_GAP_LIMIT;
+use crate::managed_account::address_pool::AddressPoolType;
 use crate::managed_account::managed_account_ref::{
     ManagedAccountRef, ManagedAccountRefMut, OwnedManagedCoreAccount,
 };
@@ -20,8 +16,8 @@ use crate::managed_account::managed_account_type::ManagedAccountType;
 use crate::managed_account::managed_platform_account::ManagedPlatformAccount;
 use crate::managed_account::{ManagedCoreFundsAccount, ManagedCoreKeysAccount};
 use crate::transaction_checking::account_checker::CoreAccountTypeMatch;
+use crate::KeySource;
 use crate::{Account, AccountCollection};
-use crate::{KeySource, Network};
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
@@ -489,8 +485,11 @@ impl ManagedAccountCollection {
         account: &Account,
     ) -> Result<ManagedCoreFundsAccount, crate::error::Error> {
         let key_source = KeySource::Public(account.account_xpub);
-        let managed_type =
-            Self::build_managed_account_type(account.account_type, account.network, &key_source)?;
+        let managed_type = ManagedAccountType::from_account_type(
+            account.account_type,
+            account.network,
+            &key_source,
+        )?;
         Ok(ManagedCoreFundsAccount::new(managed_type, account.network))
     }
 
@@ -499,8 +498,11 @@ impl ManagedAccountCollection {
         account: &Account,
     ) -> Result<ManagedCoreKeysAccount, crate::error::Error> {
         let key_source = KeySource::Public(account.account_xpub);
-        let managed_type =
-            Self::build_managed_account_type(account.account_type, account.network, &key_source)?;
+        let managed_type = ManagedAccountType::from_account_type(
+            account.account_type,
+            account.network,
+            &key_source,
+        )?;
         Ok(ManagedCoreKeysAccount::new(managed_type, account.network))
     }
 
@@ -511,8 +513,11 @@ impl ManagedAccountCollection {
         account: &crate::account::BLSAccount,
     ) -> Result<ManagedCoreKeysAccount, crate::error::Error> {
         let key_source = KeySource::BLSPublic(account.bls_public_key.clone());
-        let managed_type =
-            Self::build_managed_account_type(account.account_type, account.network, &key_source)?;
+        let managed_type = ManagedAccountType::from_account_type(
+            account.account_type,
+            account.network,
+            &key_source,
+        )?;
         Ok(ManagedCoreKeysAccount::new(managed_type, account.network))
     }
 
@@ -527,264 +532,12 @@ impl ManagedAccountCollection {
             Some(priv_key) => KeySource::EdDSAPrivate(priv_key),
             None => KeySource::NoKeySource,
         };
-        let managed_type =
-            Self::build_managed_account_type(account.account_type, account.network, &key_source)?;
+        let managed_type = ManagedAccountType::from_account_type(
+            account.account_type,
+            account.network,
+            &key_source,
+        )?;
         Ok(ManagedCoreKeysAccount::new(managed_type, account.network))
-    }
-
-    /// Build the [`ManagedAccountType`] (address pools + variant data) for an
-    /// account type and network. Shared between the funds-bearing and
-    /// keys-only construction helpers above — the wrap into one variant or
-    /// the other happens in the caller.
-    fn build_managed_account_type(
-        account_type: AccountType,
-        network: Network,
-        key_source: &KeySource,
-    ) -> Result<ManagedAccountType, crate::error::Error> {
-        // Get the derivation path for this account type
-        let base_path = account_type
-            .derivation_path(network)
-            .unwrap_or_else(|_| crate::bip32::DerivationPath::master());
-
-        // Create the appropriate ManagedAccountType with address pools
-        let managed_type = match account_type {
-            AccountType::Standard {
-                index,
-                standard_account_type,
-            } => {
-                // For standard accounts, add the receive/change branch to the path
-                let mut external_path = base_path.clone();
-                external_path.push(crate::bip32::ChildNumber::from_normal_idx(0)?); // 0 for external
-                let external_pool = AddressPool::new(
-                    external_path,
-                    AddressPoolType::External,
-                    DEFAULT_EXTERNAL_GAP_LIMIT,
-                    network,
-                    key_source,
-                )?;
-
-                let mut internal_path = base_path;
-                internal_path.push(crate::bip32::ChildNumber::from_normal_idx(1)?); // 1 for internal
-                let internal_pool = AddressPool::new(
-                    internal_path,
-                    AddressPoolType::Internal,
-                    DEFAULT_INTERNAL_GAP_LIMIT,
-                    network,
-                    key_source,
-                )?;
-
-                let managed_standard_type = standard_account_type;
-
-                ManagedAccountType::Standard {
-                    index,
-                    standard_account_type: managed_standard_type,
-                    external_addresses: external_pool,
-                    internal_addresses: internal_pool,
-                }
-            }
-            AccountType::CoinJoin {
-                index,
-            } => {
-                // Dual-pool: external (.../0/index) for Dash Core mixed coins, internal
-                // (.../1/index) for DashSync mixing-change. Watch both so no funds are missed.
-                let mut external_path = base_path.clone();
-                external_path.push(crate::bip32::ChildNumber::from_normal_idx(0)?);
-                let external_addresses = AddressPool::new(
-                    external_path,
-                    AddressPoolType::External,
-                    DEFAULT_COINJOIN_GAP_LIMIT,
-                    network,
-                    key_source,
-                )?;
-
-                let mut internal_path = base_path;
-                internal_path.push(crate::bip32::ChildNumber::from_normal_idx(1)?);
-                let internal_addresses = AddressPool::new(
-                    internal_path,
-                    AddressPoolType::Internal,
-                    DEFAULT_COINJOIN_GAP_LIMIT,
-                    network,
-                    key_source,
-                )?;
-
-                ManagedAccountType::CoinJoin {
-                    index,
-                    external_addresses,
-                    internal_addresses,
-                }
-            }
-            AccountType::IdentityRegistration => {
-                let addresses = AddressPool::new(
-                    base_path,
-                    AddressPoolType::Absent,
-                    DEFAULT_SPECIAL_GAP_LIMIT,
-                    network,
-                    key_source,
-                )?;
-                ManagedAccountType::IdentityRegistration {
-                    addresses,
-                }
-            }
-            AccountType::IdentityTopUp {
-                registration_index,
-            } => {
-                let addresses = AddressPool::new(
-                    base_path,
-                    AddressPoolType::Absent,
-                    DEFAULT_SPECIAL_GAP_LIMIT,
-                    network,
-                    key_source,
-                )?;
-                ManagedAccountType::IdentityTopUp {
-                    registration_index,
-                    addresses,
-                }
-            }
-            AccountType::IdentityTopUpNotBoundToIdentity => {
-                let addresses = AddressPool::new(
-                    base_path,
-                    AddressPoolType::Absent,
-                    DEFAULT_SPECIAL_GAP_LIMIT,
-                    network,
-                    key_source,
-                )?;
-                ManagedAccountType::IdentityTopUpNotBoundToIdentity {
-                    addresses,
-                }
-            }
-            AccountType::IdentityInvitation => {
-                let addresses = AddressPool::new(
-                    base_path,
-                    AddressPoolType::Absent,
-                    DEFAULT_SPECIAL_GAP_LIMIT,
-                    network,
-                    key_source,
-                )?;
-                ManagedAccountType::IdentityInvitation {
-                    addresses,
-                }
-            }
-            AccountType::AssetLockAddressTopUp => {
-                let addresses = AddressPool::new(
-                    base_path,
-                    AddressPoolType::Absent,
-                    DEFAULT_SPECIAL_GAP_LIMIT,
-                    network,
-                    key_source,
-                )?;
-                ManagedAccountType::AssetLockAddressTopUp {
-                    addresses,
-                }
-            }
-            AccountType::AssetLockShieldedAddressTopUp => {
-                let addresses = AddressPool::new(
-                    base_path,
-                    AddressPoolType::Absent,
-                    DEFAULT_SPECIAL_GAP_LIMIT,
-                    network,
-                    key_source,
-                )?;
-                ManagedAccountType::AssetLockShieldedAddressTopUp {
-                    addresses,
-                }
-            }
-            AccountType::ProviderVotingKeys => {
-                let addresses = AddressPool::new(
-                    base_path,
-                    AddressPoolType::Absent,
-                    DEFAULT_SPECIAL_GAP_LIMIT,
-                    network,
-                    key_source,
-                )?;
-                ManagedAccountType::ProviderVotingKeys {
-                    addresses,
-                }
-            }
-            AccountType::ProviderOwnerKeys => {
-                let addresses = AddressPool::new(
-                    base_path,
-                    AddressPoolType::Absent,
-                    DEFAULT_SPECIAL_GAP_LIMIT,
-                    network,
-                    key_source,
-                )?;
-                ManagedAccountType::ProviderOwnerKeys {
-                    addresses,
-                }
-            }
-            AccountType::ProviderOperatorKeys => {
-                let addresses = AddressPool::new(
-                    base_path,
-                    AddressPoolType::Absent,
-                    DEFAULT_SPECIAL_GAP_LIMIT,
-                    network,
-                    key_source,
-                )?;
-                ManagedAccountType::ProviderOperatorKeys {
-                    addresses,
-                }
-            }
-            AccountType::ProviderPlatformKeys => {
-                let addresses = AddressPool::new(
-                    base_path,
-                    AddressPoolType::AbsentHardened,
-                    DEFAULT_SPECIAL_GAP_LIMIT,
-                    network,
-                    key_source,
-                )?;
-                ManagedAccountType::ProviderPlatformKeys {
-                    addresses,
-                }
-            }
-            AccountType::DashpayReceivingFunds {
-                index,
-                user_identity_id,
-                friend_identity_id,
-            } => {
-                let addresses =
-                    AddressPool::new(base_path, AddressPoolType::Absent, 20, network, key_source)?;
-                ManagedAccountType::DashpayReceivingFunds {
-                    index,
-                    user_identity_id,
-                    friend_identity_id,
-                    addresses,
-                }
-            }
-            AccountType::DashpayExternalAccount {
-                index,
-                user_identity_id,
-                friend_identity_id,
-            } => {
-                let addresses =
-                    AddressPool::new(base_path, AddressPoolType::Absent, 20, network, key_source)?;
-                ManagedAccountType::DashpayExternalAccount {
-                    index,
-                    user_identity_id,
-                    friend_identity_id,
-                    addresses,
-                }
-            }
-            AccountType::PlatformPayment {
-                account,
-                key_class,
-            } => {
-                // DIP-17/DIP-18: Platform Payment addresses
-                let addresses = AddressPool::new(
-                    base_path,
-                    AddressPoolType::Absent,
-                    DIP17_GAP_LIMIT,
-                    network,
-                    key_source,
-                )?;
-                ManagedAccountType::PlatformPayment {
-                    account,
-                    key_class,
-                    addresses,
-                }
-            }
-        };
-
-        Ok(managed_type)
     }
 
     /// Create a ManagedPlatformAccount from an Account for Platform Payment accounts
@@ -795,15 +548,9 @@ impl ManagedAccountCollection {
         // Use the account's existing public key
         let key_source = KeySource::Public(account.account_xpub);
 
-        // Get the derivation path for this account type
-        let base_path = account
-            .account_type
-            .derivation_path(account.network)
-            .unwrap_or_else(|_| crate::bip32::DerivationPath::master());
-
-        // Create address pool for DIP-17 Platform Payment addresses
-        let addresses = AddressPool::new(
-            base_path,
+        // DIP-17 Platform Payment addresses: single pool on the account's path.
+        let addresses = ManagedAccountType::single_pool(
+            account.account_type,
             AddressPoolType::Absent,
             DIP17_GAP_LIMIT,
             account.network,
