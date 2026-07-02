@@ -1,8 +1,8 @@
 //! Per-peer staged fork buffer.
 //!
 //! Buffers fork headers received from peers until either their cumulative
-//! work exceeds the active chain (`take_winning_candidate`), they age out
-//! (`expire_stale`), or the peer disconnects (`remove_peer`).
+//! work exceeds the active chain (`heaviest_branch` plus `take_branch`), they
+//! age out (`expire_stale`), or the peer disconnects (`remove_peer`).
 //!
 //! All buffered branches are independently validated: each header must meet
 //! its claimed PoW target, satisfy the median-time-past rule against the
@@ -30,9 +30,12 @@ pub(super) const MAX_FORK_HEADERS_PER_PEER: usize = 4096;
 /// Maximum distinct fork branch tips a single peer may contribute.
 const MAX_BRANCHES_PER_PEER: usize = 16;
 
+/// Identifies a buffered branch by its source peer and tip hash.
+pub(super) type BranchKey = (SocketAddr, BlockHash);
+
 #[derive(Debug)]
 pub(super) struct ForkBuffer {
-    branches: HashMap<(SocketAddr, BlockHash), BufferedBranch>,
+    branches: HashMap<BranchKey, BufferedBranch>,
     params: Params,
 }
 
@@ -168,26 +171,25 @@ impl ForkBuffer {
         self.branches.retain(|(p, _), _| *p != peer);
     }
 
-    /// Take the buffered branch whose extension work strictly exceeds
-    /// `active_extension_work`.
+    /// Return the key, ancestor height, and cumulative extension work of the
+    /// heaviest buffered branch, without removing it.
     ///
-    /// Caller supplies the cumulative work of the active chain's headers
-    /// from one past the candidate's ancestor up to the active tip. The
-    /// buffer returns a winner only when the fork's extension is heavier.
-    /// Phase 3 promotes the candidate by truncating storage at
-    /// `ancestor_height` and storing the fork headers.
-    pub(super) fn take_winning_candidate(
-        &mut self,
-        active_extension_work: ChainWork,
-    ) -> Option<ForkCandidate> {
-        let winner_key = self.branches.iter().max_by_key(|(_, b)| b.total_work).map(|(k, _)| *k)?;
-        let branch = self.branches.remove(&winner_key)?;
-        if branch.total_work <= active_extension_work {
-            // Not a winner. Put it back to give future ingests a chance to
-            // extend the same branch.
-            self.branches.insert(winner_key, branch);
-            return None;
-        }
+    /// The caller must measure the active chain's extension work from the
+    /// returned `ancestor_height` up to the active tip, because different
+    /// branches fork at different ancestors and must be judged against their
+    /// own baseline. Promote via `take_branch` only when the branch work is
+    /// strictly heavier on that baseline.
+    pub(super) fn heaviest_branch(&self) -> Option<(BranchKey, u32, ChainWork)> {
+        self.branches
+            .iter()
+            .max_by_key(|(_, b)| b.total_work)
+            .map(|(key, b)| (*key, b.ancestor_height, b.total_work))
+    }
+
+    /// Remove the branch identified by `key` and return it as a promotable
+    /// candidate.
+    pub(super) fn take_branch(&mut self, key: BranchKey) -> Option<ForkCandidate> {
+        let branch = self.branches.remove(&key)?;
         Some(ForkCandidate {
             ancestor_height: branch.ancestor_height,
             headers: branch.headers,
@@ -304,9 +306,12 @@ mod tests {
         buf.ingest(peer, &fork, ancestor_height, ancestor, &active).expect("ingest");
         assert_eq!(buf.len(), 1);
 
-        // Force a winner by passing zero active work.
-        let candidate =
-            buf.take_winning_candidate(ChainWork::zero()).expect("candidate should win");
+        // The buffered branch is the heaviest and, against a zero baseline,
+        // wins outright.
+        let (key, winner_ancestor, work) = buf.heaviest_branch().expect("a branch is buffered");
+        assert_eq!(winner_ancestor, ancestor_height);
+        assert!(work > ChainWork::zero());
+        let candidate = buf.take_branch(key).expect("candidate should be removed");
         assert_eq!(candidate.ancestor_height, ancestor_height);
         assert_eq!(candidate.headers.len(), 3);
         assert_eq!(buf.len(), 0);

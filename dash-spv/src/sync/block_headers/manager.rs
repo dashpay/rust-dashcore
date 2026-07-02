@@ -144,13 +144,13 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> BlockHeadersManager<H, M> {
         let ancestor = *history.last().ok_or_else(|| {
             SyncError::Validation(format!("missing ancestor header at height {}", ancestor_height))
         })?;
-        let tip_height = storage
-            .get_tip_height()
-            .await
-            .ok_or_else(|| SyncError::MissingDependency("no tip height".to_string()))?;
-        let active_extension = storage.load_headers(ancestor_height + 1..tip_height + 1).await?;
         drop(storage);
 
+        // Validate and buffer the fork before touching the active-chain
+        // extension. The `history` load above is bounded to the DGW window,
+        // but the extension load below is unbounded in the ancestor depth, so
+        // it must stay behind full validation to deny a cheap remote memory
+        // amplification via crafted low-ancestor forks.
         self.fork_buffer.ingest(peer, headers, ancestor_height, ancestor, &history)?;
 
         // Track the new fork tip so subsequent batches extending this branch
@@ -160,16 +160,33 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> BlockHeadersManager<H, M> {
             self.fork_tip_index.insert(last.block_hash(), ancestor_height);
         }
 
+        // Judge the heaviest buffered branch against the active-chain work
+        // measured from that branch's own ancestor. A branch that forks deeper
+        // must beat more active blocks, so the baseline is branch-specific.
+        let Some((key, winner_ancestor, branch_work)) = self.fork_buffer.heaviest_branch() else {
+            return Ok(());
+        };
+
+        let storage = self.header_storage.read().await;
+        let tip_height = storage
+            .get_tip_height()
+            .await
+            .ok_or_else(|| SyncError::MissingDependency("no tip height".to_string()))?;
+        let active_extension = storage.load_headers(winner_ancestor + 1..tip_height + 1).await?;
+        drop(storage);
+
         let active_extension_work = ChainWork::accumulate(ChainWork::zero(), &active_extension);
-        if let Some(candidate) = self.fork_buffer.take_winning_candidate(active_extension_work) {
-            tracing::info!(
-                "Fork candidate ready for promotion: ancestor={} headers={} (peer {})",
-                candidate.ancestor_height,
-                candidate.headers.len(),
-                peer
-            );
-            self.pending_fork_candidate = Some(candidate);
-            self.prune_fork_tip_index();
+        if branch_work > active_extension_work {
+            if let Some(candidate) = self.fork_buffer.take_branch(key) {
+                tracing::info!(
+                    "Fork candidate ready for promotion: ancestor={} headers={} (peer {})",
+                    candidate.ancestor_height,
+                    candidate.headers.len(),
+                    peer
+                );
+                self.pending_fork_candidate = Some(candidate);
+                self.prune_fork_tip_index();
+            }
         }
         Ok(())
     }
@@ -798,6 +815,25 @@ mod tests {
         assert!(locator.len() <= 32, "locator should not exceed 32 entries, got {}", locator.len());
     }
 
+    /// Mine a header extending `prev` at `time` with the given `bits`, using
+    /// an easy target so a valid nonce is found in a few tries.
+    fn mine_header(prev: BlockHash, time: u32, bits: CompactTarget) -> Header {
+        for nonce in 0u32..256 {
+            let header = Header {
+                version: Version::ONE,
+                prev_blockhash: prev,
+                merkle_root: TxMerkleNode::all_zeros(),
+                time,
+                bits,
+                nonce,
+            };
+            if header.target().is_met_by(header.block_hash()) {
+                return header;
+            }
+        }
+        panic!("nonce space exhausted");
+    }
+
     /// Build a regtest manager seeded with `count` blocks so the storage tip is
     /// at height `count - 1`. Returns the manager and the stored chain.
     async fn create_regtest_manager_with_chain(
@@ -810,22 +846,7 @@ mod tests {
         let mut prev = BlockHash::all_zeros();
         let mut chain = Vec::with_capacity(count);
         for i in 0..count {
-            let mut header = None;
-            for nonce in 0u32..64 {
-                let h = Header {
-                    version: Version::ONE,
-                    prev_blockhash: prev,
-                    merkle_root: TxMerkleNode::all_zeros(),
-                    time: 1_700_000_000 + i as u32 * 600,
-                    bits: easy_bits,
-                    nonce,
-                };
-                if h.target().is_met_by(h.block_hash()) {
-                    header = Some(h);
-                    break;
-                }
-            }
-            let h = header.expect("nonce space exhausted");
+            let h = mine_header(prev, 1_700_000_000 + i as u32 * 600, easy_bits);
             prev = h.block_hash();
             chain.push(h);
         }
@@ -864,22 +885,7 @@ mod tests {
         // Build one valid fork header extending chain[1] (height 1, depth 3).
         let ancestor = chain[1];
         let fork_time = ancestor.time + 11 * 600 + 1;
-        let mut fork_header = None;
-        for nonce in 0u32..64 {
-            let h = Header {
-                version: Version::ONE,
-                prev_blockhash: ancestor.block_hash(),
-                merkle_root: TxMerkleNode::all_zeros(),
-                time: fork_time,
-                bits: easy_bits,
-                nonce,
-            };
-            if h.target().is_met_by(h.block_hash()) {
-                fork_header = Some(h);
-                break;
-            }
-        }
-        let fork_header = fork_header.expect("nonce space exhausted");
+        let fork_header = mine_header(ancestor.block_hash(), fork_time, easy_bits);
 
         let events = manager.handle_headers_pipeline(&[fork_header], peer, &sender).await.unwrap();
 
@@ -894,22 +900,7 @@ mod tests {
         // ingest_fork rather than silently dropping it as an unmatched pipeline batch.
         let fork_tip = fork_header.block_hash();
         let second_fork_time = fork_time + 600;
-        let mut second_fork_header = None;
-        for nonce in 0u32..64 {
-            let h = Header {
-                version: Version::ONE,
-                prev_blockhash: fork_tip,
-                merkle_root: TxMerkleNode::all_zeros(),
-                time: second_fork_time,
-                bits: easy_bits,
-                nonce,
-            };
-            if h.target().is_met_by(h.block_hash()) {
-                second_fork_header = Some(h);
-                break;
-            }
-        }
-        let second_fork_header = second_fork_header.expect("nonce space exhausted");
+        let second_fork_header = mine_header(fork_tip, second_fork_time, easy_bits);
 
         // The continuation batch is routed through fork_tip_index to ingest_fork.
         // The ingest fails the chain-continuity check (second batch anchors at the
@@ -923,6 +914,47 @@ mod tests {
             1,
             "fork buffer must not grow (second ingest fails chain-continuity)"
         );
+    }
+
+    #[tokio::test]
+    async fn deeper_lighter_fork_is_judged_against_its_own_ancestor() {
+        // Buffer a two-block deep fork that loses against the active chain
+        // measured from its own ancestor, then ingest a one-block shallow fork.
+        // The heaviest branch (the deep fork) must be judged against the deep
+        // ancestor's baseline, not the shallow ingest's baseline, so the deep,
+        // strictly-lighter fork is never promoted.
+        let easy_bits = CompactTarget::from_consensus(0x207fffff);
+        let (mut manager, chain) = create_regtest_manager_with_chain(5).await;
+        let tip = manager.tip().await.unwrap();
+        manager.pipeline.init(0, *tip.hash(), tip.height());
+        manager.pipeline.mark_tip_complete();
+        manager.progress.set_state(SyncState::Synced);
+
+        let peer: SocketAddr = "1.2.3.4:9999".parse().unwrap();
+        let (sender, _rx) = create_test_request_sender();
+
+        // Deep fork forks at height 1 with two blocks. The active extension from
+        // height 1 spans heights 2, 3, 4, so two equal-difficulty fork blocks
+        // cannot outweigh it.
+        let deep_a = mine_header(chain[1].block_hash(), chain[1].time + 11 * 600 + 1, easy_bits);
+        let deep_b = mine_header(deep_a.block_hash(), deep_a.time + 700, easy_bits);
+        let events =
+            manager.handle_headers_pipeline(&[deep_a, deep_b], peer, &sender).await.unwrap();
+        assert!(events.is_empty());
+        assert_eq!(manager.fork_buffer.len(), 1);
+        assert!(manager.take_pending_fork_candidate().is_none());
+
+        // Shallow fork forks at height 3 with one block. Its active extension is
+        // only height 4 (one block), the shallow baseline that the buggy code
+        // reused when judging the heavier deep branch.
+        let shallow = mine_header(chain[3].block_hash(), chain[3].time + 11 * 600 + 5, easy_bits);
+        let events = manager.handle_headers_pipeline(&[shallow], peer, &sender).await.unwrap();
+        assert!(events.is_empty());
+        assert_eq!(manager.fork_buffer.len(), 2);
+
+        // The deep branch is heaviest but still loses on its own baseline, so
+        // nothing is promoted.
+        assert!(manager.take_pending_fork_candidate().is_none());
     }
 
     #[tokio::test]
