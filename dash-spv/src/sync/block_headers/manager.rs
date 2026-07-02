@@ -208,30 +208,36 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> BlockHeadersManager<H, M> {
 
     /// Build a Dash Core style block locator from the current storage tip.
     ///
-    /// First 10 entries step back by 1, then the step doubles each entry, and
-    /// genesis is always the final entry. Used as the `getheaders` locator so
-    /// peers on a fork can find the most recent common ancestor.
+    /// First 10 entries step back by 1, then the step doubles each entry. The
+    /// walk stops at the storage floor (the lowest stored height, genesis on a
+    /// full client or the seed checkpoint on a checkpoint-synced client), which
+    /// is always the final entry. Used as the `getheaders` locator so peers on
+    /// a fork can find the most recent common ancestor.
     pub(super) async fn build_locator(&self) -> SyncResult<Vec<BlockHash>> {
         let storage = self.header_storage.read().await;
         let tip_height = storage
             .get_tip_height()
             .await
             .ok_or_else(|| SyncError::MissingDependency("storage not initialized".to_string()))?;
+        let floor = storage.get_start_height().await.unwrap_or(0);
 
         let mut locator = Vec::with_capacity(32);
         let mut step: u32 = 1;
         let mut height = tip_height;
+        let mut iterations: u32 = 0;
         loop {
             if let Some(header) = storage.get_header(height).await? {
                 locator.push(header.block_hash());
-            } else {
-                tracing::warn!("build_locator: header at height {} missing from storage", height);
             }
-            if height == 0 {
+            if height <= floor {
                 break;
             }
-            height = height.saturating_sub(step);
-            if locator.len() > 10 {
+            // Clamp to the floor so a checkpoint-synced client never walks below
+            // its lowest stored header. Double the step by iteration count, not
+            // by entries found, so a missing header cannot stall the decay.
+            height = height.saturating_sub(step).max(floor);
+            iterations += 1;
+            if iterations > 10 {
                 step = step.saturating_mul(2);
             }
         }
@@ -845,6 +851,48 @@ mod tests {
 
         // Stays under the dashd ~32 entry bound.
         assert!(locator.len() <= 32, "locator should not exceed 32 entries, got {}", locator.len());
+    }
+
+    #[tokio::test]
+    async fn build_locator_stops_at_checkpoint_floor() {
+        // A checkpoint-synced client stores headers starting at a high height.
+        // The locator must terminate at that floor instead of walking to
+        // genesis, so it stays bounded and never probes below the floor.
+        const FLOOR: u32 = 1_000_000;
+        let mut storage = DiskStorageManager::with_temp_dir().await.unwrap();
+        let chain = Header::dummy_batch(FLOOR..FLOOR + 200);
+        storage.store_headers_at_height(&chain, FLOOR).await.unwrap();
+        let checkpoint_manager = create_test_checkpoint_manager();
+        let manager = BlockHeadersManager::new(
+            storage.block_headers(),
+            storage.metadata(),
+            checkpoint_manager,
+            Network::Testnet,
+        )
+        .await
+        .unwrap();
+
+        let locator = manager.build_locator().await.unwrap();
+
+        // First entry is the tip, last entry is the seed checkpoint floor.
+        assert_eq!(locator[0], chain[chain.len() - 1].block_hash());
+        assert_eq!(*locator.last().unwrap(), chain[0].block_hash());
+
+        // Bounded, and far smaller than a full walk down to genesis would be.
+        assert!(locator.len() <= 32, "locator should stay bounded, got {}", locator.len());
+
+        // Every entry is a stored header at or above the floor.
+        for hash in &locator {
+            let height = manager
+                .header_storage
+                .read()
+                .await
+                .get_header_height_by_hash(hash)
+                .await
+                .unwrap()
+                .expect("locator entry must be a stored header");
+            assert!(height >= FLOOR, "locator probed below the floor at height {}", height);
+        }
     }
 
     /// Mine a header extending `prev` at `time` with the given `bits`, using
