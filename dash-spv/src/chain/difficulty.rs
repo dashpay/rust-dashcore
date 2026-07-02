@@ -138,8 +138,8 @@ fn pow_limit_target(network: Network) -> Target {
     match network {
         // dashd mainnet/testnet: uint256S("00000fffffff...ff"), ~2^236.
         Network::Mainnet | Network::Testnet => {
-            bytes[3] = 0x0f;
-            for b in bytes.iter_mut().skip(4) {
+            bytes[2] = 0x0f;
+            for b in bytes.iter_mut().skip(3) {
                 *b = 0xff;
             }
         }
@@ -175,6 +175,29 @@ mod tests {
 
     fn pow_limit_compact(params: &Params) -> CompactTarget {
         pow_limit_target(params.network).to_compact_lossy()
+    }
+
+    #[test]
+    fn pow_limit_compact_matches_dashd_constants() {
+        // dashd `consensus.powLimit`: mainnet/testnet is
+        // uint256S("00000fffffff...ff") with compact 0x1e0fffff, regtest/devnet
+        // is uint256S("7fffffff...ff") with compact 0x207fffff.
+        assert_eq!(
+            pow_limit_target(Network::Mainnet).to_compact_lossy(),
+            CompactTarget::from_consensus(0x1e0fffff)
+        );
+        assert_eq!(
+            pow_limit_target(Network::Testnet).to_compact_lossy(),
+            CompactTarget::from_consensus(0x1e0fffff)
+        );
+        assert_eq!(
+            pow_limit_target(Network::Regtest).to_compact_lossy(),
+            CompactTarget::from_consensus(0x207fffff)
+        );
+        assert_eq!(
+            pow_limit_target(Network::Devnet).to_compact_lossy(),
+            CompactTarget::from_consensus(0x207fffff)
+        );
     }
 
     #[test]
