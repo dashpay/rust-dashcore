@@ -15,7 +15,7 @@ use crate::chain::{ChainWork, CheckpointManager, ForkCandidate};
 use crate::error::{SyncError, SyncResult};
 use crate::network::RequestSender;
 use crate::storage::{BlockHeaderStorage, BlockHeaderTip, MetadataStorage};
-use crate::sync::block_headers::fork_buffer::ForkBuffer;
+use crate::sync::block_headers::fork_buffer::{BranchKey, ForkBuffer};
 use crate::sync::block_headers::HeadersPipeline;
 use crate::sync::{BlockHeadersProgress, ProgressPercentage, SyncEvent, SyncManager, SyncState};
 use crate::types::HashedBlockHeader;
@@ -199,19 +199,38 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> BlockHeadersManager<H, M> {
             self.fork_tip_index.insert(last.block_hash(), ancestor_height);
         }
 
-        // Judge the heaviest buffered branch against the active-chain work
-        // measured from that branch's own ancestor. A branch that forks deeper
-        // must beat more active blocks, so the baseline is branch-specific.
-        let Some((key, winner_ancestor, branch_work)) = self.fork_buffer.heaviest_branch() else {
+        // Judge every buffered branch against the active-chain work measured
+        // from that branch's own ancestor. A branch that forks deeper must beat
+        // more active blocks, so each baseline is branch-specific and a heavier
+        // raw extension can still lose while a shallower branch wins.
+        let branches: Vec<(BranchKey, u32, ChainWork)> = self.fork_buffer.branches().collect();
+        let Some(min_ancestor) = branches.iter().map(|(_, ancestor, _)| *ancestor).min() else {
             return Ok(());
         };
 
         let storage = self.header_storage.read().await;
-        let active_extension = storage.load_headers(winner_ancestor + 1..tip_height + 1).await?;
+        let active = storage.load_headers(min_ancestor + 1..tip_height + 1).await?;
         drop(storage);
 
-        let active_extension_work = ChainWork::accumulate(ChainWork::zero(), &active_extension);
-        if branch_work > active_extension_work {
+        // Among branches that outweigh their own baseline, pick the one with the
+        // most work on the shared baseline anchored at the lowest candidate
+        // ancestor. Every candidate forks off the same active chain, so the
+        // active blocks below its own ancestor are the common prefix that makes
+        // the totals comparable.
+        let mut winner: Option<(BranchKey, ChainWork)> = None;
+        for (key, ancestor, branch_work) in branches {
+            let split = (ancestor - min_ancestor) as usize;
+            let own_baseline = ChainWork::accumulate(ChainWork::zero(), &active[split..]);
+            if branch_work <= own_baseline {
+                continue;
+            }
+            let comparable = ChainWork::accumulate(branch_work, &active[..split]);
+            if winner.as_ref().is_none_or(|(_, best)| comparable > *best) {
+                winner = Some((key, comparable));
+            }
+        }
+
+        if let Some((key, _)) = winner {
             if let Some(candidate) = self.fork_buffer.take_branch(key) {
                 tracing::info!(
                     "Fork candidate ready for promotion: ancestor={} headers={} (peer {})",
@@ -1164,11 +1183,11 @@ mod tests {
 
     #[tokio::test]
     async fn deeper_lighter_fork_is_judged_against_its_own_ancestor() {
-        // Buffer a two-block deep fork that loses against the active chain
-        // measured from its own ancestor, then ingest a one-block shallow fork.
-        // The heaviest branch (the deep fork) must be judged against the deep
-        // ancestor's baseline, not the shallow ingest's baseline, so the deep,
-        // strictly-lighter fork is never promoted.
+        // A deep branch with the largest raw extension work can still lose
+        // against the active chain measured from its own deep ancestor, while a
+        // shallower branch beats the shorter active extension above its later
+        // ancestor. Every buffered branch is judged against its own baseline, so
+        // the deep loser never masks the shallow winner.
         let easy_bits = CompactTarget::from_consensus(0x207fffff);
         let (mut manager, chain) = create_regtest_manager_with_chain(5).await;
         let tip = manager.tip().await.unwrap();
@@ -1179,28 +1198,39 @@ mod tests {
         let peer: SocketAddr = "1.2.3.4:9999".parse().unwrap();
         let (sender, _rx) = create_test_request_sender();
 
-        // Deep fork forks at height 1 with two blocks. The active extension from
-        // height 1 spans heights 2, 3, 4, so two equal-difficulty fork blocks
-        // cannot outweigh it.
+        // Deep fork forks at height 1 with three blocks. The active extension
+        // from height 1 spans heights 2, 3, 4, so three equal-difficulty fork
+        // blocks tie and cannot outweigh it.
         let deep_a = mine_header(chain[1].block_hash(), chain[1].time + 11 * 600 + 1, easy_bits);
         let deep_b = mine_header(deep_a.block_hash(), deep_a.time + 700, easy_bits);
-        let events =
-            manager.handle_headers_pipeline(&[deep_a, deep_b], peer, &sender).await.unwrap();
+        let deep_c = mine_header(deep_b.block_hash(), deep_b.time + 700, easy_bits);
+        let events = manager
+            .handle_headers_pipeline(&[deep_a, deep_b, deep_c], peer, &sender)
+            .await
+            .unwrap();
         assert!(events.is_empty());
         assert_eq!(manager.fork_buffer.len(), 1);
         assert!(manager.take_pending_fork_candidate().is_none());
 
-        // Shallow fork forks at height 3 with one block. Its active extension is
-        // only height 4 (one block), the shallow baseline that the buggy code
-        // reused when judging the heavier deep branch.
-        let shallow = mine_header(chain[3].block_hash(), chain[3].time + 11 * 600 + 5, easy_bits);
-        let events = manager.handle_headers_pipeline(&[shallow], peer, &sender).await.unwrap();
-        assert!(events.is_empty());
-        assert_eq!(manager.fork_buffer.len(), 2);
+        // Shallow fork forks at height 3 with two blocks. Its active extension is
+        // only height 4 (one block), so two blocks outweigh it. The deep branch
+        // carries more raw extension work, so judging only the heaviest branch
+        // would evaluate the deep loser and let the shallow winner expire.
+        let shallow_a = mine_header(chain[3].block_hash(), chain[3].time + 11 * 600 + 5, easy_bits);
+        let shallow_b = mine_header(shallow_a.block_hash(), shallow_a.time + 700, easy_bits);
+        let events =
+            manager.handle_headers_pipeline(&[shallow_a, shallow_b], peer, &sender).await.unwrap();
 
-        // The deep branch is heaviest but still loses on its own baseline, so
-        // nothing is promoted.
-        assert!(manager.take_pending_fork_candidate().is_none());
+        // The shallow winner is detected on its own baseline (ancestor height 3),
+        // even though the deep branch carries more raw extension work.
+        assert!(events.iter().any(|e| matches!(
+            e,
+            SyncEvent::ForkDetected {
+                ancestor_height: 3,
+                header_count: 2,
+                ..
+            }
+        )));
     }
 
     #[tokio::test]

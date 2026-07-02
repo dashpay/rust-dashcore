@@ -1,8 +1,8 @@
 //! Per-peer staged fork buffer.
 //!
 //! Buffers fork headers received from peers until either their cumulative
-//! work exceeds the active chain (`heaviest_branch` plus `take_branch`), they
-//! age out (`expire_stale`), or the peer disconnects (`remove_peer`).
+//! work exceeds the active chain (`branches` plus `take_branch`), they age out
+//! (`expire_stale`), or the peer disconnects (`remove_peer`).
 //!
 //! All buffered branches are independently validated: each header must meet
 //! its claimed PoW target, satisfy the median-time-past rule against the
@@ -173,19 +173,16 @@ impl ForkBuffer {
         self.branches.retain(|(p, _), _| *p != peer);
     }
 
-    /// Return the key, ancestor height, and cumulative extension work of the
-    /// heaviest buffered branch, without removing it.
+    /// Iterate over every buffered branch as its key, ancestor height, and
+    /// cumulative extension work, without removing any.
     ///
-    /// The caller must measure the active chain's extension work from the
-    /// returned `ancestor_height` up to the active tip, because different
+    /// The caller must measure the active chain's extension work from each
+    /// branch's own `ancestor_height` up to the active tip, because different
     /// branches fork at different ancestors and must be judged against their
     /// own baseline. Promote via `take_branch` only when the branch work is
     /// strictly heavier on that baseline.
-    pub(super) fn heaviest_branch(&self) -> Option<(BranchKey, u32, ChainWork)> {
-        self.branches
-            .iter()
-            .max_by_key(|(_, b)| b.total_work)
-            .map(|(key, b)| (*key, b.ancestor_height, b.total_work))
+    pub(super) fn branches(&self) -> impl Iterator<Item = (BranchKey, u32, ChainWork)> + '_ {
+        self.branches.iter().map(|(key, b)| (*key, b.ancestor_height, b.total_work))
     }
 
     /// Remove the branch identified by `key` and return it as a promotable
@@ -308,9 +305,8 @@ mod tests {
         buf.ingest(peer, &fork, ancestor_height, ancestor, &active).expect("ingest");
         assert_eq!(buf.len(), 1);
 
-        // The buffered branch is the heaviest and, against a zero baseline,
-        // wins outright.
-        let (key, winner_ancestor, work) = buf.heaviest_branch().expect("a branch is buffered");
+        // The sole buffered branch, against a zero baseline, wins outright.
+        let (key, winner_ancestor, work) = buf.branches().next().expect("a branch is buffered");
         assert_eq!(winner_ancestor, ancestor_height);
         assert!(work > ChainWork::zero());
         let candidate = buf.take_branch(key).expect("candidate should be removed");
