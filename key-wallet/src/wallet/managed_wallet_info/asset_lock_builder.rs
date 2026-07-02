@@ -344,7 +344,7 @@ impl ManagedWalletInfo {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::signer::SignerMethod;
+    use crate::signer::{ExtendedPubKeySigner, SignerMethod};
     use crate::wallet::initialization::WalletAccountCreationOptions;
     use crate::Network;
     use dashcore::ScriptBuf;
@@ -469,7 +469,10 @@ mod tests {
                 .map_err(|e| e.to_string())?;
             Ok(secp256k1::PublicKey::from_secret_key(&secp, &xpriv.private_key))
         }
+    }
 
+    #[async_trait::async_trait]
+    impl ExtendedPubKeySigner for InMemorySigner {
         async fn extended_public_key(
             &self,
             path: &DerivationPath,
@@ -482,6 +485,33 @@ mod tests {
                 .map_err(|e| e.to_string())?;
             Ok(crate::bip32::ExtendedPubKey::from_priv(&secp, &xpriv))
         }
+    }
+
+    #[tokio::test]
+    async fn in_memory_signer_extended_public_key_matches_wallet_derivation() {
+        use std::str::FromStr;
+        let (wallet, _info) = test_wallet_and_info();
+        let root = match &wallet.wallet_type {
+            crate::wallet::WalletType::Mnemonic {
+                root_extended_private_key,
+                ..
+            } => root_extended_private_key.clone(),
+            _ => unreachable!("test_wallet_and_info produces a mnemonic wallet"),
+        };
+        let signer = InMemorySigner {
+            root,
+            network: Network::Testnet,
+        };
+        // A hardened path — only derivable with the private key, which is the
+        // whole point of exposing extended-pubkey export on the signer.
+        let path = DerivationPath::from_str("m/9'/1'/15'/0'").expect("valid path");
+        let from_signer =
+            signer.extended_public_key(&path).await.expect("signer extended_public_key");
+        let from_wallet = wallet.derive_extended_public_key(&path).expect("wallet extended pubkey");
+        assert_eq!(
+            from_signer, from_wallet,
+            "signer xpub at a hardened path must equal the wallet's own derivation"
+        );
     }
 
     #[tokio::test]
@@ -548,12 +578,6 @@ mod tests {
                 unreachable!("should be rejected before any signing is attempted")
             }
             async fn public_key(&self, _: &DerivationPath) -> Result<PublicKey, Self::Error> {
-                unreachable!()
-            }
-            async fn extended_public_key(
-                &self,
-                _: &DerivationPath,
-            ) -> Result<crate::bip32::ExtendedPubKey, Self::Error> {
                 unreachable!()
             }
         }

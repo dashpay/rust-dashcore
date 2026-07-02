@@ -125,7 +125,18 @@ pub trait Signer: Send + Sync {
     /// keys) that the caller later references when signing Platform state
     /// transitions.
     async fn public_key(&self, path: &DerivationPath) -> Result<PublicKey, Self::Error>;
+}
 
+/// A [`Signer`] that can additionally export BIP-32 extended public keys.
+///
+/// Kept separate from [`Signer`] because exporting an extended public key
+/// is a key-export capability, not a signing one: a pure signing backend
+/// (an HSM or remote signing service whose policy forbids exporting chain
+/// codes, since an xpub plus any descendant non-hardened private key
+/// compromises the whole subtree) can implement [`Signer`] alone, while
+/// callers that need offline descendant derivation bound on this trait.
+#[async_trait]
+pub trait ExtendedPubKeySigner: Signer {
     /// Return the BIP-32 extended public key at `path` — the public point
     /// plus the chain code and parent fingerprint, so the caller can
     /// non-hardened-derive a whole range of descendants from a single
@@ -133,9 +144,9 @@ pub trait Signer: Send + Sync {
     /// (e.g. DashPay contact payment addresses under
     /// `m/9'/coin'/15'/account'/sender/recipient`).
     ///
-    /// Distinct from [`Self::public_key`], which returns only the leaf point
-    /// (no chain code). A signer that cannot export an extended public key at
-    /// a hardened path should return an error rather than panic.
+    /// Distinct from [`Signer::public_key`], which returns only the leaf
+    /// point (no chain code). A signer that cannot export an extended public
+    /// key at a hardened path should return an error rather than panic.
     async fn extended_public_key(
         &self,
         path: &DerivationPath,
