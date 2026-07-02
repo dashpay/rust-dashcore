@@ -156,7 +156,7 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> BlockHeadersManager<H, M> {
         // Mirror dashd's pre-DGW-window short-circuit: when the ancestor sits
         // below `DGW_HISTORY`, DGW returns `pow_limit` regardless of the
         // window contents, so we only need what storage actually has.
-        let pre_window = ancestor_height + 1 < Self::DGW_HISTORY;
+        let pre_window = ancestor_height < Self::DGW_HISTORY;
         // A checkpoint-seeded node holds no headers below its storage floor.
         // Clamp the window there so a read never dips below the lowest stored
         // header, which would panic in debug and return zeroed sentinel headers
@@ -1078,6 +1078,49 @@ mod tests {
             err
         );
         assert_eq!(manager.fork_buffer.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn fork_at_dgw_window_boundary_is_accepted_without_full_history() {
+        // dashd short-circuits DGW to `pow_limit` when the ancestor height is
+        // below the 24-block window, so a fork anchored at height 23 must be
+        // accepted even when the history stored above the floor is shorter than
+        // a full window. The ancestor sits exactly on the boundary: one block
+        // higher would demand the full window.
+        const FLOOR: u32 = 1;
+        let easy_bits = CompactTarget::from_consensus(0x207fffff);
+        let mut storage = DiskStorageManager::with_temp_dir().await.unwrap();
+        let mut prev = BlockHash::all_zeros();
+        let mut chain = Vec::new();
+        for i in 0..24u32 {
+            let h = mine_header(prev, 1_700_000_000 + i * 600, easy_bits);
+            prev = h.block_hash();
+            chain.push(h);
+        }
+        storage.store_headers_at_height(&chain, FLOOR).await.unwrap();
+        let mut manager = BlockHeadersManager::new(
+            storage.block_headers(),
+            storage.metadata(),
+            Arc::new(CheckpointManager::new(vec![])),
+            Network::Regtest,
+        )
+        .await
+        .unwrap();
+
+        // Heights run FLOOR..FLOOR+24, so the ancestor at chain index 22 is
+        // height 23, the DGW window boundary, and the tip at height 24 is its
+        // single active extension.
+        let ancestor_height = FLOOR + 22;
+        assert_eq!(ancestor_height, TestBlockHeadersManager::DGW_HISTORY - 1);
+        let ancestor = chain[22];
+        let fork = mine_header(ancestor.block_hash(), ancestor.time + 700, easy_bits);
+        let peer: SocketAddr = "1.2.3.4:9999".parse().unwrap();
+
+        manager
+            .ingest_fork(peer, &[fork], ancestor_height)
+            .await
+            .expect("boundary fork must be accepted via the DGW short-circuit");
+        assert_eq!(manager.fork_buffer.len(), 1);
     }
 
     #[tokio::test]
