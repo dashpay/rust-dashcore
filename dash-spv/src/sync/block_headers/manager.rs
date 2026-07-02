@@ -128,19 +128,21 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> BlockHeadersManager<H, M> {
         // below `DGW_HISTORY`, DGW returns `pow_limit` regardless of the
         // window contents, so we only need what storage actually has.
         let pre_window = ancestor_height + 1 < Self::DGW_HISTORY;
-        let history_start = ancestor_height.saturating_sub(Self::DGW_HISTORY);
-        let history = storage.load_headers(history_start..ancestor_height + 1).await?;
-        if !pre_window {
-            let expected_len = (ancestor_height + 1 - history_start) as usize;
-            if history.len() != expected_len {
-                return Err(SyncError::Validation(format!(
-                    "storage gap before ancestor at height {}: expected {} headers, got {}",
-                    ancestor_height,
-                    expected_len,
-                    history.len()
-                )));
-            }
+        // A checkpoint-seeded node holds no headers below its storage floor.
+        // Clamp the window there so a read never dips below the lowest stored
+        // header, which would panic in debug and return zeroed sentinel headers
+        // in release.
+        let floor = storage.get_start_height().await.unwrap_or(0);
+        let history_start = ancestor_height.saturating_sub(Self::DGW_HISTORY).max(floor);
+        if !pre_window && ancestor_height + 1 - history_start < Self::DGW_HISTORY {
+            return Err(SyncError::Validation(format!(
+                "insufficient stored history to validate fork at ancestor height {}: need {} headers above storage floor {}",
+                ancestor_height,
+                Self::DGW_HISTORY,
+                floor
+            )));
         }
+        let history = storage.load_headers(history_start..ancestor_height + 1).await?;
         let ancestor = *history.last().ok_or_else(|| {
             SyncError::Validation(format!("missing ancestor header at height {}", ancestor_height))
         })?;
@@ -941,6 +943,48 @@ mod tests {
         .await
         .expect("failed to create regtest manager");
         (manager, chain)
+    }
+
+    #[tokio::test]
+    async fn fork_near_checkpoint_floor_rejects_without_reading_below_floor() {
+        // A checkpoint-seeded node holds no headers below its storage floor. A
+        // fork anchored within the DGW window of that floor must be rejected
+        // with a validation error rather than reading below the floor, which
+        // panics in debug and returns sentinel headers in release.
+        const FLOOR: u32 = 1_000_000;
+        let easy_bits = CompactTarget::from_consensus(0x207fffff);
+        let mut storage = DiskStorageManager::with_temp_dir().await.unwrap();
+        let mut prev = BlockHash::all_zeros();
+        let mut chain = Vec::new();
+        for i in 0..30u32 {
+            let h = mine_header(prev, 1_700_000_000 + i * 600, easy_bits);
+            prev = h.block_hash();
+            chain.push(h);
+        }
+        storage.store_headers_at_height(&chain, FLOOR).await.unwrap();
+        let mut manager = BlockHeadersManager::new(
+            storage.block_headers(),
+            storage.metadata(),
+            Arc::new(CheckpointManager::new(vec![])),
+            Network::Regtest,
+        )
+        .await
+        .unwrap();
+
+        // Ancestor sits three blocks above the floor, so the DGW window reaches
+        // below it. The old code walked below the floor here.
+        let ancestor_height = FLOOR + 3;
+        let ancestor = chain[3];
+        let fork = mine_header(ancestor.block_hash(), ancestor.time + 11 * 600 + 1, easy_bits);
+        let peer: SocketAddr = "1.2.3.4:9999".parse().unwrap();
+
+        let err = manager.ingest_fork(peer, &[fork], ancestor_height).await.unwrap_err();
+        assert!(
+            matches!(err, SyncError::Validation(_)),
+            "expected a graceful validation error, got {:?}",
+            err
+        );
+        assert_eq!(manager.fork_buffer.len(), 0);
     }
 
     #[tokio::test]
