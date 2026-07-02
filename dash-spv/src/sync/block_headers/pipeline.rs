@@ -360,6 +360,7 @@ mod tests {
 
     use crate::network::{NetworkRequest, RequestSender};
     use crate::sync::block_headers::segment_state::SegmentState;
+    use dashcore::network::message::NetworkMessage;
 
     fn create_test_checkpoint_manager(is_testnet: bool) -> Arc<CheckpointManager> {
         let checkpoints = if is_testnet {
@@ -646,9 +647,6 @@ mod tests {
 
     #[test]
     fn send_pending_uses_full_locator_when_storage_matches_tip_and_single_entry_otherwise() {
-        use crate::network::NetworkRequest;
-        use dashcore::network::message::NetworkMessage;
-
         let tip_hash = BlockHash::dummy(77);
         let mut tip_seg = SegmentState::new(0, 100, tip_hash, None, None);
         tip_seg.current_tip_hash = tip_hash;
