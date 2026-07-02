@@ -230,6 +230,20 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> BlockHeadersManager<H, M> {
         self.judge_fork_winner(peer).await
     }
 
+    /// Absorb peer-data validation failures so unsolicited divergent headers
+    /// cannot surface as app-visible manager errors. `Validation` and
+    /// `ForkChainBreak` come from untrusted peer data and are logged at debug
+    /// and dropped. Internal errors (storage, missing dependencies) propagate.
+    fn absorb_fork_error(&self, peer: SocketAddr, result: SyncResult<()>) -> SyncResult<()> {
+        match result {
+            Err(e @ (SyncError::Validation(_) | SyncError::ForkChainBreak(_))) => {
+                tracing::debug!("dropping invalid fork batch from {}: {}", peer, e);
+                Ok(())
+            }
+            other => other,
+        }
+    }
+
     /// Judge every buffered branch against the active-chain work measured from
     /// that branch's own ancestor and promote the heaviest winner, if any.
     async fn judge_fork_winner(&mut self, peer: SocketAddr) -> SyncResult<()> {
@@ -421,7 +435,9 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> BlockHeadersManager<H, M> {
                 if forked {
                     // Diverges at height `prev_h + 1 + shared`, anchored at the
                     // last header the batch and the active chain share.
-                    self.ingest_fork(peer, &headers[shared..], prev_h + shared as u32).await?;
+                    let result =
+                        self.ingest_fork(peer, &headers[shared..], prev_h + shared as u32).await;
+                    self.absorb_fork_error(peer, result)?;
                     return Ok(self.drain_fork_detection());
                 }
                 if shared == headers.len() {
@@ -439,13 +455,8 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> BlockHeadersManager<H, M> {
                 // belongs to another peer's branch has no entry under this
                 // peer's key and is dropped.
                 let tip_hash = first.prev_blockhash;
-                match self.extend_fork(peer, ancestor_height, tip_hash, headers).await {
-                    Ok(()) => {}
-                    Err(SyncError::ForkChainBreak(msg)) => {
-                        tracing::debug!("fork continuation chain break: {}", msg);
-                    }
-                    Err(e) => return Err(e),
-                }
+                let result = self.extend_fork(peer, ancestor_height, tip_hash, headers).await;
+                self.absorb_fork_error(peer, result)?;
                 return Ok(self.drain_fork_detection());
             }
         }
@@ -1308,7 +1319,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn fork_continuation_non_fork_chain_break_error_propagates() {
+    async fn garbage_fork_batches_are_absorbed_quietly() {
+        // Peer-data validation failures on both the first-batch and continuation
+        // fork paths are dropped with no events instead of surfacing as
+        // app-visible manager errors. Only internal errors would propagate.
         let easy_bits = CompactTarget::from_consensus(0x207fffff);
         let (mut manager, chain) = create_regtest_manager_with_chain(5).await;
         let tip = manager.tip().await.unwrap();
@@ -1320,24 +1334,27 @@ mod tests {
         let peer: SocketAddr = "1.2.3.4:9999".parse().unwrap();
         let (sender, _rx) = create_test_request_sender();
 
+        // First-batch garbage fork: diverges from the active chain at height 3
+        // but carries wrong bits. Absorbed, so no events and nothing buffered.
+        let mut garbage =
+            mine_header(chain[3].block_hash(), chain[3].time + 11 * 600 + 1, easy_bits);
+        garbage.bits = CompactTarget::from_consensus(0x2100_ffff);
+        let events = manager.handle_headers_pipeline(&[garbage], peer, &sender).await.unwrap();
+        assert!(events.is_empty());
+        assert_eq!(manager.fork_buffer.len(), 0);
+
         // Buffer a genuine one-block branch off chain[3].
-        let ancestor = chain[3];
-        let fork_a = mine_header(ancestor.block_hash(), ancestor.time + 11 * 600 + 1, easy_bits);
+        let fork_a = mine_header(chain[3].block_hash(), chain[3].time + 11 * 600 + 1, easy_bits);
         manager.handle_headers_pipeline(&[fork_a], peer, &sender).await.unwrap();
         assert_eq!(manager.fork_buffer.len(), 1);
 
-        // A continuation whose PoW passes but whose bits differ from the DGW
-        // expected value fails validation with a non-ForkChainBreak error, which
-        // must reach the Err(e) => return Err(e) arm.
+        // Continuation garbage: correct PoW but wrong bits. Absorbed, so no
+        // events and the branch is left unchanged.
         let mut cont = mine_header(fork_a.block_hash(), fork_a.time + 700, easy_bits);
         cont.bits = CompactTarget::from_consensus(0x2100_ffff);
-
-        let result = manager.handle_headers_pipeline(&[cont], peer, &sender).await;
-        assert!(
-            matches!(&result, Err(SyncError::Validation(_))),
-            "non-ForkChainBreak error must propagate from fork continuation: {:?}",
-            result
-        );
+        let events = manager.handle_headers_pipeline(&[cont], peer, &sender).await.unwrap();
+        assert!(events.is_empty());
+        assert_eq!(manager.fork_buffer.len(), 1);
     }
 
     #[tokio::test]
