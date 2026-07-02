@@ -279,6 +279,20 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> BlockHeadersManager<H, M> {
         Ok(locator)
     }
 
+    /// Build the fork-finding locator for a retry only when it would actually
+    /// be sent: the tip segment must be ready to send and still anchored at the
+    /// storage tip. Before the first response the tip segment tip equals the
+    /// storage tip, so a peer on a fork can find a common ancestor. Once a
+    /// response advances the segment past storage the storage-derived locator no
+    /// longer matches the segment tip, so the empty slice keeps `send_pending`
+    /// on its single-entry fallback and the walk's storage reads are skipped.
+    pub(super) async fn tip_retry_locator(&self) -> SyncResult<Vec<BlockHash>> {
+        match self.pipeline.sendable_tip_segment_hash() {
+            Some(anchor) if anchor == *self.tip().await?.hash() => self.build_locator().await,
+            _ => Ok(Vec::new()),
+        }
+    }
+
     /// Validate and store headers batch.
     async fn store_headers(&mut self, headers: &[HashedBlockHeader]) -> SyncResult<BlockHeaderTip> {
         debug_assert!(!headers.is_empty());
@@ -396,11 +410,12 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> BlockHeadersManager<H, M> {
 
         // Send more requests during initial sync or active post-sync catch-up
         // before processing ready batches so network and storage work overlap.
-        // During initial sync the segment tip has already advanced past storage
-        // so the storage-derived locator would never be selected; pass an empty
-        // slice and let `send_pending` use the single-entry fallback directly.
+        // A retry that fires before the tip segment has advanced past storage
+        // still needs the full fork-finding locator, so build it only when the
+        // tip segment is anchored at the storage tip.
         if was_syncing || !tip_was_complete {
-            let sent = self.pipeline.send_pending(requests, &[])?;
+            let locator = self.tip_retry_locator().await?;
+            let sent = self.pipeline.send_pending(requests, &locator)?;
             if sent > 0 {
                 tracing::debug!("Pipeline sent {} more requests", sent);
             }
@@ -1283,15 +1298,20 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn tick_retries_sync_with_single_entry_locator_before_first_response() {
+    async fn tick_retries_sync_with_full_locator_before_first_response() {
         // Simulate a timeout before any headers response arrives: the pipeline is
-        // initialized but no headers have been received yet, so the segment's
+        // initialized but no headers have been received yet, so the tip segment's
         // current_tip_hash still equals the storage tip. The tick handler must
-        // still send a GetHeaders using the single-entry locator (segment tip),
-        // not silently skip because no in-flight request exists.
-        let mut manager = create_test_manager().await;
-        let tip = manager.tip().await.unwrap();
-        let tip_hash = *tip.hash();
+        // retry with the full fork-finding locator so a peer on a stale, reorged
+        // tip can still find the most recent common ancestor. A single-entry
+        // locator here would strand a node restarted on a reorged-away tip.
+        let (mut manager, chain) = create_regtest_manager_with_chain(5).await;
+        let expected_locator = manager.build_locator().await.unwrap();
+        assert!(
+            expected_locator.len() > 1,
+            "test needs a multi-entry locator to distinguish full from single-entry"
+        );
+        assert_eq!(expected_locator[0], chain.last().unwrap().block_hash());
 
         let initial_event = NetworkEvent::PeersUpdated {
             connected_count: 1,
@@ -1311,14 +1331,14 @@ mod tests {
         manager.pipeline.clear_in_flight();
         manager.tick(&requests).await.unwrap();
 
-        // Tick must have issued a GetHeaders whose locator starts from the
-        // storage tip (segment tip == storage tip before the first response).
+        // Tick must have issued a GetHeaders carrying the full locator, not just
+        // the single storage-tip entry.
         let msg = rx.try_recv().expect("tick must send retry GetHeaders");
         match msg {
             NetworkRequest::SendMessage(NetworkMessage::GetHeaders(m)) => {
                 assert_eq!(
-                    m.locator_hashes[0], tip_hash,
-                    "retry locator must start at the storage tip"
+                    m.locator_hashes, expected_locator,
+                    "retry must reuse the full fork-finding locator"
                 );
             }
             other => panic!("expected GetHeaders, got {:?}", other),

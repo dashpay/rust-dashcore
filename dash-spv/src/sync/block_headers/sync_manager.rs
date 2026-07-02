@@ -132,12 +132,13 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> SyncManager for BlockHeadersMana
             self.prune_fork_tip_index();
         }
 
-        // During initial sync, send more requests and log progress.
-        // The segment tip is always ahead of storage during active sync so the
-        // storage-derived locator would never be selected; pass an empty slice
-        // and let `send_pending` use the single-entry fallback directly.
+        // During initial sync, send more requests and log progress. A retry that
+        // fires before the tip segment has advanced past storage still needs the
+        // full fork-finding locator, so build it only when the tip segment is
+        // anchored at the storage tip.
         if self.state() == SyncState::Syncing {
-            let sent = self.pipeline.send_pending(requests, &[])?;
+            let locator = self.tip_retry_locator().await?;
+            let sent = self.pipeline.send_pending(requests, &locator)?;
             if sent > 0 {
                 tracing::debug!("Tick: pipeline sent {} more requests", sent);
             }

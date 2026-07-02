@@ -350,6 +350,19 @@ impl HeadersPipeline {
             .find(|s| s.target_height.is_none())
             .is_some_and(|s| !s.complete && s.coordinator.active_count() > 0)
     }
+
+    /// Return the tip segment's current tip hash when the segment is ready to
+    /// send a request. A caller uses this to decide whether building the full
+    /// storage-derived locator is worthwhile: the locator is only selected when
+    /// its first entry equals this hash, so an unsendable tip segment makes the
+    /// walk pointless.
+    pub(super) fn sendable_tip_segment_hash(&self) -> Option<BlockHash> {
+        self.segments
+            .iter()
+            .find(|s| s.target_height.is_none())
+            .filter(|s| s.can_send())
+            .map(|s| s.current_tip_hash)
+    }
 }
 
 #[cfg(test)]
