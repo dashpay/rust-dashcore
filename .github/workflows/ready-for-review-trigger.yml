@@ -6,7 +6,7 @@ name: Ready for Review Trigger
 # privileged "Ready for Review Label" workflow reacts to with a write token.
 on:
   pull_request:
-    types: [ready_for_review, labeled]
+    types: [ready_for_review, labeled, converted_to_draft]
   pull_request_review:
     types: [submitted, dismissed]
 

@@ -107,7 +107,8 @@ jobs:
             PR_JSON=$(gh pr view "$PR_NUMBER" --repo "$REPO" --json isDraft,labels)
 
             if [ "$(echo "$PR_JSON" | jq -r '.isDraft')" = "true" ]; then
-              echo "PR is a draft. Skipping."
+              echo "PR is a draft. Removing ready-for-review label if present."
+              gh pr edit "$PR_NUMBER" --repo "$REPO" --remove-label "ready-for-review" || true
               continue
             fi
 
