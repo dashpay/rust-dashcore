@@ -135,14 +135,11 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> BlockHeadersManager<H, M> {
         }
     }
 
-    /// Buffer a fork extension whose ancestor is on the active chain at a
-    /// height strictly below the current tip.
-    async fn ingest_fork(
-        &mut self,
-        peer: SocketAddr,
-        headers: &[Header],
-        ancestor_height: u32,
-    ) -> SyncResult<()> {
+    /// Load the DGW-window history needed to validate a fork anchored at
+    /// `ancestor_height`, returning the ancestor header and the window (oldest
+    /// first, ancestor last). Rejects forks anchored too deep or without enough
+    /// stored history to retarget.
+    async fn load_fork_history(&self, ancestor_height: u32) -> SyncResult<(Header, Vec<Header>)> {
         let storage = self.header_storage.read().await;
         let tip_height = storage
             .get_tip_height()
@@ -183,13 +180,24 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> BlockHeadersManager<H, M> {
         let ancestor = *history.last().ok_or_else(|| {
             SyncError::Validation(format!("missing ancestor header at height {}", ancestor_height))
         })?;
-        drop(storage);
+        Ok((ancestor, history))
+    }
+
+    /// Buffer a fork extension whose ancestor is on the active chain at a
+    /// height strictly below the current tip.
+    async fn ingest_fork(
+        &mut self,
+        peer: SocketAddr,
+        headers: &[Header],
+        ancestor_height: u32,
+    ) -> SyncResult<()> {
+        let (ancestor, history) = self.load_fork_history(ancestor_height).await?;
 
         // Validate and buffer the fork before touching the active-chain
         // extension. The `history` load above is bounded to the DGW window,
-        // but the extension load below is unbounded in the ancestor depth, so
-        // it must stay behind full validation to deny a cheap remote memory
-        // amplification via crafted low-ancestor forks.
+        // but the extension load in `judge_fork_winner` is unbounded in the
+        // ancestor depth, so it must stay behind full validation to deny a
+        // cheap remote memory amplification via crafted low-ancestor forks.
         self.fork_buffer.ingest(peer, headers, ancestor_height, ancestor, &history)?;
 
         // Track the new fork tip so subsequent batches extending this branch
@@ -199,16 +207,45 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> BlockHeadersManager<H, M> {
             self.fork_tip_index.insert(last.block_hash(), ancestor_height);
         }
 
-        // Judge every buffered branch against the active-chain work measured
-        // from that branch's own ancestor. A branch that forks deeper must beat
-        // more active blocks, so each baseline is branch-specific and a heavier
-        // raw extension can still lose while a shallower branch wins.
+        self.judge_fork_winner(peer).await
+    }
+
+    /// Extend a buffered fork branch with a continuation batch that builds on
+    /// its tip rather than on the active chain.
+    async fn extend_fork(
+        &mut self,
+        peer: SocketAddr,
+        ancestor_height: u32,
+        tip_hash: BlockHash,
+        headers: &[Header],
+    ) -> SyncResult<()> {
+        let (_ancestor, history) = self.load_fork_history(ancestor_height).await?;
+
+        let new_tip = self.fork_buffer.extend_branch((peer, tip_hash), headers, &history)?;
+
+        // Re-key the branch's tip so the next continuation still routes here.
+        self.fork_tip_index.remove(&tip_hash);
+        self.fork_tip_index.insert(new_tip, ancestor_height);
+
+        self.judge_fork_winner(peer).await
+    }
+
+    /// Judge every buffered branch against the active-chain work measured from
+    /// that branch's own ancestor and promote the heaviest winner, if any.
+    async fn judge_fork_winner(&mut self, peer: SocketAddr) -> SyncResult<()> {
+        // A branch that forks deeper must beat more active blocks, so each
+        // baseline is branch-specific and a heavier raw extension can still lose
+        // while a shallower branch wins.
         let branches: Vec<(BranchKey, u32, ChainWork)> = self.fork_buffer.branches().collect();
         let Some(min_ancestor) = branches.iter().map(|(_, ancestor, _)| *ancestor).min() else {
             return Ok(());
         };
 
         let storage = self.header_storage.read().await;
+        let tip_height = storage
+            .get_tip_height()
+            .await
+            .ok_or_else(|| SyncError::MissingDependency("no tip height".to_string()))?;
         let active = storage.load_headers(min_ancestor + 1..tip_height + 1).await?;
         drop(storage);
 
@@ -396,13 +433,13 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> BlockHeadersManager<H, M> {
                 pipeline_start = shared;
             } else if let Some(&ancestor_height) = self.fork_tip_index.get(&first.prev_blockhash) {
                 drop(storage);
-                // prev_blockhash is a fork tip, not on the active chain. Route
-                // continuation batches to the fork buffer using the same
-                // ancestor_height as the first batch. A chain break is
-                // swallowed because the continuation anchors at the active-chain
-                // ancestor rather than the buffered fork tip, and penalizing the
-                // peer for that would be wrong.
-                match self.ingest_fork(peer, headers, ancestor_height).await {
+                // prev_blockhash is a buffered fork tip, not on the active
+                // chain. Extend that branch so a fork announced across several
+                // headers messages accumulates work. A continuation whose tip
+                // belongs to another peer's branch has no entry under this
+                // peer's key and is dropped.
+                let tip_hash = first.prev_blockhash;
+                match self.extend_fork(peer, ancestor_height, tip_hash, headers).await {
                     Ok(()) => {}
                     Err(SyncError::ForkChainBreak(msg)) => {
                         tracing::debug!("fork continuation chain break: {}", msg);
@@ -550,7 +587,6 @@ mod tests {
     use crate::storage::{
         DiskStorageManager, PersistentBlockHeaderStorage, PersistentMetadataStorage, StorageManager,
     };
-    use crate::sync::block_headers::fork_buffer::MAX_FORK_HEADERS_PER_PEER;
     use crate::sync::{ManagerIdentifier, SyncManager, SyncManagerProgress};
     use dashcore::network::message::NetworkMessage;
     use dashcore::{block::Version, CompactTarget, TxMerkleNode};
@@ -1130,10 +1166,12 @@ mod tests {
 
     #[tokio::test]
     async fn fork_header_at_depth_is_routed_to_buffer() {
-        // Store a 5-block chain (heights 0-4). Build a fork extending height 1
-        // (depth 3 below tip=4). The fork must be routed to the fork buffer,
-        // not the pipeline. Routing is confirmed by the return being empty
-        // events and the fork buffer holding one entry.
+        // Store a 5-block chain (heights 0-4). Build a fork extending height 3,
+        // whose active extension is only height 4 (one block). The first fork
+        // header is routed to the fork buffer, not the pipeline. A continuation
+        // header that builds on the buffered tip must extend the same branch so
+        // the two-block fork outweighs the single active block and fires a
+        // detection event.
         let easy_bits = CompactTarget::from_consensus(0x207fffff);
 
         let (mut manager, chain) = create_regtest_manager_with_chain(5).await;
@@ -1147,38 +1185,40 @@ mod tests {
         let peer: SocketAddr = "1.2.3.4:9999".parse().unwrap();
         let (sender, _rx) = create_test_request_sender();
 
-        // Build one valid fork header extending chain[1] (height 1, depth 3).
-        let ancestor = chain[1];
+        // Build one valid fork header extending chain[3] (height 3, depth 1).
+        let ancestor = chain[3];
         let fork_time = ancestor.time + 11 * 600 + 1;
         let fork_header = mine_header(ancestor.block_hash(), fork_time, easy_bits);
 
         let events = manager.handle_headers_pipeline(&[fork_header], peer, &sender).await.unwrap();
 
-        // Fork path returns no events, not the pipeline path.
+        // Fork path returns no events, not the pipeline path. A single fork
+        // block ties the single active block, so nothing is promoted yet.
         assert!(events.is_empty());
-        // Branch entered the buffer.
         assert_eq!(manager.fork_buffer.len(), 1);
         assert!(manager.take_pending_fork_candidate().is_none());
 
-        // Second batch extending the fork: prev_blockhash is the first fork header's hash,
-        // which is not on the active chain. The fork_tip_index must route it into
-        // ingest_fork rather than silently dropping it as an unmatched pipeline batch.
+        // Second batch extending the fork: prev_blockhash is the first fork
+        // header's hash, not on the active chain. The fork_tip_index routes it
+        // into extend_fork, which extends the buffered branch rather than
+        // dropping it. The branch now has two blocks and beats the single active
+        // block, firing a ForkDetected event with the combined header count.
         let fork_tip = fork_header.block_hash();
-        let second_fork_time = fork_time + 600;
+        let second_fork_time = fork_time + 700;
         let second_fork_header = mine_header(fork_tip, second_fork_time, easy_bits);
 
-        // The continuation batch is routed through fork_tip_index to ingest_fork.
-        // The ingest fails the chain-continuity check (second batch anchors at the
-        // active-chain ancestor, not the buffered fork tip), but the ForkChainBreak
-        // error is swallowed so the peer is not penalized, and the fork buffer stays
-        // at one branch.
-        let result2 = manager.handle_headers_pipeline(&[second_fork_header], peer, &sender).await;
-        assert!(result2.is_ok(), "continuation must not propagate error to caller: {:?}", result2);
-        assert_eq!(
-            manager.fork_buffer.len(),
-            1,
-            "fork buffer must not grow (second ingest fails chain-continuity)"
-        );
+        let events =
+            manager.handle_headers_pipeline(&[second_fork_header], peer, &sender).await.unwrap();
+        assert!(events.iter().any(|e| matches!(
+            e,
+            SyncEvent::ForkDetected {
+                ancestor_height: 3,
+                header_count: 2,
+                ..
+            }
+        )));
+        // The winning branch was taken for promotion, so the buffer is empty.
+        assert_eq!(manager.fork_buffer.len(), 0);
     }
 
     #[tokio::test]
@@ -1269,34 +1309,30 @@ mod tests {
 
     #[tokio::test]
     async fn fork_continuation_non_fork_chain_break_error_propagates() {
-        let (mut manager, _chain) = create_regtest_manager_with_chain(5).await;
+        let easy_bits = CompactTarget::from_consensus(0x207fffff);
+        let (mut manager, chain) = create_regtest_manager_with_chain(5).await;
         let tip = manager.tip().await.unwrap();
         let tip_hash = *tip.hash();
         manager.pipeline.init(0, tip_hash, tip.height());
         manager.pipeline.mark_tip_complete();
         manager.progress.set_state(SyncState::Synced);
 
-        let fake_fork_tip = BlockHash::from_slice(&[0xAB; 32]).unwrap();
-        manager.fork_tip_index.insert(fake_fork_tip, 1);
-
-        // Craft a batch that exceeds MAX_FORK_HEADERS_PER_PEER (4096) so
-        // fork_buffer.ingest returns SyncError::Validation("Fork branch too
-        // large") before the chain-break check. This is not a ForkChainBreak
-        // error and must reach the Err(e) => return Err(e) arm.
-        let oversized_header = Header {
-            version: Version::ONE,
-            prev_blockhash: fake_fork_tip,
-            merkle_root: TxMerkleNode::all_zeros(),
-            time: 1_700_000_000,
-            bits: CompactTarget::from_consensus(0x207fffff),
-            nonce: 0,
-        };
-        let oversized_batch = vec![oversized_header; MAX_FORK_HEADERS_PER_PEER + 1];
-
         let peer: SocketAddr = "1.2.3.4:9999".parse().unwrap();
         let (sender, _rx) = create_test_request_sender();
 
-        let result = manager.handle_headers_pipeline(&oversized_batch, peer, &sender).await;
+        // Buffer a genuine one-block branch off chain[3].
+        let ancestor = chain[3];
+        let fork_a = mine_header(ancestor.block_hash(), ancestor.time + 11 * 600 + 1, easy_bits);
+        manager.handle_headers_pipeline(&[fork_a], peer, &sender).await.unwrap();
+        assert_eq!(manager.fork_buffer.len(), 1);
+
+        // A continuation whose PoW passes but whose bits differ from the DGW
+        // expected value fails validation with a non-ForkChainBreak error, which
+        // must reach the Err(e) => return Err(e) arm.
+        let mut cont = mine_header(fork_a.block_hash(), fork_a.time + 700, easy_bits);
+        cont.bits = CompactTarget::from_consensus(0x2100_ffff);
+
+        let result = manager.handle_headers_pipeline(&[cont], peer, &sender).await;
         assert!(
             matches!(&result, Err(SyncError::Validation(_))),
             "non-ForkChainBreak error must propagate from fork continuation: {:?}",
