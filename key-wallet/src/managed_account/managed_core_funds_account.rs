@@ -179,11 +179,20 @@ impl ManagedCoreFundsAccount {
                     .map(|info| info.address.clone())
                     .collect();
 
-                // Detect a self-send: this account owns at least one input being
-                // spent. `account_match.sent` is computed by matching inputs against
-                // this account's UTXO set, so a non-zero value means we owned at
-                // least one of the spent outpoints.
-                let has_owned_input = account_match.sent > 0;
+                // Detect a trusted self-send, mirroring Bitcoin Core's
+                // `CWalletTx::IsTrusted`: every input must spend one of our own
+                // UTXOs that is itself final (confirmed, InstantSend-locked, or
+                // trusted). Parent trust already carries the recursion, so one
+                // level of lookup is transitive over the whole ancestry. The
+                // spent parents are still present in `self.utxos` here because
+                // they are only removed after the insert loop below. An unknown
+                // or non-final parent denies trust, so funds that the network
+                // may still drop never surface as confirmed.
+                let all_inputs_final_and_ours = tx.input.iter().all(|input| {
+                    self.utxos.get(&input.previous_output).is_some_and(|parent| {
+                        parent.is_confirmed || parent.is_instantlocked || parent.is_trusted
+                    })
+                });
 
                 let txid = tx.txid();
                 let mut utxos_changed = false;
@@ -215,12 +224,13 @@ impl ManagedCoreFundsAccount {
                             }
 
                             // Flag outputs from a "trusted" mempool transaction we created —
-                            // one that spends at least one of our own UTXOs and pays this
-                            // output back to one of our internal (change) addresses. Such
-                            // an output is just our previously-tracked funds returning, so
-                            // `update_balance` credits it to the confirmed bucket even
+                            // one whose inputs all spend our own final UTXOs and which pays
+                            // this output back to one of our internal (change) addresses.
+                            // Such an output is just our previously-tracked funds returning,
+                            // so `update_balance` credits it to the confirmed bucket even
                             // before the parent transaction settles.
-                            let is_trusted_output = has_owned_input && change_addrs.contains(&addr);
+                            let is_trusted_output =
+                                all_inputs_final_and_ours && change_addrs.contains(&addr);
                             let txout = dashcore::TxOut {
                                 value: output.value,
                                 script_pubkey: output.script_pubkey.clone(),
