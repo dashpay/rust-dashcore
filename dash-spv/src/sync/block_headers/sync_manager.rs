@@ -15,7 +15,9 @@ use std::time::{Duration, Instant};
 pub(super) const UNSOLICITED_HEADERS_WAIT_TIMEOUT: Duration = Duration::from_secs(3);
 
 /// Maximum age of a staged fork branch before it is dropped from the buffer.
-pub(super) const FORK_BUFFER_TTL: Duration = Duration::from_secs(60);
+/// Set well above the block spacing so a branch survives long enough for the
+/// next fork block to arrive and extend it.
+const FORK_BUFFER_TTL: Duration = Duration::from_secs(600);
 
 #[async_trait]
 impl<H: BlockHeaderStorage, M: MetadataStorage> SyncManager for BlockHeadersManager<H, M> {
