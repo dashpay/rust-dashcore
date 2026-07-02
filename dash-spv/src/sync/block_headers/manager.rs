@@ -270,9 +270,13 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> BlockHeadersManager<H, M> {
             return Ok(vec![]);
         }
 
-        // Check whether the batch is a fork extension before the pipeline
-        // sees it. A fork extension's `prev_blockhash` is a known active
-        // header whose height is strictly less than our tip.
+        // Classify the batch against the active chain before the pipeline sees
+        // it. A batch is only a real fork when it diverges from what we already
+        // store. Batches that merely re-list headers we hold (lagging or
+        // retrying peers) must not be treated as forks, and an overlapping
+        // batch that also carries new headers must yield its new tail to the
+        // pipeline rather than the fork buffer.
+        let mut pipeline_start = 0usize;
         if let Some(first) = headers.first() {
             let storage = self.header_storage.read().await;
             let prev_height = storage.get_header_height_by_hash(&first.prev_blockhash).await?;
@@ -280,33 +284,61 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> BlockHeadersManager<H, M> {
                 .get_tip_height()
                 .await
                 .ok_or_else(|| SyncError::MissingDependency("no tip height".to_string()))?;
-            drop(storage);
 
             if let Some(prev_h) = prev_height {
-                if prev_h < tip_height {
-                    self.ingest_fork(peer, headers, prev_h).await?;
+                // Compare the batch against the active chain starting one past
+                // the anchor. Only load the overlapping range, up to our tip.
+                let scan_end = (prev_h + 1 + headers.len() as u32).min(tip_height + 1);
+                let stored_overlap = if prev_h + 1 < scan_end {
+                    storage.load_headers(prev_h + 1..scan_end).await?
+                } else {
+                    Vec::new()
+                };
+                drop(storage);
+
+                let mut shared = 0usize;
+                let mut forked = false;
+                for (i, existing) in stored_overlap.iter().enumerate() {
+                    if headers[i].block_hash() == existing.block_hash() {
+                        shared += 1;
+                    } else {
+                        forked = true;
+                        break;
+                    }
+                }
+
+                if forked {
+                    // Diverges at height `prev_h + 1 + shared`, anchored at the
+                    // last header the batch and the active chain share.
+                    self.ingest_fork(peer, &headers[shared..], prev_h + shared as u32).await?;
                     return Ok(Vec::new());
                 }
+                if shared == headers.len() {
+                    // Entire batch is already on the active chain: a duplicate.
+                    return Ok(Vec::new());
+                }
+                // Headers past the shared prefix extend our tip. Hand only that
+                // new tail to the pipeline.
+                pipeline_start = shared;
             } else if let Some(&ancestor_height) = self.fork_tip_index.get(&first.prev_blockhash) {
-                // prev_blockhash is a fork tip, not on the active chain.
-                // Route continuation batches to the fork buffer using the
-                // same ancestor_height as the first batch. Chain-break errors
-                // are swallowed because the second batch anchors at the
-                // active-chain ancestor rather than the buffered fork tip;
-                // proper re-anchoring is deferred to Phase 3.
+                drop(storage);
+                // prev_blockhash is a fork tip, not on the active chain. Route
+                // continuation batches to the fork buffer using the same
+                // ancestor_height as the first batch. A chain break is
+                // swallowed because the continuation anchors at the active-chain
+                // ancestor rather than the buffered fork tip, and penalizing the
+                // peer for that would be wrong.
                 match self.ingest_fork(peer, headers, ancestor_height).await {
                     Ok(()) => {}
                     Err(SyncError::ForkChainBreak(msg)) => {
-                        tracing::debug!(
-                            "fork continuation chain break (deferred to Phase 3): {}",
-                            msg
-                        );
+                        tracing::debug!("fork continuation chain break: {}", msg);
                     }
                     Err(e) => return Err(e),
                 }
                 return Ok(Vec::new());
             }
         }
+        let headers = &headers[pipeline_start..];
 
         let was_syncing = self.state() == SyncState::Syncing;
         let tip_was_complete = self.pipeline.is_tip_complete();
@@ -861,6 +893,41 @@ mod tests {
         .await
         .expect("failed to create regtest manager");
         (manager, chain)
+    }
+
+    #[tokio::test]
+    async fn overlap_batch_with_new_tip_is_stored_via_pipeline_not_buffered() {
+        // A batch whose first header is our current tip and whose second header
+        // is a genuinely new block must not be classified as a fork. It flows
+        // through the normal pipeline, which stores the new tail.
+        let easy_bits = CompactTarget::from_consensus(0x207fffff);
+        let (mut manager, chain) = create_regtest_manager_with_chain(5).await;
+        let tip = manager.tip().await.unwrap();
+        let tip_hash = *tip.hash();
+
+        manager.pipeline.init(0, tip_hash, tip.height());
+        manager.pipeline.mark_tip_complete();
+        manager.progress.set_state(SyncState::Synced);
+
+        let peer: SocketAddr = "1.2.3.4:9999".parse().unwrap();
+        let (sender, _rx) = create_test_request_sender();
+
+        // Overlap: the current tip (chain[4]) followed by a new block.
+        let overlap_tip = *chain.last().unwrap();
+        let new_tip = mine_header(overlap_tip.block_hash(), overlap_tip.time + 600, easy_bits);
+        let events =
+            manager.handle_headers_pipeline(&[overlap_tip, new_tip], peer, &sender).await.unwrap();
+
+        // Not buffered as a fork, and the new tip is stored.
+        assert_eq!(manager.fork_buffer.len(), 0);
+        assert!(manager.take_pending_fork_candidate().is_none());
+        assert_eq!(manager.tip().await.unwrap().height(), 5);
+        assert!(events.iter().any(|e| matches!(
+            e,
+            SyncEvent::BlockHeadersStored {
+                tip_height: 5
+            }
+        )));
     }
 
     #[tokio::test]
