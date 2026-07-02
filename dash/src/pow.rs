@@ -559,8 +559,12 @@ impl U256 {
 
     /// Wrapping (modular) addition. Computes `self + rhs`, wrapping around at the boundary of the
     /// type.
+    ///
+    /// Mirrors dashd's `arith_uint256`, which wraps silently on overflow, where
+    /// the `Add` operator trips a `debug_assert`. Consensus ports reproducing
+    /// dashd's wrapping arithmetic use this method.
     #[must_use = "this returns the result of the operation, without modifying the original"]
-    fn wrapping_add(self, rhs: Self) -> Self {
+    pub fn wrapping_add(self, rhs: Self) -> Self {
         let (ret, _overflow) = self.overflowing_add(rhs);
         ret
     }
@@ -575,9 +579,12 @@ impl U256 {
 
     /// Wrapping (modular) multiplication. Computes `self * rhs`, wrapping around at the boundary of
     /// the type.
+    ///
+    /// Mirrors dashd's `arith_uint256`, which wraps silently on overflow. The
+    /// `Mul` operator instead trips a `debug_assert` on overflow, so consensus
+    /// ports that must reproduce dashd's wrapping arithmetic use this method.
     #[must_use = "this returns the result of the operation, without modifying the original"]
-    #[cfg(test)]
-    fn wrapping_mul(self, rhs: Self) -> Self {
+    pub fn wrapping_mul(self, rhs: Self) -> Self {
         let (ret, _overflow) = self.overflowing_mul(rhs);
         ret
     }

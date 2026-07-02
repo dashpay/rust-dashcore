@@ -68,8 +68,12 @@ pub(crate) fn next_work_required_dgw_v3(
             past_target_avg = target;
         } else {
             // past_target_avg = (past_target_avg * count + target) / (count + 1)
-            past_target_avg =
-                (past_target_avg * U256::from(count) + target) / U256::from(count + 1);
+            //
+            // dashd's arith_uint256 wraps on overflow here, which happens once
+            // targets approach 2^255 (devnet pow_limit). Wrap the multiply and
+            // add to match rather than tripping their debug_asserts.
+            past_target_avg = past_target_avg.wrapping_mul(U256::from(count)).wrapping_add(target)
+                / U256::from(count + 1);
         }
     }
 
@@ -80,7 +84,8 @@ pub(crate) fn next_work_required_dgw_v3(
 
     let actual_clamped = actual.max(target_timespan / 3).min(target_timespan.saturating_mul(3));
 
-    let mut bn_new = past_target_avg * U256::from(actual_clamped) / U256::from(target_timespan);
+    let mut bn_new =
+        past_target_avg.wrapping_mul(U256::from(actual_clamped)) / U256::from(target_timespan);
 
     let limit = U256::from_be_bytes(pow_limit_target.to_be_bytes());
     if bn_new > limit {
@@ -249,6 +254,26 @@ mod tests {
             next,
             bits
         );
+    }
+
+    #[test]
+    fn devnet_pow_limit_window_does_not_overflow() {
+        // Devnet retargets and its pow_limit sits near 2^255, so averaging a
+        // full window multiplies values that overflow 256 bits. dashd's
+        // arith_uint256 wraps silently there; this must return without tripping
+        // the `Mul` debug_assert and stay clamped at or below pow_limit.
+        let params = Params::new(Network::Devnet);
+        let pow_limit_bits = pow_limit_compact(&params);
+        let spacing = DASH_TARGET_SPACING as u32;
+        let window: Vec<Header> = (0..DGW_PAST_BLOCKS)
+            .map(|i| synthetic_header(pow_limit_bits.to_consensus(), 1_500_000_000 + i * spacing))
+            .collect();
+
+        let next = next_work_required_dgw_v3(&window, 100_000, &params);
+
+        let next_u = U256::from_be_bytes(Target::from_compact(next).to_be_bytes());
+        let limit_u = U256::from_be_bytes(pow_limit_target(params.network).to_be_bytes());
+        assert!(next_u <= limit_u, "devnet DGW output must stay clamped at or below pow_limit");
     }
 
     #[test]
