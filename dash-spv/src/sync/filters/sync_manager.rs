@@ -1,7 +1,6 @@
 use crate::error::{SyncError, SyncResult};
 use crate::network::{Message, MessageType, RequestSender};
 use crate::storage::{BlockHeaderStorage, FilterHeaderStorage, FilterStorage};
-use crate::sync::progress::ProgressPercentage;
 use crate::sync::sync_manager::ensure_not_started;
 use crate::sync::{
     FiltersManager, ManagerIdentifier, SyncEvent, SyncManager, SyncManagerProgress, SyncState,
@@ -81,26 +80,13 @@ impl<
             return Ok(events);
         }
 
-        // Already at or beyond stored filters tip - check if fully synced
+        // Already at or beyond stored filters tip - delegate to start_download,
+        // whose early-return path anchors the store and processing cursors at
+        // the frontier and parks the idle pipeline there. Unlike the branch
+        // above this must not emit a SyncStart.
         if stored_filters_tip > 0 && stored_filters_tip == self.progress.committed_height() {
             self.progress.update_filter_header_tip_height(stored_filters_tip);
-            // Initialize the pipeline at the current tip. On full disconnect in-flight state gets
-            // reset, so we need to initialize the pipeline otherwise it would re-queue from height 1.
-            self.filter_pipeline.init(stored_filters_tip + 1, stored_filters_tip);
-            // Only emit SyncComplete if we've also reached the chain tip
-            if self.progress.committed_height() >= self.progress.target_height() {
-                self.set_state(SyncState::Synced);
-                tracing::info!(
-                    "FiltersManager: already synced at height {}",
-                    self.progress.committed_height()
-                );
-                return Ok(vec![SyncEvent::FiltersSyncComplete {
-                    tip_height: stored_filters_tip,
-                }]);
-            }
-            // Caught up to stored filters but chain tip not reached yet
-            self.set_state(SyncState::WaitForEvents);
-            return Ok(vec![]);
+            return self.start_download(requests).await;
         }
 
         // No stored filters to process - wait for FilterHeadersSyncComplete events
