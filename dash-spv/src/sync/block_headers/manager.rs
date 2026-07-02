@@ -109,6 +109,12 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> BlockHeadersManager<H, M> {
     /// Number of ancestor headers DGW v3 requires to compute next bits.
     const DGW_HISTORY: u32 = 24;
 
+    /// Deepest ancestor below the tip a fork may anchor at. ChainLocks make
+    /// reorgs beyond a handful of blocks impossible on Dash, so this bound sits
+    /// far above any realistic reorg while capping the active-chain read a fork
+    /// can trigger from an unauthenticated peer.
+    const MAX_FORK_DEPTH: u32 = 2000;
+
     /// Consume the fork candidate set when a buffered branch overtook the
     /// active chain.
     fn take_pending_fork_candidate(&mut self) -> Option<ForkCandidate> {
@@ -138,6 +144,23 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> BlockHeadersManager<H, M> {
         ancestor_height: u32,
     ) -> SyncResult<()> {
         let storage = self.header_storage.read().await;
+        let tip_height = storage
+            .get_tip_height()
+            .await
+            .ok_or_else(|| SyncError::MissingDependency("no tip height".to_string()))?;
+        // Reject forks anchored deeper than `MAX_FORK_DEPTH` below the tip
+        // before loading any history or the active-chain extension. A single
+        // valid-PoW header at a deep ancestor would otherwise force an
+        // unbounded active-chain read from one unauthenticated peer. ChainLocks
+        // make reorgs this deep impossible on Dash, so the bound is safe.
+        if tip_height.saturating_sub(ancestor_height) > Self::MAX_FORK_DEPTH {
+            return Err(SyncError::Validation(format!(
+                "fork ancestor at height {} exceeds max fork depth {} below tip {}",
+                ancestor_height,
+                Self::MAX_FORK_DEPTH,
+                tip_height
+            )));
+        }
         // Mirror dashd's pre-DGW-window short-circuit: when the ancestor sits
         // below `DGW_HISTORY`, DGW returns `pow_limit` regardless of the
         // window contents, so we only need what storage actually has.
@@ -184,10 +207,6 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> BlockHeadersManager<H, M> {
         };
 
         let storage = self.header_storage.read().await;
-        let tip_height = storage
-            .get_tip_height()
-            .await
-            .ok_or_else(|| SyncError::MissingDependency("no tip height".to_string()))?;
         let active_extension = storage.load_headers(winner_ancestor + 1..tip_height + 1).await?;
         drop(storage);
 
@@ -996,6 +1015,45 @@ mod tests {
         assert!(
             matches!(err, SyncError::Validation(_)),
             "expected a graceful validation error, got {:?}",
+            err
+        );
+        assert_eq!(manager.fork_buffer.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn fork_deeper_than_max_depth_is_rejected_before_loading() {
+        // A fork anchored deeper than MAX_FORK_DEPTH below the tip must be
+        // rejected outright, before any history or active-chain read, so a
+        // single peer cannot force a huge storage load.
+        const FLOOR: u32 = 1_000_000;
+        let easy_bits = CompactTarget::from_consensus(0x207fffff);
+        let mut storage = DiskStorageManager::with_temp_dir().await.unwrap();
+        let mut prev = BlockHash::all_zeros();
+        let mut chain = Vec::new();
+        for i in 0..30u32 {
+            let h = mine_header(prev, 1_700_000_000 + i * 600, easy_bits);
+            prev = h.block_hash();
+            chain.push(h);
+        }
+        storage.store_headers_at_height(&chain, FLOOR).await.unwrap();
+        let mut manager = BlockHeadersManager::new(
+            storage.block_headers(),
+            storage.metadata(),
+            Arc::new(CheckpointManager::new(vec![])),
+            Network::Regtest,
+        )
+        .await
+        .unwrap();
+
+        let tip_height = manager.tip().await.unwrap().height();
+        let ancestor_height = tip_height - (TestBlockHeadersManager::MAX_FORK_DEPTH + 1);
+        let fork = mine_header(chain[0].block_hash(), chain[0].time + 11 * 600 + 1, easy_bits);
+        let peer: SocketAddr = "1.2.3.4:9999".parse().unwrap();
+
+        let err = manager.ingest_fork(peer, &[fork], ancestor_height).await.unwrap_err();
+        assert!(
+            matches!(&err, SyncError::Validation(msg) if msg.contains("max fork depth")),
+            "expected a max-fork-depth validation error, got {:?}",
             err
         );
         assert_eq!(manager.fork_buffer.len(), 0);
