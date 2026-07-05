@@ -326,16 +326,20 @@ impl Wallet {
 
     /// Create a wallet from seed bytes array
     ///
+    /// Takes the seed by reference so a caller holding it in a zeroizing buffer
+    /// can pass `&*buf` without materializing an extra un-scrubbed by-value copy
+    /// of the 64-byte master secret at the call boundary (`[u8; 64]` is `Copy`).
+    ///
     /// # Arguments
     /// * `seed_bytes` - The seed bytes array
     /// * `network` - Network to create accounts for
     /// * `account_creation_options` - Specifies which accounts to create during initialization
     pub fn from_seed_bytes(
-        seed_bytes: [u8; 64],
+        seed_bytes: &[u8; 64],
         network: Network,
         account_creation_options: WalletAccountCreationOptions,
     ) -> Result<Self> {
-        Self::from_seed(Seed::new(seed_bytes), network, account_creation_options)
+        Self::from_seed(Seed::new(*seed_bytes), network, account_creation_options)
     }
 
     /// Create a wallet from an extended private key
