@@ -177,7 +177,7 @@ mod unit_tests {
 
     #[tokio::test]
     async fn test_connection_pool_limits() {
-        let pool = PeerPool::new();
+        let pool = PeerPool::new(8);
 
         // Should start empty
         assert_eq!(pool.peer_count().await, 0);

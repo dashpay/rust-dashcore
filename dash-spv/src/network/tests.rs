@@ -29,12 +29,12 @@ mod pool_tests {
 
     #[tokio::test]
     async fn test_pool_limits() {
-        let pool = PeerPool::new();
+        let pool = PeerPool::new(8);
 
         // Test needs_more_peers logic
         assert!(pool.needs_more_peers().await);
 
-        // Can accept up to TARGET_PEERS
+        // Can accept up to 8 peers
         assert!(pool.can_accept_peers().await);
 
         // Test peer count

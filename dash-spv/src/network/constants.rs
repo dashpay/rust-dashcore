@@ -2,9 +2,6 @@
 
 use std::time::Duration;
 
-// Connection limits
-pub const TARGET_PEERS: usize = 3;
-
 // Timeouts
 pub const CONNECTION_TIMEOUT: Duration = Duration::from_secs(30);
 pub const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
