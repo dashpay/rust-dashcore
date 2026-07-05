@@ -47,6 +47,26 @@ async fn test_sync_restart_consistency() {
     assert_eq!(first_balance, second_balance, "Balance mismatch after restart");
     assert_eq!(first_tx_count, second_tx_count, "Transaction count mismatch after restart");
     tracing::info!("State consistent after restart");
+
+    // A block mined right after a fully-synced restart must commit through the
+    // Filters phase instead of freezing `committed_height` one below the new
+    // tip. `wait_for_sync` checks the filters committed height, so the wedge
+    // surfaces as a timeout here.
+    if ctx.dashd.supports_mining {
+        drop(client_handle);
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        tracing::info!("Restarting fully synced, then mining a boundary block");
+        let mut client_handle = ctx.spawn_new_client().await;
+        wait_for_sync(&mut client_handle.progress_receiver, ctx.dashd.initial_height).await;
+
+        let miner_address = ctx.dashd.node.get_new_address_from_wallet("default");
+        ctx.dashd.node.generate_blocks(1, &miner_address);
+        wait_for_sync(&mut client_handle.progress_receiver, ctx.dashd.initial_height + 1).await;
+        client_handle.stop().await;
+    } else {
+        eprintln!("Skipping boundary-block restart check (dashd RPC miner not available)");
+    }
 }
 
 /// Verify correct rescan behavior when restarting with a fresh wallet but existing storage.
