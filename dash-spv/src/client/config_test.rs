@@ -23,7 +23,7 @@ mod tests {
         assert_eq!(config.validation_mode, ValidationMode::Full);
         assert!(config.enable_filters);
         assert!(config.enable_masternodes);
-        assert_eq!(config.max_peers, 8);
+        assert_eq!(config.max_peers, 3);
 
         // Mempool defaults
         assert!(config.enable_mempool_tracking);
