@@ -958,6 +958,8 @@ mod tests {
         assert!(ctx.transaction(&txid).is_confirmed());
         assert_eq!(ctx.transaction(&txid).height(), Some(1000));
         assert!(ctx.first_utxo().is_confirmed);
+        // The earlier IS lock must survive the mempool→block reprocess.
+        assert!(ctx.first_utxo().is_instantlocked, "IS-lock flag must not be lost on confirmation");
         assert_eq!(ctx.managed_wallet.balance.spendable(), 200_000);
 
         // Stage 4: chain-locked block (rescan with stronger context)
