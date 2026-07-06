@@ -1,7 +1,6 @@
 //! Peer pool for managing multiple peer connections
 
 use crate::error::{NetworkError, SpvError as Error};
-use crate::network::constants::TARGET_PEERS;
 use crate::network::peer::Peer;
 use dashcore::network::constants::ServiceFlags;
 use dashcore::prelude::CoreBlockHeight;
@@ -16,14 +15,21 @@ pub struct PeerPool {
     peers: Arc<RwLock<HashMap<SocketAddr, Arc<RwLock<Peer>>>>>,
     /// Addresses currently being connected to
     connecting: Arc<RwLock<HashSet<SocketAddr>>>,
+    /// Maximum number of simultaneous peer connections (from `ClientConfig::max_peers`).
+    max_peers: usize,
 }
 
 impl PeerPool {
-    /// Create a new peer pool
-    pub fn new() -> Self {
+    /// Create a new peer pool with a connection cap.
+    pub fn new(max_peers: usize) -> Self {
+        // Assert peers are greater than 0. We may change this
+        // so 0 means 'connect to as many peers as you can'
+        debug_assert!(max_peers > 0, "max_peers must be greater than 0 for the spv client to sync");
+
         Self {
             peers: Arc::new(RwLock::new(HashMap::new())),
             connecting: Arc::new(RwLock::new(HashSet::new())),
+            max_peers,
         }
     }
 
@@ -42,10 +48,10 @@ impl PeerPool {
         connecting.remove(&addr);
 
         // Check if we're at capacity
-        if peers.len() >= TARGET_PEERS {
+        if peers.len() >= self.max_peers {
             return Err(Error::Network(NetworkError::ConnectionFailed(format!(
                 "Maximum peers ({}) reached",
-                TARGET_PEERS
+                self.max_peers
             ))));
         }
 
@@ -192,12 +198,12 @@ impl PeerPool {
 
     /// Check if we need more peers
     pub async fn needs_more_peers(&self) -> bool {
-        self.peer_count().await < TARGET_PEERS
+        self.peer_count().await < self.max_peers
     }
 
     /// Check if we can accept more peers
     pub async fn can_accept_peers(&self) -> bool {
-        self.peer_count().await < TARGET_PEERS
+        self.peer_count().await < self.max_peers
     }
 
     /// Remove unhealthy peers and return their addresses so the caller can
@@ -230,7 +236,7 @@ impl PeerPool {
 
 impl Default for PeerPool {
     fn default() -> Self {
-        Self::new()
+        Self::new(8)
     }
 }
 
@@ -249,7 +255,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_peer_pool_basic() {
-        let pool = PeerPool::new();
+        let pool = PeerPool::new(8);
 
         // Initial state
         assert_eq!(pool.peer_count().await, 0);
@@ -265,7 +271,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_service_lookup() {
-        let pool = PeerPool::new();
+        let pool = PeerPool::new(8);
         let compact_filters = ServiceFlags::COMPACT_FILTERS;
         let combined = compact_filters | ServiceFlags::NODE_HEADERS_COMPRESSED;
 

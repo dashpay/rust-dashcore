@@ -1,5 +1,6 @@
 use dash_spv::sync::ProgressPercentage;
 use dashcore::{Address, Amount, Network};
+use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
@@ -425,6 +426,72 @@ async fn test_spend_change_balance() {
     wait_for_mempool_tx(&mut client_handle.wallet_event_receiver, MEMPOOL_TIMEOUT)
         .await
         .expect("detect tx_b");
+
+    client_handle.stop().await;
+}
+
+/// Two transactions built from the same wallet before either is broadcast must
+/// not select the same UTXO. The first build reserves its inputs so the second
+/// build's coin selection skips them, preventing a double-spend the network
+/// would reject. Without the reservation both builds pick the same UTXO and the
+/// `tx_a`/`tx_b` inputs overlap, so the disjoint-input assertion below fails.
+///
+/// The two builds run sequentially: this guards that the first build's
+/// reservation outlives its wallet lock and is observed by the second build,
+/// not that the two builds are scheduled concurrently.
+#[tokio::test]
+async fn test_concurrent_builds_do_not_double_spend() {
+    let Some(ctx) = TestContext::new(TestChain::Minimal).await else {
+        return;
+    };
+    if !ctx.dashd.supports_mining {
+        eprintln!("Skipping test (dashd RPC miner not available)");
+        return;
+    }
+
+    let (wallet, wallet_id) = create_test_wallet(EMPTY_MNEMONIC, Network::Regtest);
+    let mut client_handle = create_and_start_client(&ctx.client_config, Arc::clone(&wallet)).await;
+    wait_for_sync(&mut client_handle.progress_receiver, ctx.dashd.initial_height).await;
+
+    // Fund the wallet with two separate, equal UTXOs at the same receive
+    // address. Either one alone covers a single send, so naive coin selection
+    // would pick the same UTXO for both builds.
+    let receive_address = reserve_first_address(EMPTY_MNEMONIC).await;
+    let utxo_amount = Amount::from_sat(200_000_000);
+    ctx.dashd.node.send_to_address(&receive_address, utxo_amount);
+    ctx.dashd.node.send_to_address(&receive_address, utxo_amount);
+
+    let miner_address = ctx.dashd.node.get_new_address_from_wallet("default");
+    ctx.dashd.node.generate_blocks(1, &miner_address);
+    let funded_height = ctx.dashd.initial_height + 1;
+    wait_for_sync(&mut client_handle.progress_receiver, funded_height).await;
+    wait_for_wallet_synced(&wallet, &wallet_id, funded_height).await;
+
+    // Build both transactions before broadcasting either, so neither spend has
+    // been processed back into the wallet when the second build selects inputs.
+    let dest_a = Address::dummy(Network::Regtest, 1);
+    let dest_b = Address::dummy(Network::Regtest, 2);
+    let (tx_a, _) =
+        build_and_sign(&wallet, &wallet_id, &dest_a, 50_000_000).await.expect("build tx_a");
+    let (tx_b, _) =
+        build_and_sign(&wallet, &wallet_id, &dest_b, 50_000_000).await.expect("build tx_b");
+
+    let inputs_a: HashSet<_> = tx_a.input.iter().map(|i| i.previous_output).collect();
+    let overlap = tx_b.input.iter().any(|i| inputs_a.contains(&i.previous_output));
+    assert!(!overlap, "tx_a and tx_b must not share an input (double-spend)");
+
+    // Both broadcasts succeed and both transactions reach the mempool: a
+    // double-spend would have the second rejected by the network.
+    client_handle.client.broadcast_transaction(&tx_a).await.expect("broadcast tx_a");
+    let detected_a = wait_for_mempool_tx(&mut client_handle.wallet_event_receiver, MEMPOOL_TIMEOUT)
+        .await
+        .expect("detect tx_a");
+    assert_eq!(detected_a, tx_a.txid());
+    client_handle.client.broadcast_transaction(&tx_b).await.expect("broadcast tx_b");
+    let detected_b = wait_for_mempool_tx(&mut client_handle.wallet_event_receiver, MEMPOOL_TIMEOUT)
+        .await
+        .expect("detect tx_b");
+    assert_eq!(detected_b, tx_b.txid());
 
     client_handle.stop().await;
 }
