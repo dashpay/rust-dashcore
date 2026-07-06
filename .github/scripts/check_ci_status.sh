@@ -8,11 +8,19 @@ set -euo pipefail
 PR_NUMBER="$1"
 REPO="$2"
 
-# gh pr checks exits 8 when any check is still pending and non-zero when any
-# check fails, even with --json. Capture the JSON and ignore that exit status so
-# the jq rollup below classifies the state instead of aborting the caller under
-# set -e. Empty output means gh reported no checks at all.
-CHECKS=$(gh pr checks "$PR_NUMBER" --repo "$REPO" --json name,bucket 2>/dev/null) || true
+# gh pr checks signals check state through its exit code: 0 when every check
+# passed (and, with --json, also when some failed), 8 when checks are still
+# pending. Any other code is gh itself failing (auth, rate limit, network,
+# unknown PR); surface that instead of misreading it as an empty check set,
+# which would silently strip the label and hide the error. Keep stderr visible.
+set +e
+CHECKS=$(gh pr checks "$PR_NUMBER" --repo "$REPO" --json name,bucket)
+EXIT=$?
+set -e
+
+if [ "$EXIT" -ne 0 ] && [ "$EXIT" -ne 8 ]; then
+  exit "$EXIT"
+fi
 
 if [ -z "$CHECKS" ]; then
   echo "no_checks"
