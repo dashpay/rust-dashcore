@@ -56,6 +56,7 @@ pub struct TransactionBuilder {
     fee_rate: FeeRate,
     current_height: u32,
     selection_strategy: SelectionStrategy,
+    require_final_inputs: bool,
     /// Special transaction payload for Dash-specific transactions
     special_payload: Option<TransactionPayload>,
     /// Reservation set of the funding account, captured by `set_funding`. The
@@ -80,9 +81,21 @@ impl TransactionBuilder {
             fee_rate: FeeRate::normal(),
             current_height: 0,
             selection_strategy: SelectionStrategy::BranchAndBound,
+            require_final_inputs: false,
             special_payload: None,
             reservations: None,
         }
+    }
+
+    /// Restrict coin selection to final inputs: confirmed or
+    /// InstantSend-locked UTXOs. Per DIP-0010 only such inputs are
+    /// InstantSend-eligible, so transactions that must receive an
+    /// InstantSend lock themselves (e.g. asset locks funding Platform
+    /// credits) must never spend other mempool outputs, including our
+    /// own trusted change.
+    pub fn require_final_inputs(mut self) -> Self {
+        self.require_final_inputs = true;
+        self
     }
 
     pub fn set_current_height(mut self, current_height: u32) -> Self {
@@ -300,6 +313,10 @@ impl TransactionBuilder {
             }
             _ => self.outputs.iter().map(|o| o.value).sum(),
         };
+
+        if self.require_final_inputs {
+            self.inputs.retain(|utxo| utxo.is_confirmed || utxo.is_instantlocked);
+        }
 
         let selection = CoinSelector::new(self.selection_strategy)
             .select_coins_with_size(

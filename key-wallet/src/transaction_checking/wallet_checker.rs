@@ -1815,6 +1815,86 @@ mod tests {
     }
 
     /// Sibling of `test_self_send_change_in_mempool_lands_in_confirmed_balance`:
+    /// a self-send change output is only trusted when the spent parent is
+    /// itself final. `Utxo::is_trusted` mirrors Bitcoin Core's
+    /// `CWalletTx::IsTrusted`, which is recursive: a 0-conf output is trusted
+    /// only if every parent resolves to confirmed, InstantSend-locked, or
+    /// trusted. Change spending an unconfirmed external parent must therefore
+    /// stay in the unconfirmed bucket, otherwise non-final funds surface as
+    /// confirmed/spendable and downstream asset locks get built on them.
+    #[tokio::test]
+    async fn test_self_send_change_with_unconfirmed_parent_is_not_trusted() {
+        let mut ctx = TestWalletContext::new_random();
+        let external_address = Address::p2pkh(
+            &dashcore::PublicKey::from_slice(&[0x02; 33]).expect("pubkey"),
+            Network::Testnet,
+        );
+
+        // Unconfirmed external funding UTXO: the parent stays in the mempool.
+        let funding_value = 1_000_000u64;
+        let funding_tx = Transaction::dummy(&ctx.receive_address, 0..1, &[funding_value]);
+        ctx.check_transaction(&funding_tx, TransactionContext::Mempool).await;
+        assert_eq!(ctx.managed_wallet.balance.confirmed(), 0);
+        assert_eq!(ctx.managed_wallet.balance.unconfirmed(), funding_value);
+
+        let change_address = ctx
+            .managed_wallet
+            .first_bip44_managed_account_mut()
+            .expect("account")
+            .next_change_address(Some(&ctx.xpub), true)
+            .expect("change address");
+
+        // Spend the still-unconfirmed funding UTXO: some out, the rest back
+        // to ourselves as change, broadcast into the mempool.
+        let send_amount = 600_000u64;
+        let fee = 1_000u64;
+        let change_amount = funding_value - send_amount - fee;
+        let spend_tx = Transaction {
+            version: 2,
+            lock_time: 0,
+            input: vec![TxIn {
+                previous_output: OutPoint {
+                    txid: funding_tx.txid(),
+                    vout: 0,
+                },
+                script_sig: ScriptBuf::new(),
+                sequence: 0xffffffff,
+                witness: dashcore::Witness::new(),
+            }],
+            output: vec![
+                TxOut {
+                    value: send_amount,
+                    script_pubkey: external_address.script_pubkey(),
+                },
+                TxOut {
+                    value: change_amount,
+                    script_pubkey: change_address.script_pubkey(),
+                },
+            ],
+            special_transaction_payload: None,
+        };
+        ctx.check_transaction(&spend_tx, TransactionContext::Mempool).await;
+
+        let change_outpoint = OutPoint {
+            txid: spend_tx.txid(),
+            vout: 1,
+        };
+        let change_utxo =
+            ctx.bip44_account().utxos.get(&change_outpoint).expect("change UTXO recorded");
+
+        assert!(
+            !change_utxo.is_trusted,
+            "change spending an unconfirmed parent must not be trusted"
+        );
+        assert_eq!(
+            ctx.managed_wallet.balance.confirmed(),
+            0,
+            "non-final funds must not be counted as confirmed"
+        );
+        assert_eq!(ctx.managed_wallet.balance.unconfirmed(), change_amount);
+    }
+
+    /// Sibling of `test_self_send_change_in_mempool_lands_in_confirmed_balance`:
     /// when the wallet receives a mempool payment but does not own any of the
     /// inputs, an output that happens to land on one of our addresses must
     /// remain in the unconfirmed bucket. The "self-send" carve-out only applies
