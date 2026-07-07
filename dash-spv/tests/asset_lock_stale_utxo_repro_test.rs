@@ -222,15 +222,21 @@ async fn stale_spent_utxo_still_reported_selectable_after_persisted_reload() {
         let wm = wallet.read().await;
         let raw_wallet = wm.get_wallet(&wallet_id).expect("wallet registered").clone();
         let info = wm.get_wallet_info(&wallet_id).expect("wallet info registered");
-        let info_bytes = serde_json::to_vec(info).expect("serialize ManagedWalletInfo");
+        // bincode's serde-compat shim, not serde_json: ManagedWalletInfo's
+        // internal maps are keyed by non-string types (e.g. OutPoint), which
+        // JSON's object-key model cannot represent (verified: serde_json
+        // fails with "key must be a string" on this exact type).
+        let info_bytes = bincode::serde::encode_to_vec(info, bincode::config::standard())
+            .expect("serialize ManagedWalletInfo");
         (wallet_id, raw_wallet, info_bytes)
         // wallet_manager (and its client) drop here — nothing carries over
         // in-memory into phase 2 except these three plain values.
     };
 
     // ---- Phase 2: genuine reload into a brand-new WalletManager + client ----
-    let restored_info: ManagedWalletInfo =
-        serde_json::from_slice(&info_bytes).expect("deserialize ManagedWalletInfo");
+    let (restored_info, _): (ManagedWalletInfo, usize) =
+        bincode::serde::decode_from_slice(&info_bytes, bincode::config::standard())
+            .expect("deserialize ManagedWalletInfo");
 
     let mut wallet_manager2 = WalletManager::<ManagedWalletInfo>::new(Network::Testnet);
     let reloaded_wallet_id = wallet_manager2

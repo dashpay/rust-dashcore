@@ -56,6 +56,7 @@ dash-spv = { path = ".", features = ["test-utils"] }
 dashcore = { path = "../dash", features = ["test-utils"] }
 key-wallet = { path = "../key-wallet", features = ["test-utils", "bincode"] }
 key-wallet-manager = { path = "../key-wallet-manager", features = ["test-utils"] }
+bincode = { version = "2.0.1", features = ["serde"] }
 criterion = { version = "0.8.1", features = ["async_tokio"] }
 tempfile = "3.0"
 tokio-test = "0.4"
