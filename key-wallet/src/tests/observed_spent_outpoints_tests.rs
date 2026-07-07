@@ -1,0 +1,700 @@
+//! Tests for the wallet-level observed-spent-outpoint guard
+//! (dashpay/rust-dashcore#649).
+//!
+//! Issue #649: a spend delivered out of order (before the transaction that
+//! funded the coin it spends, as happens during a scrambled rescan) left the
+//! funding UTXO permanently tracked once its funding block was finally
+//! processed. The fix records every outpoint observed spent in a processed
+//! block into a wallet-level, classification-independent, persisted set
+//! (`ManagedWalletInfo::observed_spent_outpoints`) and reconciles it against
+//! both the spend side (drop the coin whichever account holds it) and the
+//! funding side (drop a just-inserted output already observed spent).
+//!
+//! Invariants exercised here:
+//! - **K-INV-649** (primary): an outpoint observed spent in a block is never
+//!   present in any account's live `utxos`, in either delivery order.
+//! - **K-INV-649-PERSIST**: the invalidation survives a serialize/deserialize
+//!   (restart) cycle.
+//! - **K-INV-649-BOUND**: set growth is bounded by the inputs of matched
+//!   blocks — no dedup loss, no superlinear cost.
+//! - **K-INV-649-SCOPE**: only block-confirmed contexts populate the set;
+//!   mempool / InstantSend-only spends do not, and self-heal on confirmation.
+//! - **K-INV-649-NOREGRESS**: in-order matched spends behave exactly as before.
+
+use std::collections::BTreeMap;
+use std::time::Instant;
+
+use dashcore::blockdata::transaction::special_transaction::asset_lock::AssetLockPayload;
+use dashcore::blockdata::transaction::special_transaction::TransactionPayload;
+use dashcore::blockdata::transaction::{OutPoint, Transaction};
+use dashcore::ephemerealdata::instant_lock::InstantLock;
+use dashcore::prelude::CoreBlockHeight;
+use dashcore::{Address, Network, ScriptBuf, TxIn, TxOut, Witness};
+
+use crate::account::{AccountType, StandardAccountType};
+use crate::managed_account::managed_account_trait::ManagedAccountTrait;
+use crate::managed_account::ManagedCoreFundsAccount;
+use crate::test_utils::TestWalletContext;
+use crate::transaction_checking::{
+    BlockInfo, TransactionContext, TransactionRouter, TransactionType,
+};
+use crate::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
+use crate::wallet::managed_wallet_info::ManagedWalletInfo;
+
+/// A block-confirmed context at `height` with a height-derived block hash.
+fn block_ctx(height: u32) -> TransactionContext {
+    TransactionContext::InBlock(BlockInfo::new(
+        height,
+        dashcore::BlockHash::dummy(height),
+        1_650_000_000 + height,
+    ))
+}
+
+/// A transaction spending `inputs` and paying `value` to an unrelated external
+/// address (`ext_id` selects a distinct dummy address). No change back to us.
+fn spend_to_external(inputs: &[OutPoint], value: u64, ext_id: usize) -> Transaction {
+    Transaction {
+        version: 2,
+        lock_time: 0,
+        input: inputs
+            .iter()
+            .map(|op| TxIn {
+                previous_output: *op,
+                script_sig: ScriptBuf::new(),
+                sequence: 0xffffffff,
+                witness: Witness::new(),
+            })
+            .collect(),
+        output: vec![TxOut {
+            value,
+            script_pubkey: Address::dummy(Network::Testnet, ext_id).script_pubkey(),
+        }],
+        special_transaction_payload: None,
+    }
+}
+
+/// Does any funding account currently hold a live UTXO at `outpoint`?
+fn utxo_tracked(wallet: &ManagedWalletInfo, outpoint: &OutPoint) -> bool {
+    wallet.accounts.all_funding_accounts().iter().any(|a| a.utxos.contains_key(outpoint))
+}
+
+/// Round-trip only the `observed_spent_outpoints` field through JSON (its
+/// persisted, `(OutPoint, height)`-pair form) and return the reloaded map.
+///
+/// A full `ManagedWalletInfo` cannot round-trip through JSON once its address
+/// pools are populated — `AddressPool::script_pubkey_index` is a
+/// `HashMap<ScriptBuf, u32>`, and `ScriptBuf` is not a valid JSON object key —
+/// so wallets are not persisted via JSON in practice. The field's own serde
+/// adapter (validated on a pool-free wallet in
+/// `observed_spent_outpoints_round_trips_through_serde`) uses the pair form
+/// precisely to avoid that, and this helper exercises the same encoding to model
+/// what a reload restores without fighting the unrelated pool limitation.
+fn reload_observed_field(wallet: &ManagedWalletInfo) -> BTreeMap<OutPoint, CoreBlockHeight> {
+    let pairs: Vec<(OutPoint, CoreBlockHeight)> =
+        wallet.observed_spent_outpoints().iter().map(|(k, v)| (*k, *v)).collect();
+    let json = serde_json::to_string(&pairs).expect("serialize field");
+    serde_json::from_str::<Vec<(OutPoint, CoreBlockHeight)>>(&json)
+        .expect("deserialize field")
+        .into_iter()
+        .collect()
+}
+
+// ── observed_spent_outpoints serde round-trip + default ──────
+
+/// The field's `#[serde(default, with = ...)]` adapter round-trips through a
+/// real full-struct JSON serialize/deserialize (on a pool-free wallet, which is
+/// the only kind that can JSON-serialize) and defaults to empty when the key is
+/// absent — the persistence + backward-compat contract (K-INV-649-PERSIST).
+#[test]
+fn observed_spent_outpoints_round_trips_through_serde() {
+    let mut wallet = ManagedWalletInfo::new(Network::Testnet, [7u8; 32]);
+    let outpoint = OutPoint::new(dashcore::Txid::from([0x5A; 32]), 3);
+    wallet.record_observed_spends(&spend_to_external(&[outpoint], 1, 70), 1234);
+
+    // Full-struct round-trip (pool-free wallet → JSON works).
+    let json = serde_json::to_string(&wallet).expect("serialize minimal wallet");
+    let restored: ManagedWalletInfo = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(
+        restored.observed_spent_outpoints().get(&outpoint).copied(),
+        Some(1234),
+        "the field survives a full-struct serde round-trip"
+    );
+
+    // Backward compat: a snapshot missing the key loads to an empty set.
+    let mut value: serde_json::Value = serde_json::from_str(&json).expect("to value");
+    value.as_object_mut().expect("object").remove("observed_spent_outpoints");
+    let stripped = serde_json::to_string(&value).expect("reserialize");
+    let loaded: ManagedWalletInfo =
+        serde_json::from_str(&stripped).expect("load pre-field snapshot");
+    assert!(loaded.observed_spent_outpoints().is_empty(), "#[serde(default)] supplies empty set");
+}
+
+// ── reject funding after a reload of the persisted set ──
+
+/// The spend recorded in session 1 both (a) already excludes the coin in-memory
+/// before the restart and (b) still excludes it after the persisted set is
+/// reloaded and the funding arrives post-restart — proving the reject depends
+/// solely on the persisted `observed_spent_outpoints`, not transient state.
+#[tokio::test]
+async fn restored_observed_spend_rejects_funding_after_reload() {
+    let mut ctx = TestWalletContext::new_random();
+
+    let funding_value = 1_000_000u64;
+    let funding_tx = Transaction::dummy(&ctx.receive_address, 0..1, &[funding_value]);
+    let funding_outpoint = OutPoint::new(funding_tx.txid(), 0);
+    let spend_tx = spend_to_external(&[funding_outpoint], funding_value - 1_000, 51);
+
+    // Session 1: process the spend block first; assert the pre-restart state.
+    ctx.check_transaction(&spend_tx, block_ctx(200)).await;
+    assert!(
+        ctx.managed_wallet.observed_spent_outpoints().contains_key(&funding_outpoint),
+        "spend seen in a block must record the observed-spent outpoint"
+    );
+    assert!(
+        !utxo_tracked(&ctx.managed_wallet, &funding_outpoint),
+        "coin must not be tracked pre-restart (recording actually happened)"
+    );
+
+    // Restart: wipe the in-memory set and reload it from its persisted form.
+    let reloaded = reload_observed_field(&ctx.managed_wallet);
+    ctx.managed_wallet.observed_spent_outpoints.clear();
+    ctx.managed_wallet.observed_spent_outpoints = reloaded;
+    assert!(
+        ctx.managed_wallet.observed_spent_outpoints().contains_key(&funding_outpoint),
+        "persisted set restores the recorded spend"
+    );
+
+    // Session 2: the funding block finally arrives.
+    ctx.check_transaction(&funding_tx, block_ctx(100)).await;
+    assert!(
+        !utxo_tracked(&ctx.managed_wallet, &funding_outpoint),
+        "BUG #649: funding coin resurrected after restart despite reloaded spend record"
+    );
+}
+
+// ── normal order unaffected, no double removal ───────────────────────
+
+/// In-order funding-then-spend: the coin is inserted then removed exactly once
+/// via the existing `update_utxos` path, the spend record still attributes the
+/// input value (recording is insert-only, so `input_details` survive), and the
+/// new seam adds no second monitor-revision bump (K-INV-649-NOREGRESS).
+#[tokio::test]
+async fn in_order_spend_records_observed_outpoint_without_double_removal() {
+    let mut ctx = TestWalletContext::new_random();
+
+    let funding_value = 5_000_000u64;
+    let funding_tx = Transaction::dummy(&ctx.receive_address, 0..1, &[funding_value]);
+    let funding_outpoint = OutPoint::new(funding_tx.txid(), 0);
+
+    ctx.check_transaction(&funding_tx, block_ctx(100)).await;
+    let account = ctx.managed_wallet.first_bip44_managed_account().expect("account");
+    assert!(account.utxos.contains_key(&funding_outpoint), "funding coin inserted in order");
+    let rev_after_funding = account.monitor_revision();
+
+    let spend_tx = spend_to_external(&[funding_outpoint], funding_value - 1_000, 52);
+    ctx.check_transaction(&spend_tx, block_ctx(101)).await;
+
+    let account = ctx.managed_wallet.first_bip44_managed_account().expect("account");
+    assert!(account.utxos.is_empty(), "spent coin removed");
+    assert_eq!(
+        account.monitor_revision(),
+        rev_after_funding + 1,
+        "the spend must bump the monitor revision exactly once — no double removal"
+    );
+    assert_eq!(ctx.managed_wallet.balance.total(), 0, "no phantom balance after the spend");
+    assert!(
+        ctx.managed_wallet.observed_spent_outpoints().contains_key(&funding_outpoint),
+        "the input is recorded even on the in-order (matched) path"
+    );
+    // The record still carries the spent input's value: recording is insert-only
+    // and never removes the coin before `record_transaction` reads it.
+    let record = account.transactions().get(&spend_tx.txid()).expect("spend recorded");
+    assert_eq!(record.net_amount, -(funding_value as i64), "input value attributed to the spend");
+    assert_eq!(record.input_details.len(), 1, "input_details preserved by insert-only recording");
+}
+
+// ── multi-input spend, partial ownership ─────────────────────────────
+
+/// A single spend consuming two owned outpoints (A, B) and one the wallet never
+/// tracks (C), delivered before any funding: every input is recorded (set grows
+/// by exactly 3), processing never panics on the unowned C, and neither A nor B
+/// resurfaces once their funding blocks arrive.
+#[tokio::test]
+async fn multi_input_spend_records_each_input_including_unowned() {
+    let mut ctx = TestWalletContext::new_random();
+
+    let fund_a = Transaction::dummy(&ctx.receive_address, 0..1, &[700_000]);
+    let fund_b = Transaction::dummy(&ctx.receive_address, 1..2, &[800_000]);
+    let outpoint_a = OutPoint::new(fund_a.txid(), 0);
+    let outpoint_b = OutPoint::new(fund_b.txid(), 0);
+    // C belongs to nobody the wallet tracks.
+    let outpoint_c = OutPoint::new(dashcore::Txid::from([0xCC; 32]), 7);
+
+    let spend = spend_to_external(&[outpoint_a, outpoint_b, outpoint_c], 1_400_000, 53);
+    let before = ctx.managed_wallet.observed_spent_outpoints().len();
+    ctx.check_transaction(&spend, block_ctx(300)).await; // must not panic on C
+    let after = ctx.managed_wallet.observed_spent_outpoints().len();
+    assert_eq!(after - before, 3, "one observed-spent entry per input, not conflated per-tx");
+    for op in [outpoint_a, outpoint_b, outpoint_c] {
+        assert!(ctx.managed_wallet.observed_spent_outpoints().contains_key(&op));
+    }
+
+    // Funding for A then B arrives out of order — neither may become live.
+    ctx.check_transaction(&fund_a, block_ctx(200)).await;
+    ctx.check_transaction(&fund_b, block_ctx(201)).await;
+    assert!(!utxo_tracked(&ctx.managed_wallet, &outpoint_a), "A must not resurface");
+    assert!(!utxo_tracked(&ctx.managed_wallet, &outpoint_b), "B must not resurface");
+}
+
+// ── irrelevant-block noise, bounded growth ───────────────────────────
+
+/// Interleaving many unrelated multi-input spends with the wallet's own
+/// funding/spend pair yields the same final wallet state as the pair alone, and
+/// grows the set by exactly the total input count observed — never the whole
+/// chain (K-INV-649-BOUND).
+#[tokio::test]
+async fn irrelevant_block_noise_grows_set_by_total_inputs_only() {
+    let mut ctx = TestWalletContext::new_random();
+
+    let funding_value = 2_000_000u64;
+    let funding_tx = Transaction::dummy(&ctx.receive_address, 0..1, &[funding_value]);
+    let funding_outpoint = OutPoint::new(funding_tx.txid(), 0);
+    let spend_tx = spend_to_external(&[funding_outpoint], funding_value - 1_000, 54);
+
+    let mut expected_inputs = 0usize;
+    // 50 unrelated 2-input spends touching nothing of ours.
+    for i in 0..50u32 {
+        let a = OutPoint::new(dashcore::Txid::from([(i as u8).wrapping_add(1); 32]), 0);
+        let b = OutPoint::new(dashcore::Txid::from([(i as u8).wrapping_add(1); 32]), 1);
+        let noise = spend_to_external(&[a, b], 10_000, 100 + i as usize);
+        expected_inputs += 2;
+        ctx.check_transaction(&noise, block_ctx(400 + i)).await;
+    }
+
+    ctx.check_transaction(&funding_tx, block_ctx(500)).await;
+    expected_inputs += 1; // funding's own synthetic input
+    ctx.check_transaction(&spend_tx, block_ctx(501)).await;
+    expected_inputs += 1; // the spend's input (= funding_outpoint)
+
+    assert_eq!(
+        ctx.managed_wallet.observed_spent_outpoints().len(),
+        expected_inputs,
+        "set size equals total observed inputs — bounded to block activity, not chain history"
+    );
+    assert!(
+        !utxo_tracked(&ctx.managed_wallet, &funding_outpoint),
+        "the real funding/spend pair still resolves correctly amid the noise"
+    );
+    assert_eq!(ctx.managed_wallet.balance.total(), 0);
+}
+
+// ── backward-compatible load of a pre-fix snapshot ───────────────────
+
+/// A wallet loaded from a pre-fix snapshot (empty `observed_spent_outpoints`, as
+/// `#[serde(default)]` supplies) protects newly observed out-of-order spends, and
+/// is explicitly NOT retroactively corrected for spends it mis-processed before
+/// the fix existed — the empty loaded set means no magic backfill.
+#[tokio::test]
+async fn pre_fix_snapshot_without_field_loads_and_protects_new_spends() {
+    let mut ctx = TestWalletContext::new_random();
+    // A pre-fix load presents an empty set (the #[serde(default)] result, checked
+    // directly in `observed_spent_outpoints_round_trips_through_serde`).
+    assert!(
+        ctx.managed_wallet.observed_spent_outpoints().is_empty(),
+        "no historical record is fabricated for a pre-fix wallet"
+    );
+
+    // A new out-of-order spend observed post-load IS protected.
+    let funding_value = 3_000_000u64;
+    let funding_tx = Transaction::dummy(&ctx.receive_address, 0..1, &[funding_value]);
+    let funding_outpoint = OutPoint::new(funding_tx.txid(), 0);
+    let spend_tx = spend_to_external(&[funding_outpoint], funding_value - 1_000, 55);
+
+    ctx.check_transaction(&spend_tx, block_ctx(200)).await;
+    ctx.check_transaction(&funding_tx, block_ctx(100)).await;
+    assert!(
+        !utxo_tracked(&ctx.managed_wallet, &funding_outpoint),
+        "post-load out-of-order spend is protected"
+    );
+}
+
+// ── unbounded-growth stress, bounded and roughly linear ──────────────
+
+/// Many filter-matched blocks of orphaned spends (funding never arrives) do not
+/// panic, keep exactly one entry per observed input (no dedup loss), and do not
+/// exhibit superlinear per-block cost as the set grows (K-INV-649-BOUND, §5.5).
+#[tokio::test]
+async fn many_orphaned_spend_blocks_stay_bounded_and_linear() {
+    let mut ctx = TestWalletContext::new_random();
+
+    const CHUNKS: u32 = 4;
+    const PER_CHUNK: u32 = 500;
+    const INPUTS_PER_TX: usize = 3;
+    let mut durations = Vec::new();
+
+    for chunk in 0..CHUNKS {
+        let start = Instant::now();
+        for i in 0..PER_CHUNK {
+            let n = chunk * PER_CHUNK + i;
+            // Distinct, never-owned outpoints per tx (unique txid seed per block).
+            let seed = n.to_le_bytes();
+            let inputs: Vec<OutPoint> = (0..INPUTS_PER_TX as u32)
+                .map(|v| {
+                    let mut b = [0u8; 32];
+                    b[..4].copy_from_slice(&seed);
+                    b[4] = v as u8;
+                    OutPoint::new(dashcore::Txid::from(b), v)
+                })
+                .collect();
+            let tx = spend_to_external(&inputs, 1_000, 200 + (n as usize % 40));
+            ctx.check_transaction(&tx, block_ctx(1_000 + n)).await;
+        }
+        durations.push(start.elapsed());
+    }
+
+    let total = (CHUNKS * PER_CHUNK) as usize * INPUTS_PER_TX;
+    assert_eq!(
+        ctx.managed_wallet.observed_spent_outpoints().len(),
+        total,
+        "exactly one entry per observed input — no silent dedup or loss"
+    );
+    // Superlinear (O(n^2)) growth would make the last chunk dramatically slower
+    // than the first; a generous bound catches that without timing flakiness.
+    let first = durations.first().copied().unwrap().as_secs_f64().max(1e-4);
+    let last = durations.last().copied().unwrap().as_secs_f64();
+    assert!(
+        last < first * 12.0,
+        "per-chunk cost must stay roughly flat (first={first:.4}s last={last:.4}s)"
+    );
+}
+
+// ── same outpoint spent in two blocks, last-write-wins ───────────────
+
+/// Recording the same outpoint from two different-height blocks keeps a single
+/// entry at the last-inserted height (`BTreeMap::insert` overwrite semantics) —
+/// pinned so a future height-keyed pruning policy can rely on it.
+#[tokio::test]
+async fn same_outpoint_spent_in_two_blocks_keeps_last_height() {
+    let ctx = TestWalletContext::new_random();
+    let mut wallet = ctx.managed_wallet;
+
+    let outpoint = OutPoint::new(dashcore::Txid::from([0xA1; 32]), 0);
+    let spend = spend_to_external(&[outpoint], 9_000, 60);
+
+    wallet.record_observed_spends(&spend, 111);
+    wallet.record_observed_spends(&spend, 222);
+
+    assert_eq!(wallet.observed_spent_outpoints().len(), 1, "single entry, not a multimap");
+    assert_eq!(
+        wallet.observed_spent_outpoints().get(&outpoint).copied(),
+        Some(222),
+        "last write wins on height"
+    );
+}
+
+// ── orphaned spend never expires (no pruning) ────────────────────────
+
+/// The v1 "no pruning" decision is implemented, not just documented: however far
+/// `last_processed_height` advances past the observed spend, the funding coin is
+/// still rejected when it finally arrives.
+#[tokio::test]
+async fn orphaned_spend_never_expires_no_pruning() {
+    let mut ctx = TestWalletContext::new_random();
+
+    let funding_value = 4_000_000u64;
+    let funding_tx = Transaction::dummy(&ctx.receive_address, 0..1, &[funding_value]);
+    let funding_outpoint = OutPoint::new(funding_tx.txid(), 0);
+    let spend_tx = spend_to_external(&[funding_outpoint], funding_value - 1_000, 61);
+
+    ctx.check_transaction(&spend_tx, block_ctx(50)).await;
+    // Advance far past any plausible pruning horizon.
+    ctx.managed_wallet.update_last_processed_height(1_000_050);
+
+    ctx.check_transaction(&funding_tx, block_ctx(60)).await;
+    assert!(
+        !utxo_tracked(&ctx.managed_wallet, &funding_outpoint),
+        "no TTL/expiry: the observed spend still invalidates the funding a million blocks later"
+    );
+    assert!(ctx.managed_wallet.observed_spent_outpoints().contains_key(&funding_outpoint));
+}
+
+// ── cross-account-type routing gap ───────────────────────────────────
+
+/// A CoinJoin-owned coin spent by an AssetLock-classified transaction (whose
+/// `relevant_types` exclude CoinJoin) must still be invalidated when its funding
+/// arrives later — recording and reconciliation are independent of the spending
+/// transaction's classification (the cross-account-type routing gap).
+#[tokio::test]
+async fn coinjoin_utxo_spent_by_asset_lock_classified_tx_still_invalidated() {
+    let mut ctx = TestWalletContext::new_random();
+
+    // Derive a CoinJoin address (Default account options create the account).
+    // CoinJoin accounts are spend-only for the Standard receive/change paths, so
+    // their addresses come from the generic `next_address` pool accessor.
+    let cj_xpub = ctx.wallet.get_coinjoin_account(0).expect("coinjoin account").account_xpub;
+    let cj_address = ctx
+        .managed_wallet
+        .first_coinjoin_managed_account_mut()
+        .expect("managed coinjoin account")
+        .next_address(Some(&cj_xpub), true)
+        .expect("coinjoin address");
+
+    let funding_value = 1_500_000u64;
+    let funding_tx = Transaction::dummy(&cj_address, 0..1, &[funding_value]);
+    let funding_outpoint = OutPoint::new(funding_tx.txid(), 0);
+
+    // The spend classifies as AssetLock via its special payload, which narrows
+    // relevant account types to exclude CoinJoin.
+    let mut spend_tx = spend_to_external(&[funding_outpoint], funding_value - 1_000, 62);
+    spend_tx.special_transaction_payload =
+        Some(TransactionPayload::AssetLockPayloadType(AssetLockPayload::new(vec![])));
+    assert_eq!(
+        TransactionRouter::classify_transaction(&spend_tx),
+        TransactionType::AssetLock,
+        "spend must classify as AssetLock for this scenario to bite",
+    );
+
+    // Spend block processed before the CoinJoin funding block.
+    ctx.check_transaction(&spend_tx, block_ctx(700)).await;
+    assert!(
+        ctx.managed_wallet.observed_spent_outpoints().contains_key(&funding_outpoint),
+        "recording must be un-gated by the spend's AssetLock classification"
+    );
+
+    ctx.check_transaction(&funding_tx, block_ctx(600)).await;
+    assert!(
+        !utxo_tracked(&ctx.managed_wallet, &funding_outpoint),
+        "BUG #649: CoinJoin coin resurrected because the spend routed away from CoinJoin"
+    );
+}
+
+// ── dual bookkeeping consistency ─────────────────────────────────────
+
+/// An in-order matched spend populates both the per-account derived
+/// `spent_outpoints` (via the existing `update_utxos` path — proven behaviorally
+/// by a re-processed funding staying rejected) and the wallet-level
+/// `observed_spent_outpoints`, with no double-decrement or double bump.
+#[tokio::test]
+async fn in_order_spend_populates_both_peraccount_and_wallet_sets() {
+    let mut ctx = TestWalletContext::new_random();
+
+    let funding_value = 6_000_000u64;
+    let funding_tx = Transaction::dummy(&ctx.receive_address, 0..1, &[funding_value]);
+    let funding_outpoint = OutPoint::new(funding_tx.txid(), 0);
+    ctx.check_transaction(&funding_tx, block_ctx(100)).await;
+    let rev_after_funding =
+        ctx.managed_wallet.first_bip44_managed_account().expect("account").monitor_revision();
+
+    let spend_tx = spend_to_external(&[funding_outpoint], funding_value - 1_000, 63);
+    ctx.check_transaction(&spend_tx, block_ctx(101)).await;
+
+    // Wallet-level set: directly observable.
+    assert!(ctx.managed_wallet.observed_spent_outpoints().contains_key(&funding_outpoint));
+    let account = ctx.managed_wallet.first_bip44_managed_account().expect("account");
+    assert!(account.utxos.is_empty());
+    assert_eq!(account.monitor_revision(), rev_after_funding + 1, "exactly one bump for the spend");
+    assert_eq!(ctx.managed_wallet.balance.total(), 0, "no double-decrement");
+
+    // Per-account derived set: proven behaviorally — re-processing the funding
+    // (as a rescan would) must not re-insert the coin.
+    ctx.check_transaction(&funding_tx, block_ctx(100)).await;
+    assert!(
+        !utxo_tracked(&ctx.managed_wallet, &funding_outpoint),
+        "re-processed funding stays rejected — both guards agree"
+    );
+}
+
+// ── account created after the spend was observed ─────────────────────
+
+/// The wallet-level (not per-account) placement of the set means a spend
+/// observed while an owning account does not yet exist still invalidates the
+/// funding once that account is added and its funding block is processed.
+#[tokio::test]
+async fn account_created_after_spend_observed_still_rejects_funding() {
+    let mut ctx = TestWalletContext::new_random();
+
+    // Build account 1 and its first receive address off to the side (in the
+    // wallet + a detached managed account), so we can construct the funding tx
+    // that pays it — but do NOT put the managed account into the collection yet.
+    // At spend-observation time the managed wallet still only knows account 0.
+    ctx.wallet
+        .add_account(
+            AccountType::Standard {
+                index: 1,
+                standard_account_type: StandardAccountType::BIP44Account,
+            },
+            None,
+        )
+        .expect("add account 1");
+    let acct1 = ctx.wallet.get_bip44_account(1).expect("account 1");
+    let xpub1 = acct1.account_xpub;
+    let mut managed_acct1 = ManagedCoreFundsAccount::from_account(acct1);
+    let addr1 = managed_acct1.next_receive_address(Some(&xpub1), true).expect("addr1");
+
+    let funding_value = 2_500_000u64;
+    let funding_tx = Transaction::dummy(&addr1, 0..1, &[funding_value]);
+    let funding_outpoint = OutPoint::new(funding_tx.txid(), 0);
+    let spend_tx = spend_to_external(&[funding_outpoint], funding_value - 1_000, 64);
+
+    // Observe the spend while account 1 is NOT yet in the managed collection.
+    ctx.check_transaction(&spend_tx, block_ctx(800)).await;
+    assert!(ctx.managed_wallet.observed_spent_outpoints().contains_key(&funding_outpoint));
+
+    // Now the managed account 1 appears (gap-limit/lazy discovery).
+    ctx.managed_wallet
+        .accounts
+        .insert_funds_bearing_account(managed_acct1)
+        .expect("insert managed account 1");
+
+    // Its funding block is processed — the coin must not become live.
+    ctx.check_transaction(&funding_tx, block_ctx(700)).await;
+    assert!(
+        !utxo_tracked(&ctx.managed_wallet, &funding_outpoint),
+        "wallet-level recording protects an account that did not exist at spend time"
+    );
+}
+
+// ── mempool / InstantSend spends excluded, self-heal on block ────────
+
+/// Mempool- and InstantSend-only spends do not populate the set (K-INV-649-SCOPE)
+/// — so the coin is momentarily spendable — and the state self-heals when the
+/// same spend is later seen in a block.
+#[tokio::test]
+async fn mempool_and_instantsend_spends_not_recorded_but_self_heal_on_block() {
+    for non_block_ctx in
+        [TransactionContext::Mempool, TransactionContext::InstantSend(InstantLock::default())]
+    {
+        let mut ctx = TestWalletContext::new_random();
+
+        let funding_value = 1_200_000u64;
+        let funding_tx = Transaction::dummy(&ctx.receive_address, 0..1, &[funding_value]);
+        let funding_outpoint = OutPoint::new(funding_tx.txid(), 0);
+        let spend_tx = spend_to_external(&[funding_outpoint], funding_value - 1_000, 65);
+
+        // Spend seen only via a non-block context: NOT recorded.
+        ctx.check_transaction(&spend_tx, non_block_ctx.clone()).await;
+        assert!(
+            ctx.managed_wallet.observed_spent_outpoints().is_empty(),
+            "non-block spend must not populate the observed-spent set: {non_block_ctx}"
+        );
+
+        // Funding arrives: the coin is (correctly, per current scope) spendable.
+        ctx.check_transaction(&funding_tx, block_ctx(100)).await;
+        assert!(
+            utxo_tracked(&ctx.managed_wallet, &funding_outpoint),
+            "transient window: coin is spendable until the spend confirms in a block"
+        );
+
+        // The same spend is later mined: now it records and self-heals.
+        ctx.check_transaction(&spend_tx, block_ctx(200)).await;
+        assert!(
+            ctx.managed_wallet.observed_spent_outpoints().contains_key(&funding_outpoint),
+            "block confirmation records the spend"
+        );
+        assert!(
+            !utxo_tracked(&ctx.managed_wallet, &funding_outpoint),
+            "self-healed: the coin is dropped on the block-confirmed spend"
+        );
+    }
+}
+
+// ── idempotent re-processing of the same spend block ─────────────────
+
+/// Re-delivering the identical spend block (rescan overlap / retry) is
+/// idempotent: one entry for the outpoint, no extra monitor bump, and the
+/// funding is still rejected afterward.
+#[tokio::test]
+async fn duplicate_spend_block_is_idempotent() {
+    let mut ctx = TestWalletContext::new_random();
+
+    let funding_value = 1_800_000u64;
+    let funding_tx = Transaction::dummy(&ctx.receive_address, 0..1, &[funding_value]);
+    let funding_outpoint = OutPoint::new(funding_tx.txid(), 0);
+    let spend_tx = spend_to_external(&[funding_outpoint], funding_value - 1_000, 66);
+
+    ctx.check_transaction(&spend_tx, block_ctx(200)).await;
+    let len_after_first = ctx.managed_wallet.observed_spent_outpoints().len();
+    let rev_after_first =
+        ctx.managed_wallet.first_bip44_managed_account().expect("account").monitor_revision();
+
+    // Byte-identical re-delivery at the same height.
+    ctx.check_transaction(&spend_tx, block_ctx(200)).await;
+    assert_eq!(
+        ctx.managed_wallet.observed_spent_outpoints().len(),
+        len_after_first,
+        "duplicate delivery keeps a single entry (BTreeMap keyed by OutPoint)"
+    );
+    assert_eq!(
+        ctx.managed_wallet.first_bip44_managed_account().expect("account").monitor_revision(),
+        rev_after_first,
+        "nothing changed on re-delivery: no extra monitor-revision bump"
+    );
+
+    ctx.check_transaction(&funding_tx, block_ctx(100)).await;
+    assert!(!utxo_tracked(&ctx.managed_wallet, &funding_outpoint), "funding still rejected");
+}
+
+// ── pre-fix load composed with an in-flight out-of-order spend ───────
+
+/// The real cold-rescan shape: a wallet that started from a pre-fix snapshot
+/// (empty observed set) runs the whole out-of-order sequence in the same
+/// session. Outcome must match a fresh wallet — no latent state alters the fix.
+#[tokio::test]
+async fn pre_fix_snapshot_then_out_of_order_matches_fresh_wallet() {
+    let mut ctx = TestWalletContext::new_random();
+    // Model the loaded old snapshot: the observed set starts empty.
+    assert!(ctx.managed_wallet.observed_spent_outpoints().is_empty());
+
+    let funding_value = 3_300_000u64;
+    let funding_tx = Transaction::dummy(&ctx.receive_address, 0..1, &[funding_value]);
+    let funding_outpoint = OutPoint::new(funding_tx.txid(), 0);
+    let spend_tx = spend_to_external(&[funding_outpoint], funding_value - 1_000, 67);
+
+    ctx.check_transaction(&spend_tx, block_ctx(200)).await;
+    ctx.check_transaction(&funding_tx, block_ctx(100)).await;
+
+    assert!(
+        !utxo_tracked(&ctx.managed_wallet, &funding_outpoint),
+        "old-format load + out-of-order delivery behaves identically to a fresh wallet"
+    );
+    assert_eq!(ctx.managed_wallet.balance.total(), 0);
+}
+
+// ── no removal path: permanent one-way commitment (accepted) ─────────
+
+/// Documents and pins the accepted asymmetric behavior: `observed_spent_outpoints`
+/// has no removal/rollback path, so once a spend is observed the coin stays
+/// excluded permanently — even if that spend is later treated as never having
+/// confirmed on the canonical chain. This is the accepted mirror-image trade of
+/// the #649 fix; the test exists so a future contributor cannot silently add a
+/// removal path (reintroducing #649) without a deliberate decision.
+#[tokio::test]
+async fn observed_spend_has_no_removal_path_permanent_by_design() {
+    let mut ctx = TestWalletContext::new_random();
+
+    let funding_value = 2_100_000u64;
+    let funding_tx = Transaction::dummy(&ctx.receive_address, 0..1, &[funding_value]);
+    let funding_outpoint = OutPoint::new(funding_tx.txid(), 0);
+    let spend_tx = spend_to_external(&[funding_outpoint], funding_value - 1_000, 68);
+
+    // Observe the spend in a block.
+    ctx.check_transaction(&spend_tx, block_ctx(200)).await;
+    assert!(ctx.managed_wallet.observed_spent_outpoints().contains_key(&funding_outpoint));
+
+    // Emulate "the spend never confirmed on the canonical chain" the only way
+    // key-wallet can today — re-deliver the spend as Mempool (the same
+    // context-flip the per-record reorg test uses). There is no block-disconnect
+    // API, and crucially no path that retracts the observed-spent entry.
+    ctx.check_transaction(&spend_tx, TransactionContext::Mempool).await;
+    assert!(
+        ctx.managed_wallet.observed_spent_outpoints().contains_key(&funding_outpoint),
+        "no removal path: a context flip to Mempool does not retract the observed spend"
+    );
+
+    // The canonical funding is now permanently excluded — the accepted trade.
+    ctx.check_transaction(&funding_tx, block_ctx(100)).await;
+    assert!(
+        !utxo_tracked(&ctx.managed_wallet, &funding_outpoint),
+        "accepted mirror-image behavior: a coin observed spent stays excluded permanently"
+    );
+}

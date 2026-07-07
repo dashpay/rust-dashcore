@@ -28,6 +28,8 @@ mod special_transaction_tests;
 
 mod transaction_tests;
 
+mod observed_spent_outpoints_tests;
+
 mod spent_outpoints_tests;
 
 mod unit_variant_wallet_tests;

@@ -62,7 +62,37 @@ impl WalletTransactionChecker for ManagedWalletInfo {
         // Check only relevant account types
         let mut result = self.accounts.check_transaction(tx, &relevant_types);
 
+        // #649: remember every spend seen in a block, independent of the
+        // spending tx's classification or whether the wallet can attribute it.
+        // Insert-only here (no account mutation), so a spend that IS attributed
+        // still has its `input_details` built from the live funding UTXO by
+        // `record_transaction` below. Mempool / IS-lock spends are deliberately
+        // never recorded — an unconfirmed spend must not invalidate a coin.
+        let block_height = if update_state {
+            context.block_info().map(|info| info.height())
+        } else {
+            None
+        };
+        if let Some(height) = block_height {
+            self.record_observed_spends(tx, height);
+        }
+
         if !update_state || !result.is_relevant {
+            // A block spend the wallet cannot attribute to the owning account
+            // (routed away by tx-type narrowing, or unmatched because its
+            // funding lives in another account) still consumes a real coin.
+            // Drop it now, un-gated by classification — safe on this path
+            // precisely because no `record_transaction` runs for an unmatched
+            // tx, so no `input_details` depend on the coin still being present
+            // (#649: the funding-first mirror of the out-of-order ordering,
+            // including a spend whose classification excludes the owning
+            // account's type).
+            if block_height.is_some() && self.remove_spent_from_accounts(tx) {
+                result.state_modified = true;
+                if update_balance {
+                    self.update_balance();
+                }
+            }
             return result;
         }
 
@@ -211,6 +241,23 @@ impl WalletTransactionChecker for ManagedWalletInfo {
             if result.new_addresses.len() > rev_before {
                 account.bump_monitor_revision();
             }
+        }
+
+        // #649: after processing the matched accounts, enforce the
+        // observed-spent invariant from both orderings, un-gated by
+        // classification:
+        //  - `remove_spent_from_accounts` (block context only) drops any coin
+        //    this tx spends that the matched-account path did not remove — a
+        //    spend routed away from the owning account's type. Idempotent, so
+        //    the normal in-order spend (already removed by `update_utxos`) is a
+        //    no-op here.
+        //  - `reconcile_inserts_with_observed_spends` drops any UTXO just
+        //    inserted for this tx's outputs that a higher-height spend,
+        //    processed earlier, already consumed (out-of-order rescan delivery).
+        let spent_removed = block_height.is_some() && self.remove_spent_from_accounts(tx);
+        let insert_reconciled = self.reconcile_inserts_with_observed_spends(tx);
+        if spent_removed || insert_reconciled {
+            result.state_modified = true;
         }
 
         if is_new {
