@@ -1181,19 +1181,22 @@ async fn compensation_survives_simulated_reload_across_two_restart_cycles() {
 }
 
 /// A full historical rescan delivers already-chainlocked blocks: the funding
-/// tx's FIRST sighting can be `InChainLockedBlock`, not `InBlock`. In that
-/// case `record_transaction` drops the just-inserted record to
-/// `finalized_txids` (memory-saving finalization) BEFORE the wallet-level
-/// `reconcile_inserts_with_observed_spends` step gets to compensate it — so
-/// the compensation's `account.transactions_mut().get_mut(&funding_txid)`
-/// finds nothing and silently no-ops, and the record vanishes from
-/// `transaction_history()` entirely instead of landing at a compensated
-/// net_amount. The coin removal itself (and thus `balance.total()`) is
-/// unaffected — only the coin actually spent is dropped from `utxos` — but
-/// the surviving output's value then has no corresponding history record,
-/// breaking the very invariant this whole fix chain exists to protect.
+/// tx's FIRST sighting can be `InChainLockedBlock`, not `InBlock`. Since the
+/// #649 restructure (B3), `record_transaction` builds the record BORN
+/// CORRECT — out0 is excluded from `output_details`/`net_amount` at
+/// construction time because its spend is already in `observed_spent_outpoints`
+/// — before the default (`keep-finalized-transactions = OFF`) feature drops
+/// the just-inserted, already-correct record to `finalized_txids`. There is
+/// nothing left uncompensated; the record simply vanishes from
+/// `transaction_history()` like any other pruned record, so `history_net` is
+/// 0 while `balance.total()` reflects the live out1 coin. This is the general
+/// pruning non-invariant pinned by
+/// [`plain_chainlocked_funding_diverges_history_from_balance_by_design`], not
+/// a #649-specific bug — kept here so a future reviewer does not re-file the
+/// divergence as a regression.
+#[cfg(not(feature = "keep-finalized-transactions"))]
 #[tokio::test]
-async fn spend_first_ordering_with_chainlocked_first_sighting_diverges_history_from_balance() {
+async fn spend_first_ordering_with_chainlocked_first_sighting_prunes_record_by_design() {
     let mut ctx = TestWalletContext::new_random();
 
     let out0_value = 2_000_000u64;
@@ -1218,14 +1221,46 @@ async fn spend_first_ordering_with_chainlocked_first_sighting_diverges_history_f
         out1_value,
         "balance correctly reflects the surviving output"
     );
+    assert_eq!(
+        history_net(&ctx.managed_wallet),
+        0,
+        "the born-correct record was pruned to finalized_txids on first sighting, so history \
+         omits it entirely — the general pruning non-invariant, not a #649 defect"
+    );
+}
 
+/// Mirror of the above under `keep-finalized-transactions`: the record is
+/// never pruned, so β (`history_net == balance.total()`) holds — and it holds
+/// because the record was born correct at construction (B3), not because of
+/// any post-hoc compensation. Confirms the pruning-driven divergence above is
+/// purely a consequence of pruning, not an unclosed #649 gap.
+#[cfg(feature = "keep-finalized-transactions")]
+#[tokio::test]
+async fn spend_first_ordering_with_chainlocked_first_sighting_matches_balance_when_kept() {
+    let mut ctx = TestWalletContext::new_random();
+
+    let out0_value = 2_000_000u64;
+    let out1_value = 500_000u64;
+    let funding_tx = Transaction::dummy(&ctx.receive_address, 0..1, &[out0_value, out1_value]);
+    let funding_txid = funding_tx.txid();
+    let out0 = OutPoint::new(funding_txid, 0);
+    let out1 = OutPoint::new(funding_txid, 1);
+    let spend_tx = spend_to_external(&[out0], out0_value - 1_000, 100);
+
+    ctx.check_transaction(&spend_tx, block_ctx(200)).await;
+    ctx.check_transaction(&funding_tx, chain_locked_block_ctx(100)).await;
+
+    assert!(!utxo_tracked(&ctx.managed_wallet, &out0), "out0 stays invalidated");
+    assert!(utxo_tracked(&ctx.managed_wallet, &out1), "out1 survives");
     assert_eq!(
         history_net(&ctx.managed_wallet),
         ctx.managed_wallet.balance.total() as i64,
-        "BUG: the funding record was dropped to `finalized_txids` before the \
-         #649 guard could compensate it, so transaction_history() omits it \
-         entirely instead of showing a net {out1_value} (or a kept net-0) \
-         record — history net diverges from balance by exactly the \
-         surviving output's value",
+        "with keep-finalized-transactions on, the born-correct record stays live and \
+         history net matches balance even for a chainlocked-first-sighting funding"
     );
+
+    let account = ctx.managed_wallet.first_bip44_managed_account().expect("account");
+    let record = account.transactions().get(&funding_txid).expect("record kept live");
+    assert_eq!(record.net_amount, out1_value as i64, "born correct: only out1 counted");
+    assert!(!record.output_details.iter().any(|d| d.index == 0), "out0 was never inserted");
 }
