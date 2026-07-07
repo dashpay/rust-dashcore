@@ -307,6 +307,7 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletManager<T> {
     ///
     /// # Arguments
     /// * `xprv` - The extended private key string (base58check encoded)
+    /// * `birth_height` - Birth height for wallet scanning (0 to sync from genesis)
     /// * `account_creation_options` - Specifies which accounts to create during initialization
     ///
     /// # Returns
@@ -315,6 +316,7 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletManager<T> {
     pub fn import_wallet_from_extended_priv_key(
         &mut self,
         xprv: &str,
+        birth_height: CoreBlockHeight,
         account_creation_options: key_wallet::wallet::initialization::WalletAccountCreationOptions,
     ) -> Result<WalletId, WalletError> {
         // Parse the extended private key
@@ -334,7 +336,7 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletManager<T> {
         }
 
         // Create managed wallet info
-        let managed_info = T::from_wallet(&wallet, self.last_processed_height());
+        let managed_info = T::from_wallet(&wallet, birth_height);
 
         self.wallets.insert(wallet_id, wallet);
         self.wallet_infos.insert(wallet_id, managed_info);
@@ -349,6 +351,7 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletManager<T> {
     ///
     /// # Arguments
     /// * `xpub` - The extended public key string (base58check encoded)
+    /// * `birth_height` - Birth height for wallet scanning (0 to sync from genesis)
     /// * `can_sign_externally` - If true, creates an externally signable wallet (e.g., for hardware wallets).
     ///   If false, creates a pure watch-only wallet.
     ///
@@ -358,6 +361,7 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletManager<T> {
     pub fn import_wallet_from_xpub(
         &mut self,
         xpub: &str,
+        birth_height: CoreBlockHeight,
         can_sign_externally: bool,
     ) -> Result<WalletId, WalletError> {
         // Parse the extended public key
@@ -380,7 +384,7 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletManager<T> {
         }
 
         // Create managed wallet info
-        let managed_info = T::from_wallet(&wallet, self.last_processed_height());
+        let managed_info = T::from_wallet(&wallet, birth_height);
 
         self.wallets.insert(wallet_id, wallet);
         self.wallet_infos.insert(wallet_id, managed_info);
@@ -394,8 +398,14 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletManager<T> {
     /// This is useful for restoring wallets from backups or transferring wallets
     /// between systems.
     ///
+    /// The serialized form contains only the immutable `Wallet`, not the mutable
+    /// `ManagedWalletInfo`, so the caller must supply a `birth_height` to seed the
+    /// new wallet's sync checkpoint. Pass 0 to rescan from genesis, or the chain
+    /// tip if no historical scan is desired.
+    ///
     /// # Arguments
     /// * `wallet_bytes` - The bincode-serialized wallet bytes
+    /// * `birth_height` - Birth height for wallet scanning (0 to sync from genesis)
     ///
     /// # Returns
     /// * `Ok(WalletId)` - The computed wallet ID of the imported wallet
@@ -404,6 +414,7 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletManager<T> {
     pub fn import_wallet_from_bytes(
         &mut self,
         wallet_bytes: &[u8],
+        birth_height: CoreBlockHeight,
     ) -> Result<WalletId, WalletError> {
         // Deserialize the wallet from bincode
         let wallet: Wallet = bincode::decode_from_slice(wallet_bytes, bincode::config::standard())
@@ -420,10 +431,8 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletManager<T> {
             return Err(WalletError::WalletExists(wallet_id));
         }
 
-        // Create managed wallet info from the imported wallet, using the manager's
-        // current aggregated last-processed height as the fallback birth height
-        // since the serialized form does not preserve it.
-        let managed_info = T::from_wallet(&wallet, self.last_processed_height());
+        // Create managed wallet info from the imported wallet
+        let managed_info = T::from_wallet(&wallet, birth_height);
 
         self.wallets.insert(wallet_id, wallet);
         self.wallet_infos.insert(wallet_id, managed_info);

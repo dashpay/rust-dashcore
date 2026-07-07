@@ -925,6 +925,7 @@ mod tests {
                 manager3,
                 wallet_bytes_slice.as_ptr(),
                 wallet_bytes_slice.len(),
+                0,
                 import_wallet_id_out.as_mut_ptr(),
                 error,
             )
@@ -1081,6 +1082,7 @@ mod tests {
                 manager2,
                 wallet_bytes_copy.as_ptr(),
                 wallet_bytes_copy.len(),
+                0,
                 import_wallet_id_out.as_mut_ptr(),
                 error,
             )

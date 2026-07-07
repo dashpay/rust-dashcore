@@ -196,6 +196,7 @@ mod tests {
                 manager2,
                 wallet_bytes_out,
                 wallet_bytes_len_out,
+                0,
                 imported_wallet_id.as_mut_ptr(),
                 error,
             )
