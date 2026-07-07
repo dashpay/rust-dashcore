@@ -430,9 +430,9 @@ impl ManagedCoreFundsAccount {
     /// Record a new transaction and update UTXOs for spendable account types.
     ///
     /// `observed_spent` is the wallet-level `observed_spent_outpoints` view
-    /// (dashpay/rust-dashcore#649), threaded down read-only from
-    /// `check_core_transaction`; consulted starting in the check-before-insert
-    /// change that follows this plumbing commit.
+    /// (dashpay/rust-dashcore#649), read-only from `check_core_transaction`.
+    /// The freshly built record is compensated against it before insertion —
+    /// see [`TransactionRecord::compensate_for_observed_spends`].
     pub(crate) fn record_transaction(
         &mut self,
         tx: &Transaction,
