@@ -148,11 +148,8 @@ async fn wallet_relevant_spend_buried_in_large_noisy_block_still_caught() {
          out-of-order funding"
     );
 
-    let observed_len = manager
-        .get_wallet_info(&wallet_id)
-        .expect("wallet info")
-        .observed_spent_outpoints()
-        .len();
+    let observed_len =
+        manager.get_wallet_info(&wallet_id).expect("wallet info").observed_spent_outpoints().len();
     let expected_total = expected_inputs_in_spend_block + 1 /* funding_tx's own input */;
     assert_eq!(
         observed_len, expected_total,
