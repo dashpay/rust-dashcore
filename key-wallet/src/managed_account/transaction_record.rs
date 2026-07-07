@@ -200,38 +200,36 @@ impl TransactionRecord {
         self.net_amount.unsigned_abs()
     }
 
-    /// Drop any `Received`/`Change` [`OutputDetail`] whose outpoint is already
-    /// in `observed_spent` and recompute `net_amount` to match
-    /// (dashpay/rust-dashcore#649): such an output was spent on-chain before
-    /// this wallet ever processed its funding transaction, so it is not live
-    /// received value regardless of which order the two transactions arrived
-    /// in.
-    ///
-    /// Declarative, not incremental: `net_amount` is always recomputed from
-    /// the current `output_details`/`input_details`, never adjusted by a
-    /// delta. That makes this idempotent by construction — calling it again
-    /// on an already-compensated record (all matching entries already
-    /// dropped) is a no-op, so no separate idempotency marker is needed.
+    /// Drop any `Received`/`Change` [`OutputDetail`] whose outpoint is in
+    /// `observed_spent` and subtract its value from `net_amount`
+    /// (dashpay/rust-dashcore#649): such an output was spent on-chain, so it
+    /// is not live received value. Only ever subtracts a delta from whatever
+    /// `net_amount` currently is — never re-derives the base from
+    /// `output_details`/`input_details` sums, which are a narrower, lossier
+    /// view than the account checker's `received`/`sent` (e.g. an output
+    /// matched by script but unresolved to a tracked address, or a spend
+    /// whose `input_details` are incomplete). A repeat call for an
+    /// already-dropped output finds nothing left to retain, so it subtracts
+    /// nothing further — idempotent without needing the delta to be
+    /// re-derived.
     pub(crate) fn compensate_for_observed_spends(
         &mut self,
         observed_spent: &BTreeMap<OutPoint, CoreBlockHeight>,
     ) {
         let txid = self.txid;
+        let mut excluded_value: u64 = 0;
         self.output_details.retain(|detail| {
-            !matches!(detail.role, OutputRole::Received | OutputRole::Change)
-                || !observed_spent.contains_key(&OutPoint {
+            let now_excluded = matches!(detail.role, OutputRole::Received | OutputRole::Change)
+                && observed_spent.contains_key(&OutPoint {
                     txid,
                     vout: detail.index,
-                })
+                });
+            if now_excluded {
+                excluded_value += detail.value;
+            }
+            !now_excluded
         });
-        let received: u64 = self
-            .output_details
-            .iter()
-            .filter(|d| matches!(d.role, OutputRole::Received | OutputRole::Change))
-            .map(|d| d.value)
-            .sum();
-        let sent: u64 = self.input_details.iter().map(|d| d.value).sum();
-        self.net_amount = received as i64 - sent as i64;
+        self.net_amount -= excluded_value as i64;
     }
 }
 

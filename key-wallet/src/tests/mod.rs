@@ -28,6 +28,8 @@ mod special_transaction_tests;
 
 mod transaction_tests;
 
+mod net_amount_source_of_truth_tests;
+
 mod observed_spent_outpoints_tests;
 
 mod spent_outpoints_tests;
