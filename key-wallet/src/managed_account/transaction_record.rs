@@ -268,6 +268,77 @@ mod tests {
         )
     }
 
+    /// Marvin's white-box adversarial check of the "declarative, not
+    /// incremental" claim in `compensate_for_observed_spends`'s doc comment:
+    /// calling it twice in a row on the SAME record (simulating a rescan
+    /// rebuilding an already-compensated record) must be a complete no-op
+    /// the second time — no double-drop of a surviving output, no `net_amount`
+    /// drift — because it recomputes from `output_details`/`input_details`
+    /// on every call rather than subtracting a delta.
+    #[test]
+    fn compensate_for_observed_spends_is_idempotent_on_direct_repeated_calls() {
+        let tx = Transaction::dummy_empty();
+        let txid = tx.txid();
+        let mut record = TransactionRecord::new(
+            tx,
+            test_account_type(),
+            TransactionContext::Mempool,
+            TransactionType::Standard,
+            TransactionDirection::Incoming,
+            Vec::new(),
+            vec![
+                OutputDetail {
+                    index: 0,
+                    role: OutputRole::Received,
+                    address: None,
+                    value: 2_000_000,
+                },
+                OutputDetail {
+                    index: 1,
+                    role: OutputRole::Received,
+                    address: None,
+                    value: 500_000,
+                },
+            ],
+            2_500_000,
+        );
+
+        let mut observed_spent = BTreeMap::new();
+        observed_spent.insert(
+            OutPoint {
+                txid,
+                vout: 0,
+            },
+            200u32,
+        );
+
+        record.compensate_for_observed_spends(&observed_spent);
+        assert_eq!(record.net_amount, 500_000, "output 0 compensated away, output 1 survives");
+        assert_eq!(record.output_details.len(), 1);
+        assert_eq!(record.output_details[0].index, 1);
+
+        // Second call, same observed_spent map, same record: must be a
+        // complete no-op, not a second compensation of output 1.
+        record.compensate_for_observed_spends(&observed_spent);
+        assert_eq!(record.net_amount, 500_000, "second call must not drift net_amount");
+        assert_eq!(record.output_details.len(), 1, "surviving output must not be dropped");
+        assert_eq!(record.output_details[0].index, 1);
+
+        // Third call with an EXPANDED observed_spent set (output 1 now also
+        // spent) proves the recompute is driven by current input state, not
+        // cached from the first call.
+        observed_spent.insert(
+            OutPoint {
+                txid,
+                vout: 1,
+            },
+            201u32,
+        );
+        record.compensate_for_observed_spends(&observed_spent);
+        assert_eq!(record.net_amount, 0, "newly-observed second spend is compensated in this pass");
+        assert!(record.output_details.is_empty());
+    }
+
     #[test]
     fn test_transaction_record_creation() {
         let tx = Transaction::dummy_empty();
