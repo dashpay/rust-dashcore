@@ -311,10 +311,11 @@ impl ManagedWalletInfo {
     /// the normal path already removed is simply absent — so it never
     /// double-counts a spend. Coinbase inputs are skipped (null prevout).
     ///
-    /// Because the spend that consumes these coins was never recorded as a
-    /// transaction (it looked irrelevant), each removal also compensates the
-    /// funding transaction's history record so `transaction_history` stays in
-    /// step with the recomputed balance (see [`Self::finalize_guard_removed_utxo`]).
+    /// This is the funding-first ordering: the funding record is already live
+    /// when the (unattributed) spend arrives, so unlike the spend-first
+    /// ordering (born correct at insert time in `update_utxos`/
+    /// `record_transaction`), the live record's history must be recomputed in
+    /// place — see [`Self::finalize_guard_removed_utxo`].
     pub(crate) fn remove_spent_from_accounts(&mut self, tx: &Transaction) -> bool {
         if tx.is_coin_base() {
             return false;
@@ -328,7 +329,11 @@ impl ManagedWalletInfo {
                 let account: &mut ManagedCoreFundsAccount = account;
                 if let Some(utxo) = account.utxos.remove(&outpoint) {
                     account.bump_monitor_revision();
-                    Self::finalize_guard_removed_utxo(account, &utxo);
+                    Self::finalize_guard_removed_utxo(
+                        account,
+                        &utxo,
+                        &self.observed_spent_outpoints,
+                    );
                     removed = true;
                     break;
                 }
@@ -337,95 +342,39 @@ impl ManagedWalletInfo {
         removed
     }
 
-    /// Reconcile UTXOs just inserted for `tx`'s outputs against the observed
-    /// spent set: if an output this transaction creates is already a member of
-    /// [`Self::observed_spent_outpoints`] — its spend was seen in an
-    /// earlier-processed block (out-of-order rescan delivery) — drop it from
-    /// whichever funding account it landed in (dashpay/rust-dashcore#649).
-    /// Returns whether any UTXO was removed. Membership is a plain set lookup;
-    /// the recorded height is not compared (the set is permanent, so presence
-    /// alone is authoritative).
-    ///
-    /// This is the funding-side half of the invariant — the spend-first
-    /// ordering — complementing [`Self::remove_spent_from_accounts`], which
-    /// handles the funding-first ordering. As there, each removal compensates
-    /// the funding transaction's just-pushed history record so
-    /// `transaction_history` stays in step with the recomputed balance; the
-    /// caller re-syncs the emitted `new_records` from the post-reconciliation
-    /// account state.
-    pub(crate) fn reconcile_inserts_with_observed_spends(&mut self, tx: &Transaction) -> bool {
-        if self.observed_spent_outpoints.is_empty() {
-            return false;
-        }
-        let txid = tx.txid();
-        let spent_vouts: Vec<u32> = (0..tx.output.len() as u32)
-            .filter(|&vout| {
-                self.observed_spent_outpoints.contains_key(&OutPoint {
-                    txid,
-                    vout,
-                })
-            })
-            .collect();
-        if spent_vouts.is_empty() {
-            return false;
-        }
-        let mut removed = false;
-        // Fetch the account handles once, not once per output.
-        for account in self.accounts.all_funding_accounts_mut() {
-            for &vout in &spent_vouts {
-                let outpoint = OutPoint {
-                    txid,
-                    vout,
-                };
-                if let Some(utxo) = account.utxos.remove(&outpoint) {
-                    account.bump_monitor_revision();
-                    Self::finalize_guard_removed_utxo(account, &utxo);
-                    removed = true;
-                }
-            }
-        }
-        removed
-    }
-
-    /// Finalize the account-local bookkeeping for a UTXO the #649 guard removed,
-    /// so the removal behaves like the (unrecorded) spend it stands in for.
-    ///
-    /// The guard removes coins whose spend was observed in a block but never
-    /// recorded as a transaction (the spend looked irrelevant — an external
-    /// payment with `sent = 0` at the time). This does three things:
+    /// Finalize the account-local bookkeeping for a UTXO the #649 guard removed
+    /// (funding-first ordering: the record was already live), so the removal
+    /// behaves like the (unrecorded) spend it stands in for.
     ///
     /// 1. Registers the outpoint in the account-local `spent_outpoints` set so a
     ///    reprocessing of the funding transaction (rescan / duplicate delivery)
     ///    does not resurrect the coin via `update_utxos`.
-    /// 2. Reverses the removed value from the funding transaction's history
-    ///    record and drops the matching `output_details` entry, keeping both the
-    ///    `net_amount` and the per-output line items in step with the recomputed
-    ///    balance. The record is kept (not deleted) even when fully compensated
-    ///    to `net_amount == 0`: deleting it would make a reprocessing of the
-    ///    funding transaction look like a brand-new sighting (`is_new`), which —
-    ///    with the coin now marked spent so `update_utxos` will not re-insert it
-    ///    — would re-record a positive `net_amount` with no coin to reconcile it
-    ///    back against, reopening the divergence. A kept `net_amount == 0` record
-    ///    is both history-consistent and reprocess-safe.
-    /// 3. Stays idempotent: the `output_details` entry's presence marks "not yet
-    ///    compensated". Its removal makes a later re-removal of the same output a
-    ///    no-op for the record — covering rescan reprocessing even across a
-    ///    serialize/deserialize, where the local `spent_outpoints` set is rebuilt
-    ///    from recorded transactions and would not include this unrecorded spend.
-    fn finalize_guard_removed_utxo(account: &mut ManagedCoreFundsAccount, removed: &Utxo) {
+    /// 2. Declaratively recomputes the funding record's `output_details`/
+    ///    `net_amount` via [`TransactionRecord::compensate_for_observed_spends`]
+    ///    — not an incremental subtract, so no idempotency marker is needed:
+    ///    reprocessing or repeated guard removals recompute the same result
+    ///    every time. The record is kept (not deleted) even when fully
+    ///    compensated to `net_amount == 0`: deleting it would make a
+    ///    reprocessing of the funding transaction look like a brand-new
+    ///    sighting (`is_new`), which — with the coin now marked spent so
+    ///    `update_utxos` will not re-insert it — would re-record a positive
+    ///    `net_amount` with no coin to reconcile it back against, reopening
+    ///    the divergence.
+    ///
+    /// A no-op when the record is absent (pruned/finalized under the default
+    /// `keep-finalized-transactions = OFF` feature): `net_amount` reflecting
+    /// live-received value is undefined for a pruned record, same as for
+    /// every other finalized coin — there is nothing to compensate.
+    fn finalize_guard_removed_utxo(
+        account: &mut ManagedCoreFundsAccount,
+        removed: &Utxo,
+        observed_spent: &BTreeMap<OutPoint, CoreBlockHeight>,
+    ) {
         account.mark_outpoint_spent(removed.outpoint);
 
         let funding_txid = removed.outpoint.txid;
-        let removed_vout = removed.outpoint.vout;
         if let Some(record) = account.transactions_mut().get_mut(&funding_txid) {
-            // Only compensate an output once: its `output_details` entry is
-            // present exactly until the first compensation removes it.
-            let not_yet_compensated =
-                record.output_details.iter().any(|detail| detail.index == removed_vout);
-            if not_yet_compensated {
-                record.net_amount -= removed.txout.value as i64;
-                record.output_details.retain(|detail| detail.index != removed_vout);
-            }
+            record.compensate_for_observed_spends(observed_spent);
         }
     }
 
