@@ -19,6 +19,7 @@ use super::balance::WalletCoreBalance;
 use super::metadata::WalletMetadata;
 use crate::account::ManagedAccountCollection;
 use crate::managed_account::managed_account_trait::ManagedAccountTrait;
+use crate::managed_account::ManagedCoreFundsAccount;
 use crate::wallet::managed_wallet_info::transaction_building::AccountTypePreference;
 use crate::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
 use crate::{Network, Wallet};
@@ -70,28 +71,58 @@ pub struct ManagedWalletInfo {
     /// added, never removed, and reorg rollback does NOT retract it. Treating a
     /// coin as spendable again after a spend was observed is the failure this
     /// set exists to prevent, and the block heights are retained for diagnostics
-    /// and future height-bounded pruning rather than for rollback. Only spends
-    /// seen in a block (`InBlock` / `InChainLockedBlock`) are recorded —
+    /// and possible future height-bounded pruning rather than for rollback. Only
+    /// spends seen in a block (`InBlock` / `InChainLockedBlock`) are recorded —
     /// mempool-context spends are never recorded, so an unconfirmed spend can
     /// never wrongly invalidate a coin.
     ///
-    /// Persisted (survives restart) so the guard holds across a cold reload;
-    /// `#[serde(default)]` keeps wallet files written before this field existed
-    /// loadable, seeding an empty set. Serialized as a sequence of
-    /// `(OutPoint, height)` pairs rather than a map, because `OutPoint`'s
-    /// human-readable serialization is not a valid JSON object key.
+    /// # Growth and pruning (documented limitation)
+    ///
+    /// The set is not pruned in this version. Its size grows with the total
+    /// number of transaction inputs across *filter-matched* blocks — driven by
+    /// transactions-per-matched-block, not by block count, so a single large
+    /// matched block can add tens of thousands of entries. That is bounded by
+    /// matched activity rather than whole-chain history, but it is unbounded
+    /// over a long-running process; height-bounded pruning is tracked as
+    /// follow-up work, not implemented here. A defensive cap on the deserialized
+    /// entry count (see the serde adapter) guards against a corrupted or hostile
+    /// wallet file forcing an unbounded allocation on load.
+    ///
+    /// # Persistence
+    ///
+    /// The field is serde-serializable so it is preserved wherever a
+    /// `ManagedWalletInfo` is serialized. Its real value, though, is
+    /// order-independent correctness *within a single continuous processing run*
+    /// — which is what the observed #649 symptom needs, since a cold rescan is a
+    /// full fresh replay in one process. `#[serde(default)]` keeps snapshots
+    /// written before this field existed loadable, seeding an empty set (a
+    /// pre-fix wallet gets no retroactive backfill; only spends observed after
+    /// the field exists are protected).
     #[cfg_attr(feature = "serde", serde(default, with = "observed_spent_outpoints_serde"))]
     pub(crate) observed_spent_outpoints: BTreeMap<OutPoint, CoreBlockHeight>,
 }
 
 /// Serde adapter for [`ManagedWalletInfo::observed_spent_outpoints`] that
-/// encodes the map as a sequence of `(OutPoint, height)` pairs. A plain
-/// `BTreeMap<OutPoint, _>` cannot round-trip through JSON, whose object keys
-/// must be strings while `OutPoint` serializes to a string only as a *value*.
+/// encodes the map as a sequence of `(OutPoint, height)` pairs rather than as a
+/// map.
+///
+/// This is for format-agnosticism, not a JSON limitation: `OutPoint` serializes
+/// to a string in human-readable formats (so it is a fine `serde_json` object
+/// key) but to a struct `{ txid, vout }` in non-human-readable / strict-key
+/// encoders (bincode's serde layer, `platform_value::Value`), where a struct
+/// cannot be a map key. Encoding the map as a sequence of key/value pairs
+/// round-trips identically across every serde format.
+///
+/// Deserialization applies a defensive cap ([`MAX_OBSERVED_SPENT_OUTPOINTS`]):
+/// a corrupted or hostile wallet file declaring an absurd number of entries is
+/// rejected rather than driving an unbounded allocation.
 #[cfg(feature = "serde")]
 mod observed_spent_outpoints_serde {
-    use super::{BTreeMap, CoreBlockHeight, OutPoint};
-    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+    use super::{BTreeMap, CoreBlockHeight, OutPoint, MAX_OBSERVED_SPENT_OUTPOINTS};
+    use core::fmt;
+    use serde::de::{Error as _, SeqAccess, Visitor};
+    use serde::ser::SerializeSeq;
+    use serde::{Deserializer, Serializer};
 
     pub(super) fn serialize<S>(
         map: &BTreeMap<OutPoint, CoreBlockHeight>,
@@ -100,7 +131,11 @@ mod observed_spent_outpoints_serde {
     where
         S: Serializer,
     {
-        map.iter().collect::<Vec<(&OutPoint, &CoreBlockHeight)>>().serialize(serializer)
+        let mut seq = serializer.serialize_seq(Some(map.len()))?;
+        for entry in map {
+            seq.serialize_element(&entry)?;
+        }
+        seq.end()
     }
 
     pub(super) fn deserialize<'de, D>(
@@ -109,9 +144,50 @@ mod observed_spent_outpoints_serde {
     where
         D: Deserializer<'de>,
     {
-        Ok(Vec::<(OutPoint, CoreBlockHeight)>::deserialize(deserializer)?.into_iter().collect())
+        struct PairsVisitor;
+
+        impl<'de> Visitor<'de> for PairsVisitor {
+            type Value = BTreeMap<OutPoint, CoreBlockHeight>;
+
+            fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                write!(f, "a sequence of (OutPoint, height) pairs")
+            }
+
+            fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+            where
+                A: SeqAccess<'de>,
+            {
+                // Stream elements one at a time and cap the count so an
+                // oversized declared length cannot force an unbounded
+                // allocation before we notice.
+                let mut map = BTreeMap::new();
+                while let Some((outpoint, height)) =
+                    seq.next_element::<(OutPoint, CoreBlockHeight)>()?
+                {
+                    if map.len() >= MAX_OBSERVED_SPENT_OUTPOINTS {
+                        return Err(A::Error::custom(format!(
+                            "observed_spent_outpoints exceeds the maximum of {MAX_OBSERVED_SPENT_OUTPOINTS} entries"
+                        )));
+                    }
+                    map.insert(outpoint, height);
+                }
+                Ok(map)
+            }
+        }
+
+        deserializer.deserialize_seq(PairsVisitor)
     }
 }
+
+/// Defensive upper bound on the number of [`ManagedWalletInfo::observed_spent_outpoints`]
+/// entries accepted when deserializing a wallet.
+///
+/// Chosen far above any plausible legitimate size (matched-block spend activity
+/// over a realistic rescan) so it only ever rejects a corrupted or hostile
+/// wallet file, never a real one. At ~40 bytes per entry this caps the load-time
+/// allocation for this field at a few hundred MB.
+#[cfg(feature = "serde")]
+const MAX_OBSERVED_SPENT_OUTPOINTS: usize = 10_000_000;
 
 impl ManagedWalletInfo {
     /// Create new managed wallet info with network and wallet ID
@@ -234,16 +310,25 @@ impl ManagedWalletInfo {
     /// the funding was seen in a different account). It is idempotent — a coin
     /// the normal path already removed is simply absent — so it never
     /// double-counts a spend. Coinbase inputs are skipped (null prevout).
+    ///
+    /// Because the spend that consumes these coins was never recorded as a
+    /// transaction (it looked irrelevant), each removal also compensates the
+    /// funding transaction's history record so `transaction_history` stays in
+    /// step with the recomputed balance (see [`Self::compensate_removed_utxo`]).
     pub(crate) fn remove_spent_from_accounts(&mut self, tx: &Transaction) -> bool {
         if tx.is_coin_base() {
             return false;
         }
         let mut removed = false;
+        // Fetch the account handles once, not once per input.
+        let mut accounts = self.accounts.all_funding_accounts_mut();
         for input in &tx.input {
             let outpoint = input.previous_output;
-            for account in self.accounts.all_funding_accounts_mut() {
-                if account.utxos.remove(&outpoint).is_some() {
+            for account in accounts.iter_mut() {
+                let account: &mut ManagedCoreFundsAccount = account;
+                if let Some(utxo) = account.utxos.remove(&outpoint) {
                     account.bump_monitor_revision();
+                    Self::compensate_removed_utxo(account, &utxo);
                     removed = true;
                     break;
                 }
@@ -253,37 +338,79 @@ impl ManagedWalletInfo {
     }
 
     /// Reconcile UTXOs just inserted for `tx`'s outputs against the observed
-    /// spent set: if an output this transaction creates was already recorded as
-    /// spent by a higher-height block processed earlier (out-of-order rescan
-    /// delivery), drop it from whichever funding account it landed in
-    /// (dashpay/rust-dashcore#649). Returns whether any UTXO was removed.
+    /// spent set: if an output this transaction creates is already a member of
+    /// [`Self::observed_spent_outpoints`] — its spend was seen in an
+    /// earlier-processed block (out-of-order rescan delivery) — drop it from
+    /// whichever funding account it landed in (dashpay/rust-dashcore#649).
+    /// Returns whether any UTXO was removed. Membership is a plain set lookup;
+    /// the recorded height is not compared (the set is permanent, so presence
+    /// alone is authoritative).
     ///
     /// This is the funding-side half of the invariant — the spend-first
     /// ordering — complementing [`Self::remove_spent_from_accounts`], which
-    /// handles the funding-first ordering.
+    /// handles the funding-first ordering. As there, each removal compensates
+    /// the funding transaction's just-pushed history record so
+    /// `transaction_history` stays in step with the recomputed balance; the
+    /// caller re-syncs the emitted `new_records` from the post-reconciliation
+    /// account state.
     pub(crate) fn reconcile_inserts_with_observed_spends(&mut self, tx: &Transaction) -> bool {
         if self.observed_spent_outpoints.is_empty() {
             return false;
         }
         let txid = tx.txid();
+        let spent_vouts: Vec<u32> = (0..tx.output.len() as u32)
+            .filter(|&vout| {
+                self.observed_spent_outpoints.contains_key(&OutPoint {
+                    txid,
+                    vout,
+                })
+            })
+            .collect();
+        if spent_vouts.is_empty() {
+            return false;
+        }
         let mut removed = false;
-        for vout in 0..tx.output.len() as u32 {
-            let outpoint = OutPoint {
-                txid,
-                vout,
-            };
-            if !self.observed_spent_outpoints.contains_key(&outpoint) {
-                continue;
-            }
-            for account in self.accounts.all_funding_accounts_mut() {
-                if account.utxos.remove(&outpoint).is_some() {
+        // Fetch the account handles once, not once per output.
+        for account in self.accounts.all_funding_accounts_mut() {
+            for &vout in &spent_vouts {
+                let outpoint = OutPoint {
+                    txid,
+                    vout,
+                };
+                if let Some(utxo) = account.utxos.remove(&outpoint) {
                     account.bump_monitor_revision();
+                    Self::compensate_removed_utxo(account, &utxo);
                     removed = true;
-                    break;
                 }
             }
         }
         removed
+    }
+
+    /// Reverse the wallet-history credit for a UTXO the #649 guard removed.
+    ///
+    /// The guard removes coins whose spend was observed but never recorded as a
+    /// transaction (the spend looked irrelevant — an external payment with
+    /// `sent = 0` at the time). The funding transaction that created the coin,
+    /// however, *was* recorded with a positive `net_amount`, so after removal
+    /// `transaction_history`'s net would exceed the recomputed balance. Reverse
+    /// the removed value from that funding record and, when the transaction is
+    /// left with no net effect and no surviving wallet output, drop the now
+    /// phantom record entirely — keeping the history-net == balance invariant.
+    fn compensate_removed_utxo(account: &mut ManagedCoreFundsAccount, removed: &Utxo) {
+        let funding_txid = removed.outpoint.txid;
+        let has_surviving_output =
+            account.utxos.keys().any(|outpoint| outpoint.txid == funding_txid);
+        let drop_record = match account.transactions_mut().get_mut(&funding_txid) {
+            Some(record) => {
+                record.net_amount -= removed.txout.value as i64;
+                record.net_amount == 0 && !has_surviving_output
+            }
+            None => false,
+        };
+        if drop_record {
+            account.transactions_mut().remove(&funding_txid);
+        }
     }
 
     pub fn next_change_address(

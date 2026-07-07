@@ -81,14 +81,15 @@ fn utxo_tracked(wallet: &ManagedWalletInfo, outpoint: &OutPoint) -> bool {
 /// Round-trip only the `observed_spent_outpoints` field through JSON (its
 /// persisted, `(OutPoint, height)`-pair form) and return the reloaded map.
 ///
-/// A full `ManagedWalletInfo` cannot round-trip through JSON once its address
-/// pools are populated — `AddressPool::script_pubkey_index` is a
-/// `HashMap<ScriptBuf, u32>`, and `ScriptBuf` is not a valid JSON object key —
-/// so wallets are not persisted via JSON in practice. The field's own serde
-/// adapter (validated on a pool-free wallet in
-/// `observed_spent_outpoints_round_trips_through_serde`) uses the pair form
-/// precisely to avoid that, and this helper exercises the same encoding to model
-/// what a reload restores without fighting the unrelated pool limitation.
+/// This helper round-trips the field alone rather than the whole wallet because
+/// a full `ManagedWalletInfo` cannot serialize to JSON once its address pools
+/// are populated: `AddressPool::script_pubkey_index` is a
+/// `HashMap<ScriptBuf, u32>`, and `ScriptBuf` is not a valid JSON object key.
+/// That pool limitation is unrelated to this field — `OutPoint` *is* a valid
+/// JSON key; the field's pair-form adapter exists for format-agnosticism across
+/// non-human-readable encoders (validated by
+/// `observed_spent_outpoints_round_trips_through_serde` on a pool-free wallet).
+/// The helper exercises that same pair encoding to model what a reload restores.
 fn reload_observed_field(wallet: &ManagedWalletInfo) -> BTreeMap<OutPoint, CoreBlockHeight> {
     let pairs: Vec<(OutPoint, CoreBlockHeight)> =
         wallet.observed_spent_outpoints().iter().map(|(k, v)| (*k, *v)).collect();
@@ -696,5 +697,143 @@ async fn observed_spend_has_no_removal_path_permanent_by_design() {
     assert!(
         !utxo_tracked(&ctx.managed_wallet, &funding_outpoint),
         "accepted mirror-image behavior: a coin observed spent stays excluded permanently"
+    );
+}
+
+// ── history/balance consistency — no phantom "received" after a guarded spend ──
+
+/// Sum of `transaction_history()` net amounts across all accounts.
+fn history_net(wallet: &ManagedWalletInfo) -> i64 {
+    wallet.transaction_history().iter().map(|r| r.net_amount).sum()
+}
+
+/// Spend-first ordering: when the funding block arrives after its spend was
+/// observed, the funding UTXO is reconciled away — and the funding transaction's
+/// "received" history record must be compensated so `transaction_history()`'s
+/// net equals `balance.total()`. Without the fix the record shows "+funding"
+/// against a zero balance with no transaction explaining where it went.
+#[tokio::test]
+async fn transaction_history_net_matches_balance_after_spend_before_funding() {
+    let mut ctx = TestWalletContext::new_random();
+
+    let funding_value = 1_000_000u64;
+    let funding_tx = Transaction::dummy(&ctx.receive_address, 0..1, &[funding_value]);
+    let funding_outpoint = OutPoint::new(funding_tx.txid(), 0);
+    let spend_tx = spend_to_external(&[funding_outpoint], funding_value - 1_000, 90);
+
+    ctx.check_transaction(&spend_tx, block_ctx(200)).await;
+    ctx.check_transaction(&funding_tx, block_ctx(100)).await;
+
+    assert!(!utxo_tracked(&ctx.managed_wallet, &funding_outpoint), "coin invalidated");
+    assert_eq!(ctx.managed_wallet.balance.total(), 0, "no phantom balance");
+    assert_eq!(history_net(&ctx.managed_wallet), 0, "no phantom 'received' in history");
+    assert_eq!(
+        history_net(&ctx.managed_wallet),
+        ctx.managed_wallet.balance.total() as i64,
+        "transaction_history net must equal balance",
+    );
+    // The pure spend-before-funding case leaves no surviving effect for the tx,
+    // so its now-phantom record is dropped entirely.
+    assert!(
+        ctx.managed_wallet.transaction_history().is_empty(),
+        "the funding record is dropped, not left as a zero-net phantom"
+    );
+}
+
+/// Funding-first mirror: a coin funded and recorded, then spent by a transaction
+/// whose classification excludes the owning account (AssetLock spend of a
+/// CoinJoin coin), is removed via the un-gated spend path. Its funding record
+/// must likewise be compensated so history net stays equal to balance.
+#[tokio::test]
+async fn transaction_history_net_matches_balance_after_unattributed_spend() {
+    let mut ctx = TestWalletContext::new_random();
+
+    let cj_xpub = ctx.wallet.get_coinjoin_account(0).expect("coinjoin account").account_xpub;
+    let cj_address = ctx
+        .managed_wallet
+        .first_coinjoin_managed_account_mut()
+        .expect("managed coinjoin account")
+        .next_address(Some(&cj_xpub), true)
+        .expect("coinjoin address");
+
+    let funding_value = 1_500_000u64;
+    let funding_tx = Transaction::dummy(&cj_address, 0..1, &[funding_value]);
+    let funding_outpoint = OutPoint::new(funding_tx.txid(), 0);
+
+    // Funding first: recorded and tracked on the CoinJoin account.
+    ctx.check_transaction(&funding_tx, block_ctx(100)).await;
+    assert!(utxo_tracked(&ctx.managed_wallet, &funding_outpoint));
+    assert_eq!(history_net(&ctx.managed_wallet), funding_value as i64);
+
+    // Spend classified as AssetLock — excludes CoinJoin from relevant types, so
+    // it is unattributed and removed by the un-gated spend path.
+    let mut spend_tx = spend_to_external(&[funding_outpoint], funding_value - 1_000, 91);
+    spend_tx.special_transaction_payload =
+        Some(TransactionPayload::AssetLockPayloadType(AssetLockPayload::new(vec![])));
+    assert_eq!(TransactionRouter::classify_transaction(&spend_tx), TransactionType::AssetLock);
+    ctx.check_transaction(&spend_tx, block_ctx(200)).await;
+
+    assert!(!utxo_tracked(&ctx.managed_wallet, &funding_outpoint), "coin invalidated");
+    assert_eq!(ctx.managed_wallet.balance.total(), 0, "no phantom balance");
+    assert_eq!(
+        history_net(&ctx.managed_wallet),
+        ctx.managed_wallet.balance.total() as i64,
+        "transaction_history net must equal balance after an unattributed spend",
+    );
+}
+
+// ── reconciliation is intentionally NOT gated to block context ────────────────
+
+/// Recording is restricted to block contexts, but reconciliation is not: the
+/// observed-spent set only ever holds block-confirmed spends, so a coin present
+/// in it is genuinely spent on-chain and must be dropped even when its funding
+/// is (re)delivered via mempool. This pins that intentional asymmetry.
+#[tokio::test]
+async fn mempool_funding_is_reconciled_against_block_observed_spend() {
+    let mut ctx = TestWalletContext::new_random();
+
+    let funding_value = 1_100_000u64;
+    let funding_tx = Transaction::dummy(&ctx.receive_address, 0..1, &[funding_value]);
+    let funding_outpoint = OutPoint::new(funding_tx.txid(), 0);
+    let spend_tx = spend_to_external(&[funding_outpoint], funding_value - 1_000, 92);
+
+    // The spend is seen in a block first (records the observed spend).
+    ctx.check_transaction(&spend_tx, block_ctx(200)).await;
+    assert!(ctx.managed_wallet.observed_spent_outpoints().contains_key(&funding_outpoint));
+
+    // The funding is then delivered via mempool (unconfirmed) — it must still be
+    // reconciled away, because the spend it collides with was block-confirmed.
+    ctx.check_transaction(&funding_tx, TransactionContext::Mempool).await;
+    assert!(
+        !utxo_tracked(&ctx.managed_wallet, &funding_outpoint),
+        "a mempool funding must not resurrect a coin whose spend was seen in a block"
+    );
+    assert_eq!(ctx.managed_wallet.balance.total(), 0);
+    assert_eq!(history_net(&ctx.managed_wallet), 0, "history stays consistent for mempool funding");
+}
+
+// ── serde adapter streams many entries (SEC-003 defensive-cap path) ───────────
+
+/// The capped, streaming deserialize visitor round-trips many entries correctly
+/// (well under the defensive cap). Exercises the visitor beyond the trivial
+/// single-entry case; the multi-hundred-MB cap boundary itself is not asserted
+/// here as constructing >10M entries is impractical for a unit test.
+#[test]
+fn observed_spent_outpoints_serde_streams_many_entries() {
+    let mut wallet = ManagedWalletInfo::new(Network::Testnet, [9u8; 32]);
+    for i in 0..3_000u32 {
+        let mut bytes = [0u8; 32];
+        bytes[..4].copy_from_slice(&i.to_le_bytes());
+        let op = OutPoint::new(dashcore::Txid::from(bytes), i % 4);
+        wallet.record_observed_spends(&spend_to_external(&[op], 1, 70), 1_000 + i);
+    }
+    assert_eq!(wallet.observed_spent_outpoints().len(), 3_000);
+
+    let json = serde_json::to_string(&wallet).expect("serialize");
+    let restored: ManagedWalletInfo = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(
+        restored.observed_spent_outpoints(),
+        wallet.observed_spent_outpoints(),
+        "the streaming adapter round-trips every entry with no loss or reordering"
     );
 }
