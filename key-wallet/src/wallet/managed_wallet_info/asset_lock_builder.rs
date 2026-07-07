@@ -97,6 +97,11 @@ pub enum AssetLockError {
     AccountNotFound(u32),
     /// No change address available.
     NoChangeAddress,
+    /// An explicit override funding UTXO was supplied but is not final
+    /// (neither confirmed nor InstantSend-locked). Asset locks must be funded
+    /// by a final input per DIP-0010, so this is surfaced as a distinct caller
+    /// error rather than silently filtered out of coin selection.
+    OverrideInputNotFinal,
     /// Underlying transaction builder error.
     Builder(BuilderError),
 }
@@ -116,7 +121,22 @@ impl fmt::Display for AssetLockError {
             Self::WatchOnlyWallet => write!(f, "Cannot sign with watch-only wallet"),
             Self::AccountNotFound(idx) => write!(f, "BIP44 account {} not found", idx),
             Self::NoChangeAddress => write!(f, "No change address available"),
+            Self::OverrideInputNotFinal => {
+                write!(
+                    f,
+                    "Override funding UTXO is not final (not confirmed or InstantSend-locked)"
+                )
+            }
             Self::Builder(e) => write!(f, "Transaction builder error: {e}"),
+        }
+    }
+}
+
+impl std::error::Error for AssetLockError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Builder(e) => Some(e),
+            _ => None,
         }
     }
 }
@@ -253,6 +273,23 @@ impl ManagedWalletInfo {
     /// one per credit output in payload order. The caller uses the paths to
     /// request signatures from the same signer when later consuming the
     /// credits on Platform.
+    ///
+    /// # Funding source
+    ///
+    /// - `override_utxo: None` funds the lock via the account's own UTXO set
+    ///   and the automatic coin selector, exactly as the default path always
+    ///   has.
+    /// - `override_utxo: Some(utxo)` makes `utxo` the *only* candidate,
+    ///   bypassing the account UTXO set entirely. The flags on `utxo` are
+    ///   trusted verbatim: this method performs no on-chain verification that
+    ///   the coin is genuinely unspent — that is the caller's responsibility.
+    ///   Change and reservation handling are identical to the default path.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AssetLockError::OverrideInputNotFinal`] if `override_utxo` is
+    /// supplied but is neither confirmed nor InstantSend-locked (asset locks
+    /// require a final funding input per DIP-0010).
     pub async fn build_asset_lock_with_signer<S: Signer>(
         &mut self,
         wallet: &Wallet,
@@ -260,6 +297,7 @@ impl ManagedWalletInfo {
         credit_output_fundings: Vec<CreditOutputFunding>,
         fee_per_kb: u64,
         signer: &S,
+        override_utxo: Option<crate::Utxo>,
     ) -> Result<AssetLockResult, AssetLockError> {
         let height = self.last_processed_height();
 
@@ -277,13 +315,27 @@ impl ManagedWalletInfo {
         let credit_outputs: Vec<TxOut> =
             credit_output_fundings.iter().map(|f| f.output.clone()).collect();
 
-        let (transaction, fee) = TransactionBuilder::new()
+        let builder = TransactionBuilder::new()
             .set_fee_rate(FeeRate::new(fee_per_kb))
             .set_current_height(height)
             .set_special_payload(TransactionPayload::AssetLockPayloadType(AssetLockPayload::new(
                 credit_outputs,
-            )))
-            .set_funding(funds_acc, &acc)
+            )));
+
+        let builder = match override_utxo {
+            Some(utxo) => {
+                // Reject a non-final override eagerly and distinctly instead of
+                // letting `require_final_inputs` silently filter it into a
+                // generic insufficient-funds failure.
+                if !(utxo.is_confirmed || utxo.is_instantlocked) {
+                    return Err(AssetLockError::OverrideInputNotFinal);
+                }
+                builder.set_funding_with_inputs(funds_acc, &acc, [utxo])
+            }
+            None => builder.set_funding(funds_acc, &acc),
+        };
+
+        let (transaction, fee) = builder
             .require_final_inputs()
             .build_signed(signer, |addr| funds_acc.address_derivation_path(&addr))
             .await?;
@@ -349,7 +401,7 @@ mod tests {
     use crate::signer::{ExtendedPubKeySigner, SignerMethod};
     use crate::wallet::initialization::WalletAccountCreationOptions;
     use crate::{Network, Utxo};
-    use dashcore::{OutPoint, ScriptBuf, Txid};
+    use dashcore::{Address, OutPoint, ScriptBuf, Txid};
     use dashcore_hashes::Hash;
 
     fn test_credit_outputs(amounts: &[u64]) -> Vec<CreditOutputFunding> {
@@ -409,6 +461,65 @@ mod tests {
         };
         account.utxos.insert(outpoint, utxo);
         outpoint
+    }
+
+    /// Build an override `Utxo` at a fresh account-0 receive address but
+    /// deliberately do **not** insert it into `funds_acc.utxos`: the override
+    /// path must accept a coin the local index has never seen. The address is a
+    /// real, derivable account address so the signer can sign for it
+    /// end-to-end.
+    fn make_override_utxo(
+        info: &mut ManagedWalletInfo,
+        wallet: &Wallet,
+        txid_byte: u8,
+        value: u64,
+        is_confirmed: bool,
+        is_instantlocked: bool,
+    ) -> Utxo {
+        let account_xpub = wallet.get_bip44_account(0).unwrap().account_xpub;
+        let account = info.accounts.standard_bip44_accounts.get_mut(&0).unwrap();
+        let funding_address = account.next_receive_address(Some(&account_xpub), true).unwrap();
+        Utxo {
+            outpoint: OutPoint {
+                txid: Txid::from_byte_array([txid_byte; 32]),
+                vout: 0,
+            },
+            txout: TxOut {
+                value,
+                script_pubkey: funding_address.script_pubkey(),
+            },
+            address: funding_address,
+            height: 1000,
+            is_coinbase: false,
+            is_confirmed,
+            is_instantlocked,
+            is_locked: false,
+            is_trusted: false,
+        }
+    }
+
+    /// A signer backed by the test wallet's own root key — signs for any address
+    /// the funding account can derive a path for.
+    fn in_memory_signer(wallet: &Wallet) -> InMemorySigner {
+        let root = match &wallet.wallet_type {
+            crate::wallet::WalletType::Mnemonic {
+                root_extended_private_key,
+                ..
+            } => root_extended_private_key.clone(),
+            _ => unreachable!("test_wallet_and_info produces a mnemonic wallet"),
+        };
+        InMemorySigner {
+            root,
+            network: Network::Testnet,
+        }
+    }
+
+    /// Reserved outpoints held by account 0 at `height`.
+    fn reserved_outpoints(
+        info: &ManagedWalletInfo,
+        height: u32,
+    ) -> std::collections::HashSet<OutPoint> {
+        info.accounts.standard_bip44_accounts.get(&0).unwrap().reservations().reserved(height)
     }
 
     // -- Error type tests --
@@ -605,7 +716,8 @@ mod tests {
             root,
             network: Network::Testnet,
         };
-        let result = info.build_asset_lock_with_signer(&wallet, 0, vec![], 1000, &signer).await;
+        let result =
+            info.build_asset_lock_with_signer(&wallet, 0, vec![], 1000, &signer, None).await;
         assert!(matches!(result, Err(AssetLockError::Builder(BuilderError::NoOutputs))));
     }
 
@@ -630,6 +742,7 @@ mod tests {
                 test_credit_outputs(&[100_000]),
                 1000,
                 &signer,
+                None,
             )
             .await;
         assert!(matches!(result, Err(AssetLockError::AccountNotFound(99))));
@@ -667,6 +780,7 @@ mod tests {
                 test_credit_outputs(&[100_000]),
                 1000,
                 &NoDigestSigner,
+                None,
             )
             .await;
         // The unfunded wallet may also surface a CoinSelection error before
@@ -698,7 +812,7 @@ mod tests {
         let credit_amounts = [200_000u64, 300_000u64];
         let fundings = test_credit_outputs(&credit_amounts);
         let result = info
-            .build_asset_lock_with_signer(&wallet, 0, fundings, 1000, &signer)
+            .build_asset_lock_with_signer(&wallet, 0, fundings, 1000, &signer, None)
             .await
             .expect("build_asset_lock_with_signer should succeed with funded wallet");
 
@@ -757,6 +871,7 @@ mod tests {
                 test_credit_outputs(&[500_000]),
                 1000,
                 &signer,
+                None,
             )
             .await;
         assert!(
@@ -764,5 +879,354 @@ mod tests {
             "Expected Builder error for insufficient funds, got: {:?}",
             result.err()
         );
+    }
+
+    // -- Explicit UTXO override tests --
+
+    /// The override UTXO is the sole input; the auto-selector's candidate pool
+    /// (the account's own UTXOs) is never consulted.
+    #[tokio::test]
+    async fn test_override_utxo_is_sole_input_ignoring_auto_selector_pool() {
+        let (wallet, mut info) = test_wallet_and_info();
+        // Three confirmed decoys, each alone sufficient for amount + fee.
+        let decoy_a = insert_funded_utxo(&mut info, &wallet, 0x22, 1_000_000, true);
+        let decoy_b = insert_funded_utxo(&mut info, &wallet, 0x23, 1_000_000, true);
+        let decoy_c = insert_funded_utxo(&mut info, &wallet, 0x24, 1_000_000, true);
+        let override_utxo = make_override_utxo(&mut info, &wallet, 0x77, 1_000_000, true, false);
+        info.update_last_processed_height(1100);
+        let signer = in_memory_signer(&wallet);
+
+        let result = info
+            .build_asset_lock_with_signer(
+                &wallet,
+                0,
+                test_credit_outputs(&[200_000]),
+                1000,
+                &signer,
+                Some(override_utxo.clone()),
+            )
+            .await
+            .expect("override funds the asset lock");
+
+        assert_eq!(result.transaction.input.len(), 1, "override must be the sole input");
+        assert_eq!(
+            result.transaction.input[0].previous_output, override_utxo.outpoint,
+            "the one input must be the override outpoint"
+        );
+        for decoy in [decoy_a, decoy_b, decoy_c] {
+            assert!(
+                result.transaction.input.iter().all(|i| i.previous_output != decoy),
+                "a decoy from funds_acc.utxos leaked into the override build"
+            );
+        }
+    }
+
+    /// An override worth less than amount + fee fails with a typed builder error
+    /// and does NOT silently fall back to the sufficient decoy; no reservation
+    /// is left behind.
+    #[tokio::test]
+    async fn test_override_utxo_insufficient_value_returns_typed_error_not_auto_fallback() {
+        let (wallet, mut info) = test_wallet_and_info();
+        // A decoy that WOULD cover the lock if auto-selection ran.
+        insert_funded_utxo(&mut info, &wallet, 0x22, 5_000_000, true);
+        let override_utxo = make_override_utxo(&mut info, &wallet, 0x77, 1, true, false);
+        info.update_last_processed_height(1100);
+        let signer = in_memory_signer(&wallet);
+
+        let result = info
+            .build_asset_lock_with_signer(
+                &wallet,
+                0,
+                test_credit_outputs(&[200_000]),
+                1000,
+                &signer,
+                Some(override_utxo),
+            )
+            .await;
+
+        assert!(
+            matches!(
+                result,
+                Err(AssetLockError::Builder(
+                    BuilderError::InsufficientFunds { .. } | BuilderError::CoinSelection(_)
+                ))
+            ),
+            "insufficient override must surface a typed builder error, not fall back to the decoy; got {:?}",
+            result.err()
+        );
+        assert!(
+            reserved_outpoints(&info, 1100).is_empty(),
+            "a failed build must not leave any UTXO reserved"
+        );
+    }
+
+    /// With `override_utxo: None`, behaviour is byte-for-byte the legacy
+    /// auto-selection path: only the confirmed UTXO is spent (mirror of
+    /// `test_selects_only_final_funding`).
+    #[tokio::test]
+    async fn test_no_override_auto_selection_behavior_unchanged() {
+        let (wallet, mut info) = test_wallet_and_info();
+        let confirmed = insert_funded_utxo(&mut info, &wallet, 0x22, 1_000_000, true);
+        insert_funded_utxo(&mut info, &wallet, 0x33, 5_000_000, false);
+        info.update_last_processed_height(1100);
+        let signer = in_memory_signer(&wallet);
+
+        let result = info
+            .build_asset_lock_with_signer(
+                &wallet,
+                0,
+                test_credit_outputs(&[200_000]),
+                1000,
+                &signer,
+                None,
+            )
+            .await
+            .expect("confirmed funds should cover the asset lock");
+
+        assert!(!result.transaction.input.is_empty());
+        for txin in &result.transaction.input {
+            assert_eq!(txin.previous_output, confirmed, "auto-selection spent a non-final input");
+        }
+    }
+
+    /// `override_utxo: None` still derives a change address and reserves the
+    /// spent input, exactly as `set_funding` does today.
+    #[tokio::test]
+    async fn test_no_override_still_derives_change_address_and_reserves_inputs() {
+        let (wallet, mut info) = test_wallet_and_info();
+        let funded = insert_funded_utxo(&mut info, &wallet, 0x22, 1_000_000, true);
+        info.update_last_processed_height(1100);
+        let signer = in_memory_signer(&wallet);
+
+        let result = info
+            .build_asset_lock_with_signer(
+                &wallet,
+                0,
+                test_credit_outputs(&[200_000]),
+                1000,
+                &signer,
+                None,
+            )
+            .await
+            .expect("build should succeed and produce change");
+
+        // OP_RETURN burn + change output.
+        assert_eq!(result.transaction.output.len(), 2, "expected burn + change output");
+        let change = &result.transaction.output[1];
+        assert!(change.value > 546, "change must exceed the dust threshold");
+        assert!(
+            reserved_outpoints(&info, 1100).contains(&funded),
+            "the spent input must be reserved after a successful build"
+        );
+    }
+
+    /// Regression guard: an override worth more than amount + fee + dust
+    /// produces a real, account-controlled change output — not
+    /// `NoChangeAddress`, not a burned excess.
+    #[tokio::test]
+    async fn test_override_utxo_still_produces_change_output() {
+        let (wallet, mut info) = test_wallet_and_info();
+        let override_value = 1_000_000u64;
+        let override_utxo =
+            make_override_utxo(&mut info, &wallet, 0x77, override_value, true, false);
+        info.update_last_processed_height(1100);
+        let signer = in_memory_signer(&wallet);
+
+        let total_credit = 200_000u64;
+        let result = info
+            .build_asset_lock_with_signer(
+                &wallet,
+                0,
+                test_credit_outputs(&[total_credit]),
+                1000,
+                &signer,
+                Some(override_utxo.clone()),
+            )
+            .await
+            .expect("override with excess must produce change, not NoChangeAddress");
+
+        assert_eq!(result.transaction.output.len(), 2, "expected burn + change output");
+        let burn = &result.transaction.output[0];
+        assert_eq!(burn.value, total_credit, "burn output must carry the total credit");
+        let change = &result.transaction.output[1];
+        assert!(change.value > 546, "change must exceed the dust threshold");
+
+        // The on-chain fee is what's left after burn + change; it must be a
+        // sane positive amount (excess was NOT burned as fee).
+        let on_chain_fee = override_value - burn.value - change.value;
+        assert!(
+            (100..10_000).contains(&on_chain_fee),
+            "unexpected fee {on_chain_fee}: excess may have been burned instead of returned as change"
+        );
+
+        // Change pays an account-derivable address, distinct from the override's
+        // own script.
+        let change_addr = Address::from_script(&change.script_pubkey, Network::Testnet)
+            .expect("change output is a standard address");
+        let funds_acc = info.accounts.standard_bip44_accounts.get(&0).unwrap();
+        assert!(
+            funds_acc.address_derivation_path(&change_addr).is_some(),
+            "change must pay an address the funding account controls"
+        );
+        assert_ne!(
+            change.script_pubkey, override_utxo.txout.script_pubkey,
+            "change must not reuse the override UTXO's own script"
+        );
+    }
+
+    /// The override outpoint is reserved after a successful build, and a second
+    /// build reusing it fails at selection (the reserved filter removes it),
+    /// leaving the first build's reservation intact.
+    #[tokio::test]
+    async fn test_override_utxo_still_reserved_after_successful_build() {
+        let (wallet, mut info) = test_wallet_and_info();
+        let override_utxo = make_override_utxo(&mut info, &wallet, 0x77, 1_000_000, true, false);
+        info.update_last_processed_height(1100);
+        let signer = in_memory_signer(&wallet);
+
+        info.build_asset_lock_with_signer(
+            &wallet,
+            0,
+            test_credit_outputs(&[200_000]),
+            1000,
+            &signer,
+            Some(override_utxo.clone()),
+        )
+        .await
+        .expect("first build succeeds");
+
+        assert!(
+            reserved_outpoints(&info, 1100).contains(&override_utxo.outpoint),
+            "override outpoint must be reserved after the first build"
+        );
+
+        // Reusing the same override outpoint: the reserved filter empties the
+        // candidate pool, so selection fails.
+        let second = info
+            .build_asset_lock_with_signer(
+                &wallet,
+                0,
+                test_credit_outputs(&[200_000]),
+                1000,
+                &signer,
+                Some(override_utxo.clone()),
+            )
+            .await;
+        assert!(
+            matches!(second, Err(AssetLockError::Builder(_))),
+            "a second build reusing a reserved override must not double-spend it; got {:?}",
+            second.err()
+        );
+        assert!(
+            reserved_outpoints(&info, 1100).contains(&override_utxo.outpoint),
+            "the first build's reservation must survive the failed second build"
+        );
+    }
+
+    /// A non-final override (`is_confirmed == false && is_instantlocked ==
+    /// false`) is rejected eagerly with the distinct `OverrideInputNotFinal`
+    /// error, NOT silently filtered into a generic insufficient-funds failure.
+    ///
+    /// Contract: the override mechanism trusts the caller-supplied finality
+    /// flags at face value — it performs no independent on-chain verification;
+    /// that is the caller's (DET's oracle) responsibility. A non-final flag is a
+    /// distinct, deliberate caller error.
+    #[tokio::test]
+    async fn test_override_utxo_not_final_rejected_with_typed_error() {
+        let (wallet, mut info) = test_wallet_and_info();
+        let override_utxo = make_override_utxo(&mut info, &wallet, 0x77, 1_000_000, false, false);
+        info.update_last_processed_height(1100);
+        let signer = in_memory_signer(&wallet);
+
+        let result = info
+            .build_asset_lock_with_signer(
+                &wallet,
+                0,
+                test_credit_outputs(&[200_000]),
+                1000,
+                &signer,
+                Some(override_utxo),
+            )
+            .await;
+
+        assert!(
+            matches!(result, Err(AssetLockError::OverrideInputNotFinal)),
+            "a non-final override must be rejected with OverrideInputNotFinal; got {:?}",
+            result.err()
+        );
+    }
+
+    /// An override whose outpoint is absent from `funds_acc.utxos` is accepted
+    /// at face value: the override path must not require local-index presence
+    /// (the very divergence the mitigation exists for).
+    #[tokio::test]
+    async fn test_override_utxo_absent_from_local_index_still_accepted() {
+        let (wallet, mut info) = test_wallet_and_info();
+        let override_utxo = make_override_utxo(&mut info, &wallet, 0x77, 1_000_000, true, false);
+        // Confirm it is genuinely absent from the local UTXO index.
+        assert!(
+            !info
+                .accounts
+                .standard_bip44_accounts
+                .get(&0)
+                .unwrap()
+                .utxos
+                .contains_key(&override_utxo.outpoint),
+            "override outpoint must not be present in the local index for this test"
+        );
+        info.update_last_processed_height(1100);
+        let signer = in_memory_signer(&wallet);
+
+        let result = info
+            .build_asset_lock_with_signer(
+                &wallet,
+                0,
+                test_credit_outputs(&[200_000]),
+                1000,
+                &signer,
+                Some(override_utxo.clone()),
+            )
+            .await
+            .expect("override absent from the local index must still be accepted");
+
+        assert_eq!(result.transaction.input.len(), 1);
+        assert_eq!(result.transaction.input[0].previous_output, override_utxo.outpoint);
+    }
+
+    /// Empty credit outputs are still rejected with `NoOutputs`, even when an
+    /// override is supplied: override plumbing must not short-circuit earlier
+    /// output validation.
+    #[tokio::test]
+    async fn test_override_empty_credit_outputs_still_rejected() {
+        let (wallet, mut info) = test_wallet_and_info();
+        let override_utxo = make_override_utxo(&mut info, &wallet, 0x77, 1_000_000, true, false);
+        info.update_last_processed_height(1100);
+        let signer = in_memory_signer(&wallet);
+
+        let result = info
+            .build_asset_lock_with_signer(&wallet, 0, vec![], 1000, &signer, Some(override_utxo))
+            .await;
+        assert!(matches!(result, Err(AssetLockError::Builder(BuilderError::NoOutputs))));
+    }
+
+    /// A nonexistent account index is still rejected with `AccountNotFound`
+    /// before the override is ever consulted.
+    #[tokio::test]
+    async fn test_override_invalid_account_index_still_rejected() {
+        let (wallet, mut info) = test_wallet_and_info();
+        let override_utxo = make_override_utxo(&mut info, &wallet, 0x77, 1_000_000, true, false);
+        let signer = in_memory_signer(&wallet);
+
+        let result = info
+            .build_asset_lock_with_signer(
+                &wallet,
+                99,
+                test_credit_outputs(&[100_000]),
+                1000,
+                &signer,
+                Some(override_utxo),
+            )
+            .await;
+        assert!(matches!(result, Err(AssetLockError::AccountNotFound(99))));
     }
 }

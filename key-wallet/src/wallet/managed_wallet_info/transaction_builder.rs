@@ -131,6 +131,36 @@ impl TransactionBuilder {
         self
     }
 
+    /// Seed the builder from a caller-supplied input set instead of the funding
+    /// account's full UTXO map, while keeping [`Self::set_funding`]'s
+    /// change-address derivation and reservation handling. Inputs already
+    /// reserved by another in-flight build are skipped, identically to
+    /// `set_funding`.
+    ///
+    /// Callers that want the account's own UTXOs as candidates want
+    /// [`Self::set_funding`]; this is for the narrow case where exactly which
+    /// coins may fund the transaction is decided outside the wallet (e.g. an
+    /// asset lock funded from a caller-verified UTXO). It never reads
+    /// `funds_acc.utxos`, so a poisoned or absent index entry can neither leak
+    /// into nor gate the candidate pool.
+    ///
+    /// Same locking contract as `set_funding`: the builder must not be held
+    /// across an `await` between this call and `build_signed`/`build_unsigned`,
+    /// or the read-then-reserve window reopens for a concurrent build.
+    pub fn set_funding_with_inputs(
+        mut self,
+        funds_acc: &mut ManagedCoreFundsAccount,
+        acc: &Account,
+        inputs: impl IntoIterator<Item = Utxo>,
+    ) -> Self {
+        let reserved = funds_acc.reservations().reserved(self.current_height);
+        self.inputs =
+            inputs.into_iter().filter(|utxo| !reserved.contains(&utxo.outpoint)).collect();
+        self.reservations = Some(funds_acc.reservations().clone());
+        self.change_addr = funds_acc.next_change_address(Some(&acc.account_xpub), true).ok();
+        self
+    }
+
     pub fn set_change_address(mut self, change_addr: Address) -> Self {
         self.change_addr = Some(change_addr);
         self
@@ -1111,6 +1141,38 @@ mod tests {
         let candidates: Vec<OutPoint> = builder.inputs.iter().map(|utxo| utxo.outpoint).collect();
         assert!(!candidates.contains(&reserved.outpoint));
         assert!(candidates.contains(&free.outpoint));
+    }
+
+    #[test]
+    fn set_funding_with_inputs_ignores_account_utxos_and_skips_reserved() {
+        let ctx = TestWalletContext::new_random();
+        let account =
+            ctx.wallet.accounts.standard_bip44_accounts.get(&0).expect("BIP44 account").clone();
+
+        let mut funds = ManagedCoreFundsAccount::dummy_bip44();
+        // A "poisoned" account UTXO that must NEVER enter the candidate pool on
+        // the override path.
+        let account_utxo = Utxo::dummy(0x01, 500_000, 100, false, true);
+        funds.utxos.insert(account_utxo.outpoint, account_utxo.clone());
+
+        // Caller-supplied inputs: one already reserved, one free.
+        let reserved = Utxo::dummy(0x02, 100_000, 100, false, true);
+        let free = Utxo::dummy(0x03, 200_000, 100, false, true);
+        funds.reservations().reserve(&[reserved.outpoint], 200);
+
+        let builder = TransactionBuilder::new().set_current_height(200).set_funding_with_inputs(
+            &mut funds,
+            &account,
+            [reserved.clone(), free.clone()],
+        );
+
+        let candidates: Vec<OutPoint> = builder.inputs.iter().map(|utxo| utxo.outpoint).collect();
+        assert!(
+            !candidates.contains(&account_utxo.outpoint),
+            "set_funding_with_inputs must not read funds_acc.utxos"
+        );
+        assert!(!candidates.contains(&reserved.outpoint), "reserved input must be skipped");
+        assert!(candidates.contains(&free.outpoint), "free caller input must be kept");
     }
 
     #[tokio::test]
