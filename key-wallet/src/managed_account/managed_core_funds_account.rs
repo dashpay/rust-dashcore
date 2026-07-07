@@ -161,6 +161,23 @@ impl ManagedCoreFundsAccount {
         self.spent_outpoints.insert(outpoint);
     }
 
+    /// Test-only: rebuild `spent_outpoints` exactly the way [`Deserialize`]
+    /// does, to simulate a save/reload cycle for QA's cross-restart
+    /// verification. A real full-struct serde round-trip is blocked for a
+    /// populated account by `AddressPool::script_pubkey_index`
+    /// (`HashMap<ScriptBuf, _>`, not a valid JSON map key), so this mirrors
+    /// the same reconstruction logic directly.
+    #[cfg(test)]
+    pub(crate) fn simulate_reload_rebuild_spent_outpoints(&mut self) {
+        self.spent_outpoints = self
+            .keys
+            .transactions()
+            .values()
+            .flat_map(|record| &record.transaction.input)
+            .map(|input| input.previous_output)
+            .collect();
+    }
+
     /// Add new UTXOs for received outputs, remove spent ones.
     fn update_utxos(
         &mut self,

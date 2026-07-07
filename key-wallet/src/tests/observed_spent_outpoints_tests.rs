@@ -50,6 +50,19 @@ fn block_ctx(height: u32) -> TransactionContext {
     ))
 }
 
+/// A chain-locked block context at `height` — the strongest finality signal,
+/// which drops the transaction's full record to save memory (default
+/// `keep-finalized-transactions = OFF`). A full historical rescan delivers
+/// old blocks already chainlocked, so this is the realistic "first sighting"
+/// context for a coin funded and spent long ago.
+fn chain_locked_block_ctx(height: u32) -> TransactionContext {
+    TransactionContext::InChainLockedBlock(BlockInfo::new(
+        height,
+        dashcore::BlockHash::dummy(height),
+        1_650_000_000 + height,
+    ))
+}
+
 /// A transaction spending `inputs` and paying `value` to an unrelated external
 /// address (`ext_id` selects a distinct dummy address). No change back to us.
 fn spend_to_external(inputs: &[OutPoint], value: u64, ext_id: usize) -> Transaction {
@@ -941,4 +954,214 @@ async fn reprocessing_fully_compensated_funding_stays_consistent() {
     let record = account.transactions().get(&funding_txid).expect("record kept");
     assert_eq!(record.net_amount, 0, "fully-compensated record sits at net 0");
     assert!(record.output_details.is_empty(), "no surviving received output remains");
+}
+
+// ── Marvin's adversarial round 3 stress tests ──────────────────────────────
+//
+// Independent verification of the round-3 self-report: repeated reprocessing
+// beyond a single retry, a multi-output tx where every output is eventually
+// observed spent, and the specific cross-serialize/deserialize claim the
+// developer flagged as the more subtle of the two layers.
+
+/// Idempotency must hold for an unbounded number of replays, not just one
+/// extra retry. Reprocess the funding tx a 2nd, 3rd, AND 4th time and assert
+/// `net_amount`/balance are stable after every single pass, not just at the
+/// end.
+#[tokio::test]
+async fn reprocessing_partially_compensated_funding_stays_idempotent_across_many_replays() {
+    let mut ctx = TestWalletContext::new_random();
+
+    let out0_value = 2_000_000u64;
+    let out1_value = 500_000u64;
+    let funding_tx = Transaction::dummy(&ctx.receive_address, 0..1, &[out0_value, out1_value]);
+    let funding_txid = funding_tx.txid();
+    let out0 = OutPoint::new(funding_txid, 0);
+    let out1 = OutPoint::new(funding_txid, 1);
+    let spend_tx = spend_to_external(&[out0], out0_value - 1_000, 96);
+
+    ctx.check_transaction(&spend_tx, block_ctx(200)).await;
+    ctx.check_transaction(&funding_tx, block_ctx(100)).await;
+
+    for replay in 1..=4 {
+        ctx.check_transaction(&funding_tx, block_ctx(100)).await;
+
+        assert!(utxo_tracked(&ctx.managed_wallet, &out1), "replay {replay}: out1 stays tracked");
+        assert!(
+            !utxo_tracked(&ctx.managed_wallet, &out0),
+            "replay {replay}: out0 stays invalidated"
+        );
+        assert_eq!(
+            ctx.managed_wallet.balance.total(),
+            out1_value,
+            "replay {replay}: balance unaffected"
+        );
+        let account = ctx.managed_wallet.first_bip44_managed_account().expect("account");
+        let record = account.transactions().get(&funding_txid).expect("funding record");
+        assert_eq!(
+            record.net_amount, out1_value as i64,
+            "replay {replay}: net_amount must not drift with repeated replay"
+        );
+        assert_eq!(
+            history_net(&ctx.managed_wallet),
+            ctx.managed_wallet.balance.total() as i64,
+            "replay {replay}: history net stays equal to balance"
+        );
+    }
+}
+
+/// A multi-output funding tx where BOTH outputs are independently observed
+/// spent (by two separate spending transactions, not one) before the funding
+/// is processed. The record must reach net 0 in a single pass and stay
+/// consistent — not just the single-output-fully-spent case, and not just
+/// the single-output-partially-spent case already covered.
+#[tokio::test]
+async fn all_outputs_independently_observed_spent_reaches_net_zero_and_stays_consistent() {
+    let mut ctx = TestWalletContext::new_random();
+
+    let out0_value = 2_000_000u64;
+    let out1_value = 500_000u64;
+    let funding_tx = Transaction::dummy(&ctx.receive_address, 0..1, &[out0_value, out1_value]);
+    let funding_txid = funding_tx.txid();
+    let out0 = OutPoint::new(funding_txid, 0);
+    let out1 = OutPoint::new(funding_txid, 1);
+    let spend_tx0 = spend_to_external(&[out0], out0_value - 1_000, 97);
+    let spend_tx1 = spend_to_external(&[out1], out1_value - 1_000, 98);
+
+    // Both spends observed, independently, before the funding tx is seen.
+    ctx.check_transaction(&spend_tx0, block_ctx(200)).await;
+    ctx.check_transaction(&spend_tx1, block_ctx(201)).await;
+    ctx.check_transaction(&funding_tx, block_ctx(100)).await;
+
+    assert!(!utxo_tracked(&ctx.managed_wallet, &out0), "out0 invalidated");
+    assert!(!utxo_tracked(&ctx.managed_wallet, &out1), "out1 invalidated");
+    assert_eq!(ctx.managed_wallet.balance.total(), 0, "no surviving output");
+
+    let account = ctx.managed_wallet.first_bip44_managed_account().expect("account");
+    let record = account.transactions().get(&funding_txid).expect("record kept");
+    assert_eq!(record.net_amount, 0, "both outputs compensated in one pass reaches net 0");
+    assert!(record.output_details.is_empty(), "both output_details entries are gone");
+    assert_eq!(history_net(&ctx.managed_wallet), 0, "history net stays equal to the zero balance");
+
+    // Reprocess: must stay at net 0, not go negative.
+    ctx.check_transaction(&funding_tx, block_ctx(100)).await;
+    let account = ctx.managed_wallet.first_bip44_managed_account().expect("account");
+    let record = account.transactions().get(&funding_txid).expect("record kept");
+    assert_eq!(record.net_amount, 0, "reprocess after both-outputs-spent stays at net 0");
+    assert_eq!(ctx.managed_wallet.balance.total(), 0);
+}
+
+/// The subtle claim under test: the developer states the `output_details`
+/// marker survives a serialize/deserialize even though the account-local
+/// `spent_outpoints` set does NOT (it is rebuilt from recorded transactions
+/// on load and omits the never-recorded spend). This exercises that boundary
+/// directly via `simulate_reload_rebuild_spent_outpoints`, which performs the
+/// exact same reconstruction the real `Deserialize` impl does — a literal
+/// full-struct serde round-trip is unavailable for a populated account (see
+/// that helper's doc comment).
+///
+/// Two reload cycles are exercised, not one, to confirm the persisted
+/// wallet-level `observed_spent_outpoints` set — not the transient
+/// account-local mark — is what makes this survive a restart.
+#[tokio::test]
+async fn compensation_survives_simulated_reload_across_two_restart_cycles() {
+    let mut ctx = TestWalletContext::new_random();
+
+    let out0_value = 2_000_000u64;
+    let out1_value = 500_000u64;
+    let funding_tx = Transaction::dummy(&ctx.receive_address, 0..1, &[out0_value, out1_value]);
+    let funding_txid = funding_tx.txid();
+    let out0 = OutPoint::new(funding_txid, 0);
+    let out1 = OutPoint::new(funding_txid, 1);
+    let spend_tx = spend_to_external(&[out0], out0_value - 1_000, 99);
+
+    ctx.check_transaction(&spend_tx, block_ctx(200)).await;
+    ctx.check_transaction(&funding_tx, block_ctx(100)).await;
+
+    let assert_consistent = |ctx: &TestWalletContext, cycle: u32| {
+        assert!(utxo_tracked(&ctx.managed_wallet, &out1), "cycle {cycle}: out1 tracked");
+        assert!(!utxo_tracked(&ctx.managed_wallet, &out0), "cycle {cycle}: out0 invalidated");
+        assert_eq!(
+            ctx.managed_wallet.balance.total(),
+            out1_value,
+            "cycle {cycle}: balance is the surviving output only"
+        );
+        let account = ctx.managed_wallet.first_bip44_managed_account().expect("account");
+        let record = account.transactions().get(&funding_txid).expect("funding record");
+        assert_eq!(
+            record.net_amount, out1_value as i64,
+            "cycle {cycle}: net_amount must not be compensated twice across a reload"
+        );
+        assert_eq!(
+            history_net(&ctx.managed_wallet),
+            ctx.managed_wallet.balance.total() as i64,
+            "cycle {cycle}: history net stays equal to balance across a reload"
+        );
+    };
+    assert_consistent(&ctx, 0);
+
+    for cycle in 1..=2 {
+        // Simulate a restart: rebuild the account-local `spent_outpoints`
+        // from recorded transactions exactly as `Deserialize` would. The
+        // persisted wallet-level `observed_spent_outpoints` is left intact,
+        // as it would be across a real save/reload.
+        ctx.managed_wallet
+            .first_bip44_managed_account_mut()
+            .expect("account")
+            .simulate_reload_rebuild_spent_outpoints();
+
+        // Post-restart rescan / duplicate delivery reprocesses the funding tx.
+        ctx.check_transaction(&funding_tx, block_ctx(100)).await;
+
+        assert_consistent(&ctx, cycle);
+    }
+}
+
+/// A full historical rescan delivers already-chainlocked blocks: the funding
+/// tx's FIRST sighting can be `InChainLockedBlock`, not `InBlock`. In that
+/// case `record_transaction` drops the just-inserted record to
+/// `finalized_txids` (memory-saving finalization) BEFORE the wallet-level
+/// `reconcile_inserts_with_observed_spends` step gets to compensate it — so
+/// the compensation's `account.transactions_mut().get_mut(&funding_txid)`
+/// finds nothing and silently no-ops, and the record vanishes from
+/// `transaction_history()` entirely instead of landing at a compensated
+/// net_amount. The coin removal itself (and thus `balance.total()`) is
+/// unaffected — only the coin actually spent is dropped from `utxos` — but
+/// the surviving output's value then has no corresponding history record,
+/// breaking the very invariant this whole fix chain exists to protect.
+#[tokio::test]
+async fn spend_first_ordering_with_chainlocked_first_sighting_diverges_history_from_balance() {
+    let mut ctx = TestWalletContext::new_random();
+
+    let out0_value = 2_000_000u64;
+    let out1_value = 500_000u64;
+    let funding_tx = Transaction::dummy(&ctx.receive_address, 0..1, &[out0_value, out1_value]);
+    let funding_txid = funding_tx.txid();
+    let out0 = OutPoint::new(funding_txid, 0);
+    let out1 = OutPoint::new(funding_txid, 1);
+    let spend_tx = spend_to_external(&[out0], out0_value - 1_000, 100);
+
+    // Spend of out0 observed first (still an ordinary InBlock context — the
+    // spend itself need not be chainlocked for this to trigger).
+    ctx.check_transaction(&spend_tx, block_ctx(200)).await;
+    // The funding tx's FIRST sighting is already chainlocked, as it would be
+    // during a full rescan of old history.
+    ctx.check_transaction(&funding_tx, chain_locked_block_ctx(100)).await;
+
+    assert!(!utxo_tracked(&ctx.managed_wallet, &out0), "out0 stays invalidated");
+    assert!(utxo_tracked(&ctx.managed_wallet, &out1), "out1 survives");
+    assert_eq!(
+        ctx.managed_wallet.balance.total(),
+        out1_value,
+        "balance correctly reflects the surviving output"
+    );
+
+    assert_eq!(
+        history_net(&ctx.managed_wallet),
+        ctx.managed_wallet.balance.total() as i64,
+        "BUG: the funding record was dropped to `finalized_txids` before the \
+         #649 guard could compensate it, so transaction_history() omits it \
+         entirely instead of showing a net {out1_value} (or a kept net-0) \
+         record — history net diverges from balance by exactly the \
+         surviving output's value",
+    );
 }
