@@ -732,12 +732,13 @@ async fn transaction_history_net_matches_balance_after_spend_before_funding() {
         ctx.managed_wallet.balance.total() as i64,
         "transaction_history net must equal balance",
     );
-    // The pure spend-before-funding case leaves no surviving effect for the tx,
-    // so its now-phantom record is dropped entirely.
-    assert!(
-        ctx.managed_wallet.transaction_history().is_empty(),
-        "the funding record is dropped, not left as a zero-net phantom"
-    );
+    // The fully-compensated funding record is KEPT at net 0 (not deleted), so a
+    // later reprocessing takes the already-known path instead of re-recording a
+    // positive net. Net 0 keeps history consistent with the zero balance.
+    let records = ctx.managed_wallet.transaction_history();
+    assert_eq!(records.len(), 1, "the funding record is kept, fully compensated");
+    assert_eq!(records[0].net_amount, 0, "kept record sits at net 0");
+    assert!(records[0].output_details.is_empty(), "its received output is compensated away");
 }
 
 /// Funding-first mirror: a coin funded and recorded, then spent by a transaction
@@ -836,4 +837,108 @@ fn observed_spent_outpoints_serde_streams_many_entries() {
         wallet.observed_spent_outpoints(),
         "the streaming adapter round-trips every entry with no loss or reordering"
     );
+}
+
+// ── multi-output partial compensation: idempotency + output_details sync ──────
+
+/// A funding tx with two of our outputs where only one is observed-spent, then
+/// reprocessed (guaranteed by rescan/duplicate-block delivery). The guard must
+/// be idempotent: reprocessing must not compensate the removed output a second
+/// time and drive `net_amount` negative (QA-001).
+#[tokio::test]
+async fn reprocessing_partially_compensated_funding_does_not_double_compensate() {
+    let mut ctx = TestWalletContext::new_random();
+
+    let out0_value = 2_000_000u64;
+    let out1_value = 500_000u64;
+    let funding_tx = Transaction::dummy(&ctx.receive_address, 0..1, &[out0_value, out1_value]);
+    let funding_txid = funding_tx.txid();
+    let out0 = OutPoint::new(funding_txid, 0);
+    let out1 = OutPoint::new(funding_txid, 1);
+    let spend_tx = spend_to_external(&[out0], out0_value - 1_000, 93);
+
+    // Spend of out0 observed first, then the funding, then the funding AGAIN.
+    ctx.check_transaction(&spend_tx, block_ctx(200)).await;
+    ctx.check_transaction(&funding_tx, block_ctx(100)).await;
+    ctx.check_transaction(&funding_tx, block_ctx(100)).await; // rescan/duplicate delivery
+
+    // out1 survives; out0 stays invalidated.
+    assert!(utxo_tracked(&ctx.managed_wallet, &out1), "surviving output stays tracked");
+    assert!(!utxo_tracked(&ctx.managed_wallet, &out0), "observed-spent output stays invalidated");
+    assert_eq!(ctx.managed_wallet.balance.total(), out1_value, "balance is the surviving output");
+
+    let account = ctx.managed_wallet.first_bip44_managed_account().expect("account");
+    let record = account.transactions().get(&funding_txid).expect("funding record");
+    assert_eq!(
+        record.net_amount, out1_value as i64,
+        "net_amount reflects only the surviving output — not compensated twice",
+    );
+    assert_eq!(
+        history_net(&ctx.managed_wallet),
+        ctx.managed_wallet.balance.total() as i64,
+        "history net stays equal to balance across reprocessing",
+    );
+}
+
+/// Single pass, multi-output partial compensation: the removed output's
+/// `output_details` entry must be dropped so per-output line items agree with
+/// the compensated `net_amount` (QA-002).
+#[tokio::test]
+async fn partial_compensation_updates_output_details() {
+    let mut ctx = TestWalletContext::new_random();
+
+    let out0_value = 2_000_000u64;
+    let out1_value = 500_000u64;
+    let funding_tx = Transaction::dummy(&ctx.receive_address, 0..1, &[out0_value, out1_value]);
+    let funding_txid = funding_tx.txid();
+    let out0 = OutPoint::new(funding_txid, 0);
+    let spend_tx = spend_to_external(&[out0], out0_value - 1_000, 94);
+
+    ctx.check_transaction(&spend_tx, block_ctx(200)).await;
+    ctx.check_transaction(&funding_tx, block_ctx(100)).await;
+
+    let account = ctx.managed_wallet.first_bip44_managed_account().expect("account");
+    let record = account.transactions().get(&funding_txid).expect("funding record");
+
+    assert_eq!(record.net_amount, out1_value as i64, "net_amount reflects surviving output");
+    assert!(
+        !record.output_details.iter().any(|d| d.index == 0),
+        "the removed output must not remain in output_details as a phantom received entry",
+    );
+    let received_sum: u64 = record.output_details.iter().map(|d| d.value).sum();
+    assert_eq!(
+        received_sum, out1_value,
+        "sum of surviving output_details values equals the compensated net_amount",
+    );
+}
+
+/// A fully-spent-before-seen funding tx (single output, all of it observed
+/// spent) is reprocessed. The fully-compensated record is kept at net 0 rather
+/// than dropped, so the reprocess takes the `is_new == false` path and does not
+/// re-record a positive net with no coin to reconcile it against.
+#[tokio::test]
+async fn reprocessing_fully_compensated_funding_stays_consistent() {
+    let mut ctx = TestWalletContext::new_random();
+    let value = 2_000_000u64;
+    let funding_tx = Transaction::dummy(&ctx.receive_address, 0..1, &[value]);
+    let funding_txid = funding_tx.txid();
+    let out0 = OutPoint::new(funding_txid, 0);
+    let spend_tx = spend_to_external(&[out0], value - 1_000, 95);
+
+    ctx.check_transaction(&spend_tx, block_ctx(200)).await;
+    ctx.check_transaction(&funding_tx, block_ctx(100)).await;
+    ctx.check_transaction(&funding_tx, block_ctx(100)).await; // reprocess
+
+    assert!(!utxo_tracked(&ctx.managed_wallet, &out0), "coin stays invalidated");
+    assert_eq!(ctx.managed_wallet.balance.total(), 0);
+    assert_eq!(
+        history_net(&ctx.managed_wallet),
+        0,
+        "history net stays equal to balance across reprocessing"
+    );
+    // The record is kept, fully compensated to net 0, with no surviving output.
+    let account = ctx.managed_wallet.first_bip44_managed_account().expect("account");
+    let record = account.transactions().get(&funding_txid).expect("record kept");
+    assert_eq!(record.net_amount, 0, "fully-compensated record sits at net 0");
+    assert!(record.output_details.is_empty(), "no surviving received output remains");
 }

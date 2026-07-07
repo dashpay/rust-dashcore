@@ -314,7 +314,7 @@ impl ManagedWalletInfo {
     /// Because the spend that consumes these coins was never recorded as a
     /// transaction (it looked irrelevant), each removal also compensates the
     /// funding transaction's history record so `transaction_history` stays in
-    /// step with the recomputed balance (see [`Self::compensate_removed_utxo`]).
+    /// step with the recomputed balance (see [`Self::finalize_guard_removed_utxo`]).
     pub(crate) fn remove_spent_from_accounts(&mut self, tx: &Transaction) -> bool {
         if tx.is_coin_base() {
             return false;
@@ -328,7 +328,7 @@ impl ManagedWalletInfo {
                 let account: &mut ManagedCoreFundsAccount = account;
                 if let Some(utxo) = account.utxos.remove(&outpoint) {
                     account.bump_monitor_revision();
-                    Self::compensate_removed_utxo(account, &utxo);
+                    Self::finalize_guard_removed_utxo(account, &utxo);
                     removed = true;
                     break;
                 }
@@ -379,7 +379,7 @@ impl ManagedWalletInfo {
                 };
                 if let Some(utxo) = account.utxos.remove(&outpoint) {
                     account.bump_monitor_revision();
-                    Self::compensate_removed_utxo(account, &utxo);
+                    Self::finalize_guard_removed_utxo(account, &utxo);
                     removed = true;
                 }
             }
@@ -387,29 +387,45 @@ impl ManagedWalletInfo {
         removed
     }
 
-    /// Reverse the wallet-history credit for a UTXO the #649 guard removed.
+    /// Finalize the account-local bookkeeping for a UTXO the #649 guard removed,
+    /// so the removal behaves like the (unrecorded) spend it stands in for.
     ///
-    /// The guard removes coins whose spend was observed but never recorded as a
-    /// transaction (the spend looked irrelevant — an external payment with
-    /// `sent = 0` at the time). The funding transaction that created the coin,
-    /// however, *was* recorded with a positive `net_amount`, so after removal
-    /// `transaction_history`'s net would exceed the recomputed balance. Reverse
-    /// the removed value from that funding record and, when the transaction is
-    /// left with no net effect and no surviving wallet output, drop the now
-    /// phantom record entirely — keeping the history-net == balance invariant.
-    fn compensate_removed_utxo(account: &mut ManagedCoreFundsAccount, removed: &Utxo) {
+    /// The guard removes coins whose spend was observed in a block but never
+    /// recorded as a transaction (the spend looked irrelevant — an external
+    /// payment with `sent = 0` at the time). This does three things:
+    ///
+    /// 1. Registers the outpoint in the account-local `spent_outpoints` set so a
+    ///    reprocessing of the funding transaction (rescan / duplicate delivery)
+    ///    does not resurrect the coin via `update_utxos`.
+    /// 2. Reverses the removed value from the funding transaction's history
+    ///    record and drops the matching `output_details` entry, keeping both the
+    ///    `net_amount` and the per-output line items in step with the recomputed
+    ///    balance. The record is kept (not deleted) even when fully compensated
+    ///    to `net_amount == 0`: deleting it would make a reprocessing of the
+    ///    funding transaction look like a brand-new sighting (`is_new`), which —
+    ///    with the coin now marked spent so `update_utxos` will not re-insert it
+    ///    — would re-record a positive `net_amount` with no coin to reconcile it
+    ///    back against, reopening the divergence. A kept `net_amount == 0` record
+    ///    is both history-consistent and reprocess-safe.
+    /// 3. Stays idempotent: the `output_details` entry's presence marks "not yet
+    ///    compensated". Its removal makes a later re-removal of the same output a
+    ///    no-op for the record — covering rescan reprocessing even across a
+    ///    serialize/deserialize, where the local `spent_outpoints` set is rebuilt
+    ///    from recorded transactions and would not include this unrecorded spend.
+    fn finalize_guard_removed_utxo(account: &mut ManagedCoreFundsAccount, removed: &Utxo) {
+        account.mark_outpoint_spent(removed.outpoint);
+
         let funding_txid = removed.outpoint.txid;
-        let has_surviving_output =
-            account.utxos.keys().any(|outpoint| outpoint.txid == funding_txid);
-        let drop_record = match account.transactions_mut().get_mut(&funding_txid) {
-            Some(record) => {
+        let removed_vout = removed.outpoint.vout;
+        if let Some(record) = account.transactions_mut().get_mut(&funding_txid) {
+            // Only compensate an output once: its `output_details` entry is
+            // present exactly until the first compensation removes it.
+            let not_yet_compensated =
+                record.output_details.iter().any(|detail| detail.index == removed_vout);
+            if not_yet_compensated {
                 record.net_amount -= removed.txout.value as i64;
-                record.net_amount == 0 && !has_surviving_output
+                record.output_details.retain(|detail| detail.index != removed_vout);
             }
-            None => false,
-        };
-        if drop_record {
-            account.transactions_mut().remove(&funding_txid);
         }
     }
 

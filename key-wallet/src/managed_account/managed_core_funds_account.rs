@@ -145,6 +145,22 @@ impl ManagedCoreFundsAccount {
         self.spent_outpoints.contains(outpoint)
     }
 
+    /// Register `outpoint` in the account-local spent set so [`Self::update_utxos`]
+    /// will not re-insert a UTXO for it (its [`Self::is_outpoint_spent`] guard).
+    ///
+    /// Used by the wallet-level out-of-order guard (dashpay/rust-dashcore#649),
+    /// which removes coins whose spend was observed in a block but never recorded
+    /// as one of this account's transactions — so the normal spend path in
+    /// `update_utxos` never populated `spent_outpoints` for them, and a
+    /// reprocessing of the funding transaction (rescan / duplicate delivery)
+    /// would otherwise resurrect the coin. Marking it here makes that reprocess a
+    /// no-op within a session; the wallet-level set remains the source of truth
+    /// across a serialize/deserialize (where this derived set is rebuilt from
+    /// recorded transactions and would not include the unrecorded spend).
+    pub(crate) fn mark_outpoint_spent(&mut self, outpoint: OutPoint) {
+        self.spent_outpoints.insert(outpoint);
+    }
+
     /// Add new UTXOs for received outputs, remove spent ones.
     fn update_utxos(
         &mut self,
