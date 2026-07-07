@@ -180,12 +180,8 @@ impl ManagedCoreFundsAccount {
 
     /// Add new UTXOs for received outputs, remove spent ones.
     ///
-    /// `observed_spent` is the wallet-level `observed_spent_outpoints` view
-    /// (dashpay/rust-dashcore#649: a spend delivered before the transaction
-    /// that funded the coin it spends). Consulted as a check-before-insert:
-    /// an output whose outpoint is already in `observed_spent` is genuinely
-    /// spent on-chain and is never inserted, so the record is born correct
-    /// instead of needing after-the-fact compensation once it lands.
+    /// Skips any output whose outpoint is already in `observed_spent` — it is
+    /// spent on-chain (dashpay/rust-dashcore#649), so the record stays consistent.
     fn update_utxos(
         &mut self,
         tx: &Transaction,
@@ -534,11 +530,8 @@ impl ManagedCoreFundsAccount {
             output_details,
             net_amount,
         );
-        // #649 spend-first ordering: born correct rather than compensated
-        // after the fact — an output already observed spent in an
-        // earlier-processed block is dropped from output_details/net_amount
-        // right here, before the record is ever inserted or a UTXO for it
-        // exists to reconcile away.
+        // #649: drop outputs already in observed_spent from output_details/net_amount
+        // before insert, so the record is consistent with the observed spend.
         tx_record.compensate_for_observed_spends(observed_spent);
 
         let record = tx_record.clone();

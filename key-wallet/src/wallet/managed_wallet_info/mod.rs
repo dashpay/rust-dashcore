@@ -311,11 +311,9 @@ impl ManagedWalletInfo {
     /// the normal path already removed is simply absent — so it never
     /// double-counts a spend. Coinbase inputs are skipped (null prevout).
     ///
-    /// This is the funding-first ordering: the funding record is already live
-    /// when the (unattributed) spend arrives, so unlike the spend-first
-    /// ordering (born correct at insert time in `update_utxos`/
-    /// `record_transaction`), the live record's history must be recomputed in
-    /// place — see [`Self::finalize_guard_removed_utxo`].
+    /// This is the funding-first ordering: the funding record is already
+    /// live, so its history is adjusted in place — see
+    /// [`Self::finalize_guard_removed_utxo`].
     pub(crate) fn remove_spent_from_accounts(&mut self, tx: &Transaction) -> bool {
         if tx.is_coin_base() {
             return false;
@@ -342,29 +340,18 @@ impl ManagedWalletInfo {
         removed
     }
 
-    /// Finalize the account-local bookkeeping for a UTXO the #649 guard removed
-    /// (funding-first ordering: the record was already live), so the removal
-    /// behaves like the (unrecorded) spend it stands in for.
+    /// Finalize the account-local bookkeeping for a UTXO the #649 guard
+    /// removed (funding-first ordering: the record was already live).
     ///
-    /// 1. Registers the outpoint in the account-local `spent_outpoints` set so a
-    ///    reprocessing of the funding transaction (rescan / duplicate delivery)
-    ///    does not resurrect the coin via `update_utxos`.
-    /// 2. Declaratively recomputes the funding record's `output_details`/
-    ///    `net_amount` via [`TransactionRecord::compensate_for_observed_spends`]
-    ///    — not an incremental subtract, so no idempotency marker is needed:
-    ///    reprocessing or repeated guard removals recompute the same result
-    ///    every time. The record is kept (not deleted) even when fully
-    ///    compensated to `net_amount == 0`: deleting it would make a
-    ///    reprocessing of the funding transaction look like a brand-new
-    ///    sighting (`is_new`), which — with the coin now marked spent so
-    ///    `update_utxos` will not re-insert it — would re-record a positive
-    ///    `net_amount` with no coin to reconcile it back against, reopening
+    /// 1. Marks the outpoint spent so reprocessing won't resurrect the coin.
+    /// 2. Adjusts the funding record's history via
+    ///    [`TransactionRecord::compensate_for_observed_spends`]. The record is
+    ///    kept at `net_amount == 0` rather than deleted when fully
+    ///    compensated: a later reprocessing would otherwise re-record it as a
+    ///    fresh sighting with no coin left to reconcile against, reopening
     ///    the divergence.
     ///
-    /// A no-op when the record is absent (pruned/finalized under the default
-    /// `keep-finalized-transactions = OFF` feature): `net_amount` reflecting
-    /// live-received value is undefined for a pruned record, same as for
-    /// every other finalized coin — there is nothing to compensate.
+    /// No-op when the record is absent (pruned/finalized) — β is undefined there.
     fn finalize_guard_removed_utxo(
         account: &mut ManagedCoreFundsAccount,
         removed: &Utxo,

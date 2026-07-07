@@ -251,17 +251,9 @@ impl WalletTransactionChecker for ManagedWalletInfo {
             }
         }
 
-        // #649: after processing the matched accounts, drop any coin this tx
-        // spends that the matched-account path did not remove — a spend
-        // routed away from the owning account's type (funding-first
-        // ordering: the funding record is already live). Block context only,
-        // mirroring the recording restriction; idempotent, so the normal
-        // in-order spend (already removed by `update_utxos`) is a no-op here.
-        // The spend-first ordering (funding arriving after its spend was
-        // already observed) no longer needs a post-insert reconciliation
-        // pass: `update_utxos`/`record_transaction` already consult
-        // `observed_spent_outpoints` at insert time, so the record and UTXO
-        // set are born correct.
+        // #649 funding-first ordering: drop any coin this tx spends that the
+        // matched-account path missed (spend routed to another account type).
+        // Block-context only; idempotent. Spend-first is handled at insert time.
         let spent_removed = block_height.is_some() && self.remove_spent_from_accounts(tx);
         if spent_removed {
             result.state_modified = true;

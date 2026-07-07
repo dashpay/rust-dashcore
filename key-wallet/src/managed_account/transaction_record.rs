@@ -200,18 +200,12 @@ impl TransactionRecord {
         self.net_amount.unsigned_abs()
     }
 
-    /// Drop any `Received`/`Change` [`OutputDetail`] whose outpoint is in
+    /// Drop any `Received`/`Change` output whose outpoint is in
     /// `observed_spent` and subtract its value from `net_amount`
-    /// (dashpay/rust-dashcore#649): such an output was spent on-chain, so it
-    /// is not live received value. Only ever subtracts a delta from whatever
-    /// `net_amount` currently is — never re-derives the base from
-    /// `output_details`/`input_details` sums, which are a narrower, lossier
-    /// view than the account checker's `received`/`sent` (e.g. an output
-    /// matched by script but unresolved to a tracked address, or a spend
-    /// whose `input_details` are incomplete). A repeat call for an
-    /// already-dropped output finds nothing left to retain, so it subtracts
-    /// nothing further — idempotent without needing the delta to be
-    /// re-derived.
+    /// (dashpay/rust-dashcore#649). Only ever subtracts a delta from the
+    /// current `net_amount` — never re-derives it from `output_details`/
+    /// `input_details` — so an already-authoritative value is never silently
+    /// narrowed, and a repeat call for an already-dropped output is a no-op.
     pub(crate) fn compensate_for_observed_spends(
         &mut self,
         observed_spent: &BTreeMap<OutPoint, CoreBlockHeight>,
@@ -268,13 +262,12 @@ mod tests {
         )
     }
 
-    /// Marvin's white-box adversarial check of the "declarative, not
-    /// incremental" claim in `compensate_for_observed_spends`'s doc comment:
-    /// calling it twice in a row on the SAME record (simulating a rescan
-    /// rebuilding an already-compensated record) must be a complete no-op
-    /// the second time — no double-drop of a surviving output, no `net_amount`
-    /// drift — because it recomputes from `output_details`/`input_details`
-    /// on every call rather than subtracting a delta.
+    /// Adversarial check of `compensate_for_observed_spends`'s idempotency
+    /// claim: calling it twice in a row on the SAME record (simulating a
+    /// rescan rebuilding an already-compensated record) must be a complete
+    /// no-op the second time — no double-drop of a surviving output, no
+    /// `net_amount` drift — because a compensated output is gone from
+    /// `output_details` and can never be found (and subtracted) again.
     #[test]
     fn compensate_for_observed_spends_is_idempotent_on_direct_repeated_calls() {
         let tx = Transaction::dummy_empty();
@@ -325,8 +318,8 @@ mod tests {
         assert_eq!(record.output_details[0].index, 1);
 
         // Third call with an EXPANDED observed_spent set (output 1 now also
-        // spent) proves the recompute is driven by current input state, not
-        // cached from the first call.
+        // spent) proves each call reads the current map, not one cached
+        // from the first call.
         observed_spent.insert(
             OutPoint {
                 txid,

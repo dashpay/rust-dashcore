@@ -1180,20 +1180,13 @@ async fn compensation_survives_simulated_reload_across_two_restart_cycles() {
     }
 }
 
-/// A full historical rescan delivers already-chainlocked blocks: the funding
-/// tx's FIRST sighting can be `InChainLockedBlock`, not `InBlock`. Since the
-/// #649 restructure (B3), `record_transaction` builds the record BORN
-/// CORRECT — out0 is excluded from `output_details`/`net_amount` at
-/// construction time because its spend is already in `observed_spent_outpoints`
-/// — before the default (`keep-finalized-transactions = OFF`) feature drops
-/// the just-inserted, already-correct record to `finalized_txids`. There is
-/// nothing left uncompensated; the record simply vanishes from
-/// `transaction_history()` like any other pruned record, so `history_net` is
-/// 0 while `balance.total()` reflects the live out1 coin. This is the general
-/// pruning non-invariant pinned by
-/// [`plain_chainlocked_funding_diverges_history_from_balance_by_design`], not
-/// a #649-specific bug — kept here so a future reviewer does not re-file the
-/// divergence as a regression.
+/// A full historical rescan can deliver a funding tx whose FIRST sighting is
+/// already `InChainLockedBlock`. `record_transaction` builds the record with
+/// out0 excluded (its spend is in `observed_spent_outpoints`) before the
+/// default feature prunes the record to `finalized_txids`. So `history_net`
+/// is 0 while `balance` keeps out1 — the general pruning non-invariant pinned
+/// by [`plain_chainlocked_funding_diverges_history_from_balance_by_design`],
+/// not a #649 defect.
 #[cfg(not(feature = "keep-finalized-transactions"))]
 #[tokio::test]
 async fn spend_first_ordering_with_chainlocked_first_sighting_prunes_record_by_design() {
@@ -1231,8 +1224,8 @@ async fn spend_first_ordering_with_chainlocked_first_sighting_prunes_record_by_d
 
 /// Mirror of the above under `keep-finalized-transactions`: the record is
 /// never pruned, so β (`history_net == balance.total()`) holds — and it holds
-/// because the record was born correct at construction (B3), not because of
-/// any post-hoc compensation. Confirms the pruning-driven divergence above is
+/// because the record was born correct at construction, not because of any
+/// post-hoc compensation. Confirms the pruning-driven divergence above is
 /// purely a consequence of pruning, not an unclosed #649 gap.
 #[cfg(feature = "keep-finalized-transactions")]
 #[tokio::test]
