@@ -54,7 +54,7 @@ dashcore-rpc = { path = "../rpc-client", optional = true }
 [dev-dependencies]
 dash-spv = { path = ".", features = ["test-utils"] }
 dashcore = { path = "../dash", features = ["test-utils"] }
-key-wallet = { path = "../key-wallet", features = ["test-utils"] }
+key-wallet = { path = "../key-wallet", features = ["test-utils", "bincode"] }
 key-wallet-manager = { path = "../key-wallet-manager", features = ["test-utils"] }
 criterion = { version = "0.8.1", features = ["async_tokio"] }
 tempfile = "3.0"
