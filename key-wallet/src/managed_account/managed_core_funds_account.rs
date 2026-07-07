@@ -179,11 +179,17 @@ impl ManagedCoreFundsAccount {
     }
 
     /// Add new UTXOs for received outputs, remove spent ones.
+    ///
+    /// `_observed_spent` is the wallet-level `observed_spent_outpoints` view
+    /// (dashpay/rust-dashcore#649), threaded down read-only from
+    /// `check_core_transaction`; consulted starting in the check-before-insert
+    /// change that follows this plumbing commit.
     fn update_utxos(
         &mut self,
         tx: &Transaction,
         account_match: &AccountMatch,
         context: TransactionContext,
+        _observed_spent: &BTreeMap<OutPoint, CoreBlockHeight>,
     ) {
         // Update UTXOs only for spendable account types
         match self.keys.managed_account_type() {
@@ -341,6 +347,7 @@ impl ManagedCoreFundsAccount {
         account_match: &AccountMatch,
         context: TransactionContext,
         transaction_type: TransactionType,
+        observed_spent: &BTreeMap<OutPoint, CoreBlockHeight>,
     ) -> Option<TransactionRecord> {
         let txid = tx.txid();
 
@@ -353,7 +360,13 @@ impl ManagedCoreFundsAccount {
         if !self.keys.has_transaction(&txid) {
             // Genuinely new sighting — delegate to record_transaction
             // (which handles finalize-on-record itself).
-            let record = self.record_transaction(tx, account_match, context, transaction_type);
+            let record = self.record_transaction(
+                tx,
+                account_match,
+                context,
+                transaction_type,
+                observed_spent,
+            );
             return Some(record);
         }
 
@@ -392,7 +405,7 @@ impl ManagedCoreFundsAccount {
         // chainlock catches up.
         #[cfg(not(feature = "keep-finalized-transactions"))]
         let drop_now = context.is_chain_locked();
-        self.update_utxos(tx, account_match, context);
+        self.update_utxos(tx, account_match, context, observed_spent);
         #[cfg(not(feature = "keep-finalized-transactions"))]
         if drop_now {
             self.keys.drop_finalized_transaction(&txid);
@@ -400,13 +413,19 @@ impl ManagedCoreFundsAccount {
         record_after
     }
 
-    /// Record a new transaction and update UTXOs for spendable account types
+    /// Record a new transaction and update UTXOs for spendable account types.
+    ///
+    /// `observed_spent` is the wallet-level `observed_spent_outpoints` view
+    /// (dashpay/rust-dashcore#649), threaded down read-only from
+    /// `check_core_transaction`; consulted starting in the check-before-insert
+    /// change that follows this plumbing commit.
     pub(crate) fn record_transaction(
         &mut self,
         tx: &Transaction,
         account_match: &AccountMatch,
         context: TransactionContext,
         transaction_type: TransactionType,
+        observed_spent: &BTreeMap<OutPoint, CoreBlockHeight>,
     ) -> TransactionRecord {
         let net_amount = account_match.received as i64 - account_match.sent as i64;
 
@@ -512,7 +531,7 @@ impl ManagedCoreFundsAccount {
         // feature is on (we want to keep the full record).
         #[cfg(not(feature = "keep-finalized-transactions"))]
         let drop_now = context.is_chain_locked();
-        self.update_utxos(tx, account_match, context);
+        self.update_utxos(tx, account_match, context, observed_spent);
         #[cfg(not(feature = "keep-finalized-transactions"))]
         if drop_now {
             self.keys.drop_finalized_transaction(&txid);

@@ -20,6 +20,8 @@ use crate::transaction_checking::account_checker::AccountMatch;
 use crate::transaction_checking::transaction_router::TransactionType;
 use crate::transaction_checking::TransactionContext;
 use crate::Network;
+use dashcore::blockdata::transaction::OutPoint;
+use dashcore::prelude::CoreBlockHeight;
 use dashcore::{Address, ScriptBuf, Transaction, Txid};
 use std::collections::BTreeMap;
 
@@ -293,16 +295,21 @@ impl<'a> ManagedAccountRefMut<'a> {
     /// Funds variants update UTXO state and balance; keys variants update
     /// only the transaction history. Both are subject to the
     /// `keep-finalized-transactions` Cargo feature for chainlocked records.
+    ///
+    /// `observed_spent` is the wallet-level `observed_spent_outpoints` view
+    /// (dashpay/rust-dashcore#649); only the funds variant consults it (keys
+    /// accounts track no UTXOs/output details).
     pub fn record_transaction(
         &mut self,
         tx: &Transaction,
         account_match: &AccountMatch,
         context: TransactionContext,
         transaction_type: TransactionType,
+        observed_spent: &BTreeMap<OutPoint, CoreBlockHeight>,
     ) -> TransactionRecord {
         match self {
             ManagedAccountRefMut::Funds(a) => {
-                a.record_transaction(tx, account_match, context, transaction_type)
+                a.record_transaction(tx, account_match, context, transaction_type, observed_spent)
             }
             ManagedAccountRefMut::Keys(a) => {
                 a.record_transaction(tx, account_match, context, transaction_type)
@@ -314,16 +321,20 @@ impl<'a> ManagedAccountRefMut<'a> {
     ///
     /// Funds variants additionally refresh UTXO state. Returns the updated
     /// record only when confirmation status actually changes.
+    ///
+    /// `observed_spent` is the wallet-level `observed_spent_outpoints` view
+    /// (dashpay/rust-dashcore#649); only the funds variant consults it.
     pub fn confirm_transaction(
         &mut self,
         tx: &Transaction,
         account_match: &AccountMatch,
         context: TransactionContext,
         transaction_type: TransactionType,
+        observed_spent: &BTreeMap<OutPoint, CoreBlockHeight>,
     ) -> Option<TransactionRecord> {
         match self {
             ManagedAccountRefMut::Funds(a) => {
-                a.confirm_transaction(tx, account_match, context, transaction_type)
+                a.confirm_transaction(tx, account_match, context, transaction_type, observed_spent)
             }
             ManagedAccountRefMut::Keys(a) => {
                 a.confirm_transaction(tx, account_match, context, transaction_type)

@@ -159,6 +159,7 @@ impl WalletTransactionChecker for ManagedWalletInfo {
                             &account_match,
                             context.clone(),
                             tx_type,
+                            &self.observed_spent_outpoints,
                         );
                         account.mark_utxos_instant_send(&txid);
                         result.new_records.push(record);
@@ -185,15 +186,24 @@ impl WalletTransactionChecker for ManagedWalletInfo {
             };
 
             if is_new {
-                let record =
-                    account.record_transaction(tx, &account_match, context.clone(), tx_type);
+                let record = account.record_transaction(
+                    tx,
+                    &account_match,
+                    context.clone(),
+                    tx_type,
+                    &self.observed_spent_outpoints,
+                );
                 result.new_records.push(record);
                 result.state_modified = true;
             } else {
                 let existed_before = account.has_transaction(&tx.txid());
-                if let Some(record) =
-                    account.confirm_transaction(tx, &account_match, context.clone(), tx_type)
-                {
+                if let Some(record) = account.confirm_transaction(
+                    tx,
+                    &account_match,
+                    context.clone(),
+                    tx_type,
+                    &self.observed_spent_outpoints,
+                ) {
                     result.state_modified = true;
                     if existed_before {
                         result.updated_records.push(record);
@@ -321,6 +331,7 @@ mod tests {
     use dashcore::TxOut;
     use dashcore::{Address, BlockHash, TxIn, Txid};
     use dashcore_hashes::Hash;
+    use std::collections::BTreeMap;
 
     /// Test wallet checker with unrelated transaction
     #[tokio::test]
@@ -1260,7 +1271,13 @@ mod tests {
         let block_context =
             TransactionContext::InBlock(BlockInfo::new(600, block_hash, 1700000000));
         let tx_type = TransactionRouter::classify_transaction(&tx);
-        let backfilled = account.confirm_transaction(&tx, &account_match, block_context, tx_type);
+        let backfilled = account.confirm_transaction(
+            &tx,
+            &account_match,
+            block_context,
+            tx_type,
+            &BTreeMap::new(),
+        );
         assert!(backfilled.is_some(), "Should return Some when backfilling a missing record");
 
         // Verify the transaction was recorded with block context
@@ -1311,7 +1328,13 @@ mod tests {
             .first_bip44_managed_account_mut()
             .expect("Should have BIP44 account");
         let tx_type = TransactionRouter::classify_transaction(&tx);
-        let confirmed = account.confirm_transaction(&tx, &account_match, block_context, tx_type);
+        let confirmed = account.confirm_transaction(
+            &tx,
+            &account_match,
+            block_context,
+            tx_type,
+            &BTreeMap::new(),
+        );
         assert!(confirmed.is_some(), "Should return Some when confirming unconfirmed tx");
 
         let record = account.transactions().get(&txid).expect("Should have record");
