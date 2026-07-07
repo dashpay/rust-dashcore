@@ -8,10 +8,12 @@ use crate::error::Error;
 use crate::transaction_checking::transaction_router::TransactionType;
 use crate::transaction_checking::{BlockInfo, TransactionContext};
 use crate::Address;
-use dashcore::blockdata::transaction::Transaction;
+use dashcore::blockdata::transaction::{OutPoint, Transaction};
+use dashcore::prelude::CoreBlockHeight;
 use dashcore::Txid;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 /// Maximum length of a transaction label in bytes.
 pub const MAX_LABEL_LENGTH: usize = 256;
@@ -196,6 +198,40 @@ impl TransactionRecord {
     /// Get the absolute value of the net amount
     pub fn amount(&self) -> u64 {
         self.net_amount.unsigned_abs()
+    }
+
+    /// Drop any `Received`/`Change` [`OutputDetail`] whose outpoint is already
+    /// in `observed_spent` and recompute `net_amount` to match
+    /// (dashpay/rust-dashcore#649): such an output was spent on-chain before
+    /// this wallet ever processed its funding transaction, so it is not live
+    /// received value regardless of which order the two transactions arrived
+    /// in.
+    ///
+    /// Declarative, not incremental: `net_amount` is always recomputed from
+    /// the current `output_details`/`input_details`, never adjusted by a
+    /// delta. That makes this idempotent by construction — calling it again
+    /// on an already-compensated record (all matching entries already
+    /// dropped) is a no-op, so no separate idempotency marker is needed.
+    pub(crate) fn compensate_for_observed_spends(
+        &mut self,
+        observed_spent: &BTreeMap<OutPoint, CoreBlockHeight>,
+    ) {
+        let txid = self.txid;
+        self.output_details.retain(|detail| {
+            !matches!(detail.role, OutputRole::Received | OutputRole::Change)
+                || !observed_spent.contains_key(&OutPoint {
+                    txid,
+                    vout: detail.index,
+                })
+        });
+        let received: u64 = self
+            .output_details
+            .iter()
+            .filter(|d| matches!(d.role, OutputRole::Received | OutputRole::Change))
+            .map(|d| d.value)
+            .sum();
+        let sent: u64 = self.input_details.iter().map(|d| d.value).sum();
+        self.net_amount = received as i64 - sent as i64;
     }
 }
 

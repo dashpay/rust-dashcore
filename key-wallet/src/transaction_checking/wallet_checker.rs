@@ -6,7 +6,6 @@
 pub(crate) use super::account_checker::TransactionCheckResult;
 use super::transaction_context::TransactionContext;
 use super::transaction_router::TransactionRouter;
-use crate::managed_account::managed_account_trait::ManagedAccountTrait;
 use crate::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
 use crate::wallet::managed_wallet_info::ManagedWalletInfo;
 use crate::{KeySource, Wallet};
@@ -252,38 +251,19 @@ impl WalletTransactionChecker for ManagedWalletInfo {
             }
         }
 
-        // #649: after processing the matched accounts, enforce the
-        // observed-spent invariant from both orderings, un-gated by
-        // classification:
-        //  - `remove_spent_from_accounts` (block context only, mirroring the
-        //    recording restriction) drops any coin this tx spends that the
-        //    matched-account path did not remove — a spend routed away from the
-        //    owning account's type. Idempotent, so the normal in-order spend
-        //    (already removed by `update_utxos`) is a no-op here.
-        //  - `reconcile_inserts_with_observed_spends` drops any UTXO just
-        //    inserted for this tx's outputs whose spend was recorded by an
-        //    earlier-processed block (out-of-order rescan delivery). It is NOT
-        //    gated to block context on purpose: the observed-spent set only ever
-        //    contains block-confirmed spends, so a coin present in it is
-        //    genuinely spent on-chain and must not resurface even when its
-        //    funding is (re)delivered via mempool. Removal finality does not
-        //    need to match insert finality here.
+        // #649: after processing the matched accounts, drop any coin this tx
+        // spends that the matched-account path did not remove — a spend
+        // routed away from the owning account's type (funding-first
+        // ordering: the funding record is already live). Block context only,
+        // mirroring the recording restriction; idempotent, so the normal
+        // in-order spend (already removed by `update_utxos`) is a no-op here.
+        // The spend-first ordering (funding arriving after its spend was
+        // already observed) no longer needs a post-insert reconciliation
+        // pass: `update_utxos`/`record_transaction` already consult
+        // `observed_spent_outpoints` at insert time, so the record and UTXO
+        // set are born correct.
         let spent_removed = block_height.is_some() && self.remove_spent_from_accounts(tx);
-        let insert_reconciled = self.reconcile_inserts_with_observed_spends(tx);
-        if insert_reconciled {
-            // The guard removed freshly-inserted UTXO(s) for this tx and
-            // compensated their funding record in place (dropping it when it
-            // becomes a phantom). Re-sync the emitted new-record clones from the
-            // authoritative account state so events, `transaction_history`, and
-            // balance all agree.
-            result.new_records.retain(|record| record.transaction.txid() != txid);
-            for account in self.accounts.all_funding_accounts() {
-                if let Some(record) = account.transactions().get(&txid) {
-                    result.new_records.push(record.clone());
-                }
-            }
-        }
-        if spent_removed || insert_reconciled {
+        if spent_removed {
             result.state_modified = true;
         }
 
@@ -316,6 +296,7 @@ impl WalletTransactionChecker for ManagedWalletInfo {
 mod tests {
     use super::*;
     use crate::account::account_type::StandardAccountType;
+    use crate::managed_account::managed_account_trait::ManagedAccountTrait;
     use crate::managed_account::transaction_record::{OutputRole, TransactionDirection};
     use crate::test_utils::TestWalletContext;
     use crate::transaction_checking::BlockInfo;

@@ -180,16 +180,18 @@ impl ManagedCoreFundsAccount {
 
     /// Add new UTXOs for received outputs, remove spent ones.
     ///
-    /// `_observed_spent` is the wallet-level `observed_spent_outpoints` view
-    /// (dashpay/rust-dashcore#649), threaded down read-only from
-    /// `check_core_transaction`; consulted starting in the check-before-insert
-    /// change that follows this plumbing commit.
+    /// `observed_spent` is the wallet-level `observed_spent_outpoints` view
+    /// (dashpay/rust-dashcore#649: a spend delivered before the transaction
+    /// that funded the coin it spends). Consulted as a check-before-insert:
+    /// an output whose outpoint is already in `observed_spent` is genuinely
+    /// spent on-chain and is never inserted, so the record is born correct
+    /// instead of needing after-the-fact compensation once it lands.
     fn update_utxos(
         &mut self,
         tx: &Transaction,
         account_match: &AccountMatch,
         context: TransactionContext,
-        _observed_spent: &BTreeMap<OutPoint, CoreBlockHeight>,
+        observed_spent: &BTreeMap<OutPoint, CoreBlockHeight>,
     ) {
         // Update UTXOs only for spendable account types
         match self.keys.managed_account_type() {
@@ -258,6 +260,18 @@ impl ManagedCoreFundsAccount {
                                 tracing::debug!(
                                     outpoint = %outpoint,
                                     "Skipping UTXO already spent by previously processed transaction"
+                                );
+                                continue;
+                            }
+
+                            // #649 spend-first ordering: the spend was observed in an
+                            // earlier-processed block, so this output is genuinely spent
+                            // on-chain even though this account has never seen it before —
+                            // never insert it, so the record built below is born correct.
+                            if observed_spent.contains_key(&outpoint) {
+                                tracing::debug!(
+                                    outpoint = %outpoint,
+                                    "Skipping UTXO already observed spent in an earlier-processed block (#649)"
                                 );
                                 continue;
                             }
@@ -510,7 +524,7 @@ impl ManagedCoreFundsAccount {
             TransactionDirection::Incoming
         };
 
-        let tx_record = TransactionRecord::new(
+        let mut tx_record = TransactionRecord::new(
             tx.clone(),
             self.keys.managed_account_type().to_account_type(),
             context.clone(),
@@ -520,6 +534,12 @@ impl ManagedCoreFundsAccount {
             output_details,
             net_amount,
         );
+        // #649 spend-first ordering: born correct rather than compensated
+        // after the fact — an output already observed spent in an
+        // earlier-processed block is dropped from output_details/net_amount
+        // right here, before the record is ever inserted or a UTXO for it
+        // exists to reconcile away.
+        tx_record.compensate_for_observed_spends(observed_spent);
 
         let record = tx_record.clone();
         let txid = tx.txid();
