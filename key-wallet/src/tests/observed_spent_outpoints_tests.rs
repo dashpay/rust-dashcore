@@ -720,6 +720,70 @@ fn history_net(wallet: &ManagedWalletInfo) -> i64 {
     wallet.transaction_history().iter().map(|r| r.net_amount).sum()
 }
 
+/// Documents the #649-restructure architectural finding: `history_net ==
+/// balance.total()` is NOT a system invariant under default features
+/// (`keep-finalized-transactions = OFF`) — it never holds for ANY
+/// chainlocked-and-pruned funding, #649 or not. `transaction_history()`
+/// returns only live records; a funding record whose first sighting is
+/// already chainlocked (as in a full historical rescan) is dropped to
+/// `finalized_txids` immediately, while its coin stays live in `balance`.
+/// No spend, no #649 guard, no compensation involved — pinned here so a
+/// future reviewer does not re-file this divergence as a regression.
+#[cfg(not(feature = "keep-finalized-transactions"))]
+#[tokio::test]
+async fn plain_chainlocked_funding_diverges_history_from_balance_by_design() {
+    let mut ctx = TestWalletContext::new_random();
+
+    let funding_value = 900_000u64;
+    let funding_tx = Transaction::dummy(&ctx.receive_address, 0..1, &[funding_value]);
+    let funding_outpoint = OutPoint::new(funding_tx.txid(), 0);
+
+    ctx.check_transaction(&funding_tx, chain_locked_block_ctx(50)).await;
+
+    assert!(utxo_tracked(&ctx.managed_wallet, &funding_outpoint), "coin is live");
+    assert_eq!(
+        ctx.managed_wallet.balance.total(),
+        funding_value,
+        "balance correctly reflects the live coin"
+    );
+    assert_eq!(
+        history_net(&ctx.managed_wallet),
+        0,
+        "the record was pruned to finalized_txids on first sighting, so history omits it \
+         entirely — NOT a #649 regression, this holds for any chainlocked-and-pruned funding"
+    );
+    assert_ne!(
+        history_net(&ctx.managed_wallet),
+        ctx.managed_wallet.balance.total() as i64,
+        "documents: history_net == balance.total() is not a system invariant under default \
+         features for finalized (pruned) records"
+    );
+}
+
+/// Mirror of the above under `keep-finalized-transactions`: with the feature
+/// on, the record is never pruned, so β (`history_net == balance.total()`)
+/// DOES hold — confirming the divergence above is purely a consequence of
+/// pruning, not of anything #649-specific.
+#[cfg(feature = "keep-finalized-transactions")]
+#[tokio::test]
+async fn plain_chainlocked_funding_matches_balance_when_records_are_kept() {
+    let mut ctx = TestWalletContext::new_random();
+
+    let funding_value = 900_000u64;
+    let funding_tx = Transaction::dummy(&ctx.receive_address, 0..1, &[funding_value]);
+    let funding_outpoint = OutPoint::new(funding_tx.txid(), 0);
+
+    ctx.check_transaction(&funding_tx, chain_locked_block_ctx(50)).await;
+
+    assert!(utxo_tracked(&ctx.managed_wallet, &funding_outpoint), "coin is live");
+    assert_eq!(
+        history_net(&ctx.managed_wallet),
+        ctx.managed_wallet.balance.total() as i64,
+        "with keep-finalized-transactions on, the record is never pruned, so history net \
+         matches balance even for a chainlocked-first-sighting funding"
+    );
+}
+
 /// Spend-first ordering: when the funding block arrives after its spend was
 /// observed, the funding UTXO is reconciled away — and the funding transaction's
 /// "received" history record must be compensated so `transaction_history()`'s
