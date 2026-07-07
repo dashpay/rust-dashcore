@@ -12,9 +12,9 @@
 //! read-modify-write on a record that had, in the interim, ceased to exist.
 //!
 //! Per decision doc §5, this is claimed to be dissolved (not patched): the
-//! record's absence is a no-op for the compensation step, and balance
-//! correctness (α) never depended on the record at all. This test
-//! constructs the exact race and checks that claim holds:
+//! record's absence is a no-op for the (declarative, not incremental)
+//! recompute, and balance correctness (α) never depended on the record at
+//! all. This test constructs the exact race and checks that claim holds:
 //! no panic, no phantom balance, and reprocessing safety (the account-local
 //! spent marker is still set even though the record lookup was a no-op).
 //!

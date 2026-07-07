@@ -312,7 +312,7 @@ impl ManagedWalletInfo {
     /// double-counts a spend. Coinbase inputs are skipped (null prevout).
     ///
     /// This is the funding-first ordering: the funding record is already
-    /// live, so its history is adjusted in place — see
+    /// live, so its history is recomputed in place — see
     /// [`Self::finalize_guard_removed_utxo`].
     pub(crate) fn remove_spent_from_accounts(&mut self, tx: &Transaction) -> bool {
         if tx.is_coin_base() {
@@ -344,7 +344,7 @@ impl ManagedWalletInfo {
     /// removed (funding-first ordering: the record was already live).
     ///
     /// 1. Marks the outpoint spent so reprocessing won't resurrect the coin.
-    /// 2. Adjusts the funding record's history via
+    /// 2. Recomputes the funding record's history via
     ///    [`TransactionRecord::compensate_for_observed_spends`]. The record is
     ///    kept at `net_amount == 0` rather than deleted when fully
     ///    compensated: a later reprocessing would otherwise re-record it as a

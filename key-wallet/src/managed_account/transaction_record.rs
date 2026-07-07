@@ -200,30 +200,31 @@ impl TransactionRecord {
         self.net_amount.unsigned_abs()
     }
 
-    /// Drop any `Received`/`Change` output whose outpoint is in
-    /// `observed_spent` and subtract its value from `net_amount`
-    /// (dashpay/rust-dashcore#649). Only ever subtracts a delta from the
-    /// current `net_amount` — never re-derives it from `output_details`/
-    /// `input_details` — so an already-authoritative value is never silently
-    /// narrowed, and a repeat call for an already-dropped output is a no-op.
+    /// Drop any `Received`/`Change` [`OutputDetail`] whose outpoint is in
+    /// `observed_spent` and recompute `net_amount` from the surviving details
+    /// (dashpay/rust-dashcore#649): such an output was spent on-chain, so it is
+    /// not live received value. Recomputes declaratively (never a delta), so
+    /// re-running it on an already-compensated record is a no-op.
     pub(crate) fn compensate_for_observed_spends(
         &mut self,
         observed_spent: &BTreeMap<OutPoint, CoreBlockHeight>,
     ) {
         let txid = self.txid;
-        let mut excluded_value: u64 = 0;
         self.output_details.retain(|detail| {
-            let now_excluded = matches!(detail.role, OutputRole::Received | OutputRole::Change)
-                && observed_spent.contains_key(&OutPoint {
+            !matches!(detail.role, OutputRole::Received | OutputRole::Change)
+                || !observed_spent.contains_key(&OutPoint {
                     txid,
                     vout: detail.index,
-                });
-            if now_excluded {
-                excluded_value += detail.value;
-            }
-            !now_excluded
+                })
         });
-        self.net_amount -= excluded_value as i64;
+        let received: u64 = self
+            .output_details
+            .iter()
+            .filter(|d| matches!(d.role, OutputRole::Received | OutputRole::Change))
+            .map(|d| d.value)
+            .sum();
+        let sent: u64 = self.input_details.iter().map(|d| d.value).sum();
+        self.net_amount = received as i64 - sent as i64;
     }
 }
 
@@ -262,12 +263,13 @@ mod tests {
         )
     }
 
-    /// Adversarial check of `compensate_for_observed_spends`'s idempotency
-    /// claim: calling it twice in a row on the SAME record (simulating a
-    /// rescan rebuilding an already-compensated record) must be a complete
-    /// no-op the second time — no double-drop of a surviving output, no
-    /// `net_amount` drift — because a compensated output is gone from
-    /// `output_details` and can never be found (and subtracted) again.
+    /// Marvin's white-box adversarial check of the "declarative, not
+    /// incremental" claim in `compensate_for_observed_spends`'s doc comment:
+    /// calling it twice in a row on the SAME record (simulating a rescan
+    /// rebuilding an already-compensated record) must be a complete no-op
+    /// the second time — no double-drop of a surviving output, no `net_amount`
+    /// drift — because it recomputes from `output_details`/`input_details`
+    /// on every call rather than subtracting a delta.
     #[test]
     fn compensate_for_observed_spends_is_idempotent_on_direct_repeated_calls() {
         let tx = Transaction::dummy_empty();
@@ -318,8 +320,8 @@ mod tests {
         assert_eq!(record.output_details[0].index, 1);
 
         // Third call with an EXPANDED observed_spent set (output 1 now also
-        // spent) proves each call reads the current map, not one cached
-        // from the first call.
+        // spent) proves the recompute is driven by current input state, not
+        // cached from the first call.
         observed_spent.insert(
             OutPoint {
                 txid,
