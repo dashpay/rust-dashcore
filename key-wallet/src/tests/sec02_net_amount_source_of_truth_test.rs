@@ -10,7 +10,7 @@
 //! specific divergence condition (`contains_script_pub_key` matches a
 //! scriptPubKey whose address then fails `get_address_info` resolution).
 
-use crate::managed_account::address_pool::{KeySource, PublicKeyType};
+use crate::managed_account::address_pool::PublicKeyType;
 use crate::managed_account::managed_account_trait::ManagedAccountTrait;
 use crate::test_utils::TestWalletContext;
 use crate::transaction_checking::{BlockInfo, TransactionContext};
@@ -182,23 +182,20 @@ async fn net_amount_matches_account_match_formula_for_self_transfer() {
 
 // ── (b) the specific divergence condition Smythe describes ────────────────
 
-/// Constructs the exact edge case: an address whose scriptPubKey is pruned
-/// from `AddressPool::address_index`/`addresses` via the pool's own (public,
-/// currently uncalled-in-production) `prune_unused` but left behind in
-/// `script_pubkey_index` (`address_pool.rs::prune_unused`, ~line 1000, only
-/// removes `address_index`, never `script_pubkey_index` — this asymmetry is
-/// the concrete, reachable mechanism behind Smythe's hypothetical: it is a
-/// PRE-EXISTING desync in `AddressPool`, not introduced by the #649
-/// restructure, and `prune_unused` has zero callers in production today, but
-/// as a `pub fn` it is part of the crate's API contract and is exercised
-/// directly here to force the exact state Smythe described).
+/// Constructs the exact edge case: an address whose scriptPubKey is present
+/// in `AddressPool::script_pubkey_index` but whose `address_index` entry is
+/// missing, forced via direct field manipulation. (`AddressPool::prune_unused`
+/// used to leave exactly this desync behind, the concrete mechanism behind
+/// Smythe's hypothetical — but it now keeps both maps in sync, so this exact
+/// state is no longer reachable through it; both maps remain independently
+/// `pub` fields, so nothing rules the desync out at the type level.)
 ///
 /// A funding tx pays two outputs: one to a live, tracked address (so the
 /// transaction is still recognized as relevant — `has_addresses` requires at
 /// least one resolved address or `sent > 0`, and `received > 0` alone does
-/// NOT satisfy that in `account_checker.rs`) and one to the pruned address
-/// (`contains_script_pub_key` still matches it — stale index entry — but
-/// `get_address_info` now returns `None`).
+/// NOT satisfy that in `account_checker.rs`) and one to the desynced address
+/// (`contains_script_pub_key` still matches it, but `get_address_info` now
+/// returns `None`).
 ///
 /// Result: `account_match.received` (account_checker.rs:646-665) counts BOTH
 /// outputs (the `received += output.value` at line 664 is unconditional on
@@ -222,42 +219,35 @@ async fn net_amount_matches_account_match_formula_for_self_transfer() {
 #[tokio::test]
 async fn pruned_address_script_desync_does_not_under_report_relative_to_balance() {
     let mut ctx = TestWalletContext::new_random();
-    let key_source = KeySource::Public(ctx.xpub);
 
-    let pruned_address = {
+    let desynced_address = {
         let account = ctx.managed_wallet.first_bip44_managed_account_mut().expect("account");
         let pools = account.managed_account_type_mut().address_pools_mut();
         let external_pool = pools.into_iter().next().expect("external pool");
 
-        // Generate far past the gap limit so pruning has real candidates.
-        external_pool.generate_addresses(60, &key_source, true).expect("generate");
-        let pruned_address = external_pool.address_at_index(55).expect("address at index 55");
-        assert!(external_pool.contains_address(&pruned_address), "generated, so indexed");
+        let desynced_address =
+            external_pool.address_at_index(1).expect("pool pre-generates past index 0");
+        assert!(external_pool.contains_address(&desynced_address), "generated, so indexed");
 
-        // Force pruning eligibility: only index 0 (ctx.receive_address) is
-        // "used"; everything past gap_limit beyond it is prunable.
-        external_pool.highest_used = Some(0);
-        external_pool.used_indices.clear();
-        external_pool.used_indices.insert(0);
-        let pruned_count = external_pool.prune_unused();
-        assert!(pruned_count > 0, "index 55 must have been pruned");
+        // Force the desync directly: prune_unused itself keeps both maps in
+        // sync now, so removing only the address-keyed entry is the only way
+        // left to construct this state.
+        external_pool.address_index.remove(&desynced_address);
 
-        // The desync: address-keyed lookup is gone, script-keyed lookup is not.
         assert!(
-            !external_pool.contains_address(&pruned_address),
-            "address_index no longer resolves the pruned address"
+            !external_pool.contains_address(&desynced_address),
+            "address_index no longer resolves the desynced address"
         );
         assert!(
-            external_pool.contains_script_pubkey(&pruned_address.script_pubkey()),
-            "STALE: script_pubkey_index still matches the pruned address's script — the exact \
-             desync SEC-02 hypothesized (address_pool.rs::prune_unused never clears this map)"
+            external_pool.contains_script_pubkey(&desynced_address.script_pubkey()),
+            "script_pubkey_index still matches — the constructed desync"
         );
-        pruned_address
+        desynced_address
     };
 
     let value0 = 500_000u64;
     let value1 = 750_000u64;
-    let funding_tx = fund_multi(&[(&ctx.receive_address, value0), (&pruned_address, value1)]);
+    let funding_tx = fund_multi(&[(&ctx.receive_address, value0), (&desynced_address, value1)]);
 
     // The OLD net_amount formula, evaluated for real via the account's own
     // (unchanged-by-this-diff) `check_transaction_for_match`.
