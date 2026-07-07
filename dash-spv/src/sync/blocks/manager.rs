@@ -80,12 +80,13 @@ impl<H: BlockHeaderStorage, B: BlockStorage, W: WalletInterface> BlocksManager<H
 
         // Process blocks in height order using pipeline's ordering logic
         while let Some((block, height, interested)) = self.pipeline.take_next_ordered_block() {
-            let hash = block.block_hash();
+            let hash = *block.hash();
 
             // Process the block only for the wallets whose filter matched it.
             // Already-synced wallets that did not match are not touched.
             let mut wallet = self.wallet.write().await;
-            let result = wallet.process_block_for_wallets(&block, height, &interested).await;
+            let result =
+                wallet.process_block_for_wallets(block.block(), hash, height, &interested).await;
             drop(wallet);
 
             let total_relevant = result.relevant_tx_count();
@@ -172,6 +173,7 @@ mod tests {
     };
     use crate::sync::{ManagerIdentifier, SyncEvent, SyncManagerProgress};
     use crate::test_utils::MockNetworkManager;
+    use crate::types::HashedBlock;
     use key_wallet_manager::test_utils::{MockWallet, MOCK_WALLET_ID};
     use key_wallet_manager::FilterMatchKey;
     use std::collections::{BTreeMap, BTreeSet};
@@ -256,7 +258,11 @@ mod tests {
             header,
             txdata: vec![],
         };
-        manager.pipeline.add_from_storage(block.clone(), 100, BTreeSet::from([MOCK_WALLET_ID]));
+        manager.pipeline.add_from_storage(
+            HashedBlock::from(&block),
+            100,
+            BTreeSet::from([MOCK_WALLET_ID]),
+        );
 
         let events = manager.process_buffered_blocks().await.unwrap();
         assert!(matches!(events.first(), Some(SyncEvent::BlockProcessed { .. })));
@@ -312,7 +318,11 @@ mod tests {
             txdata: vec![],
         };
         // Only wallet_in is in the routed set.
-        manager.pipeline.add_from_storage(block.clone(), 100, BTreeSet::from([wallet_in]));
+        manager.pipeline.add_from_storage(
+            HashedBlock::from(&block),
+            100,
+            BTreeSet::from([wallet_in]),
+        );
 
         let _ = manager.process_buffered_blocks().await.unwrap();
 
@@ -357,7 +367,11 @@ mod tests {
         };
 
         // Already-downloaded block sitting in the pipeline.
-        manager.pipeline.add_from_storage(block.clone(), 200, BTreeSet::from([MOCK_WALLET_ID]));
+        manager.pipeline.add_from_storage(
+            HashedBlock::from(&block),
+            200,
+            BTreeSet::from([MOCK_WALLET_ID]),
+        );
 
         manager.on_disconnect();
 

@@ -38,6 +38,7 @@ const DEFAULT_NETWORK_EVENT_CAPACITY: usize = 10000;
 pub struct PeerNetworkManager {
     /// Peer pool
     pool: Arc<PeerPool>,
+    max_peers: usize,
     /// DNS discovery
     discovery: Arc<DnsDiscovery>,
     /// AddrV2 handler
@@ -115,8 +116,11 @@ impl PeerNetworkManager {
         // Create request queue for outgoing messages
         let (request_tx, request_rx) = unbounded_channel();
 
+        let max_peers = config.max_peers.max(1) as usize;
+
         Ok(Self {
-            pool: Arc::new(PeerPool::new()),
+            pool: Arc::new(PeerPool::new(max_peers)),
+            max_peers,
             discovery: Arc::new(discovery),
             addrv2_handler: Arc::new(AddrV2Handler::new()),
             peer_store: Arc::new(peer_store),
@@ -192,7 +196,7 @@ impl PeerNetworkManager {
                 peer_addresses.extend(
                     dns_peers
                         .into_iter()
-                        .take(TARGET_PEERS)
+                        .take(self.max_peers)
                         .map(|addr| AddrV2Message::new(addr, ServiceFlags::NETWORK)),
                 );
                 tracing::info!(
@@ -956,10 +960,10 @@ impl PeerNetworkManager {
             self.evict_mismatched_peers().await;
             // Re-read count after potential churn so top-up sees the current pool size.
             let count = self.pool.peer_count().await;
-            if count < TARGET_PEERS {
+            if count < self.max_peers {
                 // Try known addresses first, sorted by reputation
                 let known = self.addrv2_handler.get_known_addresses().await;
-                let needed = TARGET_PEERS.saturating_sub(count);
+                let needed = self.max_peers.saturating_sub(count);
                 // Select best peers based on reputation
                 let best_peers = self.reputation_manager.select_best_peers(known, needed * 2).await;
                 let mut attempted = 0;
@@ -1019,7 +1023,7 @@ impl PeerNetworkManager {
 
     async fn dns_fallback_tick(&self) {
         let count = self.pool.peer_count().await;
-        if count >= TARGET_PEERS {
+        if count >= self.max_peers {
             return;
         }
         let dns_peers = tokio::select! {
@@ -1029,7 +1033,7 @@ impl PeerNetworkManager {
                 return
             }
         };
-        let needed = TARGET_PEERS.saturating_sub(count);
+        let needed = self.max_peers.saturating_sub(count);
         tracing::debug!("DNS fallback tick found {} addresses. Needed {}", dns_peers.len(), needed);
         let mut dns_attempted = 0;
         for addr in dns_peers.iter() {
@@ -1373,6 +1377,7 @@ impl Clone for PeerNetworkManager {
     fn clone(&self) -> Self {
         Self {
             pool: self.pool.clone(),
+            max_peers: self.max_peers,
             discovery: self.discovery.clone(),
             addrv2_handler: self.addrv2_handler.clone(),
             peer_store: self.peer_store.clone(),
@@ -1492,7 +1497,8 @@ impl PeerNetworkManager {
         let discovery = DnsDiscovery::new();
         let (request_tx, request_rx) = unbounded_channel();
         Self {
-            pool: Arc::new(PeerPool::new()),
+            pool: Arc::new(PeerPool::new(8)),
+            max_peers: 8,
             discovery: Arc::new(discovery),
             addrv2_handler: Arc::new(AddrV2Handler::new()),
             peer_store: Arc::new(peer_store),

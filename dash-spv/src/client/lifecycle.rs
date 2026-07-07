@@ -291,7 +291,10 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
                         );
                     } else {
                         storage
-                            .store_headers_at_height(&[checkpoint_header], checkpoint.height)
+                            .store_headers_at_height(
+                                &[crate::types::HashedBlockHeader::from(checkpoint_header)],
+                                checkpoint.height,
+                            )
                             .await?;
 
                         tracing::info!(
@@ -332,7 +335,10 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
         tracing::debug!("Using genesis block header with hash: {}", calculated_hash);
 
         // Store the genesis header at height 0
-        storage.store_headers(&[genesis_header]).await.map_err(SpvError::Storage)?;
+        storage
+            .store_headers(&[crate::types::HashedBlockHeader::from(genesis_header)])
+            .await
+            .map_err(SpvError::Storage)?;
 
         // Verify it was stored correctly
         let stored_height = storage.get_tip_height().await;

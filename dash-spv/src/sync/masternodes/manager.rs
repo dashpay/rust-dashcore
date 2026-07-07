@@ -654,7 +654,17 @@ mod tests {
     ) -> (TestMasternodesManager, RequestSender, mpsc::UnboundedReceiver<NetworkRequest>) {
         let storage = DiskStorageManager::with_temp_dir().await.unwrap();
         let block_headers = storage.block_headers();
-        block_headers.write().await.store_headers(&Header::dummy_batch(0..tip + 1)).await.unwrap();
+        block_headers
+            .write()
+            .await
+            .store_headers(
+                &Header::dummy_batch(0..tip + 1)
+                    .iter()
+                    .map(crate::types::HashedBlockHeader::from)
+                    .collect::<Vec<_>>(),
+            )
+            .await
+            .unwrap();
         let engine = engine_with_lists(&[(tip, 1)]);
         let mut manager = MasternodesManager::new(
             block_headers,

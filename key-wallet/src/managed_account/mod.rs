@@ -21,6 +21,7 @@ pub mod managed_core_funds_account;
 pub mod managed_core_keys_account;
 pub mod managed_platform_account;
 pub mod platform_address;
+pub(crate) mod reservation;
 pub mod transaction_record;
 
 pub use managed_account_ref::{ManagedAccountRef, ManagedAccountRefMut, OwnedManagedCoreAccount};

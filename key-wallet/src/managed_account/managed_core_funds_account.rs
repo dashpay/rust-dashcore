@@ -19,6 +19,7 @@ use crate::managed_account::address_pool;
 use crate::managed_account::managed_account_trait::ManagedAccountTrait;
 use crate::managed_account::managed_account_type::ManagedAccountType;
 use crate::managed_account::managed_core_keys_account::ManagedCoreKeysAccount;
+use crate::managed_account::reservation::ReservationSet;
 use crate::managed_account::transaction_record::{
     InputDetail, OutputDetail, OutputRole, TransactionDirection,
 };
@@ -61,6 +62,12 @@ pub struct ManagedCoreFundsAccount {
     /// Rebuilt from `transactions` during deserialization.
     #[cfg_attr(feature = "serde", serde(skip_serializing))]
     spent_outpoints: HashSet<OutPoint>,
+    /// Outpoints reserved by in-flight transaction builds so concurrent builds
+    /// do not select the same UTXO before the first build's transaction is
+    /// processed. Empty after a restart, where chain and mempool sync
+    /// re-establish which coins are spent.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    reservations: ReservationSet,
 }
 
 impl ManagedCoreFundsAccount {
@@ -71,6 +78,7 @@ impl ManagedCoreFundsAccount {
             balance: WalletCoreBalance::default(),
             utxos: BTreeMap::new(),
             spent_outpoints: HashSet::new(),
+            reservations: ReservationSet::default(),
         }
     }
 
@@ -97,7 +105,29 @@ impl ManagedCoreFundsAccount {
             balance: WalletCoreBalance::default(),
             utxos: BTreeMap::new(),
             spent_outpoints: HashSet::new(),
+            reservations: ReservationSet::default(),
         }
+    }
+
+    /// Reservation set tracking outpoints chosen by in-flight transaction
+    /// builds, consulted by coin selection so concurrent builds do not pick the
+    /// same UTXO.
+    ///
+    /// The reservation is only effective when each build runs `set_funding`
+    /// through `assemble_unsigned` under a single uninterrupted hold of the
+    /// wallet lock. If two builds interleave between observing the UTXO set and
+    /// reserving their inputs, both can see the same UTXO as free and select it.
+    pub(crate) fn reservations(&self) -> &ReservationSet {
+        &self.reservations
+    }
+
+    /// Release the reservations held for `tx`'s inputs. Call this when a built
+    /// transaction will not be broadcast, e.g. the user cancelled, so its inputs
+    /// become selectable again immediately instead of waiting out the TTL
+    /// backstop. Broadcast transactions release on their own once the spend is
+    /// processed back into the wallet, so this is only for abandoned builds.
+    pub fn release_reservation(&self, tx: &Transaction) {
+        self.reservations.release(tx.input.iter().map(|input| &input.previous_output));
     }
 
     /// Get a reference to the inner keys-account state.
@@ -149,11 +179,20 @@ impl ManagedCoreFundsAccount {
                     .map(|info| info.address.clone())
                     .collect();
 
-                // Detect a self-send: this account owns at least one input being
-                // spent. `account_match.sent` is computed by matching inputs against
-                // this account's UTXO set, so a non-zero value means we owned at
-                // least one of the spent outpoints.
-                let has_owned_input = account_match.sent > 0;
+                // Detect a trusted self-send, mirroring Bitcoin Core's
+                // `CWalletTx::IsTrusted`: every input must spend one of our own
+                // UTXOs that is itself final (confirmed, InstantSend-locked, or
+                // trusted). Parent trust already carries the recursion, so one
+                // level of lookup is transitive over the whole ancestry. The
+                // spent parents are still present in `self.utxos` here because
+                // they are only removed after the insert loop below. An unknown
+                // or non-final parent denies trust, so funds that the network
+                // may still drop never surface as confirmed.
+                let all_inputs_final_and_ours = tx.input.iter().all(|input| {
+                    self.utxos.get(&input.previous_output).is_some_and(|parent| {
+                        parent.is_confirmed || parent.is_instantlocked || parent.is_trusted
+                    })
+                });
 
                 let txid = tx.txid();
                 let mut utxos_changed = false;
@@ -185,12 +224,13 @@ impl ManagedCoreFundsAccount {
                             }
 
                             // Flag outputs from a "trusted" mempool transaction we created —
-                            // one that spends at least one of our own UTXOs and pays this
-                            // output back to one of our internal (change) addresses. Such
-                            // an output is just our previously-tracked funds returning, so
-                            // `update_balance` credits it to the confirmed bucket even
+                            // one whose inputs all spend our own final UTXOs and which pays
+                            // this output back to one of our internal (change) addresses.
+                            // Such an output is just our previously-tracked funds returning,
+                            // so `update_balance` credits it to the confirmed bucket even
                             // before the parent transaction settles.
-                            let is_trusted_output = has_owned_input && change_addrs.contains(&addr);
+                            let is_trusted_output =
+                                all_inputs_final_and_ours && change_addrs.contains(&addr);
                             let txout = dashcore::TxOut {
                                 value: output.value,
                                 script_pubkey: output.script_pubkey.clone(),
@@ -202,13 +242,29 @@ impl ManagedCoreFundsAccount {
                             utxo.is_instantlocked =
                                 matches!(context, TransactionContext::InstantSend(_));
                             utxo.is_trusted = is_trusted_output;
+                            // Reprocessing (e.g. mempool→block) rebuilds this UTXO from
+                            // scratch, so carry forward flags that must not regress. An
+                            // InstantSend lock is permanent for a txid (DIP-0010) and
+                            // trust only ever settles, so both latch monotonically. A
+                            // coin reservation is orthogonal to chain context and is kept
+                            // as-is. `is_confirmed` stays freshly derived so a reorg can
+                            // still downgrade it.
+                            if let Some(prior) = self.utxos.get(&outpoint) {
+                                utxo.is_instantlocked |= prior.is_instantlocked;
+                                utxo.is_trusted |= prior.is_trusted;
+                                utxo.is_locked = prior.is_locked;
+                            }
                             self.utxos.insert(outpoint, utxo);
                             utxos_changed = true;
                         }
                     }
                 }
 
-                // Remove UTXOs spent by this transaction and track spent outpoints
+                // Remove UTXOs spent by this transaction and track spent outpoints.
+                // Processing the spend also hands the inputs off from the
+                // ephemeral build reservation to the durable spent set, so the
+                // reservation taken when this transaction was built is released.
+                self.reservations.release(tx.input.iter().map(|input| &input.previous_output));
                 for input in &tx.input {
                     self.spent_outpoints.insert(input.previous_output);
 
@@ -726,6 +782,7 @@ impl<'de> Deserialize<'de> for ManagedCoreFundsAccount {
             balance: helper.balance,
             utxos: helper.utxos,
             spent_outpoints,
+            reservations: ReservationSet::default(),
         })
     }
 }

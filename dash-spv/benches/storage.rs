@@ -28,7 +28,10 @@ fn bench_disk_storage(c: &mut Criterion) {
 
     let rt = Builder::new_multi_thread().worker_threads(4).enable_all().build().unwrap();
 
-    let headers = (0..NUM_ELEMENTS).map(create_test_header).collect::<Vec<Header>>();
+    let headers = (0..NUM_ELEMENTS)
+        .map(create_test_header)
+        .map(dash_spv::types::HashedBlockHeader::from)
+        .collect::<Vec<_>>();
     let mut rng = StdRng::seed_from_u64(SEED);
 
     c.bench_function("storage/disk/store", |b| {
@@ -75,7 +78,7 @@ fn bench_disk_storage(c: &mut Criterion) {
         b.to_async(&rt).iter_batched(
             || {
                 let height = rand::random::<u32>() % NUM_ELEMENTS;
-                headers[height as usize].block_hash()
+                *headers[height as usize].hash()
             },
             async |hash| {
                 let _ = storage.get_header_height_by_hash(&hash).await.unwrap();

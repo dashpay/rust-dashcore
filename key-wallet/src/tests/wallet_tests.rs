@@ -97,6 +97,7 @@ fn test_wallet_creation_from_extended_key() {
     let seed = mnemonic.to_seed("");
     let root_key = RootExtendedPrivKey::new_master(&seed).unwrap();
     let master_key = root_key.to_extended_priv_key(Network::Testnet);
+    let master_private_key = master_key.private_key;
 
     let wallet = Wallet::from_extended_key(
         master_key,
@@ -113,7 +114,7 @@ fn test_wallet_creation_from_extended_key() {
     // Verify extended key is stored
     match &wallet.wallet_type {
         WalletType::ExtendedPrivKey(wallet_key) => {
-            assert_eq!(wallet_key.root_private_key, master_key.private_key);
+            assert_eq!(wallet_key.root_private_key, master_private_key);
         }
         _ => panic!("Expected extended private key wallet type"),
     }

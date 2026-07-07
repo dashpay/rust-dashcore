@@ -87,13 +87,10 @@ impl FilterHeadersPipeline {
             let batch_end = (current + FILTER_HEADERS_BATCH_SIZE - 1).min(new_target);
 
             // Get stop hash for this batch
-            let stop_hash = storage
-                .get_header(batch_end)
-                .await?
-                .ok_or_else(|| {
+            let stop_hash =
+                storage.get_header(batch_end).await?.map(|h| *h.hash()).ok_or_else(|| {
                     SyncError::Storage(format!("Missing header at height {}", batch_end))
-                })?
-                .block_hash();
+                })?;
 
             self.coordinator.enqueue([stop_hash]);
             self.batch_starts.insert(stop_hash, current);
@@ -145,13 +142,10 @@ impl FilterHeadersPipeline {
             let batch_end = (current + FILTER_HEADERS_BATCH_SIZE - 1).min(target_height);
 
             // Get stop hash for this batch
-            let stop_hash = storage
-                .get_header(batch_end)
-                .await?
-                .ok_or_else(|| {
+            let stop_hash =
+                storage.get_header(batch_end).await?.map(|h| *h.hash()).ok_or_else(|| {
                     SyncError::Storage(format!("Missing header at height {}", batch_end))
-                })?
-                .block_hash();
+                })?;
 
             self.coordinator.enqueue([stop_hash]);
             self.batch_starts.insert(stop_hash, current);
