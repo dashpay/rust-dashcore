@@ -102,6 +102,11 @@ pub enum AssetLockError {
     /// by a final input per DIP-0010, so this is surfaced as a distinct caller
     /// error rather than silently filtered out of coin selection.
     OverrideInputNotFinal,
+    /// An explicit override funding UTXO's `address` and `txout.script_pubkey`
+    /// disagree. Signing derives the key from `address` but signs over
+    /// `script_pubkey`, so a mismatched pair is rejected up front rather than
+    /// producing an account-key signature over an unrelated script.
+    OverrideInputScriptMismatch,
     /// Underlying transaction builder error.
     Builder(BuilderError),
 }
@@ -126,6 +131,9 @@ impl fmt::Display for AssetLockError {
                     f,
                     "Override funding UTXO is not final (not confirmed or InstantSend-locked)"
                 )
+            }
+            Self::OverrideInputScriptMismatch => {
+                write!(f, "Override funding UTXO's address does not match its script_pubkey")
             }
             Self::Builder(e) => write!(f, "Transaction builder error: {e}"),
         }
@@ -287,9 +295,11 @@ impl ManagedWalletInfo {
     ///
     /// # Errors
     ///
-    /// Returns [`AssetLockError::OverrideInputNotFinal`] if `override_utxo` is
-    /// supplied but is neither confirmed nor InstantSend-locked (asset locks
-    /// require a final funding input per DIP-0010).
+    /// With an `override_utxo`, returns [`AssetLockError::OverrideInputNotFinal`]
+    /// if it is neither confirmed nor InstantSend-locked (asset locks require a
+    /// final funding input per DIP-0010), or
+    /// [`AssetLockError::OverrideInputScriptMismatch`] if its `address` and
+    /// `txout.script_pubkey` disagree.
     pub async fn build_asset_lock_with_signer<S: Signer>(
         &mut self,
         wallet: &Wallet,
@@ -324,6 +334,12 @@ impl ManagedWalletInfo {
 
         let builder = match override_utxo {
             Some(utxo) => {
+                // Signing derives the key from `utxo.address` but signs over
+                // `utxo.txout.script_pubkey`; reject a mismatched pair so an
+                // account-derivable address can never sign an unrelated script.
+                if utxo.address.script_pubkey() != utxo.txout.script_pubkey {
+                    return Err(AssetLockError::OverrideInputScriptMismatch);
+                }
                 // Reject a non-final override eagerly and distinctly instead of
                 // letting `require_final_inputs` silently filter it into a
                 // generic insufficient-funds failure.
@@ -1228,5 +1244,98 @@ mod tests {
             )
             .await;
         assert!(matches!(result, Err(AssetLockError::AccountNotFound(99))));
+    }
+
+    /// An override whose `address` and `txout.script_pubkey` disagree is
+    /// rejected up front with `OverrideInputScriptMismatch` — an
+    /// account-derivable address must never sign over an unrelated script.
+    #[tokio::test]
+    async fn test_override_utxo_script_mismatch_rejected() {
+        let (wallet, mut info) = test_wallet_and_info();
+        let mut override_utxo =
+            make_override_utxo(&mut info, &wallet, 0x77, 1_000_000, true, false);
+        // Corrupt the script so it no longer matches the (account-derivable)
+        // address the key would be derived from.
+        override_utxo.txout.script_pubkey = Address::dummy(Network::Testnet, 5).script_pubkey();
+        info.update_last_processed_height(1100);
+        let signer = in_memory_signer(&wallet);
+
+        let result = info
+            .build_asset_lock_with_signer(
+                &wallet,
+                0,
+                test_credit_outputs(&[200_000]),
+                1000,
+                &signer,
+                Some(override_utxo),
+            )
+            .await;
+        assert!(
+            matches!(result, Err(AssetLockError::OverrideInputScriptMismatch)),
+            "address/script mismatch must be rejected with OverrideInputScriptMismatch; got {:?}",
+            result.err()
+        );
+    }
+
+    /// An override whose address is not derivable by the funding account (a coin
+    /// from a different wallet) fails closed at signing with a typed error and
+    /// strands no reservation — the finality/script guards trust caller flags,
+    /// so ownership is enforced downstream by the signer's path resolver.
+    #[tokio::test]
+    async fn test_override_utxo_foreign_address_fails_at_signing_without_reservation() {
+        let (wallet, mut info) = test_wallet_and_info();
+
+        // A confirmed override at an address derived from an unrelated wallet:
+        // internally consistent (its own address matches its own script) so it
+        // clears the eager guards, but unknown to `funds_acc`, so no derivation
+        // path resolves for it during signing.
+        let (foreign_wallet, mut foreign_info) = test_wallet_and_info();
+        let foreign_xpub = foreign_wallet.get_bip44_account(0).unwrap().account_xpub;
+        let foreign_address = foreign_info
+            .accounts
+            .standard_bip44_accounts
+            .get_mut(&0)
+            .unwrap()
+            .next_receive_address(Some(&foreign_xpub), true)
+            .unwrap();
+        let override_utxo = Utxo {
+            outpoint: OutPoint {
+                txid: Txid::from_byte_array([0x99; 32]),
+                vout: 0,
+            },
+            txout: TxOut {
+                value: 1_000_000,
+                script_pubkey: foreign_address.script_pubkey(),
+            },
+            address: foreign_address,
+            height: 1000,
+            is_coinbase: false,
+            is_confirmed: true,
+            is_instantlocked: false,
+            is_locked: false,
+            is_trusted: false,
+        };
+        info.update_last_processed_height(1100);
+        let signer = in_memory_signer(&wallet);
+
+        let result = info
+            .build_asset_lock_with_signer(
+                &wallet,
+                0,
+                test_credit_outputs(&[200_000]),
+                1000,
+                &signer,
+                Some(override_utxo),
+            )
+            .await;
+        assert!(
+            matches!(result, Err(AssetLockError::Builder(BuilderError::SigningFailed(_)))),
+            "a foreign-account override must fail closed at signing; got {:?}",
+            result.err()
+        );
+        assert!(
+            reserved_outpoints(&info, 1100).is_empty(),
+            "a signing failure must strand no reservation"
+        );
     }
 }

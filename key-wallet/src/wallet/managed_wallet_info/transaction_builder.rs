@@ -132,21 +132,16 @@ impl TransactionBuilder {
     }
 
     /// Seed the builder from a caller-supplied input set instead of the funding
-    /// account's full UTXO map, while keeping [`Self::set_funding`]'s
-    /// change-address derivation and reservation handling. Inputs already
-    /// reserved by another in-flight build are skipped, identically to
-    /// `set_funding`.
+    /// account's full UTXO map, keeping [`Self::set_funding`]'s change-address
+    /// derivation and reserved-input skipping.
     ///
-    /// Callers that want the account's own UTXOs as candidates want
-    /// [`Self::set_funding`]; this is for the narrow case where exactly which
-    /// coins may fund the transaction is decided outside the wallet (e.g. an
-    /// asset lock funded from a caller-verified UTXO). It never reads
-    /// `funds_acc.utxos`, so a poisoned or absent index entry can neither leak
-    /// into nor gate the candidate pool.
+    /// Unlike `set_funding` it never reads `funds_acc.utxos`, so a poisoned or
+    /// absent index entry can neither leak into nor gate the candidate pool —
+    /// the mechanism for funding from coins chosen outside the wallet (e.g. an
+    /// asset lock funded from a caller-verified UTXO).
     ///
-    /// Same locking contract as `set_funding`: the builder must not be held
-    /// across an `await` between this call and `build_signed`/`build_unsigned`,
-    /// or the read-then-reserve window reopens for a concurrent build.
+    /// Same locking contract as `set_funding`: do not hold the builder across an
+    /// `await` between this call and `build_signed`/`build_unsigned`.
     pub fn set_funding_with_inputs(
         mut self,
         funds_acc: &mut ManagedCoreFundsAccount,
