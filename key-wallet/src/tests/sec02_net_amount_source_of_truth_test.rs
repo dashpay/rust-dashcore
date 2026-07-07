@@ -10,12 +10,12 @@
 //! specific divergence condition (`contains_script_pub_key` matches a
 //! scriptPubKey whose address then fails `get_address_info` resolution).
 
-use crate::managed_account::address_pool::KeySource;
+use crate::managed_account::address_pool::{KeySource, PublicKeyType};
 use crate::managed_account::managed_account_trait::ManagedAccountTrait;
 use crate::test_utils::TestWalletContext;
 use crate::transaction_checking::{BlockInfo, TransactionContext};
 use dashcore::blockdata::transaction::OutPoint;
-use dashcore::{Address, ScriptBuf, Transaction, TxIn, TxOut, Txid, Witness};
+use dashcore::{Address, PublicKey, ScriptBuf, Transaction, TxIn, TxOut, Txid, Witness};
 
 fn block_ctx(height: u32) -> TransactionContext {
     TransactionContext::InBlock(BlockInfo::new(
@@ -304,5 +304,182 @@ async fn pruned_address_script_desync_does_not_under_report_relative_to_balance(
          would have been the one diverging from balance, not the new one. The restructure does \
          not introduce a new spendable-fund miscount here; it happens to resolve a pre-existing, \
          prune_unused-only-reachable history/balance mismatch instead of preserving it"
+    );
+}
+
+// ── follow-up: Adams's RUST-001 scenarios (independent structural finding) ─
+
+/// Adams's scenario 1 (RUST-001): "a bare P2PK scriptPubKey the account owns
+/// matches `contains_script_pub_key` but can't resolve via `Address::from_script`
+/// / `get_address_info`." Attempts this literally, using the account's OWN
+/// derived public key (the most favorable case for triggering it) built into
+/// a real P2PK scriptPubKey via `ScriptBuf::new_p2pk`.
+///
+/// Result: UNREACHABLE as literally stated. `contains_script_pub_key` is an
+/// exact byte-match against `AddressPool::script_pubkey_index`
+/// (`address_pool.rs::contains_script_pubkey`), and nothing in this crate
+/// ever inserts a P2PK-shaped script into that index: `AddressType`
+/// (`dash/src/address.rs`) has no P2PK variant (only P2pkh/P2sh/P2wpkh/P2wsh/
+/// P2tr), and `AddressPool::generate_address_at_index` always builds
+/// `Address::p2pkh(&dash_pubkey, network)` for the ECDSA path regardless of
+/// `address_type`. So `contains_script_pub_key(p2pk_script)` is always
+/// `false` for a script this crate did not itself register — and it never
+/// registers a P2PK script. The transaction below is not even recognized
+/// as touching this account at all (confirmed below), let alone reaching
+/// the `received += value` unconditional-counting line Adams cites.
+///
+/// This does NOT mean Adams's underlying concern is unfounded, though: the
+/// GENERAL class — `contains_script_pub_key` true but `Address::from_script`/
+/// `get_address_info` resolution failing — is real and already demonstrated
+/// with a different, genuinely constructible trigger in
+/// `pruned_address_script_desync_does_not_under_report_relative_to_balance`
+/// above (an `AddressPool::prune_unused`-induced `script_pubkey_index` /
+/// `address_index` desync). P2PK specifically just isn't how it happens in
+/// this codebase.
+#[tokio::test]
+async fn scenario1_bare_p2pk_is_structurally_unreachable() {
+    let ctx = TestWalletContext::new_random();
+    let account = ctx.managed_wallet.first_bip44_managed_account().expect("account");
+    let info = account.get_address_info(&ctx.receive_address).expect("own address info");
+    let public_key = info.public_key.clone().expect("ECDSA key");
+    let PublicKeyType::ECDSA(pubkey_bytes) = &public_key else {
+        panic!("BIP44 account must derive ECDSA keys");
+    };
+    let pubkey = PublicKey::from_slice(pubkey_bytes).expect("valid pubkey");
+    let p2pk_script = ScriptBuf::new_p2pk(&pubkey);
+
+    assert_ne!(
+        p2pk_script,
+        ctx.receive_address.script_pubkey(),
+        "sanity: P2PK and P2PKH scripts for the same key are byte-distinct"
+    );
+    assert!(
+        !account.managed_account_type().contains_script_pub_key(&p2pk_script),
+        "the account's own script_pubkey_index never contains a P2PK-shaped script — \
+         confirms contains_script_pub_key cannot match a bare P2PK output for OUR key, \
+         so Adams's scenario 1 cannot trigger via this exact mechanism"
+    );
+
+    let funding_tx = Transaction {
+        version: 2,
+        lock_time: 0,
+        input: vec![TxIn {
+            previous_output: OutPoint::new(Txid::from([0xEEu8; 32]), 0),
+            script_sig: ScriptBuf::new(),
+            sequence: 0xffffffff,
+            witness: Witness::new(),
+        }],
+        output: vec![TxOut {
+            value: 1_000_000,
+            script_pubkey: p2pk_script,
+        }],
+        special_transaction_payload: None,
+    };
+    assert!(
+        account.check_transaction_for_match(&funding_tx, Some(0)).is_none(),
+        "a P2PK-only output to our own key is not even recognized as relevant to the account \
+         — confirms the whole scenario never reaches record_transaction/compensate_for_observed_spends"
+    );
+}
+
+/// Adams's scenario 2 (RUST-001): "the code's own comment
+/// (`managed_core_funds_account.rs:473-476`) admits `account_match.sent` can
+/// be nonzero while `input_details` is empty (partial rescan) — the
+/// unconditional recompute then subtracts 0 instead of the real spend."
+///
+/// Result: UNREACHABLE given the CURRENT implementation. Grep-confirmed
+/// there is exactly ONE `sent =`/`sent +=` assignment site in the entire
+/// `account_checker.rs` (`check_transaction_for_match`, line ~672):
+/// `sent = sent.saturating_add(utxo.txout.value)`, gated by
+/// `self.utxos.get(&input.previous_output)` — the IDENTICAL predicate, on
+/// the SAME `ManagedCoreFundsAccount` instance, that
+/// `record_transaction`'s `input_details` loop uses
+/// (`managed_core_funds_account.rs:463`). Traced the call path in
+/// `wallet_checker.rs` (lines 61, 188): `account_match` is computed once via
+/// `self.accounts.check_transaction`, then `record_transaction` runs on the
+/// SAME account handle with no intervening mutation of `self.utxos` for this
+/// transaction. So for the standard funds-account path, `account_match.sent
+/// > 0` structurally IMPLIES `input_details` is non-empty — they cannot
+/// diverge. The doc comment's stated rationale ("UTXO set may be incomplete")
+/// does not correspond to any live divergence in this exact code today; it
+/// reads as defensive/historical rationale rather than a description of
+/// current behavior — itself worth a documentation fix, but not a functional
+/// bug in `compensate_for_observed_spends`.
+///
+/// Demonstrated empirically below: the same "partial rescan" precondition
+/// (this account's `utxos` genuinely lacks the spent coin) drives BOTH
+/// signals to zero/empty together, never one without the other.
+#[tokio::test]
+async fn scenario2_sent_and_input_details_cannot_diverge_in_current_code() {
+    let mut ctx = TestWalletContext::new_random();
+
+    // Model "partial rescan": a coin this account actually owns on-chain,
+    // but whose funding was never processed, so `self.utxos` never learned
+    // about it — the exact condition the code comment names.
+    let unscanned_outpoint = OutPoint::new(Txid::from([0x77u8; 32]), 3);
+    let external = Address::dummy(dashcore::Network::Testnet, 210);
+    let spend_of_unscanned_coin = Transaction {
+        version: 2,
+        lock_time: 0,
+        input: vec![TxIn {
+            previous_output: unscanned_outpoint,
+            script_sig: ScriptBuf::new(),
+            sequence: 0xffffffff,
+            witness: Witness::new(),
+        }],
+        output: vec![TxOut {
+            value: 999_000,
+            script_pubkey: external.script_pubkey(),
+        }],
+        special_transaction_payload: None,
+    };
+
+    let account = ctx.managed_wallet.first_bip44_managed_account().expect("account");
+    assert!(
+        !account.utxos.contains_key(&unscanned_outpoint),
+        "sanity: the coin is genuinely absent from this account's utxo set"
+    );
+    let match_result = account.check_transaction_for_match(&spend_of_unscanned_coin, Some(0));
+    assert!(
+        match_result.is_none_or(|m| m.sent == 0),
+        "when self.utxos lacks the coin, account_match.sent is ALSO 0 (not '> 0 with empty \
+         input_details' as scenario 2 hypothesizes) — sent and input_details are governed by \
+         the identical predicate and cannot diverge in the current code"
+    );
+
+    // Contrast: once the SAME coin is genuinely funded and tracked, both
+    // signals become nonzero together — never independently.
+    let funding_value = 999_000u64;
+    let funding_tx = Transaction::dummy(&ctx.receive_address, 0..1, &[funding_value]);
+    ctx.check_transaction(&funding_tx, block_ctx(100)).await;
+    let funding_outpoint = OutPoint::new(funding_tx.txid(), 0);
+    let spend_tx = Transaction {
+        version: 2,
+        lock_time: 0,
+        input: vec![TxIn {
+            previous_output: funding_outpoint,
+            script_sig: ScriptBuf::new(),
+            sequence: 0xffffffff,
+            witness: Witness::new(),
+        }],
+        output: vec![TxOut {
+            value: funding_value - 1_000,
+            script_pubkey: external.script_pubkey(),
+        }],
+        special_transaction_payload: None,
+    };
+    let account_match = ctx
+        .managed_wallet
+        .first_bip44_managed_account()
+        .expect("account")
+        .check_transaction_for_match(&spend_tx, Some(0))
+        .expect("must match — the coin is tracked");
+    assert_eq!(account_match.sent, funding_value, "tracked coin: sent is populated");
+    ctx.check_transaction(&spend_tx, block_ctx(101)).await;
+    let record = ctx.transaction(&spend_tx.txid());
+    assert_eq!(
+        record.input_details.len(),
+        1,
+        "input_details is populated in lockstep with account_match.sent, never independently"
     );
 }
