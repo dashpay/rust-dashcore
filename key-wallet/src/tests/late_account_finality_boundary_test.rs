@@ -231,3 +231,31 @@ async fn every_add_variant_rewinds_checkpoint() {
         "birth_height == 0 rewinds to 0 without underflow"
     );
 }
+
+/// Marvin QA-001 round 2: two accounts added back-to-back with NO intervening
+/// rescan/re-certification (no `update_synced_height` call between the two
+/// adds) — the race the task explicitly flagged. Since the rewind floor is
+/// wallet-level `birth_height` (identical for every account, not a per-account
+/// value), the second rewind's `min` is idempotent against the first: it must
+/// land at exactly `birth_height - 1`, never lower (no double-decrement) and
+/// never higher (no accidental un-rewind).
+#[tokio::test]
+async fn back_to_back_account_adds_rewind_idempotently() {
+    let mut ctx = TestWalletContext::new_random();
+    ctx.managed_wallet.metadata.birth_height = BIRTH;
+    ctx.managed_wallet.update_synced_height(1_000);
+
+    ctx.wallet.add_account(bip44(1), None).expect("wallet account 1");
+    ctx.managed_wallet.add_managed_account(&ctx.wallet, bip44(1)).expect("add managed 1");
+    assert_eq!(ctx.managed_wallet.synced_height(), BIRTH - 1, "first add rewinds to birth - 1");
+
+    // Second add fires immediately after, with no rescan tick / re-certify in
+    // between — exactly the in-flight sequencing the task asked about.
+    ctx.wallet.add_account(bip44(2), None).expect("wallet account 2");
+    ctx.managed_wallet.add_managed_account(&ctx.wallet, bip44(2)).expect("add managed 2");
+    assert_eq!(
+        ctx.managed_wallet.synced_height(),
+        BIRTH - 1,
+        "second back-to-back add is idempotent: still exactly birth - 1, not further reduced"
+    );
+}

@@ -1382,6 +1382,64 @@ mod tests {
         );
     }
 
+    /// Marvin QA-001 round 2: two wallets in the SAME batch, only one of them
+    /// rewound mid-flight (simulating an account add on wallet_a only). The
+    /// contiguity guard must block wallet_a's advance while still advancing
+    /// wallet_b normally — a per-wallet leak here would either strand a
+    /// healthy wallet or silently clobber the rewound one.
+    #[tokio::test]
+    async fn contiguity_guard_is_per_wallet_not_batch_wide() {
+        let wallet_a: WalletId = [0xAA; 32];
+        let wallet_b: WalletId = [0xBB; 32];
+        let multi = Arc::new(RwLock::new(MultiMockWallet::new()));
+        {
+            let mut w = multi.write().await;
+            w.insert_wallet(
+                wallet_a,
+                MockWalletState {
+                    synced_height: 4999,
+                    ..MockWalletState::default()
+                },
+            );
+            w.insert_wallet(
+                wallet_b,
+                MockWalletState {
+                    synced_height: 4999,
+                    ..MockWalletState::default()
+                },
+            );
+        }
+        let mut manager = create_multi_test_manager(multi.clone()).await;
+        manager.set_state(SyncState::Syncing);
+
+        // Batch [5000..9999] scanned with BOTH wallets recorded.
+        let mut batch = FiltersBatch::new(5000, 9999, HashMap::new());
+        batch.set_pending_blocks(0);
+        batch.mark_scanned();
+        batch.mark_rescan_complete();
+        batch.set_scanned_wallets(BTreeSet::from([wallet_a, wallet_b]));
+        manager.active_batches.insert(5000, batch);
+
+        // Only wallet_a gets an account added mid-flight (rewound). wallet_b
+        // is untouched and remains legitimately contiguous with this batch.
+        multi.write().await.wallet_mut(&wallet_a).synced_height = 49;
+
+        manager.try_commit_batches().await.unwrap();
+
+        assert_eq!(manager.progress.committed_height(), 9999);
+        assert_eq!(
+            multi.read().await.wallet_synced_height(&wallet_a),
+            49,
+            "wallet_a's rewound checkpoint must survive commit"
+        );
+        assert_eq!(
+            multi.read().await.wallet_synced_height(&wallet_b),
+            9999,
+            "wallet_b was legitimately contiguous and must still advance despite \
+             sharing a batch with a rewound wallet"
+        );
+    }
+
     /// `scan_batch` with two wallets at different `synced_height` values:
     /// only the wallet whose synced_height is below the matching block's
     /// height should be attributed.
