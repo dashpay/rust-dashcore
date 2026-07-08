@@ -82,11 +82,14 @@ pub struct ManagedWalletInfo {
     /// number of transaction inputs across *filter-matched* blocks — driven by
     /// transactions-per-matched-block, not by block count, so a single large
     /// matched block can add tens of thousands of entries. That is bounded by
-    /// matched activity rather than whole-chain history, but it is unbounded
-    /// over a long-running process; height-bounded pruning is tracked as
-    /// follow-up work, not implemented here. A defensive cap on the deserialized
-    /// entry count (see the serde adapter) guards against a corrupted or hostile
-    /// wallet file forcing an unbounded allocation on load.
+    /// matched activity rather than whole-chain history, but growth is currently
+    /// unbounded within a process lifetime. A bounding strategy is under active
+    /// design review: a naive age/LRU eviction is unsafe here because it can
+    /// reopen the exact bug this field prevents — evicting an entry whose funding
+    /// transaction later arrives out of order reintroduces #649 for that coin. A
+    /// defensive cap on the deserialized entry count (see the serde adapter)
+    /// guards against a corrupted or hostile wallet file forcing an unbounded
+    /// allocation on load.
     ///
     /// # Persistence
     ///
@@ -97,7 +100,11 @@ pub struct ManagedWalletInfo {
     /// full fresh replay in one process. `#[serde(default)]` keeps snapshots
     /// written before this field existed loadable, seeding an empty set (a
     /// pre-fix wallet gets no retroactive backfill; only spends observed after
-    /// the field exists are protected).
+    /// the field exists are protected). That default applies only to
+    /// self-describing formats (e.g. JSON) that can detect the absent field;
+    /// non-self-describing serde formats (bincode-serde, `platform_value::Value`)
+    /// cannot default a missing field, so consumers using those need a versioned
+    /// migration to load pre-field snapshots.
     #[cfg_attr(feature = "serde", serde(default, with = "observed_spent_outpoints_serde"))]
     pub(crate) observed_spent_outpoints: BTreeMap<OutPoint, CoreBlockHeight>,
 }
@@ -344,20 +351,23 @@ impl ManagedWalletInfo {
     /// removed (funding-first ordering: the record was already live).
     ///
     /// 1. Marks the outpoint spent so reprocessing won't resurrect the coin.
-    /// 2. Recomputes the funding record's history via
+    /// 2. Releases any build reservation held on the coin, so it is freed
+    ///    immediately rather than lingering until the reservation TTL backstop
+    ///    — matching the normal spend path in `update_utxos`.
+    /// 3. Recomputes the funding record's history via
     ///    [`TransactionRecord::compensate_for_observed_spends`]. The record is
     ///    kept at `net_amount == 0` rather than deleted when fully
     ///    compensated: a later reprocessing would otherwise re-record it as a
     ///    fresh sighting with no coin left to reconcile against, reopening
-    ///    the divergence.
-    ///
-    /// No-op when the record is absent (pruned/finalized) — β is undefined there.
+    ///    the divergence. This step is skipped when the record is absent
+    ///    (pruned/finalized); steps 1 and 2 still run.
     fn finalize_guard_removed_utxo(
         account: &mut ManagedCoreFundsAccount,
         removed: &Utxo,
         observed_spent: &BTreeMap<OutPoint, CoreBlockHeight>,
     ) {
         account.mark_outpoint_spent(removed.outpoint);
+        account.release_reservation_for(&removed.outpoint);
 
         let funding_txid = removed.outpoint.txid;
         if let Some(record) = account.transactions_mut().get_mut(&funding_txid) {

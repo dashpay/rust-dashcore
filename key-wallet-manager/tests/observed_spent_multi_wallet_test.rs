@@ -8,22 +8,16 @@
 //! it (e.g. a synthetic/colliding outpoint, or a reused xpub-derived address
 //! across two independently imported wallets, which the SDK does not forbid).
 
+mod common;
+
+use common::{funding_tx, process_block_for, spend_tx};
 use dashcore::blockdata::block::Block;
 use dashcore::blockdata::transaction::OutPoint;
-use dashcore::{Network, ScriptBuf, Transaction, TxIn, TxOut, Witness};
+use dashcore::Network;
 use key_wallet::wallet::initialization::WalletAccountCreationOptions;
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
-use key_wallet_manager::{WalletId, WalletInterface, WalletManager};
+use key_wallet_manager::{WalletId, WalletManager};
 use std::collections::BTreeSet;
-
-async fn process_block_for(
-    manager: &mut WalletManager<ManagedWalletInfo>,
-    block: &Block,
-    height: u32,
-    wallets: &BTreeSet<WalletId>,
-) {
-    manager.process_block_for_wallets(block, block.block_hash(), height, wallets).await;
-}
 
 #[tokio::test]
 async fn observed_spends_are_isolated_per_wallet() {
@@ -43,50 +37,21 @@ async fn observed_spends_are_isolated_per_wallet() {
 
     // Funding pays B's address; the outpoint it creates is O.
     let funding_value = 1_000_000u64;
-    let funding_tx = Transaction {
-        version: 2,
-        lock_time: 0,
-        input: vec![TxIn {
-            previous_output: OutPoint::new(dashcore::Txid::from([0xB0u8; 32]), 0),
-            script_sig: ScriptBuf::new(),
-            sequence: 0xffffffff,
-            witness: Witness::new(),
-        }],
-        output: vec![TxOut {
-            value: funding_value,
-            script_pubkey: b_address.script_pubkey(),
-        }],
-        special_transaction_payload: None,
-    };
-    let outpoint = OutPoint::new(funding_tx.txid(), 0);
+    let funding = funding_tx(&b_address, funding_value, 0xB0);
+    let outpoint = OutPoint::new(funding.txid(), 0);
 
     // A spend of O, delivered to wallet A out of order (before any funding A sees).
-    let external = dashcore::Address::dummy(Network::Testnet, 77);
-    let spend_tx = Transaction {
-        version: 2,
-        lock_time: 0,
-        input: vec![TxIn {
-            previous_output: outpoint,
-            script_sig: ScriptBuf::new(),
-            sequence: 0xffffffff,
-            witness: Witness::new(),
-        }],
-        output: vec![TxOut {
-            value: funding_value - 1_000,
-            script_pubkey: external.script_pubkey(),
-        }],
-        special_transaction_payload: None,
-    };
+    let spend = spend_tx(outpoint, funding_value - 1_000, 77);
 
     let only_a: BTreeSet<WalletId> = [wallet_a].into_iter().collect();
     let only_b: BTreeSet<WalletId> = [wallet_b].into_iter().collect();
 
     // Wallet A observes the spend (records O in A's set only).
-    let spend_block = Block::dummy(200, vec![spend_tx]);
+    let spend_block = Block::dummy(200, vec![spend]);
     process_block_for(&mut manager, &spend_block, 200, &only_a).await;
 
     // Wallet B funds O in order — B never saw the spend, so B's set is empty.
-    let funding_block = Block::dummy(100, vec![funding_tx]);
+    let funding_block = Block::dummy(100, vec![funding]);
     process_block_for(&mut manager, &funding_block, 100, &only_b).await;
 
     let b_utxos = manager.wallet_utxos(&wallet_b).expect("wallet B registered");

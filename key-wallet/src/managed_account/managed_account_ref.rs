@@ -299,7 +299,7 @@ impl<'a> ManagedAccountRefMut<'a> {
     /// `observed_spent` is the wallet-level `observed_spent_outpoints` view
     /// (dashpay/rust-dashcore#649); only the funds variant consults it (keys
     /// accounts track no UTXOs/output details).
-    pub fn record_transaction(
+    pub(crate) fn record_transaction(
         &mut self,
         tx: &Transaction,
         account_match: &AccountMatch,
@@ -324,7 +324,7 @@ impl<'a> ManagedAccountRefMut<'a> {
     ///
     /// `observed_spent` is the wallet-level `observed_spent_outpoints` view
     /// (dashpay/rust-dashcore#649); only the funds variant consults it.
-    pub fn confirm_transaction(
+    pub(crate) fn confirm_transaction(
         &mut self,
         tx: &Transaction,
         account_match: &AccountMatch,

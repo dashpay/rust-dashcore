@@ -263,13 +263,13 @@ mod tests {
         )
     }
 
-    /// Marvin's white-box adversarial check of the "declarative, not
-    /// incremental" claim in `compensate_for_observed_spends`'s doc comment:
-    /// calling it twice in a row on the SAME record (simulating a rescan
-    /// rebuilding an already-compensated record) must be a complete no-op
-    /// the second time — no double-drop of a surviving output, no `net_amount`
-    /// drift — because it recomputes from `output_details`/`input_details`
-    /// on every call rather than subtracting a delta.
+    /// Pins that `compensate_for_observed_spends` is declarative, not
+    /// incremental (dashpay/rust-dashcore#649): calling it twice in a row on the
+    /// SAME record (as a rescan rebuilding an already-compensated record would)
+    /// is a complete no-op the second time — no double-drop of a surviving
+    /// output, no `net_amount` drift — because it recomputes from
+    /// `output_details`/`input_details` on every call rather than subtracting a
+    /// delta.
     #[test]
     fn compensate_for_observed_spends_is_idempotent_on_direct_repeated_calls() {
         let tx = Transaction::dummy_empty();

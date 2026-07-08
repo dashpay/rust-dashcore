@@ -130,6 +130,16 @@ impl ManagedCoreFundsAccount {
         self.reservations.release(tx.input.iter().map(|input| &input.previous_output));
     }
 
+    /// Release any build reservation held on a single `outpoint`.
+    ///
+    /// Used when a coin is removed outside the normal spend path — the
+    /// wallet-level out-of-order guard (dashpay/rust-dashcore#649) — so the
+    /// reservation is freed immediately instead of lingering until the TTL
+    /// backstop, matching what [`Self::update_utxos`] does for ordinary spends.
+    pub(crate) fn release_reservation_for(&self, outpoint: &OutPoint) {
+        self.reservations.release(std::iter::once(outpoint));
+    }
+
     /// Get a reference to the inner keys-account state.
     pub fn keys(&self) -> &ManagedCoreKeysAccount {
         &self.keys
@@ -162,20 +172,13 @@ impl ManagedCoreFundsAccount {
     }
 
     /// Test-only: rebuild `spent_outpoints` exactly the way [`Deserialize`]
-    /// does, to simulate a save/reload cycle for QA's cross-restart
-    /// verification. A real full-struct serde round-trip is blocked for a
-    /// populated account by `AddressPool::script_pubkey_index`
-    /// (`HashMap<ScriptBuf, _>`, not a valid JSON map key), so this mirrors
-    /// the same reconstruction logic directly.
+    /// does, to simulate a save/reload cycle for cross-restart tests. A real
+    /// full-struct serde round-trip is blocked for a populated account by
+    /// `AddressPool::script_pubkey_index` (`HashMap<ScriptBuf, _>`, not a valid
+    /// JSON map key), so this mirrors the same reconstruction logic directly.
     #[cfg(test)]
     pub(crate) fn simulate_reload_rebuild_spent_outpoints(&mut self) {
-        self.spent_outpoints = self
-            .keys
-            .transactions()
-            .values()
-            .flat_map(|record| &record.transaction.input)
-            .map(|input| input.previous_output)
-            .collect();
+        self.spent_outpoints = rebuild_spent_outpoints(&self.keys);
     }
 
     /// Add new UTXOs for received outputs, remove spent ones.
@@ -466,10 +469,11 @@ impl ManagedCoreFundsAccount {
             }
         }
 
-        // Use both UTXO-based input details and `account_match.sent` as signals
-        // that we created this transaction. The UTXO set may be incomplete
-        // (e.g., partial rescan) so `account_match.sent > 0` catches cases where
-        // the transaction still spent our funds even without matching UTXOs.
+        // Marks a transaction that spends our coins. `input_details` and
+        // `account_match.sent` both derive from the same `self.utxos` lookup on
+        // this account, so they populate together and cannot diverge — either
+        // signal alone is sufficient (see
+        // `scenario2_sent_and_input_details_cannot_diverge_in_current_code`).
         let has_inputs = !input_details.is_empty() || account_match.sent > 0;
 
         let network = self.keys.network();
@@ -819,6 +823,21 @@ impl ManagedAccountTrait for ManagedCoreFundsAccount {
     }
 }
 
+/// Rebuild the account-local `spent_outpoints` set from recorded transactions.
+///
+/// Every input of every recorded transaction is a spend this account has seen,
+/// so its `previous_output` belongs in the derived set. The field is not
+/// persisted (`#[serde(skip)]`), so both [`Deserialize`] and the test reload
+/// simulation reconstruct it through here to stay in lockstep.
+#[cfg(any(feature = "serde", test))]
+fn rebuild_spent_outpoints(keys: &ManagedCoreKeysAccount) -> HashSet<OutPoint> {
+    keys.transactions()
+        .values()
+        .flat_map(|record| &record.transaction.input)
+        .map(|input| input.previous_output)
+        .collect()
+}
+
 #[cfg(feature = "serde")]
 impl<'de> Deserialize<'de> for ManagedCoreFundsAccount {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
@@ -834,13 +853,7 @@ impl<'de> Deserialize<'de> for ManagedCoreFundsAccount {
 
         let helper = Helper::deserialize(deserializer)?;
 
-        let spent_outpoints = helper
-            .keys
-            .transactions()
-            .values()
-            .flat_map(|record| &record.transaction.input)
-            .map(|input| input.previous_output)
-            .collect();
+        let spent_outpoints = rebuild_spent_outpoints(&helper.keys);
 
         Ok(ManagedCoreFundsAccount {
             keys: helper.keys,

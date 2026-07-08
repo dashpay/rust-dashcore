@@ -30,9 +30,9 @@ mod transaction_tests;
 
 mod observed_spent_outpoints_tests;
 
-mod gap5_async_chainlock_prune_race_test;
+mod async_chainlock_prune_race_test;
 
-mod sec02_net_amount_source_of_truth_test;
+mod net_amount_source_of_truth_test;
 
 mod spent_outpoints_tests;
 
