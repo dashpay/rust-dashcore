@@ -146,22 +146,14 @@ impl BlockFilter {
         filter_hash.filter_header(previous_filter_header)
     }
 
-    /// Returns true if any query matches against this [`BlockFilter`].
-    pub fn match_any<I>(&self, block_hash: &BlockHash, query: I) -> Result<bool, Error>
-    where
-        I: Iterator,
-        I::Item: Borrow<[u8]>,
-    {
+    /// Returns true if any element of `query` matches against this [`BlockFilter`].
+    pub fn match_any(&self, block_hash: &BlockHash, query: &FilterQuery) -> Result<bool, Error> {
         let filter_reader = BlockFilterReader::new(block_hash);
         filter_reader.match_any(&mut self.content.as_slice(), query)
     }
 
-    /// Returns true if all queries match against this [`BlockFilter`].
-    pub fn match_all<I>(&self, block_hash: &BlockHash, query: I) -> Result<bool, Error>
-    where
-        I: Iterator,
-        I::Item: Borrow<[u8]>,
-    {
+    /// Returns true if all elements of `query` match against this [`BlockFilter`].
+    pub fn match_all(&self, block_hash: &BlockHash, query: &FilterQuery) -> Result<bool, Error> {
         let filter_reader = BlockFilterReader::new(block_hash);
         filter_reader.match_all(&mut self.content.as_slice(), query)
     }
@@ -246,21 +238,17 @@ impl BlockFilterReader {
         }
     }
 
-    /// Returns true if any query matches against this [`BlockFilterReader`].
-    pub fn match_any<I, R>(&self, reader: &mut R, query: I) -> Result<bool, Error>
+    /// Returns true if any element of `query` matches against this [`BlockFilterReader`].
+    pub fn match_any<R>(&self, reader: &mut R, query: &FilterQuery) -> Result<bool, Error>
     where
-        I: Iterator,
-        I::Item: Borrow<[u8]>,
         R: io::Read + ?Sized,
     {
         self.reader.match_any(reader, query)
     }
 
-    /// Returns true if all queries match against this [`BlockFilterReader`].
-    pub fn match_all<I, R>(&self, reader: &mut R, query: I) -> Result<bool, Error>
+    /// Returns true if all elements of `query` match against this [`BlockFilterReader`].
+    pub fn match_all<R>(&self, reader: &mut R, query: &FilterQuery) -> Result<bool, Error>
     where
-        I: Iterator,
-        I::Item: Borrow<[u8]>,
         R: io::Read + ?Sized,
     {
         self.reader.match_all(reader, query)
@@ -282,11 +270,9 @@ impl GcsFilterReader {
         }
     }
 
-    /// Returns true if any query matches against this [`GcsFilterReader`].
-    pub fn match_any<I, R>(&self, reader: &mut R, query: I) -> Result<bool, Error>
+    /// Returns true if any element of `query` matches against this [`GcsFilterReader`].
+    pub fn match_any<R>(&self, reader: &mut R, query: &FilterQuery) -> Result<bool, Error>
     where
-        I: Iterator,
-        I::Item: Borrow<[u8]>,
         R: io::Read + ?Sized,
     {
         let mut decoder = reader;
@@ -294,8 +280,7 @@ impl GcsFilterReader {
         let reader = &mut decoder;
         // map hashes to [0, n_elements << grp]
         let nm = n_elements.0 * self.m;
-        let mut mapped =
-            query.map(|e| map_to_range(self.filter.hash(e.borrow()), nm)).collect::<Vec<_>>();
+        let mut mapped = self.filter.hash_query(query, nm);
         // For an empty query set, "any" should be false (no items to match).
         if mapped.is_empty() {
             return Ok(false);
@@ -329,11 +314,9 @@ impl GcsFilterReader {
         Ok(false)
     }
 
-    /// Returns true if all queries match against this [`GcsFilterReader`].
-    pub fn match_all<I, R>(&self, reader: &mut R, query: I) -> Result<bool, Error>
+    /// Returns true if all elements of `query` match against this [`GcsFilterReader`].
+    pub fn match_all<R>(&self, reader: &mut R, query: &FilterQuery) -> Result<bool, Error>
     where
-        I: Iterator,
-        I::Item: Borrow<[u8]>,
         R: io::Read + ?Sized,
     {
         let mut decoder = reader;
@@ -341,8 +324,7 @@ impl GcsFilterReader {
         let reader = &mut decoder;
         // map hashes to [0, n_elements << grp]
         let nm = n_elements.0 * self.m;
-        let mut mapped =
-            query.map(|e| map_to_range(self.filter.hash(e.borrow()), nm)).collect::<Vec<_>>();
+        let mut mapped = self.filter.hash_query(query, nm);
         if mapped.is_empty() {
             return Ok(true);
         }
@@ -382,11 +364,83 @@ fn map_to_range(hash: u64, nm: u64) -> u64 {
     ((hash as u128 * nm as u128) >> 64) as u64
 }
 
+/// Byte length of a standard P2PKH scriptPubKey
+const P2PKH_SCRIPT_LEN: usize = 25;
+/// Byte length of a standard P2SH scriptPubKey
+const P2SH_SCRIPT_LEN: usize = 23;
+
+/// A set of elements (scriptPubKeys) to match against GCS filters, bucketed by length
+/// so each bucket hashes through the fixed-length SIMD [`siphash24::siphash_batch`]. The
+/// two standard Dash sizes (P2PKH = 25, P2SH = 23) get their own buckets; the rest go to
+/// `other`. Build once and reuse across filters to avoid re-bucketing per match.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct FilterQuery {
+    p2pkh: Vec<[u8; P2PKH_SCRIPT_LEN]>,
+    p2sh: Vec<[u8; P2SH_SCRIPT_LEN]>,
+    other: Vec<Vec<u8>>,
+}
+
+impl FilterQuery {
+    /// Creates an empty query.
+    pub fn new() -> FilterQuery {
+        FilterQuery::default()
+    }
+
+    /// Adds one element (e.g. a scriptPubKey), routing it to its length bucket.
+    pub fn push(&mut self, element: &[u8]) {
+        // The length guards make `copy_from_slice` into the fixed-size array infallible.
+        match element.len() {
+            P2PKH_SCRIPT_LEN => {
+                let mut buf = [0u8; P2PKH_SCRIPT_LEN];
+                buf.copy_from_slice(element);
+                self.p2pkh.push(buf);
+            }
+            P2SH_SCRIPT_LEN => {
+                let mut buf = [0u8; P2SH_SCRIPT_LEN];
+                buf.copy_from_slice(element);
+                self.p2sh.push(buf);
+            }
+            _ => self.other.push(element.to_vec()),
+        }
+    }
+
+    /// Total number of elements across all buckets.
+    pub fn len(&self) -> usize {
+        self.p2pkh.len() + self.p2sh.len() + self.other.len()
+    }
+
+    /// Whether the query has no elements.
+    pub fn is_empty(&self) -> bool {
+        self.p2pkh.is_empty() && self.p2sh.is_empty() && self.other.is_empty()
+    }
+
+    /// Deduplicates each length bucket (sorting as a side effect). Used by the writer, since
+    /// BIP158 hashes each distinct element once; the matcher tolerates duplicates.
+    fn dedup(&mut self) {
+        self.p2pkh.sort_unstable();
+        self.p2pkh.dedup();
+        self.p2sh.sort_unstable();
+        self.p2sh.dedup();
+        self.other.sort_unstable();
+        self.other.dedup();
+    }
+}
+
+impl<S: AsRef<[u8]>> FromIterator<S> for FilterQuery {
+    fn from_iter<I: IntoIterator<Item = S>>(iter: I) -> FilterQuery {
+        let mut query = FilterQuery::new();
+        for element in iter {
+            query.push(element.as_ref());
+        }
+        query
+    }
+}
+
 /// Golomb-Rice encoded filter writer.
 pub struct GcsFilterWriter<'a, W> {
     filter: GcsFilter,
     writer: &'a mut W,
-    elements: BTreeSet<Vec<u8>>,
+    elements: FilterQuery,
     m: u64,
 }
 
@@ -396,7 +450,7 @@ impl<'a, W: io::Write> GcsFilterWriter<'a, W> {
         GcsFilterWriter {
             filter: GcsFilter::new(k0, k1, p),
             writer,
-            elements: BTreeSet::new(),
+            elements: FilterQuery::new(),
             m,
         }
     }
@@ -404,20 +458,17 @@ impl<'a, W: io::Write> GcsFilterWriter<'a, W> {
     /// Adds data to the filter.
     pub fn add_element(&mut self, element: &[u8]) {
         if !element.is_empty() {
-            self.elements.insert(element.to_vec());
+            self.elements.push(element);
         }
     }
 
     /// Writes the filter to the wrapped writer.
     pub fn finish(&mut self) -> Result<usize, io::Error> {
+        // BIP158 counts distinct elements; the query keeps duplicates, so fold them here.
+        self.elements.dedup();
         let nm = self.elements.len() as u64 * self.m;
 
-        // map hashes to [0, n_elements * M)
-        let mut mapped: Vec<_> = self
-            .elements
-            .iter()
-            .map(|e| map_to_range(self.filter.hash(e.as_slice()), nm))
-            .collect();
+        let mut mapped = self.filter.hash_query(&self.elements, nm);
         mapped.sort_unstable();
 
         // write number of elements as varint
@@ -486,9 +537,42 @@ impl GcsFilter {
         Ok((q << self.p) + r)
     }
 
-    /// Hashes an arbitrary slice with siphash using parameters of this filter.
-    fn hash(&self, element: &[u8]) -> u64 {
-        siphash24::Hash::hash_to_u64_with_keys(self.k0, self.k1, element)
+    /// Hashes each length bucket of `query` with this filter's keys (fixed-length buckets via
+    /// the SIMD [`siphash24::siphash_batch`], `other` via the scalar one-shot) and maps the
+    /// results into `[0, nm)`, returned unsorted.
+    fn hash_query(&self, query: &FilterQuery, nm: u64) -> Vec<u64> {
+        let mut mapped = vec![0u64; query.len()];
+        let mut off = 0;
+
+        if !query.p2pkh.is_empty() {
+            let end = off + query.p2pkh.len();
+            siphash24::siphash_batch::<P2PKH_SCRIPT_LEN>(
+                self.k0,
+                self.k1,
+                &query.p2pkh,
+                &mut mapped[off..end],
+            );
+            off = end;
+        }
+        if !query.p2sh.is_empty() {
+            let end = off + query.p2sh.len();
+            siphash24::siphash_batch::<P2SH_SCRIPT_LEN>(
+                self.k0,
+                self.k1,
+                &query.p2sh,
+                &mut mapped[off..end],
+            );
+            off = end;
+        }
+        for e in &query.other {
+            mapped[off] = siphash24::siphash(self.k0, self.k1, e);
+            off += 1;
+        }
+
+        for m in &mut mapped {
+            *m = map_to_range(*m, nm);
+        }
+        mapped
     }
 }
 
@@ -642,27 +726,14 @@ mod test {
             assert_eq!(test_filter.content, filter.content);
 
             let block_hash = &block.block_hash();
-            assert!(
-                filter
-                    .match_all(
-                        block_hash,
-                        &mut txmap.values().filter_map(|s| if !s.is_empty() {
-                            Some(s.as_bytes())
-                        } else {
-                            None
-                        })
-                    )
-                    .unwrap()
-            );
+            let all: FilterQuery =
+                txmap.values().filter(|s| !s.is_empty()).map(|s| s.as_bytes()).collect();
+            assert!(filter.match_all(block_hash, &all).unwrap());
 
             for script in txmap.values() {
-                let query = [script];
                 if !script.is_empty() {
-                    assert!(
-                        filter
-                            .match_any(block_hash, &mut query.iter().map(|s| s.as_bytes()))
-                            .unwrap()
-                    );
+                    let query: FilterQuery = core::iter::once(script.as_bytes()).collect();
+                    assert!(filter.match_any(block_hash, &query).unwrap());
                 }
             }
 
@@ -703,47 +774,27 @@ mod test {
         let bytes = out;
 
         {
-            let query = [hex!("abcdef"), hex!("eeeeee")];
+            let query: FilterQuery =
+                [hex!("abcdef"), hex!("eeeeee")].iter().map(|v| v.as_slice()).collect();
             let reader = GcsFilterReader::new(0, 0, M, P);
-            assert!(
-                reader
-                    .match_any(&mut bytes.as_slice(), &mut query.iter().map(|v| v.as_slice()))
-                    .unwrap()
-            );
+            assert!(reader.match_any(&mut bytes.as_slice(), &query).unwrap());
         }
         {
-            let query = [hex!("abcdef"), hex!("123456")];
+            let query: FilterQuery =
+                [hex!("abcdef"), hex!("123456")].iter().map(|v| v.as_slice()).collect();
             let reader = GcsFilterReader::new(0, 0, M, P);
-            assert!(
-                !reader
-                    .match_any(&mut bytes.as_slice(), &mut query.iter().map(|v| v.as_slice()))
-                    .unwrap()
-            );
+            assert!(!reader.match_any(&mut bytes.as_slice(), &query).unwrap());
         }
         {
             let reader = GcsFilterReader::new(0, 0, M, P);
-            let mut query = Vec::new();
-            for p in &patterns {
-                query.push(p.clone());
-            }
-            assert!(
-                reader
-                    .match_all(&mut bytes.as_slice(), &mut query.iter().map(|v| v.as_slice()))
-                    .unwrap()
-            );
+            let query: FilterQuery = patterns.iter().map(|v| v.as_slice()).collect();
+            assert!(reader.match_all(&mut bytes.as_slice(), &query).unwrap());
         }
         {
             let reader = GcsFilterReader::new(0, 0, M, P);
-            let mut query = Vec::new();
-            for p in &patterns {
-                query.push(p.clone());
-            }
-            query.push(hex!("abcdef"));
-            assert!(
-                !reader
-                    .match_all(&mut bytes.as_slice(), &mut query.iter().map(|v| v.as_slice()))
-                    .unwrap()
-            );
+            let mut query: FilterQuery = patterns.iter().map(|v| v.as_slice()).collect();
+            query.push(&hex!("abcdef"));
+            assert!(!reader.match_all(&mut bytes.as_slice(), &query).unwrap());
         }
     }
 
