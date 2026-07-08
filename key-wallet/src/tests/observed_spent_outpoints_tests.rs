@@ -27,6 +27,7 @@ use std::time::Instant;
 use dashcore::blockdata::transaction::special_transaction::asset_lock::AssetLockPayload;
 use dashcore::blockdata::transaction::special_transaction::TransactionPayload;
 use dashcore::blockdata::transaction::{OutPoint, Transaction};
+use dashcore::ephemerealdata::chain_lock::ChainLock;
 use dashcore::ephemerealdata::instant_lock::InstantLock;
 use dashcore::prelude::CoreBlockHeight;
 use dashcore::Network;
@@ -627,16 +628,15 @@ async fn pre_fix_snapshot_then_out_of_order_matches_fresh_wallet() {
     assert_eq!(ctx.managed_wallet.balance.total(), 0);
 }
 
-// ── no removal path: permanent one-way commitment (accepted) ─────────
+// ── bounded permanence: removal only at the finality boundary ────────
 
-/// Documents and pins the accepted asymmetric behavior: `observed_spent_outpoints`
-/// has no removal/rollback path, so once a spend is observed the coin stays
-/// excluded permanently — even if that spend is later treated as never having
-/// confirmed on the canonical chain. This is the accepted mirror-image trade of
-/// the #649 fix; the test exists so a future contributor cannot silently add a
-/// removal path (reintroducing #649) without a deliberate decision.
+/// Pins the bounded-permanence invariant (#649): an observed spend is removed
+/// ONLY at or below the finality boundary `min(chainlock, synced_height)`, and
+/// only through [`ManagedWalletInfo::prune_finalized_observed_spends`]. No
+/// contributor may add another removal path — reorg/rollback, age, or recency —
+/// without a deliberate decision, since that would reintroduce #649.
 #[tokio::test]
-async fn observed_spend_has_no_removal_path_permanent_by_design() {
+async fn observed_spend_removal_only_via_finality_boundary() {
     let mut ctx = TestWalletContext::new_random();
 
     let funding_value = 2_100_000u64;
@@ -644,25 +644,39 @@ async fn observed_spend_has_no_removal_path_permanent_by_design() {
     let funding_outpoint = OutPoint::new(funding_tx.txid(), 0);
     let spend_tx = spend_to_external(&[funding_outpoint], funding_value - 1_000, 68);
 
-    // Observe the spend in a block.
+    // Observe the spend in a block at height 200.
     ctx.check_transaction(&spend_tx, block_ctx(200)).await;
     assert!(ctx.managed_wallet.observed_spent_outpoints().contains_key(&funding_outpoint));
 
-    // Emulate "the spend never confirmed on the canonical chain" the only way
-    // key-wallet can today — re-deliver the spend as Mempool (the same
-    // context-flip the per-record reorg test uses). There is no block-disconnect
-    // API, and crucially no path that retracts the observed-spent entry.
+    // A context flip to Mempool must NOT retract the entry (no reorg/rollback path).
     ctx.check_transaction(&spend_tx, TransactionContext::Mempool).await;
     assert!(
         ctx.managed_wallet.observed_spent_outpoints().contains_key(&funding_outpoint),
-        "no removal path: a context flip to Mempool does not retract the observed spend"
+        "no reorg/rollback removal path: a context flip to Mempool does not retract the entry"
     );
 
-    // The canonical funding is now permanently excluded — the accepted trade.
-    ctx.check_transaction(&funding_tx, block_ctx(100)).await;
+    // Advancing synced_height alone, with no chainlock, must NOT prune: without
+    // a chainlock there is no finality boundary.
+    ctx.managed_wallet.update_synced_height(1_000_000);
     assert!(
-        !utxo_tracked(&ctx.managed_wallet, &funding_outpoint),
-        "accepted mirror-image behavior: a coin observed spent stays excluded permanently"
+        ctx.managed_wallet.observed_spent_outpoints().contains_key(&funding_outpoint),
+        "synced_height without a chainlock defines no boundary, so nothing is pruned"
+    );
+
+    // A chainlock BELOW the entry height must NOT prune it (boundary 199 < 200).
+    ctx.managed_wallet.update_last_processed_height(1_000_000);
+    ctx.managed_wallet.apply_chain_lock(ChainLock::dummy(199));
+    assert!(
+        ctx.managed_wallet.observed_spent_outpoints().contains_key(&funding_outpoint),
+        "a chainlock below the spend height leaves the entry (height 200 > boundary 199)"
+    );
+
+    // Only a chainlock at/above the entry height (with synced_height past it)
+    // removes it — exactly at the finality boundary and nowhere else.
+    ctx.managed_wallet.apply_chain_lock(ChainLock::dummy(200));
+    assert!(
+        !ctx.managed_wallet.observed_spent_outpoints().contains_key(&funding_outpoint),
+        "removal happens exactly at the finality boundary min(chainlock, synced_height)"
     );
 }
 
@@ -1265,4 +1279,257 @@ async fn guard_removed_coin_releases_its_reservation_immediately() {
         !account.reservations().reserved(0).contains(&funding_outpoint),
         "the guard-removal path must release the reservation immediately, not wait out the TTL"
     );
+}
+
+// ── Phase 1: finality-boundary pruning (dashpay/rust-dashcore#649) ────────
+
+/// Advance chainlock + synced_height past an observed spend's height so its
+/// entry is evicted, then redeliver the funding tx in block context. The
+/// finalized funding record short-circuits reinsertion, so the coin is not
+/// resurrected and balance/history are unchanged.
+#[tokio::test]
+async fn pruned_entry_does_not_resurrect_on_funding_redelivery() {
+    let mut ctx = TestWalletContext::new_random();
+
+    let funding_value = 1_000_000u64;
+    let funding_tx = Transaction::dummy(&ctx.receive_address, 0..1, &[funding_value]);
+    let funding_outpoint = OutPoint::new(funding_tx.txid(), 0);
+    let spend_tx = spend_to_external(&[funding_outpoint], funding_value - 1_000, 130);
+
+    // Spend-first at height 200, funding at height 100.
+    ctx.check_transaction(&spend_tx, block_ctx(200)).await;
+    ctx.check_transaction(&funding_tx, block_ctx(100)).await;
+    assert!(!utxo_tracked(&ctx.managed_wallet, &funding_outpoint), "coin reconciled away");
+    assert!(ctx.managed_wallet.observed_spent_outpoints().contains_key(&funding_outpoint));
+
+    // Advance the finality boundary to the spend height (200): evicts the entry.
+    ctx.managed_wallet.update_last_processed_height(200);
+    ctx.managed_wallet.apply_chain_lock(ChainLock::dummy(200));
+    ctx.managed_wallet.update_synced_height(200);
+    assert!(
+        !ctx.managed_wallet.observed_spent_outpoints().contains_key(&funding_outpoint),
+        "entry at height 200 evicted once chainlock and synced_height reach 200"
+    );
+
+    let balance_before = ctx.managed_wallet.balance.total();
+    let history_before = history_net(&ctx.managed_wallet);
+
+    // Redeliver the funding tx: the finalized record must short-circuit.
+    ctx.check_transaction(&funding_tx, block_ctx(100)).await;
+    assert!(
+        !utxo_tracked(&ctx.managed_wallet, &funding_outpoint),
+        "a pruned entry must not resurrect the coin on funding redelivery"
+    );
+    assert_eq!(ctx.managed_wallet.balance.total(), balance_before, "balance unchanged");
+    assert_eq!(history_net(&ctx.managed_wallet), history_before, "history unchanged");
+}
+
+/// As above, but rebuild the account-local `spent_outpoints` from records (a
+/// reload) before the redelivery. The account-local set never held this spend
+/// (it was never recorded there), so this pins that the durable protection is
+/// the finalized/chainlocked record, not the account-local spent set.
+#[tokio::test]
+async fn pruned_entry_does_not_resurrect_across_reload() {
+    let mut ctx = TestWalletContext::new_random();
+
+    let funding_value = 1_000_000u64;
+    let funding_tx = Transaction::dummy(&ctx.receive_address, 0..1, &[funding_value]);
+    let funding_outpoint = OutPoint::new(funding_tx.txid(), 0);
+    let spend_tx = spend_to_external(&[funding_outpoint], funding_value - 1_000, 131);
+
+    ctx.check_transaction(&spend_tx, block_ctx(200)).await;
+    ctx.check_transaction(&funding_tx, block_ctx(100)).await;
+
+    ctx.managed_wallet.update_last_processed_height(200);
+    ctx.managed_wallet.apply_chain_lock(ChainLock::dummy(200));
+    ctx.managed_wallet.update_synced_height(200);
+    assert!(!ctx.managed_wallet.observed_spent_outpoints().contains_key(&funding_outpoint));
+
+    // Reload: rebuild the account-local spent set from recorded transactions.
+    ctx.managed_wallet
+        .first_bip44_managed_account_mut()
+        .expect("account")
+        .simulate_reload_rebuild_spent_outpoints();
+
+    ctx.check_transaction(&funding_tx, block_ctx(100)).await;
+    assert!(
+        !utxo_tracked(&ctx.managed_wallet, &funding_outpoint),
+        "protection survives reload via the finalized record, not the rebuilt spent set"
+    );
+    assert_eq!(ctx.managed_wallet.balance.total(), 0, "no phantom balance after reload");
+}
+
+/// Direct pin of the §2 disproof: a guard-removed spend's protection is the
+/// wallet-level map (the account-local set does not hold it after a reload).
+/// The entry must survive the reload and keep guarding; only once its height is
+/// final may it be pruned, and even then the finalized record prevents
+/// resurrection.
+#[tokio::test]
+async fn guard_removed_entry_survives_reload_then_prunes_safely() {
+    let mut ctx = TestWalletContext::new_random();
+
+    // Fund a CoinJoin coin in order (AssetLock spend routes away from it).
+    let cj_xpub = ctx.wallet.get_coinjoin_account(0).expect("coinjoin account").account_xpub;
+    let cj_address = ctx
+        .managed_wallet
+        .first_coinjoin_managed_account_mut()
+        .expect("managed coinjoin account")
+        .next_address(Some(&cj_xpub), true)
+        .expect("coinjoin address");
+
+    let funding_value = 1_500_000u64;
+    let funding_tx = Transaction::dummy(&cj_address, 0..1, &[funding_value]);
+    let funding_outpoint = OutPoint::new(funding_tx.txid(), 0);
+    ctx.check_transaction(&funding_tx, block_ctx(100)).await;
+
+    // Guard-remove via an AssetLock-classified spend at height 200.
+    let mut spend_tx = spend_to_external(&[funding_outpoint], funding_value - 1_000, 132);
+    spend_tx.special_transaction_payload =
+        Some(TransactionPayload::AssetLockPayloadType(AssetLockPayload::new(vec![])));
+    assert_eq!(TransactionRouter::classify_transaction(&spend_tx), TransactionType::AssetLock);
+    ctx.check_transaction(&spend_tx, block_ctx(200)).await;
+    assert!(!utxo_tracked(&ctx.managed_wallet, &funding_outpoint), "guard removed the coin");
+    assert!(ctx.managed_wallet.observed_spent_outpoints().contains_key(&funding_outpoint));
+
+    // Reload: the rebuilt account-local set lacks the spend (never recorded),
+    // so the wallet-level map is the sole guard.
+    ctx.managed_wallet
+        .first_coinjoin_managed_account_mut()
+        .expect("account")
+        .simulate_reload_rebuild_spent_outpoints();
+    assert!(
+        ctx.managed_wallet.observed_spent_outpoints().contains_key(&funding_outpoint),
+        "the wallet-level entry survives reload and remains the guard"
+    );
+    ctx.check_transaction(&funding_tx, block_ctx(100)).await;
+    assert!(
+        !utxo_tracked(&ctx.managed_wallet, &funding_outpoint),
+        "the surviving map entry still guards the coin after reload"
+    );
+
+    // Finalize past the spend height, then prune: the finalized record now
+    // guards, so eviction is safe.
+    ctx.managed_wallet.update_last_processed_height(200);
+    ctx.managed_wallet.apply_chain_lock(ChainLock::dummy(200));
+    ctx.managed_wallet.update_synced_height(200);
+    assert!(
+        !ctx.managed_wallet.observed_spent_outpoints().contains_key(&funding_outpoint),
+        "entry pruned once its spend height is final"
+    );
+    ctx.managed_wallet
+        .first_coinjoin_managed_account_mut()
+        .expect("account")
+        .simulate_reload_rebuild_spent_outpoints();
+    ctx.check_transaction(&funding_tx, block_ctx(100)).await;
+    assert!(
+        !utxo_tracked(&ctx.managed_wallet, &funding_outpoint),
+        "after prune the finalized record short-circuits any resurrection"
+    );
+}
+
+/// Nothing is pruned above the finality boundary: entries with height above the
+/// chainlock height are retained regardless of `synced_height`, and entries at
+/// or below the chainlock but above `synced_height` are retained too (the
+/// rescan-in-progress guard).
+#[test]
+fn no_prune_above_finality_boundary() {
+    let op = |b: u8| OutPoint::new(dashcore::Txid::from([b; 32]), 0);
+
+    let mut wallet = ManagedWalletInfo::new(Network::Testnet, [21u8; 32]);
+    wallet.record_observed_spends(&spend_to_external(&[op(1)], 1, 70), 100);
+    wallet.record_observed_spends(&spend_to_external(&[op(2)], 1, 71), 200);
+    wallet.record_observed_spends(&spend_to_external(&[op(3)], 1, 72), 300);
+
+    // boundary = min(chainlock 200, synced 250) = 200.
+    wallet.update_last_processed_height(250);
+    wallet.apply_chain_lock(ChainLock::dummy(200));
+    wallet.update_synced_height(250);
+    assert!(
+        wallet.observed_spent_outpoints().contains_key(&op(3)),
+        "entry above the chainlock height (300 > 200) retained regardless of synced_height"
+    );
+    assert!(
+        !wallet.observed_spent_outpoints().contains_key(&op(1))
+            && !wallet.observed_spent_outpoints().contains_key(&op(2)),
+        "entries at or below the boundary (100, 200) evicted"
+    );
+
+    // Rescan-in-progress: chainlock ahead, synced behind → boundary follows synced.
+    let mut w2 = ManagedWalletInfo::new(Network::Testnet, [22u8; 32]);
+    w2.record_observed_spends(&spend_to_external(&[op(4)], 1, 73), 150);
+    w2.update_last_processed_height(300);
+    w2.apply_chain_lock(ChainLock::dummy(300));
+    w2.update_synced_height(100);
+    assert!(
+        w2.observed_spent_outpoints().contains_key(&op(4)),
+        "entry at 150 retained while synced_height (100) < its height, despite chainlock 300"
+    );
+}
+
+/// Anti-LRU pin: an old entry above the boundary survives arbitrary block-height
+/// advances as long as no chainlock defines a finality boundary. Pruning is
+/// event-driven (chainlock/checkpoint), never age- or recency-based.
+#[test]
+fn prune_is_event_driven_not_age_based() {
+    let mut wallet = ManagedWalletInfo::new(Network::Testnet, [23u8; 32]);
+    let op = OutPoint::new(dashcore::Txid::from([9u8; 32]), 0);
+    wallet.record_observed_spends(&spend_to_external(&[op], 1, 70), 100);
+
+    // Advance processed/synced height far ahead, but never apply a chainlock.
+    wallet.update_last_processed_height(1_000_000);
+    wallet.update_synced_height(1_000_000);
+    assert!(
+        wallet.observed_spent_outpoints().contains_key(&op),
+        "no chainlock ⇒ no finality boundary ⇒ entry retained regardless of height/age"
+    );
+}
+
+/// After an entry is evicted, replaying the funding and spend blocks in either
+/// order converges to the correct final state (no live UTXO, no double-counted
+/// `net_amount`) and repopulates the map so it is re-prunable.
+#[tokio::test]
+async fn evicted_entry_self_heals_on_replay() {
+    let mut ctx = TestWalletContext::new_random();
+
+    let funding_value = 1_000_000u64;
+    let funding_tx = Transaction::dummy(&ctx.receive_address, 0..1, &[funding_value]);
+    let funding_outpoint = OutPoint::new(funding_tx.txid(), 0);
+    let spend_tx = spend_to_external(&[funding_outpoint], funding_value - 1_000, 133);
+
+    ctx.check_transaction(&spend_tx, block_ctx(200)).await;
+    ctx.check_transaction(&funding_tx, block_ctx(100)).await;
+    ctx.managed_wallet.update_last_processed_height(200);
+    ctx.managed_wallet.apply_chain_lock(ChainLock::dummy(200));
+    ctx.managed_wallet.update_synced_height(200);
+    assert!(!ctx.managed_wallet.observed_spent_outpoints().contains_key(&funding_outpoint));
+
+    let balance = ctx.managed_wallet.balance.total();
+    let history = history_net(&ctx.managed_wallet);
+
+    // Replay order A — spend first: repopulates the map, coin stays reconciled.
+    ctx.check_transaction(&spend_tx, block_ctx(200)).await;
+    assert!(
+        ctx.managed_wallet.observed_spent_outpoints().contains_key(&funding_outpoint),
+        "replaying the spend block repopulates the observed-spent entry"
+    );
+    ctx.check_transaction(&funding_tx, block_ctx(100)).await;
+    assert!(!utxo_tracked(&ctx.managed_wallet, &funding_outpoint), "order A: no resurrection");
+    assert_eq!(ctx.managed_wallet.balance.total(), balance, "order A: balance not double-counted");
+    assert_eq!(history_net(&ctx.managed_wallet), history, "order A: history not double-counted");
+
+    // The repopulated entry is re-prunable at the same, already-final boundary.
+    ctx.managed_wallet.prune_finalized_observed_spends();
+    assert!(!ctx.managed_wallet.observed_spent_outpoints().contains_key(&funding_outpoint));
+
+    // Replay order B — funding first: the finalized record short-circuits, then
+    // the spend re-guards; final state is identical.
+    ctx.check_transaction(&funding_tx, block_ctx(100)).await;
+    assert!(!utxo_tracked(&ctx.managed_wallet, &funding_outpoint), "order B: no resurrection");
+    ctx.check_transaction(&spend_tx, block_ctx(200)).await;
+    assert!(
+        ctx.managed_wallet.observed_spent_outpoints().contains_key(&funding_outpoint),
+        "order B: the replayed spend re-guards the coin"
+    );
+    assert_eq!(ctx.managed_wallet.balance.total(), balance, "order B: balance stable");
+    assert_eq!(history_net(&ctx.managed_wallet), history, "order B: history stable");
 }

@@ -67,29 +67,39 @@ pub struct ManagedWalletInfo {
     /// spending transaction's classification, lets the funding-side insert be
     /// reconciled away whichever order the two blocks arrive in.
     ///
-    /// Membership is intentionally permanent and one-way: an entry is only ever
-    /// added, never removed, and reorg rollback does NOT retract it. Treating a
+    /// Membership is bounded-permanent: an entry is retained until its spend
+    /// height is provably final, then evicted by
+    /// [`Self::prune_finalized_observed_spends`]. Until then it is only ever
+    /// added, never removed, and reorg rollback does NOT retract it — treating a
     /// coin as spendable again after a spend was observed is the failure this
-    /// set exists to prevent, and the block heights are retained for diagnostics
-    /// and possible future height-bounded pruning rather than for rollback. Only
-    /// spends seen in a block (`InBlock` / `InChainLockedBlock`) are recorded —
-    /// mempool-context spends are never recorded, so an unconfirmed spend can
-    /// never wrongly invalidate a coin.
+    /// set exists to prevent. Only spends seen in a block (`InBlock` /
+    /// `InChainLockedBlock`) are recorded; mempool-context spends are never
+    /// recorded, so an unconfirmed spend can never wrongly invalidate a coin.
     ///
-    /// # Growth and pruning (documented limitation)
+    /// # Bounded permanence
     ///
-    /// The set is not pruned in this version. Its size grows with the total
-    /// number of transaction inputs across *filter-matched* blocks — driven by
-    /// transactions-per-matched-block, not by block count, so a single large
-    /// matched block can add tens of thousands of entries. That is bounded by
-    /// matched activity rather than whole-chain history, but growth is currently
-    /// unbounded within a process lifetime. A bounding strategy is under active
-    /// design review: a naive age/LRU eviction is unsafe here because it can
-    /// reopen the exact bug this field prevents — evicting an entry whose funding
-    /// transaction later arrives out of order reintroduces #649 for that coin. A
-    /// defensive cap on the deserialized entry count (see the serde adapter)
-    /// guards against a corrupted or hostile wallet file forcing an unbounded
-    /// allocation on load.
+    /// An entry `(outpoint, height)` is removed only when
+    /// `height <= min(last_applied_chain_lock.block_height, synced_height)` —
+    /// the finality boundary. At that boundary the spend is chain-locked (it can
+    /// never be reorged out) and any funding transaction for the outpoint has
+    /// been delivered (BIP158 filters have no false negatives below
+    /// `synced_height`) and finalized (promoted into `finalized_txids`, or kept
+    /// as a chainlocked record), so every redelivery path short-circuits before
+    /// a coin could be re-inserted — in both `keep-finalized-transactions`
+    /// configurations and across a reload. No other removal path may be added
+    /// without a deliberate decision.
+    ///
+    /// Eviction is event-driven (chainlock application, sync-checkpoint commit),
+    /// never age- or recency-based: during an out-of-order rescan `synced_height`
+    /// is low, so nothing is pruned in exactly the window where #649 ordering
+    /// hazards live, and the set self-repopulates on any replay since
+    /// `record_observed_spends` runs unconditionally per checked tx. A naive
+    /// age/LRU eviction would instead evict the cold entries whose funding tx may
+    /// still arrive out of order, reopening #649 for that coin. Steady-state size
+    /// is the above-boundary window only — roughly one block's inputs on a
+    /// healthy chain. A defensive cap on the deserialized entry count (see the
+    /// serde adapter) guards against a corrupted or hostile wallet file forcing
+    /// an unbounded allocation on load.
     ///
     /// # Persistence
     ///
@@ -304,6 +314,26 @@ impl ManagedWalletInfo {
         for input in &tx.input {
             self.observed_spent_outpoints.insert(input.previous_output, height);
         }
+    }
+
+    /// Evict [`Self::observed_spent_outpoints`] entries at or below the finality
+    /// boundary `min(last_applied_chain_lock.block_height, synced_height)`.
+    ///
+    /// An entry `(outpoint, height)` with `height <= boundary` is safe to
+    /// forget: the spend at that height is chain-locked (never reorged out) and
+    /// any funding transaction for the outpoint has been delivered and finalized,
+    /// so no redelivery path can re-insert the coin (dashpay/rust-dashcore#649).
+    /// No-op until a chainlock has been applied (`last_applied_chain_lock` is
+    /// `None`) — without a finality boundary nothing can be proven final.
+    ///
+    /// Called on chainlock application and sync-checkpoint commit; not age- or
+    /// recency-based.
+    pub(crate) fn prune_finalized_observed_spends(&mut self) {
+        let Some(chain_lock) = self.metadata.last_applied_chain_lock.as_ref() else {
+            return;
+        };
+        let boundary = chain_lock.block_height.min(self.metadata.synced_height);
+        self.observed_spent_outpoints.retain(|_, height| *height > boundary);
     }
 
     /// Drop any live UTXO consumed by `tx`'s inputs from whichever funding
