@@ -48,7 +48,12 @@ pub struct ManagedWalletInfo {
     pub description: Option<String>,
     /// Wallet metadata
     pub metadata: WalletMetadata,
-    /// All managed accounts
+    /// All managed accounts.
+    ///
+    /// Prefer the `add_managed_*` methods to add accounts to a live wallet:
+    /// they rewind the sync checkpoint so the new account's coins get filter
+    /// coverage. Inserting directly here without that rewind can reopen
+    /// dashpay/rust-dashcore#649 for the added account.
     pub accounts: ManagedAccountCollection,
     /// Cached wallet core balance - should be updated when accounts change
     pub balance: WalletCoreBalance,
@@ -334,6 +339,27 @@ impl ManagedWalletInfo {
         };
         let boundary = chain_lock.block_height.min(self.metadata.synced_height);
         self.observed_spent_outpoints.retain(|_, height| *height > boundary);
+    }
+
+    /// Invalidate the wallet's sync certificate when an account is added.
+    ///
+    /// `synced_height` certifies "every filter at or below this height was
+    /// matched against the wallet's scripts" — but only for the account set that
+    /// existed while those filters were scanned. A newly added account has had no
+    /// filter coverage, so the certificate no longer holds for the current
+    /// account set, and [`Self::prune_finalized_observed_spends`] must not
+    /// consume it (dashpay/rust-dashcore#649). Rewinding `synced_height` to just
+    /// below wallet birth collapses the prune boundary and makes the sync layer
+    /// detect the wallet as behind and backfill from birth (the dash-spv filter
+    /// tick). A wallet still in initial sync (`synced_height` already at or below
+    /// the floor) is left untouched; `birth_height == 0` saturates safely.
+    ///
+    /// `last_processed_height` and `last_applied_chain_lock` are intentionally
+    /// left as-is: they are chain facts, not coverage facts, and keeping the
+    /// chainlock is what lets the backfilled history arrive born-chainlocked.
+    fn rewind_sync_checkpoint_for_new_account(&mut self) {
+        let floor = self.metadata.birth_height.saturating_sub(1);
+        self.metadata.synced_height = self.metadata.synced_height.min(floor);
     }
 
     /// Drop any live UTXO consumed by `tx`'s inputs from whichever funding

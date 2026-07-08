@@ -524,7 +524,15 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
                 if !scanned_wallets.is_empty() {
                     let mut wallet = self.wallet.write().await;
                     for wallet_id in &scanned_wallets {
-                        wallet.update_wallet_synced_height(wallet_id, end);
+                        // Contiguity guard: a batch extends a wallet's certified
+                        // coverage only if the wallet was already certified up to
+                        // the batch's start. A checkpoint rewound after this batch
+                        // was scanned (an account added mid-flight) stays behind
+                        // and is picked up by the tick rescan instead of being
+                        // silently clobbered forward (dashpay/rust-dashcore#649).
+                        if wallet.wallet_synced_height(wallet_id).saturating_add(1) >= batch_start {
+                            wallet.update_wallet_synced_height(wallet_id, end);
+                        }
                     }
                 }
             }
@@ -1282,6 +1290,96 @@ mod tests {
         assert_eq!(manager.progress.committed_height(), 4999);
         assert_eq!(multi.read().await.wallet_synced_height(&wallet_a), 4999);
         assert_eq!(multi.read().await.wallet_synced_height(&wallet_b), 0);
+    }
+
+    /// Contiguity guard (dashpay/rust-dashcore#649): a batch scanned before an
+    /// account-add rewinds the wallet's checkpoint must NOT clobber the rewound
+    /// value forward at commit time — otherwise the account-addition rescan is
+    /// silently cancelled. The wallet stays behind and the tick picks it up.
+    #[tokio::test]
+    async fn mid_flight_account_add_does_not_clobber_rescan_floor() {
+        let wallet_a: WalletId = [0xAA; 32];
+        let multi = Arc::new(RwLock::new(MultiMockWallet::new()));
+        {
+            let mut w = multi.write().await;
+            // Already synced up to 4999, so the next batch legitimately starts at 5000.
+            w.insert_wallet(
+                wallet_a,
+                MockWalletState {
+                    synced_height: 4999,
+                    ..MockWalletState::default()
+                },
+            );
+        }
+        let mut manager = create_multi_test_manager(multi.clone()).await;
+        manager.set_state(SyncState::Syncing);
+
+        // Batch [5000..9999] scanned with wallet_a recorded, ready to commit.
+        let mut batch = FiltersBatch::new(5000, 9999, HashMap::new());
+        batch.set_pending_blocks(0);
+        batch.mark_scanned();
+        batch.mark_rescan_complete();
+        batch.set_scanned_wallets(BTreeSet::from([wallet_a]));
+        manager.active_batches.insert(5000, batch);
+
+        // Simulate an account being added mid-flight: the wallet's checkpoint is
+        // rewound to just below birth, far below this batch's start.
+        multi.write().await.wallet_mut(&wallet_a).synced_height = 49;
+
+        manager.try_commit_batches().await.unwrap();
+
+        // committed_height still advances (chain progress), but the wallet's
+        // checkpoint is NOT dragged forward over the gap it must rescan.
+        assert_eq!(manager.progress.committed_height(), 9999);
+        assert_eq!(
+            multi.read().await.wallet_synced_height(&wallet_a),
+            49,
+            "the rewound checkpoint must survive commit — the batch is non-contiguous with it"
+        );
+        // The wallet is still behind, so the next tick rescans it.
+        assert!(
+            multi.read().await.wallets_behind(9999).contains(&wallet_a),
+            "the wallet remains behind and is picked up by the tick rescan"
+        );
+    }
+
+    /// The contiguity guard is transparent in normal operation: contiguous
+    /// ascending batches advance each wallet's checkpoint exactly as before.
+    #[tokio::test]
+    async fn contiguity_guard_permits_normal_advance() {
+        let wallet_a: WalletId = [0xCC; 32];
+        let multi = Arc::new(RwLock::new(MultiMockWallet::new()));
+        multi.write().await.insert_wallet(wallet_a, MockWalletState::default());
+        let mut manager = create_multi_test_manager(multi.clone()).await;
+        manager.set_state(SyncState::Syncing);
+
+        // First batch starts at 0 = synced_height (0) + ... the wallet is fresh,
+        // so this batch is contiguous and advances the checkpoint.
+        let mut batch1 = FiltersBatch::new(0, 4999, HashMap::new());
+        batch1.set_pending_blocks(0);
+        batch1.mark_scanned();
+        batch1.mark_rescan_complete();
+        batch1.set_scanned_wallets(BTreeSet::from([wallet_a]));
+        manager.active_batches.insert(0, batch1);
+
+        manager.try_commit_batches().await.unwrap();
+        assert_eq!(multi.read().await.wallet_synced_height(&wallet_a), 4999);
+
+        // Second batch starts exactly at synced_height + 1 = 5000: still
+        // contiguous, so it advances too.
+        let mut batch2 = FiltersBatch::new(5000, 9999, HashMap::new());
+        batch2.set_pending_blocks(0);
+        batch2.mark_scanned();
+        batch2.mark_rescan_complete();
+        batch2.set_scanned_wallets(BTreeSet::from([wallet_a]));
+        manager.active_batches.insert(5000, batch2);
+
+        manager.try_commit_batches().await.unwrap();
+        assert_eq!(
+            multi.read().await.wallet_synced_height(&wallet_a),
+            9999,
+            "contiguous ascending batches advance the checkpoint unchanged by the guard"
+        );
     }
 
     /// `scan_batch` with two wallets at different `synced_height` values:

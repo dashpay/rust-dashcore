@@ -41,7 +41,7 @@ use crate::test_utils::{
 };
 use crate::transaction_checking::{TransactionContext, TransactionRouter, TransactionType};
 use crate::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
-use crate::wallet::managed_wallet_info::ManagedWalletInfo;
+use crate::wallet::managed_wallet_info::{ManagedAccountOperations, ManagedWalletInfo};
 
 /// Round-trip only the `observed_spent_outpoints` field through JSON (its
 /// persisted, `(OutPoint, height)`-pair form) and return the reloaded map.
@@ -360,13 +360,14 @@ async fn same_outpoint_spent_in_two_blocks_keeps_last_height() {
     );
 }
 
-// ── orphaned spend never expires (no pruning) ────────────────────────
+// ── last_processed_height alone does not prune ───────────────────────
 
-/// The v1 "no pruning" decision is implemented, not just documented: however far
-/// `last_processed_height` advances past the observed spend, the funding coin is
-/// still rejected when it finally arrives.
+/// Pruning is gated only on the finality boundary (chainlock + synced_height),
+/// not on `last_processed_height` (#649): however far `last_processed_height`
+/// advances past the observed spend, with no chainlock the entry is retained and
+/// the funding coin is still rejected when it finally arrives.
 #[tokio::test]
-async fn orphaned_spend_never_expires_no_pruning() {
+async fn orphaned_spend_not_pruned_by_last_processed_height() {
     let mut ctx = TestWalletContext::new_random();
 
     let funding_value = 4_000_000u64;
@@ -677,6 +678,43 @@ async fn observed_spend_removal_only_via_finality_boundary() {
     assert!(
         !ctx.managed_wallet.observed_spent_outpoints().contains_key(&funding_outpoint),
         "removal happens exactly at the finality boundary min(chainlock, synced_height)"
+    );
+
+    // Adding an account invalidates the sync certificate (the boundary input):
+    // a freshly observed spend is not removed until the checkpoint re-advances
+    // past it, even though the chainlock is already well ahead.
+    ctx.managed_wallet.metadata.birth_height = 100;
+    let op2 = OutPoint::new(dashcore::Txid::from([0x7C; 32]), 0);
+    ctx.managed_wallet.record_observed_spends(&spend_to_external(&[op2], 1, 69), 150);
+    ctx.wallet
+        .add_account(
+            AccountType::Standard {
+                index: 1,
+                standard_account_type: StandardAccountType::BIP44Account,
+            },
+            None,
+        )
+        .expect("add wallet account 1");
+    ctx.managed_wallet
+        .add_managed_account(
+            &ctx.wallet,
+            AccountType::Standard {
+                index: 1,
+                standard_account_type: StandardAccountType::BIP44Account,
+            },
+        )
+        .expect("add managed account 1");
+    ctx.managed_wallet.apply_chain_lock(ChainLock::dummy(300));
+    assert!(
+        ctx.managed_wallet.observed_spent_outpoints().contains_key(&op2),
+        "after an account addition, no removal occurs until the checkpoint re-advances past it"
+    );
+
+    // Re-advancing the checkpoint re-certifies coverage and the entry prunes.
+    ctx.managed_wallet.update_synced_height(300);
+    assert!(
+        !ctx.managed_wallet.observed_spent_outpoints().contains_key(&op2),
+        "entry prunable again once synced_height re-advances past it"
     );
 }
 

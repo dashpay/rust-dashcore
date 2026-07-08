@@ -20,7 +20,7 @@ mod keep_finalized_transactions_tests;
 
 mod managed_account_collection_tests;
 
-mod marvin_qa_late_account_prune_test;
+mod late_account_finality_boundary_test;
 
 mod performance_tests;
 
