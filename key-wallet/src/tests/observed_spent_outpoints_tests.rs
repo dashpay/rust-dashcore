@@ -306,8 +306,8 @@ async fn irrelevant_block_noise_grows_set_by_total_inputs_only() {
 
 /// A wallet loaded from a pre-fix snapshot (empty `observed_spent_outpoints`, as
 /// `#[serde(default)]` supplies) protects newly observed out-of-order spends, and
-/// is explicitly NOT retroactively corrected for spends it mis-processed before
-/// the fix existed — the empty loaded set means no magic backfill.
+/// is explicitly NOT retroactively corrected for spends it processed incorrectly
+/// before the fix existed — the empty loaded set means no magic backfill.
 #[tokio::test]
 async fn pre_fix_snapshot_without_field_loads_and_protects_new_spends() {
     let mut ctx = TestWalletContext::new_random();
