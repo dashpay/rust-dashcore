@@ -1,6 +1,6 @@
 //! Peer network manager for SPV client
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -16,7 +16,7 @@ use crate::network::addrv2::AddrV2Handler;
 use crate::network::constants::*;
 use crate::network::discovery::DnsDiscovery;
 use crate::network::pool::PeerPool;
-use crate::network::reputation::{ChangeReason, PeerReputationManager, ReputationAware};
+use crate::network::reputation::{ChangeReason, PeerReputationManager};
 use crate::network::{
     HandshakeManager, Message, MessageDispatcher, MessageType, NetworkEvent, NetworkManager,
     NetworkRequest, Peer, RequestSender,
@@ -33,6 +33,31 @@ use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 
 const DEFAULT_NETWORK_EVENT_CAPACITY: usize = 10000;
+
+/// Latency probes fired right after handshake to seed peer scoring.
+const INITIAL_PROBE_PINGS: usize = 3;
+
+/// How long to wait for the initial probe pongs before scoring the peer.
+const INITIAL_PROBE_WAIT: Duration = Duration::from_millis(1200);
+
+/// How often to probe known-but-unconnected peers looking for better ones.
+const SCOUT_INTERVAL: Duration = Duration::from_secs(45);
+
+/// Peers to probe per scout tick.
+const SCOUT_BATCH: usize = 4;
+
+/// Latency tier (lower is better): the band we rank and keep peers by. We only dial peers
+/// in the best-known tier or one worse, and drop a connected peer more than one tier below
+/// the best in the pool — so a genuinely slow peer never takes a slot. `<=50ms`=0,
+/// `<=100ms`=1, `<=150ms`=2, else 3.
+fn latency_tier(latency_ms: u32) -> u8 {
+    match latency_ms {
+        0..=50 => 0,
+        51..=100 => 1,
+        101..=150 => 2,
+        _ => 3,
+    }
+}
 
 /// Peer network manager
 pub struct PeerNetworkManager {
@@ -68,16 +93,12 @@ pub struct PeerNetworkManager {
     capability_rejected: Arc<RwLock<HashMap<SocketAddr, Instant>>>,
     /// Cached count of currently connected peers for fast, non-blocking queries
     connected_peer_count: Arc<AtomicUsize>,
-    /// Disable headers2 after decompression failure
-    headers2_disabled: Arc<Mutex<HashSet<SocketAddr>>>,
     /// Dispatcher for unbounded and message-type filtered message distribution.
     message_dispatcher: Arc<Mutex<MessageDispatcher>>,
     /// Request queue sender, cloneable handle for sending requests to the network manager.
     request_tx: UnboundedSender<NetworkRequest>,
     /// Request queue receiver (consumed by send loop).
     request_rx: Arc<Mutex<Option<UnboundedReceiver<NetworkRequest>>>>,
-    /// Round-robin counter for distributing requests across peers.
-    round_robin_counter: Arc<AtomicUsize>,
     /// Network event bus for notifying about network/peer related changes.
     network_event_sender: broadcast::Sender<NetworkEvent>,
 }
@@ -135,11 +156,9 @@ impl PeerNetworkManager {
             required_services,
             capability_rejected: Arc::new(RwLock::new(HashMap::new())),
             connected_peer_count: Arc::new(AtomicUsize::new(0)),
-            headers2_disabled: Arc::new(Mutex::new(HashSet::new())),
             message_dispatcher: Arc::new(Mutex::new(MessageDispatcher::default())),
             request_tx,
             request_rx: Arc::new(Mutex::new(Some(request_rx))),
-            round_robin_counter: Arc::new(AtomicUsize::new(0)),
             network_event_sender: broadcast::Sender::new(DEFAULT_NETWORK_EVENT_CAPACITY),
         })
     }
@@ -225,9 +244,9 @@ impl PeerNetworkManager {
 
     /// Connect to a specific peer
     async fn connect_to_peer(&self, addr: SocketAddr) {
-        // Check reputation first
-        if !self.reputation_manager.should_connect_to_peer(&addr).await {
-            tracing::warn!("Not connecting to {} due to bad reputation", addr);
+        // Skip peers whose multiplier has collapsed to zero (untrusted).
+        if !self.reputation_manager.is_usable(&addr).await {
+            tracing::warn!("Not connecting to {} - untrusted peer", addr);
             return;
         }
 
@@ -241,9 +260,6 @@ impl PeerNetworkManager {
             return; // Already being connected to
         }
 
-        // Record connection attempt
-        self.reputation_manager.record_connection_attempt(addr).await;
-
         let pool = self.pool.clone();
         let network = self.network;
         let addrv2_handler = self.addrv2_handler.clone();
@@ -253,7 +269,6 @@ impl PeerNetworkManager {
         let required_services = self.required_services;
         let capability_rejected = self.capability_rejected.clone();
         let connected_peer_count = self.connected_peer_count.clone();
-        let headers2_disabled = self.headers2_disabled.clone();
         let message_dispatcher = self.message_dispatcher.clone();
         let network_event_sender = self.network_event_sender.clone();
 
@@ -305,13 +320,51 @@ impl PeerNetworkManager {
                             }
                             tracing::info!("Successfully connected to {}", addr);
 
+                            // Seed behaviour and latency from persisted history, then measure
+                            // latency inline so the peer enters the pool already scored and sync
+                            // traffic avoids slow peers from the very first request.
+                            if let Some((multiplier, median_ms)) =
+                                reputation_manager.hint(&addr).await
+                            {
+                                peer.set_behavior_multiplier(multiplier);
+                                if let Some(ms) = median_ms {
+                                    peer.record_rtt(Duration::from_millis(ms as u64));
+                                }
+                            }
+                            Self::probe_latency_inline(&mut peer).await;
+
+                            // Record the freshly-measured latency to reputation (so its tier
+                            // is known at once) and reject a clearly-slower peer BEFORE it
+                            // joins the pool, so a bad peer never receives any sync traffic.
+                            // Good peers connect faster, so they are already measured here.
+                            if let Some(rtt) = peer.median_rtt() {
+                                let ms = rtt.as_millis() as u32;
+                                reputation_manager.record_latency(addr, ms).await;
+                                let connected = pool.get_connected_addresses().await;
+                                let best = reputation_manager
+                                    .latencies(&connected)
+                                    .await
+                                    .values()
+                                    .map(|m| latency_tier(*m))
+                                    .min();
+                                if let Some(best) = best {
+                                    if latency_tier(ms) > best + 1 {
+                                        tracing::info!(
+                                            "Rejecting peer {} (tier {} > best {} + 1) before pool — worse than the set",
+                                            addr,
+                                            latency_tier(ms),
+                                            best
+                                        );
+                                        pool.remove_peer(&addr).await;
+                                        return;
+                                    }
+                                }
+                            }
+
                             // Request addresses from the peer for discovery
                             if let Err(e) = peer.send_message(NetworkMessage::GetAddr).await {
                                 tracing::warn!("Failed to send GetAddr to {}: {}", addr, e);
                             }
-
-                            // Record successful connection
-                            reputation_manager.record_successful_connection(addr).await;
 
                             // Add to pool
                             if let Err(e) = pool.add_peer(addr, peer).await {
@@ -346,7 +399,6 @@ impl PeerNetworkManager {
                                 shutdown_token,
                                 reputation_manager.clone(),
                                 connected_peer_count.clone(),
-                                headers2_disabled.clone(),
                                 message_dispatcher,
                                 network_event_sender.clone(),
                             )
@@ -356,10 +408,7 @@ impl PeerNetworkManager {
                             tracing::warn!("Handshake failed with {}: {}", addr, e);
                             // Only clears connecting set. Peer was never added, so no count/event needed.
                             pool.remove_peer(&addr).await;
-                            // Update reputation for handshake failure
-                            reputation_manager
-                                .update_reputation(addr, ChangeReason::HandshakeFailed)
-                                .await;
+                            reputation_manager.penalize(addr, ChangeReason::HandshakeFailed).await;
                             // For handshake failures, try again later
                             tokio::time::sleep(RECONNECT_DELAY).await;
                         }
@@ -369,10 +418,7 @@ impl PeerNetworkManager {
                     tracing::debug!("Failed to connect to {}: {}", addr, e);
                     // Only clears connecting set. Peer was never added, so no count/event needed.
                     pool.remove_peer(&addr).await;
-                    // Minor reputation penalty for connection failure
-                    reputation_manager
-                        .update_reputation(addr, ChangeReason::ConnectionFailed)
-                        .await;
+                    reputation_manager.penalize(addr, ChangeReason::ConnectionFailed).await;
                 }
             }
         });
@@ -426,7 +472,6 @@ impl PeerNetworkManager {
         shutdown_token: CancellationToken,
         reputation_manager: Arc<PeerReputationManager>,
         connected_peer_count: Arc<AtomicUsize>,
-        headers2_disabled: Arc<Mutex<HashSet<SocketAddr>>>,
         message_dispatcher: Arc<Mutex<MessageDispatcher>>,
         network_event_sender: broadcast::Sender<NetworkEvent>,
     ) {
@@ -611,6 +656,11 @@ impl PeerNetworkManager {
                                             headers.len(),
                                             addr
                                         );
+                                        {
+                                            let mut g = peer.write().await;
+                                            g.note_response();
+                                            g.apply_reason(ChangeReason::GoodResponse);
+                                        }
                                         // Forward as regular Headers message
                                         let headers_msg = NetworkMessage::Headers(headers);
                                         let message = Message::new(msg.peer_address(), headers_msg);
@@ -618,20 +668,15 @@ impl PeerNetworkManager {
                                         continue; // Already sent, don't forward the original Headers2
                                     }
                                     Err(e) => {
+                                        // A peer that opted into headers2 but sent data that fails
+                                        // to decompress served us invalid data - distrust it.
                                         tracing::error!(
-                                            "Headers2 decompression failed from {}: {} - disabling headers2",
+                                            "Headers2 decompression failed from {}: {} - distrusting peer",
                                             addr,
                                             e
                                         );
-                                        headers2_disabled.lock().await.insert(addr);
-                                        // Apply reputation penalty
-                                        reputation_manager
-                                            .update_reputation(
-                                                addr,
-                                                ChangeReason::Headers2DecompressionFailed,
-                                            )
-                                            .await;
-                                        continue; // Don't forward corrupted message
+                                        peer.write().await.apply_reason(ChangeReason::InvalidData);
+                                        break; // Disconnect the untrusted peer
                                     }
                                 }
                             }
@@ -670,6 +715,13 @@ impl PeerNetworkManager {
                             }
                         }
 
+                        // A forwarded data message answers an outstanding request:
+                        // clear the stall timer and reward the peer.
+                        {
+                            let mut peer_guard = peer.write().await;
+                            peer_guard.note_response();
+                            peer_guard.apply_reason(ChangeReason::GoodResponse);
+                        }
                         message_dispatcher.lock().await.dispatch(&msg);
                     }
                     Ok(None) => {
@@ -685,10 +737,7 @@ impl PeerNetworkManager {
                             }
                             NetworkError::Timeout => {
                                 tracing::debug!("Timeout reading from {}, continuing...", addr);
-                                // Minor reputation penalty for timeout
-                                reputation_manager
-                                    .update_reputation(addr, ChangeReason::ReadTimeout)
-                                    .await;
+                                peer.write().await.apply_reason(ChangeReason::Timeout);
                                 continue;
                             }
                             _ => {
@@ -703,13 +752,7 @@ impl PeerNetworkManager {
                                             "BLOCK DECODE FAILURE - Error details: {}",
                                             error_msg
                                         );
-                                        // Reputation penalty for invalid data
-                                        reputation_manager
-                                            .update_reputation(
-                                                addr,
-                                                ChangeReason::InvalidTransactionInBlock,
-                                            )
-                                            .await;
+                                        peer.write().await.apply_reason(ChangeReason::BadResponse);
                                     } else if error_msg
                                         .contains("Failed to decode transactions for block")
                                     {
@@ -752,6 +795,19 @@ impl PeerNetworkManager {
                 }
             }
 
+            // Persist the peer's final behaviour and latency before removing it.
+            if let Some(peer) = pool.get_peer(&addr).await {
+                let mut guard = peer.write().await;
+                // Reward a long, healthy connection.
+                if Duration::from_secs(60 * loop_iteration) > Duration::from_secs(3600) {
+                    guard.apply_reason(ChangeReason::LongUptime);
+                }
+                let multiplier = guard.behavior_multiplier();
+                let median = guard.median_rtt().map(|d| d.as_millis() as u32);
+                drop(guard);
+                reputation_manager.record(addr, multiplier, median).await;
+            }
+
             // Remove from pool and notify consumers
             tracing::warn!("Disconnecting from {} (peer reader loop ended)", addr);
             Self::remove_peer_and_notify(
@@ -761,15 +817,6 @@ impl PeerNetworkManager {
                 &network_event_sender,
             )
             .await;
-
-            headers2_disabled.lock().await.remove(&addr);
-
-            // Give small positive reputation if peer maintained long connection
-            let conn_duration = Duration::from_secs(60 * loop_iteration); // Rough estimate
-            if conn_duration > Duration::from_secs(3600) {
-                // 1 hour
-                reputation_manager.update_reputation(addr, ChangeReason::LongUptime).await;
-            }
         });
     }
 
@@ -798,25 +845,9 @@ impl PeerNetworkManager {
                         match request {
                             Some(NetworkRequest::SendMessage(msg)) => {
                                 tracing::debug!("Request processor: sending {}", msg.cmd());
-                                // Spawn each send concurrently to allow parallel requests across peers.
                                 let this = this.clone();
                                 tokio::spawn(async move {
-                                    let result = match &msg {
-                                        // Distribute across peers for parallel sync
-                                        NetworkMessage::GetCFHeaders(_)
-                                        | NetworkMessage::GetCFilters(_)
-                                        | NetworkMessage::GetData(_)
-                                        | NetworkMessage::GetMnListD(_)
-                                        | NetworkMessage::GetQRInfo(_)
-                                        | NetworkMessage::GetHeaders(_)
-                                        | NetworkMessage::GetHeaders2(_) => {
-                                            this.send_distributed(msg).await
-                                        }
-                                        _ => {
-                                            this.send_to_single_peer(msg).await
-                                        }
-                                    };
-                                    if let Err(e) = result {
+                                    if let Err(e) = this.pool.send(msg).await {
                                         tracing::error!("Request processor: failed to send message: {}", e);
                                     }
                                 });
@@ -826,24 +857,15 @@ impl PeerNetworkManager {
                                 let this = this.clone();
                                 tokio::spawn(async move {
                                     let fallback_msg = msg.clone();
-                                    let result = match this.pool.get_peer(&peer_address).await {
-                                        Some(peer) => match this.send_message_to_peer(&peer_address, &peer, msg).await {
-                                            Ok(()) => Ok(()),
-                                            Err(err) => {
-                                                tracing::warn!(
-                                                    "Target peer {} send failed ({}), falling back to distributed send",
-                                                    peer_address,
-                                                    err
-                                                );
-                                                this.send_distributed(fallback_msg).await
-                                            }
-                                        },
-                                        None => {
+                                    let result = match this.pool.send_to(peer_address, msg).await {
+                                        Ok(()) => Ok(()),
+                                        Err(err) => {
                                             tracing::warn!(
-                                                "Target peer {} disconnected, falling back to distributed send",
-                                                peer_address
+                                                "Target peer {} send failed ({}), falling back to best peer",
+                                                peer_address,
+                                                err
                                             );
-                                            this.send_distributed(fallback_msg).await
+                                            this.pool.send(fallback_msg).await.map(|_| ())
                                         }
                                     };
                                     if let Err(e) = result {
@@ -947,11 +969,13 @@ impl PeerNetworkManager {
         // Keep the cached counter in sync with actual pool count
         self.connected_peer_count.store(count, Ordering::Relaxed);
         if self.exclusive_mode {
-            // In exclusive mode, only reconnect to originally specified peers
-            for addr in self.initial_peers.iter() {
-                if !self.pool.is_connected(addr).await && !self.pool.is_connecting(addr).await {
+            // Reconnect only to configured peers, and only those within the best tier band —
+            // a configured peer that measured clearly worse than the others is not redialed
+            // (max_peers is a ceiling). Unmeasured peers pass, so the first connect tries all.
+            for addr in self.within_tier_band(self.initial_peers.clone()).await {
+                if !self.pool.is_connected(&addr).await && !self.pool.is_connecting(&addr).await {
                     tracing::info!("Reconnecting to exclusive peer: {}", addr);
-                    self.connect_to_peer(*addr).await;
+                    self.connect_to_peer(addr).await;
                 }
             }
         } else {
@@ -961,11 +985,12 @@ impl PeerNetworkManager {
             // Re-read count after potential churn so top-up sees the current pool size.
             let count = self.pool.peer_count().await;
             if count < self.max_peers {
-                // Try known addresses first, sorted by reputation
-                let known = self.addrv2_handler.get_known_addresses().await;
                 let needed = self.max_peers.saturating_sub(count);
-                // Select best peers based on reputation
-                let best_peers = self.reputation_manager.select_best_peers(known, needed * 2).await;
+                // Dial known addresses best-first, restricted to the best tier band so we
+                // never top up with a clearly-slower peer than the ones we could have.
+                let known = self.known_socket_addrs().await;
+                let best_peers =
+                    self.within_tier_band(self.reputation_manager.rank(known).await).await;
                 let mut attempted = 0;
 
                 for addr in best_peers {
@@ -988,20 +1013,49 @@ impl PeerNetworkManager {
             return;
         }
 
-        // Send ping to all peers if needed and disconnect unresponsive ones
+        // Ping peers if needed, snapshot their measured quality for persistence,
+        // and disconnect unresponsive ones.
+        let mut low_quality: Vec<SocketAddr> = Vec::new();
         for (addr, peer) in self.pool.get_all_peers().await {
             let mut peer_guard = peer.write().await;
             if peer_guard.should_ping() {
                 if let Err(e) = peer_guard.send_ping().await {
                     tracing::error!("Failed to ping {}: {}", addr, e);
-                    // Update reputation for ping failure
-                    self.reputation_manager.update_reputation(addr, ChangeReason::PingFailed).await;
+                    peer_guard.apply_reason(ChangeReason::PingFailed);
                 }
+            }
+            // We ONLY replace a peer when it STALLS (goes silent on a request). We do not
+            // churn a merely-slow-but-responsive peer here: once syncing, every peer is
+            // under our own request load, so a high latency is expected. (Genuinely-bad
+            // peers are handled up front by measurement + `drop_worse_tier_peers`.)
+            let stalling = peer_guard.is_stalling();
+            if stalling {
+                peer_guard.apply_reason(ChangeReason::Timeout);
+                low_quality.push(addr);
+            }
+            if peer_guard.median_rtt().is_some() {
+                let median = peer_guard.median_rtt().map(|d| d.as_millis() as u32);
+                self.reputation_manager
+                    .record(addr, peer_guard.behavior_multiplier(), median)
+                    .await;
             }
             let has_expired = peer_guard.remove_expired_pings();
             drop(peer_guard);
             if has_expired {
                 let _ = self.disconnect_peer(&addr, "ping timeout").await;
+            }
+        }
+
+        // Drop any connected peer whose measured tier is clearly worse than the best in the
+        // pool (the "bad peer" of a mixed set) — it should never hold a slot. Runs in every
+        // mode (the mixed-set case is a local/exclusive scenario).
+        self.drop_worse_tier_peers().await;
+
+        // Replace peers that stalled, swapping in the best known unconnected peer and
+        // probing more to find a permanent one.
+        if !self.exclusive_mode {
+            for addr in low_quality {
+                self.replace_peer(addr).await;
             }
         }
 
@@ -1050,6 +1104,229 @@ impl PeerNetworkManager {
         }
     }
 
+    /// Send a burst of probe pings and wait briefly for the pongs, recording the
+    /// RTTs. Unanswered probes are scored as the worst bucket so a silent or slow
+    /// peer enters the pool already deprioritised.
+    async fn probe_latency_inline(peer: &mut Peer) {
+        let mut pending = Vec::new();
+        for _ in 0..INITIAL_PROBE_PINGS {
+            match peer.send_ping().await {
+                Ok(nonce) => pending.push(nonce),
+                Err(_) => break,
+            }
+        }
+        if pending.is_empty() {
+            return;
+        }
+        let deadline = Instant::now() + INITIAL_PROBE_WAIT;
+        let mut answered = 0;
+        while answered < pending.len() {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                break;
+            }
+            match tokio::time::timeout(remaining, peer.receive_message()).await {
+                Ok(Ok(Some(message))) => match message.inner() {
+                    NetworkMessage::Pong(n) if pending.contains(n) => {
+                        let _ = peer.handle_pong(*n);
+                        answered += 1;
+                    }
+                    NetworkMessage::Ping(p) => {
+                        let _ = peer.handle_ping(*p).await;
+                    }
+                    _ => {}
+                },
+                _ => break,
+            }
+        }
+        for _ in answered..pending.len() {
+            peer.record_rtt(INITIAL_PROBE_WAIT);
+        }
+    }
+
+    /// Probe known-but-unconnected peers we have not measured yet, so the address
+    /// pool has fresh latency data ready to swap in as replacements. Cycles until
+    /// every known peer has been measured.
+    async fn scout_once(&self) {
+        if self.exclusive_mode {
+            return;
+        }
+        let candidates = self.unmeasured_candidates().await;
+        for addr in candidates.into_iter().take(SCOUT_BATCH) {
+            match self.probe_peer(addr).await {
+                Some(median_ms) => {
+                    self.reputation_manager.record_latency(addr, median_ms).await;
+                    tracing::debug!("Scout measured {} -> {}ms", addr, median_ms);
+                }
+                None => {
+                    // Unreachable/failed probe: penalise so it ranks lower and, after
+                    // enough failures, its multiplier hits zero and it drops out entirely.
+                    self.reputation_manager.penalize(addr, ChangeReason::ConnectionFailed).await;
+                }
+            }
+        }
+    }
+
+    /// Known addresses we are not connected to and have not measured yet.
+    async fn unmeasured_candidates(&self) -> Vec<SocketAddr> {
+        let mut out = Vec::new();
+        for addr in self.known_socket_addrs().await {
+            if self.pool.is_connected(&addr).await
+                || self.pool.is_connecting(&addr).await
+                || !self.reputation_manager.is_usable(&addr).await
+                || self.reputation_manager.is_measured(&addr).await
+                || self.is_capability_rejected(&addr).await
+            {
+                continue;
+            }
+            out.push(addr);
+        }
+        out
+    }
+
+    async fn known_socket_addrs(&self) -> Vec<SocketAddr> {
+        self.addrv2_handler
+            .get_known_addresses()
+            .await
+            .iter()
+            .filter_map(|m| m.socket_addr().ok())
+            .collect()
+    }
+
+    /// Keep only dial candidates within one latency tier of the best MEASURED candidate,
+    /// so we never add a clearly-slower peer while good ones are known (connect only to
+    /// the best tier or one worse). Unmeasured peers pass — they still need a probe.
+    async fn within_tier_band(&self, ranked: Vec<SocketAddr>) -> Vec<SocketAddr> {
+        let latencies = self.reputation_manager.latencies(&ranked).await;
+        let best_tier =
+            ranked.iter().filter_map(|a| latencies.get(a)).map(|ms| latency_tier(*ms)).min();
+        let Some(best_tier) = best_tier else {
+            return ranked; // nothing measured yet — keep all to bootstrap
+        };
+        ranked
+            .into_iter()
+            .filter(|a| {
+                latencies.get(a).map(|ms| latency_tier(*ms) <= best_tier + 1).unwrap_or(true)
+            })
+            .collect()
+    }
+
+    /// Drop connected peers whose latency tier is more than one worse than the best in the
+    /// pool. `max_peers` is a ceiling, not a quota: a genuinely-slow peer is not worth a
+    /// slot, so we run with fewer rather than keep it. Never drops below one peer, and if
+    /// every peer is equally bad nothing is dropped (nothing better to prefer).
+    async fn drop_worse_tier_peers(&self) {
+        let mut tiers: Vec<(SocketAddr, u8)> = Vec::new();
+        for (addr, _) in self.pool.get_all_peers().await {
+            if let Some(ms) = self.reputation_manager.hint(&addr).await.and_then(|(_, l)| l) {
+                tiers.push((addr, latency_tier(ms)));
+            }
+        }
+        let Some(best) = tiers.iter().map(|(_, t)| *t).min() else {
+            return;
+        };
+        for (addr, tier) in tiers {
+            if tier > best + 1 && self.pool.peer_count().await > 1 {
+                tracing::info!(
+                    "Dropping peer {} (tier {} > best tier {} + 1) — worse than the pool",
+                    addr,
+                    tier,
+                    best
+                );
+                let _ = self.disconnect_peer(&addr, "worse latency tier than the pool").await;
+            }
+        }
+    }
+
+    /// The best known peer we are not connected to (within the best tier band), for use
+    /// as a replacement.
+    async fn best_unconnected_peer(&self) -> Option<SocketAddr> {
+        let ranked = self
+            .within_tier_band(self.reputation_manager.rank(self.known_socket_addrs().await).await)
+            .await;
+        for addr in ranked {
+            if !self.pool.is_connected(&addr).await
+                && !self.pool.is_connecting(&addr).await
+                && !self.is_capability_rejected(&addr).await
+            {
+                return Some(addr);
+            }
+        }
+        None
+    }
+
+    /// Drop a peer whose quality fell below the threshold, swap in the best known
+    /// unconnected peer as a temporary replacement, and probe more peers to find a
+    /// permanent one. Keeps the peer if it is our only one and nothing can replace it.
+    async fn replace_peer(&self, addr: SocketAddr) {
+        let replacement = self.best_unconnected_peer().await;
+        if replacement.is_none() && self.pool.peer_count().await <= 1 {
+            return;
+        }
+        let _ = self.disconnect_peer(&addr, "quality below threshold").await;
+        if let Some(candidate) = replacement {
+            tracing::info!("Replacing low-quality peer {} with {}", addr, candidate);
+            self.connect_to_peer(candidate).await;
+        }
+        let scout = self.clone();
+        tokio::spawn(async move { scout.scout_once().await });
+    }
+
+    /// Connect, handshake and ping a peer once to measure its median latency, then
+    /// disconnect. Returns the median RTT in ms on success.
+    async fn probe_peer(&self, addr: SocketAddr) -> Option<u32> {
+        const PROBE_TOTAL: Duration = Duration::from_secs(8);
+        const PROBE_READ: Duration = Duration::from_millis(500);
+
+        if !self.pool.mark_connecting(addr).await {
+            return None;
+        }
+        let result = self.probe_peer_inner(addr, PROBE_TOTAL, PROBE_READ).await;
+        // Clears the connecting flag; the probe peer was never added to the pool.
+        self.pool.remove_peer(&addr).await;
+        result
+    }
+
+    async fn probe_peer_inner(
+        &self,
+        addr: SocketAddr,
+        total: Duration,
+        read_timeout: Duration,
+    ) -> Option<u32> {
+        let mut peer = tokio::select! {
+            r = Peer::connect(addr, CONNECTION_TIMEOUT.as_secs(), self.network) => r.ok()?,
+            _ = self.shutdown_token.cancelled() => return None,
+        };
+        let mut handshake = HandshakeManager::new(self.network, self.user_agent.clone());
+        tokio::select! {
+            r = handshake.perform_handshake(&mut peer) => r.ok()?,
+            _ = self.shutdown_token.cancelled() => return None,
+        };
+
+        let nonce = peer.send_ping().await.ok()?;
+        let start = Instant::now();
+        while start.elapsed() < total {
+            match tokio::time::timeout(read_timeout, peer.receive_message()).await {
+                Ok(Ok(Some(message))) => match message.inner() {
+                    NetworkMessage::Pong(n) if *n == nonce => {
+                        let _ = peer.handle_pong(*n);
+                        break;
+                    }
+                    NetworkMessage::Ping(p) => {
+                        let _ = peer.handle_ping(*p).await;
+                    }
+                    _ => {}
+                },
+                Ok(Ok(None)) | Err(_) => {}
+                Ok(Err(_)) => return None,
+            }
+        }
+
+        let median = peer.median_rtt()?;
+        let _ = peer.disconnect().await;
+        Some(median.as_millis() as u32)
+    }
+
     /// Start peer connection maintenance loop
     async fn start_maintenance_loop(&self) {
         let this = self.clone();
@@ -1060,6 +1337,9 @@ impl PeerNetworkManager {
                 time::interval_at(Instant::now() + DNS_DISCOVERY_DELAY, DNS_DISCOVERY_DELAY);
             // Periodic reconnection check (active in both modes)
             let mut maintenance_interval = time::interval(MAINTENANCE_INTERVAL);
+            // Background probing of known-but-unconnected peers (non-exclusive mode).
+            let mut scout_interval =
+                time::interval_at(Instant::now() + SCOUT_INTERVAL, SCOUT_INTERVAL);
             let mut network_events = this.network_event_sender.subscribe();
             while !this.shutdown_token.is_cancelled() {
                 tokio::select! {
@@ -1069,6 +1349,10 @@ impl PeerNetworkManager {
                     }
                     _ = dns_interval.tick(), if !this.exclusive_mode => {
                         this.dns_fallback_tick().await;
+                    }
+                    _ = scout_interval.tick(), if !this.exclusive_mode => {
+                        let scout = this.clone();
+                        tokio::spawn(async move { scout.scout_once().await });
                     }
                     event = network_events.recv() => {
                         match event {
@@ -1090,142 +1374,6 @@ impl PeerNetworkManager {
                 }
             }
         });
-    }
-
-    /// Send a message to a single peer selected by message type requirements.
-    async fn send_to_single_peer(&self, message: NetworkMessage) -> NetworkResult<()> {
-        let peers = self.pool.get_all_peers().await;
-
-        if peers.is_empty() {
-            return Err(NetworkError::ConnectionFailed("No connected peers".to_string()));
-        }
-
-        let preferred_service = match &message {
-            NetworkMessage::FilterLoad(_)
-            | NetworkMessage::FilterClear
-            | NetworkMessage::MemPool => Some((ServiceFlags::BLOOM, true)),
-            NetworkMessage::GetCFHeaders(_) | NetworkMessage::GetCFilters(_) => {
-                Some((ServiceFlags::COMPACT_FILTERS, true))
-            }
-            NetworkMessage::GetHeaders(_) | NetworkMessage::GetHeaders2(_) => {
-                Some((ServiceFlags::NODE_HEADERS_COMPRESSED, false))
-            }
-            _ => None,
-        };
-
-        let (addr, peer) = if let Some((flags, required)) = preferred_service {
-            match self.pool.peer_with_service(flags).await {
-                Some((address, peer)) => {
-                    tracing::debug!(
-                        "Selected peer {} with {} for {}",
-                        address,
-                        flags,
-                        message.cmd()
-                    );
-                    (address, peer)
-                }
-                None if required => {
-                    tracing::warn!("No peers support {}, cannot send {}", flags, message.cmd());
-                    return Err(NetworkError::ProtocolError(format!("No peers support {}", flags)));
-                }
-                None => self.next_peer(&peers),
-            }
-        } else {
-            self.next_peer(&peers)
-        };
-
-        self.send_message_to_peer(&addr, &peer, message).await
-    }
-
-    /// Send a message distributed across connected peers using round-robin selection.
-    ///
-    /// Peer selection and message handling based on message type:
-    /// - Filters (GetCFHeaders/GetCFilters): requires peers that support compact filters
-    /// - Headers (GetHeaders/GetHeaders2): prefers headers2 peers, upgrades GetHeaders if supported
-    /// - Other (blocks, masternode data, etc.): uses all connected peers
-    async fn send_distributed(&self, message: NetworkMessage) -> NetworkResult<()> {
-        let peers = self.pool.get_all_peers().await;
-
-        if peers.is_empty() {
-            return Err(NetworkError::ConnectionFailed("No connected peers".to_string()));
-        }
-
-        // Select eligible peers based on message type
-        let (selected_peers, require_capability) = match &message {
-            NetworkMessage::GetCFHeaders(_) | NetworkMessage::GetCFilters(_) => {
-                let filter_peers =
-                    self.pool.peers_with_service(ServiceFlags::COMPACT_FILTERS).await;
-                (filter_peers, true)
-            }
-            NetworkMessage::GetHeaders(_) | NetworkMessage::GetHeaders2(_) => {
-                // Prefer headers2 peers (excluding disabled), fall back to all
-                let disabled = self.headers2_disabled.lock().await;
-                let mut headers2_peers =
-                    self.pool.peers_with_service(ServiceFlags::NODE_HEADERS_COMPRESSED).await;
-                headers2_peers.retain(|(addr, _)| !disabled.contains(addr));
-                drop(disabled);
-                if headers2_peers.is_empty() {
-                    (peers.clone(), false)
-                } else {
-                    (headers2_peers, false)
-                }
-            }
-            _ => {
-                // All other messages use all connected peers
-                (peers.clone(), false)
-            }
-        };
-
-        if selected_peers.is_empty() {
-            return if require_capability {
-                Err(NetworkError::ProtocolError("No peers support required capability".to_string()))
-            } else {
-                Err(NetworkError::ConnectionFailed("No connected peers".to_string()))
-            };
-        }
-
-        let (addr, peer) = self.next_peer(&selected_peers);
-
-        tracing::debug!("Distributing {} request to peer {}", message.cmd(), addr);
-
-        self.send_message_to_peer(&addr, &peer, message).await
-    }
-
-    /// Pick the next peer from `peers` using round-robin rotation.
-    fn next_peer(
-        &self,
-        peers: &[(SocketAddr, Arc<RwLock<Peer>>)],
-    ) -> (SocketAddr, Arc<RwLock<Peer>>) {
-        let idx = self.round_robin_counter.fetch_add(1, Ordering::Relaxed) % peers.len();
-        (peers[idx].0, peers[idx].1.clone())
-    }
-
-    /// Send a message to the given peer.
-    /// For GetHeaders messages upgrade to GetHeaders2 if the peer supports it.
-    async fn send_message_to_peer(
-        &self,
-        addr: &SocketAddr,
-        peer: &Arc<RwLock<Peer>>,
-        message: NetworkMessage,
-    ) -> NetworkResult<()> {
-        let message = match message {
-            NetworkMessage::GetHeaders(get_headers) => {
-                let supports_headers2 = peer.read().await.can_request_headers2();
-                if supports_headers2 && !self.headers2_disabled.lock().await.contains(addr) {
-                    tracing::debug!("Upgrading GetHeaders to GetHeaders2 for peer {}", addr);
-                    NetworkMessage::GetHeaders2(get_headers)
-                } else {
-                    NetworkMessage::GetHeaders(get_headers)
-                }
-            }
-            other => other,
-        };
-
-        let mut peer_guard = peer.write().await;
-        peer_guard
-            .send_message(message)
-            .await
-            .map_err(|e| NetworkError::ProtocolError(format!("Failed to send to {}: {}", addr, e)))
     }
 
     /// Broadcast a message to all connected peers
@@ -1280,30 +1428,6 @@ impl PeerNetworkManager {
         .await;
 
         Ok(())
-    }
-
-    /// Get reputation information for all peers
-    pub async fn get_peer_reputations(&self) -> HashMap<SocketAddr, (i32, bool)> {
-        let reputations = self.reputation_manager.get_all_reputations().await;
-        reputations.into_iter().map(|(addr, rep)| (addr, (rep.score, rep.is_banned()))).collect()
-    }
-
-    /// Ban a specific peer manually
-    pub async fn ban_peer(&self, addr: &SocketAddr, reason: &str) -> Result<(), Error> {
-        tracing::info!("Manually banning peer {} - reason: {}", addr, reason);
-
-        // Disconnect the peer first
-        self.disconnect_peer(addr, reason).await?;
-
-        // Update reputation to trigger ban
-        self.reputation_manager.update_reputation(*addr, ChangeReason::ManuallyBanned).await;
-
-        Ok(())
-    }
-
-    /// Unban a specific peer
-    pub async fn unban_peer(&self, addr: &SocketAddr) {
-        self.reputation_manager.unban_peer(addr).await;
     }
 
     /// Shutdown the network manager
@@ -1392,11 +1516,9 @@ impl Clone for PeerNetworkManager {
             required_services: self.required_services,
             capability_rejected: self.capability_rejected.clone(),
             connected_peer_count: self.connected_peer_count.clone(),
-            headers2_disabled: self.headers2_disabled.clone(),
             message_dispatcher: self.message_dispatcher.clone(),
             request_tx: self.request_tx.clone(),
             request_rx: self.request_rx.clone(),
-            round_robin_counter: self.round_robin_counter.clone(),
             network_event_sender: self.network_event_sender.clone(),
         }
     }
@@ -1423,19 +1545,17 @@ impl NetworkManager for PeerNetworkManager {
     }
 
     async fn send_message(&mut self, message: NetworkMessage) -> NetworkResult<()> {
-        // For sync messages that require consistent responses, send to only one peer
+        // For sync requests, route to the single best peer; broadcast everything else.
         match &message {
             NetworkMessage::GetHeaders(_)
             | NetworkMessage::GetHeaders2(_)
             | NetworkMessage::GetCFHeaders(_)
             | NetworkMessage::GetCFilters(_)
             | NetworkMessage::GetData(_)
-            | NetworkMessage::GetMnListD(_) => self.send_to_single_peer(message).await,
+            | NetworkMessage::GetMnListD(_) => self.pool.send(message).await.map(|_| ()),
             _ => {
-                // For other messages, broadcast to all peers
                 let results = self.broadcast(message).await;
 
-                // Return error if all sends failed
                 if results.is_empty() {
                     return Err(NetworkError::ConnectionFailed("No connected peers".to_string()));
                 }
@@ -1513,11 +1633,9 @@ impl PeerNetworkManager {
             required_services,
             capability_rejected: Arc::new(RwLock::new(HashMap::new())),
             connected_peer_count: Arc::new(AtomicUsize::new(0)),
-            headers2_disabled: Arc::new(Mutex::new(HashSet::new())),
             message_dispatcher: Arc::new(Mutex::new(MessageDispatcher::default())),
             request_tx,
             request_rx: Arc::new(Mutex::new(Some(request_rx))),
-            round_robin_counter: Arc::new(AtomicUsize::new(0)),
             network_event_sender: broadcast::Sender::new(DEFAULT_NETWORK_EVENT_CAPACITY),
         }
     }

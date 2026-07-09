@@ -1,10 +1,10 @@
 //! Dash peer connection management.
 
 use dashcore::network::constants::ServiceFlags;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::net::SocketAddr;
 use std::sync::Arc;
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, Instant, SystemTime};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::sync::Mutex;
@@ -15,6 +15,7 @@ use dashcore::Network;
 
 use crate::error::{NetworkError, NetworkResult};
 use crate::network::constants::PING_INTERVAL;
+use crate::network::reputation::ChangeReason;
 use crate::network::Message;
 
 /// Internal state for the TCP connection
@@ -46,6 +47,27 @@ pub struct Peer {
     relay: Option<bool>,
     prefers_headers2: bool,
     sent_sendheaders2: bool,
+    headers2_disabled: bool,
+    rtt_samples: VecDeque<Duration>,
+    behavior_multiplier: f32,
+    awaiting_since: Option<Instant>,
+}
+
+/// Number of recent response-time samples kept per peer for scoring.
+const MAX_RTT_SAMPLES: usize = 8;
+
+/// A peer silent for this long after being sent a request is treated as stalling
+/// and skipped, so retries go to a different peer — no second chances.
+const STALL_THRESHOLD: Duration = Duration::from_secs(4);
+
+/// Bucket a response time into a 1..=4 quality score (4 = ideal, sub-50ms).
+fn rtt_score(rtt: Duration) -> u8 {
+    match rtt.as_millis() {
+        0..=49 => 4,
+        50..=149 => 3,
+        150..=399 => 2,
+        _ => 1,
+    }
 }
 
 impl Peer {
@@ -72,6 +94,10 @@ impl Peer {
             relay: None,
             prefers_headers2: false,
             sent_sendheaders2: false,
+            headers2_disabled: false,
+            rtt_samples: VecDeque::new(),
+            behavior_multiplier: 1.0,
+            awaiting_since: None,
         }
     }
 
@@ -118,6 +144,10 @@ impl Peer {
             relay: None,
             prefers_headers2: false,
             sent_sendheaders2: false,
+            headers2_disabled: false,
+            rtt_samples: VecDeque::new(),
+            behavior_multiplier: 1.0,
+            awaiting_since: None,
         })
     }
 
@@ -693,6 +723,7 @@ impl Peer {
             let rtt = now.duration_since(sent_time).unwrap_or(Duration::from_secs(0));
 
             self.last_pong_received = Some(now);
+            self.record_rtt(rtt);
 
             tracing::debug!(
                 "Received valid pong from {} with nonce {} (RTT: {:?})",
@@ -790,11 +821,86 @@ impl Peer {
         self.sent_sendheaders2
     }
 
+    /// Record a response-time sample used for peer quality scoring.
+    pub fn record_rtt(&mut self, rtt: Duration) {
+        self.rtt_samples.push_back(rtt);
+        while self.rtt_samples.len() > MAX_RTT_SAMPLES {
+            self.rtt_samples.pop_front();
+        }
+    }
+
+    /// Latency score in 1..=4 (higher is better): the worst bucket across recent
+    /// samples, so a peer that occasionally stalls is penalised. Unprobed peers
+    /// score 4 so they still get exercised until real samples arrive.
+    fn response_score(&self) -> u8 {
+        self.rtt_samples.iter().copied().map(rtt_score).min().unwrap_or(4)
+    }
+
+    /// Overall selection quality in `[0, 4]`: the latency score scaled by the
+    /// behaviour multiplier, so a slow, misbehaving or lying peer ranks low.
+    pub fn quality(&self) -> f32 {
+        self.response_score() as f32 * self.behavior_multiplier
+    }
+
+    /// Behaviour multiplier in `[0, 1]` (1 = trusted, 0 = never selected).
+    pub fn behavior_multiplier(&self) -> f32 {
+        self.behavior_multiplier
+    }
+
+    /// Seed the behaviour multiplier from persisted history on connect.
+    pub fn set_behavior_multiplier(&mut self, multiplier: f32) {
+        self.behavior_multiplier = multiplier.clamp(0.0, 1.0);
+    }
+
+    /// Fold a behaviour event into the multiplier (good raises, bad lowers, a
+    /// security violation zeroes it).
+    pub fn apply_reason(&mut self, reason: ChangeReason) {
+        self.behavior_multiplier = reason.apply(self.behavior_multiplier);
+    }
+
+    /// Note that a request expecting a response was sent to this peer.
+    pub fn note_request_sent(&mut self) {
+        if self.awaiting_since.is_none() {
+            self.awaiting_since = Some(Instant::now());
+        }
+    }
+
+    /// Note that the peer answered with data, clearing any pending-request timer.
+    pub fn note_response(&mut self) {
+        self.awaiting_since = None;
+    }
+
+    /// True when the peer was sent a request and has produced no data for longer than
+    /// `STALL_THRESHOLD` — it is stalling the sync and should not get more requests, and
+    /// the retry should go to a different peer.
+    pub fn is_stalling(&self) -> bool {
+        self.awaiting_since.map(|t| t.elapsed() > STALL_THRESHOLD).unwrap_or(false)
+    }
+
+    /// Median recent response time, or `None` if the peer has not been probed.
+    pub fn median_rtt(&self) -> Option<Duration> {
+        if self.rtt_samples.is_empty() {
+            return None;
+        }
+        let mut sorted: Vec<Duration> = self.rtt_samples.iter().copied().collect();
+        sorted.sort_unstable();
+        Some(sorted[sorted.len() / 2])
+    }
+
+    /// Stop requesting compressed headers from this peer (e.g. after a
+    /// decompression failure); falls back to uncompressed `getheaders`.
+    pub fn disable_headers2(&mut self) {
+        self.headers2_disabled = true;
+    }
+
     /// Check if we can request headers2 from this peer.
     pub fn can_request_headers2(&self) -> bool {
         // We can request headers2 if peer has the service flag for headers2 support
         // Note: We don't wait for SendHeaders2 from peer as that creates a race condition
         // during initial sync. The service flag is sufficient to know they support headers2.
+        if self.headers2_disabled {
+            return false;
+        }
         if let Some(services) = self.services {
             dashcore::network::constants::ServiceFlags::from(services)
                 .has(dashcore::network::constants::NODE_HEADERS_COMPRESSED)
@@ -846,5 +952,35 @@ mod tests {
         peer.pending_pings.insert(20, expired);
         assert!(peer.remove_expired_pings());
         assert!(peer.pending_pings.is_empty());
+    }
+
+    #[test]
+    fn response_scoring() {
+        let addr: SocketAddr = "127.0.0.1:9999".parse().unwrap();
+        let mut peer = Peer::dummy(addr);
+
+        // Unprobed peers are optimistic and have no median.
+        assert_eq!(peer.response_score(), 4);
+        assert!(peer.median_rtt().is_none());
+
+        // A fast peer scores 4.
+        peer.record_rtt(Duration::from_millis(20));
+        peer.record_rtt(Duration::from_millis(40));
+        assert_eq!(peer.response_score(), 4);
+        assert_eq!(peer.median_rtt(), Some(Duration::from_millis(40)));
+
+        // A single slow sample drags the score down to the worst bucket.
+        peer.record_rtt(Duration::from_millis(900));
+        assert_eq!(peer.response_score(), 1);
+    }
+
+    #[test]
+    fn rtt_samples_are_bounded() {
+        let addr: SocketAddr = "127.0.0.1:9999".parse().unwrap();
+        let mut peer = Peer::dummy(addr);
+        for _ in 0..(super::MAX_RTT_SAMPLES + 5) {
+            peer.record_rtt(Duration::from_millis(10));
+        }
+        assert_eq!(peer.rtt_samples.len(), super::MAX_RTT_SAMPLES);
     }
 }

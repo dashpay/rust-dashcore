@@ -1,109 +1,96 @@
-//! Unit tests for reputation system (in-module tests)
+//! Unit tests for the peer behaviour multiplier.
 
 #[cfg(test)]
 mod tests {
-    use crate::storage::{PersistentPeerStorage, PersistentStorage};
-
     use super::super::*;
+    use crate::storage::{PersistentPeerStorage, PersistentStorage};
     use std::net::SocketAddr;
 
-    async fn score(manager: &PeerReputationManager, peer: &SocketAddr) -> i32 {
-        manager.get_all_reputations().await.get(peer).map_or(0, |rep| rep.score)
+    fn addr(s: &str) -> SocketAddr {
+        s.parse().unwrap()
+    }
+
+    async fn multiplier(manager: &PeerReputationManager, peer: &SocketAddr) -> f32 {
+        manager.hint(peer).await.unwrap().0
+    }
+
+    #[test]
+    fn good_and_bad_actions_move_the_multiplier_within_bounds() {
+        // Starts trusted.
+        assert_eq!(ChangeReason::GoodResponse.apply(1.0), 1.0);
+        // A bad action lowers it.
+        let m = ChangeReason::Timeout.apply(1.0);
+        assert!(m < 1.0 && m > 0.0);
+        // Good actions raise it back, clamped at 1.
+        assert_eq!(ChangeReason::GoodResponse.apply(0.98), 1.0);
+        // It never goes below 0.
+        assert_eq!(ChangeReason::HandshakeFailed.apply(0.1), 0.0);
+    }
+
+    #[test]
+    fn security_violation_zeroes_the_multiplier() {
+        assert_eq!(ChangeReason::InvalidData.apply(1.0), 0.0);
+        assert!(ChangeReason::InvalidData.is_security_violation());
     }
 
     #[tokio::test]
-    async fn test_basic_reputation_operations() {
+    async fn penalize_accumulates_and_gates_usability() {
         let manager = PeerReputationManager::new();
-        let peer: SocketAddr = "127.0.0.1:8333".parse().unwrap();
+        let peer = addr("127.0.0.1:8333");
 
-        assert_eq!(score(&manager, &peer).await, 0);
+        // Unknown peers are usable by default.
+        assert!(manager.is_usable(&peer).await);
 
-        manager.update_reputation(peer, ChangeReason::HandshakeFailed).await;
-        assert_eq!(score(&manager, &peer).await, 10);
+        manager.penalize(peer, ChangeReason::Timeout).await;
+        assert!(multiplier(&manager, &peer).await < 1.0);
+        assert!(manager.is_usable(&peer).await);
 
-        manager.update_reputation(peer, ChangeReason::LongUptime).await;
-        assert_eq!(score(&manager, &peer).await, 5);
+        manager.penalize(peer, ChangeReason::InvalidData).await;
+        assert_eq!(multiplier(&manager, &peer).await, 0.0);
+        assert!(!manager.is_usable(&peer).await);
     }
 
     #[tokio::test]
-    async fn test_banning_mechanism() {
+    async fn rank_orders_by_multiplier_then_latency_and_drops_zero() {
         let manager = PeerReputationManager::new();
-        let peer: SocketAddr = "192.168.1.1:8333".parse().unwrap();
+        let best = addr("1.1.1.1:8333");
+        let slower = addr("2.2.2.2:8333");
+        let untrusted = addr("3.3.3.3:8333");
 
-        // Banned on the 10th violation (10 * 10 = 100).
-        for i in 0..10 {
-            let banned = manager.update_reputation(peer, ChangeReason::HandshakeFailed).await;
-            if i == 9 {
-                assert!(banned);
-            } else {
-                assert!(!banned);
-            }
-        }
+        manager.record(best, 1.0, Some(20)).await;
+        manager.record(slower, 1.0, Some(200)).await;
+        manager.record(untrusted, 0.0, Some(5)).await;
 
-        assert!(manager.is_banned(&peer).await);
+        let ranked = manager.rank(vec![slower, untrusted, best]).await;
+        assert_eq!(ranked, vec![best, slower]);
     }
 
     #[tokio::test]
-    async fn test_reputation_persistence() {
+    async fn record_latency_preserves_multiplier() {
         let manager = PeerReputationManager::new();
-        let peer1: SocketAddr = "10.0.0.1:8333".parse().unwrap();
-        let peer2: SocketAddr = "10.0.0.2:8333".parse().unwrap();
+        let peer = addr("10.0.0.1:8333");
 
-        manager.update_reputation(peer1, ChangeReason::LongUptime).await;
-        manager.update_reputation(peer1, ChangeReason::LongUptime).await;
-        manager.update_reputation(peer2, ChangeReason::InvalidTransactionInBlock).await;
+        manager.penalize(peer, ChangeReason::Timeout).await;
+        let m = multiplier(&manager, &peer).await;
+        manager.record_latency(peer, 42).await;
+
+        assert_eq!(multiplier(&manager, &peer).await, m);
+        assert!(manager.is_measured(&peer).await);
+        assert_eq!(manager.hint(&peer).await, Some((m, Some(42))));
+    }
+
+    #[tokio::test]
+    async fn persistence_round_trips_multiplier_and_latency() {
+        let manager = PeerReputationManager::new();
+        let peer = addr("10.0.0.2:8333");
+        manager.record(peer, 0.4, Some(120)).await;
 
         let temp_dir = tempfile::TempDir::new().unwrap();
-        let peer_storage = PersistentPeerStorage::open(temp_dir.path())
-            .await
-            .expect("Failed to open PersistentPeerStorage");
-        manager.save_to_storage(&peer_storage).await.unwrap();
+        let storage = PersistentPeerStorage::open(temp_dir.path()).await.unwrap();
+        manager.save_to_storage(&storage).await.unwrap();
 
-        let new_manager = PeerReputationManager::new();
-        new_manager.load_from_storage(&peer_storage).await.unwrap();
-
-        assert_eq!(score(&new_manager, &peer1).await, -10);
-        assert_eq!(score(&new_manager, &peer2).await, 20);
-    }
-
-    #[tokio::test]
-    async fn test_peer_selection() {
-        let manager = PeerReputationManager::new();
-
-        let good_peer = AddrV2Message::dummy(0, "1.1.1.1".parse().unwrap(), 8333);
-        let neutral_peer = AddrV2Message::dummy(0, "2.2.2.2".parse().unwrap(), 8333);
-        let bad_peer = AddrV2Message::dummy(0, "3.3.3.3".parse().unwrap(), 8333);
-
-        manager.update_reputation(good_peer.socket_addr().unwrap(), ChangeReason::LongUptime).await;
-        manager
-            .update_reputation(
-                bad_peer.socket_addr().unwrap(),
-                ChangeReason::InvalidTransactionInBlock,
-            )
-            .await;
-
-        let all_peers = vec![good_peer.clone(), neutral_peer.clone(), bad_peer.clone()];
-        let selected = manager.select_best_peers(all_peers, 2).await;
-
-        assert_eq!(selected.len(), 2);
-        assert_eq!(selected[0], good_peer.socket_addr().unwrap());
-        assert_eq!(selected[1], neutral_peer.socket_addr().unwrap());
-    }
-
-    #[tokio::test]
-    async fn test_connection_tracking() {
-        let manager = PeerReputationManager::new();
-        let peer: SocketAddr = "127.0.0.1:9999".parse().unwrap();
-
-        // Track connection attempts
-        manager.record_connection_attempt(peer).await;
-        manager.record_connection_attempt(peer).await;
-        manager.record_successful_connection(peer).await;
-
-        let reputations = manager.get_all_reputations().await;
-        let rep = &reputations[&peer];
-
-        assert_eq!(rep.connection_attempts, 2);
-        assert_eq!(rep.successful_connections, 1);
+        let loaded = PeerReputationManager::new();
+        loaded.load_from_storage(&storage).await.unwrap();
+        assert_eq!(loaded.hint(&peer).await, Some((0.4, Some(120))));
     }
 }

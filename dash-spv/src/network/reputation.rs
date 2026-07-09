@@ -1,225 +1,111 @@
-//! Peer reputation management system
+//! Peer behaviour scoring for selection.
 //!
-//! This module implements a reputation system to track peer behavior and protect
-//! against malicious peers. It tracks both positive and negative behaviors,
-//! implements automatic banning for excessive misbehavior, and provides reputation
-//! decay over time for recovery.
+//! Each peer carries a behaviour multiplier in `[0, 1]`. Good actions nudge it up
+//! toward 1, bad actions down toward 0, and a security violation (the peer fed us
+//! invalid data — it lied) drops it straight to 0. Peer selection multiplies this
+//! by the peer's response-time score, so a misbehaving peer is deprioritised and a
+//! lying one is never chosen. This manager persists the multiplier (and last
+//! measured latency) so the judgement survives across connections.
 
 use crate::storage::PeerStorage;
-use dashcore::network::address::AddrV2Message;
 use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
 
-/// Reason for a peer reputation change. Each reason owns its score delta
-/// (positive = penalty, negative = reward) and a human-readable label.
+/// A peer behaviour event.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ChangeReason {
     HandshakeFailed,
     ConnectionFailed,
-    Headers2DecompressionFailed,
-    ReadTimeout,
+    Timeout,
     PingFailed,
-    InvalidTransactionInBlock,
-    ManuallyBanned,
+    BadResponse,
+    GoodResponse,
     LongUptime,
+    /// The peer supplied invalid/untrustworthy data — treat it as a liar.
+    InvalidData,
 }
 
 impl ChangeReason {
-    /// Score delta for this reason: positive for misbehavior (penalty),
-    /// negative for good behavior (reward).
-    pub fn score(&self) -> i32 {
+    /// A security violation collapses the multiplier to zero immediately.
+    pub fn is_security_violation(&self) -> bool {
+        matches!(self, ChangeReason::InvalidData)
+    }
+
+    /// Additive change to the `[0, 1]` behaviour multiplier for non-fatal events.
+    fn delta(&self) -> f32 {
         match self {
-            ChangeReason::HandshakeFailed => 10,
-            ChangeReason::ConnectionFailed => 2,
-            ChangeReason::Headers2DecompressionFailed => 10,
-            ChangeReason::ReadTimeout => 5,
-            ChangeReason::PingFailed => 5,
-            ChangeReason::InvalidTransactionInBlock => 20,
-            ChangeReason::ManuallyBanned => 100,
-            ChangeReason::LongUptime => -5,
+            ChangeReason::HandshakeFailed => -0.3,
+            ChangeReason::ConnectionFailed => -0.1,
+            ChangeReason::Timeout => -0.2,
+            ChangeReason::PingFailed => -0.2,
+            ChangeReason::BadResponse => -0.3,
+            ChangeReason::GoodResponse => 0.1,
+            ChangeReason::LongUptime => 0.1,
+            ChangeReason::InvalidData => -1.0,
         }
+    }
+
+    /// Apply this event to a multiplier, clamped to `[0, 1]` (0 on a security
+    /// violation).
+    pub fn apply(&self, multiplier: f32) -> f32 {
+        if self.is_security_violation() {
+            return 0.0;
+        }
+        (multiplier + self.delta()).clamp(0.0, 1.0)
     }
 }
 
 impl std::fmt::Display for ChangeReason {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let label = match self {
-            ChangeReason::HandshakeFailed => "Handshake failed",
-            ChangeReason::ConnectionFailed => "Connection failed",
-            ChangeReason::Headers2DecompressionFailed => "Headers2 decompression failed",
-            ChangeReason::ReadTimeout => "Read timeout",
-            ChangeReason::PingFailed => "Ping failed",
-            ChangeReason::InvalidTransactionInBlock => "Invalid transaction type in block",
-            ChangeReason::ManuallyBanned => "Manually banned",
-            ChangeReason::LongUptime => "Long connection uptime",
+            ChangeReason::HandshakeFailed => "handshake failed",
+            ChangeReason::ConnectionFailed => "connection failed",
+            ChangeReason::Timeout => "timed out",
+            ChangeReason::PingFailed => "ping failed",
+            ChangeReason::BadResponse => "bad response",
+            ChangeReason::GoodResponse => "good response",
+            ChangeReason::LongUptime => "long uptime",
+            ChangeReason::InvalidData => "invalid data",
         };
         f.write_str(label)
     }
 }
 
-/// Ban duration for misbehaving peers
-const BAN_DURATION: Duration = Duration::from_secs(24 * 60 * 60); // 24 hours
+fn default_multiplier() -> f32 {
+    1.0
+}
 
-/// Reputation decay interval
-const DECAY_INTERVAL: Duration = Duration::from_secs(60 * 60); // 1 hour
-
-/// Amount to decay reputation score per interval
-const DECAY_AMOUNT: i32 = 5;
-
-/// Maximum misbehavior score before a peer is banned
-const MAX_MISBEHAVIOR_SCORE: i32 = 100;
-
-/// Minimum score (most positive reputation)
-const MIN_MISBEHAVIOR_SCORE: i32 = -50;
-
-const MAX_BAN_COUNT: u32 = 1000;
-
-const MAX_ACTION_COUNT: u64 = 1_000_000;
-
-fn clamp_peer_score<'de, D>(deserializer: D) -> Result<i32, D::Error>
+fn clamp_multiplier<'de, D>(deserializer: D) -> Result<f32, D::Error>
 where
     D: Deserializer<'de>,
 {
-    let mut v = i32::deserialize(deserializer)?;
-
-    if v < MIN_MISBEHAVIOR_SCORE {
-        tracing::warn!("Peer has invalid score {v}, clamping to min {MIN_MISBEHAVIOR_SCORE}");
-        v = MIN_MISBEHAVIOR_SCORE
-    } else if v > MAX_MISBEHAVIOR_SCORE {
-        tracing::warn!("Peer has invalid score {v}, clamping to max {MAX_MISBEHAVIOR_SCORE}");
-        v = MAX_MISBEHAVIOR_SCORE
-    }
-
-    Ok(v)
+    Ok(f32::deserialize(deserializer)?.clamp(0.0, 1.0))
 }
 
-fn clamp_peer_ban_count<'de, D>(deserializer: D) -> Result<u32, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let mut v = u32::deserialize(deserializer)?;
-
-    if v > MAX_BAN_COUNT {
-        tracing::warn!("Peer has excessive ban count {v}, clamping to {MAX_BAN_COUNT}");
-        v = MAX_BAN_COUNT
-    }
-
-    Ok(v)
-}
-
-fn clamp_peer_connection_attempts<'de, D>(deserializer: D) -> Result<u64, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let mut v = u64::deserialize(deserializer)?;
-
-    v = v.min(MAX_ACTION_COUNT);
-
-    Ok(v)
-}
-
-/// Peer reputation entry
+/// Persisted peer quality: behaviour multiplier plus last measured latency.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PeerReputation {
-    /// Current misbehavior score
-    #[serde(deserialize_with = "clamp_peer_score")]
-    pub score: i32,
-
-    /// Number of times this peer has been banned
-    #[serde(deserialize_with = "clamp_peer_ban_count")]
-    pub ban_count: u32,
-
-    /// Time when the peer was banned (if currently banned)
-    #[serde(skip)]
-    pub banned_until: Option<Instant>,
-
-    /// Last time the reputation was updated
-    #[serde(skip, default = "Instant::now")]
-    pub last_update: Instant,
-
-    /// Total number of positive actions
-    pub positive_actions: u64,
-
-    /// Total number of negative actions
-    pub negative_actions: u64,
-
-    /// Connection count
-    #[serde(deserialize_with = "clamp_peer_connection_attempts")]
-    pub connection_attempts: u64,
-
-    /// Successful connection count
-    pub successful_connections: u64,
-
-    /// Last connection time
-    #[serde(skip)]
-    pub last_connection: Option<Instant>,
+    #[serde(default = "default_multiplier", deserialize_with = "clamp_multiplier")]
+    pub multiplier: f32,
+    #[serde(default)]
+    pub median_rtt_ms: Option<u32>,
 }
 
 impl Default for PeerReputation {
     fn default() -> Self {
         Self {
-            score: 0,
-            ban_count: 0,
-            banned_until: None,
-            last_update: Instant::now(),
-            positive_actions: 0,
-            negative_actions: 0,
-            connection_attempts: 0,
-            successful_connections: 0,
-            last_connection: None,
+            multiplier: 1.0,
+            median_rtt_ms: None,
         }
     }
 }
 
-impl PeerReputation {
-    /// Check if the peer is currently banned
-    pub fn is_banned(&self) -> bool {
-        self.banned_until.is_some_and(|until| Instant::now() < until)
-    }
-
-    /// Get remaining ban time
-    pub fn ban_time_remaining(&self) -> Option<Duration> {
-        self.banned_until.and_then(|until| {
-            let now = Instant::now();
-            if now < until {
-                Some(until - now)
-            } else {
-                None
-            }
-        })
-    }
-
-    /// Apply reputation decay
-    pub fn apply_decay(&mut self) {
-        let now = Instant::now();
-        let elapsed = now - self.last_update;
-
-        // Apply decay for each interval that has passed
-        let intervals = elapsed.as_secs() / DECAY_INTERVAL.as_secs();
-        if intervals > 0 {
-            // Use saturating conversion to prevent overflow
-            // Cap at a reasonable maximum to avoid excessive decay
-            let intervals_i32 = intervals.min(i32::MAX as u64) as i32;
-            let decay = intervals_i32.saturating_mul(DECAY_AMOUNT);
-            self.score = (self.score - decay).max(MIN_MISBEHAVIOR_SCORE);
-            self.last_update = now;
-        }
-
-        // Check if ban has expired
-        if self.is_banned() && self.ban_time_remaining().is_none() {
-            self.banned_until = None;
-        }
-    }
-}
-
-/// Peer reputation manager
+/// Tracks and persists per-peer behaviour multipliers.
 pub struct PeerReputationManager {
-    /// Reputation data for each peer
-    reputations: Arc<RwLock<HashMap<SocketAddr, PeerReputation>>>,
+    records: Arc<RwLock<HashMap<SocketAddr, PeerReputation>>>,
 }
 
 impl Default for PeerReputationManager {
@@ -229,207 +115,93 @@ impl Default for PeerReputationManager {
 }
 
 impl PeerReputationManager {
-    /// Create a new reputation manager
     pub fn new() -> Self {
         Self {
-            reputations: Arc::new(RwLock::new(HashMap::new())),
+            records: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
-    /// Update peer reputation by the score delta of `reason`.
-    pub async fn update_reputation(&self, peer: SocketAddr, reason: ChangeReason) -> bool {
-        let score_change = reason.score();
-
-        let mut reputations = self.reputations.write().await;
-        let reputation = reputations.entry(peer).or_default();
-
-        // Apply decay first
-        reputation.apply_decay();
-
-        // Update score
-        let old_score = reputation.score;
-        reputation.score =
-            (reputation.score + score_change).clamp(MIN_MISBEHAVIOR_SCORE, MAX_MISBEHAVIOR_SCORE);
-
-        // Track positive/negative actions
-        if score_change > 0 {
-            reputation.negative_actions += 1;
-        } else if score_change < 0 {
-            reputation.positive_actions += 1;
-        }
-
-        // Check if peer should be banned
-        let should_ban = reputation.score >= MAX_MISBEHAVIOR_SCORE && !reputation.is_banned();
-        if should_ban {
-            reputation.banned_until = Some(Instant::now() + BAN_DURATION);
-            reputation.ban_count += 1;
-            tracing::warn!(
-                "Peer {} banned for misbehavior (score: {}, ban #{}, reason: {})",
-                peer,
-                reputation.score,
-                reputation.ban_count,
-                reason
-            );
-        }
-
-        // Log significant changes
-        if score_change.abs() >= 10 || should_ban {
-            tracing::info!(
-                "Peer {} reputation changed: {} -> {} (change: {}, reason: {})",
-                peer,
-                old_score,
-                reputation.score,
-                score_change,
-                reason
-            );
-        }
-
-        should_ban
+    /// Apply a behaviour event to a peer that has no live connection to carry the
+    /// multiplier (e.g. a connect or handshake failure). Returns the new value.
+    pub async fn penalize(&self, addr: SocketAddr, reason: ChangeReason) -> f32 {
+        let mut records = self.records.write().await;
+        let record = records.entry(addr).or_default();
+        record.multiplier = reason.apply(record.multiplier);
+        record.multiplier
     }
 
-    /// Check if a peer is banned
-    pub async fn is_banned(&self, peer: &SocketAddr) -> bool {
-        let mut reputations = self.reputations.write().await;
-        if let Some(reputation) = reputations.get_mut(peer) {
-            reputation.apply_decay();
-            reputation.is_banned()
-        } else {
-            false
+    /// Write through a live peer's measured quality for persistence and reuse.
+    pub async fn record(&self, addr: SocketAddr, multiplier: f32, median_rtt_ms: Option<u32>) {
+        let mut records = self.records.write().await;
+        let record = records.entry(addr).or_default();
+        record.multiplier = multiplier.clamp(0.0, 1.0);
+        if median_rtt_ms.is_some() {
+            record.median_rtt_ms = median_rtt_ms;
         }
     }
 
-    /// Record a connection attempt
-    pub async fn record_connection_attempt(&self, peer: SocketAddr) {
-        let mut reputations = self.reputations.write().await;
-        let reputation = reputations.entry(peer).or_default();
-        reputation.connection_attempts += 1;
-        reputation.last_connection = Some(Instant::now());
+    /// Record a peer's measured latency (from a background probe) without
+    /// touching its behaviour multiplier.
+    pub async fn record_latency(&self, addr: SocketAddr, median_rtt_ms: u32) {
+        let mut records = self.records.write().await;
+        records.entry(addr).or_default().median_rtt_ms = Some(median_rtt_ms);
     }
 
-    /// Record a successful connection
-    pub async fn record_successful_connection(&self, peer: SocketAddr) {
-        let mut reputations = self.reputations.write().await;
-        let reputation = reputations.entry(peer).or_default();
-        reputation.successful_connections += 1;
+    /// Measured latency (ms) for each of `addrs` that has one, in a single lock. Used to
+    /// filter dial candidates and drop connected peers by latency tier.
+    pub async fn latencies(&self, addrs: &[SocketAddr]) -> HashMap<SocketAddr, u32> {
+        let records = self.records.read().await;
+        addrs
+            .iter()
+            .filter_map(|a| records.get(a).and_then(|r| r.median_rtt_ms).map(|l| (*a, l)))
+            .collect()
     }
 
-    /// Get all peer reputations
-    pub async fn get_all_reputations(&self) -> HashMap<SocketAddr, PeerReputation> {
-        let mut reputations = self.reputations.write().await;
-
-        // Apply decay to all peers
-        for reputation in reputations.values_mut() {
-            reputation.apply_decay();
-        }
-
-        reputations.clone()
+    /// Persisted `(multiplier, median_rtt_ms)` used to seed a peer on connect.
+    pub async fn hint(&self, addr: &SocketAddr) -> Option<(f32, Option<u32>)> {
+        self.records.read().await.get(addr).map(|r| (r.multiplier, r.median_rtt_ms))
     }
 
-    /// Clear banned status for a peer (admin function)
-    pub async fn unban_peer(&self, peer: &SocketAddr) {
-        let mut reputations = self.reputations.write().await;
-        if let Some(reputation) = reputations.get_mut(peer) {
-            reputation.banned_until = None;
-            reputation.score = reputation.score.min(MAX_MISBEHAVIOR_SCORE - 10);
-            tracing::info!("Manually unbanned peer {}", peer);
-        }
+    /// A peer is dialable unless its multiplier has collapsed to zero.
+    pub async fn is_usable(&self, addr: &SocketAddr) -> bool {
+        self.records.read().await.get(addr).map(|r| r.multiplier > 0.0).unwrap_or(true)
     }
 
-    /// Save reputation data to persistent storage
+    /// True once the peer has a measured latency (has been probed at least once).
+    pub async fn is_measured(&self, addr: &SocketAddr) -> bool {
+        self.records.read().await.get(addr).map(|r| r.median_rtt_ms.is_some()).unwrap_or(false)
+    }
+
+    /// Order candidate addresses best-first (highest multiplier, then lowest
+    /// measured latency), dropping any with a zero multiplier.
+    pub async fn rank(&self, mut addrs: Vec<SocketAddr>) -> Vec<SocketAddr> {
+        let records = self.records.read().await;
+        let key = |addr: &SocketAddr| -> (f32, u32) {
+            match records.get(addr) {
+                Some(r) => (r.multiplier, r.median_rtt_ms.unwrap_or(u32::MAX)),
+                None => (1.0, u32::MAX),
+            }
+        };
+        addrs.retain(|addr| records.get(addr).map(|r| r.multiplier > 0.0).unwrap_or(true));
+        addrs.sort_by(|a, b| {
+            let (ma, la) = key(a);
+            let (mb, lb) = key(b);
+            mb.total_cmp(&ma).then(la.cmp(&lb))
+        });
+        addrs
+    }
+
     pub async fn save_to_storage(&self, storage: &impl PeerStorage) -> std::io::Result<()> {
-        let reputations = self.reputations.read().await;
-
-        storage.save_peers_reputation(&reputations).await.map_err(std::io::Error::other)
+        let records = self.records.read().await;
+        storage.save_peers_reputation(&records).await.map_err(std::io::Error::other)
     }
 
-    /// Load reputation data from persistent storage
     pub async fn load_from_storage(&self, storage: &impl PeerStorage) -> std::io::Result<()> {
         let data = storage.load_peers_reputation().await.map_err(std::io::Error::other)?;
-
-        let mut reputations = self.reputations.write().await;
-        let mut loaded_count = 0;
-        let mut skipped_count = 0;
-
-        for (addr, mut reputation) in data {
-            // Validate successful connections don't exceed attempts
-            reputation.successful_connections =
-                reputation.successful_connections.min(reputation.connection_attempts);
-
-            // Skip entry if data appears corrupted
-            if reputation.positive_actions > MAX_ACTION_COUNT
-                || reputation.negative_actions > MAX_ACTION_COUNT
-            {
-                tracing::warn!("Skipping peer {} with potentially corrupted action counts", addr);
-                skipped_count += 1;
-                continue;
-            }
-
-            // Apply initial decay based on ban count
-            if reputation.ban_count > 0 {
-                reputation.score = reputation.score.max(50); // Start with higher score for previously banned peers
-            }
-
-            reputations.insert(addr, reputation);
-            loaded_count += 1;
-        }
-
-        tracing::info!(
-            "Loaded reputation data for {} peers (skipped {} corrupted entries)",
-            loaded_count,
-            skipped_count
-        );
+        let mut records = self.records.write().await;
+        *records = data;
+        tracing::info!("Loaded reputation data for {} peers", records.len());
         Ok(())
-    }
-}
-
-/// Helper trait for reputation-aware peer selection
-pub trait ReputationAware {
-    /// Select best peers based on reputation
-    fn select_best_peers(
-        &self,
-        available_peers: Vec<AddrV2Message>,
-        count: usize,
-    ) -> impl std::future::Future<Output = Vec<SocketAddr>> + Send;
-
-    /// Check if we should connect to a peer based on reputation
-    fn should_connect_to_peer(
-        &self,
-        peer: &SocketAddr,
-    ) -> impl std::future::Future<Output = bool> + Send;
-}
-
-impl ReputationAware for PeerReputationManager {
-    async fn select_best_peers(
-        &self,
-        available_peers: Vec<AddrV2Message>,
-        count: usize,
-    ) -> Vec<SocketAddr> {
-        let mut peer_scores = Vec::new();
-        let mut reputations = self.reputations.write().await;
-
-        for peer in available_peers {
-            let Ok(socket_addr) = peer.socket_addr() else {
-                tracing::warn!("Skip invalid peer address: {:?}", peer);
-                continue;
-            };
-
-            let reputation = reputations.entry(socket_addr).or_default();
-            reputation.apply_decay();
-
-            if !reputation.is_banned() {
-                peer_scores.push((socket_addr, reputation.score));
-            }
-        }
-
-        // Sort by score (lower is better)
-        peer_scores.sort_by_key(|(_, score)| *score);
-
-        // Return the best peers
-        peer_scores.into_iter().take(count).map(|(peer, _)| peer).collect()
-    }
-
-    async fn should_connect_to_peer(&self, peer: &SocketAddr) -> bool {
-        !self.is_banned(peer).await
     }
 }
 

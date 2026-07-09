@@ -1,13 +1,46 @@
 //! Peer pool for managing multiple peer connections
 
-use crate::error::{NetworkError, SpvError as Error};
+use crate::error::{NetworkError, NetworkResult, SpvError as Error};
 use crate::network::peer::Peer;
 use dashcore::network::constants::ServiceFlags;
+use dashcore::network::message::NetworkMessage;
 use dashcore::prelude::CoreBlockHeight;
 use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::RwLock;
+
+/// Whether a message is a request that expects a response from the peer.
+fn is_request(message: &NetworkMessage) -> bool {
+    matches!(
+        message,
+        NetworkMessage::GetHeaders(_)
+            | NetworkMessage::GetHeaders2(_)
+            | NetworkMessage::GetCFHeaders(_)
+            | NetworkMessage::GetCFilters(_)
+            | NetworkMessage::GetData(_)
+            | NetworkMessage::GetMnListD(_)
+            | NetworkMessage::GetQRInfo(_)
+            | NetworkMessage::MemPool
+    )
+}
+
+/// Service flags a message requires from a peer, and whether they are mandatory.
+fn required_service(message: &NetworkMessage) -> Option<(ServiceFlags, bool)> {
+    match message {
+        NetworkMessage::FilterLoad(_) | NetworkMessage::FilterClear | NetworkMessage::MemPool => {
+            Some((ServiceFlags::BLOOM, true))
+        }
+        NetworkMessage::GetCFHeaders(_) | NetworkMessage::GetCFilters(_) => {
+            Some((ServiceFlags::COMPACT_FILTERS, true))
+        }
+        NetworkMessage::GetHeaders(_) | NetworkMessage::GetHeaders2(_) => {
+            Some((ServiceFlags::NODE_HEADERS_COMPRESSED, false))
+        }
+        _ => None,
+    }
+}
 
 /// Pool for managing multiple peer instances
 pub struct PeerPool {
@@ -156,20 +189,6 @@ impl PeerPool {
         }
     }
 
-    /// Find the first connected peer that advertises the given service flags.
-    pub(crate) async fn peer_with_service(
-        &self,
-        flags: ServiceFlags,
-    ) -> Option<(SocketAddr, Arc<RwLock<Peer>>)> {
-        let peers = self.peers.read().await;
-        for (addr, peer) in peers.iter() {
-            if peer.read().await.has_service(flags) {
-                return Some((*addr, Arc::clone(peer)));
-            }
-        }
-        None
-    }
-
     /// Collect all connected peers that advertise the given service flags.
     pub(crate) async fn peers_with_service(
         &self,
@@ -194,6 +213,119 @@ impl PeerPool {
             }
         }
         false
+    }
+
+    /// Send a message to the best-scoring peer able to serve it, returning the
+    /// address it was sent to.
+    ///
+    /// The pool owns peer selection: callers never hold a `Peer`. It picks the
+    /// probed peer with the best response-time bucket (breaking ties by lowest
+    /// median RTT), so a slow, stalling or still-unprobed peer is skipped. Sync
+    /// requests stay on a single fast peer, which the filter pipeline processes
+    /// faster than interleaved responses from several peers.
+    pub(crate) async fn send(&self, message: NetworkMessage) -> NetworkResult<SocketAddr> {
+        let candidates = match required_service(&message) {
+            Some((flags, must_have)) => {
+                let matching = self.peers_with_service(flags).await;
+                if matching.is_empty() {
+                    if must_have {
+                        return Err(NetworkError::ProtocolError(format!(
+                            "No peers support {}",
+                            flags
+                        )));
+                    }
+                    self.get_all_peers().await
+                } else {
+                    matching
+                }
+            }
+            None => self.get_all_peers().await,
+        };
+
+        let (addr, peer) = self
+            .select_best(&candidates)
+            .await
+            .ok_or_else(|| NetworkError::ConnectionFailed("No connected peers".to_string()))?;
+
+        Self::send_on_peer(&addr, &peer, message).await?;
+        Ok(addr)
+    }
+
+    /// Send a message to a specific peer. Errors if the peer is gone so the
+    /// caller can fall back to `send`.
+    pub(crate) async fn send_to(
+        &self,
+        addr: SocketAddr,
+        message: NetworkMessage,
+    ) -> NetworkResult<()> {
+        let peer = self.get_peer(&addr).await.ok_or_else(|| {
+            NetworkError::ConnectionFailed(format!("Peer {} not connected", addr))
+        })?;
+        Self::send_on_peer(&addr, &peer, message).await
+    }
+
+    /// Pick the best peer: once any peer has a latency sample, only probed peers
+    /// are eligible (a still-unprobed or silent peer is skipped); among those it
+    /// takes the highest quality (latency score × behaviour multiplier), breaking
+    /// ties by lowest median RTT.
+    async fn select_best(
+        &self,
+        candidates: &[(SocketAddr, Arc<RwLock<Peer>>)],
+    ) -> Option<(SocketAddr, Arc<RwLock<Peer>>)> {
+        if candidates.is_empty() {
+            return None;
+        }
+        let mut entries = Vec::with_capacity(candidates.len());
+        for (addr, peer) in candidates {
+            let (probed, stalling, quality, median) = {
+                let guard = peer.read().await;
+                (
+                    guard.median_rtt().is_some(),
+                    guard.is_stalling(),
+                    guard.quality(),
+                    guard.median_rtt(),
+                )
+            };
+            entries.push((
+                *addr,
+                peer.clone(),
+                probed,
+                stalling,
+                quality,
+                median.unwrap_or(Duration::MAX),
+            ));
+        }
+
+        // Prefer non-stalling, probed peers; fall back only if none qualify so a
+        // single (even stalling) peer still gets used rather than stalling forever.
+        let any_probed = entries.iter().any(|e| e.2);
+        let any_live = entries.iter().any(|e| (!any_probed || e.2) && !e.3);
+        entries
+            .into_iter()
+            .filter(|e| (!any_probed || e.2) && (!any_live || !e.3))
+            .max_by(|a, b| a.4.total_cmp(&b.4).then_with(|| b.5.cmp(&a.5)))
+            .map(|(addr, peer, ..)| (addr, peer))
+    }
+
+    async fn send_on_peer(
+        addr: &SocketAddr,
+        peer: &Arc<RwLock<Peer>>,
+        message: NetworkMessage,
+    ) -> NetworkResult<()> {
+        let mut guard = peer.write().await;
+        let message = match message {
+            NetworkMessage::GetHeaders(h) if guard.can_request_headers2() => {
+                NetworkMessage::GetHeaders2(h)
+            }
+            other => other,
+        };
+        if is_request(&message) {
+            guard.note_request_sent();
+        }
+        guard
+            .send_message(message)
+            .await
+            .map_err(|e| NetworkError::ProtocolError(format!("Failed to send to {}: {}", addr, e)))
     }
 
     /// Check if we need more peers
@@ -247,6 +379,14 @@ impl PeerPool {
         peer.set_services(flags);
         self.peers.write().await.insert(addr, Arc::new(RwLock::new(peer)));
     }
+
+    async fn insert_peer_with_rtts(&self, addr: SocketAddr, rtts: &[u64]) {
+        let mut peer = Peer::dummy(addr);
+        for &ms in rtts {
+            peer.record_rtt(std::time::Duration::from_millis(ms));
+        }
+        self.peers.write().await.insert(addr, Arc::new(RwLock::new(peer)));
+    }
 }
 
 #[cfg(test)]
@@ -270,19 +410,57 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_select_skips_slow_peer() {
+        let pool = PeerPool::new(8);
+        let fast: SocketAddr = "127.0.0.1:2001".parse().unwrap();
+        let slow: SocketAddr = "127.0.0.1:2002".parse().unwrap();
+        pool.insert_peer_with_rtts(fast, &[20, 30, 40]).await;
+        pool.insert_peer_with_rtts(slow, &[900, 800]).await;
+
+        let candidates = pool.get_all_peers().await;
+        let (addr, _) = pool.select_best(&candidates).await.unwrap();
+        assert_eq!(addr, fast);
+    }
+
+    #[tokio::test]
+    async fn test_select_breaks_ties_by_median() {
+        let pool = PeerPool::new(8);
+        let quick: SocketAddr = "127.0.0.1:2003".parse().unwrap();
+        let quicker: SocketAddr = "127.0.0.1:2004".parse().unwrap();
+        // Same worst-bucket score (4), so the lower median wins.
+        pool.insert_peer_with_rtts(quick, &[40, 45]).await;
+        pool.insert_peer_with_rtts(quicker, &[5, 10]).await;
+
+        let candidates = pool.get_all_peers().await;
+        let (addr, _) = pool.select_best(&candidates).await.unwrap();
+        assert_eq!(addr, quicker);
+    }
+
+    #[tokio::test]
+    async fn test_select_prefers_probed_over_unprobed() {
+        let pool = PeerPool::new(8);
+        let probed: SocketAddr = "127.0.0.1:2005".parse().unwrap();
+        let unprobed: SocketAddr = "127.0.0.1:2006".parse().unwrap();
+        pool.insert_peer_with_rtts(probed, &[30]).await;
+        pool.insert_peer_with_rtts(unprobed, &[]).await;
+
+        let candidates = pool.get_all_peers().await;
+        let (addr, _) = pool.select_best(&candidates).await.unwrap();
+        assert_eq!(addr, probed);
+    }
+
+    #[tokio::test]
     async fn test_service_lookup() {
         let pool = PeerPool::new(8);
         let compact_filters = ServiceFlags::COMPACT_FILTERS;
         let combined = compact_filters | ServiceFlags::NODE_HEADERS_COMPRESSED;
 
         // No matches on empty pool
-        assert!(pool.peer_with_service(compact_filters).await.is_none());
         assert!(pool.peers_with_service(compact_filters).await.is_empty());
 
         // No matches when peers lack the requested flag
         let addr1: SocketAddr = "127.0.0.1:1001".parse().unwrap();
         pool.insert_peer_with_services(addr1, ServiceFlags::NETWORK).await;
-        assert!(pool.peer_with_service(compact_filters).await.is_none());
         assert!(pool.peers_with_service(compact_filters).await.is_empty());
 
         // Single-flag lookup returns matching peers
@@ -291,10 +469,6 @@ mod tests {
         pool.insert_peer_with_services(addr2, ServiceFlags::NETWORK | compact_filters).await;
         pool.insert_peer_with_services(addr3, ServiceFlags::NETWORK | combined).await;
 
-        let (found_addr, found_peer) = pool.peer_with_service(compact_filters).await.unwrap();
-        assert!(found_addr == addr2 || found_addr == addr3);
-        assert!(found_peer.read().await.has_service(compact_filters));
-
         let filter_peers: HashMap<SocketAddr, _> =
             pool.peers_with_service(compact_filters).await.into_iter().collect();
         assert_eq!(filter_peers.len(), 2);
@@ -302,14 +476,11 @@ mod tests {
         assert!(filter_peers.contains_key(&addr3));
 
         // Combined flags require all bits present
-        let (found_addr, _) = pool.peer_with_service(combined).await.unwrap();
-        assert_eq!(found_addr, addr3);
         let combined_peers = pool.peers_with_service(combined).await;
         assert_eq!(combined_peers.len(), 1);
         assert_eq!(combined_peers[0].0, addr3);
 
         // NONE matches every peer in the pool
-        assert!(pool.peer_with_service(ServiceFlags::NONE).await.is_some());
         let all = pool.peers_with_service(ServiceFlags::NONE).await;
         assert_eq!(all.len(), 3);
     }
