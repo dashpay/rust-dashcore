@@ -7,23 +7,22 @@ mod tests {
     use super::super::*;
     use std::net::SocketAddr;
 
+    async fn score(manager: &PeerReputationManager, peer: &SocketAddr) -> i32 {
+        manager.get_all_reputations().await.get(peer).map_or(0, |rep| rep.score)
+    }
+
     #[tokio::test]
     async fn test_basic_reputation_operations() {
         let manager = PeerReputationManager::new();
         let peer: SocketAddr = "127.0.0.1:8333".parse().unwrap();
 
-        // Initial score should be 0
-        assert_eq!(manager.get_score(&peer).await, 0);
+        assert_eq!(score(&manager, &peer).await, 0);
 
-        // Test misbehavior
-        manager
-            .update_reputation(peer, misbehavior_scores::INVALID_MESSAGE, "Test invalid message")
-            .await;
-        assert_eq!(manager.get_score(&peer).await, 10);
+        manager.update_reputation(peer, ChangeReason::HandshakeFailed).await;
+        assert_eq!(score(&manager, &peer).await, 10);
 
-        // Test positive behavior
-        manager.update_reputation(peer, positive_scores::VALID_HEADERS, "Test valid headers").await;
-        assert_eq!(manager.get_score(&peer).await, 5);
+        manager.update_reputation(peer, ChangeReason::LongUptime).await;
+        assert_eq!(score(&manager, &peer).await, 5);
     }
 
     #[tokio::test]
@@ -31,17 +30,9 @@ mod tests {
         let manager = PeerReputationManager::new();
         let peer: SocketAddr = "192.168.1.1:8333".parse().unwrap();
 
-        // Accumulate misbehavior
+        // Banned on the 10th violation (10 * 10 = 100).
         for i in 0..10 {
-            let banned = manager
-                .update_reputation(
-                    peer,
-                    misbehavior_scores::INVALID_MESSAGE,
-                    &format!("Violation {}", i),
-                )
-                .await;
-
-            // Should be banned on the 10th violation (total score = 100)
+            let banned = manager.update_reputation(peer, ChangeReason::HandshakeFailed).await;
             if i == 9 {
                 assert!(banned);
             } else {
@@ -58,11 +49,10 @@ mod tests {
         let peer1: SocketAddr = "10.0.0.1:8333".parse().unwrap();
         let peer2: SocketAddr = "10.0.0.2:8333".parse().unwrap();
 
-        // Set reputations
-        manager.update_reputation(peer1, -10, "Good peer").await;
-        manager.update_reputation(peer2, 50, "Bad peer").await;
+        manager.update_reputation(peer1, ChangeReason::LongUptime).await;
+        manager.update_reputation(peer1, ChangeReason::LongUptime).await;
+        manager.update_reputation(peer2, ChangeReason::InvalidTransactionInBlock).await;
 
-        // Save and load
         let temp_dir = tempfile::TempDir::new().unwrap();
         let peer_storage = PersistentPeerStorage::open(temp_dir.path())
             .await
@@ -72,9 +62,8 @@ mod tests {
         let new_manager = PeerReputationManager::new();
         new_manager.load_from_storage(&peer_storage).await.unwrap();
 
-        // Verify scores were preserved
-        assert_eq!(new_manager.get_score(&peer1).await, -10);
-        assert_eq!(new_manager.get_score(&peer2).await, 50);
+        assert_eq!(score(&new_manager, &peer1).await, -10);
+        assert_eq!(score(&new_manager, &peer2).await, 20);
     }
 
     #[tokio::test]
@@ -85,15 +74,17 @@ mod tests {
         let neutral_peer = AddrV2Message::dummy(0, "2.2.2.2".parse().unwrap(), 8333);
         let bad_peer = AddrV2Message::dummy(0, "3.3.3.3".parse().unwrap(), 8333);
 
-        // Set different reputations
-        manager.update_reputation(good_peer.socket_addr().unwrap(), -20, "Very good").await;
-        manager.update_reputation(bad_peer.socket_addr().unwrap(), 80, "Very bad").await;
-        // neutral_peer has default score of 0
+        manager.update_reputation(good_peer.socket_addr().unwrap(), ChangeReason::LongUptime).await;
+        manager
+            .update_reputation(
+                bad_peer.socket_addr().unwrap(),
+                ChangeReason::InvalidTransactionInBlock,
+            )
+            .await;
 
         let all_peers = vec![good_peer.clone(), neutral_peer.clone(), bad_peer.clone()];
         let selected = manager.select_best_peers(all_peers, 2).await;
 
-        // Should select good_peer first, then neutral_peer
         assert_eq!(selected.len(), 2);
         assert_eq!(selected[0], good_peer.socket_addr().unwrap());
         assert_eq!(selected[1], neutral_peer.socket_addr().unwrap());

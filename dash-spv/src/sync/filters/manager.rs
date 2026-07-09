@@ -7,7 +7,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
 
-use dashcore::bip158::BlockFilter;
+use dashcore::bip158::{BlockFilter, FilterQuery};
 use dashcore::ScriptBuf;
 
 use super::batch::FiltersBatch;
@@ -791,6 +791,14 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
             wallet_states.iter().flat_map(|(_, _, scripts)| scripts.iter().cloned()).collect();
         let min_synced = wallet_states.iter().map(|(_, synced, _)| *synced).min().unwrap_or(0);
 
+        // Pre-group each wallet's scripts by length once; reused across every matched filter.
+        let wallet_queries: Vec<(WalletId, u32, FilterQuery)> = wallet_states
+            .iter()
+            .map(|(id, synced, scripts)| {
+                (*id, *synced, scripts.iter().map(|s| s.as_bytes()).collect())
+            })
+            .collect();
+
         let block_to_wallets = {
             let Some(batch) = self.active_batches.get(&batch_start) else {
                 return Ok(events);
@@ -810,13 +818,11 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
                     );
                     continue;
                 };
-                for (wallet_id, wallet_synced, scripts) in &wallet_states {
+                for (wallet_id, wallet_synced, query) in &wallet_queries {
                     if key.height() <= *wallet_synced {
                         continue;
                     }
-                    let matched = match filter
-                        .match_any(key.hash(), scripts.iter().map(|s| s.as_bytes()))
-                    {
+                    let matched = match filter.match_any(key.hash(), query) {
                         Ok(matched) => matched,
                         Err(e) => {
                             tracing::warn!(

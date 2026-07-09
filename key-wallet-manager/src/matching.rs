@@ -1,4 +1,4 @@
-use dashcore::bip158::BlockFilter;
+use dashcore::bip158::{BlockFilter, FilterQuery};
 use dashcore::prelude::CoreBlockHeight;
 use dashcore::{BlockHash, ScriptBuf};
 #[cfg(feature = "parallel-filters")]
@@ -36,11 +36,13 @@ pub fn check_compact_filters_for_script_pubkeys(
     script_pubkeys: &[ScriptBuf],
     min_height: CoreBlockHeight,
 ) -> BTreeSet<FilterMatchKey> {
+    // Group the scripts by length once; the same query is reused across every filter.
+    let query: FilterQuery = script_pubkeys.iter().map(|s| s.as_bytes()).collect();
     let match_filter = |(key, filter): (&FilterMatchKey, &BlockFilter)| {
         if key.height() <= min_height {
             return None;
         }
-        match filter.match_any(key.hash(), script_pubkeys.iter().map(|s| s.as_bytes())) {
+        match filter.match_any(key.hash(), &query) {
             Ok(true) => Some(key.clone()),
             Ok(false) => None,
             Err(e) => {

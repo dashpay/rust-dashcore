@@ -9,7 +9,7 @@ pub mod manager;
 mod message_dispatcher;
 pub mod peer;
 pub mod pool;
-pub mod reputation;
+mod reputation;
 
 mod message_type;
 #[cfg(test)]
@@ -35,6 +35,7 @@ pub use manager::PeerNetworkManager;
 pub use message_dispatcher::{Message, MessageDispatcher};
 pub use message_type::MessageType;
 pub use peer::Peer;
+pub(crate) use reputation::PeerReputation;
 use std::net::SocketAddr;
 use tokio::sync::mpsc::UnboundedReceiver;
 
