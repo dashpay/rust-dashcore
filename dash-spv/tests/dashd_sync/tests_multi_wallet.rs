@@ -727,3 +727,66 @@ async fn test_force_resync_rebuilds_and_keeps_syncing() {
 
     client_handle.stop().await;
 }
+
+/// Checkpoint anchoring and re-anchoring against a real node. Regtest ships no checkpoints, so
+/// the test injects two built from the running chain. A wallet born above the higher checkpoint
+/// anchors the client there and syncs forward from mid-chain (the path mock unit tests can't
+/// cover). Adding a wallet below that anchor makes a resync necessary, and `force_resync`
+/// re-anchors at the next checkpoint down and re-syncs from there.
+#[tokio::test]
+async fn test_checkpoint_anchoring_and_reanchor_to_lower_checkpoint() {
+    let Some(ctx) = TestContext::new(TestChain::Minimal).await else {
+        return;
+    };
+
+    let initial_height = ctx.dashd.initial_height;
+
+    // Two checkpoints below the tip, built from the real chain so forward sync connects to them.
+    let checkpoints = vec![ctx.dashd.node.checkpoint_at(50), ctx.dashd.node.checkpoint_at(100)];
+    let config = ctx.client_config.clone().with_checkpoints(checkpoints);
+
+    // A single wallet born above the higher checkpoint, so the client anchors at height 100.
+    let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new(Network::Regtest)));
+    wallet
+        .write()
+        .await
+        .create_wallet_from_mnemonic(EMPTY_MNEMONIC, 150, default_test_account_options())
+        .expect("first wallet creation must succeed");
+
+    let mut client_handle = create_and_start_client(&config, Arc::clone(&wallet)).await;
+    wait_for_sync(&mut client_handle.progress_receiver, initial_height).await;
+
+    // Anchored at the 100 checkpoint rather than genesis, proving checkpoint sync works against a
+    // real node, and no resync is needed while the only wallet is above the anchor.
+    assert_eq!(
+        client_handle.client.start_height().await,
+        Some(100),
+        "client should anchor at the 100 checkpoint",
+    );
+    assert!(!client_handle.client.resync_needed().await);
+
+    // A wallet born below the anchor cannot have its earlier history scanned without
+    // re-anchoring lower, so a resync becomes necessary.
+    wallet
+        .write()
+        .await
+        .create_wallet_from_mnemonic(SECONDARY_MNEMONIC, 60, default_test_account_options())
+        .expect("second wallet creation must succeed");
+    assert!(
+        client_handle.client.resync_needed().await,
+        "a wallet born at 60 sits below the 100 anchor",
+    );
+
+    // Re-anchor to the next checkpoint down (50, the nearest at or below birth 60) and re-sync
+    // from there against the node.
+    client_handle.client.force_resync().await.expect("force resync must succeed");
+    wait_for_sync(&mut client_handle.progress_receiver, initial_height).await;
+    assert_eq!(
+        client_handle.client.start_height().await,
+        Some(50),
+        "force_resync should re-anchor at the 50 checkpoint",
+    );
+    assert!(!client_handle.client.resync_needed().await);
+
+    client_handle.stop().await;
+}

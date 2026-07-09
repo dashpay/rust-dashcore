@@ -9,7 +9,6 @@
 //! - Wallet data loading
 
 use super::{ClientConfig, DashSpvClient, EventHandler};
-use crate::chain::checkpoints::CheckpointManager;
 use crate::error::{Result, SpvError};
 use crate::network::NetworkManager;
 use crate::storage::{
@@ -133,7 +132,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
             W,
         > = Managers::default();
 
-        let checkpoint_manager = Arc::new(CheckpointManager::for_network(config.network));
+        let checkpoint_manager = Arc::new(config.checkpoint_manager());
         managers.block_headers = Some(
             BlockHeadersManager::new(
                 storage.block_headers(),
@@ -376,7 +375,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
 
         // Check if we should use a checkpoint instead of genesis
         if let Some(start_height) = start_from_height {
-            let checkpoint_manager = CheckpointManager::for_network(config.network);
+            let checkpoint_manager = config.checkpoint_manager();
 
             // Find the best checkpoint at or before the requested height
             if let Some(checkpoint) = checkpoint_manager.last_checkpoint_before_height(start_height)

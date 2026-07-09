@@ -3,8 +3,11 @@
 //! This provides utilities for managing a dashd instance and loading test wallet data.
 
 use dashcore::{Address, Amount, BlockHash, Transaction, Txid};
+use dashcore_hashes::Hash;
 use dashcore_rpc::json as rpc_json;
 use dashcore_rpc::{Auth, Client, RpcApi};
+
+use crate::chain::Checkpoint;
 use serde::Deserialize;
 use serde_json::{Map, Value};
 use std::collections::HashMap;
@@ -475,6 +478,29 @@ impl DashCoreNode {
     pub fn get_best_block_hash(&self) -> BlockHash {
         let client = self.rpc_client();
         client.get_best_block_hash().expect("getbestblockhash failed")
+    }
+
+    /// Build a real [`Checkpoint`] from the block at `height` on this node, so a test can anchor
+    /// a client at a checkpoint on regtest, which ships none. The block hash is the actual one
+    /// so forward sync from `height + 1` connects, and `bits`/`time` come from the real header
+    /// so difficulty validation of later headers passes. `chain_work` is a placeholder since it
+    /// is not consumed by the anchoring path.
+    pub fn checkpoint_at(&self, height: u32) -> Checkpoint {
+        let client = self.rpc_client();
+        let block_hash = client.get_block_hash(height).expect("getblockhash failed");
+        let header = client.get_block_header(&block_hash).expect("getblockheader failed");
+        Checkpoint {
+            height,
+            block_hash,
+            prev_blockhash: header.prev_blockhash,
+            timestamp: header.time,
+            target: header.target(),
+            merkle_root: Some(BlockHash::from_byte_array(header.merkle_root.to_byte_array())),
+            chain_work: format!("0x{:064x}", height.wrapping_mul(1000)),
+            masternode_list_name: None,
+            protocol_version: None,
+            nonce: header.nonce,
+        }
     }
 
     /// Call getblocktemplate to trigger CreateNewBlock (includes quorum commitments).
