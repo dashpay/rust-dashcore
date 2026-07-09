@@ -53,13 +53,21 @@ mod tests {
     const TEST_MNEMONIC: &str =
         "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
 
-    /// Construct a mainnet client with the given wallet birth height and optional
-    /// explicit `start_from_height`, then return the height and hash its chain is
-    /// anchored at.
-    async fn anchored_tip(
+    const SECOND_MNEMONIC: &str =
+        "legal winner thank year wave sausage worth useful legal winner thank yellow";
+
+    /// Construct a mainnet client seeded with a single wallet at `birth_height` and an
+    /// optional explicit `start_from_height`. Returns the client, its shared wallet manager,
+    /// and the storage `TempDir` guard, which the caller must keep alive for the client's
+    /// storage to remain valid.
+    async fn build_test_client(
         birth_height: u32,
         start_from_height: Option<u32>,
-    ) -> (u32, Option<dashcore::BlockHash>) {
+    ) -> (
+        DashSpvClient<WalletManager<ManagedWalletInfo>, MockNetworkManager, DiskStorageManager>,
+        Arc<RwLock<WalletManager<ManagedWalletInfo>>>,
+        TempDir,
+    ) {
         let mut wallet_manager = WalletManager::<ManagedWalletInfo>::new(Network::Mainnet);
         wallet_manager
             .create_wallet_from_mnemonic(
@@ -82,11 +90,21 @@ mod tests {
             config,
             MockNetworkManager::new(),
             storage,
-            wallet,
+            wallet.clone(),
             vec![Arc::new(())],
         )
         .await
         .expect("client construction must succeed");
+        (client, wallet, temp_dir)
+    }
+
+    /// Return the height and hash a client's chain is anchored at for the given wallet birth
+    /// height and optional explicit `start_from_height`.
+    async fn anchored_tip(
+        birth_height: u32,
+        start_from_height: Option<u32>,
+    ) -> (u32, Option<dashcore::BlockHash>) {
+        let (client, _wallet, _temp_dir) = build_test_client(birth_height, start_from_height).await;
         (client.tip_height().await, client.tip_hash().await)
     }
 
@@ -113,6 +131,35 @@ mod tests {
         // Explicit `start_from_height` wins over the wallet birth height and is honored
         // even below the floor.
         assert_eq!(anchored_tip(120_000, Some(60_000)).await.0, 50_000);
+    }
+
+    #[tokio::test]
+    async fn force_resync_reanchors_to_lower_birth_wallet() {
+        // A client whose only wallet is born at 120_000 anchors at the 100_000 checkpoint.
+        let (client, wallet, _temp_dir) = build_test_client(120_000, None).await;
+
+        assert_eq!(client.tip_height().await, 100_000);
+        assert!(!client.resync_needed().await);
+
+        // Add a wallet born below the current anchor. Nothing re-anchors on its own, so the
+        // stored chain still starts at 100_000 and a resync is now required.
+        wallet
+            .write()
+            .await
+            .create_wallet_from_mnemonic(
+                SECOND_MNEMONIC,
+                60_000,
+                WalletAccountCreationOptions::Default,
+            )
+            .expect("second wallet creation must succeed");
+        assert!(client.resync_needed().await);
+        assert_eq!(client.tip_height().await, 100_000);
+
+        // Forcing a resync wipes the old anchor and re-anchors at the 50_000 checkpoint, the
+        // nearest at or below the new minimum birth height.
+        client.force_resync().await.expect("force resync must succeed");
+        assert_eq!(client.tip_height().await, 50_000);
+        assert!(!client.resync_needed().await);
     }
 
     #[tokio::test]

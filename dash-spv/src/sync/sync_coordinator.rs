@@ -147,8 +147,8 @@ where
     M: MetadataStorage,
     W: WalletInterface + 'static,
 {
-    /// Create a new coordinator with the given config.
-    pub(crate) async fn new(managers: Managers<H, FH, F, B, M, W>) -> Self {
+    /// Aggregate the starting progress across every present manager.
+    fn seed_initial_progress(managers: &Managers<H, FH, F, B, M, W>) -> SyncProgress {
         let mut initial_progress = SyncProgress::default();
 
         try_update_progress(managers.block_headers.as_ref(), &mut initial_progress);
@@ -159,6 +159,13 @@ where
         try_update_progress(managers.chainlock.as_ref(), &mut initial_progress);
         try_update_progress(managers.instantsend.as_ref(), &mut initial_progress);
         try_update_progress(managers.mempool.as_ref(), &mut initial_progress);
+
+        initial_progress
+    }
+
+    /// Create a new coordinator with the given config.
+    pub(crate) async fn new(managers: Managers<H, FH, F, B, M, W>) -> Self {
+        let initial_progress = Self::seed_initial_progress(&managers);
 
         tracing::info!("Initial sync progress {}", initial_progress.clone());
 
@@ -175,6 +182,23 @@ where
             shutdown: CancellationToken::new(),
             progress_task: None,
         }
+    }
+
+    /// Reset the coordinator for a fresh sync against rebuilt managers, keeping the progress
+    /// and sync-event senders so existing subscribers stay connected across the restart.
+    ///
+    /// Call after `shutdown` has drained the previous tasks, then `start` respawns against the
+    /// new managers. Replacing the whole coordinator instead would drop these senders and
+    /// silently orphan every subscriber (progress and event streams would freeze).
+    pub(crate) fn reset(&mut self, managers: Managers<H, FH, F, B, M, W>) {
+        let initial_progress = Self::seed_initial_progress(&managers);
+
+        self.managers = managers;
+        self.progress_receivers.clear();
+        self.shutdown = CancellationToken::new();
+        self.sync_start_time = None;
+        self.progress_task = None;
+        self.progress_sender.send_replace(initial_progress);
     }
 
     /// Subscribe to progress updates.

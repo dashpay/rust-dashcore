@@ -878,6 +878,12 @@ impl PeerNetworkManager {
                     }
                 }
             }
+
+            // Return the receiver to the shared slot so a later `connect` can take it again.
+            // The channel and the `request_tx` clones managers hold are never rebuilt, so a
+            // restart reuses the same channel and every previously handed-out sender stays
+            // valid.
+            *this.request_rx.lock().await = Some(request_rx);
         });
     }
 
@@ -1338,6 +1344,10 @@ impl PeerNetworkManager {
         for addr in self.pool.get_connected_addresses().await {
             self.pool.remove_peer(&addr).await;
         }
+
+        // `remove_peer` above bypasses the counter maintained on the notify path, so zero it
+        // explicitly here to leave a clean count for any later reconnect.
+        self.connected_peer_count.store(0, Ordering::Relaxed);
     }
 
     async fn record_capability_rejection(&self, addr: SocketAddr) {
@@ -1414,6 +1424,12 @@ impl NetworkManager for PeerNetworkManager {
     }
 
     async fn connect(&mut self) -> NetworkResult<()> {
+        // Re-arm the shutdown token so a reconnect after `disconnect` (which cancelled it)
+        // spawns its tasks against a live token. The request channel is not rebuilt here: the
+        // request processor returns its receiver to the shared slot on shutdown, so `start`
+        // simply takes it again, keeping every manager's request sender valid across
+        // reconnects.
+        self.shutdown_token = CancellationToken::new();
         self.start().await.map_err(|e| NetworkError::ConnectionFailed(e.to_string()))
     }
 

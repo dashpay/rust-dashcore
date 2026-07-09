@@ -209,6 +209,12 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> BlockHeadersManager<H, M> {
                 events.push(SyncEvent::BlockHeaderSyncComplete {
                     tip_height: tip.height(),
                 });
+
+                // A block that lands while we're still catching up can be missed: the peer
+                // only announces a new block when it connects to the tip it believes we
+                // already have, so one mined before we finished syncing is never pushed to
+                // us. Poll our tip once on the sync-completion edge to pull it in directly.
+                requests.request_block_headers(*tip.hash())?;
             }
         }
 

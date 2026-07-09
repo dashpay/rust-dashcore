@@ -653,3 +653,77 @@ async fn test_runtime_add_with_tip_advance_during_rescan() {
 
     client_handle.stop().await;
 }
+
+/// `force_resync` while running tears down sync, wipes chain storage, and rebuilds the
+/// coordinator so the next sync re-anchors from scratch (genesis on regtest, which has no
+/// checkpoints). The client keeps running and re-syncs the full chain, and the
+/// already-synced wallet keeps its per-wallet progress and discovered outputs since wallet
+/// state lives outside chain storage.
+#[tokio::test]
+async fn test_force_resync_rebuilds_and_keeps_syncing() {
+    let Some(ctx) = TestContext::new(TestChain::Minimal).await else {
+        return;
+    };
+    if !ctx.dashd.supports_mining {
+        eprintln!("Skipping test (dashd RPC miner not available)");
+        return;
+    }
+
+    let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new(Network::Regtest)));
+    let mut client_handle = create_and_start_client(&ctx.client_config, Arc::clone(&wallet)).await;
+    wait_for_sync(&mut client_handle.progress_receiver, ctx.dashd.initial_height).await;
+
+    let initial_height = ctx.dashd.initial_height;
+
+    // Add the pre-funded wallet and let it catch up so it has discovered state.
+    let w1_id = {
+        let mut wallet_guard = client_handle.client.wallet().write().await;
+        wallet_guard
+            .create_wallet_from_mnemonic(
+                &ctx.dashd.wallet.mnemonic,
+                0,
+                default_test_account_options(),
+            )
+            .expect("add pre-funded wallet at runtime")
+    };
+    wait_for_wallet_synced(client_handle.client.wallet(), &w1_id, initial_height).await;
+
+    let balance_before = get_spendable_balance(client_handle.client.wallet(), &w1_id).await;
+    let tx_count_before = count_wallet_transactions(client_handle.client.wallet(), &w1_id).await;
+    assert!(tx_count_before > 0, "pre-funded wallet should have transactions before the resync");
+
+    // Wipe chain storage and rebuild the sync managers while running.
+    client_handle.client.force_resync().await.expect("force resync must succeed");
+
+    // Wait on the external progress receiver for the re-sync back to the tip. force_resync
+    // resets the coordinator in place: it re-seeds progress to the genesis anchor (regtest has
+    // no checkpoints) and re-anchors from scratch, so the receiver observably drops from the
+    // pre-resync tip down to genesis and climbs back. Reaching the tip on this receiver proves
+    // both that the re-sync ran and that the progress stream survived the resync rather than
+    // freezing at its pre-resync value.
+    wait_for_sync(&mut client_handle.progress_receiver, initial_height).await;
+
+    // Once fully re-synced and steady, a boundary block mined at the tip must be picked up,
+    // proving the rebuilt client keeps tracking the chain after a resync. Regtest replays the
+    // whole re-sync in milliseconds, so without a pause the block can be mined before dashd
+    // has registered the just-reconnected peer's tip and it never gets announced. Give dashd
+    // that moment, matching the settling a real network provides between blocks.
+    tokio::time::sleep(Duration::from_secs(3)).await;
+    let miner_address = ctx.dashd.node.get_new_address_from_wallet("default");
+    ctx.dashd.node.generate_blocks(1, &miner_address);
+    wait_for_sync(&mut client_handle.progress_receiver, initial_height + 1).await;
+
+    // Wallet state lives outside chain storage, so the resync preserves it.
+    assert_eq!(
+        get_spendable_balance(client_handle.client.wallet(), &w1_id).await,
+        balance_before,
+        "wallet balance must be preserved across force_resync",
+    );
+    assert_eq!(
+        count_wallet_transactions(client_handle.client.wallet(), &w1_id).await,
+        tx_count_before,
+        "wallet transaction count must be preserved across force_resync",
+    );
+
+    client_handle.stop().await;
+}
