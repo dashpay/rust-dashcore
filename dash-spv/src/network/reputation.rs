@@ -14,58 +14,51 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
 
-/// Misbehavior score thresholds for different violations
-pub mod misbehavior_scores {
-    /// Invalid message format or protocol violation
-    pub const INVALID_MESSAGE: i32 = 10;
-
-    /// Invalid block header
-    pub const INVALID_HEADER: i32 = 50;
-
-    /// Invalid compact filter
-    pub const INVALID_FILTER: i32 = 25;
-
-    /// Timeout or slow response
-    pub const TIMEOUT: i32 = 5;
-
-    /// Sending unsolicited data
-    pub const UNSOLICITED_DATA: i32 = 15;
-
-    /// Invalid transaction
-    pub const INVALID_TRANSACTION: i32 = 20;
-
-    /// Invalid masternode list diff
-    pub const INVALID_MASTERNODE_DIFF: i32 = 30;
-
-    /// Invalid ChainLock
-    pub const INVALID_CHAINLOCK: i32 = 40;
-
-    /// Invalid InstantLock
-    pub const INVALID_INSTANTLOCK: i32 = 35;
-
-    /// Duplicate message
-    pub const DUPLICATE_MESSAGE: i32 = 5;
-
-    /// Connection flood attempt
-    pub const CONNECTION_FLOOD: i32 = 20;
+/// Reason for a peer reputation change. Each reason owns its score delta
+/// (positive = penalty, negative = reward) and a human-readable label.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChangeReason {
+    HandshakeFailed,
+    ConnectionFailed,
+    Headers2DecompressionFailed,
+    ReadTimeout,
+    PingFailed,
+    InvalidTransactionInBlock,
+    ManuallyBanned,
+    LongUptime,
 }
 
-/// Positive behavior scores
-pub mod positive_scores {
-    /// Successfully provided valid headers
-    pub const VALID_HEADERS: i32 = -5;
+impl ChangeReason {
+    /// Score delta for this reason: positive for misbehavior (penalty),
+    /// negative for good behavior (reward).
+    pub fn score(&self) -> i32 {
+        match self {
+            ChangeReason::HandshakeFailed => 10,
+            ChangeReason::ConnectionFailed => 2,
+            ChangeReason::Headers2DecompressionFailed => 10,
+            ChangeReason::ReadTimeout => 5,
+            ChangeReason::PingFailed => 5,
+            ChangeReason::InvalidTransactionInBlock => 20,
+            ChangeReason::ManuallyBanned => 100,
+            ChangeReason::LongUptime => -5,
+        }
+    }
+}
 
-    /// Successfully provided valid filters
-    pub const VALID_FILTERS: i32 = -3;
-
-    /// Successfully provided valid block
-    pub const VALID_BLOCK: i32 = -10;
-
-    /// Fast response time
-    pub const FAST_RESPONSE: i32 = -2;
-
-    /// Long uptime connection
-    pub const LONG_UPTIME: i32 = -5;
+impl std::fmt::Display for ChangeReason {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let label = match self {
+            ChangeReason::HandshakeFailed => "Handshake failed",
+            ChangeReason::ConnectionFailed => "Connection failed",
+            ChangeReason::Headers2DecompressionFailed => "Headers2 decompression failed",
+            ChangeReason::ReadTimeout => "Read timeout",
+            ChangeReason::PingFailed => "Ping failed",
+            ChangeReason::InvalidTransactionInBlock => "Invalid transaction type in block",
+            ChangeReason::ManuallyBanned => "Manually banned",
+            ChangeReason::LongUptime => "Long connection uptime",
+        };
+        f.write_str(label)
+    }
 }
 
 /// Ban duration for misbehaving peers
@@ -223,25 +216,10 @@ impl PeerReputation {
     }
 }
 
-/// Reputation change event
-#[derive(Debug, Clone)]
-pub struct ReputationEvent {
-    pub peer: SocketAddr,
-    pub change: i32,
-    pub reason: String,
-    pub timestamp: Instant,
-}
-
 /// Peer reputation manager
 pub struct PeerReputationManager {
     /// Reputation data for each peer
     reputations: Arc<RwLock<HashMap<SocketAddr, PeerReputation>>>,
-
-    /// Recent reputation events for monitoring
-    recent_events: Arc<RwLock<Vec<ReputationEvent>>>,
-
-    /// Maximum number of events to keep
-    max_events: usize,
 }
 
 impl Default for PeerReputationManager {
@@ -255,18 +233,13 @@ impl PeerReputationManager {
     pub fn new() -> Self {
         Self {
             reputations: Arc::new(RwLock::new(HashMap::new())),
-            recent_events: Arc::new(RwLock::new(Vec::new())),
-            max_events: 1000,
         }
     }
 
-    /// Update peer reputation
-    pub async fn update_reputation(
-        &self,
-        peer: SocketAddr,
-        score_change: i32,
-        reason: &str,
-    ) -> bool {
+    /// Update peer reputation by the score delta of `reason`.
+    pub async fn update_reputation(&self, peer: SocketAddr, reason: ChangeReason) -> bool {
+        let score_change = reason.score();
+
         let mut reputations = self.reputations.write().await;
         let reputation = reputations.entry(peer).or_default();
 
@@ -311,30 +284,7 @@ impl PeerReputationManager {
             );
         }
 
-        // Record event
-        let event = ReputationEvent {
-            peer,
-            change: score_change,
-            reason: reason.to_string(),
-            timestamp: Instant::now(),
-        };
-
-        drop(reputations); // Release lock before recording event
-        self.record_event(event).await;
-
         should_ban
-    }
-
-    /// Record a reputation event
-    async fn record_event(&self, event: ReputationEvent) {
-        let mut events = self.recent_events.write().await;
-        events.push(event);
-
-        // Keep only recent events
-        if events.len() > self.max_events {
-            let drain_count = events.len() - self.max_events;
-            events.drain(0..drain_count);
-        }
     }
 
     /// Check if a peer is banned
@@ -346,35 +296,6 @@ impl PeerReputationManager {
         } else {
             false
         }
-    }
-
-    /// Get peer reputation score
-    pub async fn get_score(&self, peer: &SocketAddr) -> i32 {
-        let mut reputations = self.reputations.write().await;
-        if let Some(reputation) = reputations.get_mut(peer) {
-            reputation.apply_decay();
-            reputation.score
-        } else {
-            0
-        }
-    }
-
-    /// Temporarily ban a peer for a specified duration, regardless of score.
-    /// This can be used for critical protocol violations (e.g., invalid ChainLocks).
-    pub async fn temporary_ban_peer(&self, peer: SocketAddr, duration: Duration, reason: &str) {
-        let mut reputations = self.reputations.write().await;
-        let reputation = reputations.entry(peer).or_default();
-
-        reputation.banned_until = Some(Instant::now() + duration);
-        reputation.ban_count += 1;
-
-        tracing::warn!(
-            "Peer {} temporarily banned for {:?} (ban #{}, reason: {})",
-            peer,
-            duration,
-            reputation.ban_count,
-            reason
-        );
     }
 
     /// Record a connection attempt
@@ -404,11 +325,6 @@ impl PeerReputationManager {
         reputations.clone()
     }
 
-    /// Get recent reputation events
-    pub async fn get_recent_events(&self) -> Vec<ReputationEvent> {
-        self.recent_events.read().await.clone()
-    }
-
     /// Clear banned status for a peer (admin function)
     pub async fn unban_peer(&self, peer: &SocketAddr) {
         let mut reputations = self.reputations.write().await;
@@ -417,33 +333,6 @@ impl PeerReputationManager {
             reputation.score = reputation.score.min(MAX_MISBEHAVIOR_SCORE - 10);
             tracing::info!("Manually unbanned peer {}", peer);
         }
-    }
-
-    /// Reset reputation for a peer
-    pub async fn reset_reputation(&self, peer: &SocketAddr) {
-        let mut reputations = self.reputations.write().await;
-        reputations.remove(peer);
-        tracing::info!("Reset reputation for peer {}", peer);
-    }
-
-    /// Get peers sorted by reputation (best first)
-    pub async fn get_peers_by_reputation(&self) -> Vec<(SocketAddr, i32)> {
-        let mut reputations = self.reputations.write().await;
-
-        // Apply decay and collect scores
-        let mut peer_scores: Vec<(SocketAddr, i32)> = reputations
-            .iter_mut()
-            .map(|(addr, rep)| {
-                rep.apply_decay();
-                (*addr, rep.score)
-            })
-            .filter(|(_, score)| *score < MAX_MISBEHAVIOR_SCORE) // Exclude banned peers
-            .collect();
-
-        // Sort by score (lower is better)
-        peer_scores.sort_by_key(|(_, score)| *score);
-
-        peer_scores
     }
 
     /// Save reputation data to persistent storage
