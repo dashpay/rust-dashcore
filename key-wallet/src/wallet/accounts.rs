@@ -18,13 +18,15 @@ impl Wallet {
     /// # Arguments
     /// * `account_type` - The type of account to create
     /// * `account_xpub` - Optional extended public key for the account. If not provided,
-    ///   the account will be derived from the wallet's private key.
-    ///   This will fail if the wallet doesn't have a private key
-    ///   (watch-only wallets or externally managed wallets where
-    ///   the private key is stored securely outside of the SDK).
+    ///   the account is derived from the wallet's in-wallet private key.
     ///
     /// # Returns
     /// Ok(()) if the account was successfully added
+    ///
+    /// # Errors
+    /// Returns [`Error::KeylessWalletRequiresAccountKey`] when `account_xpub` is
+    /// `None` on a keyless wallet (watch-only / external-signable): such wallets
+    /// hold no in-wallet private key, so pass the account's xpub via `Some(..)`.
     pub fn add_account(
         &mut self,
         account_type: AccountType,
@@ -41,8 +43,12 @@ impl Wallet {
             // Derive from wallet's private key
             let derivation_path = account_type.derivation_path(self.network)?;
 
-            // This will fail if the wallet doesn't have a private key (watch-only or externally managed)
-            let root_key = self.root_extended_priv_key()?;
+            let root_key = self.root_extended_priv_key().map_err(|_| {
+                Error::KeylessWalletRequiresAccountKey {
+                    account_type,
+                    required_key: "extended public key (xpub)",
+                }
+            })?;
             let master_key = root_key.to_extended_priv_key(self.network);
             let secp = Secp256k1::new();
             let account_xpriv =
@@ -70,10 +76,14 @@ impl Wallet {
     /// # Arguments
     /// * `account_type` - The type of account (must be ProviderOperatorKeys)
     /// * `bls_seed` - Optional 32-byte seed for BLS key generation. If not provided,
-    ///   the account will be derived from the wallet's private key.
+    ///   the account is derived from the wallet's in-wallet private key.
     ///
     /// # Returns
     /// Ok(()) if the account was successfully added
+    ///
+    /// # Errors
+    /// Returns [`Error::KeylessWalletRequiresAccountKey`] when `bls_seed` is `None`
+    /// on a keyless wallet (watch-only / external-signable): pass the seed via `Some(..)`.
     #[cfg(feature = "bls")]
     pub fn add_bls_account(
         &mut self,
@@ -98,8 +108,12 @@ impl Wallet {
             // Derive from wallet's private key
             let derivation_path = account_type.derivation_path(self.network)?;
 
-            // This will fail if the wallet doesn't have a private key
-            let root_key = self.root_extended_priv_key()?;
+            let root_key = self.root_extended_priv_key().map_err(|_| {
+                Error::KeylessWalletRequiresAccountKey {
+                    account_type,
+                    required_key: "32-byte BLS seed",
+                }
+            })?;
             let master_key = root_key.to_extended_priv_key(self.network);
             let secp = Secp256k1::new();
             let account_xpriv =
@@ -131,10 +145,14 @@ impl Wallet {
     /// # Arguments
     /// * `account_type` - The type of account (must be ProviderPlatformKeys)
     /// * `ed25519_seed` - Optional 32-byte seed for Ed25519 key generation. If not provided,
-    ///   the account will be derived from the wallet's private key.
+    ///   the account is derived from the wallet's in-wallet private key.
     ///
     /// # Returns
     /// Ok(()) if the account was successfully added
+    ///
+    /// # Errors
+    /// Returns [`Error::KeylessWalletRequiresAccountKey`] when `ed25519_seed` is `None`
+    /// on a keyless wallet (watch-only / external-signable): pass the seed via `Some(..)`.
     #[cfg(feature = "eddsa")]
     pub fn add_eddsa_account(
         &mut self,
@@ -159,8 +177,12 @@ impl Wallet {
             // Derive from wallet's private key
             let derivation_path = account_type.derivation_path(self.network)?;
 
-            // This will fail if the wallet doesn't have a private key
-            let root_key = self.root_extended_priv_key()?;
+            let root_key = self.root_extended_priv_key().map_err(|_| {
+                Error::KeylessWalletRequiresAccountKey {
+                    account_type,
+                    required_key: "32-byte Ed25519 seed",
+                }
+            })?;
             let master_key = root_key.to_extended_priv_key(self.network);
             let secp = Secp256k1::new();
             let account_xpriv =

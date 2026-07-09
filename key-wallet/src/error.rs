@@ -41,6 +41,16 @@ pub enum Error {
     WatchOnly,
     /// No key source available for address derivation
     NoKeySource,
+    /// A keyless wallet (watch-only or external-signable) was asked to derive an
+    /// account from an in-wallet private key it does not hold. The caller must
+    /// instead supply the account's key material via the `Some(..)` argument of
+    /// the relevant `add_*account` method.
+    KeylessWalletRequiresAccountKey {
+        /// The account type the caller was trying to add.
+        account_type: crate::account::AccountType,
+        /// What must be supplied instead, e.g. `"extended public key (xpub)"`.
+        required_key: &'static str,
+    },
 }
 
 impl fmt::Display for Error {
@@ -63,6 +73,16 @@ impl fmt::Display for Error {
             Error::InvalidParameter(s) => write!(f, "Invalid parameter: {}", s),
             Error::WatchOnly => write!(f, "Watch-only wallet: private keys not available"),
             Error::NoKeySource => write!(f, "No key source available for address derivation"),
+            Error::KeylessWalletRequiresAccountKey {
+                account_type,
+                required_key,
+            } => write!(
+                f,
+                "Wallet has no in-wallet private key (watch-only / external-signable): cannot \
+                 derive the {} account from a root key. Supply the account's {} via the \
+                 Some(..) argument of the add_*account method.",
+                account_type, required_key
+            ),
         }
     }
 }

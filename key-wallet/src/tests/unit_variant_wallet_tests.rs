@@ -6,6 +6,8 @@
 //! the host to track addresses or route signing requests to an external device.
 
 use crate::account::account_collection::AccountCollection;
+use crate::account::{AccountType, StandardAccountType};
+use crate::error::Error;
 use crate::mnemonic::{Language, Mnemonic};
 use crate::wallet::initialization::WalletAccountCreationOptions;
 use crate::wallet::{Wallet, WalletType};
@@ -159,6 +161,73 @@ fn derive_extended_public_key_error_points_to_per_account_xpub() {
     // Hardened path: the existing "no private key" error shape is preserved.
     let hardened: DerivationPath = "m/44'/1'/0'".parse().unwrap();
     assert!(watch.derive_extended_public_key(&hardened).is_err());
+}
+
+// -------- add_*account(_, None) is actionable on keyless wallets -------
+
+#[test]
+fn add_account_none_on_keyless_wallet_returns_typed_error() {
+    let full = built_full_wallet();
+    let account_type = AccountType::Standard {
+        index: 0,
+        standard_account_type: StandardAccountType::BIP44Account,
+    };
+
+    for mut wallet in [
+        Wallet::new_watch_only(Network::Testnet, full.wallet_id, AccountCollection::new()),
+        Wallet::new_external_signable(Network::Testnet, full.wallet_id, AccountCollection::new()),
+    ] {
+        let err = wallet.add_account(account_type, None).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                Error::KeylessWalletRequiresAccountKey { account_type: at, .. } if at == account_type
+            ),
+            "expected KeylessWalletRequiresAccountKey, got: {err:?}"
+        );
+        // The message must name its own remedy: the Some(..) argument.
+        let msg = err.to_string();
+        assert!(
+            msg.contains("Some(") && msg.contains("private key"),
+            "error should name the Some(..) remedy; got: {msg}"
+        );
+    }
+}
+
+#[cfg(feature = "bls")]
+#[test]
+fn add_bls_account_none_on_keyless_wallet_returns_typed_error() {
+    let full = built_full_wallet();
+    let account_type = AccountType::ProviderOperatorKeys;
+    let mut wallet =
+        Wallet::new_external_signable(Network::Testnet, full.wallet_id, AccountCollection::new());
+
+    let err = wallet.add_bls_account(account_type, None).unwrap_err();
+    assert!(
+        matches!(
+            err,
+            Error::KeylessWalletRequiresAccountKey { account_type: at, .. } if at == account_type
+        ),
+        "expected KeylessWalletRequiresAccountKey, got: {err:?}"
+    );
+}
+
+#[cfg(feature = "eddsa")]
+#[test]
+fn add_eddsa_account_none_on_keyless_wallet_returns_typed_error() {
+    let full = built_full_wallet();
+    let account_type = AccountType::ProviderPlatformKeys;
+    let mut wallet =
+        Wallet::new_watch_only(Network::Testnet, full.wallet_id, AccountCollection::new());
+
+    let err = wallet.add_eddsa_account(account_type, None).unwrap_err();
+    assert!(
+        matches!(
+            err,
+            Error::KeylessWalletRequiresAccountKey { account_type: at, .. } if at == account_type
+        ),
+        "expected KeylessWalletRequiresAccountKey, got: {err:?}"
+    );
 }
 
 // -------- bincode round-trip -------------------------------------------
