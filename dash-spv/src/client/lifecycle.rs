@@ -281,6 +281,19 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
         Ok(())
     }
 
+    /// Resync only if a wallet now sits below the anchored header start, collapsing the
+    /// `resync_needed` check and the `force_resync` action into one call. Returns whether a
+    /// resync actually ran, so a caller that just added wallets can do the whole "rescan the
+    /// older history if I need to" step without polling `resync_needed` itself.
+    pub async fn resync_if_needed(&self) -> Result<bool> {
+        if self.resync_needed().await {
+            self.force_resync().await?;
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
+
     /// Start the SPV client: spawn sync tasks and connect to the network.
     pub(super) async fn start(&self) -> Result<()> {
         if self.is_running() {

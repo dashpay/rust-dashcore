@@ -38,7 +38,7 @@ mod config_test;
 
 #[cfg(test)]
 mod tests {
-    use super::{ClientConfig, DashSpvClient};
+    use super::{ClientConfig, DashSpvClient, EventHandler};
     use crate::client::config::MempoolStrategy;
     use crate::storage::DiskStorageManager;
     use crate::test_utils::MockNetworkManager;
@@ -46,7 +46,9 @@ mod tests {
     use key_wallet::wallet::initialization::WalletAccountCreationOptions;
     use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
     use key_wallet_manager::WalletManager;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
+    use std::time::Duration;
     use tempfile::TempDir;
     use tokio::sync::RwLock;
 
@@ -63,6 +65,20 @@ mod tests {
     async fn build_test_client(
         birth_height: u32,
         start_from_height: Option<u32>,
+    ) -> (
+        DashSpvClient<WalletManager<ManagedWalletInfo>, MockNetworkManager, DiskStorageManager>,
+        Arc<RwLock<WalletManager<ManagedWalletInfo>>>,
+        TempDir,
+    ) {
+        build_test_client_with_handlers(birth_height, start_from_height, vec![Arc::new(())]).await
+    }
+
+    /// Like [`build_test_client`] but installs the given event handlers, so a test can observe
+    /// the client's push notifications.
+    async fn build_test_client_with_handlers(
+        birth_height: u32,
+        start_from_height: Option<u32>,
+        event_handlers: Vec<Arc<dyn EventHandler>>,
     ) -> (
         DashSpvClient<WalletManager<ManagedWalletInfo>, MockNetworkManager, DiskStorageManager>,
         Arc<RwLock<WalletManager<ManagedWalletInfo>>>,
@@ -91,7 +107,7 @@ mod tests {
             MockNetworkManager::new(),
             storage,
             wallet.clone(),
-            vec![Arc::new(())],
+            event_handlers,
         )
         .await
         .expect("client construction must succeed");
@@ -160,6 +176,97 @@ mod tests {
         client.force_resync().await.expect("force resync must succeed");
         assert_eq!(client.tip_height().await, 50_000);
         assert!(!client.resync_needed().await);
+    }
+
+    #[tokio::test]
+    async fn resync_if_needed_runs_only_when_needed() {
+        // Only wallet born at 120_000, anchored at 100_000: no resync is needed, so
+        // `resync_if_needed` is a no-op that reports it did nothing and leaves the anchor.
+        let (client, wallet, _temp_dir) = build_test_client(120_000, None).await;
+        assert_eq!(client.tip_height().await, 100_000);
+        assert!(!client.resync_if_needed().await.expect("resync_if_needed must succeed"));
+        assert_eq!(client.tip_height().await, 100_000);
+
+        // A wallet added below the anchor makes a resync necessary, so now it re-anchors and
+        // reports that it ran.
+        wallet
+            .write()
+            .await
+            .create_wallet_from_mnemonic(
+                SECOND_MNEMONIC,
+                60_000,
+                WalletAccountCreationOptions::Default,
+            )
+            .expect("second wallet creation must succeed");
+        assert!(client.resync_if_needed().await.expect("resync_if_needed must succeed"));
+        assert_eq!(client.tip_height().await, 50_000);
+
+        // Once re-anchored the condition is cleared, so a second call is again a no-op.
+        assert!(!client.resync_if_needed().await.expect("resync_if_needed must succeed"));
+        assert_eq!(client.tip_height().await, 50_000);
+    }
+
+    #[tokio::test]
+    async fn run_loop_signals_resync_needed_on_wallet_add_below_anchor() {
+        // Records how many times the client pushed `on_resync_needed`.
+        struct ResyncRecorder {
+            count: Arc<AtomicUsize>,
+        }
+        impl EventHandler for ResyncRecorder {
+            fn on_resync_needed(&self) {
+                self.count.fetch_add(1, Ordering::SeqCst);
+            }
+        }
+
+        let count = Arc::new(AtomicUsize::new(0));
+        let (client, wallet, _temp_dir) = build_test_client_with_handlers(
+            120_000,
+            None,
+            vec![Arc::new(ResyncRecorder {
+                count: count.clone(),
+            })],
+        )
+        .await;
+        let client = Arc::new(client);
+
+        // Drive the run loop so its periodic resync check runs. The mock network connects
+        // without a real peer, so sync just idles.
+        let run_client = Arc::clone(&client);
+        let run_handle = tokio::spawn(async move { run_client.run().await });
+
+        // Let the loop start and seed its baseline (resync not yet needed) before we change
+        // the wallet set, so adding the wallet is observed as a rising edge.
+        while !client.is_running() {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        assert_eq!(count.load(Ordering::SeqCst), 0);
+
+        // Add a wallet below the anchor: the next periodic check must see the rising edge and
+        // fire the notification exactly once.
+        wallet
+            .write()
+            .await
+            .create_wallet_from_mnemonic(
+                SECOND_MNEMONIC,
+                60_000,
+                WalletAccountCreationOptions::Default,
+            )
+            .expect("second wallet creation must succeed");
+
+        let mut waited = Duration::ZERO;
+        while count.load(Ordering::SeqCst) == 0 && waited < Duration::from_secs(5) {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            waited += Duration::from_millis(50);
+        }
+        assert_eq!(count.load(Ordering::SeqCst), 1, "resync-needed must fire once on the edge");
+
+        // The condition stays true but must not re-fire on later checks.
+        tokio::time::sleep(Duration::from_millis(1200)).await;
+        assert_eq!(count.load(Ordering::SeqCst), 1, "resync-needed must not repeat");
+
+        client.stop().await.expect("stop must succeed");
+        let _ = run_handle.await;
     }
 
     #[tokio::test]

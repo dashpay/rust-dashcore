@@ -18,6 +18,11 @@ use key_wallet_manager::WalletInterface;
 
 const SYNC_COORDINATOR_TICK_MS: Duration = Duration::from_millis(100);
 
+/// How often the run loop re-checks whether a resync is needed. Kept well above the sync tick
+/// so the extra storage lock this takes doesn't contend with active sync: a resync becomes
+/// needed only when a wallet is added below the anchor, which is rare and not latency-sensitive.
+const RESYNC_CHECK_INTERVAL: Duration = Duration::from_secs(1);
+
 impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, N, S> {
     /// Get current sync progress.
     pub async fn sync_progress(&self) -> SyncProgress {
@@ -113,6 +118,12 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
 
         // Run the sync loop
         let mut sync_coordinator_tick_interval = tokio::time::interval(SYNC_COORDINATOR_TICK_MS);
+        let mut resync_check_interval = tokio::time::interval(RESYNC_CHECK_INTERVAL);
+
+        // Notify on the rising edge only, so a wallet added below the anchor is reported once
+        // rather than every check. Seed from the current state so a resync already needed at
+        // startup (the caller can observe it directly) isn't re-announced here.
+        let mut resync_was_needed = self.resync_needed().await;
 
         let error: Option<SpvError> = loop {
             if !self.is_running() {
@@ -123,6 +134,16 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
             let error: Option<SpvError> = tokio::select! {
                 _ = sync_coordinator_tick_interval.tick() => {
                     self.sync_coordinator.lock().await.tick().await.err().map(Into::into)
+                }
+                _ = resync_check_interval.tick() => {
+                    let needed = self.resync_needed().await;
+                    if needed && !resync_was_needed {
+                        for handler in handlers.iter() {
+                            handler.on_resync_needed();
+                        }
+                    }
+                    resync_was_needed = needed;
+                    None
                 }
                 _ = stop_rx.changed() => {
                     tracing::debug!("DashSpvClient run loop stop requested");
