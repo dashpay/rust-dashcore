@@ -234,9 +234,26 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
     /// the `run` monitoring loop and every progress and event subscriber stay connected across
     /// the resync instead of tearing down. Flipping `running` would make `run` exit and never
     /// come back, silently freezing all outward progress.
+    ///
+    /// A failure after the initial teardown is unrecoverable: storage has been wiped and the old
+    /// chain data is gone, so there is no prior state to restore. Rather than leave `running` set
+    /// with a drained coordinator (whose `tick` reports no error and would spin `run` forever), the
+    /// error path drains anything a partial restart may have spawned and marks the client stopped,
+    /// so `run` exits and the failure surfaces. A later `force_resync` retries the rebuild cleanly.
     pub async fn force_resync(&self) -> Result<()> {
         let was_running = self.is_running();
 
+        let result = self.force_resync_body(was_running).await;
+
+        if was_running && result.is_err() {
+            let _ = self.sync_coordinator.lock().await.shutdown().await;
+            self.running.send_replace(false);
+        }
+
+        result
+    }
+
+    async fn force_resync_body(&self, was_running: bool) -> Result<()> {
         // Tear down the running sync without touching `running`, so the `run` loop keeps
         // monitoring. Drain the coordinator's manager tasks and drop the network connection.
         if was_running {
