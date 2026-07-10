@@ -120,6 +120,15 @@ impl zeroize::Zeroize for ChainCode {
     }
 }
 
+// Manual implementation of Zeroize for Fingerprint, so extended-key types in
+// other modules (BLS, Ed25519) can wipe their derivation metadata too.
+// Note: Fingerprint is Copy, so this won't prevent copies in registers/stack
+impl zeroize::Zeroize for Fingerprint {
+    fn zeroize(&mut self) {
+        zeroize::Zeroize::zeroize(&mut self.0);
+    }
+}
+
 impl fmt::LowerHex for ChainCode {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         for &byte in &self.0 {

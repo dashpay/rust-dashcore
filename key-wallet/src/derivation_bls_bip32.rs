@@ -78,6 +78,33 @@ pub struct ExtendedBLSPrivKey {
     pub chain_code: ChainCode,
 }
 
+// Hand-written (not `#[derive(Zeroize)]`): `BlsSecretKey` has no `Zeroize`
+// impl of its own, but its inner scalar (public field `0`) does, so we wipe
+// the value field by field. `Drop` (below) calls this, so the key is wiped
+// automatically on scope exit with no caller action required.
+// Cf. `ExtendedPrivKey` in `bip32`.
+impl zeroize::Zeroize for ExtendedBLSPrivKey {
+    fn zeroize(&mut self) {
+        // Secret key material.
+        self.private_key.0.zeroize();
+        self.chain_code.zeroize();
+        // Derivation metadata — cleared too so the whole value is wiped.
+        self.depth.zeroize();
+        self.parent_fingerprint.zeroize();
+        self.child_number = ChildNumber::Normal {
+            index: 0,
+        };
+        self.network = Network::Mainnet; // repr(u8)=0 discriminant, the "zero" value
+    }
+}
+
+impl Drop for ExtendedBLSPrivKey {
+    fn drop(&mut self) {
+        use zeroize::Zeroize;
+        self.zeroize();
+    }
+}
+
 impl ExtendedBLSPrivKey {
     /// Create a new master key from a seed
     pub fn new_master(network: Network, seed: &[u8]) -> Result<Self, Error> {
@@ -1212,5 +1239,22 @@ mod tests {
         // Both should have correct parent fingerprint
         assert_eq!(child_hardened.parent_fingerprint, master.fingerprint());
         assert_eq!(child_unhardened.parent_fingerprint, master.fingerprint());
+    }
+
+    #[test]
+    fn test_zeroize_clears_key_material() {
+        use zeroize::Zeroize;
+
+        let seed = [42u8; 32];
+        let mut key = ExtendedBLSPrivKey::new_master(Network::Testnet, &seed).unwrap();
+        assert_ne!(key.private_key.to_be_bytes(), [0u8; 32]);
+        assert_ne!(key.chain_code.as_ref(), &[0u8; 32]);
+
+        key.zeroize();
+
+        assert_eq!(key.private_key.to_be_bytes(), [0u8; 32]);
+        assert_eq!(key.chain_code.as_ref(), &[0u8; 32]);
+        assert_eq!(key.depth, 0);
+        assert_eq!(key.parent_fingerprint, Fingerprint::default());
     }
 }
