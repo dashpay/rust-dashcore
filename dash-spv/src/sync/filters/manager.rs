@@ -23,11 +23,24 @@ use crate::validation::{FilterValidationInput, FilterValidator, Validator};
 use crate::sync::progress::ProgressPercentage;
 use dashcore::hash_types::FilterHeader;
 use key_wallet_manager::WalletInterface;
-use key_wallet_manager::{check_compact_filters_for_script_pubkeys, FilterMatchKey, WalletId};
+use key_wallet_manager::{check_compact_filters_for_elements, FilterMatchKey, WalletId};
 use tokio::sync::RwLock;
 
 /// Batch size for processing filters.
 const BATCH_PROCESSING_SIZE: u32 = 5000;
+
+/// Snapshot of a behind wallet's compact-filter query inputs for a batch scan.
+struct WalletScanState {
+    /// The wallet these inputs belong to.
+    id: WalletId,
+    /// The wallet's committed sync checkpoint; heights at or below it are skipped.
+    synced: u32,
+    /// Monitored scriptPubKeys.
+    scripts: Vec<ScriptBuf>,
+    /// Bare `hash160` filter elements (owner/voting key hashes) a compact
+    /// filter carries beyond the scriptPubKeys.
+    elements: Vec<Vec<u8>>,
+}
 
 /// Maximum number of batches to scan ahead while waiting for blocks.
 const MAX_LOOKAHEAD_BATCHES: usize = 3;
@@ -646,21 +659,33 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
         let batch_filters = batch.filters();
 
         // Per-wallet `synced_height` snapshot so heights below the wallet's
-        // own progress are skipped during the rescan.
-        let synced_heights: HashMap<WalletId, u32> = {
+        // own progress are skipped during the rescan, plus the bare
+        // owner/voting filter elements a compact filter carries beyond the
+        // wallet's scriptPubKeys.
+        let mut synced_heights: HashMap<WalletId, u32> = HashMap::new();
+        let mut filter_elements: HashMap<WalletId, Vec<Vec<u8>>> = HashMap::new();
+        {
             let wallet = self.wallet.read().await;
-            new_scripts.keys().map(|id| (*id, wallet.wallet_synced_height(id))).collect()
-        };
+            for id in new_scripts.keys() {
+                synced_heights.insert(*id, wallet.wallet_synced_height(id));
+                filter_elements.insert(*id, wallet.monitored_filter_elements_for(id));
+            }
+        }
 
         let mut block_to_wallets: BTreeMap<FilterMatchKey, BTreeSet<WalletId>> = BTreeMap::new();
         for (wallet_id, scripts) in new_scripts {
-            if scripts.is_empty() {
+            let elements = filter_elements.get(wallet_id).map(Vec::as_slice).unwrap_or(&[]);
+            if scripts.is_empty() && elements.is_empty() {
                 continue;
             }
             let scripts_vec: Vec<ScriptBuf> = scripts.iter().cloned().collect();
             let min_synced = synced_heights.get(wallet_id).copied().unwrap_or(0);
-            let matches =
-                check_compact_filters_for_script_pubkeys(batch_filters, &scripts_vec, min_synced);
+            let matches = check_compact_filters_for_elements(
+                batch_filters,
+                &scripts_vec,
+                elements,
+                min_synced,
+            );
             for key in matches {
                 block_to_wallets.entry(key).or_default().insert(*wallet_id);
             }
@@ -742,12 +767,20 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
         // filters.
         let wallet = self.wallet.read().await;
         let behind = wallet.wallets_behind(batch_end);
-        let mut wallet_states: Vec<(WalletId, u32, Vec<ScriptBuf>)> = Vec::new();
+        let mut wallet_states: Vec<WalletScanState> = Vec::new();
         for wallet_id in &behind {
             let synced = wallet.wallet_synced_height(wallet_id);
             let scripts = wallet.monitored_script_pubkeys_for(wallet_id);
-            if !scripts.is_empty() {
-                wallet_states.push((*wallet_id, synced, scripts));
+            // Bare owner/voting key hashes a compact filter carries beyond the
+            // wallet's scriptPubKeys.
+            let elements = wallet.monitored_filter_elements_for(wallet_id);
+            if !scripts.is_empty() || !elements.is_empty() {
+                wallet_states.push(WalletScanState {
+                    id: *wallet_id,
+                    synced,
+                    scripts,
+                    elements,
+                });
             }
         }
         drop(wallet);
@@ -777,17 +810,25 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
         }
 
         // Single-pass union-then-attribute: build the union of all scripts
-        // across behind wallets, run the filters once, then for each matched
-        // block re-test per-wallet scripts to attribute the match correctly.
+        // and bare elements across behind wallets, run the filters once, then
+        // for each matched block re-test per-wallet queries to attribute the
+        // match correctly.
         let union_scripts: Vec<ScriptBuf> =
-            wallet_states.iter().flat_map(|(_, _, scripts)| scripts.iter().cloned()).collect();
-        let min_synced = wallet_states.iter().map(|(_, synced, _)| *synced).min().unwrap_or(0);
+            wallet_states.iter().flat_map(|s| s.scripts.iter().cloned()).collect();
+        let union_elements: Vec<Vec<u8>> =
+            wallet_states.iter().flat_map(|s| s.elements.iter().cloned()).collect();
+        let min_synced = wallet_states.iter().map(|s| s.synced).min().unwrap_or(0);
 
-        // Pre-group each wallet's scripts by length once; reused across every matched filter.
+        // Pre-group each wallet's scripts and bare elements by length once;
+        // reused across every matched filter.
         let wallet_queries: Vec<(WalletId, u32, FilterQuery)> = wallet_states
             .iter()
-            .map(|(id, synced, scripts)| {
-                (*id, *synced, scripts.iter().map(|s| s.as_bytes()).collect())
+            .map(|s| {
+                let mut query: FilterQuery = s.scripts.iter().map(|sp| sp.as_bytes()).collect();
+                for element in &s.elements {
+                    query.push(element);
+                }
+                (s.id, s.synced, query)
             })
             .collect();
 
@@ -797,8 +838,12 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
             };
             let batch_filters = batch.filters();
 
-            let matches =
-                check_compact_filters_for_script_pubkeys(batch_filters, &union_scripts, min_synced);
+            let matches = check_compact_filters_for_elements(
+                batch_filters,
+                &union_scripts,
+                &union_elements,
+                min_synced,
+            );
             let mut block_to_wallets: BTreeMap<FilterMatchKey, BTreeSet<WalletId>> =
                 BTreeMap::new();
             for key in matches {
