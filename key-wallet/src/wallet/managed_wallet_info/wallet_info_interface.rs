@@ -8,6 +8,7 @@ use super::managed_account_operations::ManagedAccountOperations;
 use crate::account::{AccountType, ManagedAccountTrait};
 use crate::managed_account::managed_account_collection::ManagedAccountCollection;
 use crate::managed_account::managed_account_ref::ManagedAccountRefMut;
+use crate::managed_account::managed_account_type::ManagedAccountType;
 use crate::managed_account::ManagedCoreFundsAccount;
 use crate::transaction_checking::TransactionContext;
 use crate::transaction_checking::WalletTransactionChecker;
@@ -15,6 +16,7 @@ use crate::wallet::managed_wallet_info::transaction_building::AccountTypePrefere
 use crate::wallet::managed_wallet_info::TransactionRecord;
 use crate::wallet::ManagedWalletInfo;
 use crate::{Network, Utxo, Wallet, WalletCoreBalance};
+use dashcore::address::Payload;
 use dashcore::ephemerealdata::chain_lock::ChainLock;
 use dashcore::ephemerealdata::instant_lock::InstantLock;
 use dashcore::prelude::CoreBlockHeight;
@@ -87,6 +89,19 @@ pub trait WalletInfoInterface: Sized + WalletTransactionChecker + ManagedAccount
 
     /// Get cached scriptPubKeys for every monitored address.
     fn monitored_script_pubkeys(&self) -> Vec<ScriptBuf>;
+
+    /// Get bare `hash160` filter elements that a compact filter carries in
+    /// addition to scriptPubKeys.
+    ///
+    /// Dash Core inserts a `ProRegTx`'s owner (`keyIDOwner`) and voting
+    /// (`keyIDVoting`) key hashes into the block's BIP158 compact filter as
+    /// bare 20-byte `hash160` elements, not as P2PKH scripts (see Dash Core's
+    /// `ExtractSpecialTxFilterElements`). A masternode owner watching only
+    /// those keys therefore never matches on the scriptPubKey path, so the
+    /// query must also carry the same bare hashes. This returns each provider
+    /// owner/voting address's 20-byte `hash160`; every other account type is
+    /// omitted because its scriptPubKeys already cover the query.
+    fn monitored_filter_elements(&self) -> Vec<Vec<u8>>;
 
     /// Get all UTXOs for the wallet
     fn utxos(&self) -> BTreeSet<&Utxo>;
@@ -338,6 +353,28 @@ impl WalletInfoInterface for ManagedWalletInfo {
             scripts.extend(account.all_script_pubkeys());
         }
         scripts
+    }
+
+    fn monitored_filter_elements(&self) -> Vec<Vec<u8>> {
+        let mut elements = Vec::new();
+        for account in self.accounts.all_accounts() {
+            if matches!(
+                account.managed_account_type(),
+                ManagedAccountType::ProviderOwnerKeys { .. }
+                    | ManagedAccountType::ProviderVotingKeys { .. }
+            ) {
+                // Extract the bare 20-byte `hash160` a peer inserted into the
+                // compact filter, matching the byte order the BIP37 bloom path
+                // uses in `dash-spv`'s `address_payload_bytes`. Provider
+                // owner/voting keys are P2PKH, so this is the pubkey hash.
+                elements.extend(account.all_addresses().iter().filter_map(|a| match a.payload() {
+                    Payload::PubkeyHash(hash) => Some(<[u8; 20]>::from(*hash).to_vec()),
+                    Payload::ScriptHash(hash) => Some(<[u8; 20]>::from(*hash).to_vec()),
+                    _ => None,
+                }));
+            }
+        }
+        elements
     }
 
     fn utxos(&self) -> BTreeSet<&Utxo> {

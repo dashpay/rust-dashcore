@@ -228,6 +228,13 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
             .unwrap_or_default()
     }
 
+    fn monitored_filter_elements_for(&self, wallet_id: &WalletId) -> Vec<Vec<u8>> {
+        self.wallet_infos
+            .get(wallet_id)
+            .map(|info| info.monitored_filter_elements())
+            .unwrap_or_default()
+    }
+
     fn watched_outpoints(&self) -> Vec<dashcore::OutPoint> {
         self.watched_outpoints()
     }
