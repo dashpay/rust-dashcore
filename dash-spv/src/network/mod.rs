@@ -34,7 +34,7 @@ pub use handshake::{HandshakeManager, HandshakeState};
 pub use manager::PeerNetworkManager;
 pub use message_dispatcher::{Message, MessageDispatcher};
 pub use message_type::MessageType;
-pub use peer::Peer;
+pub use peer::{Peer, PeerStatsSnapshot};
 pub(crate) use reputation::PeerReputation;
 use std::net::SocketAddr;
 use tokio::sync::mpsc::UnboundedReceiver;
@@ -209,6 +209,15 @@ pub trait NetworkManager: Send + Sync + 'static {
 
     /// Get the number of connected peers.
     fn peer_count(&self) -> usize;
+
+    /// Snapshot per-peer connection statistics (bytes transferred, ping RTT,
+    /// advertised height).
+    ///
+    /// The default implementation returns an empty list for network managers
+    /// that don't track per-peer statistics.
+    async fn peer_stats(&self) -> Vec<PeerStatsSnapshot> {
+        Vec::new()
+    }
 
     /// Request QRInfo from the network.
     ///

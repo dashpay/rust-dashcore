@@ -86,7 +86,12 @@ def extract(archive_path, dest_dir):
             zf.extractall(dest_dir)
     else:
         with tarfile.open(archive_path, "r:gz") as tf:
-            tf.extractall(dest_dir, filter="data")
+            try:
+                tf.extractall(dest_dir, filter="data")
+            except TypeError:
+                # The `filter` kwarg needs Python 3.9.17+/3.10.12+/3.11.4+;
+                # fall back for older interpreters (e.g. macOS system 3.9.6).
+                tf.extractall(dest_dir)
 
 
 def setup_dashd(cache_dir):
