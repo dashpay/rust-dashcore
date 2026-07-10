@@ -22,11 +22,12 @@ use crate::managed_account::managed_account_trait::ManagedAccountTrait;
 use crate::wallet::managed_wallet_info::transaction_building::AccountTypePreference;
 use crate::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
 use crate::{Network, Wallet};
+use dashcore::hash_types::ProTxHash;
 use dashcore::prelude::CoreBlockHeight;
 use dashcore::{Address, Txid};
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashSet};
 
 /// Information about a managed wallet
 ///
@@ -53,6 +54,20 @@ pub struct ManagedWalletInfo {
     /// Transactions that have received an InstantSend lock.
     #[cfg_attr(feature = "serde", serde(skip))]
     pub(crate) instant_send_locks: HashSet<Txid>,
+    /// proTxHashes of the masternodes this wallet controls, watched so a later
+    /// masternode-update special transaction is caught by the compact-filter
+    /// scan.
+    ///
+    /// A `ProUpServTx`/`ProUpRevTx` carries only the masternode's `proTxHash`
+    /// in the block's BIP158 compact filter (Dash Core inserts it as a bare
+    /// 32-byte element via `AddHashElement`) and none of the wallet's
+    /// scriptPubKeys, so owner/voting-key matching cannot catch it. The set is
+    /// populated internally by transaction processing: when a matched
+    /// `ProRegTx`/`ProUpRegTx` is discovered via the wallet's owner/voting key
+    /// its `proTxHash` is recorded here. It is transient sync state derived
+    /// from the chain, not wallet identity, so it is never persisted.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub(crate) watched_pro_tx_hashes: BTreeSet<ProTxHash>,
 }
 
 impl ManagedWalletInfo {
@@ -67,6 +82,7 @@ impl ManagedWalletInfo {
             accounts: ManagedAccountCollection::new(),
             balance: WalletCoreBalance::default(),
             instant_send_locks: HashSet::new(),
+            watched_pro_tx_hashes: BTreeSet::new(),
         }
     }
 
@@ -81,6 +97,7 @@ impl ManagedWalletInfo {
             accounts: ManagedAccountCollection::new(),
             balance: WalletCoreBalance::default(),
             instant_send_locks: HashSet::new(),
+            watched_pro_tx_hashes: BTreeSet::new(),
         }
     }
 
@@ -105,6 +122,7 @@ impl ManagedWalletInfo {
             accounts: ManagedAccountCollection::from_account_collection(&wallet.accounts),
             balance: WalletCoreBalance::default(),
             instant_send_locks: HashSet::new(),
+            watched_pro_tx_hashes: BTreeSet::new(),
         }
     }
 
@@ -134,6 +152,17 @@ impl ManagedWalletInfo {
     /// inside this crate.
     pub fn instant_send_locks(&self) -> &HashSet<Txid> {
         &self.instant_send_locks
+    }
+
+    /// Watch a masternode's `proTxHash` so a later masternode-update special
+    /// transaction is caught by the compact-filter scan.
+    ///
+    /// Called by transaction processing when a `ProRegTx`/`ProUpRegTx` matched
+    /// via the wallet's owner/voting key is discovered. Idempotent: watching an
+    /// already-watched `proTxHash` is a no-op. See `watched_pro_tx_hashes` for
+    /// why the `proTxHash` has to be carried in the query directly.
+    pub(crate) fn watch_pro_tx_hash(&mut self, pro_tx_hash: ProTxHash) {
+        self.watched_pro_tx_hashes.insert(pro_tx_hash);
     }
 
     pub fn next_change_address(

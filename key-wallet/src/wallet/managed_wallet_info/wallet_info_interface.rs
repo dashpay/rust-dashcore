@@ -399,6 +399,15 @@ impl WalletInfoInterface for ManagedWalletInfo {
                 elements.push(dashcore::consensus::encode::serialize(&utxo.outpoint));
             }
         }
+        // A `ProUpServTx`/`ProUpRevTx` carries only the masternode's `proTxHash`
+        // in the block's compact filter (Dash Core inserts it as a bare 32-byte
+        // element via `AddHashElement`), none of the wallet's scriptPubKeys, so
+        // watch the `proTxHash` of each masternode the wallet controls directly.
+        // The set is populated by transaction processing from matched
+        // `ProRegTx`/`ProUpRegTx` transactions.
+        for pro_tx_hash in &self.watched_pro_tx_hashes {
+            elements.push(dashcore::consensus::encode::serialize(pro_tx_hash));
+        }
         elements
     }
 
@@ -536,6 +545,8 @@ mod tests {
     use super::*;
     use crate::test_utils::TestWalletContext;
     use crate::wallet::initialization::WalletAccountCreationOptions;
+    use dashcore::hash_types::ProTxHash;
+    use dashcore::hashes::Hash;
 
     /// A wallet that owns a UTXO must surface that UTXO's outpoint as a bare
     /// filter element, consensus-serialized to the 36-byte form Dash Core
@@ -578,6 +589,27 @@ mod tests {
         assert!(
             elements.is_empty(),
             "funding-only wallet must not emit collateral outpoint elements"
+        );
+    }
+
+    /// A watched masternode `proTxHash` must surface as a bare 32-byte filter
+    /// element, serialized the way Dash Core inserts a `ProUp*`'s `proTxHash`
+    /// (raw internal order), so a compact-filter scan catches the
+    /// masternode-update transaction even though it carries none of the
+    /// wallet's scriptPubKeys.
+    #[test]
+    fn test_watched_pro_tx_hash_is_filter_element() {
+        let mut ctx = TestWalletContext::new_random();
+        let pro_tx_hash = ProTxHash::from_byte_array([7u8; 32]);
+        let serialized = dashcore::consensus::encode::serialize(&pro_tx_hash);
+        assert_eq!(serialized.len(), 32, "proTxHash serializes to 32 raw bytes");
+
+        ctx.managed_wallet.watch_pro_tx_hash(pro_tx_hash);
+
+        let elements = ctx.managed_wallet.monitored_filter_elements();
+        assert!(
+            elements.contains(&serialized),
+            "monitored_filter_elements must carry the watched proTxHash as a 32-byte element"
         );
     }
 }

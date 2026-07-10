@@ -5,14 +5,16 @@
 
 pub(crate) use super::account_checker::TransactionCheckResult;
 use super::transaction_context::TransactionContext;
-use super::transaction_router::TransactionRouter;
+use super::transaction_router::{TransactionRouter, TransactionType};
 #[cfg(test)]
 use crate::managed_account::managed_account_trait::ManagedAccountTrait;
 use crate::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
 use crate::wallet::managed_wallet_info::ManagedWalletInfo;
 use crate::{KeySource, Wallet};
 use async_trait::async_trait;
+use dashcore::blockdata::transaction::special_transaction::TransactionPayload;
 use dashcore::blockdata::transaction::Transaction;
+use dashcore::hash_types::ProTxHash;
 use dashcore::{Amount, SignedAmount};
 
 /// Extension trait for ManagedWalletInfo to add transaction checking capabilities
@@ -64,6 +66,34 @@ impl WalletTransactionChecker for ManagedWalletInfo {
 
         if !update_state || !result.is_relevant {
             return result;
+        }
+
+        // A matched `ProRegTx`/`ProUpRegTx` is discovered via the wallet's
+        // owner/voting key (issue #861, replacing the abandoned masternode-list
+        // cross-reference), so the masternode's `proTxHash` is learned straight
+        // from the transaction. Watch it so a later `ProUpServTx`/`ProUpRevTx`,
+        // which carries only the `proTxHash` in the block's compact filter and
+        // none of the wallet's scriptPubKeys, is still caught by the scan. The
+        // `proTxHash` is the `ProRegTx`'s own txid, or the `ProUpRegTx`
+        // payload's `pro_tx_hash` field. The operator key needs no explicit
+        // handling here: its account is one of the provider account types the
+        // router already checks, so a payload operator key the wallet owns
+        // matches independently and is marked used by the generic
+        // `mark_address_used` pass below.
+        match tx_type {
+            TransactionType::ProviderRegistration => {
+                self.watch_pro_tx_hash(ProTxHash::from_raw_hash(tx.txid().to_raw_hash()));
+            }
+            TransactionType::ProviderUpdateRegistrar => {
+                if let Some(TransactionPayload::ProviderUpdateRegistrarPayloadType(payload)) =
+                    &tx.special_transaction_payload
+                {
+                    self.watch_pro_tx_hash(ProTxHash::from_raw_hash(
+                        payload.pro_tx_hash.to_raw_hash(),
+                    ));
+                }
+            }
+            _ => {}
         }
 
         // Check if this transaction already exists in any affected account
