@@ -588,15 +588,37 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
                     // Newly derived scripts also have to reach ranges that
                     // already committed: those blocks were matched against a
                     // watch set that predates these scripts, and nothing else
-                    // ever looks below `committed_height` again (#846).
-                    // Stored filters cover that range, so re-test the new
-                    // scripts against them; hits attribute to this batch so
-                    // its commit waits for the fixpoint.
-                    events.extend(
-                        self.rescan_committed_range(batch_start, &scripts_by_wallet).await?,
-                    );
+                    // ever looks below `committed_height` again (#846). That
+                    // backward sweep walks stored history — the expensive
+                    // direction — so defer it: accumulate the scripts here
+                    // and sweep once when the forward fixpoint is quiescent,
+                    // instead of re-walking the committed range on every
+                    // derivation round.
+                    if let Some(batch) = self.active_batches.get_mut(&batch_start) {
+                        batch.accumulate_backward_scripts(scripts_by_wallet);
+                        if batch.pending_blocks() > 0 {
+                            // Forward rescan found blocks; converge the
+                            // forward direction first.
+                            break;
+                        }
+                    }
+                }
 
-                    // Check if rescan found more blocks
+                // Forward direction quiescent: one combined backward sweep
+                // over the committed range with everything accumulated. Hits
+                // attribute to this batch, so scripts their processing
+                // derives re-enter through `collected_scripts` above and
+                // only genuinely new scripts get a follow-up sweep.
+                let backward_scripts = self
+                    .active_batches
+                    .get_mut(&batch_start)
+                    .map(|b| b.take_backward_scripts())
+                    .unwrap_or_default();
+                if !backward_scripts.is_empty() {
+                    events
+                        .extend(self.rescan_committed_range(batch_start, &backward_scripts).await?);
+
+                    // Check if the backward sweep found more blocks
                     if let Some(batch) = self.active_batches.get(&batch_start) {
                         if batch.pending_blocks() > 0 {
                             // Found more blocks, can't commit yet
@@ -815,6 +837,26 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
             }
         }
 
+        Ok(self.queue_new_script_matches(batch_start, block_to_wallets, "Rescan"))
+    }
+
+    /// Queue filter matches driven by newly derived scripts for
+    /// (re-)download — the shared tail of `rescan_batch` and
+    /// `rescan_committed_range`.
+    ///
+    /// These matches come from scripts that did not exist when their block
+    /// was first processed, so a processed record must not suppress the
+    /// re-download: the block has to be re-applied against the extended
+    /// pools (`track_for_new_scripts`). Genuinely new blocks are charged to
+    /// `batch_start`'s `pending_blocks` accounting so its commit waits for
+    /// them; blocks already on their way still get a fresh `BlocksNeeded`
+    /// so the pipeline merges late wallet ids into its pending wallet set.
+    fn queue_new_script_matches(
+        &mut self,
+        batch_start: u32,
+        block_to_wallets: BTreeMap<FilterMatchKey, BTreeSet<WalletId>>,
+        context: &str,
+    ) -> Vec<SyncEvent> {
         let mut events = Vec::new();
         let mut blocks_needed: BTreeMap<FilterMatchKey, BTreeSet<WalletId>> = BTreeMap::new();
         let mut new_blocks_count = 0;
@@ -823,10 +865,6 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
             self.progress.add_matched(block_to_wallets.len() as u32);
         }
         for (key, wallets) in block_to_wallets {
-            // Matches here are driven by scripts that did not exist when the
-            // block was first processed, so a processed record must not
-            // suppress the re-download: the block has to be re-applied
-            // against the extended pools.
             match self.tracker.track_for_new_scripts(&key, batch_start, wallets) {
                 BlockTrackResult::NewlyTracked {
                     wallets,
@@ -837,8 +875,6 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
                 BlockTrackResult::InFlight {
                     wallets,
                 } => {
-                    // Block already on its way; merge late wallet ids into the
-                    // pipeline's pending wallet set via a fresh BlocksNeeded.
                     blocks_needed.insert(key, wallets);
                 }
                 // Never returned by track_for_new_scripts.
@@ -851,7 +887,7 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
             if let Some(batch) = self.active_batches.get_mut(&batch_start) {
                 batch.set_pending_blocks(batch.pending_blocks() + new_blocks_count);
             }
-            tracing::info!("Rescan found {} additional blocks", new_blocks_count);
+            tracing::info!("{} found {} additional blocks", context, new_blocks_count);
         }
         if !blocks_needed.is_empty() {
             events.push(SyncEvent::BlocksNeeded {
@@ -859,7 +895,7 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
             });
         }
 
-        Ok(events)
+        events
     }
 
     /// Scan a specific batch, matching its filters against each behind-wallet's
@@ -1152,51 +1188,7 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
             chunk_start = chunk_end + 1;
         }
 
-        let mut events = Vec::new();
-        let mut blocks_needed: BTreeMap<FilterMatchKey, BTreeSet<WalletId>> = BTreeMap::new();
-        let mut new_blocks_count = 0;
-
-        if !block_to_wallets.is_empty() {
-            self.progress.add_matched(block_to_wallets.len() as u32);
-        }
-        for (key, wallets) in block_to_wallets {
-            // As in `rescan_batch`: these matches are driven by scripts that
-            // did not exist when the block was first processed, so processed
-            // records must not suppress the re-download.
-            match self.tracker.track_for_new_scripts(&key, batch_start, wallets) {
-                BlockTrackResult::NewlyTracked {
-                    wallets,
-                } => {
-                    blocks_needed.insert(key, wallets);
-                    new_blocks_count += 1;
-                }
-                BlockTrackResult::InFlight {
-                    wallets,
-                } => {
-                    blocks_needed.insert(key, wallets);
-                }
-                // Never returned by track_for_new_scripts.
-                BlockTrackResult::AlreadyProcessed => {}
-            }
-        }
-
-        if new_blocks_count > 0 {
-            if let Some(batch) = self.active_batches.get_mut(&batch_start) {
-                batch.set_pending_blocks(batch.pending_blocks() + new_blocks_count);
-            }
-            tracing::info!(
-                "Committed-range rescan found {} blocks below height {}",
-                new_blocks_count,
-                batch_start
-            );
-        }
-        if !blocks_needed.is_empty() {
-            events.push(SyncEvent::BlocksNeeded {
-                blocks: blocks_needed,
-            });
-        }
-
-        Ok(events)
+        Ok(self.queue_new_script_matches(batch_start, block_to_wallets, "Committed-range rescan"))
     }
 
     /// Handle notification that new filter headers are available.
