@@ -82,7 +82,7 @@ mod tests {
     use super::*;
     use dashcore::address::Payload;
     use dashcore::bip158::BlockFilterWriter;
-    use dashcore::{Address, Block, Transaction};
+    use dashcore::{Address, Block, OutPoint, Transaction, Txid};
     use key_wallet::Network;
 
     fn scripts_for(addresses: &[Address]) -> Vec<ScriptBuf> {
@@ -255,5 +255,50 @@ mod tests {
         // Carrying the bare hash in `extra_elements` matches.
         let with_element = check_compact_filters_for_elements(&input, &[], &[owner_hash], 0);
         assert!(with_element.contains(&key), "bare-element query must match");
+    }
+
+    /// A wallet that owns a masternode's 1000-DASH collateral output but not
+    /// its owner/voting keys sees a compact filter that carries the
+    /// `ProRegTx`'s `collateralOutpoint` as a bare 36-byte consensus-serialized
+    /// element (the way Dash Core's `ExtractSpecialTxFilterElements` inserts
+    /// it), not as one of the block's scriptPubKeys. The scripts-only query
+    /// must miss it and the query carrying the serialized outpoint must hit it.
+    #[test]
+    fn test_collateral_outpoint_requires_extra_element() {
+        // The collateral outpoint a peer inserts as a bare element.
+        let outpoint = OutPoint::new(Txid::from([7u8; 32]), 1);
+        let serialized = dashcore::consensus::encode::serialize(&outpoint);
+        assert_eq!(serialized.len(), 36, "outpoint serializes to txid ++ le-vout");
+
+        // An unrelated output so the filter is realistic.
+        let unrelated = Address::dummy(Network::Regtest, 99);
+        let tx = Transaction::dummy(&unrelated, 0..0, &[1]);
+        let block = Block::dummy(100, vec![tx]);
+
+        // Build the filter like a Dash Core peer: block output scripts plus the
+        // collateral outpoint as a bare element.
+        let mut content = Vec::new();
+        {
+            let mut writer = BlockFilterWriter::new(&mut content, &block);
+            writer.add_output_scripts();
+            writer.add_element(&serialized);
+            writer.finish().expect("finish filter");
+        }
+        let filter = BlockFilter::new(&content);
+        let key = FilterMatchKey::new(100, block.block_hash());
+
+        let mut input = HashMap::new();
+        input.insert(key.clone(), filter);
+
+        // A wallet watching only its own addresses (none of them in this block)
+        // does not carry the bare 36-byte outpoint element and misses.
+        let watched = Address::dummy(Network::Regtest, 7);
+        let scripts_only =
+            check_compact_filters_for_elements(&input, &scripts_for(&[watched]), &[], 0);
+        assert!(!scripts_only.contains(&key), "scripts-only query must miss the outpoint");
+
+        // Carrying the serialized outpoint in `extra_elements` matches.
+        let with_element = check_compact_filters_for_elements(&input, &[], &[serialized], 0);
+        assert!(with_element.contains(&key), "serialized-outpoint query must match");
     }
 }
