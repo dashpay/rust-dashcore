@@ -717,6 +717,32 @@ mod tests {
                 .is_empty(),
             "spent CoinJoin UTXO must be removed"
         );
+
+        // Aggregate wallet balance — the actual regression is balance inflation.
+        // `check_core_transaction` was called with `update_balance = true`, so
+        // the cached balance now reflects the spend. If the spent CoinJoin coin
+        // were NOT debited, the wallet would still count its `funding_value`
+        // (100_000_000) on top of the new BIP44 change, reporting
+        // `funding_value + change_value`. After a correct debit only the
+        // confirmed BIP44 change UTXO remains (the asset-lock credit output is
+        // locked into Platform, never counted as a spendable wallet UTXO — see
+        // the `total_received == change_value` assertion above).
+        assert_eq!(
+            managed_wallet.balance.confirmed(),
+            change_value,
+            "confirmed balance must be only the BIP44 change; the spent CoinJoin \
+             coin must not inflate it"
+        );
+        assert_eq!(
+            managed_wallet.balance.spendable(),
+            change_value,
+            "spendable balance must fall from funding_value to change_value after the spend"
+        );
+        assert_eq!(
+            managed_wallet.balance.total(),
+            change_value,
+            "total balance must not double-count the spent CoinJoin UTXO"
+        );
     }
 
     /// Test the full coinbase maturity flow - immature to mature transition
