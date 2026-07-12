@@ -989,6 +989,10 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
     }
 }
 #[cfg(test)]
+#[path = "coinjoin_gap_discovery_tests.rs"]
+mod coinjoin_gap_discovery_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::network::{Message, MessageType, NetworkRequest, RequestSender};
