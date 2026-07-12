@@ -69,6 +69,12 @@ impl FiltersBatch {
     pub(super) fn filters_mut(&mut self) -> &mut HashMap<FilterMatchKey, BlockFilter> {
         &mut self.filters
     }
+    /// Take the loaded filters out of this batch, leaving it empty. Used at
+    /// commit to move a committed batch's filters into the manager's retained
+    /// committed-filter set without cloning.
+    pub(super) fn take_filters(&mut self) -> HashMap<FilterMatchKey, BlockFilter> {
+        std::mem::take(&mut self.filters)
+    }
     /// Returns whether this batch is verified (filters verified against their headers).
     pub(super) fn verified(&self) -> bool {
         self.verified

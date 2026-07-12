@@ -153,6 +153,14 @@ impl BlockMatchTracker {
         self.blocks_remaining.is_empty() && self.processed_blocks_per_wallet.is_empty()
     }
 
+    /// True while any matched block is still awaiting its `BlockProcessed`.
+    /// Used to hold off `FiltersSyncComplete` while a committed-range re-open
+    /// (issue #846) has a below-frontier block in flight that no active batch
+    /// accounts for.
+    pub(super) fn has_in_flight(&self) -> bool {
+        !self.blocks_remaining.is_empty()
+    }
+
     /// Drop all in-flight and processed-record state.
     pub(super) fn clear(&mut self) {
         self.blocks_remaining.clear();

@@ -176,7 +176,9 @@ impl<
                         );
                     }
 
-                    // Collect per-wallet new scripts for deferred rescan at commit time.
+                    // Collect per-wallet new scripts for the active-batch
+                    // deferred rescan at commit time. A re-opened committed
+                    // block has no owning active batch, so this no-ops for it.
                     for (wallet_id, scripts) in new_scripts {
                         if scripts.is_empty() {
                             continue;
@@ -185,6 +187,14 @@ impl<
                             batch.add_scripts_for_wallet(*wallet_id, scripts.iter().cloned());
                         }
                     }
+
+                    // Also queue the derived scripts for a re-test against the
+                    // already-committed filter range. This is what re-opens a
+                    // committed batch when gap-limit maintenance derives the
+                    // matching script only after that batch committed (#846),
+                    // and it fires for re-opened committed blocks too, driving
+                    // the cascade to a fixpoint.
+                    self.enqueue_committed_rescan(new_scripts);
 
                     return self.try_process_batch().await;
                 }
