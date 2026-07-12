@@ -858,6 +858,42 @@ mod tests {
         assert_eq!(fee, 526, "fee must include the 300-duff dropped dust remainder");
     }
 
+    /// An asset lock burns the locked amount into an on-chain OP_RETURN output
+    /// mirroring the payload's credit outputs. That output is part of
+    /// Σ(outputs), so the returned fee must be the miner fee only — the locked
+    /// credits must never be counted as fee.
+    #[test]
+    fn test_asset_lock_fee_excludes_locked_credits() {
+        let utxos = vec![Utxo::dummy(0, 1_000_000, 100, false, true)];
+        let change_address = Address::dummy(Network::Testnet, 0);
+
+        let asset_lock_payload = AssetLockPayload {
+            version: 1,
+            credit_outputs: vec![TxOut {
+                value: 100_000,
+                script_pubkey: ScriptBuf::new(),
+            }],
+        };
+
+        let (tx, fee) = TransactionBuilder::new()
+            .set_current_height(200)
+            .set_fee_rate(FeeRate::normal())
+            .set_change_address(change_address)
+            .set_special_payload(TransactionPayload::AssetLockPayloadType(asset_lock_payload))
+            .add_inputs(utxos)
+            .build_unsigned()
+            .unwrap();
+
+        assert_eq!(tx.output.len(), 2, "OP_RETURN burn output + change");
+        let total_output: u64 = tx.output.iter().map(|o| o.value).sum();
+        assert_eq!(fee, 1_000_000 - total_output, "fee must equal inputs minus outputs");
+        assert!(
+            fee < 1_000,
+            "fee must be the miner fee only, not include the 100k locked credits, got {}",
+            fee
+        );
+    }
+
     #[test]
     fn test_special_payload_size_calculations() {
         // Test that special payload sizes are calculated correctly
