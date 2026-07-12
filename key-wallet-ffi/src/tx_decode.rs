@@ -36,7 +36,7 @@ pub struct DecodedTxInputFFI {
     pub prev_vout: u32,
     /// Sender address recovered from a P2PKH-shaped scriptSig (exactly two
     /// pushes: DER signature, then public key), or null when the input is
-    /// coinbase / non-P2PKH / unparseable. **Unauthenticated**: the value is
+    /// coinbase / non-P2PKH / unparsable. **Unauthenticated**: the value is
     /// derived from a script push the spender fully controls, with no
     /// signature verification against the spent UTXO — use it for display or
     /// as a matching hint only, never for authentication or authorization.
@@ -106,7 +106,7 @@ fn input_address_from_script_sig(script_sig: &ScriptBuf, network: Network) -> Op
                 (Some(_), None) => pubkey_bytes = Some(bytes.as_bytes()),
                 _ => return None, // more than two pushes
             },
-            _ => return None, // non-push opcode or unparseable script
+            _ => return None, // non-push opcode or unparsable script
         }
     }
     let (sig, pubkey_bytes) = (sig?, pubkey_bytes?);

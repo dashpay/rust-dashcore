@@ -4,7 +4,7 @@ This document provides a comprehensive reference for all FFI (Foreign Function I
 
 **Auto-generated**: This documentation is automatically generated from the source code. Do not edit manually.
 
-**Total Functions**: 258
+**Total Functions**: 260
 
 ## Table of Contents
 
@@ -272,16 +272,18 @@ Functions: 10
 
 ### Transaction Management
 
-Functions: 14
+Functions: 16
 
 | Function | Description | Module |
 |----------|-------------|--------|
+| `decoded_transaction_free` | Release a `DecodedTransactionFFI` returned by `transaction_decode` | tx_decode |
 | `transaction_add_input` | Add an input to a transaction  # Safety - `tx` must be a valid pointer to an... | transaction |
 | `transaction_add_output` | Add an output to a transaction  # Safety - `tx` must be a valid pointer to... | transaction |
 | `transaction_bytes_free` | Free transaction bytes  # Safety  - `tx_bytes` must be a valid pointer... | transaction |
 | `transaction_check_result_free` | Free a transaction check result  # Safety  - `result` must be a valid... | transaction_checking |
 | `transaction_classify` | Get the transaction classification for routing  Returns a string describing... | transaction_checking |
 | `transaction_create` | Create a new empty transaction  # Returns - Pointer to FFITransaction on... | transaction |
+| `transaction_decode` | Consensus-decode `tx_bytes` into a `DecodedTransactionFFI` | tx_decode |
 | `transaction_deserialize` | Deserialize a transaction  # Safety - `data` must be a valid pointer to... | transaction |
 | `transaction_destroy` | Destroy a transaction  # Safety - `tx` must be a valid pointer to an... | transaction |
 | `transaction_get_txid` | Get the transaction ID  # Safety - `tx` must be a valid pointer to an... | transaction |
@@ -3557,6 +3559,22 @@ Validate an address  # Safety  - `address` must be a valid null-terminated C str
 
 ### Transaction Management - Detailed
 
+#### `decoded_transaction_free`
+
+```c
+decoded_transaction_free(decoded: *mut DecodedTransactionFFI) -> ()
+```
+
+**Description:**
+Release a `DecodedTransactionFFI` returned by `transaction_decode`. Safe to call with null.  # Safety `decoded` must be null or a pointer previously returned by `transaction_decode` that has not been freed yet.
+
+**Safety:**
+`decoded` must be null or a pointer previously returned by `transaction_decode` that has not been freed yet.
+
+**Module:** `tx_decode`
+
+---
+
 #### `transaction_add_input`
 
 ```c
@@ -3647,6 +3665,22 @@ transaction_create() -> *mut FFITransaction
 Create a new empty transaction  # Returns - Pointer to FFITransaction on success - NULL on error
 
 **Module:** `transaction`
+
+---
+
+#### `transaction_decode`
+
+```c
+transaction_decode(tx_bytes: *const u8, tx_bytes_len: usize, network: FFINetwork, out_decoded: *mut *mut DecodedTransactionFFI, error: *mut FFIError,) -> bool
+```
+
+**Description:**
+Consensus-decode `tx_bytes` into a `DecodedTransactionFFI`. Rejects trailing bytes after a valid transaction (uses [`deserialize`], not a streaming decode), so a valid prefix followed by garbage is an error rather than a silent trim.  # Safety - `tx_bytes` must point to `tx_bytes_len` readable bytes. - `out_decoded` must be a valid pointer; it is nulled on entry and, on success, receives an owned `*mut DecodedTransactionFFI` that must be released with `decoded_transaction_free`. - `error` must be a valid pointer to an FFIError.
+
+**Safety:**
+- `tx_bytes` must point to `tx_bytes_len` readable bytes. - `out_decoded` must be a valid pointer; it is nulled on entry and, on success, receives an owned `*mut DecodedTransactionFFI` that must be released with `decoded_transaction_free`. - `error` must be a valid pointer to an FFIError.
+
+**Module:** `tx_decode`
 
 ---
 
