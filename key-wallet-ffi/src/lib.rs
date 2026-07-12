@@ -18,6 +18,7 @@ pub mod managed_wallet;
 pub mod mnemonic;
 pub mod transaction;
 pub mod transaction_checking;
+pub mod tx_decode;
 pub mod types;
 pub mod utils;
 pub mod utxo;
