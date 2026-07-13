@@ -10,8 +10,9 @@
 //! contract (consumers must key off `payload_type`).
 //!
 //! All heap-allocated fields are owned by the structs and freed by their
-//! `Drop` impls, which run when the owning [`FFITransactionRecord`]
-//! (`crate::managed_account::FFITransactionRecord`) is freed.
+//! `Drop` impls, which run when the owning
+//! [`FFITransactionRecord`](crate::managed_account::FFITransactionRecord)
+//! is freed.
 
 use std::net::{IpAddr, Ipv6Addr, SocketAddr};
 use std::os::raw::c_char;
