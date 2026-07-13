@@ -51,7 +51,9 @@ pub struct ManagedCoreKeysAccount {
     /// including ones that have been chainlocked. With the feature OFF
     /// (the default), records of chainlocked transactions are dropped
     /// from this map and only their txids are retained in
-    /// `finalized_txids` to bound memory growth.
+    /// `finalized_txids` to bound memory growth — except provider-payload
+    /// records on provider-key accounts, which are always retained (see
+    /// [`Self::drop_finalized_transaction`]).
     transactions: BTreeMap<Txid, TransactionRecord>,
     /// Txids of transactions that have been finalized in a chainlocked
     /// block and whose full records have been dropped from
@@ -98,13 +100,57 @@ impl ManagedCoreKeysAccount {
     /// [`ManagedAccountTrait::transaction_is_finalized`] keeps
     /// returning `true`.
     ///
+    /// Exception: on masternode provider-key accounts, records whose
+    /// transaction carries a DIP-3 provider payload (`ProRegTx`,
+    /// `ProUpServTx`, `ProUpRegTx`, `ProUpRevTx`) are retained. Their
+    /// payload data — most importantly the masternode's service IP:port
+    /// and `proTxHash` linkage — is what the account exists to surface,
+    /// and it would otherwise become unreachable the moment the
+    /// registration is chainlocked. These records are rare (one per
+    /// masternode lifecycle event matching our keys), so retaining them
+    /// does not meaningfully grow memory.
+    ///
     /// With the feature on the full record stays in `transactions`
     /// indefinitely, so there's nothing to do — the function does not
     /// exist in that mode.
     #[cfg(not(feature = "keep-finalized-transactions"))]
     pub(crate) fn drop_finalized_transaction(&mut self, txid: &Txid) {
         self.finalized_txids.insert(*txid);
+        if self.retains_provider_payload_record(txid) {
+            return;
+        }
         self.transactions.remove(txid);
+    }
+
+    /// Whether the record for `txid` must survive finalization: true only
+    /// on provider-key accounts for transactions carrying a DIP-3
+    /// provider payload. See [`Self::drop_finalized_transaction`].
+    #[cfg(not(feature = "keep-finalized-transactions"))]
+    fn retains_provider_payload_record(&self, txid: &Txid) -> bool {
+        use dashcore::blockdata::transaction::special_transaction::TransactionPayload;
+
+        let is_provider_keys_account = matches!(
+            self.managed_account_type,
+            ManagedAccountType::ProviderVotingKeys { .. }
+                | ManagedAccountType::ProviderOwnerKeys { .. }
+                | ManagedAccountType::ProviderOperatorKeys { .. }
+                | ManagedAccountType::ProviderPlatformKeys { .. }
+        );
+        if !is_provider_keys_account {
+            return false;
+        }
+
+        self.transactions.get(txid).is_some_and(|record| {
+            matches!(
+                record.transaction.special_transaction_payload,
+                Some(
+                    TransactionPayload::ProviderRegistrationPayloadType(_)
+                        | TransactionPayload::ProviderUpdateServicePayloadType(_)
+                        | TransactionPayload::ProviderUpdateRegistrarPayloadType(_)
+                        | TransactionPayload::ProviderUpdateRevocationPayloadType(_)
+                )
+            )
+        })
     }
 
     /// Promote any `InBlock` records at height `<= cl_height` to
@@ -367,10 +413,10 @@ impl ManagedAccountTrait for ManagedCoreKeysAccount {
     }
 
     /// With the feature OFF, chainlocked records are dropped from
-    /// `transactions` and only their txids are retained in
-    /// `finalized_txids`. A live record can never satisfy this check
-    /// (it would have been pruned at the chainlock event), so the only
-    /// `true` answer comes from the txid set.
+    /// `transactions` and their txids are retained in `finalized_txids`.
+    /// The txid set is authoritative: even the provider-payload records
+    /// that [`Self::drop_finalized_transaction`] keeps alive in
+    /// `transactions` have their txid added to the set at finalization.
     #[cfg(not(feature = "keep-finalized-transactions"))]
     fn transaction_is_finalized(&self, txid: &Txid) -> bool {
         self.finalized_txids.contains(txid)
