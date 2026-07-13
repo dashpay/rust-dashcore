@@ -565,6 +565,186 @@ mod tests {
         assert_eq!(record.net_amount, -(funding_value as i64));
     }
 
+    /// Regression: an asset-lock transaction that spends a CoinJoin UTXO must
+    /// debit that UTXO.
+    ///
+    /// `check_core_transaction` only marks a UTXO spent for the account types
+    /// returned by `TransactionRouter::get_relevant_account_types`. Before the
+    /// fix, the `AssetLock` arm omitted `CoinJoin` (and the DashPay accounts),
+    /// so an asset lock funded from a CoinJoin UTXO never had that input
+    /// debited: the spent UTXO kept counting toward the balance while the BIP44
+    /// change output was still credited, inflating the balance by exactly the
+    /// spent amount — on both relay and rescan (dashpay/platform#4073, #4074,
+    /// dashpay/dash-wallet#1507).
+    #[tokio::test]
+    async fn test_asset_lock_spending_coinjoin_utxo_is_debited() {
+        use crate::account::AccountType;
+        use crate::managed_account::managed_account_type::ManagedAccountType;
+        use dashcore::blockdata::transaction::special_transaction::asset_lock::AssetLockPayload;
+        use dashcore::blockdata::transaction::special_transaction::TransactionPayload;
+
+        let network = Network::Testnet;
+
+        // Wallet with a BIP44 account (asset-lock change lands here) and a
+        // CoinJoin account (funds the asset lock).
+        let mut wallet = Wallet::new_random(network, WalletAccountCreationOptions::None)
+            .expect("Should create wallet");
+        wallet
+            .add_account(
+                AccountType::Standard {
+                    index: 0,
+                    standard_account_type: StandardAccountType::BIP44Account,
+                },
+                None,
+            )
+            .expect("Should add BIP44 account");
+        wallet
+            .add_account(
+                AccountType::CoinJoin {
+                    index: 0,
+                },
+                None,
+            )
+            .expect("Should add CoinJoin account");
+
+        let mut managed_wallet =
+            ManagedWalletInfo::from_wallet_with_name(&wallet, "Test".to_string(), 0);
+
+        // Derive a CoinJoin external address and a BIP44 change address.
+        let coinjoin_xpub =
+            wallet.accounts.coinjoin_accounts.get(&0).expect("coinjoin account").account_xpub;
+        let coinjoin_address = {
+            let managed_account =
+                managed_wallet.first_coinjoin_managed_account_mut().expect("managed coinjoin");
+            if let ManagedAccountType::CoinJoin {
+                external_addresses,
+                ..
+            } = managed_account.managed_account_type_mut()
+            {
+                external_addresses
+                    .next_unused(&KeySource::Public(coinjoin_xpub), true)
+                    .expect("coinjoin address")
+            } else {
+                panic!("Expected CoinJoin account type");
+            }
+        };
+        let bip44_xpub =
+            wallet.accounts.standard_bip44_accounts.get(&0).expect("bip44 account").account_xpub;
+        let change_address = managed_wallet
+            .first_bip44_managed_account_mut()
+            .expect("managed bip44")
+            .next_change_address(Some(&bip44_xpub), true)
+            .expect("bip44 change address");
+
+        // Fund the CoinJoin address, creating a CoinJoin UTXO.
+        let funding_value = 100_000_000u64;
+        let funding_tx = Transaction::dummy(&coinjoin_address, 0..1, &[funding_value]);
+        let funding_context = TransactionContext::InChainLockedBlock(BlockInfo::new(
+            1,
+            BlockHash::from_slice(&[7u8; 32]).expect("Should create block hash"),
+            1_650_000_000,
+        ));
+        let funding_result = managed_wallet
+            .check_core_transaction(&funding_tx, funding_context, &mut wallet, true, true)
+            .await;
+        assert!(funding_result.is_relevant, "CoinJoin funding must be relevant");
+        assert_eq!(funding_result.total_received, funding_value);
+        assert_eq!(
+            managed_wallet.first_coinjoin_managed_account().expect("coinjoin account").utxos.len(),
+            1,
+            "CoinJoin funding must create a UTXO"
+        );
+
+        // Build an asset-lock tx spending the CoinJoin UTXO, with BIP44 change.
+        let credit_value = 40_000_000u64;
+        let change_value = funding_value - credit_value - 1_000; // small fee
+        let asset_lock_tx = Transaction {
+            version: 3,
+            lock_time: 0,
+            input: vec![TxIn {
+                previous_output: OutPoint {
+                    txid: funding_tx.txid(),
+                    vout: 0,
+                },
+                script_sig: ScriptBuf::new(),
+                sequence: 0xffffffff,
+                witness: dashcore::Witness::new(),
+            }],
+            output: vec![TxOut {
+                value: change_value,
+                script_pubkey: change_address.script_pubkey(),
+            }],
+            special_transaction_payload: Some(TransactionPayload::AssetLockPayloadType(
+                AssetLockPayload {
+                    version: 1,
+                    credit_outputs: vec![TxOut {
+                        value: credit_value,
+                        script_pubkey: change_address.script_pubkey(),
+                    }],
+                },
+            )),
+        };
+        assert_eq!(
+            TransactionRouter::classify_transaction(&asset_lock_tx),
+            TransactionType::AssetLock,
+            "tx must classify as AssetLock so it routes through the AssetLock arm"
+        );
+
+        let spend_context = TransactionContext::InChainLockedBlock(BlockInfo::new(
+            2,
+            BlockHash::from_slice(&[8u8; 32]).expect("Should create block hash"),
+            1_650_000_100,
+        ));
+        let spend_result = managed_wallet
+            .check_core_transaction(&asset_lock_tx, spend_context, &mut wallet, true, true)
+            .await;
+
+        assert!(spend_result.is_relevant, "asset lock spending our UTXO must be relevant");
+        // The load-bearing assertion: the CoinJoin input must be debited.
+        assert_eq!(
+            spend_result.total_sent, funding_value,
+            "asset lock must debit the CoinJoin UTXO it spends"
+        );
+        assert_eq!(
+            spend_result.total_received, change_value,
+            "BIP44 change output must be credited"
+        );
+        assert!(
+            managed_wallet
+                .first_coinjoin_managed_account()
+                .expect("coinjoin account")
+                .utxos
+                .is_empty(),
+            "spent CoinJoin UTXO must be removed"
+        );
+
+        // Aggregate wallet balance — the actual regression is balance inflation.
+        // `check_core_transaction` was called with `update_balance = true`, so
+        // the cached balance now reflects the spend. If the spent CoinJoin coin
+        // were NOT debited, the wallet would still count its `funding_value`
+        // (100_000_000) on top of the new BIP44 change, reporting
+        // `funding_value + change_value`. After a correct debit only the
+        // confirmed BIP44 change UTXO remains (the asset-lock credit output is
+        // locked into Platform, never counted as a spendable wallet UTXO — see
+        // the `total_received == change_value` assertion above).
+        assert_eq!(
+            managed_wallet.balance.confirmed(),
+            change_value,
+            "confirmed balance must be only the BIP44 change; the spent CoinJoin \
+             coin must not inflate it"
+        );
+        assert_eq!(
+            managed_wallet.balance.spendable(),
+            change_value,
+            "spendable balance must fall from funding_value to change_value after the spend"
+        );
+        assert_eq!(
+            managed_wallet.balance.total(),
+            change_value,
+            "total balance must not double-count the spent CoinJoin UTXO"
+        );
+    }
+
     /// Test the full coinbase maturity flow - immature to mature transition
     #[tokio::test]
     async fn test_wallet_checker_immature_transaction_flow() {
