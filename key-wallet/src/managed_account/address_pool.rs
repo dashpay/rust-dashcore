@@ -143,9 +143,11 @@ impl KeySource {
             #[cfg(feature = "bls")]
             KeySource::BLSPrivate(xprv) => {
                 // BLS HD derivation using the proper BIP32-like derivation
+                // Legacy mode: BLS pools exist only for provider operator keys,
+                // which dashbls/DashSync derive with fLegacy = true.
                 let mut derived = xprv.clone();
                 for child_num in path.as_ref() {
-                    derived = derived.derive_priv(*child_num).map_err(|e| {
+                    derived = derived.derive_priv_legacy(*child_num).map_err(|e| {
                         Error::InvalidParameter(format!("BLS derivation error: {:?}", e))
                     })?;
                 }
@@ -161,7 +163,7 @@ impl KeySource {
                             "Cannot derive hardened child from BLS public key".into(),
                         ));
                     }
-                    derived = derived.derive_pub(*child_num).map_err(|e| {
+                    derived = derived.derive_pub_legacy(*child_num).map_err(|e| {
                         Error::InvalidParameter(format!("BLS public derivation error: {:?}", e))
                     })?;
                 }

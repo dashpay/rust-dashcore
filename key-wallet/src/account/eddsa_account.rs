@@ -84,15 +84,22 @@ impl EdDSAAccount {
         })
     }
 
-    /// Create an EdDSA account from a private key (seed)
+    /// Create an EdDSA account from a wallet seed (e.g. the 64-byte BIP39 seed).
+    ///
+    /// The seed is fed directly into the SLIP-0010 Ed25519 master key and the
+    /// account's derivation path (e.g. `m/9'/5'/3'/4'` for mainnet platform
+    /// node keys) is applied in the Ed25519 scheme, matching DashSync. The
+    /// stored extended public key is the account-level key.
     pub fn from_seed(
         parent_wallet_id: Option<Vec<u8>>,
         account_type: AccountType,
-        ed25519_seed: [u8; 32],
+        seed: &[u8],
         network: Network,
     ) -> Result<Self> {
-        let ed25519_private_key = ExtendedEd25519PrivKey::new_master(network, &ed25519_seed)?;
-        let ed25519_public_key = ExtendedEd25519PubKey::from_priv(&ed25519_private_key)?;
+        let master = ExtendedEd25519PrivKey::new_master(network, seed)?;
+        let path = account_type.derivation_path(network)?;
+        let account_xpriv = master.derive_priv(&path)?;
+        let ed25519_public_key = ExtendedEd25519PubKey::from_priv(&account_xpriv)?;
 
         Ok(Self {
             parent_wallet_id,
@@ -454,7 +461,7 @@ mod tests {
                 index: 0,
                 standard_account_type: StandardAccountType::BIP44Account,
             },
-            seed,
+            &seed,
             Network::Testnet,
         )
         .expect("Failed to create EdDSA account from seed");
@@ -471,7 +478,7 @@ mod tests {
                 index: 0,
                 standard_account_type: StandardAccountType::BIP44Account,
             },
-            seed,
+            &seed,
             Network::Testnet,
         )
         .expect("Failed to create EdDSA account from seed");
@@ -516,7 +523,7 @@ mod tests {
                 index: 0,
                 standard_account_type: StandardAccountType::BIP44Account,
             },
-            seed,
+            &seed,
             Network::Testnet,
         )
         .expect("Failed to create EdDSA account from seed");

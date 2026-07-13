@@ -101,6 +101,28 @@ impl Wallet {
         matches!(self.wallet_type, WalletType::Seed { .. } | WalletType::Mnemonic { .. })
     }
 
+    /// Get the wallet's 64-byte seed, if it has one.
+    ///
+    /// For mnemonic wallets this is the BIP39 seed (empty passphrase — the
+    /// same convention wallet construction uses to derive the root key).
+    /// Wallets created from an extended private key, watch-only wallets and
+    /// external-signable wallets have no seed and return `None`.
+    pub fn wallet_seed_bytes(&self) -> Option<[u8; 64]> {
+        match &self.wallet_type {
+            WalletType::Mnemonic {
+                mnemonic,
+                ..
+            } => Some(mnemonic.to_seed("")),
+            WalletType::Seed {
+                seed,
+                ..
+            } => Some(*seed.as_bytes()),
+            WalletType::ExtendedPrivKey(_)
+            | WalletType::ExternalSignable
+            | WalletType::WatchOnly => None,
+        }
+    }
+
     /// Create accounts based on the provided creation options
     pub(crate) fn create_accounts_from_options(
         &mut self,
@@ -321,10 +343,18 @@ impl Wallet {
         // Provider keys accounts
         self.add_account(AccountType::ProviderVotingKeys, None)?;
         self.add_account(AccountType::ProviderOwnerKeys, None)?;
-        #[cfg(feature = "bls")]
-        self.add_bls_account(AccountType::ProviderOperatorKeys, None)?;
-        #[cfg(feature = "eddsa")]
-        self.add_eddsa_account(AccountType::ProviderPlatformKeys, None)?;
+        // Operator (BLS) and platform-node (Ed25519) keys are derived from the
+        // raw wallet seed in their own scheme (matching DashSync/dashbls), not
+        // from the secp256k1 root key — so they can only be auto-created for
+        // wallets that carry a seed. Seedless wallets (extended-priv-key based)
+        // can still add them explicitly via add_bls_account/add_eddsa_account
+        // with an externally supplied seed.
+        if self.has_seed() {
+            #[cfg(feature = "bls")]
+            self.add_bls_account(AccountType::ProviderOperatorKeys, None)?;
+            #[cfg(feature = "eddsa")]
+            self.add_eddsa_account(AccountType::ProviderPlatformKeys, None)?;
+        }
 
         Ok(())
     }
