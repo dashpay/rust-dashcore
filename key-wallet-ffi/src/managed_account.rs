@@ -7,12 +7,12 @@
 use dash_network::ffi::FFINetwork;
 use dashcore::hashes::Hash;
 use std::os::raw::{c_char, c_uint};
-#[cfg(feature = "keep-finalized-transactions")]
 use std::ptr::slice_from_raw_parts_mut;
 use std::sync::Arc;
 
 use crate::address_pool::{FFIAddressPool, FFIAddressPoolType};
 use crate::error::{FFIError, FFIErrorCode};
+use crate::special_payload::FFISpecialTransactionPayload;
 use crate::types::{
     FFIAccountKind, FFIInputDetail, FFIOutputDetail, FFITransactionContext,
     FFITransactionDirection, FFITransactionType,
@@ -894,6 +894,9 @@ pub struct FFITransactionRecord {
     pub tx_len: usize,
     /// Optional label (null if not set)
     pub label: *mut c_char,
+    /// Typed DIP-2 special-transaction payload (null for classical
+    /// transactions). Owned by this record and freed with it.
+    pub special_transaction_payload: *mut FFISpecialTransactionPayload,
 }
 
 impl From<&TransactionRecord> for FFITransactionRecord {
@@ -943,6 +946,12 @@ impl From<&TransactionRecord> for FFITransactionRecord {
             Box::into_raw(output_slice) as *mut FFIOutputDetail
         };
 
+        // Typed special-transaction payload (ProRegTx service IP etc.)
+        let special_transaction_payload = match &value.transaction.special_transaction_payload {
+            Some(payload) => Box::into_raw(Box::new(FFISpecialTransactionPayload::from(payload))),
+            None => std::ptr::null_mut(),
+        };
+
         FFITransactionRecord {
             txid,
             net_amount,
@@ -958,6 +967,7 @@ impl From<&TransactionRecord> for FFITransactionRecord {
             tx_data,
             tx_len,
             label,
+            special_transaction_payload,
         }
     }
 }
@@ -994,6 +1004,12 @@ impl Drop for FFITransactionRecord {
             let _ = unsafe { std::ffi::CString::from_raw(self.label) };
 
             self.label = std::ptr::null_mut();
+        }
+
+        if !self.special_transaction_payload.is_null() {
+            let _ = unsafe { Box::from_raw(self.special_transaction_payload) };
+
+            self.special_transaction_payload = std::ptr::null_mut();
         }
     }
 }
@@ -1041,17 +1057,64 @@ pub unsafe extern "C" fn managed_core_account_get_transactions(
     true
 }
 
-#[cfg(feature = "keep-finalized-transactions")]
-/// Free transactions array returned by managed_core_account_get_transactions
+/// Get the transactions of a managed account that carry a DIP-2 special
+/// payload (provider registrations / updates, asset locks, …).
 ///
-/// Only available with the `keep-finalized-transactions` Cargo feature, in
-/// which configuration `managed_core_account_get_transactions` is also
-/// available — the two functions are paired.
+/// Unlike `managed_core_account_get_transactions` this is available in
+/// every feature configuration: provider-relevant records are retained
+/// in memory even after their block is chainlocked (see
+/// `ManagedCoreKeysAccount::drop_finalized_transaction` in `key-wallet`),
+/// so a provider-key account's registration history — including each
+/// masternode's service IP — remains queryable without the
+/// `keep-finalized-transactions` feature.
+///
+/// Returns records in txid order. Each record's
+/// `special_transaction_payload` field is non-null.
 ///
 /// # Safety
 ///
-/// - `transactions` must be a pointer returned by `managed_core_account_get_transactions`
-/// - `count` must be the count returned by `managed_core_account_get_transactions`
+/// - `account` must be a valid pointer to an FFIManagedCoreAccount instance
+/// - `transactions_out` must be a valid pointer to receive the transactions array pointer
+/// - `count_out` must be a valid pointer to receive the count
+/// - The caller must free the returned array using `managed_core_account_free_transactions`
+#[no_mangle]
+pub unsafe extern "C" fn managed_core_account_get_special_transactions(
+    account: *const FFIManagedCoreAccount,
+    transactions_out: *mut *mut FFITransactionRecord,
+    count_out: *mut usize,
+) -> bool {
+    if account.is_null() || transactions_out.is_null() || count_out.is_null() {
+        return false;
+    }
+
+    let account = &*account;
+    let ffi_tx = account
+        .keys_account()
+        .transactions()
+        .values()
+        .filter(|record| record.transaction.special_transaction_payload.is_some())
+        .map(FFITransactionRecord::from)
+        .collect::<Vec<_>>();
+
+    if ffi_tx.is_empty() {
+        *transactions_out = std::ptr::null_mut();
+        *count_out = 0;
+        return true;
+    }
+
+    *count_out = ffi_tx.len();
+    *transactions_out = Box::into_raw(ffi_tx.into_boxed_slice()) as *mut FFITransactionRecord;
+    true
+}
+
+/// Free a transactions array returned by
+/// `managed_core_account_get_transactions` or
+/// `managed_core_account_get_special_transactions`.
+///
+/// # Safety
+///
+/// - `transactions` must be a pointer returned by one of the paired getters
+/// - `count` must be the count returned alongside it
 /// - This function must only be called once per allocation
 #[no_mangle]
 pub unsafe extern "C" fn managed_core_account_free_transactions(
@@ -1768,8 +1831,10 @@ mod tests {
     };
     use dash_network::ffi::FFINetwork;
     use dashcore::Transaction;
+    #[cfg(feature = "keep-finalized-transactions")]
+    use key_wallet::managed_account::transaction_record::{OutputDetail, OutputRole};
     use key_wallet::managed_account::transaction_record::{
-        OutputDetail, OutputRole, TransactionDirection, TransactionRecord,
+        TransactionDirection, TransactionRecord,
     };
     use key_wallet::transaction_checking::transaction_context::TransactionContext;
     use key_wallet::transaction_checking::transaction_router::TransactionType;
@@ -2638,6 +2703,7 @@ mod tests {
 
             // Create label
             label: CString::new("Payment for coffee").unwrap().into_raw(),
+            special_transaction_payload: std::ptr::null_mut(),
         };
 
         // Second record: empty sub-arrays
@@ -2668,6 +2734,7 @@ mod tests {
             tx_data: std::ptr::null_mut(),
             tx_len: 0,
             label: std::ptr::null_mut(),
+            special_transaction_payload: std::ptr::null_mut(),
         };
 
         records.push(r0);
@@ -2680,6 +2747,179 @@ mod tests {
         // Free should not crash
         unsafe {
             managed_core_account_free_transactions(records_ptr, count);
+        }
+    }
+
+    /// Masternode-registration transaction wrapping the mainnet-shape
+    /// ProRegTx payload fixture (service `54.148.58.128:9999`).
+    fn proreg_transaction() -> Transaction {
+        use dashcore::blockdata::transaction::special_transaction::TransactionPayload;
+
+        Transaction {
+            version: 3,
+            lock_time: 0,
+            input: vec![],
+            output: vec![],
+            special_transaction_payload: Some(TransactionPayload::ProviderRegistrationPayloadType(
+                crate::special_payload::mainnet_shape_proreg_payload(),
+            )),
+        }
+    }
+
+    /// Acceptance round-trip for issue #875: a stored `ProRegTx` record
+    /// exposes its typed payload — service address included — without the
+    /// consumer decoding `tx_data`.
+    #[test]
+    fn test_transaction_record_exposes_typed_proreg_payload() {
+        use dashcore::hashes::hex::FromHex;
+
+        let tx = proreg_transaction();
+        let record = TransactionRecord::new(
+            tx,
+            key_wallet::AccountType::ProviderOwnerKeys,
+            TransactionContext::Mempool,
+            TransactionType::ProviderRegistration,
+            TransactionDirection::Internal,
+            vec![],
+            vec![],
+            0,
+        );
+
+        let ffi = FFITransactionRecord::from(&record);
+        assert!(!ffi.special_transaction_payload.is_null());
+        let payload = unsafe { &*ffi.special_transaction_payload };
+        assert_eq!(payload.payload_type, 1, "DIP-2 type 1 = ProRegTx");
+        assert!(!payload.provider_registration.is_null());
+
+        let reg = unsafe { &*payload.provider_registration };
+        let service =
+            unsafe { std::ffi::CStr::from_ptr(reg.service_address) }.to_str().expect("utf8");
+        assert_eq!(service, "54.148.58.128:9999");
+        assert_eq!(reg.service_port, 9999);
+        let expected_hash =
+            <[u8; 20]>::from_hex("70993555a01f7e8d6179d6135b5c56809d2d1d36").expect("hash160");
+        assert_eq!(reg.owner_key_hash, expected_hash);
+        assert_eq!(reg.voting_key_hash, expected_hash);
+
+        // The raw bytes escape hatch still round-trips alongside the
+        // typed payload.
+        let tx_bytes = unsafe { std::slice::from_raw_parts(ffi.tx_data, ffi.tx_len) };
+        let decoded: Transaction =
+            dashcore::consensus::deserialize(tx_bytes).expect("tx_data must stay decodable");
+        assert_eq!(decoded.txid().to_byte_array(), ffi.txid);
+    }
+
+    /// `managed_core_account_get_special_transactions` surfaces
+    /// payload-carrying records from a provider keys account in every
+    /// feature configuration (this is how retained `ProRegTx` records
+    /// stay queryable without `keep-finalized-transactions`).
+    #[test]
+    fn test_get_special_transactions_returns_proreg_record() {
+        use key_wallet::transaction_checking::BlockInfo;
+
+        unsafe {
+            let mut error = FFIError::default();
+            let manager = wallet_manager_create(FFINetwork::Testnet, &mut error);
+            assert!(!manager.is_null());
+
+            let mnemonic = CString::new(TEST_MNEMONIC).unwrap();
+            assert!(wallet_manager_add_wallet_from_mnemonic_with_options(
+                manager,
+                mnemonic.as_ptr(),
+                ptr::null(),
+                &mut error,
+            ));
+
+            let mut wallet_ids_out: *mut u8 = ptr::null_mut();
+            let mut count_out: usize = 0;
+            assert!(wallet_manager_get_wallet_ids(
+                manager,
+                &mut wallet_ids_out,
+                &mut count_out,
+                &mut error,
+            ));
+            assert_eq!(count_out, 1);
+
+            // Insert a chainlocked ProRegTx record into the provider
+            // owner-keys account plus a payload-less control record.
+            let proreg_tx = proreg_transaction();
+            let proreg_txid = proreg_tx.txid();
+            let plain_tx = Transaction {
+                version: 2,
+                lock_time: 0,
+                input: vec![],
+                output: vec![],
+                special_transaction_payload: None,
+            };
+            let account_type_rust = key_wallet::AccountType::ProviderOwnerKeys;
+            let block_hash = dashcore::BlockHash::from_byte_array([9u8; 32]);
+
+            let mut wallet_id_array = [0u8; 32];
+            ptr::copy_nonoverlapping(wallet_ids_out, wallet_id_array.as_mut_ptr(), 32);
+
+            let manager_ref = &*manager;
+            manager_ref.runtime.block_on(async {
+                let mut manager_guard = manager_ref.manager.write().await;
+                let wallet_info =
+                    manager_guard.get_wallet_info_mut(&wallet_id_array).expect("wallet");
+                let mut account = crate::address_pool::get_managed_account_by_type_mut(
+                    &mut wallet_info.accounts,
+                    &account_type_rust,
+                )
+                .expect("provider owner keys account");
+                for (tx, tx_type) in [
+                    (proreg_tx.clone(), TransactionType::ProviderRegistration),
+                    (plain_tx.clone(), TransactionType::Standard),
+                ] {
+                    let txid = tx.txid();
+                    let record = TransactionRecord::new(
+                        tx,
+                        account_type_rust,
+                        TransactionContext::InChainLockedBlock(BlockInfo::new(
+                            100,
+                            block_hash,
+                            1_700_000_000,
+                        )),
+                        tx_type,
+                        TransactionDirection::Internal,
+                        vec![],
+                        vec![],
+                        0,
+                    );
+                    account.transactions_mut().insert(txid, record);
+                }
+            });
+
+            let result = managed_wallet_get_account(
+                manager,
+                wallet_ids_out,
+                0,
+                FFIAccountKind::ProviderOwnerKeys,
+            );
+            assert!(!result.account.is_null());
+
+            let mut txs_out: *mut FFITransactionRecord = ptr::null_mut();
+            let mut txs_count: usize = 0;
+            assert!(managed_core_account_get_special_transactions(
+                result.account,
+                &mut txs_out,
+                &mut txs_count,
+            ));
+            assert_eq!(txs_count, 1, "only the payload-carrying record is returned");
+
+            let record = &*txs_out;
+            assert_eq!(record.txid, proreg_txid.to_byte_array());
+            assert!(!record.special_transaction_payload.is_null());
+            let payload = &*record.special_transaction_payload;
+            assert_eq!(payload.payload_type, 1);
+            let reg = &*payload.provider_registration;
+            let service = std::ffi::CStr::from_ptr(reg.service_address).to_str().expect("utf8");
+            assert_eq!(service, "54.148.58.128:9999");
+
+            managed_core_account_free_transactions(txs_out, txs_count);
+            managed_core_account_free(result.account);
+            wallet_manager_free_wallet_ids(wallet_ids_out, count_out);
+            wallet_manager_free(manager);
         }
     }
 }

@@ -22,6 +22,15 @@ use crate::{
     transaction_checking::{BlockInfo, TransactionContext},
     wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface,
 };
+#[cfg(not(feature = "keep-finalized-transactions"))]
+use crate::{
+    managed_account::{
+        address_pool::KeySource, managed_account_type::ManagedAccountType, ManagedCoreKeysAccount,
+    },
+    transaction_checking::account_checker::{AccountMatch, CoreAccountTypeMatch},
+    transaction_checking::transaction_router::TransactionType as RoutedTransactionType,
+    Network,
+};
 use dashcore::ephemerealdata::chain_lock::ChainLock;
 #[cfg(not(feature = "keep-finalized-transactions"))]
 use dashcore::ephemerealdata::instant_lock::InstantLock;
@@ -211,6 +220,194 @@ async fn test_apply_chain_lock_skips_unmined_and_above_height() {
     );
     assert!(!ctx.bip44_account().transaction_is_finalized(&mempool_txid));
     assert!(!ctx.bip44_account().transaction_is_finalized(&block_txid));
+}
+
+/// Build a masternode-registration transaction whose DIP-3 payload carries a
+/// service endpoint, plus the [`AccountMatch`] a provider owner-keys account
+/// would report for it.
+#[cfg(not(feature = "keep-finalized-transactions"))]
+fn proreg_tx_and_owner_match() -> (Transaction, AccountMatch) {
+    use dashcore::blockdata::transaction::special_transaction::provider_registration::{
+        ProviderMasternodeType, ProviderRegistrationPayload,
+    };
+    use dashcore::blockdata::transaction::special_transaction::TransactionPayload;
+    use dashcore::bls_sig_utils::BLSPublicKey;
+    use dashcore::hash_types::InputsHash;
+    use dashcore::{OutPoint, PubkeyHash, ScriptBuf, Txid};
+    use std::net::SocketAddr;
+    use std::str::FromStr;
+
+    let key_hash = PubkeyHash::from_slice(&[0x70; 20]).expect("hash160");
+    let payload = ProviderRegistrationPayload {
+        version: 1,
+        masternode_type: ProviderMasternodeType::Regular,
+        masternode_mode: 0,
+        collateral_outpoint: OutPoint {
+            txid: Txid::from_slice(&[0x19; 32]).expect("txid"),
+            vout: 1,
+        },
+        service_address: SocketAddr::from_str("54.148.58.128:9999").expect("socket addr"),
+        owner_key_hash: key_hash,
+        operator_public_key: BLSPublicKey::from([0x11; 48]),
+        voting_key_hash: key_hash,
+        operator_reward: 0,
+        script_payout: ScriptBuf::new(),
+        inputs_hash: InputsHash::from_slice(&[0x22; 32]).expect("inputs hash"),
+        signature: vec![0x33; 65],
+        platform_node_id: None,
+        platform_p2p_port: None,
+        platform_http_port: None,
+    };
+    let tx = Transaction {
+        version: 3,
+        lock_time: 0,
+        input: vec![],
+        output: vec![],
+        special_transaction_payload: Some(TransactionPayload::ProviderRegistrationPayloadType(
+            payload,
+        )),
+    };
+    let account_match = AccountMatch {
+        account_type_match: CoreAccountTypeMatch::ProviderOwnerKeys {
+            involved_addresses: vec![],
+        },
+        received: 0,
+        sent: 0,
+        received_for_credit_conversion: 0,
+    };
+    (tx, account_match)
+}
+
+/// Build a keys account of the given type without key material (the
+/// retention decision only looks at the account type and the payload).
+#[cfg(not(feature = "keep-finalized-transactions"))]
+fn keys_account(account_type: AccountType) -> ManagedCoreKeysAccount {
+    let managed_type = ManagedAccountType::from_account_type(
+        account_type,
+        Network::Testnet,
+        &KeySource::NoKeySource,
+    )
+    .expect("managed account type");
+    ManagedCoreKeysAccount::new(managed_type, Network::Testnet)
+}
+
+/// A `ProRegTx` first seen already chainlocked (the historical-rescan case
+/// from masternode-key discovery) must keep its full record on a provider
+/// owner-keys account even with the feature OFF: the payload's service
+/// IP / proTxHash data is what the account exists to surface.
+#[cfg(not(feature = "keep-finalized-transactions"))]
+#[test]
+fn test_provider_payload_record_retained_on_provider_account() {
+    let mut account = keys_account(AccountType::ProviderOwnerKeys);
+    let (tx, account_match) = proreg_tx_and_owner_match();
+    let txid = tx.txid();
+
+    let block_hash = BlockHash::from_slice(&[5u8; 32]).expect("hash");
+    let _ = account.record_transaction(
+        &tx,
+        &account_match,
+        TransactionContext::InChainLockedBlock(BlockInfo::new(100, block_hash, 1_700_000_000)),
+        RoutedTransactionType::ProviderRegistration,
+    );
+
+    assert!(account.transaction_is_finalized(&txid));
+    assert!(account.has_transaction(&txid));
+    let record = account
+        .transactions()
+        .get(&txid)
+        .expect("provider payload record must be retained past finalization");
+    assert!(record.transaction.special_transaction_payload.is_some());
+}
+
+/// The retention exception is payload-driven: a payload-less transaction
+/// on the same provider account still drops at finalization.
+#[cfg(not(feature = "keep-finalized-transactions"))]
+#[test]
+fn test_plain_record_still_dropped_on_provider_account() {
+    let mut account = keys_account(AccountType::ProviderOwnerKeys);
+    let (_, account_match) = proreg_tx_and_owner_match();
+    let tx = Transaction {
+        version: 2,
+        lock_time: 0,
+        input: vec![],
+        output: vec![],
+        special_transaction_payload: None,
+    };
+    let txid = tx.txid();
+
+    let block_hash = BlockHash::from_slice(&[6u8; 32]).expect("hash");
+    let _ = account.record_transaction(
+        &tx,
+        &account_match,
+        TransactionContext::InChainLockedBlock(BlockInfo::new(100, block_hash, 1_700_000_000)),
+        RoutedTransactionType::Standard,
+    );
+
+    assert!(account.transaction_is_finalized(&txid));
+    assert!(account.has_transaction(&txid));
+    assert!(
+        !account.transactions().contains_key(&txid),
+        "payload-less records must still be dropped at finalization"
+    );
+}
+
+/// The retention exception is also account-driven: the same `ProRegTx`
+/// record drops at finalization on a non-provider keys account.
+#[cfg(not(feature = "keep-finalized-transactions"))]
+#[test]
+fn test_provider_payload_record_dropped_on_non_provider_account() {
+    let mut account = keys_account(AccountType::IdentityRegistration);
+    let (tx, _) = proreg_tx_and_owner_match();
+    let account_match = AccountMatch {
+        account_type_match: CoreAccountTypeMatch::IdentityRegistration {
+            involved_addresses: vec![],
+        },
+        received: 0,
+        sent: 0,
+        received_for_credit_conversion: 0,
+    };
+    let txid = tx.txid();
+
+    let block_hash = BlockHash::from_slice(&[7u8; 32]).expect("hash");
+    let _ = account.record_transaction(
+        &tx,
+        &account_match,
+        TransactionContext::InChainLockedBlock(BlockInfo::new(100, block_hash, 1_700_000_000)),
+        RoutedTransactionType::ProviderRegistration,
+    );
+
+    assert!(account.transaction_is_finalized(&txid));
+    assert!(!account.transactions().contains_key(&txid));
+}
+
+/// A retained provider record must also survive the deferred-chainlock
+/// path (`apply_chain_lock` promoting an `InBlock` record) with its
+/// context updated, and repeated chainlocks must be idempotent.
+#[cfg(not(feature = "keep-finalized-transactions"))]
+#[test]
+fn test_provider_payload_record_retained_through_apply_chain_lock() {
+    let mut account = keys_account(AccountType::ProviderOwnerKeys);
+    let (tx, account_match) = proreg_tx_and_owner_match();
+    let txid = tx.txid();
+
+    let block_hash = BlockHash::from_slice(&[8u8; 32]).expect("hash");
+    let _ = account.record_transaction(
+        &tx,
+        &account_match,
+        TransactionContext::InBlock(BlockInfo::new(50, block_hash, 1_700_000_000)),
+        RoutedTransactionType::ProviderRegistration,
+    );
+
+    let promoted = account.apply_chain_lock(60);
+    assert_eq!(promoted, vec![txid]);
+    assert!(account.transaction_is_finalized(&txid));
+    let record = account.transactions().get(&txid).expect("record retained");
+    assert!(matches!(record.context, TransactionContext::InChainLockedBlock(_)));
+
+    // A later chainlock must not re-promote (or drop) the retained record.
+    let promoted_again = account.apply_chain_lock(70);
+    assert!(promoted_again.is_empty());
+    assert!(account.transactions().contains_key(&txid));
 }
 
 /// IS-lock first, then a chainlocked block: the record must drop only at

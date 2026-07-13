@@ -12,7 +12,6 @@ use core::fmt;
 use dashcore::blockdata::script::{Builder, PushBytes, ScriptBuf};
 use dashcore::blockdata::transaction::special_transaction::TransactionPayload;
 use dashcore::blockdata::transaction::{OutPoint, Transaction};
-use dashcore::consensus::Encodable;
 use dashcore::sighash::{EcdsaSighashType, LegacySighash, SighashCache};
 use dashcore::Address;
 use dashcore::{TxIn, TxOut};
@@ -24,15 +23,6 @@ use std::cmp::Ordering;
 /// A transaction with more inputs would exceed the relay standard-size cap (~100 KB at ~148
 /// bytes/signed input) and be rejected by the network
 const MAX_STANDARD_TX_INPUTS: usize = 500;
-
-/// Consensus-encoded byte length of `tx`, used to compute the fee from the real
-/// serialized size. Surfaces an encode error instead of panicking so the caller
-/// can release any reservations it took rather than stranding the inputs.
-fn encoded_size(tx: &Transaction) -> Result<usize, BuilderError> {
-    let mut bytes = Vec::new();
-    tx.consensus_encode(&mut bytes)
-        .map_err(|err| BuilderError::InvalidData(format!("failed to encode transaction: {}", err)))
-}
 
 /// Calculate varint size for a given number
 fn varint_size(n: usize) -> usize {
@@ -432,28 +422,25 @@ impl TransactionBuilder {
         }
     }
 
+    /// Build the unsigned transaction. The returned fee is the fee the
+    /// transaction actually pays: Σ(selected input values) − Σ(output values).
+    /// This can exceed the size-based fee target when a dust change remainder
+    /// (≤ 546 duffs) is dropped and left to miners.
     pub fn build_unsigned(self) -> Result<(Transaction, u64), BuilderError> {
-        let fee_rate = self.fee_rate;
-        let reservations = self.reservations.clone();
-
         let (tx, inputs) = self.assemble_unsigned()?;
 
-        let fee = match encoded_size(&tx) {
-            Ok(size) => fee_rate.calculate_fee(size),
-            Err(err) => {
-                if let Some(reservations) = &reservations {
-                    reservations.release(inputs.iter().map(|utxo| &utxo.outpoint));
-                }
-                return Err(err);
-            }
-        };
+        let total_input: u64 = inputs.iter().map(|utxo| utxo.value()).sum();
+        let total_output: u64 = tx.output.iter().map(|out| out.value).sum();
 
-        Ok((tx, fee))
+        Ok((tx, total_input.saturating_sub(total_output)))
     }
 
     /// Build and sign the transaction. The `path_resolver` maps each input
     /// address to the derivation path the signer should use for that input.
-    /// The returned fee is computed from the encoded size of the signed tx.
+    /// The returned fee is the fee the transaction actually pays:
+    /// Σ(selected input values) − Σ(output values). This can exceed the
+    /// size-based fee target when a dust change remainder (≤ 546 duffs) is
+    /// dropped and left to miners.
     pub async fn build_signed<S, P>(
         self,
         signer: &S,
@@ -463,10 +450,10 @@ impl TransactionBuilder {
         S: TransactionSigner + ?Sized + Sync,
         P: Fn(Address) -> Option<DerivationPath> + Send,
     {
-        let fee_rate = self.fee_rate;
         let reservations = self.reservations.clone();
 
         let (tx, inputs) = self.assemble_unsigned()?;
+        let total_input: u64 = inputs.iter().map(|utxo| utxo.value()).sum();
         // Signing never reaches the network for a local key, but an external
         // signer can fail. A failed sign means the reserved inputs are still
         // spendable, so release them now instead of stranding the funds until
@@ -482,17 +469,9 @@ impl TransactionBuilder {
             }
         };
 
-        let fee = match encoded_size(&tx) {
-            Ok(size) => fee_rate.calculate_fee(size),
-            Err(err) => {
-                if let Some(reservations) = &reservations {
-                    reservations.release(reserved.iter());
-                }
-                return Err(err);
-            }
-        };
+        let total_output: u64 = tx.output.iter().map(|out| out.value).sum();
 
-        Ok((tx, fee))
+        Ok((tx, total_input.saturating_sub(total_output)))
     }
 }
 
@@ -850,6 +829,69 @@ mod tests {
         // Should only have 1 output (no change) because change is below dust threshold
         assert_eq!(tx.output.len(), 1);
         assert_eq!(tx.output[0].value, 150000);
+    }
+
+    /// When the change remainder is dust (≤ 546 duffs) the builder drops it and
+    /// those duffs go to miners. The returned fee must be what the transaction
+    /// actually pays (Σ inputs − Σ outputs), not the smaller size-based target.
+    #[test]
+    fn test_dropped_dust_change_counts_toward_returned_fee() {
+        // 150000 to recipient + 226 size fee + 300 dust remainder
+        let utxos = vec![Utxo::dummy(0, 150526, 100, false, true)];
+
+        let recipient_address = Address::dummy(Network::Testnet, 0);
+        let change_address = Address::dummy(Network::Testnet, 0);
+
+        let (tx, fee) = TransactionBuilder::new()
+            .set_current_height(200)
+            .set_selection_strategy(SelectionStrategy::SmallestFirst)
+            .set_fee_rate(FeeRate::normal())
+            .set_change_address(change_address)
+            .add_inputs(utxos)
+            .add_output(&recipient_address, 150000)
+            .build_unsigned()
+            .unwrap();
+
+        assert_eq!(tx.output.len(), 1, "dust change must be dropped");
+        let total_output: u64 = tx.output.iter().map(|o| o.value).sum();
+        assert_eq!(fee, 150526 - total_output, "fee must equal inputs minus outputs");
+        assert_eq!(fee, 526, "fee must include the 300-duff dropped dust remainder");
+    }
+
+    /// An asset lock burns the locked amount into an on-chain OP_RETURN output
+    /// mirroring the payload's credit outputs. That output is part of
+    /// Σ(outputs), so the returned fee must be the miner fee only — the locked
+    /// credits must never be counted as fee.
+    #[test]
+    fn test_asset_lock_fee_excludes_locked_credits() {
+        let utxos = vec![Utxo::dummy(0, 1_000_000, 100, false, true)];
+        let change_address = Address::dummy(Network::Testnet, 0);
+
+        let asset_lock_payload = AssetLockPayload {
+            version: 1,
+            credit_outputs: vec![TxOut {
+                value: 100_000,
+                script_pubkey: ScriptBuf::new(),
+            }],
+        };
+
+        let (tx, fee) = TransactionBuilder::new()
+            .set_current_height(200)
+            .set_fee_rate(FeeRate::normal())
+            .set_change_address(change_address)
+            .set_special_payload(TransactionPayload::AssetLockPayloadType(asset_lock_payload))
+            .add_inputs(utxos)
+            .build_unsigned()
+            .unwrap();
+
+        assert_eq!(tx.output.len(), 2, "OP_RETURN burn output + change");
+        let total_output: u64 = tx.output.iter().map(|o| o.value).sum();
+        assert_eq!(fee, 1_000_000 - total_output, "fee must equal inputs minus outputs");
+        assert!(
+            fee < 1_000,
+            "fee must be the miner fee only, not include the 100k locked credits, got {}",
+            fee
+        );
     }
 
     #[test]

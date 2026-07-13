@@ -4,7 +4,7 @@ This document provides a comprehensive reference for all FFI (Foreign Function I
 
 **Auto-generated**: This documentation is automatically generated from the source code. Do not edit manually.
 
-**Total Functions**: 258
+**Total Functions**: 261
 
 ## Table of Contents
 
@@ -140,7 +140,7 @@ Functions: 63
 
 ### Account Management
 
-Functions: 108
+Functions: 109
 
 | Function | Description | Module |
 |----------|-------------|--------|
@@ -231,7 +231,7 @@ Functions: 108
 | `managed_account_collection_summary_data` | Get structured account collection summary data for managed collection ... | managed_account_collection |
 | `managed_account_collection_summary_free` | Free a managed account collection summary and all its allocated memory  #... | managed_account_collection |
 | `managed_core_account_free` | Free a managed account handle  # Safety  - `account` must be a valid pointer... | managed_account |
-| `managed_core_account_free_transactions` | Free transactions array returned by managed_core_account_get_transactions ... | managed_account |
+| `managed_core_account_free_transactions` | Free a transactions array returned by `managed_core_account_get_transactions`... | managed_account |
 | `managed_core_account_get_account_type` | Get the account type of a managed account  # Safety  - `account` must be a... | managed_account |
 | `managed_core_account_get_address_pool` | Get an address pool from a managed account by type  This function returns... | managed_account |
 | `managed_core_account_get_balance` | Get the balance of a managed account | managed_account |
@@ -239,6 +239,7 @@ Functions: 108
 | `managed_core_account_get_index` | Get the account index from a managed account  Returns the primary account... | managed_account |
 | `managed_core_account_get_internal_address_pool` | Get the internal address pool from a managed account  This function returns... | managed_account |
 | `managed_core_account_get_network` | Get the network of a managed account  # Safety  - `account` must be a valid... | managed_account |
+| `managed_core_account_get_special_transactions` | Get the transactions of a managed account that carry a DIP-2 special payload... | managed_account |
 | `managed_core_account_get_transaction_count` | Get the number of transactions in a managed account  Only available with the... | managed_account |
 | `managed_core_account_get_transactions` | Get all transactions from a managed account  Returns an array of... | managed_account |
 | `managed_core_account_get_utxo_count` | Get the number of UTXOs in a managed account | managed_account |
@@ -272,16 +273,18 @@ Functions: 10
 
 ### Transaction Management
 
-Functions: 14
+Functions: 16
 
 | Function | Description | Module |
 |----------|-------------|--------|
+| `decoded_transaction_free` | Release a `DecodedTransactionFFI` returned by `transaction_decode` | tx_decode |
 | `transaction_add_input` | Add an input to a transaction  # Safety - `tx` must be a valid pointer to an... | transaction |
 | `transaction_add_output` | Add an output to a transaction  # Safety - `tx` must be a valid pointer to... | transaction |
 | `transaction_bytes_free` | Free transaction bytes  # Safety  - `tx_bytes` must be a valid pointer... | transaction |
 | `transaction_check_result_free` | Free a transaction check result  # Safety  - `result` must be a valid... | transaction_checking |
 | `transaction_classify` | Get the transaction classification for routing  Returns a string describing... | transaction_checking |
 | `transaction_create` | Create a new empty transaction  # Returns - Pointer to FFITransaction on... | transaction |
+| `transaction_decode` | Consensus-decode `tx_bytes` into a `DecodedTransactionFFI` | tx_decode |
 | `transaction_deserialize` | Deserialize a transaction  # Safety - `data` must be a valid pointer to... | transaction |
 | `transaction_destroy` | Destroy a transaction  # Safety - `tx` must be a valid pointer to an... | transaction |
 | `transaction_get_txid` | Get the transaction ID  # Safety - `tx` must be a valid pointer to an... | transaction |
@@ -3064,10 +3067,10 @@ managed_core_account_free_transactions(transactions: *mut FFITransactionRecord, 
 ```
 
 **Description:**
-Free transactions array returned by managed_core_account_get_transactions  Only available with the `keep-finalized-transactions` Cargo feature, in which configuration `managed_core_account_get_transactions` is also available — the two functions are paired.  # Safety  - `transactions` must be a pointer returned by `managed_core_account_get_transactions` - `count` must be the count returned by `managed_core_account_get_transactions` - This function must only be called once per allocation
+Free a transactions array returned by `managed_core_account_get_transactions` or `managed_core_account_get_special_transactions`.  # Safety  - `transactions` must be a pointer returned by one of the paired getters - `count` must be the count returned alongside it - This function must only be called once per allocation
 
 **Safety:**
-- `transactions` must be a pointer returned by `managed_core_account_get_transactions` - `count` must be the count returned by `managed_core_account_get_transactions` - This function must only be called once per allocation
+- `transactions` must be a pointer returned by one of the paired getters - `count` must be the count returned alongside it - This function must only be called once per allocation
 
 **Module:** `managed_account`
 
@@ -3180,6 +3183,22 @@ Get the network of a managed account  # Safety  - `account` must be a valid poin
 
 **Safety:**
 - `account` must be a valid pointer to an FFIManagedCoreAccount instance - Returns `FFINetwork::Mainnet` if the account is null
+
+**Module:** `managed_account`
+
+---
+
+#### `managed_core_account_get_special_transactions`
+
+```c
+managed_core_account_get_special_transactions(account: *const FFIManagedCoreAccount, transactions_out: *mut *mut FFITransactionRecord, count_out: *mut usize,) -> bool
+```
+
+**Description:**
+Get the transactions of a managed account that carry a DIP-2 special payload (provider registrations / updates, asset locks, …).  Unlike `managed_core_account_get_transactions` this is available in every feature configuration: provider-relevant records are retained in memory even after their block is chainlocked (see `ManagedCoreKeysAccount::drop_finalized_transaction` in `key-wallet`), so a provider-key account's registration history — including each masternode's service IP — remains queryable without the `keep-finalized-transactions` feature.  Returns records in txid order. Each record's `special_transaction_payload` field is non-null.  # Safety  - `account` must be a valid pointer to an FFIManagedCoreAccount instance - `transactions_out` must be a valid pointer to receive the transactions array pointer - `count_out` must be a valid pointer to receive the count - The caller must free the returned array using `managed_core_account_free_transactions`
+
+**Safety:**
+- `account` must be a valid pointer to an FFIManagedCoreAccount instance - `transactions_out` must be a valid pointer to receive the transactions array pointer - `count_out` must be a valid pointer to receive the count - The caller must free the returned array using `managed_core_account_free_transactions`
 
 **Module:** `managed_account`
 
@@ -3557,6 +3576,22 @@ Validate an address  # Safety  - `address` must be a valid null-terminated C str
 
 ### Transaction Management - Detailed
 
+#### `decoded_transaction_free`
+
+```c
+decoded_transaction_free(decoded: *mut DecodedTransactionFFI) -> ()
+```
+
+**Description:**
+Release a `DecodedTransactionFFI` returned by `transaction_decode`. Safe to call with null.  # Safety `decoded` must be null or a pointer previously returned by `transaction_decode` that has not been freed yet.
+
+**Safety:**
+`decoded` must be null or a pointer previously returned by `transaction_decode` that has not been freed yet.
+
+**Module:** `tx_decode`
+
+---
+
 #### `transaction_add_input`
 
 ```c
@@ -3647,6 +3682,22 @@ transaction_create() -> *mut FFITransaction
 Create a new empty transaction  # Returns - Pointer to FFITransaction on success - NULL on error
 
 **Module:** `transaction`
+
+---
+
+#### `transaction_decode`
+
+```c
+transaction_decode(tx_bytes: *const u8, tx_bytes_len: usize, network: FFINetwork, out_decoded: *mut *mut DecodedTransactionFFI, error: *mut FFIError,) -> bool
+```
+
+**Description:**
+Consensus-decode `tx_bytes` into a `DecodedTransactionFFI`. Rejects trailing bytes after a valid transaction (uses [`deserialize`], not a streaming decode), so a valid prefix followed by garbage is an error rather than a silent trim.  # Safety - `tx_bytes` must point to `tx_bytes_len` readable bytes. - `out_decoded` must be a valid pointer; it is nulled on entry and, on success, receives an owned `*mut DecodedTransactionFFI` that must be released with `decoded_transaction_free`. - `error` must be a valid pointer to an FFIError.
+
+**Safety:**
+- `tx_bytes` must point to `tx_bytes_len` readable bytes. - `out_decoded` must be a valid pointer; it is nulled on entry and, on success, receives an owned `*mut DecodedTransactionFFI` that must be released with `decoded_transaction_free`. - `error` must be a valid pointer to an FFIError.
+
+**Module:** `tx_decode`
 
 ---
 
