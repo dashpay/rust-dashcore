@@ -109,15 +109,23 @@ impl BLSAccount {
         })
     }
 
-    /// Create a BLS account from raw private key bytes (seed)
+    /// Create a BLS account from a wallet seed (e.g. the 64-byte BIP39 seed).
+    ///
+    /// The seed is fed directly into the BLS HD master key (dashbls
+    /// `ExtendedPrivateKey::FromSeed`) and the account's derivation path
+    /// (e.g. `m/9'/5'/3'/3'` for mainnet operator keys) is applied in the BLS
+    /// scheme, matching DashSync. The stored extended public key is the
+    /// account-level key, so key `i` is its `i`th child.
     pub fn from_seed(
         parent_wallet_id: Option<Vec<u8>>,
         account_type: AccountType,
-        seed: [u8; 32],
+        seed: &[u8],
         network: Network,
     ) -> Result<Self> {
-        let bls_private_key = ExtendedBLSPrivKey::new_master(network, &seed)?;
-        let bls_public_key = ExtendedBLSPubKey::from_private_key(&bls_private_key);
+        let master = ExtendedBLSPrivKey::new_master(network, seed)?;
+        let path = account_type.derivation_path(network)?;
+        let account_xpriv = master.derive_path(&path)?;
+        let bls_public_key = ExtendedBLSPubKey::from_private_key(&account_xpriv);
 
         Ok(Self {
             parent_wallet_id,
@@ -237,7 +245,11 @@ impl
     }
 
     fn has_internal_and_external(&self) -> bool {
-        true
+        // Provider operator keys live in a single pool (`account/i`, matching
+        // DashSync) — there are no separate external/internal chains. This also
+        // keeps the chain-agnostic seed derivation helpers usable, so operator
+        // key `i` derived from the seed is `m/9'/coin'/3'/3'/i`.
+        false
     }
 
     fn has_intermediate_derivation(&self) -> Option<ChildNumber> {
@@ -456,7 +468,7 @@ mod tests {
                 index: 0,
                 standard_account_type: StandardAccountType::BIP44Account,
             },
-            seed,
+            &seed,
             Network::Testnet,
         )
         .expect("Failed to create BLS account from seed");
@@ -473,7 +485,7 @@ mod tests {
                 index: 0,
                 standard_account_type: StandardAccountType::BIP44Account,
             },
-            seed,
+            &seed,
             Network::Testnet,
         )
         .expect("Failed to create BLS account from seed");
@@ -492,7 +504,7 @@ mod tests {
                 index: 0,
                 standard_account_type: StandardAccountType::BIP44Account,
             },
-            seed,
+            &seed,
             Network::Testnet,
         )
         .expect("Failed to create BLS account from seed");

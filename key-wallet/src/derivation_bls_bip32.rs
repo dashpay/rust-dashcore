@@ -1,20 +1,26 @@
 //! BIP32-like implementation for BLS12-381.
 //!
 //! Implementation of hierarchical deterministic wallets for BLS12-381,
-//! inspired by BIP32 and adapted for BLS signatures.
+//! matching the dashbls (`bls-signatures`) `ExtendedPrivateKey` /
+//! `ExtendedPublicKey` scheme used by Dash Core and DashSync for masternode
+//! operator keys (DIP-3 `m/9'/coin'/3'/3'`).
 //!
 //! Key differences from standard BIP32:
 //! - Uses BLS12-381 curve instead of secp256k1
 //! - Keys are 32 bytes (private) and 48 bytes (public)
-//! - Uses "BLS12381 seed" as the HMAC key for master key generation
+//! - Uses "BLS HD seed" as the HMAC key for master key generation
 //! - Supports both hardened and non-hardened derivation
+//! - Hardened child HMAC input is `sk(32) || index(4 BE) || {0,1}` — unlike
+//!   secp256k1 BIP32 there is **no** leading `0x00` byte
+//! - Non-hardened derivation feeds the parent public key into the HMAC using
+//!   the **legacy** G1 serialization (Dash's pre-basic-scheme format), which is
+//!   what dashbls/DashSync use for the HD chain (`fLegacy = true`)
 
 use core::fmt;
 use dashcore_hashes::{sha256, Hash, HashEngine, Hmac, HmacEngine};
 use std::error;
 
 // NOTE: We use Bls12381G2Impl for BLS keys (48-byte public keys)
-#[cfg(any(feature = "serde", feature = "bincode"))]
 use dashcore::blsful::SerializationFormat;
 use dashcore::blsful::{Bls12381G2Impl, PublicKey as BlsPublicKey, SecretKey as BlsSecretKey};
 
@@ -170,17 +176,18 @@ impl ExtendedBLSPrivKey {
 
     /// Derive a child private key
     pub fn derive_priv(&self, child: ChildNumber) -> Result<Self, Error> {
-        // Build the input data for HMAC
+        // Build the input data for HMAC, following dashbls
+        // `ExtendedPrivateKey::PrivateChild` (extendedprivatekey.cpp)
         let mut input_data = Vec::new();
 
         if child.is_hardened() {
-            // Hardened derivation: 0x00 || private_key || index
-            input_data.push(0x00);
+            // Hardened derivation: private_key || index
+            // (no leading 0x00 — that prefix belongs to secp256k1 BIP32,
+            // where it pads the 33-byte pubkey slot; dashbls doesn't use it)
             input_data.extend_from_slice(&self.private_key.to_be_bytes());
         } else {
-            // Non-hardened derivation: public_key || index
-            let public_key_bytes = self.public_key_bytes();
-            input_data.extend_from_slice(&public_key_bytes);
+            // Non-hardened derivation: public_key (legacy serialization) || index
+            input_data.extend_from_slice(&self.public_key_bytes_legacy());
         }
         let child_bytes = u32::from(child).to_be_bytes();
         input_data.extend_from_slice(&child_bytes);
@@ -234,9 +241,19 @@ impl ExtendedBLSPrivKey {
         BlsPublicKey::from(&self.private_key)
     }
 
-    /// Get the public key bytes
+    /// Get the public key bytes (modern/IETF serialization)
     pub fn public_key_bytes(&self) -> [u8; 48] {
         let bytes = self.public_key().to_bytes();
+        let mut array = [0u8; 48];
+        array.copy_from_slice(&bytes[..48.min(bytes.len())]);
+        array
+    }
+
+    /// Get the public key bytes in Dash legacy serialization.
+    ///
+    /// This is the format dashbls/DashSync use throughout the BLS HD chain.
+    pub fn public_key_bytes_legacy(&self) -> [u8; 48] {
+        let bytes = self.public_key().to_bytes_with_mode(SerializationFormat::Legacy);
         let mut array = [0u8; 48];
         array.copy_from_slice(&bytes[..48.min(bytes.len())]);
         array
@@ -315,9 +332,10 @@ impl ExtendedBLSPubKey {
             return Err(Error::CannotDeriveFromHardenedPublic);
         }
 
-        // Build the input data for HMAC: public_key || index
+        // Build the input data for HMAC: public_key (legacy serialization) || index
+        // — matches dashbls `ExtendedPublicKey::PublicChild` with fLegacy = true.
         let mut input_data = Vec::new();
-        input_data.extend_from_slice(&self.public_key.to_bytes());
+        input_data.extend_from_slice(&self.to_bytes_legacy());
         let child_bytes = u32::from(child).to_be_bytes();
         input_data.extend_from_slice(&child_bytes);
 
@@ -381,9 +399,19 @@ impl ExtendedBLSPubKey {
         Fingerprint::from_bytes(fingerprint_bytes)
     }
 
-    /// Get the public key bytes
+    /// Get the public key bytes (modern/IETF serialization)
     pub fn to_bytes(&self) -> [u8; 48] {
         let bytes = self.public_key.to_bytes();
+        let mut array = [0u8; 48];
+        array.copy_from_slice(&bytes[..48.min(bytes.len())]);
+        array
+    }
+
+    /// Get the public key bytes in Dash legacy serialization.
+    ///
+    /// This is the format dashbls/DashSync use throughout the BLS HD chain.
+    pub fn to_bytes_legacy(&self) -> [u8; 48] {
+        let bytes = self.public_key.to_bytes_with_mode(SerializationFormat::Legacy);
         let mut array = [0u8; 48];
         array.copy_from_slice(&bytes[..48.min(bytes.len())]);
         array
@@ -1239,6 +1267,174 @@ mod tests {
         // Both should have correct parent fingerprint
         assert_eq!(child_hardened.parent_fingerprint, master.fingerprint());
         assert_eq!(child_unhardened.parent_fingerprint, master.fingerprint());
+    }
+
+    /// Reference vectors generated with dashbls (dashpay/bls-signatures @ 0842b17,
+    /// the C++ library DashSync uses via FFI): `ExtendedPrivateKey::FromSeed` +
+    /// `PrivateChild(i, fLegacy=true)`. These pin our derivation to the exact
+    /// bytes Dash Core / DashSync produce (see issue #878).
+    mod dashbls_vectors {
+        use super::*;
+
+        /// BIP39 seed for "abandon abandon ... about" (empty passphrase).
+        const SEED64: &str = "5eb00bbddcf069084889a8ab9155568165f5c453ccb85e70811aaed6f6da5fc19a5ac40b389cd370d086206dec8aa6c43daea6690f20ad3d8d48b2d2ce9e38e4";
+
+        fn master_from_seed64() -> ExtendedBLSPrivKey {
+            let seed = hex::decode(SEED64).unwrap();
+            ExtendedBLSPrivKey::new_master(Network::Mainnet, &seed).unwrap()
+        }
+
+        fn hardened(idx: u32) -> ChildNumber {
+            ChildNumber::from_hardened_idx(idx).unwrap()
+        }
+
+        #[test]
+        fn master_from_seed() {
+            let master = master_from_seed64();
+            assert_eq!(
+                hex::encode(master.private_key.to_be_bytes()),
+                "27d1e600fe5ce42e9a18fe064aa0c1b8ee6754289013a86eb1e8af985ddc55c5"
+            );
+            assert_eq!(
+                hex::encode(&master.chain_code[..]),
+                "2a680de50ab918089c65f47e6f32363eb8fbb915a61e9a10e0f882aa1c12aef9"
+            );
+            assert_eq!(
+                hex::encode(master.public_key_bytes_legacy()),
+                "883389cd6c289b97bfa18cc7b7c873397b4d753269d47d2fa29dda1682c1565687ccb19dd016398da7c9724f8a58bdef"
+            );
+            assert_eq!(
+                hex::encode(master.public_key_bytes()),
+                "a83389cd6c289b97bfa18cc7b7c873397b4d753269d47d2fa29dda1682c1565687ccb19dd016398da7c9724f8a58bdef"
+            );
+        }
+
+        #[test]
+        fn mainnet_operator_account_and_keys() {
+            // DIP-3 operator path m/9'/5'/3'/3' — every level hardened.
+            let master = master_from_seed64();
+            let account = master
+                .derive_priv(hardened(9))
+                .unwrap()
+                .derive_priv(hardened(5))
+                .unwrap()
+                .derive_priv(hardened(3))
+                .unwrap()
+                .derive_priv(hardened(3))
+                .unwrap();
+
+            assert_eq!(
+                hex::encode(account.private_key.to_be_bytes()),
+                "5f36c0e346c6e6275d6550a09857325e3f54f2a962eb09a48f61756f7b4bbfb0"
+            );
+            assert_eq!(
+                hex::encode(&account.chain_code[..]),
+                "d9659c1bde2fd0e0f799f2f66bbbcfc7378fdea624d73d5d4749dc7222daea5e"
+            );
+
+            // Operator keys 0..2 (non-hardened children — exercises the
+            // legacy-serialization HMAC input).
+            let expected = [
+                (
+                    "11122e1ad656d0610ce0f80d40da874d67ea656a3e66ed371c915ec3a488a43a",
+                    "078cad04aae29eb76171937eb7101452b401b026efbc27db840f130374e6a9ec8443d917277f8921e0ba6678a7709875",
+                    "878cad04aae29eb76171937eb7101452b401b026efbc27db840f130374e6a9ec8443d917277f8921e0ba6678a7709875",
+                ),
+                (
+                    "1a4e3318640cd4e50222184d0ea111abf8a0c18a0e5dc3ed45dad85009db4e31",
+                    "0c04974d14df3b5eb23787e21642d25c47609d966bb80f504854e4675657c63f4c4c7056f3f007671b911eb390dec4f7",
+                    "8c04974d14df3b5eb23787e21642d25c47609d966bb80f504854e4675657c63f4c4c7056f3f007671b911eb390dec4f7",
+                ),
+                (
+                    "107ab3ddb1f1277dd082f3f6c9187145a614c6f0c97e4e5f3c8912ba5bba6200",
+                    "0d14cad34409c74f9dd587fc00be01ca0c527e3793f016eb2a612d78ec45c650e8942fbff3e1ab44a21a6e575ebe80a1",
+                    "8d14cad34409c74f9dd587fc00be01ca0c527e3793f016eb2a612d78ec45c650e8942fbff3e1ab44a21a6e575ebe80a1",
+                ),
+            ];
+            for (i, (sk, pk_legacy, pk_modern)) in expected.iter().enumerate() {
+                let child =
+                    account.derive_priv(ChildNumber::from_normal_idx(i as u32).unwrap()).unwrap();
+                assert_eq!(hex::encode(child.private_key.to_be_bytes()), *sk, "sk {}", i);
+                assert_eq!(
+                    hex::encode(child.public_key_bytes_legacy()),
+                    *pk_legacy,
+                    "pk_legacy {}",
+                    i
+                );
+                assert_eq!(hex::encode(child.public_key_bytes()), *pk_modern, "pk_modern {}", i);
+            }
+
+            // Watch-only path: same child 0 via public derivation.
+            let account_pub = account.to_extended_pub_key();
+            let child0_pub =
+                account_pub.derive_pub(ChildNumber::from_normal_idx(0).unwrap()).unwrap();
+            assert_eq!(hex::encode(child0_pub.to_bytes_legacy()), expected[0].1);
+        }
+
+        #[test]
+        fn testnet_operator_account_and_key0() {
+            // Testnet operator path m/9'/1'/3'/3'.
+            let master = master_from_seed64();
+            let account = master
+                .derive_priv(hardened(9))
+                .unwrap()
+                .derive_priv(hardened(1))
+                .unwrap()
+                .derive_priv(hardened(3))
+                .unwrap()
+                .derive_priv(hardened(3))
+                .unwrap();
+            assert_eq!(
+                hex::encode(account.private_key.to_be_bytes()),
+                "05e18aebbe5c73f4dde3dd6a4a204da46c6efa38a38ff4fa5548b1c171154bda"
+            );
+            let child0 = account.derive_priv(ChildNumber::from_normal_idx(0).unwrap()).unwrap();
+            assert_eq!(
+                hex::encode(child0.private_key.to_be_bytes()),
+                "3346dfd71627f9f31cad3ee66fe7b673c32cb077b2eb38c621d7e61c30e46dbd"
+            );
+            assert_eq!(
+                hex::encode(child0.public_key_bytes_legacy()),
+                "09d8beabae708de1638487f1aff44b38e8c07d9b09f22d76329d6c8ec01e2ad4d030b660bca40ddbd222373a72c5bcef"
+            );
+        }
+
+        #[test]
+        fn chia_style_seed8_vectors() {
+            // dashbls test-suite seed {1, 50, 6, 244, 24, 199, 1, 25}.
+            let seed = [1u8, 50, 6, 244, 24, 199, 1, 25];
+            let master = ExtendedBLSPrivKey::new_master(Network::Testnet, &seed).unwrap();
+            assert_eq!(
+                hex::encode(master.private_key.to_be_bytes()),
+                "3e9f7b3846c1803703f94c764b51f5ace513b2f02c4d6b2c452d8ce66e5975bd"
+            );
+            assert_eq!(
+                hex::encode(&master.chain_code[..]),
+                "d8b12555b4cc5578951e4a7c80031e22019cc0dce168b3ed88115311b8feb1e3"
+            );
+
+            // Hardened child 77'
+            let c77h = master.derive_priv(hardened(77)).unwrap();
+            assert_eq!(
+                hex::encode(c77h.private_key.to_be_bytes()),
+                "51b31efbd83aeead1e324c5c8248f5a13bb17ba7afe29aeb5ceef7eaff49ed6f"
+            );
+            assert_eq!(
+                hex::encode(&c77h.chain_code[..]),
+                "f2c8e4269bb3e54f8179a5c6976d92ca14c3260dd729981e9d15f53049fd698b"
+            );
+
+            // Non-hardened child 77 (legacy serialization in HMAC input)
+            let c77 = master.derive_priv(ChildNumber::from_normal_idx(77).unwrap()).unwrap();
+            assert_eq!(
+                hex::encode(c77.private_key.to_be_bytes()),
+                "3ef4f8b4d262fb8981665532b531c7889798044f7cbe4d5fae5e30435f746044"
+            );
+            assert_eq!(
+                hex::encode(&c77.chain_code[..]),
+                "f428f5f011f52569c0b2004aaeda0744259f4247fd5e77649d3d25e6b491cc53"
+            );
+        }
     }
 
     #[test]

@@ -58,7 +58,7 @@ mod tests {
         let bls_account = BLSAccount::from_seed(
             None,
             AccountType::ProviderOperatorKeys,
-            [42u8; 32],
+            &[42u8; 32],
             Network::Testnet,
         )
         .unwrap();
@@ -70,7 +70,7 @@ mod tests {
         let eddsa_account = EdDSAAccount::from_seed(
             None,
             AccountType::ProviderPlatformKeys,
-            [99u8; 32],
+            &[99u8; 32],
             Network::Testnet,
         )
         .unwrap();
@@ -118,7 +118,7 @@ mod tests {
         let bls_account = BLSAccount::from_seed(
             None,
             AccountType::ProviderVotingKeys, // Wrong! Should be ProviderOperatorKeys
-            [42u8; 32],
+            &[42u8; 32],
             Network::Testnet,
         )
         .unwrap();
@@ -136,7 +136,7 @@ mod tests {
         let eddsa_account = EdDSAAccount::from_seed(
             None,
             AccountType::IdentityRegistration, // Wrong! Should be ProviderPlatformKeys
-            [99u8; 32],
+            &[99u8; 32],
             Network::Testnet,
         )
         .unwrap();
