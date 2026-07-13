@@ -92,20 +92,26 @@ mod tests {
 
     #[tokio::test]
     async fn birth_height_anchors_chain_to_nearest_checkpoint() {
-        // A wallet born at 120_000 anchors at the 100_000 checkpoint, not genesis, and
-        // the stored tip carries the trusted checkpoint hash (what the next header's
-        // `prev_blockhash` is validated against), not a hash recomputed from a header.
+        // A wallet birth height below mainnet's HD/BIP39 activation floor is clamped up to
+        // the floor, which anchors at the nearest checkpoint at or before it: the 200_000
+        // checkpoint. The stored tip carries the trusted checkpoint hash (what the next
+        // header's `prev_blockhash` is validated against), not a hash recomputed from a header.
+        // 120_000 is below mainnet's HD/BIP39 sync floor, so it is clamped up.
         let (height, hash) = anchored_tip(120_000, None).await;
-        assert_eq!(height, 100_000);
+        assert_eq!(height, 200_000);
         let expected: dashcore::BlockHash =
-            "00000000000fd08c2fb661d2fcb0d49abb3a91e5f27082ce64feed3b4dede2e2".parse().unwrap();
+            "000000000004d0615ff622ec78457ca211dc63fc9c62cca9d9d9af7206be721b".parse().unwrap();
         assert_eq!(hash, Some(expected));
 
-        // Birth height 0 keeps syncing from genesis.
-        assert_eq!(anchored_tip(0, None).await.0, 0);
+        // Birth height 0 no longer drags mainnet sync to genesis; it floors at HD activation.
+        assert_eq!(anchored_tip(0, None).await.0, 200_000);
 
-        // Explicit `start_from_height` wins over the wallet birth height, even when
-        // the birth height would resolve to a higher checkpoint.
+        // A birth height above the floor is unaffected and anchors at the nearest
+        // checkpoint at or below it.
+        assert_eq!(anchored_tip(560_000, None).await.0, 550_000);
+
+        // Explicit `start_from_height` wins over the wallet birth height and is honored
+        // even below the floor.
         assert_eq!(anchored_tip(120_000, Some(60_000)).await.0, 50_000);
     }
 
