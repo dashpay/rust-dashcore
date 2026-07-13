@@ -12,9 +12,27 @@
 //! - Supports both hardened and non-hardened derivation
 //! - Hardened child HMAC input is `sk(32) || index(4 BE) || {0,1}` — unlike
 //!   secp256k1 BIP32 there is **no** leading `0x00` byte
-//! - Non-hardened derivation feeds the parent public key into the HMAC using
-//!   the **legacy** G1 serialization (Dash's pre-basic-scheme format), which is
-//!   what dashbls/DashSync use for the HD chain (`fLegacy = true`)
+//!
+//! # Serialization modes
+//!
+//! Non-hardened derivation feeds the parent public key into the HMAC, so the
+//! G1 serialization format is part of the derivation itself — dashbls
+//! parameterizes it as `fLegacy`. Both modes are supported, mirroring dashbls:
+//!
+//! - [`ExtendedBLSPrivKey::derive_priv`] / [`ExtendedBLSPubKey::derive_pub`]
+//!   use the **modern** (IETF/basic-scheme) serialization, like dashbls
+//!   `PrivateChild(i)` with the default `fLegacy = false`.
+//! - [`ExtendedBLSPrivKey::derive_priv_legacy`] /
+//!   [`ExtendedBLSPubKey::derive_pub_legacy`] use the **legacy** Dash
+//!   serialization (`fLegacy = true`). This is what dashbls/DashSync use for
+//!   masternode operator keys (DIP-3 `m/9'/coin'/3'/3'`), so the provider-key
+//!   account layer derives with these.
+//! - The `*_with_mode` variants take an explicit [`SerializationFormat`].
+//!
+//! Hardened derivation never serializes the public key, so the mode only
+//! matters for non-hardened children. Output serialization is likewise
+//! available in both formats ([`ExtendedBLSPubKey::to_bytes`] /
+//! [`ExtendedBLSPubKey::to_bytes_legacy`]).
 
 use core::fmt;
 use dashcore_hashes::{sha256, Hash, HashEngine, Hmac, HmacEngine};
@@ -174,8 +192,35 @@ impl ExtendedBLSPrivKey {
         })
     }
 
-    /// Derive a child private key
+    /// Derive a child private key using the modern (IETF) public key
+    /// serialization for non-hardened children.
+    ///
+    /// Equivalent to dashbls `PrivateChild(i)` with the default
+    /// `fLegacy = false`. For Dash masternode operator keys use
+    /// [`Self::derive_priv_legacy`], which matches DashSync.
     pub fn derive_priv(&self, child: ChildNumber) -> Result<Self, Error> {
+        self.derive_priv_with_mode(child, SerializationFormat::Modern)
+    }
+
+    /// Derive a child private key using the legacy Dash public key
+    /// serialization for non-hardened children.
+    ///
+    /// Equivalent to dashbls `PrivateChild(i, fLegacy = true)` — the mode
+    /// dashbls/DashSync use for masternode operator keys.
+    pub fn derive_priv_legacy(&self, child: ChildNumber) -> Result<Self, Error> {
+        self.derive_priv_with_mode(child, SerializationFormat::Legacy)
+    }
+
+    /// Derive a child private key with an explicit serialization mode.
+    ///
+    /// The mode selects the G1 serialization of the parent public key in the
+    /// HMAC input for non-hardened children; hardened derivation never
+    /// serializes the public key, so both modes agree there.
+    pub fn derive_priv_with_mode(
+        &self,
+        child: ChildNumber,
+        format: SerializationFormat,
+    ) -> Result<Self, Error> {
         // Build the input data for HMAC, following dashbls
         // `ExtendedPrivateKey::PrivateChild` (extendedprivatekey.cpp)
         let mut input_data = Vec::new();
@@ -186,8 +231,8 @@ impl ExtendedBLSPrivKey {
             // where it pads the 33-byte pubkey slot; dashbls doesn't use it)
             input_data.extend_from_slice(&self.private_key.to_be_bytes());
         } else {
-            // Non-hardened derivation: public_key (legacy serialization) || index
-            input_data.extend_from_slice(&self.public_key_bytes_legacy());
+            // Non-hardened derivation: public_key || index
+            input_data.extend_from_slice(&self.public_key().to_bytes_with_mode(format));
         }
         let child_bytes = u32::from(child).to_be_bytes();
         input_data.extend_from_slice(&child_bytes);
@@ -281,11 +326,27 @@ impl ExtendedBLSPrivKey {
         }
     }
 
-    /// Derive at a path
+    /// Derive at a path using the modern (IETF) serialization mode
+    /// (see [`Self::derive_priv`]).
     pub fn derive_path(&self, path: &DerivationPath) -> Result<Self, Error> {
+        self.derive_path_with_mode(path, SerializationFormat::Modern)
+    }
+
+    /// Derive at a path using the legacy Dash serialization mode
+    /// (see [`Self::derive_priv_legacy`]).
+    pub fn derive_path_legacy(&self, path: &DerivationPath) -> Result<Self, Error> {
+        self.derive_path_with_mode(path, SerializationFormat::Legacy)
+    }
+
+    /// Derive at a path with an explicit serialization mode.
+    pub fn derive_path_with_mode(
+        &self,
+        path: &DerivationPath,
+        format: SerializationFormat,
+    ) -> Result<Self, Error> {
         let mut key = self.clone();
         for child in path.as_ref() {
-            key = key.derive_priv(*child)?;
+            key = key.derive_priv_with_mode(*child, format)?;
         }
         Ok(key)
     }
@@ -321,21 +382,47 @@ impl ExtendedBLSPubKey {
         }
     }
 
-    /// Derive a child public key (only for non-hardened derivation)
+    /// Derive a child public key using the modern (IETF) serialization mode
+    /// (only for non-hardened derivation).
     pub fn ckd_pub(&self, child: ChildNumber) -> Result<Self, Error> {
         self.derive_pub(child)
     }
 
-    /// Derive a child public key (only for non-hardened derivation)
+    /// Derive a child public key using the modern (IETF) public key
+    /// serialization (only for non-hardened derivation).
+    ///
+    /// Equivalent to dashbls `PublicChild(i)` with the default
+    /// `fLegacy = false`. For Dash masternode operator keys use
+    /// [`Self::derive_pub_legacy`], which matches DashSync.
     pub fn derive_pub(&self, child: ChildNumber) -> Result<Self, Error> {
+        self.derive_pub_with_mode(child, SerializationFormat::Modern)
+    }
+
+    /// Derive a child public key using the legacy Dash public key
+    /// serialization (only for non-hardened derivation).
+    ///
+    /// Equivalent to dashbls `PublicChild(i, fLegacy = true)` — the mode
+    /// dashbls/DashSync use for masternode operator keys.
+    pub fn derive_pub_legacy(&self, child: ChildNumber) -> Result<Self, Error> {
+        self.derive_pub_with_mode(child, SerializationFormat::Legacy)
+    }
+
+    /// Derive a child public key with an explicit serialization mode
+    /// (only for non-hardened derivation).
+    pub fn derive_pub_with_mode(
+        &self,
+        child: ChildNumber,
+        format: SerializationFormat,
+    ) -> Result<Self, Error> {
         if child.is_hardened() {
             return Err(Error::CannotDeriveFromHardenedPublic);
         }
 
-        // Build the input data for HMAC: public_key (legacy serialization) || index
-        // — matches dashbls `ExtendedPublicKey::PublicChild` with fLegacy = true.
+        // Build the input data for HMAC: public_key || index — matches
+        // dashbls `ExtendedPublicKey::PublicChild`, whose fLegacy flag
+        // corresponds to `format`.
         let mut input_data = Vec::new();
-        input_data.extend_from_slice(&self.to_bytes_legacy());
+        input_data.extend_from_slice(&self.public_key.to_bytes_with_mode(format));
         let child_bytes = u32::from(child).to_be_bytes();
         input_data.extend_from_slice(&child_bytes);
 
@@ -417,11 +504,28 @@ impl ExtendedBLSPubKey {
         array
     }
 
-    /// Derive at a path (only non-hardened paths allowed)
+    /// Derive at a path using the modern (IETF) serialization mode
+    /// (only non-hardened paths allowed; see [`Self::derive_pub`]).
     pub fn derive_path(&self, path: &DerivationPath) -> Result<Self, Error> {
+        self.derive_path_with_mode(path, SerializationFormat::Modern)
+    }
+
+    /// Derive at a path using the legacy Dash serialization mode
+    /// (only non-hardened paths allowed; see [`Self::derive_pub_legacy`]).
+    pub fn derive_path_legacy(&self, path: &DerivationPath) -> Result<Self, Error> {
+        self.derive_path_with_mode(path, SerializationFormat::Legacy)
+    }
+
+    /// Derive at a path with an explicit serialization mode
+    /// (only non-hardened paths allowed).
+    pub fn derive_path_with_mode(
+        &self,
+        path: &DerivationPath,
+        format: SerializationFormat,
+    ) -> Result<Self, Error> {
         let mut key = self.clone();
         for child in path.as_ref() {
-            key = key.derive_pub(*child)?;
+            key = key.derive_pub_with_mode(*child, format)?;
         }
         Ok(key)
     }
@@ -1352,8 +1456,9 @@ mod tests {
                 ),
             ];
             for (i, (sk, pk_legacy, pk_modern)) in expected.iter().enumerate() {
-                let child =
-                    account.derive_priv(ChildNumber::from_normal_idx(i as u32).unwrap()).unwrap();
+                let child = account
+                    .derive_priv_legacy(ChildNumber::from_normal_idx(i as u32).unwrap())
+                    .unwrap();
                 assert_eq!(hex::encode(child.private_key.to_be_bytes()), *sk, "sk {}", i);
                 assert_eq!(
                     hex::encode(child.public_key_bytes_legacy()),
@@ -1367,7 +1472,7 @@ mod tests {
             // Watch-only path: same child 0 via public derivation.
             let account_pub = account.to_extended_pub_key();
             let child0_pub =
-                account_pub.derive_pub(ChildNumber::from_normal_idx(0).unwrap()).unwrap();
+                account_pub.derive_pub_legacy(ChildNumber::from_normal_idx(0).unwrap()).unwrap();
             assert_eq!(hex::encode(child0_pub.to_bytes_legacy()), expected[0].1);
         }
 
@@ -1388,7 +1493,8 @@ mod tests {
                 hex::encode(account.private_key.to_be_bytes()),
                 "05e18aebbe5c73f4dde3dd6a4a204da46c6efa38a38ff4fa5548b1c171154bda"
             );
-            let child0 = account.derive_priv(ChildNumber::from_normal_idx(0).unwrap()).unwrap();
+            let child0 =
+                account.derive_priv_legacy(ChildNumber::from_normal_idx(0).unwrap()).unwrap();
             assert_eq!(
                 hex::encode(child0.private_key.to_be_bytes()),
                 "3346dfd71627f9f31cad3ee66fe7b673c32cb077b2eb38c621d7e61c30e46dbd"
@@ -1425,7 +1531,7 @@ mod tests {
             );
 
             // Non-hardened child 77 (legacy serialization in HMAC input)
-            let c77 = master.derive_priv(ChildNumber::from_normal_idx(77).unwrap()).unwrap();
+            let c77 = master.derive_priv_legacy(ChildNumber::from_normal_idx(77).unwrap()).unwrap();
             assert_eq!(
                 hex::encode(c77.private_key.to_be_bytes()),
                 "3ef4f8b4d262fb8981665532b531c7889798044f7cbe4d5fae5e30435f746044"
@@ -1434,6 +1540,65 @@ mod tests {
                 hex::encode(&c77.chain_code[..]),
                 "f428f5f011f52569c0b2004aaeda0744259f4247fd5e77649d3d25e6b491cc53"
             );
+        }
+
+        #[test]
+        fn modern_mode_vectors() {
+            // dashbls `PrivateChild(i)` with the default fLegacy = false —
+            // the mode used by `derive_priv`/`derive_pub` without suffix.
+            let seed = [1u8, 50, 6, 244, 24, 199, 1, 25];
+            let master = ExtendedBLSPrivKey::new_master(Network::Testnet, &seed).unwrap();
+            let c77 = master.derive_priv(ChildNumber::from_normal_idx(77).unwrap()).unwrap();
+            assert_eq!(
+                hex::encode(c77.private_key.to_be_bytes()),
+                "0f9b101b475e449c9995032e138b432a330738b6401f675f0632385fe8d349bf"
+            );
+            assert_eq!(
+                hex::encode(&c77.chain_code[..]),
+                "c7b09e00d6b9b1676e8714e1060e0324787734809ae557a4bc8c07e9b1304ed0"
+            );
+            assert_eq!(
+                hex::encode(c77.public_key_bytes()),
+                "a63fa533db03b400030a5eb163433ac7c8700d2301c4242e03db58d516dea0d52768d1b0d29e9f28f7707ce96d2d6108"
+            );
+
+            // Modern-mode child 0 under the operator path from the BIP39 seed.
+            // Hardened levels agree across modes; the non-hardened leaf differs.
+            let master64 = master_from_seed64();
+            let account = master64
+                .derive_priv(hardened(9))
+                .unwrap()
+                .derive_priv(hardened(5))
+                .unwrap()
+                .derive_priv(hardened(3))
+                .unwrap()
+                .derive_priv(hardened(3))
+                .unwrap();
+            let child0_modern =
+                account.derive_priv(ChildNumber::from_normal_idx(0).unwrap()).unwrap();
+            assert_eq!(
+                hex::encode(child0_modern.private_key.to_be_bytes()),
+                "1669d6cc8ac08fa377d63dafcf83f1fa6aee09e2df58c490b1b1a0b0999417ec"
+            );
+            assert_eq!(
+                hex::encode(child0_modern.public_key_bytes()),
+                "8f5d504fee1026394728781f004fee70480335c1f53156124b23e45386c7c1e2973efee3eab4ae60650fdaa8ae4460d0"
+            );
+
+            // Same leaf via legacy mode is a different key entirely.
+            let child0_legacy =
+                account.derive_priv_legacy(ChildNumber::from_normal_idx(0).unwrap()).unwrap();
+            assert_ne!(
+                child0_modern.private_key.to_be_bytes(),
+                child0_legacy.private_key.to_be_bytes()
+            );
+
+            // Private/public derivation stays consistent in modern mode too.
+            let child0_pub = account
+                .to_extended_pub_key()
+                .derive_pub(ChildNumber::from_normal_idx(0).unwrap())
+                .unwrap();
+            assert_eq!(child0_pub.to_bytes(), child0_modern.public_key_bytes());
         }
     }
 

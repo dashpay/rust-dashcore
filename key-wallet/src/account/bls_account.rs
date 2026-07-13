@@ -124,7 +124,7 @@ impl BLSAccount {
     ) -> Result<Self> {
         let master = ExtendedBLSPrivKey::new_master(network, seed)?;
         let path = account_type.derivation_path(network)?;
-        let account_xpriv = master.derive_path(&path)?;
+        let account_xpriv = master.derive_path_legacy(&path)?;
         let bls_public_key = ExtendedBLSPubKey::from_private_key(&account_xpriv);
 
         Ok(Self {
@@ -147,7 +147,7 @@ impl BLSAccount {
                     return Err(Error::WatchOnly);
                 }
                 let child_num = ChildNumber::from_normal_idx(index)?;
-                current_key = current_key.ckd_pub(child_num)?;
+                current_key = current_key.derive_pub_legacy(child_num)?;
             }
 
             Ok(current_key)
@@ -278,9 +278,10 @@ impl
         // Get the derivation path for this account type
         let path = self.account_type.derivation_path(self.network)?;
 
-        // Derive the account private key from master
+        // Derive the account private key from master (legacy mode, matching
+        // dashbls/DashSync for provider operator keys)
         master_xpriv
-            .derive_path(&path)
+            .derive_path_legacy(&path)
             .map_err(|e| Error::InvalidParameter(format!("BLS derivation error: {}", e)))
     }
 
@@ -296,9 +297,9 @@ impl
             return Err(Error::WatchOnly);
         }
 
-        // Derive the child private key from account private key
+        // Derive the child private key from account private key (legacy mode)
         account_xpriv
-            .derive_path(child_path)
+            .derive_path_legacy(child_path)
             .map_err(|e| Error::InvalidParameter(format!("BLS child derivation error: {}", e)))
     }
 
@@ -315,9 +316,9 @@ impl
             }
         }
 
-        // Derive the child public key from account public key
+        // Derive the child public key from account public key (legacy mode)
         self.bls_public_key
-            .derive_path(child_path)
+            .derive_path_legacy(child_path)
             .map_err(|e| Error::InvalidParameter(format!("BLS public key derivation error: {}", e)))
     }
 

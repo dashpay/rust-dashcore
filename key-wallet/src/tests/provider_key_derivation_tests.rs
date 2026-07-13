@@ -45,7 +45,7 @@ fn bls_operator_keys_match_dashbls_reference() {
 
     // Operator key 0 via watch-side (non-hardened public) derivation.
     let key0_pub =
-        account.bls_public_key.derive_pub(ChildNumber::from_normal_idx(0).unwrap()).unwrap();
+        account.bls_public_key.derive_pub_legacy(ChildNumber::from_normal_idx(0).unwrap()).unwrap();
     assert_eq!(
         hex::encode(key0_pub.to_bytes_legacy()),
         "078cad04aae29eb76171937eb7101452b401b026efbc27db840f130374e6a9ec8443d917277f8921e0ba6678a7709875"
@@ -82,7 +82,7 @@ fn bls_operator_keys_testnet_match_dashbls_reference() {
         .expect("operator account should be auto-created for mnemonic wallets");
 
     let key0_pub =
-        account.bls_public_key.derive_pub(ChildNumber::from_normal_idx(0).unwrap()).unwrap();
+        account.bls_public_key.derive_pub_legacy(ChildNumber::from_normal_idx(0).unwrap()).unwrap();
     assert_eq!(
         hex::encode(key0_pub.to_bytes_legacy()),
         "09d8beabae708de1638487f1aff44b38e8c07d9b09f22d76329d6c8ec01e2ad4d030b660bca40ddbd222373a72c5bcef"
