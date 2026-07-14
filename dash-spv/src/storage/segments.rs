@@ -135,18 +135,18 @@ impl<I: Persistable> SegmentCache<I> {
     }
 
     /// Parse the segment id out of a segment file name of the form
-    /// `{SEGMENT_PREFIX}_{id:04}.{DATA_FILE_EXTENSION}`.
+    /// `{SEGMENT_PREFIX}_{id:04}.{DATA_FILE_EXTENSION}` (see
+    /// [`Persistable::segment_file_name`]).
+    ///
+    /// The entire remaining component between the `{prefix}_` and
+    /// `.{extension}` fixtures must parse as a `u32`, so trailing junk
+    /// (`segment_0000junk.dat`) is rejected and ids longer than the
+    /// zero-padding width (`segment_100000.dat`) are accepted, not truncated.
     fn parse_segment_id(file_name: &str) -> Option<u32> {
-        if !file_name.starts_with(I::SEGMENT_PREFIX)
-            || !file_name.ends_with(&format!(".{}", I::DATA_FILE_EXTENSION))
-        {
-            return None;
-        }
+        let separator = format!("{}_", I::SEGMENT_PREFIX);
+        let suffix = format!(".{}", I::DATA_FILE_EXTENSION);
 
-        let segment_id_start = I::SEGMENT_PREFIX.len() + 1;
-        let segment_id_end = segment_id_start + 4;
-
-        file_name.get(segment_id_start..segment_id_end)?.parse::<u32>().ok()
+        file_name.strip_prefix(&separator)?.strip_suffix(&suffix)?.parse::<u32>().ok()
     }
 
     #[inline]
@@ -455,29 +455,46 @@ impl<I: Persistable> SegmentCache<I> {
     /// `truncate_above`, the deletion is not durable until that `persist`
     /// succeeds; a crash in between leaves the old files on disk and the
     /// cache reopens with the pre-clear contents.
-    pub fn clear(&mut self) {
+    ///
+    /// The directory scan runs to completion *before* any cache state is
+    /// mutated: a failed scan must not leave the cache reporting empty while
+    /// persisted segment files survive on disk, since those would resurrect
+    /// after restart. A missing segments directory is treated as an empty
+    /// (already-cleared) cache; any other I/O error is propagated.
+    pub fn clear(&mut self) -> StorageResult<()> {
         // Queue every on-disk segment file, discovered by directory scan since
         // only up to MAX_ACTIVE_SEGMENTS of them are resident in memory.
-        if let Ok(entries) = fs::read_dir(&self.segments_dir) {
-            for entry in entries.flatten() {
-                if let Some(name) = entry.file_name().to_str() {
-                    if let Some(id) = Self::parse_segment_id(name) {
-                        self.to_delete.insert(id);
+        let mut to_delete = HashSet::new();
+        match fs::read_dir(&self.segments_dir) {
+            Ok(entries) => {
+                for entry in entries {
+                    let entry = entry?;
+                    if let Some(name) = entry.file_name().to_str() {
+                        if let Some(id) = Self::parse_segment_id(name) {
+                            to_delete.insert(id);
+                        }
                     }
                 }
             }
+            // No directory yet means nothing was ever persisted here.
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(StorageError::Io(e)),
         }
 
-        // Resident and evicted segments may be dirty and not persisted yet, so
-        // the scan above cannot see them. Queue their ids too; `persist`
-        // ignores missing files.
-        self.to_delete.extend(self.segments.keys().copied());
-        self.to_delete.extend(self.evicted.keys().copied());
+        // Scan succeeded — now it is safe to mutate cache state. Resident and
+        // evicted segments may be dirty and not persisted yet, so the scan
+        // above cannot see them. Queue their ids too; `persist` ignores
+        // missing files.
+        to_delete.extend(self.segments.keys().copied());
+        to_delete.extend(self.evicted.keys().copied());
 
+        self.to_delete.extend(to_delete);
         self.segments.clear();
         self.evicted.clear();
         self.tip_height = None;
         self.start_height = None;
+
+        Ok(())
     }
 
     pub async fn persist(&mut self, segments_dir: impl Into<PathBuf>) {
@@ -1197,7 +1214,7 @@ mod tests {
 
         // Reopen (so only the min/max segments are resident) and clear.
         let mut cache = SegmentCache::<FilterHeader>::load_or_new(tmp_dir.path()).await.unwrap();
-        cache.clear();
+        cache.clear().unwrap();
 
         assert_eq!(cache.tip_height(), None);
         assert_eq!(cache.start_height(), None);
@@ -1238,7 +1255,7 @@ mod tests {
         // without an intervening persist.
         let more = FilterHeader::dummy_batch(100..105);
         cache.store_items_at_height(&more, 10).await.unwrap();
-        cache.clear();
+        cache.clear().unwrap();
 
         assert_eq!(cache.tip_height(), None);
         assert_eq!(cache.start_height(), None);
@@ -1249,6 +1266,45 @@ mod tests {
         let reloaded = SegmentCache::<FilterHeader>::load_or_new(tmp_dir.path()).await.unwrap();
         assert_eq!(reloaded.tip_height(), None);
         assert_eq!(reloaded.start_height(), None);
+    }
+
+    #[test]
+    fn test_parse_segment_id() {
+        type Cache = SegmentCache<FilterHeader>;
+
+        // Round-trips the writer's `{prefix}_{id:04}.{ext}` format for a range
+        // of ids, including ones wider than the zero-padding.
+        for id in [0u32, 1, 42, 9999, 10_000, 100_000, u32::MAX] {
+            assert_eq!(Cache::parse_segment_id(&FilterHeader::segment_file_name(id)), Some(id));
+        }
+
+        // Zero-padded low ids parse to their numeric value, not truncated.
+        assert_eq!(Cache::parse_segment_id("segment_0000.dat"), Some(0));
+        assert_eq!(Cache::parse_segment_id("segment_0005.dat"), Some(5));
+
+        // Ids wider than the padding are accepted whole, never truncated to
+        // the first four digits.
+        assert_eq!(Cache::parse_segment_id("segment_100000.dat"), Some(100_000));
+
+        // Trailing junk between the id and the extension is rejected rather
+        // than silently parsed as a prefix of the component.
+        assert_eq!(Cache::parse_segment_id("segment_0000junk.dat"), None);
+        assert_eq!(Cache::parse_segment_id("segment_12ab.dat"), None);
+
+        // Wrong prefix, wrong extension, missing separator, or a
+        // non-numeric/empty id component are all rejected.
+        assert_eq!(Cache::parse_segment_id("segment_0000.tmp"), None);
+        assert_eq!(Cache::parse_segment_id("other_0000.dat"), None);
+        assert_eq!(Cache::parse_segment_id("segment0000.dat"), None);
+        assert_eq!(Cache::parse_segment_id("segment_.dat"), None);
+        assert_eq!(Cache::parse_segment_id("segment_-1.dat"), None);
+        assert_eq!(Cache::parse_segment_id("segment_0000.dat.bak"), None);
+
+        // The filter storage's item type round-trips through the same helper.
+        assert_eq!(
+            SegmentCache::<Vec<u8>>::parse_segment_id(&<Vec<u8>>::segment_file_name(7)),
+            Some(7)
+        );
     }
 
     #[test]
