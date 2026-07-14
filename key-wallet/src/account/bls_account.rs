@@ -136,6 +136,55 @@ impl BLSAccount {
         })
     }
 
+    /// Derive the operator (masternode) BLS public key at `index` from the
+    /// stored account-level extended public key, using legacy-scheme
+    /// (`fLegacy = true`) non-hardened derivation, matching dashbls/DashSync.
+    ///
+    /// This is wallet-state-agnostic: it works on both resident accounts
+    /// (created from a mnemonic or seed) and watch-only / externally-signable
+    /// accounts, since only the account xpub is needed for the non-hardened
+    /// child step. There is no `is_watch_only` gate.
+    ///
+    /// The returned extended public key exposes both serializations of the
+    /// operator key: [`ExtendedBLSPubKey::to_bytes_legacy`] (legacy Dash
+    /// format) and [`ExtendedBLSPubKey::to_bytes`] (modern/IETF format used
+    /// in v19+ ProRegTx payloads).
+    ///
+    /// Returns an error if this account is not an
+    /// [`AccountType::ProviderOperatorKeys`] account, so a mixed-up account
+    /// lookup fails loudly instead of yielding valid-looking wrong keys.
+    pub fn operator_public_key_at(&self, index: u32) -> Result<ExtendedBLSPubKey> {
+        if self.account_type != AccountType::ProviderOperatorKeys {
+            return Err(Error::InvalidParameter(format!(
+                "operator_public_key_at requires a ProviderOperatorKeys account, got {}",
+                self.account_type
+            )));
+        }
+        let child = ChildNumber::from_normal_idx(index)?;
+        Ok(self.bls_public_key.derive_pub_legacy(child)?)
+    }
+
+    /// Derive the operator (masternode) BLS secret key at `index` directly
+    /// from a wallet seed (e.g. the 64-byte BIP39 seed).
+    ///
+    /// The full DIP-3 operator account path (`m/9'/5'/3'/3'` on mainnet,
+    /// `m/9'/1'/3'/3'` otherwise) is re-derived from the seed in the legacy
+    /// BLS scheme, then the non-hardened child `index` is applied — matching
+    /// dashbls/DashSync. Because derivation starts from the raw seed, no
+    /// account state is involved and in particular no `is_watch_only` gate
+    /// applies.
+    pub fn operator_private_key_at(
+        seed: &[u8],
+        network: Network,
+        index: u32,
+    ) -> Result<SecretKey<Bls12381G2Impl>> {
+        let master = ExtendedBLSPrivKey::new_master(network, seed)?;
+        let path = AccountType::ProviderOperatorKeys.derivation_path(network)?;
+        let account_xpriv = master.derive_path_legacy(&path)?;
+        let child = account_xpriv.derive_priv_legacy(ChildNumber::from_normal_idx(index)?)?;
+        Ok(child.private_key.clone())
+    }
+
     /// Derive a BLS key at a specific path (watch-only, non-hardened paths only)
     pub fn derive_bls_key_at_path(&self, path: &[u32]) -> Result<ExtendedBLSPubKey> {
         if self.is_watch_only {

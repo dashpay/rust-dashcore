@@ -125,6 +125,103 @@ fn ed25519_platform_node_keys_match_slip10_reference() {
     );
 }
 
+/// The gate-free provider-key entry points must work identically on resident
+/// (non-watch-only) and watch-only accounts, and must match the dashbls
+/// reference vectors. See
+/// <https://github.com/dashpay/rust-dashcore/issues/880>.
+#[cfg(feature = "bls")]
+#[test]
+fn operator_key_at_is_wallet_state_agnostic() {
+    use crate::account::bls_account::BLSAccount;
+
+    let wallet = test_wallet(Network::Mainnet);
+    let resident = wallet
+        .accounts
+        .bls_account_of_type(AccountType::ProviderOperatorKeys)
+        .expect("operator account should be auto-created for mnemonic wallets");
+    assert!(!resident.is_watch_only);
+
+    // A restored / externally-signable wallet stores the same account xpub but
+    // flags it watch-only (`BLSAccount::new` sets `is_watch_only: true`).
+    let watch_only = resident.to_watch_only();
+    assert!(watch_only.is_watch_only);
+
+    // The legacy-gated wrapper fails on the resident account — the new entry
+    // point must not.
+    assert!(resident.derive_bls_key_at_index(0).is_err());
+
+    for account in [resident, &watch_only] {
+        let key0 = account.operator_public_key_at(0).expect("gate-free derivation must succeed");
+        assert_eq!(
+            hex::encode(key0.to_bytes_legacy()),
+            "078cad04aae29eb76171937eb7101452b401b026efbc27db840f130374e6a9ec8443d917277f8921e0ba6678a7709875"
+        );
+        assert_eq!(
+            hex::encode(key0.to_bytes()),
+            "878cad04aae29eb76171937eb7101452b401b026efbc27db840f130374e6a9ec8443d917277f8921e0ba6678a7709875"
+        );
+    }
+
+    // Seed-based private derivation needs no account state at all.
+    let seed = hex::decode(TEST_SEED_HEX).unwrap();
+    let sk0 = BLSAccount::operator_private_key_at(&seed, Network::Mainnet, 0).unwrap();
+    assert_eq!(
+        hex::encode(sk0.to_be_bytes()),
+        "11122e1ad656d0610ce0f80d40da874d67ea656a3e66ed371c915ec3a488a43a"
+    );
+    let sk1 = BLSAccount::operator_private_key_at(&seed, Network::Mainnet, 1).unwrap();
+    assert_eq!(
+        hex::encode(sk1.to_be_bytes()),
+        "1a4e3318640cd4e50222184d0ea111abf8a0c18a0e5dc3ed45dad85009db4e31"
+    );
+
+    // Testnet vectors (coin type 1: m/9'/1'/3'/3').
+    let sk0_testnet = BLSAccount::operator_private_key_at(&seed, Network::Testnet, 0).unwrap();
+    assert_eq!(
+        hex::encode(sk0_testnet.to_be_bytes()),
+        "3346dfd71627f9f31cad3ee66fe7b673c32cb077b2eb38c621d7e61c30e46dbd"
+    );
+}
+
+/// `operator_public_key_at` refuses non-operator accounts so a mixed-up
+/// account lookup fails loudly instead of yielding valid-looking wrong keys.
+#[cfg(feature = "bls")]
+#[test]
+fn operator_public_key_at_rejects_non_operator_accounts() {
+    use crate::account::bls_account::BLSAccount;
+
+    let seed = hex::decode(TEST_SEED_HEX).unwrap();
+    let account =
+        BLSAccount::from_seed(None, AccountType::IdentityRegistration, &seed, Network::Mainnet)
+            .unwrap();
+    assert!(account.operator_public_key_at(0).is_err());
+}
+
+#[cfg(feature = "eddsa")]
+#[test]
+fn platform_node_key_at_is_wallet_state_agnostic() {
+    use crate::account::eddsa_account::EdDSAAccount;
+
+    // Seed-based hardened derivation, pinned to the SLIP-0010 reference
+    // vector for m/9'/5'/3'/4'/0'. No account state is involved.
+    let seed = hex::decode(TEST_SEED_HEX).unwrap();
+    let sk0 = EdDSAAccount::platform_node_key_at(&seed, Network::Mainnet, 0).unwrap();
+    assert_eq!(
+        hex::encode(sk0.to_bytes()),
+        "5fa238b12be77347abf9b5957bd902d16c6aaca28d25c4267ffacbd7458dceb1"
+    );
+
+    // Cross-check against the account stored in a resident wallet: the
+    // seed-based path must agree with the account-based path.
+    let wallet = test_wallet(Network::Mainnet);
+    let account = wallet
+        .accounts
+        .eddsa_account_of_type(AccountType::ProviderPlatformKeys)
+        .expect("platform node account should be auto-created for mnemonic wallets");
+    let via_account = account.derive_from_seed_private_key_at(&seed, 0).unwrap();
+    assert_eq!(sk0.to_bytes(), via_account.to_bytes());
+}
+
 /// Wallets created from a bare extended private key carry no seed, so
 /// DashSync-compatible BLS/Ed25519 provider keys cannot be derived for them.
 /// Default account creation must skip those accounts rather than fabricate
