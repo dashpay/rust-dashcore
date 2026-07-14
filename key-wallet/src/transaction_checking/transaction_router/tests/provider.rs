@@ -688,12 +688,13 @@ async fn test_provider_registration_transaction_routing_check_platform_only() {
                 inputs_hash: dashcore::hash_types::InputsHash::from_slice(&[6u8; 32])
                     .expect("Failed to create inputs hash from bytes"),
                 signature: vec![7u8; 65], // Simplified signature
-                platform_node_id: Some(
-                    *platform_node_id
+                platform_node_id: Some(dashcore::PlatformNodeId::from_byte_array(
+                    platform_node_id
                         .payload()
                         .as_pubkey_hash()
-                        .expect("Platform node ID address should be P2PKH"),
-                ),
+                        .expect("Platform node ID address should be P2PKH")
+                        .to_byte_array(),
+                )),
                 platform_p2p_port: Some(26656),
                 platform_http_port: Some(8080),
             },

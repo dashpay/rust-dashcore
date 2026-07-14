@@ -14,6 +14,7 @@ use crate::managed_account::transaction_record::TransactionRecord;
 use crate::Address;
 use dashcore::address::Payload;
 use dashcore::blockdata::transaction::Transaction;
+use dashcore::hashes::Hash as _;
 use dashcore::transaction::TransactionPayload;
 use dashcore::ScriptBuf;
 
@@ -1045,7 +1046,7 @@ impl ManagedCoreFundsAccount {
                 // Check if platform_node_id matches any of our address hashes
                 for (address, &addr_index) in &addresses.address_index {
                     if let Payload::PubkeyHash(addr_hash) = address.payload() {
-                        if addr_hash == platform_node_id {
+                        if addr_hash.as_byte_array() == platform_node_id.as_byte_array() {
                             // Get the address info
                             if let Some(address_info) = addresses.addresses.get(&addr_index) {
                                 return Some(AccountMatch {
@@ -1515,7 +1516,7 @@ impl crate::managed_account::ManagedCoreKeysAccount {
 
                 for (address, &addr_index) in &addresses.address_index {
                     if let Payload::PubkeyHash(addr_hash) = address.payload() {
-                        if addr_hash == platform_node_id {
+                        if addr_hash.as_byte_array() == platform_node_id.as_byte_array() {
                             if let Some(address_info) = addresses.addresses.get(&addr_index) {
                                 return Some(AccountMatch {
                                     account_type_match:

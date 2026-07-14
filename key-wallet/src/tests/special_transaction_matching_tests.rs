@@ -278,7 +278,7 @@ fn prov_reg_tx(
     voting_key_hash: dashcore::PubkeyHash,
     operator_public_key: dashcore::bls_sig_utils::BLSPublicKey,
     script_payout: ScriptBuf,
-    platform_node_id: Option<dashcore::PubkeyHash>,
+    platform_node_id: Option<dashcore::PlatformNodeId>,
 ) -> Transaction {
     Transaction {
         version: 3,
@@ -461,7 +461,9 @@ async fn provider_registration_with_platform_node_id_matches_provider_platform_k
         .expect("provider_platform_keys managed")
         .next_eddsa_platform_key(eddsa, true)
         .expect("derive platform");
-    let platform_node_id = derive_pubkey_hash(&platform_info.address);
+    let platform_node_id = dashcore::PlatformNodeId::from_byte_array(
+        derive_pubkey_hash(&platform_info.address).to_byte_array(),
+    );
 
     let tx = prov_reg_tx(
         ProviderMasternodeType::HighPerformance,
