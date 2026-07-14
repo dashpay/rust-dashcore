@@ -143,6 +143,14 @@ pub const FEATURE_PURPOSE_DASHPAY: u32 = 15;
 /// auto-accept path builder and the FFI signer's raw-key export gate) must
 /// reference this constant rather than a local literal.
 pub const FEATURE_PURPOSE_DASHPAY_AUTO_ACCEPT: u32 = 16;
+/// DIP-15 contactInfo `encToUserId` hardened child (`root / 65536' / index'`,
+/// where `root` is the owner's identity-authentication path): derives the
+/// AES key that encrypts the contact id in a `contactInfo` document.
+pub const DASHPAY_CONTACT_INFO_ENC_TO_USER_ID_CHILD: u32 = 1 << 16;
+/// DIP-15 contactInfo `privateData` hardened child (`root / 65537' / index'`):
+/// derives the AES key that encrypts the private-data blob in a `contactInfo`
+/// document.
+pub const DASHPAY_CONTACT_INFO_PRIVATE_DATA_CHILD: u32 = (1 << 16) + 1;
 /// DIP-17: Platform Payment Addresses feature index
 pub const FEATURE_PURPOSE_PLATFORM_PAYMENT: u32 = 17;
 pub const DASH_BIP44_PATH_MAINNET: IndexConstPath<2> = IndexConstPath {
