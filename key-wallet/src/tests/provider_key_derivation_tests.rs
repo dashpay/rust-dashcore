@@ -125,6 +125,70 @@ fn ed25519_platform_node_keys_match_slip10_reference() {
     );
 }
 
+/// The platform node id must follow the Tenderdash/CometBFT convention —
+/// `SHA256(pubkey)[0..20]` — not hash160, or wallet-side matching can never
+/// hit on-chain evonode registrations. See
+/// <https://github.com/dashpay/rust-dashcore/issues/883>.
+#[cfg(feature = "eddsa")]
+#[test]
+fn ed25519_platform_node_id_matches_tenderdash_convention() {
+    use crate::account::eddsa_account::EdDSAAccount;
+    use crate::derivation_slip10::tenderdash_node_id;
+
+    // Platform node key 0 (m/9'/5'/3'/4'/0') for TEST_SEED — the same key the
+    // SLIP-0010 vector above pins. Public key and node id cross-checked with
+    // an independent Ed25519 implementation (pyca/cryptography).
+    let seed = hex::decode(TEST_SEED_HEX).unwrap();
+    let sk0 = EdDSAAccount::platform_node_key_at(&seed, Network::Mainnet, 0).unwrap();
+    let pubkey = sk0.verifying_key();
+    assert_eq!(
+        hex::encode(pubkey.to_bytes()),
+        "3130c14339391cf26a68d86879e180ee9a16b660f5aa91f560f67c0abe8cf789"
+    );
+    assert_eq!(
+        hex::encode(tenderdash_node_id(&pubkey.to_bytes())),
+        "302f2615e6955cce8ed3cff81e8011bfd3a2991f"
+    );
+}
+
+/// The managed ProviderPlatformKeys pool must key its entries by the
+/// Tenderdash node id, since that payload is what ProRegTx matching compares
+/// against the on-chain `platform_node_id` field.
+#[cfg(feature = "eddsa")]
+#[test]
+fn platform_pool_entries_are_keyed_by_tenderdash_node_id() {
+    use crate::derivation_slip10::ExtendedEd25519PrivKey;
+    use crate::managed_account::managed_account_trait::ManagedAccountTrait;
+    use crate::wallet::managed_wallet_info::ManagedWalletInfo;
+    use dashcore::hashes::Hash;
+
+    let wallet = test_wallet(Network::Mainnet);
+    let mut info = ManagedWalletInfo::from_wallet_with_name(&wallet, "node-id".to_string(), 0);
+
+    let seed = hex::decode(TEST_SEED_HEX).unwrap();
+    let master = ExtendedEd25519PrivKey::new_master(Network::Mainnet, &seed).unwrap();
+    let account_xpriv = master
+        .derive_priv(&AccountType::ProviderPlatformKeys.derivation_path(Network::Mainnet).unwrap())
+        .unwrap();
+
+    let (verifying_key, entry) = info
+        .provider_platform_keys_managed_account_mut()
+        .expect("platform managed account")
+        .next_eddsa_platform_key(account_xpriv, true)
+        .expect("derive platform key 0");
+
+    assert_eq!(
+        hex::encode(verifying_key.to_bytes()),
+        "3130c14339391cf26a68d86879e180ee9a16b660f5aa91f560f67c0abe8cf789"
+    );
+    // The pool entry's payload is the Tenderdash node id — the value a real
+    // ProRegTx carries — so registration matching can hit it.
+    let dashcore::address::Payload::PubkeyHash(hash) = entry.address.payload() else {
+        panic!("platform pool entries use P2PKH-style payloads");
+    };
+    assert_eq!(hex::encode(hash.to_byte_array()), "302f2615e6955cce8ed3cff81e8011bfd3a2991f");
+}
+
 /// The gate-free provider-key entry points must work identically on resident
 /// (non-watch-only) and watch-only accounts, and must match the dashbls
 /// reference vectors. See

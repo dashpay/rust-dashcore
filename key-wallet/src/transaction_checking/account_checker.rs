@@ -1043,7 +1043,9 @@ impl ManagedCoreFundsAccount {
                     _ => return None,
                 };
 
-                // Check if platform_node_id matches any of our address hashes
+                // Check if platform_node_id matches any of our pool entries.
+                // Pool payloads hold Tenderdash node ids (SHA256(pubkey)[..20]),
+                // matching the on-chain field's convention.
                 for (address, &addr_index) in &addresses.address_index {
                     if let Payload::PubkeyHash(addr_hash) = address.payload() {
                         if addr_hash.as_byte_array() == platform_node_id.as_byte_array() {
