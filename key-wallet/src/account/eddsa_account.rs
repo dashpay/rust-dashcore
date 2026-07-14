@@ -128,6 +128,26 @@ impl EdDSAAccount {
         })
     }
 
+    /// Derive the Platform node Ed25519 signing key at `index` directly from
+    /// a wallet seed (e.g. the 64-byte BIP39 seed).
+    ///
+    /// SLIP-0010 Ed25519 only supports hardened derivation, so the key is the
+    /// hardened child `index'` of the platform node account path
+    /// (`m/9'/5'/3'/4'` on mainnet, `m/9'/1'/3'/4'` otherwise), matching
+    /// DashSync. Because derivation starts from the raw seed, no account
+    /// state is involved and in particular no `is_watch_only` gate applies.
+    pub fn platform_node_key_at(
+        seed: &[u8],
+        network: Network,
+        index: u32,
+    ) -> Result<dashcore::ed25519_dalek::SigningKey> {
+        let master = ExtendedEd25519PrivKey::new_master(network, seed)?;
+        let path = AccountType::ProviderPlatformKeys.derivation_path(network)?;
+        let account_xpriv = master.derive_priv(&path)?;
+        let child = account_xpriv.derive_priv(&[ChildNumber::from_hardened_idx(index)?])?;
+        Ok(dashcore::ed25519_dalek::SigningKey::from_bytes(&child.private_key))
+    }
+
     /// Derive an Ed25519 key at a specific path
     /// Note: Ed25519 with SLIP-0010 only supports hardened derivation
     pub fn derive_ed25519_key_at_path(&self, path: &[u32]) -> Result<ExtendedEd25519PubKey> {
