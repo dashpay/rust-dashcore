@@ -39,7 +39,9 @@ pub use crate::bip32::DerivationPath;
 pub fn tenderdash_node_id(ed25519_public_key_bytes: &[u8; 32]) -> [u8; 20] {
     use dashcore_hashes::sha256;
     let hash = sha256::Hash::hash(ed25519_public_key_bytes);
-    hash.as_byte_array()[..20].try_into().expect("SHA-256 yields 32 bytes")
+    let mut node_id = [0u8; 20];
+    node_id.copy_from_slice(&hash.as_byte_array()[..20]);
+    node_id
 }
 
 /// Extended Ed25519 private key for SLIP-0010

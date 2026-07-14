@@ -350,9 +350,7 @@ impl
 
         use dashcore::address::Payload;
         use dashcore::hashes::Hash;
-        let pubkey_hash = dashcore::PubkeyHash::from_slice(&node_id)
-            .expect("Tenderdash node id is exactly 20 bytes");
-        let payload = Payload::PubkeyHash(pubkey_hash);
+        let payload = Payload::PubkeyHash(dashcore::PubkeyHash::from_byte_array(node_id));
         Ok(Address::new(self.network, payload))
     }
 
