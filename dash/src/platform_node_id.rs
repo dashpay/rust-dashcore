@@ -19,6 +19,12 @@
 //! wire like a [`PubkeyHash`](crate::PubkeyHash), it is *not* a `hash160`
 //! public key hash, so it gets its own type to keep the two conventions from
 //! being conflated.
+//!
+//! The inner bytes are always held in canonical forward order — the order in
+//! which Tenderdash and dashmate display and derive the id. Dash Core
+//! serializes the field as a `uint160`, whose internal blob order is the
+//! byte-reversal of the canonical form, so the consensus encoding reverses on
+//! the way in and out.
 
 #[cfg(feature = "bincode")]
 use bincode::{Decode, Encode};
@@ -32,8 +38,9 @@ use crate::io;
 /// A Dash Platform (Tenderdash/CometBFT) node ID.
 ///
 /// This is `SHA256(ed25519_public_key)` truncated to 20 bytes, not a `hash160`
-/// public key hash. The consensus encoding is the raw 20 bytes, identical to
-/// the encoding of a 20-byte key hash.
+/// public key hash. The inner bytes are always in canonical forward order
+/// (as displayed by Tenderdash/dashmate); the consensus encoding is the
+/// byte-reversal of that, matching Dash Core's internal `uint160` blob order.
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 pub struct PlatformNodeId([u8; 20]);
@@ -42,17 +49,17 @@ impl_array_newtype!(PlatformNodeId, u8, 20);
 impl_bytes_newtype!(PlatformNodeId, 20);
 
 impl PlatformNodeId {
-    /// Constructs a platform node ID from its raw 20 bytes.
+    /// Constructs a platform node ID from its 20 canonical (forward-order) bytes.
     pub const fn from_byte_array(bytes: [u8; 20]) -> Self {
         PlatformNodeId(bytes)
     }
 
-    /// Returns the raw 20 bytes of the node ID.
+    /// Returns the 20 canonical (forward-order) bytes of the node ID.
     pub const fn to_byte_array(self) -> [u8; 20] {
         self.0
     }
 
-    /// Returns a reference to the raw 20 bytes of the node ID.
+    /// Returns a reference to the 20 canonical (forward-order) bytes of the node ID.
     pub const fn as_byte_array(&self) -> &[u8; 20] {
         &self.0
     }
@@ -69,13 +76,19 @@ impl PlatformNodeId {
 
 impl Encodable for PlatformNodeId {
     fn consensus_encode<W: io::Write + ?Sized>(&self, w: &mut W) -> Result<usize, io::Error> {
-        self.0.consensus_encode(w)
+        // The wire carries Dash Core's internal `uint160` blob order, which is
+        // the byte-reversal of the canonical form held in `self.0`.
+        let mut wire_bytes = self.0;
+        wire_bytes.reverse();
+        wire_bytes.consensus_encode(w)
     }
 }
 
 impl Decodable for PlatformNodeId {
     fn consensus_decode<R: io::Read + ?Sized>(r: &mut R) -> Result<Self, encode::Error> {
-        Ok(PlatformNodeId(<[u8; 20]>::consensus_decode(r)?))
+        let mut bytes = <[u8; 20]>::consensus_decode(r)?;
+        bytes.reverse();
+        Ok(PlatformNodeId(bytes))
     }
 }
 
@@ -86,12 +99,43 @@ mod tests {
 
     #[test]
     fn consensus_round_trip() {
-        let node_id = PlatformNodeId::from_byte_array([0xAB; 20]);
+        let mut canonical = [0u8; 20];
+        for (i, byte) in canonical.iter_mut().enumerate() {
+            *byte = i as u8;
+        }
+        let mut wire = canonical;
+        wire.reverse();
+
+        let node_id = PlatformNodeId::from_byte_array(canonical);
         let encoded = serialize(&node_id);
         assert_eq!(encoded.len(), 20);
-        assert_eq!(encoded, [0xAB; 20]);
+        assert_eq!(encoded, wire, "wire order is the byte-reversal of canonical order");
         let decoded: PlatformNodeId = deserialize(&encoded).expect("decode node id");
         assert_eq!(decoded, node_id);
+    }
+
+    /// Mainnet evonode example from issue #887: the ProRegTx wire bytes carry
+    /// the `uint160` internal (reversed) order, while the canonical id — as
+    /// dashmate/Tenderdash derive and display it — is the byte-reversal.
+    #[test]
+    fn consensus_decode_yields_canonical_order() {
+        let wire_bytes = crate::internal_macros::hex!("8cb97997a418f4814a63d3564b9574a393437968");
+        let node_id: PlatformNodeId = deserialize(&wire_bytes).expect("decode node id");
+        assert_eq!(node_id.to_string(), "68794393a374954b56d3634a81f418a49779b98c");
+        assert_eq!(serialize(&node_id), wire_bytes, "re-encoding restores wire order");
+    }
+
+    /// A node id decoded from the wire must compare equal to one derived from
+    /// the matching Ed25519 public key — the mismatch reported in issue #887.
+    #[test]
+    fn decoded_wire_id_matches_derived_id() {
+        let public_key = [7u8; 32];
+        let derived = PlatformNodeId::from_ed25519_public_key(&public_key);
+
+        let mut wire_bytes = derived.to_byte_array();
+        wire_bytes.reverse();
+        let decoded: PlatformNodeId = deserialize(&wire_bytes).expect("decode node id");
+        assert_eq!(decoded, derived);
     }
 
     /// Persisted masternode-list snapshots were written while
