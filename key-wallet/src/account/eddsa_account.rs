@@ -534,6 +534,46 @@ mod tests {
         assert!(result.is_err());
     }
 
+    /// `derive_address_at` must produce Tenderdash-node-id payloads
+    /// (SHA256(pubkey)[0..20]) — pinned to the same golden vector as
+    /// `tests::provider_key_derivation_tests` (platform node key 0 at
+    /// m/9'/5'/3'/4'/0' for the BIP39 "abandon…about" seed, cross-checked
+    /// with an independent Ed25519 implementation).
+    #[test]
+    fn test_derive_address_at_uses_tenderdash_node_id() {
+        use dashcore::hashes::Hash;
+
+        let seed = hex::decode(
+            "5eb00bbddcf069084889a8ab9155568165f5c453ccb85e70811aaed6f6da5fc1\
+             9a5ac40b389cd370d086206dec8aa6c43daea6690f20ad3d8d48b2d2ce9e38e4",
+        )
+        .unwrap();
+        let account = EdDSAAccount::from_seed(
+            None,
+            AccountType::ProviderPlatformKeys,
+            &seed,
+            Network::Mainnet,
+        )
+        .expect("create platform keys account from seed");
+
+        let master =
+            ExtendedEd25519PrivKey::new_master(Network::Mainnet, &seed).expect("master from seed");
+        let account_xpriv = master
+            .derive_priv(
+                &AccountType::ProviderPlatformKeys.derivation_path(Network::Mainnet).unwrap(),
+            )
+            .expect("derive account xpriv");
+
+        let address = account
+            .derive_address_at(AddressPoolType::AbsentHardened, 0, Some(account_xpriv))
+            .expect("derive platform node pseudo-address");
+
+        let dashcore::address::Payload::PubkeyHash(hash) = address.payload() else {
+            panic!("platform pseudo-addresses use P2PKH-style payloads");
+        };
+        assert_eq!(hex::encode(hash.to_byte_array()), "302f2615e6955cce8ed3cff81e8011bfd3a2991f");
+    }
+
     #[test]
     fn test_derive_identity_key() {
         let seed = [5u8; 32];
