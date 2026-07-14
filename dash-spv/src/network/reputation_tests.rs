@@ -2,10 +2,12 @@
 
 #[cfg(test)]
 mod tests {
-    use crate::storage::{PersistentPeerStorage, PersistentStorage};
+    use crate::storage::{PeerStorage, PersistentPeerStorage, PersistentStorage};
 
     use super::super::*;
+    use std::collections::HashMap;
     use std::net::SocketAddr;
+    use std::time::{Duration, SystemTime};
 
     async fn score(manager: &PeerReputationManager, peer: &SocketAddr) -> i32 {
         manager.get_all_reputations().await.get(peer).map_or(0, |rep| rep.score)
@@ -107,5 +109,73 @@ mod tests {
 
         assert_eq!(rep.connection_attempts, 2);
         assert_eq!(rep.successful_connections, 1);
+    }
+
+    #[tokio::test]
+    async fn test_request_timeout_penalty_and_ban() {
+        let manager = PeerReputationManager::new();
+        let peer: SocketAddr = "127.0.0.1:7777".parse().unwrap();
+
+        // Ten stalls (10 * 10) reach the ban line; only the tenth bans.
+        for i in 0..10 {
+            let banned = manager.update_reputation(peer, ChangeReason::RequestTimeout).await;
+            assert_eq!(banned, i == 9);
+        }
+        assert_eq!(score(&manager, &peer).await, 100);
+        assert!(manager.is_banned(&peer).await);
+    }
+
+    #[tokio::test]
+    async fn test_scores_for_returns_scores_and_defaults() {
+        let manager = PeerReputationManager::new();
+        let good: SocketAddr = "127.0.0.1:1".parse().unwrap();
+        let bad: SocketAddr = "127.0.0.1:2".parse().unwrap();
+        let unknown: SocketAddr = "127.0.0.1:3".parse().unwrap();
+
+        manager.update_reputation(good, ChangeReason::ResponseDelivered).await;
+        manager.update_reputation(bad, ChangeReason::InvalidTransactionInBlock).await;
+
+        let scores = manager.scores_for([good, bad, unknown]).await;
+        assert_eq!(scores.get(&good), Some(&-2));
+        assert_eq!(scores.get(&bad), Some(&20));
+        assert_eq!(scores.get(&unknown), Some(&0));
+    }
+
+    #[tokio::test]
+    async fn test_load_clamps_score_and_credits_offline_decay() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let storage = PersistentPeerStorage::open(temp_dir.path()).await.unwrap();
+
+        // Persisted near the ban line but seen recently: clamps to the restart ceiling.
+        let near_ban: SocketAddr = "10.0.0.1:8333".parse().unwrap();
+        // Persisted mid-score but offline ~2 hours: decays by two intervals on load.
+        let offline: SocketAddr = "10.0.0.2:8333".parse().unwrap();
+
+        let mut map: HashMap<SocketAddr, PeerReputation> = HashMap::new();
+        map.insert(
+            near_ban,
+            PeerReputation {
+                score: 95,
+                last_seen: SystemTime::now(),
+                ..Default::default()
+            },
+        );
+        map.insert(
+            offline,
+            PeerReputation {
+                score: 30,
+                last_seen: SystemTime::now() - Duration::from_secs(2 * 60 * 60 + 60),
+                ..Default::default()
+            },
+        );
+        storage.save_peers_reputation(&map).await.unwrap();
+
+        let manager = PeerReputationManager::new();
+        manager.load_from_storage(&storage).await.unwrap();
+
+        // Clamped to RESTART_SCORE_CEILING, so one post-restart penalty cannot ban it.
+        assert_eq!(score(&manager, &near_ban).await, 40);
+        // 30 - 2 intervals * 5 decay.
+        assert_eq!(score(&manager, &offline).await, 20);
     }
 }
