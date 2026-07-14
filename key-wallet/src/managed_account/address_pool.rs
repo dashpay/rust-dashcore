@@ -491,13 +491,26 @@ impl AddressPool {
                 (address, PublicKeyType::BLS(public_key_bytes))
             }
             DerivedKey::EdDSA(public_key_bytes) => {
-                // EdDSA addresses use Hash160 of the public key bytes
-                use dashcore::hashes::{hash160, Hash};
-                let pubkey_hash = hash160::Hash::hash(&public_key_bytes);
+                // EdDSA pool entries key on the Tenderdash node ID
+                // (SHA256(pubkey)[0..20]) — the value ProRegTx carries as
+                // `platform_node_id` — wrapped in a P2PKH-style payload so it
+                // can live in the pool's address index. NOT hash160: a
+                // hash160-keyed entry can never match an on-chain evonode
+                // registration.
+                let pubkey_arr: &[u8; 32] =
+                    public_key_bytes.as_slice().try_into().map_err(|_| {
+                        Error::InvalidParameter(format!(
+                            "EdDSA public key must be 32 bytes, got {}",
+                            public_key_bytes.len()
+                        ))
+                    })?;
+                let node_id = crate::derivation_slip10::tenderdash_node_id(pubkey_arr);
 
-                // Create P2PKH address from the hash
                 use dashcore::address::Payload;
-                let payload = Payload::PubkeyHash(pubkey_hash.into());
+                use dashcore::hashes::Hash;
+                let pubkey_hash = dashcore::PubkeyHash::from_slice(&node_id)
+                    .expect("Tenderdash node id is exactly 20 bytes");
+                let payload = Payload::PubkeyHash(pubkey_hash);
                 let address = Address::new(self.network, payload);
 
                 (address, PublicKeyType::EdDSA(public_key_bytes))

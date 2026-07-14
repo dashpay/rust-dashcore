@@ -25,6 +25,23 @@ pub use dashcore::ed25519_dalek::VerifyingKey as Ed25519PublicKey;
 // Use DerivationPath from bip32
 pub use crate::bip32::DerivationPath;
 
+/// Compute the Tenderdash/CometBFT node ID for an Ed25519 public key: the
+/// first 20 bytes of a single SHA-256 of the 32-byte public key.
+///
+/// This is the canonical value of the `platform_node_id` field in ProRegTx /
+/// ProUpServTx payloads for evonodes: it is what dashmate derives from
+/// `node_key.json` and what Tenderdash announces on the platform P2P network,
+/// so it is the only value that can match an on-chain registration.
+///
+/// Note this is **not** `hash160` (SHA-256 + RIPEMD-160). Dash uses hash160
+/// for the ECDSA owner/voting key hashes in the same payload, but the
+/// platform node id follows the CometBFT node-ID convention.
+pub fn tenderdash_node_id(ed25519_public_key_bytes: &[u8; 32]) -> [u8; 20] {
+    use dashcore_hashes::sha256;
+    let hash = sha256::Hash::hash(ed25519_public_key_bytes);
+    hash.as_byte_array()[..20].try_into().expect("SHA-256 yields 32 bytes")
+}
+
 /// Extended Ed25519 private key for SLIP-0010
 #[derive(Clone)]
 pub struct ExtendedEd25519PrivKey {

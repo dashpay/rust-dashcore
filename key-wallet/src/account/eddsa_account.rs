@@ -329,9 +329,13 @@ impl
         ))
     }
 
-    /// Derive an Ed25519-based address at a specific chain and index.
+    /// Derive an Ed25519-based pseudo-address at a specific chain and index.
     ///
-    /// Creates a P2PKH-style address from the hash160 of the Ed25519 public key.
+    /// The payload is the Tenderdash node ID of the Ed25519 public key
+    /// (`SHA256(pubkey)[0..20]`, the CometBFT convention) wrapped in a
+    /// P2PKH-style address — the same value ProRegTx carries as
+    /// `platform_node_id`, so it can be matched against on-chain evonode
+    /// registrations. NOT hash160, which Dash only uses for ECDSA key hashes.
     fn derive_address_at(
         &self,
         address_pool_type: AddressPoolType,
@@ -342,17 +346,13 @@ impl
         let ed25519_pubkey =
             self.derive_public_key_at(address_pool_type, index, use_hardened_with_priv_key)?;
 
-        // Get the Ed25519 public key bytes (32 bytes for Ed25519)
-        let pubkey_bytes = ed25519_pubkey.to_bytes();
+        let node_id = crate::derivation_slip10::tenderdash_node_id(&ed25519_pubkey.to_bytes());
 
-        // Create a P2PKH address from the hash160 of the Ed25519 public key
-        // This uses the same hash160 (SHA256 + RIPEMD160) as ECDSA addresses
-        use dashcore::hashes::{hash160, Hash};
-        let pubkey_hash = hash160::Hash::hash(&pubkey_bytes);
-
-        // Create the address from the public key hash
         use dashcore::address::Payload;
-        let payload = Payload::PubkeyHash(pubkey_hash.into());
+        use dashcore::hashes::Hash;
+        let pubkey_hash = dashcore::PubkeyHash::from_slice(&node_id)
+            .expect("Tenderdash node id is exactly 20 bytes");
+        let payload = Payload::PubkeyHash(pubkey_hash);
         Ok(Address::new(self.network, payload))
     }
 
