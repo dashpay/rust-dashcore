@@ -122,6 +122,7 @@ pub enum DerivedKey {
     /// BLS public key (48 bytes)
     BLS(Vec<u8>),
     /// EdDSA public key (32 bytes)
+    #[cfg(feature = "eddsa")]
     EdDSA(Vec<u8>),
 }
 
@@ -490,6 +491,7 @@ impl AddressPool {
 
                 (address, PublicKeyType::BLS(public_key_bytes))
             }
+            #[cfg(feature = "eddsa")]
             DerivedKey::EdDSA(public_key_bytes) => {
                 // EdDSA pool entries key on the Tenderdash node ID
                 // (SHA256(pubkey)[0..20]) — the value ProRegTx carries as
