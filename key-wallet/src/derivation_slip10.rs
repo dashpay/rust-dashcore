@@ -37,11 +37,7 @@ pub use crate::bip32::DerivationPath;
 /// for the ECDSA owner/voting key hashes in the same payload, but the
 /// platform node id follows the CometBFT node-ID convention.
 pub fn tenderdash_node_id(ed25519_public_key_bytes: &[u8; 32]) -> [u8; 20] {
-    use dashcore_hashes::sha256;
-    let hash = sha256::Hash::hash(ed25519_public_key_bytes);
-    let mut node_id = [0u8; 20];
-    node_id.copy_from_slice(&hash.as_byte_array()[..20]);
-    node_id
+    dashcore::PlatformNodeId::from_ed25519_public_key(ed25519_public_key_bytes).to_byte_array()
 }
 
 /// Extended Ed25519 private key for SLIP-0010

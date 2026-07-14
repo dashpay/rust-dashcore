@@ -20,7 +20,7 @@ use crate::internal_macros::impl_consensus_encoding;
 use crate::sml::masternode_list_entry::net_info::{
     Bip155Network, ExtNetInfo, NetInfoEntry, NetInfoPurpose,
 };
-use crate::{ProTxHash, PubkeyHash};
+use crate::{PlatformNodeId, ProTxHash, PubkeyHash};
 
 #[derive(Clone, Ord, PartialOrd, Eq, PartialEq, Debug)]
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
@@ -29,7 +29,9 @@ pub enum EntryMasternodeType {
     Regular,
     HighPerformance {
         platform_http_port: u16,
-        platform_node_id: PubkeyHash,
+        /// Tenderdash/CometBFT node ID (`SHA256(ed25519_pubkey)[0..20]`),
+        /// not a `hash160` public key hash.
+        platform_node_id: PlatformNodeId,
     },
 }
 
