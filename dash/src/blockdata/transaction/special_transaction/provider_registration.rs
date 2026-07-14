@@ -768,10 +768,13 @@ mod tests {
 
         assert_eq!(payload.version, 2);
         assert_eq!(payload.masternode_type, ProviderMasternodeType::HighPerformance);
+        // The wire carries `4cd2ca50b36e0a2bb1b6b29da140448b47eeb7a1` (Dash
+        // Core's internal uint160 blob order); the decoded id is the canonical
+        // Tenderdash form, i.e. the byte-reversal.
         assert_eq!(
             payload.platform_node_id,
             Some(
-                "4cd2ca50b36e0a2bb1b6b29da140448b47eeb7a1"
+                "a1b7ee478b4440a19db2b6b12b0a6eb350cad24c"
                     .parse()
                     .expect("valid platform node id hex")
             )
