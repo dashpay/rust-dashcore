@@ -113,6 +113,26 @@ mod tests {
     }
 
     #[test]
+    fn hex_display_and_parse_round_trip() {
+        let hex = "4cd2ca50b36e0a2bb1b6b29da140448b47eeb7a1";
+        let node_id: PlatformNodeId = hex.parse().expect("parse node id hex");
+        assert_eq!(node_id.to_string(), hex);
+        assert_eq!(format!("{:?}", node_id), hex);
+        assert!("abcd".parse::<PlatformNodeId>().is_err(), "wrong-length hex must fail");
+        assert!("zz".repeat(20).parse::<PlatformNodeId>().is_err(), "non-hex input must fail");
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn serde_json_round_trip_as_hex_string() {
+        let node_id = PlatformNodeId::from_byte_array([0x11; 20]);
+        let json = serde_json::to_string(&node_id).expect("serialize node id");
+        assert_eq!(json, format!("\"{}\"", "11".repeat(20)));
+        let back: PlatformNodeId = serde_json::from_str(&json).expect("deserialize node id");
+        assert_eq!(back, node_id);
+    }
+
+    #[test]
     fn from_ed25519_public_key_is_truncated_sha256() {
         let public_key = [7u8; 32];
         let digest = sha256::Hash::hash(&public_key);

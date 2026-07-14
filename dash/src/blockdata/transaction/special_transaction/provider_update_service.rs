@@ -422,6 +422,37 @@ mod tests {
         assert_eq!(decoded, original);
     }
 
+    /// A v2 Evo payload with absent platform fields still writes the
+    /// zero-filled node id and ports on the wire.
+    #[test]
+    fn v2_evo_masternode_none_platform_fields_encode_zero_filled() {
+        let original = ProviderUpdateServicePayload {
+            version: 2,
+            mn_type: Some(1), // HighPerformance (Evo)
+            pro_tx_hash: Txid::all_zeros(),
+            ip_address: 0,
+            port: 0,
+            script_payout: ScriptBuf::new(),
+            inputs_hash: InputsHash::all_zeros(),
+            platform_node_id: None,
+            platform_p2p_port: None,
+            platform_http_port: None,
+            payload_sig: BLSSignature::from([0; 96]),
+        };
+
+        let mut encoded = Vec::new();
+        original.consensus_encode(&mut encoded).unwrap();
+
+        // version(2) + mn_type(2) + pro_tx_hash(32) + ip(16) + port(2) +
+        // script(1) + inputs_hash(32) + node_id(20) + p2p(2) + http(2) + sig(96)
+        assert_eq!(encoded.len(), 207);
+
+        let decoded = ProviderUpdateServicePayload::consensus_decode(&mut &encoded[..]).unwrap();
+        assert_eq!(decoded.platform_node_id, Some(PlatformNodeId::from_byte_array([0; 20])));
+        assert_eq!(decoded.platform_p2p_port, Some(0));
+        assert_eq!(decoded.platform_http_port, Some(0));
+    }
+
     #[test]
     fn test_protx_update_v2_block_parsing() {
         use crate::blockdata::block::Block;

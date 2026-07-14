@@ -723,6 +723,41 @@ mod tests {
         assert_eq!(actual, want);
     }
 
+    /// A v2 high-performance payload with absent platform fields still
+    /// writes the zero-filled node id and ports on the wire.
+    #[test]
+    fn v2_high_performance_none_platform_fields_encode_zero_filled() {
+        let payload = ProviderRegistrationPayload {
+            version: 2,
+            masternode_type: ProviderMasternodeType::HighPerformance,
+            masternode_mode: 0,
+            collateral_outpoint: OutPoint {
+                txid: Txid::all_zeros(),
+                vout: 0,
+            },
+            service_address: SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::from_bits(0), 0)),
+            owner_key_hash: PubkeyHash::all_zeros(),
+            operator_public_key: BLSPublicKey::from([0; 48]),
+            voting_key_hash: PubkeyHash::all_zeros(),
+            operator_reward: 0,
+            script_payout: ScriptBuf::new(),
+            inputs_hash: InputsHash::all_zeros(),
+            signature: vec![],
+            platform_node_id: None,
+            platform_p2p_port: None,
+            platform_http_port: None,
+        };
+
+        let mut encoded = Vec::new();
+        payload.consensus_encode(&mut encoded).unwrap();
+
+        let decoded: ProviderRegistrationPayload =
+            deserialize(&encoded).expect("deserialize zero-filled payload");
+        assert_eq!(decoded.platform_node_id, Some(crate::PlatformNodeId::from_byte_array([0; 20])));
+        assert_eq!(decoded.platform_p2p_port, Some(0));
+        assert_eq!(decoded.platform_http_port, Some(0));
+    }
+
     #[test]
     fn test_payload_version_2_encoding_and_decoding() {
         let payload_bytes = hex!(
