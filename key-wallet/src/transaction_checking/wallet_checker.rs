@@ -178,14 +178,13 @@ impl WalletTransactionChecker for ManagedWalletInfo {
                 account.mark_address_used(&address_info.address);
             }
 
-            let Some(xpub) = wallet.extended_public_key_for_account_type(
+            let key_source = wallet.key_source_for_account_type(
                 &account_match.account_type_match.to_account_type_to_check(),
                 account_match.account_type_match.account_index(),
-            ) else {
+            );
+            if matches!(key_source, KeySource::NoKeySource) {
                 continue;
-            };
-
-            let key_source = KeySource::Public(xpub);
+            }
             let rev_before = result.new_addresses.len();
             let owning_account_type = account.managed_account_type().to_account_type();
             for pool in account.managed_account_type_mut().address_pools_mut() {
