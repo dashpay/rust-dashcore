@@ -19,6 +19,15 @@
 //! wire like a [`PubkeyHash`](crate::PubkeyHash), it is *not* a `hash160`
 //! public key hash, so it gets its own type to keep the two conventions from
 //! being conflated.
+//!
+//! # Byte order
+//!
+//! The newtype always holds **canonical forward** bytes — the same order
+//! dashmate / Tenderdash display and `from_ed25519_public_key` produce.
+//! Dash Core serializes `platformNodeID` as a `uint160`, whose on-wire
+//! `m_data` is the reverse of that canonical form (`GetHex` / `SetHex`
+//! reverse for human hex). Consensus encode/decode therefore reverse at the
+//! boundary so Display, FromHex, and derived ids stay comparable.
 
 #[cfg(feature = "bincode")]
 use bincode::{Decode, Encode};
@@ -32,8 +41,9 @@ use crate::io;
 /// A Dash Platform (Tenderdash/CometBFT) node ID.
 ///
 /// This is `SHA256(ed25519_public_key)` truncated to 20 bytes, not a `hash160`
-/// public key hash. The consensus encoding is the raw 20 bytes, identical to
-/// the encoding of a 20-byte key hash.
+/// public key hash. The inner bytes are always the **canonical** (dashmate /
+/// Tenderdash) forward form. Consensus encoding reverses them to match Dash
+/// Core's `uint160` wire blob order.
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 pub struct PlatformNodeId([u8; 20]);
@@ -42,17 +52,17 @@ impl_array_newtype!(PlatformNodeId, u8, 20);
 impl_bytes_newtype!(PlatformNodeId, 20);
 
 impl PlatformNodeId {
-    /// Constructs a platform node ID from its raw 20 bytes.
+    /// Constructs a platform node ID from its raw **canonical** 20 bytes.
     pub const fn from_byte_array(bytes: [u8; 20]) -> Self {
         PlatformNodeId(bytes)
     }
 
-    /// Returns the raw 20 bytes of the node ID.
+    /// Returns the raw **canonical** 20 bytes of the node ID.
     pub const fn to_byte_array(self) -> [u8; 20] {
         self.0
     }
 
-    /// Returns a reference to the raw 20 bytes of the node ID.
+    /// Returns a reference to the raw **canonical** 20 bytes of the node ID.
     pub const fn as_byte_array(&self) -> &[u8; 20] {
         &self.0
     }
@@ -69,13 +79,17 @@ impl PlatformNodeId {
 
 impl Encodable for PlatformNodeId {
     fn consensus_encode<W: io::Write + ?Sized>(&self, w: &mut W) -> Result<usize, io::Error> {
-        self.0.consensus_encode(w)
+        let mut wire = self.0;
+        wire.reverse();
+        wire.consensus_encode(w)
     }
 }
 
 impl Decodable for PlatformNodeId {
     fn consensus_decode<R: io::Read + ?Sized>(r: &mut R) -> Result<Self, encode::Error> {
-        Ok(PlatformNodeId(<[u8; 20]>::consensus_decode(r)?))
+        let mut wire = <[u8; 20]>::consensus_decode(r)?;
+        wire.reverse();
+        Ok(PlatformNodeId(wire))
     }
 }
 
@@ -83,6 +97,7 @@ impl Decodable for PlatformNodeId {
 mod tests {
     use super::*;
     use crate::consensus::{deserialize, serialize};
+    use hashes::hex::FromHex;
 
     #[test]
     fn consensus_round_trip() {
@@ -91,6 +106,54 @@ mod tests {
         assert_eq!(encoded.len(), 20);
         assert_eq!(encoded, [0xAB; 20]);
         let decoded: PlatformNodeId = deserialize(&encoded).expect("decode node id");
+        assert_eq!(decoded, node_id);
+    }
+
+    #[test]
+    fn consensus_encode_reverses_asymmetric_bytes() {
+        let mut canonical = [0u8; 20];
+        for (i, b) in canonical.iter_mut().enumerate() {
+            *b = i as u8;
+        }
+        let node_id = PlatformNodeId::from_byte_array(canonical);
+        let encoded = serialize(&node_id);
+        let mut expected_wire = canonical;
+        expected_wire.reverse();
+        assert_eq!(encoded, expected_wire);
+
+        let decoded: PlatformNodeId = deserialize(&encoded).expect("decode node id");
+        assert_eq!(decoded, node_id);
+        assert_eq!(decoded.to_byte_array(), canonical);
+    }
+
+    /// Issue #887 mainnet-verified wire ↔ canonical pair.
+    #[test]
+    fn consensus_wire_matches_dash_core_uint160_order() {
+        let wire_hex = "8cb97997a418f4814a63d3564b9574a393437968";
+        let canonical_hex = "68794393a374954b56d3634a81f418a49779b98c";
+
+        let wire = <[u8; 20]>::from_hex(wire_hex).expect("wire hex");
+        let decoded: PlatformNodeId = deserialize(&wire).expect("decode wire");
+        assert_eq!(decoded.to_string(), canonical_hex);
+        assert_eq!(serialize(&decoded), wire);
+    }
+
+    /// #884 golden pubkey → canonical id; wire is the byte-reversal.
+    #[test]
+    fn from_ed25519_public_key_consensus_wire_is_reversed() {
+        let pubkey = <[u8; 32]>::from_hex(
+            "3130c14339391cf26a68d86879e180ee9a16b660f5aa91f560f67c0abe8cf789",
+        )
+        .expect("pubkey hex");
+        let node_id = PlatformNodeId::from_ed25519_public_key(&pubkey);
+        assert_eq!(node_id.to_string(), "302f2615e6955cce8ed3cff81e8011bfd3a2991f");
+
+        let encoded = serialize(&node_id);
+        let mut expected_wire = node_id.to_byte_array();
+        expected_wire.reverse();
+        assert_eq!(encoded, expected_wire);
+
+        let decoded: PlatformNodeId = deserialize(&encoded).expect("decode");
         assert_eq!(decoded, node_id);
     }
 

@@ -768,10 +768,12 @@ mod tests {
 
         assert_eq!(payload.version, 2);
         assert_eq!(payload.masternode_type, ProviderMasternodeType::HighPerformance);
+        // Wire blob is Dash Core uint160 order; PlatformNodeId holds canonical
+        // (byte-reversed) form — see issue #887.
         assert_eq!(
             payload.platform_node_id,
             Some(
-                "4cd2ca50b36e0a2bb1b6b29da140448b47eeb7a1"
+                "a1b7ee478b4440a19db2b6b12b0a6eb350cad24c"
                     .parse()
                     .expect("valid platform node id hex")
             )
