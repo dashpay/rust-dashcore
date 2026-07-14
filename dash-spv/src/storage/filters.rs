@@ -21,6 +21,26 @@ pub trait FilterStorage: Send + Sync + 'static {
 
     async fn filter_tip_height(&self) -> StorageResult<u32>;
 
+    /// Lowest filter height present in storage, or `None` when no filters are
+    /// stored.
+    ///
+    /// `filter_tip_height` is a tip watermark only: storage is dense within
+    /// `[filter_start_height, filter_tip_height]`, but heights below the start
+    /// were never stored. Callers must not treat the tip as proof that storage
+    /// is contiguous from an arbitrary lower height.
+    async fn filter_start_height(&self) -> Option<u32>;
+
+    /// Drop every stored filter, leaving the storage empty.
+    ///
+    /// Used when the stored range cannot serve the current scan (e.g. filters
+    /// were previously stored from a checkpoint above a wallet's rescan
+    /// start): keeping an unreachable island of tip-region filters would leave
+    /// a permanent hole below it that the contiguous store path cannot fill.
+    ///
+    /// Like `truncate_above`, the deletion is not durable until the next
+    /// successful `persist` call.
+    async fn clear_filters(&mut self) -> StorageResult<()>;
+
     /// Drop all filters with `height > target_height`.
     ///
     /// Truncating above the current tip is a no-op, truncating below
@@ -79,6 +99,15 @@ impl FilterStorage for PersistentFilterStorage {
         Ok(self.filters.read().await.tip_height().unwrap_or(0))
     }
 
+    async fn filter_start_height(&self) -> Option<u32> {
+        self.filters.read().await.start_height()
+    }
+
+    async fn clear_filters(&mut self) -> StorageResult<()> {
+        self.filters.write().await.clear();
+        Ok(())
+    }
+
     async fn truncate_above(&mut self, target_height: u32) -> StorageResult<()> {
         self.filters.write().await.truncate_above(target_height).await
     }
@@ -106,5 +135,58 @@ mod tests {
 
         assert_eq!(storage.filter_tip_height().await.unwrap(), 2);
         assert!(storage.load_filters(3..4).await.is_err());
+    }
+
+    /// Filters stored only in a high region (as when headers previously
+    /// synced from a checkpoint): the start accessor reports the true lowest
+    /// stored height, reads below it fail loudly instead of returning
+    /// sentinels, and `clear_filters` durably empties the storage.
+    #[tokio::test]
+    async fn test_filter_start_height_and_clear_filters() {
+        let tmp_dir = TempDir::new().unwrap();
+        let mut storage = PersistentFilterStorage::open(tmp_dir.path()).await.unwrap();
+
+        assert_eq!(storage.filter_start_height().await, None);
+
+        for height in 900..=1000 {
+            storage.store_filter(height, &filter_bytes(height as u8)).await.unwrap();
+        }
+        assert_eq!(storage.filter_start_height().await, Some(900));
+        assert_eq!(storage.filter_tip_height().await.unwrap(), 1000);
+
+        // Reads that begin below the stored range must error, not hand back
+        // sentinel data zipped against real headers.
+        assert!(storage.load_filters(100..200).await.is_err());
+        assert!(storage.load_filters(850..950).await.is_err());
+        assert_eq!(storage.load_filters(900..1001).await.unwrap().len(), 101);
+
+        storage.persist(tmp_dir.path()).await.unwrap();
+        let segment_file =
+            tmp_dir.path().join(PersistentFilterStorage::FOLDER_NAME).join("segment_0000.dat");
+        assert!(segment_file.exists());
+
+        // The start height survives a reload.
+        let mut storage = PersistentFilterStorage::open(tmp_dir.path()).await.unwrap();
+        assert_eq!(storage.filter_start_height().await, Some(900));
+
+        storage.clear_filters().await.unwrap();
+        assert_eq!(storage.filter_start_height().await, None);
+        assert_eq!(storage.filter_tip_height().await.unwrap(), 0);
+        assert!(storage.load_filters(900..901).await.is_err());
+
+        storage.persist(tmp_dir.path()).await.unwrap();
+        assert!(!segment_file.exists());
+
+        // Reopen: the clear is durable, and the storage accepts a fresh
+        // contiguous range from a lower start.
+        let mut storage = PersistentFilterStorage::open(tmp_dir.path()).await.unwrap();
+        assert_eq!(storage.filter_start_height().await, None);
+        assert_eq!(storage.filter_tip_height().await.unwrap(), 0);
+
+        for height in 100..=110 {
+            storage.store_filter(height, &filter_bytes(height as u8)).await.unwrap();
+        }
+        assert_eq!(storage.filter_start_height().await, Some(100));
+        assert_eq!(storage.load_filters(100..111).await.unwrap().len(), 11);
     }
 }
