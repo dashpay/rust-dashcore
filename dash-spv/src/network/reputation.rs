@@ -12,7 +12,7 @@ use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 use tokio::sync::RwLock;
 
 /// Reason for a peer reputation change. Each reason owns its score delta
@@ -22,11 +22,10 @@ pub enum ChangeReason {
     HandshakeFailed,
     ConnectionFailed,
     Headers2DecompressionFailed,
-    ReadTimeout,
     PingFailed,
     InvalidTransactionInBlock,
     ManuallyBanned,
-    LongUptime,
+    ResponseDelivered,
 }
 
 impl ChangeReason {
@@ -37,11 +36,10 @@ impl ChangeReason {
             ChangeReason::HandshakeFailed => 10,
             ChangeReason::ConnectionFailed => 2,
             ChangeReason::Headers2DecompressionFailed => 10,
-            ChangeReason::ReadTimeout => 5,
             ChangeReason::PingFailed => 5,
             ChangeReason::InvalidTransactionInBlock => 20,
             ChangeReason::ManuallyBanned => 100,
-            ChangeReason::LongUptime => -5,
+            ChangeReason::ResponseDelivered => -2,
         }
     }
 }
@@ -52,11 +50,10 @@ impl std::fmt::Display for ChangeReason {
             ChangeReason::HandshakeFailed => "Handshake failed",
             ChangeReason::ConnectionFailed => "Connection failed",
             ChangeReason::Headers2DecompressionFailed => "Headers2 decompression failed",
-            ChangeReason::ReadTimeout => "Read timeout",
             ChangeReason::PingFailed => "Ping failed",
             ChangeReason::InvalidTransactionInBlock => "Invalid transaction type in block",
             ChangeReason::ManuallyBanned => "Manually banned",
-            ChangeReason::LongUptime => "Long connection uptime",
+            ChangeReason::ResponseDelivered => "Delivered requested response",
         };
         f.write_str(label)
     }
@@ -76,6 +73,11 @@ const MAX_MISBEHAVIOR_SCORE: i32 = 100;
 
 /// Minimum score (most positive reputation)
 const MIN_MISBEHAVIOR_SCORE: i32 = -50;
+
+/// Highest score a peer may load with after a restart. A persisted near-ban
+/// score can then never ban a peer on its first post-restart penalty, which
+/// would otherwise let stale suspicion lock the client out of known-good peers.
+const RESTART_SCORE_CEILING: i32 = 40;
 
 const MAX_BAN_COUNT: u32 = 1000;
 
@@ -158,6 +160,12 @@ pub struct PeerReputation {
     /// Last connection time
     #[serde(skip)]
     pub last_connection: Option<Instant>,
+
+    /// Wall-clock time this reputation was last persisted. Used to credit decay
+    /// for time the client spent offline, since the monotonic `last_update`
+    /// resets on load and cannot measure downtime.
+    #[serde(default = "SystemTime::now")]
+    pub last_seen: SystemTime,
 }
 
 impl Default for PeerReputation {
@@ -172,6 +180,7 @@ impl Default for PeerReputation {
             connection_attempts: 0,
             successful_connections: 0,
             last_connection: None,
+            last_seen: SystemTime::now(),
         }
     }
 }
@@ -338,7 +347,11 @@ impl PeerReputationManager {
 
     /// Save reputation data to persistent storage
     pub async fn save_to_storage(&self, storage: &impl PeerStorage) -> std::io::Result<()> {
-        let reputations = self.reputations.read().await;
+        let now = SystemTime::now();
+        let mut reputations = self.reputations.write().await;
+        for reputation in reputations.values_mut() {
+            reputation.last_seen = now;
+        }
 
         storage.save_peers_reputation(&reputations).await.map_err(std::io::Error::other)
     }
@@ -365,10 +378,20 @@ impl PeerReputationManager {
                 continue;
             }
 
-            // Apply initial decay based on ban count
-            if reputation.ban_count > 0 {
-                reputation.score = reputation.score.max(50); // Start with higher score for previously banned peers
+            // Credit decay for the wall-clock time the client spent offline. The
+            // monotonic `last_update` reset to now on load, so without this a peer
+            // never recovers while the client is closed.
+            if let Ok(offline) = SystemTime::now().duration_since(reputation.last_seen) {
+                let intervals = offline.as_secs() / DECAY_INTERVAL.as_secs();
+                if intervals > 0 {
+                    let intervals_i32 = intervals.min(i32::MAX as u64) as i32;
+                    let decay = intervals_i32.saturating_mul(DECAY_AMOUNT);
+                    reputation.score = (reputation.score - decay).max(MIN_MISBEHAVIOR_SCORE);
+                }
             }
+
+            // Never let a peer return one strike short of a ban after a restart.
+            reputation.score = reputation.score.min(RESTART_SCORE_CEILING);
 
             reputations.insert(addr, reputation);
             loaded_count += 1;

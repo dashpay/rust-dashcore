@@ -485,6 +485,14 @@ impl PeerNetworkManager {
                         // Log all received messages at debug level to help troubleshoot
                         tracing::trace!("Received {:?} from {}", msg.cmd(), addr);
 
+                        // Reward peers that deliver substantive responses to our sync
+                        // requests, so productive peers rank above idle or stalling ones.
+                        if is_rewardable_response(msg.inner()) {
+                            reputation_manager
+                                .update_reputation(addr, ChangeReason::ResponseDelivered)
+                                .await;
+                        }
+
                         // Handle some messages directly
                         match &msg.inner() {
                             NetworkMessage::SendAddrV2 => {
@@ -684,11 +692,9 @@ impl PeerNetworkManager {
                                 break;
                             }
                             NetworkError::Timeout => {
+                                // Idle socket reads time out constantly on healthy
+                                // connections, so this is not a quality signal.
                                 tracing::debug!("Timeout reading from {}, continuing...", addr);
-                                // Minor reputation penalty for timeout
-                                reputation_manager
-                                    .update_reputation(addr, ChangeReason::ReadTimeout)
-                                    .await;
                                 continue;
                             }
                             _ => {
@@ -763,13 +769,6 @@ impl PeerNetworkManager {
             .await;
 
             headers2_disabled.lock().await.remove(&addr);
-
-            // Give small positive reputation if peer maintained long connection
-            let conn_duration = Duration::from_secs(60 * loop_iteration); // Rough estimate
-            if conn_duration > Duration::from_secs(3600) {
-                // 1 hour
-                reputation_manager.update_reputation(addr, ChangeReason::LongUptime).await;
-            }
         });
     }
 
@@ -1486,6 +1485,22 @@ impl NetworkManager for PeerNetworkManager {
     fn subscribe_network_events(&self) -> broadcast::Receiver<NetworkEvent> {
         self.network_event_sender.subscribe()
     }
+}
+
+/// Whether an inbound message is a substantive response to one of our sync
+/// requests, and therefore evidence the peer is doing useful work. Unsolicited
+/// gossip (inv, tx, addr, ping) is excluded so the reward stays a real signal.
+fn is_rewardable_response(msg: &NetworkMessage) -> bool {
+    matches!(
+        msg,
+        NetworkMessage::Headers(_)
+            | NetworkMessage::Headers2(_)
+            | NetworkMessage::CFHeaders(_)
+            | NetworkMessage::CFilter(_)
+            | NetworkMessage::Block(_)
+            | NetworkMessage::MnListDiff(_)
+            | NetworkMessage::QRInfo(_)
+    )
 }
 
 #[cfg(test)]
