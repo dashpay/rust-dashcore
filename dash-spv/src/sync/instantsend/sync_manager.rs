@@ -27,6 +27,9 @@ impl SyncManager for InstantSendManager {
 
     fn on_disconnect(&mut self) {
         self.pending_instantlocks.clear();
+        // Nothing is queued anymore, so the height at which we last validated is
+        // meaningless; reset it so re-validation runs again after reconnect.
+        self.last_validated_engine_height = None;
     }
 
     async fn handle_message(
@@ -103,6 +106,26 @@ impl SyncManager for InstantSendManager {
     async fn tick(&mut self, _requests: &RequestSender) -> SyncResult<Vec<SyncEvent>> {
         // Prune old entries periodically
         self.prune_old_entries();
+
+        // Re-validate queued InstantLocks once the masternode engine has advanced
+        // past the height at which they were last checked. A lock received before
+        // quorum sync completed (e.g. right after a fresh SPV start, for a
+        // transaction the wallet just broadcast) is then verified as soon as the
+        // needed quorum data lands, rather than waiting for the next
+        // `MasternodeStateUpdated` event — which, for a just-broadcast
+        // transaction, may not arrive until the block that mines it.
+        if !self.pending_instantlocks.is_empty() {
+            let engine_height = self.engine_height().await;
+            let advanced = match (engine_height, self.last_validated_engine_height) {
+                (Some(current), Some(last)) => current > last,
+                (Some(_), None) => true,
+                (None, _) => false,
+            };
+            if advanced {
+                return self.validate_pending().await;
+            }
+        }
+
         Ok(vec![])
     }
 
