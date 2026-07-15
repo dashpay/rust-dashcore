@@ -101,7 +101,14 @@ const GOOD_BAND_DELTA: i32 = 5;
 /// A connected peer whose oldest sync request stays unanswered this long is
 /// treated as stalling and penalized. Any response resets its timer, so a peer
 /// streaming a large block is not punished for the download taking a while.
-const REQUEST_STALL_TIMEOUT: Duration = Duration::from_secs(45);
+///
+/// Only small, fast responses are timed (see `is_tracked_request`), so this is
+/// generous: a filter, filter-header or header response is at most a few tens of
+/// KB and arrives in well under a second on any usable link. Large payloads
+/// (blocks, masternode diffs, quorum info) are deliberately not timed here, since
+/// their transfer can legitimately exceed this on a slow mobile link; the sync
+/// layer's own download timeouts already retry those elsewhere.
+const REQUEST_STALL_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// If a maintenance sweep runs at least this long after the previous one, the
 /// process was likely suspended (e.g. an iOS app backgrounded). Every
@@ -109,9 +116,15 @@ const REQUEST_STALL_TIMEOUT: Duration = Duration::from_secs(45);
 /// timers and skips penalties for that round instead of blaming every peer.
 const SUSPEND_GAP: Duration = Duration::from_secs(90);
 
-/// A connected peer scoring at least this becomes an eviction candidate (two
-/// stalls at +10, or equivalent misbehavior). Well below the +100 ban line, so a
-/// peer is dropped and replaced long before it would be banned outright.
+/// A connected peer scoring at least this becomes an eviction candidate: two
+/// consecutive stalls, or equivalent misbehavior. Well below the +100 ban line,
+/// so a peer is dropped and replaced long before it would be banned outright, and
+/// eviction stays a soft demotion (the peer keeps its address-book entry and
+/// decays back).
+///
+/// Reachable only because a stalling peer's timer is re-armed rather than
+/// dropped: one stall already freezes it out of routing via `GOOD_BAND_DELTA`, so
+/// it receives no new requests and could otherwise never earn a second strike.
 const STUCK_PEER_EVICTION_SCORE: i32 = 20;
 
 /// Never evict a peer for reputation while at or below this many connections, so
@@ -1010,15 +1023,22 @@ impl PeerNetworkManager {
                 .filter(|(_, sent)| now.saturating_duration_since(**sent) > REQUEST_STALL_TIMEOUT)
                 .map(|(addr, _)| *addr)
                 .collect();
-            // Drop so the next request to the peer re-arms the timer instead of it
-            // being penalized again on every following sweep.
+            // Re-arm rather than drop: one stall already freezes the peer out of
+            // routing, so it gets no new request to re-arm the timer, and a still
+            // unanswered request must keep counting for it to ever be evicted.
             for addr in &stalled {
-                outstanding.remove(addr);
+                outstanding.insert(*addr, now);
             }
             stalled
         };
 
+        // A peer already at the eviction threshold is condemned, so further strikes
+        // add nothing and would only march it toward an outright ban.
+        let scores = self.reputation_manager.scores_for(stalled.iter().copied()).await;
         for addr in stalled {
+            if scores.get(&addr).copied().unwrap_or(0) >= STUCK_PEER_EVICTION_SCORE {
+                continue;
+            }
             tracing::debug!("Peer {} stalled on a sync request, penalizing", addr);
             self.reputation_manager.update_reputation(addr, ChangeReason::RequestTimeout).await;
         }
@@ -1692,8 +1712,13 @@ impl NetworkManager for PeerNetworkManager {
     }
 }
 
-/// Whether an outbound message is a sync request we expect a response to, and
-/// therefore worth timing for stall detection.
+/// Whether an outbound message is a sync request whose response is small enough
+/// that a healthy peer always answers promptly, making it a fair stall signal.
+///
+/// Block, masternode-diff and quorum-info requests are excluded on purpose: those
+/// payloads can be megabytes and a peer sends nothing until the transfer
+/// completes, so timing them would punish honest peers on slow links. The sync
+/// layer's own download timeouts already retry those elsewhere.
 fn is_tracked_request(msg: &NetworkMessage) -> bool {
     matches!(
         msg,
@@ -1701,9 +1726,6 @@ fn is_tracked_request(msg: &NetworkMessage) -> bool {
             | NetworkMessage::GetHeaders2(_)
             | NetworkMessage::GetCFHeaders(_)
             | NetworkMessage::GetCFilters(_)
-            | NetworkMessage::GetData(_)
-            | NetworkMessage::GetMnListD(_)
-            | NetworkMessage::GetQRInfo(_)
     )
 }
 
