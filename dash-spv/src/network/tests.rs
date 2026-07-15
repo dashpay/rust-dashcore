@@ -120,13 +120,41 @@ mod pool_tests {
 
 #[cfg(test)]
 mod selection_tests {
-    use crate::network::manager::PeerNetworkManager;
+    use crate::network::manager::{PeerNetworkManager, REQUEST_STALL_TIMEOUT};
     use crate::network::reputation::ChangeReason;
     use crate::test_utils::test_socket_address;
     use dashcore::network::constants::ServiceFlags;
+    use dashcore::network::message::NetworkMessage;
+    use dashcore::network::message_filter::{CFilter, GetCFHeaders, GetCFilters};
+    use dashcore::BlockHash;
+    use dashcore_hashes::Hash;
     use std::collections::HashMap;
     use std::net::SocketAddr;
     use std::time::Duration;
+
+    fn get_filter_headers() -> NetworkMessage {
+        NetworkMessage::GetCFHeaders(GetCFHeaders {
+            filter_type: 0,
+            start_height: 0,
+            stop_hash: BlockHash::all_zeros(),
+        })
+    }
+
+    fn get_filters() -> NetworkMessage {
+        NetworkMessage::GetCFilters(GetCFilters {
+            filter_type: 0,
+            start_height: 0,
+            stop_hash: BlockHash::all_zeros(),
+        })
+    }
+
+    fn filter_response() -> NetworkMessage {
+        NetworkMessage::CFilter(CFilter {
+            filter_type: 0,
+            block_hash: BlockHash::all_zeros(),
+            filter: vec![],
+        })
+    }
 
     async fn full_pool_with_bad_peer(bad: u8) -> (PeerNetworkManager, std::net::SocketAddr) {
         let cf = ServiceFlags::COMPACT_FILTERS;
@@ -139,6 +167,64 @@ mod selection_tests {
         manager.test_update_reputation(bad_addr, ChangeReason::RequestTimeout).await;
         manager.test_update_reputation(bad_addr, ChangeReason::RequestTimeout).await;
         (manager, bad_addr)
+    }
+
+    /// A peer that is fast at one request kind must not be able to hide being slow
+    /// at another.
+    ///
+    /// Seen on mainnet: a peer averaging 11.9s on filter headers, with a 32s p90,
+    /// measured as 52ms and took 40% of the traffic with zero stall penalties. Its
+    /// quick `cfilter` responses kept clearing the timer its slow `getcfheaders`
+    /// had armed, so the slow response found nothing to clear and was never
+    /// recorded, and the sweep never saw an aged entry. Only 255 of 1050 filter
+    /// header timers were cleared by an actual `cfheaders` response.
+    #[tokio::test(start_paused = true)]
+    async fn test_fast_response_does_not_clear_another_kinds_timer() {
+        let cf = ServiceFlags::COMPACT_FILTERS;
+        let manager = PeerNetworkManager::new_for_test(cf).await;
+        let peer = test_socket_address(1);
+        manager.insert_test_peer(peer, cf).await;
+
+        // The peer owes us both a filter-header and a filter response.
+        manager.test_arm_request(peer, &get_filter_headers()).await;
+        manager.test_arm_request(peer, &get_filters()).await;
+
+        // It answers the filter promptly. That must not count as answering the
+        // filter headers, which it is still sitting on.
+        tokio::time::advance(Duration::from_millis(50)).await;
+        manager.test_deliver_response(peer, &filter_response()).await;
+
+        // Past the stall timeout with the filter headers still unanswered.
+        tokio::time::advance(REQUEST_STALL_TIMEOUT + Duration::from_secs(1)).await;
+        manager.test_sweep_stalled_peers().await;
+
+        assert_eq!(
+            manager.test_score(peer).await,
+            ChangeReason::RequestTimeout.score(),
+            "the unanswered filter-header request must still be caught as a stall"
+        );
+    }
+
+    /// A peer stalling on several request kinds at once is one failing peer, not
+    /// several, so a single sweep must not stack strikes and evict it outright.
+    #[tokio::test(start_paused = true)]
+    async fn test_stalling_on_two_kinds_is_one_strike_per_sweep() {
+        let cf = ServiceFlags::COMPACT_FILTERS;
+        let manager = PeerNetworkManager::new_for_test(cf).await;
+        let peer = test_socket_address(1);
+        manager.insert_test_peer(peer, cf).await;
+
+        manager.test_arm_request(peer, &get_filter_headers()).await;
+        manager.test_arm_request(peer, &get_filters()).await;
+
+        tokio::time::advance(REQUEST_STALL_TIMEOUT + Duration::from_secs(1)).await;
+        manager.test_sweep_stalled_peers().await;
+
+        assert_eq!(
+            manager.test_score(peer).await,
+            ChangeReason::RequestTimeout.score(),
+            "two stalled kinds are still one failing peer, so one strike"
+        );
     }
 
     #[tokio::test]

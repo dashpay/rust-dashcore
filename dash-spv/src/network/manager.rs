@@ -81,9 +81,9 @@ pub struct PeerNetworkManager {
     round_robin_counter: Arc<AtomicUsize>,
     /// Network event bus for notifying about network/peer related changes.
     network_event_sender: broadcast::Sender<NetworkEvent>,
-    /// Instant each connected peer's oldest unanswered sync request was sent.
-    /// Any substantive response clears the entry, a stale one marks a stalling peer.
-    outstanding_requests: Arc<Mutex<HashMap<SocketAddr, Instant>>>,
+    /// Instant each peer's oldest unanswered request of a given kind was sent.
+    /// The answering response clears the entry, a stale one marks a stalling peer.
+    outstanding_requests: Arc<Mutex<HashMap<(SocketAddr, RequestKind), Instant>>>,
     /// Rolling response times per peer, used to route requests to the peers that
     /// are actually answering fastest.
     latency: Arc<Mutex<PeerLatency>>,
@@ -107,7 +107,7 @@ const CAPABILITY_REJECTED_TTL: Duration = Duration::from_secs(30 * 60);
 /// (blocks, masternode diffs, quorum info) are deliberately not timed here, since
 /// their transfer can legitimately exceed this on a slow mobile link; the sync
 /// layer's own download timeouts already retry those elsewhere.
-const REQUEST_STALL_TIMEOUT: Duration = Duration::from_secs(10);
+pub(super) const REQUEST_STALL_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// If a maintenance sweep runs at least this long after the previous one, the
 /// process was likely suspended (e.g. an iOS app backgrounded). Every
@@ -484,7 +484,7 @@ impl PeerNetworkManager {
         addrv2_handler: Arc<AddrV2Handler>,
         shutdown_token: CancellationToken,
         reputation_manager: Arc<PeerReputationManager>,
-        outstanding_requests: Arc<Mutex<HashMap<SocketAddr, Instant>>>,
+        outstanding_requests: Arc<Mutex<HashMap<(SocketAddr, RequestKind), Instant>>>,
         latency: Arc<Mutex<PeerLatency>>,
         connected_peer_count: Arc<AtomicUsize>,
         headers2_disabled: Arc<Mutex<HashSet<SocketAddr>>>,
@@ -553,8 +553,8 @@ impl PeerNetworkManager {
                         // backlog as well as its service time. That is deliberate:
                         // both delay us equally, and it lets a peer we are
                         // over-feeding report itself as congested.
-                        if is_timed_response(msg.inner()) {
-                            let sent = outstanding_requests.lock().await.remove(&addr);
+                        if let Some(kind) = timed_response_kind(msg.inner()) {
+                            let sent = outstanding_requests.lock().await.remove(&(addr, kind));
                             if let Some(sent) = sent {
                                 latency.lock().await.record(addr, sent.elapsed());
                             }
@@ -1016,7 +1016,7 @@ impl PeerNetworkManager {
 
         let stalled = {
             let mut outstanding = self.outstanding_requests.lock().await;
-            outstanding.retain(|addr, _| connected.contains(addr));
+            outstanding.retain(|(addr, _), _| connected.contains(addr));
 
             if gap > SUSPEND_GAP {
                 for sent in outstanding.values_mut() {
@@ -1025,18 +1025,27 @@ impl PeerNetworkManager {
                 return true;
             }
 
-            let stalled: Vec<(SocketAddr, Duration)> = outstanding
+            let aged: Vec<((SocketAddr, RequestKind), Duration)> = outstanding
                 .iter()
-                .filter_map(|(addr, sent)| {
+                .filter_map(|(key, sent)| {
                     let waited = now.saturating_duration_since(*sent);
-                    (waited > REQUEST_STALL_TIMEOUT).then_some((*addr, waited))
+                    (waited > REQUEST_STALL_TIMEOUT).then_some((*key, waited))
                 })
                 .collect();
             // Re-arm rather than drop: one stall already freezes the peer out of
             // routing, so it gets no new request to re-arm the timer, and a still
             // unanswered request must keep counting for it to ever be evicted.
-            for (addr, _) in &stalled {
-                outstanding.insert(*addr, now);
+            for (key, _) in &aged {
+                outstanding.insert(*key, now);
+            }
+
+            // Collapse to one entry per peer, keeping its worst wait. A peer
+            // stalling on several kinds at once is one failing peer, not several,
+            // and must not take several strikes from a single sweep.
+            let mut stalled: HashMap<SocketAddr, Duration> = HashMap::new();
+            for ((addr, _), waited) in aged {
+                let worst = stalled.entry(addr).or_insert(waited);
+                *worst = (*worst).max(waited);
             }
             stalled
         };
@@ -1053,7 +1062,7 @@ impl PeerNetworkManager {
 
         // A peer already at the eviction threshold is condemned, so further strikes
         // add nothing and would only march it toward an outright ban.
-        let scores = self.reputation_manager.scores_for(stalled.iter().map(|(a, _)| *a)).await;
+        let scores = self.reputation_manager.scores_for(stalled.keys().copied()).await;
         for (addr, _) in stalled {
             if scores.get(&addr).copied().unwrap_or(0) >= STUCK_PEER_EVICTION_SCORE {
                 continue;
@@ -1460,7 +1469,7 @@ impl PeerNetworkManager {
             other => other,
         };
 
-        let is_request = is_tracked_request(&message);
+        let request_kind = tracked_request_kind(&message);
         let send_result = {
             let mut peer_guard = peer.write().await;
             peer_guard.send_message(message).await
@@ -1471,8 +1480,14 @@ impl PeerNetworkManager {
         // Arm the stall timer for request-type messages, keeping the oldest
         // unanswered timestamp so a peer that never replies is caught. The peer
         // lock is already released, so this only ever holds the outstanding lock.
-        if result.is_ok() && is_request {
-            self.outstanding_requests.lock().await.entry(*addr).or_insert_with(Instant::now);
+        if result.is_ok() {
+            if let Some(kind) = request_kind {
+                self.outstanding_requests
+                    .lock()
+                    .await
+                    .entry((*addr, kind))
+                    .or_insert_with(Instant::now);
+            }
         }
         result
     }
@@ -1741,35 +1756,49 @@ impl NetworkManager for PeerNetworkManager {
     }
 }
 
-/// Whether an outbound message is a sync request whose response is small enough
-/// that a healthy peer always answers promptly, making it a fair stall signal.
+/// The sync request a timer belongs to.
 ///
-/// Block, masternode-diff and quorum-info requests are excluded on purpose: those
+/// Timers are kept per kind rather than per peer, so a response can only clear a
+/// request it actually answers. Sharing one timer across kinds lets a peer that is
+/// fast at one kind hide being slow at another: its quick responses clear the
+/// timer the slow request armed, the slow response then finds nothing to clear and
+/// is never measured, and the stall sweep never sees an aged entry to penalize.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum RequestKind {
+    Headers,
+    FilterHeaders,
+    Filters,
+}
+
+/// The kind of timer an outbound message arms, or `None` if it is not timed.
+///
+/// Only requests whose response is small enough that a healthy peer always answers
+/// promptly are timed, which is what makes a fixed stall timeout fair. Block,
+/// masternode-diff and quorum-info requests are excluded on purpose: those
 /// payloads can be megabytes and a peer sends nothing until the transfer
 /// completes, so timing them would punish honest peers on slow links. The sync
 /// layer's own download timeouts already retry those elsewhere.
-fn is_tracked_request(msg: &NetworkMessage) -> bool {
-    matches!(
-        msg,
-        NetworkMessage::GetHeaders(_)
-            | NetworkMessage::GetHeaders2(_)
-            | NetworkMessage::GetCFHeaders(_)
-            | NetworkMessage::GetCFilters(_)
-    )
+fn tracked_request_kind(msg: &NetworkMessage) -> Option<RequestKind> {
+    match msg {
+        NetworkMessage::GetHeaders(_) | NetworkMessage::GetHeaders2(_) => {
+            Some(RequestKind::Headers)
+        }
+        NetworkMessage::GetCFHeaders(_) => Some(RequestKind::FilterHeaders),
+        NetworkMessage::GetCFilters(_) => Some(RequestKind::Filters),
+        _ => None,
+    }
 }
 
-/// Whether an inbound message answers one of the requests timed by
-/// `is_tracked_request`, and so can be used to measure the peer's response time.
-/// Unsolicited gossip (inv, tx, addr, ping) is excluded: it arrives unprompted and
-/// would clear a timer the peer has not actually answered.
-fn is_timed_response(msg: &NetworkMessage) -> bool {
-    matches!(
-        msg,
-        NetworkMessage::Headers(_)
-            | NetworkMessage::Headers2(_)
-            | NetworkMessage::CFHeaders(_)
-            | NetworkMessage::CFilter(_)
-    )
+/// The kind of timer an inbound message clears, or `None` if it answers nothing we
+/// timed. Unsolicited gossip (inv, tx, addr, ping) is excluded: it arrives
+/// unprompted and would clear a timer the peer has not actually answered.
+fn timed_response_kind(msg: &NetworkMessage) -> Option<RequestKind> {
+    match msg {
+        NetworkMessage::Headers(_) | NetworkMessage::Headers2(_) => Some(RequestKind::Headers),
+        NetworkMessage::CFHeaders(_) => Some(RequestKind::FilterHeaders),
+        NetworkMessage::CFilter(_) => Some(RequestKind::Filters),
+        _ => None,
+    }
 }
 
 #[cfg(test)]
@@ -1859,6 +1888,31 @@ impl PeerNetworkManager {
 
     pub(crate) async fn test_record_latency(&self, addr: SocketAddr, elapsed: Duration) {
         self.latency.lock().await.record(addr, elapsed);
+    }
+
+    /// Arm a stall timer exactly as a successful send does.
+    pub(crate) async fn test_arm_request(&self, addr: SocketAddr, msg: &NetworkMessage) {
+        if let Some(kind) = tracked_request_kind(msg) {
+            self.outstanding_requests.lock().await.entry((addr, kind)).or_insert_with(Instant::now);
+        }
+    }
+
+    /// Clear a stall timer exactly as the peer reader loop does on a response.
+    pub(crate) async fn test_deliver_response(&self, addr: SocketAddr, msg: &NetworkMessage) {
+        if let Some(kind) = timed_response_kind(msg) {
+            let sent = self.outstanding_requests.lock().await.remove(&(addr, kind));
+            if let Some(sent) = sent {
+                self.latency.lock().await.record(addr, sent.elapsed());
+            }
+        }
+    }
+
+    pub(crate) async fn test_sweep_stalled_peers(&self) -> bool {
+        self.sweep_stalled_peers().await
+    }
+
+    pub(crate) async fn test_score(&self, addr: SocketAddr) -> i32 {
+        self.reputation_manager.scores_for([addr]).await.get(&addr).copied().unwrap_or(0)
     }
 
     pub(crate) async fn test_evict_worst_stuck_peer(&self) {
