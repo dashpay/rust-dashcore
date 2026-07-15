@@ -24,6 +24,8 @@ mod late_account_finality_boundary_test;
 
 mod performance_tests;
 
+mod provider_key_derivation_tests;
+
 mod special_transaction_matching_tests;
 
 mod special_transaction_tests;

@@ -43,6 +43,7 @@ use crate::blockdata::transaction::special_transaction::provider_registration::P
 use crate::bls_sig_utils::BLSSignature;
 use crate::consensus::{Decodable, Encodable, encode};
 use crate::hash_types::{InputsHash, SpecialTransactionPayloadHash, Txid};
+use crate::platform_node_id::PlatformNodeId;
 use crate::{ScriptBuf, VarInt, io};
 
 /// ProTx version constants
@@ -68,8 +69,10 @@ pub struct ProviderUpdateServicePayload {
     pub port: u16,
     pub script_payout: ScriptBuf,
     pub inputs_hash: InputsHash,
-    // Platform fields (only for BasicBLS version and Evo masternode type)
-    pub platform_node_id: Option<[u8; 20]>,
+    // Platform fields (only for BasicBLS version and Evo masternode type).
+    // The node ID is a Tenderdash/CometBFT node ID (SHA256 of the ed25519
+    // public key truncated to 20 bytes), not a hash160 public key hash.
+    pub platform_node_id: Option<PlatformNodeId>,
     pub platform_p2p_port: Option<u16>,
     pub platform_http_port: Option<u16>,
     pub payload_sig: BLSSignature,
@@ -88,7 +91,7 @@ impl ProviderUpdateServicePayload {
         port: u16,
         script_payout: ScriptBuf,
         inputs_hash: InputsHash,
-        platform_node_id: Option<[u8; 20]>,
+        platform_node_id: Option<PlatformNodeId>,
         platform_p2p_port: Option<u16>,
         platform_http_port: Option<u16>,
         payload_sig: BLSSignature,
@@ -147,7 +150,7 @@ impl SpecialTransactionBasePayloadEncodable for ProviderUpdateServicePayload {
         if self.version >= ProTxVersion::BasicBLS as u16
             && self.mn_type == Some(ProviderMasternodeType::HighPerformance as u16)
         {
-            len += s.write(&self.platform_node_id.unwrap_or([0u8; 20]))?;
+            len += self.platform_node_id.unwrap_or_default().consensus_encode(&mut s)?;
             len += self.platform_p2p_port.unwrap_or_default().consensus_encode(&mut s)?;
             len += self.platform_http_port.unwrap_or_default().consensus_encode(&mut s)?;
         }
@@ -199,11 +202,7 @@ impl Decodable for ProviderUpdateServicePayload {
             == ProTxVersion::BasicBLS as u16
             && mn_type == Some(ProviderMasternodeType::HighPerformance as u16)
         {
-            let node_id = {
-                let mut buf = [0u8; 20];
-                r.read_exact(&mut buf)?;
-                buf
-            };
+            let node_id = PlatformNodeId::consensus_decode(r)?;
             let p2p_port = u16::consensus_decode(r)?;
             let http_port = u16::consensus_decode(r)?;
             (Some(node_id), Some(p2p_port), Some(http_port))
@@ -244,6 +243,7 @@ mod tests {
     use crate::consensus::{Decodable, Encodable, deserialize};
     use crate::hash_types::InputsHash;
     use crate::internal_macros::hex;
+    use crate::platform_node_id::PlatformNodeId;
     use crate::{Network, ScriptBuf, Transaction, Txid};
 
     #[test]
@@ -406,7 +406,7 @@ mod tests {
             port: 0,
             script_payout: ScriptBuf::from(vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 0]),
             inputs_hash: InputsHash::all_zeros(),
-            platform_node_id: Some([0; 20]),
+            platform_node_id: Some(PlatformNodeId::from_byte_array([0; 20])),
             platform_p2p_port: Some(0),
             platform_http_port: Some(0),
             payload_sig: BLSSignature::from([0; 96]),
@@ -420,6 +420,37 @@ mod tests {
 
         let decoded = ProviderUpdateServicePayload::consensus_decode(&mut &encoded[..]).unwrap();
         assert_eq!(decoded, original);
+    }
+
+    /// A v2 Evo payload with absent platform fields still writes the
+    /// zero-filled node id and ports on the wire.
+    #[test]
+    fn v2_evo_masternode_none_platform_fields_encode_zero_filled() {
+        let original = ProviderUpdateServicePayload {
+            version: 2,
+            mn_type: Some(1), // HighPerformance (Evo)
+            pro_tx_hash: Txid::all_zeros(),
+            ip_address: 0,
+            port: 0,
+            script_payout: ScriptBuf::new(),
+            inputs_hash: InputsHash::all_zeros(),
+            platform_node_id: None,
+            platform_p2p_port: None,
+            platform_http_port: None,
+            payload_sig: BLSSignature::from([0; 96]),
+        };
+
+        let mut encoded = Vec::new();
+        original.consensus_encode(&mut encoded).unwrap();
+
+        // version(2) + mn_type(2) + pro_tx_hash(32) + ip(16) + port(2) +
+        // script(1) + inputs_hash(32) + node_id(20) + p2p(2) + http(2) + sig(96)
+        assert_eq!(encoded.len(), 207);
+
+        let decoded = ProviderUpdateServicePayload::consensus_decode(&mut &encoded[..]).unwrap();
+        assert_eq!(decoded.platform_node_id, Some(PlatformNodeId::from_byte_array([0; 20])));
+        assert_eq!(decoded.platform_p2p_port, Some(0));
+        assert_eq!(decoded.platform_http_port, Some(0));
     }
 
     #[test]

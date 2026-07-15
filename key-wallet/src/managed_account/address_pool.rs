@@ -122,6 +122,7 @@ pub enum DerivedKey {
     /// BLS public key (48 bytes)
     BLS(Vec<u8>),
     /// EdDSA public key (32 bytes)
+    #[cfg(feature = "eddsa")]
     EdDSA(Vec<u8>),
 }
 
@@ -143,9 +144,11 @@ impl KeySource {
             #[cfg(feature = "bls")]
             KeySource::BLSPrivate(xprv) => {
                 // BLS HD derivation using the proper BIP32-like derivation
+                // Legacy mode: BLS pools exist only for provider operator keys,
+                // which dashbls/DashSync derive with fLegacy = true.
                 let mut derived = xprv.clone();
                 for child_num in path.as_ref() {
-                    derived = derived.derive_priv(*child_num).map_err(|e| {
+                    derived = derived.derive_priv_legacy(*child_num).map_err(|e| {
                         Error::InvalidParameter(format!("BLS derivation error: {:?}", e))
                     })?;
                 }
@@ -161,7 +164,7 @@ impl KeySource {
                             "Cannot derive hardened child from BLS public key".into(),
                         ));
                     }
-                    derived = derived.derive_pub(*child_num).map_err(|e| {
+                    derived = derived.derive_pub_legacy(*child_num).map_err(|e| {
                         Error::InvalidParameter(format!("BLS public derivation error: {:?}", e))
                     })?;
                 }
@@ -488,14 +491,26 @@ impl AddressPool {
 
                 (address, PublicKeyType::BLS(public_key_bytes))
             }
+            #[cfg(feature = "eddsa")]
             DerivedKey::EdDSA(public_key_bytes) => {
-                // EdDSA addresses use Hash160 of the public key bytes
-                use dashcore::hashes::{hash160, Hash};
-                let pubkey_hash = hash160::Hash::hash(&public_key_bytes);
+                // EdDSA pool entries key on the Tenderdash node ID
+                // (SHA256(pubkey)[0..20]) — the value ProRegTx carries as
+                // `platform_node_id` — wrapped in a P2PKH-style payload so it
+                // can live in the pool's address index. NOT hash160: a
+                // hash160-keyed entry can never match an on-chain evonode
+                // registration.
+                let pubkey_arr: &[u8; 32] =
+                    public_key_bytes.as_slice().try_into().map_err(|_| {
+                        Error::InvalidParameter(format!(
+                            "EdDSA public key must be 32 bytes, got {}",
+                            public_key_bytes.len()
+                        ))
+                    })?;
+                let node_id = crate::derivation_slip10::tenderdash_node_id(pubkey_arr);
 
-                // Create P2PKH address from the hash
                 use dashcore::address::Payload;
-                let payload = Payload::PubkeyHash(pubkey_hash.into());
+                use dashcore::hashes::Hash;
+                let payload = Payload::PubkeyHash(dashcore::PubkeyHash::from_byte_array(node_id));
                 let address = Address::new(self.network, payload);
 
                 (address, PublicKeyType::EdDSA(public_key_bytes))

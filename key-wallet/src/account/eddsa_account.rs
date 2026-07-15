@@ -84,15 +84,22 @@ impl EdDSAAccount {
         })
     }
 
-    /// Create an EdDSA account from a private key (seed)
+    /// Create an EdDSA account from a wallet seed (e.g. the 64-byte BIP39 seed).
+    ///
+    /// The seed is fed directly into the SLIP-0010 Ed25519 master key and the
+    /// account's derivation path (e.g. `m/9'/5'/3'/4'` for mainnet platform
+    /// node keys) is applied in the Ed25519 scheme, matching DashSync. The
+    /// stored extended public key is the account-level key.
     pub fn from_seed(
         parent_wallet_id: Option<Vec<u8>>,
         account_type: AccountType,
-        ed25519_seed: [u8; 32],
+        seed: &[u8],
         network: Network,
     ) -> Result<Self> {
-        let ed25519_private_key = ExtendedEd25519PrivKey::new_master(network, &ed25519_seed)?;
-        let ed25519_public_key = ExtendedEd25519PubKey::from_priv(&ed25519_private_key)?;
+        let master = ExtendedEd25519PrivKey::new_master(network, seed)?;
+        let path = account_type.derivation_path(network)?;
+        let account_xpriv = master.derive_priv(&path)?;
+        let ed25519_public_key = ExtendedEd25519PubKey::from_priv(&account_xpriv)?;
 
         Ok(Self {
             parent_wallet_id,
@@ -119,6 +126,26 @@ impl EdDSAAccount {
             ed25519_public_key,
             is_watch_only: false,
         })
+    }
+
+    /// Derive the Platform node Ed25519 signing key at `index` directly from
+    /// a wallet seed (e.g. the 64-byte BIP39 seed).
+    ///
+    /// SLIP-0010 Ed25519 only supports hardened derivation, so the key is the
+    /// hardened child `index'` of the platform node account path
+    /// (`m/9'/5'/3'/4'` on mainnet, `m/9'/1'/3'/4'` otherwise), matching
+    /// DashSync. Because derivation starts from the raw seed, no account
+    /// state is involved and in particular no `is_watch_only` gate applies.
+    pub fn platform_node_key_at(
+        seed: &[u8],
+        network: Network,
+        index: u32,
+    ) -> Result<dashcore::ed25519_dalek::SigningKey> {
+        let master = ExtendedEd25519PrivKey::new_master(network, seed)?;
+        let path = AccountType::ProviderPlatformKeys.derivation_path(network)?;
+        let account_xpriv = master.derive_priv(&path)?;
+        let child = account_xpriv.derive_priv(&[ChildNumber::from_hardened_idx(index)?])?;
+        Ok(dashcore::ed25519_dalek::SigningKey::from_bytes(&child.private_key))
     }
 
     /// Derive an Ed25519 key at a specific path
@@ -302,9 +329,13 @@ impl
         ))
     }
 
-    /// Derive an Ed25519-based address at a specific chain and index.
+    /// Derive an Ed25519-based pseudo-address at a specific chain and index.
     ///
-    /// Creates a P2PKH-style address from the hash160 of the Ed25519 public key.
+    /// The payload is the Tenderdash node ID of the Ed25519 public key
+    /// (`SHA256(pubkey)[0..20]`, the CometBFT convention) wrapped in a
+    /// P2PKH-style address — the same value ProRegTx carries as
+    /// `platform_node_id`, so it can be matched against on-chain evonode
+    /// registrations. NOT hash160, which Dash only uses for ECDSA key hashes.
     fn derive_address_at(
         &self,
         address_pool_type: AddressPoolType,
@@ -315,17 +346,11 @@ impl
         let ed25519_pubkey =
             self.derive_public_key_at(address_pool_type, index, use_hardened_with_priv_key)?;
 
-        // Get the Ed25519 public key bytes (32 bytes for Ed25519)
-        let pubkey_bytes = ed25519_pubkey.to_bytes();
+        let node_id = crate::derivation_slip10::tenderdash_node_id(&ed25519_pubkey.to_bytes());
 
-        // Create a P2PKH address from the hash160 of the Ed25519 public key
-        // This uses the same hash160 (SHA256 + RIPEMD160) as ECDSA addresses
-        use dashcore::hashes::{hash160, Hash};
-        let pubkey_hash = hash160::Hash::hash(&pubkey_bytes);
-
-        // Create the address from the public key hash
         use dashcore::address::Payload;
-        let payload = Payload::PubkeyHash(pubkey_hash.into());
+        use dashcore::hashes::Hash;
+        let payload = Payload::PubkeyHash(dashcore::PubkeyHash::from_byte_array(node_id));
         Ok(Address::new(self.network, payload))
     }
 
@@ -454,7 +479,7 @@ mod tests {
                 index: 0,
                 standard_account_type: StandardAccountType::BIP44Account,
             },
-            seed,
+            &seed,
             Network::Testnet,
         )
         .expect("Failed to create EdDSA account from seed");
@@ -471,7 +496,7 @@ mod tests {
                 index: 0,
                 standard_account_type: StandardAccountType::BIP44Account,
             },
-            seed,
+            &seed,
             Network::Testnet,
         )
         .expect("Failed to create EdDSA account from seed");
@@ -507,6 +532,46 @@ mod tests {
         assert!(result.is_err());
     }
 
+    /// `derive_address_at` must produce Tenderdash-node-id payloads
+    /// (SHA256(pubkey)[0..20]) — pinned to the same golden vector as
+    /// `tests::provider_key_derivation_tests` (platform node key 0 at
+    /// m/9'/5'/3'/4'/0' for the BIP39 "abandon…about" seed, cross-checked
+    /// with an independent Ed25519 implementation).
+    #[test]
+    fn test_derive_address_at_uses_tenderdash_node_id() {
+        use dashcore::hashes::Hash;
+
+        let seed = hex::decode(
+            "5eb00bbddcf069084889a8ab9155568165f5c453ccb85e70811aaed6f6da5fc1\
+             9a5ac40b389cd370d086206dec8aa6c43daea6690f20ad3d8d48b2d2ce9e38e4",
+        )
+        .unwrap();
+        let account = EdDSAAccount::from_seed(
+            None,
+            AccountType::ProviderPlatformKeys,
+            &seed,
+            Network::Mainnet,
+        )
+        .expect("create platform keys account from seed");
+
+        let master =
+            ExtendedEd25519PrivKey::new_master(Network::Mainnet, &seed).expect("master from seed");
+        let account_xpriv = master
+            .derive_priv(
+                &AccountType::ProviderPlatformKeys.derivation_path(Network::Mainnet).unwrap(),
+            )
+            .expect("derive account xpriv");
+
+        let address = account
+            .derive_address_at(AddressPoolType::AbsentHardened, 0, Some(account_xpriv))
+            .expect("derive platform node pseudo-address");
+
+        let dashcore::address::Payload::PubkeyHash(hash) = address.payload() else {
+            panic!("platform pseudo-addresses use P2PKH-style payloads");
+        };
+        assert_eq!(hex::encode(hash.to_byte_array()), "302f2615e6955cce8ed3cff81e8011bfd3a2991f");
+    }
+
     #[test]
     fn test_derive_identity_key() {
         let seed = [5u8; 32];
@@ -516,7 +581,7 @@ mod tests {
                 index: 0,
                 standard_account_type: StandardAccountType::BIP44Account,
             },
-            seed,
+            &seed,
             Network::Testnet,
         )
         .expect("Failed to create EdDSA account from seed");

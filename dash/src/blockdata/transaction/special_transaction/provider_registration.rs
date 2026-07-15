@@ -46,6 +46,7 @@ use crate::blockdata::transaction::special_transaction::SpecialTransactionBasePa
 use crate::bls_sig_utils::BLSPublicKey;
 use crate::consensus::{Decodable, Encodable, encode};
 use crate::hash_types::{InputsHash, PubkeyHash, SpecialTransactionPayloadHash};
+use crate::platform_node_id::PlatformNodeId;
 use crate::prelude::*;
 use crate::{Address, Network, OutPoint, ScriptBuf, VarInt, io};
 
@@ -108,7 +109,11 @@ pub struct ProviderRegistrationPayload {
     pub script_payout: ScriptBuf,
     pub inputs_hash: InputsHash,
     pub signature: Vec<u8>,
-    pub platform_node_id: Option<PubkeyHash>,
+    /// Tenderdash/CometBFT node ID of the masternode's Platform node:
+    /// `SHA256(ed25519_public_key)` truncated to 20 bytes. Not a `hash160`
+    /// public key hash. Only present for high-performance (Evo) masternodes
+    /// on payload version 2+.
+    pub platform_node_id: Option<PlatformNodeId>,
     pub platform_p2p_port: Option<u16>,
     pub platform_http_port: Option<u16>,
 }
@@ -131,7 +136,7 @@ impl ProviderRegistrationPayload {
         script_payout: ScriptBuf,
         inputs_hash: InputsHash,
         signature: Vec<u8>,
-        platform_node_id: Option<PubkeyHash>,
+        platform_node_id: Option<PlatformNodeId>,
         platform_p2p_port: Option<u16>,
         platform_http_port: Option<u16>,
     ) -> Self {
@@ -221,10 +226,7 @@ impl SpecialTransactionBasePayloadEncodable for ProviderRegistrationPayload {
         len += self.inputs_hash.consensus_encode(&mut s)?;
 
         if self.version >= 2 && self.masternode_type == ProviderMasternodeType::HighPerformance {
-            len += self
-                .platform_node_id
-                .unwrap_or_else(PubkeyHash::all_zeros)
-                .consensus_encode(&mut s)?;
+            len += self.platform_node_id.unwrap_or_default().consensus_encode(&mut s)?;
             len += self.platform_p2p_port.unwrap_or_default().consensus_encode(&mut s)?;
             len += self.platform_http_port.unwrap_or_default().consensus_encode(&mut s)?;
         }
@@ -267,7 +269,7 @@ impl Decodable for ProviderRegistrationPayload {
         let mut platform_http_port = None;
 
         if version >= 2 && provider_type == ProviderMasternodeType::HighPerformance {
-            platform_node_id = Some(PubkeyHash::consensus_decode(r)?);
+            platform_node_id = Some(PlatformNodeId::consensus_decode(r)?);
             platform_p2p_port = Some(u16::consensus_decode(r)?);
             platform_http_port = Some(u16::consensus_decode(r)?);
         }
@@ -721,6 +723,41 @@ mod tests {
         assert_eq!(actual, want);
     }
 
+    /// A v2 high-performance payload with absent platform fields still
+    /// writes the zero-filled node id and ports on the wire.
+    #[test]
+    fn v2_high_performance_none_platform_fields_encode_zero_filled() {
+        let payload = ProviderRegistrationPayload {
+            version: 2,
+            masternode_type: ProviderMasternodeType::HighPerformance,
+            masternode_mode: 0,
+            collateral_outpoint: OutPoint {
+                txid: Txid::all_zeros(),
+                vout: 0,
+            },
+            service_address: SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::from_bits(0), 0)),
+            owner_key_hash: PubkeyHash::all_zeros(),
+            operator_public_key: BLSPublicKey::from([0; 48]),
+            voting_key_hash: PubkeyHash::all_zeros(),
+            operator_reward: 0,
+            script_payout: ScriptBuf::new(),
+            inputs_hash: InputsHash::all_zeros(),
+            signature: vec![],
+            platform_node_id: None,
+            platform_p2p_port: None,
+            platform_http_port: None,
+        };
+
+        let mut encoded = Vec::new();
+        payload.consensus_encode(&mut encoded).unwrap();
+
+        let decoded: ProviderRegistrationPayload =
+            deserialize(&encoded).expect("deserialize zero-filled payload");
+        assert_eq!(decoded.platform_node_id, Some(crate::PlatformNodeId::from_byte_array([0; 20])));
+        assert_eq!(decoded.platform_p2p_port, Some(0));
+        assert_eq!(decoded.platform_http_port, Some(0));
+    }
+
     #[test]
     fn test_payload_version_2_encoding_and_decoding() {
         let payload_bytes = hex!(
@@ -728,6 +765,22 @@ mod tests {
         );
         let payload: ProviderRegistrationPayload =
             deserialize(&payload_bytes).expect("deserialize payload");
+
+        assert_eq!(payload.version, 2);
+        assert_eq!(payload.masternode_type, ProviderMasternodeType::HighPerformance);
+        // The wire carries `4cd2ca50b36e0a2bb1b6b29da140448b47eeb7a1` (Dash
+        // Core's internal uint160 blob order); the decoded id is the canonical
+        // Tenderdash form, i.e. the byte-reversal.
+        assert_eq!(
+            payload.platform_node_id,
+            Some(
+                "a1b7ee478b4440a19db2b6b12b0a6eb350cad24c"
+                    .parse()
+                    .expect("valid platform node id hex")
+            )
+        );
+        assert_eq!(payload.platform_p2p_port, Some(26656));
+        assert_eq!(payload.platform_http_port, Some(443));
 
         let mut serialized_payload_bytes = Vec::new();
 
