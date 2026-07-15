@@ -107,16 +107,9 @@ impl<I: Persistable> SegmentCache<I> {
 
             for entry in entries.flatten() {
                 if let Some(name) = entry.file_name().to_str() {
-                    if name.starts_with(I::SEGMENT_PREFIX)
-                        && name.ends_with(&format!(".{}", I::DATA_FILE_EXTENSION))
-                    {
-                        let segment_id_start = I::SEGMENT_PREFIX.len() + 1;
-                        let segment_id_end = segment_id_start + 4;
-
-                        if let Ok(id) = name[segment_id_start..segment_id_end].parse::<u32>() {
-                            max_seg_id = Some(max_seg_id.map_or(id, |max: u32| max.max(id)));
-                            min_seg_id = Some(min_seg_id.map_or(id, |min: u32| min.min(id)));
-                        }
+                    if let Some(id) = Self::parse_segment_id(name) {
+                        max_seg_id = Some(max_seg_id.map_or(id, |max: u32| max.max(id)));
+                        min_seg_id = Some(min_seg_id.map_or(id, |min: u32| min.min(id)));
                     }
                 }
             }
@@ -139,6 +132,21 @@ impl<I: Persistable> SegmentCache<I> {
         }
 
         Ok(cache)
+    }
+
+    /// Parse the segment id out of a segment file name of the form
+    /// `{SEGMENT_PREFIX}_{id:04}.{DATA_FILE_EXTENSION}` (see
+    /// [`Persistable::segment_file_name`]).
+    ///
+    /// The entire remaining component between the `{prefix}_` and
+    /// `.{extension}` fixtures must parse as a `u32`, so trailing junk
+    /// (`segment_0000junk.dat`) is rejected and ids longer than the
+    /// zero-padding width (`segment_100000.dat`) are accepted, not truncated.
+    fn parse_segment_id(file_name: &str) -> Option<u32> {
+        let separator = format!("{}_", I::SEGMENT_PREFIX);
+        let suffix = format!(".{}", I::DATA_FILE_EXTENSION);
+
+        file_name.strip_prefix(&separator)?.strip_suffix(&suffix)?.parse::<u32>().ok()
     }
 
     #[inline]
@@ -223,6 +231,17 @@ impl<I: Persistable> SegmentCache<I> {
             return Err(StorageError::InvalidArgument(format!(
                 "get_items range {height_range:?} extends above tip {:?}",
                 self.tip_height
+            )));
+        }
+
+        // Reject ranges that begin below the lowest stored height: those slots
+        // were never populated and hold only sentinels. Without this guard the
+        // read would trip the `first_valid_offset` debug assertion below in
+        // debug builds, and silently hand back sentinel data in release builds.
+        if self.start_height.is_none_or(|lowest| start < lowest) {
+            return Err(StorageError::InvalidArgument(format!(
+                "get_items range {height_range:?} begins below the lowest stored height {:?}",
+                self.start_height
             )));
         }
 
@@ -425,6 +444,55 @@ impl<I: Persistable> SegmentCache<I> {
         }
 
         self.tip_height = Some(target_height);
+
+        Ok(())
+    }
+
+    /// Drop every stored item, leaving the cache empty.
+    ///
+    /// All backing segment files — including segments not currently resident
+    /// in memory — are queued for deletion on the next `persist`. Like
+    /// `truncate_above`, the deletion is not durable until that `persist`
+    /// succeeds; a crash in between leaves the old files on disk and the
+    /// cache reopens with the pre-clear contents.
+    ///
+    /// The directory scan runs to completion *before* any cache state is
+    /// mutated: a failed scan must not leave the cache reporting empty while
+    /// persisted segment files survive on disk, since those would resurrect
+    /// after restart. A missing segments directory is treated as an empty
+    /// (already-cleared) cache; any other I/O error is propagated.
+    pub fn clear(&mut self) -> StorageResult<()> {
+        // Queue every on-disk segment file, discovered by directory scan since
+        // only up to MAX_ACTIVE_SEGMENTS of them are resident in memory.
+        let mut to_delete = HashSet::new();
+        match fs::read_dir(&self.segments_dir) {
+            Ok(entries) => {
+                for entry in entries {
+                    let entry = entry?;
+                    if let Some(name) = entry.file_name().to_str() {
+                        if let Some(id) = Self::parse_segment_id(name) {
+                            to_delete.insert(id);
+                        }
+                    }
+                }
+            }
+            // No directory yet means nothing was ever persisted here.
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(StorageError::Io(e)),
+        }
+
+        // Scan succeeded — now it is safe to mutate cache state. Resident and
+        // evicted segments may be dirty and not persisted yet, so the scan
+        // above cannot see them. Queue their ids too; `persist` ignores
+        // missing files.
+        to_delete.extend(self.segments.keys().copied());
+        to_delete.extend(self.evicted.keys().copied());
+
+        self.to_delete.extend(to_delete);
+        self.segments.clear();
+        self.evicted.clear();
+        self.tip_height = None;
+        self.start_height = None;
 
         Ok(())
     }
@@ -1089,6 +1157,153 @@ mod tests {
         assert_eq!(
             reloaded.get_items(ITEMS_PER_SEGMENT + 6..ITEMS_PER_SEGMENT + 16).await.unwrap(),
             replacement
+        );
+    }
+
+    /// Ranges that begin below the lowest stored height read never-populated
+    /// sentinel slots and must fail with a typed error rather than panicking
+    /// on the `first_valid_offset` debug assertion (or silently returning
+    /// sentinels in release builds).
+    #[tokio::test]
+    async fn test_get_items_below_start_height_errors() {
+        let tmp_dir = TempDir::new().unwrap();
+
+        let items = FilterHeader::dummy_batch(0..10);
+
+        let mut cache = SegmentCache::<FilterHeader>::load_or_new(tmp_dir.path()).await.unwrap();
+        cache.store_items_at_height(&items, 900).await.unwrap();
+        assert_eq!(cache.start_height(), Some(900));
+
+        // Entirely below the stored range (the #892 shape: a scan start far
+        // below tip-region storage, within the same segment).
+        assert!(matches!(cache.get_items(100..200).await, Err(StorageError::InvalidArgument(_))));
+        // Straddling the lowest stored height.
+        assert!(matches!(cache.get_items(895..905).await, Err(StorageError::InvalidArgument(_))));
+        // The stored range itself is readable.
+        assert_eq!(cache.get_items(900..910).await.unwrap(), items);
+
+        // Same result when the never-populated slots live in a lower segment
+        // than the stored data.
+        const ITEMS_PER_SEGMENT: u32 = Segment::<FilterHeader>::ITEMS_PER_SEGMENT;
+        let mut cache = SegmentCache::<FilterHeader>::load_or_new(tmp_dir.path()).await.unwrap();
+        cache.store_items_at_height(&items, ITEMS_PER_SEGMENT + 5).await.unwrap();
+        assert!(matches!(cache.get_items(100..200).await, Err(StorageError::InvalidArgument(_))));
+
+        // An empty cache rejects every range.
+        let mut cache =
+            SegmentCache::<FilterHeader>::load_or_new(tmp_dir.path().join("empty")).await.unwrap();
+        assert!(matches!(cache.get_items(0..1).await, Err(StorageError::InvalidArgument(_))));
+    }
+
+    #[tokio::test]
+    async fn test_segment_cache_clear() {
+        let tmp_dir = TempDir::new().unwrap();
+
+        const ITEMS_PER_SEGMENT: u32 = Segment::<FilterHeader>::ITEMS_PER_SEGMENT;
+
+        // Two segments' worth of items, persisted to disk.
+        let items = FilterHeader::dummy_batch(0..ITEMS_PER_SEGMENT + 5);
+        let mut cache = SegmentCache::<FilterHeader>::load_or_new(tmp_dir.path()).await.unwrap();
+        cache.store_items_at_height(&items, 0).await.unwrap();
+        cache.persist(tmp_dir.path()).await;
+
+        let file_0 = tmp_dir.path().join(FilterHeader::segment_file_name(0));
+        let file_1 = tmp_dir.path().join(FilterHeader::segment_file_name(1));
+        assert!(file_0.exists());
+        assert!(file_1.exists());
+
+        // Reopen (so only the min/max segments are resident) and clear.
+        let mut cache = SegmentCache::<FilterHeader>::load_or_new(tmp_dir.path()).await.unwrap();
+        cache.clear().unwrap();
+
+        assert_eq!(cache.tip_height(), None);
+        assert_eq!(cache.start_height(), None);
+        assert_eq!(cache.get_item(3).await.unwrap(), None);
+        assert!(cache.get_items(0..5).await.is_err());
+
+        // The deletion becomes durable on persist.
+        cache.persist(tmp_dir.path()).await;
+        assert!(!file_0.exists());
+        assert!(!file_1.exists());
+
+        // Storing a fresh range from a lower origin after clear is sound.
+        let replacement = FilterHeader::dummy_batch(100..110);
+        cache.store_items_at_height(&replacement, 100).await.unwrap();
+        assert_eq!(cache.start_height(), Some(100));
+        assert_eq!(cache.tip_height(), Some(109));
+        assert_eq!(cache.get_items(100..110).await.unwrap(), replacement);
+
+        cache.persist(tmp_dir.path()).await;
+        let mut reloaded = SegmentCache::<FilterHeader>::load_or_new(tmp_dir.path()).await.unwrap();
+        assert_eq!(reloaded.start_height(), Some(100));
+        assert_eq!(reloaded.tip_height(), Some(109));
+        assert_eq!(reloaded.get_items(100..110).await.unwrap(), replacement);
+    }
+
+    /// `clear` must also drop dirty in-memory state that was never persisted,
+    /// and queue previously-persisted files of those same segments.
+    #[tokio::test]
+    async fn test_segment_cache_clear_unpersisted_state() {
+        let tmp_dir = TempDir::new().unwrap();
+
+        let items = FilterHeader::dummy_batch(0..10);
+        let mut cache = SegmentCache::<FilterHeader>::load_or_new(tmp_dir.path()).await.unwrap();
+        cache.store_items_at_height(&items, 0).await.unwrap();
+        cache.persist(tmp_dir.path()).await;
+
+        // Dirty the resident segment again so it differs from disk, then clear
+        // without an intervening persist.
+        let more = FilterHeader::dummy_batch(100..105);
+        cache.store_items_at_height(&more, 10).await.unwrap();
+        cache.clear().unwrap();
+
+        assert_eq!(cache.tip_height(), None);
+        assert_eq!(cache.start_height(), None);
+
+        cache.persist(tmp_dir.path()).await;
+        assert!(!tmp_dir.path().join(FilterHeader::segment_file_name(0)).exists());
+
+        let reloaded = SegmentCache::<FilterHeader>::load_or_new(tmp_dir.path()).await.unwrap();
+        assert_eq!(reloaded.tip_height(), None);
+        assert_eq!(reloaded.start_height(), None);
+    }
+
+    #[test]
+    fn test_parse_segment_id() {
+        type Cache = SegmentCache<FilterHeader>;
+
+        // Round-trips the writer's `{prefix}_{id:04}.{ext}` format for a range
+        // of ids, including ones wider than the zero-padding.
+        for id in [0u32, 1, 42, 9999, 10_000, 100_000, u32::MAX] {
+            assert_eq!(Cache::parse_segment_id(&FilterHeader::segment_file_name(id)), Some(id));
+        }
+
+        // Zero-padded low ids parse to their numeric value, not truncated.
+        assert_eq!(Cache::parse_segment_id("segment_0000.dat"), Some(0));
+        assert_eq!(Cache::parse_segment_id("segment_0005.dat"), Some(5));
+
+        // Ids wider than the padding are accepted whole, never truncated to
+        // the first four digits.
+        assert_eq!(Cache::parse_segment_id("segment_100000.dat"), Some(100_000));
+
+        // Trailing junk between the id and the extension is rejected rather
+        // than silently parsed as a prefix of the component.
+        assert_eq!(Cache::parse_segment_id("segment_0000junk.dat"), None);
+        assert_eq!(Cache::parse_segment_id("segment_12ab.dat"), None);
+
+        // Wrong prefix, wrong extension, missing separator, or a
+        // non-numeric/empty id component are all rejected.
+        assert_eq!(Cache::parse_segment_id("segment_0000.tmp"), None);
+        assert_eq!(Cache::parse_segment_id("other_0000.dat"), None);
+        assert_eq!(Cache::parse_segment_id("segment0000.dat"), None);
+        assert_eq!(Cache::parse_segment_id("segment_.dat"), None);
+        assert_eq!(Cache::parse_segment_id("segment_-1.dat"), None);
+        assert_eq!(Cache::parse_segment_id("segment_0000.dat.bak"), None);
+
+        // The filter storage's item type round-trips through the same helper.
+        assert_eq!(
+            SegmentCache::<Vec<u8>>::parse_segment_id(&<Vec<u8>>::segment_file_name(7)),
+            Some(7)
         );
     }
 
