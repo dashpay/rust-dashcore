@@ -15,8 +15,10 @@ use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 use tokio::sync::RwLock;
 
-/// Reason for a peer reputation change. Each reason owns its score delta
-/// (positive = penalty, negative = reward) and a human-readable label.
+/// Reason a peer's misbehavior score rose. Each reason owns its penalty and a
+/// human-readable label. There is deliberately no reason that lowers the score:
+/// only decay does that, so the score cannot be earned down by a peer that is
+/// merely busy. Useful behavior is measured by [`super::latency`] instead.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ChangeReason {
     HandshakeFailed,
@@ -26,12 +28,10 @@ pub enum ChangeReason {
     PingFailed,
     InvalidTransactionInBlock,
     ManuallyBanned,
-    ResponseDelivered,
 }
 
 impl ChangeReason {
-    /// Score delta for this reason: positive for misbehavior (penalty),
-    /// negative for good behavior (reward).
+    /// Penalty this reason adds to a peer's misbehavior score.
     pub fn score(&self) -> i32 {
         match self {
             ChangeReason::HandshakeFailed => 10,
@@ -41,7 +41,6 @@ impl ChangeReason {
             ChangeReason::PingFailed => 5,
             ChangeReason::InvalidTransactionInBlock => 20,
             ChangeReason::ManuallyBanned => 100,
-            ChangeReason::ResponseDelivered => -2,
         }
     }
 }
@@ -56,7 +55,6 @@ impl std::fmt::Display for ChangeReason {
             ChangeReason::PingFailed => "Ping failed",
             ChangeReason::InvalidTransactionInBlock => "Invalid transaction type in block",
             ChangeReason::ManuallyBanned => "Manually banned",
-            ChangeReason::ResponseDelivered => "Delivered requested response",
         };
         f.write_str(label)
     }
@@ -74,8 +72,14 @@ const DECAY_AMOUNT: i32 = 5;
 /// Maximum misbehavior score before a peer is banned
 const MAX_MISBEHAVIOR_SCORE: i32 = 100;
 
-/// Minimum score (most positive reputation)
-const MIN_MISBEHAVIOR_SCORE: i32 = -50;
+/// Minimum score. Zero, because this score only measures misbehavior and "none
+/// observed" is as clean as a peer can be. Letting it run negative would bank
+/// credit that a peer could later spend on misbehaving: decay alone would carry a
+/// long-lived peer far below zero, and it would then need several extra strikes to
+/// reach eviction, making the peers most likely to be quietly failing the hardest
+/// ones to remove. How useful a peer actually is, as opposed to how badly it is
+/// behaving, is measured by [`super::latency`] instead.
+const MIN_MISBEHAVIOR_SCORE: i32 = 0;
 
 /// Highest score a peer may load with after a restart. A persisted near-ban
 /// score can then never ban a peer on its first post-restart penalty, which
@@ -86,6 +90,12 @@ const MAX_BAN_COUNT: u32 = 1000;
 
 const MAX_ACTION_COUNT: u64 = 1_000_000;
 
+/// Lowest score any earlier version could persist, back when answering a request
+/// earned credit below zero. A stored score in that range is stale rather than
+/// corrupt, so it is clamped quietly: warning would fire once per persisted peer
+/// on the first run after an upgrade.
+const LEGACY_MIN_SCORE: i32 = -50;
+
 fn clamp_peer_score<'de, D>(deserializer: D) -> Result<i32, D::Error>
 where
     D: Deserializer<'de>,
@@ -93,7 +103,9 @@ where
     let mut v = i32::deserialize(deserializer)?;
 
     if v < MIN_MISBEHAVIOR_SCORE {
-        tracing::warn!("Peer has invalid score {v}, clamping to min {MIN_MISBEHAVIOR_SCORE}");
+        if v < LEGACY_MIN_SCORE {
+            tracing::warn!("Peer has invalid score {v}, clamping to min {MIN_MISBEHAVIOR_SCORE}");
+        }
         v = MIN_MISBEHAVIOR_SCORE
     } else if v > MAX_MISBEHAVIOR_SCORE {
         tracing::warn!("Peer has invalid score {v}, clamping to max {MAX_MISBEHAVIOR_SCORE}");
@@ -339,10 +351,10 @@ impl PeerReputationManager {
     }
 
     /// Return the current score for each requested peer. Peers with no record
-    /// default to 0. Takes a read lock and does not apply decay, so it stays cheap
-    /// on the routing hot path (decay is applied by `update_reputation` and the
-    /// periodic maintenance pass). Acquires only the reputation lock, so callers
-    /// must not hold a pool guard across this to keep a single lock order.
+    /// default to 0. Takes a read lock and does not apply decay, so a caller sees
+    /// the score as of the last `update_reputation` or maintenance pass. Acquires
+    /// only the reputation lock, so callers must not hold a pool guard across this
+    /// to keep a single lock order.
     pub async fn scores_for(
         &self,
         addrs: impl IntoIterator<Item = SocketAddr>,

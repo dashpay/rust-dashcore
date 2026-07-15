@@ -23,8 +23,8 @@ mod tests {
         manager.update_reputation(peer, ChangeReason::HandshakeFailed).await;
         assert_eq!(score(&manager, &peer).await, 10);
 
-        manager.update_reputation(peer, ChangeReason::ResponseDelivered).await;
-        assert_eq!(score(&manager, &peer).await, 8);
+        manager.update_reputation(peer, ChangeReason::PingFailed).await;
+        assert_eq!(score(&manager, &peer).await, 15);
     }
 
     #[tokio::test]
@@ -51,8 +51,7 @@ mod tests {
         let peer1: SocketAddr = "10.0.0.1:8333".parse().unwrap();
         let peer2: SocketAddr = "10.0.0.2:8333".parse().unwrap();
 
-        manager.update_reputation(peer1, ChangeReason::ResponseDelivered).await;
-        manager.update_reputation(peer1, ChangeReason::ResponseDelivered).await;
+        manager.update_reputation(peer1, ChangeReason::PingFailed).await;
         manager.update_reputation(peer2, ChangeReason::InvalidTransactionInBlock).await;
 
         let temp_dir = tempfile::TempDir::new().unwrap();
@@ -64,7 +63,7 @@ mod tests {
         let new_manager = PeerReputationManager::new();
         new_manager.load_from_storage(&peer_storage).await.unwrap();
 
-        assert_eq!(score(&new_manager, &peer1).await, -4);
+        assert_eq!(score(&new_manager, &peer1).await, 5);
         assert_eq!(score(&new_manager, &peer2).await, 20);
     }
 
@@ -72,13 +71,10 @@ mod tests {
     async fn test_peer_selection() {
         let manager = PeerReputationManager::new();
 
-        let good_peer = AddrV2Message::dummy(0, "1.1.1.1".parse().unwrap(), 8333);
-        let neutral_peer = AddrV2Message::dummy(0, "2.2.2.2".parse().unwrap(), 8333);
+        let clean_peer = AddrV2Message::dummy(0, "1.1.1.1".parse().unwrap(), 8333);
+        let other_clean_peer = AddrV2Message::dummy(0, "2.2.2.2".parse().unwrap(), 8333);
         let bad_peer = AddrV2Message::dummy(0, "3.3.3.3".parse().unwrap(), 8333);
 
-        manager
-            .update_reputation(good_peer.socket_addr().unwrap(), ChangeReason::ResponseDelivered)
-            .await;
         manager
             .update_reputation(
                 bad_peer.socket_addr().unwrap(),
@@ -86,12 +82,15 @@ mod tests {
             )
             .await;
 
-        let all_peers = vec![good_peer.clone(), neutral_peer.clone(), bad_peer.clone()];
+        let all_peers = vec![clean_peer.clone(), other_clean_peer.clone(), bad_peer.clone()];
         let selected = manager.select_best_peers(all_peers, 2).await;
 
+        // The two clean peers are indistinguishable, and deliberately so: the score
+        // only records misbehavior, and equal scores are returned shuffled so
+        // clients do not all herd onto the same node. Only their exclusion of the
+        // misbehaving peer is guaranteed, not their order.
         assert_eq!(selected.len(), 2);
-        assert_eq!(selected[0], good_peer.socket_addr().unwrap());
-        assert_eq!(selected[1], neutral_peer.socket_addr().unwrap());
+        assert!(!selected.contains(&bad_peer.socket_addr().unwrap()));
     }
 
     #[tokio::test]
@@ -128,15 +127,15 @@ mod tests {
     #[tokio::test]
     async fn test_scores_for_returns_scores_and_defaults() {
         let manager = PeerReputationManager::new();
-        let good: SocketAddr = "127.0.0.1:1".parse().unwrap();
+        let slight: SocketAddr = "127.0.0.1:1".parse().unwrap();
         let bad: SocketAddr = "127.0.0.1:2".parse().unwrap();
         let unknown: SocketAddr = "127.0.0.1:3".parse().unwrap();
 
-        manager.update_reputation(good, ChangeReason::ResponseDelivered).await;
+        manager.update_reputation(slight, ChangeReason::PingFailed).await;
         manager.update_reputation(bad, ChangeReason::InvalidTransactionInBlock).await;
 
-        let scores = manager.scores_for([good, bad, unknown]).await;
-        assert_eq!(scores.get(&good), Some(&-2));
+        let scores = manager.scores_for([slight, bad, unknown]).await;
+        assert_eq!(scores.get(&slight), Some(&5));
         assert_eq!(scores.get(&bad), Some(&20));
         assert_eq!(scores.get(&unknown), Some(&0));
     }
