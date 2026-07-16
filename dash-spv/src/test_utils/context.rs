@@ -58,10 +58,6 @@ impl DashdTestContext {
         config.datadir = datadir.path().to_path_buf();
         config.wallet = "wallet".to_string();
 
-        // Retain the temp datadir if ensure_wallet (or other post-start setup)
-        // panics before Self is built. start() failures retain via fail_startup.
-        let retain_guard = RetainOnPanic::new(datadir.path(), "dashd-startup");
-
         let wallet = WalletFile::from_json(datadir.path(), "wallet");
         info!(
             "Loaded '{}' wallet: {} transactions, {} UTXOs, balance: {:.8} DASH",
@@ -69,14 +65,18 @@ impl DashdTestContext {
         );
 
         let mut node = DashCoreNode::with_config(config);
+        // start() failures retain via fail_startup. Install the panic retainer
+        // only for post-start setup (ensure_wallet, etc.) so a start failure
+        // does not copy the datadir twice under two labels.
         let addr = node.start().await;
         info!("DashCoreNode started at {}", addr);
+        let retain_guard = RetainOnPanic::new(datadir.path(), "dashd-startup");
 
         // Load a separate wallet for mining so coinbase rewards don't pollute
         // the test wallet's address space (the "wallet" wallet and SPV wallet
         // share the same mnemonic). The fixture already ships this wallet on
-        // disk; ensure_wallet must load it rather than recreate it.
-        node.ensure_wallet("default");
+        // disk — load only; never create.
+        node.load_wallet("default");
         info!("Mining wallet 'default' ready");
 
         let initial_height = node.get_block_count();

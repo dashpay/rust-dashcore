@@ -27,10 +27,13 @@ pub(super) fn copy_dir(src: &Path, dst: &Path) -> io::Result<()> {
 pub(super) fn clear_stale_runtime_locks(datadir: &Path) {
     let regtest = datadir.join("regtest");
     remove_if_exists(&regtest.join(".lock"));
+    // Legacy single-wallet layout stores the lock at regtest/.walletlock.
+    remove_if_exists(&regtest.join(".walletlock"));
 
-    // Wallet directories may sit under regtest/<name>/ or regtest/wallets/<name>/.
-    for wallet_root in [regtest.clone(), regtest.join("wallets")] {
-        let Ok(entries) = fs::read_dir(&wallet_root) else {
+    // Named wallet directories may sit under regtest/<name>/ or regtest/wallets/<name>/.
+    let wallets_root = regtest.join("wallets");
+    for wallet_root in [&regtest, &wallets_root] {
+        let Ok(entries) = fs::read_dir(wallet_root) else {
             continue;
         };
         for entry in entries.flatten() {
@@ -43,10 +46,10 @@ pub(super) fn clear_stale_runtime_locks(datadir: &Path) {
 }
 
 fn remove_if_exists(path: &Path) {
-    if path.exists() {
-        if let Err(e) = fs::remove_file(path) {
-            eprintln!("Failed to remove stale lock {}: {}", path.display(), e);
-        }
+    match fs::remove_file(path) {
+        Ok(()) => {}
+        Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+        Err(e) => eprintln!("Failed to remove stale lock {}: {}", path.display(), e),
     }
 }
 
@@ -113,7 +116,8 @@ impl RetainOnPanic {
 impl Drop for RetainOnPanic {
     fn drop(&mut self) {
         if std::thread::panicking() {
-            retain_test_dir(&self.path, &self.label);
+            // Already know we are panicking; skip retain_test_dir's re-check.
+            retain_test_dir_now(&self.path, &self.label);
         }
     }
 }

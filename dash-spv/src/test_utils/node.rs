@@ -30,19 +30,19 @@ fn readiness_timeout() -> Duration {
     } else {
         30
     };
-    match std::env::var("DASHD_STARTUP_TIMEOUT_SECS") {
+    let secs = match std::env::var("DASHD_STARTUP_TIMEOUT_SECS") {
         Ok(raw) => match raw.parse::<u64>() {
-            Ok(secs) if secs > 0 => Duration::from_secs(secs),
+            Ok(secs) if secs > 0 => secs,
             _ => {
                 tracing::warn!(
-                    "invalid DASHD_STARTUP_TIMEOUT_SECS={raw:?}; using default {}s",
-                    DEFAULT_SECS
+                    "invalid DASHD_STARTUP_TIMEOUT_SECS={raw:?}; using default {DEFAULT_SECS}s"
                 );
-                Duration::from_secs(DEFAULT_SECS)
+                DEFAULT_SECS
             }
         },
-        Err(_) => Duration::from_secs(DEFAULT_SECS),
-    }
+        Err(_) => DEFAULT_SECS,
+    };
+    Duration::from_secs(secs)
 }
 
 /// Base of the port range used by tests. Sits above the standard Dash regtest
@@ -227,19 +227,16 @@ impl DashCoreNode {
 
         self.process = Some(child);
 
-        tracing::info!(
-            "Waiting for dashd to be ready (timeout {}s)...",
-            readiness_timeout().as_secs()
-        );
+        let ready_timeout = readiness_timeout();
+        tracing::info!("Waiting for dashd to be ready (timeout {}s)...", ready_timeout.as_secs());
         // Brief yield so a process that dies on spawn is observed immediately.
         tokio::time::sleep(Duration::from_millis(500)).await;
         if let Some(status) = self.process_exit_status() {
             self.fail_startup(&format!("dashd exited immediately with status: {status}"));
         }
 
-        match self.wait_for_ready().await {
-            Ok(()) => {}
-            Err(reason) => self.fail_startup(&reason),
+        if let Err(reason) = self.wait_for_ready(ready_timeout).await {
+            self.fail_startup(&reason);
         }
 
         let addr = SocketAddr::from(([127, 0, 0, 1], self.config.p2p_port));
@@ -262,8 +259,9 @@ impl DashCoreNode {
     fn fail_startup(&self, reason: &str) -> ! {
         let debug_log = self.config.datadir.join("regtest/debug.log");
         let tail = read_log_tail(&debug_log, 40);
-        // Ensure CI artifacts capture the datadir even if the caller has not
-        // yet constructed a Drop-based retainer.
+        // Callers that need post-start retain (e.g. DashdTestContext) install
+        // RetainOnPanic only after start() returns, so this is the sole retain
+        // path for startup failures.
         retain_test_dir_now(&self.config.datadir, &format!("dashd-{}", self.config.p2p_port));
         panic!(
             "{reason}\n  binary: {}\n  datadir: {}\n  p2p: {}\n  rpc: {}\n  debug.log tail:\n{tail}",
@@ -274,8 +272,7 @@ impl DashCoreNode {
         );
     }
 
-    async fn wait_for_ready(&mut self) -> Result<(), String> {
-        let max_wait = readiness_timeout();
+    async fn wait_for_ready(&mut self, max_wait: Duration) -> Result<(), String> {
         let check_interval = Duration::from_millis(500);
         let mut last_rpc_error = String::from("no RPC attempt yet");
         let mut p2p_ready = false;
@@ -298,25 +295,24 @@ impl DashCoreNode {
                     }
                 }
 
-                let url = format!("http://127.0.0.1:{}", self.config.rpc_port);
-                let cookie_path = self.config.datadir.join("regtest/.cookie");
-                if cookie_path.exists() {
-                    cookie_seen = true;
-                    match Client::new(&url, Auth::CookieFile(cookie_path)) {
-                        Ok(client) => match client.get_blockchain_info() {
+                match self.try_rpc_client_base() {
+                    Ok(client) => {
+                        cookie_seen = true;
+                        match client.get_blockchain_info() {
                             Ok(_) => return Ok(()),
                             Err(e) => {
                                 last_rpc_error = format!("getblockchaininfo: {e}");
                                 tracing::debug!("RPC not ready yet: {e}");
                             }
-                        },
-                        Err(e) => {
-                            last_rpc_error = format!("cookie auth: {e}");
-                            tracing::debug!("RPC client not ready yet: {e}");
                         }
                     }
-                } else {
-                    last_rpc_error = "RPC cookie file not created yet".to_string();
+                    Err(e) => {
+                        if self.rpc_cookie_path().exists() {
+                            cookie_seen = true;
+                        }
+                        last_rpc_error = e;
+                        tracing::debug!("RPC client not ready yet: {last_rpc_error}");
+                    }
                 }
                 sleep(check_interval).await;
             }
@@ -355,23 +351,44 @@ impl DashCoreNode {
         self.rpc_client_at_path("")
     }
 
+    fn rpc_cookie_path(&self) -> PathBuf {
+        self.config.datadir.join("regtest/.cookie")
+    }
+
     fn rpc_client_at_path(&self, path: &str) -> Client {
-        let url = format!("http://127.0.0.1:{}{path}", self.config.rpc_port);
-        let cookie_path = self.config.datadir.join("regtest/.cookie");
+        let cookie_path = self.rpc_cookie_path();
         assert!(
             cookie_path.exists(),
             "RPC cookie file not found at {}. Is dashd running with this datadir?",
             cookie_path.display()
         );
+        let url = format!("http://127.0.0.1:{}{path}", self.config.rpc_port);
         Client::new(&url, Auth::CookieFile(cookie_path)).expect("failed to create rpc client")
     }
 
-    /// Load a wallet by name, creating it only when dashd reports it is missing.
+    /// Soft base RPC client for readiness probes and best-effort RPCs.
+    ///
+    /// Returns a diagnostic string on failure so readiness timeouts can report
+    /// whether the cookie was missing or cookie auth itself failed.
+    fn try_rpc_client_base(&self) -> Result<Client, String> {
+        let cookie_path = self.rpc_cookie_path();
+        if !cookie_path.exists() {
+            return Err("RPC cookie file not created yet".to_string());
+        }
+        let url = format!("http://127.0.0.1:{}", self.config.rpc_port);
+        Client::new(&url, Auth::CookieFile(cookie_path)).map_err(|e| format!("cookie auth: {e}"))
+    }
+
+    /// Ensure a wallet is loaded, creating it only when Core reports it is missing
+    /// and no on-disk database already exists.
     ///
     /// The regtest fixtures ship both a `wallet` and a `default` wallet on
     /// disk. Treating every `loadwallet` failure as permission to call
     /// `createwallet` races with those existing databases and panics with
     /// "Database already exists" (especially under parallel Windows CI).
+    ///
+    /// Prefer [`Self::load_wallet`] when the wallet is known to ship in the
+    /// fixture (e.g. the mining `default` wallet).
     pub fn ensure_wallet(&self, wallet_name: &str) {
         // Wallet management RPCs are node-global; use the base endpoint so we
         // are not coupled to whichever wallet was started with `-wallet=`.
@@ -386,6 +403,12 @@ impl DashCoreNode {
                 return;
             }
             Err(e) if wallet_does_not_exist(&e) => {
+                if wallet_database_exists(self.config.datadir.as_path(), wallet_name) {
+                    panic!(
+                        "loadwallet reported wallet '{wallet_name}' missing, but a \
+                         database path already exists under the datadir: {e}"
+                    );
+                }
                 tracing::info!("Wallet {wallet_name} not found; creating");
             }
             Err(e) => {
@@ -403,41 +426,39 @@ impl DashCoreNode {
 
         match client.create_wallet(wallet_name, None, None, None, None) {
             Ok(_) => tracing::info!("Created wallet: {wallet_name}"),
-            Err(e) if wallet_already_loaded(&e) || wallet_already_exists(&e) => {
-                // Lost a race with another load/create, or the wallet appeared
-                // on disk between our load and create attempts. Confirm it is
-                // usable rather than treating the create error as success.
-                self.confirm_wallet_available(&client, wallet_name, &e);
+            Err(e) if wallet_already_loaded(&e) => {
+                tracing::info!("Wallet already loaded during create: {wallet_name}");
+            }
+            Err(e) if wallet_already_exists(&e) => {
+                // Database appeared between load and create. Load it rather
+                // than treating the create error as success by name alone.
+                match client.load_wallet(wallet_name) {
+                    Ok(_) => tracing::info!("Loaded wallet after create race: {wallet_name}"),
+                    Err(load_err) if wallet_already_loaded(&load_err) => {
+                        tracing::info!("Wallet already loaded after create race: {wallet_name}");
+                    }
+                    Err(load_err) => panic!(
+                        "failed to create wallet '{wallet_name}': {e}; \
+                         subsequent load also failed: {load_err}"
+                    ),
+                }
             }
             Err(e) => panic!("failed to create wallet '{wallet_name}': {e}"),
         }
     }
 
-    fn confirm_wallet_available(
-        &self,
-        client: &Client,
-        wallet_name: &str,
-        create_err: &dashcore_rpc::Error,
-    ) {
+    /// Load a wallet that is expected to already exist (fixture or prior create).
+    ///
+    /// Unlike [`Self::ensure_wallet`], this never calls `createwallet`, so a
+    /// shipped fixture wallet cannot race into "Database already exists".
+    pub fn load_wallet(&self, wallet_name: &str) {
+        let client = self.rpc_client_base();
         match client.load_wallet(wallet_name) {
-            Ok(_) => {
-                tracing::info!("Loaded wallet after create race: {wallet_name}");
-            }
+            Ok(_) => tracing::info!("Loaded wallet: {wallet_name}"),
             Err(e) if wallet_already_loaded(&e) => {
-                tracing::info!("Wallet already loaded after create race: {wallet_name}");
+                tracing::info!("Wallet already loaded: {wallet_name}");
             }
-            Err(load_err) => {
-                if let Ok(wallets) = client.list_wallets() {
-                    if wallets.iter().any(|w| w == wallet_name) {
-                        tracing::info!("Wallet {wallet_name} present in listwallets");
-                        return;
-                    }
-                }
-                panic!(
-                    "failed to create wallet '{wallet_name}': {create_err}; \
-                     subsequent load also failed: {load_err}"
-                );
-            }
+            Err(e) => panic!("failed to load expected wallet '{wallet_name}': {e}"),
         }
     }
 
@@ -481,12 +502,7 @@ impl DashCoreNode {
 
     /// Send DASH to an address from the primary wallet.
     pub fn send_to_address(&self, address: &Address, amount: Amount) -> Txid {
-        let client = self.rpc_client();
-        let txid = client
-            .send_to_address(address, amount, None, None, None, None, None, None, None, None)
-            .expect("failed to send to address");
-        tracing::info!("Sent {} to {}, txid: {}", amount, address, txid);
-        txid
+        self.send_to_address_from_wallet(&self.config.wallet, address, amount)
     }
 
     /// Send DASH to many addresses in a single transaction from the primary
@@ -540,35 +556,20 @@ impl DashCoreNode {
         destination: &Address,
         fee: Amount,
     ) -> Txid {
-        let client = self.rpc_client_for_wallet(wallet_name);
-
-        let inputs = vec![rpc_json::CreateRawTransactionInput {
-            txid: input_txid,
-            vout: input_vout,
-            sequence: None,
-        }];
-        let send_amount = input_amount.checked_sub(fee).expect("fee exceeds input amount");
-        let mut outputs = HashMap::new();
-        outputs.insert(destination.to_string(), send_amount);
-
-        let raw_tx: Transaction = client
-            .create_raw_transaction(&inputs, &outputs, None)
-            .expect("failed to create raw tx");
-
-        let signed = client
-            .sign_raw_transaction_with_wallet(&raw_tx, None, None)
-            .expect("failed to sign raw tx");
-        assert!(signed.complete, "raw transaction signing incomplete");
-
-        let txid = client
-            .send_raw_transaction(&signed.transaction().expect("invalid signed tx"))
-            .expect("failed to send raw tx");
-        tracing::info!(
-            "Sent raw tx from wallet '{}': {} -> {}, txid: {}",
+        let tx = self.create_signed_transaction(
             wallet_name,
+            input_txid,
+            input_vout,
             input_amount,
             destination,
-            txid
+            fee,
+        );
+        let txid = self
+            .rpc_client_for_wallet(wallet_name)
+            .send_raw_transaction(&tx)
+            .expect("failed to send raw tx");
+        tracing::info!(
+            "Sent raw tx from wallet '{wallet_name}': {input_amount} -> {destination}, txid: {txid}"
         );
         txid
     }
@@ -673,14 +674,7 @@ impl DashCoreNode {
     /// Uses the base URL (no wallet path) which works for all non-wallet RPCs.
     /// Useful during DKG orchestration where transient failures are expected.
     pub fn try_rpc_call(&self, method: &str, params: &[serde_json::Value]) -> Option<Value> {
-        let url = format!("http://127.0.0.1:{}", self.config.rpc_port);
-        let cookie_path = self.config.datadir.join("regtest/.cookie");
-        if !cookie_path.exists() {
-            return None;
-        }
-        let auth = Auth::CookieFile(cookie_path);
-        let client = Client::new(&url, auth).ok()?;
-        client.call(method, params).ok()
+        self.try_rpc_client_base().ok()?.call(method, params).ok()
     }
 
     pub fn datadir(&self) -> &Path {
@@ -770,11 +764,16 @@ pub(crate) fn wallet_already_loaded(err: &dashcore_rpc::Error) -> bool {
 /// True when `loadwallet` reports the wallet file does not exist.
 pub(crate) fn wallet_does_not_exist(err: &dashcore_rpc::Error) -> bool {
     match rpc_error_parts(err) {
-        Some((RPC_WALLET_NOT_FOUND, _)) => true,
+        Some((RPC_WALLET_NOT_FOUND, msg)) => {
+            // Code -18 is Core's wallet-not-found; still require a wallet-ish
+            // message so unrelated -18 codes never authorize createwallet.
+            let lower = msg.to_ascii_lowercase();
+            lower.contains("wallet") || lower.contains("not found")
+        }
         Some((_, msg)) => {
             let lower = msg.to_ascii_lowercase();
-            lower.contains("not found")
-                || (lower.contains("does not exist") && lower.contains("wallet"))
+            lower.contains("wallet")
+                && (lower.contains("not found") || lower.contains("does not exist"))
         }
         None => false,
     }
@@ -847,6 +846,10 @@ mod tests {
         assert!(wallet_does_not_exist(&err));
         assert!(!wallet_already_loaded(&err));
         assert!(!wallet_already_exists(&err));
+
+        // Unrelated "not found" must not authorize createwallet.
+        let method = rpc_err(-32601, "Method not found");
+        assert!(!wallet_does_not_exist(&method));
     }
 
     #[test]
@@ -866,7 +869,6 @@ mod tests {
              Database already exists.",
         );
         assert!(wallet_already_exists(&err));
-        assert!(!wallet_does_not_exist(&err));
         // The old ensure_wallet treated this as create-permission; it must not
         // be classified as a missing wallet.
         assert!(!wallet_does_not_exist(&err));
@@ -889,11 +891,13 @@ mod tests {
         let wallet = regtest.join("default");
         fs::create_dir_all(&wallet).unwrap();
         fs::write(regtest.join(".lock"), b"").unwrap();
+        fs::write(regtest.join(".walletlock"), b"").unwrap();
         fs::write(wallet.join(".walletlock"), b"").unwrap();
 
         clear_stale_runtime_locks(tmp.path());
 
         assert!(!regtest.join(".lock").exists());
+        assert!(!regtest.join(".walletlock").exists());
         assert!(!wallet.join(".walletlock").exists());
     }
 
