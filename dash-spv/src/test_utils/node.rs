@@ -764,16 +764,13 @@ pub(crate) fn wallet_already_loaded(err: &dashcore_rpc::Error) -> bool {
 /// True when `loadwallet` reports the wallet file does not exist.
 pub(crate) fn wallet_does_not_exist(err: &dashcore_rpc::Error) -> bool {
     match rpc_error_parts(err) {
-        Some((RPC_WALLET_NOT_FOUND, msg)) => {
-            // Code -18 is Core's wallet-not-found; still require a wallet-ish
-            // message so unrelated -18 codes never authorize createwallet.
+        Some((code, msg)) => {
             let lower = msg.to_ascii_lowercase();
-            lower.contains("wallet") || lower.contains("not found")
-        }
-        Some((_, msg)) => {
-            let lower = msg.to_ascii_lowercase();
-            lower.contains("wallet")
-                && (lower.contains("not found") || lower.contains("does not exist"))
+            // Require a wallet-related phrase so unrelated "not found" / code
+            // -18 responses never authorize createwallet.
+            let walletish = lower.contains("wallet");
+            let missing = lower.contains("not found") || lower.contains("does not exist");
+            walletish && missing && (code == RPC_WALLET_NOT_FOUND || code != 0)
         }
         None => false,
     }
