@@ -9,7 +9,7 @@ use std::net::SocketAddr;
 use tempfile::TempDir;
 use tracing::info;
 
-use super::fs_helpers::{clear_stale_runtime_locks, copy_dir, retain_test_dir, RetainOnPanic};
+use super::fs_helpers::{copy_dir, retain_test_dir, RetainOnPanic};
 use super::node::TestChain;
 use super::{DashCoreConfig, DashCoreNode, WalletFile};
 
@@ -53,14 +53,13 @@ impl DashdTestContext {
     async fn create(mut config: DashCoreConfig) -> Self {
         let datadir = TempDir::new().expect("failed to create temp dir");
         copy_dir(&config.datadir, datadir.path()).expect("failed to copy datadir");
-        // Fixture archives are snapshots of a previously running node and may
-        // still contain lock files that block a fresh dashd start.
-        clear_stale_runtime_locks(datadir.path());
+        // Stale fixture locks are cleared in DashCoreNode::start (covers all
+        // callers, including masternode harnesses).
         config.datadir = datadir.path().to_path_buf();
         config.wallet = "wallet".to_string();
 
-        // Retain the temp datadir if startup panics before Self is built
-        // (DashCoreNode::start / ensure_wallet failures).
+        // Retain the temp datadir if ensure_wallet (or other post-start setup)
+        // panics before Self is built. start() failures retain via fail_startup.
         let retain_guard = RetainOnPanic::new(datadir.path(), "dashd-startup");
 
         let wallet = WalletFile::from_json(datadir.path(), "wallet");

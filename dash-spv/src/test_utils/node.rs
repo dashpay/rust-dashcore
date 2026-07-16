@@ -347,15 +347,23 @@ impl DashCoreNode {
 
     /// Get an RPC client targeting a specific wallet.
     fn rpc_client_for_wallet(&self, wallet_name: &str) -> Client {
-        let url = format!("http://127.0.0.1:{}/wallet/{}", self.config.rpc_port, wallet_name);
+        self.rpc_client_at_path(&format!("/wallet/{wallet_name}"))
+    }
+
+    /// Base (non-wallet) RPC client for node-global methods.
+    fn rpc_client_base(&self) -> Client {
+        self.rpc_client_at_path("")
+    }
+
+    fn rpc_client_at_path(&self, path: &str) -> Client {
+        let url = format!("http://127.0.0.1:{}{path}", self.config.rpc_port);
         let cookie_path = self.config.datadir.join("regtest/.cookie");
         assert!(
             cookie_path.exists(),
             "RPC cookie file not found at {}. Is dashd running with this datadir?",
             cookie_path.display()
         );
-        let auth = Auth::CookieFile(cookie_path);
-        Client::new(&url, auth).expect("failed to create rpc client")
+        Client::new(&url, Auth::CookieFile(cookie_path)).expect("failed to create rpc client")
     }
 
     /// Load a wallet by name, creating it only when dashd reports it is missing.
@@ -403,18 +411,6 @@ impl DashCoreNode {
             }
             Err(e) => panic!("failed to create wallet '{wallet_name}': {e}"),
         }
-    }
-
-    /// Base (non-wallet) RPC client for node-global methods.
-    fn rpc_client_base(&self) -> Client {
-        let url = format!("http://127.0.0.1:{}", self.config.rpc_port);
-        let cookie_path = self.config.datadir.join("regtest/.cookie");
-        assert!(
-            cookie_path.exists(),
-            "RPC cookie file not found at {}. Is dashd running with this datadir?",
-            cookie_path.display()
-        );
-        Client::new(&url, Auth::CookieFile(cookie_path)).expect("failed to create rpc client")
     }
 
     fn confirm_wallet_available(
