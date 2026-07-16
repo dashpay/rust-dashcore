@@ -25,7 +25,11 @@ use super::fs_helpers::{clear_stale_runtime_locks, retain_test_dir_now};
 /// independent dashd processes start in parallel. Override with
 /// `DASHD_STARTUP_TIMEOUT_SECS` when diagnosing slow environments.
 fn readiness_timeout() -> Duration {
-    const DEFAULT_SECS: u64 = if cfg!(windows) { 90 } else { 30 };
+    const DEFAULT_SECS: u64 = if cfg!(windows) {
+        90
+    } else {
+        30
+    };
     match std::env::var("DASHD_STARTUP_TIMEOUT_SECS") {
         Ok(raw) => match raw.parse::<u64>() {
             Ok(secs) if secs > 0 => Duration::from_secs(secs),
@@ -422,11 +426,9 @@ impl DashCoreNode {
         match client.load_wallet(wallet_name) {
             Ok(_) => {
                 tracing::info!("Loaded wallet after create race: {wallet_name}");
-                return;
             }
             Err(e) if wallet_already_loaded(&e) => {
                 tracing::info!("Wallet already loaded after create race: {wallet_name}");
-                return;
             }
             Err(load_err) => {
                 if let Ok(wallets) = client.list_wallets() {
@@ -824,11 +826,7 @@ fn read_log_tail(path: &Path, max_lines: usize) -> String {
     if lines.is_empty() {
         return "  <empty>".to_string();
     }
-    lines[start..]
-        .iter()
-        .map(|l| format!("  {l}"))
-        .collect::<Vec<_>>()
-        .join("\n")
+    lines[start..].iter().map(|l| format!("  {l}")).collect::<Vec<_>>().join("\n")
 }
 
 #[cfg(test)]
