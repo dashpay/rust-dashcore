@@ -775,6 +775,260 @@ mod tests {
         );
     }
 
+    /// Regression: a coinbase that pays a CoinJoin address must credit that account.
+    ///
+    /// `check_core_transaction` only consults the account types returned by
+    /// `TransactionRouter::get_relevant_account_types`. Before the fix, the
+    /// `Coinbase` arm returned only StandardBIP44/BIP32, so a mining reward or
+    /// masternode payout to a CoinJoin (or DashPay) address was never matched:
+    /// the block was still downloaded (filters query all scripts), but the
+    /// output was dropped purely by the account-type narrowing, undercounting
+    /// the balance (dashpay/rust-dashcore#900). Discovery is membership-based
+    /// like Dash Core's `IsMine`, so consulting the full fund-bearing set cannot
+    /// yield a false positive.
+    #[tokio::test]
+    async fn test_coinbase_paying_coinjoin_address_is_credited() {
+        use crate::managed_account::managed_account_type::ManagedAccountType;
+        use crate::transaction_checking::transaction_router::TransactionRouter;
+
+        let network = Network::Testnet;
+
+        let mut wallet = Wallet::new_random(network, WalletAccountCreationOptions::None)
+            .expect("Should create wallet");
+        wallet
+            .add_account(
+                AccountType::CoinJoin {
+                    index: 0,
+                },
+                None,
+            )
+            .expect("Should add CoinJoin account");
+
+        let mut managed_wallet =
+            ManagedWalletInfo::from_wallet_with_name(&wallet, "Test".to_string(), 0);
+
+        let coinjoin_xpub =
+            wallet.accounts.coinjoin_accounts.get(&0).expect("coinjoin account").account_xpub;
+        let coinjoin_address = {
+            let managed_account =
+                managed_wallet.first_coinjoin_managed_account_mut().expect("managed coinjoin");
+            if let ManagedAccountType::CoinJoin {
+                external_addresses,
+                ..
+            } = managed_account.managed_account_type_mut()
+            {
+                external_addresses
+                    .next_unused(&KeySource::Public(coinjoin_xpub), true)
+                    .expect("coinjoin address")
+            } else {
+                panic!("Expected CoinJoin account type");
+            }
+        };
+
+        let reward = 5_000_000_000u64;
+        let coinbase_tx = Transaction {
+            version: 2,
+            lock_time: 0,
+            input: vec![TxIn {
+                previous_output: OutPoint {
+                    txid: Txid::all_zeros(),
+                    vout: 0xffffffff,
+                },
+                script_sig: ScriptBuf::new(),
+                sequence: 0xffffffff,
+                witness: dashcore::Witness::new(),
+            }],
+            output: vec![TxOut {
+                value: reward,
+                script_pubkey: coinjoin_address.script_pubkey(),
+            }],
+            special_transaction_payload: None,
+        };
+        assert_eq!(
+            TransactionRouter::classify_transaction(&coinbase_tx),
+            TransactionType::Coinbase,
+            "tx must classify as Coinbase so it routes through the Coinbase arm"
+        );
+
+        let block_height = 100_000;
+        let context = TransactionContext::InBlock(BlockInfo::new(
+            block_height,
+            BlockHash::from_slice(&[9u8; 32]).expect("Should create block hash"),
+            1_650_000_200,
+        ));
+        let result = managed_wallet
+            .check_core_transaction(&coinbase_tx, context, &mut wallet, true, true)
+            .await;
+        managed_wallet.update_last_processed_height(block_height);
+
+        assert!(result.is_relevant, "coinbase paying a CoinJoin address must be relevant");
+        assert_eq!(
+            result.total_received, reward,
+            "coinbase must credit the CoinJoin output value"
+        );
+
+        let coinjoin_account =
+            managed_wallet.first_coinjoin_managed_account().expect("coinjoin account");
+        assert!(
+            coinjoin_account.transactions().contains_key(&coinbase_tx.txid()),
+            "coinbase must be recorded on the CoinJoin account"
+        );
+        assert_eq!(
+            coinjoin_account.utxos.len(),
+            1,
+            "coinbase must create a CoinJoin UTXO"
+        );
+        let utxo = coinjoin_account.utxos.values().next().expect("CoinJoin UTXO");
+        assert!(utxo.is_coinbase, "credited UTXO must be marked coinbase");
+
+        // Aggregate wallet balance — the actual regression is a lost credit.
+        // Before the fix, routing never consulted CoinJoin, so the reward was
+        // dropped and immature balance stayed 0.
+        assert_eq!(
+            managed_wallet.balance.immature(),
+            reward,
+            "immature balance must credit the CoinJoin coinbase reward"
+        );
+        assert_eq!(
+            managed_wallet.balance.total(),
+            reward,
+            "total balance must include the immature CoinJoin coinbase"
+        );
+    }
+
+    /// Sibling credit-side regression for AssetUnlock (Platform credit withdrawal).
+    ///
+    /// Same membership-based routing gap as the coinbase case above: before the
+    /// fix, `AssetUnlock` only consulted StandardBIP44/BIP32, so a withdrawal to
+    /// a CoinJoin address was never credited (dashpay/rust-dashcore#900).
+    #[tokio::test]
+    async fn test_asset_unlock_paying_coinjoin_address_is_credited() {
+        use crate::managed_account::managed_account_type::ManagedAccountType;
+        use crate::transaction_checking::transaction_router::TransactionRouter;
+        use dashcore::blockdata::transaction::special_transaction::asset_unlock::qualified_asset_unlock::AssetUnlockPayload;
+        use dashcore::blockdata::transaction::special_transaction::asset_unlock::request_info::AssetUnlockRequestInfo;
+        use dashcore::blockdata::transaction::special_transaction::asset_unlock::unqualified_asset_unlock::AssetUnlockBasePayload;
+        use dashcore::blockdata::transaction::special_transaction::TransactionPayload;
+        use dashcore::bls_sig_utils::BLSSignature;
+
+        let network = Network::Testnet;
+
+        let mut wallet = Wallet::new_random(network, WalletAccountCreationOptions::None)
+            .expect("Should create wallet");
+        wallet
+            .add_account(
+                AccountType::CoinJoin {
+                    index: 0,
+                },
+                None,
+            )
+            .expect("Should add CoinJoin account");
+
+        let mut managed_wallet =
+            ManagedWalletInfo::from_wallet_with_name(&wallet, "Test".to_string(), 0);
+
+        let coinjoin_xpub =
+            wallet.accounts.coinjoin_accounts.get(&0).expect("coinjoin account").account_xpub;
+        let coinjoin_address = {
+            let managed_account =
+                managed_wallet.first_coinjoin_managed_account_mut().expect("managed coinjoin");
+            if let ManagedAccountType::CoinJoin {
+                external_addresses,
+                ..
+            } = managed_account.managed_account_type_mut()
+            {
+                external_addresses
+                    .next_unused(&KeySource::Public(coinjoin_xpub), true)
+                    .expect("coinjoin address")
+            } else {
+                panic!("Expected CoinJoin account type");
+            }
+        };
+
+        let unlock_value = 100_000_000u64;
+        let asset_unlock_tx = Transaction {
+            version: 3,
+            lock_time: 0,
+            input: vec![TxIn {
+                previous_output: OutPoint {
+                    txid: Txid::from_byte_array([1u8; 32]),
+                    vout: 0,
+                },
+                script_sig: ScriptBuf::new(),
+                sequence: 0xffffffff,
+                witness: dashcore::Witness::new(),
+            }],
+            output: vec![TxOut {
+                value: unlock_value,
+                script_pubkey: coinjoin_address.script_pubkey(),
+            }],
+            special_transaction_payload: Some(TransactionPayload::AssetUnlockPayloadType(
+                AssetUnlockPayload {
+                    base: AssetUnlockBasePayload {
+                        version: 1,
+                        index: 42,
+                        fee: 1000,
+                    },
+                    request_info: AssetUnlockRequestInfo {
+                        request_height: 500_000,
+                        quorum_hash: [5u8; 32].into(),
+                    },
+                    quorum_sig: BLSSignature::from([6u8; 96]),
+                },
+            )),
+        };
+        assert_eq!(
+            TransactionRouter::classify_transaction(&asset_unlock_tx),
+            TransactionType::AssetUnlock,
+            "tx must classify as AssetUnlock so it routes through the AssetUnlock arm"
+        );
+
+        // Use InBlock (not chainlocked) so the full record is retained under the
+        // default `keep-finalized-transactions=OFF` feature; the load-bearing
+        // assertions are UTXO creation and confirmed balance credit.
+        let context = TransactionContext::InBlock(BlockInfo::new(
+            500_100,
+            BlockHash::from_slice(&[10u8; 32]).expect("Should create block hash"),
+            1_650_000_300,
+        ));
+        let result = managed_wallet
+            .check_core_transaction(&asset_unlock_tx, context, &mut wallet, true, true)
+            .await;
+        managed_wallet.update_last_processed_height(500_100);
+
+        assert!(
+            result.is_relevant,
+            "asset unlock paying a CoinJoin address must be relevant"
+        );
+        assert_eq!(
+            result.total_received, unlock_value,
+            "asset unlock must credit the CoinJoin output value"
+        );
+
+        let coinjoin_account =
+            managed_wallet.first_coinjoin_managed_account().expect("coinjoin account");
+        assert!(
+            coinjoin_account.transactions().contains_key(&asset_unlock_tx.txid()),
+            "asset unlock must be recorded on the CoinJoin account"
+        );
+        assert_eq!(
+            coinjoin_account.utxos.len(),
+            1,
+            "asset unlock must create a CoinJoin UTXO"
+        );
+
+        assert_eq!(
+            managed_wallet.balance.confirmed(),
+            unlock_value,
+            "confirmed balance must credit the CoinJoin asset-unlock withdrawal"
+        );
+        assert_eq!(
+            managed_wallet.balance.total(),
+            unlock_value,
+            "total balance must include the CoinJoin asset-unlock credit"
+        );
+    }
+
     /// Test the full coinbase maturity flow - immature to mature transition
     #[tokio::test]
     async fn test_wallet_checker_immature_transaction_flow() {
