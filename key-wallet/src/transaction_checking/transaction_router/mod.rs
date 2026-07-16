@@ -88,7 +88,9 @@ impl TransactionRouter {
     /// label, never a precondition for discovery, so both shapes must consult the full set of
     /// fund-bearing accounts. An account only matches when a scriptPubKey or spent UTXO actually
     /// belongs to it, so checking extra accounts never produces false positives.
-    fn fund_bearing_account_types() -> Vec<AccountTypeToCheck> {
+    /// Visible to unit tests so routing assertions can compare against the
+    /// production list rather than re-listing the five types by hand.
+    pub(crate) fn fund_bearing_account_types() -> Vec<AccountTypeToCheck> {
         vec![
             AccountTypeToCheck::StandardBIP44,
             AccountTypeToCheck::StandardBIP32,

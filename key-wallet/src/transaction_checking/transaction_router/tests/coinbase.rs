@@ -275,12 +275,11 @@ fn test_coinbase_routing() {
 
     // Coinbase can pay any fund-bearing address (mining reward / masternode
     // payout is user-chosen), so routing must cover the full fund-bearing set.
-    assert_eq!(accounts.len(), 5, "Coinbase should route to all fund-bearing account types");
-    assert!(accounts.contains(&AccountTypeToCheck::StandardBIP44));
-    assert!(accounts.contains(&AccountTypeToCheck::StandardBIP32));
-    assert!(accounts.contains(&AccountTypeToCheck::CoinJoin));
-    assert!(accounts.contains(&AccountTypeToCheck::DashpayReceivingFunds));
-    assert!(accounts.contains(&AccountTypeToCheck::DashpayExternalAccount));
+    assert_eq!(
+        accounts,
+        TransactionRouter::fund_bearing_account_types(),
+        "Coinbase should route to all fund-bearing account types"
+    );
 
     // Should NOT route to non-fund-bearing special account types
     assert!(!accounts.contains(&AccountTypeToCheck::IdentityRegistration));

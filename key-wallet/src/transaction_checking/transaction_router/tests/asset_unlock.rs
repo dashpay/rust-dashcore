@@ -23,12 +23,11 @@ fn test_asset_unlock_routing() {
 
     // Asset unlock withdrawals can pay any fund-bearing address (destination is
     // user-chosen), so routing must cover the full fund-bearing set.
-    assert_eq!(accounts.len(), 5, "AssetUnlock should route to all fund-bearing account types");
-    assert!(accounts.contains(&AccountTypeToCheck::StandardBIP44));
-    assert!(accounts.contains(&AccountTypeToCheck::StandardBIP32));
-    assert!(accounts.contains(&AccountTypeToCheck::CoinJoin));
-    assert!(accounts.contains(&AccountTypeToCheck::DashpayReceivingFunds));
-    assert!(accounts.contains(&AccountTypeToCheck::DashpayExternalAccount));
+    assert_eq!(
+        accounts,
+        TransactionRouter::fund_bearing_account_types(),
+        "AssetUnlock should route to all fund-bearing account types"
+    );
 
     // Should NOT check identity accounts - those are for locks only
     assert!(!accounts.contains(&AccountTypeToCheck::IdentityRegistration));
@@ -66,12 +65,11 @@ fn test_asset_unlock_classification() {
 
     // Verify routing for AssetUnlock
     let accounts = TransactionRouter::get_relevant_account_types(&tx_type);
-    assert_eq!(accounts.len(), 5, "AssetUnlock should route to all fund-bearing account types");
-    assert!(accounts.contains(&AccountTypeToCheck::StandardBIP44));
-    assert!(accounts.contains(&AccountTypeToCheck::StandardBIP32));
-    assert!(accounts.contains(&AccountTypeToCheck::CoinJoin));
-    assert!(accounts.contains(&AccountTypeToCheck::DashpayReceivingFunds));
-    assert!(accounts.contains(&AccountTypeToCheck::DashpayExternalAccount));
+    assert_eq!(
+        accounts,
+        TransactionRouter::fund_bearing_account_types(),
+        "AssetUnlock should route to all fund-bearing account types"
+    );
 }
 
 #[tokio::test]

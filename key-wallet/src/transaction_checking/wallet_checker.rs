@@ -288,6 +288,32 @@ mod tests {
     use dashcore_hashes::Hash;
     use std::collections::BTreeMap;
 
+    /// Wallet with a single CoinJoin account and one derived external address.
+    /// Shared fixture for credit/debit regressions that target CoinJoin ownership.
+    fn wallet_with_coinjoin_address() -> (Wallet, ManagedWalletInfo, Address) {
+        let network = Network::Testnet;
+        let mut wallet = Wallet::new_random(network, WalletAccountCreationOptions::None)
+            .expect("Should create wallet");
+        wallet
+            .add_account(
+                AccountType::CoinJoin {
+                    index: 0,
+                },
+                None,
+            )
+            .expect("Should add CoinJoin account");
+        let mut managed_wallet =
+            ManagedWalletInfo::from_wallet_with_name(&wallet, "Test".to_string(), 0);
+        let coinjoin_xpub =
+            wallet.accounts.coinjoin_accounts.get(&0).expect("coinjoin account").account_xpub;
+        let coinjoin_address = managed_wallet
+            .first_coinjoin_managed_account_mut()
+            .expect("managed coinjoin")
+            .next_address(Some(&coinjoin_xpub), true)
+            .expect("coinjoin address");
+        (wallet, managed_wallet, coinjoin_address)
+    }
+
     /// Test wallet checker with unrelated transaction
     #[tokio::test]
     async fn test_wallet_checker_unrelated_transaction() {
@@ -788,42 +814,9 @@ mod tests {
     /// yield a false positive.
     #[tokio::test]
     async fn test_coinbase_paying_coinjoin_address_is_credited() {
-        use crate::managed_account::managed_account_type::ManagedAccountType;
         use crate::transaction_checking::transaction_router::TransactionRouter;
 
-        let network = Network::Testnet;
-
-        let mut wallet = Wallet::new_random(network, WalletAccountCreationOptions::None)
-            .expect("Should create wallet");
-        wallet
-            .add_account(
-                AccountType::CoinJoin {
-                    index: 0,
-                },
-                None,
-            )
-            .expect("Should add CoinJoin account");
-
-        let mut managed_wallet =
-            ManagedWalletInfo::from_wallet_with_name(&wallet, "Test".to_string(), 0);
-
-        let coinjoin_xpub =
-            wallet.accounts.coinjoin_accounts.get(&0).expect("coinjoin account").account_xpub;
-        let coinjoin_address = {
-            let managed_account =
-                managed_wallet.first_coinjoin_managed_account_mut().expect("managed coinjoin");
-            if let ManagedAccountType::CoinJoin {
-                external_addresses,
-                ..
-            } = managed_account.managed_account_type_mut()
-            {
-                external_addresses
-                    .next_unused(&KeySource::Public(coinjoin_xpub), true)
-                    .expect("coinjoin address")
-            } else {
-                panic!("Expected CoinJoin account type");
-            }
-        };
+        let (mut wallet, mut managed_wallet, coinjoin_address) = wallet_with_coinjoin_address();
 
         let reward = 5_000_000_000u64;
         let coinbase_tx = Transaction {
@@ -896,7 +889,6 @@ mod tests {
     /// a CoinJoin address was never credited (dashpay/rust-dashcore#900).
     #[tokio::test]
     async fn test_asset_unlock_paying_coinjoin_address_is_credited() {
-        use crate::managed_account::managed_account_type::ManagedAccountType;
         use crate::transaction_checking::transaction_router::TransactionRouter;
         use dashcore::blockdata::transaction::special_transaction::asset_unlock::qualified_asset_unlock::AssetUnlockPayload;
         use dashcore::blockdata::transaction::special_transaction::asset_unlock::request_info::AssetUnlockRequestInfo;
@@ -904,39 +896,7 @@ mod tests {
         use dashcore::blockdata::transaction::special_transaction::TransactionPayload;
         use dashcore::bls_sig_utils::BLSSignature;
 
-        let network = Network::Testnet;
-
-        let mut wallet = Wallet::new_random(network, WalletAccountCreationOptions::None)
-            .expect("Should create wallet");
-        wallet
-            .add_account(
-                AccountType::CoinJoin {
-                    index: 0,
-                },
-                None,
-            )
-            .expect("Should add CoinJoin account");
-
-        let mut managed_wallet =
-            ManagedWalletInfo::from_wallet_with_name(&wallet, "Test".to_string(), 0);
-
-        let coinjoin_xpub =
-            wallet.accounts.coinjoin_accounts.get(&0).expect("coinjoin account").account_xpub;
-        let coinjoin_address = {
-            let managed_account =
-                managed_wallet.first_coinjoin_managed_account_mut().expect("managed coinjoin");
-            if let ManagedAccountType::CoinJoin {
-                external_addresses,
-                ..
-            } = managed_account.managed_account_type_mut()
-            {
-                external_addresses
-                    .next_unused(&KeySource::Public(coinjoin_xpub), true)
-                    .expect("coinjoin address")
-            } else {
-                panic!("Expected CoinJoin account type");
-            }
-        };
+        let (mut wallet, mut managed_wallet, coinjoin_address) = wallet_with_coinjoin_address();
 
         let unlock_value = 100_000_000u64;
         let asset_unlock_tx = Transaction {
