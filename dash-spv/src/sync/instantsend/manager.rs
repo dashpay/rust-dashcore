@@ -14,7 +14,7 @@ use dashcore::Txid;
 use tokio::sync::RwLock;
 
 use crate::error::SyncResult;
-use crate::sync::{InstantSendProgress, SyncEvent};
+use crate::sync::{InstantSendProgress, SyncEvent, SyncState};
 
 /// Maximum number of pending InstantLocks awaiting validation.
 const MAX_PENDING_INSTANTLOCKS: usize = 500;
@@ -282,6 +282,66 @@ impl InstantSendManager {
         });
     }
 
+    /// Drop cached InstantLock entries that were never BLS-validated, and clear
+    /// the queued locks that fed them.
+    ///
+    /// Called on disconnect. The `instantlocks` cache is what
+    /// [`process_instantlock`](Self::process_instantlock) dedupes against, so if
+    /// an unvalidated entry survived a disconnect the same lock re-announced
+    /// after reconnect would be treated as a duplicate and never re-queued or
+    /// re-validated. Validated entries are kept — their locks are already final.
+    pub(super) fn clear_unvalidated_on_disconnect(&mut self) {
+        self.pending_instantlocks.clear();
+        self.instantlocks.retain(|_, entry| entry.validated);
+        self.progress.update_pending(0);
+    }
+
+    /// Drop pending locks that have outlived [`PENDING_TTL`] without running BLS
+    /// verification.
+    ///
+    /// This is the cheap, advancement-independent half of expiry: `tick` calls
+    /// it on every tick so a lock that never becomes verifiable is dropped after
+    /// an hour even when the masternode engine height is static. Full
+    /// re-validation (which does run BLS) stays in
+    /// [`validate_pending`](Self::validate_pending) and only runs when the engine
+    /// advances. Returns the number of locks expired.
+    pub(super) fn expire_pending(&mut self) -> usize {
+        let before = self.pending_instantlocks.len();
+        self.pending_instantlocks.retain(|pending| {
+            let expired =
+                pending.first_seen.elapsed().map(|age| age > PENDING_TTL).unwrap_or(false);
+            if expired {
+                tracing::warn!(
+                    "Dropping InstantLock for txid {} after awaiting quorum data for over {}s",
+                    pending.instant_lock.txid,
+                    PENDING_TTL.as_secs()
+                );
+            }
+            !expired
+        });
+        let expired = before - self.pending_instantlocks.len();
+        if expired > 0 {
+            self.progress.add_invalid(expired as u32);
+            self.progress.update_pending(self.pending_instantlocks.len());
+        }
+        expired
+    }
+
+    /// Transition to [`SyncState::Synced`] once no pending validations remain.
+    ///
+    /// Shared by the event-driven (`handle_sync_event`) and tick-driven
+    /// revalidation paths so both resolve the manager's state the same way when
+    /// the last pending lock is validated or expired. No-op unless the manager
+    /// is currently `Syncing` or `WaitForEvents`.
+    pub(super) fn transition_synced_if_idle(&mut self) {
+        if self.pending_instantlocks.is_empty()
+            && matches!(self.progress.state(), SyncState::Syncing | SyncState::WaitForEvents)
+        {
+            self.progress.set_state(SyncState::Synced);
+            tracing::info!("InstantSend manager synced (no pending validations)");
+        }
+    }
+
     /// Get an InstantLock by transaction ID.
     pub fn get_instantlock(&self, txid: &Txid) -> Option<&InstantLockEntry> {
         self.instantlocks.get(txid)
@@ -345,6 +405,13 @@ mod tests {
         PendingInstantLock {
             instant_lock: create_test_instantlock(txid),
             first_seen: SystemTime::now() - Duration::from_secs(PENDING_TTL.as_secs() + 60),
+        }
+    }
+
+    fn fresh_pending(txid: Txid) -> PendingInstantLock {
+        PendingInstantLock {
+            instant_lock: create_test_instantlock(txid),
+            first_seen: SystemTime::now(),
         }
     }
 
@@ -558,25 +625,28 @@ mod tests {
         assert_eq!(manager.last_validated_engine_height, Some(201));
     }
 
-    /// Without an engine advance, `tick` must leave pending locks alone — it must
-    /// not run (potentially expensive) BLS verification on every 100ms tick.
+    /// Without an engine advance, `tick` must not run (potentially expensive) BLS
+    /// re-validation. A *fresh* pending lock (well within its TTL) must survive
+    /// the tick untouched: the advancement-independent expiry pass leaves it in
+    /// place and validation never runs.
     #[tokio::test]
     async fn test_tick_skips_revalidation_without_engine_advance() {
         let mut manager = create_test_manager();
         let requests = no_op_requests();
 
-        // Seed the engine and record that we already validated at that height.
+        // Engine at height 100, but the marker is deliberately set ABOVE it so
+        // the advancement gate (current > last) stays closed. If `validate_pending`
+        // ran it would overwrite the marker down to 100 — so an unchanged marker
+        // proves it did not run.
         advance_engine_height(&manager, 100).await;
-        manager.last_validated_engine_height = Some(100);
+        manager.last_validated_engine_height = Some(150);
 
-        // Queue a lock that is already past its TTL. If tick re-validated here it
-        // would expire and drop the lock — so surviving proves tick did not run
-        // validation while the engine height was unchanged.
-        manager.pending_instantlocks.push(expired_pending(Txid::from_byte_array([7u8; 32])));
+        manager.pending_instantlocks.push(fresh_pending(Txid::from_byte_array([7u8; 32])));
 
         let events = manager.tick(&requests).await.unwrap();
         assert!(events.is_empty());
         assert_eq!(manager.pending_count(), 1);
+        assert_eq!(manager.last_validated_engine_height, Some(150));
         if let SyncManagerProgress::InstantSend(progress) = manager.progress() {
             assert_eq!(progress.invalid(), 0);
         } else {
@@ -584,8 +654,88 @@ mod tests {
         }
     }
 
-    /// A pending lock that never becomes verifiable is dropped once it exceeds
-    /// [`PENDING_TTL`], the next time re-validation runs after an engine advance.
+    /// TTL expiry must be independent of engine advancement (finding: expire
+    /// pending locks even when the engine height is static). A lock past its TTL
+    /// is dropped by `tick` without the engine ever advancing and without running
+    /// BLS re-validation.
+    #[tokio::test]
+    async fn test_tick_expires_pending_without_engine_advance() {
+        let mut manager = create_test_manager();
+        let requests = no_op_requests();
+
+        // Close the advancement gate: engine at 100, already validated at 100.
+        // `validate_pending` therefore cannot run this tick.
+        advance_engine_height(&manager, 100).await;
+        manager.last_validated_engine_height = Some(100);
+
+        manager.pending_instantlocks.push(expired_pending(Txid::from_byte_array([8u8; 32])));
+
+        let events = manager.tick(&requests).await.unwrap();
+
+        assert!(events.is_empty());
+        // Expired purely by the advancement-independent pass.
+        assert_eq!(manager.pending_count(), 0);
+        // Marker untouched: only cheap expiry ran, not validation.
+        assert_eq!(manager.last_validated_engine_height, Some(100));
+        if let SyncManagerProgress::InstantSend(progress) = manager.progress() {
+            assert_eq!(progress.invalid(), 1);
+        } else {
+            panic!("Expected SyncManagerProgress::InstantSend");
+        }
+    }
+
+    /// When `tick` resolves the final pending lock — here by expiring it under a
+    /// static engine height — the manager must leave `Syncing`, exactly as it
+    /// would had the resolution come from a `MasternodeStateUpdated` event via
+    /// `handle_sync_event`. Otherwise it stays stuck in `Syncing` indefinitely.
+    #[tokio::test]
+    async fn test_tick_transitions_synced_when_last_pending_resolved() {
+        let mut manager = create_test_manager();
+        let requests = no_op_requests();
+
+        manager.set_state(SyncState::Syncing);
+        manager.pending_instantlocks.push(expired_pending(Txid::from_byte_array([4u8; 32])));
+
+        let events = manager.tick(&requests).await.unwrap();
+
+        assert!(events.is_empty());
+        assert_eq!(manager.pending_count(), 0);
+        assert_eq!(manager.state(), SyncState::Synced);
+    }
+
+    /// A lock re-announced with the same txid after a disconnect must be
+    /// processed fresh, not silently dropped as a duplicate. `on_disconnect` has
+    /// to evict the unvalidated cache entry that `process_instantlock` dedupes
+    /// against, otherwise the re-announced lock is never re-queued/re-validated.
+    #[tokio::test]
+    async fn test_reannounce_after_disconnect_is_not_duplicate() {
+        let mut manager = create_test_manager();
+
+        let txid = Txid::from_byte_array([5u8; 32]);
+
+        // First announcement: the empty engine can't verify it, so it is queued
+        // and cached as an unvalidated entry.
+        let events = manager.process_instantlock(&create_test_instantlock(txid)).await.unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(manager.pending_count(), 1);
+        assert!(manager.get_instantlock(&txid).is_some());
+
+        // Disconnect must clear the queue AND the unvalidated cache entry.
+        manager.on_disconnect();
+        assert_eq!(manager.pending_count(), 0);
+        assert!(manager.get_instantlock(&txid).is_none());
+
+        // Re-announcement of the same txid is processed fresh, not deduped away.
+        let events = manager.process_instantlock(&create_test_instantlock(txid)).await.unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(manager.pending_count(), 1);
+    }
+
+    /// A pending lock past its [`PENDING_TTL`] is dropped and counted invalid,
+    /// even when the engine has also advanced. Expiry is handled by the cheap
+    /// advancement-independent pass, which drains the queue before the
+    /// validation gate — so `validate_pending` never runs and the marker is left
+    /// untouched (it is meaningless with no pending locks anyway).
     #[tokio::test]
     async fn test_pending_expires_after_ttl_on_revalidation() {
         let mut manager = create_test_manager();
@@ -593,14 +743,16 @@ mod tests {
 
         manager.pending_instantlocks.push(expired_pending(Txid::from_byte_array([9u8; 32])));
 
-        // Advancing the engine triggers re-validation; the lock is past its TTL
-        // and still unverifiable, so it is dropped and counted invalid.
+        // The lock is past its TTL and still unverifiable, so it is dropped and
+        // counted invalid regardless of the engine advancing to height 300.
         advance_engine_height(&manager, 300).await;
         let events = manager.tick(&requests).await.unwrap();
 
         assert!(events.is_empty());
         assert_eq!(manager.pending_count(), 0);
-        assert_eq!(manager.last_validated_engine_height, Some(300));
+        // Expiry drained the queue before the validation gate, so the marker was
+        // never set by a validation pass.
+        assert_eq!(manager.last_validated_engine_height, None);
         if let SyncManagerProgress::InstantSend(progress) = manager.progress() {
             assert_eq!(progress.invalid(), 1);
         } else {

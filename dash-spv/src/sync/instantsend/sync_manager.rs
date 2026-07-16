@@ -26,7 +26,11 @@ impl SyncManager for InstantSendManager {
     }
 
     fn on_disconnect(&mut self) {
-        self.pending_instantlocks.clear();
+        // Clear the queue *and* drop unvalidated cache entries. Leaving the
+        // latter behind would make `process_instantlock` treat a lock
+        // re-announced after reconnect as a duplicate, so it would never be
+        // re-queued or re-validated.
+        self.clear_unvalidated_on_disconnect();
         // Nothing is queued anymore, so the height at which we last validated is
         // meaningless; reset it so re-validation runs again after reconnect.
         self.last_validated_engine_height = None;
@@ -89,13 +93,8 @@ impl SyncManager for InstantSendManager {
                 vec![]
             };
 
-            // Transition to Synced when no pending validations after masternode sync
-            if self.pending_count() == 0
-                && matches!(self.state(), SyncState::Syncing | SyncState::WaitForEvents)
-            {
-                self.set_state(SyncState::Synced);
-                tracing::info!("InstantSend manager synced (no pending validations)");
-            }
+            // Transition to Synced when no pending validations after masternode sync.
+            self.transition_synced_if_idle();
 
             return Ok(events);
         }
@@ -107,6 +106,17 @@ impl SyncManager for InstantSendManager {
         // Prune old entries periodically
         self.prune_old_entries();
 
+        // Whether there was work to resolve at the start of this tick. Guards the
+        // synced-state transition below so a freshly created manager sitting idle
+        // in `WaitForEvents` isn't marked `Synced` without ever having done work.
+        let had_pending = !self.pending_instantlocks.is_empty();
+
+        // Expire pending locks that have outlived their TTL. This runs on every
+        // tick, independent of engine advancement — otherwise, with a static
+        // engine height, `validate_pending` (the only other place expiry runs)
+        // would never be reached and a lock could stay pending forever.
+        self.expire_pending();
+
         // Re-validate queued InstantLocks once the masternode engine has advanced
         // past the height at which they were last checked. A lock received before
         // quorum sync completed (e.g. right after a fresh SPV start, for a
@@ -114,6 +124,7 @@ impl SyncManager for InstantSendManager {
         // needed quorum data lands, rather than waiting for the next
         // `MasternodeStateUpdated` event — which, for a just-broadcast
         // transaction, may not arrive until the block that mines it.
+        let mut events = Vec::new();
         if !self.pending_instantlocks.is_empty() {
             let engine_height = self.engine_height().await;
             let advanced = match (engine_height, self.last_validated_engine_height) {
@@ -122,11 +133,19 @@ impl SyncManager for InstantSendManager {
                 (None, _) => false,
             };
             if advanced {
-                return self.validate_pending().await;
+                events = self.validate_pending().await?;
             }
         }
 
-        Ok(vec![])
+        // If this tick started with pending work that has now fully drained (via
+        // expiry or validation), mirror `handle_sync_event` and resolve the
+        // manager's state — otherwise a final lock resolved by tick rather than a
+        // `MasternodeStateUpdated` event would leave it stuck in `Syncing`.
+        if had_pending {
+            self.transition_synced_if_idle();
+        }
+
+        Ok(events)
     }
 
     fn progress(&self) -> SyncManagerProgress {
