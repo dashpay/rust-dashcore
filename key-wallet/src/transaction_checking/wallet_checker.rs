@@ -862,10 +862,7 @@ mod tests {
         managed_wallet.update_last_processed_height(block_height);
 
         assert!(result.is_relevant, "coinbase paying a CoinJoin address must be relevant");
-        assert_eq!(
-            result.total_received, reward,
-            "coinbase must credit the CoinJoin output value"
-        );
+        assert_eq!(result.total_received, reward, "coinbase must credit the CoinJoin output value");
 
         let coinjoin_account =
             managed_wallet.first_coinjoin_managed_account().expect("coinjoin account");
@@ -873,11 +870,7 @@ mod tests {
             coinjoin_account.transactions().contains_key(&coinbase_tx.txid()),
             "coinbase must be recorded on the CoinJoin account"
         );
-        assert_eq!(
-            coinjoin_account.utxos.len(),
-            1,
-            "coinbase must create a CoinJoin UTXO"
-        );
+        assert_eq!(coinjoin_account.utxos.len(), 1, "coinbase must create a CoinJoin UTXO");
         let utxo = coinjoin_account.utxos.values().next().expect("CoinJoin UTXO");
         assert!(utxo.is_coinbase, "credited UTXO must be marked coinbase");
 
@@ -996,10 +989,7 @@ mod tests {
             .await;
         managed_wallet.update_last_processed_height(500_100);
 
-        assert!(
-            result.is_relevant,
-            "asset unlock paying a CoinJoin address must be relevant"
-        );
+        assert!(result.is_relevant, "asset unlock paying a CoinJoin address must be relevant");
         assert_eq!(
             result.total_received, unlock_value,
             "asset unlock must credit the CoinJoin output value"
@@ -1011,11 +1001,7 @@ mod tests {
             coinjoin_account.transactions().contains_key(&asset_unlock_tx.txid()),
             "asset unlock must be recorded on the CoinJoin account"
         );
-        assert_eq!(
-            coinjoin_account.utxos.len(),
-            1,
-            "asset unlock must create a CoinJoin UTXO"
-        );
+        assert_eq!(coinjoin_account.utxos.len(), 1, "asset unlock must create a CoinJoin UTXO");
 
         assert_eq!(
             managed_wallet.balance.confirmed(),
