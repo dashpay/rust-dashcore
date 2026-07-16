@@ -230,7 +230,14 @@ impl DashCoreNode {
         }
     }
 
-    fn fail_startup(&self, reason: &str) -> ! {
+    fn fail_startup(&mut self, reason: &str) -> ! {
+        // Kill dashd before reading/copying the datadir so Windows does not
+        // hit sharing violations on open LevelDB/wallet/debug.log handles.
+        if let Some(mut process) = self.process.take() {
+            let _ = process.start_kill();
+            let _ = process.try_wait();
+        }
+
         let debug_log = self.config.datadir.join("regtest/debug.log");
         let tail = read_log_tail(&debug_log, 40);
         // Callers that need post-start retain (e.g. DashdTestContext) install
@@ -779,15 +786,36 @@ pub(crate) fn wallet_database_exists(datadir: &Path, wallet_name: &str) -> bool 
 }
 
 fn read_log_tail(path: &Path, max_lines: usize) -> String {
+    use std::io::{Seek, SeekFrom};
+
+    // Cap how much of debug.log we load: -debug=all against large fixtures can
+    // produce multi-hundred-MB logs that would OOM a full read on failure.
+    const MAX_TAIL_BYTES: u64 = 64 * 1024;
+
     let mut file = match fs::File::open(path) {
         Ok(f) => f,
         Err(e) => return format!("  <unavailable: {} ({})>", path.display(), e),
     };
+    let len = match file.metadata() {
+        Ok(m) => m.len(),
+        Err(e) => return format!("  <failed to stat {}: {}>", path.display(), e),
+    };
+    if len > MAX_TAIL_BYTES {
+        if let Err(e) = file.seek(SeekFrom::End(-(MAX_TAIL_BYTES as i64))) {
+            return format!("  <failed to seek {}: {}>", path.display(), e);
+        }
+    }
     let mut contents = String::new();
     if let Err(e) = file.read_to_string(&mut contents) {
         return format!("  <failed to read {}: {}>", path.display(), e);
     }
-    let lines: Vec<&str> = contents.lines().collect();
+    // Drop a partial first line after a mid-file seek.
+    let body = if len > MAX_TAIL_BYTES {
+        contents.split_once('\n').map(|(_, rest)| rest).unwrap_or(&contents)
+    } else {
+        contents.as_str()
+    };
+    let lines: Vec<&str> = body.lines().collect();
     let start = lines.len().saturating_sub(max_lines);
     if lines.is_empty() {
         return "  <empty>".to_string();
