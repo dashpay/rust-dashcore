@@ -9,7 +9,7 @@ use std::net::SocketAddr;
 use tempfile::TempDir;
 use tracing::info;
 
-use super::fs_helpers::{copy_dir, retain_test_dir};
+use super::fs_helpers::{clear_stale_runtime_locks, copy_dir, retain_test_dir, RetainOnPanic};
 use super::node::TestChain;
 use super::{DashCoreConfig, DashCoreNode, WalletFile};
 
@@ -53,8 +53,15 @@ impl DashdTestContext {
     async fn create(mut config: DashCoreConfig) -> Self {
         let datadir = TempDir::new().expect("failed to create temp dir");
         copy_dir(&config.datadir, datadir.path()).expect("failed to copy datadir");
+        // Fixture archives are snapshots of a previously running node and may
+        // still contain lock files that block a fresh dashd start.
+        clear_stale_runtime_locks(datadir.path());
         config.datadir = datadir.path().to_path_buf();
         config.wallet = "wallet".to_string();
+
+        // Retain the temp datadir if startup panics before Self is built
+        // (DashCoreNode::start / ensure_wallet failures).
+        let retain_guard = RetainOnPanic::new(datadir.path(), "dashd-startup");
 
         let wallet = WalletFile::from_json(datadir.path(), "wallet");
         info!(
@@ -68,7 +75,8 @@ impl DashdTestContext {
 
         // Load a separate wallet for mining so coinbase rewards don't pollute
         // the test wallet's address space (the "wallet" wallet and SPV wallet
-        // share the same mnemonic).
+        // share the same mnemonic). The fixture already ships this wallet on
+        // disk; ensure_wallet must load it rather than recreate it.
         node.ensure_wallet("default");
         info!("Mining wallet 'default' ready");
 
@@ -80,6 +88,7 @@ impl DashdTestContext {
             info!("RPC miner not available (tests requiring block generation will be skipped)");
         }
 
+        retain_guard.defuse();
         DashdTestContext {
             node,
             addr,
