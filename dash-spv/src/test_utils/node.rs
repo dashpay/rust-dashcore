@@ -15,6 +15,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU16, Ordering};
 use std::time::Duration;
 use tokio::process::Child;
+use tokio::task;
 use tokio::time::{sleep, timeout};
 
 use super::fs_helpers::{clear_stale_runtime_locks, retain_test_dir_now};
@@ -163,7 +164,12 @@ impl DashCoreNode {
 
         fs::create_dir_all(&self.config.datadir).expect("failed to create datadir");
         // Fixture snapshots may include lock files from the process that built them.
-        clear_stale_runtime_locks(&self.config.datadir);
+        clear_stale_runtime_locks(&self.config.datadir).unwrap_or_else(|e| {
+            panic!(
+                "failed to clear stale dashd runtime locks from {} before startup: {e}",
+                self.config.datadir.display()
+            )
+        });
 
         let mut args_vec = vec![
             "-regtest".to_string(),
@@ -206,11 +212,11 @@ impl DashCoreNode {
         // Brief yield so a process that dies on spawn is observed immediately.
         tokio::time::sleep(Duration::from_millis(500)).await;
         if let Some(status) = self.process_exit_status() {
-            self.fail_startup(&format!("dashd exited immediately with status: {status}"));
+            self.fail_startup(&format!("dashd exited immediately with status: {status}")).await;
         }
 
         if let Err(reason) = self.wait_for_ready(ready_timeout).await {
-            self.fail_startup(&reason);
+            self.fail_startup(&reason).await;
         }
 
         let addr = SocketAddr::from(([127, 0, 0, 1], self.config.p2p_port));
@@ -230,13 +236,10 @@ impl DashCoreNode {
         }
     }
 
-    fn fail_startup(&mut self, reason: &str) -> ! {
+    async fn fail_startup(&mut self, reason: &str) -> ! {
         // Kill dashd before reading/copying the datadir so Windows does not
         // hit sharing violations on open LevelDB/wallet/debug.log handles.
-        if let Some(mut process) = self.process.take() {
-            let _ = process.start_kill();
-            let _ = process.try_wait();
-        }
+        let shutdown_status = self.terminate_process_for_startup().await;
 
         let debug_log = self.config.datadir.join("regtest/debug.log");
         let tail = read_log_tail(&debug_log, 40);
@@ -245,7 +248,7 @@ impl DashCoreNode {
         // path for startup failures.
         retain_test_dir_now(&self.config.datadir, &format!("dashd-{}", self.config.p2p_port));
         panic!(
-            "{reason}\n  binary: {}\n  datadir: {}\n  p2p: {}\n  rpc: {}\n  debug.log tail:\n{tail}",
+            "{reason}\n  binary: {}\n  datadir: {}\n  p2p: {}\n  rpc: {}\n  {shutdown_status}\n  debug.log tail:\n{tail}",
             self.config.dashd_path.display(),
             self.config.datadir.display(),
             self.config.p2p_port,
@@ -253,11 +256,34 @@ impl DashCoreNode {
         );
     }
 
+    async fn terminate_process_for_startup(&mut self) -> String {
+        let Some(mut process) = self.process.take() else {
+            return "dashd shutdown: process was not running".to_string();
+        };
+
+        let kill_result = process.start_kill();
+        let wait_result = process.wait().await;
+        match (kill_result, wait_result) {
+            (Ok(()), Ok(status)) => format!("dashd shutdown: exited with {status}"),
+            (Err(kill_err), Ok(status)) => format!(
+                "dashd shutdown: kill request failed ({kill_err}); process exited with {status}"
+            ),
+            (Ok(()), Err(wait_err)) => {
+                format!("dashd shutdown: kill requested but wait failed: {wait_err}")
+            }
+            (Err(kill_err), Err(wait_err)) => {
+                format!("dashd shutdown: kill request failed ({kill_err}); wait failed: {wait_err}")
+            }
+        }
+    }
+
     async fn wait_for_ready(&mut self, max_wait: Duration) -> Result<(), String> {
         let check_interval = Duration::from_millis(500);
         let mut last_rpc_error = String::from("no RPC attempt yet");
+        let mut last_blockchain_error = String::from("no blockchain readiness attempt yet");
         let mut p2p_ready = false;
         let mut cookie_seen = false;
+        let mut rpc_ready = false;
 
         let result = timeout(max_wait, async {
             loop {
@@ -265,35 +291,48 @@ impl DashCoreNode {
                     return Err(format!("dashd exited during startup with status: {status}"));
                 }
 
-                if !p2p_ready {
-                    let addr = SocketAddr::from(([127, 0, 0, 1], self.config.p2p_port));
-                    if tokio::net::TcpStream::connect(addr).await.is_ok() {
-                        p2p_ready = true;
-                        tracing::debug!("dashd P2P port accepting connections");
-                    } else {
-                        sleep(check_interval).await;
-                        continue;
-                    }
+                let addr = SocketAddr::from(([127, 0, 0, 1], self.config.p2p_port));
+                let current_p2p_ready = tokio::net::TcpStream::connect(addr).await.is_ok();
+                if current_p2p_ready && !p2p_ready {
+                    tracing::debug!("dashd P2P port accepting connections");
                 }
+                p2p_ready = current_p2p_ready;
 
-                match self.try_rpc_client_base() {
-                    Ok(client) => {
-                        cookie_seen = true;
-                        match client.get_blockchain_info() {
-                            Ok(_) => return Ok(()),
-                            Err(e) => {
-                                last_rpc_error = format!("getblockchaininfo: {e}");
-                                tracing::debug!("RPC not ready yet: {e}");
+                let cookie_path = self.rpc_cookie_path();
+                let current_cookie_seen = cookie_path.exists();
+                cookie_seen |= current_cookie_seen;
+                if current_cookie_seen {
+                    let rpc_port = self.config.rpc_port;
+                    match task::spawn_blocking(move || {
+                        probe_blockchain_ready(cookie_path, rpc_port)
+                    })
+                    .await
+                    {
+                        Ok(Ok(())) => {
+                            rpc_ready = true;
+                            last_rpc_error = "RPC ready".to_string();
+                            last_blockchain_error = "blockchain ready".to_string();
+                            if p2p_ready {
+                                return Ok(());
                             }
                         }
-                    }
-                    Err(e) => {
-                        if self.rpc_cookie_path().exists() {
-                            cookie_seen = true;
+                        Ok(Err(e)) => {
+                            rpc_ready = false;
+                            last_rpc_error = e.clone();
+                            last_blockchain_error = e;
+                            tracing::debug!("RPC/blockchain not ready yet: {last_rpc_error}");
                         }
-                        last_rpc_error = e;
-                        tracing::debug!("RPC client not ready yet: {last_rpc_error}");
+                        Err(e) => {
+                            rpc_ready = false;
+                            last_rpc_error = format!("readiness task failed: {e}");
+                            last_blockchain_error = last_rpc_error.clone();
+                            tracing::debug!("RPC readiness task failed: {e}");
+                        }
                     }
+                } else {
+                    rpc_ready = false;
+                    last_rpc_error = "RPC cookie file not created yet".to_string();
+                    tracing::debug!("RPC client not ready yet: {last_rpc_error}");
                 }
                 sleep(check_interval).await;
             }
@@ -305,7 +344,8 @@ impl DashCoreNode {
             Ok(Err(e)) => Err(e),
             Err(_) => Err(format!(
                 "dashd failed to become ready within {}s \
-                 (p2p_ready={p2p_ready}, cookie_seen={cookie_seen}, last_rpc_error={last_rpc_error})",
+                 (p2p_ready={p2p_ready}, cookie_seen={cookie_seen}, rpc_ready={rpc_ready}, \
+                 last_rpc_error={last_rpc_error}, last_blockchain_error={last_blockchain_error})",
                 max_wait.as_secs()
             )),
         }
@@ -669,17 +709,45 @@ impl DashCoreNode {
     pub fn rpc_port(&self) -> u16 {
         self.config.rpc_port
     }
+
+    pub(super) fn stop_and_wait(&mut self) {
+        let Some(mut process) = self.process.take() else {
+            return;
+        };
+
+        tracing::info!("Stopping dashd process...");
+        if let Err(e) = process.start_kill() {
+            tracing::warn!("Failed to request dashd shutdown: {}", e);
+        }
+        loop {
+            match process.try_wait() {
+                Ok(Some(status)) => {
+                    tracing::info!("dashd process exited with {}", status);
+                    break;
+                }
+                Ok(None) => {
+                    std::thread::sleep(Duration::from_millis(50));
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to wait for dashd process exit: {}", e);
+                    break;
+                }
+            }
+        }
+    }
 }
 
 impl Drop for DashCoreNode {
     fn drop(&mut self) {
-        if let Some(mut process) = self.process.take() {
-            tracing::info!("Stopping dashd process in Drop...");
-            if let Err(e) = process.start_kill() {
-                tracing::warn!("Failed to kill dashd process: {}", e);
-            }
-        }
+        self.stop_and_wait();
     }
+}
+
+fn probe_blockchain_ready(cookie_path: PathBuf, rpc_port: u16) -> Result<(), String> {
+    let url = format!("http://127.0.0.1:{rpc_port}");
+    let client = Client::new(&url, Auth::CookieFile(cookie_path))
+        .map_err(|e| format!("cookie auth: {e}"))?;
+    client.get_blockchain_info().map(|_| ()).map_err(|e| format!("getblockchaininfo: {e}"))
 }
 
 /// Wallet file structure for test wallets.
@@ -747,11 +815,12 @@ pub(crate) fn wallet_does_not_exist(err: &dashcore_rpc::Error) -> bool {
     match rpc_error_parts(err) {
         Some((code, msg)) => {
             let lower = msg.to_ascii_lowercase();
-            // Require a wallet-related phrase so unrelated "not found" / code
-            // -18 responses never authorize createwallet.
+            // Require RPC_WALLET_NOT_FOUND (-18) and wallet-missing wording so
+            // unrelated nonzero codes (e.g. -32601 "Wallet method not found")
+            // never authorize createwallet.
             let walletish = lower.contains("wallet");
             let missing = lower.contains("not found") || lower.contains("does not exist");
-            walletish && missing && (code == RPC_WALLET_NOT_FOUND || code != 0)
+            code == RPC_WALLET_NOT_FOUND && walletish && missing
         }
         None => false,
     }
@@ -852,6 +921,15 @@ mod tests {
     }
 
     #[test]
+    fn wallet_not_found_requires_rpc_wallet_not_found_code() {
+        let err = rpc_err(RPC_WALLET_NOT_FOUND, "Wallet file does not exist.");
+        assert!(wallet_does_not_exist(&err));
+
+        let wrong_code = rpc_err(-32601, "Wallet file not found.");
+        assert!(!wallet_does_not_exist(&wrong_code));
+    }
+
+    #[test]
     fn classifies_wallet_already_loaded() {
         let err = rpc_err(RPC_WALLET_ALREADY_LOADED, "Wallet already loaded.");
         assert!(wallet_already_loaded(&err));
@@ -893,7 +971,7 @@ mod tests {
         fs::write(regtest.join(".walletlock"), b"").unwrap();
         fs::write(wallet.join(".walletlock"), b"").unwrap();
 
-        clear_stale_runtime_locks(tmp.path());
+        clear_stale_runtime_locks(tmp.path()).unwrap();
 
         assert!(!regtest.join(".lock").exists());
         assert!(!regtest.join(".walletlock").exists());

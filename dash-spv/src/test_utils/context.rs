@@ -64,13 +64,16 @@ impl DashdTestContext {
             wallet.wallet_name, wallet.transaction_count, wallet.utxo_count, wallet.balance
         );
 
+        // retain_guard is declared before node so reverse-declaration drop order
+        // shuts dashd down (DashCoreNode::drop / stop_and_wait) before
+        // RetainOnPanic copies the datadir on post-start panics.
+        // start() failures retain via fail_startup instead, so the guard is
+        // installed only after start returns.
+        let retain_guard;
         let mut node = DashCoreNode::with_config(config);
-        // start() failures retain via fail_startup. Install the panic retainer
-        // only for post-start setup (ensure_wallet, etc.) so a start failure
-        // does not copy the datadir twice under two labels.
         let addr = node.start().await;
         info!("DashCoreNode started at {}", addr);
-        let retain_guard = RetainOnPanic::new(datadir.path(), "dashd-startup");
+        retain_guard = RetainOnPanic::new(datadir.path(), "dashd-startup");
 
         // Load a separate wallet for mining so coinbase rewards don't pollute
         // the test wallet's address space (the "wallet" wallet and SPV wallet
@@ -102,6 +105,7 @@ impl DashdTestContext {
 impl Drop for DashdTestContext {
     fn drop(&mut self) {
         let label = format!("dashd-{}", self.addr.port());
+        self.node.stop_and_wait();
         retain_test_dir(self.datadir.path(), &label);
     }
 }
