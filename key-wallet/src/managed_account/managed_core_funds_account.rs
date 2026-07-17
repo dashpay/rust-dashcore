@@ -123,7 +123,7 @@ impl ManagedCoreFundsAccount {
 
     /// Return the outpoints currently reserved by this account's in-flight
     /// transaction builds, evaluated at `current_height` so stale reservations
-    /// past the TTL backstop are dropped first (see [`ReservationSet`]).
+    /// past the TTL backstop are dropped first (see `ReservationSet`).
     ///
     /// This exposes the otherwise crate-private reservation ledger as a public,
     /// read-only snapshot for callers that select inputs across accounts and so
