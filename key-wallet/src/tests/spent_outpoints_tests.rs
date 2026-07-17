@@ -1,5 +1,7 @@
 //! Tests for spent_outpoints deserialization and tracking.
 
+use std::collections::HashSet;
+
 use dashcore::blockdata::transaction::{OutPoint, Transaction};
 use dashcore::hashes::Hash;
 use dashcore::{BlockHash, TxIn, Txid};
@@ -10,6 +12,7 @@ use crate::managed_account::transaction_record::TransactionDirection;
 use crate::managed_account::ManagedCoreFundsAccount;
 use crate::test_utils::TestWalletContext;
 use crate::transaction_checking::{BlockInfo, TransactionContext, TransactionType};
+use crate::Utxo;
 
 /// Create a transaction that spends the given outpoints.
 fn spending_tx(spent: &[OutPoint]) -> Transaction {
@@ -127,6 +130,56 @@ async fn processing_a_spend_releases_its_reservation() {
 
     let account = ctx.managed_wallet.first_bip44_managed_account().expect("BIP44 account");
     assert!(!account.reservations().reserved(0).contains(&second_funded));
+}
+
+#[test]
+fn reserved_outpoints_are_excluded_from_spendable_and_reappear_on_release() {
+    // The public read API added for cross-account input selection: a caller
+    // that force-adds another account's UTXOs into a shared sweep must be able
+    // to see and skip outpoints an in-flight build already reserved, otherwise
+    // a rebuild/retry can reselect them into a conflicting transaction.
+    let height = 100;
+    let mut account = ManagedCoreFundsAccount::dummy_bip44();
+
+    // Two mature, non-coinbase UTXOs: both spendable at `height`.
+    let utxo_reserved = Utxo::dummy(0x11, 100_000, 10, false, true);
+    let utxo_free = Utxo::dummy(0x22, 200_000, 10, false, true);
+    let reserved_op = utxo_reserved.outpoint;
+    let free_op = utxo_free.outpoint;
+    account.utxos.insert(reserved_op, utxo_reserved);
+    account.utxos.insert(free_op, utxo_free);
+
+    // Nothing reserved yet: the excluding view matches plain spendable, and the
+    // reserved set is empty.
+    assert!(account.reserved_outpoints(height).is_empty());
+    let spendable: Vec<OutPoint> =
+        account.spendable_utxos(height).iter().map(|u| u.outpoint).collect();
+    assert!(spendable.contains(&reserved_op) && spendable.contains(&free_op));
+    let excluding: Vec<OutPoint> =
+        account.spendable_utxos_excluding_reserved(height).iter().map(|u| u.outpoint).collect();
+    assert!(excluding.contains(&reserved_op) && excluding.contains(&free_op));
+
+    // Reserve one outpoint as an in-flight build would.
+    account.reservations().reserve(&[reserved_op], height);
+
+    // The reserved outpoint is now visible via the public read API...
+    assert_eq!(account.reserved_outpoints(height), HashSet::from([reserved_op]));
+    // ...excluded from the reservation-aware enumeration...
+    let excluding: Vec<OutPoint> =
+        account.spendable_utxos_excluding_reserved(height).iter().map(|u| u.outpoint).collect();
+    assert_eq!(excluding, vec![free_op]);
+    // ...but still present in the reservation-unaware `spendable_utxos`, whose
+    // semantics are unchanged (the additive API must not alter it).
+    let spendable: Vec<OutPoint> =
+        account.spendable_utxos(height).iter().map(|u| u.outpoint).collect();
+    assert!(spendable.contains(&reserved_op) && spendable.contains(&free_op));
+
+    // Releasing the reservation makes the outpoint selectable again.
+    account.reservations().release([&reserved_op]);
+    assert!(account.reserved_outpoints(height).is_empty());
+    let excluding: Vec<OutPoint> =
+        account.spendable_utxos_excluding_reserved(height).iter().map(|u| u.outpoint).collect();
+    assert!(excluding.contains(&reserved_op) && excluding.contains(&free_op));
 }
 
 #[test]

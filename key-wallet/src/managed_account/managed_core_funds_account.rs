@@ -121,6 +121,29 @@ impl ManagedCoreFundsAccount {
         &self.reservations
     }
 
+    /// Return the outpoints currently reserved by this account's in-flight
+    /// transaction builds, evaluated at `current_height` so stale reservations
+    /// past the TTL backstop are dropped first (see [`ReservationSet`]).
+    ///
+    /// This exposes the otherwise crate-private reservation ledger as a public,
+    /// read-only snapshot for callers that select inputs across accounts and so
+    /// cannot go through this account's own `set_funding`. A cross-account
+    /// sweep that force-adds another account's [`spendable_utxos`] bypasses that
+    /// account's coin selector and therefore its reservation awareness; reading
+    /// this set lets the caller skip inputs already committed to an in-flight
+    /// build, preventing a rebuild/retry from reselecting them into a
+    /// conflicting transaction. Prefer [`spendable_utxos_excluding_reserved`]
+    /// when the goal is simply to enumerate selectable UTXOs.
+    ///
+    /// The snapshot is a point-in-time copy: it reflects reservations taken up
+    /// to this call and is not updated as later builds reserve or release.
+    ///
+    /// [`spendable_utxos`]: Self::spendable_utxos
+    /// [`spendable_utxos_excluding_reserved`]: Self::spendable_utxos_excluding_reserved
+    pub fn reserved_outpoints(&self, current_height: u32) -> HashSet<OutPoint> {
+        self.reservations.reserved(current_height)
+    }
+
     /// Release the reservations held for `tx`'s inputs. Call this when a built
     /// transaction will not be broadcast, e.g. the user cancelled, so its inputs
     /// become selectable again immediately instead of waiting out the TTL
@@ -508,6 +531,35 @@ impl ManagedCoreFundsAccount {
     /// account-type specific.
     pub fn spendable_utxos(&self, last_processed_height: u32) -> BTreeSet<&Utxo> {
         self.utxos.values().filter(|utxo| utxo.is_spendable(last_processed_height)).collect()
+    }
+
+    /// Like [`spendable_utxos`](Self::spendable_utxos) but additionally excludes
+    /// any UTXO whose outpoint is currently reserved by an in-flight
+    /// transaction build (see [`reserved_outpoints`](Self::reserved_outpoints)).
+    ///
+    /// [`spendable_utxos`](Self::spendable_utxos) filters on spendability
+    /// (maturity, lock, and confirmation policy) only; it is unaware of
+    /// reservations because an account selecting its own inputs goes through
+    /// `set_funding`, which consults the reservation ledger directly. A caller
+    /// that force-adds another account's UTXOs into a shared selection bypasses
+    /// that path, so a broadcast that left inputs reserved could be reselected
+    /// by a rebuild/retry and produce a conflicting transaction. This variant is
+    /// the reservation-aware enumeration for exactly those cross-account sweeps.
+    ///
+    /// Reservations are evaluated at `last_processed_height`, which also drives
+    /// spendability, so a single height keeps both filters consistent and drops
+    /// reservations past the TTL backstop.
+    pub fn spendable_utxos_excluding_reserved(
+        &self,
+        last_processed_height: u32,
+    ) -> BTreeSet<&Utxo> {
+        let reserved = self.reservations.reserved(last_processed_height);
+        self.utxos
+            .values()
+            .filter(|utxo| {
+                utxo.is_spendable(last_processed_height) && !reserved.contains(&utxo.outpoint)
+            })
+            .collect()
     }
 
     /// Promote any `InBlock` records at height `<= cl_height` to
