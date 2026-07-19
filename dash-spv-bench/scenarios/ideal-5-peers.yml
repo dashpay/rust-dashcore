@@ -1,0 +1,5 @@
+description: "Ideal link, more peers: 4 CPUs, 5 peers @ 50ms, full 1M sync."
+cpus: "0-3"
+repeats: 3
+peers:
+  - { count: 5, latency_ms: 50 }

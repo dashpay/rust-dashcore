@@ -29,4 +29,5 @@ excluded:
   - integration_test  # Requires live Dash node
   - dash-fuzz  # Honggfuzz binary targets, tested by fuzz.yml
   - masternode-seeds-fetcher  # Tooling binary; needs live dashd RPC, exercised by update-masternode-seeds.yml
+  - dash-spv-bench  # Benchmarking binary
   - git-state  # Compile-time proc-macro with no tests, exercised via dash-spv

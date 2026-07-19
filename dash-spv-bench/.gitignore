@@ -1,0 +1,24 @@
+bench-results/
+bench-storage/
+profiles/
+
+*.lock
+
+# Persistent testnet chain snapshot grown by snapshot-chain.sh (multi-GB; never committed).
+chain-data/
+
+# Transient per-peer CoW clones created by run.sh + the file that remembers their dir.
+.bench-clones.*
+.clonedir
+
+# Scenario matrix outputs (bench-scenarios.sh): generated reports/logs/compose, and the
+# bootstrapped yq binary. Reports are meant to be copied out, not committed.
+.scenario.*.yml
+results/
+.bin/
+
+# FlameGraph tooling clone (run.sh --flame), fetched on demand.
+.flamegraph/
+
+# Wallet mnemonics (one BIP39 phrase per line) — secrets, never committed.
+wallets.txt

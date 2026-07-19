@@ -1,0 +1,38 @@
+description: "One-line summary of this scenario"   # optional; shown in the report table.
+
+mode: local            # "local" (docker peers you control), "testnet" or "mainnet" (real network). Default: local.
+
+cpus: "0-3"            # optional. taskset CPU list pinning the MEASURED client (here cores 0,1,2,3).
+                       # In local mode the docker peers get every OTHER core. Omit => no pinning.
+
+max_peers: 3           # optional. Max simultaneous peers. Omit => the ClientConfig default.
+
+
+# ---------------------------------------------------------------------------------------------
+# LOCAL mode (mode: local) — docker dashd peers serving the frozen ./chain-data snapshot
+# ---------------------------------------------------------------------------------------------
+blocks: 1000000            # optional (default 1000000). The target HEIGHT: snapshot-chain.sh builds
+                           # ./chain-data up to here (via docker) and the client syncs the full
+                           # range genesis..blocks. Lower it for a shorter run.
+
+# Peer groups: one entry per group; each becomes `count` dashd containers sharing a connection
+# quality (via `tc netem`). List several groups to mix good and bad peers in one network.
+peers:
+  - count: 3               # required: how many peers in this group
+    latency_ms: 50         # optional: added one-way delay (netem delay)
+    jitter_ms: 0           # optional: delay jitter (netem delay <lat> <jitter>)
+    loss_pct: 0            # optional: packet loss %  (netem loss)
+    rate_kbit: 0           # optional: bandwidth cap in kbit (netem rate)
+    corrupt_pct: 0         # optional: bit corruption %  (netem corrupt)
+    reorder_pct: 0         # optional: packet reordering % (netem reorder)
+  # A second, degraded group ("bad peers"):
+  # - { count: 1, latency_ms: 800, loss_pct: 8, rate_kbit: 500 }
+
+# ---------------------------------------------------------------------------------------------
+# TESTNET / MAINNET mode — connect to the real Dash network instead of docker peers.
+# Set `mode: testnet` or `mode: mainnet` above, then use these instead of blocks/peers:
+# ---------------------------------------------------------------------------------------------
+# peers:                   # explicit nodes as "host:port" strings; omit for DNS discovery.
+#   - "1.2.3.4:9999"       # (testnet uses :19999, mainnet :9999)
+#   - "5.6.7.8:9999"
+# start_height: 2000000    # optional checkpoint: skip genesis..start and sync a bounded range.
