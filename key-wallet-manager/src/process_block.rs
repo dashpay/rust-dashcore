@@ -47,20 +47,22 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
             && wallets.iter().filter_map(|wid| self.wallet_infos.get(wid)).all(|info| {
                 info.last_applied_chain_lock().is_some_and(|cl| height <= cl.block_height)
             });
-        let block_context = if all_chainlocked {
-            TransactionContext::InChainLockedBlock(info)
-        } else {
-            TransactionContext::InBlock(info)
-        };
-
         let mut per_wallet_inserted: BTreeMap<WalletId, Vec<TransactionRecord>> = BTreeMap::new();
         let mut per_wallet_updated: BTreeMap<WalletId, Vec<TransactionRecord>> = BTreeMap::new();
         let mut per_wallet_derived: BTreeMap<WalletId, Vec<DerivedAddressInfo>> = BTreeMap::new();
 
-        for tx in &block.txdata {
-            let check_result = self
-                .check_transaction_in_wallets(tx, block_context.clone(), wallets, true, false)
-                .await;
+        for (position, tx) in block.txdata.iter().enumerate() {
+            // Stamp each record with its `block.vtx` index so consumers
+            // can replay Core's same-block apply order (e.g. multiple
+            // provider updates for one masternode in a single block).
+            let tx_info = info.with_position(position as u32);
+            let block_context = if all_chainlocked {
+                TransactionContext::InChainLockedBlock(tx_info)
+            } else {
+                TransactionContext::InBlock(tx_info)
+            };
+            let check_result =
+                self.check_transaction_in_wallets(tx, block_context, wallets, true, false).await;
 
             if !check_result.affected_wallets.is_empty() {
                 if check_result.is_new_transaction {
@@ -225,6 +227,13 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
         self.wallet_infos
             .get(wallet_id)
             .map(|info| info.monitored_script_pubkeys())
+            .unwrap_or_default()
+    }
+
+    fn monitored_filter_elements_for(&self, wallet_id: &WalletId) -> Vec<Vec<u8>> {
+        self.wallet_infos
+            .get(wallet_id)
+            .map(|info| info.monitored_filter_elements())
             .unwrap_or_default()
     }
 

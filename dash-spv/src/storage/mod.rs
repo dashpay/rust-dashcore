@@ -20,7 +20,7 @@ use async_trait::async_trait;
 use dashcore::hash_types::FilterHeader;
 use dashcore::prelude::CoreBlockHeight;
 use std::ops::Range;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
@@ -99,16 +99,34 @@ pub struct DiskStorageManager {
     _lock_file: LockFile,
 }
 
+/// Derives the lockfile path for a storage directory by appending `.lock` to
+/// the directory's full name. `Path::set_extension` is unsuitable here: it
+/// replaces everything after the last dot, so directory names containing dots
+/// (e.g. `95.183.53.19-9999` and `95.183.53.20-9999`) would collide on the
+/// same lockfile.
+fn lock_file_path(storage_path: &Path) -> PathBuf {
+    match storage_path.file_name() {
+        Some(name) => {
+            let mut lock_name = name.to_os_string();
+            lock_name.push(".lock");
+            storage_path.with_file_name(lock_name)
+        }
+        // Paths without a final component (e.g. `/` or `..`); keep the
+        // previous `set_extension` behavior.
+        None => {
+            let mut lock_file = storage_path.to_path_buf();
+            lock_file.set_extension("lock");
+            lock_file
+        }
+    }
+}
+
 impl DiskStorageManager {
     pub async fn new(config: &ClientConfig) -> StorageResult<Self> {
         use std::fs;
 
         let storage_path = config.storage_path.clone();
-        let lock_file = {
-            let mut lock_file = storage_path.clone();
-            lock_file.set_extension("lock");
-            lock_file
-        };
+        let lock_file = lock_file_path(&storage_path);
 
         fs::create_dir_all(&storage_path)?;
 
@@ -357,6 +375,14 @@ impl filters::FilterStorage for DiskStorageManager {
         self.filters.read().await.filter_tip_height().await
     }
 
+    async fn filter_start_height(&self) -> Option<u32> {
+        self.filters.read().await.filter_start_height().await
+    }
+
+    async fn clear_filters(&mut self) -> StorageResult<()> {
+        self.filters.write().await.clear_filters().await
+    }
+
     async fn truncate_above(&mut self, target_height: u32) -> StorageResult<()> {
         self.filters.write().await.truncate_above(target_height).await
     }
@@ -415,6 +441,41 @@ mod tests {
 
     fn hashed_batch(r: std::ops::Range<u32>) -> Vec<HashedBlockHeader> {
         BlockHeader::dummy_batch(r).into_iter().map(HashedBlockHeader::from).collect()
+    }
+
+    #[test]
+    fn test_lock_file_path_appends_to_full_name() {
+        // Dot-free directory names keep the historical behavior.
+        assert_eq!(
+            lock_file_path(Path::new("data/discovery")),
+            PathBuf::from("data/discovery.lock")
+        );
+
+        // Dotted directory names must not have their "extension" replaced:
+        // distinct sibling directories need distinct lockfiles.
+        let a = lock_file_path(Path::new("probes/95.183.53.19-9999"));
+        let b = lock_file_path(Path::new("probes/95.183.53.20-9999"));
+        assert_eq!(a, PathBuf::from("probes/95.183.53.19-9999.lock"));
+        assert_eq!(b, PathBuf::from("probes/95.183.53.20-9999.lock"));
+        assert_ne!(a, b);
+    }
+
+    #[tokio::test]
+    async fn test_dotted_sibling_dirs_do_not_share_lock() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let temp_dir = TempDir::new()?;
+        let path_a = temp_dir.path().join("95.183.53.19-9999");
+        let path_b = temp_dir.path().join("95.183.53.20-9999");
+
+        let config_a = ClientConfig::testnet().with_storage_path(&path_a);
+        let config_b = ClientConfig::testnet().with_storage_path(&path_b);
+
+        let _storage_a = DiskStorageManager::new(&config_a).await?;
+        // Before the fix this failed with "Data directory ... is already in
+        // use by another process" because both paths derived the same lockfile.
+        let _storage_b = DiskStorageManager::new(&config_b).await?;
+
+        Ok(())
     }
 
     #[tokio::test]

@@ -278,7 +278,7 @@ fn prov_reg_tx(
     voting_key_hash: dashcore::PubkeyHash,
     operator_public_key: dashcore::bls_sig_utils::BLSPublicKey,
     script_payout: ScriptBuf,
-    platform_node_id: Option<dashcore::PubkeyHash>,
+    platform_node_id: Option<dashcore::PlatformNodeId>,
 ) -> Transaction {
     Transaction {
         version: 3,
@@ -432,6 +432,97 @@ async fn provider_registration_with_operator_public_key_matches_provider_operato
     assert_matched_account_type(&result, AccountTypeToCheck::ProviderOperatorKeys);
 }
 
+/// After a ProRegTx uses an operator key, gap-limit maintenance must extend
+/// the operator pool with freshly derived BLS keys — exactly like the ECDSA
+/// owner/voting pools. Regression test for the operator pool being skipped
+/// because the wallet exposes no ECDSA xpub for BLS accounts (the checker
+/// bailed before `maintain_gap_limit`).
+#[cfg(feature = "bls")]
+#[tokio::test]
+async fn provider_registration_extends_operator_key_gap_limit() {
+    use crate::managed_account::address_pool::PublicKeyType;
+    use crate::managed_account::managed_account_type::ManagedAccountType;
+    use crate::AccountType;
+
+    let (mut wallet, mut info) = make_wallet();
+    let (_other_wallet, mut other_info) = make_wallet();
+
+    let owner_addr = other_info
+        .provider_owner_keys_managed_account_mut()
+        .expect("other owner")
+        .next_address(None, true)
+        .expect("derive owner");
+    let voting_addr = other_info
+        .provider_voting_keys_managed_account_mut()
+        .expect("other voting")
+        .next_address(None, true)
+        .expect("derive voting");
+    // Takes operator key 0 and marks it used, so the pool's unused window
+    // shrinks below the gap limit.
+    let operator_pk = info
+        .provider_operator_keys_managed_account_mut()
+        .expect("provider_operator_keys managed")
+        .next_bls_operator_key(None, true)
+        .expect("derive operator");
+
+    let operator_pool_state = |info: &ManagedWalletInfo| {
+        let account =
+            info.provider_operator_keys_managed_account().expect("operator managed account");
+        match account.managed_account_type() {
+            ManagedAccountType::ProviderOperatorKeys {
+                addresses,
+            } => (addresses.highest_generated, addresses.highest_used, addresses.gap_limit),
+            _ => unreachable!("operator account holds an operator pool"),
+        }
+    };
+
+    let (highest_generated_before, highest_used_before, gap_limit) = operator_pool_state(&info);
+    assert_eq!(highest_used_before, Some(0));
+    assert!(
+        highest_generated_before < Some(gap_limit),
+        "setup: the pre-generated window must not already satisfy the gap limit"
+    );
+
+    let tx = prov_reg_tx(
+        ProviderMasternodeType::Regular,
+        derive_pubkey_hash(&owner_addr),
+        derive_pubkey_hash(&voting_addr),
+        operator_pk.0.to_compressed().into(),
+        ScriptBuf::new(),
+        None,
+    );
+    let result =
+        info.check_core_transaction(&tx, test_block_context(), &mut wallet, true, true).await;
+
+    assert_matched_account_type(&result, AccountTypeToCheck::ProviderOperatorKeys);
+
+    // The pool must now hold `gap_limit` unused keys past the used index 0.
+    let (highest_generated_after, highest_used_after, _) = operator_pool_state(&info);
+    assert_eq!(highest_used_after, Some(0));
+    assert_eq!(highest_generated_after, Some(gap_limit));
+
+    // The freshly derived keys are surfaced to callers and carry BLS public
+    // keys matching the audited gate-free derivation entry point.
+    let bls_account = wallet
+        .accounts
+        .bls_account_of_type(AccountType::ProviderOperatorKeys)
+        .expect("operator account exists");
+    let new_operator_keys: Vec<_> = result
+        .new_addresses
+        .iter()
+        .filter(|derived| derived.account_type == AccountType::ProviderOperatorKeys)
+        .collect();
+    assert!(!new_operator_keys.is_empty(), "gap maintenance must derive new operator keys");
+    for derived in new_operator_keys {
+        let expected = bls_account
+            .operator_public_key_at(derived.info.index)
+            .expect("gate-free public derivation")
+            .to_bytes()
+            .to_vec();
+        assert_eq!(derived.info.public_key, Some(PublicKeyType::BLS(expected)));
+    }
+}
+
 #[cfg(feature = "eddsa")]
 #[tokio::test]
 async fn provider_registration_with_platform_node_id_matches_provider_platform_keys() {
@@ -461,7 +552,9 @@ async fn provider_registration_with_platform_node_id_matches_provider_platform_k
         .expect("provider_platform_keys managed")
         .next_eddsa_platform_key(eddsa, true)
         .expect("derive platform");
-    let platform_node_id = derive_pubkey_hash(&platform_info.address);
+    let platform_node_id = dashcore::PlatformNodeId::from_byte_array(
+        derive_pubkey_hash(&platform_info.address).to_byte_array(),
+    );
 
     let tx = prov_reg_tx(
         ProviderMasternodeType::HighPerformance,

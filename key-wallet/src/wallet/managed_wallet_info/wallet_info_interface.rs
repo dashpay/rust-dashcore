@@ -8,6 +8,7 @@ use super::managed_account_operations::ManagedAccountOperations;
 use crate::account::{AccountType, ManagedAccountTrait};
 use crate::managed_account::managed_account_collection::ManagedAccountCollection;
 use crate::managed_account::managed_account_ref::ManagedAccountRefMut;
+use crate::managed_account::managed_account_type::ManagedAccountType;
 use crate::managed_account::ManagedCoreFundsAccount;
 use crate::transaction_checking::TransactionContext;
 use crate::transaction_checking::WalletTransactionChecker;
@@ -15,6 +16,7 @@ use crate::wallet::managed_wallet_info::transaction_building::AccountTypePrefere
 use crate::wallet::managed_wallet_info::TransactionRecord;
 use crate::wallet::ManagedWalletInfo;
 use crate::{Network, Utxo, Wallet, WalletCoreBalance};
+use dashcore::address::Payload;
 use dashcore::ephemerealdata::chain_lock::ChainLock;
 use dashcore::ephemerealdata::instant_lock::InstantLock;
 use dashcore::prelude::CoreBlockHeight;
@@ -87,6 +89,19 @@ pub trait WalletInfoInterface: Sized + WalletTransactionChecker + ManagedAccount
 
     /// Get cached scriptPubKeys for every monitored address.
     fn monitored_script_pubkeys(&self) -> Vec<ScriptBuf>;
+
+    /// Get bare `hash160` filter elements that a compact filter carries in
+    /// addition to scriptPubKeys.
+    ///
+    /// Dash Core inserts a `ProRegTx`'s owner (`keyIDOwner`) and voting
+    /// (`keyIDVoting`) key hashes into the block's BIP158 compact filter as
+    /// bare 20-byte `hash160` elements, not as P2PKH scripts (see Dash Core's
+    /// `ExtractSpecialTxFilterElements`). A masternode owner watching only
+    /// those keys therefore never matches on the scriptPubKey path, so the
+    /// query must also carry the same bare hashes. This returns each provider
+    /// owner/voting address's 20-byte `hash160`; every other account type is
+    /// omitted because its scriptPubKeys already cover the query.
+    fn monitored_filter_elements(&self) -> Vec<Vec<u8>>;
 
     /// Get all UTXOs for the wallet
     fn utxos(&self) -> BTreeSet<&Utxo>;
@@ -354,6 +369,53 @@ impl WalletInfoInterface for ManagedWalletInfo {
         scripts
     }
 
+    fn monitored_filter_elements(&self) -> Vec<Vec<u8>> {
+        let mut elements = Vec::new();
+        for account in self.accounts.all_accounts() {
+            if matches!(
+                account.managed_account_type(),
+                ManagedAccountType::ProviderOwnerKeys { .. }
+                    | ManagedAccountType::ProviderVotingKeys { .. }
+            ) {
+                // Extract the bare 20-byte `hash160` a peer inserted into the
+                // compact filter, matching the byte order the BIP37 bloom path
+                // uses in `dash-spv`'s `address_payload_bytes`. Provider
+                // owner/voting keys are P2PKH, so this is the pubkey hash.
+                elements.extend(account.all_addresses().iter().filter_map(|a| match a.payload() {
+                    Payload::PubkeyHash(hash) => Some(<[u8; 20]>::from(*hash).to_vec()),
+                    Payload::ScriptHash(hash) => Some(<[u8; 20]>::from(*hash).to_vec()),
+                    _ => None,
+                }));
+            }
+        }
+        // Dash Core inserts a `ProRegTx`'s `collateralOutpoint` into the block's
+        // compact filter serialized the consensus way — 32-byte txid followed by
+        // the 4-byte little-endian vout, 36 bytes total (see
+        // `ExtractSpecialTxFilterElements`). A wallet that owns the collateral
+        // output but not the masternode's owner/voting keys would otherwise never
+        // match that `ProRegTx` on the scriptPubKey path, so watch each UTXO's
+        // outpoint directly.
+        //
+        // This is gated on the wallet holding provider accounts because the
+        // element is only ever useful to a masternode owner: it discovers a
+        // `ProRegTx` that *references* one of the wallet's UTXOs as collateral.
+        // The common paths are already covered without it — an owner-created
+        // `ProRegTx` is matched by its fee input's script, and a key-holding
+        // owner by the owner/voting hashes above — so the collateral element
+        // only adds the narrow case where the wallet owns the collateral but
+        // holds neither the keys nor the funding inputs. A funding-only wallet
+        // can never hit that case, so it skips these elements rather than pay
+        // the per-UTXO false-positive cost on every compact-filter query. Within
+        // a provider wallet every UTXO is watched (not just collateral-sized
+        // ones) to avoid hardcoding network-specific collateral amounts.
+        if self.accounts.has_provider_accounts() {
+            for utxo in self.utxos() {
+                elements.push(dashcore::consensus::encode::serialize(&utxo.outpoint));
+            }
+        }
+        elements
+    }
+
     fn utxos(&self) -> BTreeSet<&Utxo> {
         let mut utxos = BTreeSet::new();
         for account in self.accounts.all_funding_accounts() {
@@ -480,5 +542,56 @@ impl WalletInfoInterface for ManagedWalletInfo {
 
     fn monitor_revision(&self) -> u64 {
         self.accounts.all_accounts().iter().map(|a| a.monitor_revision()).sum()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_utils::TestWalletContext;
+    use crate::wallet::initialization::WalletAccountCreationOptions;
+
+    /// A wallet that owns a UTXO must surface that UTXO's outpoint as a bare
+    /// filter element, consensus-serialized to the 36-byte form Dash Core
+    /// inserts for a `ProRegTx`'s `collateralOutpoint`, so a compact-filter
+    /// scan matches a masternode registration against the wallet's collateral
+    /// even when the wallet holds none of the masternode's keys.
+    #[tokio::test]
+    async fn test_watched_utxo_outpoint_is_filter_element() {
+        let (ctx, _tx) = TestWalletContext::new_random().with_mempool_funding(200_000).await;
+        let outpoint = ctx.first_utxo().outpoint;
+        let serialized = dashcore::consensus::encode::serialize(&outpoint);
+        assert_eq!(serialized.len(), 36, "outpoint serializes to txid ++ le-vout");
+
+        let elements = ctx.managed_wallet.monitored_filter_elements();
+        assert!(
+            elements.contains(&serialized),
+            "monitored_filter_elements must carry the watched UTXO's serialized outpoint"
+        );
+    }
+
+    /// A funding-only wallet (no provider accounts) must not surface its UTXO
+    /// outpoints as filter elements. The collateral outpoint only helps a
+    /// masternode owner discover a `ProRegTx` referencing its collateral, so a
+    /// plain payment wallet skips that per-UTXO cost entirely.
+    #[tokio::test]
+    async fn test_funding_only_wallet_omits_collateral_outpoints() {
+        let (ctx, _tx) = TestWalletContext::new_random_with_options(
+            WalletAccountCreationOptions::BIP44AccountsOnly([0].into()),
+        )
+        .with_mempool_funding(200_000)
+        .await;
+
+        // The wallet is funded, so it owns a UTXO...
+        let serialized = dashcore::consensus::encode::serialize(&ctx.first_utxo().outpoint);
+        assert_eq!(serialized.len(), 36);
+
+        // ...but with no provider accounts it emits no filter elements at all,
+        // in particular none of its UTXO outpoints.
+        let elements = ctx.managed_wallet.monitored_filter_elements();
+        assert!(
+            elements.is_empty(),
+            "funding-only wallet must not emit collateral outpoint elements"
+        );
     }
 }

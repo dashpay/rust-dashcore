@@ -24,6 +24,8 @@ mod managed_account_collection_tests;
 
 mod performance_tests;
 
+mod provider_key_derivation_tests;
+
 mod special_transaction_matching_tests;
 
 mod special_transaction_tests;

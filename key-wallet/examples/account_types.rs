@@ -68,7 +68,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let bls_account = BLSAccount::from_seed(
             None,
             AccountType::ProviderVotingKeys,
-            bls_seed,
+            &bls_seed,
             Network::Testnet,
         )?;
 
@@ -110,7 +110,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let eddsa_account = EdDSAAccount::from_seed(
             None,
             AccountType::IdentityRegistration,
-            ed25519_seed,
+            &ed25519_seed,
             Network::Testnet,
         )?;
 
@@ -164,7 +164,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let bls_account = BLSAccount::from_seed(
             None,
             AccountType::ProviderVotingKeys,
-            bls_seed,
+            &bls_seed,
             Network::Testnet,
         )?;
         let watch_only_bls = bls_account.to_watch_only();
@@ -177,7 +177,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let eddsa_account = EdDSAAccount::from_seed(
             None,
             AccountType::IdentityRegistration,
-            ed25519_seed,
+            &ed25519_seed,
             Network::Testnet,
         )?;
         let watch_only_eddsa = eddsa_account.to_watch_only();

@@ -11,7 +11,7 @@ use dashcore::blockdata::transaction::special_transaction::{
 use dashcore::bls_sig_utils::{BLSPublicKey, BLSSignature};
 use dashcore::hash_types::{InputsHash, PubkeyHash};
 use dashcore::hashes::Hash;
-use dashcore::{OutPoint, ScriptBuf, Transaction, TxIn, TxOut, Txid};
+use dashcore::{OutPoint, PlatformNodeId, ScriptBuf, Transaction, TxIn, TxOut, Txid};
 use std::net::SocketAddr;
 
 /// Special transaction types in Dash
@@ -206,7 +206,7 @@ fn create_special_transaction(tx_type: SpecialTransactionType) -> Transaction {
                 script_payout: ScriptBuf::new(),
                 inputs_hash: InputsHash::from_byte_array([6u8; 32]),
                 signature: vec![7u8; 96],
-                platform_node_id: Some(PubkeyHash::from_byte_array([8u8; 20])),
+                platform_node_id: Some(PlatformNodeId::from_byte_array([8u8; 20])),
                 platform_p2p_port: Some(26656),
                 platform_http_port: Some(443),
             };
@@ -231,7 +231,7 @@ fn create_special_transaction(tx_type: SpecialTransactionType) -> Transaction {
                 port: 19999,
                 script_payout: ScriptBuf::new(),
                 inputs_hash: InputsHash::from_byte_array([10u8; 32]),
-                platform_node_id: Some([12u8; 20]),
+                platform_node_id: Some(PlatformNodeId::from_byte_array([12u8; 20])),
                 platform_p2p_port: Some(26656),
                 platform_http_port: Some(443),
                 payload_sig: BLSSignature::from([11u8; 96]),

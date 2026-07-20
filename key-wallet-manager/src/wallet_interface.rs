@@ -88,6 +88,18 @@ pub trait WalletInterface: Send + Sync + 'static {
     /// Get cached scriptPubKeys for every address monitored by `wallet_id`.
     fn monitored_script_pubkeys_for(&self, wallet_id: &WalletId) -> Vec<ScriptBuf>;
 
+    /// Get the bare `hash160` compact-filter elements monitored by `wallet_id`
+    /// that are not covered by its scriptPubKeys.
+    ///
+    /// These are the provider owner/voting key hashes a Dash Core peer inserts
+    /// into a block's BIP158 compact filter as bare 20-byte elements, so a
+    /// masternode owner watching only those keys can match the block. The
+    /// default returns an empty set for implementations that monitor scripts
+    /// only.
+    fn monitored_filter_elements_for(&self, _wallet_id: &WalletId) -> Vec<Vec<u8>> {
+        Vec::new()
+    }
+
     /// Get all outpoints the wallet is watching (unspent outputs).
     /// Used for bloom filter construction to detect spends of our UTXOs.
     fn watched_outpoints(&self) -> Vec<OutPoint>;

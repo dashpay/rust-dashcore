@@ -1283,3 +1283,59 @@ async fn test_block_processed_chainlocked_flag_matches_record_context() {
         assert!(matches!(inserted[0].context, TransactionContext::InBlock(_)));
     }
 }
+
+// ---------------------------------------------------------------------------
+// In-block position stamping
+// ---------------------------------------------------------------------------
+
+/// Records inserted by block processing must carry their `block.txdata`
+/// index in `BlockInfo::position`, so consumers can replay Core's
+/// same-block apply order (e.g. multiple provider special transactions
+/// for one masternode in a single block resolve latest-wins by this
+/// position in `RebuildListFromBlock`).
+#[tokio::test]
+async fn test_block_processing_stamps_in_block_position() {
+    let (mut manager, wallet_id, addr) = setup_manager_with_wallet();
+    let mut rx = manager.subscribe_events();
+
+    let tx_first = create_tx_paying_to(&addr, 0xb1);
+    let tx_second = create_tx_paying_to(&addr, 0xb2);
+    let block = make_block(vec![tx_first.clone(), tx_second.clone()], 0xb1, 1500);
+    let wallets = BTreeSet::from([wallet_id]);
+    manager.process_block_for_wallets(&block, block.block_hash(), 300, &wallets).await;
+
+    let events = drain_events(&mut rx);
+    let bp = events
+        .iter()
+        .find(|e| matches!(e, WalletEvent::BlockProcessed { .. }))
+        .expect("BlockProcessed expected");
+    let WalletEvent::BlockProcessed {
+        inserted,
+        ..
+    } = bp
+    else {
+        unreachable!()
+    };
+    assert_eq!(inserted.len(), 2, "both txs pay the wallet, got {inserted:?}");
+
+    let position_of = |txid| {
+        inserted
+            .iter()
+            .find(|r| r.txid == txid)
+            .expect("record for txid")
+            .context
+            .block_info()
+            .expect("confirmed record must carry block info")
+            .position()
+    };
+    assert_eq!(
+        position_of(tx_first.txid()),
+        Some(0),
+        "first tx in block.txdata must be stamped position 0"
+    );
+    assert_eq!(
+        position_of(tx_second.txid()),
+        Some(1),
+        "second tx in block.txdata must be stamped position 1"
+    );
+}

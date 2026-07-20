@@ -134,16 +134,28 @@ impl TransactionRouter {
                 AccountTypeToCheck::StandardBIP32,
                 AccountTypeToCheck::CoinJoin,
             ],
-            TransactionType::AssetLock => vec![
-                AccountTypeToCheck::StandardBIP44,
-                AccountTypeToCheck::StandardBIP32,
-                AccountTypeToCheck::IdentityRegistration,
-                AccountTypeToCheck::IdentityTopUp,
-                AccountTypeToCheck::IdentityTopUpNotBound,
-                AccountTypeToCheck::IdentityInvitation,
-                AccountTypeToCheck::AssetLockAddressTopUp,
-                AccountTypeToCheck::AssetLockShieldedAddressTopUp,
-            ],
+            TransactionType::AssetLock => {
+                // An asset lock can be funded from any fund-bearing account, and only
+                // `check_core_transaction` debits a spent UTXO — scoped to the accounts
+                // returned here. Omitting CoinJoin / DashPay meant asset locks funded from
+                // those accounts never had their inputs debited, so the spent UTXOs kept
+                // counting toward the balance indefinitely while the (BIP44) change output
+                // was still credited — the balance ended up high by exactly the
+                // CoinJoin/DashPay amount spent, both on relay and on rescan
+                // (dashpay/platform#4073, dashpay/platform#4074, dashpay/dash-wallet#1507).
+                // Discovery is membership-based like Dash Core's `IsMine`, so consulting the
+                // full fund-bearing set never yields false positives.
+                let mut accounts = Self::fund_bearing_account_types();
+                accounts.extend([
+                    AccountTypeToCheck::IdentityRegistration,
+                    AccountTypeToCheck::IdentityTopUp,
+                    AccountTypeToCheck::IdentityTopUpNotBound,
+                    AccountTypeToCheck::IdentityInvitation,
+                    AccountTypeToCheck::AssetLockAddressTopUp,
+                    AccountTypeToCheck::AssetLockShieldedAddressTopUp,
+                ]);
+                accounts
+            }
             TransactionType::AssetUnlock => {
                 vec![AccountTypeToCheck::StandardBIP44, AccountTypeToCheck::StandardBIP32]
             }

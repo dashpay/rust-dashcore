@@ -96,6 +96,18 @@ impl ManagedAccountCollection {
     }
 
     /// Check if a managed account type exists in the collection
+    /// Whether the wallet holds any masternode provider account (owner,
+    /// voting, operator, or platform keys).
+    ///
+    /// A wallet with none of these can never own or operate a masternode, so it
+    /// has no reason to watch for masternode special transactions.
+    pub(crate) fn has_provider_accounts(&self) -> bool {
+        self.provider_owner_keys.is_some()
+            || self.provider_voting_keys.is_some()
+            || self.provider_operator_keys.is_some()
+            || self.provider_platform_keys.is_some()
+    }
+
     pub fn contains_managed_account_type(&self, managed_type: &ManagedAccountType) -> bool {
         use crate::account::StandardAccountType;
 

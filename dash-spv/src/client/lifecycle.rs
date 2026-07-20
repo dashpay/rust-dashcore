@@ -49,11 +49,15 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
         // Resolve where to anchor the chain. An explicit `start_from_height` always
         // wins. Otherwise fall back to the wallet birth height so we don't sync headers
         // and filter headers from genesis when the wallet only cares about recent blocks.
+        // The wallet-derived height is floored at the network minimum: no HD/BIP39 wallet
+        // can predate mainnet's activation height, so a low or zero birth height must never
+        // drag mainnet sync below it.
         let start_from_height = match config.start_from_height {
             Some(height) => Some(height),
             None => {
                 let birth_height = wallet.read().await.earliest_required_height().await;
-                (birth_height > 0).then_some(birth_height)
+                let start = birth_height.max(config.network.hd_wallet_sync_floor());
+                (start > 0).then_some(start)
             }
         };
 
