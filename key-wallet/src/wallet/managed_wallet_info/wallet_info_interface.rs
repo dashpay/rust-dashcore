@@ -343,6 +343,11 @@ impl WalletInfoInterface for ManagedWalletInfo {
             self.metadata.last_applied_chain_lock = Some(chain_lock);
         }
 
+        // Evict observed-spent entries the promotion above just made final.
+        // Must run after both the per-account promotion and the metadata
+        // advance, so the finality boundary reflects this chainlock.
+        self.prune_finalized_observed_spends();
+
         ApplyChainLockOutcome {
             locked_transactions,
             metadata_advanced: advance,
@@ -492,6 +497,9 @@ impl WalletInfoInterface for ManagedWalletInfo {
 
     fn update_synced_height(&mut self, current_height: u32) {
         self.metadata.synced_height = current_height;
+        // A newly committed checkpoint can lift the finality boundary when the
+        // chainlock was already ahead of the old synced_height.
+        self.prune_finalized_observed_spends();
     }
 
     fn matured_coinbase_records(
