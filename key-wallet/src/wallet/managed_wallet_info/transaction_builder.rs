@@ -216,10 +216,19 @@ impl TransactionBuilder {
     /// taken and skips them.
     ///
     /// `primary` supplies both candidate UTXOs and the change address (change
-    /// always returns to the primary account). Every account in `extra`
-    /// contributes candidate UTXOs and its own reservation ledger; extra
-    /// accounts never emit change, so they need no [`Account`]. `primary` must
-    /// not also appear in `extra`.
+    /// always returns to the primary account), so it is taken by `&mut` — the
+    /// only mutation performed here is deriving the change address. Every
+    /// account in `extra` contributes candidate UTXOs and its own reservation
+    /// ledger; extra accounts are only read (their UTXOs and reservation set),
+    /// never mutated, so they are taken by *shared* reference. This lets a caller
+    /// that already holds the primary by `&mut` pass the rest by `&` out of the
+    /// same account collection without partitioning it into N exclusive borrows.
+    /// Extra accounts never emit change, so they need no [`Account`].
+    ///
+    /// `primary` must not also appear in `extra`; a duplicate would push the
+    /// same UTXOs twice and reserve them twice. This is a caller bug — it is
+    /// caught by identity comparison and the duplicate is skipped (with a
+    /// `debug_assert!` so it fails loudly in tests/debug builds).
     ///
     /// Atomicity: the reservations for all selected inputs are committed as one
     /// synchronous step at assembly time, only after coin selection has fully
@@ -240,13 +249,13 @@ impl TransactionBuilder {
         extra: E,
     ) -> Self
     where
-        E: IntoIterator<Item = &'a mut ManagedCoreFundsAccount>,
+        E: IntoIterator<Item = &'a ManagedCoreFundsAccount>,
     {
         let height = self.current_height;
         let mut inputs = Vec::new();
         let mut ledgers = Vec::new();
 
-        let mut push_account = |acc: &mut ManagedCoreFundsAccount| {
+        let mut push_account = |acc: &ManagedCoreFundsAccount| {
             let reserved = acc.reservations().reserved(height);
             let mut owned = HashSet::new();
             for utxo in acc.utxos.values() {
@@ -268,6 +277,21 @@ impl TransactionBuilder {
         self.change_addr = primary_acc.next_change_address(Some(&account.account_xpub), true).ok();
 
         for acc in extra {
+            // Enforce the documented precondition that `primary` must not also
+            // appear in `extra`. Extra accounts are shared references, so we can
+            // compare identity by pointer; a duplicate would push the same UTXOs
+            // twice and reserve them twice, so skip it. A duplicate is a caller
+            // bug, hence the debug_assert alongside the graceful skip.
+            if std::ptr::eq(acc, &*primary_acc) {
+                debug_assert!(
+                    false,
+                    "set_funding_multi: `primary` must not also appear in `extra`"
+                );
+                tracing::warn!(
+                    "set_funding_multi: skipping an `extra` account identical to `primary`"
+                );
+                continue;
+            }
             push_account(acc);
         }
 
@@ -1402,7 +1426,7 @@ mod tests {
             .set_current_height(200)
             .set_fee_rate(FeeRate::normal())
             .set_selection_strategy(SelectionStrategy::All)
-            .set_funding_multi((&mut primary, &account), [&mut second, &mut third])
+            .set_funding_multi((&mut primary, &account), [&second, &third])
             .add_output(&destination, 1)
             .build_unsigned()
             .expect("union drain builds");
@@ -1442,7 +1466,7 @@ mod tests {
             .set_current_height(200)
             .set_fee_rate(FeeRate::normal())
             .set_selection_strategy(SelectionStrategy::SmallestFirst)
-            .set_funding_multi((&mut primary, &account), [&mut second, &mut third])
+            .set_funding_multi((&mut primary, &account), [&second, &third])
             .set_change_address(Address::dummy(Network::Testnet, 1))
             .add_output(&destination, 500_000)
             .build_unsigned()
@@ -1484,7 +1508,7 @@ mod tests {
         let result = TransactionBuilder::new()
             .set_current_height(200)
             .set_fee_rate(FeeRate::normal())
-            .set_funding_multi((&mut primary, &account), [&mut second])
+            .set_funding_multi((&mut primary, &account), [&second])
             // Far more than the union holds.
             .set_change_address(Address::dummy(Network::Testnet, 1))
             .add_output(&destination, 10_000_000)
@@ -1517,7 +1541,7 @@ mod tests {
             .set_current_height(200)
             .set_fee_rate(FeeRate::normal())
             .set_selection_strategy(SelectionStrategy::All)
-            .set_funding_multi((&mut primary, &account), [&mut second])
+            .set_funding_multi((&mut primary, &account), [&second])
             .add_output(&destination, 1);
 
         // A resolver that never resolves a path forces signing to fail *after*
@@ -1556,7 +1580,7 @@ mod tests {
             .set_current_height(200)
             .set_fee_rate(FeeRate::normal())
             .set_selection_strategy(SelectionStrategy::All)
-            .set_funding_multi((&mut primary, &account), [&mut second])
+            .set_funding_multi((&mut primary, &account), [&second])
             .add_output(&destination, 1)
             .build_unsigned()
             .expect("union drain builds");
@@ -1620,7 +1644,7 @@ mod tests {
                     .set_current_height(200)
                     .set_fee_rate(FeeRate::normal())
                     .set_selection_strategy(SelectionStrategy::SmallestFirst)
-                    .set_funding_multi((primary, &account), [second])
+                    .set_funding_multi((primary, &account), [&*second])
                     .set_change_address(Address::dummy(Network::Testnet, 1))
                     .add_output(&destination, 1_000_000)
                     .build_unsigned();
@@ -1646,5 +1670,42 @@ mod tests {
         let selected = all_selected.lock().expect("selected lock");
         let unique: StdHashSet<&OutPoint> = selected.iter().collect();
         assert_eq!(unique.len(), selected.len(), "an outpoint was double-selected");
+    }
+
+    /// The documented precondition — `primary` must not also appear in `extra` —
+    /// is enforced by an identity check that skips the duplicate (so it can never
+    /// be pushed and reserved twice) and, in debug builds, trips a `debug_assert`
+    /// so the caller bug is caught loudly. Because `primary` is held by `&mut`
+    /// and `extra` by `&`, safe borrows make it impossible to present the same
+    /// account both ways; we forge the aliased shared reference through a raw
+    /// pointer purely to drive the guard.
+    #[test]
+    #[should_panic(expected = "must not also appear in `extra`")]
+    fn set_funding_multi_rejects_primary_listed_in_extra() {
+        let ctx = TestWalletContext::new_random();
+        let account =
+            ctx.wallet.accounts.standard_bip44_accounts.get(&0).expect("BIP44 account").clone();
+
+        let mut primary = ManagedCoreFundsAccount::dummy_bip44();
+        let up = Utxo::dummy(0x01, 1_000_000, 100, false, true);
+        primary.utxos.insert(up.outpoint, up.clone());
+
+        // The guard reads only the *address* of this alias (via `ptr::eq`) and
+        // panics before anything is read through it, so no data is actually
+        // accessed through both the `&mut` and this `&` at once.
+        // SAFETY: `primary` outlives the alias, and the alias is used solely to
+        // present the same account as an `extra` — the exact misuse the guard
+        // rejects. It is never dereferenced for its contents.
+        let primary_ptr: *const ManagedCoreFundsAccount = &primary;
+        let aliased: &ManagedCoreFundsAccount = unsafe { &*primary_ptr };
+
+        let destination = Address::dummy(Network::Testnet, 0);
+        let _ = TransactionBuilder::new()
+            .set_current_height(200)
+            .set_fee_rate(FeeRate::normal())
+            .set_selection_strategy(SelectionStrategy::All)
+            .set_funding_multi((&mut primary, &account), [aliased])
+            .add_output(&destination, 1)
+            .build_unsigned();
     }
 }
