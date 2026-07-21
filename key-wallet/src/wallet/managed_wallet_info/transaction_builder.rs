@@ -19,6 +19,7 @@ use dashcore_hashes::Hash;
 use secp256k1::ecdsa::Signature;
 use secp256k1::{Message, PublicKey, Secp256k1};
 use std::cmp::Ordering;
+use std::collections::HashSet;
 
 /// A transaction with more inputs would exceed the relay standard-size cap (~100 KB at ~148
 /// bytes/signed input) and be rejected by the network
@@ -49,10 +50,93 @@ pub struct TransactionBuilder {
     require_final_inputs: bool,
     /// Special transaction payload for Dash-specific transactions
     special_payload: Option<TransactionPayload>,
-    /// Reservation set of the funding account, captured by `set_funding`. The
-    /// inputs chosen during assembly are reserved here so a concurrent build
-    /// skips them until the broadcast transaction is processed.
-    reservations: Option<ReservationSet>,
+    /// Where the inputs chosen during assembly are reserved so a concurrent
+    /// build skips them until the broadcast transaction is processed. Captured
+    /// by `set_funding` (single account) or `set_funding_multi` (union across
+    /// several accounts, each input reserved in its owning account's ledger).
+    reservations: Reservations,
+}
+
+/// A funding account's reservation ledger together with the candidate outpoints
+/// it owns among the builder's inputs. Used by the multi-account funding path so
+/// each selected input is reserved in its owning account, not in one shared set.
+///
+/// The `owned` sets are disjoint across ledgers because a UTXO belongs to exactly
+/// one account, which makes grouping the selected inputs by owner unambiguous.
+#[derive(Clone)]
+struct FundingLedger {
+    /// A clone (shared `Arc<Mutex<_>>` handle) of the owning account's set.
+    set: ReservationSet,
+    /// The unreserved candidate outpoints this account contributed.
+    owned: HashSet<OutPoint>,
+}
+
+/// How the builder reserves the inputs it selects.
+///
+/// Kept private: callers choose a mode through `set_funding` / `set_funding_multi`
+/// (or neither), never by naming this type.
+#[derive(Clone, Default)]
+enum Reservations {
+    /// No funding account was attached (inputs came from `add_inputs`); nothing
+    /// is reserved.
+    #[default]
+    None,
+    /// A single funding account: every selected input is reserved in this one
+    /// set. This is the historical `set_funding` behaviour, preserved exactly.
+    Single(ReservationSet),
+    /// A union of funding accounts: each selected input is reserved in the ledger
+    /// of its owning account. All groups commit together (one synchronous,
+    /// infallible step after selection succeeds) and roll back together (on a
+    /// signing failure), so there is never a window where a subset is reserved.
+    Multi(Vec<FundingLedger>),
+}
+
+impl Reservations {
+    /// Commit the reservation of every selected input. For a single funding
+    /// account all inputs go to its one set; for a union each input is reserved
+    /// in the ledger of the account that owns it. This runs as one synchronous,
+    /// infallible step (see [`ReservationSet::reserve`]) with no interior yield,
+    /// so the whole commit is atomic with respect to any correctly-locked
+    /// concurrent selector.
+    fn reserve_selected(&self, selected: &[Utxo], height: u32) {
+        match self {
+            Reservations::None => {}
+            Reservations::Single(set) => {
+                let outpoints: Vec<OutPoint> = selected.iter().map(|utxo| utxo.outpoint).collect();
+                set.reserve(&outpoints, height);
+            }
+            Reservations::Multi(ledgers) => {
+                for ledger in ledgers {
+                    let group: Vec<OutPoint> = selected
+                        .iter()
+                        .map(|utxo| utxo.outpoint)
+                        .filter(|outpoint| ledger.owned.contains(outpoint))
+                        .collect();
+                    if !group.is_empty() {
+                        ledger.set.reserve(&group, height);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Release a previously committed reservation of `reserved`, rolling back
+    /// every owning account. Idempotent: releasing an outpoint that is not (or
+    /// no longer) reserved is a no-op, so a Multi ledger only ever drops the
+    /// outpoints it actually owns.
+    fn release_selected(&self, reserved: &[OutPoint]) {
+        match self {
+            Reservations::None => {}
+            Reservations::Single(set) => set.release(reserved.iter()),
+            Reservations::Multi(ledgers) => {
+                for ledger in ledgers {
+                    ledger.set.release(reserved.iter().filter(|outpoint| {
+                        ledger.owned.contains(*outpoint)
+                    }));
+                }
+            }
+        }
+    }
 }
 
 impl Default for TransactionBuilder {
@@ -73,7 +157,7 @@ impl TransactionBuilder {
             selection_strategy: SelectionStrategy::BranchAndBound,
             require_final_inputs: false,
             special_payload: None,
-            reservations: None,
+            reservations: Reservations::None,
         }
     }
 
@@ -116,8 +200,79 @@ impl TransactionBuilder {
             .filter(|utxo| !reserved.contains(&utxo.outpoint))
             .cloned()
             .collect();
-        self.reservations = Some(funds_acc.reservations().clone());
+        self.reservations = Reservations::Single(funds_acc.reservations().clone());
         self.change_addr = funds_acc.next_change_address(Some(&acc.account_xpub), true).ok();
+        self
+    }
+
+    /// Seed the builder with a *union* of several funding accounts' spendable
+    /// UTXOs, reserving each selected input in its own owning account's ledger.
+    ///
+    /// Unlike [`set_funding`](Self::set_funding), which snapshots one account's
+    /// [`ReservationSet`] and reserves every selected input there, this reserves
+    /// each input in the account that actually owns it. That is what makes the
+    /// reservation correct when inputs are drawn from more than one account: a
+    /// later build issued through an owning account observes its own coins as
+    /// taken and skips them.
+    ///
+    /// `primary` supplies both candidate UTXOs and the change address (change
+    /// always returns to the primary account). Every account in `extra`
+    /// contributes candidate UTXOs and its own reservation ledger; extra
+    /// accounts never emit change, so they need no [`Account`]. `primary` must
+    /// not also appear in `extra`.
+    ///
+    /// Atomicity: the reservations for all selected inputs are committed as one
+    /// synchronous step at assembly time, only after coin selection has fully
+    /// succeeded. Because [`ReservationSet::reserve`] is infallible and the
+    /// commit yields to no other task, either every group is reserved or (on an
+    /// earlier selection error) none is — there is no window in which a subset
+    /// is reserved and a concurrent selector grabs the rest. A signing failure
+    /// after the commit releases every group (see
+    /// [`build_signed`](Self::build_signed)).
+    ///
+    /// Like `set_funding`, this call and the assembly that reserves the chosen
+    /// inputs must run under one uninterrupted hold of the wallet lock; the
+    /// builder must not be held across an `await` between here and
+    /// `build_signed` / `assemble_unsigned`.
+    pub fn set_funding_multi<'a, E>(
+        mut self,
+        primary: (&mut ManagedCoreFundsAccount, &Account),
+        extra: E,
+    ) -> Self
+    where
+        E: IntoIterator<Item = &'a mut ManagedCoreFundsAccount>,
+    {
+        let height = self.current_height;
+        let mut inputs = Vec::new();
+        let mut ledgers = Vec::new();
+
+        let mut push_account = |acc: &mut ManagedCoreFundsAccount| {
+            let reserved = acc.reservations().reserved(height);
+            let mut owned = HashSet::new();
+            for utxo in acc.utxos.values() {
+                if reserved.contains(&utxo.outpoint) {
+                    continue;
+                }
+                owned.insert(utxo.outpoint);
+                inputs.push(utxo.clone());
+            }
+            ledgers.push(FundingLedger {
+                set: acc.reservations().clone(),
+                owned,
+            });
+        };
+
+        let (primary_acc, account) = primary;
+        push_account(primary_acc);
+        // Change always returns to the primary (transparent) account.
+        self.change_addr = primary_acc.next_change_address(Some(&account.account_xpub), true).ok();
+
+        for acc in extra {
+            push_account(acc);
+        }
+
+        self.inputs = inputs;
+        self.reservations = Reservations::Multi(ledgers);
         self
     }
 
@@ -392,12 +547,10 @@ impl TransactionBuilder {
 
         // Reserve the chosen inputs so a concurrent build skips them until the
         // broadcast transaction is processed back into the wallet (which
-        // releases the reservation) or the TTL backstop reclaims it.
-        if let Some(reservations) = &self.reservations {
-            let outpoints: Vec<OutPoint> =
-                selected_inputs.iter().map(|utxo| utxo.outpoint).collect();
-            reservations.reserve(&outpoints, self.current_height);
-        }
+        // releases the reservation) or the TTL backstop reclaims it. Selection
+        // has fully succeeded by this point, so this commit is the last thing
+        // assembly does: on any earlier error nothing is reserved.
+        self.reservations.reserve_selected(&selected_inputs, self.current_height);
 
         return Ok((transaction, selected_inputs));
 
@@ -457,14 +610,14 @@ impl TransactionBuilder {
         // Signing never reaches the network for a local key, but an external
         // signer can fail. A failed sign means the reserved inputs are still
         // spendable, so release them now instead of stranding the funds until
-        // the TTL backstop reclaims them.
+        // the TTL backstop reclaims them. For a multi-account funding set every
+        // group rolls back together, so no owning account is left with a
+        // stranded reservation.
         let reserved: Vec<OutPoint> = inputs.iter().map(|utxo| utxo.outpoint).collect();
         let tx = match signer.sign_tx(tx, inputs, path_resolver).await {
             Ok(tx) => tx,
             Err(err) => {
-                if let Some(reservations) = &reservations {
-                    reservations.release(reserved.iter());
-                }
+                reservations.release_selected(&reserved);
                 return Err(err);
             }
         };
