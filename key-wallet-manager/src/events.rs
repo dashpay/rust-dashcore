@@ -434,7 +434,7 @@ mod project_derived_addresses_tests {
     use super::*;
     use key_wallet::account::StandardAccountType;
     use key_wallet::bip32::{ChildNumber, DerivationPath};
-    use key_wallet::managed_account::address_pool::AddressInfo;
+    use key_wallet::managed_account::address_pool::{AddressInfo, AddressState};
     use std::collections::BTreeMap;
 
     /// Compressed encoding of the secp256k1 generator point (G).
@@ -488,9 +488,7 @@ mod project_derived_addresses_tests {
                 public_key: Some(PublicKeyType::ECDSA(pubkey_bytes)),
                 index,
                 path,
-                used: false,
-                generated_at: 0,
-                used_at: None,
+                state: AddressState::Available,
                 tx_count: 0,
                 total_received: 0,
                 total_sent: 0,

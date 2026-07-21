@@ -72,6 +72,14 @@ pub struct ClientConfig {
     /// The client will use the nearest checkpoint at or before this height.
     pub start_from_height: Option<u32>,
 
+    /// Time-to-live (seconds) for unfunded receive-address reservations,
+    /// periodically reclaimed by the sweep so a hand-out that is never paid and
+    /// never released does not pin gap-limit headroom forever. `Some(secs)`
+    /// enables the sweep with that TTL; `None` disables it. Defaults to one hour.
+    /// Set with [`Self::with_reservation_ttl_secs`] or clear with
+    /// [`Self::without_reservation_sweep`].
+    pub reservation_sweep_ttl_secs: Option<u64>,
+
     /// Devnet-only configuration. Must be `Some` iff `network == Network::Devnet`.
     pub devnet: Option<DevnetConfig>,
 }
@@ -94,6 +102,7 @@ impl Default for ClientConfig {
             max_mempool_transactions: 1000,
             fetch_mempool_transactions: true,
             start_from_height: None,
+            reservation_sweep_ttl_secs: Some(3600),
             devnet: None,
         }
     }
@@ -186,6 +195,19 @@ impl ClientConfig {
         self
     }
 
+    /// Disable the periodic receive-address reservation sweep.
+    pub fn without_reservation_sweep(mut self) -> Self {
+        self.reservation_sweep_ttl_secs = None;
+        self
+    }
+
+    /// Enable the periodic receive-address reservation sweep with the given TTL
+    /// (seconds): a reservation older than `secs` is reclaimed.
+    pub fn with_reservation_ttl_secs(mut self, secs: u64) -> Self {
+        self.reservation_sweep_ttl_secs = Some(secs);
+        self
+    }
+
     /// Attach a [`DevnetConfig`]. The network must be `Network::Devnet`.
     /// [`validate`](Self::validate) enforces the biconditional.
     pub fn with_devnet(mut self, devnet: DevnetConfig) -> Self {
@@ -206,6 +228,10 @@ impl ClientConfig {
             return Err(
                 "max_mempool_transactions must be > 0 when mempool tracking is enabled".to_string()
             );
+        }
+
+        if self.reservation_sweep_ttl_secs == Some(0) {
+            return Err("reservation_sweep_ttl_secs must be > 0 when set; use without_reservation_sweep() to disable the sweep".to_string());
         }
 
         match (self.network == Network::Devnet, &self.devnet) {

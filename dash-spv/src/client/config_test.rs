@@ -198,6 +198,18 @@ mod tests {
     }
 
     #[test]
+    fn test_validation_rejects_zero_reservation_ttl() {
+        let config = ClientConfig {
+            reservation_sweep_ttl_secs: Some(0),
+            ..Default::default()
+        };
+
+        let result = config.validate();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("reservation_sweep_ttl_secs must be > 0"));
+    }
+
+    #[test]
     fn test_apply_global_overrides_no_devnet_is_noop() {
         let tmp = TempDir::new().unwrap();
         let config = ClientConfig::new(Network::Mainnet).with_storage_path(tmp.path());

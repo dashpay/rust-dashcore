@@ -210,6 +210,28 @@ impl KeySource {
     }
 }
 
+/// Lifecycle state of an address in the pool.
+///
+/// The three states are mutually exclusive by construction, so the invariant
+/// "a used address is never reserved" holds structurally rather than being
+/// maintained by hand. The reservation timestamp is caller-supplied (seconds),
+/// and `0` means the caller had no clock available.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "bincode", derive(Encode, Decode))]
+pub enum AddressState {
+    /// Free to hand out: neither reserved nor used.
+    #[default]
+    Available,
+    /// Handed out but not yet funded. `at` is when it was reserved.
+    Reserved {
+        /// Reservation timestamp.
+        at: u64,
+    },
+    /// Funds have been seen at this address.
+    Used,
+}
+
 /// Information about a single address in the pool
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
@@ -225,12 +247,8 @@ pub struct AddressInfo {
     pub index: u32,
     /// Full derivation path
     pub path: DerivationPath,
-    /// Whether this address has been used
-    pub used: bool,
-    /// When the address was first generated (timestamp)
-    pub generated_at: u64,
-    /// When the address was first used (timestamp)
-    pub used_at: Option<u64>,
+    /// Lifecycle state: available, reserved, or used
+    pub state: AddressState,
     /// Transaction count for this address
     pub tx_count: u32,
     /// Total received amount
@@ -260,9 +278,7 @@ impl AddressInfo {
             public_key: Some(public_key),
             index,
             path,
-            used: false,
-            generated_at: 0, // Should use actual timestamp
-            used_at: None,
+            state: AddressState::Available,
             tx_count: 0,
             total_received: 0,
             total_sent: 0,
@@ -294,9 +310,7 @@ impl AddressInfo {
             public_key: None, // Public key not available from script alone
             index,
             path,
-            used: false,
-            generated_at: 0, // Should use actual timestamp
-            used_at: None,
+            state: AddressState::Available,
             tx_count: 0,
             total_received: 0,
             total_sent: 0,
@@ -306,11 +320,38 @@ impl AddressInfo {
         })
     }
 
-    /// Mark this address as used
+    /// Mark this address as used.
+    ///
+    /// Transitions to [`AddressState::Used`], which structurally drops any
+    /// reservation so the invariant "a used address is never reserved" holds
+    /// even when a reserved address is promoted directly to used.
     fn mark_used(&mut self) {
-        if !self.used {
-            self.used = true;
-            self.used_at = Some(0); // Should use actual timestamp
+        self.state = AddressState::Used;
+    }
+
+    /// Whether this address is available to be handed out: neither used nor
+    /// reserved.
+    pub fn is_available(&self) -> bool {
+        matches!(self.state, AddressState::Available)
+    }
+
+    /// Whether this address is currently reserved (handed out but not yet used).
+    pub fn is_reserved(&self) -> bool {
+        matches!(self.state, AddressState::Reserved { .. })
+    }
+
+    /// Whether this address has been used.
+    pub fn is_used(&self) -> bool {
+        matches!(self.state, AddressState::Used)
+    }
+
+    /// Timestamp the address was reserved, or `None` if not reserved.
+    pub fn reserved_at(&self) -> Option<u64> {
+        match self.state {
+            AddressState::Reserved {
+                at,
+            } => Some(at),
+            _ => None,
         }
     }
 
@@ -538,7 +579,7 @@ impl AddressPool {
         // First, try to find an already generated unused address
         for i in 0..=self.highest_generated.unwrap_or(0) {
             if let Some(info) = self.addresses.get(&i) {
-                if !info.used {
+                if info.is_available() {
                     return Ok(info.address.clone());
                 }
             }
@@ -563,7 +604,7 @@ impl AddressPool {
         // First, try to find an already generated unused address
         for i in 0..=self.highest_generated.unwrap_or(0) {
             if let Some(info) = self.addresses.get(&i) {
-                if !info.used {
+                if info.is_available() {
                     return Ok(info.clone());
                 }
             }
@@ -582,6 +623,112 @@ impl AddressPool {
         self.addresses.get(&next_index).cloned().ok_or_else(|| {
             Error::InvalidParameter("Failed to retrieve generated address info".into())
         })
+    }
+
+    /// Reserve and return the next available address.
+    ///
+    /// Scans for the first available index (neither used nor reserved), marks it
+    /// reserved with `now`, and returns its address. Because the scan and the
+    /// reserve happen under a single exclusive `&mut self` borrow, two
+    /// sequential hand-outs cannot both observe the same index as available: the
+    /// first reserves it before the second runs. When no generated address is
+    /// available a fresh one is derived and always materialized into the pool,
+    /// since the reservation is stored on the address entry.
+    ///
+    /// `now` is a caller-supplied timestamp (seconds) that stamps the
+    /// reservation and is what [`AddressPool::sweep_expired_reservations`] later
+    /// compares against. The pool keeps no clock of its own.
+    ///
+    /// This path derives a fresh address whenever every existing address is
+    /// used or reserved, with no upper bound. Outstanding reservations are
+    /// reclaimed only by [`AddressPool::release_reservation`] and
+    /// [`AddressPool::sweep_expired_reservations`], so callers are assumed
+    /// trusted. Gate or cap this before exposing it to untrusted input.
+    pub fn next_unused_and_reserve(&mut self, key_source: &KeySource, now: u64) -> Result<Address> {
+        for i in 0..=self.highest_generated.unwrap_or(0) {
+            if let Some(info) = self.addresses.get_mut(&i) {
+                if info.is_available() {
+                    info.state = AddressState::Reserved {
+                        at: now,
+                    };
+                    return Ok(info.address.clone());
+                }
+            }
+        }
+
+        if matches!(key_source, KeySource::NoKeySource) {
+            return Err(Error::NoKeySource);
+        }
+        let next_index = self.highest_generated.map(|h| h + 1).unwrap_or(0);
+        let address = self.generate_address_at_index(next_index, key_source, true)?;
+        // `generate_address_at_index` with `add_to_state = true` always inserts
+        // at `next_index`. If `highest_generated` ever drifts out of sync with
+        // `addresses` a silent lookup miss would return an unreserved address,
+        // reintroducing the hand-out race this method exists to close, so report
+        // the broken invariant as an error rather than fail open.
+        let info = self.addresses.get_mut(&next_index).ok_or_else(|| {
+            Error::InvalidState(format!(
+                "next_unused_and_reserve: generate_address_at_index({}) succeeded but \
+                 the entry was not stored; pool invariant broken",
+                next_index
+            ))
+        })?;
+        debug_assert!(info.is_available());
+        info.state = AddressState::Reserved {
+            at: now,
+        };
+        Ok(address)
+    }
+
+    /// Release a reservation, returning the address to the available pool.
+    ///
+    /// Idempotent: returns `false` when the index is not currently reserved
+    /// (never reserved, already released, already used, or unknown index), and
+    /// `true` when a reservation was actually cleared.
+    pub fn release_reservation(&mut self, index: u32) -> bool {
+        if let Some(info) = self.addresses.get_mut(&index) {
+            if info.is_reserved() {
+                info.state = AddressState::Available;
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Reclaim reservations older than `ttl`, returning their addresses to the
+    /// available pool.
+    ///
+    /// A reservation is expired when `now - reserved_at >= ttl`. Returns how
+    /// many reservations were reclaimed. `now` and `ttl` are caller-supplied
+    /// (seconds). The pool keeps no clock. This is the backstop against a
+    /// hand-out that is reserved but never paid and never explicitly released,
+    /// which would otherwise pin gap-limit headroom across restarts forever.
+    ///
+    /// A `now` of 0 means the caller has no clock available, so the sweep
+    /// declines to judge staleness and reclaims nothing. A `ttl` of 0 means no
+    /// expiry window, so nothing is reclaimed either. A reservation stamped with
+    /// `at == 0` (its caller had no clock) is likewise never aged out.
+    pub fn sweep_expired_reservations(&mut self, now: u64, ttl: u64) -> usize {
+        if now == 0 || ttl == 0 {
+            return 0;
+        }
+        let mut reclaimed = 0;
+        for info in self.addresses.values_mut() {
+            if let AddressState::Reserved {
+                at,
+            } = info.state
+            {
+                // A clockless stamp cannot be judged stale against a real clock.
+                if at == 0 {
+                    continue;
+                }
+                if now.saturating_sub(at) >= ttl {
+                    info.state = AddressState::Available;
+                    reclaimed += 1;
+                }
+            }
+        }
+        reclaimed
     }
 
     /// Get multiple unused addresses at once
@@ -604,7 +751,7 @@ impl AddressPool {
                 break;
             }
             if let Some(info) = self.addresses.get(&i) {
-                if !info.used {
+                if info.is_available() {
                     addresses.push(info.address.clone());
                     collected += 1;
                 }
@@ -660,7 +807,7 @@ impl AddressPool {
                 break;
             }
             if let Some(info) = self.addresses.get(&i) {
-                if !info.used {
+                if info.is_available() {
                     result.push((info.address.clone(), info.clone()));
                     collected += 1;
                 }
@@ -711,7 +858,7 @@ impl AddressPool {
             && self.highest_generated.map(|h| current_index <= h).unwrap_or(false)
         {
             if let Some(info) = self.addresses.get(&current_index) {
-                if !info.used {
+                if info.is_available() {
                     unused.push(info.address.clone());
                 }
             }
@@ -732,7 +879,7 @@ impl AddressPool {
     pub fn mark_used(&mut self, address: &Address) -> bool {
         if let Some(&index) = self.address_index.get(address) {
             if let Some(info) = self.addresses.get_mut(&index) {
-                if !info.used {
+                if !info.is_used() {
                     info.mark_used();
                     self.used_indices.insert(index);
 
@@ -752,7 +899,7 @@ impl AddressPool {
     /// Mark an address at a specific index as used
     pub fn mark_index_used(&mut self, index: u32) -> bool {
         if let Some(info) = self.addresses.get_mut(&index) {
-            if !info.used {
+            if !info.is_used() {
                 info.mark_used();
                 self.used_indices.insert(index);
 
@@ -776,7 +923,7 @@ impl AddressPool {
         let mut found = Vec::new();
 
         for (_, info) in self.addresses.iter_mut() {
-            if !info.used && check_fn(&info.address) {
+            if !info.is_used() && check_fn(&info.address) {
                 info.mark_used();
                 self.used_indices.insert(info.index);
                 found.push(info.address.clone());
@@ -804,12 +951,20 @@ impl AddressPool {
 
     /// Get only used addresses
     pub fn used_addresses(&self) -> Vec<Address> {
-        self.addresses.values().filter(|info| info.used).map(|info| info.address.clone()).collect()
+        self.addresses
+            .values()
+            .filter(|info| info.is_used())
+            .map(|info| info.address.clone())
+            .collect()
     }
 
-    /// Get only unused addresses
+    /// Get only available addresses (neither used nor reserved)
     pub fn unused_addresses(&self) -> Vec<Address> {
-        self.addresses.values().filter(|info| !info.used).map(|info| info.address.clone()).collect()
+        self.addresses
+            .values()
+            .filter(|info| info.is_available())
+            .map(|info| info.address.clone())
+            .collect()
     }
 
     /// Get address at specific index
@@ -892,9 +1047,10 @@ impl AddressPool {
 
     /// Check if we need to generate more addresses
     pub fn needs_more_addresses(&self) -> bool {
-        let unused_count = self.addresses.values().filter(|info| !info.used).count() as u32;
+        let available_count =
+            self.addresses.values().filter(|info| info.is_available()).count() as u32;
 
-        unused_count < self.gap_limit
+        available_count < self.gap_limit
     }
 
     /// Raise the gap limit and generate the addresses the wider limit now requires.
@@ -928,17 +1084,17 @@ impl AddressPool {
             let next_index = self.highest_generated.map(|h| h + 1).unwrap_or(0);
             self.generate_address_at_index(next_index, key_source, true)?;
             // `generate_address_at_index` with `add_to_state = true` always
-            // inserts at `next_index`. Asserting the invariant explicitly
-            // here turns a regression that breaks it (e.g. a refactor that
-            // hits the early-return branch on a re-derivation) into a loud
-            // panic instead of an infinite loop on the outer `while`.
-            let info = self.addresses.get(&next_index).cloned().unwrap_or_else(|| {
-                panic!(
+            // inserts at `next_index`. Surfacing a regression that breaks it
+            // (e.g. a refactor that hits the early-return branch on a
+            // re-derivation) as an error keeps the outer `while` from spinning
+            // into an infinite loop.
+            let info = self.addresses.get(&next_index).cloned().ok_or_else(|| {
+                Error::InvalidState(format!(
                     "maintain_gap_limit: generate_address_at_index({}) succeeded but \
                      the entry was not stored; pool invariant broken",
                     next_index
-                )
-            });
+                ))
+            })?;
             new_addresses.push(info);
         }
 
@@ -968,11 +1124,14 @@ impl AddressPool {
     /// Get pool statistics
     pub fn stats(&self) -> PoolStats {
         let used_count = self.used_indices.len() as u32;
-        let unused_count = self.addresses.len() as u32 - used_count;
+        let reserved_count =
+            self.addresses.values().filter(|info| info.is_reserved()).count() as u32;
+        let unused_count = self.addresses.len() as u32 - used_count - reserved_count;
 
         PoolStats {
             total_generated: self.addresses.len() as u32,
             used_count,
+            reserved_count,
             unused_count,
             highest_used: self.highest_used,
             highest_generated: self.highest_generated,
@@ -984,8 +1143,7 @@ impl AddressPool {
     /// Reset the pool (for rescan)
     pub fn reset_usage(&mut self) {
         for info in self.addresses.values_mut() {
-            info.used = false;
-            info.used_at = None;
+            info.state = AddressState::Available;
             info.tx_count = 0;
             info.total_received = 0;
             info.total_sent = 0;
@@ -1005,9 +1163,11 @@ impl AddressPool {
         let mut pruned = 0;
         let indices_to_remove: Vec<u32> = self
             .addresses
-            .keys()
-            .filter(|&&idx| idx > keep_until && !self.used_indices.contains(&idx))
-            .copied()
+            .iter()
+            .filter(|(&idx, info)| {
+                idx > keep_until && !self.used_indices.contains(&idx) && !info.is_reserved()
+            })
+            .map(|(&idx, _)| idx)
             .collect();
 
         for idx in indices_to_remove {
@@ -1034,7 +1194,9 @@ pub struct PoolStats {
     pub total_generated: u32,
     /// Number of used addresses
     pub used_count: u32,
-    /// Number of unused addresses
+    /// Number of reserved addresses (handed out but not yet used)
+    pub reserved_count: u32,
+    /// Number of unused addresses (neither used nor reserved)
     pub unused_count: u32,
     /// Highest used index
     pub highest_used: Option<u32>,
@@ -1050,7 +1212,7 @@ impl fmt::Display for PoolStats {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "{} pool: {} addresses ({} used, {} unused), gap limit: {}",
+            "{} pool: {} addresses ({} used, {} reserved, {} unused), gap limit: {}",
             if self.is_internal {
                 "Internal"
             } else {
@@ -1058,6 +1220,7 @@ impl fmt::Display for PoolStats {
             },
             self.total_generated,
             self.used_count,
+            self.reserved_count,
             self.unused_count,
             self.gap_limit
         )
@@ -1278,6 +1441,266 @@ mod tests {
     }
 
     #[test]
+    fn test_reserve_returns_distinct_addresses() {
+        let base_path = DerivationPath::from(vec![ChildNumber::from_normal_idx(0).unwrap()]);
+        let mut pool = AddressPool::new_without_generation(
+            base_path,
+            AddressPoolType::External,
+            5,
+            Network::Testnet,
+        );
+        let key_source = test_key_source();
+
+        // Without reserving, two hand-outs return the same address (the race).
+        let peek1 = pool.next_unused(&key_source, true).unwrap();
+        let peek2 = pool.next_unused(&key_source, true).unwrap();
+        assert_eq!(peek1, peek2);
+
+        // Reserving on hand-out makes two sequential calls return distinct
+        // addresses: the first is no longer available to the second.
+        let addr1 = pool.next_unused_and_reserve(&key_source, 100).unwrap();
+        let addr2 = pool.next_unused_and_reserve(&key_source, 100).unwrap();
+        assert_ne!(addr1, addr2);
+
+        // A plain peek must skip the reserved addresses too.
+        let peek3 = pool.next_unused(&key_source, true).unwrap();
+        assert_ne!(peek3, addr1);
+        assert_ne!(peek3, addr2);
+    }
+
+    #[test]
+    fn test_release_returns_address_to_pool() {
+        let base_path = DerivationPath::from(vec![ChildNumber::from_normal_idx(0).unwrap()]);
+        let mut pool = AddressPool::new_without_generation(
+            base_path,
+            AddressPoolType::External,
+            5,
+            Network::Testnet,
+        );
+        let key_source = test_key_source();
+
+        let addr = pool.next_unused_and_reserve(&key_source, 100).unwrap();
+        let index = pool.address_index(&addr).unwrap();
+
+        // A reserved address is excluded from the available set.
+        assert!(!pool.unused_addresses().contains(&addr));
+
+        // After releasing, the same address becomes available again.
+        assert!(pool.release_reservation(index));
+        assert!(pool.unused_addresses().contains(&addr));
+        let reissued = pool.next_unused_and_reserve(&key_source, 200).unwrap();
+        assert_eq!(addr, reissued);
+    }
+
+    #[test]
+    fn test_release_is_idempotent() {
+        let base_path = DerivationPath::from(vec![ChildNumber::from_normal_idx(0).unwrap()]);
+        let mut pool = AddressPool::new_without_generation(
+            base_path,
+            AddressPoolType::External,
+            5,
+            Network::Testnet,
+        );
+        let key_source = test_key_source();
+
+        let addr = pool.next_unused_and_reserve(&key_source, 100).unwrap();
+        let index = pool.address_index(&addr).unwrap();
+
+        // First release clears the reservation, a second is a no-op.
+        assert!(pool.release_reservation(index));
+        assert!(!pool.release_reservation(index));
+        // Releasing a never-reserved index is a no-op too.
+        let other = pool.next_unused(&key_source, true).unwrap();
+        let other_index = pool.address_index(&other).unwrap();
+        assert!(!pool.release_reservation(other_index));
+        // Unknown index is a no-op.
+        assert!(!pool.release_reservation(9_999));
+    }
+
+    #[test]
+    fn test_reserved_promoted_to_used_clears_reservation() {
+        let base_path = DerivationPath::from(vec![ChildNumber::from_normal_idx(0).unwrap()]);
+        let mut pool = AddressPool::new_without_generation(
+            base_path,
+            AddressPoolType::External,
+            5,
+            Network::Testnet,
+        );
+        let key_source = test_key_source();
+
+        let addr = pool.next_unused_and_reserve(&key_source, 100).unwrap();
+        let index = pool.address_index(&addr).unwrap();
+        assert!(pool.addresses.get(&index).unwrap().is_reserved());
+
+        // Funds arriving mark the reserved address used, so the reservation is
+        // structurally dropped (a used address is never reserved).
+        assert!(pool.mark_used(&addr));
+        let info = pool.addresses.get(&index).unwrap();
+        assert!(info.is_used());
+        assert!(!info.is_reserved());
+        assert!(info.reserved_at().is_none());
+        // Releasing a now-used index is a no-op.
+        assert!(!pool.release_reservation(index));
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn test_reservation_survives_serde_round_trip() {
+        let base_path = DerivationPath::from(vec![ChildNumber::from_normal_idx(0).unwrap()]);
+        let mut pool = AddressPool::new_without_generation(
+            base_path,
+            AddressPoolType::External,
+            5,
+            Network::Testnet,
+        );
+        let key_source = test_key_source();
+
+        let reserved = pool.next_unused_and_reserve(&key_source, 12_345).unwrap();
+        let index = pool.address_index(&reserved).unwrap();
+
+        // Unlike an ephemeral reservation, the reserved state must survive a
+        // round trip so a handed-out address is not re-issued after a restart.
+        let json = serde_json::to_string(&pool).unwrap();
+        let mut restored: AddressPool = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(restored.addresses.get(&index).unwrap().reserved_at(), Some(12_345));
+        assert!(restored.addresses.get(&index).unwrap().is_reserved());
+
+        // A fresh hand-out on the restored pool skips the still-reserved address.
+        let next = restored.next_unused_and_reserve(&key_source, 12_346).unwrap();
+        assert_ne!(next, reserved);
+    }
+
+    #[cfg(feature = "bincode")]
+    #[test]
+    fn test_reservation_survives_bincode_round_trip() {
+        let base_path = DerivationPath::from(vec![ChildNumber::from_normal_idx(0).unwrap()]);
+        let mut pool = AddressPool::new_without_generation(
+            base_path,
+            AddressPoolType::External,
+            5,
+            Network::Testnet,
+        );
+        let key_source = test_key_source();
+
+        let reserved = pool.next_unused_and_reserve(&key_source, 12_345).unwrap();
+        let index = pool.address_index(&reserved).unwrap();
+
+        // The reserved state must survive a bincode round trip so a handed-out
+        // address is not re-issued after a restart.
+        let bytes = bincode::encode_to_vec(&pool, bincode::config::standard()).unwrap();
+        let (mut restored, _): (AddressPool, usize) =
+            bincode::decode_from_slice(&bytes, bincode::config::standard()).unwrap();
+
+        assert_eq!(restored.addresses.get(&index).unwrap().reserved_at(), Some(12_345));
+        assert!(restored.addresses.get(&index).unwrap().is_reserved());
+
+        // A fresh hand-out on the restored pool skips the still-reserved address.
+        let next = restored.next_unused_and_reserve(&key_source, 12_346).unwrap();
+        assert_ne!(next, reserved);
+    }
+
+    #[test]
+    fn test_sweep_expired_reservations() {
+        let base_path = DerivationPath::from(vec![ChildNumber::from_normal_idx(0).unwrap()]);
+        let mut pool = AddressPool::new_without_generation(
+            base_path,
+            AddressPoolType::External,
+            5,
+            Network::Testnet,
+        );
+        let key_source = test_key_source();
+
+        let old = pool.next_unused_and_reserve(&key_source, 100).unwrap();
+        let recent = pool.next_unused_and_reserve(&key_source, 200).unwrap();
+        let clockless = pool.next_unused_and_reserve(&key_source, 0).unwrap();
+        let old_index = pool.address_index(&old).unwrap();
+        let recent_index = pool.address_index(&recent).unwrap();
+        let clockless_index = pool.address_index(&clockless).unwrap();
+
+        // now == 0 means no clock: nothing is reclaimed.
+        assert_eq!(pool.sweep_expired_reservations(0, 100), 0);
+        assert!(pool.addresses.get(&old_index).unwrap().is_reserved());
+
+        // ttl == 0 means no expiry window: live reservations are left intact.
+        assert_eq!(pool.sweep_expired_reservations(250, 0), 0);
+        assert!(pool.addresses.get(&old_index).unwrap().is_reserved());
+        assert!(pool.addresses.get(&recent_index).unwrap().is_reserved());
+
+        // At now=250 with ttl=100: old (age 150) expires, recent (age 50) stays.
+        // A clockless reservation (reserved_at == 0) is never aged out.
+        assert_eq!(pool.sweep_expired_reservations(250, 100), 1);
+        assert!(!pool.addresses.get(&old_index).unwrap().is_reserved());
+        assert!(pool.addresses.get(&recent_index).unwrap().is_reserved());
+        assert!(pool.addresses.get(&clockless_index).unwrap().is_reserved());
+
+        // The reclaimed address is available for hand-out again.
+        let reissued = pool.next_unused_and_reserve(&key_source, 300).unwrap();
+        assert_eq!(old, reissued);
+    }
+
+    #[test]
+    fn test_reset_usage_clears_reservations() {
+        let base_path = DerivationPath::from(vec![ChildNumber::from_normal_idx(0).unwrap()]);
+        let mut pool = AddressPool::new_without_generation(
+            base_path,
+            AddressPoolType::External,
+            5,
+            Network::Testnet,
+        );
+        let key_source = test_key_source();
+
+        let reserved = pool.next_unused_and_reserve(&key_source, 100).unwrap();
+        let index = pool.address_index(&reserved).unwrap();
+        assert!(pool.addresses.get(&index).unwrap().is_reserved());
+
+        // A rescan reset must drop reservations too, otherwise the address stays
+        // pinned forever and is never handed out again.
+        pool.reset_usage();
+        assert!(!pool.addresses.get(&index).unwrap().is_reserved());
+
+        let reissued = pool.next_unused_and_reserve(&key_source, 200).unwrap();
+        assert_eq!(reserved, reissued);
+    }
+
+    #[test]
+    fn test_prune_never_drops_reserved() {
+        let base_path = DerivationPath::from(vec![ChildNumber::from_normal_idx(0).unwrap()]);
+        let gap_limit = 5;
+        let mut pool = AddressPool::new_without_generation(
+            base_path,
+            AddressPoolType::External,
+            gap_limit,
+            Network::Testnet,
+        );
+        let key_source = test_key_source();
+        pool.generate_addresses(10, &key_source, true).unwrap();
+
+        // Mark index 0 used so keep_until = highest_used + gap_limit = 5.
+        pool.mark_index_used(0);
+
+        // Reserve indices 1..=7 (first available each time, index 0 is used).
+        let mut reserved = Vec::new();
+        for t in 0..7 {
+            reserved.push(pool.next_unused_and_reserve(&key_source, 100 + t).unwrap());
+        }
+
+        // Indices 6 and 7 are reserved and beyond keep_until. Indices 8 and 9
+        // are plain unused beyond keep_until and are the only prunable entries.
+        let pruned = pool.prune_unused();
+        assert_eq!(pruned, 2);
+        assert!(!pool.addresses.contains_key(&8));
+        assert!(!pool.addresses.contains_key(&9));
+
+        // Every reserved address survived the prune.
+        for addr in &reserved {
+            assert!(pool.address_index(addr).is_some());
+        }
+        assert!(pool.addresses.get(&6).unwrap().is_reserved());
+        assert!(pool.addresses.get(&7).unwrap().is_reserved());
+    }
+
+    #[test]
     fn test_gap_limit_maintenance() {
         let base_path = DerivationPath::from(vec![ChildNumber::from_normal_idx(0).unwrap()]);
         let key_source = test_key_source();
@@ -1326,6 +1749,29 @@ mod tests {
         assert_eq!(new_addresses[1].index, gap_limit + 2);
         assert_eq!(pool.highest_generated, Some(gap_limit + 2));
         assert_eq!(pool.addresses.len(), gap_limit as usize + 3);
+    }
+
+    #[test]
+    fn test_reserved_addresses_count_against_gap_limit() {
+        let base_path = DerivationPath::from(vec![ChildNumber::from_normal_idx(0).unwrap()]);
+        let key_source = test_key_source();
+        let gap_limit = 5;
+
+        // A pool with exactly gap_limit available addresses needs no more.
+        let mut pool = AddressPool::new(
+            base_path,
+            AddressPoolType::External,
+            gap_limit,
+            Network::Testnet,
+            &key_source,
+        )
+        .unwrap();
+        assert!(!pool.needs_more_addresses());
+
+        // Reserving one drops available headroom below the gap limit, so the
+        // pool now reports it needs more even though nothing was used.
+        pool.next_unused_and_reserve(&key_source, 100).unwrap();
+        assert!(pool.needs_more_addresses());
     }
 
     #[test]

@@ -54,15 +54,20 @@ fn test_next_unused_multiple() {
     pool.mark_used(&addresses[0]);
     pool.mark_used(&addresses[2]);
 
-    // Request more addresses - should get 3 unused + 2 new
+    // Reserve the first remaining unused address: it must be skipped too.
+    let reserved = pool.next_unused_and_reserve(&key_source, 100).unwrap();
+    assert_eq!(reserved, addresses[1]);
+
+    // Request more addresses: should skip used and reserved, returning the
+    // remaining generated ones plus freshly derived ones to satisfy the count.
     let more_addresses = pool.next_unused_multiple(5, &key_source, true);
     assert_eq!(more_addresses.len(), 5);
-    assert_eq!(more_addresses[0], addresses[1]); // First unused
-    assert_eq!(more_addresses[1], addresses[3]); // Second unused
-    assert_eq!(more_addresses[2], addresses[4]); // Third unused
-                                                 // more_addresses[3] and [4] should be newly generated
+    assert!(!more_addresses.contains(&reserved));
+    assert_eq!(more_addresses[0], addresses[3]); // First available
+    assert_eq!(more_addresses[1], addresses[4]); // Second available
+                                                 // remaining entries are newly generated
 
-    assert_eq!(pool.highest_generated, Some(6)); // Generated 2 more
+    assert_eq!(pool.highest_generated, Some(7)); // Generated 3 more
 }
 
 #[test]
@@ -84,18 +89,23 @@ fn test_next_unused_multiple_with_info() {
     for (i, (addr, info)) in address_infos.iter().enumerate() {
         assert_eq!(addr, &info.address);
         assert_eq!(info.index, i as u32);
-        assert!(!info.used);
+        assert!(!info.is_used());
         assert!(info.public_key.is_some());
     }
 
     // Mark first one as used
     pool.mark_used(&address_infos[0].0);
 
-    // Get more with info - should skip the used one
+    // Reserve the second one: it must be skipped alongside the used one.
+    let reserved = pool.next_unused_and_reserve(&key_source, 100).unwrap();
+    assert_eq!(reserved, address_infos[1].0);
+
+    // Get more with info: should skip both the used and the reserved address,
+    // still returning the requested count by deriving fresh addresses.
     let more_infos = pool.next_unused_multiple_with_info(3, &key_source, true);
     assert_eq!(more_infos.len(), 3);
-    assert_eq!(more_infos[0].0, address_infos[1].0); // Should skip the first (used) one
-    assert_eq!(more_infos[1].0, address_infos[2].0);
+    assert!(!more_infos.iter().any(|(addr, _)| addr == &reserved));
+    assert_eq!(more_infos[0].0, address_infos[2].0); // First available after used + reserved
 }
 
 #[test]

@@ -7,6 +7,7 @@ use tokio_util::sync::CancellationToken;
 
 use super::event_handler::{
     spawn_broadcast_monitor, spawn_chainlock_wallet_dispatch, spawn_progress_monitor,
+    spawn_reservation_sweep,
 };
 use super::DashSpvClient;
 use crate::error::Result;
@@ -103,6 +104,14 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
             return Err(e);
         }
 
+        // Spawn the reservation sweep only after startup succeeds: it mutates
+        // wallet state, so a slow or failing `start()` must not let it reclaim
+        // reservations while `run()` is still on its way to returning an error.
+        let reservation_sweep_task =
+            self.config.read().await.reservation_sweep_ttl_secs.map(|ttl| {
+                spawn_reservation_sweep(self.wallet.clone(), ttl, monitor_shutdown.clone())
+            });
+
         // `start()` flipped the state to `true`. Consume that edge so `changed()`
         // only fires on the subsequent transition to `false` (the stop request).
         // If a `stop()` already raced in, this reads `false` and the loop's first
@@ -150,6 +159,9 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
             wallet_task,
             progress_task
         );
+        if let Some(task) = reservation_sweep_task {
+            let _ = task.await;
+        }
 
         if let Some(ref e) = error {
             for handler in handlers.iter() {
