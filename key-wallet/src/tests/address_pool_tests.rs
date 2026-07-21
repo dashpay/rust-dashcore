@@ -187,3 +187,45 @@ fn test_next_unused_multiple_mixed_usage() {
     assert!(!initial.contains(&next_batch[6]));
     assert!(!initial.contains(&next_batch[7]));
 }
+
+/// `prune_unused` must drop a pruned address from BOTH reverse indexes it
+/// maintains — `address_index` and `script_pubkey_index`. A leftover
+/// `script_pubkey_index` entry would let a pruned (unwatched) script still
+/// resolve to an index and be treated as wallet-relevant. Regression guard for
+/// the missing `script_pubkey_index.remove` in `prune_unused`
+/// (dashpay/rust-dashcore#649 companion fix).
+#[test]
+fn prune_unused_clears_script_pubkey_index() {
+    let base_path = DerivationPath::from(vec![ChildNumber::from_normal_idx(0).unwrap()]);
+    let gap_limit = 20u32;
+    let mut pool = AddressPool::new_without_generation(
+        base_path,
+        AddressPoolType::External,
+        gap_limit,
+        Network::Testnet,
+    );
+    let (key_source, _) = test_key_source();
+
+    // Generate well beyond the gap limit; none are marked used, so with
+    // `highest_used == None` everything above `gap_limit - 1` is prunable.
+    pool.generate_addresses(gap_limit + 10, &key_source, true).unwrap();
+
+    // Pick an index that will be pruned and capture its address + script.
+    let victim_index = gap_limit + 5;
+    let victim = pool.addresses.get(&victim_index).expect("victim address generated").clone();
+    assert_eq!(pool.address_index.get(&victim.address), Some(&victim_index));
+    assert_eq!(pool.script_pubkey_index.get(&victim.script_pubkey), Some(&victim_index));
+
+    let pruned = pool.prune_unused();
+    assert!(pruned > 0, "addresses beyond the gap limit should be pruned");
+
+    assert!(!pool.addresses.contains_key(&victim_index), "pruned address removed from pool");
+    assert!(
+        !pool.address_index.contains_key(&victim.address),
+        "pruned address removed from address_index"
+    );
+    assert!(
+        !pool.script_pubkey_index.contains_key(&victim.script_pubkey),
+        "pruned address must also be removed from script_pubkey_index"
+    );
+}
