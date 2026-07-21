@@ -85,6 +85,29 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
         Ok(client)
     }
 
+    /// Lowest height the chain needs to cover, or `None` when nothing constrains it and sync
+    /// should start from genesis.
+    ///
+    /// An explicit `start_from_height` always wins. Otherwise fall back to the wallet birth
+    /// height so we don't sync headers and filter headers from genesis when the wallet only
+    /// cares about recent blocks. The wallet-derived height is floored at the network minimum:
+    /// no HD/BIP39 wallet can predate mainnet's activation height, so a low or zero birth
+    /// height must never drag mainnet sync below it.
+    ///
+    /// Both the anchoring in `build_managers` and the `resync_needed` check derive their height
+    /// here, so the height the chain is anchored from and the height it is judged against can
+    /// never disagree.
+    async fn effective_start_height(config: &ClientConfig, wallet: &Arc<RwLock<W>>) -> Option<u32> {
+        match config.start_from_height {
+            Some(height) => Some(height),
+            None => {
+                let birth_height = wallet.read().await.earliest_required_height().await;
+                let start = birth_height.max(config.network.hd_wallet_sync_floor());
+                (start > 0).then_some(start)
+            }
+        }
+    }
+
     /// Resolve the anchor height, initialize the genesis or checkpoint header in storage,
     /// and construct every sync manager against storage.
     ///
@@ -105,19 +128,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
             W,
         >,
     > {
-        // An explicit `start_from_height` always wins. Otherwise fall back to the wallet
-        // birth height so we don't sync headers and filter headers from genesis when the
-        // wallet only cares about recent blocks. The wallet-derived height is floored at
-        // the network minimum: no HD/BIP39 wallet can predate mainnet's activation height,
-        // so a low or zero birth height must never drag mainnet sync below it.
-        let start_from_height = match config.start_from_height {
-            Some(height) => Some(height),
-            None => {
-                let birth_height = wallet.read().await.earliest_required_height().await;
-                let start = birth_height.max(config.network.hd_wallet_sync_floor());
-                (start > 0).then_some(start)
-            }
-        };
+        let start_from_height = Self::effective_start_height(config, wallet).await;
 
         // Initialize genesis block or checkpoint before creating managers,
         // so they can read the tip from storage during construction.
@@ -199,15 +210,24 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
         Ok(managers)
     }
 
-    /// Whether the current wallet set needs a resync: some wallet's birth height is below
-    /// the anchored header start, so its earlier history cannot be scanned without
-    /// re-anchoring lower. Returns false when nothing is anchored yet or every wallet is
-    /// already within the synced range.
+    /// Whether the current wallet set needs a resync: the height the chain would now be
+    /// anchored from is below the anchored header start, so the earlier history cannot be
+    /// scanned without re-anchoring lower. Returns false when nothing is anchored yet or the
+    /// stored chain already reaches far enough back.
+    ///
+    /// The required height comes from [`Self::effective_start_height`], the same source
+    /// `build_managers` anchors from, so a `force_resync` always clears the condition instead
+    /// of leaving it permanently true. Comparing the raw wallet birth height here instead
+    /// would make a mainnet wallet born below the HD activation floor report a resync that
+    /// re-anchoring can never satisfy, wiping and refetching the chain on every check.
     pub async fn resync_needed(&self) -> bool {
-        let required = self.wallet.read().await.earliest_required_height().await;
-        if required == 0 {
-            return false;
-        }
+        let required = {
+            let config = self.config.read().await;
+            match Self::effective_start_height(&config, &self.wallet).await {
+                Some(required) => required,
+                None => return false,
+            }
+        };
 
         match self.storage.lock().await.get_start_height().await {
             Some(header_start) => required < header_start,
