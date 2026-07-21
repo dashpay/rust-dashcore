@@ -151,41 +151,45 @@ mod tests {
 
     #[tokio::test]
     async fn force_resync_reanchors_to_lower_birth_wallet() {
-        // A client whose only wallet is born at 120_000 anchors at the 100_000 checkpoint.
-        let (client, wallet, _temp_dir) = build_test_client(120_000, None).await;
+        // A client whose only wallet is born at 620_000 anchors at the 600_000 checkpoint.
+        // Both wallets here sit well above mainnet's HD/BIP39 sync floor, so the anchor is
+        // genuinely wallet-derived rather than clamped to the floor.
+        let (client, wallet, _temp_dir) = build_test_client(620_000, None).await;
 
-        assert_eq!(client.tip_height().await, 100_000);
+        assert_eq!(client.tip_height().await, 600_000);
         assert!(!client.resync_needed().await);
 
         // Add a wallet born below the current anchor. Nothing re-anchors on its own, so the
-        // stored chain still starts at 100_000 and a resync is now required.
+        // stored chain still starts at 600_000 and a resync is now required.
         wallet
             .write()
             .await
             .create_wallet_from_mnemonic(
                 SECOND_MNEMONIC,
-                60_000,
+                520_000,
                 WalletAccountCreationOptions::Default,
             )
             .expect("second wallet creation must succeed");
         assert!(client.resync_needed().await);
-        assert_eq!(client.tip_height().await, 100_000);
+        assert_eq!(client.tip_height().await, 600_000);
 
-        // Forcing a resync wipes the old anchor and re-anchors at the 50_000 checkpoint, the
+        // Forcing a resync wipes the old anchor and re-anchors at the 500_000 checkpoint, the
         // nearest at or below the new minimum birth height.
         client.force_resync().await.expect("force resync must succeed");
-        assert_eq!(client.tip_height().await, 50_000);
+        assert_eq!(client.tip_height().await, 500_000);
         assert!(!client.resync_needed().await);
     }
 
     #[tokio::test]
     async fn resync_if_needed_runs_only_when_needed() {
-        // Only wallet born at 120_000, anchored at 100_000: no resync is needed, so
-        // `resync_if_needed` is a no-op that reports it did nothing and leaves the anchor.
-        let (client, wallet, _temp_dir) = build_test_client(120_000, None).await;
-        assert_eq!(client.tip_height().await, 100_000);
+        // Only wallet born at 620_000, anchored at the 600_000 checkpoint: no resync is
+        // needed, so `resync_if_needed` is a no-op that reports it did nothing and leaves the
+        // anchor. Both birth heights used here are above mainnet's HD/BIP39 sync floor, so the
+        // anchor tracks the wallets rather than the floor.
+        let (client, wallet, _temp_dir) = build_test_client(620_000, None).await;
+        assert_eq!(client.tip_height().await, 600_000);
         assert!(!client.resync_if_needed().await.expect("resync_if_needed must succeed"));
-        assert_eq!(client.tip_height().await, 100_000);
+        assert_eq!(client.tip_height().await, 600_000);
 
         // A wallet added below the anchor makes a resync necessary, so now it re-anchors and
         // reports that it ran.
@@ -194,16 +198,26 @@ mod tests {
             .await
             .create_wallet_from_mnemonic(
                 SECOND_MNEMONIC,
-                60_000,
+                520_000,
                 WalletAccountCreationOptions::Default,
             )
             .expect("second wallet creation must succeed");
         assert!(client.resync_if_needed().await.expect("resync_if_needed must succeed"));
-        assert_eq!(client.tip_height().await, 50_000);
+        assert_eq!(client.tip_height().await, 500_000);
 
         // Once re-anchored the condition is cleared, so a second call is again a no-op.
         assert!(!client.resync_if_needed().await.expect("resync_if_needed must succeed"));
-        assert_eq!(client.tip_height().await, 50_000);
+        assert_eq!(client.tip_height().await, 500_000);
+
+        // A wallet born below mainnet's HD/BIP39 sync floor anchors at the floor's checkpoint,
+        // which sits above its birth height. Re-anchoring could never reach that birth height,
+        // so the resync condition must read as false rather than wiping and refetching the
+        // whole chain on every call.
+        let (floored, _wallet, _temp_dir) = build_test_client(60_000, None).await;
+        assert_eq!(floored.tip_height().await, 200_000);
+        assert!(!floored.resync_needed().await);
+        assert!(!floored.resync_if_needed().await.expect("resync_if_needed must succeed"));
+        assert_eq!(floored.tip_height().await, 200_000);
     }
 
     #[tokio::test]
@@ -220,7 +234,7 @@ mod tests {
 
         let count = Arc::new(AtomicUsize::new(0));
         let (client, wallet, _temp_dir) = build_test_client_with_handlers(
-            120_000,
+            620_000,
             None,
             vec![Arc::new(ResyncRecorder {
                 count: count.clone(),
@@ -243,13 +257,15 @@ mod tests {
         assert_eq!(count.load(Ordering::SeqCst), 0);
 
         // Add a wallet below the anchor: the next periodic check must see the rising edge and
-        // fire the notification exactly once.
+        // fire the notification exactly once. 520_000 is still above mainnet's HD/BIP39 sync
+        // floor, so it lands below the 600_000 anchor on its own merit rather than being
+        // clamped up to the floor.
         wallet
             .write()
             .await
             .create_wallet_from_mnemonic(
                 SECOND_MNEMONIC,
-                60_000,
+                520_000,
                 WalletAccountCreationOptions::Default,
             )
             .expect("second wallet creation must succeed");
