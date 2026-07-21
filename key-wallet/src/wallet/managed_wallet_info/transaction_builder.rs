@@ -130,9 +130,9 @@ impl Reservations {
             Reservations::Single(set) => set.release(reserved.iter()),
             Reservations::Multi(ledgers) => {
                 for ledger in ledgers {
-                    ledger.set.release(reserved.iter().filter(|outpoint| {
-                        ledger.owned.contains(*outpoint)
-                    }));
+                    ledger.set.release(
+                        reserved.iter().filter(|outpoint| ledger.owned.contains(*outpoint)),
+                    );
                 }
             }
         }
@@ -1368,5 +1368,283 @@ mod tests {
         // stranding them until the TTL backstop reclaims them.
         funds.release_reservation(&tx);
         assert!(funds.reservations().reserved(200).is_empty());
+    }
+
+    // -- Multi-account funding (`set_funding_multi`) --
+
+    /// A union spend that draws an input from every one of three accounts must
+    /// reserve each input in the ledger of the account that *owns* it — never
+    /// pooled into the primary account's set. This is the core fix: a later
+    /// build issued through any owning account then observes its own coin as
+    /// taken and skips it.
+    #[test]
+    fn set_funding_multi_reserves_each_input_in_its_owning_account() {
+        let ctx = TestWalletContext::new_random();
+        let account =
+            ctx.wallet.accounts.standard_bip44_accounts.get(&0).expect("BIP44 account").clone();
+
+        let mut primary = ManagedCoreFundsAccount::dummy_bip44();
+        let up = Utxo::dummy(0x01, 1_000_000, 100, false, true);
+        primary.utxos.insert(up.outpoint, up.clone());
+
+        let mut second = ManagedCoreFundsAccount::dummy_bip44();
+        let us = Utxo::dummy(0x02, 1_000_000, 100, false, true);
+        second.utxos.insert(us.outpoint, us.clone());
+
+        let mut third = ManagedCoreFundsAccount::dummy_bip44();
+        let ut = Utxo::dummy(0x03, 1_000_000, 100, false, true);
+        third.utxos.insert(ut.outpoint, ut.clone());
+
+        let destination = Address::dummy(Network::Testnet, 0);
+        // `All` drains every candidate input across the union, so each account
+        // contributes exactly its own UTXO.
+        let (tx, _) = TransactionBuilder::new()
+            .set_current_height(200)
+            .set_fee_rate(FeeRate::normal())
+            .set_selection_strategy(SelectionStrategy::All)
+            .set_funding_multi((&mut primary, &account), [&mut second, &mut third])
+            .add_output(&destination, 1)
+            .build_unsigned()
+            .expect("union drain builds");
+
+        // Every input was selected and reserved, but each in its own ledger.
+        assert_eq!(tx.input.len(), 3, "the drain spends all three union inputs");
+        assert_eq!(primary.reservations().reserved(200), HashSet::from([up.outpoint]));
+        assert_eq!(second.reservations().reserved(200), HashSet::from([us.outpoint]));
+        assert_eq!(third.reservations().reserved(200), HashSet::from([ut.outpoint]));
+    }
+
+    /// When coin selection leaves one account's UTXO unused, that account's
+    /// ledger stays clean — only the accounts whose coins were actually
+    /// selected reserve anything. Proves the group filter, not just the
+    /// all-or-nothing drain.
+    #[test]
+    fn set_funding_multi_reserves_only_selected_accounts() {
+        let ctx = TestWalletContext::new_random();
+        let account =
+            ctx.wallet.accounts.standard_bip44_accounts.get(&0).expect("BIP44 account").clone();
+
+        // Two small UTXOs cover the spend; the large third one is never needed.
+        let mut primary = ManagedCoreFundsAccount::dummy_bip44();
+        let up = Utxo::dummy(0x01, 300_000, 100, false, true);
+        primary.utxos.insert(up.outpoint, up.clone());
+
+        let mut second = ManagedCoreFundsAccount::dummy_bip44();
+        let us = Utxo::dummy(0x02, 300_000, 100, false, true);
+        second.utxos.insert(us.outpoint, us.clone());
+
+        let mut third = ManagedCoreFundsAccount::dummy_bip44();
+        let ut = Utxo::dummy(0x03, 900_000, 100, false, true);
+        third.utxos.insert(ut.outpoint, ut.clone());
+
+        let destination = Address::dummy(Network::Testnet, 0);
+        let (tx, _) = TransactionBuilder::new()
+            .set_current_height(200)
+            .set_fee_rate(FeeRate::normal())
+            .set_selection_strategy(SelectionStrategy::SmallestFirst)
+            .set_funding_multi((&mut primary, &account), [&mut second, &mut third])
+            .set_change_address(Address::dummy(Network::Testnet, 1))
+            .add_output(&destination, 500_000)
+            .build_unsigned()
+            .expect("union builds from the two small inputs");
+
+        // The two small inputs were selected; the large one was not.
+        let selected: HashSet<OutPoint> =
+            tx.input.iter().map(|input| input.previous_output).collect();
+        assert!(selected.contains(&up.outpoint));
+        assert!(selected.contains(&us.outpoint));
+        assert!(!selected.contains(&ut.outpoint), "large input should be left unselected");
+
+        assert_eq!(primary.reservations().reserved(200), HashSet::from([up.outpoint]));
+        assert_eq!(second.reservations().reserved(200), HashSet::from([us.outpoint]));
+        assert!(
+            third.reservations().reserved(200).is_empty(),
+            "an account whose coin was not selected must reserve nothing"
+        );
+    }
+
+    /// A union spend that cannot be covered by any account reserves nothing
+    /// anywhere: the selection error is returned before the commit step, so no
+    /// ledger is left dirty.
+    #[test]
+    fn set_funding_multi_insufficient_funds_reserves_nothing() {
+        let ctx = TestWalletContext::new_random();
+        let account =
+            ctx.wallet.accounts.standard_bip44_accounts.get(&0).expect("BIP44 account").clone();
+
+        let mut primary = ManagedCoreFundsAccount::dummy_bip44();
+        let up = Utxo::dummy(0x01, 100_000, 100, false, true);
+        primary.utxos.insert(up.outpoint, up.clone());
+
+        let mut second = ManagedCoreFundsAccount::dummy_bip44();
+        let us = Utxo::dummy(0x02, 100_000, 100, false, true);
+        second.utxos.insert(us.outpoint, us.clone());
+
+        let destination = Address::dummy(Network::Testnet, 0);
+        let result = TransactionBuilder::new()
+            .set_current_height(200)
+            .set_fee_rate(FeeRate::normal())
+            .set_funding_multi((&mut primary, &account), [&mut second])
+            // Far more than the union holds.
+            .set_change_address(Address::dummy(Network::Testnet, 1))
+            .add_output(&destination, 10_000_000)
+            .build_unsigned();
+
+        assert!(result.is_err(), "under-funded union must fail");
+        assert!(primary.reservations().reserved(200).is_empty());
+        assert!(second.reservations().reserved(200).is_empty());
+    }
+
+    /// A signing failure after the union has been reserved must release *every*
+    /// account's group — no owning ledger may be left with a stranded
+    /// reservation.
+    #[tokio::test]
+    async fn build_signed_multi_releases_all_ledgers_on_signing_failure() {
+        let ctx = TestWalletContext::new_random();
+        let account =
+            ctx.wallet.accounts.standard_bip44_accounts.get(&0).expect("BIP44 account").clone();
+
+        let mut primary = ManagedCoreFundsAccount::dummy_bip44();
+        let up = Utxo::dummy(0x01, 1_000_000, 100, false, true);
+        primary.utxos.insert(up.outpoint, up.clone());
+
+        let mut second = ManagedCoreFundsAccount::dummy_bip44();
+        let us = Utxo::dummy(0x02, 1_000_000, 100, false, true);
+        second.utxos.insert(us.outpoint, us.clone());
+
+        let destination = Address::dummy(Network::Testnet, 0);
+        let builder = TransactionBuilder::new()
+            .set_current_height(200)
+            .set_fee_rate(FeeRate::normal())
+            .set_selection_strategy(SelectionStrategy::All)
+            .set_funding_multi((&mut primary, &account), [&mut second])
+            .add_output(&destination, 1);
+
+        // A resolver that never resolves a path forces signing to fail *after*
+        // both accounts' inputs have been reserved by assembly.
+        let result = builder.build_signed(&ctx.wallet, |_addr| None).await;
+        assert!(result.is_err());
+
+        // Every ledger rolled back — both accounts are clean.
+        assert!(primary.reservations().reserved(200).is_empty());
+        assert!(second.reservations().reserved(200).is_empty());
+    }
+
+    /// The per-account TTL backstop and the per-account
+    /// [`release_reservation`](ManagedCoreFundsAccount::release_reservation)
+    /// both act on the owning ledger with no multi-account machinery: releasing
+    /// through one account clears only that account's group, and the TTL sweep
+    /// reclaims each account independently.
+    #[test]
+    fn set_funding_multi_release_and_ttl_are_per_account() {
+        use crate::managed_account::reservation::RESERVATION_TTL_BLOCKS;
+
+        let ctx = TestWalletContext::new_random();
+        let account =
+            ctx.wallet.accounts.standard_bip44_accounts.get(&0).expect("BIP44 account").clone();
+
+        let mut primary = ManagedCoreFundsAccount::dummy_bip44();
+        let up = Utxo::dummy(0x01, 1_000_000, 100, false, true);
+        primary.utxos.insert(up.outpoint, up.clone());
+
+        let mut second = ManagedCoreFundsAccount::dummy_bip44();
+        let us = Utxo::dummy(0x02, 1_000_000, 100, false, true);
+        second.utxos.insert(us.outpoint, us.clone());
+
+        let destination = Address::dummy(Network::Testnet, 0);
+        let (tx, _) = TransactionBuilder::new()
+            .set_current_height(200)
+            .set_fee_rate(FeeRate::normal())
+            .set_selection_strategy(SelectionStrategy::All)
+            .set_funding_multi((&mut primary, &account), [&mut second])
+            .add_output(&destination, 1)
+            .build_unsigned()
+            .expect("union drain builds");
+        assert_eq!(tx.input.len(), 2);
+
+        // Releasing through the primary clears only the primary's group; the
+        // second account's reservation is untouched (release is keyed on the
+        // outpoints the ledger actually holds).
+        primary.release_reservation(&tx);
+        assert!(primary.reservations().reserved(200).is_empty());
+        assert_eq!(second.reservations().reserved(200), HashSet::from([us.outpoint]));
+
+        // The second account's reservation is still reclaimed by its own TTL
+        // backstop once enough blocks elapse — no shared sweep needed.
+        assert!(second.reservations().reserved(200 + RESERVATION_TTL_BLOCKS).is_empty());
+    }
+
+    /// Two builds racing over the same union under the shared lock (the
+    /// wallet-manager lock the platform layer relies on) must never both select
+    /// the same coin: the first build's reservation is visible to the second,
+    /// which then has nothing left to fund itself with. Exercises the crate's
+    /// `Arc<Mutex>` + `thread::spawn` concurrency idiom.
+    #[test]
+    fn concurrent_multi_build_cannot_double_select() {
+        use std::collections::HashSet as StdHashSet;
+        use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
+        use std::sync::{Arc, Mutex};
+        use std::thread;
+
+        let ctx = TestWalletContext::new_random();
+        let account =
+            ctx.wallet.accounts.standard_bip44_accounts.get(&0).expect("BIP44 account").clone();
+
+        let mut primary = ManagedCoreFundsAccount::dummy_bip44();
+        let up = Utxo::dummy(0x0A, 600_000, 100, false, true);
+        primary.utxos.insert(up.outpoint, up.clone());
+
+        let mut second = ManagedCoreFundsAccount::dummy_bip44();
+        let us = Utxo::dummy(0x0B, 600_000, 100, false, true);
+        second.utxos.insert(us.outpoint, us.clone());
+
+        // The lock that serializes the two builds stands in for the
+        // wallet-manager write lock.
+        let accounts = Arc::new(Mutex::new((primary, second)));
+        let account = Arc::new(account);
+        let successes = Arc::new(AtomicUsize::new(0));
+        let all_selected = Arc::new(Mutex::new(Vec::<OutPoint>::new()));
+
+        let mut handles = Vec::new();
+        for _ in 0..2 {
+            let accounts = Arc::clone(&accounts);
+            let account = Arc::clone(&account);
+            let successes = Arc::clone(&successes);
+            let all_selected = Arc::clone(&all_selected);
+            handles.push(thread::spawn(move || {
+                let mut guard = accounts.lock().expect("accounts lock");
+                let (primary, second) = &mut *guard;
+                let destination = Address::dummy(Network::Testnet, 0);
+                // Needs both 600k inputs to cover 1_000_000 + fee.
+                let result = TransactionBuilder::new()
+                    .set_current_height(200)
+                    .set_fee_rate(FeeRate::normal())
+                    .set_selection_strategy(SelectionStrategy::SmallestFirst)
+                    .set_funding_multi((primary, &account), [second])
+                    .set_change_address(Address::dummy(Network::Testnet, 1))
+                    .add_output(&destination, 1_000_000)
+                    .build_unsigned();
+                if let Ok((tx, _)) = result {
+                    successes.fetch_add(1, AtomicOrdering::SeqCst);
+                    let mut selected = all_selected.lock().expect("selected lock");
+                    selected.extend(tx.input.iter().map(|input| input.previous_output));
+                }
+            }));
+        }
+        for handle in handles {
+            handle.join().expect("thread join");
+        }
+
+        // Exactly one build could fund itself; the other observed the first's
+        // reservations and had no free inputs left.
+        assert_eq!(
+            successes.load(AtomicOrdering::SeqCst),
+            1,
+            "both builds funded themselves — the reservation window leaked"
+        );
+        // No outpoint was selected by both builds.
+        let selected = all_selected.lock().expect("selected lock");
+        let unique: StdHashSet<&OutPoint> = selected.iter().collect();
+        assert_eq!(unique.len(), selected.len(), "an outpoint was double-selected");
     }
 }

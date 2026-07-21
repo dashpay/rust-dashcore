@@ -29,7 +29,7 @@ use dashcore::blockdata::transaction::OutPoint;
 /// selection-to-processing latency (seconds): reclaiming a still-in-flight
 /// reservation too early would let coin selection re-pick the input and rebuild
 /// the very double-spend this guards against.
-const RESERVATION_TTL_BLOCKS: u32 = 24;
+pub(crate) const RESERVATION_TTL_BLOCKS: u32 = 24;
 
 /// Ephemeral, in-memory set of reserved outpoints. Cloning shares the
 /// underlying state, which is what lets a build's reservation outlive the
