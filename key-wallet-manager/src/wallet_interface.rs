@@ -137,6 +137,17 @@ pub trait WalletInterface: Send + Sync + 'static {
     /// Return the per-wallet committed sync checkpoint, or `0` if unknown.
     fn wallet_synced_height(&self, wallet_id: &WalletId) -> CoreBlockHeight;
 
+    /// Return the generation of one wallet's account set — a counter bumped
+    /// whenever an account is added to that wallet (`0` if unknown). Filter
+    /// sync snapshots this per wallet when scanning a range and refuses to
+    /// advance `wallet_synced_height` at commit time if it changed in between:
+    /// the scan did not test the added account's scripts, so it cannot certify
+    /// coverage for the current account set (dashpay/rust-dashcore#649). The
+    /// default (constant `0`) opts an implementation out of the check.
+    fn wallet_account_generation(&self, _wallet_id: &WalletId) -> u64 {
+        0
+    }
+
     /// Advance one wallet's committed sync checkpoint. Implementations must
     /// only advance forward (a value below the current is silently ignored).
     fn update_wallet_synced_height(&mut self, wallet_id: &WalletId, height: CoreBlockHeight);

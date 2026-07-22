@@ -91,10 +91,17 @@ impl WalletTransactionChecker for ManagedWalletInfo {
             // (#649: the funding-first mirror of the out-of-order ordering,
             // including a spend whose classification excludes the owning
             // account's type).
-            if block_height.is_some() && self.remove_spent_from_accounts(tx) {
-                result.state_modified = true;
-                if update_balance {
-                    self.update_balance();
+            if block_height.is_some() {
+                let (removed, rewritten_records) = self.remove_spent_from_accounts(tx);
+                // Surface every compensated funding record even though this tx
+                // itself is not relevant: downstream consumers persist
+                // per-record updates and must see the rewrite.
+                result.updated_records.extend(rewritten_records);
+                if removed {
+                    result.state_modified = true;
+                    if update_balance {
+                        self.update_balance();
+                    }
                 }
             }
             return result;
@@ -159,7 +166,7 @@ impl WalletTransactionChecker for ManagedWalletInfo {
                             result.updated_records.push(record.clone());
                         }
                     } else {
-                        let record = account.record_transaction(
+                        let record = account.record_transaction_with_observed_spends(
                             tx,
                             &account_match,
                             context.clone(),
@@ -191,7 +198,7 @@ impl WalletTransactionChecker for ManagedWalletInfo {
             };
 
             if is_new {
-                let record = account.record_transaction(
+                let record = account.record_transaction_with_observed_spends(
                     tx,
                     &account_match,
                     context.clone(),
@@ -202,7 +209,7 @@ impl WalletTransactionChecker for ManagedWalletInfo {
                 result.state_modified = true;
             } else {
                 let existed_before = account.has_transaction(&tx.txid());
-                if let Some(record) = account.confirm_transaction(
+                if let Some(record) = account.confirm_transaction_with_observed_spends(
                     tx,
                     &account_match,
                     context.clone(),
@@ -259,9 +266,14 @@ impl WalletTransactionChecker for ManagedWalletInfo {
         // #649 funding-first ordering: drop any coin this tx spends that the
         // matched-account path missed (spend routed to another account type).
         // Block-context only; idempotent. Spend-first is handled at insert time.
-        let spent_removed = block_height.is_some() && self.remove_spent_from_accounts(tx);
-        if spent_removed {
-            result.state_modified = true;
+        if block_height.is_some() {
+            let (removed, rewritten_records) = self.remove_spent_from_accounts(tx);
+            // Compensated funding records live in accounts the matched path
+            // did not touch; surface their rewrite to downstream consumers.
+            result.updated_records.extend(rewritten_records);
+            if removed {
+                result.state_modified = true;
+            }
         }
 
         if is_new {

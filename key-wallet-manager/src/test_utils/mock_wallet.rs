@@ -380,6 +380,9 @@ pub struct MockWalletState {
     pub addresses: Vec<Address>,
     pub synced_height: CoreBlockHeight,
     pub last_processed_height: CoreBlockHeight,
+    /// Mirrors `ManagedWalletInfo::account_generation`: bumped by tests to
+    /// simulate an account being added to this wallet mid-flight.
+    pub account_generation: u64,
 }
 
 /// Multi-wallet mock that holds independent state for several wallet IDs,
@@ -490,6 +493,10 @@ impl WalletInterface for MultiMockWallet {
 
     fn wallet_synced_height(&self, wallet_id: &WalletId) -> CoreBlockHeight {
         self.wallets.get(wallet_id).map(|s| s.synced_height).unwrap_or(0)
+    }
+
+    fn wallet_account_generation(&self, wallet_id: &WalletId) -> u64 {
+        self.wallets.get(wallet_id).map(|s| s.account_generation).unwrap_or(0)
     }
 
     fn update_wallet_synced_height(&mut self, wallet_id: &WalletId, height: CoreBlockHeight) {
