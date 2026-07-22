@@ -162,8 +162,11 @@ async fn funding_first_guard_removes_held_coin_and_compensates_record() {
     // the coin un-gated by classification.
     let spend = spending_tx(&[funded]);
     ctx.managed_wallet.record_observed_spends(&spend, 200);
-    let removed = ctx.managed_wallet.remove_spent_from_accounts(&spend);
+    let (removed, rewritten) = ctx.managed_wallet.remove_spent_from_accounts(&spend);
     assert!(removed, "guard must remove the live coin the matched path missed");
+    assert_eq!(rewritten.len(), 1, "the compensated funding record is surfaced for consumers");
+    assert_eq!(rewritten[0].txid, funding_tx.txid());
+    assert_eq!(rewritten[0].net_amount, 0, "the surfaced clone is the post-compensation record");
 
     let account = ctx.managed_wallet.first_bip44_managed_account().unwrap();
     assert!(!account.utxos.contains_key(&funded), "coin dropped from the funding account");
@@ -177,13 +180,13 @@ async fn funding_first_guard_removes_held_coin_and_compensates_record() {
 
     // Idempotent: the coin is already gone, so a second call removes nothing.
     assert!(
-        !ctx.managed_wallet.remove_spent_from_accounts(&spend),
+        !ctx.managed_wallet.remove_spent_from_accounts(&spend).0,
         "second call has nothing left to remove"
     );
     // A coinbase's single input is the null prevout and spends nothing real.
     let coinbase = Transaction::dummy_coinbase(&ctx.receive_address, 5_000_000_000);
     assert!(
-        !ctx.managed_wallet.remove_spent_from_accounts(&coinbase),
+        !ctx.managed_wallet.remove_spent_from_accounts(&coinbase).0,
         "coinbase is skipped by the guard"
     );
 }
@@ -202,7 +205,7 @@ async fn wallet_level_set_outlives_account_local_reload() {
 
     // Observe + drop the coin via the funding-first guard.
     ctx.managed_wallet.record_observed_spends(&spend, 200);
-    assert!(ctx.managed_wallet.remove_spent_from_accounts(&spend));
+    assert!(ctx.managed_wallet.remove_spent_from_accounts(&spend).0);
 
     // Simulate a save/reload: the account-local derived set is rebuilt from
     // recorded transactions only. The spend was never recorded as one of our
@@ -234,6 +237,7 @@ fn adding_account_from_xpub_rewinds_sync_checkpoint() {
     let mut ctx = TestWalletContext::new_random();
     ctx.managed_wallet.metadata.birth_height = 1_000;
     ctx.managed_wallet.metadata.synced_height = 5_000;
+    let generation_before = ctx.managed_wallet.account_generation();
 
     ctx.managed_wallet
         .add_managed_account_from_xpub(
@@ -247,6 +251,11 @@ fn adding_account_from_xpub_rewinds_sync_checkpoint() {
     assert_eq!(
         ctx.managed_wallet.metadata.synced_height, 999,
         "synced_height rewound to birth_height - 1 so the new account is re-scanned from birth"
+    );
+    assert_eq!(
+        ctx.managed_wallet.account_generation(),
+        generation_before + 1,
+        "adding an account bumps the account generation so in-flight scans are invalidated"
     );
 
     // A wallet whose sync checkpoint is already below the birth floor is left
@@ -264,4 +273,43 @@ fn adding_account_from_xpub_rewinds_sync_checkpoint() {
         ctx.managed_wallet.metadata.synced_height, 10,
         "a still-behind sync checkpoint is not advanced by the rewind"
     );
+    assert_eq!(
+        ctx.managed_wallet.account_generation(),
+        generation_before + 2,
+        "the generation bumps even when the checkpoint does not move — this is the only \
+         signal a commit-time check has for a height-invisible account add"
+    );
+}
+
+/// Growing the observed-spent map is itself a state modification
+/// (dashpay/rust-dashcore#649): the map is persisted wallet state, and a
+/// consumer that persists only on reported modifications must not drop a
+/// recorded spend across a restart. An irrelevant block spend therefore
+/// reports `state_modified`, a byte-identical redelivery (map unchanged) does
+/// not, and a mempool spend (never recorded) does not.
+#[tokio::test]
+async fn recording_observed_spend_reports_state_modified() {
+    let mut ctx = TestWalletContext::new_random();
+    let unrelated = OutPoint::new(Txid::from([0x77; 32]), 1);
+    let spend = spending_tx(&[unrelated]);
+    let block =
+        BlockInfo::new(200, BlockHash::from_slice(&[3u8; 32]).expect("hash"), 1_700_000_000);
+
+    let result = ctx.check_transaction(&spend, TransactionContext::InBlock(block)).await;
+    assert!(!result.is_relevant, "the spend touches nothing the wallet owns");
+    assert!(
+        result.state_modified,
+        "recording a new observed spend must surface as a state modification"
+    );
+    assert_eq!(ctx.managed_wallet.observed_spent_outpoints().get(&unrelated), Some(&200));
+
+    // Same tx at the same height: the map entry is already present with the
+    // same value, so nothing changed and nothing must be reported.
+    let result = ctx.check_transaction(&spend, TransactionContext::InBlock(block)).await;
+    assert!(!result.state_modified, "an unchanged map must not report a modification");
+
+    // Mempool spends are never recorded, so they modify nothing either.
+    let mempool_spend = spending_tx(&[OutPoint::new(Txid::from([0x78; 32]), 0)]);
+    let result = ctx.check_transaction(&mempool_spend, TransactionContext::Mempool).await;
+    assert!(!result.state_modified, "a mempool spend records nothing");
 }

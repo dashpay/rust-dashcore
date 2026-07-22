@@ -514,13 +514,19 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletManager<T> {
                             .or_default()
                             .extend(check_result.new_records);
                     }
-                    if !check_result.updated_records.is_empty() {
-                        result
-                            .per_wallet_updated_records
-                            .entry(*wallet_id)
-                            .or_default()
-                            .extend(check_result.updated_records);
-                    }
+                }
+
+                // Updated records are surfaced independent of relevance: the
+                // #649 funding-first guard can rewrite a funding record while
+                // processing a spend the wallet cannot attribute
+                // (`is_relevant == false`), and consumers persisting
+                // per-record updates must still see that rewrite.
+                if !check_result.updated_records.is_empty() {
+                    result
+                        .per_wallet_updated_records
+                        .entry(*wallet_id)
+                        .or_default()
+                        .extend(check_result.updated_records);
                 }
 
                 if !check_result.new_addresses.is_empty() {
