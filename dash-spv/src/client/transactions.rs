@@ -59,6 +59,11 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
     /// — modern Dash Core removed the BIP61 `reject` message — so a refused
     /// transaction surfaces as `Uncertain`.
     ///
+    /// The mempool manager's own `Uncertain` event (emitted at the configured
+    /// acceptance timeout) does not end the wait early: a late echo can still
+    /// upgrade the outcome to `Accepted`, so with a caller timeout longer
+    /// than the configured one the wait continues until the deadline.
+    ///
     /// Requires mempool tracking to be enabled.
     pub async fn broadcast_transaction_and_wait(
         &self,
@@ -84,10 +89,15 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
         let deadline = tokio::time::Instant::now() + wait;
         loop {
             match tokio::time::timeout_at(deadline, events.recv()).await {
+                // An interim `Uncertain` (the manager's acceptance timeout
+                // firing) is not returned early: a late echo can still
+                // upgrade the outcome, so keep waiting until the deadline.
                 Ok(Ok(SyncEvent::TransactionBroadcastResult {
                     txid: event_txid,
                     result,
-                })) if event_txid == txid => return Ok(result),
+                })) if event_txid == txid && !matches!(result, BroadcastResult::Uncertain) => {
+                    return Ok(result)
+                }
                 Ok(Ok(_)) => continue,
                 Ok(Err(RecvError::Lagged(skipped))) => {
                     tracing::warn!(

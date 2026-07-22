@@ -384,7 +384,7 @@ pub unsafe extern "C" fn dash_spv_ffi_config_set_broadcast_acceptance_threshold(
 }
 
 /// Sets the timeout (in seconds) after which a pending broadcast with no
-/// acceptance or rejection signal is reported as uncertain. Must be > 0.
+/// acceptance signal is reported as uncertain. Must be > 0.
 ///
 /// # Safety
 /// - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet

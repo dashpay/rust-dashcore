@@ -280,7 +280,7 @@ dash_spv_ffi_config_set_broadcast_acceptance_timeout_secs(config: *mut FFIClient
 ```
 
 **Description:**
-Sets the timeout (in seconds) after which a pending broadcast with no acceptance or rejection signal is reported as uncertain. Must be > 0.  # Safety - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet - The caller must ensure the config pointer remains valid for the duration of this call
+Sets the timeout (in seconds) after which a pending broadcast with no acceptance signal is reported as uncertain. Must be > 0.  # Safety - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet - The caller must ensure the config pointer remains valid for the duration of this call
 
 **Safety:**
 - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet - The caller must ensure the config pointer remains valid for the duration of this call
