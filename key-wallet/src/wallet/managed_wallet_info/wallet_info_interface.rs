@@ -170,6 +170,16 @@ pub trait WalletInfoInterface: Sized + WalletTransactionChecker + ManagedAccount
     /// Return the durable wallet sync checkpoint height.
     fn synced_height(&self) -> CoreBlockHeight;
 
+    /// Return the current generation of the wallet's account set — a counter
+    /// bumped on every account addition. Filter-sync layers snapshot it at
+    /// scan time and refuse to certify coverage at commit time when it has
+    /// changed, since the scan did not include the added account's scripts
+    /// (dashpay/rust-dashcore#649). The default (constant `0`) opts an
+    /// implementation out of the check.
+    fn account_generation(&self) -> u64 {
+        0
+    }
+
     /// Return the highest chainlock that has been applied to this
     /// wallet, retaining the signing proof. Blocks at or below
     /// `chain_lock.block_height` are considered chainlock-finalized
@@ -287,6 +297,10 @@ impl WalletInfoInterface for ManagedWalletInfo {
 
     fn synced_height(&self) -> CoreBlockHeight {
         self.metadata.synced_height
+    }
+
+    fn account_generation(&self) -> u64 {
+        self.account_generation
     }
 
     fn last_applied_chain_lock(&self) -> Option<&ChainLock> {

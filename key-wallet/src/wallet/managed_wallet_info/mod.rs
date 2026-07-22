@@ -28,7 +28,7 @@ use dashcore::prelude::CoreBlockHeight;
 use dashcore::{Address, Transaction, Txid};
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 
 /// Information about a managed wallet
 ///
@@ -122,6 +122,24 @@ pub struct ManagedWalletInfo {
     /// migration to load pre-field snapshots.
     #[cfg_attr(feature = "serde", serde(default, with = "observed_spent_outpoints_serde"))]
     pub(crate) observed_spent_outpoints: BTreeMap<OutPoint, CoreBlockHeight>,
+    /// Generation counter for the wallet's account set, bumped every time an
+    /// account is added to a live wallet (see
+    /// [`Self::rewind_sync_checkpoint_for_new_account`]).
+    ///
+    /// Filter-sync layers snapshot this when they scan a range for the wallet
+    /// and compare at commit time: a batch scanned under an older generation
+    /// must not certify coverage (`synced_height`) for the current account
+    /// set, because the added account's scripts were not part of the scan
+    /// (dashpay/rust-dashcore#649). A height-only contiguity check cannot
+    /// detect this when the account-add rewind lands inside the batch's range
+    /// — or moves nothing at all because the checkpoint already sat at the
+    /// birth floor.
+    ///
+    /// In-memory only (`serde(skip)`): the snapshots comparing against it are
+    /// in-flight scan state that does not survive a restart either, and a
+    /// fresh process restarts both sides at 0.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub(crate) account_generation: u64,
 }
 
 /// Serde adapter for [`ManagedWalletInfo::observed_spent_outpoints`] that
@@ -226,6 +244,7 @@ impl ManagedWalletInfo {
             balance: WalletCoreBalance::default(),
             instant_send_locks: HashSet::new(),
             observed_spent_outpoints: BTreeMap::new(),
+            account_generation: 0,
         }
     }
 
@@ -241,6 +260,7 @@ impl ManagedWalletInfo {
             balance: WalletCoreBalance::default(),
             instant_send_locks: HashSet::new(),
             observed_spent_outpoints: BTreeMap::new(),
+            account_generation: 0,
         }
     }
 
@@ -266,6 +286,7 @@ impl ManagedWalletInfo {
             balance: WalletCoreBalance::default(),
             instant_send_locks: HashSet::new(),
             observed_spent_outpoints: BTreeMap::new(),
+            account_generation: 0,
         }
     }
 
@@ -375,12 +396,32 @@ impl ManagedWalletInfo {
     fn rewind_sync_checkpoint_for_new_account(&mut self) {
         let floor = self.metadata.birth_height.saturating_sub(1);
         self.metadata.synced_height = self.metadata.synced_height.min(floor);
+        // Bump unconditionally — even when the checkpoint was already at or
+        // below the floor and did not move. An in-flight filter scan snapshot
+        // taken before this add did not include the new account's scripts, and
+        // the generation mismatch is the only signal a commit-time check has
+        // when the rewind is height-invisible (dashpay/rust-dashcore#649).
+        self.account_generation += 1;
+    }
+
+    /// Current generation of the wallet's account set; see the
+    /// [`Self::account_generation`] field doc. Bumped on every account add.
+    pub fn account_generation(&self) -> u64 {
+        self.account_generation
     }
 
     /// Drop any live UTXO consumed by `tx`'s inputs from whichever funding
     /// account currently holds it, scanning ALL funding accounts independently
     /// of the spending transaction's classification (dashpay/rust-dashcore#649).
-    /// Returns whether any UTXO was removed.
+    ///
+    /// Returns whether any UTXO was removed, plus a post-compensation clone of
+    /// every funding record the removal rewrote (deduplicated per funding
+    /// txid). Callers must surface those clones as updated records — the
+    /// mutation happens outside the matched-account path, so without this a
+    /// downstream consumer persisting per-record updates would retain the
+    /// pre-compensation record while the in-memory one has changed. `removed`
+    /// can be `true` with no records when every rewritten funding record was
+    /// already pruned/finalized.
     ///
     /// This is the un-gated counterpart to the normal spend path in
     /// `update_utxos`: it covers spends the wallet cannot attribute to the
@@ -392,11 +433,16 @@ impl ManagedWalletInfo {
     /// This is the funding-first ordering: the funding record is already
     /// live, so its history is recomputed in place — see
     /// [`Self::finalize_guard_removed_utxo`].
-    pub(crate) fn remove_spent_from_accounts(&mut self, tx: &Transaction) -> bool {
+    pub(crate) fn remove_spent_from_accounts(
+        &mut self,
+        tx: &Transaction,
+    ) -> (bool, Vec<TransactionRecord>) {
         if tx.is_coin_base() {
-            return false;
+            return (false, Vec::new());
         }
         let mut removed = false;
+        let mut updated_records: Vec<TransactionRecord> = Vec::new();
+        let mut updated_txids: BTreeSet<Txid> = BTreeSet::new();
         // Fetch the account handles once, not once per input.
         let mut accounts = self.accounts.all_funding_accounts_mut();
         for input in &tx.input {
@@ -405,17 +451,30 @@ impl ManagedWalletInfo {
                 let account: &mut ManagedCoreFundsAccount = account;
                 if let Some(utxo) = account.utxos.remove(&outpoint) {
                     account.bump_monitor_revision();
-                    Self::finalize_guard_removed_utxo(
+                    let rewritten = Self::finalize_guard_removed_utxo(
                         account,
                         &utxo,
                         &self.observed_spent_outpoints,
                     );
+                    if let Some(record) = rewritten {
+                        // One clone per funding tx even when several of its
+                        // outputs are spent by this tx: the record is
+                        // compensated cumulatively, so the last clone taken
+                        // for a txid is always the freshest.
+                        if updated_txids.insert(record.txid) {
+                            updated_records.push(record);
+                        } else if let Some(slot) =
+                            updated_records.iter_mut().find(|r| r.txid == record.txid)
+                        {
+                            *slot = record;
+                        }
+                    }
                     removed = true;
                     break;
                 }
             }
         }
-        removed
+        (removed, updated_records)
     }
 
     /// Finalize the account-local bookkeeping for a UTXO the #649 guard
@@ -432,18 +491,22 @@ impl ManagedWalletInfo {
     ///    fresh sighting with no coin left to reconcile against, reopening
     ///    the divergence. This step is skipped when the record is absent
     ///    (pruned/finalized); steps 1 and 2 still run.
+    ///
+    /// Returns a post-compensation clone of the funding record when step 3
+    /// ran, so the caller can surface the rewrite as an updated record.
     fn finalize_guard_removed_utxo(
         account: &mut ManagedCoreFundsAccount,
         removed: &Utxo,
         observed_spent: &BTreeMap<OutPoint, CoreBlockHeight>,
-    ) {
+    ) -> Option<TransactionRecord> {
         account.mark_outpoint_spent(removed.outpoint);
         account.release_reservation_for(&removed.outpoint);
 
         let funding_txid = removed.outpoint.txid;
-        if let Some(record) = account.transactions_mut().get_mut(&funding_txid) {
+        account.transactions_mut().get_mut(&funding_txid).map(|record| {
             record.compensate_for_observed_spends(observed_spent);
-        }
+            record.clone()
+        })
     }
 
     pub fn next_change_address(
