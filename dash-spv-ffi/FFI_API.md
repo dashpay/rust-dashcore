@@ -4,7 +4,7 @@ This document provides a comprehensive reference for all FFI (Foreign Function I
 
 **Auto-generated**: This documentation is automatically generated from the source code. Do not edit manually.
 
-**Total Functions**: 39
+**Total Functions**: 45
 
 ## Table of Contents
 
@@ -31,7 +31,7 @@ Functions: 3
 
 ### Configuration
 
-Functions: 15
+Functions: 19
 
 | Function | Description | Module |
 |----------|-------------|--------|
@@ -41,6 +41,10 @@ Functions: 15
 | `dash_spv_ffi_config_get_network` | Gets the network type from the configuration  # Safety - `config` must be a... | config |
 | `dash_spv_ffi_config_mainnet` | No description | config |
 | `dash_spv_ffi_config_new` | No description | config |
+| `dash_spv_ffi_config_set_broadcast_acceptance_threshold` | Sets how many distinct non-recipient peers must announce a broadcast txid... | config |
+| `dash_spv_ffi_config_set_broadcast_acceptance_timeout_secs` | Sets the timeout (in seconds) after which a pending broadcast with no... | config |
+| `dash_spv_ffi_config_set_broadcast_holdout_count` | Withholds broadcast transactions from a fixed number of peers (clamped so... | config |
+| `dash_spv_ffi_config_set_broadcast_holdout_half` | Withholds broadcast transactions from half of the connected peers (the... | config |
 | `dash_spv_ffi_config_set_data_dir` | Sets the data directory for storing blockchain data  # Safety - `config`... | config |
 | `dash_spv_ffi_config_set_fetch_mempool_transactions` | Sets whether to fetch full mempool transaction data  # Safety - `config`... | config |
 | `dash_spv_ffi_config_set_masternode_sync_enabled` | Enables or disables masternode synchronization  # Safety - `config` must be... | config |
@@ -63,11 +67,13 @@ Functions: 3
 
 ### Transaction Management
 
-Functions: 1
+Functions: 3
 
 | Function | Description | Module |
 |----------|-------------|--------|
+| `dash_spv_ffi_broadcast_result_destroy` | Free the strings owned by an FFIBroadcastResult | client |
 | `dash_spv_ffi_client_broadcast_transaction` | Broadcasts a transaction to the Dash network via connected peers | client |
+| `dash_spv_ffi_client_broadcast_transaction_and_wait` | Broadcasts a transaction and waits for its network-level outcome | client |
 
 ### Mempool Operations
 
@@ -247,6 +253,70 @@ dash_spv_ffi_config_mainnet() -> *mut FFIClientConfig
 ```c
 dash_spv_ffi_config_new(network: FFINetwork) -> *mut FFIClientConfig
 ```
+
+**Module:** `config`
+
+---
+
+#### `dash_spv_ffi_config_set_broadcast_acceptance_threshold`
+
+```c
+dash_spv_ffi_config_set_broadcast_acceptance_threshold(config: *mut FFIClientConfig, threshold: u32,) -> i32
+```
+
+**Description:**
+Sets how many distinct non-recipient peers must announce a broadcast txid back before it is reported as accepted. Must be > 0.  # Safety - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet - The caller must ensure the config pointer remains valid for the duration of this call
+
+**Safety:**
+- `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet - The caller must ensure the config pointer remains valid for the duration of this call
+
+**Module:** `config`
+
+---
+
+#### `dash_spv_ffi_config_set_broadcast_acceptance_timeout_secs`
+
+```c
+dash_spv_ffi_config_set_broadcast_acceptance_timeout_secs(config: *mut FFIClientConfig, seconds: u32,) -> i32
+```
+
+**Description:**
+Sets the timeout (in seconds) after which a pending broadcast with no acceptance or rejection signal is reported as uncertain. Must be > 0.  # Safety - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet - The caller must ensure the config pointer remains valid for the duration of this call
+
+**Safety:**
+- `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet - The caller must ensure the config pointer remains valid for the duration of this call
+
+**Module:** `config`
+
+---
+
+#### `dash_spv_ffi_config_set_broadcast_holdout_count`
+
+```c
+dash_spv_ffi_config_set_broadcast_holdout_count(config: *mut FFIClientConfig, count: u32,) -> i32
+```
+
+**Description:**
+Withholds broadcast transactions from a fixed number of peers (clamped so that at least one peer always receives the transaction).  # Safety - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet - The caller must ensure the config pointer remains valid for the duration of this call
+
+**Safety:**
+- `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet - The caller must ensure the config pointer remains valid for the duration of this call
+
+**Module:** `config`
+
+---
+
+#### `dash_spv_ffi_config_set_broadcast_holdout_half`
+
+```c
+dash_spv_ffi_config_set_broadcast_holdout_half(config: *mut FFIClientConfig,) -> i32
+```
+
+**Description:**
+Withholds broadcast transactions from half of the connected peers (the default policy). The withheld peers are the source of the `inv` echo that proves a broadcast propagated through the network.  # Safety - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet - The caller must ensure the config pointer remains valid for the duration of this call
+
+**Safety:**
+- `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet - The caller must ensure the config pointer remains valid for the duration of this call
 
 **Module:** `config`
 
@@ -442,6 +512,22 @@ Destroy an `FFISyncProgress` object and all its nested pointers.  # Safety - `pr
 
 ### Transaction Management - Detailed
 
+#### `dash_spv_ffi_broadcast_result_destroy`
+
+```c
+dash_spv_ffi_broadcast_result_destroy(result: *mut FFIBroadcastResult) -> ()
+```
+
+**Description:**
+Free the strings owned by an FFIBroadcastResult.  # Safety - `result` must be a valid pointer to an FFIBroadcastResult previously filled in by `dash_spv_ffi_client_broadcast_transaction_and_wait`, and must not be used after this call.
+
+**Safety:**
+- `result` must be a valid pointer to an FFIBroadcastResult previously filled in by `dash_spv_ffi_client_broadcast_transaction_and_wait`, and must not be used after this call.
+
+**Module:** `client`
+
+---
+
 #### `dash_spv_ffi_client_broadcast_transaction`
 
 ```c
@@ -453,6 +539,22 @@ Broadcasts a transaction to the Dash network via connected peers.  # Safety  - `
 
 **Safety:**
 - `client` must be a valid, non-null pointer to an initialized FFIDashSpvClient - `tx_bytes` must be a valid, non-null pointer to the transaction data - `length` must be the length of the transaction data in bytes
+
+**Module:** `client`
+
+---
+
+#### `dash_spv_ffi_client_broadcast_transaction_and_wait`
+
+```c
+dash_spv_ffi_client_broadcast_transaction_and_wait(client: *mut FFIDashSpvClient, tx_bytes: *const u8, length: usize, timeout_secs: u32, out_result: *mut FFIBroadcastResult,) -> i32
+```
+
+**Description:**
+Broadcasts a transaction and waits for its network-level outcome.  Blocks until the network accepts the transaction (non-recipient peers announce it back, it is InstantSend-locked, or confirmed), a peer rejects it, or the timeout elapses (outcome `Uncertain`). `timeout_secs == 0` uses the configured acceptance timeout plus a small grace period.  Requires mempool tracking to be enabled in the client config.  # Safety  - `client` must be a valid, non-null pointer to an initialized FFIDashSpvClient - `tx_bytes` must be a valid, non-null pointer to the transaction data - `length` must be the length of the transaction data in bytes - `out_result` must be a valid, non-null pointer to an FFIBroadcastResult
+
+**Safety:**
+- `client` must be a valid, non-null pointer to an initialized FFIDashSpvClient - `tx_bytes` must be a valid, non-null pointer to the transaction data - `length` must be the length of the transaction data in bytes - `out_result` must be a valid, non-null pointer to an FFIBroadcastResult
 
 **Module:** `client`
 
