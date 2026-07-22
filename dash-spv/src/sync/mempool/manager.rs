@@ -11,12 +11,15 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use dashcore::ephemerealdata::instant_lock::InstantLock;
+use dashcore::hashes::Hash as _;
 use dashcore::network::message::NetworkMessage;
 use dashcore::network::message_blockdata::Inventory;
+use dashcore::network::message_network::{Reject, RejectReason};
 use dashcore::{Amount, Transaction, Txid};
 use rand::seq::IteratorRandom;
 use tokio::sync::RwLock;
 
+use super::broadcast::{BroadcastConfig, BroadcastResult, BroadcastStatus, TxBroadcastState};
 use super::filter::build_wallet_bloom_filter;
 use super::BLOOM_FALSE_POSITIVE_RATE;
 use crate::client::config::MempoolStrategy;
@@ -55,7 +58,9 @@ pub(crate) struct MempoolManager<W: WalletInterface> {
     pub(super) progress: MempoolProgress,
     pub(super) wallet: Arc<RwLock<W>>,
     pub(super) transactions: HashMap<Txid, UnconfirmedTransaction>,
-    pub(super) recent_sends: HashMap<Txid, Instant>,
+    /// Self-broadcast transactions and their network-acceptance state.
+    pub(super) broadcasts: HashMap<Txid, TxBroadcastState>,
+    broadcast_config: BroadcastConfig,
     strategy: MempoolStrategy,
     max_transactions: usize,
     /// Txids we have requested via getdata but not yet received, with request time.
@@ -81,12 +86,14 @@ impl<W: WalletInterface> MempoolManager<W> {
         strategy: MempoolStrategy,
         max_transactions: usize,
         initial_monitor_revision: u64,
+        broadcast_config: BroadcastConfig,
     ) -> Self {
         Self {
             progress: MempoolProgress::default(),
             wallet,
             transactions: HashMap::new(),
-            recent_sends: HashMap::new(),
+            broadcasts: HashMap::new(),
+            broadcast_config,
             strategy,
             max_transactions,
             pending_requests: HashMap::new(),
@@ -202,9 +209,14 @@ impl<W: WalletInterface> MempoolManager<W> {
         peer: SocketAddr,
         requests: &RequestSender,
     ) -> SyncResult<Vec<SyncEvent>> {
+        // Acceptance detection must run before any early return: an inv for
+        // one of our own broadcasts from a peer we did NOT send it to proves
+        // the transaction relayed through the network.
+        let events = self.record_broadcast_echoes(inv, peer);
+
         let mempool_full = self.transactions.len() >= self.max_transactions;
         if mempool_full {
-            return Ok(vec![]);
+            return Ok(events);
         }
 
         let total_queued: usize =
@@ -237,7 +249,52 @@ impl<W: WalletInterface> MempoolManager<W> {
             self.send_queued(requests).await?;
         }
 
-        Ok(vec![])
+        Ok(events)
+    }
+
+    /// Record `inv` announcements of our own broadcast transactions and
+    /// promote broadcasts to accepted once enough non-recipient peers have
+    /// announced them back.
+    fn record_broadcast_echoes(&mut self, inv: &[Inventory], peer: SocketAddr) -> Vec<SyncEvent> {
+        let mut events = Vec::new();
+        for item in inv {
+            let Inventory::Transaction(txid) = item else {
+                continue;
+            };
+            let Some(state) = self.broadcasts.get_mut(txid) else {
+                continue;
+            };
+            // Announcements from direct recipients carry no information: a
+            // peer only ever announces to peers it did not get the tx from,
+            // so a recipient echoing back would just be a protocol quirk.
+            if state.sent_to.contains(&peer) || !state.announced_by.insert(peer) {
+                continue;
+            }
+            tracing::debug!(
+                "Broadcast {} announced back by non-recipient peer {} ({}/{} needed)",
+                txid,
+                peer,
+                state.announced_by.len(),
+                self.broadcast_config.acceptance_threshold
+            );
+            if matches!(state.status, BroadcastStatus::Pending | BroadcastStatus::Uncertain)
+                && state.announced_by.len() >= self.broadcast_config.acceptance_threshold
+            {
+                state.status = BroadcastStatus::Accepted;
+                tracing::info!(
+                    "Broadcast {} accepted by the network ({} peer(s) relayed it back)",
+                    txid,
+                    state.announced_by.len()
+                );
+                events.push(SyncEvent::TransactionBroadcastResult {
+                    txid: *txid,
+                    result: BroadcastResult::Accepted {
+                        relayed_by: state.announced_by.len(),
+                    },
+                });
+            }
+        }
+        events
     }
 
     /// Drain per-peer queues and send getdata for up to `MAX_IN_FLIGHT` items.
@@ -302,22 +359,28 @@ impl<W: WalletInterface> MempoolManager<W> {
     /// Handle a received transaction.
     ///
     /// When `peer` is the local sentinel address (`0.0.0.0:0`), the transaction
-    /// is treated as self-originated and recorded in `recent_sends`.
+    /// is treated as self-originated: it is sent to a subset of connected peers
+    /// (withholding a holdout set) and tracked in `broadcasts` for network
+    /// acceptance detection.
     pub(super) async fn handle_tx(
         &mut self,
         tx: Transaction,
         peer: SocketAddr,
+        requests: &RequestSender,
     ) -> SyncResult<Vec<SyncEvent>> {
         let txid = tx.txid();
         self.pending_requests.remove(&txid);
         let is_local = peer.ip().is_unspecified();
 
+        // Send self-originated transactions to the network regardless of
+        // wallet relevance — the caller explicitly asked to broadcast.
+        if is_local {
+            self.start_broadcast(&tx, requests);
+        }
+
         // Skip if already tracked (e.g., locally broadcast then received from a peer)
         if self.transactions.contains_key(&txid) {
             self.seen_txids.insert(txid, Instant::now());
-            if is_local {
-                self.recent_sends.insert(txid, Instant::now());
-            }
             return Ok(vec![]);
         }
 
@@ -351,21 +414,166 @@ impl<W: WalletInterface> MempoolManager<W> {
             result.net_amount,
         );
         self.transactions.insert(txid, unconfirmed_tx);
-        if is_local {
-            self.recent_sends.insert(txid, Instant::now());
-        }
         self.progress.set_tracked(self.transactions.len() as u32);
 
         Ok(vec![])
     }
 
+    /// Begin tracking a self-originated transaction and send it to the
+    /// network, withholding it from a holdout subset of peers.
+    ///
+    /// Idempotent per txid: repeated local dispatches of the same transaction
+    /// do not resend (the rebroadcast timer handles resends).
+    pub(super) fn start_broadcast(&mut self, tx: &Transaction, requests: &RequestSender) {
+        let txid = tx.txid();
+        if self.broadcasts.contains_key(&txid) {
+            return;
+        }
+
+        let mut state = TxBroadcastState::new(tx.clone(), Instant::now());
+        let peers: Vec<SocketAddr> = self.peers.keys().copied().collect();
+        let holdout_count = self.broadcast_config.holdout.count_for(peers.len());
+        state.holdout = peers
+            .iter()
+            .copied()
+            .choose_multiple(&mut rand::thread_rng(), holdout_count)
+            .into_iter()
+            .collect();
+
+        for peer in &peers {
+            if state.holdout.contains(peer) {
+                continue;
+            }
+            if requests.send_transaction(tx.clone(), *peer).is_ok() {
+                state.sent_to.insert(*peer);
+            }
+        }
+
+        if peers.is_empty() {
+            // No peers right now; the rebroadcast timer sends once one connects.
+            tracing::warn!("Broadcast {} deferred: no connected peers", txid);
+        } else {
+            tracing::info!(
+                "Broadcast {} to {}/{} peers ({} withheld for acceptance detection)",
+                txid,
+                state.sent_to.len(),
+                peers.len(),
+                state.holdout.len()
+            );
+        }
+        self.broadcasts.insert(txid, state);
+    }
+
+    /// Handle a p2p `reject` message that references one of our broadcasts.
+    ///
+    /// Best-effort negative signal: BIP61 `reject` was removed upstream in
+    /// Bitcoin Core 0.20 and modern Dash Core releases may never send it, in
+    /// which case invalid broadcasts surface as `Uncertain` via the timeout.
+    pub(super) fn handle_reject(&mut self, reject: &Reject) -> Vec<SyncEvent> {
+        if reject.message != "tx" && reject.message != "ix" {
+            return vec![];
+        }
+        let txid = Txid::from_byte_array(reject.hash.to_byte_array());
+        let Some(state) = self.broadcasts.get_mut(&txid) else {
+            return vec![];
+        };
+        match reject.ccode {
+            // The Duplicate code covers both "already have this transaction"
+            // (txn-already-in-mempool / txn-already-known — acceptance
+            // evidence, not failure) and "conflicts with a mempool
+            // transaction" (txn-mempool-conflict — a genuine rejection,
+            // e.g. a double-spend), distinguishable only via the reason.
+            RejectReason::Duplicate if !reject.reason.contains("conflict") => {
+                if matches!(state.status, BroadcastStatus::Pending | BroadcastStatus::Uncertain) {
+                    state.status = BroadcastStatus::Accepted;
+                    tracing::info!("Broadcast {} accepted (peer reported duplicate)", txid);
+                    vec![SyncEvent::TransactionBroadcastResult {
+                        txid,
+                        result: BroadcastResult::Accepted {
+                            relayed_by: state.announced_by.len(),
+                        },
+                    }]
+                } else {
+                    vec![]
+                }
+            }
+            code => {
+                if state.status == BroadcastStatus::Pending {
+                    state.status = BroadcastStatus::Rejected;
+                    tracing::warn!(
+                        "Broadcast {} rejected by peer: {:?} ({})",
+                        txid,
+                        code,
+                        reject.reason
+                    );
+                    vec![SyncEvent::TransactionBroadcastResult {
+                        txid,
+                        result: BroadcastResult::Rejected {
+                            code,
+                            reason: reject.reason.to_string(),
+                        },
+                    }]
+                } else {
+                    tracing::debug!(
+                        "Ignoring late reject for broadcast {} (status {:?})",
+                        txid,
+                        state.status
+                    );
+                    vec![]
+                }
+            }
+        }
+    }
+
+    /// Transition pending broadcasts that outlived the acceptance timeout to
+    /// `Uncertain`, emitting one event per transition. A late echo, IS lock,
+    /// or confirmation can still upgrade them to `Accepted`.
+    pub(super) fn expire_broadcasts(&mut self) -> Vec<SyncEvent> {
+        self.expire_broadcasts_at(Instant::now())
+    }
+
+    fn expire_broadcasts_at(&mut self, now: Instant) -> Vec<SyncEvent> {
+        let timeout = self.broadcast_config.acceptance_timeout;
+        let mut events = Vec::new();
+        for (txid, state) in &mut self.broadcasts {
+            if state.status == BroadcastStatus::Pending
+                && now.saturating_duration_since(state.created_at) >= timeout
+            {
+                state.status = BroadcastStatus::Uncertain;
+                tracing::info!(
+                    "Broadcast {} outcome uncertain: no acceptance signal within {:?}",
+                    txid,
+                    timeout
+                );
+                events.push(SyncEvent::TransactionBroadcastResult {
+                    txid: *txid,
+                    result: BroadcastResult::Uncertain,
+                });
+            }
+        }
+        events
+    }
+
     /// Remove transactions from the mempool that have been confirmed in a block.
-    pub(super) fn remove_confirmed(&mut self, txids: &[Txid]) {
+    ///
+    /// Confirmation is definitive acceptance: pending or uncertain broadcasts
+    /// for confirmed txids are promoted to accepted and dropped from tracking.
+    pub(super) fn remove_confirmed(&mut self, txids: &[Txid]) -> Vec<SyncEvent> {
         self.seen_txids.retain(|_, t| t.elapsed() < SEEN_TXID_EXPIRY);
+        let mut events = Vec::new();
         let mut removed = Vec::new();
         for txid in txids {
+            if let Some(state) = self.broadcasts.remove(txid) {
+                if matches!(state.status, BroadcastStatus::Pending | BroadcastStatus::Uncertain) {
+                    events.push(SyncEvent::TransactionBroadcastResult {
+                        txid: *txid,
+                        result: BroadcastResult::Accepted {
+                            relayed_by: state.announced_by.len(),
+                        },
+                    });
+                }
+            }
             if self.transactions.remove(txid).is_some() {
-                self.recent_sends.remove(txid);
                 removed.push(*txid);
             }
         }
@@ -374,17 +582,35 @@ impl<W: WalletInterface> MempoolManager<W> {
             self.progress.set_tracked(self.transactions.len() as u32);
             tracing::debug!("Removed {} confirmed transactions from mempool", removed.len());
         }
+        events
     }
 
     /// Mark a mempool transaction as InstantSend-locked and notify the wallet.
     ///
     /// If the transaction hasn't arrived yet, remembers the lock so it
     /// can be applied when the transaction is later received via `handle_tx`.
-    pub(super) async fn process_instant_send(&mut self, instant_lock: InstantLock) {
+    ///
+    /// An InstantSend lock is definitive acceptance: any pending or uncertain
+    /// broadcast for the txid is promoted to accepted and dropped from tracking.
+    pub(super) async fn process_instant_send(
+        &mut self,
+        instant_lock: InstantLock,
+    ) -> Vec<SyncEvent> {
         let txid = instant_lock.txid;
+        let mut events = Vec::new();
+        if let Some(state) = self.broadcasts.remove(&txid) {
+            if matches!(state.status, BroadcastStatus::Pending | BroadcastStatus::Uncertain) {
+                tracing::info!("Broadcast {} accepted (InstantSend lock received)", txid);
+                events.push(SyncEvent::TransactionBroadcastResult {
+                    txid,
+                    result: BroadcastResult::Accepted {
+                        relayed_by: state.announced_by.len(),
+                    },
+                });
+            }
+        }
         let instant_lock_opt = if let Some(tx) = self.transactions.get_mut(&txid) {
             tx.is_instant_send = true;
-            self.recent_sends.remove(&txid);
             tracing::debug!("Marked mempool tx {} as InstantSend-locked", txid);
             Some(instant_lock)
         } else if self.pending_is_locks.len() < MAX_PENDING_IS_LOCKS {
@@ -403,6 +629,7 @@ impl<W: WalletInterface> MempoolManager<W> {
             let mut wallet = self.wallet.write().await;
             wallet.process_instant_send_lock(lock);
         }
+        events
     }
 
     /// Prune transactions and pending IS locks older than `timeout`.
@@ -417,9 +644,9 @@ impl<W: WalletInterface> MempoolManager<W> {
             }
         });
 
-        // Prune old recent sends
+        // Prune old broadcast tracking states (including rejected entries)
         if let Some(cutoff) = Instant::now().checked_sub(timeout) {
-            self.recent_sends.retain(|_, &mut timestamp| timestamp > cutoff);
+            self.broadcasts.retain(|_, state| state.created_at > cutoff);
         }
 
         if !expired_txids.is_empty() {
@@ -440,11 +667,18 @@ impl<W: WalletInterface> MempoolManager<W> {
         }
     }
 
-    /// Rebroadcast unconfirmed self-sent transactions to all peers.
+    /// Rebroadcast unconfirmed self-sent transactions.
     ///
-    /// Each transaction in `recent_sends` tracks when it was last broadcast.
-    /// Transactions whose last broadcast was more than `REBROADCAST_INTERVAL`
-    /// ago are rebroadcast and their timestamp is reset.
+    /// Each entry in `broadcasts` tracks when it was last sent. Entries whose
+    /// last send was more than `REBROADCAST_INTERVAL` ago are resent:
+    /// - `Pending`: targeted resend that keeps respecting the holdout set so
+    ///   an acceptance echo remains possible. If every holdout peer has
+    ///   disconnected, replacement holdouts are picked from peers that never
+    ///   received the transaction.
+    /// - `Accepted`/`Uncertain`: plain broadcast to all peers (the holdout no
+    ///   longer matters; a late echo from a new peer can still upgrade
+    ///   `Uncertain` to `Accepted`).
+    /// - `Rejected`: never rebroadcast.
     pub(super) async fn rebroadcast_if_due(&mut self, requests: &RequestSender) {
         self.rebroadcast_if_due_at(requests, Instant::now()).await
     }
@@ -453,20 +687,61 @@ impl<W: WalletInterface> MempoolManager<W> {
     /// forward instead of subtracting from `Instant::now()`, which underflows on
     /// Windows when the QPC-based monotonic clock has a small value at boot.
     async fn rebroadcast_if_due_at(&mut self, requests: &RequestSender, now: Instant) {
+        let current_peers: Vec<SocketAddr> = self.peers.keys().copied().collect();
         let mut count: usize = 0;
-        for (txid, last_broadcast) in &mut self.recent_sends {
-            if now.saturating_duration_since(*last_broadcast) < REBROADCAST_INTERVAL {
+        for (txid, state) in &mut self.broadcasts {
+            if state.status == BroadcastStatus::Rejected || current_peers.is_empty() {
                 continue;
             }
-            if let Some(unconfirmed) = self.transactions.get(txid) {
-                let _ = requests.broadcast(NetworkMessage::Tx(unconfirmed.transaction.clone()));
-                *last_broadcast = now;
-                count += 1;
+            // A pending broadcast that never reached any peer (no peers were
+            // connected at send time) is due immediately.
+            let never_sent = state.status == BroadcastStatus::Pending && state.sent_to.is_empty();
+            if !never_sent
+                && now.saturating_duration_since(state.last_broadcast) < REBROADCAST_INTERVAL
+            {
+                continue;
             }
+            if state.status == BroadcastStatus::Pending {
+                // Re-pick the holdout from never-sent peers if all holdouts left.
+                let holdout_alive = current_peers.iter().any(|p| state.holdout.contains(p));
+                if !holdout_alive {
+                    let needed = self.broadcast_config.holdout.count_for(current_peers.len());
+                    let candidates: Vec<SocketAddr> = current_peers
+                        .iter()
+                        .filter(|p| !state.sent_to.contains(*p))
+                        .copied()
+                        .collect();
+                    state.holdout.extend(
+                        candidates.into_iter().choose_multiple(&mut rand::thread_rng(), needed),
+                    );
+                }
+                let targets: Vec<SocketAddr> =
+                    current_peers.iter().filter(|p| !state.holdout.contains(*p)).copied().collect();
+                if targets.is_empty() {
+                    // Every connected peer is a holdout (all original
+                    // recipients are gone); relay through everyone rather
+                    // than letting the transaction stall.
+                    if !current_peers.is_empty() {
+                        let _ = requests.broadcast(NetworkMessage::Tx(state.transaction.clone()));
+                        state.sent_to.extend(current_peers.iter().copied());
+                    }
+                } else {
+                    for peer in targets {
+                        if requests.send_transaction(state.transaction.clone(), peer).is_ok() {
+                            state.sent_to.insert(peer);
+                        }
+                    }
+                }
+            } else {
+                let _ = requests.broadcast(NetworkMessage::Tx(state.transaction.clone()));
+            }
+            tracing::debug!("Rebroadcast unconfirmed transaction {}", txid);
+            state.last_broadcast = now;
+            count += 1;
         }
 
         if count > 0 {
-            tracing::info!("Rebroadcast {} unconfirmed transaction(s) to all peers", count);
+            tracing::info!("Rebroadcast {} unconfirmed transaction(s)", count);
         }
     }
 
@@ -544,6 +819,7 @@ impl<W: WalletInterface> fmt::Debug for MempoolManager<W> {
         f.debug_struct("MempoolManager")
             .field("progress", &self.progress)
             .field("strategy", &self.strategy)
+            .field("broadcasts", &self.broadcasts.len())
             .field("pending_requests", &self.pending_requests.len())
             .field("peers", &self.peers.len())
             .field("activated_peers", &activated)
@@ -590,7 +866,13 @@ mod tests {
         let (tx, rx) = mpsc::unbounded_channel::<NetworkRequest>();
         let requests = RequestSender::new(tx);
 
-        let mut manager = MempoolManager::new(wallet, MempoolStrategy::FetchAll, 1000, 0);
+        let mut manager = MempoolManager::new(
+            wallet,
+            MempoolStrategy::FetchAll,
+            1000,
+            0,
+            BroadcastConfig::default(),
+        );
         manager.progress.set_state(SyncState::Synced);
 
         (manager, requests, rx)
@@ -602,7 +884,13 @@ mod tests {
         let (tx, rx) = mpsc::unbounded_channel::<NetworkRequest>();
         let requests = RequestSender::new(tx);
 
-        let manager = MempoolManager::new(wallet, MempoolStrategy::BloomFilter, 1000, 0);
+        let manager = MempoolManager::new(
+            wallet,
+            MempoolStrategy::BloomFilter,
+            1000,
+            0,
+            BroadcastConfig::default(),
+        );
 
         (manager, requests, rx)
     }
@@ -671,6 +959,7 @@ mod tests {
             MempoolStrategy::FetchAll,
             2, // Very small capacity
             0,
+            BroadcastConfig::default(),
         );
         let peer = test_socket_address(1);
         manager.peers.insert(peer, Some(VecDeque::new()));
@@ -705,7 +994,13 @@ mod tests {
         let (tx, _rx) = mpsc::unbounded_channel::<NetworkRequest>();
         let requests = RequestSender::new(tx);
 
-        let mut manager = MempoolManager::new(wallet, MempoolStrategy::FetchAll, 2, 0);
+        let mut manager = MempoolManager::new(
+            wallet,
+            MempoolStrategy::FetchAll,
+            2,
+            0,
+            BroadcastConfig::default(),
+        );
         manager.progress.set_state(SyncState::Synced);
         let peer = test_socket_address(1);
         manager.peers.insert(peer, Some(VecDeque::new()));
@@ -729,7 +1024,13 @@ mod tests {
         let (tx, _rx) = mpsc::unbounded_channel::<NetworkRequest>();
         let _requests = RequestSender::new(tx);
 
-        let mut manager = MempoolManager::new(wallet, MempoolStrategy::FetchAll, 1000, 0);
+        let mut manager = MempoolManager::new(
+            wallet,
+            MempoolStrategy::FetchAll,
+            1000,
+            0,
+            BroadcastConfig::default(),
+        );
 
         let fresh_txid = Txid::from_byte_array([1; 32]);
         let stale_txid = Txid::from_byte_array([2; 32]);
@@ -747,7 +1048,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_handle_tx_irrelevant() {
-        let (mut manager, _requests, _rx) = create_test_manager();
+        let (mut manager, requests, _rx) = create_test_manager();
 
         let tx = Transaction {
             version: 1,
@@ -758,7 +1059,7 @@ mod tests {
         };
         let txid = tx.txid();
 
-        let events = manager.handle_tx(tx, test_socket_address(1)).await.unwrap();
+        let events = manager.handle_tx(tx, test_socket_address(1), &requests).await.unwrap();
         // MockWallet returns is_relevant=false by default
         assert!(events.is_empty());
         assert_eq!(manager.progress.received(), 1);
@@ -842,14 +1143,20 @@ mod tests {
         let (tx, _rx) = mpsc::unbounded_channel::<NetworkRequest>();
         let requests = RequestSender::new(tx);
 
-        let manager = MempoolManager::new(wallet.clone(), MempoolStrategy::BloomFilter, 1000, 0);
+        let manager = MempoolManager::new(
+            wallet.clone(),
+            MempoolStrategy::BloomFilter,
+            1000,
+            0,
+            BroadcastConfig::default(),
+        );
 
         (manager, requests, wallet)
     }
 
     #[tokio::test]
     async fn test_handle_tx_relevant_stores_transaction() {
-        let (mut manager, _requests, _wallet) = create_relevant_manager();
+        let (mut manager, requests, _wallet) = create_relevant_manager();
 
         let tx = Transaction {
             version: 1,
@@ -860,7 +1167,7 @@ mod tests {
         };
         let txid = tx.txid();
 
-        let events = manager.handle_tx(tx, test_socket_address(1)).await.unwrap();
+        let events = manager.handle_tx(tx, test_socket_address(1), &requests).await.unwrap();
         assert!(events.is_empty());
 
         // Verify transaction was stored
@@ -877,7 +1184,7 @@ mod tests {
             output: vec![],
             special_transaction_payload: None,
         };
-        let events = manager.handle_tx(tx2, test_socket_address(1)).await.unwrap();
+        let events = manager.handle_tx(tx2, test_socket_address(1), &requests).await.unwrap();
         assert!(events.is_empty());
 
         assert_eq!(manager.transactions.len(), 1);
@@ -888,7 +1195,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_handle_tx_local_records_send() {
-        let (mut manager, _requests, _wallet) = create_relevant_manager();
+        let (mut manager, requests, _wallet) = create_relevant_manager();
 
         let tx = Transaction {
             version: 2,
@@ -901,18 +1208,18 @@ mod tests {
 
         // Use the unspecified address to simulate a locally broadcast transaction
         let local_addr = SocketAddr::from(([0, 0, 0, 0], 0));
-        manager.handle_tx(tx, local_addr).await.unwrap();
+        manager.handle_tx(tx, local_addr, &requests).await.unwrap();
 
         assert!(manager.transactions.contains_key(&txid));
         assert!(
-            manager.recent_sends.contains_key(&txid),
-            "locally dispatched transaction should be recorded as a recent send"
+            manager.broadcasts.contains_key(&txid),
+            "locally dispatched transaction should be tracked as a broadcast"
         );
     }
 
     #[tokio::test]
     async fn test_handle_tx_remote_does_not_record_send() {
-        let (mut manager, _requests, _wallet) = create_relevant_manager();
+        let (mut manager, requests, _wallet) = create_relevant_manager();
 
         let tx = Transaction {
             version: 3,
@@ -923,18 +1230,18 @@ mod tests {
         };
         let txid = tx.txid();
 
-        manager.handle_tx(tx, test_socket_address(1)).await.unwrap();
+        manager.handle_tx(tx, test_socket_address(1), &requests).await.unwrap();
 
         assert!(manager.transactions.contains_key(&txid));
         assert!(
-            !manager.recent_sends.contains_key(&txid),
-            "peer-received transaction should not be recorded as a recent send"
+            !manager.broadcasts.contains_key(&txid),
+            "peer-received transaction should not be tracked as a broadcast"
         );
     }
 
     #[tokio::test]
     async fn test_handle_tx_clears_pending_request() {
-        let (mut manager, _requests, _wallet) = create_relevant_manager();
+        let (mut manager, requests, _wallet) = create_relevant_manager();
 
         let tx = Transaction {
             version: 1,
@@ -949,7 +1256,7 @@ mod tests {
         manager.pending_requests.insert(txid, Instant::now());
         assert!(manager.pending_requests.contains_key(&txid));
 
-        manager.handle_tx(tx, test_socket_address(1)).await.unwrap();
+        manager.handle_tx(tx, test_socket_address(1), &requests).await.unwrap();
         // Pending request should be cleared regardless of relevance
         assert!(!manager.pending_requests.contains_key(&txid));
 
@@ -966,7 +1273,13 @@ mod tests {
         let (tx, rx) = mpsc::unbounded_channel::<NetworkRequest>();
         let requests = RequestSender::new(tx);
 
-        let manager = MempoolManager::new(wallet, MempoolStrategy::BloomFilter, 1000, 0);
+        let manager = MempoolManager::new(
+            wallet,
+            MempoolStrategy::BloomFilter,
+            1000,
+            0,
+            BroadcastConfig::default(),
+        );
 
         (manager, requests, rx)
     }
@@ -1010,20 +1323,27 @@ mod tests {
             special_transaction_payload: None,
         };
         let txid = tx.txid();
+        manager.broadcasts.insert(txid, TxBroadcastState::new(tx.clone(), Instant::now()));
         manager.transactions.insert(
             txid,
             UnconfirmedTransaction::new(tx, Amount::from_sat(0), false, false, Vec::new(), 0),
         );
-        manager.recent_sends.insert(txid, Instant::now());
 
-        manager.process_instant_send(dummy_instant_lock(txid)).await;
+        let events = manager.process_instant_send(dummy_instant_lock(txid)).await;
 
-        // Verify IS flag and recent_sends cleanup
+        // Verify IS flag, broadcast promotion, and tracking cleanup
         assert!(manager.transactions.get(&txid).unwrap().is_instant_send);
         assert!(
-            !manager.recent_sends.contains_key(&txid),
-            "IS-locked transaction should be removed from recent_sends"
+            !manager.broadcasts.contains_key(&txid),
+            "IS-locked transaction should no longer be tracked as a broadcast"
         );
+        assert!(matches!(
+            events.as_slice(),
+            [SyncEvent::TransactionBroadcastResult {
+                result: BroadcastResult::Accepted { .. },
+                ..
+            }]
+        ));
 
         let wallet = manager.wallet.read().await;
         let status_changes = wallet.status_changes();
@@ -1187,7 +1507,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_instant_send_before_transaction() {
-        let (mut manager, _requests, wallet) = create_relevant_manager();
+        let (mut manager, requests, wallet) = create_relevant_manager();
 
         let tx = Transaction {
             version: 1,
@@ -1203,7 +1523,7 @@ mod tests {
         assert!(manager.pending_is_locks.contains_key(&txid));
 
         // Transaction arrives
-        manager.handle_tx(tx, test_socket_address(1)).await.unwrap();
+        manager.handle_tx(tx, test_socket_address(1), &requests).await.unwrap();
 
         // Pending IS lock consumed
         assert!(manager.pending_is_locks.is_empty());
@@ -1225,7 +1545,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_instant_send_before_irrelevant_transaction() {
-        let (mut manager, _requests, _rx) = create_test_manager();
+        let (mut manager, requests, _rx) = create_test_manager();
 
         let tx = Transaction {
             version: 1,
@@ -1241,7 +1561,7 @@ mod tests {
         assert!(manager.pending_is_locks.contains_key(&txid));
 
         // Transaction arrives but wallet says it's not relevant
-        manager.handle_tx(tx, test_socket_address(1)).await.unwrap();
+        manager.handle_tx(tx, test_socket_address(1), &requests).await.unwrap();
 
         // Pending IS lock cleaned up (no leak)
         assert!(manager.pending_is_locks.is_empty());
@@ -1386,7 +1706,13 @@ mod tests {
         let (tx, rx) = mpsc::unbounded_channel::<NetworkRequest>();
         let requests = RequestSender::new(tx);
 
-        let mut manager = MempoolManager::new(wallet, MempoolStrategy::BloomFilter, 1000, 0);
+        let mut manager = MempoolManager::new(
+            wallet,
+            MempoolStrategy::BloomFilter,
+            1000,
+            0,
+            BroadcastConfig::default(),
+        );
 
         // Drop receiver so send_filter_load fails
         drop(rx);
@@ -1398,7 +1724,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_handle_tx_relevant_populates_wallet_effect_fields() {
-        let (mut manager, _requests, wallet) = create_relevant_manager();
+        let (mut manager, requests, wallet) = create_relevant_manager();
 
         let tx = Transaction {
             version: 1,
@@ -1417,7 +1743,7 @@ mod tests {
             w.set_mempool_addresses(vec![addr.clone()]);
         }
 
-        manager.handle_tx(tx, test_socket_address(1)).await.unwrap();
+        manager.handle_tx(tx, test_socket_address(1), &requests).await.unwrap();
 
         let stored = manager.transactions.get(&txid).unwrap();
         assert_eq!(stored.net_amount, 50000);
@@ -1429,7 +1755,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_handle_tx_outgoing_transaction() {
-        let (mut manager, _requests, wallet) = create_relevant_manager();
+        let (mut manager, requests, wallet) = create_relevant_manager();
 
         let tx = Transaction {
             version: 1,
@@ -1445,7 +1771,7 @@ mod tests {
             w.set_mempool_net_amount(-30000);
         }
 
-        manager.handle_tx(tx, test_socket_address(1)).await.unwrap();
+        manager.handle_tx(tx, test_socket_address(1), &requests).await.unwrap();
 
         let stored = manager.transactions.get(&txid).unwrap();
         assert_eq!(stored.net_amount, -30000);
@@ -1545,23 +1871,35 @@ mod tests {
             };
             let txid = tx.txid();
             txids.push(txid);
+            if i < 2 {
+                // Mark the first two as self-broadcasts
+                manager.broadcasts.insert(txid, TxBroadcastState::new(tx.clone(), Instant::now()));
+            }
             manager.transactions.insert(
                 txid,
                 UnconfirmedTransaction::new(tx, Amount::from_sat(0), false, false, Vec::new(), 0),
             );
         }
         assert_eq!(manager.transactions.len(), 3);
-        // Mark two as recent sends
-        manager.recent_sends.insert(txids[0], Instant::now());
-        manager.recent_sends.insert(txids[1], Instant::now());
 
         // Remove 2 of the 3 transactions
-        manager.remove_confirmed(&txids[..2]);
+        let events = manager.remove_confirmed(&txids[..2]);
 
         assert_eq!(manager.transactions.len(), 1);
         assert!(manager.transactions.contains_key(&txids[2]));
-        assert!(!manager.recent_sends.contains_key(&txids[0]));
-        assert!(!manager.recent_sends.contains_key(&txids[1]));
+        assert!(!manager.broadcasts.contains_key(&txids[0]));
+        assert!(!manager.broadcasts.contains_key(&txids[1]));
+        // Both pending broadcasts were confirmed => promoted to accepted
+        assert_eq!(events.len(), 2);
+        assert!(events.iter().all(|e| matches!(
+            e,
+            SyncEvent::TransactionBroadcastResult {
+                result: BroadcastResult::Accepted {
+                    relayed_by: 0
+                },
+                ..
+            }
+        )));
 
         assert_eq!(manager.progress.removed(), 2);
         assert_eq!(manager.progress.tracked(), 1);
@@ -1637,35 +1975,39 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn test_rebroadcast_sends_old_recent_sends() {
-        let (mut manager, requests, mut rx) = create_test_manager();
-
-        let tx = Transaction {
-            version: 10,
+    fn test_transaction(version: u16) -> Transaction {
+        Transaction {
+            version,
             lock_time: 0,
             input: vec![],
             output: vec![],
             special_transaction_payload: None,
-        };
+        }
+    }
+
+    #[tokio::test]
+    async fn test_rebroadcast_sends_old_pending_broadcasts() {
+        let (mut manager, requests, mut rx) = create_test_manager();
+        let peer = test_socket_address(1);
+        manager.peers.insert(peer, Some(VecDeque::new()));
+
+        let tx = test_transaction(10);
         let txid = tx.txid();
 
         let t0 = Instant::now();
         let later = t0 + REBROADCAST_INTERVAL + Duration::from_secs(1);
 
-        manager.transactions.insert(
-            txid,
-            UnconfirmedTransaction::new(tx, Amount::from_sat(0), false, true, Vec::new(), -100_000),
-        );
-        manager.recent_sends.insert(txid, t0);
+        let mut state = TxBroadcastState::new(tx, t0);
+        state.sent_to.insert(peer);
+        manager.broadcasts.insert(txid, state);
 
         manager.rebroadcast_if_due_at(&requests, later).await;
 
-        // Should have sent a BroadcastMessage for the transaction
+        // Pending entries are resent via targeted sends (respecting the holdout)
         let msg = rx.try_recv().expect("expected a rebroadcast message");
         assert!(
-            matches!(msg, NetworkRequest::BroadcastMessage(NetworkMessage::Tx(_))),
-            "expected BroadcastMessage(Tx), got {:?}",
+            matches!(msg, NetworkRequest::SendMessageToPeer(NetworkMessage::Tx(_), p) if p == peer),
+            "expected SendMessageToPeer(Tx), got {:?}",
             msg
         );
 
@@ -1676,24 +2018,45 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_rebroadcast_skips_recent_transactions() {
+    async fn test_rebroadcast_uncertain_uses_full_broadcast() {
         let (mut manager, requests, mut rx) = create_test_manager();
+        let peer = test_socket_address(1);
+        manager.peers.insert(peer, Some(VecDeque::new()));
 
-        let tx = Transaction {
-            version: 11,
-            lock_time: 0,
-            input: vec![],
-            output: vec![],
-            special_transaction_payload: None,
-        };
+        let tx = test_transaction(12);
         let txid = tx.txid();
 
-        // Add a transaction that was just sent (within the rebroadcast interval)
-        manager.transactions.insert(
-            txid,
-            UnconfirmedTransaction::new(tx, Amount::from_sat(0), false, true, Vec::new(), -50_000),
+        let t0 = Instant::now();
+        let later = t0 + REBROADCAST_INTERVAL + Duration::from_secs(1);
+
+        let mut state = TxBroadcastState::new(tx, t0);
+        state.sent_to.insert(peer);
+        state.status = BroadcastStatus::Uncertain;
+        manager.broadcasts.insert(txid, state);
+
+        manager.rebroadcast_if_due_at(&requests, later).await;
+
+        let msg = rx.try_recv().expect("expected a rebroadcast message");
+        assert!(
+            matches!(msg, NetworkRequest::BroadcastMessage(NetworkMessage::Tx(_))),
+            "expected BroadcastMessage(Tx), got {:?}",
+            msg
         );
-        manager.recent_sends.insert(txid, Instant::now());
+    }
+
+    #[tokio::test]
+    async fn test_rebroadcast_skips_recent_transactions() {
+        let (mut manager, requests, mut rx) = create_test_manager();
+        let peer = test_socket_address(1);
+        manager.peers.insert(peer, Some(VecDeque::new()));
+
+        let tx = test_transaction(11);
+        let txid = tx.txid();
+
+        // Add a broadcast that was just sent (within the rebroadcast interval)
+        let mut state = TxBroadcastState::new(tx, Instant::now());
+        state.sent_to.insert(peer);
+        manager.broadcasts.insert(txid, state);
 
         manager.rebroadcast_if_due(&requests).await;
 
@@ -1716,5 +2079,435 @@ mod tests {
         // peer2 should still be present and activated
         assert!(manager.peers.contains_key(&peer2));
         assert!(manager.peers[&peer2].is_some());
+    }
+
+    // ---- Broadcast acceptance tracking ----
+
+    const LOCAL_SENTINEL: SocketAddr =
+        SocketAddr::new(std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED), 0);
+
+    fn tx_reject(txid: Txid, ccode: RejectReason, reason: &'static str) -> Reject {
+        Reject {
+            message: "tx".into(),
+            ccode,
+            reason: reason.into(),
+            hash: dashcore::hashes::Hash::from_byte_array(txid.to_byte_array()),
+        }
+    }
+
+    fn drain_tx_sends(rx: &mut mpsc::UnboundedReceiver<NetworkRequest>) -> Vec<SocketAddr> {
+        let mut sends = Vec::new();
+        while let Ok(msg) = rx.try_recv() {
+            if let NetworkRequest::SendMessageToPeer(NetworkMessage::Tx(_), peer) = msg {
+                sends.push(peer);
+            }
+        }
+        sends
+    }
+
+    fn accepted_event_count(events: &[SyncEvent]) -> usize {
+        events
+            .iter()
+            .filter(|e| {
+                matches!(
+                    e,
+                    SyncEvent::TransactionBroadcastResult {
+                        result: BroadcastResult::Accepted { .. },
+                        ..
+                    }
+                )
+            })
+            .count()
+    }
+
+    #[tokio::test]
+    async fn test_local_tx_sends_to_half_of_peers() {
+        let (mut manager, requests, mut rx) = create_test_manager();
+        for i in 1..=4 {
+            manager.peers.insert(test_socket_address(i), None);
+        }
+
+        let tx = test_transaction(20);
+        let txid = tx.txid();
+        manager.handle_tx(tx, LOCAL_SENTINEL, &requests).await.unwrap();
+
+        let sends = drain_tx_sends(&mut rx);
+        assert_eq!(sends.len(), 2, "should send to half of 4 peers");
+
+        let state = manager.broadcasts.get(&txid).expect("broadcast tracked");
+        assert_eq!(state.sent_to.len(), 2);
+        assert_eq!(state.holdout.len(), 2);
+        assert!(state.sent_to.is_disjoint(&state.holdout));
+        assert_eq!(state.status, BroadcastStatus::Pending);
+
+        // A second local dispatch of the same tx must not resend
+        let tx = test_transaction(20);
+        manager.handle_tx(tx, LOCAL_SENTINEL, &requests).await.unwrap();
+        assert!(drain_tx_sends(&mut rx).is_empty(), "idempotent per txid");
+    }
+
+    #[tokio::test]
+    async fn test_local_tx_single_peer_no_holdout() {
+        let (mut manager, requests, mut rx) = create_test_manager();
+        let peer = test_socket_address(1);
+        manager.peers.insert(peer, None);
+
+        let tx = test_transaction(21);
+        let txid = tx.txid();
+        manager.handle_tx(tx, LOCAL_SENTINEL, &requests).await.unwrap();
+
+        assert_eq!(drain_tx_sends(&mut rx), vec![peer]);
+        let state = manager.broadcasts.get(&txid).unwrap();
+        assert!(state.holdout.is_empty(), "single peer leaves nobody to hold out");
+    }
+
+    #[tokio::test]
+    async fn test_echo_from_holdout_peer_accepts_once() {
+        let (mut manager, requests, mut rx) = create_test_manager();
+        let recipient = test_socket_address(1);
+        let holdout = test_socket_address(2);
+        manager.peers.insert(recipient, None);
+        manager.peers.insert(holdout, None);
+
+        let tx = test_transaction(22);
+        let txid = tx.txid();
+        let mut state = TxBroadcastState::new(tx, Instant::now());
+        state.sent_to.insert(recipient);
+        state.holdout.insert(holdout);
+        manager.broadcasts.insert(txid, state);
+        drain_tx_sends(&mut rx);
+
+        let inv = vec![Inventory::Transaction(txid)];
+
+        // Echo from the recipient peer carries no information
+        let events = manager.handle_inv(&inv, recipient, &requests).await.unwrap();
+        assert_eq!(accepted_event_count(&events), 0);
+        assert_eq!(manager.broadcasts[&txid].status, BroadcastStatus::Pending);
+
+        // Echo from the holdout peer proves propagation
+        let events = manager.handle_inv(&inv, holdout, &requests).await.unwrap();
+        assert_eq!(accepted_event_count(&events), 1);
+        assert_eq!(manager.broadcasts[&txid].status, BroadcastStatus::Accepted);
+
+        // A repeat announcement must not emit a second event
+        let events = manager.handle_inv(&inv, holdout, &requests).await.unwrap();
+        assert_eq!(accepted_event_count(&events), 0);
+    }
+
+    #[tokio::test]
+    async fn test_echo_detected_when_mempool_full() {
+        let wallet = Arc::new(RwLock::new(MockWallet::new()));
+        let (tx_chan, _rx) = mpsc::unbounded_channel::<NetworkRequest>();
+        let requests = RequestSender::new(tx_chan);
+        let mut manager = MempoolManager::new(
+            wallet,
+            MempoolStrategy::FetchAll,
+            1, // capacity of one
+            0,
+            BroadcastConfig::default(),
+        );
+
+        // Fill the mempool to capacity with an unrelated transaction
+        let filler = test_transaction(23);
+        manager.transactions.insert(
+            filler.txid(),
+            UnconfirmedTransaction::new(filler, Amount::from_sat(0), false, false, Vec::new(), 0),
+        );
+
+        let holdout = test_socket_address(2);
+        let tx = test_transaction(24);
+        let txid = tx.txid();
+        let mut state = TxBroadcastState::new(tx, Instant::now());
+        state.sent_to.insert(test_socket_address(1));
+        state.holdout.insert(holdout);
+        manager.broadcasts.insert(txid, state);
+
+        // The mempool-full early return must not swallow the acceptance echo
+        let inv = vec![Inventory::Transaction(txid)];
+        let events = manager.handle_inv(&inv, holdout, &requests).await.unwrap();
+        assert_eq!(accepted_event_count(&events), 1);
+    }
+
+    #[tokio::test]
+    async fn test_reject_marks_rejected_and_stops_rebroadcast() {
+        let (mut manager, requests, mut rx) = create_test_manager();
+        let peer = test_socket_address(1);
+        manager.peers.insert(peer, None);
+
+        let tx = test_transaction(25);
+        let txid = tx.txid();
+        let t0 = Instant::now();
+        let mut state = TxBroadcastState::new(tx, t0);
+        state.sent_to.insert(peer);
+        manager.broadcasts.insert(txid, state);
+
+        let events = manager.handle_reject(&tx_reject(txid, RejectReason::Fee, "insufficient fee"));
+        assert!(matches!(
+            events.as_slice(),
+            [SyncEvent::TransactionBroadcastResult {
+                result: BroadcastResult::Rejected {
+                    code: RejectReason::Fee,
+                    ..
+                },
+                ..
+            }]
+        ));
+        assert_eq!(manager.broadcasts[&txid].status, BroadcastStatus::Rejected);
+
+        // Rejected transactions must not be rebroadcast
+        let later = t0 + REBROADCAST_INTERVAL + Duration::from_secs(1);
+        manager.rebroadcast_if_due_at(&requests, later).await;
+        assert!(drain_tx_sends(&mut rx).is_empty());
+        assert!(rx.try_recv().is_err());
+
+        // A second reject must not emit a second event
+        let events = manager.handle_reject(&tx_reject(txid, RejectReason::Fee, "insufficient fee"));
+        assert!(events.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_reject_duplicate_already_known_counts_as_acceptance() {
+        let (mut manager, _requests, _rx) = create_test_manager();
+
+        let tx = test_transaction(26);
+        let txid = tx.txid();
+        let mut state = TxBroadcastState::new(tx, Instant::now());
+        state.sent_to.insert(test_socket_address(1));
+        manager.broadcasts.insert(txid, state);
+
+        let events = manager.handle_reject(&tx_reject(
+            txid,
+            RejectReason::Duplicate,
+            "txn-already-in-mempool",
+        ));
+        assert_eq!(accepted_event_count(&events), 1);
+        assert_eq!(manager.broadcasts[&txid].status, BroadcastStatus::Accepted);
+    }
+
+    #[tokio::test]
+    async fn test_reject_duplicate_mempool_conflict_is_rejection() {
+        let (mut manager, _requests, _rx) = create_test_manager();
+
+        let tx = test_transaction(36);
+        let txid = tx.txid();
+        let mut state = TxBroadcastState::new(tx, Instant::now());
+        state.sent_to.insert(test_socket_address(1));
+        manager.broadcasts.insert(txid, state);
+
+        // Same Duplicate code, but the reason marks a double-spend conflict
+        let events = manager.handle_reject(&tx_reject(
+            txid,
+            RejectReason::Duplicate,
+            "txn-mempool-conflict",
+        ));
+        assert!(matches!(
+            events.as_slice(),
+            [SyncEvent::TransactionBroadcastResult {
+                result: BroadcastResult::Rejected { .. },
+                ..
+            }]
+        ));
+        assert_eq!(manager.broadcasts[&txid].status, BroadcastStatus::Rejected);
+    }
+
+    #[tokio::test]
+    async fn test_reject_for_non_tx_message_ignored() {
+        let (mut manager, _requests, _rx) = create_test_manager();
+
+        let tx = test_transaction(27);
+        let txid = tx.txid();
+        manager.broadcasts.insert(txid, TxBroadcastState::new(tx, Instant::now()));
+
+        let mut reject = tx_reject(txid, RejectReason::Invalid, "bad-blk");
+        reject.message = "block".into();
+        assert!(manager.handle_reject(&reject).is_empty());
+        assert_eq!(manager.broadcasts[&txid].status, BroadcastStatus::Pending);
+    }
+
+    #[tokio::test]
+    async fn test_timeout_uncertain_then_late_echo_upgrades() {
+        let (mut manager, requests, _rx) = create_test_manager();
+        let holdout = test_socket_address(2);
+
+        let tx = test_transaction(28);
+        let txid = tx.txid();
+        let t0 = Instant::now();
+        let mut state = TxBroadcastState::new(tx, t0);
+        state.sent_to.insert(test_socket_address(1));
+        state.holdout.insert(holdout);
+        manager.broadcasts.insert(txid, state);
+
+        // Before the timeout nothing expires
+        let events = manager.expire_broadcasts_at(t0 + Duration::from_secs(1));
+        assert!(events.is_empty());
+
+        // At the timeout the broadcast becomes uncertain, exactly once
+        let deadline = t0 + BroadcastConfig::default().acceptance_timeout;
+        let events = manager.expire_broadcasts_at(deadline);
+        assert!(matches!(
+            events.as_slice(),
+            [SyncEvent::TransactionBroadcastResult {
+                result: BroadcastResult::Uncertain,
+                ..
+            }]
+        ));
+        assert!(manager.expire_broadcasts_at(deadline + Duration::from_secs(9)).is_empty());
+        assert_eq!(manager.broadcasts[&txid].status, BroadcastStatus::Uncertain);
+
+        // A late echo still upgrades the outcome to accepted
+        let inv = vec![Inventory::Transaction(txid)];
+        let events = manager.handle_inv(&inv, holdout, &requests).await.unwrap();
+        assert_eq!(accepted_event_count(&events), 1);
+        assert_eq!(manager.broadcasts[&txid].status, BroadcastStatus::Accepted);
+    }
+
+    #[tokio::test]
+    async fn test_zero_peers_at_broadcast_sends_on_next_tick() {
+        let (mut manager, requests, mut rx) = create_test_manager();
+
+        // No peers connected at broadcast time
+        let tx = test_transaction(29);
+        let txid = tx.txid();
+        manager.handle_tx(tx, LOCAL_SENTINEL, &requests).await.unwrap();
+        assert!(drain_tx_sends(&mut rx).is_empty());
+        assert!(manager.broadcasts[&txid].sent_to.is_empty());
+
+        // A peer connects; the never-sent broadcast is due immediately
+        let peer = test_socket_address(1);
+        manager.peers.insert(peer, None);
+        manager.rebroadcast_if_due(&requests).await;
+        assert_eq!(drain_tx_sends(&mut rx), vec![peer]);
+        assert!(manager.broadcasts[&txid].sent_to.contains(&peer));
+    }
+
+    #[tokio::test]
+    async fn test_holdout_sticky_across_rebroadcasts() {
+        let (mut manager, requests, mut rx) = create_test_manager();
+        let recipient = test_socket_address(1);
+        let holdout = test_socket_address(2);
+        manager.peers.insert(recipient, None);
+        manager.peers.insert(holdout, None);
+
+        let tx = test_transaction(30);
+        let txid = tx.txid();
+        let t0 = Instant::now();
+        let mut state = TxBroadcastState::new(tx, t0);
+        state.sent_to.insert(recipient);
+        state.holdout.insert(holdout);
+        manager.broadcasts.insert(txid, state);
+
+        let later = t0 + REBROADCAST_INTERVAL + Duration::from_secs(1);
+        manager.rebroadcast_if_due_at(&requests, later).await;
+
+        // Only the original recipient is resent to; the holdout stays withheld
+        assert_eq!(drain_tx_sends(&mut rx), vec![recipient]);
+        assert_eq!(manager.broadcasts[&txid].holdout, [holdout].into_iter().collect());
+    }
+
+    #[tokio::test]
+    async fn test_holdout_repicked_when_all_holdouts_disconnect() {
+        let (mut manager, requests, mut rx) = create_test_manager();
+        let recipient = test_socket_address(1);
+        let new_peer = test_socket_address(3);
+        manager.peers.insert(recipient, None);
+        manager.peers.insert(new_peer, None);
+
+        let tx = test_transaction(31);
+        let txid = tx.txid();
+        let t0 = Instant::now();
+        let mut state = TxBroadcastState::new(tx, t0);
+        state.sent_to.insert(recipient);
+        // Original holdout peer already disconnected (not in manager.peers)
+        state.holdout.insert(test_socket_address(2));
+        manager.broadcasts.insert(txid, state);
+
+        let later = t0 + REBROADCAST_INTERVAL + Duration::from_secs(1);
+        manager.rebroadcast_if_due_at(&requests, later).await;
+
+        // The never-sent connected peer becomes the replacement holdout,
+        // so the resend goes only to the original recipient.
+        assert_eq!(drain_tx_sends(&mut rx), vec![recipient]);
+        assert!(manager.broadcasts[&txid].holdout.contains(&new_peer));
+        assert!(!manager.broadcasts[&txid].sent_to.contains(&new_peer));
+    }
+
+    #[tokio::test]
+    async fn test_acceptance_threshold_two_requires_two_peers() {
+        let wallet = Arc::new(RwLock::new(MockWallet::new()));
+        let (tx_chan, _rx) = mpsc::unbounded_channel::<NetworkRequest>();
+        let requests = RequestSender::new(tx_chan);
+        let mut manager = MempoolManager::new(
+            wallet,
+            MempoolStrategy::FetchAll,
+            1000,
+            0,
+            BroadcastConfig {
+                acceptance_threshold: 2,
+                ..BroadcastConfig::default()
+            },
+        );
+
+        let holdout1 = test_socket_address(2);
+        let holdout2 = test_socket_address(3);
+        let tx = test_transaction(32);
+        let txid = tx.txid();
+        let mut state = TxBroadcastState::new(tx, Instant::now());
+        state.sent_to.insert(test_socket_address(1));
+        state.holdout.extend([holdout1, holdout2]);
+        manager.broadcasts.insert(txid, state);
+
+        let inv = vec![Inventory::Transaction(txid)];
+        let events = manager.handle_inv(&inv, holdout1, &requests).await.unwrap();
+        assert_eq!(accepted_event_count(&events), 0, "one echo below threshold");
+
+        let events = manager.handle_inv(&inv, holdout2, &requests).await.unwrap();
+        assert_eq!(accepted_event_count(&events), 1, "second distinct peer meets threshold");
+        assert!(matches!(
+            events.as_slice(),
+            [SyncEvent::TransactionBroadcastResult {
+                result: BroadcastResult::Accepted {
+                    relayed_by: 2
+                },
+                ..
+            }]
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_clear_pending_preserves_broadcasts() {
+        let (mut manager, _requests, _rx) = create_test_manager();
+
+        let tx = test_transaction(33);
+        let txid = tx.txid();
+        manager.broadcasts.insert(txid, TxBroadcastState::new(tx, Instant::now()));
+
+        manager.clear_pending();
+
+        assert!(
+            manager.broadcasts.contains_key(&txid),
+            "broadcast tracking must survive disconnects"
+        );
+    }
+
+    #[test]
+    fn test_prune_expired_removes_old_broadcasts() {
+        let (mut manager, _requests, _rx) = create_test_manager();
+        let timeout = Duration::from_secs(2);
+
+        let fresh = test_transaction(34);
+        let fresh_txid = fresh.txid();
+        manager.broadcasts.insert(fresh_txid, TxBroadcastState::new(fresh, Instant::now()));
+
+        let stale = test_transaction(35);
+        let stale_txid = stale.txid();
+        let mut stale_state =
+            TxBroadcastState::new(stale, Instant::now() - timeout - Duration::from_secs(1));
+        stale_state.status = BroadcastStatus::Rejected;
+        manager.broadcasts.insert(stale_txid, stale_state);
+
+        manager.prune_expired(timeout);
+
+        assert!(manager.broadcasts.contains_key(&fresh_txid));
+        assert!(!manager.broadcasts.contains_key(&stale_txid));
     }
 }

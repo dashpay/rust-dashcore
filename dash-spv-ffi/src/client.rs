@@ -348,6 +348,118 @@ pub unsafe extern "C" fn dash_spv_ffi_client_broadcast_transaction(
     }
 }
 
+/// Network-level outcome of a broadcast, as returned by
+/// `dash_spv_ffi_client_broadcast_transaction_and_wait`.
+#[repr(C)]
+pub struct FFIBroadcastResult {
+    /// The determined outcome.
+    pub status: crate::FFIBroadcastStatus,
+    /// Distinct non-recipient peers that announced the txid back
+    /// (meaningful for `Accepted`).
+    pub relayed_by: u32,
+    /// Raw p2p reject code (meaningful for `Rejected`, 0 otherwise).
+    pub reject_code: u8,
+    /// Peer-supplied reject reason (empty unless `Rejected`). Must be freed
+    /// with `dash_spv_ffi_broadcast_result_destroy`.
+    pub reject_reason: crate::FFIString,
+}
+
+/// Free the strings owned by an FFIBroadcastResult.
+///
+/// # Safety
+/// - `result` must be a valid pointer to an FFIBroadcastResult previously
+///   filled in by `dash_spv_ffi_client_broadcast_transaction_and_wait`, and
+///   must not be used after this call.
+#[no_mangle]
+pub unsafe extern "C" fn dash_spv_ffi_broadcast_result_destroy(result: *mut FFIBroadcastResult) {
+    if !result.is_null() {
+        crate::types::dash_spv_ffi_string_destroy(std::ptr::read(&(*result).reject_reason));
+    }
+}
+
+/// Broadcasts a transaction and waits for its network-level outcome.
+///
+/// Blocks until the network accepts the transaction (non-recipient peers
+/// announce it back, it is InstantSend-locked, or confirmed), a peer rejects
+/// it, or the timeout elapses (outcome `Uncertain`). `timeout_secs == 0`
+/// uses the configured acceptance timeout plus a small grace period.
+///
+/// Requires mempool tracking to be enabled in the client config.
+///
+/// # Safety
+///
+/// - `client` must be a valid, non-null pointer to an initialized FFIDashSpvClient
+/// - `tx_bytes` must be a valid, non-null pointer to the transaction data
+/// - `length` must be the length of the transaction data in bytes
+/// - `out_result` must be a valid, non-null pointer to an FFIBroadcastResult
+#[no_mangle]
+pub unsafe extern "C" fn dash_spv_ffi_client_broadcast_transaction_and_wait(
+    client: *mut FFIDashSpvClient,
+    tx_bytes: *const u8,
+    length: usize,
+    timeout_secs: u32,
+    out_result: *mut FFIBroadcastResult,
+) -> i32 {
+    null_check!(client);
+    null_check!(tx_bytes);
+    null_check!(out_result);
+
+    let tx_bytes = std::slice::from_raw_parts(tx_bytes, length);
+
+    let tx = match dashcore::consensus::deserialize::<dashcore::Transaction>(tx_bytes) {
+        Ok(t) => t,
+        Err(e) => {
+            set_last_error(&format!("Invalid transaction: {}", e));
+            return FFIErrorCode::InvalidArgument as i32;
+        }
+    };
+
+    let client = &(*client);
+    let spv_client = client.inner.clone();
+    let timeout = (timeout_secs > 0).then(|| std::time::Duration::from_secs(timeout_secs as u64));
+
+    let result = client
+        .runtime
+        .block_on(async { spv_client.broadcast_transaction_and_wait(&tx, timeout).await });
+
+    match result {
+        Ok(outcome) => {
+            use dash_spv::BroadcastResult;
+            let ffi = match outcome {
+                BroadcastResult::Accepted {
+                    relayed_by,
+                } => FFIBroadcastResult {
+                    status: crate::FFIBroadcastStatus::Accepted,
+                    relayed_by: relayed_by as u32,
+                    reject_code: 0,
+                    reject_reason: crate::FFIString::new(""),
+                },
+                BroadcastResult::Rejected {
+                    code,
+                    reason,
+                } => FFIBroadcastResult {
+                    status: crate::FFIBroadcastStatus::Rejected,
+                    relayed_by: 0,
+                    reject_code: code as u8,
+                    reject_reason: crate::FFIString::new(&reason),
+                },
+                BroadcastResult::Uncertain => FFIBroadcastResult {
+                    status: crate::FFIBroadcastStatus::Uncertain,
+                    relayed_by: 0,
+                    reject_code: 0,
+                    reject_reason: crate::FFIString::new(""),
+                },
+            };
+            std::ptr::write(out_result, ffi);
+            FFIErrorCode::Success as i32
+        }
+        Err(e) => {
+            set_last_error(&format!("Failed to broadcast transaction: {}", e));
+            FFIErrorCode::from(e) as i32
+        }
+    }
+}
+
 /// Destroy the client and free associated resources.
 ///
 /// # Safety

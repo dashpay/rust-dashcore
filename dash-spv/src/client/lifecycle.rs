@@ -145,6 +145,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
                 config.mempool_strategy,
                 config.max_mempool_transactions,
                 initial_revision,
+                config.broadcast_config(),
             ));
         }
 
