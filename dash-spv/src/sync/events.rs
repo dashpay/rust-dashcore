@@ -1,3 +1,4 @@
+use crate::sync::mempool::BroadcastResult;
 use crate::sync::ManagerIdentifier;
 use dashcore::ephemerealdata::chain_lock::ChainLock;
 use dashcore::ephemerealdata::instant_lock::InstantLock;
@@ -162,6 +163,20 @@ pub enum SyncEvent {
         validated: bool,
     },
 
+    /// The network-level outcome of a self-broadcast transaction was
+    /// determined: accepted (echoed back by non-recipient peers, InstantSend
+    /// locked, or confirmed) or uncertain (no signal within the timeout).
+    /// An `Uncertain` outcome may later be followed by an `Accepted` one.
+    ///
+    /// Emitted by: `MempoolManager`
+    /// Consumed by: External listeners, `broadcast_transaction_and_wait`
+    TransactionBroadcastResult {
+        /// The broadcast transaction's txid
+        txid: Txid,
+        /// The determined outcome
+        result: BroadcastResult,
+    },
+
     /// Sync has reached the chain tip (all managers idle).
     ///
     /// Emitted on every not-synced to synced transition. Cycle 0 is the
@@ -256,6 +271,10 @@ impl fmt::Display for SyncEvent {
                 "InstantLockReceived(txid={}, validated={})",
                 instant_lock.txid, validated
             ),
+            SyncEvent::TransactionBroadcastResult {
+                txid,
+                result,
+            } => write!(f, "TransactionBroadcastResult(txid={}, result={})", txid, result),
             SyncEvent::SyncComplete {
                 header_tip,
                 cycle,

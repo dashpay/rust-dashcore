@@ -107,4 +107,78 @@ mod tests {
             dash_spv_ffi_config_destroy(config);
         }
     }
+
+    #[test]
+    #[serial]
+    fn test_config_broadcast_holdout_setters() {
+        unsafe {
+            let config = dash_spv_ffi_config_new(FFINetwork::Testnet);
+
+            let result = dash_spv_ffi_config_set_broadcast_holdout_count(config, 2);
+            assert_eq!(result, FFIErrorCode::Success as i32);
+            assert_eq!(
+                (*config).get_inner().broadcast_holdout,
+                dash_spv::BroadcastHoldout::Count(2)
+            );
+
+            let result = dash_spv_ffi_config_set_broadcast_holdout_half(config);
+            assert_eq!(result, FFIErrorCode::Success as i32);
+            assert_eq!((*config).get_inner().broadcast_holdout, dash_spv::BroadcastHoldout::Half);
+
+            dash_spv_ffi_config_destroy(config);
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn test_config_broadcast_acceptance_threshold() {
+        unsafe {
+            let config = dash_spv_ffi_config_new(FFINetwork::Testnet);
+
+            // Zero is rejected and leaves the default intact
+            let default_threshold = (*config).get_inner().broadcast_acceptance_threshold;
+            let result = dash_spv_ffi_config_set_broadcast_acceptance_threshold(config, 0);
+            assert_eq!(result, FFIErrorCode::InvalidArgument as i32);
+            assert_eq!(
+                (*config).get_inner().broadcast_acceptance_threshold,
+                default_threshold,
+                "rejected value must not modify the config"
+            );
+
+            // Nonzero maps to the ClientConfig field
+            let result = dash_spv_ffi_config_set_broadcast_acceptance_threshold(config, 3);
+            assert_eq!(result, FFIErrorCode::Success as i32);
+            assert_eq!((*config).get_inner().broadcast_acceptance_threshold, 3);
+
+            dash_spv_ffi_config_destroy(config);
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn test_config_broadcast_acceptance_timeout() {
+        unsafe {
+            let config = dash_spv_ffi_config_new(FFINetwork::Testnet);
+
+            // Zero is rejected and leaves the default intact
+            let default_timeout = (*config).get_inner().broadcast_acceptance_timeout;
+            let result = dash_spv_ffi_config_set_broadcast_acceptance_timeout_secs(config, 0);
+            assert_eq!(result, FFIErrorCode::InvalidArgument as i32);
+            assert_eq!(
+                (*config).get_inner().broadcast_acceptance_timeout,
+                default_timeout,
+                "rejected value must not modify the config"
+            );
+
+            // Nonzero maps to the ClientConfig field
+            let result = dash_spv_ffi_config_set_broadcast_acceptance_timeout_secs(config, 90);
+            assert_eq!(result, FFIErrorCode::Success as i32);
+            assert_eq!(
+                (*config).get_inner().broadcast_acceptance_timeout,
+                std::time::Duration::from_secs(90)
+            );
+
+            dash_spv_ffi_config_destroy(config);
+        }
+    }
 }

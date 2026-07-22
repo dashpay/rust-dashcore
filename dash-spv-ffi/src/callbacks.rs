@@ -226,6 +226,35 @@ pub type OnManagerErrorCallback =
 pub type OnSyncCompleteCallback =
     Option<extern "C" fn(header_tip: u32, cycle: u32, user_data: *mut c_void)>;
 
+/// Network-level outcome of a transaction broadcast.
+///
+/// There is no rejected state: modern Dash Core removed the BIP61 `reject`
+/// message, so the p2p network provides no negative signal — a transaction
+/// the network refuses surfaces as `Uncertain` (no echo within the timeout).
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FFIBroadcastStatus {
+    /// Non-recipient peers announced the txid back (or it was
+    /// InstantSend-locked/confirmed) — the network accepted it.
+    Accepted = 0,
+    /// No acceptance signal arrived within the acceptance timeout.
+    Uncertain = 1,
+}
+
+/// Callback for SyncEvent::TransactionBroadcastResult
+///
+/// The `txid` pointer is borrowed and only valid for the duration of the
+/// callback. `relayed_by` is the number of distinct non-recipient peers that
+/// announced the txid back (meaningful for `Accepted`).
+pub type OnTransactionBroadcastResultCallback = Option<
+    extern "C" fn(
+        txid: *const [u8; 32],
+        status: FFIBroadcastStatus,
+        relayed_by: u32,
+        user_data: *mut c_void,
+    ),
+>;
+
 /// Sync event callbacks - one callback per SyncEvent variant.
 ///
 /// Set only the callbacks you're interested in; unset callbacks will be ignored.
@@ -250,6 +279,7 @@ pub struct FFISyncEventCallbacks {
     pub on_instantlock_received: OnInstantLockReceivedCallback,
     pub on_manager_error: OnManagerErrorCallback,
     pub on_sync_complete: OnSyncCompleteCallback,
+    pub on_transaction_broadcast_result: OnTransactionBroadcastResultCallback,
     pub user_data: *mut c_void,
 }
 
@@ -282,6 +312,7 @@ impl Default for FFISyncEventCallbacks {
             on_instantlock_received: None,
             on_manager_error: None,
             on_sync_complete: None,
+            on_transaction_broadcast_result: None,
             user_data: std::ptr::null_mut(),
         }
     }
@@ -436,6 +467,22 @@ impl FFISyncEventCallbacks {
             } => {
                 if let Some(cb) = self.on_sync_complete {
                     cb(*header_tip, *cycle, self.user_data);
+                }
+            }
+            SyncEvent::TransactionBroadcastResult {
+                txid,
+                result,
+            } => {
+                if let Some(cb) = self.on_transaction_broadcast_result {
+                    use dash_spv::BroadcastResult;
+                    let txid_bytes = txid.as_byte_array();
+                    let (status, relayed_by) = match result {
+                        BroadcastResult::Accepted {
+                            relayed_by,
+                        } => (FFIBroadcastStatus::Accepted, *relayed_by as u32),
+                        BroadcastResult::Uncertain => (FFIBroadcastStatus::Uncertain, 0),
+                    };
+                    cb(txid_bytes as *const [u8; 32], status, relayed_by, self.user_data);
                 }
             }
         }
@@ -1369,5 +1416,48 @@ mod tests {
             locked_transactions: BTreeMap::new(),
         });
         assert_eq!(FIRED.load(Ordering::SeqCst), 0);
+    }
+
+    /// `TransactionBroadcastResult` dispatch must marshal the outcome fields
+    /// (status, relayed_by) for each variant.
+    #[test]
+    fn test_transaction_broadcast_result_dispatch() {
+        use dash_spv::BroadcastResult;
+
+        static STATUS: AtomicU32 = AtomicU32::new(u32::MAX);
+        static RELAYED: AtomicU32 = AtomicU32::new(u32::MAX);
+
+        extern "C" fn cb(
+            txid: *const [u8; 32],
+            status: FFIBroadcastStatus,
+            relayed_by: u32,
+            _user: *mut c_void,
+        ) {
+            assert!(!txid.is_null());
+            STATUS.store(status as u32, Ordering::SeqCst);
+            RELAYED.store(relayed_by, Ordering::SeqCst);
+        }
+
+        let callbacks = FFISyncEventCallbacks {
+            on_transaction_broadcast_result: Some(cb),
+            ..FFISyncEventCallbacks::default()
+        };
+        let txid = Txid::from_byte_array([7u8; 32]);
+
+        callbacks.dispatch(&SyncEvent::TransactionBroadcastResult {
+            txid,
+            result: BroadcastResult::Accepted {
+                relayed_by: 3,
+            },
+        });
+        assert_eq!(STATUS.load(Ordering::SeqCst), FFIBroadcastStatus::Accepted as u32);
+        assert_eq!(RELAYED.load(Ordering::SeqCst), 3);
+
+        callbacks.dispatch(&SyncEvent::TransactionBroadcastResult {
+            txid,
+            result: BroadcastResult::Uncertain,
+        });
+        assert_eq!(STATUS.load(Ordering::SeqCst), FFIBroadcastStatus::Uncertain as u32);
+        assert_eq!(RELAYED.load(Ordering::SeqCst), 0);
     }
 }
