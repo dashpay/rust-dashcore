@@ -4,7 +4,7 @@ This document provides a comprehensive reference for all FFI (Foreign Function I
 
 **Auto-generated**: This documentation is automatically generated from the source code. Do not edit manually.
 
-**Total Functions**: 45
+**Total Functions**: 44
 
 ## Table of Contents
 
@@ -67,11 +67,10 @@ Functions: 3
 
 ### Transaction Management
 
-Functions: 3
+Functions: 2
 
 | Function | Description | Module |
 |----------|-------------|--------|
-| `dash_spv_ffi_broadcast_result_destroy` | Free the strings owned by an FFIBroadcastResult | client |
 | `dash_spv_ffi_client_broadcast_transaction` | Broadcasts a transaction to the Dash network via connected peers | client |
 | `dash_spv_ffi_client_broadcast_transaction_and_wait` | Broadcasts a transaction and waits for its network-level outcome | client |
 
@@ -512,22 +511,6 @@ Destroy an `FFISyncProgress` object and all its nested pointers.  # Safety - `pr
 
 ### Transaction Management - Detailed
 
-#### `dash_spv_ffi_broadcast_result_destroy`
-
-```c
-dash_spv_ffi_broadcast_result_destroy(result: *mut FFIBroadcastResult) -> ()
-```
-
-**Description:**
-Free the strings owned by an FFIBroadcastResult.  # Safety - `result` must be a valid pointer to an FFIBroadcastResult previously filled in by `dash_spv_ffi_client_broadcast_transaction_and_wait`, and must not be used after this call.
-
-**Safety:**
-- `result` must be a valid pointer to an FFIBroadcastResult previously filled in by `dash_spv_ffi_client_broadcast_transaction_and_wait`, and must not be used after this call.
-
-**Module:** `client`
-
----
-
 #### `dash_spv_ffi_client_broadcast_transaction`
 
 ```c
@@ -551,7 +534,7 @@ dash_spv_ffi_client_broadcast_transaction_and_wait(client: *mut FFIDashSpvClient
 ```
 
 **Description:**
-Broadcasts a transaction and waits for its network-level outcome.  Blocks until the network accepts the transaction (non-recipient peers announce it back, it is InstantSend-locked, or confirmed), a peer rejects it, or the timeout elapses (outcome `Uncertain`). `timeout_secs == 0` uses the configured acceptance timeout plus a small grace period.  Requires mempool tracking to be enabled in the client config.  # Safety  - `client` must be a valid, non-null pointer to an initialized FFIDashSpvClient - `tx_bytes` must be a valid, non-null pointer to the transaction data - `length` must be the length of the transaction data in bytes - `out_result` must be a valid, non-null pointer to an FFIBroadcastResult
+Broadcasts a transaction and waits for its network-level outcome.  Blocks until the network accepts the transaction (non-recipient peers announce it back, it is InstantSend-locked, or confirmed) or the timeout elapses (outcome `Uncertain`). `timeout_secs == 0` uses the configured acceptance timeout plus a small grace period.  Requires mempool tracking to be enabled in the client config.  # Safety  - `client` must be a valid, non-null pointer to an initialized FFIDashSpvClient - `tx_bytes` must be a valid, non-null pointer to the transaction data - `length` must be the length of the transaction data in bytes - `out_result` must be a valid, non-null pointer to an FFIBroadcastResult
 
 **Safety:**
 - `client` must be a valid, non-null pointer to an initialized FFIDashSpvClient - `tx_bytes` must be a valid, non-null pointer to the transaction data - `length` must be the length of the transaction data in bytes - `out_result` must be a valid, non-null pointer to an FFIBroadcastResult

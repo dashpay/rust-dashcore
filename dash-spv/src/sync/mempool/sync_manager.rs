@@ -23,7 +23,7 @@ impl<W: WalletInterface + 'static> SyncManager for MempoolManager<W> {
     }
 
     fn wanted_message_types(&self) -> &'static [MessageType] {
-        &[MessageType::Inv, MessageType::Tx, MessageType::Reject]
+        &[MessageType::Inv, MessageType::Tx]
     }
 
     async fn start_sync(&mut self, requests: &RequestSender) -> SyncResult<Vec<SyncEvent>> {
@@ -53,7 +53,6 @@ impl<W: WalletInterface + 'static> SyncManager for MempoolManager<W> {
             NetworkMessage::Tx(tx) => {
                 self.handle_tx(tx.clone(), msg.peer_address(), requests).await
             }
-            NetworkMessage::Reject(reject) => Ok(self.handle_reject(reject)),
             _ => Ok(vec![]),
         }
     }
@@ -228,8 +227,7 @@ mod tests {
         let types = manager.wanted_message_types();
         assert!(types.contains(&MessageType::Inv));
         assert!(types.contains(&MessageType::Tx));
-        assert!(types.contains(&MessageType::Reject));
-        assert_eq!(types.len(), 3);
+        assert_eq!(types.len(), 2);
 
         manager.set_state(SyncState::Synced);
         assert_eq!(manager.state(), SyncState::Synced);

@@ -11,10 +11,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use dashcore::ephemerealdata::instant_lock::InstantLock;
-use dashcore::hashes::Hash as _;
 use dashcore::network::message::NetworkMessage;
 use dashcore::network::message_blockdata::Inventory;
-use dashcore::network::message_network::{Reject, RejectReason};
 use dashcore::{Amount, Transaction, Txid};
 use rand::seq::IteratorRandom;
 use tokio::sync::RwLock;
@@ -464,67 +462,6 @@ impl<W: WalletInterface> MempoolManager<W> {
         self.broadcasts.insert(txid, state);
     }
 
-    /// Handle a p2p `reject` message that references one of our broadcasts.
-    ///
-    /// Best-effort negative signal: BIP61 `reject` was removed upstream in
-    /// Bitcoin Core 0.20 and modern Dash Core releases may never send it, in
-    /// which case invalid broadcasts surface as `Uncertain` via the timeout.
-    pub(super) fn handle_reject(&mut self, reject: &Reject) -> Vec<SyncEvent> {
-        if reject.message != "tx" && reject.message != "ix" {
-            return vec![];
-        }
-        let txid = Txid::from_byte_array(reject.hash.to_byte_array());
-        let Some(state) = self.broadcasts.get_mut(&txid) else {
-            return vec![];
-        };
-        match reject.ccode {
-            // The Duplicate code covers both "already have this transaction"
-            // (txn-already-in-mempool / txn-already-known — acceptance
-            // evidence, not failure) and "conflicts with a mempool
-            // transaction" (txn-mempool-conflict — a genuine rejection,
-            // e.g. a double-spend), distinguishable only via the reason.
-            RejectReason::Duplicate if !reject.reason.contains("conflict") => {
-                if matches!(state.status, BroadcastStatus::Pending | BroadcastStatus::Uncertain) {
-                    state.status = BroadcastStatus::Accepted;
-                    tracing::info!("Broadcast {} accepted (peer reported duplicate)", txid);
-                    vec![SyncEvent::TransactionBroadcastResult {
-                        txid,
-                        result: BroadcastResult::Accepted {
-                            relayed_by: state.announced_by.len(),
-                        },
-                    }]
-                } else {
-                    vec![]
-                }
-            }
-            code => {
-                if state.status == BroadcastStatus::Pending {
-                    state.status = BroadcastStatus::Rejected;
-                    tracing::warn!(
-                        "Broadcast {} rejected by peer: {:?} ({})",
-                        txid,
-                        code,
-                        reject.reason
-                    );
-                    vec![SyncEvent::TransactionBroadcastResult {
-                        txid,
-                        result: BroadcastResult::Rejected {
-                            code,
-                            reason: reject.reason.to_string(),
-                        },
-                    }]
-                } else {
-                    tracing::debug!(
-                        "Ignoring late reject for broadcast {} (status {:?})",
-                        txid,
-                        state.status
-                    );
-                    vec![]
-                }
-            }
-        }
-    }
-
     /// Transition pending broadcasts that outlived the acceptance timeout to
     /// `Uncertain`, emitting one event per transition. A late echo, IS lock,
     /// or confirmation can still upgrade them to `Accepted`.
@@ -644,7 +581,7 @@ impl<W: WalletInterface> MempoolManager<W> {
             }
         });
 
-        // Prune old broadcast tracking states (including rejected entries)
+        // Prune old broadcast tracking states
         if let Some(cutoff) = Instant::now().checked_sub(timeout) {
             self.broadcasts.retain(|_, state| state.created_at > cutoff);
         }
@@ -678,7 +615,6 @@ impl<W: WalletInterface> MempoolManager<W> {
     /// - `Accepted`/`Uncertain`: plain broadcast to all peers (the holdout no
     ///   longer matters; a late echo from a new peer can still upgrade
     ///   `Uncertain` to `Accepted`).
-    /// - `Rejected`: never rebroadcast.
     pub(super) async fn rebroadcast_if_due(&mut self, requests: &RequestSender) {
         self.rebroadcast_if_due_at(requests, Instant::now()).await
     }
@@ -690,7 +626,7 @@ impl<W: WalletInterface> MempoolManager<W> {
         let current_peers: Vec<SocketAddr> = self.peers.keys().copied().collect();
         let mut count: usize = 0;
         for (txid, state) in &mut self.broadcasts {
-            if state.status == BroadcastStatus::Rejected || current_peers.is_empty() {
+            if current_peers.is_empty() {
                 continue;
             }
             // A pending broadcast that never reached any peer (no peers were
@@ -2086,15 +2022,6 @@ mod tests {
     const LOCAL_SENTINEL: SocketAddr =
         SocketAddr::new(std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED), 0);
 
-    fn tx_reject(txid: Txid, ccode: RejectReason, reason: &'static str) -> Reject {
-        Reject {
-            message: "tx".into(),
-            ccode,
-            reason: reason.into(),
-            hash: dashcore::hashes::Hash::from_byte_array(txid.to_byte_array()),
-        }
-    }
-
     fn drain_tx_sends(rx: &mut mpsc::UnboundedReceiver<NetworkRequest>) -> Vec<SocketAddr> {
         let mut sends = Vec::new();
         while let Ok(msg) = rx.try_recv() {
@@ -2226,102 +2153,6 @@ mod tests {
         let inv = vec![Inventory::Transaction(txid)];
         let events = manager.handle_inv(&inv, holdout, &requests).await.unwrap();
         assert_eq!(accepted_event_count(&events), 1);
-    }
-
-    #[tokio::test]
-    async fn test_reject_marks_rejected_and_stops_rebroadcast() {
-        let (mut manager, requests, mut rx) = create_test_manager();
-        let peer = test_socket_address(1);
-        manager.peers.insert(peer, None);
-
-        let tx = test_transaction(25);
-        let txid = tx.txid();
-        let t0 = Instant::now();
-        let mut state = TxBroadcastState::new(tx, t0);
-        state.sent_to.insert(peer);
-        manager.broadcasts.insert(txid, state);
-
-        let events = manager.handle_reject(&tx_reject(txid, RejectReason::Fee, "insufficient fee"));
-        assert!(matches!(
-            events.as_slice(),
-            [SyncEvent::TransactionBroadcastResult {
-                result: BroadcastResult::Rejected {
-                    code: RejectReason::Fee,
-                    ..
-                },
-                ..
-            }]
-        ));
-        assert_eq!(manager.broadcasts[&txid].status, BroadcastStatus::Rejected);
-
-        // Rejected transactions must not be rebroadcast
-        let later = t0 + REBROADCAST_INTERVAL + Duration::from_secs(1);
-        manager.rebroadcast_if_due_at(&requests, later).await;
-        assert!(drain_tx_sends(&mut rx).is_empty());
-        assert!(rx.try_recv().is_err());
-
-        // A second reject must not emit a second event
-        let events = manager.handle_reject(&tx_reject(txid, RejectReason::Fee, "insufficient fee"));
-        assert!(events.is_empty());
-    }
-
-    #[tokio::test]
-    async fn test_reject_duplicate_already_known_counts_as_acceptance() {
-        let (mut manager, _requests, _rx) = create_test_manager();
-
-        let tx = test_transaction(26);
-        let txid = tx.txid();
-        let mut state = TxBroadcastState::new(tx, Instant::now());
-        state.sent_to.insert(test_socket_address(1));
-        manager.broadcasts.insert(txid, state);
-
-        let events = manager.handle_reject(&tx_reject(
-            txid,
-            RejectReason::Duplicate,
-            "txn-already-in-mempool",
-        ));
-        assert_eq!(accepted_event_count(&events), 1);
-        assert_eq!(manager.broadcasts[&txid].status, BroadcastStatus::Accepted);
-    }
-
-    #[tokio::test]
-    async fn test_reject_duplicate_mempool_conflict_is_rejection() {
-        let (mut manager, _requests, _rx) = create_test_manager();
-
-        let tx = test_transaction(36);
-        let txid = tx.txid();
-        let mut state = TxBroadcastState::new(tx, Instant::now());
-        state.sent_to.insert(test_socket_address(1));
-        manager.broadcasts.insert(txid, state);
-
-        // Same Duplicate code, but the reason marks a double-spend conflict
-        let events = manager.handle_reject(&tx_reject(
-            txid,
-            RejectReason::Duplicate,
-            "txn-mempool-conflict",
-        ));
-        assert!(matches!(
-            events.as_slice(),
-            [SyncEvent::TransactionBroadcastResult {
-                result: BroadcastResult::Rejected { .. },
-                ..
-            }]
-        ));
-        assert_eq!(manager.broadcasts[&txid].status, BroadcastStatus::Rejected);
-    }
-
-    #[tokio::test]
-    async fn test_reject_for_non_tx_message_ignored() {
-        let (mut manager, _requests, _rx) = create_test_manager();
-
-        let tx = test_transaction(27);
-        let txid = tx.txid();
-        manager.broadcasts.insert(txid, TxBroadcastState::new(tx, Instant::now()));
-
-        let mut reject = tx_reject(txid, RejectReason::Invalid, "bad-blk");
-        reject.message = "block".into();
-        assert!(manager.handle_reject(&reject).is_empty());
-        assert_eq!(manager.broadcasts[&txid].status, BroadcastStatus::Pending);
     }
 
     #[tokio::test]
@@ -2502,7 +2333,7 @@ mod tests {
         let stale_txid = stale.txid();
         let mut stale_state =
             TxBroadcastState::new(stale, Instant::now() - timeout - Duration::from_secs(1));
-        stale_state.status = BroadcastStatus::Rejected;
+        stale_state.status = BroadcastStatus::Uncertain;
         manager.broadcasts.insert(stale_txid, stale_state);
 
         manager.prune_expired(timeout);

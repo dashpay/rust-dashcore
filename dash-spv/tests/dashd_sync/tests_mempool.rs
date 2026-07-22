@@ -672,9 +672,8 @@ async fn test_broadcast_transaction_network_acceptance() {
 
     // Negative leg: a double-spend of the same UTXO must NOT be reported as
     // accepted. The receiving node refuses it (mempool conflict), so it never
-    // relays to the holdout peer. Whether the outcome is Rejected or
-    // Uncertain depends on whether this dashd version still sends BIP61
-    // reject messages; both are valid "not accepted" outcomes.
+    // relays to the holdout peer and no echo arrives. Modern dashd sends no
+    // BIP61 reject, so the outcome resolves Uncertain via the timeout.
     let double_spend = ctx.dashd.node.create_signed_transaction(
         wallet_name,
         utxo.txid,
@@ -692,8 +691,8 @@ async fn test_broadcast_transaction_network_acceptance() {
         .expect("broadcast_transaction_and_wait failed for double spend");
     tracing::info!("Double-spend {} outcome: {}", ds_txid, ds_result);
     assert!(
-        !matches!(ds_result, dash_spv::BroadcastResult::Accepted { .. }),
-        "double spend must not be reported as accepted, got {}",
+        matches!(ds_result, dash_spv::BroadcastResult::Uncertain),
+        "double spend must resolve uncertain (no echo, no BIP61 reject), got {}",
         ds_result
     );
 

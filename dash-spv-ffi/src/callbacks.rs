@@ -227,33 +227,30 @@ pub type OnSyncCompleteCallback =
     Option<extern "C" fn(header_tip: u32, cycle: u32, user_data: *mut c_void)>;
 
 /// Network-level outcome of a transaction broadcast.
+///
+/// There is no rejected state: modern Dash Core removed the BIP61 `reject`
+/// message, so the p2p network provides no negative signal — a transaction
+/// the network refuses surfaces as `Uncertain` (no echo within the timeout).
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FFIBroadcastStatus {
     /// Non-recipient peers announced the txid back (or it was
     /// InstantSend-locked/confirmed) — the network accepted it.
     Accepted = 0,
-    /// A peer rejected the transaction via a p2p `reject` message.
-    Rejected = 1,
-    /// No definitive signal arrived within the acceptance timeout.
-    Uncertain = 2,
+    /// No acceptance signal arrived within the acceptance timeout.
+    Uncertain = 1,
 }
 
 /// Callback for SyncEvent::TransactionBroadcastResult
 ///
-/// The `txid` and `reject_reason` pointers are borrowed and only valid for
-/// the duration of the callback. `relayed_by` is the number of distinct
-/// non-recipient peers that announced the txid back (meaningful for
-/// `Accepted`). `reject_code` is the raw p2p reject code and `reject_reason`
-/// the peer-supplied reason string; both are only meaningful for `Rejected`
-/// (`reject_reason` is null otherwise).
+/// The `txid` pointer is borrowed and only valid for the duration of the
+/// callback. `relayed_by` is the number of distinct non-recipient peers that
+/// announced the txid back (meaningful for `Accepted`).
 pub type OnTransactionBroadcastResultCallback = Option<
     extern "C" fn(
         txid: *const [u8; 32],
         status: FFIBroadcastStatus,
         relayed_by: u32,
-        reject_code: u8,
-        reject_reason: *const c_char,
         user_data: *mut c_void,
     ),
 >;
@@ -479,40 +476,13 @@ impl FFISyncEventCallbacks {
                 if let Some(cb) = self.on_transaction_broadcast_result {
                     use dash_spv::BroadcastResult;
                     let txid_bytes = txid.as_byte_array();
-                    match result {
+                    let (status, relayed_by) = match result {
                         BroadcastResult::Accepted {
                             relayed_by,
-                        } => cb(
-                            txid_bytes as *const [u8; 32],
-                            FFIBroadcastStatus::Accepted,
-                            *relayed_by as u32,
-                            0,
-                            ptr::null(),
-                            self.user_data,
-                        ),
-                        BroadcastResult::Rejected {
-                            code,
-                            reason,
-                        } => {
-                            let c_reason = CString::new(reason.as_str()).unwrap_or_default();
-                            cb(
-                                txid_bytes as *const [u8; 32],
-                                FFIBroadcastStatus::Rejected,
-                                0,
-                                *code as u8,
-                                c_reason.as_ptr(),
-                                self.user_data,
-                            );
-                        }
-                        BroadcastResult::Uncertain => cb(
-                            txid_bytes as *const [u8; 32],
-                            FFIBroadcastStatus::Uncertain,
-                            0,
-                            0,
-                            ptr::null(),
-                            self.user_data,
-                        ),
-                    }
+                        } => (FFIBroadcastStatus::Accepted, *relayed_by as u32),
+                        BroadcastResult::Uncertain => (FFIBroadcastStatus::Uncertain, 0),
+                    };
+                    cb(txid_bytes as *const [u8; 32], status, relayed_by, self.user_data);
                 }
             }
         }
@@ -1449,35 +1419,23 @@ mod tests {
     }
 
     /// `TransactionBroadcastResult` dispatch must marshal the outcome fields
-    /// (status, relayed_by, reject code/reason) for each variant.
+    /// (status, relayed_by) for each variant.
     #[test]
     fn test_transaction_broadcast_result_dispatch() {
         use dash_spv::BroadcastResult;
-        use dashcore::network::message_network::RejectReason;
 
         static STATUS: AtomicU32 = AtomicU32::new(u32::MAX);
         static RELAYED: AtomicU32 = AtomicU32::new(u32::MAX);
-        static CODE: AtomicU32 = AtomicU32::new(u32::MAX);
-        static REASON_LEN: AtomicU32 = AtomicU32::new(u32::MAX);
 
         extern "C" fn cb(
             txid: *const [u8; 32],
             status: FFIBroadcastStatus,
             relayed_by: u32,
-            reject_code: u8,
-            reject_reason: *const c_char,
             _user: *mut c_void,
         ) {
             assert!(!txid.is_null());
             STATUS.store(status as u32, Ordering::SeqCst);
             RELAYED.store(relayed_by, Ordering::SeqCst);
-            CODE.store(reject_code as u32, Ordering::SeqCst);
-            let reason_len = if reject_reason.is_null() {
-                0
-            } else {
-                unsafe { std::ffi::CStr::from_ptr(reject_reason) }.to_bytes().len() as u32
-            };
-            REASON_LEN.store(reason_len, Ordering::SeqCst);
         }
 
         let callbacks = FFISyncEventCallbacks {
@@ -1494,24 +1452,12 @@ mod tests {
         });
         assert_eq!(STATUS.load(Ordering::SeqCst), FFIBroadcastStatus::Accepted as u32);
         assert_eq!(RELAYED.load(Ordering::SeqCst), 3);
-        assert_eq!(CODE.load(Ordering::SeqCst), 0);
-        assert_eq!(REASON_LEN.load(Ordering::SeqCst), 0);
-
-        callbacks.dispatch(&SyncEvent::TransactionBroadcastResult {
-            txid,
-            result: BroadcastResult::Rejected {
-                code: RejectReason::Fee,
-                reason: "insufficient fee".to_string(),
-            },
-        });
-        assert_eq!(STATUS.load(Ordering::SeqCst), FFIBroadcastStatus::Rejected as u32);
-        assert_eq!(CODE.load(Ordering::SeqCst), RejectReason::Fee as u32);
-        assert_eq!(REASON_LEN.load(Ordering::SeqCst), "insufficient fee".len() as u32);
 
         callbacks.dispatch(&SyncEvent::TransactionBroadcastResult {
             txid,
             result: BroadcastResult::Uncertain,
         });
         assert_eq!(STATUS.load(Ordering::SeqCst), FFIBroadcastStatus::Uncertain as u32);
+        assert_eq!(RELAYED.load(Ordering::SeqCst), 0);
     }
 }

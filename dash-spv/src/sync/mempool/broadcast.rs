@@ -10,7 +10,6 @@ use std::collections::HashSet;
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 
-use dashcore::network::message_network::RejectReason;
 use dashcore::Transaction;
 
 /// How many peers to withhold a broadcast transaction from.
@@ -72,20 +71,14 @@ pub enum BroadcastResult {
         /// confirmation before any echo arrived.
         relayed_by: usize,
     },
-    /// A peer rejected the transaction via a p2p `reject` message.
+    /// No acceptance signal arrived within the configured timeout.
     ///
-    /// Best-effort signal: modern Dash Core versions may never send BIP61
-    /// `reject` messages, in which case invalid transactions surface as
-    /// `Uncertain` instead.
-    Rejected {
-        /// Protocol reject code.
-        code: RejectReason,
-        /// Human-readable reason string from the rejecting peer.
-        reason: String,
-    },
-    /// No acceptance or rejection signal arrived within the configured
-    /// timeout. The transaction may still confirm later; a late echo,
-    /// InstantSend lock, or confirmation upgrades the outcome to `Accepted`.
+    /// This is also what an invalid transaction looks like: modern Dash Core
+    /// removed the BIP61 `reject` message, so there is no negative signal on
+    /// the p2p network — a transaction the network refuses simply never
+    /// echoes back. The transaction may also still be fine and confirm
+    /// later; a late echo, InstantSend lock, or confirmation upgrades the
+    /// outcome to `Accepted`.
     Uncertain,
 }
 
@@ -95,10 +88,6 @@ impl std::fmt::Display for BroadcastResult {
             BroadcastResult::Accepted {
                 relayed_by,
             } => write!(f, "Accepted(relayed_by={})", relayed_by),
-            BroadcastResult::Rejected {
-                code,
-                reason,
-            } => write!(f, "Rejected(code={:?}, reason={})", code, reason),
             BroadcastResult::Uncertain => write!(f, "Uncertain"),
         }
     }
@@ -106,17 +95,15 @@ impl std::fmt::Display for BroadcastResult {
 
 /// Internal lifecycle state of a tracked broadcast.
 ///
-/// Valid transitions: `Pending -> Accepted | Rejected | Uncertain` and
+/// Valid transitions: `Pending -> Accepted | Uncertain` and
 /// `Uncertain -> Accepted`. Every transition emits exactly one
 /// `SyncEvent::TransactionBroadcastResult`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum BroadcastStatus {
-    /// Broadcast sent, awaiting an acceptance or rejection signal.
+    /// Broadcast sent, awaiting an acceptance signal.
     Pending,
     /// Accepted by the network (echo threshold, IS lock, or confirmation).
     Accepted,
-    /// Rejected by a peer via a p2p `reject` message.
-    Rejected,
     /// Timed out without a definitive signal.
     Uncertain,
 }

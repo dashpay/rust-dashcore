@@ -53,10 +53,11 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
     ///
     /// Resolves with [`BroadcastResult::Accepted`] once enough non-recipient
     /// peers announce the txid back (or it is InstantSend-locked/confirmed),
-    /// [`BroadcastResult::Rejected`] on a p2p `reject`, and
-    /// [`BroadcastResult::Uncertain`] when no definitive signal arrives within
-    /// the timeout (defaults to the configured acceptance timeout plus a small
-    /// grace period).
+    /// and [`BroadcastResult::Uncertain`] when no acceptance signal arrives
+    /// within the timeout (defaults to the configured acceptance timeout plus
+    /// a small grace period). There is no negative signal on the p2p network
+    /// — modern Dash Core removed the BIP61 `reject` message — so a refused
+    /// transaction surfaces as `Uncertain`.
     ///
     /// Requires mempool tracking to be enabled.
     pub async fn broadcast_transaction_and_wait(

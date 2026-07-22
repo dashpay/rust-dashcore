@@ -165,7 +165,7 @@ pub enum SyncEvent {
 
     /// The network-level outcome of a self-broadcast transaction was
     /// determined: accepted (echoed back by non-recipient peers, InstantSend
-    /// locked, or confirmed), rejected (p2p `reject`), or uncertain (timeout).
+    /// locked, or confirmed) or uncertain (no signal within the timeout).
     /// An `Uncertain` outcome may later be followed by an `Accepted` one.
     ///
     /// Emitted by: `MempoolManager`

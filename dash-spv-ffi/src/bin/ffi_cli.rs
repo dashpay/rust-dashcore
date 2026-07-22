@@ -137,8 +137,6 @@ extern "C" fn on_transaction_broadcast_result(
     txid: *const [u8; 32],
     status: FFIBroadcastStatus,
     relayed_by: u32,
-    reject_code: u8,
-    reject_reason: *const c_char,
     _user_data: *mut c_void,
 ) {
     let txid_hex = unsafe { &*txid }.iter().rev().fold(String::new(), |mut acc, b| {
@@ -149,14 +147,6 @@ extern "C" fn on_transaction_broadcast_result(
     match status {
         FFIBroadcastStatus::Accepted => {
             println!("[Broadcast] {} accepted ({} peer(s) relayed it back)", txid_hex, relayed_by)
-        }
-        FFIBroadcastStatus::Rejected => {
-            let reason = if reject_reason.is_null() {
-                String::new()
-            } else {
-                unsafe { std::ffi::CStr::from_ptr(reject_reason) }.to_string_lossy().into_owned()
-            };
-            println!("[Broadcast] {} rejected (code {}): {}", txid_hex, reject_code, reason)
         }
         FFIBroadcastStatus::Uncertain => {
             println!("[Broadcast] {} outcome uncertain (no network signal)", txid_hex)
