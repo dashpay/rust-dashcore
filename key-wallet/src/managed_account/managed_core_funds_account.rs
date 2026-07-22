@@ -488,11 +488,12 @@ impl ManagedCoreFundsAccount {
             }
         }
 
-        // Marks a transaction that spends our coins. `input_details` and
-        // `account_match.sent` both derive from the same `self.utxos` lookup on
-        // this account, so they populate together and cannot diverge — either
-        // signal alone is sufficient (see
-        // `scenario2_sent_and_input_details_cannot_diverge_in_current_code`).
+        // Marks a transaction that spends our coins. `input_details` (built
+        // above) and `account_match.sent` (built in `check_transaction_with_index`)
+        // both derive from `self.utxos.get(&input.previous_output)` on this
+        // account, with no UTXO mutation between the two lookups, so they
+        // populate together; keeping both keeps this robust should the two
+        // call sites ever compute over different UTXO snapshots.
         let has_inputs = !input_details.is_empty() || account_match.sent > 0;
 
         let network = self.keys.network();

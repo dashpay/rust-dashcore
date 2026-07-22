@@ -265,3 +265,36 @@ fn adding_account_from_xpub_rewinds_sync_checkpoint() {
         "a still-behind sync checkpoint is not advanced by the rewind"
     );
 }
+
+/// Growing the observed-spent map is itself a state modification
+/// (dashpay/rust-dashcore#649): the map is persisted wallet state, and a
+/// consumer that persists only on reported modifications must not drop a
+/// recorded spend across a restart. An irrelevant block spend therefore
+/// reports `state_modified`, a byte-identical redelivery (map unchanged) does
+/// not, and a mempool spend (never recorded) does not.
+#[tokio::test]
+async fn recording_observed_spend_reports_state_modified() {
+    let mut ctx = TestWalletContext::new_random();
+    let unrelated = OutPoint::new(Txid::from([0x77; 32]), 1);
+    let spend = spending_tx(&[unrelated]);
+    let block =
+        BlockInfo::new(200, BlockHash::from_slice(&[3u8; 32]).expect("hash"), 1_700_000_000);
+
+    let result = ctx.check_transaction(&spend, TransactionContext::InBlock(block)).await;
+    assert!(!result.is_relevant, "the spend touches nothing the wallet owns");
+    assert!(
+        result.state_modified,
+        "recording a new observed spend must surface as a state modification"
+    );
+    assert_eq!(ctx.managed_wallet.observed_spent_outpoints().get(&unrelated), Some(&200));
+
+    // Same tx at the same height: the map entry is already present with the
+    // same value, so nothing changed and nothing must be reported.
+    let result = ctx.check_transaction(&spend, TransactionContext::InBlock(block)).await;
+    assert!(!result.state_modified, "an unchanged map must not report a modification");
+
+    // Mempool spends are never recorded, so they modify nothing either.
+    let mempool_spend = spending_tx(&[OutPoint::new(Txid::from([0x78; 32]), 0)]);
+    let result = ctx.check_transaction(&mempool_spend, TransactionContext::Mempool).await;
+    assert!(!result.state_modified, "a mempool spend records nothing");
+}
