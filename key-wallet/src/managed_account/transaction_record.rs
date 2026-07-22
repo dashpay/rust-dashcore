@@ -205,11 +205,17 @@ impl TransactionRecord {
     /// (dashpay/rust-dashcore#649): such an output was spent on-chain, so it is
     /// not live received value. Recomputes declaratively (never a delta), so
     /// re-running it on an already-compensated record is a no-op.
+    ///
+    /// When no detail matches `observed_spent`, the record — including its
+    /// original `net_amount` — is left untouched: the recompute only replaces
+    /// the match-derived `net_amount` with the details-derived one on records
+    /// the compensation actually altered.
     pub(crate) fn compensate_for_observed_spends(
         &mut self,
         observed_spent: &BTreeMap<OutPoint, CoreBlockHeight>,
     ) {
         let txid = self.txid;
+        let before = self.output_details.len();
         self.output_details.retain(|detail| {
             !matches!(detail.role, OutputRole::Received | OutputRole::Change)
                 || !observed_spent.contains_key(&OutPoint {
@@ -217,6 +223,9 @@ impl TransactionRecord {
                     vout: detail.index,
                 })
         });
+        if self.output_details.len() == before {
+            return;
+        }
         let received: u64 = self
             .output_details
             .iter()
@@ -263,12 +272,60 @@ mod tests {
         )
     }
 
+    /// The `net_amount` recompute in `compensate_for_observed_spends` is gated
+    /// on the compensation actually dropping a detail: a record with no
+    /// observed-spent output keeps its original match-derived `net_amount`
+    /// verbatim, even where that value differs from the details-derived sum
+    /// (details are a display companion, not the authoritative source, for
+    /// uncompensated records).
+    #[test]
+    fn compensate_for_observed_spends_leaves_unmatched_record_untouched() {
+        let tx = Transaction::dummy_empty();
+        let txid = tx.txid();
+        // net_amount deliberately does NOT equal the details-derived sum
+        // (2_000_000), pinning that no recompute happens without a drop.
+        let mut record = TransactionRecord::new(
+            tx,
+            test_account_type(),
+            TransactionContext::Mempool,
+            TransactionType::Standard,
+            TransactionDirection::Incoming,
+            Vec::new(),
+            vec![OutputDetail {
+                index: 0,
+                role: OutputRole::Received,
+                address: None,
+                value: 2_000_000,
+            }],
+            1_999_000,
+        );
+
+        let mut observed_spent = BTreeMap::new();
+        // An observed spend of a DIFFERENT outpoint of the same tx (vout 5)
+        // must not compensate the vout-0 detail.
+        observed_spent.insert(
+            OutPoint {
+                txid,
+                vout: 5,
+            },
+            200u32,
+        );
+
+        record.compensate_for_observed_spends(&observed_spent);
+        assert_eq!(record.output_details.len(), 1, "no detail matched, none dropped");
+        assert_eq!(
+            record.net_amount, 1_999_000,
+            "an untouched record keeps its match-derived net_amount verbatim"
+        );
+    }
+
     /// Pins that `compensate_for_observed_spends` is declarative, not
     /// incremental (dashpay/rust-dashcore#649): calling it twice in a row on the
     /// SAME record (as a rescan rebuilding an already-compensated record would)
     /// is a complete no-op the second time — no double-drop of a surviving
-    /// output, no `net_amount` drift — because it recomputes from
-    /// `output_details`/`input_details` on every call rather than subtracting a
+    /// output, no `net_amount` drift — because a call that drops nothing leaves
+    /// the record untouched, and a call that does drop recomputes from the
+    /// surviving `output_details`/`input_details` rather than subtracting a
     /// delta.
     #[test]
     fn compensate_for_observed_spends_is_idempotent_on_direct_repeated_calls() {

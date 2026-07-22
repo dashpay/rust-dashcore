@@ -205,11 +205,13 @@ mod observed_spent_outpoints_serde {
 /// entries accepted when deserializing a wallet.
 ///
 /// Chosen far above any plausible legitimate size (matched-block spend activity
-/// over a realistic rescan) so it only ever rejects a corrupted or hostile
-/// wallet file, never a real one. At ~40 bytes per entry this caps the load-time
-/// allocation for this field at a few hundred MB.
+/// over a realistic rescan — a busy matched block contributes on the order of
+/// 10⁴ inputs, and steady state holds only the above-finality-boundary window)
+/// so it only ever rejects a corrupted or hostile wallet file, never a real
+/// one. At ~40 bytes per entry this caps the load-time allocation for this
+/// field at a few tens of MB.
 #[cfg(feature = "serde")]
-const MAX_OBSERVED_SPENT_OUTPOINTS: usize = 10_000_000;
+const MAX_OBSERVED_SPENT_OUTPOINTS: usize = 1_000_000;
 
 impl ManagedWalletInfo {
     /// Create new managed wallet info with network and wallet ID
@@ -312,13 +314,26 @@ impl ManagedWalletInfo {
     /// it is skipped. Call this only for block-context transactions
     /// (`InBlock` / `InChainLockedBlock`); mempool spends must never be recorded
     /// (see the field doc — an unconfirmed spend may never be mined).
-    pub(crate) fn record_observed_spends(&mut self, tx: &Transaction, height: CoreBlockHeight) {
+    ///
+    /// Returns whether the map actually changed (a new outpoint, or an existing
+    /// one re-observed at a different height). The map is persisted wallet
+    /// state, so callers must surface a `true` as a state modification —
+    /// otherwise a consumer that persists only on reported modifications could
+    /// drop the recorded spend across a restart and reopen #649 for it.
+    pub(crate) fn record_observed_spends(
+        &mut self,
+        tx: &Transaction,
+        height: CoreBlockHeight,
+    ) -> bool {
         if tx.is_coin_base() {
-            return;
+            return false;
         }
+        let mut changed = false;
         for input in &tx.input {
-            self.observed_spent_outpoints.insert(input.previous_output, height);
+            changed |=
+                self.observed_spent_outpoints.insert(input.previous_output, height) != Some(height);
         }
+        changed
     }
 
     /// Evict [`Self::observed_spent_outpoints`] entries at or below the finality

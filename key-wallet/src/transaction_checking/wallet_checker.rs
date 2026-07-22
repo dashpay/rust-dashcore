@@ -72,7 +72,13 @@ impl WalletTransactionChecker for ManagedWalletInfo {
             None
         };
         if let Some(height) = block_height {
-            self.record_observed_spends(tx, height);
+            // The observed-spent map is persisted wallet state: growing it is a
+            // state modification in its own right, even when the tx is
+            // otherwise irrelevant — losing an entry across a restart would
+            // reopen #649 for that coin.
+            if self.record_observed_spends(tx, height) {
+                result.state_modified = true;
+            }
         }
 
         if !update_state || !result.is_relevant {
