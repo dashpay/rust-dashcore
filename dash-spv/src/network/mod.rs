@@ -91,6 +91,15 @@ impl RequestSender {
             .map_err(|e| NetworkError::ProtocolError(e.to_string()))
     }
 
+    /// Send a transaction to a specific peer.
+    pub(crate) fn send_transaction(
+        &self,
+        tx: dashcore::Transaction,
+        peer_address: SocketAddr,
+    ) -> NetworkResult<()> {
+        self.send_message_to_peer(NetworkMessage::Tx(tx), peer_address)
+    }
+
     /// Request inventory from a specific peer.
     pub fn request_inventory(
         &self,

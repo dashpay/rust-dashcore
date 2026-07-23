@@ -133,6 +133,27 @@ extern "C" fn on_sync_complete(header_tip: u32, cycle: u32, _user_data: *mut c_v
     println!("[Sync] Sync complete at height: {} (cycle {})", header_tip, cycle);
 }
 
+extern "C" fn on_transaction_broadcast_result(
+    txid: *const [u8; 32],
+    status: FFIBroadcastStatus,
+    relayed_by: u32,
+    _user_data: *mut c_void,
+) {
+    let txid_hex = unsafe { &*txid }.iter().rev().fold(String::new(), |mut acc, b| {
+        use std::fmt::Write;
+        let _ = write!(acc, "{:02x}", b);
+        acc
+    });
+    match status {
+        FFIBroadcastStatus::Accepted => {
+            println!("[Broadcast] {} accepted ({} peer(s) relayed it back)", txid_hex, relayed_by)
+        }
+        FFIBroadcastStatus::Uncertain => {
+            println!("[Broadcast] {} outcome uncertain (no network signal)", txid_hex)
+        }
+    }
+}
+
 // ============================================================================
 // Network Event Callbacks
 // ============================================================================
@@ -511,6 +532,7 @@ fn main() {
                 on_instantlock_received: Some(on_instantlock_received),
                 on_manager_error: Some(on_manager_error),
                 on_sync_complete: Some(on_sync_complete),
+                on_transaction_broadcast_result: Some(on_transaction_broadcast_result),
                 user_data: ptr::null_mut(),
             },
             network: FFINetworkEventCallbacks {
