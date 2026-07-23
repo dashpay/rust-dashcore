@@ -23,7 +23,7 @@ pub use filters::{FiltersManager, FiltersProgress};
 pub use instantsend::{InstantSendManager, InstantSendProgress};
 pub use masternodes::{MasternodesManager, MasternodesProgress};
 pub(crate) use mempool::MempoolManager;
-pub use mempool::MempoolProgress;
+pub use mempool::{BroadcastConfig, BroadcastHoldout, BroadcastResult, MempoolProgress};
 
 pub use events::SyncEvent;
 pub use identifier::ManagerIdentifier;

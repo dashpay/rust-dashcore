@@ -1,8 +1,10 @@
+mod broadcast;
 mod filter;
 mod manager;
 mod progress;
 mod sync_manager;
 
+pub use broadcast::{BroadcastConfig, BroadcastHoldout, BroadcastResult};
 pub(crate) use manager::MempoolManager;
 pub use progress::MempoolProgress;
 

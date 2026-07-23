@@ -3,11 +3,13 @@
 use clap::ValueEnum;
 use std::net::SocketAddr;
 use std::path::PathBuf;
+use std::time::Duration;
 
 use dashcore::Network;
 // Serialization removed due to complex Address types
 
 use crate::client::devnet::DevnetConfig;
+use crate::sync::BroadcastHoldout;
 use crate::types::ValidationMode;
 
 /// Strategy for handling mempool (unconfirmed) transactions.
@@ -68,6 +70,21 @@ pub struct ClientConfig {
     /// Whether to fetch transactions from INV messages immediately.
     pub fetch_mempool_transactions: bool,
 
+    /// How many peers to withhold broadcast transactions from.
+    ///
+    /// Peers never re-announce a transaction to whoever sent it to them, so
+    /// the withheld ("holdout") peers are the only source of the `inv` echo
+    /// that proves a broadcast propagated through the network.
+    pub broadcast_holdout: BroadcastHoldout,
+
+    /// Distinct non-recipient peers that must announce a broadcast txid back
+    /// before the broadcast is reported as accepted.
+    pub broadcast_acceptance_threshold: usize,
+
+    /// How long a broadcast may stay pending before its outcome is reported
+    /// as uncertain.
+    pub broadcast_acceptance_timeout: Duration,
+
     /// Start syncing from a specific block height.
     /// The client will use the nearest checkpoint at or before this height.
     pub start_from_height: Option<u32>,
@@ -101,6 +118,9 @@ impl Default for ClientConfig {
             mempool_strategy: MempoolStrategy::FetchAll,
             max_mempool_transactions: 1000,
             fetch_mempool_transactions: true,
+            broadcast_holdout: BroadcastHoldout::Half,
+            broadcast_acceptance_threshold: 1,
+            broadcast_acceptance_timeout: Duration::from_secs(60),
             start_from_height: None,
             reservation_sweep_ttl_secs: Some(3600),
             devnet: None,
@@ -189,6 +209,33 @@ impl ClientConfig {
         self
     }
 
+    /// Set the broadcast holdout policy.
+    pub fn with_broadcast_holdout(mut self, holdout: BroadcastHoldout) -> Self {
+        self.broadcast_holdout = holdout;
+        self
+    }
+
+    /// Set how many non-recipient peer announcements mark a broadcast accepted.
+    pub fn with_broadcast_acceptance_threshold(mut self, threshold: usize) -> Self {
+        self.broadcast_acceptance_threshold = threshold;
+        self
+    }
+
+    /// Set the timeout after which a pending broadcast is reported uncertain.
+    pub fn with_broadcast_acceptance_timeout(mut self, timeout: Duration) -> Self {
+        self.broadcast_acceptance_timeout = timeout;
+        self
+    }
+
+    /// Bundle the broadcast acceptance settings for the mempool manager.
+    pub(crate) fn broadcast_config(&self) -> crate::sync::BroadcastConfig {
+        crate::sync::BroadcastConfig {
+            holdout: self.broadcast_holdout,
+            acceptance_threshold: self.broadcast_acceptance_threshold,
+            acceptance_timeout: self.broadcast_acceptance_timeout,
+        }
+    }
+
     /// Set the starting height for synchronization.
     pub fn with_start_height(mut self, height: u32) -> Self {
         self.start_from_height = Some(height);
@@ -232,6 +279,13 @@ impl ClientConfig {
 
         if self.reservation_sweep_ttl_secs == Some(0) {
             return Err("reservation_sweep_ttl_secs must be > 0 when set; use without_reservation_sweep() to disable the sweep".to_string());
+        }
+
+        if self.broadcast_acceptance_threshold == 0 {
+            return Err("broadcast_acceptance_threshold must be > 0".to_string());
+        }
+        if self.broadcast_acceptance_timeout.is_zero() {
+            return Err("broadcast_acceptance_timeout must be > 0".to_string());
         }
 
         match (self.network == Network::Devnet, &self.devnet) {
