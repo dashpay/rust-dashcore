@@ -281,6 +281,223 @@ fn adding_account_from_xpub_rewinds_sync_checkpoint() {
     );
 }
 
+/// Regression for the "born-fully-spent" history record-loss reported by
+/// HashEngineering against #851/#866 (dashpay/rust-dashcore#649, and the
+/// #846-class invisible-record family): a funding transaction recovered
+/// *after* its spend was already observed — so every one of its
+/// wallet-relevant outputs is in `observed_spent_outpoints` before the funding
+/// itself is applied — must still be **recorded in history**, not silently
+/// dropped. The balance and UTXO set are unaffected (the output is genuinely
+/// spent on-chain), so this is purely about not losing the history record.
+///
+/// This is the spend-first / out-of-order ordering produced by the committed-
+/// range rescan (`track_for_new_scripts`): the forward scan already processed
+/// the spend, then the old funding block is re-applied. #649's fix keeps the
+/// record: `check_transaction_for_match` classifies relevance by address
+/// membership (never gated on spent-status, so the fully-spent funding is still
+/// relevant), and `ManagedCoreFundsAccount::record_transaction` unconditionally
+/// inserts the record after `TransactionRecord::compensate_for_observed_spends`
+/// zeroes the already-spent outputs. This test pins that a born-fully-spent
+/// funding tx (1) is surfaced as a new record and (2) lands in the account's
+/// transaction history, while balance and UTXOs stay at zero.
+#[tokio::test]
+async fn born_fully_spent_funding_tx_is_recorded_in_history() {
+    use dashcore::blockdata::script::ScriptBuf;
+    use dashcore::TxOut;
+
+    let mut ctx = TestWalletContext::new_random();
+
+    // Funding F pays our receive address; its single output F:0 is ours.
+    let funding_value = 1_000_000u64;
+    let funding = Transaction::dummy(&ctx.receive_address, 0..1, &[funding_value]);
+    let f_txid = funding.txid();
+    let f_outpoint = OutPoint::new(f_txid, 0);
+
+    // Spend S consumes F:0 entirely to an external address (no wallet output),
+    // so the wallet cannot attribute it to any account when it arrives first.
+    let external = dashcore::Address::p2pkh(
+        &dashcore::PublicKey::from_slice(&[0x02; 33]).expect("pubkey"),
+        dashcore::Network::Testnet,
+    );
+    let spend = Transaction {
+        version: 2,
+        lock_time: 0,
+        input: vec![TxIn {
+            previous_output: f_outpoint,
+            script_sig: ScriptBuf::new(),
+            sequence: 0xffffffff,
+            witness: dashcore::Witness::new(),
+        }],
+        output: vec![TxOut {
+            value: funding_value - 1_000,
+            script_pubkey: external.script_pubkey(),
+        }],
+        special_transaction_payload: None,
+    };
+
+    // Spend-first: the spend's block (height 200) is applied before the
+    // funding's block (height 100), exactly as the committed-range rescan
+    // re-applies old funding blocks after their spends.
+    let spend_ctx = TransactionContext::InBlock(BlockInfo::new(
+        200,
+        BlockHash::from_slice(&[2u8; 32]).expect("hash"),
+        1_650_000_200,
+    ));
+    let spend_res = ctx.check_transaction(&spend, spend_ctx).await;
+    // The spend pays nothing to us and spends a coin we do not yet own, so it is
+    // not attributable — but it must still be observed so the funding is
+    // reconciled against it.
+    assert!(!spend_res.is_relevant, "external spend of a not-yet-owned coin is unattributable");
+    assert_eq!(
+        ctx.managed_wallet.observed_spent_outpoints().get(&f_outpoint),
+        Some(&200),
+        "the spend must be recorded in observed_spent_outpoints"
+    );
+
+    // Now the funding block arrives. Every output of F is already observed
+    // spent, i.e. F is born fully spent.
+    let fund_ctx = TransactionContext::InBlock(BlockInfo::new(
+        100,
+        BlockHash::from_slice(&[1u8; 32]).expect("hash"),
+        1_650_000_100,
+    ));
+    let fund_res = ctx.check_transaction(&funding, fund_ctx).await;
+
+    // (1) The funding tx is still relevant and surfaced as a NEW record — this
+    // is the detection event a consumer persists into history. Before #649's
+    // record-keeping fix the spend-first path made it come out not-relevant and
+    // produced no record and no event.
+    assert!(fund_res.is_relevant, "a fully-spent funding tx paying our address is still relevant");
+    assert!(
+        fund_res.new_records.iter().any(|r| r.txid == f_txid),
+        "born-fully-spent funding tx must be surfaced as a new record"
+    );
+
+    // (2) The record is present in the account's transaction history.
+    let account = ctx.managed_wallet.first_bip44_managed_account().expect("BIP44 account");
+    assert!(
+        account.transactions().contains_key(&f_txid),
+        "born-fully-spent funding tx must be recorded in the account's history"
+    );
+
+    // Balance and UTXO accounting are unchanged: the output is genuinely spent,
+    // so it is never inserted as a UTXO and contributes zero to the balance.
+    assert!(account.utxos.is_empty(), "the already-spent output must not become a UTXO");
+    assert_eq!(ctx.managed_wallet.balance.total(), 0, "born-fully-spent tx must not add balance");
+
+    // The record itself is compensated to a net-zero, output-less history entry.
+    let record = account.transactions().get(&f_txid).expect("record present");
+    assert_eq!(record.net_amount, 0, "the already-spent output is compensated out of net_amount");
+    assert!(
+        record.output_details.iter().all(|d| !matches!(
+            d.role,
+            crate::managed_account::transaction_record::OutputRole::Received
+                | crate::managed_account::transaction_record::OutputRole::Change
+        )),
+        "no live Received/Change output detail should survive on a born-fully-spent record"
+    );
+}
+
+/// Companion to [`born_fully_spent_funding_tx_is_recorded_in_history`] covering
+/// the CoinJoin-style intermediate hop that HashEngineering measured missing: a
+/// transaction that both **spends a live wallet coin** and pays its change back
+/// to us, where that change output is itself already observed spent. It must be
+/// recorded even though it nets to zero and leaves no UTXO.
+#[tokio::test]
+async fn born_fully_spent_intermediate_hop_is_recorded_in_history() {
+    use dashcore::blockdata::script::ScriptBuf;
+    use dashcore::TxOut;
+
+    let mut ctx = TestWalletContext::new_random();
+
+    // A second receive address for the hop's change output.
+    let hop_addr = ctx
+        .managed_wallet
+        .first_bip44_managed_account_mut()
+        .expect("BIP44 account")
+        .next_receive_address(Some(&ctx.xpub), true)
+        .expect("hop address");
+
+    // C funds our first receive address (a live coin).
+    let c = Transaction::dummy(&ctx.receive_address, 0..1, &[1_000_000]);
+    let c_txid = c.txid();
+
+    // Hop T spends C:0 and pays 990_000 back to our hop address (T:0).
+    let t = Transaction {
+        version: 2,
+        lock_time: 0,
+        input: vec![TxIn {
+            previous_output: OutPoint::new(c_txid, 0),
+            script_sig: ScriptBuf::new(),
+            sequence: 0xffffffff,
+            witness: dashcore::Witness::new(),
+        }],
+        output: vec![TxOut {
+            value: 990_000,
+            script_pubkey: hop_addr.script_pubkey(),
+        }],
+        special_transaction_payload: None,
+    };
+    let t_txid = t.txid();
+
+    // U spends T:0 out to an external address.
+    let external = dashcore::Address::p2pkh(
+        &dashcore::PublicKey::from_slice(&[0x02; 33]).expect("pubkey"),
+        dashcore::Network::Testnet,
+    );
+    let u = Transaction {
+        version: 2,
+        lock_time: 0,
+        input: vec![TxIn {
+            previous_output: OutPoint::new(t_txid, 0),
+            script_sig: ScriptBuf::new(),
+            sequence: 0xffffffff,
+            witness: dashcore::Witness::new(),
+        }],
+        output: vec![TxOut {
+            value: 980_000,
+            script_pubkey: external.script_pubkey(),
+        }],
+        special_transaction_payload: None,
+    };
+
+    let blk = |h: u32, b: u8| {
+        TransactionContext::InBlock(BlockInfo::new(
+            h,
+            BlockHash::from_slice(&[b; 32]).expect("hash"),
+            1_650_000_000 + h,
+        ))
+    };
+
+    // Order: fund C (live), then U (records T:0 observed spent), then the hop T
+    // whose own output is already spent.
+    ctx.check_transaction(&c, blk(1, 1)).await;
+    let u_res = ctx.check_transaction(&u, blk(3, 3)).await;
+    assert!(!u_res.is_relevant, "U is an external spend of a not-yet-owned coin");
+    let t_res = ctx.check_transaction(&t, blk(2, 2)).await;
+
+    // The hop is relevant (it spends our live coin C) and recorded, even though
+    // its own output is compensated away.
+    assert!(t_res.is_relevant, "a hop that spends our live coin is relevant");
+    assert!(
+        t_res.new_records.iter().any(|r| r.txid == t_txid),
+        "the fully-spent hop must be surfaced as a new record"
+    );
+
+    let account = ctx.managed_wallet.first_bip44_managed_account().expect("BIP44 account");
+    assert!(
+        account.transactions().contains_key(&t_txid),
+        "the fully-spent hop must be recorded in history"
+    );
+    assert!(
+        account.transactions().contains_key(&c_txid),
+        "the funding tx must also remain in history"
+    );
+    // Both C and T's outputs are consumed, so no UTXOs and zero balance remain.
+    assert!(account.utxos.is_empty(), "no UTXO should remain after the hop chain");
+    assert_eq!(ctx.managed_wallet.balance.total(), 0, "hop chain nets to zero balance");
+}
+
 /// Growing the observed-spent map is itself a state modification
 /// (dashpay/rust-dashcore#649): the map is persisted wallet state, and a
 /// consumer that persists only on reported modifications must not drop a
