@@ -156,8 +156,7 @@ impl ManagedCoreFundsAccount {
     /// [`build_unsigned_reserved`]: crate::wallet::managed_wallet_info::transaction_builder::TransactionBuilder::build_unsigned_reserved
     /// [`build_signed_reserved`]: crate::wallet::managed_wallet_info::transaction_builder::TransactionBuilder::build_signed_reserved
     pub fn release_reservation_if_owner(&self, tx: &Transaction, token: ReservationToken) {
-        let outpoints: Vec<OutPoint> =
-            tx.input.iter().map(|input| input.previous_output).collect();
+        let outpoints: Vec<OutPoint> = tx.input.iter().map(|input| input.previous_output).collect();
         self.reservations.release_if_owner(&outpoints, token);
     }
 
