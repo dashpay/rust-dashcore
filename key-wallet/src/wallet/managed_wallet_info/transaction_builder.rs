@@ -350,12 +350,34 @@ impl TransactionBuilder {
         if self.selection_strategy == SelectionStrategy::All {
             // Drain: the single output takes the whole balance minus fee (the caller's amount is
             // ignored); no change.
+            let drained = total_input.saturating_sub(selection.estimated_fee);
             let [out] = tx_outputs.as_mut_slice() else {
                 return Err(BuilderError::InvalidData(
                     "SelectionStrategy::All requires exactly one output (the destination)".into(),
                 ));
             };
-            out.value = total_input.saturating_sub(selection.estimated_fee);
+            out.value = drained;
+            // An asset-lock drain must also rewrite the payload's credit
+            // output: the on-chain OP_RETURN burn (`out` above) mirrors the
+            // payload credit sum, and a mismatch is consensus-invalid.
+            if let Some(TransactionPayload::AssetLockPayloadType(payload)) =
+                &mut self.special_payload
+            {
+                let [credit] = payload.credit_outputs.as_mut_slice() else {
+                    return Err(BuilderError::InvalidData(
+                        "SelectionStrategy::All with an asset-lock payload requires exactly one \
+                         credit output"
+                            .into(),
+                    ));
+                };
+                if drained == 0 {
+                    return Err(BuilderError::InsufficientFunds {
+                        available: total_input,
+                        required: selection.estimated_fee,
+                    });
+                }
+                credit.value = drained;
+            }
         } else if change_amount > 546 {
             // Add change output if above dust threshold
             let Some(change_addr) = self.change_addr else {
