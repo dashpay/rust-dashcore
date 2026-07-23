@@ -299,7 +299,7 @@ impl<'a> ManagedAccountRefMut<'a> {
     /// This public entry point records with no observed-spend context — the
     /// pre-#649 behavior, appropriate for callers driving an account directly
     /// without wallet-level block processing. The wallet checker uses
-    /// [`Self::record_transaction_with_observed_spends`] instead, which
+    /// `Self::record_transaction_with_observed_spends` instead, which
     /// reconciles the record against the wallet-level observed-spent set.
     pub fn record_transaction(
         &mut self,
@@ -347,7 +347,7 @@ impl<'a> ManagedAccountRefMut<'a> {
     /// This public entry point confirms with no observed-spend context — the
     /// pre-#649 behavior, appropriate for callers driving an account directly
     /// without wallet-level block processing. The wallet checker uses
-    /// [`Self::confirm_transaction_with_observed_spends`] instead.
+    /// `Self::confirm_transaction_with_observed_spends` instead.
     pub fn confirm_transaction(
         &mut self,
         tx: &Transaction,
