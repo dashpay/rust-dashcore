@@ -10,7 +10,7 @@ use secp256k1::PublicKey;
 use std::fmt;
 
 use crate::managed_account::managed_account_trait::ManagedAccountTrait;
-use crate::managed_account::ManagedCoreKeysAccount;
+use crate::managed_account::{ManagedCoreKeysAccount, ReservationToken};
 use crate::signer::Signer;
 use crate::wallet::managed_wallet_info::fee::FeeRate;
 use crate::wallet::managed_wallet_info::transaction_builder::{BuilderError, TransactionBuilder};
@@ -72,6 +72,18 @@ pub struct AssetLockResult {
     /// Per-credit-output key material. See [`AssetLockCreditKeys`] for
     /// ordering and variant semantics.
     pub keys: AssetLockCreditKeys,
+    /// Owner token for the reservation this build took on the funding inputs,
+    /// or `None` if the funding account carried no reservation set.
+    ///
+    /// The caller broadcasts `transaction` and, on a rejected broadcast, must
+    /// release the reserved inputs with
+    /// [`ManagedCoreFundsAccount::release_reservation_if_owner`] passing this
+    /// token — never the unconditional `release_reservation` — so a reservation
+    /// the TTL sweep reclaimed and another build re-took mid-broadcast is not
+    /// freed out from under that other build. See `dashpay/platform#4185`.
+    ///
+    /// [`ManagedCoreFundsAccount::release_reservation_if_owner`]: crate::managed_account::ManagedCoreFundsAccount::release_reservation_if_owner
+    pub reservation_token: Option<ReservationToken>,
 }
 
 /// Errors specific to asset lock transaction building.
@@ -206,7 +218,7 @@ impl ManagedWalletInfo {
 
         // Build first, derive credit keys after — a build failure must not
         // consume any funding-key indices.
-        let (transaction, fee) = TransactionBuilder::new()
+        let (transaction, fee, reservation_token) = TransactionBuilder::new()
             .set_fee_rate(FeeRate::new(fee_per_kb))
             .set_current_height(height)
             .set_special_payload(TransactionPayload::AssetLockPayloadType(AssetLockPayload::new(
@@ -214,7 +226,7 @@ impl ManagedWalletInfo {
             )))
             .set_funding(funds_acc, acc)
             .require_final_inputs()
-            .build_signed(wallet, |addr| funds_acc.address_derivation_path(&addr))
+            .build_signed_reserved(wallet, |addr| funds_acc.address_derivation_path(&addr))
             .await?;
 
         // Derive one private key per credit output.
@@ -235,6 +247,7 @@ impl ManagedWalletInfo {
             transaction,
             fee,
             keys: AssetLockCreditKeys::Private(keys),
+            reservation_token,
         })
     }
 
@@ -277,7 +290,7 @@ impl ManagedWalletInfo {
         let credit_outputs: Vec<TxOut> =
             credit_output_fundings.iter().map(|f| f.output.clone()).collect();
 
-        let (transaction, fee) = TransactionBuilder::new()
+        let (transaction, fee, reservation_token) = TransactionBuilder::new()
             .set_fee_rate(FeeRate::new(fee_per_kb))
             .set_current_height(height)
             .set_special_payload(TransactionPayload::AssetLockPayloadType(AssetLockPayload::new(
@@ -285,7 +298,7 @@ impl ManagedWalletInfo {
             )))
             .set_funding(funds_acc, &acc)
             .require_final_inputs()
-            .build_signed(signer, |addr| funds_acc.address_derivation_path(&addr))
+            .build_signed_reserved(signer, |addr| funds_acc.address_derivation_path(&addr))
             .await?;
 
         // Credit-output bookkeeping: for each funding, peek the next unused
@@ -339,6 +352,7 @@ impl ManagedWalletInfo {
             transaction,
             fee,
             keys: AssetLockCreditKeys::Public(credit_output_keys),
+            reservation_token,
         })
     }
 }
