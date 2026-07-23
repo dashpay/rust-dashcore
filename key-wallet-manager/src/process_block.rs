@@ -274,6 +274,10 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
         self.wallet_infos.get(wallet_id).map(|info| info.synced_height()).unwrap_or(0)
     }
 
+    fn wallet_account_generation(&self, wallet_id: &WalletId) -> u64 {
+        self.wallet_infos.get(wallet_id).map(|info| info.account_generation()).unwrap_or(0)
+    }
+
     fn update_wallet_synced_height(&mut self, wallet_id: &WalletId, height: CoreBlockHeight) {
         if let Some(info) = self.wallet_infos.get_mut(wallet_id) {
             if height > info.synced_height() {
