@@ -5,7 +5,7 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, Instant, SystemTime};
 
 use dashcore::ephemerealdata::instant_lock::InstantLock;
 use dashcore::hashes::Hash;
@@ -49,8 +49,9 @@ pub(super) struct PendingInstantLock {
     /// The InstantLock data.
     instant_lock: InstantLock,
     /// When the lock was first received, used to expire locks that never
-    /// become verifiable.
-    first_seen: SystemTime,
+    /// become verifiable. Uses a monotonic `Instant` so the elapsed-time TTL
+    /// check is unaffected by wall-clock adjustments.
+    first_seen: Instant,
 }
 
 /// InstantSend manager.
@@ -122,7 +123,7 @@ impl InstantSendManager {
         } else {
             self.queue_pending(PendingInstantLock {
                 instant_lock: instantlock.clone(),
-                first_seen: SystemTime::now(),
+                first_seen: Instant::now(),
             });
             self.progress.update_pending(self.pending_instantlocks.len());
         }
@@ -239,8 +240,7 @@ impl InstantSendManager {
             let txid = pending_lock.instant_lock.txid;
 
             // Drop locks that have been awaiting quorum data for too long.
-            let expired =
-                pending_lock.first_seen.elapsed().map(|age| age > PENDING_TTL).unwrap_or(false);
+            let expired = pending_lock.first_seen.elapsed() > PENDING_TTL;
             if expired {
                 tracing::warn!(
                     "Dropping InstantLock for txid {} after awaiting quorum data for over {}s",
@@ -308,8 +308,7 @@ impl InstantSendManager {
     pub(super) fn expire_pending(&mut self) -> usize {
         let before = self.pending_instantlocks.len();
         self.pending_instantlocks.retain(|pending| {
-            let expired =
-                pending.first_seen.elapsed().map(|age| age > PENDING_TTL).unwrap_or(false);
+            let expired = pending.first_seen.elapsed() > PENDING_TTL;
             if expired {
                 tracing::warn!(
                     "Dropping InstantLock for txid {} after awaiting quorum data for over {}s",
@@ -404,14 +403,14 @@ mod tests {
     fn expired_pending(txid: Txid) -> PendingInstantLock {
         PendingInstantLock {
             instant_lock: create_test_instantlock(txid),
-            first_seen: SystemTime::now() - Duration::from_secs(PENDING_TTL.as_secs() + 60),
+            first_seen: Instant::now() - Duration::from_secs(PENDING_TTL.as_secs() + 60),
         }
     }
 
     fn fresh_pending(txid: Txid) -> PendingInstantLock {
         PendingInstantLock {
             instant_lock: create_test_instantlock(txid),
-            first_seen: SystemTime::now(),
+            first_seen: Instant::now(),
         }
     }
 
