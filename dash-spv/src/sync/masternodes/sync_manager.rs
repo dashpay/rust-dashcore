@@ -162,7 +162,7 @@ pub(super) async fn feed_qrinfo_heights_to_engine<S: BlockHeaderStorage>(
         if let Ok(Some(height)) = storage.get_header_height_by_hash(&block_hash).await {
             engine.feed_block_height(height, block_hash);
             fed_count += 1;
-            tracing::debug!("Fed height {} for block {}", height, block_hash);
+            tracing::trace!("Fed height {} for block {}", height, block_hash);
         }
     }
 

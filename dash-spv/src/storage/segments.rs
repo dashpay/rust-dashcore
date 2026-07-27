@@ -359,7 +359,7 @@ impl<I: Persistable> SegmentCache<I> {
 
         let mut height = start_height;
 
-        tracing::debug!(
+        tracing::trace!(
             "SegmentsCache: storing {} items starting at height {}",
             items.len(),
             height,
