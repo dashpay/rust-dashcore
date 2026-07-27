@@ -483,7 +483,7 @@ impl PeerNetworkManager {
                 match msg_result {
                     Ok(Some(msg)) => {
                         // Log all received messages at debug level to help troubleshoot
-                        tracing::debug!("Received {:?} from {}", msg.cmd(), addr);
+                        tracing::trace!("Received {:?} from {}", msg.cmd(), addr);
 
                         // Handle some messages directly
                         match &msg.inner() {
@@ -797,7 +797,7 @@ impl PeerNetworkManager {
                     request = request_rx.recv() => {
                         match request {
                             Some(NetworkRequest::SendMessage(msg)) => {
-                                tracing::debug!("Request processor: sending {}", msg.cmd());
+                                tracing::trace!("Request processor: sending {}", msg.cmd());
                                 // Spawn each send concurrently to allow parallel requests across peers.
                                 let this = this.clone();
                                 tokio::spawn(async move {
@@ -822,7 +822,7 @@ impl PeerNetworkManager {
                                 });
                             }
                             Some(NetworkRequest::SendMessageToPeer(msg, peer_address)) => {
-                                tracing::debug!("Request processor: sending {} to peer {}", msg.cmd(), peer_address);
+                                tracing::trace!("Request processor: sending {} to peer {}", msg.cmd(), peer_address);
                                 let this = this.clone();
                                 tokio::spawn(async move {
                                     let fallback_msg = msg.clone();
@@ -1064,7 +1064,7 @@ impl PeerNetworkManager {
             while !this.shutdown_token.is_cancelled() {
                 tokio::select! {
                     _ = maintenance_interval.tick() => {
-                        tracing::debug!("Maintenance interval elapsed");
+                        tracing::trace!("Maintenance interval elapsed");
                         this.maintenance_tick().await;
                     }
                     _ = dns_interval.tick(), if !this.exclusive_mode => {
@@ -1186,7 +1186,7 @@ impl PeerNetworkManager {
 
         let (addr, peer) = self.next_peer(&selected_peers);
 
-        tracing::debug!("Distributing {} request to peer {}", message.cmd(), addr);
+        tracing::trace!("Distributing {} request to peer {}", message.cmd(), addr);
 
         self.send_message_to_peer(&addr, &peer, message).await
     }

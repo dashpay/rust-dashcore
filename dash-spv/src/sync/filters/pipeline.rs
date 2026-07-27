@@ -182,7 +182,7 @@ impl FiltersPipeline {
 
             self.coordinator.mark_sent(&[start_height]);
 
-            tracing::debug!(
+            tracing::trace!(
                 "Sent GetCFilters: {} to {} ({} active batches)",
                 start_height,
                 batch_end,
@@ -219,7 +219,7 @@ impl FiltersPipeline {
             let received = tracker.received();
             let expected = (tracker.end_height() - batch_start + 1) as usize;
             if received > 0 && received % 100 == 0 {
-                tracing::debug!(
+                tracing::trace!(
                     "Filter batch {} progress: {}/{} filters received",
                     batch_start,
                     received,
