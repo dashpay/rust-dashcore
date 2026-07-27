@@ -174,7 +174,12 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> BlockHeadersManager<H, M> {
                 floor
             )));
         }
-        let history = storage.load_headers(history_start..ancestor_height + 1).await?;
+        let history: Vec<Header> = storage
+            .load_headers(history_start..ancestor_height + 1)
+            .await?
+            .iter()
+            .map(|h| *h.header())
+            .collect();
         let ancestor = *history.last().ok_or_else(|| {
             SyncError::Validation(format!("missing ancestor header at height {}", ancestor_height))
         })?;
@@ -247,7 +252,12 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> BlockHeadersManager<H, M> {
             .get_tip_height()
             .await
             .ok_or_else(|| SyncError::MissingDependency("no tip height".to_string()))?;
-        let active = storage.load_headers(min_ancestor + 1..tip_height + 1).await?;
+        let active: Vec<Header> = storage
+            .load_headers(min_ancestor + 1..tip_height + 1)
+            .await?
+            .iter()
+            .map(|h| *h.header())
+            .collect();
         drop(storage);
 
         // Among branches that outweigh their own baseline, pick the one with the
@@ -312,7 +322,7 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> BlockHeadersManager<H, M> {
         let mut iterations: u32 = 0;
         loop {
             if let Some(header) = storage.get_header(height).await? {
-                locator.push(header.block_hash());
+                locator.push(*header.hash());
             }
             if height <= floor {
                 break;
@@ -404,7 +414,7 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> BlockHeadersManager<H, M> {
                 let mut shared = 0usize;
                 let mut forked = false;
                 for (i, existing) in stored_overlap.iter().enumerate() {
-                    if headers[i].block_hash() == existing.block_hash() {
+                    if headers[i].block_hash() == *existing.hash() {
                         shared += 1;
                     } else {
                         forked = true;
@@ -593,16 +603,15 @@ mod tests {
         Arc::new(CheckpointManager::new(testnet_checkpoints()))
     }
 
+    fn hashed(headers: &[Header]) -> Vec<HashedBlockHeader> {
+        headers.iter().copied().map(HashedBlockHeader::from).collect()
+    }
+
     async fn create_test_manager() -> TestBlockHeadersManager {
         let mut storage = DiskStorageManager::with_temp_dir().await.unwrap();
         // Store a genesis header so the manager can initialize
         let genesis = Header::dummy_batch(0..1);
-        storage
-            .store_headers(
-                &genesis.iter().map(crate::types::HashedBlockHeader::from).collect::<Vec<_>>(),
-            )
-            .await
-            .unwrap();
+        storage.store_headers(&hashed(&genesis)).await.unwrap();
         let checkpoint_manager = create_test_checkpoint_manager();
         BlockHeadersManager::new(
             storage.block_headers(),
@@ -901,7 +910,7 @@ mod tests {
         let mut storage = DiskStorageManager::with_temp_dir().await.unwrap();
         let chain = Header::dummy_chain(10_000, BlockHash::all_zeros());
         // First header in dummy_chain has prev = all_zeros (treat as genesis).
-        storage.store_headers(&chain).await.unwrap();
+        storage.store_headers(&hashed(&chain)).await.unwrap();
         let checkpoint_manager = create_test_checkpoint_manager();
         let manager = BlockHeadersManager::new(
             storage.block_headers(),
@@ -959,7 +968,7 @@ mod tests {
         const FLOOR: u32 = 1_000_000;
         let mut storage = DiskStorageManager::with_temp_dir().await.unwrap();
         let chain = Header::dummy_batch(FLOOR..FLOOR + 200);
-        storage.store_headers_at_height(&chain, FLOOR).await.unwrap();
+        storage.store_headers_at_height(&hashed(&chain), FLOOR).await.unwrap();
         let checkpoint_manager = create_test_checkpoint_manager();
         let manager = BlockHeadersManager::new(
             storage.block_headers(),
@@ -1028,7 +1037,7 @@ mod tests {
             prev = h.block_hash();
             chain.push(h);
         }
-        storage.store_headers(&chain).await.unwrap();
+        storage.store_headers(&hashed(&chain)).await.unwrap();
         let checkpoint_manager = Arc::new(CheckpointManager::new(vec![]));
         let manager = BlockHeadersManager::new(
             storage.block_headers(),
@@ -1057,7 +1066,7 @@ mod tests {
             prev = h.block_hash();
             chain.push(h);
         }
-        storage.store_headers_at_height(&chain, FLOOR).await.unwrap();
+        storage.store_headers_at_height(&hashed(&chain), FLOOR).await.unwrap();
         let mut manager = BlockHeadersManager::new(
             storage.block_headers(),
             storage.metadata(),
@@ -1100,7 +1109,7 @@ mod tests {
             prev = h.block_hash();
             chain.push(h);
         }
-        storage.store_headers_at_height(&chain, FLOOR).await.unwrap();
+        storage.store_headers_at_height(&hashed(&chain), FLOOR).await.unwrap();
         let mut manager = BlockHeadersManager::new(
             storage.block_headers(),
             storage.metadata(),
@@ -1141,7 +1150,7 @@ mod tests {
             prev = h.block_hash();
             chain.push(h);
         }
-        storage.store_headers_at_height(&chain, FLOOR).await.unwrap();
+        storage.store_headers_at_height(&hashed(&chain), FLOOR).await.unwrap();
         let mut manager = BlockHeadersManager::new(
             storage.block_headers(),
             storage.metadata(),
