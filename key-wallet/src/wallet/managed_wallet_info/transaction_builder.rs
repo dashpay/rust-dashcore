@@ -351,6 +351,12 @@ impl TransactionBuilder {
             // Drain: the single output takes the whole balance minus fee (the caller's amount is
             // ignored); no change.
             let drained = total_input.saturating_sub(selection.estimated_fee);
+            if drained == 0 {
+                return Err(BuilderError::InsufficientFunds {
+                    available: total_input,
+                    required: selection.estimated_fee,
+                });
+            }
             let [out] = tx_outputs.as_mut_slice() else {
                 return Err(BuilderError::InvalidData(
                     "SelectionStrategy::All requires exactly one output (the destination)".into(),
@@ -370,12 +376,6 @@ impl TransactionBuilder {
                             .into(),
                     ));
                 };
-                if drained == 0 {
-                    return Err(BuilderError::InsufficientFunds {
-                        available: total_input,
-                        required: selection.estimated_fee,
-                    });
-                }
                 credit.value = drained;
             }
         } else if change_amount > 546 {

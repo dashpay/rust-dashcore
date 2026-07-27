@@ -206,6 +206,28 @@ fn resolve_funding_account(
     }
 }
 
+/// Shared guard for both asset-lock builders: a drain rewrites exactly one
+/// credit output, and CoinJoin accounts have no change-address pool semantics
+/// for asset locks (change would need re-denomination), so they only support
+/// the whole-balance drain.
+fn validate_drain_funding(
+    funding_account: AssetLockFundingAccount,
+    credit_output_count: usize,
+    drain: bool,
+) -> Result<(), AssetLockError> {
+    if drain && credit_output_count != 1 {
+        return Err(AssetLockError::Builder(BuilderError::InvalidData(
+            "drain asset lock requires exactly one credit output".into(),
+        )));
+    }
+    if matches!(funding_account, AssetLockFundingAccount::CoinJoin { .. }) && !drain {
+        return Err(AssetLockError::Builder(BuilderError::InvalidData(
+            "CoinJoin-funded asset locks support drain mode only".into(),
+        )));
+    }
+    Ok(())
+}
+
 impl ManagedWalletInfo {
     /// Build and sign an asset lock transaction.
     ///
@@ -268,25 +290,7 @@ impl ManagedWalletInfo {
                 .ok_or(AssetLockError::AccountNotFound(account_index))?,
         };
 
-        if drain && credit_output_fundings.len() != 1 {
-            return Err(AssetLockError::Builder(BuilderError::InvalidData(
-                "drain asset lock requires exactly one credit output".into(),
-            )));
-        }
-        if matches!(
-            funding_account,
-            AssetLockFundingAccount::CoinJoin {
-                ..
-            }
-        ) && !drain
-        {
-            // CoinJoin accounts have no change-address pool semantics for
-            // asset locks (change would need re-denomination); only the
-            // whole-balance drain is supported.
-            return Err(AssetLockError::Builder(BuilderError::InvalidData(
-                "CoinJoin-funded asset locks support drain mode only".into(),
-            )));
-        }
+        validate_drain_funding(funding_account, credit_output_fundings.len(), drain)?;
 
         let credit_outputs: Vec<TxOut> =
             credit_output_fundings.iter().map(|f| f.output.clone()).collect();
@@ -390,25 +394,7 @@ impl ManagedWalletInfo {
                 .ok_or(AssetLockError::AccountNotFound(account_index))?,
         };
 
-        if drain && credit_output_fundings.len() != 1 {
-            return Err(AssetLockError::Builder(BuilderError::InvalidData(
-                "drain asset lock requires exactly one credit output".into(),
-            )));
-        }
-        if matches!(
-            funding_account,
-            AssetLockFundingAccount::CoinJoin {
-                ..
-            }
-        ) && !drain
-        {
-            // CoinJoin accounts have no change-address pool semantics for
-            // asset locks (change would need re-denomination); only the
-            // whole-balance drain is supported.
-            return Err(AssetLockError::Builder(BuilderError::InvalidData(
-                "CoinJoin-funded asset locks support drain mode only".into(),
-            )));
-        }
+        validate_drain_funding(funding_account, credit_output_fundings.len(), drain)?;
 
         let credit_outputs: Vec<TxOut> =
             credit_output_fundings.iter().map(|f| f.output.clone()).collect();
@@ -718,7 +704,8 @@ mod tests {
     #[tokio::test]
     async fn test_empty_credit_outputs_rejected() {
         let (wallet, mut info) = test_wallet_and_info();
-        let result = info.build_asset_lock(
+        let result = info
+            .build_asset_lock(
                 &wallet,
                 AssetLockFundingAccount::Bip44 {
                     account_index: 0,
@@ -726,15 +713,16 @@ mod tests {
                 vec![],
                 1000,
                 false,
-            ).await;
+            )
+            .await;
         assert!(matches!(result, Err(AssetLockError::Builder(BuilderError::NoOutputs))));
     }
 
     #[tokio::test]
     async fn test_invalid_account_index() {
         let (wallet, mut info) = test_wallet_and_info();
-        let result =
-            info.build_asset_lock(
+        let result = info
+            .build_asset_lock(
                 &wallet,
                 AssetLockFundingAccount::Bip44 {
                     account_index: 99,
@@ -742,7 +730,8 @@ mod tests {
                 test_credit_outputs(&[100_000]),
                 1000,
                 false,
-            ).await;
+            )
+            .await;
         assert!(matches!(result, Err(AssetLockError::AccountNotFound(99))));
     }
 
@@ -750,7 +739,8 @@ mod tests {
     async fn test_insufficient_funds() {
         // Wallet has no UTXOs, so coin selection should fail
         let (wallet, mut info) = test_wallet_and_info();
-        let result = info.build_asset_lock(
+        let result = info
+            .build_asset_lock(
                 &wallet,
                 AssetLockFundingAccount::Bip44 {
                     account_index: 0,
@@ -758,7 +748,8 @@ mod tests {
                 test_credit_outputs(&[500_000]),
                 1000,
                 false,
-            ).await;
+            )
+            .await;
         assert!(
             matches!(result, Err(AssetLockError::Builder(_))),
             "Expected Builder error for insufficient funds, got: {:?}",
@@ -776,7 +767,8 @@ mod tests {
         insert_funded_utxo(&mut info, &wallet, 0x11, 1_000_000, false);
         info.update_last_processed_height(1100);
 
-        let result = info.build_asset_lock(
+        let result = info
+            .build_asset_lock(
                 &wallet,
                 AssetLockFundingAccount::Bip44 {
                     account_index: 0,
@@ -784,7 +776,8 @@ mod tests {
                 test_credit_outputs(&[200_000]),
                 1000,
                 false,
-            ).await;
+            )
+            .await;
         assert!(
             matches!(result, Err(AssetLockError::Builder(_))),
             "asset lock must not be built on unconfirmed funds, got: {:?}",
@@ -928,7 +921,8 @@ mod tests {
             root,
             network: Network::Testnet,
         };
-        let result = info.build_asset_lock_with_signer(
+        let result = info
+            .build_asset_lock_with_signer(
                 &wallet,
                 AssetLockFundingAccount::Bip44 {
                     account_index: 0,
