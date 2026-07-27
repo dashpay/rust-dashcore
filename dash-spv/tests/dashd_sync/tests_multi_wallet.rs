@@ -14,7 +14,7 @@ use super::helpers::{
     count_wallet_transactions, get_spendable_balance, wait_for_sync, wait_for_wallet_synced,
     EMPTY_MNEMONIC, SECONDARY_MNEMONIC,
 };
-use super::setup::{create_and_start_client, TestContext};
+use super::setup::{create_and_start_client, create_and_start_client_at_checkpoint, TestContext};
 use dash_spv::test_utils::{create_test_wallet, default_test_account_options, TestChain};
 use key_wallet::account::ManagedAccountTrait;
 
@@ -650,6 +650,131 @@ async fn test_runtime_add_with_tip_advance_during_rescan() {
             .any(|account| account.transactions().contains_key(&w2_funding_txid))
     };
     assert!(w2_has_funding, "W2 should hold funding tx {}", w2_funding_txid);
+
+    client_handle.stop().await;
+}
+
+/// Every txid a wallet holds, confirmed or immature.
+async fn wallet_txids(
+    wallet: &Arc<RwLock<WalletManager<ManagedWalletInfo>>>,
+    wallet_id: &key_wallet_manager::WalletId,
+) -> HashSet<String> {
+    let reader = wallet.read().await;
+    let info = reader.get_wallet_info(wallet_id).expect("wallet info");
+    let mut txids: HashSet<String> = info
+        .accounts()
+        .all_accounts()
+        .iter()
+        .flat_map(|a| a.transactions().keys())
+        .map(|txid| txid.to_string())
+        .collect();
+    txids.extend(info.immature_transactions().iter().map(|tx| tx.txid().to_string()));
+    txids
+}
+
+/// Fixture txids in blocks below `height`, from the wallet JSON's
+/// `confirmations` (`height = tip - confirmations + 1`).
+fn fixture_txids_below(ctx: &TestContext, height: u32) -> HashSet<String> {
+    ctx.dashd
+        .wallet
+        .transactions
+        .iter()
+        .filter_map(|tx| {
+            let confirmations = tx.get("confirmations")?.as_u64()? as u32;
+            let tx_height = ctx.dashd.initial_height.checked_sub(confirmations)? + 1;
+            let txid = tx.get("txid")?.as_str()?;
+            (tx_height < height).then(|| txid.to_string())
+        })
+        .collect()
+}
+
+/// A wallet added below the checkpoint the client is anchored on cannot see its
+/// own history: the client holds no headers or filter headers below that
+/// checkpoint, so no rescan can reach those blocks.
+///
+/// Wallet A is born at the checkpoint height, which is what anchors the client
+/// there (`start_from_height` falls back to the earliest wallet birth height).
+/// The funded wallet is added afterwards, while the client runs, born at
+/// genesis.
+#[tokio::test]
+async fn test_wallet_added_below_checkpoint_cannot_see_its_history() {
+    let Some(ctx) = TestContext::new(TestChain::Full).await else {
+        return;
+    };
+    let tip = ctx.dashd.initial_height;
+    let checkpoint_height = tip / 2;
+
+    // What the fixture wallet owns below the checkpoint.
+    let below_checkpoint = fixture_txids_below(&ctx, checkpoint_height);
+    assert!(
+        !below_checkpoint.is_empty(),
+        "fixture has no transactions below height {checkpoint_height}"
+    );
+
+    // A has no regtest history; only its birth height matters here.
+    let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new(Network::Regtest)));
+    {
+        let mut guard = wallet.write().await;
+        guard
+            .create_wallet_from_mnemonic(
+                EMPTY_MNEMONIC,
+                checkpoint_height,
+                default_test_account_options(),
+            )
+            .expect("add A born at the checkpoint");
+    }
+
+    let mut client_handle = create_and_start_client_at_checkpoint(
+        &ctx.client_config,
+        Arc::clone(&wallet),
+        &ctx.dashd.node,
+        checkpoint_height,
+    )
+    .await;
+    wait_for_sync(&mut client_handle.progress_receiver, tip).await;
+
+    // The funded wallet, born at genesis, added while the client runs.
+    let funded_id = {
+        let mut guard = client_handle.client.wallet().write().await;
+        guard
+            .create_wallet_from_mnemonic(
+                &ctx.dashd.wallet.mnemonic,
+                0,
+                default_test_account_options(),
+            )
+            .expect("add the funded wallet below the checkpoint")
+    };
+
+    // Own budget rather than `wait_for_wallet_synced`: dropping the scan floor
+    // reissues every filter batch, and a batch lost to a transient send failure
+    // is only retried after the download coordinator's 30s timeout — the same
+    // value as `SYNC_TIMEOUT`.
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(180);
+    loop {
+        let (synced, _) = wallet_heights(&wallet, &funded_id).await;
+        if synced >= tip {
+            break;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "the funded wallet never caught up: stuck at synced_height {synced}, target {tip}",
+        );
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
+
+    let found_below =
+        below_checkpoint.intersection(&wallet_txids(&wallet, &funded_id).await).count();
+    let balance = get_spendable_balance(&wallet, &funded_id).await;
+    let full_balance = (ctx.dashd.wallet.balance * 1e8).round() as u64;
+
+    assert_eq!(
+        balance,
+        full_balance,
+        "the wallet was added below the checkpoint and is missing {} of the {} transactions in \
+         blocks the client never downloaded",
+        below_checkpoint.len() - found_below,
+        below_checkpoint.len(),
+    );
 
     client_handle.stop().await;
 }

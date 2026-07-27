@@ -2,7 +2,7 @@ use dash_spv::client::config::MempoolStrategy;
 use dash_spv::network::NetworkEvent;
 use dash_spv::test_utils::{
     create_test_wallet, init_test_logging, next_unused_receive_address, retain_test_dir,
-    DashdTestContext, TestChain, TestEventHandler,
+    DashCoreNode, DashdTestContext, TestChain, TestEventHandler,
 };
 use dash_spv::{
     client::{ClientConfig, DashSpvClient},
@@ -278,6 +278,25 @@ pub(super) async fn create_and_start_client(
     config: &ClientConfig,
     wallet: Arc<RwLock<WalletManager<ManagedWalletInfo>>>,
 ) -> ClientHandle {
+    create_and_start_client_inner(config, wallet, None).await
+}
+
+/// `create_and_start_client`, anchored on a checkpoint from `node`'s chain at
+/// `height`.
+pub(super) async fn create_and_start_client_at_checkpoint(
+    config: &ClientConfig,
+    wallet: Arc<RwLock<WalletManager<ManagedWalletInfo>>>,
+    node: &DashCoreNode,
+    height: u32,
+) -> ClientHandle {
+    create_and_start_client_inner(config, wallet, Some((node, height))).await
+}
+
+async fn create_and_start_client_inner(
+    config: &ClientConfig,
+    wallet: Arc<RwLock<WalletManager<ManagedWalletInfo>>>,
+    checkpoint: Option<(&DashCoreNode, u32)>,
+) -> ClientHandle {
     let network_manager = PeerNetworkManager::new(config).await;
     let storage_manager =
         DiskStorageManager::new(config).await.expect("Failed to create storage manager");
@@ -287,10 +306,28 @@ pub(super) async fn create_and_start_client(
     let sync_event_receiver = handler.subscribe_sync_events();
     let network_event_receiver = handler.subscribe_network_events();
 
-    let client =
-        DashSpvClient::new(config.clone(), network_manager, storage_manager, wallet, vec![handler])
-            .await
-            .expect("Failed to create client");
+    let client = match checkpoint {
+        Some((node, height)) => DashSpvClient::new_anchored_at_checkpoint(
+            config.clone(),
+            network_manager,
+            storage_manager,
+            wallet,
+            vec![handler],
+            node,
+            height,
+        )
+        .await
+        .expect("Failed to create checkpoint-anchored client"),
+        None => DashSpvClient::new(
+            config.clone(),
+            network_manager,
+            storage_manager,
+            wallet,
+            vec![handler],
+        )
+        .await
+        .expect("Failed to create client"),
+    };
 
     let wallet_event_receiver = {
         let w = client.wallet().read().await;

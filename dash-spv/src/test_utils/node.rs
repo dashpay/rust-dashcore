@@ -472,6 +472,21 @@ impl DashCoreNode {
         let _: Value = client.call("setmocktime", &[time.into()]).expect("setmocktime failed");
     }
 
+    /// Block hash at `height`.
+    pub fn get_block_hash(&self, height: u32) -> BlockHash {
+        self.rpc_client().get_block_hash(height).expect("getblockhash failed")
+    }
+
+    /// Block header for `hash`.
+    pub fn get_block_header(&self, hash: &BlockHash) -> dashcore::block::Header {
+        self.rpc_client().get_block_header(hash).expect("getblockheader failed")
+    }
+
+    /// Verbose block header info for `hash` (needed for `chainwork`).
+    pub fn get_block_header_info(&self, hash: &BlockHash) -> rpc_json::GetBlockHeaderResult {
+        self.rpc_client().get_block_header_info(hash).expect("getblockheader verbose failed")
+    }
+
     pub fn get_best_block_hash(&self) -> BlockHash {
         let client = self.rpc_client();
         client.get_best_block_hash().expect("getbestblockhash failed")

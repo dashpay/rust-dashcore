@@ -10,6 +10,7 @@
 
 use super::{ClientConfig, DashSpvClient, EventHandler};
 use crate::chain::checkpoints::CheckpointManager;
+use crate::chain::Checkpoint;
 use crate::error::{Result, SpvError};
 use crate::network::NetworkManager;
 use crate::storage::{
@@ -36,9 +37,25 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
     pub async fn new(
         config: ClientConfig,
         network: N,
+        storage: S,
+        wallet: Arc<RwLock<W>>,
+        event_handlers: Vec<Arc<dyn EventHandler>>,
+    ) -> Result<Self> {
+        Self::new_with_checkpoints(config, network, storage, wallet, event_handlers, None).await
+    }
+
+    /// `new`, with the option to replace the checkpoints bundled for the network.
+    ///
+    /// Reachable from outside the crate through `test_utils`: regtest and devnet
+    /// bundle none, which otherwise leaves the checkpoint-anchored path
+    /// untestable.
+    pub(crate) async fn new_with_checkpoints(
+        config: ClientConfig,
+        network: N,
         mut storage: S,
         wallet: Arc<RwLock<W>>,
         event_handlers: Vec<Arc<dyn EventHandler>>,
+        checkpoints: Option<Vec<Checkpoint>>,
     ) -> Result<Self> {
         tracing::info!("{}", crate::version_info());
 
@@ -61,9 +78,20 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
             }
         };
 
+        let checkpoint_manager = Arc::new(match checkpoints {
+            Some(checkpoints) => CheckpointManager::new(checkpoints),
+            None => CheckpointManager::for_network(config.network),
+        });
+
         // Initialize genesis block or checkpoint before creating managers,
         // so they can read the tip from storage during construction.
-        Self::initialize_genesis_block(&config, start_from_height, &mut storage).await?;
+        Self::initialize_genesis_block(
+            &config,
+            &checkpoint_manager,
+            start_from_height,
+            &mut storage,
+        )
+        .await?;
 
         let masternode_engine = {
             if config.enable_masternodes {
@@ -82,17 +110,17 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
             PersistentBlockStorage,
             PersistentMetadataStorage,
             W,
-        > = Managers::default();
-
-        let checkpoint_manager = Arc::new(CheckpointManager::for_network(config.network));
-        managers.block_headers = Some(
-            BlockHeadersManager::new(
-                storage.block_headers(),
-                storage.metadata(),
-                checkpoint_manager,
-            )
-            .await?,
-        );
+        > = Managers {
+            block_headers: Some(
+                BlockHeadersManager::new(
+                    storage.block_headers(),
+                    storage.metadata(),
+                    checkpoint_manager,
+                )
+                .await?,
+            ),
+            ..Default::default()
+        };
 
         if config.enable_filters {
             managers.filter_headers = Some(
@@ -276,6 +304,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
     /// Called before creating managers so they can read the tip during construction.
     async fn initialize_genesis_block(
         config: &ClientConfig,
+        checkpoint_manager: &CheckpointManager,
         start_from_height: Option<u32>,
         storage: &mut S,
     ) -> Result<()> {
@@ -290,8 +319,6 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
 
         // Check if we should use a checkpoint instead of genesis
         if let Some(start_height) = start_from_height {
-            let checkpoint_manager = CheckpointManager::for_network(config.network);
-
             // Find the best checkpoint at or before the requested height
             if let Some(checkpoint) = checkpoint_manager.last_checkpoint_before_height(start_height)
             {
