@@ -6,6 +6,7 @@ use crate::sync::{
 use async_trait::async_trait;
 use dashcore::network::message::NetworkMessage;
 use dashcore::network::message_blockdata::Inventory;
+use std::time::Instant;
 
 #[async_trait]
 impl SyncManager for InstantSendManager {
@@ -88,7 +89,7 @@ impl SyncManager for InstantSendManager {
                     "Masternode state updated, validating {} pending InstantLocks",
                     pending
                 );
-                self.validate_pending().await?
+                self.validate_pending(Instant::now()).await?
             } else {
                 vec![]
             };
@@ -102,7 +103,25 @@ impl SyncManager for InstantSendManager {
         Ok(vec![])
     }
 
-    async fn tick(&mut self, _requests: &RequestSender) -> SyncResult<Vec<SyncEvent>> {
+    async fn tick(&mut self, requests: &RequestSender) -> SyncResult<Vec<SyncEvent>> {
+        self.tick_at(Instant::now(), requests).await
+    }
+
+    fn progress(&self) -> SyncManagerProgress {
+        SyncManagerProgress::InstantSend(self.progress.clone())
+    }
+}
+
+impl InstantSendManager {
+    /// `tick` with the current time injected, so tests can drive TTL expiry with
+    /// a future instant instead of back-dating `first_seen` (an `Instant` cannot
+    /// portably be back-dated by subtraction — `PendingInstantLock::is_expired`
+    /// explains why). The trait `tick` passes `Instant::now()`.
+    pub(super) async fn tick_at(
+        &mut self,
+        now: Instant,
+        _requests: &RequestSender,
+    ) -> SyncResult<Vec<SyncEvent>> {
         // Prune old entries periodically
         self.prune_old_entries();
 
@@ -115,7 +134,7 @@ impl SyncManager for InstantSendManager {
         // tick, independent of engine advancement — otherwise, with a static
         // engine height, `validate_pending` (the only other place expiry runs)
         // would never be reached and a lock could stay pending forever.
-        self.expire_pending();
+        self.expire_pending(now);
 
         // Re-validate queued InstantLocks once the masternode engine has advanced
         // past the height at which they were last checked. A lock received before
@@ -133,7 +152,7 @@ impl SyncManager for InstantSendManager {
                 (None, _) => false,
             };
             if advanced {
-                events = self.validate_pending().await?;
+                events = self.validate_pending(now).await?;
             }
         }
 
@@ -146,9 +165,5 @@ impl SyncManager for InstantSendManager {
         }
 
         Ok(events)
-    }
-
-    fn progress(&self) -> SyncManagerProgress {
-        SyncManagerProgress::InstantSend(self.progress.clone())
     }
 }

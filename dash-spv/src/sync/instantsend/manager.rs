@@ -54,6 +54,23 @@ pub(super) struct PendingInstantLock {
     first_seen: Instant,
 }
 
+impl PendingInstantLock {
+    /// Whether this pending lock has outlived [`PENDING_TTL`] as of `now`.
+    ///
+    /// Uses [`Instant::saturating_duration_since`], which clamps to zero
+    /// instead of panicking when `now` precedes `first_seen`. The current time
+    /// is threaded in by the caller (production passes `Instant::now()`; tests
+    /// pass a fabricated future instant) so expiry can be exercised without
+    /// back-dating `first_seen`. Back-dating an `Instant` by subtraction
+    /// (`Instant::now() - PENDING_TTL`) underflows and panics on platforms
+    /// whose `Instant` epoch sits near zero — notably Windows, where the clock
+    /// starts at boot — because an `Instant` cannot represent a time before its
+    /// epoch.
+    fn is_expired(&self, now: Instant) -> bool {
+        now.saturating_duration_since(self.first_seen) > PENDING_TTL
+    }
+}
+
 /// InstantSend manager.
 ///
 /// This manager:
@@ -228,7 +245,12 @@ impl InstantSendManager {
     /// once the engine has advanced. Locks that verify are emitted as validated
     /// `InstantLockReceived` events; locks that still can't be verified are
     /// re-queued until they either become verifiable or exceed [`PENDING_TTL`].
-    pub(super) async fn validate_pending(&mut self) -> SyncResult<Vec<SyncEvent>> {
+    ///
+    /// `now` is the current time used for TTL expiry; production callers pass
+    /// `Instant::now()`. It is threaded in (rather than read here) so tests can
+    /// drive expiry with a future instant without back-dating `first_seen` —
+    /// see [`PendingInstantLock::is_expired`].
+    pub(super) async fn validate_pending(&mut self, now: Instant) -> SyncResult<Vec<SyncEvent>> {
         // Snapshot the height we are validating against before doing the work so
         // `tick` knows not to re-run until the engine advances past it.
         let engine_height = self.engine_height().await;
@@ -240,7 +262,7 @@ impl InstantSendManager {
             let txid = pending_lock.instant_lock.txid;
 
             // Drop locks that have been awaiting quorum data for too long.
-            let expired = pending_lock.first_seen.elapsed() > PENDING_TTL;
+            let expired = pending_lock.is_expired(now);
             if expired {
                 tracing::warn!(
                     "Dropping InstantLock for txid {} after awaiting quorum data for over {}s",
@@ -305,10 +327,15 @@ impl InstantSendManager {
     /// re-validation (which does run BLS) stays in
     /// [`validate_pending`](Self::validate_pending) and only runs when the engine
     /// advances. Returns the number of locks expired.
-    pub(super) fn expire_pending(&mut self) -> usize {
+    ///
+    /// `now` is the current time used for TTL expiry; production callers pass
+    /// `Instant::now()`. It is threaded in (rather than read here) so tests can
+    /// drive expiry with a future instant without back-dating `first_seen` —
+    /// see [`PendingInstantLock::is_expired`].
+    pub(super) fn expire_pending(&mut self, now: Instant) -> usize {
         let before = self.pending_instantlocks.len();
         self.pending_instantlocks.retain(|pending| {
-            let expired = pending.first_seen.elapsed() > PENDING_TTL;
+            let expired = pending.is_expired(now);
             if expired {
                 tracing::warn!(
                     "Dropping InstantLock for txid {} after awaiting quorum data for over {}s",
@@ -400,18 +427,28 @@ mod tests {
         RequestSender::new(tx)
     }
 
-    fn expired_pending(txid: Txid) -> PendingInstantLock {
-        PendingInstantLock {
-            instant_lock: create_test_instantlock(txid),
-            first_seen: Instant::now() - Duration::from_secs(PENDING_TTL.as_secs() + 60),
-        }
-    }
-
+    /// A pending lock whose `first_seen` is the current instant. Expiry is
+    /// driven by the `now` passed to `tick_at`/`expire_pending`, not by
+    /// back-dating this field — see [`past_ttl`].
     fn fresh_pending(txid: Txid) -> PendingInstantLock {
         PendingInstantLock {
             instant_lock: create_test_instantlock(txid),
             first_seen: Instant::now(),
         }
+    }
+
+    /// An injected "now" far enough past a [`fresh_pending`] lock's `first_seen`
+    /// that the lock counts as expired (`first_seen + PENDING_TTL + 1s`).
+    ///
+    /// Built additively from `Instant::now()`, so it never underflows. Expiry
+    /// used to be simulated by back-dating `first_seen` to
+    /// `Instant::now() - PENDING_TTL`, but subtracting from an `Instant` panics
+    /// on platforms whose `Instant` epoch is near zero — notably Windows, whose
+    /// monotonic clock starts at boot — because an `Instant` cannot represent a
+    /// time before its epoch. Driving expiry with a future `now` instead keeps
+    /// the test portable.
+    fn past_ttl() -> Instant {
+        Instant::now() + PENDING_TTL + Duration::from_secs(1)
     }
 
     fn create_test_instantlock(txid: Txid) -> InstantLock {
@@ -667,9 +704,11 @@ mod tests {
         advance_engine_height(&manager, 100).await;
         manager.last_validated_engine_height = Some(100);
 
-        manager.pending_instantlocks.push(expired_pending(Txid::from_byte_array([8u8; 32])));
+        manager.pending_instantlocks.push(fresh_pending(Txid::from_byte_array([8u8; 32])));
 
-        let events = manager.tick(&requests).await.unwrap();
+        // Drive the tick with a `now` past the lock's TTL so the cheap expiry
+        // pass drops it without back-dating `first_seen`.
+        let events = manager.tick_at(past_ttl(), &requests).await.unwrap();
 
         assert!(events.is_empty());
         // Expired purely by the advancement-independent pass.
@@ -693,9 +732,11 @@ mod tests {
         let requests = no_op_requests();
 
         manager.set_state(SyncState::Syncing);
-        manager.pending_instantlocks.push(expired_pending(Txid::from_byte_array([4u8; 32])));
+        manager.pending_instantlocks.push(fresh_pending(Txid::from_byte_array([4u8; 32])));
 
-        let events = manager.tick(&requests).await.unwrap();
+        // A `now` past the lock's TTL expires it during the tick, draining the
+        // last pending lock and forcing the synced-state transition.
+        let events = manager.tick_at(past_ttl(), &requests).await.unwrap();
 
         assert!(events.is_empty());
         assert_eq!(manager.pending_count(), 0);
@@ -740,12 +781,13 @@ mod tests {
         let mut manager = create_test_manager();
         let requests = no_op_requests();
 
-        manager.pending_instantlocks.push(expired_pending(Txid::from_byte_array([9u8; 32])));
+        manager.pending_instantlocks.push(fresh_pending(Txid::from_byte_array([9u8; 32])));
 
-        // The lock is past its TTL and still unverifiable, so it is dropped and
-        // counted invalid regardless of the engine advancing to height 300.
+        // The lock is past its TTL (driven by the injected `now`) and still
+        // unverifiable, so it is dropped and counted invalid regardless of the
+        // engine advancing to height 300.
         advance_engine_height(&manager, 300).await;
-        let events = manager.tick(&requests).await.unwrap();
+        let events = manager.tick_at(past_ttl(), &requests).await.unwrap();
 
         assert!(events.is_empty());
         assert_eq!(manager.pending_count(), 0);
@@ -767,7 +809,7 @@ mod tests {
 
         advance_engine_height(&manager, 100).await;
         manager.last_validated_engine_height = Some(100);
-        manager.pending_instantlocks.push(expired_pending(Txid::from_byte_array([1u8; 32])));
+        manager.pending_instantlocks.push(fresh_pending(Txid::from_byte_array([1u8; 32])));
 
         manager.on_disconnect();
 
