@@ -8,6 +8,9 @@ use std::time::Duration;
 use dashcore::Network;
 // Serialization removed due to complex Address types
 
+#[cfg(feature = "test-utils")]
+use crate::chain::Checkpoint;
+use crate::chain::CheckpointManager;
 use crate::client::devnet::DevnetConfig;
 use crate::sync::BroadcastHoldout;
 use crate::types::ValidationMode;
@@ -89,6 +92,12 @@ pub struct ClientConfig {
     /// The client will use the nearest checkpoint at or before this height.
     pub start_from_height: Option<u32>,
 
+    /// Override the bundled checkpoints for a network that ships none (regtest, devnet), so tests
+    /// can exercise checkpoint anchoring against a real node. Compiled only under the
+    /// `test-utils` feature, so it is not part of the production config surface.
+    #[cfg(feature = "test-utils")]
+    pub checkpoints: Option<Vec<Checkpoint>>,
+
     /// Devnet-only configuration. Must be `Some` iff `network == Network::Devnet`.
     pub devnet: Option<DevnetConfig>,
 }
@@ -114,6 +123,8 @@ impl Default for ClientConfig {
             broadcast_acceptance_threshold: 1,
             broadcast_acceptance_timeout: Duration::from_secs(60),
             start_from_height: None,
+            #[cfg(feature = "test-utils")]
+            checkpoints: None,
             devnet: None,
         }
     }
@@ -231,6 +242,25 @@ impl ClientConfig {
     pub fn with_start_height(mut self, height: u32) -> Self {
         self.start_from_height = Some(height);
         self
+    }
+
+    /// Override the bundled checkpoints with a custom set, for a network that ships none (e.g.
+    /// regtest). Test-only: compiled under the `test-utils` feature.
+    #[cfg(feature = "test-utils")]
+    pub fn with_checkpoints(mut self, checkpoints: Vec<Checkpoint>) -> Self {
+        self.checkpoints = Some(checkpoints);
+        self
+    }
+
+    /// Build the checkpoint manager for this config: the network's bundled checkpoints, or a
+    /// `test-utils`-only custom override when set (for networks that ship none). Production builds
+    /// have no override field, so they always use the bundled set.
+    pub(crate) fn checkpoint_manager(&self) -> CheckpointManager {
+        #[cfg(feature = "test-utils")]
+        if let Some(checkpoints) = &self.checkpoints {
+            return CheckpointManager::new(checkpoints.clone());
+        }
+        CheckpointManager::for_network(self.network)
     }
 
     /// Attach a [`DevnetConfig`]. The network must be `Network::Devnet`.

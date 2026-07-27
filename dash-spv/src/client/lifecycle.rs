@@ -9,7 +9,6 @@
 //! - Wallet data loading
 
 use super::{ClientConfig, DashSpvClient, EventHandler};
-use crate::chain::checkpoints::CheckpointManager;
 use crate::error::{Result, SpvError};
 use crate::network::NetworkManager;
 use crate::storage::{
@@ -46,34 +45,94 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
         config.validate().map_err(SpvError::Config)?;
         config.apply_global_overrides().map_err(SpvError::Config)?;
 
-        // Resolve where to anchor the chain. An explicit `start_from_height` always
-        // wins. Otherwise fall back to the wallet birth height so we don't sync headers
-        // and filter headers from genesis when the wallet only cares about recent blocks.
-        // The wallet-derived height is floored at the network minimum: no HD/BIP39 wallet
-        // can predate mainnet's activation height, so a low or zero birth height must never
-        // drag mainnet sync below it.
-        let start_from_height = match config.start_from_height {
+        // Masternodes and chainlocks share one list engine; create it up front so the
+        // handle stored on the client and the one handed to the managers stay the same.
+        let masternode_engine = if config.enable_masternodes {
+            Some(Arc::new(RwLock::new(MasternodeListEngine::default_for_network(config.network))))
+        } else {
+            None
+        };
+
+        // Resolve the anchor height, initialize the genesis/checkpoint header, and build
+        // all sync managers against storage.
+        let managers =
+            Self::build_managers(&config, &mut storage, &wallet, &masternode_engine).await?;
+        let sync_coordinator = SyncCoordinator::new(managers).await;
+
+        // Wrap storage in Arc<Mutex>
+        let storage = Arc::new(Mutex::new(storage));
+
+        let client = Self {
+            config: Arc::new(RwLock::new(config)),
+            network: Arc::new(Mutex::new(network)),
+            storage,
+            wallet,
+            masternode_engine,
+            sync_coordinator: Arc::new(Mutex::new(sync_coordinator)),
+            running: Arc::new(watch::Sender::new(false)),
+            event_handlers: Arc::new(event_handlers),
+        };
+
+        // Load wallet data from storage
+        client.load_wallet_data().await?;
+
+        // Emit initial progress so callers get immediate feedback
+        let initial_progress = client.sync_coordinator.lock().await.progress().clone();
+        for event_handler in client.event_handlers.iter() {
+            event_handler.on_progress(&initial_progress);
+        }
+
+        Ok(client)
+    }
+
+    /// Lowest height the chain needs to cover, or `None` when nothing constrains it and sync
+    /// should start from genesis.
+    ///
+    /// An explicit `start_from_height` always wins. Otherwise fall back to the wallet birth
+    /// height so we don't sync headers and filter headers from genesis when the wallet only
+    /// cares about recent blocks. The wallet-derived height is floored at the network minimum:
+    /// no HD/BIP39 wallet can predate mainnet's activation height, so a low or zero birth
+    /// height must never drag mainnet sync below it.
+    ///
+    /// Both the anchoring in `build_managers` and the `resync_needed` check derive their height
+    /// here, so the height the chain is anchored from and the height it is judged against can
+    /// never disagree.
+    async fn effective_start_height(config: &ClientConfig, wallet: &Arc<RwLock<W>>) -> Option<u32> {
+        match config.start_from_height {
             Some(height) => Some(height),
             None => {
                 let birth_height = wallet.read().await.earliest_required_height().await;
                 let start = birth_height.max(config.network.hd_wallet_sync_floor());
                 (start > 0).then_some(start)
             }
-        };
+        }
+    }
+
+    /// Resolve the anchor height, initialize the genesis or checkpoint header in storage,
+    /// and construct every sync manager against storage.
+    ///
+    /// The caller owns `storage`. When it has just been cleared this re-anchors from scratch,
+    /// otherwise `initialize_genesis_block` sees the existing tip and leaves the chain in place.
+    async fn build_managers(
+        config: &ClientConfig,
+        storage: &mut S,
+        wallet: &Arc<RwLock<W>>,
+        masternode_engine: &Option<Arc<RwLock<MasternodeListEngine>>>,
+    ) -> Result<
+        Managers<
+            PersistentBlockHeaderStorage,
+            PersistentFilterHeaderStorage,
+            PersistentFilterStorage,
+            PersistentBlockStorage,
+            PersistentMetadataStorage,
+            W,
+        >,
+    > {
+        let start_from_height = Self::effective_start_height(config, wallet).await;
 
         // Initialize genesis block or checkpoint before creating managers,
         // so they can read the tip from storage during construction.
-        Self::initialize_genesis_block(&config, start_from_height, &mut storage).await?;
-
-        let masternode_engine = {
-            if config.enable_masternodes {
-                Some(Arc::new(RwLock::new(MasternodeListEngine::default_for_network(
-                    config.network,
-                ))))
-            } else {
-                None
-            }
-        };
+        Self::initialize_genesis_block(config, start_from_height, storage).await?;
 
         let mut managers: Managers<
             PersistentBlockHeaderStorage,
@@ -84,7 +143,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
             W,
         > = Managers::default();
 
-        let checkpoint_manager = Arc::new(CheckpointManager::for_network(config.network));
+        let checkpoint_manager = Arc::new(config.checkpoint_manager());
         managers.block_headers = Some(
             BlockHeadersManager::new(
                 storage.block_headers(),
@@ -149,32 +208,127 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
             ));
         }
 
-        let sync_coordinator = SyncCoordinator::new(managers).await;
+        Ok(managers)
+    }
 
-        // Wrap storage in Arc<Mutex>
-        let storage = Arc::new(Mutex::new(storage));
-
-        let client = Self {
-            config: Arc::new(RwLock::new(config)),
-            network: Arc::new(Mutex::new(network)),
-            storage,
-            wallet,
-            masternode_engine,
-            sync_coordinator: Arc::new(Mutex::new(sync_coordinator)),
-            running: Arc::new(watch::Sender::new(false)),
-            event_handlers: Arc::new(event_handlers),
+    /// Whether the current wallet set needs a resync: the height the chain would now be
+    /// anchored from is below the anchored header start, so the earlier history cannot be
+    /// scanned without re-anchoring lower. Returns false when nothing is anchored yet or the
+    /// stored chain already reaches far enough back.
+    ///
+    /// The required height comes from [`Self::effective_start_height`], the same source
+    /// `build_managers` anchors from, so a `force_resync` always clears the condition instead
+    /// of leaving it permanently true. Comparing the raw wallet birth height here instead
+    /// would make a mainnet wallet born below the HD activation floor report a resync that
+    /// re-anchoring can never satisfy, wiping and refetching the chain on every check.
+    pub async fn resync_needed(&self) -> bool {
+        let required = {
+            let config = self.config.read().await;
+            match Self::effective_start_height(&config, &self.wallet).await {
+                Some(required) => required,
+                None => return false,
+            }
         };
 
-        // Load wallet data from storage
-        client.load_wallet_data().await?;
+        match self.storage.lock().await.get_start_height().await {
+            Some(header_start) => required < header_start,
+            None => false,
+        }
+    }
 
-        // Emit initial progress so callers get immediate feedback
-        let initial_progress = client.sync_coordinator.lock().await.progress().clone();
-        for event_handler in client.event_handlers.iter() {
-            event_handler.on_progress(&initial_progress);
+    /// Force a full resync from the checkpoint at or below the current minimum wallet birth
+    /// height. Tears down sync, wipes all chain storage, and rebuilds the sync managers so the
+    /// next sync re-anchors from scratch.
+    ///
+    /// Wallet state (per-wallet synced heights and discovered outputs) lives outside chain
+    /// storage and is preserved, so only chain data is refetched: an added wallet with a
+    /// lower birth height drags the anchor down and gets its range scanned, while wallets
+    /// that were already ahead keep their progress and are not rescanned below it.
+    ///
+    /// Restores the running state it was called in. A running client keeps running across the
+    /// resync. A stopped client stays stopped with its managers rebuilt against the cleared
+    /// storage.
+    ///
+    /// The teardown and restart are done directly on the coordinator and network rather than
+    /// through `stop`/`start`, and the coordinator is reset in place rather than replaced. This
+    /// keeps the `running` flag set and the coordinator's event and progress senders alive, so
+    /// the `run` monitoring loop and every progress and event subscriber stay connected across
+    /// the resync instead of tearing down. Flipping `running` would make `run` exit and never
+    /// come back, silently freezing all outward progress.
+    ///
+    /// A failure after the initial teardown is unrecoverable: storage has been wiped and the old
+    /// chain data is gone, so there is no prior state to restore. Rather than leave `running` set
+    /// with a drained coordinator (whose `tick` reports no error and would spin `run` forever), the
+    /// error path drains anything a partial restart may have spawned and marks the client stopped,
+    /// so `run` exits and the failure surfaces. A later `force_resync` retries the rebuild cleanly.
+    pub async fn force_resync(&self) -> Result<()> {
+        let was_running = self.is_running();
+
+        let result = self.force_resync_body(was_running).await;
+
+        if was_running && result.is_err() {
+            let _ = self.sync_coordinator.lock().await.shutdown().await;
+            self.running.send_replace(false);
         }
 
-        Ok(client)
+        result
+    }
+
+    async fn force_resync_body(&self, was_running: bool) -> Result<()> {
+        // Tear down the running sync without touching `running`, so the `run` loop keeps
+        // monitoring. Drain the coordinator's manager tasks and drop the network connection.
+        if was_running {
+            self.sync_coordinator.lock().await.shutdown().await.map_err(SpvError::Sync)?;
+            self.network.lock().await.disconnect().await?;
+        }
+
+        // Masternode lists are chain-derived and wiped below, so reset the shared engine so it
+        // doesn't retain state from before the resync.
+        if let Some(engine) = &self.masternode_engine {
+            let network = self.config.read().await.network;
+            *engine.write().await = MasternodeListEngine::default_for_network(network);
+        }
+
+        // Rebuild the managers while holding only the storage and config locks, then reset the
+        // coordinator with them, so we never hold the storage lock and the coordinator lock at
+        // once.
+        let managers = {
+            let mut storage = self.storage.lock().await;
+            storage.clear().await.map_err(SpvError::Storage)?;
+            let config = self.config.read().await;
+            Self::build_managers(&config, &mut storage, &self.wallet, &self.masternode_engine)
+                .await?
+        };
+        self.sync_coordinator.lock().await.reset(managers);
+
+        if was_running {
+            // Respawn the coordinator's tasks and reconnect, mirroring `start` but without
+            // flipping `running`. `connect` re-arms the network for a fresh start on its own,
+            // so the rebuilt managers pick up a working request path.
+            let mut network = self.network.lock().await;
+            self.sync_coordinator
+                .lock()
+                .await
+                .start(&mut *network)
+                .await
+                .map_err(SpvError::Sync)?;
+            network.connect().await?;
+        }
+
+        Ok(())
+    }
+
+    /// Resync only if a wallet now sits below the anchored header start, collapsing the
+    /// `resync_needed` check and the `force_resync` action into one call. Returns whether a
+    /// resync actually ran, so a caller that just added wallets can do the whole "rescan the
+    /// older history if I need to" step without polling `resync_needed` itself.
+    pub async fn resync_if_needed(&self) -> Result<bool> {
+        if self.resync_needed().await {
+            self.force_resync().await?;
+            Ok(true)
+        } else {
+            Ok(false)
+        }
     }
 
     /// Start the SPV client: spawn sync tasks and connect to the network.
@@ -259,7 +413,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
 
         // Check if we should use a checkpoint instead of genesis
         if let Some(start_height) = start_from_height {
-            let checkpoint_manager = CheckpointManager::for_network(config.network);
+            let checkpoint_manager = config.checkpoint_manager();
 
             // Find the best checkpoint at or before the requested height
             if let Some(checkpoint) = checkpoint_manager.last_checkpoint_before_height(start_height)

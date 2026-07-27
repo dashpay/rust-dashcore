@@ -168,6 +168,12 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
         self.storage.lock().await.get_tip_height().await.unwrap_or(0)
     }
 
+    /// Returns the height the chain is currently anchored at (the checkpoint or genesis the
+    /// stored headers start from), or `None` when nothing is anchored yet.
+    pub async fn start_height(&self) -> Option<u32> {
+        self.storage.lock().await.get_start_height().await
+    }
+
     // ============ Storage Operations ============
 
     /// Clear all persisted storage (headers, filters, state, sync state) and reset in-memory state.

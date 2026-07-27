@@ -210,7 +210,8 @@ pub trait NetworkManager: Send + Sync + 'static {
     /// Connect to the network.
     async fn connect(&mut self) -> NetworkResult<()>;
 
-    /// Disconnect from the network.
+    /// Disconnect from the network. Implementations must leave the manager in a startable
+    /// state, so a later `connect` runs as if freshly constructed.
     async fn disconnect(&mut self) -> NetworkResult<()>;
 
     /// Send a message to a peer.

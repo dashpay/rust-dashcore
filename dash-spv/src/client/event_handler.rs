@@ -29,6 +29,13 @@ pub trait EventHandler: Send + Sync + 'static {
     fn on_progress(&self, _progress: &SyncProgress) {}
     /// Called for wallet events (transaction received, balance updated).
     fn on_wallet_event(&self, _event: &WalletEvent) {}
+    /// Called once when a wallet's history first falls below the anchored header start, so its
+    /// earlier blocks cannot be scanned without re-anchoring lower. Fires on the rising edge of
+    /// [`crate::client::DashSpvClient::resync_needed`]. The client does not act on it: react by
+    /// calling [`crate::client::DashSpvClient::force_resync`] or
+    /// [`crate::client::DashSpvClient::resync_if_needed`] when the policy fits (it wipes and
+    /// refetches chain data), or defer.
+    fn on_resync_needed(&self) {}
     /// Called on fatal errors (start failure, monitor channel failure, sync loop error).
     fn on_error(&self, _error: &str) {}
 }
