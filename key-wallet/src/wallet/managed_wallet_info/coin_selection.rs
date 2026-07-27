@@ -7,6 +7,10 @@ use crate::wallet::managed_wallet_info::fee::FeeRate;
 use crate::Utxo;
 use core::cmp::Reverse;
 
+pub(crate) const TX_OUTPUT_SIZE: usize = 34;
+pub(crate) const TX_INPUT_SIZE: usize = 148;
+pub(crate) const CHANGE_OUTPUT_SIZE: usize = TX_OUTPUT_SIZE;
+
 /// UTXO selection strategy
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SelectionStrategy {
@@ -110,9 +114,9 @@ impl CoinSelector {
     where
         I: IntoIterator<Item = &'a Utxo>,
     {
-        // Default base size assumes 2 outputs (target + change)
-        let default_base_size = 10 + (34 * 2);
-        let input_size = 148;
+        // Default base size assumes 2 outputs: the target output and one change output.
+        let default_base_size = 10 + TX_OUTPUT_SIZE + CHANGE_OUTPUT_SIZE;
+        let input_size = TX_INPUT_SIZE;
         self.select_coins_with_size(
             utxos,
             target_amount,
@@ -120,10 +124,15 @@ impl CoinSelector {
             current_height,
             default_base_size,
             input_size,
+            CHANGE_OUTPUT_SIZE,
         )
     }
 
-    /// Select UTXOs for a target amount with custom transaction size parameters
+    /// Select UTXOs for a target amount with custom transaction size parameters.
+    ///
+    /// `base_size` includes the change output; `change_output_size` is its byte count (`0` when
+    /// there is no change address), letting the accumulator drop it to size a no-change fee.
+    #[allow(clippy::too_many_arguments)]
     pub fn select_coins_with_size<'a, I>(
         &self,
         utxos: I,
@@ -132,6 +141,7 @@ impl CoinSelector {
         current_height: u32,
         base_size: usize,
         input_size: usize,
+        change_output_size: usize,
     ) -> Result<SelectionResult, SelectionError>
     where
         I: IntoIterator<Item = &'a Utxo>,
@@ -170,6 +180,7 @@ impl CoinSelector {
                             fee_rate,
                             base_size,
                             input_size,
+                            change_output_size,
                         )
                     }
                     SelectionStrategy::LargestFirst => {
@@ -180,6 +191,7 @@ impl CoinSelector {
                             fee_rate,
                             base_size,
                             input_size,
+                            change_output_size,
                         )
                     }
                     SelectionStrategy::SmallestFirstTill(threshold) => {
@@ -196,6 +208,7 @@ impl CoinSelector {
                                 fee_rate,
                                 base_size,
                                 input_size,
+                                change_output_size,
                             )
                         } else {
                             // Split at threshold
@@ -213,6 +226,7 @@ impl CoinSelector {
                                 fee_rate,
                                 base_size,
                                 input_size,
+                                change_output_size,
                             )
                         }
                     }
@@ -225,6 +239,7 @@ impl CoinSelector {
                             fee_rate,
                             base_size,
                             input_size,
+                            change_output_size,
                         )
                     }
                     SelectionStrategy::OptimalConsolidation => self
@@ -234,6 +249,7 @@ impl CoinSelector {
                             fee_rate,
                             base_size,
                             input_size,
+                            change_output_size,
                         ),
                     _ => unreachable!(),
                 }
@@ -250,6 +266,7 @@ impl CoinSelector {
                     fee_rate,
                     base_size,
                     input_size,
+                    change_output_size,
                 )
             }
             SelectionStrategy::All => {
@@ -287,7 +304,9 @@ impl CoinSelector {
         }
     }
 
-    /// Simple accumulation strategy with custom transaction size parameters
+    /// Accumulate UTXOs. `change_output_size` = the change output's bytes within `base_size`
+    /// (`0` if none is budgeted), shaved off to size the no-change fee.
+    #[allow(clippy::too_many_arguments)]
     fn accumulate_coins_with_size<'a, I>(
         &self,
         utxos: I,
@@ -295,52 +314,79 @@ impl CoinSelector {
         fee_rate: FeeRate,
         base_size: usize,
         input_size: usize,
+        change_output_size: usize,
     ) -> Result<SelectionResult, SelectionError>
     where
         I: IntoIterator<Item = &'a Utxo>,
     {
         let mut selected = Vec::new();
         let mut total_value = 0u64;
+        // Reported on shortfall so `available < required`, not the fee-excluded `target_amount`
+        // that looked like `available > required` (#911).
+        let mut required_no_change = target_amount;
 
         for utxo in utxos {
             total_value += utxo.value();
             selected.push(utxo.clone());
 
-            // Calculate size with current inputs
+            // `base_size` budgets a change output; a no-change send omits it and pays less.
             let estimated_size = base_size + (input_size * selected.len());
             let estimated_fee = fee_rate.calculate_fee(estimated_size);
-            let required_amount = target_amount + estimated_fee;
+            let size_no_change = estimated_size.saturating_sub(change_output_size);
+            let fee_no_change = fee_rate.calculate_fee(size_no_change);
+            required_no_change = target_amount + fee_no_change;
 
-            if total_value >= required_amount {
-                let change_amount = total_value - required_amount;
+            if total_value < required_no_change {
+                continue;
+            }
 
-                // Check if change is dust
-                let (final_change, exact_match) = if change_amount < self.dust_threshold {
-                    // Add dust to fee
-                    (0, change_amount == 0)
-                } else {
-                    (change_amount, false)
-                };
-
+            // Keep change only if one is budgeted and it clears dust (`>`, like the builder).
+            let required_with_change = target_amount + estimated_fee;
+            if change_output_size > 0
+                && total_value >= required_with_change
+                && total_value - required_with_change > self.dust_threshold
+            {
                 return Ok(SelectionResult {
                     selected,
                     total_value,
                     target_amount,
-                    change_amount: final_change,
+                    change_amount: total_value - required_with_change,
                     estimated_size,
-                    estimated_fee: if final_change == 0 {
-                        total_value - target_amount
-                    } else {
-                        estimated_fee
-                    },
-                    exact_match,
+                    estimated_fee,
+                    exact_match: false,
                 });
             }
+
+            // No change output budgeted but a real remainder: surface it as change so the builder
+            // adds one or errors, instead of burning a large surplus into the fee.
+            let remainder = total_value - required_no_change;
+            if change_output_size == 0 && remainder > self.dust_threshold {
+                return Ok(SelectionResult {
+                    selected,
+                    total_value,
+                    target_amount,
+                    change_amount: remainder,
+                    estimated_size: size_no_change,
+                    estimated_fee: fee_no_change,
+                    exact_match: false,
+                });
+            }
+
+            // Otherwise the remainder is dust: drop the change output, fold it into the fee (#911).
+            return Ok(SelectionResult {
+                selected,
+                total_value,
+                target_amount,
+                change_amount: 0,
+                estimated_size: size_no_change,
+                estimated_fee: total_value - target_amount,
+                exact_match: total_value == required_no_change,
+            });
         }
 
         Err(SelectionError::InsufficientFunds {
             available: total_value,
-            required: target_amount,
+            required: required_no_change,
         })
     }
 
@@ -357,6 +403,7 @@ impl CoinSelector {
     /// - Pros: Faster to find solutions due to aggressive pruning
     /// - Cons: May leave small UTXOs unconsolidated, leading to wallet fragmentation
     /// - Cons: Less likely to find exact matches with larger denominations
+    #[allow(clippy::too_many_arguments)]
     fn branch_and_bound_with_size<'a, I>(
         &self,
         utxos: I,
@@ -364,6 +411,7 @@ impl CoinSelector {
         fee_rate: FeeRate,
         base_size: usize,
         input_size: usize,
+        change_output_size: usize,
     ) -> Result<SelectionResult, SelectionError>
     where
         I: IntoIterator<Item = &'a Utxo>,
@@ -400,15 +448,14 @@ impl CoinSelector {
             });
         }
 
-        // Fall back to accumulation if no exact match found
-        // For fallback, assume change output is needed
-        let base_size_with_change = base_size + 34;
+        // No exact match: accumulate. `base_size` already budgets the change output.
         self.accumulate_coins_with_size(
             sorted_refs,
             target_amount,
             fee_rate,
-            base_size_with_change,
+            base_size,
             input_size,
+            change_output_size,
         )
     }
 
@@ -435,6 +482,7 @@ impl CoinSelector {
     /// - During low-fee periods when consolidation is cheaper
     /// - For wallets that receive many small payments
     /// - When exact change is preferred to minimize privacy leaks
+    #[allow(clippy::too_many_arguments)]
     fn optimal_consolidation_with_size<'a>(
         &self,
         utxos: &[&'a Utxo],
@@ -442,6 +490,7 @@ impl CoinSelector {
         fee_rate: FeeRate,
         base_size: usize,
         input_size: usize,
+        change_output_size: usize,
     ) -> Result<SelectionResult, SelectionError> {
         // First, try to find an exact match using smaller UTXOs
         // Sort by value ascending to prioritize using smaller UTXOs
@@ -475,9 +524,8 @@ impl CoinSelector {
             }
         }
 
-        // If no exact match, try to minimize change while consolidating small UTXOs
-        // Use a combination of smallest UTXOs that slightly exceeds the target
-        let base_size_with_change = base_size + 34; // Add change output to base size
+        // Minimize change while consolidating small UTXOs. `base_size` already budgets the
+        // change output.
         let mut best_selection: Option<Vec<Utxo>> = None;
         let mut best_change = u64::MAX;
 
@@ -490,13 +538,13 @@ impl CoinSelector {
                 current_total += utxo.value();
             }
 
-            let estimated_size = base_size_with_change + (input_size * current.len());
+            let estimated_size = base_size + (input_size * current.len());
             let estimated_fee = fee_rate.calculate_fee(estimated_size);
             let required = target_amount + estimated_fee;
 
             if current_total >= required {
                 let change = current_total - required;
-                if change < best_change && change >= self.dust_threshold {
+                if change < best_change && change > self.dust_threshold {
                     best_selection = Some(current);
                     best_change = change;
                 }
@@ -504,7 +552,7 @@ impl CoinSelector {
         }
 
         if let Some(selected) = best_selection {
-            let estimated_size = base_size_with_change + (input_size * selected.len());
+            let estimated_size = base_size + (input_size * selected.len());
             let estimated_fee = fee_rate.calculate_fee(estimated_size);
             let total_value: u64 = selected.iter().map(|u| u.value()).sum();
 
@@ -519,15 +567,14 @@ impl CoinSelector {
             });
         }
 
-        // Fall back to accumulate if we couldn't find a good solution
-        // For fallback, assume change output is needed
-        let base_size_with_change = base_size + 34;
+        // Fall back to accumulate; `base_size` already budgets the change output.
         self.accumulate_coins_with_size(
             sorted_asc,
             target_amount,
             fee_rate,
-            base_size_with_change,
+            base_size,
             input_size,
+            change_output_size,
         )
     }
 
@@ -694,6 +741,7 @@ impl std::error::Error for SelectionError {}
 #[cfg(test)]
 mod tests {
     use super::*;
+    use test_case::test_case;
 
     #[test]
     fn test_select_all_drains_everything() {
@@ -765,6 +813,132 @@ mod tests {
         let result = selector.select_coins(&utxos, 50000, FeeRate::new(1000), 200);
 
         assert!(matches!(result, Err(SelectionError::InsufficientFunds { .. })));
+    }
+
+    /// #911: a no-change send is wrongly rejected with a misleading `InsufficientFunds`
+    /// (available > required) because the fee is sized for a change output that won't exist.
+    /// UTXO 150_200, send 150_000 (fee 200, no change) — must succeed for every strategy.
+    #[test_case(SelectionStrategy::SmallestFirst      ; "smallest_first")]
+    #[test_case(SelectionStrategy::LargestFirst       ; "largest_first")]
+    #[test_case(SelectionStrategy::SmallestFirstTill(2) ; "smallest_first_till")]
+    #[test_case(SelectionStrategy::BranchAndBound     ; "branch_and_bound")]
+    #[test_case(SelectionStrategy::OptimalConsolidation ; "optimal_consolidation")]
+    #[test_case(SelectionStrategy::Random             ; "random")]
+    fn test_zero_or_dust_change_send_not_rejected_issue_911(strategy: SelectionStrategy) {
+        let utxos = vec![Utxo::dummy(0, 150_200, 100, false, true)];
+        let target = 150_000;
+
+        let result =
+            CoinSelector::new(strategy).select_coins(&utxos, target, FeeRate::normal(), 200);
+
+        // The bug's tell-tale: InsufficientFunds with available > required.
+        if let Err(SelectionError::InsufficientFunds {
+            available,
+            required,
+        }) = &result
+        {
+            assert!(
+                available < required,
+                "{strategy:?}: misleading InsufficientFunds — available {available} > required \
+                 {required}; a no-change tx (fee {}) fits, so this send must not be rejected",
+                available - target
+            );
+        }
+
+        let selection =
+            result.unwrap_or_else(|e| panic!("{strategy:?}: valid no-change send rejected: {e:?}"));
+        assert_eq!(
+            selection.change_amount, 0,
+            "{strategy:?}: send-everything-minus-fee has no change"
+        );
+        assert_eq!(selection.total_value, 150_200, "{strategy:?}");
+        assert_eq!(selection.estimated_fee, 200, "{strategy:?}: whole remainder becomes the fee");
+    }
+
+    /// #911 with its exact figures, through the fallback path: `BranchAndBound` (the builder
+    /// default) and `OptimalConsolidation` used to hand the accumulator a `base_size` inflated by
+    /// a phantom change output. UTXO 10_000_000, send 9_999_780 (fee 220, no change) — must hold
+    /// for every strategy, not just those that skip the fallback.
+    #[test_case(SelectionStrategy::SmallestFirst        ; "smallest_first")]
+    #[test_case(SelectionStrategy::LargestFirst         ; "largest_first")]
+    #[test_case(SelectionStrategy::SmallestFirstTill(2) ; "smallest_first_till")]
+    #[test_case(SelectionStrategy::BranchAndBound       ; "branch_and_bound_default")]
+    #[test_case(SelectionStrategy::OptimalConsolidation ; "optimal_consolidation")]
+    #[test_case(SelectionStrategy::Random               ; "random")]
+    fn test_issue_911_exact_figures_no_phantom_change(strategy: SelectionStrategy) {
+        let utxos = vec![Utxo::dummy(0, 10_000_000, 100, false, true)];
+        let target = 9_999_780;
+
+        let result =
+            CoinSelector::new(strategy).select_coins(&utxos, target, FeeRate::normal(), 200);
+
+        let selection = result.unwrap_or_else(|e| {
+            panic!("{strategy:?}: #911 send rejected (phantom change output in fallback?): {e:?}")
+        });
+        assert_eq!(selection.change_amount, 0, "{strategy:?}: no change on a send-everything");
+        assert_eq!(
+            selection.estimated_fee, 220,
+            "{strategy:?}: the whole 220-duff remainder is the fee (no change output budgeted)"
+        );
+    }
+
+    /// #911 gap 2: with no change address, `base_size` has no change output and
+    /// `change_output_size` is 0 — the accumulator must NOT shave a phantom 34 bytes off the fee.
+    /// Sending everything but a 158-duff remainder underpays the real 192-byte fee and must be
+    /// rejected, not silently accepted below the min-relay fee.
+    #[test_case(SelectionStrategy::SmallestFirst        ; "smallest_first")]
+    #[test_case(SelectionStrategy::LargestFirst         ; "largest_first")]
+    #[test_case(SelectionStrategy::SmallestFirstTill(2) ; "smallest_first_till")]
+    #[test_case(SelectionStrategy::BranchAndBound       ; "branch_and_bound")]
+    #[test_case(SelectionStrategy::OptimalConsolidation ; "optimal_consolidation")]
+    #[test_case(SelectionStrategy::Random               ; "random")]
+    fn test_no_change_address_does_not_underpay_issue_911_gap2(strategy: SelectionStrategy) {
+        let utxos = vec![Utxo::dummy(0, 10_000_000, 100, false, true)];
+        let target = 10_000_000 - 158; // only affordable if the fee were under-sized to 158
+        let base_size = 10 + 34; // overhead + target output, NO change output
+        let result = CoinSelector::new(strategy).select_coins_with_size(
+            &utxos,
+            target,
+            FeeRate::normal(),
+            200,
+            base_size,
+            148,
+            0, // no change address => no change output to drop
+        );
+        assert!(
+            matches!(result, Err(SelectionError::InsufficientFunds { .. })),
+            "{strategy:?}: accepted an underpaid (158 < 192) no-change tx: {result:?}"
+        );
+    }
+
+    /// Review finding: with no change address (`change_output_size == 0`) and a remainder well
+    /// above dust, the leftover must be reported as change (so the builder can add a change output
+    /// or error), NOT silently folded into the fee. Sending 100_000 out of a 10_000_000 UTXO leaves
+    /// ~9.9M that must not become fee.
+    #[test_case(SelectionStrategy::SmallestFirst        ; "smallest_first")]
+    #[test_case(SelectionStrategy::LargestFirst         ; "largest_first")]
+    #[test_case(SelectionStrategy::SmallestFirstTill(2) ; "smallest_first_till")]
+    #[test_case(SelectionStrategy::BranchAndBound       ; "branch_and_bound")]
+    #[test_case(SelectionStrategy::OptimalConsolidation ; "optimal_consolidation")]
+    #[test_case(SelectionStrategy::Random               ; "random")]
+    fn test_no_change_address_surplus_not_burned_as_fee(strategy: SelectionStrategy) {
+        let utxos = vec![Utxo::dummy(0, 10_000_000, 100, false, true)];
+        let target = 100_000;
+        let base_size = 10 + 34; // one (target) output, no change output budgeted
+        let selection = CoinSelector::new(strategy)
+            .select_coins_with_size(&utxos, target, FeeRate::normal(), 200, base_size, 148, 0)
+            .unwrap_or_else(|e| panic!("{strategy:?}: {e:?}"));
+
+        // No-change fee is 192 (44 + 148); the ~9.9M remainder is change, not fee.
+        assert_eq!(
+            selection.estimated_fee, 192,
+            "{strategy:?}: only the no-change fee is charged, not the whole surplus"
+        );
+        assert_eq!(
+            selection.change_amount,
+            10_000_000 - target - 192,
+            "{strategy:?}: the surplus is surfaced as change, not burned"
+        );
     }
 
     #[test]
