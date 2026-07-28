@@ -126,6 +126,15 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage> SyncManager for FilterHeade
         self.pipeline.send_pending(network).await?;
 
         if self.pipeline.is_complete() {
+            if self.backfilling {
+                // The low range is in. Point progress and the pipeline back at
+                // the stored tip: everything above the filled range is already
+                // stored, and re-queueing it would overwrite it.
+                self.backfilling = false;
+                let tip = self.reported_tip().await;
+                self.progress.update_current_height(tip);
+                tracing::info!("Filter header backfill complete, tip back at {}", tip);
+            }
             if let Some(event) = self.try_complete_sync() {
                 events.push(event);
             }
@@ -149,6 +158,10 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage> SyncManager for FilterHeade
             SyncEvent::BlockHeadersStored {
                 tip_height,
             } => self.handle_new_headers(*tip_height, network).await,
+            SyncEvent::HeaderFloorLowered {
+                start_height,
+                ..
+            } => self.resync_from_floor(*start_height, network).await,
             _ => Ok(vec![]),
         }
     }

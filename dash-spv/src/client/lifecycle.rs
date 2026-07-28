@@ -21,13 +21,8 @@ use crate::sync::{
     BlockHeadersManager, BlocksManager, ChainLockManager, FilterHeadersManager, FiltersManager,
     InstantSendManager, Managers, MasternodesManager, MempoolManager, SyncCoordinator,
 };
-use crate::types::HashedBlockHeader;
-use dashcore::block::{Header as BlockHeader, Version};
 use dashcore::network::constants::NetworkExt;
-use dashcore::pow::CompactTarget;
 use dashcore::sml::masternode_list_engine::MasternodeListEngine;
-use dashcore::TxMerkleNode;
-use dashcore_hashes::Hash;
 use key_wallet_manager::WalletInterface;
 use std::sync::Arc;
 use tokio::sync::{watch, Mutex, RwLock};
@@ -116,6 +111,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
                     storage.block_headers(),
                     storage.metadata(),
                     checkpoint_manager,
+                    config.network,
                 )
                 .await?,
             ),
@@ -329,29 +325,9 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
                         start_height
                     );
 
-                    // The checkpoint stores the trusted block hash but not the block version,
-                    // so a reconstructed header cannot be hashed back to that value. Anchor on
-                    // the trusted hash directly: chain linkage compares against the stored hash,
-                    // and `time`/`bits` (used for difficulty checks of later headers) come from
-                    // the checkpoint. The version is irrelevant since the hash is never recomputed.
-                    let checkpoint_header = BlockHeader {
-                        version: Version::from_consensus(0),
-                        prev_blockhash: checkpoint.prev_blockhash,
-                        merkle_root: checkpoint
-                            .merkle_root
-                            .map(|h| TxMerkleNode::from_byte_array(*h.as_byte_array()))
-                            .unwrap_or_else(TxMerkleNode::all_zeros),
-                        time: checkpoint.timestamp,
-                        bits: CompactTarget::from_consensus(
-                            checkpoint.target.to_compact_lossy().to_consensus(),
-                        ),
-                        nonce: checkpoint.nonce,
-                    };
-                    let anchor = HashedBlockHeader::with_trusted_hash(
-                        checkpoint_header,
-                        checkpoint.block_hash,
-                    );
-                    storage.store_headers_at_height(&[anchor], checkpoint.height).await?;
+                    storage
+                        .store_headers_at_height(&[checkpoint.anchor_header()], checkpoint.height)
+                        .await?;
 
                     tracing::info!(
                         "✅ Initialized from checkpoint at height {}, skipping {} headers",

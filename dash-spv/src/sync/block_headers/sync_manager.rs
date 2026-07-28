@@ -116,11 +116,15 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> SyncManager for BlockHeadersMana
 
     async fn handle_sync_event(
         &mut self,
-        _event: &SyncEvent,
-        _network: &Arc<dyn NetworkManager>,
+        event: &SyncEvent,
+        network: &Arc<dyn NetworkManager>,
     ) -> SyncResult<Vec<SyncEvent>> {
-        // BlockHeadersManager doesn't react to events from other managers
-        Ok(vec![])
+        match event {
+            SyncEvent::HeaderBackfillNeeded {
+                from_height,
+            } => self.backfill_from(*from_height, network).await,
+            _ => Ok(vec![]),
+        }
     }
 
     async fn tick(&mut self, network: &Arc<dyn NetworkManager>) -> SyncResult<Vec<SyncEvent>> {

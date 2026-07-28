@@ -22,6 +22,7 @@ use crate::validation::{BlockHeaderValidator, Validator};
 use dashcore::block::Header;
 use dashcore::network::message_blockdata::Inventory;
 use dashcore::BlockHash;
+use dashcore::Network;
 use tokio::sync::RwLock;
 
 /// Headers manager for downloading and validating block headers.
@@ -45,6 +46,11 @@ pub struct BlockHeadersManager<H: BlockHeaderStorage, M: MetadataStorage> {
     /// Peers we've sent a GetHeaders to after sync, so Dash Core knows our tip
     /// and can send us header announcements instead of inv.
     pub(super) announced_peers: HashSet<SocketAddr>,
+    /// Network, for the genesis header a backfill below every checkpoint anchors on.
+    network: Network,
+    /// Lowest stored height when a backfill started, so its completion can be
+    /// told apart from the ordinary segments finishing.
+    backfill_ceiling: Option<u32>,
 }
 
 impl<H: BlockHeaderStorage, M: MetadataStorage> std::fmt::Debug for BlockHeadersManager<H, M> {
@@ -62,6 +68,7 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> BlockHeadersManager<H, M> {
         header_storage: Arc<RwLock<H>>,
         metadata_storage: Arc<RwLock<M>>,
         checkpoint_manager: Arc<CheckpointManager>,
+        network: Network,
     ) -> SyncResult<Self> {
         let tip = header_storage
             .read()
@@ -88,6 +95,8 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> BlockHeadersManager<H, M> {
             pipeline: HeadersPipeline::new(checkpoint_manager),
             pending_announcements: HashMap::new(),
             announced_peers: HashSet::new(),
+            network,
+            backfill_ceiling: None,
         })
     }
 
@@ -100,15 +109,106 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> BlockHeadersManager<H, M> {
             .ok_or_else(|| SyncError::MissingDependency("storage not initialized".to_string()))
     }
 
-    /// Validate and store headers batch.
-    async fn store_headers(&mut self, headers: &[HashedBlockHeader]) -> SyncResult<BlockHeaderTip> {
+    /// Fill in the headers below the stored range so a wallet born down there
+    /// can be scanned.
+    ///
+    /// A client anchored on a checkpoint holds no headers below it, so no rescan
+    /// can reach that history. Download it from the highest anchor at or below
+    /// `from_height` — a lower checkpoint, else genesis — up to the lowest
+    /// header already stored.
+    pub(super) async fn backfill_from(
+        &mut self,
+        from_height: u32,
+        network: &Arc<dyn NetworkManager>,
+    ) -> SyncResult<Vec<SyncEvent>> {
+        let current_start = self.header_storage.read().await.get_start_height().await.unwrap_or(0);
+        if from_height >= current_start {
+            return Ok(vec![]);
+        }
+
+        // Anchor on a checkpoint below the requested height when one exists, so
+        // only the range that is actually missing gets downloaded.
+        let (anchor_height, anchor_hash) = match self
+            .pipeline
+            .checkpoint_at_or_below(from_height)
+            .filter(|cp| cp.height > 0)
+        {
+            Some(checkpoint) => {
+                // Store the anchor: the backfill's first batch links onto it, and
+                // nothing below the old floor is in storage yet.
+                let checkpoint = checkpoint.clone();
+                self.header_storage
+                    .write()
+                    .await
+                    .store_headers_at_height(&[checkpoint.anchor_header()], checkpoint.height)
+                    .await?;
+                (checkpoint.height, checkpoint.block_hash)
+            }
+            None => {
+                // TODO: If the checkpoint manager return genesis this is
+                // not needed and maybe the network field can be removed
+                //
+                // Genesis is the universal anchor. Store it so the backfilled
+                // range is dense from height 0 rather than from height 1.
+                let genesis = dashcore::blockdata::constants::genesis_block(self.network).header;
+                let genesis = HashedBlockHeader::from(genesis);
+                let hash = *genesis.hash();
+                self.header_storage.write().await.store_headers_at_height(&[genesis], 0).await?;
+                (0, hash)
+            }
+        };
+
+        // The range to fetch ends one block below the stored one, which must not
+        // be rewritten. What that stored header points back to is the hash the
+        // last segment validates its final block against.
+        let join =
+            self.header_storage.read().await.get_header(current_start).await?.ok_or_else(|| {
+                SyncError::MissingDependency(format!("no stored header at {current_start}"))
+            })?;
+        let last_height = current_start - 1;
+        let last_hash = join.header().prev_blockhash;
+
+        if anchor_height >= last_height {
+            // Nothing to fetch: storing the anchor already made the range
+            // contiguous, so the floor is as low as this wallet needs.
+            tracing::info!("Headers already reach {anchor_height}, no backfill needed");
+            return Ok(vec![SyncEvent::HeaderFloorLowered {
+                start_height: anchor_height,
+                previous_start_height: current_start,
+            }]);
+        }
+
+        tracing::info!(
+            "Backfilling headers {}..{} (wallet needs {})",
+            anchor_height,
+            current_start,
+            from_height
+        );
+
+        self.backfill_ceiling = Some(current_start);
+        self.pipeline.prepend_backfill(anchor_height, anchor_hash, last_height, last_hash);
+        self.progress.set_state(SyncState::Syncing);
+        self.pipeline.send_pending(network).await?;
+
+        Ok(vec![])
+    }
+
+    /// Validate and store a headers batch starting at `start_height`.
+    ///
+    /// The height is explicit because a batch does not always extend the tip:
+    /// a backfill lands below it, on top of a parent further down.
+    async fn store_headers_at(
+        &mut self,
+        start_height: u32,
+        headers: &[HashedBlockHeader],
+    ) -> SyncResult<BlockHeaderTip> {
         debug_assert!(!headers.is_empty());
 
         // Validate batch for internal continuity and PoW
         BlockHeaderValidator::new().validate(headers)?;
 
         // Store headers
-        self.header_storage.write().await.store_headers(headers).await?;
+        self.header_storage.write().await.store_headers_at_height(headers, start_height).await?;
 
         let tip = self.tip().await?;
 
@@ -173,30 +273,67 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> BlockHeadersManager<H, M> {
         let mut events = Vec::new();
         let ready_batches = self.pipeline.take_ready_to_store();
 
-        for (_start_height, batch_headers) in ready_batches {
+        for (_, batch_headers) in ready_batches {
             if !batch_headers.is_empty() {
-                // Validate chain continuity with current tip
                 let tip = self.tip().await?;
-                if batch_headers[0].header().prev_blockhash != *tip.hash() {
-                    return Err(SyncError::Validation(format!(
-                        "Segment chain break: expected prev {}, got {}",
-                        tip.hash(),
-                        batch_headers[0].header().prev_blockhash
-                    )));
-                }
+                let parent = batch_headers[0].header().prev_blockhash;
 
                 // Clear any pending announcements for headers we're storing
                 for header in &batch_headers {
                     self.pending_announcements.remove(header.hash());
                 }
 
-                let new_tip = self.store_headers(&batch_headers).await?;
+                // A batch either extends the tip or, coming from a backfill,
+                // lands on a stored parent further down. Either way the parent's
+                // height is where it goes: look it up rather than trust the
+                // segment's own start height, which only describes its first
+                // batch.
+                let start_height = if parent == *tip.hash() {
+                    tip.height() + 1
+                } else {
+                    let parent_height =
+                        self.header_storage.read().await.get_header_height_by_hash(&parent).await?;
+                    match parent_height {
+                        Some(height) => height + 1,
+                        None => {
+                            return Err(SyncError::Validation(format!(
+                                "Segment chain break: parent {} of the incoming batch is neither \
+                                 the tip {} nor a stored header",
+                                parent,
+                                tip.hash()
+                            )))
+                        }
+                    }
+                };
+
+                let new_tip = self.store_headers_at(start_height, &batch_headers).await?;
                 // Update target if we've exceeded it (post-sync case)
                 if new_tip.height() > self.progress.target_height() {
                     self.progress.update_target_height(new_tip.height());
                 }
                 events.push(SyncEvent::BlockHeadersStored {
                     tip_height: new_tip.height(),
+                });
+            }
+        }
+
+        // Announce the lowered floor once the backfilled range is contiguous:
+        // the filter-header side builds its request queue from stored headers,
+        // so it can only run when the whole range is in.
+        if let Some(ceiling) = self.backfill_ceiling {
+            if self.pipeline.is_complete_below(ceiling) {
+                let previous_start_height = ceiling;
+                self.backfill_ceiling = None;
+                let start_height =
+                    self.header_storage.read().await.get_start_height().await.unwrap_or(0);
+                tracing::info!(
+                    "Header backfill complete: floor lowered from {} to {}",
+                    previous_start_height,
+                    start_height
+                );
+                events.push(SyncEvent::HeaderFloorLowered {
+                    start_height,
+                    previous_start_height,
                 });
             }
         }
@@ -300,9 +437,14 @@ mod tests {
             .await
             .unwrap();
         let checkpoint_manager = create_test_checkpoint_manager();
-        BlockHeadersManager::new(storage.block_headers(), storage.metadata(), checkpoint_manager)
-            .await
-            .expect("Failed to create BlockHeadersManager")
+        BlockHeadersManager::new(
+            storage.block_headers(),
+            storage.metadata(),
+            checkpoint_manager,
+            Network::Regtest,
+        )
+        .await
+        .expect("Failed to create BlockHeadersManager")
     }
 
     /// Create a manager in synced state with an initialized pipeline.

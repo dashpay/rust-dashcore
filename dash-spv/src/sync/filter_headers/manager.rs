@@ -40,6 +40,9 @@ pub struct FilterHeadersManager<H: BlockHeaderStorage, FH: FilterHeaderStorage> 
     /// Whether block header sync has completed. Gates FilterHeadersSyncComplete emission
     /// to ensure it never fires before BlockHeaderSyncComplete.
     pub(super) block_headers_synced: bool,
+    /// Filling in a range below the stored one, where the storage tip stays put
+    /// while the pipeline walks the low range.
+    pub(super) backfilling: bool,
 }
 
 impl<H: BlockHeaderStorage, FH: FilterHeaderStorage> FilterHeadersManager<H, FH> {
@@ -89,6 +92,7 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage> FilterHeadersManager<H, FH>
             filter_header_storage,
             pipeline: FilterHeadersPipeline::default(),
             checkpoint_start_height: None,
+            backfilling: false,
             block_headers_synced: false,
         })
     }
@@ -130,6 +134,65 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage> FilterHeadersManager<H, FH>
         self.progress.add_processed(count);
 
         Ok(count)
+    }
+
+    /// Re-sync filter headers from a header floor that just moved down.
+    ///
+    /// `start_download` derives its start from the filter-header tip, so it can
+    /// only ever move forward and would skip a range that became reachable
+    /// below it. Re-initialize the pipeline at the new floor instead: the range
+    /// above it is re-requested and stored back at the same heights, which
+    /// keeps progress monotonic and avoids a second, backwards download path.
+    pub(super) async fn resync_from_floor(
+        &mut self,
+        start_height: u32,
+        network: &Arc<dyn NetworkManager>,
+    ) -> SyncResult<Vec<SyncEvent>> {
+        // Only fetch what is actually missing: everything from the stored start
+        // upwards is already there, and re-storing it would overwrite it.
+        let stored_start = self.filter_header_storage.read().await.get_filter_start_height().await;
+        let Some(target_height) = stored_start.map(|start| start.saturating_sub(1)) else {
+            return Ok(vec![]);
+        };
+        if start_height > target_height {
+            return Ok(vec![]);
+        }
+
+        tracing::info!(
+            "Filling in filter headers {}..{} below the stored range",
+            start_height,
+            target_height
+        );
+
+        let header_storage = self.header_storage.read().await;
+        self.pipeline.init(&*header_storage, start_height, target_height).await?;
+        drop(header_storage);
+
+        // Filter verification chains from the header below the range, so the
+        // first batch has to store the predecessor the peer sends with it —
+        // the same thing a fresh checkpoint sync does. Genesis has none.
+        self.checkpoint_start_height = (start_height > 0).then_some(start_height);
+        self.backfilling = true;
+        self.progress.update_current_height(start_height.saturating_sub(1));
+        self.pipeline.send_pending(network).await?;
+        self.set_state(SyncState::Syncing);
+
+        Ok(vec![])
+    }
+
+    /// Tip to report to other managers: the highest filter header stored, which
+    /// during a backfill is above the range the pipeline is currently walking.
+    pub(super) async fn reported_tip(&self) -> u32 {
+        let stored_tip = self
+            .filter_header_storage
+            .read()
+            .await
+            .get_filter_tip_height()
+            .await
+            .ok()
+            .flatten()
+            .unwrap_or(0);
+        stored_tip.max(self.progress.current_height())
     }
 
     /// Start or resume filter header download.
@@ -200,6 +263,14 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage> FilterHeadersManager<H, FH>
     ) -> SyncResult<Vec<SyncEvent>> {
         self.progress.update_block_header_tip_height(tip_height);
         self.update_target_height(tip_height);
+
+        // While filling in a range below the stored one the pipeline is aimed at
+        // that range, so extending it towards the tip here would queue the whole
+        // already-stored span above it. The fill rebases onto the tip when it
+        // finishes.
+        if self.backfilling {
+            return Ok(vec![]);
+        }
 
         // Nothing to do if caught up to available headers
         if self.progress.current_height() >= self.progress.block_header_tip_height() {

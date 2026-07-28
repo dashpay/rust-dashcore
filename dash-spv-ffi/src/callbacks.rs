@@ -486,6 +486,15 @@ impl FFISyncEventCallbacks {
                     cb(txid_bytes as *const [u8; 32], status, relayed_by, self.user_data);
                 }
             }
+            // Internal to the sync managers: a wallet needing history below the
+            // stored headers, and the backfill that answers it. Nothing for an
+            // FFI consumer to act on.
+            SyncEvent::HeaderBackfillNeeded {
+                ..
+            }
+            | SyncEvent::HeaderFloorLowered {
+                ..
+            } => {}
         }
     }
 }

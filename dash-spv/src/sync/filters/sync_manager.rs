@@ -151,6 +151,30 @@ impl<
         network: &Arc<dyn NetworkManager>,
     ) -> SyncResult<Vec<SyncEvent>> {
         match event {
+            // A backfill lowered the header floor and the filter headers for the
+            // newly reachable range have just landed: restart the scan so it runs
+            // from the wallets' own floor instead of the old one.
+            SyncEvent::FilterHeadersSyncComplete {
+                tip_height,
+            } if self.floor_lowered => {
+                self.floor_lowered = false;
+                let min_synced = self.wallet.read().await.synced_height();
+                tracing::info!(
+                    "Header floor lowered, restarting filter scan from {} (tip {})",
+                    min_synced,
+                    tip_height
+                );
+                self.reset_for_rescan();
+                self.progress.update_committed_height(min_synced);
+                return self.start_download(network).await;
+            }
+
+            SyncEvent::HeaderFloorLowered {
+                ..
+            } => {
+                self.floor_lowered = true;
+            }
+
             SyncEvent::FilterHeadersSyncComplete {
                 tip_height,
             } => {

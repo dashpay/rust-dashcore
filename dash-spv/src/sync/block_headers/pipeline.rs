@@ -9,7 +9,7 @@ use std::sync::Arc;
 use dashcore::block::Header;
 use dashcore::BlockHash;
 
-use crate::chain::CheckpointManager;
+use crate::chain::{Checkpoint, CheckpointManager};
 use crate::error::SyncResult;
 use crate::network::NetworkManager;
 use crate::sync::block_headers::segment_state::SegmentState;
@@ -52,57 +52,10 @@ impl HeadersPipeline {
         }
     }
 
-    /// Initialize the pipeline for downloading from current_height to target_height.
     pub fn init(&mut self, current_height: u32, current_hash: BlockHash, target_height: u32) {
-        self.segments.clear();
         self.next_to_store = 0;
         self.initialized = true;
-
-        // Get checkpoint heights and find which ones are relevant
-        let checkpoint_heights = self.checkpoint_manager.checkpoint_heights();
-
-        // Find checkpoints between current_height and target_height
-        let mut boundaries: Vec<(u32, BlockHash)> = Vec::new();
-
-        // Start from current position
-        boundaries.push((current_height, current_hash));
-
-        // Add checkpoints that are above current_height
-        for &height in checkpoint_heights {
-            if height > current_height && height <= target_height {
-                if let Some(cp) = self.checkpoint_manager.get_checkpoint(height) {
-                    boundaries.push((height, cp.block_hash));
-                }
-            }
-        }
-
-        // Sort by height
-        boundaries.sort_by_key(|(h, _)| *h);
-
-        // Create segments between consecutive boundaries
-        for i in 0..boundaries.len() {
-            let (start_height, start_hash) = boundaries[i];
-            let (target_height, target_hash) = if i + 1 < boundaries.len() {
-                let (h, hash) = boundaries[i + 1];
-                (Some(h), Some(hash))
-            } else {
-                // Last segment goes to tip (unknown target)
-                (None, None)
-            };
-
-            let segment =
-                SegmentState::new(i, start_height, start_hash, target_height, target_hash);
-
-            tracing::info!(
-                "Created segment {}: {} -> {:?} (start_hash: {})",
-                i,
-                start_height,
-                target_height,
-                start_hash
-            );
-
-            self.segments.push(segment);
-        }
+        self.segments = self.build_segments(current_height, current_hash, target_height, None);
 
         tracing::info!(
             "HeadersPipeline initialized with {} segments for heights {} to {}",
@@ -110,6 +63,102 @@ impl HeadersPipeline {
             current_height,
             target_height
         );
+    }
+
+    /// Split `(start_height, limit]` into one segment per checkpoint interval.
+    ///
+    /// `end_hash` bounds the last segment when the range has a known end — a
+    /// backfill joining onto headers already stored. Without it the last segment
+    /// is open-ended and runs to whatever the peers serve, which is what an
+    /// ordinary sync towards the tip wants.
+    fn build_segments(
+        &self,
+        start_height: u32,
+        start_hash: BlockHash,
+        limit: u32,
+        end_hash: Option<BlockHash>,
+    ) -> Vec<SegmentState> {
+        let mut boundaries: Vec<(u32, BlockHash)> = vec![(start_height, start_hash)];
+
+        for &height in self.checkpoint_manager.checkpoint_heights() {
+            // The join is the last segment's target, so a checkpoint sitting on
+            // it must not also become a boundary.
+            let within = if end_hash.is_some() {
+                height < limit
+            } else {
+                height <= limit
+            };
+            if height > start_height && within {
+                if let Some(cp) = self.checkpoint_manager.get_checkpoint(height) {
+                    boundaries.push((height, cp.block_hash));
+                }
+            }
+        }
+        boundaries.sort_by_key(|(h, _)| *h);
+
+        let mut segments = Vec::with_capacity(boundaries.len());
+        for i in 0..boundaries.len() {
+            let (segment_start, segment_hash) = boundaries[i];
+            let (target_height, target_hash) = match boundaries.get(i + 1) {
+                Some((h, hash)) => (Some(*h), Some(*hash)),
+                None => match end_hash {
+                    Some(hash) => (Some(limit), Some(hash)),
+                    None => (None, None),
+                },
+            };
+
+            tracing::info!(
+                "Created segment {}: {} -> {:?} (start_hash: {})",
+                i,
+                segment_start,
+                target_height,
+                segment_hash
+            );
+            segments.push(SegmentState::new(
+                i,
+                segment_start,
+                segment_hash,
+                target_height,
+                target_hash,
+            ));
+        }
+        segments
+    }
+
+    /// Add the segments that fill in `(anchor_height, last_height]`, the range the
+    /// client skipped by anchoring above it.
+    ///
+    /// They go in front of the existing ones, split at the same checkpoint
+    /// boundaries an ordinary sync would use, and from there they are ordinary
+    /// segments: routing, sending, timeouts and completion treat them like any
+    /// other. `last_hash` is what the stored header above the range points back
+    /// to, so the last segment validates the join like it would a checkpoint —
+    /// and stops one block below the stored range, which it must not rewrite.
+    pub(super) fn prepend_backfill(
+        &mut self,
+        anchor_height: u32,
+        anchor_hash: BlockHash,
+        last_height: u32,
+        last_hash: BlockHash,
+    ) {
+        let mut segments =
+            self.build_segments(anchor_height, anchor_hash, last_height, Some(last_hash));
+        segments.append(&mut self.segments);
+        self.segments = segments;
+        // Renumber so ids keep matching height order in the logs.
+        for (id, segment) in self.segments.iter_mut().enumerate() {
+            segment.segment_id = id;
+        }
+        self.next_to_store = 0;
+        self.initialized = true;
+    }
+
+    /// Whether every segment below `height` finished downloading and storing.
+    pub(super) fn is_complete_below(&self, height: u32) -> bool {
+        self.segments
+            .iter()
+            .filter(|s| s.start_height < height)
+            .all(|s| s.complete && s.buffered_headers.is_empty())
     }
 
     /// Get the number of segments in the pipeline.
@@ -206,8 +255,14 @@ impl HeadersPipeline {
         let mut ready = Vec::new();
 
         while self.next_to_store < self.segments.len() {
-            // Check if segment has buffered headers
+            // Nothing buffered means either the segment is done — move past it,
+            // which is how a backfill prepended below already-synced segments
+            // reaches them — or it has yet to receive anything, so wait.
             if self.segments[self.next_to_store].buffered_headers.is_empty() {
+                if self.segments[self.next_to_store].complete {
+                    self.next_to_store += 1;
+                    continue;
+                }
                 break;
             }
 
@@ -274,6 +329,11 @@ impl HeadersPipeline {
     /// Check if pipeline is initialized.
     pub fn is_initialized(&self) -> bool {
         self.initialized
+    }
+
+    /// Highest checkpoint at or below `height`, if any.
+    pub(super) fn checkpoint_at_or_below(&self, height: u32) -> Option<&Checkpoint> {
+        self.checkpoint_manager.last_checkpoint_before_height(height)
     }
 
     /// Check if the tip segment is currently marked complete.

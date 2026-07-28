@@ -45,6 +45,9 @@ pub struct FiltersManager<
     F: FilterStorage,
     W: WalletInterface,
 > {
+    /// A header backfill lowered the floor: restart the scan once the filter
+    /// headers for the newly reachable range are in.
+    pub(super) floor_lowered: bool,
     /// Current progress of the manager.
     pub(super) progress: FiltersProgress,
     /// Block header storage (for block hash lookups).
@@ -103,6 +106,7 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
         initial_progress.update_filter_header_tip_height(filter_header_tip);
 
         Self {
+            floor_lowered: false,
             progress: initial_progress,
             header_storage,
             filter_header_storage,
@@ -190,6 +194,23 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
         // Get header start height (for checkpoint sync)
         let header_start_height =
             self.header_storage.read().await.get_start_height().await.unwrap_or(0);
+
+        // A wallet that needs history below the lowest stored header cannot be
+        // served by any rescan: those blocks have no headers and no filter
+        // headers, so there is nothing to scan. Ask for the backfill and wait
+        // for it instead of clamping the scan to the header floor, which would
+        // silently report the wallet as synced while its early transactions are
+        // still unreachable.
+        if wallet_birth_height < header_start_height {
+            tracing::info!(
+                "Wallet needs history from {} but headers only reach down to {}; requesting backfill",
+                wallet_birth_height,
+                header_start_height
+            );
+            return Ok(vec![SyncEvent::HeaderBackfillNeeded {
+                from_height: wallet_birth_height,
+            }]);
+        }
 
         // Calculate scan start (where we need to start processing)
         // Must be at least header_start_height for checkpoint-based sync

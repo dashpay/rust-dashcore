@@ -287,15 +287,15 @@ pub(super) async fn create_and_start_client_at_checkpoint(
     config: &ClientConfig,
     wallet: Arc<RwLock<WalletManager<ManagedWalletInfo>>>,
     node: &DashCoreNode,
-    height: u32,
+    heights: &[u32],
 ) -> ClientHandle {
-    create_and_start_client_inner(config, wallet, Some((node, height))).await
+    create_and_start_client_inner(config, wallet, Some((node, heights))).await
 }
 
 async fn create_and_start_client_inner(
     config: &ClientConfig,
     wallet: Arc<RwLock<WalletManager<ManagedWalletInfo>>>,
-    checkpoint: Option<(&DashCoreNode, u32)>,
+    checkpoint: Option<(&DashCoreNode, &[u32])>,
 ) -> ClientHandle {
     let network_manager = PeerNetworkManager::new(config).await;
     let storage_manager =
@@ -307,14 +307,14 @@ async fn create_and_start_client_inner(
     let network_event_receiver = handler.subscribe_network_events();
 
     let client = match checkpoint {
-        Some((node, height)) => DashSpvClient::new_anchored_at_checkpoint(
+        Some((node, heights)) => DashSpvClient::new_anchored_at_checkpoint(
             config.clone(),
             network_manager,
             storage_manager,
             wallet,
             vec![handler],
             node,
-            height,
+            heights,
         )
         .await
         .expect("Failed to create checkpoint-anchored client"),

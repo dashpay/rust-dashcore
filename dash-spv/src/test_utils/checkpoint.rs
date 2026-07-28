@@ -61,9 +61,9 @@ where
     N: crate::network::NetworkManager,
     S: crate::storage::StorageManager,
 {
-    /// `DashSpvClient::new`, anchored on a checkpoint from `node`'s chain at
-    /// `height` instead of the ones bundled for the network. The client then
-    /// never downloads the headers below `height`.
+    /// `DashSpvClient::new`, anchored on checkpoints taken from `node`'s chain
+    /// at `heights` instead of the ones bundled for the network. The client then
+    /// never downloads the headers below the one it anchors on.
     ///
     /// The anchor only takes effect once the client's resolved start height
     /// reaches the checkpoint: `start_from_height`, or failing that the earliest
@@ -75,15 +75,16 @@ where
         wallet: std::sync::Arc<tokio::sync::RwLock<W>>,
         event_handlers: Vec<std::sync::Arc<dyn crate::client::EventHandler>>,
         node: &crate::test_utils::DashCoreNode,
-        height: u32,
+        heights: &[u32],
     ) -> crate::error::Result<Self> {
+        let checkpoints = heights.iter().map(|h| Checkpoint::from_node(node, *h)).collect();
         Self::new_with_checkpoints(
             config,
             network,
             storage,
             wallet,
             event_handlers,
-            Some(vec![Checkpoint::from_node(node, height)]),
+            Some(checkpoints),
         )
         .await
     }

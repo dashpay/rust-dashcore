@@ -191,6 +191,26 @@ pub enum SyncEvent {
         /// Sync cycle (0 = initial, 1+ = incremental)
         cycle: u32,
     },
+
+    /// A wallet needs history below the lowest stored block header.
+    ///
+    /// Emitted by: `FiltersManager`
+    /// Consumed by: `BlockHeadersManager`
+    HeaderBackfillNeeded {
+        /// Lowest height a wallet requires
+        from_height: u32,
+    },
+
+    /// Block headers now reach further down than they did.
+    ///
+    /// Emitted by: `BlockHeadersManager`
+    /// Consumed by: `FilterHeadersManager`
+    HeaderFloorLowered {
+        /// New lowest stored header height
+        start_height: u32,
+        /// Lowest stored header height before the backfill
+        previous_start_height: u32,
+    },
 }
 
 impl fmt::Display for SyncEvent {
@@ -224,6 +244,17 @@ impl fmt::Display for SyncEvent {
             SyncEvent::FiltersSyncComplete {
                 tip_height,
             } => write!(f, "FiltersSyncComplete(tip={})", tip_height),
+            SyncEvent::HeaderBackfillNeeded {
+                from_height,
+            } => write!(f, "HeaderBackfillNeeded(from={})", from_height),
+            SyncEvent::HeaderFloorLowered {
+                start_height,
+                previous_start_height,
+            } => write!(
+                f,
+                "HeaderFloorLowered({} <- {})",
+                start_height, previous_start_height
+            ),
             SyncEvent::BlocksNeeded {
                 blocks,
             } => write!(f, "BlocksNeeded(count={})", blocks.len()),
