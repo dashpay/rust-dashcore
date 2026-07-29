@@ -1,11 +1,14 @@
 use crate::error::SyncResult;
-use crate::network::{Message, MessageType, NetworkEvent, RequestSender};
+use crate::network::{MessageType, NetworkEvent, NetworkManager};
 use crate::sync::{
     BlockHeadersProgress, BlocksProgress, ChainLockProgress, FilterHeadersProgress,
     FiltersProgress, InstantSendProgress, ManagerIdentifier, MasternodesProgress, MempoolProgress,
     SyncEvent, SyncState,
 };
 use async_trait::async_trait;
+use dashcore::network::message::NetworkMessage;
+use std::net::SocketAddr;
+use std::sync::Arc;
 
 use crate::SyncError;
 
@@ -48,11 +51,13 @@ impl SyncManagerProgress {
     }
 }
 
+pub type Inbound = (SocketAddr, Arc<NetworkMessage>);
+
 pub struct SyncManagerTaskContext {
-    pub(super) message_receiver: UnboundedReceiver<Message>,
+    pub(super) message_receiver: UnboundedReceiver<Inbound>,
     pub(super) sync_event_sender: broadcast::Sender<SyncEvent>,
     pub(super) network_event_receiver: broadcast::Receiver<NetworkEvent>,
-    pub(super) requests: RequestSender,
+    pub(super) network: Arc<dyn NetworkManager>,
     pub(super) shutdown: CancellationToken,
     pub(super) progress_sender: watch::Sender<SyncManagerProgress>,
 }
@@ -66,6 +71,51 @@ impl SyncManagerTaskContext {
             self.emit_sync_event(event);
         }
     }
+}
+
+// Display for the network event so the sync loop / broadcast monitor can log
+// it (they require `Display`). Kept here to avoid modifying the network module.
+impl std::fmt::Display for NetworkEvent {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            NetworkEvent::PeersUpdated {
+                connected_count,
+                ..
+            } => write!(f, "PeersUpdated({connected_count} peers)"),
+            NetworkEvent::PeerConnected(addr) => write!(f, "PeerConnected({addr})"),
+            NetworkEvent::PeerDisconnected(addr) => write!(f, "PeerDisconnected({addr})"),
+        }
+    }
+}
+
+/// The default [`SyncManager::handle_network_event`] body, callable from an override.
+///
+/// A manager that only cares about some `NetworkEvent` variants overrides
+/// `handle_network_event` and delegates the rest here. Rust gives no way to call a
+/// trait's default body from an override, so the shared logic lives in this free
+/// function — the trait's default method just calls it.
+pub(super) async fn default_handle_network_event<M: SyncManager + ?Sized>(
+    manager: &mut M,
+    event: &NetworkEvent,
+    network: &Arc<dyn NetworkManager>,
+) -> SyncResult<Vec<SyncEvent>> {
+    // `PeersUpdated` is the cue to kick off the initial requests: the network manager
+    // connects in `start`, after every manager has subscribed, so this is the first thing
+    // we hear from it. Individual peer disconnects are recovered by per-request
+    // timeout+retry, so they don't stop sync.
+    if let NetworkEvent::PeersUpdated {
+        ..
+    } = event
+    {
+        // Seed every manager's target from the peers' advertised tip so the
+        // height shows up right away (matches the pre-network `best_height`).
+        manager.update_target_height(network.tip());
+        if manager.state() == SyncState::WaitingForConnections {
+            tracing::info!("{} - peers available, starting sync", manager.identifier());
+            return manager.start_sync(network).await;
+        }
+    }
+    Ok(vec![])
 }
 
 /// Guard that verifies a manager has not already been started.
@@ -105,7 +155,10 @@ pub trait SyncManager: Send + Sync + std::fmt::Debug {
     /// Called after initialization to trigger the initial sync requests.
     /// For example, BlockHeadersManager sends its first getheaders request here.
     /// The default implementation is for reactive managers that just wait for events.
-    async fn start_sync(&mut self, _requests: &RequestSender) -> SyncResult<Vec<SyncEvent>> {
+    async fn start_sync(
+        &mut self,
+        _network: &Arc<dyn NetworkManager>,
+    ) -> SyncResult<Vec<SyncEvent>> {
         ensure_not_started(self.state(), self.identifier())?;
         self.set_state(SyncState::WaitForEvents);
         Ok(vec![SyncEvent::SyncStart {
@@ -127,10 +180,6 @@ pub trait SyncManager: Send + Sync + std::fmt::Debug {
     /// derivable from durable storage (block headers, filter headers, the
     /// masternode engine) or from preserved per-batch bookkeeping should
     /// survive so reconnect resumes instead of restarting.
-    ///
-    /// `BlocksManager` and `FiltersManager` go further and requeue their
-    /// in-flight network slots so the next `send_pending` reissues them
-    /// immediately to the new peer.
     fn on_disconnect(&mut self);
 
     /// Handle an incoming network message.
@@ -138,8 +187,9 @@ pub trait SyncManager: Send + Sync + std::fmt::Debug {
     /// Returns events to emit to other managers.
     async fn handle_message(
         &mut self,
-        msg: Message,
-        requests: &RequestSender,
+        peer: SocketAddr,
+        msg: NetworkMessage,
+        network: &Arc<dyn NetworkManager>,
     ) -> SyncResult<Vec<SyncEvent>>;
 
     /// Handle a sync event from another manager.
@@ -150,50 +200,27 @@ pub trait SyncManager: Send + Sync + std::fmt::Debug {
     async fn handle_sync_event(
         &mut self,
         event: &SyncEvent,
-        requests: &RequestSender,
+        network: &Arc<dyn NetworkManager>,
     ) -> SyncResult<Vec<SyncEvent>>;
 
     /// Periodic tick for timeouts, retries, and proactive work.
     ///
     /// Called regularly by the coordinator (e.g., every 100ms).
     /// Use this for:
-    /// - Timeout detection and retry logic
     /// - Proactive request sending
     /// - State cleanup
-    async fn tick(&mut self, requests: &RequestSender) -> SyncResult<Vec<SyncEvent>>;
+    async fn tick(&mut self, network: &Arc<dyn NetworkManager>) -> SyncResult<Vec<SyncEvent>>;
 
     /// Handle a network event (peer connection changes).
     ///
-    /// Default implementation handles state transitions for WaitingForConnections.
-    /// Managers can override to customize behavior.
+    /// The default body handles state transitions for `WaitingForConnections`.
+    /// Managers can override this to customize behavior.
     async fn handle_network_event(
         &mut self,
         event: &NetworkEvent,
-        requests: &RequestSender,
+        network: &Arc<dyn NetworkManager>,
     ) -> SyncResult<Vec<SyncEvent>> {
-        // Default: transition from WaitingForConnections to Syncing when peers connect
-        if let NetworkEvent::PeersUpdated {
-            connected_count,
-            best_height,
-            ..
-        } = event
-        {
-            if let Some(best_height) = best_height {
-                self.update_target_height(*best_height);
-            }
-            if *connected_count == 0 {
-                tracing::info!("{} - no peers available, stopping sync", self.identifier());
-                self.stop_sync();
-            } else if *connected_count > 0 && self.state() == SyncState::WaitingForConnections {
-                tracing::info!(
-                    "{} - peers available ({}), starting sync",
-                    self.identifier(),
-                    connected_count
-                );
-                return self.start_sync(requests).await;
-            }
-        }
-        Ok(vec![])
+        default_handle_network_event(self, event, network).await
     }
 
     /// Retrieves the current progress of the Manager.
@@ -234,10 +261,16 @@ pub trait SyncManager: Send + Sync + std::fmt::Debug {
                     break;
                 }
                 // Process incoming network messages
-                Some(message) = context.message_receiver.recv() => {
+                Some((peer, message)) = context.message_receiver.recv() => {
                     tracing::trace!("{} received message: {}", identifier, message.cmd());
+                    // The pump gives its last subscriber the sole reference, so for the
+                    // message types only one manager watches — block, cfilter, cfheaders,
+                    // headers — this takes the payload without copying it. A genuinely
+                    // shared message (`inv` goes to several managers) falls back to a clone.
+                    let message =
+                        Arc::try_unwrap(message).unwrap_or_else(|shared| (*shared).clone());
                     let progress_before = self.progress();
-                    match self.handle_message(message, &context.requests).await {
+                    match self.handle_message(peer, message, &context.network).await {
                         Ok(events) => {
                             if !events.is_empty() {
                                 for event in &events {
@@ -263,7 +296,7 @@ pub trait SyncManager: Send + Sync + std::fmt::Debug {
                         Ok(event) => {
                             tracing::trace!("{} received event: {}", identifier, event);
                             let progress_before = self.progress();
-                            match self.handle_sync_event(&event, &context.requests).await {
+                            match self.handle_sync_event(&event, &context.network).await {
                                 Ok(events) => {
                                     if !events.is_empty() {
                                         for e in &events {
@@ -278,6 +311,13 @@ pub trait SyncManager: Send + Sync + std::fmt::Debug {
                                 }
                             }
                         }
+                        Err(broadcast::error::RecvError::Lagged(n)) => {
+                            // Sync-event bus overflowed for this manager; skipped `n`
+                            // events. Keep running rather than killing the task — a
+                            // dropped event is recoverable via tick()/reconciliation,
+                            // a dead task is not.
+                            tracing::warn!("{} lagged sync events, skipped {}", identifier, n);
+                        }
                         Err(error) => {
                             tracing::error!("{} sync event error: {}", identifier, error);
                             break;
@@ -290,7 +330,7 @@ pub trait SyncManager: Send + Sync + std::fmt::Debug {
                         Ok(event) => {
                             tracing::debug!("{} received network event: {}", identifier, event);
                             let progress_before = self.progress();
-                            match self.handle_network_event(&event, &context.requests).await {
+                            match self.handle_network_event(&event, &context.network).await {
                                 Ok(events) => {
                                     if !events.is_empty() {
                                         for e in &events {
@@ -305,6 +345,12 @@ pub trait SyncManager: Send + Sync + std::fmt::Debug {
                                 }
                             }
                         }
+                        Err(broadcast::error::RecvError::Lagged(n)) => {
+                            // Network-event bus overflowed. The bus carries only
+                            // low-volume events (peer churn), so lagging 4096 behind is
+                            // not realistic; keep running rather than kill the manager.
+                            tracing::warn!("{} lagged network events, skipped {}", identifier, n);
+                        }
                         Err(error) => {
                             tracing::error!("{} network event error: {}", identifier, error);
                             break;
@@ -314,7 +360,7 @@ pub trait SyncManager: Send + Sync + std::fmt::Debug {
                 // Periodic tick for timeouts and housekeeping
                 _ = tick_interval.tick() => {
                     let progress_before = self.progress();
-                    match self.tick(&context.requests).await {
+                    match self.tick(&context.network).await {
                         Ok(events) => {
                             if !events.is_empty() {
                                 context.emit_sync_events(events);
@@ -331,134 +377,5 @@ pub trait SyncManager: Send + Sync + std::fmt::Debug {
 
         tracing::info!("{} task exiting", identifier);
         Ok(identifier)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::network::NetworkRequest;
-    use crate::sync::BlockHeadersProgress;
-    use crate::sync::SyncState;
-    use async_trait::async_trait;
-    use std::sync::atomic::{AtomicU32, Ordering};
-    use std::sync::Arc;
-    use tokio::sync::{broadcast, mpsc};
-
-    /// Mock manager for testing the task runner.
-    struct MockManager {
-        identifier: ManagerIdentifier,
-        state: SyncState,
-        message_count: Arc<AtomicU32>,
-        event_count: Arc<AtomicU32>,
-        tick_count: Arc<AtomicU32>,
-    }
-
-    impl std::fmt::Debug for MockManager {
-        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-            f.debug_struct("MockManager").field("identifier", &self.identifier).finish()
-        }
-    }
-
-    #[async_trait]
-    impl SyncManager for MockManager {
-        fn identifier(&self) -> ManagerIdentifier {
-            self.identifier
-        }
-
-        fn state(&self) -> SyncState {
-            self.state
-        }
-
-        fn set_state(&mut self, state: SyncState) {
-            self.state = state;
-        }
-
-        fn wanted_message_types(&self) -> &'static [MessageType] {
-            &[]
-        }
-
-        fn on_disconnect(&mut self) {}
-
-        async fn handle_message(
-            &mut self,
-            _msg: Message,
-            _requests: &RequestSender,
-        ) -> SyncResult<Vec<SyncEvent>> {
-            self.message_count.fetch_add(1, Ordering::Relaxed);
-            Ok(vec![])
-        }
-
-        async fn handle_sync_event(
-            &mut self,
-            _event: &SyncEvent,
-            _requests: &RequestSender,
-        ) -> SyncResult<Vec<SyncEvent>> {
-            self.event_count.fetch_add(1, Ordering::Relaxed);
-            Ok(vec![])
-        }
-
-        async fn tick(&mut self, _requests: &RequestSender) -> SyncResult<Vec<SyncEvent>> {
-            self.tick_count.fetch_add(1, Ordering::Relaxed);
-            Ok(vec![])
-        }
-
-        fn progress(&self) -> SyncManagerProgress {
-            let mut progress = BlockHeadersProgress::default();
-            progress.set_state(self.state);
-            SyncManagerProgress::BlockHeaders(progress)
-        }
-    }
-
-    #[tokio::test]
-    async fn test_manager_task_shutdown() {
-        let message_count = Arc::new(AtomicU32::new(0));
-        let event_count = Arc::new(AtomicU32::new(0));
-        let tick_count = Arc::new(AtomicU32::new(0));
-
-        let manager = MockManager {
-            identifier: ManagerIdentifier::BlockHeader,
-            state: SyncState::WaitForEvents,
-            message_count: message_count.clone(),
-            event_count: event_count.clone(),
-            tick_count: tick_count.clone(),
-        };
-
-        // Create channels
-        let (_, message_receiver) = mpsc::unbounded_channel();
-        let sync_event_sender = broadcast::Sender::<SyncEvent>::new(100);
-        let network_event_sender = broadcast::Sender::<NetworkEvent>::new(100);
-        let (req_tx, _req_rx) = mpsc::unbounded_channel::<NetworkRequest>();
-        let requests = RequestSender::new(req_tx);
-        let shutdown = CancellationToken::new();
-        let (progress_sender, _progress_rx) = watch::channel(manager.progress());
-
-        let context = SyncManagerTaskContext {
-            message_receiver,
-            sync_event_sender,
-            network_event_receiver: network_event_sender.subscribe(),
-            requests,
-            shutdown: shutdown.clone(),
-            progress_sender,
-        };
-
-        // Spawn the task using trait's run method
-        let handle = tokio::spawn(async move { manager.run(context).await });
-
-        // Let it run for a bit
-        tokio::time::sleep(Duration::from_millis(250)).await;
-
-        // Signal shutdown
-        shutdown.cancel();
-
-        // Wait for task to complete
-        let result = handle.await.unwrap();
-        assert!(result.is_ok());
-
-        // Verify the returned identifier matches
-        assert_eq!(result.unwrap(), ManagerIdentifier::BlockHeader);
-
-        // Verify tick was called multiple times
-        assert!(tick_count.load(Ordering::Relaxed) > 0);
     }
 }

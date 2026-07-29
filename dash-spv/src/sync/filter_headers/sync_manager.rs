@@ -1,5 +1,5 @@
 use crate::error::SyncResult;
-use crate::network::{Message, MessageType, RequestSender};
+use crate::network::{MessageType, NetworkManager, RequestKey};
 use crate::storage::{BlockHeaderStorage, FilterHeaderStorage};
 use crate::sync::filter_headers::pipeline::FilterHeadersPipeline;
 use crate::sync::progress::ProgressPercentage;
@@ -8,6 +8,9 @@ use crate::sync::{
 };
 use crate::SyncError;
 use async_trait::async_trait;
+use dashcore::network::message::NetworkMessage;
+use std::net::SocketAddr;
+use std::sync::Arc;
 
 #[async_trait]
 impl<H: BlockHeaderStorage, FH: FilterHeaderStorage> SyncManager for FilterHeadersManager<H, FH> {
@@ -28,7 +31,7 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage> SyncManager for FilterHeade
     }
 
     fn wanted_message_types(&self) -> &'static [MessageType] {
-        &[MessageType::CFHeaders]
+        &[MessageType::CfHeaders]
     }
 
     fn on_disconnect(&mut self) {
@@ -39,11 +42,12 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage> SyncManager for FilterHeade
 
     async fn handle_message(
         &mut self,
-        msg: Message,
-        requests: &RequestSender,
+        _peer: SocketAddr,
+        msg: NetworkMessage,
+        network: &Arc<dyn NetworkManager>,
     ) -> SyncResult<Vec<SyncEvent>> {
         // Match response to get start height
-        let Some((start_height, cfheaders)) = self.pipeline.match_response(msg.inner()) else {
+        let Some((start_height, cfheaders)) = self.pipeline.match_response(&msg) else {
             if self.pipeline.is_complete() {
                 if let Some(event) = self.try_complete_sync() {
                     return Ok(vec![event]);
@@ -51,6 +55,10 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage> SyncManager for FilterHeade
             }
             return Ok(vec![]);
         };
+
+        // Response correlated: tell the network manager to stop tracking this
+        // batch for timeout/retry.
+        network.request_answered(RequestKey::CfHeaders(cfheaders.stop_hash)).await;
 
         let mut events = Vec::new();
 
@@ -114,8 +122,8 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage> SyncManager for FilterHeade
             );
         }
 
-        // Send more requests
-        self.pipeline.send_pending(requests)?;
+        // Declare any remaining wanted batches to the broker
+        self.pipeline.send_pending(network).await?;
 
         if self.pipeline.is_complete() {
             if let Some(event) = self.try_complete_sync() {
@@ -129,28 +137,26 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage> SyncManager for FilterHeade
     async fn handle_sync_event(
         &mut self,
         event: &SyncEvent,
-        requests: &RequestSender,
+        network: &Arc<dyn NetworkManager>,
     ) -> SyncResult<Vec<SyncEvent>> {
         match event {
             SyncEvent::BlockHeaderSyncComplete {
                 tip_height,
             } => {
                 self.block_headers_synced = true;
-                self.handle_new_headers(*tip_height, requests).await
+                self.handle_new_headers(*tip_height, network).await
             }
             SyncEvent::BlockHeadersStored {
                 tip_height,
-            } => self.handle_new_headers(*tip_height, requests).await,
+            } => self.handle_new_headers(*tip_height, network).await,
             _ => Ok(vec![]),
         }
     }
 
-    async fn tick(&mut self, requests: &RequestSender) -> SyncResult<Vec<SyncEvent>> {
-        // Handle timed out requests (re-queues them for retry)
-        self.pipeline.handle_timeouts();
-
-        // Send pending requests (including retries)
-        self.pipeline.send_pending(requests)?;
+    async fn tick(&mut self, network: &Arc<dyn NetworkManager>) -> SyncResult<Vec<SyncEvent>> {
+        // Timeouts/retry are the network manager's job now; just (re-)declare
+        // whatever batches are still wanted.
+        self.pipeline.send_pending(network).await?;
 
         Ok(vec![])
     }

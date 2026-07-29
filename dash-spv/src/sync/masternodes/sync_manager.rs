@@ -1,6 +1,6 @@
 use super::manager::PipelineMode;
 use crate::error::SyncResult;
-use crate::network::{Message, MessageType, RequestSender};
+use crate::network::{MessageType, NetworkManager, RequestKey};
 use crate::storage::BlockHeaderStorage;
 use crate::sync::{
     ManagerIdentifier, MasternodesManager, SyncEvent, SyncManager, SyncManagerProgress, SyncState,
@@ -13,6 +13,8 @@ use dashcore::sml::masternode_list_engine::{MasternodeListEngine, WORK_DIFF_DEPT
 use dashcore::{BlockHash, QuorumHash};
 use dashcore_hashes::Hash;
 use std::collections::{BTreeSet, HashSet};
+use std::net::SocketAddr;
+use std::sync::Arc;
 use std::time::Duration;
 
 /// Per-attempt timeout schedule for QRInfo, indexed by the in-flight attempt's
@@ -222,7 +224,7 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
     }
 
     fn wanted_message_types(&self) -> &'static [MessageType] {
-        &[MessageType::MnListDiff, MessageType::QRInfo]
+        &[MessageType::MnListDiff, MessageType::QrInfo]
     }
 
     fn on_disconnect(&mut self) {
@@ -233,10 +235,11 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
 
     async fn handle_message(
         &mut self,
-        msg: Message,
-        requests: &RequestSender,
+        _peer: SocketAddr,
+        msg: NetworkMessage,
+        network: &Arc<dyn NetworkManager>,
     ) -> SyncResult<Vec<SyncEvent>> {
-        match msg.inner() {
+        match &msg {
             NetworkMessage::QRInfo(qr_info) => {
                 if !self.sync_state.should_process_qrinfo(qr_info) {
                     return Ok(vec![]);
@@ -252,7 +255,7 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
                 tracing::info!("Fed {} block heights to engine", fed);
 
                 // Feed QRInfo to engine first to populate masternode lists
-                let qr_info_result = match engine.feed_qr_info(qr_info.clone(), true, true) {
+                let qr_info_result = match engine.feed_qr_info((*qr_info).clone(), true, true) {
                     Ok(qr_info_result) => qr_info_result,
                     Err(e) => {
                         tracing::error!("QRInfo feed into engine failed: {}", e);
@@ -315,13 +318,13 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
                     qr_info_result,
                 };
                 self.sync_state.mnlistdiff_pipeline.queue_requests(request_pairs);
-                self.sync_state.mnlistdiff_pipeline.send_pending(requests)?;
+                self.sync_state.mnlistdiff_pipeline.send_pending(network).await?;
 
                 self.progress.bump_last_activity();
 
                 // If no pending requests, complete
                 if !self.sync_state.has_pending_requests() {
-                    return self.complete_pipeline(requests).await;
+                    return self.complete_pipeline(network).await;
                 }
             }
 
@@ -341,21 +344,22 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
                     Ok(Some(h)) => h,
                     Ok(None) => {
                         tracing::warn!(
-                            "Height not found for MnListDiff block {}, requeuing for retry",
+                            "Height not found for MnListDiff block {}, leaving wanted for retry",
                             diff.block_hash
                         );
-                        self.sync_state.mnlistdiff_pipeline.requeue(diff);
-                        self.sync_state.mnlistdiff_pipeline.send_pending(requests)?;
+                        // Leave it in the wanted set (do not answer the broker) so
+                        // the broker's timeout/retry re-sends it; re-declare as a
+                        // safety net.
+                        self.sync_state.mnlistdiff_pipeline.send_pending(network).await?;
                         return Ok(vec![]);
                     }
                     Err(e) => {
                         tracing::warn!(
-                            "Failed to get height for MnListDiff block {}: {}, requeuing for retry",
+                            "Failed to get height for MnListDiff block {}: {}, leaving wanted for retry",
                             diff.block_hash,
                             e
                         );
-                        self.sync_state.mnlistdiff_pipeline.requeue(diff);
-                        self.sync_state.mnlistdiff_pipeline.send_pending(requests)?;
+                        self.sync_state.mnlistdiff_pipeline.send_pending(network).await?;
                         return Ok(vec![]);
                     }
                 };
@@ -366,7 +370,7 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
                 engine.feed_block_height(target_height, diff.block_hash);
 
                 let apply_ok =
-                    match engine.apply_diff(diff.clone(), Some(target_height), false, None) {
+                    match engine.apply_diff((*diff).clone(), Some(target_height), false, None) {
                         Ok(_) => {
                             self.sync_state.known_mn_list_heights.insert(target_height);
                             tracing::debug!("Applied MnListDiff at height {}", target_height);
@@ -385,7 +389,9 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
 
                 self.progress.add_diffs_processed(1);
                 self.sync_state.mnlistdiff_pipeline.receive(diff);
-                self.sync_state.mnlistdiff_pipeline.send_pending(requests)?;
+                // Response correlated: tell the broker to stop tracking this
+                // request for timeout/retry.
+                network.request_answered(RequestKey::MnListDiff(diff.block_hash)).await;
 
                 // Check if all responses received
                 if self.sync_state.mnlistdiff_pipeline.is_complete() {
@@ -399,7 +405,7 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
                         return Ok(vec![]);
                     }
                     tracing::info!("All MnListDiff responses received");
-                    return self.complete_pipeline(requests).await;
+                    return self.complete_pipeline(network).await;
                 }
             }
 
@@ -412,7 +418,7 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
     async fn handle_sync_event(
         &mut self,
         event: &SyncEvent,
-        requests: &RequestSender,
+        network: &Arc<dyn NetworkManager>,
     ) -> SyncResult<Vec<SyncEvent>> {
         // Track block header tip height as headers come in
         if let SyncEvent::BlockHeadersStored {
@@ -462,7 +468,7 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
                         );
                         self.sync_state.qrinfo_retry_count = 0;
                         self.sync_state.clear_pending();
-                        return self.send_qrinfo_for_tip(requests).await;
+                        return self.send_qrinfo_for_tip(network).await;
                     }
                     PipelineMode::Incremental => {
                         tracing::debug!(
@@ -470,7 +476,7 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
                             tip_height,
                             self.progress.current_height()
                         );
-                        return self.send_tip_mnlistdiff_update(requests).await;
+                        return self.send_tip_mnlistdiff_update(network).await;
                     }
                 }
             }
@@ -544,10 +550,10 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
                             }
                             self.sync_state.qrinfo_retry_count = 0;
                             self.sync_state.clear_pending();
-                            return self.send_qrinfo_for_tip(requests).await;
+                            return self.send_qrinfo_for_tip(network).await;
                         }
                         PipelineMode::Incremental => {
-                            return self.send_tip_mnlistdiff_update(requests).await;
+                            return self.send_tip_mnlistdiff_update(network).await;
                         }
                     }
                 }
@@ -557,14 +563,14 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
                 );
                 self.sync_state.qrinfo_retry_count = 0;
                 self.sync_state.clear_pending();
-                return self.send_qrinfo_for_tip(requests).await;
+                return self.send_qrinfo_for_tip(network).await;
             }
         }
 
         Ok(vec![])
     }
 
-    async fn tick(&mut self, requests: &RequestSender) -> SyncResult<Vec<SyncEvent>> {
+    async fn tick(&mut self, network: &Arc<dyn NetworkManager>) -> SyncResult<Vec<SyncEvent>> {
         // Handle ticks for both Syncing (initial) and Synced (incremental updates)
         if !matches!(self.state(), SyncState::Syncing | SyncState::Synced) {
             return Ok(vec![]);
@@ -585,18 +591,19 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
                         if self.sync_state.qrinfo_in_flight.is_none() {
                             self.sync_state.qrinfo_retry_count = 0;
                             self.sync_state.clear_pending();
-                            return self.send_qrinfo_for_tip(requests).await;
+                            return self.send_qrinfo_for_tip(network).await;
                         }
                     }
                     PipelineMode::Incremental => {
-                        return self.send_tip_mnlistdiff_update(requests).await;
+                        return self.send_tip_mnlistdiff_update(network).await;
                     }
                 }
             }
             return Ok(vec![]);
         }
 
-        // Check for QRInfo timeout
+        // Check for QRInfo timeout. The broker does not track qrinfo, so the
+        // manager owns its timeout/retry schedule here.
         if let Some(in_flight) = self.sync_state.qrinfo_in_flight {
             let timeout = qrinfo_timeout_for(self.sync_state.qrinfo_retry_count);
             if in_flight.wait_start.elapsed() > timeout {
@@ -608,31 +615,25 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
                     );
                     self.sync_state.qrinfo_retry_count += 1;
                     self.sync_state.clear_pending();
-                    return self.send_qrinfo_for_tip(requests).await;
+                    return self.send_qrinfo_for_tip(network).await;
                 } else {
                     tracing::warn!(
                         "QRInfo timeout after {} retries, skipping masternode sync",
                         MAX_RETRY_ATTEMPTS
                     );
                     self.sync_state.clear_pending();
-                    return self.complete_pipeline(requests).await;
+                    return self.complete_pipeline(network).await;
                 }
             }
             return Ok(vec![]);
         }
 
-        // Check for MnListDiff timeouts via pipeline
-        if self.sync_state.mnlistdiff_pipeline.active_count() > 0 {
-            self.sync_state.mnlistdiff_pipeline.handle_timeouts();
-
-            // Send any re-queued requests
-            self.sync_state.mnlistdiff_pipeline.send_pending(requests)?;
-
-            // Check if complete after handling timeouts
-            if self.sync_state.mnlistdiff_pipeline.is_complete() {
-                tracing::info!("MnListDiff pipeline complete");
-                return self.complete_pipeline(requests).await;
-            }
+        // Re-declare any still-wanted MnListDiffs. Timeouts/retries for these are
+        // the broker's job now (they carry a `RequestKey::MnListDiff`); the tick
+        // just re-declares as a safety net. Completion is driven from the message
+        // handler when the last diff arrives.
+        if !self.sync_state.mnlistdiff_pipeline.is_complete() {
+            self.sync_state.mnlistdiff_pipeline.send_pending(network).await?;
         }
 
         Ok(vec![])

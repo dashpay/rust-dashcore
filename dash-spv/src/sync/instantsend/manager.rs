@@ -313,7 +313,7 @@ mod tests {
         let manager = create_test_manager();
         assert_eq!(manager.identifier(), ManagerIdentifier::InstantSend);
         assert_eq!(manager.state(), SyncState::WaitForEvents);
-        assert_eq!(manager.wanted_message_types(), vec![MessageType::ISLock, MessageType::Inv]);
+        assert_eq!(manager.wanted_message_types(), [MessageType::IsDLock, MessageType::Inv]);
     }
 
     /// Buffered `MasternodeStateUpdated` events delivered during
@@ -322,9 +322,9 @@ mod tests {
     /// `MasternodesManager` re-emits the event after reconnect.
     #[tokio::test]
     async fn test_handle_sync_event_drops_masternode_state_updated_in_waiting_for_connections() {
-        use crate::network::RequestSender;
+        use crate::network::NetworkManager;
         use crate::sync::SyncEvent;
-        use tokio::sync::mpsc::unbounded_channel;
+        use crate::test_utils::MockNetworkManager;
 
         let mut manager = create_test_manager();
         manager.set_state(SyncState::WaitingForConnections);
@@ -333,8 +333,8 @@ mod tests {
             height: 100,
             qr_info_result: None,
         };
-        let (tx, _rx) = unbounded_channel();
-        let events = manager.handle_sync_event(&event, &RequestSender::new(tx)).await.unwrap();
+        let network: Arc<dyn NetworkManager> = Arc::new(MockNetworkManager::new());
+        let events = manager.handle_sync_event(&event, &network).await.unwrap();
 
         assert!(events.is_empty());
         assert_eq!(manager.state(), SyncState::WaitingForConnections);

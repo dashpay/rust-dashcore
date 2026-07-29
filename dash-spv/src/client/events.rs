@@ -32,6 +32,6 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
 
     /// Subscribe to network events.
     pub(crate) async fn subscribe_network_events(&self) -> broadcast::Receiver<NetworkEvent> {
-        self.network.lock().await.subscribe_network_events()
+        self.network.events()
     }
 }
