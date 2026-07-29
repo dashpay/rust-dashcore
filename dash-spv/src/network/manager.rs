@@ -507,8 +507,8 @@ impl PeerNetworkManager {
     pub async fn subscribe(&self, kinds: &[MessageType]) -> UnboundedReceiver<Inbound> {
         let (tx, rx) = mpsc::unbounded_channel();
         let mut subscribers = self.subscribers.lock().await;
-        for kind in kinds {
-            subscribers.entry(*kind).or_default().push(tx.clone());
+        for kind in kinds.iter().copied().collect::<HashSet<_>>() {
+            subscribers.entry(kind).or_default().push(tx.clone());
         }
         rx
     }
@@ -1587,5 +1587,364 @@ impl MsgQueue {
         }
         self.len.fetch_add(n, Ordering::SeqCst);
         self.notify.notify_one();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::client::ClientConfig;
+    use dashcore::network::message_blockdata::GetHeadersMessage;
+    use dashcore::network::message_filter::{GetCFHeaders, GetCFilters};
+    use dashcore::network::message_sml::GetMnListDiff;
+    use dashcore::{BlockHash, Txid};
+    use dashcore_hashes::Hash;
+
+    fn get_headers(locator: u32) -> NetworkMessage {
+        NetworkMessage::GetHeaders(GetHeadersMessage::new(
+            vec![BlockHash::dummy(locator)],
+            BlockHash::dummy(0),
+        ))
+    }
+
+    fn get_cfilters(start: u32) -> NetworkMessage {
+        NetworkMessage::GetCFilters(GetCFilters {
+            filter_type: 0,
+            start_height: start,
+            stop_hash: BlockHash::dummy(9),
+        })
+    }
+
+    fn get_cfheaders(stop: u32) -> NetworkMessage {
+        NetworkMessage::GetCFHeaders(GetCFHeaders {
+            filter_type: 0,
+            start_height: 0,
+            stop_hash: BlockHash::dummy(stop),
+        })
+    }
+
+    /// A broker with no peers: `new` spawns the pump, router, timeout monitor and
+    /// bandwidth controller but never touches the network — the peer supervisor is
+    /// only started by `start()`, which these tests deliberately do not call.
+    async fn broker() -> PeerNetworkManager {
+        let config = ClientConfig::regtest().with_restrict_to_configured_peers(true);
+        PeerNetworkManager::new(&config).await
+    }
+
+    // ---- request key derivation (the dedup identity) ----
+
+    #[test]
+    fn request_keys_derives_one_key_per_request_type() {
+        assert_eq!(request_keys(&get_headers(1)), vec![RequestKey::Headers(BlockHash::dummy(1))]);
+        assert_eq!(
+            request_keys(&get_cfheaders(2)),
+            vec![RequestKey::CfHeaders(BlockHash::dummy(2))]
+        );
+        assert_eq!(request_keys(&get_cfilters(100)), vec![RequestKey::CFilters(100)]);
+        assert_eq!(
+            request_keys(&NetworkMessage::GetMnListD(GetMnListDiff {
+                base_block_hash: BlockHash::dummy(3),
+                block_hash: BlockHash::dummy(4),
+            })),
+            vec![RequestKey::MnListDiff(BlockHash::dummy(4))]
+        );
+    }
+
+    /// One `getdata` may name several blocks; each is tracked as its own request
+    /// so a single missing block can time out and retry on its own.
+    #[test]
+    fn request_keys_splits_getdata_per_block_and_ignores_other_inventory() {
+        let keys = request_keys(&NetworkMessage::GetData(vec![
+            Inventory::Block(BlockHash::dummy(1)),
+            Inventory::Transaction(Txid::from_byte_array([7; 32])),
+            Inventory::Block(BlockHash::dummy(2)),
+        ]));
+        assert_eq!(
+            keys,
+            vec![RequestKey::Block(BlockHash::dummy(1)), RequestKey::Block(BlockHash::dummy(2))]
+        );
+    }
+
+    /// Traffic the broker does not track for timeout/retry has no key, so it is
+    /// never de-duplicated — two `mempool` messages must both go out.
+    #[test]
+    fn request_keys_is_empty_for_untracked_traffic() {
+        assert!(request_keys(&NetworkMessage::MemPool).is_empty());
+        assert!(request_keys(&NetworkMessage::Ping(1)).is_empty());
+        assert!(request_keys(&NetworkMessage::GetData(vec![Inventory::Transaction(
+            Txid::from_byte_array([1; 32])
+        )]))
+        .is_empty());
+    }
+
+    // ---- de-duplication ----
+
+    #[tokio::test]
+    async fn send_dedups_a_request_already_in_play() {
+        let net = broker().await;
+
+        net.send(get_cfilters(0)).await;
+        assert_eq!(net.msg_queue.len(), 1);
+
+        // Same key while the first is still tracked: dropped before the queue.
+        net.send(get_cfilters(0)).await;
+        assert_eq!(net.msg_queue.len(), 1, "a re-declared request must not be queued twice");
+
+        // A different key is a different request.
+        net.send(get_cfilters(1000)).await;
+        assert_eq!(net.msg_queue.len(), 2);
+    }
+
+    /// The key is held for the whole lifecycle, so re-declaring is a no-op until
+    /// the requester reports the response — that is what makes it safe for a
+    /// pipeline to re-declare its whole wanted set on every tick.
+    #[tokio::test]
+    async fn request_answered_releases_the_key_for_re_declaration() {
+        let net = broker().await;
+
+        net.send(get_headers(1)).await;
+        net.send(get_headers(1)).await;
+        assert_eq!(net.msg_queue.len(), 1);
+
+        net.request_answered(RequestKey::Headers(BlockHash::dummy(1))).await;
+        assert!(net.requests.lock().await.is_empty(), "an answered request stops being tracked");
+
+        // Now the same request is accepted again.
+        net.send(get_headers(1)).await;
+        assert_eq!(net.msg_queue.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn keyless_messages_are_never_deduplicated() {
+        let net = broker().await;
+
+        net.send(NetworkMessage::MemPool).await;
+        net.send(NetworkMessage::MemPool).await;
+
+        assert_eq!(net.msg_queue.len(), 2);
+        assert!(
+            net.requests.lock().await.is_empty(),
+            "untracked traffic must not enter the registry"
+        );
+    }
+
+    // ---- strict-priority scheduling ----
+
+    #[test]
+    fn classify_maps_each_request_to_its_scheduling_class() {
+        assert_eq!(classify(&get_headers(1)), MsgClass::Headers);
+        assert_eq!(classify(&get_cfheaders(1)), MsgClass::CfHeaders);
+        assert_eq!(classify(&get_cfilters(0)), MsgClass::CFilters);
+        assert_eq!(
+            classify(&NetworkMessage::GetData(vec![Inventory::Block(BlockHash::dummy(1))])),
+            MsgClass::Blocks
+        );
+        assert_eq!(classify(&NetworkMessage::MemPool), MsgClass::Other);
+        // A `getdata` that is not purely blocks is control traffic, not a block download.
+        assert_eq!(
+            classify(&NetworkMessage::GetData(vec![Inventory::Transaction(
+                Txid::from_byte_array([1; 32])
+            )])),
+            MsgClass::Other
+        );
+    }
+
+    /// A backlog of one class must never block another behind it: the router
+    /// drains control first, then blocks, filters, filter headers, block headers.
+    #[tokio::test]
+    async fn queue_drains_in_strict_priority_order() {
+        let q = MsgQueue::new();
+
+        // Pushed in reverse priority on purpose.
+        q.push(get_headers(1)).await;
+        q.push(get_cfheaders(1)).await;
+        q.push(get_cfilters(0)).await;
+        q.push(NetworkMessage::GetData(vec![Inventory::Block(BlockHash::dummy(1))])).await;
+        q.push(NetworkMessage::MemPool).await;
+        assert_eq!(q.len(), 5);
+
+        let drained: Vec<MsgClass> = q.pop_n(5).await.iter().map(classify).collect();
+        assert_eq!(
+            drained,
+            vec![
+                MsgClass::Other,
+                MsgClass::Blocks,
+                MsgClass::CFilters,
+                MsgClass::CfHeaders,
+                MsgClass::Headers
+            ]
+        );
+        assert_eq!(q.len(), 0);
+    }
+
+    /// A message popped but not sent goes back to the FRONT of its class, so it
+    /// keeps its place: dropping it would strand the pipeline waiting forever.
+    #[tokio::test]
+    async fn unsent_messages_go_back_to_the_front_of_their_class() {
+        let q = MsgQueue::new();
+        q.push(get_cfilters(0)).await;
+        q.push(get_cfilters(1000)).await;
+
+        let popped = q.pop_n(1).await;
+        assert_eq!(q.len(), 1);
+
+        q.push_front_all(popped).await;
+        assert_eq!(q.len(), 2);
+
+        // The returned message is handed out first again, ahead of the one behind it.
+        let order: Vec<u32> = q
+            .pop_n(2)
+            .await
+            .iter()
+            .map(|m| match m {
+                NetworkMessage::GetCFilters(g) => g.start_height,
+                other => panic!("unexpected {other:?}"),
+            })
+            .collect();
+        assert_eq!(order, vec![0, 1000]);
+    }
+
+    #[tokio::test]
+    async fn pop_n_respects_its_budget() {
+        let q = MsgQueue::new();
+        for start in [0, 1000, 2000] {
+            q.push(get_cfilters(start)).await;
+        }
+        assert_eq!(q.pop_n(2).await.len(), 2);
+        assert_eq!(q.len(), 1);
+        assert!(q.pop_n(0).await.is_empty());
+    }
+
+    // ---- inbound routing ----
+
+    /// `dispatch_local` feeds a message through the same pump as a real peer,
+    /// tagged with the `0.0.0.0:0` sentinel that managers read as "self-originated".
+    #[tokio::test]
+    async fn dispatch_local_reaches_subscribers_with_the_local_sentinel() {
+        let net = broker().await;
+        let mut rx = net.subscribe(&[MessageType::Tx]).await;
+
+        let tx = dashcore::Transaction {
+            version: 1,
+            lock_time: 0,
+            input: vec![],
+            output: vec![],
+            special_transaction_payload: None,
+        };
+        net.dispatch_local(NetworkMessage::Tx(tx)).await;
+
+        let (peer, msg) = tokio::time::timeout(Duration::from_secs(2), rx.recv())
+            .await
+            .expect("the pump must deliver the injected message")
+            .expect("channel open");
+        assert!(peer.ip().is_unspecified(), "locally injected messages carry the sentinel address");
+        assert_eq!(peer.port(), 0);
+        assert!(matches!(*msg, NetworkMessage::Tx(_)));
+    }
+
+    /// Subscriptions are per message type: a manager only wakes for what it asked for.
+    #[tokio::test]
+    async fn subscribers_only_receive_the_types_they_asked_for() {
+        let net = broker().await;
+        let mut headers_rx = net.subscribe(&[MessageType::Headers]).await;
+
+        net.dispatch_local(NetworkMessage::Tx(dashcore::Transaction {
+            version: 1,
+            lock_time: 0,
+            input: vec![],
+            output: vec![],
+            special_transaction_payload: None,
+        }))
+        .await;
+
+        // Give the pump a chance to run before asserting nothing arrived.
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert!(headers_rx.try_recv().is_err(), "a Headers subscriber must not see a Tx");
+    }
+
+    // ---- peer-set accessors with no peers ----
+
+    #[tokio::test]
+    async fn reports_no_peers_and_no_tip_before_start() {
+        let net = broker().await;
+        assert_eq!(net.connected_count().await, 0);
+        assert_eq!(net.tip(), 0);
+        // Broadcasting with no peers is a no-op, not a panic.
+        net.broadcast(NetworkMessage::MemPool);
+    }
+
+    /// `inv` goes to several managers at once, so the pump must fan the same
+    /// message out to every subscriber of that type.
+    #[tokio::test]
+    async fn multiple_subscribers_of_the_same_type_all_receive_it() {
+        let net = broker().await;
+        let mut first = net.subscribe(&[MessageType::Inv]).await;
+        let mut second = net.subscribe(&[MessageType::Inv]).await;
+
+        net.dispatch_local(NetworkMessage::Inv(vec![Inventory::Block(BlockHash::dummy(1))])).await;
+
+        for rx in [&mut first, &mut second] {
+            let (_, msg) = tokio::time::timeout(Duration::from_secs(2), rx.recv())
+                .await
+                .expect("both subscribers must be served")
+                .expect("channel open");
+            assert!(matches!(*msg, NetworkMessage::Inv(_)));
+        }
+    }
+
+    /// Asking for the same type more than once must still deliver it once: a
+    /// manager that repeats a type in `wanted_message_types` would otherwise
+    /// process every message of that type as many times as it listed it.
+    #[tokio::test]
+    async fn duplicate_requested_types_deliver_once() {
+        let net = broker().await;
+        let mut rx = net.subscribe(&[MessageType::Inv, MessageType::Inv, MessageType::Inv]).await;
+
+        net.dispatch_local(NetworkMessage::Inv(vec![Inventory::Block(BlockHash::dummy(1))])).await;
+
+        tokio::time::timeout(Duration::from_secs(2), rx.recv())
+            .await
+            .expect("the message must arrive")
+            .expect("channel open");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert!(rx.try_recv().is_err(), "a repeated type must not duplicate delivery");
+    }
+
+    /// A manager task that ended drops its receiver; the pump prunes it and the
+    /// surviving subscribers keep working.
+    #[tokio::test]
+    async fn a_dropped_subscriber_does_not_break_the_others() {
+        let net = broker().await;
+        let dead = net.subscribe(&[MessageType::Inv]).await;
+        let mut alive = net.subscribe(&[MessageType::Inv]).await;
+        drop(dead);
+
+        net.dispatch_local(NetworkMessage::Inv(vec![Inventory::Block(BlockHash::dummy(1))])).await;
+
+        let (_, msg) = tokio::time::timeout(Duration::from_secs(2), alive.recv())
+            .await
+            .expect("the live subscriber must still be served")
+            .expect("channel open");
+        assert!(matches!(*msg, NetworkMessage::Inv(_)));
+    }
+
+    /// Routing keys off the wire command: an unknown command has no type and is
+    /// therefore delivered to nobody.
+    #[test]
+    fn message_type_from_cmd_maps_known_commands_and_rejects_the_rest() {
+        assert_eq!(MessageType::from_cmd("headers"), Some(MessageType::Headers));
+        assert_eq!(MessageType::from_cmd("inv"), Some(MessageType::Inv));
+        assert_eq!(MessageType::from_cmd("cfilter"), Some(MessageType::CFilter));
+        assert_eq!(MessageType::from_cmd("cfheaders"), Some(MessageType::CfHeaders));
+        assert_eq!(MessageType::from_cmd("block"), Some(MessageType::Block));
+        assert_eq!(MessageType::from_cmd("mnlistdiff"), Some(MessageType::MnListDiff));
+        assert_eq!(MessageType::from_cmd("qrinfo"), Some(MessageType::QrInfo));
+        assert_eq!(MessageType::from_cmd("tx"), Some(MessageType::Tx));
+        assert_eq!(MessageType::from_cmd("isdlock"), Some(MessageType::IsDLock));
+        assert_eq!(MessageType::from_cmd("clsig"), Some(MessageType::ChainLock));
+
+        assert_eq!(MessageType::from_cmd("ping"), None);
+        assert_eq!(MessageType::from_cmd(""), None);
+        assert_eq!(MessageType::from_cmd("Headers"), None, "the match is case-sensitive");
     }
 }
