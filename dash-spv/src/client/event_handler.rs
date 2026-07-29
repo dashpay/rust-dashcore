@@ -327,8 +327,7 @@ mod tests {
         handler.on_sync_event(&event);
         handler.on_network_event(&NetworkEvent::PeersUpdated {
             connected_count: 0,
-            addresses: vec![],
-            best_height: None,
+            best_height: 0,
         });
         handler.on_progress(&SyncProgress::default());
         handler.on_error("test error");
@@ -533,14 +532,8 @@ mod tests {
         );
 
         let addr: SocketAddr = "127.0.0.1:9999".parse().unwrap();
-        tx.send(NetworkEvent::PeerConnected {
-            address: addr,
-        })
-        .unwrap();
-        tx.send(NetworkEvent::PeerDisconnected {
-            address: addr,
-        })
-        .unwrap();
+        tx.send(NetworkEvent::PeerConnected(addr)).unwrap();
+        tx.send(NetworkEvent::PeerDisconnected(addr)).unwrap();
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
         shutdown.cancel();

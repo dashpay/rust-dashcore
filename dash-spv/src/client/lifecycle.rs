@@ -156,12 +156,13 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
 
         let client = Self {
             config: Arc::new(RwLock::new(config)),
-            network: Arc::new(Mutex::new(network)),
+            network: Arc::new(network),
             storage,
             wallet,
             masternode_engine,
             sync_coordinator: Arc::new(Mutex::new(sync_coordinator)),
             running: Arc::new(watch::Sender::new(false)),
+            stop_requested: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             event_handlers: Arc::new(event_handlers),
         };
 
@@ -183,32 +184,53 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
             return Err(SpvError::Config("Client already running".to_string()));
         }
 
-        // Start all sync tasks before connecting to the network to make sure initial connection
-        // events are handled correctly in the sync coordinator.
-        if let Err(e) =
-            self.sync_coordinator.lock().await.start(&mut *self.network.lock().await).await
-        {
+        // Fresh lifecycle: clear any stop request left over from a previous run so
+        // this start can complete. A `stop()` arriving *after* this point (while we
+        // connect below) is recorded and honored by the guarded transition at the end.
+        self.stop_requested.store(false, std::sync::atomic::Ordering::SeqCst);
+
+        // Spawn every sync task BEFORE connecting, so each manager has subscribed by the
+        // time the network announces its peers. The network manager used to connect inside
+        // `new()`, which meant `PeersUpdated` and every `PeerConnected` fired into the void
+        // — and the mempool manager, whose peer set is built from those events, stayed empty
+        // and never sent the `filterload` that enables transaction relay.
+        let network: Arc<dyn NetworkManager> = self.network.clone();
+        if let Err(e) = self.sync_coordinator.lock().await.start(&network).await {
             tracing::error!("Failed to start sync coordinator: {}", e);
             return Err(SpvError::Sync(e));
         }
 
-        // Connect to network
-        self.network.lock().await.connect().await?;
+        self.network.start();
 
-        // Only mark as running after all startup operations succeed.
-        // `send_replace` always stores the value regardless of receiver count,
-        // so this is correct even when `run()` has not subscribed yet.
-        self.running.send_replace(true);
+        // Only mark as running after all startup operations succeed — and only if
+        // no `stop()` raced in while we were connecting. The check runs inside the
+        // watch lock (via `send_if_modified`), and `stop()` sets `stop_requested`
+        // before it flips `running`, so the two orderings are both safe:
+        //   - we win the lock first: set running=true; a later stop() flips it false.
+        //   - stop() won: `stop_requested` is already true here, so we leave running
+        //     false and the run loop tears down immediately instead of syncing forever.
+        // `send_if_modified` stores the value regardless of receiver count, so this
+        // is correct even when `run()` has not subscribed yet.
+        self.running.send_if_modified(|running| {
+            if self.stop_requested.load(std::sync::atomic::Ordering::SeqCst) {
+                false
+            } else {
+                *running = true;
+                true
+            }
+        });
 
         Ok(())
     }
 
     /// Stop the SPV client.
     pub async fn stop(&self) -> Result<()> {
-        // Check if already stopped
-        if !*self.running.borrow() {
-            return Ok(());
-        }
+        // Record the stop request BEFORE flipping `running`, so a `start()` still
+        // connecting observes it (under the watch lock) and declines to mark the
+        // client running. Otherwise a stop that arrives mid-startup would be lost:
+        // `start()` would flip running true afterwards and the run task would sync
+        // forever, hanging `run_handle.await`.
+        self.stop_requested.store(true, std::sync::atomic::Ordering::SeqCst);
 
         // Flip the running state before tearing anything down so a concurrent
         // `run()` loop wakes immediately and breaks out before it can lock the
@@ -216,14 +238,23 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
         // shutdown below.
         self.running.send_replace(false);
 
+        // Always tear down, even if `running` was never true: a stop that raced
+        // startup leaves `running` false yet `start()` may already have spawned
+        // the coordinator's manager tasks and connected the network, so those must
+        // still be stopped. Every step below is idempotent (cancelling an already
+        // cancelled token, draining an empty task set, persisting again), so the
+        // normal double call — this stop() plus the run loop's own final stop() —
+        // is safe.
+
         // Shut down sync coordinator: signals cancellation and waits for manager
         // tasks to drain before we tear down the network and storage layers.
         if let Err(e) = self.sync_coordinator.lock().await.shutdown().await {
             tracing::warn!("Error shutting down sync coordinator: {}", e);
         }
 
-        // Disconnect from network
-        self.network.lock().await.disconnect().await?;
+        // Tear down the network layer: stops the router/pump and cancels every
+        // peer reader so no more messages arrive after stop() returns.
+        self.network.stop();
 
         // Shutdown storage to ensure all data is persisted
         {

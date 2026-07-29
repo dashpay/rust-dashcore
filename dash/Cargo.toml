@@ -34,6 +34,7 @@ quorum_validation = ["bls"]
 message_verification = ["bls"]
 bincode = [ "dep:bincode", "dep:bincode_derive", "dashcore_hashes/bincode", "dash-network/bincode" ]
 test-utils = []
+tokio = ["dep:tokio-util", "dep:bytes"]
 
 [package.metadata.docs.rs]
 all-features = true
@@ -57,6 +58,8 @@ bincode = { version = "2.0.1", optional = true }
 bincode_derive = { version = "2.0.1", optional = true }
 blsful = { git = "https://github.com/dashpay/agora-blsful", rev = "0c34a7a488a0bd1c9a9a2196e793b303ad35c900", optional = true }
 ed25519-dalek = { version = "2.1", features = ["rand_core"], optional = true }
+tokio-util = { version = "0.7", default-features = false, features = ["codec"], optional = true }
+bytes = { version = "1", optional = true }
 blake3 = "1.8.1"
 thiserror = "2"
 bitvec = "1.0"
