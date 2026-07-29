@@ -1066,6 +1066,26 @@ mod tests {
         Arc::new(crate::test_utils::MockNetworkManager::new())
     }
 
+    /// Like [`test_network`] but keeps the concrete mock so a test can assert on
+    /// what the manager declared to the broker.
+    async fn test_network_with_mock(
+    ) -> (Arc<crate::test_utils::MockNetworkManager>, Arc<dyn NetworkManager>) {
+        let mock = Arc::new(crate::test_utils::MockNetworkManager::new());
+        let network: Arc<dyn NetworkManager> = mock.clone();
+        (mock, network)
+    }
+
+    /// Start heights of every `GetCFilters` the manager declared, in order.
+    fn declared_filter_starts(mock: &crate::test_utils::MockNetworkManager) -> Vec<u32> {
+        mock.sent_messages()
+            .iter()
+            .filter_map(|m| match m {
+                NetworkMessage::GetCFilters(gcf) => Some(gcf.start_height),
+                _ => None,
+            })
+            .collect()
+    }
+
     type TestFiltersManager = FiltersManager<
         PersistentBlockHeaderStorage,
         PersistentFilterHeaderStorage,
@@ -3519,6 +3539,188 @@ mod tests {
             )),
             "expected FiltersSyncComplete, got {:?}",
             events
+        );
+    }
+
+    /// A restart can leave filters stored only near the tip while the wallet
+    /// still needs a range far below them. Those tip-region filters are
+    /// unreachable for the scan, so `start_download` must discard them and
+    /// restart the download from `scan_start` rather than from
+    /// `stored_filters_tip + 1`.
+    #[tokio::test]
+    async fn test_start_download_discards_stored_filters_above_scan_start() {
+        let mut manager = create_test_manager().await;
+
+        // Block headers cover the whole range so send_pending can resolve stop hashes.
+        let headers = dashcore::block::Header::dummy_batch(0..1001);
+        manager
+            .header_storage
+            .write()
+            .await
+            .store_headers(
+                &headers.iter().map(crate::types::HashedBlockHeader::from).collect::<Vec<_>>(),
+            )
+            .await
+            .unwrap();
+
+        // Filters were only ever stored near the tip: 900..=1000. The heights
+        // below 900 were never populated.
+        {
+            let mut filter_storage = manager.filter_storage.write().await;
+            for height in 900..=1000u32 {
+                filter_storage.store_filter(height, &[height as u8; 8]).await.unwrap();
+            }
+        }
+        // Restart shape: `new()` seeds stored_height from the tip watermark.
+        manager.progress.update_stored_height(1000);
+        manager.progress.update_filter_header_tip_height(1000);
+        manager.progress.update_target_height(1000);
+
+        // Wallet committed far below the stored region, so scan_start = 100.
+        manager.wallet.write().await.update_wallet_synced_height(&MOCK_WALLET_ID, 99);
+
+        let (mock, network) = test_network_with_mock().await;
+        let events = manager.start_download(&network).await.unwrap();
+
+        assert!(events.is_empty());
+        assert_eq!(manager.state(), SyncState::Syncing);
+
+        // The unreachable tip-region filters were discarded entirely...
+        assert_eq!(manager.filter_storage.read().await.filter_tip_height().await.unwrap(), 0);
+        assert_eq!(manager.filter_storage.read().await.filter_start_height().await, None);
+
+        // ...nothing was preloaded into the initial batch...
+        let batch = manager.active_batches.get(&100).expect("initial batch at scan_start");
+        assert!(batch.filters().is_empty());
+        assert!(!batch.verified());
+        assert!(!batch.scanned());
+        assert_eq!(batch.end_height(), 1000);
+
+        // ...scan gating no longer sees the stale tip watermark...
+        assert_eq!(manager.progress.stored_height(), 0);
+
+        // ...and both the store cursor and the download restart from
+        // scan_start rather than stored_filters_tip + 1.
+        assert_eq!(manager.next_batch_to_store, 100);
+        assert!(
+            declared_filter_starts(&mock).contains(&100),
+            "expected a GetCFilters declared from scan_start, got {:?}",
+            declared_filter_starts(&mock)
+        );
+    }
+
+    /// Counterpart to the sparse-storage case: when the stored filter range
+    /// actually reaches down to `scan_start`, the preload happens exactly as
+    /// before and nothing is discarded.
+    #[tokio::test]
+    async fn test_start_download_preloads_when_stored_filters_cover_scan_start() {
+        let mut manager = create_test_manager().await;
+
+        let headers = dashcore::block::Header::dummy_batch(0..1001);
+        manager
+            .header_storage
+            .write()
+            .await
+            .store_headers(
+                &headers.iter().map(crate::types::HashedBlockHeader::from).collect::<Vec<_>>(),
+            )
+            .await
+            .unwrap();
+
+        // Filters stored densely from genesis through the tip.
+        {
+            let mut filter_storage = manager.filter_storage.write().await;
+            for height in 0..=1000u32 {
+                filter_storage.store_filter(height, &[height as u8; 8]).await.unwrap();
+            }
+        }
+        manager.progress.update_stored_height(1000);
+        manager.progress.update_filter_header_tip_height(1000);
+        manager.progress.update_target_height(1000);
+
+        manager.wallet.write().await.update_wallet_synced_height(&MOCK_WALLET_ID, 99);
+
+        let (mock, network) = test_network_with_mock().await;
+        manager.start_download(&network).await.unwrap();
+
+        assert_eq!(manager.state(), SyncState::Syncing);
+
+        // Storage is untouched.
+        assert_eq!(manager.filter_storage.read().await.filter_tip_height().await.unwrap(), 1000);
+        assert_eq!(manager.filter_storage.read().await.filter_start_height().await, Some(0));
+
+        // The stored range 100..=1000 was preloaded and the batch is verified
+        // and scanned immediately.
+        let batch = manager.active_batches.get(&100).expect("initial batch at scan_start");
+        assert_eq!(batch.filters().len(), 901);
+        assert!(batch.verified());
+        assert!(batch.scanned());
+        assert_eq!(manager.progress.stored_height(), 1000);
+
+        // Nothing left to download: everything through the filter header tip
+        // is already stored.
+        assert_eq!(manager.next_batch_to_store, 1001);
+        assert!(
+            declared_filter_starts(&mock).is_empty(),
+            "no filter request expected, got {:?}",
+            declared_filter_starts(&mock)
+        );
+    }
+
+    /// Genesis-only storage: a single filter at height 0, scanning from 0.
+    /// `filter_tip_height` collapses to 0 for both an empty store and this
+    /// one, so gating the preload on `tip > 0` would misread it as empty and
+    /// needlessly re-download height 0. The stored start (Some(0)) must drive
+    /// the decision: the filter is preloaded and nothing is discarded or
+    /// re-requested. Regtest can produce exactly this shape.
+    #[tokio::test]
+    async fn test_start_download_preloads_genesis_only_stored_filter() {
+        let mut manager = create_test_manager().await;
+
+        let headers = dashcore::block::Header::dummy_batch(0..1);
+        manager
+            .header_storage
+            .write()
+            .await
+            .store_headers(
+                &headers.iter().map(crate::types::HashedBlockHeader::from).collect::<Vec<_>>(),
+            )
+            .await
+            .unwrap();
+
+        // Exactly one filter stored, at height 0.
+        manager.filter_storage.write().await.store_filter(0, &[0u8; 8]).await.unwrap();
+        assert_eq!(manager.filter_storage.read().await.filter_tip_height().await.unwrap(), 0);
+        assert_eq!(manager.filter_storage.read().await.filter_start_height().await, Some(0));
+
+        // Restart shape at the genesis tip.
+        manager.progress.update_stored_height(0);
+        manager.progress.update_filter_header_tip_height(0);
+        manager.progress.update_target_height(0);
+        // Wallet at genesis: scan_start = 0.
+
+        let (mock, network) = test_network_with_mock().await;
+        manager.start_download(&network).await.unwrap();
+
+        // The lone filter was NOT discarded...
+        assert_eq!(manager.filter_storage.read().await.filter_tip_height().await.unwrap(), 0);
+        assert_eq!(manager.filter_storage.read().await.filter_start_height().await, Some(0));
+
+        // ...it was preloaded into the initial batch, which is verified and
+        // scanned since the whole (single-height) range is covered...
+        let batch = manager.active_batches.get(&0).expect("initial batch at scan_start");
+        assert_eq!(batch.filters().len(), 1);
+        assert!(batch.verified());
+        assert!(batch.scanned());
+        assert_eq!(manager.progress.stored_height(), 0);
+
+        // ...and the download frontier sits above the stored tip, so no
+        // filter request goes out for the already-stored genesis height.
+        assert_eq!(manager.next_batch_to_store, 1);
+        assert!(
+            declared_filter_starts(&mock).is_empty(),
+            "no filter request expected for the genesis-only store, got {:?}",
+            declared_filter_starts(&mock)
         );
     }
 }
