@@ -379,3 +379,119 @@ pub trait SyncManager: Send + Sync + std::fmt::Debug {
         Ok(identifier)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::sync::BlockHeadersProgress;
+    use crate::test_utils::MockNetworkManager;
+    use std::sync::atomic::{AtomicU32, Ordering};
+    use tokio::sync::mpsc;
+
+    /// Minimal manager that only counts the callbacks the run loop makes, so a
+    /// test can observe that the loop is alive and that it stops on cancel.
+    struct MockManager {
+        identifier: ManagerIdentifier,
+        state: SyncState,
+        tick_count: Arc<AtomicU32>,
+    }
+
+    impl std::fmt::Debug for MockManager {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.debug_struct("MockManager").field("identifier", &self.identifier).finish()
+        }
+    }
+
+    #[async_trait]
+    impl SyncManager for MockManager {
+        fn identifier(&self) -> ManagerIdentifier {
+            self.identifier
+        }
+
+        fn state(&self) -> SyncState {
+            self.state
+        }
+
+        fn set_state(&mut self, state: SyncState) {
+            self.state = state;
+        }
+
+        fn wanted_message_types(&self) -> &'static [MessageType] {
+            &[]
+        }
+
+        fn on_disconnect(&mut self) {}
+
+        async fn handle_message(
+            &mut self,
+            _peer: SocketAddr,
+            _msg: NetworkMessage,
+            _network: &Arc<dyn NetworkManager>,
+        ) -> SyncResult<Vec<SyncEvent>> {
+            Ok(vec![])
+        }
+
+        async fn handle_sync_event(
+            &mut self,
+            _event: &SyncEvent,
+            _network: &Arc<dyn NetworkManager>,
+        ) -> SyncResult<Vec<SyncEvent>> {
+            Ok(vec![])
+        }
+
+        async fn tick(&mut self, _network: &Arc<dyn NetworkManager>) -> SyncResult<Vec<SyncEvent>> {
+            self.tick_count.fetch_add(1, Ordering::Relaxed);
+            Ok(vec![])
+        }
+
+        fn progress(&self) -> SyncManagerProgress {
+            let mut progress = BlockHeadersProgress::default();
+            progress.set_state(self.state);
+            SyncManagerProgress::BlockHeaders(progress)
+        }
+    }
+
+    /// The shared run loop must keep ticking while it lives and return its
+    /// identifier once the shutdown token is cancelled — a manager task that
+    /// ignored the token would hang `SyncCoordinator::shutdown` forever.
+    #[tokio::test]
+    async fn test_manager_task_shutdown() {
+        let tick_count = Arc::new(AtomicU32::new(0));
+
+        let manager = MockManager {
+            identifier: ManagerIdentifier::BlockHeader,
+            state: SyncState::WaitForEvents,
+            tick_count: tick_count.clone(),
+        };
+
+        let (_msg_tx, message_receiver) = mpsc::unbounded_channel();
+        let sync_event_sender = broadcast::Sender::<SyncEvent>::new(100);
+        let network_event_sender = broadcast::Sender::<NetworkEvent>::new(100);
+        let network: Arc<dyn NetworkManager> = Arc::new(MockNetworkManager::new());
+        let shutdown = CancellationToken::new();
+        let (progress_sender, _progress_rx) = watch::channel(manager.progress());
+
+        let context = SyncManagerTaskContext {
+            message_receiver,
+            sync_event_sender,
+            network_event_receiver: network_event_sender.subscribe(),
+            network,
+            shutdown: shutdown.clone(),
+            progress_sender,
+        };
+
+        let handle = tokio::spawn(async move { manager.run(context).await });
+
+        // Let the 100ms tick fire a few times.
+        tokio::time::sleep(Duration::from_millis(250)).await;
+        shutdown.cancel();
+
+        let result = handle.await.unwrap();
+        assert_eq!(result.unwrap(), ManagerIdentifier::BlockHeader);
+        assert!(
+            tick_count.load(Ordering::Relaxed) >= 2,
+            "the run loop should have ticked while alive, got {}",
+            tick_count.load(Ordering::Relaxed)
+        );
+    }
+}

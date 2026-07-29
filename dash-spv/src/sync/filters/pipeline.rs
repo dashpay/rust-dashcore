@@ -487,4 +487,95 @@ mod tests {
             .insert(FilterMatchKey::new(0, BlockHash::all_zeros()), BlockFilter::new(&[0x01]));
         assert_eq!(batch.filters().len(), 1);
     }
+
+    /// `Default` must be the same thing as `new`, since the pipeline is created
+    /// through both paths.
+    #[test]
+    fn test_pipeline_default_trait() {
+        let default_pipeline = FiltersPipeline::default();
+        let new_pipeline = FiltersPipeline::new();
+
+        assert_eq!(default_pipeline.is_idle(), new_pipeline.is_idle());
+        assert_eq!(default_pipeline.target_height, new_pipeline.target_height);
+        assert_eq!(default_pipeline.filters_received, new_pipeline.filters_received);
+        assert_eq!(default_pipeline.highest_received, new_pipeline.highest_received);
+    }
+
+    /// `extend_target` adds trackers for the new range without disturbing the
+    /// ones already wanted: an existing batch keeps the `end_height` it was
+    /// created with, even when the new target moves far beyond it.
+    #[test]
+    fn test_extend_target_preserves_existing_batch_end_heights() {
+        let mut pipeline = FiltersPipeline::new();
+        pipeline.init(0, 2500);
+
+        // The boundary batch was truncated at the old target.
+        assert_eq!(pipeline.batch_trackers.get(&2000).unwrap().end_height(), 2500);
+
+        pipeline.extend_target(4000);
+
+        assert_eq!(
+            pipeline.batch_trackers.get(&2000).unwrap().end_height(),
+            2500,
+            "an already-wanted batch must keep its original end height"
+        );
+        // ...and the extension picks up from the old boundary.
+        assert_eq!(pipeline.batch_trackers.get(&2501).unwrap().end_height(), 3500);
+    }
+
+    /// End-to-end over the whole batch: declare it to the broker, feed every
+    /// filter in, and take the completed batch out. This is the only coverage
+    /// of `send_pending`, which resolves stop hashes from header storage.
+    #[tokio::test]
+    async fn test_full_batch_lifecycle() {
+        use crate::storage::{PersistentBlockHeaderStorage, PersistentStorage};
+        use crate::test_utils::MockNetworkManager;
+        use tempfile::TempDir;
+
+        let headers = Header::dummy_batch(0..100);
+        let tmp_dir = TempDir::new().unwrap();
+        let mut storage = PersistentBlockHeaderStorage::open(tmp_dir.path()).await.unwrap();
+        storage
+            .store_headers(
+                &headers.iter().map(crate::types::HashedBlockHeader::from).collect::<Vec<_>>(),
+            )
+            .await
+            .unwrap();
+
+        let mut pipeline = FiltersPipeline::new();
+        pipeline.init(0, 99);
+        assert!(!pipeline.is_idle());
+
+        let mock = Arc::new(MockNetworkManager::new());
+        let network: Arc<dyn NetworkManager> = mock.clone();
+
+        // The single wanted batch is declared to the broker.
+        let declared = pipeline.send_pending(&network, &storage).await.unwrap();
+        assert_eq!(declared, 1);
+        let starts: Vec<u32> = mock
+            .sent_messages()
+            .iter()
+            .filter_map(|m| match m {
+                NetworkMessage::GetCFilters(gcf) => Some(gcf.start_height),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(starts, vec![0]);
+
+        // Receive all filters
+        for h in 0..=99 {
+            let hash = Header::dummy(h).block_hash();
+            pipeline.receive_with_data(h, hash, &dummy_filter_data(h));
+        }
+
+        // Batch complete: nothing wanted, one batch ready to take.
+        assert!(pipeline.is_idle());
+        assert_eq!(pipeline.completed_batches.len(), 1);
+        assert_eq!(pipeline.filters_received, 100);
+        assert_eq!(pipeline.highest_received, 99);
+
+        let completed = pipeline.take_completed_batches();
+        assert_eq!(completed.len(), 1);
+        assert!(pipeline.completed_batches.is_empty());
+    }
 }

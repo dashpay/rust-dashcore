@@ -72,3 +72,32 @@ impl PeerDiscoverer {
         addresses
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_dns_discovery_testnet_returns_embedded_when_dns_fails() {
+        // This test does not require network access: even if DNS resolution
+        // fails, the embedded seed file must yield peers.
+        let peers = PeerDiscoverer::discover(Network::Testnet).await;
+
+        assert!(
+            peers.len() >= 29,
+            "expected at least the 29 embedded testnet HP-MN seeds, got {}",
+            peers.len()
+        );
+        for peer in &peers {
+            assert_eq!(peer.port(), Network::Testnet.default_p2p_port());
+        }
+    }
+
+    #[tokio::test]
+    async fn test_dns_discovery_regtest() {
+        let peers = PeerDiscoverer::discover(Network::Regtest).await;
+
+        // Should return empty for regtest (no DNS seeds and no embedded list)
+        assert!(peers.is_empty());
+    }
+}
