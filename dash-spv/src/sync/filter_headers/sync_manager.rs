@@ -153,14 +153,6 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage> SyncManager for FilterHeade
         }
     }
 
-    async fn tick(&mut self, network: &Arc<dyn NetworkManager>) -> SyncResult<Vec<SyncEvent>> {
-        // Timeouts/retry are the network manager's job now; just (re-)declare
-        // whatever batches are still wanted.
-        self.pipeline.send_pending(network).await?;
-
-        Ok(vec![])
-    }
-
     fn progress(&self) -> SyncManagerProgress {
         SyncManagerProgress::FilterHeaders(self.progress.clone())
     }

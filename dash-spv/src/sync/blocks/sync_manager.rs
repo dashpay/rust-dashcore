@@ -162,7 +162,8 @@ impl<H: BlockHeaderStorage, B: BlockStorage, W: WalletInterface + 'static> SyncM
             drop(block_storage);
 
             // Queue all blocks that need downloading
-            self.pipeline.queue(to_download);
+            let newly_wanted = self.pipeline.queue(to_download);
+            self.progress.add_requested(newly_wanted as u32);
 
             self.progress.set_state(SyncState::Syncing);
 
@@ -197,12 +198,7 @@ impl<H: BlockHeaderStorage, B: BlockStorage, W: WalletInterface + 'static> SyncM
         Ok(vec![])
     }
 
-    async fn tick(&mut self, network: &Arc<dyn NetworkManager>) -> SyncResult<Vec<SyncEvent>> {
-        // Timeouts/retry are the network manager's job now; just (re-)declare
-        // whatever is still wanted and drain any buffered blocks.
-        self.send_pending(network).await?;
-
-        // Try to process any buffered blocks
+    async fn tick(&mut self, _network: &Arc<dyn NetworkManager>) -> SyncResult<Vec<SyncEvent>> {
         self.process_buffered_blocks().await
     }
 

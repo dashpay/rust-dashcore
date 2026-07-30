@@ -799,12 +799,7 @@ mod tests {
     use key_wallet_manager::test_utils::MockWallet;
 
     use crate::sync::SyncState;
-    use crate::test_utils::MockNetworkManager;
-
-    /// Deterministic loopback socket address for peer-keyed test state.
-    fn test_socket_address(id: u8) -> SocketAddr {
-        SocketAddr::from(([127, 0, 0, id], id as u16))
-    }
+    use crate::test_utils::{test_socket_address, MockNetworkManager};
 
     fn dummy_instant_lock(txid: Txid) -> InstantLock {
         InstantLock {

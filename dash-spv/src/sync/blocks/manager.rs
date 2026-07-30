@@ -67,10 +67,7 @@ impl<H: BlockHeaderStorage, B: BlockStorage, W: WalletInterface> BlocksManager<H
         &mut self,
         network: &Arc<dyn NetworkManager>,
     ) -> SyncResult<()> {
-        let sent = self.pipeline.send_pending(network).await?;
-        if sent > 0 {
-            self.progress.add_requested(sent as u32);
-        }
+        self.pipeline.send_pending(network).await?;
         Ok(())
     }
 

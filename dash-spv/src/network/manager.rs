@@ -888,7 +888,7 @@ fn spawn_bandwidth_controller(
                         } else if w > st.min_w * W_INFLATE {
                             st.cap_ema = (st.cap_ema * CAP_BACKOFF).max(FLOOR_PER_PEER as f64);
                         } else {
-                            st.cap_ema += CAP_GROW;
+                            st.cap_ema = (st.cap_ema + CAP_GROW).min(PEER_CEIL as f64);
                         }
                         (lambda, w)
                     };

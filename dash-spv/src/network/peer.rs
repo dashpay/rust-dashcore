@@ -1,8 +1,35 @@
+use dashcore::{
+    consensus::encode,
+    network::{
+        address::Address,
+        constants::ServiceFlags,
+        message::{NetworkMessage, RawNetworkMessage, RawNetworkMessageCodec},
+        message_network::VersionMessage,
+    },
+    Network,
+};
+use futures::lock::Mutex;
 use std::collections::VecDeque;
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use tokio::sync::mpsc::UnboundedSender;
+use tokio::{
+    io::{AsyncRead, AsyncWriteExt, ReadBuf},
+    net::{
+        tcp::{OwnedReadHalf, OwnedWriteHalf},
+        TcpStream,
+    },
+};
+use tokio_stream::StreamExt;
+use tokio_util::codec::FramedRead;
+use tokio_util::sync::CancellationToken;
+
+use crate::{error::NetworkResult, NetworkError};
+
+const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
+const USER_AGENT: &str = concat!("/dash-spv:", env!("CARGO_PKG_VERSION"), "/");
 
 /// Per-peer response-latency tracker: the time each pipeline request spends in
 /// flight, from send to the response that completes it. Send times are queued
@@ -19,6 +46,11 @@ pub(crate) struct Latency {
 impl Latency {
     async fn on_send(&self) {
         self.pending.lock().await.push_back(Instant::now());
+    }
+
+    /// Undo an `on_send` whose write then failed, so the queue does not drift.
+    async fn cancel_one(&self) {
+        self.pending.lock().await.pop_back();
     }
 
     /// Pop the oldest pending send and record its round-trip.
@@ -52,34 +84,6 @@ impl Latency {
         (self.count.load(Ordering::Relaxed), self.total_ns.load(Ordering::Relaxed))
     }
 }
-
-use dashcore::{
-    consensus::encode,
-    network::{
-        address::Address,
-        constants::ServiceFlags,
-        message::{NetworkMessage, RawNetworkMessage, RawNetworkMessageCodec},
-        message_network::VersionMessage,
-    },
-    Network,
-};
-use futures::lock::Mutex;
-use tokio::sync::mpsc::UnboundedSender;
-use tokio::{
-    io::{AsyncRead, AsyncWriteExt, ReadBuf},
-    net::{
-        tcp::{OwnedReadHalf, OwnedWriteHalf},
-        TcpStream,
-    },
-};
-use tokio_stream::StreamExt;
-use tokio_util::codec::FramedRead;
-use tokio_util::sync::CancellationToken;
-
-use crate::{error::NetworkResult, NetworkError};
-
-const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
-const USER_AGENT: &str = concat!("/dash-spv:", env!("CARGO_PKG_VERSION"), "/");
 
 /// Wraps a socket read half and adds every byte read into a shared counter, so
 /// the network manager can estimate download throughput (and size the global
@@ -186,14 +190,25 @@ impl ConnectedPeer {
         };
         let serialized = encode::serialize(&raw);
 
-        if let Err(e) = self.writer.lock().await.write_all(&serialized).await {
-            tracing::warn!("Disconnecting {} due to write error: {}", self.addr, e);
-            return Err(NetworkError::ConnectionFailed(format!("Write failed: {}", e)));
-        }
-        // A pipeline request counts as one unit of in-flight work for this peer.
-        if is_pipeline_request(msg) {
+        // A pipeline request counts as one unit of in-flight work for this peer, and
+        // it must be counted BEFORE the write: the peer can reply before this task is
+        // scheduled again, and the reader's decrement saturates at zero. Counting
+        // afterwards loses that decrement and leaks the slot for the connection's
+        // lifetime — with a starting cap of 2, one leak halves the peer's capacity.
+        let accounted = is_pipeline_request(msg);
+        if accounted {
             self.in_flight.fetch_add(1, Ordering::Relaxed);
             self.latency.on_send().await;
+        }
+
+        if let Err(e) = self.writer.lock().await.write_all(&serialized).await {
+            // Nothing reached the peer, so no response will free this unit.
+            if accounted {
+                self.in_flight.fetch_sub(1, Ordering::Relaxed);
+                self.latency.cancel_one().await;
+            }
+            tracing::warn!("Disconnecting {} due to write error: {}", self.addr, e);
+            return Err(NetworkError::ConnectionFailed(format!("Write failed: {}", e)));
         }
         Ok(())
     }

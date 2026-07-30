@@ -1059,7 +1059,6 @@ mod tests {
     };
     use std::net::SocketAddr;
 
-    /// A `NetworkManager` that makes no outbound connections and does no
     /// An in-memory mock network manager: it swallows any messages the manager
     /// tries to send, so these tests observe manager state, not sent messages.
     async fn test_network() -> Arc<dyn NetworkManager> {
