@@ -840,9 +840,12 @@ pub unsafe extern "C" fn wallet_build_and_sign_asset_lock_transaction(
 
             let result = unwrap_or_return!(managed_wallet.build_asset_lock(
                 wallet_ref.inner(),
-                account_index,
+                key_wallet::wallet::managed_wallet_info::asset_lock_builder::AssetLockFundingAccount::Bip44 {
+                    account_index,
+                },
                 fundings,
                 fee_per_kb,
+                false,
             ).await, error);
 
             // Write outputs

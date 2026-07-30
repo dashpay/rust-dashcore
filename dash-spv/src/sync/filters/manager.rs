@@ -866,7 +866,7 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
         if wallet_states.is_empty() {
             // No addresses to scan, but `scanned_wallets` was still recorded
             // so any zero-address behind wallets advance at commit.
-            tracing::debug!("scan_batch: no behind wallets with monitored addresses");
+            tracing::trace!("scan_batch: no behind wallets with monitored addresses");
             return Ok(events);
         }
 
