@@ -11,6 +11,76 @@ pub(crate) const TX_OUTPUT_SIZE: usize = 34;
 pub(crate) const TX_INPUT_SIZE: usize = 148;
 pub(crate) const CHANGE_OUTPUT_SIZE: usize = TX_OUTPUT_SIZE;
 
+/// Nodes the search may visit before giving up and falling back to accumulation.
+/// Caps the worst case so no input set can stall a build. Same figure as Bitcoin Core.
+const BNB_NODE_BUDGET: u32 = 100_000;
+
+#[derive(Clone, Copy)]
+struct BnbCandidate {
+    /// Position in the caller's slice, so the winner can be mapped back.
+    index: usize,
+    /// Value net of the fee to spend it.
+    effective_value: u64,
+}
+
+/// Depth-first search over subsets for one that funds the target with no change
+/// output, burning as little surplus as possible.
+///
+/// Two bounds, because one alone is not enough: abandon a branch that has overshot,
+/// *and* one that cannot reach the target even taking every UTXO left (#918).
+struct BnbSearch<'a> {
+    /// Descending effective value, so the bounds bite early.
+    candidates: &'a [BnbCandidate],
+    /// `suffix[i]`: effective value still available from `i` onwards.
+    suffix: &'a [u64],
+    target: u64,
+    /// How far above `target` is still acceptable.
+    window: u64,
+    budget: u32,
+    /// Lowest-surplus selection so far, as candidate indices.
+    best: Option<(Vec<usize>, u64)>,
+}
+
+impl BnbSearch<'_> {
+    fn run(&mut self, index: usize, chosen: &mut Vec<usize>, sum: u64) {
+        if self.budget == 0 {
+            return;
+        }
+        self.budget -= 1;
+
+        if sum >= self.target {
+            // Adding more to a funded selection only burns more; this branch ends here.
+            let surplus = sum - self.target;
+            if surplus <= self.window && self.best.as_ref().is_none_or(|(_, b)| surplus < *b) {
+                self.best = Some((chosen.clone(), surplus));
+            }
+            return;
+        }
+
+        // Even taking everything left falls short.
+        if sum.saturating_add(self.suffix[index]) < self.target {
+            return;
+        }
+
+        for i in index..self.candidates.len() {
+            let next = sum.saturating_add(self.candidates[i].effective_value);
+            // Overshoots on its own; later candidates are smaller, so skip, don't break.
+            if next > self.target.saturating_add(self.window) {
+                continue;
+            }
+
+            chosen.push(i);
+            self.run(i + 1, chosen, next);
+            chosen.pop();
+
+            // Nothing wasted cannot be improved on.
+            if self.best.as_ref().is_some_and(|(_, surplus)| *surplus == 0) {
+                return;
+            }
+        }
+    }
+}
+
 /// UTXO selection strategy
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SelectionStrategy {
@@ -116,14 +186,12 @@ impl CoinSelector {
     {
         // Default base size assumes 2 outputs: the target output and one change output.
         let default_base_size = 10 + TX_OUTPUT_SIZE + CHANGE_OUTPUT_SIZE;
-        let input_size = TX_INPUT_SIZE;
         self.select_coins_with_size(
             utxos,
             target_amount,
             fee_rate,
             current_height,
             default_base_size,
-            input_size,
             CHANGE_OUTPUT_SIZE,
         )
     }
@@ -132,7 +200,7 @@ impl CoinSelector {
     ///
     /// `base_size` includes the change output; `change_output_size` is its byte count (`0` when
     /// there is no change address), letting the accumulator drop it to size a no-change fee.
-    #[allow(clippy::too_many_arguments)]
+    /// Input size is always `TX_INPUT_SIZE`.
     pub fn select_coins_with_size<'a, I>(
         &self,
         utxos: I,
@@ -140,7 +208,6 @@ impl CoinSelector {
         fee_rate: FeeRate,
         current_height: u32,
         base_size: usize,
-        input_size: usize,
         change_output_size: usize,
     ) -> Result<SelectionResult, SelectionError>
     where
@@ -179,7 +246,6 @@ impl CoinSelector {
                             target_amount,
                             fee_rate,
                             base_size,
-                            input_size,
                             change_output_size,
                         )
                     }
@@ -190,7 +256,6 @@ impl CoinSelector {
                             target_amount,
                             fee_rate,
                             base_size,
-                            input_size,
                             change_output_size,
                         )
                     }
@@ -207,7 +272,6 @@ impl CoinSelector {
                                 target_amount,
                                 fee_rate,
                                 base_size,
-                                input_size,
                                 change_output_size,
                             )
                         } else {
@@ -225,7 +289,6 @@ impl CoinSelector {
                                 target_amount,
                                 fee_rate,
                                 base_size,
-                                input_size,
                                 change_output_size,
                             )
                         }
@@ -238,7 +301,6 @@ impl CoinSelector {
                             target_amount,
                             fee_rate,
                             base_size,
-                            input_size,
                             change_output_size,
                         )
                     }
@@ -248,7 +310,6 @@ impl CoinSelector {
                             target_amount,
                             fee_rate,
                             base_size,
-                            input_size,
                             change_output_size,
                         ),
                     _ => unreachable!(),
@@ -265,7 +326,6 @@ impl CoinSelector {
                     target_amount,
                     fee_rate,
                     base_size,
-                    input_size,
                     change_output_size,
                 )
             }
@@ -278,7 +338,7 @@ impl CoinSelector {
                 }
 
                 let total_value: u64 = selected.iter().map(|u| u.value()).sum();
-                let estimated_size = base_size + selected.len() * input_size;
+                let estimated_size = base_size + selected.len() * TX_INPUT_SIZE;
                 let estimated_fee = fee_rate.calculate_fee(estimated_size);
 
                 // The caller's `target_amount` is ignored: a drain spends everything, there is no
@@ -306,14 +366,12 @@ impl CoinSelector {
 
     /// Accumulate UTXOs. `change_output_size` = the change output's bytes within `base_size`
     /// (`0` if none is budgeted), shaved off to size the no-change fee.
-    #[allow(clippy::too_many_arguments)]
     fn accumulate_coins_with_size<'a, I>(
         &self,
         utxos: I,
         target_amount: u64,
         fee_rate: FeeRate,
         base_size: usize,
-        input_size: usize,
         change_output_size: usize,
     ) -> Result<SelectionResult, SelectionError>
     where
@@ -330,7 +388,7 @@ impl CoinSelector {
             selected.push(utxo.clone());
 
             // `base_size` budgets a change output; a no-change send omits it and pays less.
-            let estimated_size = base_size + (input_size * selected.len());
+            let estimated_size = base_size + (TX_INPUT_SIZE * selected.len());
             let estimated_fee = fee_rate.calculate_fee(estimated_size);
             let size_no_change = estimated_size.saturating_sub(change_output_size);
             let fee_no_change = fee_rate.calculate_fee(size_no_change);
@@ -403,60 +461,124 @@ impl CoinSelector {
     /// - Pros: Faster to find solutions due to aggressive pruning
     /// - Cons: May leave small UTXOs unconsolidated, leading to wallet fragmentation
     /// - Cons: Less likely to find exact matches with larger denominations
-    #[allow(clippy::too_many_arguments)]
     fn branch_and_bound_with_size<'a, I>(
         &self,
         utxos: I,
         target_amount: u64,
         fee_rate: FeeRate,
         base_size: usize,
-        input_size: usize,
         change_output_size: usize,
     ) -> Result<SelectionResult, SelectionError>
     where
         I: IntoIterator<Item = &'a Utxo>,
     {
-        // Collect the UTXOs - they should already be in the right order if needed
         let sorted_refs: Vec<&'a Utxo> = utxos.into_iter().collect();
 
-        // Try to find an exact match first
+        // `base_size` budgets a change output, which a change-free send does not pay for.
+        let base_size_no_change = base_size.saturating_sub(change_output_size);
 
-        // Use a simple recursive approach with memoization
-        let result = self.find_exact_match(
-            &sorted_refs,
-            target_amount,
-            fee_rate,
-            base_size,
-            input_size,
-            0,
-            Vec::new(),
-            0,
-        );
-
-        if let Some((selected, total)) = result {
-            let estimated_size = base_size + (input_size * selected.len());
-            let estimated_fee = fee_rate.calculate_fee(estimated_size);
+        if let Some(selected) =
+            self.branch_and_bound(&sorted_refs, target_amount, fee_rate, base_size_no_change)
+        {
+            let total_value: u64 = selected.iter().map(|u| u.value()).sum();
+            let estimated_size = base_size_no_change + TX_INPUT_SIZE * selected.len();
 
             return Ok(SelectionResult {
                 selected,
-                total_value: total,
+                total_value,
                 target_amount,
+                // The surplus is smaller than a change output would cost (#911).
                 change_amount: 0,
                 estimated_size,
-                estimated_fee,
+                estimated_fee: total_value - target_amount,
                 exact_match: true,
             });
         }
 
-        // No exact match: accumulate. `base_size` already budgets the change output.
+        // Nothing change-free found: accumulate.
         self.accumulate_coins_with_size(
             sorted_refs,
             target_amount,
             fee_rate,
             base_size,
-            input_size,
             change_output_size,
         )
+    }
+
+    /// Choose UTXOs that fund `target_amount` with **no change output**.
+    ///
+    /// `base_size_no_change` is the transaction with no inputs and no change output —
+    /// the shape being aimed for. Input and change sizes come from [`TX_INPUT_SIZE`]
+    /// and [`CHANGE_OUTPUT_SIZE`].
+    ///
+    /// `None` when nothing lands close enough, or the node budget runs out.
+    fn branch_and_bound(
+        &self,
+        utxos: &[&Utxo],
+        target_amount: u64,
+        fee_rate: FeeRate,
+        base_size_no_change: usize,
+    ) -> Option<Vec<Utxo>> {
+        // Effective values — value net of the fee to spend it — make the acceptance
+        // test independent of how many inputs are chosen. Sizing the fee from a
+        // guessed input count is what produced the old off-by-one.
+        let input_fee = fee_rate.calculate_fee(TX_INPUT_SIZE);
+        let mut candidates: Vec<BnbCandidate> = utxos
+            .iter()
+            .enumerate()
+            .filter_map(|(index, utxo)| {
+                // Worth no more than its own input costs: never helps.
+                utxo.value().checked_sub(input_fee).filter(|ev| *ev > 0).map(|effective_value| {
+                    BnbCandidate {
+                        index,
+                        effective_value,
+                    }
+                })
+            })
+            .collect();
+        candidates.sort_by_key(|c| Reverse(c.effective_value));
+
+        // What the effective values must cover.
+        let target = target_amount.saturating_add(fee_rate.calculate_fee(base_size_no_change));
+        let window = self.cost_of_change(fee_rate);
+
+        // Lets the search abandon a branch that can no longer reach the target.
+        let mut suffix = vec![0u64; candidates.len() + 1];
+        for i in (0..candidates.len()).rev() {
+            suffix[i] = suffix[i + 1].saturating_add(candidates[i].effective_value);
+        }
+
+        let mut search = BnbSearch {
+            candidates: &candidates,
+            suffix: &suffix,
+            target,
+            window,
+            budget: BNB_NODE_BUDGET,
+            best: None,
+        };
+        search.run(0, &mut Vec::new(), 0);
+
+        let (chosen, _) = search.best?;
+        let selected: Vec<Utxo> =
+            chosen.iter().map(|&c| utxos[candidates[c].index].clone()).collect();
+
+        // Effective values round each input's fee up on its own; the real transaction
+        // rounds once over its whole size. Re-check against the real fee.
+        let total_value: u64 = selected.iter().map(|u| u.value()).sum();
+        let size = base_size_no_change + TX_INPUT_SIZE * selected.len();
+        let required = target_amount.saturating_add(fee_rate.calculate_fee(size));
+        (total_value >= required && total_value - required <= window).then_some(selected)
+    }
+
+    /// What a change output costs: creating it now plus spending it later. A surplus
+    /// smaller than this is cheaper given to the miner than returned, which is what
+    /// makes a near-exact match as good as an exact one.
+    ///
+    /// Floored at the dust threshold: below that it could not be change anyway (#911).
+    fn cost_of_change(&self, fee_rate: FeeRate) -> u64 {
+        let create = fee_rate.calculate_fee(CHANGE_OUTPUT_SIZE);
+        let spend_later = fee_rate.calculate_fee(TX_INPUT_SIZE);
+        create.saturating_add(spend_later).max(self.dust_threshold)
     }
 
     /// Optimal consolidation strategy with custom sizes
@@ -482,14 +604,12 @@ impl CoinSelector {
     /// - During low-fee periods when consolidation is cheaper
     /// - For wallets that receive many small payments
     /// - When exact change is preferred to minimize privacy leaks
-    #[allow(clippy::too_many_arguments)]
     fn optimal_consolidation_with_size<'a>(
         &self,
         utxos: &[&'a Utxo],
         target_amount: u64,
         fee_rate: FeeRate,
         base_size: usize,
-        input_size: usize,
         change_output_size: usize,
     ) -> Result<SelectionResult, SelectionError> {
         // First, try to find an exact match using smaller UTXOs
@@ -506,10 +626,9 @@ impl CoinSelector {
                 target_amount,
                 fee_rate,
                 base_size,
-                input_size,
                 max_inputs,
             ) {
-                let estimated_size = base_size + (input_size * combination.len());
+                let estimated_size = base_size + (TX_INPUT_SIZE * combination.len());
                 let estimated_fee = fee_rate.calculate_fee(estimated_size);
 
                 return Ok(SelectionResult {
@@ -538,7 +657,7 @@ impl CoinSelector {
                 current_total += utxo.value();
             }
 
-            let estimated_size = base_size + (input_size * current.len());
+            let estimated_size = base_size + (TX_INPUT_SIZE * current.len());
             let estimated_fee = fee_rate.calculate_fee(estimated_size);
             let required = target_amount + estimated_fee;
 
@@ -552,7 +671,7 @@ impl CoinSelector {
         }
 
         if let Some(selected) = best_selection {
-            let estimated_size = base_size + (input_size * selected.len());
+            let estimated_size = base_size + (TX_INPUT_SIZE * selected.len());
             let estimated_fee = fee_rate.calculate_fee(estimated_size);
             let total_value: u64 = selected.iter().map(|u| u.value()).sum();
 
@@ -573,7 +692,6 @@ impl CoinSelector {
             target_amount,
             fee_rate,
             base_size,
-            input_size,
             change_output_size,
         )
     }
@@ -585,14 +703,13 @@ impl CoinSelector {
         target: u64,
         fee_rate: FeeRate,
         base_size: usize,
-        input_size: usize,
         max_inputs: usize,
     ) -> Option<Vec<Utxo>> {
         // Simple subset sum solver for exact matches
         // This is a simplified version - could be optimized with dynamic programming
 
         for num_inputs in 1..=max_inputs.min(utxos.len()) {
-            let estimated_size = base_size + (input_size * num_inputs);
+            let estimated_size = base_size + (TX_INPUT_SIZE * num_inputs);
             let estimated_fee = fee_rate.calculate_fee(estimated_size);
             let required = target + estimated_fee;
 
@@ -643,64 +760,6 @@ impl CoinSelector {
             ) {
                 return Some(result);
             }
-        }
-
-        None
-    }
-
-    /// Recursive helper for finding exact match
-    #[allow(clippy::too_many_arguments)]
-    fn find_exact_match(
-        &self,
-        utxos: &[&Utxo],
-        target: u64,
-        fee_rate: FeeRate,
-        base_size: usize,
-        input_size: usize,
-        index: usize,
-        mut current: Vec<Utxo>,
-        current_total: u64,
-    ) -> Option<(Vec<Utxo>, u64)> {
-        // Calculate required amount including fee
-        let estimated_size = base_size + (input_size * (current.len() + 1));
-        let estimated_fee = fee_rate.calculate_fee(estimated_size);
-        let required = target + estimated_fee;
-
-        // Check if we've found an exact match
-        if current_total == required {
-            return Some((current, current_total));
-        }
-
-        // Prune if we've exceeded the target
-        if current_total > required + self.dust_threshold {
-            return None;
-        }
-
-        // Try remaining UTXOs
-        for i in index..utxos.len() {
-            let new_total = current_total + utxos[i].value();
-
-            // Skip if this would exceed our target by too much
-            if new_total > required + self.dust_threshold * 10 {
-                continue;
-            }
-
-            current.push(utxos[i].clone());
-
-            if let Some(result) = self.find_exact_match(
-                utxos,
-                target,
-                fee_rate,
-                base_size,
-                input_size,
-                i + 1,
-                current.clone(),
-                new_total,
-            ) {
-                return Some(result);
-            }
-
-            current.pop();
         }
 
         None
@@ -902,7 +961,6 @@ mod tests {
             FeeRate::normal(),
             200,
             base_size,
-            148,
             0, // no change address => no change output to drop
         );
         assert!(
@@ -926,7 +984,7 @@ mod tests {
         let target = 100_000;
         let base_size = 10 + 34; // one (target) output, no change output budgeted
         let selection = CoinSelector::new(strategy)
-            .select_coins_with_size(&utxos, target, FeeRate::normal(), 200, base_size, 148, 0)
+            .select_coins_with_size(&utxos, target, FeeRate::normal(), 200, base_size, 0)
             .unwrap_or_else(|e| panic!("{strategy:?}: {e:?}"));
 
         // No-change fee is 192 (44 + 148); the ~9.9M remainder is change, not fee.
@@ -967,5 +1025,215 @@ mod tests {
         let selected_values: Vec<u64> = result.selected.iter().map(|u| u.value()).collect();
         let has_small_utxos = selected_values.iter().any(|&v| v <= 500);
         assert!(has_small_utxos, "Should include at least one small UTXO for consolidation");
+    }
+
+    /// Size of a no-change transaction with `n` inputs.
+    fn no_change_size(n: usize) -> usize {
+        (10 + TX_OUTPUT_SIZE + CHANGE_OUTPUT_SIZE) - CHANGE_OUTPUT_SIZE + TX_INPUT_SIZE * n
+    }
+
+    /// The point of the strategy: fund the payment with no change output at all.
+    #[test]
+    fn test_branch_and_bound_finds_an_exact_match() {
+        let selector = CoinSelector::new(SelectionStrategy::BranchAndBound);
+        let fee_rate = FeeRate::new(1000);
+        let utxos = vec![
+            Utxo::dummy(0, 40_000, 100, false, true),
+            Utxo::dummy(0, 30_000, 100, false, true),
+            Utxo::dummy(0, 10_000, 100, false, true),
+        ];
+
+        // Sized from the inputs actually chosen. Before the rewrite this needed the
+        // fee for *three* inputs, because the search sized it as `current.len() + 1`.
+        let fee = fee_rate.calculate_fee(no_change_size(2));
+        let target = 50_000 - fee;
+
+        let result = selector.select_coins(&utxos, target, fee_rate, 200).unwrap();
+
+        assert!(result.exact_match);
+        assert_eq!(result.change_amount, 0, "an exact match needs no change output");
+        assert_eq!(result.total_value, 50_000);
+        assert_eq!(result.selected.len(), 2);
+        assert_eq!(result.estimated_fee, fee, "nothing is burned beyond the real fee");
+    }
+
+    /// A surplus smaller than a change output would cost is taken anyway, folded into
+    /// the fee. Demanding the exact satoshi would reject it for a costlier transaction.
+    #[test]
+    fn test_branch_and_bound_prefers_a_near_exact_match_over_change() {
+        let selector = CoinSelector::new(SelectionStrategy::BranchAndBound);
+        let fee_rate = FeeRate::new(1000);
+        let utxos = vec![
+            Utxo::dummy(0, 40_000, 100, false, true),
+            Utxo::dummy(0, 30_000, 100, false, true),
+            Utxo::dummy(0, 10_000, 100, false, true),
+        ];
+
+        let fee = fee_rate.calculate_fee(no_change_size(2));
+        let surplus = 300; // under the dust threshold, so it could never be change
+        let target = 50_000 - fee - surplus;
+
+        let result = selector.select_coins(&utxos, target, fee_rate, 200).unwrap();
+
+        assert_eq!(result.total_value, 50_000);
+        assert_eq!(result.change_amount, 0, "the surplus is not worth a change output");
+        assert_eq!(result.estimated_fee, fee + surplus, "the surplus goes to the fee, not lost");
+    }
+
+    /// The mirror image: a surplus worth keeping must come back, not be burned.
+    #[test]
+    fn test_branch_and_bound_returns_change_when_the_surplus_is_worth_keeping() {
+        let selector = CoinSelector::new(SelectionStrategy::BranchAndBound);
+        let utxos = vec![Utxo::dummy(0, 60_000, 100, false, true)];
+
+        let result = selector.select_coins(&utxos, 50_000, FeeRate::new(1000), 200).unwrap();
+
+        assert!(result.change_amount > 0, "a large surplus must come back as change");
+        assert!(!result.exact_match);
+    }
+
+    /// A UTXO worth no more than the fee to spend it contributes nothing.
+    #[test]
+    fn test_branch_and_bound_skips_uneconomic_utxos() {
+        let selector = CoinSelector::new(SelectionStrategy::BranchAndBound);
+        let fee_rate = FeeRate::new(1000);
+        // An input costs 148 sat at this rate, so 120 is uneconomic.
+        let utxos = vec![
+            Utxo::dummy(0, 40_000, 100, false, true),
+            Utxo::dummy(0, 10_000, 100, false, true),
+            Utxo::dummy(0, 120, 100, false, true),
+        ];
+        let target = 50_000 - fee_rate.calculate_fee(no_change_size(2));
+
+        let result = selector.select_coins(&utxos, target, fee_rate, 200).unwrap();
+
+        assert!(
+            !result.selected.iter().any(|u| u.value() == 120),
+            "an input that costs more than it brings must not be selected"
+        );
+    }
+
+    /// Issue #918: a near-total target defeated the only bound the search had
+    /// (overshoot) — ~3s at 22 UTXOs, non-terminating past 32.
+    #[test]
+    fn test_branch_and_bound_near_total_balance_is_bounded() {
+        let selector = CoinSelector::new(SelectionStrategy::BranchAndBound);
+
+        for n in [24usize, 32, 48, 64] {
+            let utxos: Vec<Utxo> = (0..n)
+                .map(|i| Utxo::dummy(0, 100_000 + (i as u64) * 7_919, 100, false, true))
+                .collect();
+            let total: u64 = utxos.iter().map(|u| u.value()).sum();
+
+            let started = std::time::Instant::now();
+            let result = selector
+                .select_coins(&utxos, total - 50_000, FeeRate::new(1000), 200)
+                .expect("a near-total target is still fundable");
+            let elapsed = started.elapsed();
+
+            assert!(result.total_value >= total - 50_000);
+            // Generous on purpose: this only has to catch a return to unbounded
+            // search, not police runner speed. The node-count test below is what
+            // actually pins the bound.
+            assert!(
+                elapsed < std::time::Duration::from_secs(30),
+                "selection over {} UTXOs took {:?}; the search is unbounded again",
+                n,
+                elapsed
+            );
+        }
+    }
+
+    /// A low target leaves a huge feasible space; the node budget bounds it.
+    #[test]
+    fn test_branch_and_bound_mid_range_target_is_bounded() {
+        let selector = CoinSelector::new(SelectionStrategy::BranchAndBound);
+        let utxos: Vec<Utxo> = (0..64)
+            .map(|i| Utxo::dummy(0, 100_000 + (i as u64) * 7_919, 100, false, true))
+            .collect();
+        let total: u64 = utxos.iter().map(|u| u.value()).sum();
+
+        let started = std::time::Instant::now();
+        let result = selector.select_coins(&utxos, total / 3, FeeRate::new(1000), 200).unwrap();
+        let elapsed = started.elapsed();
+
+        assert!(result.total_value >= total / 3);
+        assert!(
+            elapsed < std::time::Duration::from_secs(30),
+            "selection took {:?}; the node budget is not bounding the search",
+            elapsed
+        );
+    }
+
+    /// What actually fixes #918 is the feasibility bound, not the node budget: with
+    /// a near-total target the search settles in a handful of nodes instead of
+    /// walking 2^N. Asserted on nodes visited, so it does not depend on machine speed.
+    #[test]
+    fn test_feasibility_bound_settles_a_near_total_target_in_few_nodes() {
+        let fee_rate = FeeRate::new(1000);
+        let values: Vec<u64> = (0..32u64).map(|i| 100_000 + i * 7_919).collect();
+        let total: u64 = values.iter().sum();
+
+        let (candidates, suffix) = bnb_setup(&values, fee_rate);
+        let visited = run_bnb(&candidates, &suffix, total - 50_000);
+        assert!(
+            visited < 1_000,
+            "a near-total target should be bounded in a few nodes, visited {}",
+            visited
+        );
+    }
+
+    /// Candidates and suffix sums as `branch_and_bound` builds them, so a test can
+    /// drive the search directly and count what it costs.
+    fn bnb_setup(values: &[u64], fee_rate: FeeRate) -> (Vec<BnbCandidate>, Vec<u64>) {
+        let input_fee = fee_rate.calculate_fee(TX_INPUT_SIZE);
+        let mut candidates: Vec<BnbCandidate> = values
+            .iter()
+            .enumerate()
+            .map(|(index, v)| BnbCandidate {
+                index,
+                effective_value: v - input_fee,
+            })
+            .collect();
+        candidates.sort_by_key(|c| Reverse(c.effective_value));
+
+        let mut suffix = vec![0u64; candidates.len() + 1];
+        for i in (0..candidates.len()).rev() {
+            suffix[i] = suffix[i + 1] + candidates[i].effective_value;
+        }
+        (candidates, suffix)
+    }
+
+    /// Run the search over a full budget and report the nodes it visited.
+    fn run_bnb(candidates: &[BnbCandidate], suffix: &[u64], target: u64) -> u32 {
+        let mut search = BnbSearch {
+            candidates,
+            suffix,
+            target,
+            window: 546,
+            budget: BNB_NODE_BUDGET,
+            best: None,
+        };
+        search.run(0, &mut Vec::new(), 0);
+        BNB_NODE_BUDGET - search.budget
+    }
+
+    /// The mirror of the near-total case: a low target leaves a huge feasible space
+    /// with no exact match in it, so the bounds cannot settle it and the *budget* is
+    /// what has to stop the search. Asserted on nodes visited rather than the clock.
+    #[test]
+    fn test_node_budget_stops_a_mid_range_search() {
+        let fee_rate = FeeRate::new(1000);
+        let values: Vec<u64> = (0..64u64).map(|i| 100_000 + i * 7_919).collect();
+        let total: u64 = values.iter().sum();
+
+        let (candidates, suffix) = bnb_setup(&values, fee_rate);
+        let visited = run_bnb(&candidates, &suffix, total / 3);
+
+        assert_eq!(
+            visited, BNB_NODE_BUDGET,
+            "the budget should be the binding constraint here; if the bounds now settle \
+             this case in {visited} nodes the budget may be sized wrong"
+        );
     }
 }

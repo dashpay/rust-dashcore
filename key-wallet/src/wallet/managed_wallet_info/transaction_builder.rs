@@ -6,7 +6,7 @@
 use crate::managed_account::reservation::ReservationSet;
 use crate::managed_account::ManagedCoreFundsAccount;
 use crate::wallet::managed_wallet_info::coin_selection::{
-    CoinSelector, SelectionStrategy, CHANGE_OUTPUT_SIZE, TX_INPUT_SIZE, TX_OUTPUT_SIZE,
+    CoinSelector, SelectionStrategy, CHANGE_OUTPUT_SIZE, TX_OUTPUT_SIZE,
 };
 use crate::wallet::managed_wallet_info::fee::FeeRate;
 use crate::{Account, DerivationPath, Signer, Utxo, Wallet};
@@ -325,7 +325,6 @@ impl TransactionBuilder {
                 self.fee_rate,
                 self.current_height,
                 self.calculate_base_size(),
-                TX_INPUT_SIZE,
                 change_output_size,
             )
             .map_err(BuilderError::CoinSelection)?;
