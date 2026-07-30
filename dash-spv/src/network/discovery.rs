@@ -6,6 +6,8 @@ use rand::seq::SliceRandom;
 use crate::network::peer::DisconnectedPeer;
 use crate::ClientConfig;
 
+const DNS_LOOKUP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
 pub struct PeerDiscoverer {
     network: Network,
     // Empty means "discover" from the compiled-in seeds, then DNS.
@@ -54,14 +56,23 @@ impl PeerDiscoverer {
 
         let port = network.default_p2p_port();
         for seed in network.dns_seeds() {
-            match tokio::net::lookup_host((*seed, port)).await {
-                Ok(iter) => {
+            match tokio::time::timeout(DNS_LOOKUP_TIMEOUT, tokio::net::lookup_host((*seed, port)))
+                .await
+            {
+                Ok(Ok(iter)) => {
                     let resolved: Vec<SocketAddr> = iter.collect();
                     tracing::info!("DNS seed {} returned {} addresses", seed, resolved.len());
                     addresses.extend(resolved);
                 }
-                Err(e) => {
+                Ok(Err(e)) => {
                     tracing::warn!("Failed to resolve DNS seed {} (backup source): {}", seed, e);
+                }
+                Err(_) => {
+                    tracing::warn!(
+                        "DNS seed {} did not resolve within {:?} (backup source)",
+                        seed,
+                        DNS_LOOKUP_TIMEOUT
+                    );
                 }
             }
         }

@@ -90,9 +90,9 @@ impl<W: WalletInterface + 'static> SyncManager for MempoolManager<W> {
         msg: NetworkMessage,
         network: &Arc<dyn NetworkManager>,
     ) -> SyncResult<Vec<SyncEvent>> {
-        match &msg {
-            NetworkMessage::Inv(inv) => self.handle_inv(inv, peer, network).await,
-            NetworkMessage::Tx(tx) => self.handle_tx((*tx).clone(), peer, network).await,
+        match msg {
+            NetworkMessage::Tx(tx) => self.handle_tx(tx, peer, network).await,
+            NetworkMessage::Inv(inv) => self.handle_inv(&inv, peer, network).await,
             _ => Ok(vec![]),
         }
     }

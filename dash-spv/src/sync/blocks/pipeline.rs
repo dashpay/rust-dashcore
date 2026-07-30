@@ -62,10 +62,15 @@ impl BlocksPipeline {
     }
 
     /// Queue blocks with their heights and per-block interested wallet sets.
+    ///
+    /// Returns how many were not already tracked, which is what "blocks requested"
+    /// means for progress: a block enters the wanted set once, however many times it
+    /// is later re-declared to the broker.
     pub(super) fn queue(
         &mut self,
         blocks: impl IntoIterator<Item = (FilterMatchKey, BTreeSet<WalletId>)>,
-    ) {
+    ) -> usize {
+        let mut newly_tracked = 0;
         for (key, wallets) in blocks {
             let hash = *key.hash();
             let already_tracked =
@@ -73,9 +78,11 @@ impl BlocksPipeline {
             if !already_tracked {
                 self.pending_heights.insert(key.height());
                 self.hash_to_height.insert(hash, key.height());
+                newly_tracked += 1;
             }
             self.hash_to_wallets.entry(hash).or_default().extend(wallets);
         }
+        newly_tracked
     }
 
     /// Check if the pipeline has completed all work.

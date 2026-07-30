@@ -203,13 +203,17 @@ pub trait SyncManager: Send + Sync + std::fmt::Debug {
         network: &Arc<dyn NetworkManager>,
     ) -> SyncResult<Vec<SyncEvent>>;
 
-    /// Periodic tick for timeouts, retries, and proactive work.
+    /// Periodic tick for work that only a clock can trigger.
     ///
-    /// Called regularly by the coordinator (e.g., every 100ms).
-    /// Use this for:
-    /// - Proactive request sending
-    /// - State cleanup
-    async fn tick(&mut self, network: &Arc<dyn NetworkManager>) -> SyncResult<Vec<SyncEvent>>;
+    /// Called every 100ms by the coordinator. Reserved for genuinely time-based
+    /// work — expiry, retry schedules the broker does not own, polling — and for
+    /// processing that cannot be driven from an arrival. It is *not* the place to
+    /// re-declare requests: once declared, the broker owns their timeout, retry and
+    /// peer hot-swap, so re-offering them costs a registry lock per item and buys
+    /// nothing. Managers with no such work leave this alone.
+    async fn tick(&mut self, _network: &Arc<dyn NetworkManager>) -> SyncResult<Vec<SyncEvent>> {
+        Ok(vec![])
+    }
 
     /// Handle a network event (peer connection changes).
     ///
@@ -313,9 +317,9 @@ pub trait SyncManager: Send + Sync + std::fmt::Debug {
                         }
                         Err(broadcast::error::RecvError::Lagged(n)) => {
                             // Sync-event bus overflowed for this manager; skipped `n`
-                            // events. Keep running rather than killing the task — a
-                            // dropped event is recoverable via tick()/reconciliation,
-                            // a dead task is not.
+                            // events. Keep running rather than killing the task: a dead
+                            // manager is a stalled sync. Nothing recovers the skipped
+                            // events, so the bus is sized (10k) not to overflow.
                             tracing::warn!("{} lagged sync events, skipped {}", identifier, n);
                         }
                         Err(error) => {

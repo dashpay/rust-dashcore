@@ -628,14 +628,6 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
             return Ok(vec![]);
         }
 
-        // Re-declare any still-wanted MnListDiffs. Timeouts/retries for these are
-        // the broker's job now (they carry a `RequestKey::MnListDiff`); the tick
-        // just re-declares as a safety net. Completion is driven from the message
-        // handler when the last diff arrives.
-        if !self.sync_state.mnlistdiff_pipeline.is_complete() {
-            self.sync_state.mnlistdiff_pipeline.send_pending(network).await?;
-        }
-
         Ok(vec![])
     }
 

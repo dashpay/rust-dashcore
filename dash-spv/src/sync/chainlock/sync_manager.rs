@@ -61,13 +61,14 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> SyncManager for ChainLockManager
                         "Received {} ChainLock announcements, requesting via getdata",
                         chainlocks_to_request.len()
                     );
-                    network
+                    if network
                         .send_to(peer, NetworkMessage::GetData(chainlocks_to_request.clone()))
-                        .await;
-
-                    for item in &chainlocks_to_request {
-                        if let Inventory::ChainLock(hash) = item {
-                            self.requested_chainlocks.insert(*hash);
+                        .await
+                    {
+                        for item in &chainlocks_to_request {
+                            if let Inventory::ChainLock(hash) = item {
+                                self.requested_chainlocks.insert(*hash);
+                            }
                         }
                     }
                 }
@@ -113,11 +114,6 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> SyncManager for ChainLockManager
             }]);
         }
 
-        Ok(vec![])
-    }
-
-    async fn tick(&mut self, _network: &Arc<dyn NetworkManager>) -> SyncResult<Vec<SyncEvent>> {
-        // No periodic work needed
         Ok(vec![])
     }
 

@@ -128,13 +128,7 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> SyncManager for BlockHeadersMana
             return Ok(vec![]);
         }
 
-        // During initial sync, send more requests and log progress
         if self.state() == SyncState::Syncing {
-            let sent = self.pipeline.send_pending(network).await?;
-            if sent > 0 {
-                tracing::debug!("Tick: pipeline sent {} more requests", sent);
-            }
-
             return Ok(vec![]);
         }
 

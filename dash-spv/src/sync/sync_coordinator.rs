@@ -193,7 +193,7 @@ where
     /// Each manager receives:
     /// - A message stream filtered by its subscribed types
     /// - An event bus subscription for inter-manager events
-    /// - A request sender for outgoing network messages
+    /// - A handle to the network manager, to declare requests on
     /// - A shutdown token for graceful termination
     pub async fn start(&mut self, network: &Arc<dyn NetworkManager>) -> SyncResult<()> {
         if !self.tasks.is_empty() {
