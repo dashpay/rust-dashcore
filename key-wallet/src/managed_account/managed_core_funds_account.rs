@@ -647,6 +647,93 @@ impl ManagedCoreFundsAccount {
         }
     }
 
+    /// Generate and reserve the next receive address.
+    ///
+    /// Like [`Self::next_receive_address`] but atomically reserves the returned
+    /// address so a concurrent hand-out cannot return the same one. The
+    /// reservation persists until funds arrive (promoting it to used),
+    /// [`Self::release_receive_reservation`] is called, or it is reclaimed by a
+    /// TTL sweep. `now` is a caller-supplied timestamp (seconds) stamping the
+    /// reservation. Only valid for Standard accounts.
+    ///
+    /// Derivation of fresh addresses on this path is unbounded, so callers are
+    /// assumed trusted. See [`address_pool::AddressPool::next_unused_and_reserve`].
+    pub fn next_receive_address_and_reserve(
+        &mut self,
+        account_xpub: Option<&ExtendedPubKey>,
+        now: u64,
+    ) -> Result<Address, &'static str> {
+        if let ManagedAccountType::Standard {
+            external_addresses,
+            ..
+        } = self.keys.managed_account_type_mut()
+        {
+            let key_source = match account_xpub {
+                Some(xpub) => address_pool::KeySource::Public(*xpub),
+                None => address_pool::KeySource::NoKeySource,
+            };
+
+            let addr = external_addresses.next_unused_and_reserve(&key_source, now).map_err(
+                |e| match e {
+                    crate::error::Error::NoKeySource => {
+                        "No unused addresses available and no key source provided"
+                    }
+                    _ => "Failed to generate receive address",
+                },
+            )?;
+            self.keys.bump_monitor_revision();
+            Ok(addr)
+        } else {
+            Err("Cannot generate receive address for non-standard account type")
+        }
+    }
+
+    /// Release a previously reserved receive address back to the available pool.
+    ///
+    /// Idempotent: returns `false` if the address is unknown to the external
+    /// pool or is not currently reserved. Bumps the monitor revision only when
+    /// a reservation is actually cleared.
+    pub fn release_receive_reservation(&mut self, address: &Address) -> bool {
+        if let ManagedAccountType::Standard {
+            external_addresses,
+            ..
+        } = self.keys.managed_account_type_mut()
+        {
+            if let Some(index) = external_addresses.address_index(address) {
+                if external_addresses.release_reservation(index) {
+                    self.keys.bump_monitor_revision();
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    /// Reclaim receive reservations older than `ttl`, returning their addresses
+    /// to the available pool.
+    ///
+    /// Backstop for reservations handed out but never funded and never
+    /// explicitly released, which would otherwise pin gap-limit headroom
+    /// forever. `now` and `ttl` are caller-supplied (seconds); the wallet keeps
+    /// no clock. Returns the number of reservations reclaimed and bumps the
+    /// monitor revision when that is non-zero. See
+    /// [`address_pool::AddressPool::sweep_expired_reservations`].
+    pub fn sweep_expired_receive_reservations(&mut self, now: u64, ttl: u64) -> usize {
+        if let ManagedAccountType::Standard {
+            external_addresses,
+            ..
+        } = self.keys.managed_account_type_mut()
+        {
+            let reclaimed = external_addresses.sweep_expired_reservations(now, ttl);
+            if reclaimed > 0 {
+                self.keys.bump_monitor_revision();
+            }
+            reclaimed
+        } else {
+            0
+        }
+    }
+
     /// Generate multiple receive addresses at once using the optionally provided extended public key.
     /// Only valid for Standard accounts.
     pub fn next_receive_addresses(

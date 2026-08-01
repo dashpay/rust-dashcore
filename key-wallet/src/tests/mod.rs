@@ -8,6 +8,8 @@ mod balance_tests;
 
 mod address_pool_tests;
 
+mod address_reservation_tests;
+
 mod advanced_transaction_tests;
 
 mod backup_restore_tests;

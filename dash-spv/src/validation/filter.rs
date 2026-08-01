@@ -122,7 +122,7 @@ impl Validator<FilterValidationInput<'_>> for FilterValidator {
             )));
         }
 
-        tracing::debug!("Verified {} filters successfully", input.filters.len());
+        tracing::trace!("Verified {} filters successfully", input.filters.len());
         Ok(())
     }
 }

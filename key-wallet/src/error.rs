@@ -37,6 +37,8 @@ pub enum Error {
     Serialization(String),
     /// Invalid parameter
     InvalidParameter(String),
+    /// Internal invariant violated (inconsistent wallet state)
+    InvalidState(String),
     /// Watch-only wallet (no private keys available)
     WatchOnly,
     /// No key source available for address derivation
@@ -71,6 +73,7 @@ impl fmt::Display for Error {
             Error::CoinJoinNotEnabled => write!(f, "CoinJoin not enabled for this account"),
             Error::Serialization(s) => write!(f, "Serialization error: {}", s),
             Error::InvalidParameter(s) => write!(f, "Invalid parameter: {}", s),
+            Error::InvalidState(s) => write!(f, "Invalid state: {}", s),
             Error::WatchOnly => write!(f, "Watch-only wallet: private keys not available"),
             Error::NoKeySource => write!(f, "No key source available for address derivation"),
             Error::KeylessWalletRequiresAccountKey {

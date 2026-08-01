@@ -5,7 +5,9 @@
 
 use crate::managed_account::reservation::{ReservationSet, ReservationToken};
 use crate::managed_account::ManagedCoreFundsAccount;
-use crate::wallet::managed_wallet_info::coin_selection::{CoinSelector, SelectionStrategy};
+use crate::wallet::managed_wallet_info::coin_selection::{
+    CoinSelector, SelectionStrategy, CHANGE_OUTPUT_SIZE, TX_OUTPUT_SIZE,
+};
 use crate::wallet::managed_wallet_info::fee::FeeRate;
 use crate::{Account, DerivationPath, Signer, Utxo, Wallet};
 use core::fmt;
@@ -186,12 +188,12 @@ impl TransactionBuilder {
                 },
         );
 
-        // Add outputs size (TX_OUTPUT_SIZE = 34 bytes per P2PKH output)
-        size += outputs_count * 34;
+        // Add outputs size (P2PKH output)
+        size += outputs_count * TX_OUTPUT_SIZE;
 
         // Add change output if we have a change address
         if self.change_addr.is_some() {
-            size += 34; // TX_OUTPUT_SIZE
+            size += CHANGE_OUTPUT_SIZE;
         }
 
         // Add special payload size if present
@@ -263,7 +265,8 @@ impl TransactionBuilder {
                 }
                 TransactionPayload::AssetLockPayloadType(p) => {
                     // version (1) + creditOutputsCount + creditOutputs
-                    1 + varint_size(p.credit_outputs.len()) + p.credit_outputs.len() * 34
+                    1 + varint_size(p.credit_outputs.len())
+                        + p.credit_outputs.len() * TX_OUTPUT_SIZE
                 }
                 TransactionPayload::AssetUnlockPayloadType(_p) => {
                     // version (1) + index (8) + fee (4) + requestHeight (4) + quorumHash (32) + quorumSig (96)
@@ -319,6 +322,13 @@ impl TransactionBuilder {
             self.inputs.retain(|utxo| utxo.is_confirmed || utxo.is_instantlocked);
         }
 
+        // Matches `calculate_base_size`: a change output is only budgeted with a change address.
+        let change_output_size = if self.change_addr.is_some() {
+            CHANGE_OUTPUT_SIZE
+        } else {
+            0
+        };
+
         let selection = CoinSelector::new(self.selection_strategy)
             .select_coins_with_size(
                 self.inputs.iter(),
@@ -326,7 +336,7 @@ impl TransactionBuilder {
                 self.fee_rate,
                 self.current_height,
                 self.calculate_base_size(),
-                148, // Size per P2PKH input
+                change_output_size,
             )
             .map_err(BuilderError::CoinSelection)?;
 
@@ -361,12 +371,34 @@ impl TransactionBuilder {
         if self.selection_strategy == SelectionStrategy::All {
             // Drain: the single output takes the whole balance minus fee (the caller's amount is
             // ignored); no change.
+            let drained = total_input.saturating_sub(selection.estimated_fee);
+            if drained == 0 {
+                return Err(BuilderError::InsufficientFunds {
+                    available: total_input,
+                    required: selection.estimated_fee,
+                });
+            }
             let [out] = tx_outputs.as_mut_slice() else {
                 return Err(BuilderError::InvalidData(
                     "SelectionStrategy::All requires exactly one output (the destination)".into(),
                 ));
             };
-            out.value = total_input.saturating_sub(selection.estimated_fee);
+            out.value = drained;
+            // An asset-lock drain must also rewrite the payload's credit
+            // output: the on-chain OP_RETURN burn (`out` above) mirrors the
+            // payload credit sum, and a mismatch is consensus-invalid.
+            if let Some(TransactionPayload::AssetLockPayloadType(payload)) =
+                &mut self.special_payload
+            {
+                let [credit] = payload.credit_outputs.as_mut_slice() else {
+                    return Err(BuilderError::InvalidData(
+                        "SelectionStrategy::All with an asset-lock payload requires exactly one \
+                         credit output"
+                            .into(),
+                    ));
+                };
+                credit.value = drained;
+            }
         } else if change_amount > 546 {
             // Add change output if above dust threshold
             let Some(change_addr) = self.change_addr else {
@@ -752,6 +784,25 @@ mod tests {
             result,
             Err(BuilderError::InsufficientFunds { .. }) | Err(BuilderError::CoinSelection(_))
         ));
+    }
+
+    #[test]
+    fn test_no_change_address_large_surplus_errors_not_burned() {
+        // Review finding: a send that leaves a large remainder but has no change address must
+        // error (NoChangeAddress), not silently pay the entire surplus to miners.
+        let utxo = Utxo::dummy(0, 10_000_000, 100, false, true);
+        let destination = Address::dummy(Network::Testnet, 0);
+
+        let result = TransactionBuilder::new()
+            .set_current_height(200)
+            .add_inputs([utxo]) // no set_change_address
+            .add_output(&destination, 100_000)
+            .build_unsigned();
+
+        assert!(
+            matches!(result, Err(BuilderError::NoChangeAddress)),
+            "surplus with no change address must error, got {result:?}"
+        );
     }
 
     #[test]
