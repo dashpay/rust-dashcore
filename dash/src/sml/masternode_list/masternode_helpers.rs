@@ -13,6 +13,20 @@ impl MasternodeList {
     /// `key_id_voting` is the 20-byte hash160 of the voting public key; a
     /// single voting key can back more than one masternode, so the result is
     /// a `Vec` (empty when no entry matches).
+    ///
+    /// # Ordering
+    ///
+    /// Results are returned in **ascending `ProTxHash` order**. This is a
+    /// guaranteed part of the API, not an accident of the current
+    /// implementation: the backing `masternodes` collection is a
+    /// `BTreeMap<ProTxHash, _>`, whose iteration order is defined by the
+    /// standard library to be ascending key order, and `ProTxHash` derives
+    /// `Ord` over its 32 internal bytes. Because `ProTxHash` is a
+    /// `#[hash_newtype(forward)]` hash, that internal byte order is also the
+    /// order its hex `Display` reads in, so the returned sequence is sorted
+    /// the same way it prints. Callers that need a deterministic vote order
+    /// (contested-username voting does) may rely on this directly without
+    /// re-sorting.
     pub fn masternodes_by_voting_key(&self, voting_key_id: &PubkeyHash) -> Vec<ProTxHash> {
         self.masternodes
             .values()
@@ -102,8 +116,20 @@ mod tests {
                 (pro_tx_hash, entry.into())
             })
             .collect();
-        MasternodeList::build(masternodes, Default::default(), BlockHash::from_byte_array([0u8; 32]), 0)
-            .build()
+        MasternodeList::build(
+            masternodes,
+            Default::default(),
+            BlockHash::from_byte_array([0u8; 32]),
+            0,
+        )
+        .build()
+    }
+
+    /// The `ProTxHash` that `list_from` derives for a given seed byte.
+    fn hash_for_seed(seed: u8) -> ProTxHash {
+        let mut hash_bytes = [0u8; 32];
+        hash_bytes[0] = seed;
+        ProTxHash::from_byte_array(hash_bytes)
     }
 
     #[test]
@@ -113,19 +139,40 @@ mod tests {
         // Two masternodes share voting key A, one uses key B.
         let list = list_from(vec![(1, key_a), (2, key_b), (3, key_a)]);
 
-        let mut matched = list.masternodes_by_voting_key(&PubkeyHash::from_byte_array(key_a));
-        // Order is BTreeMap (proTxHash) order; sort the seed byte for a stable assert.
-        matched.sort_by_key(|h| h.to_byte_array()[0]);
-        assert_eq!(matched.len(), 2);
-        assert_eq!(matched[0].to_byte_array()[0], 1);
-        assert_eq!(matched[1].to_byte_array()[0], 3);
+        // Asserted as a whole `Vec`, so this pins the documented ascending
+        // `ProTxHash` ordering as well as the contents.
+        let matched = list.masternodes_by_voting_key(&PubkeyHash::from_byte_array(key_a));
+        assert_eq!(matched, vec![hash_for_seed(1), hash_for_seed(3)]);
 
         let single = list.masternodes_by_voting_key(&PubkeyHash::from_byte_array(key_b));
-        assert_eq!(single.len(), 1);
-        assert_eq!(single[0].to_byte_array()[0], 2);
+        assert_eq!(single, vec![hash_for_seed(2)]);
 
         // A voting key no masternode uses yields an empty vec.
         let none = list.masternodes_by_voting_key(&PubkeyHash::from_byte_array([0xCCu8; 20]));
         assert!(none.is_empty());
+    }
+
+    #[test]
+    fn masternodes_by_voting_key_returns_ascending_pro_tx_hash_order() {
+        // Seed the list in DESCENDING proTxHash order so a result that merely
+        // echoed insertion order would come back reversed. The documented
+        // guarantee is ascending order regardless of insertion order, which
+        // only holds because `masternodes` is a `BTreeMap<ProTxHash, _>`.
+        let key = [0xAAu8; 20];
+        let list = list_from(vec![(9, key), (5, key), (7, key), (1, key)]);
+
+        let matched = list.masternodes_by_voting_key(&PubkeyHash::from_byte_array(key));
+        assert_eq!(
+            matched,
+            vec![hash_for_seed(1), hash_for_seed(5), hash_for_seed(7), hash_for_seed(9)],
+            "results must be in ascending ProTxHash order, not insertion order"
+        );
+
+        // Belt and braces: the sequence is sorted by the same comparison the
+        // public `Ord` impl exposes to callers.
+        assert!(
+            matched.windows(2).all(|w| w[0] < w[1]),
+            "returned hashes must be strictly ascending under ProTxHash: Ord"
+        );
     }
 }
