@@ -2618,6 +2618,57 @@ mod tests {
         assert!(manager.active_batches.is_empty());
     }
 
+    /// A wallet reporting `synced_height = 0` is "behind" any positive
+    /// `committed_height`, but on a checkpoint sync the scan cannot reach below
+    /// the stored headers' start anyway, so a restart would resume above the
+    /// frontier and change nothing. The trigger must compare against that floor
+    /// rather than the raw `synced_height`: comparing the raw value is
+    /// level-sensitive, so it would fire on every tick and wipe the in-flight
+    /// filter batches before any could complete.
+    #[tokio::test]
+    async fn test_tick_does_not_rescan_when_restart_would_land_above_committed() {
+        let mut manager = create_test_manager().await;
+
+        // Checkpoint sync: headers start at 500, so no scan can reach below it.
+        let headers = dashcore::block::Header::dummy_batch(500..600);
+        manager
+            .header_storage
+            .write()
+            .await
+            .store_headers_at_height(
+                &headers.iter().map(crate::types::HashedBlockHeader::from).collect::<Vec<_>>(),
+                500,
+            )
+            .await
+            .unwrap();
+        assert_eq!(manager.header_storage.read().await.get_start_height().await, Some(500));
+
+        // MockWallet defaults to synced_height=0, so wallets_behind(400) lists it
+        // even though it needs no coverage below the 500 floor.
+        assert_eq!(manager.wallet.read().await.synced_height(), 0);
+        assert!(!manager.wallet.read().await.wallets_behind(400).is_empty());
+
+        manager.set_state(SyncState::Syncing);
+        manager.progress.update_committed_height(400);
+        manager.progress.update_stored_height(400);
+        manager.progress.update_filter_header_tip_height(600);
+        manager.progress.update_target_height(600);
+
+        // In-flight work that a spurious `reset_for_rescan` would wipe.
+        manager.active_batches.insert(401, FiltersBatch::new(401, 500, HashMap::new()));
+        manager.filter_pipeline.init(401, 500);
+
+        let network = test_network().await;
+        manager.tick(&network).await.unwrap();
+
+        // restart_at = max(0 + 1, 500) = 500 > 400, so the scan was left alone.
+        assert_eq!(manager.progress.committed_height(), 400);
+        assert!(
+            manager.active_batches.contains_key(&401),
+            "in-flight batch must survive a restart that could not reach below the floor"
+        );
+    }
+
     /// `committed_height = 0` on a fresh manager must not falsely trip the
     /// rescan trigger. `wallets_behind(0)` returns an empty set since heights
     /// are unsigned, so no wallet can be strictly less than 0.
