@@ -197,6 +197,9 @@ enum ReqState {
 struct OnWire {
     /// The peer the request was routed to.
     peer: SocketAddr,
+    /// When this request last made progress: set on send, refreshed by every piece of
+    /// a streaming response, so a peer streaming steadily is not judged stalled.
+    last_progress: Instant,
     /// The exact message, re-queued verbatim on timeout (requests are
     /// self-contained, so re-sending the same bytes is a valid retry).
     msg: NetworkMessage,
@@ -664,6 +667,7 @@ async fn route_tick(
                     *slot = ReqState::OnWire(Box::new(OnWire {
                         peer,
                         msg: msg.clone(),
+                        last_progress: Instant::now(),
                     }));
                 }
             }
@@ -1278,7 +1282,7 @@ fn spawn_timeout_monitor(
             // requests and mid-stream progress) catches that: a peer with work
             // outstanding whose byte counter is frozen for a full REQUEST_TIMEOUT is
             // stuck and must be dropped, whatever the registry thinks.
-            let culprits: HashSet<SocketAddr> = {
+            let mut culprits: HashSet<SocketAddr> = {
                 let peers = connected.lock().await;
                 let live: HashSet<SocketAddr> = peers.iter().map(|(p, _)| p.addr()).collect();
                 progress.retain(|addr, _| live.contains(addr));
@@ -1296,6 +1300,19 @@ fn spawn_timeout_monitor(
                 }
                 culprits
             };
+            // A request that stopped making progress also condemns its peer: the
+            // per-peer byte check above sees unrelated traffic and judges it healthy.
+            {
+                let reqs = requests.lock().await;
+                for state in reqs.values() {
+                    if let ReqState::OnWire(o) = state {
+                        if now.duration_since(o.last_progress) > REQUEST_TIMEOUT {
+                            culprits.insert(o.peer);
+                        }
+                    }
+                }
+            }
+
             if culprits.is_empty() {
                 continue;
             }
@@ -1404,6 +1421,25 @@ fn spawn_pump(
                 PeerEvent::Message(addr, msg) => {
                     *recv_by_peer.entry(addr).or_insert(0) += 1;
                     total_recv += 1;
+
+                    // A `cfilter` is one piece of a `getcfilters` batch, which is only
+                    // marked answered once the whole batch lands. Refresh that request's
+                    // deadline so the timeout means "the pieces stopped coming".
+                    if matches!(msg, NetworkMessage::CFilter(_)) {
+                        let mut reqs = requests.lock().await;
+                        for state in reqs.values_mut() {
+                            if let ReqState::OnWire(o) = state {
+                                if o.peer == addr
+                                    && matches!(
+                                        request_keys(&o.msg).first(),
+                                        Some(RequestKey::CFilters(_))
+                                    )
+                                {
+                                    o.last_progress = Instant::now();
+                                }
+                            }
+                        }
+                    }
                     if total_recv.is_multiple_of(250_000) {
                         let mut dist: Vec<(SocketAddr, u64)> =
                             recv_by_peer.iter().map(|(a, c)| (*a, *c)).collect();

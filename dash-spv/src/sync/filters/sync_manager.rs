@@ -222,16 +222,29 @@ impl<
             let behind = wallet_read.wallets_behind(committed);
             let stale_min_synced =
                 behind.iter().map(|id| wallet_read.wallet_synced_height(id)).min();
+            let birth_height = wallet_read.earliest_required_height().await;
             drop(wallet_read);
             if let Some(stale_min_synced) = stale_min_synced {
-                tracing::info!(
-                    "Wallet synced_height {} fell below filter committed_height {}, restarting scan",
-                    stale_min_synced,
-                    committed
-                );
-                self.reset_for_rescan();
-                self.progress.update_committed_height(stale_min_synced);
-                return self.start_download(network).await;
+                // Where a restart would actually resume: `start_download` floors the
+                // scan at the wallets' birth heights and at the stored headers' start.
+                let scan_floor = birth_height
+                    .max(self.header_storage.read().await.get_start_height().await.unwrap_or(0));
+                let restart_at = stale_min_synced.saturating_add(1).max(scan_floor);
+                // Restart only if that reaches below the committed frontier. Comparing
+                // the raw `synced_height` instead would fire on every tick for a wallet
+                // that reports 0 yet needs nothing below the floor, wiping the in-flight
+                // filter batches before any can complete.
+                if restart_at <= committed {
+                    tracing::info!(
+                        "Wallet synced_height {} fell below filter committed_height {}, restarting scan at {}",
+                        stale_min_synced,
+                        committed,
+                        restart_at
+                    );
+                    self.reset_for_rescan();
+                    self.progress.update_committed_height(stale_min_synced);
+                    return self.start_download(network).await;
+                }
             }
         }
 
