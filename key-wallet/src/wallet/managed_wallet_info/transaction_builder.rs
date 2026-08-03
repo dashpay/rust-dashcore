@@ -11,6 +11,7 @@ use crate::wallet::managed_wallet_info::coin_selection::{
 use crate::wallet::managed_wallet_info::fee::FeeRate;
 use crate::{Account, DerivationPath, Signer, Utxo, Wallet};
 use core::fmt;
+use dashcore::blockdata::opcodes;
 use dashcore::blockdata::script::{Builder, PushBytes, ScriptBuf};
 use dashcore::blockdata::transaction::special_transaction::TransactionPayload;
 use dashcore::blockdata::transaction::{OutPoint, Transaction};
@@ -25,6 +26,11 @@ use std::cmp::Ordering;
 /// A transaction with more inputs would exceed the relay standard-size cap (~100 KB at ~148
 /// bytes/signed input) and be rejected by the network
 const MAX_STANDARD_TX_INPUTS: usize = 500;
+/// Default relay-policy limit for OP_RETURN payloads, matching Dash Core's `-datacarriersize`
+/// default. Override per builder with [`TransactionBuilder::set_max_op_return_bytes`] when
+/// targeting a node or network that carries a different policy. Public so callers can also
+/// reject an over-long payload before handing over a builder `add_op_return` would consume.
+pub const DEFAULT_MAX_OP_RETURN_BYTES: usize = 80;
 
 /// Calculate varint size for a given number
 fn varint_size(n: usize) -> usize {
@@ -34,6 +40,11 @@ fn varint_size(n: usize) -> usize {
         0x10000..=0xFFFFFFFF => 5,
         _ => 9,
     }
+}
+
+fn serialized_output_size(output: &TxOut) -> usize {
+    let script_len = output.script_pubkey.as_bytes().len();
+    8 + varint_size(script_len) + script_len
 }
 
 /// Transaction builder for creating Dash transactions
@@ -49,6 +60,11 @@ pub struct TransactionBuilder {
     current_height: u32,
     selection_strategy: SelectionStrategy,
     require_final_inputs: bool,
+    preserve_output_order: bool,
+    change_to_first_input: bool,
+    /// Relay-policy ceiling applied by `add_op_return`, defaulting to
+    /// [`DEFAULT_MAX_OP_RETURN_BYTES`].
+    max_op_return_bytes: usize,
     /// Special transaction payload for Dash-specific transactions
     special_payload: Option<TransactionPayload>,
     /// Reservation set of the funding account, captured by `set_funding`. The
@@ -74,6 +90,9 @@ impl TransactionBuilder {
             current_height: 0,
             selection_strategy: SelectionStrategy::BranchAndBound,
             require_final_inputs: false,
+            preserve_output_order: false,
+            change_to_first_input: false,
+            max_op_return_bytes: DEFAULT_MAX_OP_RETURN_BYTES,
             special_payload: None,
             reservations: None,
         }
@@ -135,15 +154,66 @@ impl TransactionBuilder {
 
     /// Add an output to a specific address
     ///
-    /// Note: Outputs will be sorted according to BIP-69 when the transaction is built:
+    /// Note: by default outputs are sorted according to BIP-69 when the transaction is built:
     /// - First by amount (ascending)
     /// - Then by scriptPubKey (lexicographically)
+    ///
+    /// Call [`Self::preserve_output_order`] to keep insertion order instead.
     pub fn add_output(mut self, address: &Address, amount: u64) -> Self {
         let script_pubkey = address.script_pubkey();
         self.outputs.push(TxOut {
             value: amount,
             script_pubkey,
         });
+        self
+    }
+
+    /// Set the relay-policy ceiling `add_op_return` enforces, overriding
+    /// [`DEFAULT_MAX_OP_RETURN_BYTES`]. Call it before `add_op_return`; the limit is applied
+    /// at the moment the payload is added.
+    pub fn set_max_op_return_bytes(mut self, max_bytes: usize) -> Self {
+        self.max_op_return_bytes = max_bytes;
+        self
+    }
+
+    /// Add an OP_RETURN output carrying `data` (value 0).
+    ///
+    /// Errors if `data` exceeds the configured relay-policy limit — by default
+    /// [`DEFAULT_MAX_OP_RETURN_BYTES`], overridable via
+    /// [`Self::set_max_op_return_bytes`].
+    pub fn add_op_return(mut self, data: &[u8]) -> Result<Self, BuilderError> {
+        if data.len() > self.max_op_return_bytes {
+            return Err(BuilderError::OpReturnDataTooLarge {
+                len: data.len(),
+                max: self.max_op_return_bytes,
+            });
+        }
+
+        let max = self.max_op_return_bytes;
+        let push_bytes =
+            <&PushBytes>::try_from(data).map_err(|_| BuilderError::OpReturnDataTooLarge {
+                len: data.len(),
+                max,
+            })?;
+        self.outputs.push(TxOut {
+            value: 0,
+            script_pubkey: Builder::new()
+                .push_opcode(opcodes::all::OP_RETURN)
+                .push_slice(push_bytes)
+                .into_script(),
+        });
+        Ok(self)
+    }
+
+    /// Preserve outputs in insertion order instead of applying BIP-69 sorting.
+    pub fn preserve_output_order(mut self) -> Self {
+        self.preserve_output_order = true;
+        self
+    }
+
+    /// Route change to the address of the first selected input (post-sort).
+    pub fn change_to_first_input(mut self) -> Self {
+        self.change_to_first_input = true;
         self
     }
 
@@ -167,6 +237,21 @@ impl TransactionBuilder {
         }
     }
 
+    fn should_estimate_change_output(&self) -> bool {
+        self.change_addr.is_some() || self.change_to_first_input
+    }
+
+    fn effective_outputs_size(&self) -> usize {
+        match &self.special_payload {
+            // The asset-lock burn output is sized at the flat TX_OUTPUT_SIZE rather than its
+            // real ~11 serialized bytes. The real size is smaller, so this over-estimates and
+            // over-pays slightly — deliberately kept identical to the pre-OP_RETURN behaviour
+            // so identity funding fees do not move as a side effect of Maya support.
+            Some(TransactionPayload::AssetLockPayloadType(_)) => TX_OUTPUT_SIZE,
+            _ => self.outputs.iter().map(serialized_output_size).sum(),
+        }
+    }
+
     /// Calculate the base transaction size excluding inputs
     /// Based on dashsync/DashSync/shared/Models/Transactions/Base/DSTransaction.m
     fn calculate_base_size(&self) -> usize {
@@ -181,18 +266,19 @@ impl TransactionBuilder {
         // Add varint for output count
         size += varint_size(
             outputs_count
-                + if self.change_addr.is_some() {
+                + if self.should_estimate_change_output() {
                     1
                 } else {
                     0
                 },
         );
 
-        // Add outputs size (P2PKH output)
-        size += outputs_count * TX_OUTPUT_SIZE;
+        // Add serialized output sizes. A P2PKH output still measures TX_OUTPUT_SIZE;
+        // non-standard outputs such as OP_RETURN are sized from their real script.
+        size += self.effective_outputs_size();
 
-        // Add change output if we have a change address
-        if self.change_addr.is_some() {
+        // Add change output if we expect one. Change is always P2PKH here.
+        if self.should_estimate_change_output() {
             size += CHANGE_OUTPUT_SIZE;
         }
 
@@ -306,6 +392,7 @@ impl TransactionBuilder {
         // estimate doesn't include a phantom (~34-byte) change output.
         if self.selection_strategy == SelectionStrategy::All {
             self.change_addr = None;
+            self.change_to_first_input = false;
         }
 
         // For AssetLock the on-chain spend equals the OP_RETURN burn, which
@@ -322,8 +409,10 @@ impl TransactionBuilder {
             self.inputs.retain(|utxo| utxo.is_confirmed || utxo.is_instantlocked);
         }
 
-        // Matches `calculate_base_size`: a change output is only budgeted with a change address.
-        let change_output_size = if self.change_addr.is_some() {
+        // Must match `calculate_base_size`, which budgets a change output whenever one is
+        // expected — including `change_to_first_input`, where change goes to VIN0's address
+        // rather than to a preset `change_addr`.
+        let change_output_size = if self.should_estimate_change_output() {
             CHANGE_OUTPUT_SIZE
         } else {
             0
@@ -357,6 +446,8 @@ impl TransactionBuilder {
                 required: total_output + selection.estimated_fee,
             });
         }
+
+        selected_inputs.sort_by(bip69_input_sorter);
 
         let change_amount =
             total_input.saturating_sub(total_output).saturating_sub(selection.estimated_fee);
@@ -401,20 +492,29 @@ impl TransactionBuilder {
             }
         } else if change_amount > 546 {
             // Add change output if above dust threshold
-            let Some(change_addr) = self.change_addr else {
-                return Err(BuilderError::NoChangeAddress);
+            let change_script_pubkey = if self.change_to_first_input {
+                let Some(first_input) = selected_inputs.first() else {
+                    return Err(BuilderError::NoInputs);
+                };
+                first_input.address.script_pubkey()
+            } else {
+                let Some(change_addr) = self.change_addr else {
+                    return Err(BuilderError::NoChangeAddress);
+                };
+                change_addr.script_pubkey()
             };
+
             tx_outputs.push(TxOut {
                 value: change_amount,
-                script_pubkey: change_addr.script_pubkey(),
+                script_pubkey: change_script_pubkey,
             });
         }
 
-        if !matches!(self.special_payload, Some(TransactionPayload::AssetLockPayloadType(_))) {
+        if !self.preserve_output_order
+            && !matches!(self.special_payload, Some(TransactionPayload::AssetLockPayloadType(_)))
+        {
             tx_outputs.sort_by(bip69_output_sorter);
         }
-
-        selected_inputs.sort_by(bip69_input_sorter);
         let tx_inputs: Vec<TxIn> = selected_inputs
             .iter()
             .map(|utxo| TxIn {
@@ -701,6 +801,11 @@ pub enum BuilderError {
         count: usize,
         max: usize,
     },
+    /// OP_RETURN payload exceeds the standard relay-policy size.
+    OpReturnDataTooLarge {
+        len: usize,
+        max: usize,
+    },
 }
 
 impl fmt::Display for BuilderError {
@@ -727,6 +832,12 @@ impl fmt::Display for BuilderError {
             } => {
                 write!(f, "Too many inputs for a standard transaction: {count} (max {max})")
             }
+            Self::OpReturnDataTooLarge {
+                len,
+                max,
+            } => {
+                write!(f, "OP_RETURN payload too large: {len} bytes (max {max})")
+            }
         }
     }
 }
@@ -739,9 +850,118 @@ mod tests {
     use crate::test_utils::TestWalletContext;
     use crate::Network;
     use dashcore::blockdata::transaction::special_transaction::asset_lock::AssetLockPayload;
+    use dashcore::consensus::serialize;
     use dashcore::{OutPoint, Txid};
     use dashcore_hashes::{sha256d, Hash};
     use hex;
+
+    fn op_return_script(data: &[u8]) -> ScriptBuf {
+        let push_bytes = <&PushBytes>::try_from(data).expect("test OP_RETURN bytes");
+        Builder::new().push_opcode(opcodes::all::OP_RETURN).push_slice(push_bytes).into_script()
+    }
+
+    fn build_unsigned_legacy(mut builder: TransactionBuilder) -> (Transaction, u64) {
+        if let Some(TransactionPayload::AssetLockPayloadType(p)) = &builder.special_payload {
+            assert!(!p.credit_outputs.is_empty(), "legacy helper expects outputs");
+        } else if builder.outputs.is_empty() && builder.special_payload.is_none() {
+            panic!("legacy helper expects outputs");
+        }
+
+        if builder.selection_strategy == SelectionStrategy::All {
+            builder.change_addr = None;
+        }
+
+        let total_output: u64 = match &builder.special_payload {
+            Some(TransactionPayload::AssetLockPayloadType(p)) => {
+                p.credit_outputs.iter().map(|o| o.value).sum()
+            }
+            _ => builder.outputs.iter().map(|o| o.value).sum(),
+        };
+
+        if builder.require_final_inputs {
+            builder.inputs.retain(|utxo| utxo.is_confirmed || utxo.is_instantlocked);
+        }
+
+        let selection = CoinSelector::new(builder.selection_strategy)
+            .select_coins_with_size(
+                builder.inputs.iter(),
+                total_output,
+                builder.fee_rate,
+                builder.current_height,
+                builder.calculate_base_size(),
+                // The selector's last argument is the change-output size. The legacy path
+                // budgeted one only when a change address was set — reproduce exactly that,
+                // so the comparison isolates the output-sizing change.
+                if builder.change_addr.is_some() {
+                    CHANGE_OUTPUT_SIZE
+                } else {
+                    0
+                },
+            )
+            .expect("legacy selection");
+
+        let mut selected_inputs = selection.selected;
+        let total_input: u64 = selected_inputs.iter().map(|u| u.value()).sum();
+        let change_amount =
+            total_input.saturating_sub(total_output).saturating_sub(selection.estimated_fee);
+
+        let mut tx_outputs = match &builder.special_payload {
+            Some(TransactionPayload::AssetLockPayloadType(_)) => vec![TxOut {
+                value: total_output,
+                script_pubkey: ScriptBuf::new_op_return(&[]),
+            }],
+            _ => builder.outputs,
+        };
+
+        if builder.selection_strategy == SelectionStrategy::All {
+            let [out] = tx_outputs.as_mut_slice() else {
+                panic!("legacy helper expects a single drain output");
+            };
+            out.value = total_input.saturating_sub(selection.estimated_fee);
+        } else if change_amount > 546 {
+            let change_addr = builder.change_addr.expect("legacy change address");
+            tx_outputs.push(TxOut {
+                value: change_amount,
+                script_pubkey: change_addr.script_pubkey(),
+            });
+        }
+
+        if !matches!(builder.special_payload, Some(TransactionPayload::AssetLockPayloadType(_))) {
+            tx_outputs.sort_by(|a, b| match a.value.cmp(&b.value) {
+                Ordering::Equal => a.script_pubkey.as_bytes().cmp(b.script_pubkey.as_bytes()),
+                other => other,
+            });
+        }
+
+        selected_inputs.sort_by(|a, b| {
+            let tx_hash_a = a.outpoint.txid.to_byte_array();
+            let tx_hash_b = b.outpoint.txid.to_byte_array();
+
+            match tx_hash_a.cmp(&tx_hash_b) {
+                Ordering::Equal => a.outpoint.vout.cmp(&b.outpoint.vout),
+                other => other,
+            }
+        });
+
+        let tx = Transaction {
+            version: 3,
+            lock_time: 0,
+            input: selected_inputs
+                .iter()
+                .map(|utxo| TxIn {
+                    previous_output: utxo.outpoint,
+                    script_sig: ScriptBuf::new(),
+                    sequence: 0xffffffff,
+                    witness: dashcore::blockdata::witness::Witness::new(),
+                })
+                .collect(),
+            output: tx_outputs,
+            special_transaction_payload: builder.special_payload,
+        };
+
+        let total_output: u64 = tx.output.iter().map(|out| out.value).sum();
+        (tx, total_input.saturating_sub(total_output))
+    }
 
     #[test]
     fn test_transaction_builder_basic() {
@@ -1097,6 +1317,194 @@ mod tests {
 
         // The lowest value should be 100000
         assert_eq!(tx.output[0].value, 100000);
+    }
+
+    #[test]
+    fn test_maya_deposit_shape_preserves_output_order_and_routes_change_to_first_input() {
+        let vault = Address::dummy(Network::Testnet, 42);
+        let memo = vec![0x4d; DEFAULT_MAX_OP_RETURN_BYTES];
+        let utxos = vec![
+            Utxo::dummy(0x02, 80_000, 100, false, true),
+            Utxo::dummy(0x01, 80_000, 100, false, true),
+        ];
+
+        let (tx, fee) = TransactionBuilder::new()
+            .set_current_height(200)
+            .set_selection_strategy(SelectionStrategy::SmallestFirst)
+            .set_fee_rate(FeeRate::normal())
+            .add_inputs(utxos)
+            .add_output(&vault, 120_000)
+            .add_op_return(&memo)
+            .expect("valid OP_RETURN")
+            .preserve_output_order()
+            .change_to_first_input()
+            .build_unsigned()
+            .expect("maya-shaped transaction");
+
+        assert_eq!(tx.output.len(), 3, "vault + memo + change");
+        assert_eq!(tx.output[0].script_pubkey, vault.script_pubkey());
+        assert_eq!(tx.output[1].value, 0);
+        assert!(tx.output[1].script_pubkey.is_op_return());
+        assert_eq!(tx.output[1].script_pubkey, op_return_script(&memo));
+        assert_eq!(
+            &tx.output[1].script_pubkey.as_bytes()
+                [tx.output[1].script_pubkey.as_bytes().len() - memo.len()..],
+            memo.as_slice()
+        );
+        assert_eq!(tx.output[2].script_pubkey, Address::dummy(Network::Testnet, 1).script_pubkey());
+
+        // `build_unsigned` leaves every script_sig empty, so the serialized bytes are ~107
+        // short per input (41 unsigned vs the 148 a signed P2PKH input costs). Comparing the
+        // fee against that would pass no matter how badly the estimate under-counted — the
+        // very regression the precise output sizing exists to prevent. Measure against the
+        // signed size the builder itself assumes.
+        const SIGNED_INPUT_SIZE: usize = 148;
+        const UNSIGNED_INPUT_SIZE: usize = 41;
+        let signed_size = (serialize(&tx).len()
+            + tx.input.len() * (SIGNED_INPUT_SIZE - UNSIGNED_INPUT_SIZE))
+            as u64;
+        assert!(
+            fee >= signed_size,
+            "fee {fee} must cover the signed size {signed_size} at the 1 duff/byte relay minimum"
+        );
+    }
+
+    /// The precise per-output sizing added for OP_RETURN support must not move the fee
+    /// estimate for any transaction shape that existed before it: P2PKH outputs really are
+    /// 34 serialized bytes, and the asset-lock burn is deliberately still charged at 34.
+    #[test]
+    fn test_base_size_unchanged_for_pre_op_return_shapes() {
+        fn legacy_base_size(outputs_count: usize, has_change: bool, payload_size: usize) -> usize {
+            let mut size = 8 + 1;
+            size += varint_size(outputs_count + usize::from(has_change));
+            size += outputs_count * 34;
+            if has_change {
+                size += 34;
+            }
+            if payload_size > 0 {
+                size += varint_size(payload_size) + payload_size;
+            }
+            size
+        }
+
+        let plain = TransactionBuilder::new()
+            .set_change_address(Address::dummy(Network::Testnet, 13))
+            .add_output(&Address::dummy(Network::Testnet, 11), 80_000)
+            .add_output(&Address::dummy(Network::Testnet, 12), 60_000);
+        assert_eq!(plain.calculate_base_size(), legacy_base_size(2, true, 0));
+
+        let no_change =
+            TransactionBuilder::new().add_output(&Address::dummy(Network::Testnet, 11), 80_000);
+        assert_eq!(no_change.calculate_base_size(), legacy_base_size(1, false, 0));
+
+        let asset_lock = TransactionBuilder::new()
+            .set_change_address(Address::dummy(Network::Testnet, 13))
+            .set_special_payload(TransactionPayload::AssetLockPayloadType(AssetLockPayload {
+                version: 1,
+                credit_outputs: vec![TxOut {
+                    value: 50_000,
+                    script_pubkey: Address::dummy(Network::Testnet, 14).script_pubkey(),
+                }],
+            }));
+        let payload_size = 1 + varint_size(1) + 34;
+        assert_eq!(
+            asset_lock.calculate_base_size(),
+            legacy_base_size(1, true, payload_size),
+            "asset-lock sizing must stay byte-identical to the pre-OP_RETURN estimate"
+        );
+    }
+
+    #[test]
+    fn test_add_op_return_rejects_oversized_payload() {
+        let result =
+            TransactionBuilder::new().add_op_return(&[0u8; DEFAULT_MAX_OP_RETURN_BYTES + 1]);
+
+        match result {
+            Err(BuilderError::OpReturnDataTooLarge {
+                len,
+                max,
+            }) => {
+                assert_eq!(len, DEFAULT_MAX_OP_RETURN_BYTES + 1);
+                assert_eq!(max, DEFAULT_MAX_OP_RETURN_BYTES);
+            }
+            _ => panic!("expected oversized OP_RETURN error"),
+        }
+    }
+
+    /// A node or network carrying a different `-datacarriersize` must be able to supply its own
+    /// ceiling rather than inherit the default.
+    #[test]
+    fn test_max_op_return_bytes_is_configurable() {
+        let raised = DEFAULT_MAX_OP_RETURN_BYTES + 20;
+        let payload = vec![0x4d; raised];
+
+        TransactionBuilder::new()
+            .set_max_op_return_bytes(raised)
+            .add_op_return(&payload)
+            .expect("payload within the raised ceiling is accepted");
+
+        match TransactionBuilder::new().set_max_op_return_bytes(raised).add_op_return(&vec![
+            0x4d;
+            raised
+                + 1
+        ]) {
+            Err(BuilderError::OpReturnDataTooLarge {
+                len,
+                max,
+            }) => {
+                assert_eq!(len, raised + 1);
+                assert_eq!(max, raised, "the error must report the configured ceiling");
+            }
+            _ => panic!("expected the raised ceiling to still be enforced"),
+        }
+
+        let lowered = 8;
+        match TransactionBuilder::new().set_max_op_return_bytes(lowered).add_op_return(&[0u8; 9]) {
+            Err(BuilderError::OpReturnDataTooLarge {
+                max,
+                ..
+            }) => assert_eq!(max, lowered),
+            _ => panic!("expected a lowered ceiling to be enforced"),
+        }
+    }
+
+    #[test]
+    fn test_default_ordinary_send_matches_legacy_bytes() {
+        let inputs = vec![
+            Utxo::dummy(0x03, 120_000, 100, false, true),
+            Utxo::dummy(0x01, 130_000, 100, false, true),
+        ];
+        let destination_a = Address::dummy(Network::Testnet, 11);
+        let destination_b = Address::dummy(Network::Testnet, 12);
+        let change = Address::dummy(Network::Testnet, 13);
+
+        let builder = TransactionBuilder::new()
+            .set_current_height(200)
+            .set_selection_strategy(SelectionStrategy::SmallestFirst)
+            .set_fee_rate(FeeRate::normal())
+            .set_change_address(change)
+            .add_inputs(inputs)
+            .add_output(&destination_a, 80_000)
+            .add_output(&destination_b, 60_000);
+
+        let (legacy_tx, legacy_fee) = build_unsigned_legacy(builder);
+
+        let (tx, fee) = TransactionBuilder::new()
+            .set_current_height(200)
+            .set_selection_strategy(SelectionStrategy::SmallestFirst)
+            .set_fee_rate(FeeRate::normal())
+            .set_change_address(Address::dummy(Network::Testnet, 13))
+            .add_inputs([
+                Utxo::dummy(0x03, 120_000, 100, false, true),
+                Utxo::dummy(0x01, 130_000, 100, false, true),
+            ])
+            .add_output(&destination_a, 80_000)
+            .add_output(&destination_b, 60_000)
+            .build_unsigned()
+            .expect("ordinary send");
+
+        assert_eq!(serialize(&tx), serialize(&legacy_tx));
+        assert_eq!(fee, legacy_fee);
     }
 
     #[test]
