@@ -116,9 +116,9 @@ pub struct AssetLockResult {
     /// The caller broadcasts `transaction` and, on a rejected broadcast, must
     /// release the reserved inputs with
     /// [`ManagedCoreFundsAccount::release_reservation_if_owner`] passing this
-    /// token — never the unconditional `release_reservation` — so a reservation
-    /// the TTL sweep reclaimed and another build re-took mid-broadcast is not
-    /// freed out from under that other build. See `dashpay/platform#4185`.
+    /// token — never the unconditional `release_reservation`. See
+    /// `ReservationSet::release_if_owner` for why owner-guarded release is
+    /// required here (`dashpay/platform#4185`).
     ///
     /// [`ManagedCoreFundsAccount::release_reservation_if_owner`]: crate::managed_account::ManagedCoreFundsAccount::release_reservation_if_owner
     pub reservation_token: Option<ReservationToken>,
@@ -330,9 +330,8 @@ impl ManagedWalletInfo {
         // reach `funds_acc` to release, and the caller never received the token
         // to release it either, so a leaked reservation would strand the
         // already-signed inputs until the 24-block TTL sweep. Owner-guarded
-        // release only: an unconditional release could free a concurrent
-        // build's inputs that the TTL sweep + re-reserve handed over during
-        // this build (the TOCTOU of `dashpay/platform#4185`).
+        // release only (see `ReservationSet::release_if_owner`,
+        // `dashpay/platform#4185`).
         let reservations = funds_acc.reservations().clone();
         let reserved: Vec<OutPoint> =
             transaction.input.iter().map(|input| input.previous_output).collect();
@@ -457,10 +456,8 @@ impl ManagedWalletInfo {
         // loop below re-borrows `self.accounts`, so a failure during Phase 1–3
         // — which runs after the transaction is already signed — can still
         // release THIS build's reservation instead of stranding the signed
-        // inputs until the 24-block TTL sweep. Owner-guarded release only: an
-        // unconditional release could free a concurrent build's inputs that the
-        // TTL sweep + re-reserve handed over during this build (the TOCTOU of
-        // `dashpay/platform#4185`).
+        // inputs until the 24-block TTL sweep. Owner-guarded release only (see
+        // `ReservationSet::release_if_owner`, `dashpay/platform#4185`).
         let reservations = funds_acc.reservations().clone();
         let reserved: Vec<OutPoint> =
             transaction.input.iter().map(|input| input.previous_output).collect();

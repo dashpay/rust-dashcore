@@ -137,21 +137,10 @@ impl ManagedCoreFundsAccount {
     ///
     /// This is the release a caller must use when it abandons a transaction
     /// *after having `.await`ed something* between reserving and releasing —
-    /// above all the platform broadcast path, which reserves an
-    /// asset-lock/deferred send's inputs, awaits the broadcast, and on a
-    /// `Rejected` result releases them. During that await key-wallet's TTL sweep
-    /// can invisibly reclaim the reservation and a different concurrent build can
-    /// re-reserve the same outpoint (under a new token, same wallet generation).
-    /// The unconditional [`Self::release_reservation`] would then free the other
-    /// build's inputs, letting coin selection hand them to a second transaction —
-    /// a double-spend window. Passing the original token makes the release a
-    /// no-op for any input that has since changed owners, closing that window.
-    /// The check is atomic under the reservation set's mutex, so no sweep or
-    /// re-reserve can interleave between "is it still mine?" and the removal.
-    ///
-    /// The platform layer cannot make this safe on its own because the sweep
-    /// happens inside key-wallet where it has no visibility; the owner check must
-    /// live here. See `dashpay/platform#4185`.
+    /// above all the platform broadcast path — never the unconditional
+    /// [`Self::release_reservation`]. See `ReservationSet::release_if_owner` for
+    /// the release/re-reserve race this closes and why the owner check must live
+    /// inside key-wallet (`dashpay/platform#4185`).
     ///
     /// [`build_unsigned_reserved`]: crate::wallet::managed_wallet_info::transaction_builder::TransactionBuilder::build_unsigned_reserved
     /// [`build_signed_reserved`]: crate::wallet::managed_wallet_info::transaction_builder::TransactionBuilder::build_signed_reserved

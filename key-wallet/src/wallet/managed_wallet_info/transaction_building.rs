@@ -158,7 +158,7 @@ mod tests {
             .set_change_address(change_address.clone())
             .add_output(&recipient_address, 150000)
             .add_inputs(utxos)
-            .build_unsigned()
+            .build_unsigned_reserved()
             .unwrap()
             .0;
 
@@ -190,13 +190,13 @@ mod tests {
             .require_network(Network::Testnet)
             .unwrap();
 
-        let (tx, _fee) = TransactionBuilder::new()
+        let (tx, _fee, _) = TransactionBuilder::new()
             .set_fee_rate(FeeRate::normal())
             .set_current_height(200)
             .set_change_address(change_address)
             .add_output(&recipient_address, 150000)
             .add_inputs(utxos)
-            .build_unsigned()
+            .build_unsigned_reserved()
             .expect("ordinary spend of an unconfirmed UTXO must succeed");
         assert!(!tx.input.is_empty());
     }
@@ -217,13 +217,13 @@ mod tests {
         let total = 600_000u64;
         let fee = FeeRate::normal().calculate_fee(8 + 1 + 1 + 34 + 3 * 148);
         let deliverable = total - fee;
-        let (tx, _fee) = TransactionBuilder::new()
+        let (tx, _fee, _) = TransactionBuilder::new()
             .set_fee_rate(FeeRate::normal())
             .set_current_height(200)
             .set_selection_strategy(SelectionStrategy::All)
             .add_inputs(utxos)
             .add_output(&dest, deliverable)
-            .build_unsigned()
+            .build_unsigned_reserved()
             .unwrap();
 
         assert_eq!(tx.input.len(), 3, "sweep spends every input");
@@ -312,7 +312,7 @@ mod tests {
             .add_output(&recipient_address, 150000)
             .add_inputs(utxos);
 
-        let tx = builder.build_unsigned().unwrap().0;
+        let tx = builder.build_unsigned_reserved().unwrap().0;
         let serialized = dashcore::consensus::encode::serialize(&tx);
 
         // Size should be close to our estimation
@@ -345,7 +345,7 @@ mod tests {
             .add_output(&recipient_address, 500000)
             .add_inputs(utxos);
 
-        let tx = builder.build_unsigned().unwrap().0;
+        let tx = builder.build_unsigned_reserved().unwrap().0;
 
         // Total input: 1000000
         // Output to recipient: 500000
@@ -376,7 +376,7 @@ mod tests {
             .set_change_address(change_address.clone())
             .add_output(&recipient_address, 1000000) // More than available
             .add_inputs(utxos)
-            .build_unsigned();
+            .build_unsigned_reserved();
 
         assert!(result.is_err());
     }
@@ -402,7 +402,7 @@ mod tests {
             .add_output(&recipient_address, 150000)
             .add_inputs(utxos);
 
-        let tx = builder.build_unsigned().unwrap().0;
+        let tx = builder.build_unsigned_reserved().unwrap().0;
 
         // Should only have 1 output (no change)
         assert_eq!(tx.output.len(), 1);

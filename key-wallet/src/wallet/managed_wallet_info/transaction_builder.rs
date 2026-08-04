@@ -467,27 +467,22 @@ impl TransactionBuilder {
         }
     }
 
-    /// Build the unsigned transaction. The returned fee is the fee the
-    /// transaction actually pays: Σ(selected input values) − Σ(output values).
-    /// This can exceed the size-based fee target when a dust change remainder
-    /// (≤ 546 duffs) is dropped and left to miners.
-    pub fn build_unsigned(self) -> Result<(Transaction, u64), BuilderError> {
-        let (tx, fee, _reservation) = self.build_unsigned_reserved()?;
-        Ok((tx, fee))
-    }
-
-    /// Like [`Self::build_unsigned`], but also returns the [`ReservationToken`]
-    /// stamped onto the inputs this build reserved (`None` when no reservation
-    /// set is attached).
+    /// Build the unsigned transaction, returning it alongside the fee it pays
+    /// and the [`ReservationToken`] stamped onto the inputs this build reserved
+    /// (`None` when no reservation set is attached).
     ///
-    /// Use this instead of [`Self::build_unsigned`] when the built transaction
-    /// may be abandoned after an `.await` that releases the wallet lock — most
-    /// importantly the platform broadcast path, which reserves inputs, awaits
-    /// the broadcast, and on rejection must release them. Hold the returned
-    /// token and release with
-    /// [`ManagedCoreFundsAccount::release_reservation_if_owner`] so a
-    /// reservation the TTL sweep reclaimed and another build re-took is not
-    /// freed out from under that other build (see `dashpay/platform#4185`).
+    /// The returned fee is the fee the transaction actually pays:
+    /// Σ(selected input values) − Σ(output values). This can exceed the
+    /// size-based fee target when a dust change remainder (≤ 546 duffs) is
+    /// dropped and left to miners.
+    ///
+    /// Hold the returned token when the transaction may be abandoned after an
+    /// `.await` that releases the wallet lock — most importantly the platform
+    /// broadcast path, which reserves inputs, awaits the broadcast, and on
+    /// rejection must release them — and release with
+    /// [`ManagedCoreFundsAccount::release_reservation_if_owner`]. See
+    /// `ReservationSet::release_if_owner` for why owner-guarded release is
+    /// required (`dashpay/platform#4185`).
     pub fn build_unsigned_reserved(
         self,
     ) -> Result<(Transaction, u64, Option<ReservationToken>), BuilderError> {
@@ -759,8 +754,8 @@ mod tests {
             .add_inputs([utxo])
             .add_output(&destination, 50000)
             .set_change_address(change)
-            .build_unsigned()
-            .map(|(tx, _)| tx);
+            .build_unsigned_reserved()
+            .map(|(tx, _, _)| tx);
 
         assert!(tx.is_ok());
         let transaction = tx.unwrap();
@@ -777,7 +772,7 @@ mod tests {
             .set_current_height(200)
             .add_inputs([utxo])
             .add_output(&destination, 50000)
-            .build_unsigned();
+            .build_unsigned_reserved();
 
         // Insufficient funds now surface via the coin selector wrapper too.
         assert!(matches!(
@@ -797,7 +792,7 @@ mod tests {
             .set_current_height(200)
             .add_inputs([utxo]) // no set_change_address
             .add_output(&destination, 100_000)
-            .build_unsigned();
+            .build_unsigned_reserved();
 
         assert!(
             matches!(result, Err(BuilderError::NoChangeAddress)),
@@ -901,7 +896,7 @@ mod tests {
             .set_change_address(change_address.clone())
             .add_inputs(utxos)
             .add_output(&recipient_address, 500000)
-            .build_unsigned()
+            .build_unsigned_reserved()
             .unwrap()
             .0;
 
@@ -930,7 +925,7 @@ mod tests {
             .set_change_address(change_address.clone())
             .add_inputs(utxos)
             .add_output(&recipient_address, 150000)
-            .build_unsigned()
+            .build_unsigned_reserved()
             .unwrap()
             .0;
 
@@ -950,14 +945,14 @@ mod tests {
         let recipient_address = Address::dummy(Network::Testnet, 0);
         let change_address = Address::dummy(Network::Testnet, 0);
 
-        let (tx, fee) = TransactionBuilder::new()
+        let (tx, fee, _) = TransactionBuilder::new()
             .set_current_height(200)
             .set_selection_strategy(SelectionStrategy::SmallestFirst)
             .set_fee_rate(FeeRate::normal())
             .set_change_address(change_address)
             .add_inputs(utxos)
             .add_output(&recipient_address, 150000)
-            .build_unsigned()
+            .build_unsigned_reserved()
             .unwrap();
 
         assert_eq!(tx.output.len(), 1, "dust change must be dropped");
@@ -983,13 +978,13 @@ mod tests {
             }],
         };
 
-        let (tx, fee) = TransactionBuilder::new()
+        let (tx, fee, _) = TransactionBuilder::new()
             .set_current_height(200)
             .set_fee_rate(FeeRate::normal())
             .set_change_address(change_address)
             .set_special_payload(TransactionPayload::AssetLockPayloadType(asset_lock_payload))
             .add_inputs(utxos)
-            .build_unsigned()
+            .build_unsigned_reserved()
             .unwrap();
 
         assert_eq!(tx.output.len(), 2, "OP_RETURN burn output + change");
@@ -1092,7 +1087,7 @@ mod tests {
             .add_output(&address1, 300000) // Higher amount
             .add_output(&address2, 100000) // Lower amount
             .add_output(&address1, 200000) // Middle amount
-            .build_unsigned()
+            .build_unsigned_reserved()
             .unwrap()
             .0;
 
@@ -1164,7 +1159,7 @@ mod tests {
             .add_inputs([utxo2.clone()])
             .add_inputs([utxo3.clone()])
             .add_output(&destination, 500000)
-            .build_unsigned()
+            .build_unsigned_reserved()
             .unwrap()
             .0;
 
@@ -1230,7 +1225,7 @@ mod tests {
             .set_special_payload(TransactionPayload::AssetLockPayloadType(asset_lock_payload))
             .add_output(&recipient_address, 50000)
             .add_inputs(utxos)
-            .build_unsigned()
+            .build_unsigned_reserved()
             .unwrap()
             .0;
 
@@ -1302,13 +1297,13 @@ mod tests {
         funds.utxos.insert(utxo.outpoint, utxo.clone());
 
         let destination = Address::dummy(Network::Testnet, 0);
-        let (tx, _) = TransactionBuilder::new()
+        let (tx, _, _) = TransactionBuilder::new()
             .set_current_height(200)
             .set_fee_rate(FeeRate::normal())
             .set_funding(&mut funds, &account)
             .set_change_address(Address::dummy(Network::Testnet, 1))
             .add_output(&destination, 500_000)
-            .build_unsigned()
+            .build_unsigned_reserved()
             .expect("build unsigned");
 
         // Every input the build selected is reserved, so a later build observes

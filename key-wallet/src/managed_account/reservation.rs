@@ -17,21 +17,11 @@
 //!
 //! Releasing a reservation by outpoint alone is unsafe once *releasing* and
 //! *re-reserving* can interleave. Every reservation is therefore stamped with a
-//! [`ReservationToken`] identifying the build that made it, and the release path
-//! that a rejected/abandoned broadcast uses ([`ReservationSet::release_if_owner`])
-//! removes an outpoint only if it is *still owned by the releasing build*.
-//!
-//! The concrete hazard (see `dashpay/platform#4185`): the platform broadcast
-//! path reserves an asset-lock/deferred send's inputs, `.await`s the broadcast,
-//! and on a `Rejected` result releases those inputs so they become spendable
-//! again. During that await the TTL sweep below can reclaim the reservation, and
-//! a *different* concurrent build can re-reserve the very same outpoint (same
-//! wallet generation, so any `Arc::ptr_eq` generation guard still matches). An
-//! unconditional release-by-outpoint would then free the *other* build's inputs,
-//! letting coin selection hand them to a second transaction — a double-spend
-//! window. The platform layer cannot detect this because the sweep happens
-//! inside key-wallet invisibly; the "release only if still mine" check must be
-//! atomic under this set's own mutex, which is exactly what an owner token buys.
+//! [`ReservationToken`] identifying the build that made it, and the
+//! abandon/rejected-broadcast release path ([`ReservationSet::release_if_owner`])
+//! removes an outpoint only if it is *still owned by the releasing build*. See
+//! [`ReservationSet::release_if_owner`] for the concrete hazard this closes and
+//! why the check must be atomic under this set's mutex (`dashpay/platform#4185`).
 
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -185,13 +175,18 @@ impl ReservationSet {
     /// meanwhile — is left untouched.
     ///
     /// This is the owner-guarded counterpart to [`Self::release`] and the whole
-    /// reason reservations carry a [`ReservationToken`]. It is the release a
-    /// build must use when it abandons an in-flight transaction after having
-    /// `.await`ed something (a broadcast, an external signer): during that await
-    /// its reservation may have been swept and re-taken by a concurrent build,
-    /// and an unconditional release-by-outpoint would free that other build's
-    /// inputs, opening the double-spend window described in the module docs
-    /// (`dashpay/platform#4185`). Because the check and the removal happen
+    /// reason reservations carry a [`ReservationToken`]; it is the canonical
+    /// explanation the rest of the reservation machinery points back to. It is
+    /// the release a build must use when it abandons an in-flight transaction
+    /// after having `.await`ed something (a broadcast, an external signer):
+    /// during that await the TTL sweep can reclaim this build's reservation and a
+    /// *different* concurrent build can re-reserve the very same outpoint under a
+    /// new token (same wallet generation, so any `Arc::ptr_eq` generation guard
+    /// still matches). An unconditional release-by-outpoint would then free that
+    /// other build's inputs, letting coin selection hand them to a second
+    /// transaction — a double-spend window (`dashpay/platform#4185`). The
+    /// platform layer cannot detect this because the sweep happens inside
+    /// key-wallet invisibly; because the ownership check and the removal happen
     /// together while the mutex is held, no sweep or re-reserve can interleave
     /// between them.
     ///
@@ -199,12 +194,16 @@ impl ReservationSet {
     /// different token — including one this build's own reservation already lost
     /// to a sweep, so a late release after reclamation is harmless.
     pub(crate) fn release_if_owner(&self, outpoints: &[OutPoint], token: ReservationToken) {
+        use std::collections::hash_map::Entry;
         let mut reserved = self.lock();
         for outpoint in outpoints {
-            let owned_by_token =
-                reserved.entries.get(outpoint).is_some_and(|entry| entry.owner == token);
-            if owned_by_token {
-                reserved.entries.remove(outpoint);
+            // Single hash lookup per outpoint: the `Entry` locates the slot once,
+            // and `remove` reuses it — "remove only if still mine", no second
+            // `get` before the `remove`.
+            if let Entry::Occupied(entry) = reserved.entries.entry(*outpoint) {
+                if entry.get().owner == token {
+                    entry.remove();
+                }
             }
         }
     }
