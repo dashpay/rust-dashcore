@@ -69,6 +69,27 @@ impl PendingInstantLock {
     fn is_expired(&self, now: Instant) -> bool {
         now.saturating_duration_since(self.first_seen) > PENDING_TTL
     }
+
+    /// [`is_expired`](Self::is_expired), logging the drop when it returns true.
+    ///
+    /// Both expiry paths — the advancement-independent sweep in
+    /// [`expire_pending`](InstantSendManager::expire_pending) and the
+    /// re-validation loop in
+    /// [`validate_pending`](InstantSendManager::validate_pending) — report a
+    /// dropped lock identically, so the check and its warning live here and
+    /// cannot drift apart when the TTL or the message changes. Callers remain
+    /// responsible for their own bookkeeping (progress counters, removal).
+    fn is_expired_logged(&self, now: Instant) -> bool {
+        let expired = self.is_expired(now);
+        if expired {
+            tracing::warn!(
+                "Dropping InstantLock for txid {} after awaiting quorum data for over {}s",
+                self.instant_lock.txid,
+                PENDING_TTL.as_secs()
+            );
+        }
+        expired
+    }
 }
 
 /// InstantSend manager.
@@ -262,13 +283,7 @@ impl InstantSendManager {
             let txid = pending_lock.instant_lock.txid;
 
             // Drop locks that have been awaiting quorum data for too long.
-            let expired = pending_lock.is_expired(now);
-            if expired {
-                tracing::warn!(
-                    "Dropping InstantLock for txid {} after awaiting quorum data for over {}s",
-                    txid,
-                    PENDING_TTL.as_secs()
-                );
+            if pending_lock.is_expired_logged(now) {
                 self.progress.add_invalid(1);
                 continue;
             }
@@ -334,17 +349,7 @@ impl InstantSendManager {
     /// see [`PendingInstantLock::is_expired`].
     pub(super) fn expire_pending(&mut self, now: Instant) -> usize {
         let before = self.pending_instantlocks.len();
-        self.pending_instantlocks.retain(|pending| {
-            let expired = pending.is_expired(now);
-            if expired {
-                tracing::warn!(
-                    "Dropping InstantLock for txid {} after awaiting quorum data for over {}s",
-                    pending.instant_lock.txid,
-                    PENDING_TTL.as_secs()
-                );
-            }
-            !expired
-        });
+        self.pending_instantlocks.retain(|pending| !pending.is_expired_logged(now));
         let expired = before - self.pending_instantlocks.len();
         if expired > 0 {
             self.progress.add_invalid(expired as u32);
