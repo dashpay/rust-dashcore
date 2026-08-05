@@ -37,7 +37,7 @@ use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
 use key_wallet_manager::WalletManager;
 
 #[tokio::test]
-async fn spend_processed_before_its_funding_tx_leaves_utxo_permanently_tracked() {
+async fn spend_processed_before_its_funding_tx_does_not_leave_utxo_tracked() {
     let mut manager = WalletManager::<ManagedWalletInfo>::new(dashcore::Network::Testnet);
     let wallet_id = manager
         .create_wallet_with_random_mnemonic(WalletAccountCreationOptions::Default)
