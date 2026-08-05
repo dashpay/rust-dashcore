@@ -7,7 +7,7 @@ use key_wallet::wallet::managed_wallet_info::wallet_info_interface::WalletInfoIn
 use key_wallet::wallet::managed_wallet_info::TransactionRecord;
 use key_wallet::{Account, Address, Network, Utxo, Wallet};
 use std::collections::{BTreeMap, BTreeSet};
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, mpsc};
 
 impl<T: WalletInfoInterface + Send + Sync + 'static> WalletManager<T> {
     /// Get a wallet by ID
@@ -207,6 +207,20 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletManager<T> {
     /// Get a reference to the event sender for emitting events.
     pub fn event_sender(&self) -> &broadcast::Sender<WalletEvent> {
         &self.event_sender
+    }
+
+    /// Take the lossless persistence-event receiver (dashpay/platform#4069).
+    ///
+    /// Returns the receive half of the unbounded persistence channel exactly
+    /// once; every subsequent call returns `None`. The platform durable
+    /// consumer calls this before the manager is shared with any producer,
+    /// then drains the stream losslessly (see the `persistence_sender` field
+    /// docs). Because it is an `mpsc::UnboundedReceiver`, events emitted before
+    /// the consumer starts draining are buffered rather than lost, so there is
+    /// no subscribe-before-publish startup race as there is with
+    /// [`subscribe_events`](Self::subscribe_events).
+    pub fn take_persistence_receiver(&mut self) -> Option<mpsc::UnboundedReceiver<WalletEvent>> {
+        self.persistence_receiver.take()
     }
 
     /// Return the total monitor revision (structural + per-wallet account revisions).
