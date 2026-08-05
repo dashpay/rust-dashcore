@@ -11,11 +11,10 @@
 //! * the serde adapter for `observed_spent_outpoints` (no manager test
 //!   serializes a wallet holding entries),
 //! * `prune_finalized_observed_spends` and its finality boundary,
-//! * the *funding-first* removal guard `remove_spent_from_accounts` /
-//!   `finalize_guard_removed_utxo` (the coin is already live and must be dropped
-//!   un-gated by classification),
 //! * the account-add sync rewind for a standalone (from-xpub) account, and
-//! * the account-local vs. wallet-level source-of-truth split across a reload.
+//! * the *born-fully-spent* history-recording path: a funding transaction
+//!   applied after its spend was already observed must still be recorded in
+//!   history, while its already-spent output is never (re-)tracked as a UTXO.
 //!
 //! These white-box tests exercise those branches directly against the
 //! `pub(crate)` surface.
@@ -131,103 +130,6 @@ fn prune_finalized_observed_spends_respects_finality_boundary() {
     assert_eq!(remaining.len(), 1);
 }
 
-/// The funding-first guard: a coin that is already live in a funding account,
-/// whose spend the matched-account path could not attribute, is dropped
-/// un-gated by `remove_spent_from_accounts`, which also marks it spent, releases
-/// its build reservation, and compensates the funding record. Idempotent, and a
-/// coinbase is skipped.
-#[tokio::test]
-async fn funding_first_guard_removes_held_coin_and_compensates_record() {
-    let (mut ctx, funding_tx) =
-        TestWalletContext::new_random().with_mempool_funding(1_000_000).await;
-    let funded = OutPoint::new(funding_tx.txid(), 0);
-
-    // Reserve the coin so we can prove the guard frees the reservation too.
-    ctx.managed_wallet
-        .first_bip44_managed_account()
-        .expect("BIP44 account")
-        .reservations()
-        .reserve(&[funded], 0);
-    assert!(ctx
-        .managed_wallet
-        .first_bip44_managed_account()
-        .unwrap()
-        .reservations()
-        .reserved(0)
-        .contains(&funded));
-
-    // The two decomposed steps the checker runs on a block spend it cannot
-    // attribute to the owning account (routed away by tx-type narrowing, or the
-    // funding lives in another account): record the observed spend, then drop
-    // the coin un-gated by classification.
-    let spend = spending_tx(&[funded]);
-    ctx.managed_wallet.record_observed_spends(&spend, 200);
-    let (removed, rewritten) = ctx.managed_wallet.remove_spent_from_accounts(&spend);
-    assert!(removed, "guard must remove the live coin the matched path missed");
-    assert_eq!(rewritten.len(), 1, "the compensated funding record is surfaced for consumers");
-    assert_eq!(rewritten[0].txid, funding_tx.txid());
-    assert_eq!(rewritten[0].net_amount, 0, "the surfaced clone is the post-compensation record");
-
-    let account = ctx.managed_wallet.first_bip44_managed_account().unwrap();
-    assert!(!account.utxos.contains_key(&funded), "coin dropped from the funding account");
-    assert!(
-        !account.reservations().reserved(0).contains(&funded),
-        "guard releases the build reservation immediately, not at the TTL backstop"
-    );
-    let record = account.transactions().get(&funding_tx.txid()).expect("funding record kept");
-    assert_eq!(record.net_amount, 0, "the spent output is compensated out of net_amount");
-    assert!(record.output_details.is_empty(), "the spent Received output is dropped");
-
-    // Idempotent: the coin is already gone, so a second call removes nothing.
-    assert!(
-        !ctx.managed_wallet.remove_spent_from_accounts(&spend).0,
-        "second call has nothing left to remove"
-    );
-    // A coinbase's single input is the null prevout and spends nothing real.
-    let coinbase = Transaction::dummy_coinbase(&ctx.receive_address, 5_000_000_000);
-    assert!(
-        !ctx.managed_wallet.remove_spent_from_accounts(&coinbase).0,
-        "coinbase is skipped by the guard"
-    );
-}
-
-/// After the funding-first guard drops a coin, the account-local `spent_outpoints`
-/// set — rebuilt from recorded transactions on reload — forgets the unrecorded
-/// spend, but the persisted wallet-level `observed_spent_outpoints` still keeps
-/// the coin from being resurrected when the funding is re-delivered. This is the
-/// source-of-truth split the fix relies on across a serialize/deserialize.
-#[tokio::test]
-async fn wallet_level_set_outlives_account_local_reload() {
-    let (mut ctx, funding_tx) =
-        TestWalletContext::new_random().with_mempool_funding(1_000_000).await;
-    let funded = OutPoint::new(funding_tx.txid(), 0);
-    let spend = spending_tx(&[funded]);
-
-    // Observe + drop the coin via the funding-first guard.
-    ctx.managed_wallet.record_observed_spends(&spend, 200);
-    assert!(ctx.managed_wallet.remove_spent_from_accounts(&spend).0);
-
-    // Simulate a save/reload: the account-local derived set is rebuilt from
-    // recorded transactions only. The spend was never recorded as one of our
-    // transactions, so the derived set forgets `funded` — exactly what a real
-    // `Deserialize` would reconstruct.
-    ctx.managed_wallet
-        .first_bip44_managed_account_mut()
-        .unwrap()
-        .simulate_reload_rebuild_spent_outpoints();
-
-    // The persisted wallet-level set is the durable source of truth: re-delivering
-    // the funding in a block must NOT resurrect the coin.
-    let block = BlockInfo::new(100, BlockHash::from_slice(&[9u8; 32]).unwrap(), 1_700_000_000);
-    ctx.check_transaction(&funding_tx, TransactionContext::InBlock(block)).await;
-
-    assert!(
-        !ctx.managed_wallet.first_bip44_managed_account().unwrap().utxos.contains_key(&funded),
-        "wallet-level observed_spent must keep the coin dropped even after the account-local \
-         derived set is rebuilt from recorded transactions"
-    );
-}
-
 /// Adding a standalone (from-xpub) account rewinds the sync checkpoint below
 /// wallet birth, so the new account's coins get filter coverage before pruning
 /// can consume the certificate (dashpay/rust-dashcore#649). A wallet still in
@@ -296,10 +198,12 @@ fn adding_account_from_xpub_rewinds_sync_checkpoint() {
 /// record: `check_transaction_for_match` classifies relevance by address
 /// membership (never gated on spent-status, so the fully-spent funding is still
 /// relevant), and `ManagedCoreFundsAccount::record_transaction` unconditionally
-/// inserts the record after `TransactionRecord::compensate_for_observed_spends`
-/// zeroes the already-spent outputs. This test pins that a born-fully-spent
-/// funding tx (1) is surfaced as a new record and (2) lands in the account's
-/// transaction history, while balance and UTXOs stay at zero.
+/// inserts the record while `update_utxos` skips creating a UTXO for the
+/// already-observed-spent output. The received output stays in the record's
+/// history (the minimal fix does not rewrite it away — balance correctness comes
+/// from the skipped UTXO, not from erasing the receive). This test pins that a
+/// born-fully-spent funding tx (1) is surfaced as a new record and (2) lands in
+/// the account's transaction history, while balance and UTXOs stay at zero.
 #[tokio::test]
 async fn born_fully_spent_funding_tx_is_recorded_in_history() {
     use dashcore::blockdata::script::ScriptBuf;
@@ -385,16 +289,23 @@ async fn born_fully_spent_funding_tx_is_recorded_in_history() {
     assert!(account.utxos.is_empty(), "the already-spent output must not become a UTXO");
     assert_eq!(ctx.managed_wallet.balance.total(), 0, "born-fully-spent tx must not add balance");
 
-    // The record itself is compensated to a net-zero, output-less history entry.
+    // History preserves the receive: the minimal #649 fix does not rewrite the
+    // record. The output is genuinely spent on-chain, so it is never (re-)tracked
+    // as a UTXO (asserted above) — but the record still shows the wallet received
+    // it, matching what in-order delivery would record.
     let record = account.transactions().get(&f_txid).expect("record present");
-    assert_eq!(record.net_amount, 0, "the already-spent output is compensated out of net_amount");
+    assert_eq!(
+        record.net_amount, funding_value as i64,
+        "the received output stays in the record's net_amount; balance/UTXO correctness comes \
+         from update_utxos skipping the already-spent coin, not from erasing the receive"
+    );
     assert!(
-        record.output_details.iter().all(|d| !matches!(
+        record.output_details.iter().any(|d| matches!(
             d.role,
             crate::managed_account::transaction_record::OutputRole::Received
                 | crate::managed_account::transaction_record::OutputRole::Change
         )),
-        "no live Received/Change output detail should survive on a born-fully-spent record"
+        "the received output detail is preserved in the born-fully-spent record's history"
     );
 }
 
@@ -402,7 +313,8 @@ async fn born_fully_spent_funding_tx_is_recorded_in_history() {
 /// the CoinJoin-style intermediate hop that HashEngineering measured missing: a
 /// transaction that both **spends a live wallet coin** and pays its change back
 /// to us, where that change output is itself already observed spent. It must be
-/// recorded even though it nets to zero and leaves no UTXO.
+/// recorded even though its change output never becomes a UTXO and it leaves the
+/// balance at zero.
 #[tokio::test]
 async fn born_fully_spent_intermediate_hop_is_recorded_in_history() {
     use dashcore::blockdata::script::ScriptBuf;
@@ -477,7 +389,7 @@ async fn born_fully_spent_intermediate_hop_is_recorded_in_history() {
     let t_res = ctx.check_transaction(&t, blk(2, 2)).await;
 
     // The hop is relevant (it spends our live coin C) and recorded, even though
-    // its own output is compensated away.
+    // its own output is already observed spent and so never becomes a UTXO.
     assert!(t_res.is_relevant, "a hop that spends our live coin is relevant");
     assert!(
         t_res.new_records.iter().any(|r| r.txid == t_txid),

@@ -149,16 +149,6 @@ impl ManagedCoreFundsAccount {
         self.reservations.release_if_owner(&outpoints, token);
     }
 
-    /// Release any build reservation held on a single `outpoint`.
-    ///
-    /// Used when a coin is removed outside the normal spend path — the
-    /// wallet-level out-of-order guard (dashpay/rust-dashcore#649) — so the
-    /// reservation is freed immediately instead of lingering until the TTL
-    /// backstop, matching what [`Self::update_utxos`] does for ordinary spends.
-    pub(crate) fn release_reservation_for(&self, outpoint: &OutPoint) {
-        self.reservations.release(std::iter::once(outpoint));
-    }
-
     /// Get a reference to the inner keys-account state.
     pub fn keys(&self) -> &ManagedCoreKeysAccount {
         &self.keys
@@ -172,32 +162,6 @@ impl ManagedCoreFundsAccount {
     /// Check if an outpoint was spent by a previously recorded transaction.
     fn is_outpoint_spent(&self, outpoint: &OutPoint) -> bool {
         self.spent_outpoints.contains(outpoint)
-    }
-
-    /// Register `outpoint` in the account-local spent set so [`Self::update_utxos`]
-    /// will not re-insert a UTXO for it (its [`Self::is_outpoint_spent`] guard).
-    ///
-    /// Used by the wallet-level out-of-order guard (dashpay/rust-dashcore#649),
-    /// which removes coins whose spend was observed in a block but never recorded
-    /// as one of this account's transactions — so the normal spend path in
-    /// `update_utxos` never populated `spent_outpoints` for them, and a
-    /// reprocessing of the funding transaction (rescan / duplicate delivery)
-    /// would otherwise resurrect the coin. Marking it here makes that reprocess a
-    /// no-op within a session; the wallet-level set remains the source of truth
-    /// across a serialize/deserialize (where this derived set is rebuilt from
-    /// recorded transactions and would not include the unrecorded spend).
-    pub(crate) fn mark_outpoint_spent(&mut self, outpoint: OutPoint) {
-        self.spent_outpoints.insert(outpoint);
-    }
-
-    /// Test-only: rebuild `spent_outpoints` exactly the way [`Deserialize`]
-    /// does, to simulate a save/reload cycle for cross-restart tests. A real
-    /// full-struct serde round-trip is blocked for a populated account by
-    /// `AddressPool::script_pubkey_index` (`HashMap<ScriptBuf, _>`, not a valid
-    /// JSON map key), so this mirrors the same reconstruction logic directly.
-    #[cfg(test)]
-    pub(crate) fn simulate_reload_rebuild_spent_outpoints(&mut self) {
-        self.spent_outpoints = rebuild_spent_outpoints(&self.keys);
     }
 
     /// Add new UTXOs for received outputs, remove spent ones.
@@ -449,8 +413,10 @@ impl ManagedCoreFundsAccount {
     ///
     /// `observed_spent` is the wallet-level `observed_spent_outpoints` view
     /// (dashpay/rust-dashcore#649), read-only from `check_core_transaction`.
-    /// The freshly built record is compensated against it before insertion —
-    /// see [`TransactionRecord::compensate_for_observed_spends`].
+    /// It is threaded into [`Self::update_utxos`], which skips inserting a UTXO
+    /// for any output whose outpoint is already observed spent on-chain, so a
+    /// coin whose spend was seen in an earlier-processed block is never
+    /// (re-)tracked as spendable.
     pub(crate) fn record_transaction(
         &mut self,
         tx: &Transaction,
@@ -544,7 +510,7 @@ impl ManagedCoreFundsAccount {
             TransactionDirection::Incoming
         };
 
-        let mut tx_record = TransactionRecord::new(
+        let tx_record = TransactionRecord::new(
             tx.clone(),
             self.keys.managed_account_type().to_account_type(),
             context.clone(),
@@ -554,9 +520,6 @@ impl ManagedCoreFundsAccount {
             output_details,
             net_amount,
         );
-        // #649: drop outputs already in observed_spent from output_details/net_amount
-        // before insert, so the record is consistent with the observed spend.
-        tx_record.compensate_for_observed_spends(observed_spent);
 
         let record = tx_record.clone();
         let txid = tx.txid();

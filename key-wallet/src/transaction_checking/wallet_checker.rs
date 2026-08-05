@@ -82,28 +82,6 @@ impl WalletTransactionChecker for ManagedWalletInfo {
         }
 
         if !update_state || !result.is_relevant {
-            // A block spend the wallet cannot attribute to the owning account
-            // (routed away by tx-type narrowing, or unmatched because its
-            // funding lives in another account) still consumes a real coin.
-            // Drop it now, un-gated by classification — safe on this path
-            // precisely because no `record_transaction` runs for an unmatched
-            // tx, so no `input_details` depend on the coin still being present
-            // (#649: the funding-first mirror of the out-of-order ordering,
-            // including a spend whose classification excludes the owning
-            // account's type).
-            if block_height.is_some() {
-                let (removed, rewritten_records) = self.remove_spent_from_accounts(tx);
-                // Surface every compensated funding record even though this tx
-                // itself is not relevant: downstream consumers persist
-                // per-record updates and must see the rewrite.
-                result.updated_records.extend(rewritten_records);
-                if removed {
-                    result.state_modified = true;
-                    if update_balance {
-                        self.update_balance();
-                    }
-                }
-            }
             return result;
         }
 
@@ -260,19 +238,6 @@ impl WalletTransactionChecker for ManagedWalletInfo {
             }
             if result.new_addresses.len() > rev_before {
                 account.bump_monitor_revision();
-            }
-        }
-
-        // #649 funding-first ordering: drop any coin this tx spends that the
-        // matched-account path missed (spend routed to another account type).
-        // Block-context only; idempotent. Spend-first is handled at insert time.
-        if block_height.is_some() {
-            let (removed, rewritten_records) = self.remove_spent_from_accounts(tx);
-            // Compensated funding records live in accounts the matched path
-            // did not touch; surface their rewrite to downstream consumers.
-            result.updated_records.extend(rewritten_records);
-            if removed {
-                result.state_modified = true;
             }
         }
 

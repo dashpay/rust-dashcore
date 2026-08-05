@@ -19,7 +19,6 @@ use super::balance::WalletCoreBalance;
 use super::metadata::WalletMetadata;
 use crate::account::ManagedAccountCollection;
 use crate::managed_account::managed_account_trait::ManagedAccountTrait;
-use crate::managed_account::ManagedCoreFundsAccount;
 use crate::wallet::managed_wallet_info::transaction_building::AccountTypePreference;
 use crate::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
 use crate::{Network, Wallet};
@@ -28,7 +27,7 @@ use dashcore::prelude::CoreBlockHeight;
 use dashcore::{Address, Transaction, Txid};
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::collections::{BTreeMap, HashSet};
 
 /// Information about a managed wallet
 ///
@@ -408,105 +407,6 @@ impl ManagedWalletInfo {
     /// [`Self::account_generation`] field doc. Bumped on every account add.
     pub fn account_generation(&self) -> u64 {
         self.account_generation
-    }
-
-    /// Drop any live UTXO consumed by `tx`'s inputs from whichever funding
-    /// account currently holds it, scanning ALL funding accounts independently
-    /// of the spending transaction's classification (dashpay/rust-dashcore#649).
-    ///
-    /// Returns whether any UTXO was removed, plus a post-compensation clone of
-    /// every funding record the removal rewrote (deduplicated per funding
-    /// txid). Callers must surface those clones as updated records — the
-    /// mutation happens outside the matched-account path, so without this a
-    /// downstream consumer persisting per-record updates would retain the
-    /// pre-compensation record while the in-memory one has changed. `removed`
-    /// can be `true` with no records when every rewritten funding record was
-    /// already pruned/finalized.
-    ///
-    /// This is the un-gated counterpart to the normal spend path in
-    /// `update_utxos`: it covers spends the wallet cannot attribute to the
-    /// owning account (routed away by tx-type narrowing, or unmatched because
-    /// the funding was seen in a different account). It is idempotent — a coin
-    /// the normal path already removed is simply absent — so it never
-    /// double-counts a spend. Coinbase inputs are skipped (null prevout).
-    ///
-    /// This is the funding-first ordering: the funding record is already
-    /// live, so its history is recomputed in place — see
-    /// [`Self::finalize_guard_removed_utxo`].
-    pub(crate) fn remove_spent_from_accounts(
-        &mut self,
-        tx: &Transaction,
-    ) -> (bool, Vec<TransactionRecord>) {
-        if tx.is_coin_base() {
-            return (false, Vec::new());
-        }
-        let mut removed = false;
-        let mut updated_records: Vec<TransactionRecord> = Vec::new();
-        let mut updated_txids: BTreeSet<Txid> = BTreeSet::new();
-        // Fetch the account handles once, not once per input.
-        let mut accounts = self.accounts.all_funding_accounts_mut();
-        for input in &tx.input {
-            let outpoint = input.previous_output;
-            for account in accounts.iter_mut() {
-                let account: &mut ManagedCoreFundsAccount = account;
-                if let Some(utxo) = account.utxos.remove(&outpoint) {
-                    account.bump_monitor_revision();
-                    let rewritten = Self::finalize_guard_removed_utxo(
-                        account,
-                        &utxo,
-                        &self.observed_spent_outpoints,
-                    );
-                    if let Some(record) = rewritten {
-                        // One clone per funding tx even when several of its
-                        // outputs are spent by this tx: the record is
-                        // compensated cumulatively, so the last clone taken
-                        // for a txid is always the freshest.
-                        if updated_txids.insert(record.txid) {
-                            updated_records.push(record);
-                        } else if let Some(slot) =
-                            updated_records.iter_mut().find(|r| r.txid == record.txid)
-                        {
-                            *slot = record;
-                        }
-                    }
-                    removed = true;
-                    break;
-                }
-            }
-        }
-        (removed, updated_records)
-    }
-
-    /// Finalize the account-local bookkeeping for a UTXO the #649 guard
-    /// removed (funding-first ordering: the record was already live).
-    ///
-    /// 1. Marks the outpoint spent so reprocessing won't resurrect the coin.
-    /// 2. Releases any build reservation held on the coin, so it is freed
-    ///    immediately rather than lingering until the reservation TTL backstop
-    ///    — matching the normal spend path in `update_utxos`.
-    /// 3. Recomputes the funding record's history via
-    ///    [`TransactionRecord::compensate_for_observed_spends`]. The record is
-    ///    kept at `net_amount == 0` rather than deleted when fully
-    ///    compensated: a later reprocessing would otherwise re-record it as a
-    ///    fresh sighting with no coin left to reconcile against, reopening
-    ///    the divergence. This step is skipped when the record is absent
-    ///    (pruned/finalized); steps 1 and 2 still run.
-    ///
-    /// Returns a post-compensation clone of the funding record when step 3
-    /// ran, so the caller can surface the rewrite as an updated record.
-    fn finalize_guard_removed_utxo(
-        account: &mut ManagedCoreFundsAccount,
-        removed: &Utxo,
-        observed_spent: &BTreeMap<OutPoint, CoreBlockHeight>,
-    ) -> Option<TransactionRecord> {
-        account.mark_outpoint_spent(removed.outpoint);
-        account.release_reservation_for(&removed.outpoint);
-
-        let funding_txid = removed.outpoint.txid;
-        account.transactions_mut().get_mut(&funding_txid).map(|record| {
-            record.compensate_for_observed_spends(observed_spent);
-            record.clone()
-        })
     }
 
     pub fn next_change_address(

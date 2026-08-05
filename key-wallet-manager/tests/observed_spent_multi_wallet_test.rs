@@ -41,7 +41,7 @@ async fn observed_spends_are_isolated_per_wallet() {
     let outpoint = OutPoint::new(funding.txid(), 0);
 
     // A spend of O, delivered to wallet A out of order (before any funding A sees).
-    let spend = spend_tx(Network::Testnet, outpoint, funding_value - 1_000, 77);
+    let spend = spend_tx(outpoint, funding_value - 1_000, 77);
 
     let only_a: BTreeSet<WalletId> = [wallet_a].into_iter().collect();
     let only_b: BTreeSet<WalletId> = [wallet_b].into_iter().collect();

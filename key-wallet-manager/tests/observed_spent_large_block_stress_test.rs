@@ -9,17 +9,10 @@
 //! compact filter. `ManagedWalletInfo::check_core_transaction`
 //! (`key-wallet/src/transaction_checking/wallet_checker.rs`) then records
 //! every input of every transaction it sees in block context into
-//! `observed_spent_outpoints`, and — for transactions it judges irrelevant —
-//! also calls `remove_spent_from_accounts`, which allocates a
-//! `Vec<&mut ManagedCoreFundsAccount>` via `all_funding_accounts_mut()` and
-//! attempts a UTXO-map removal per input, for every one of those irrelevant
-//! transactions.
+//! `observed_spent_outpoints`, whether or not the transaction is relevant to the
+//! wallet — so a single matched block grows the map by one entry per input over
+//! the WHOLE block, not just the relevant tx.
 //!
-//! The sibling `many_orphaned_spend_blocks_stay_bounded_and_linear`
-//! (`key-wallet/src/tests/observed_spent_outpoints_tests.rs`) spreads growth
-//! across many separate `check_transaction` calls at distinct heights. That
-//! does not exercise what a real matched block looks like: many transactions
-//! sharing ONE height/block, most of them entirely unrelated to the wallet.
 //! This test constructs a single `Block` with 5,000 unrelated 3-input
 //! transactions plus one wallet-relevant spend, and verifies both correctness
 //! (the bug is still caught when the relevant tx is buried in a large noisy
@@ -82,7 +75,7 @@ async fn wallet_relevant_spend_buried_in_large_noisy_block_still_caught() {
     let funding_tx = common::funding_tx(&funding_address, funding_value, 0xAB);
     let funding_outpoint = OutPoint::new(funding_tx.txid(), 0);
 
-    let spend_tx = common::spend_tx(Network::Testnet, funding_outpoint, funding_value - 1_000, 99);
+    let spend_tx = common::spend_tx(funding_outpoint, funding_value - 1_000, 99);
 
     // One large block: 5,000 unrelated noise transactions with the single
     // wallet-relevant spend buried in the middle — this is the realistic

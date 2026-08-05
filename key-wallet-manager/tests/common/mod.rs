@@ -7,7 +7,7 @@
 
 use dashcore::blockdata::block::Block;
 use dashcore::blockdata::transaction::OutPoint;
-use dashcore::{Address, Network, ScriptBuf, Transaction, TxIn, TxOut, Witness};
+use dashcore::{Address, ScriptBuf, Transaction, TxIn, TxOut, Witness};
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
 use key_wallet_manager::{WalletId, WalletInterface, WalletManager};
 use std::collections::BTreeSet;
@@ -54,8 +54,21 @@ pub fn funding_tx(address: &Address, value: u64, input_seed: u8) -> Transaction 
 }
 
 /// A transaction spending `outpoint` and paying `value` to an unrelated
-/// external dummy address on `network` (`ext_id` selects a distinct address).
-pub fn spend_tx(network: Network, outpoint: OutPoint, value: u64, ext_id: usize) -> Transaction {
+/// external payee (`ext_id` selects a distinct script).
+///
+/// The payee script is built directly (a P2PKH shape seeded by `ext_id`) rather
+/// than via `Address::dummy`, so the helper needs no `Network`: the
+/// observed-spend logic keys on the input outpoint, never on the payee, so the
+/// payee's network is irrelevant to every scenario here. `Transaction::dummy`
+/// does not fit this helper — it derives its inputs from an id range and cannot
+/// spend a caller-specified `outpoint`, which is the whole point of a spend.
+pub fn spend_tx(outpoint: OutPoint, value: u64, ext_id: usize) -> Transaction {
+    // OP_DUP OP_HASH160 <20-byte push> OP_EQUALVERIFY OP_CHECKSIG — a well-formed
+    // P2PKH scriptPubKey whose hash160 is seeded by `ext_id` so each payee is
+    // distinct and never collides with a wallet-owned script.
+    let mut payee = vec![0x76, 0xa9, 0x14];
+    payee.extend_from_slice(&[ext_id as u8; 20]);
+    payee.extend_from_slice(&[0x88, 0xac]);
     Transaction {
         version: 2,
         lock_time: 0,
@@ -67,7 +80,7 @@ pub fn spend_tx(network: Network, outpoint: OutPoint, value: u64, ext_id: usize)
         }],
         output: vec![TxOut {
             value,
-            script_pubkey: Address::dummy(network, ext_id).script_pubkey(),
+            script_pubkey: ScriptBuf::from_bytes(payee),
         }],
         special_transaction_payload: None,
     }
