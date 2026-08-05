@@ -209,18 +209,31 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletManager<T> {
         &self.event_sender
     }
 
-    /// Take the lossless persistence-event receiver (dashpay/platform#4069).
+    /// Install a durable persistence consumer and take its event receiver
+    /// (dashpay/platform#4069).
     ///
-    /// Returns the receive half of the unbounded persistence channel exactly
-    /// once; every subsequent call returns `None`. The platform durable
-    /// consumer calls this before the manager is shared with any producer,
-    /// then drains the stream losslessly (see the `persistence_sender` field
-    /// docs). Because it is an `mpsc::UnboundedReceiver`, events emitted before
-    /// the consumer starts draining are buffered rather than lost, so there is
-    /// no subscribe-before-publish startup race as there is with
-    /// [`subscribe_events`](Self::subscribe_events).
+    /// Persistence delivery is opt-in: the first call **creates** the lossless,
+    /// unbounded persistence channel, installs the send half on the manager, and
+    /// returns the receive half; every subsequent call returns `None`. Creating
+    /// the channel only when a consumer asks for it means a manager that never
+    /// installs a consumer never accumulates an undrained backlog of events (an
+    /// unbounded `mpsc` with no reader would otherwise grow without limit).
+    ///
+    /// The platform durable consumer calls this before the manager is shared
+    /// with any producer, then drains the stream losslessly (see the
+    /// `persistence_sender` field docs). Because installation precedes emission,
+    /// no events are emitted before the consumer is in place; unlike
+    /// [`subscribe_events`](Self::subscribe_events) there is no
+    /// subscribe-before-publish race, and unlike a `broadcast::Receiver` the
+    /// unbounded `mpsc` never `Lagged`s a row-bearing or watermark event.
     pub fn take_persistence_receiver(&mut self) -> Option<mpsc::UnboundedReceiver<WalletEvent>> {
-        self.persistence_receiver.take()
+        if self.persistence_sender.is_some() {
+            // A consumer has already been installed; the receiver is taken once.
+            return None;
+        }
+        let (sender, receiver) = mpsc::unbounded_channel();
+        self.persistence_sender = Some(sender);
+        Some(receiver)
     }
 
     /// Return the total monitor revision (structural + per-wallet account revisions).
