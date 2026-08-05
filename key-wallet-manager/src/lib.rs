@@ -40,7 +40,7 @@ use std::str::FromStr;
 
 use dashcore::address::NetworkUnchecked;
 use key_wallet::wallet::managed_wallet_info::fee::FeeRate;
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, mpsc};
 
 /// Default capacity for the wallet event bus.
 const DEFAULT_WALLET_EVENT_CAPACITY: usize = 1000;
@@ -127,20 +127,87 @@ pub struct WalletManager<T: WalletInfoInterface + Send + Sync + 'static = Manage
     /// added/removed. Combined with per-wallet account-level revisions to
     /// produce the total monitor revision.
     structural_revision: u64,
-    /// Event sender for wallet events
+    /// Event sender for wallet events.
+    ///
+    /// This is a *bounded, lossy* fan-out (capacity
+    /// [`DEFAULT_WALLET_EVENT_CAPACITY`]): under a heavy SPV catch-up a
+    /// subscriber that drains slower than blocks are processed overflows the
+    /// ring and receives `RecvError::Lagged`, silently dropping every
+    /// record/UTXO/watermark event in between. That is acceptable for the
+    /// *incidental* subscribers reached via [`subscribe_events`] (dash-spv's
+    /// `EventHandler` fan-out, unit tests) but NOT for the durable-persistence
+    /// consumer — see `persistence_sender`.
+    ///
+    /// [`subscribe_events`]: WalletManager::subscribe_events
     event_sender: broadcast::Sender<WalletEvent>,
+    /// Lossless, unbounded persistence event channel (dashpay/platform#4069).
+    ///
+    /// Carries the *same* event stream, in the *same* order, to the single
+    /// durable-persistence consumer with **no drops**. The platform consumer
+    /// projects each event into a persisted changeset; a dropped
+    /// record/watermark event there lets the durable sync watermark advance
+    /// past rows that never reached disk, which its `#4069` guard then latches
+    /// into a permanent freeze. An unbounded `mpsc` can never `Lagged`, so that
+    /// guard never fires.
+    ///
+    /// It is deliberately unbounded rather than a bounded back-pressuring
+    /// channel: several emit sites run *inside this manager's `RwLock` write
+    /// guard* (SPV block processing holds `wallet.write().await` across
+    /// `process_block_for_wallets`), while the consumer needs a `read()` lock
+    /// on the same manager to project each event. A bounded
+    /// `send().await`/`blocking_send` that parked under the write guard would
+    /// therefore deadlock the very consumer that must drain it. A non-blocking
+    /// unbounded enqueue keeps the emit paths lock-safe. See [`emit_event`].
+    ///
+    /// [`emit_event`]: WalletManager::emit_event
+    persistence_sender: mpsc::UnboundedSender<WalletEvent>,
+    /// Receive half of `persistence_sender`, handed to the persistence
+    /// consumer exactly once via [`take_persistence_receiver`]; `None`
+    /// afterwards. Held here rather than returned from [`new`] so the
+    /// `WalletManager::new(network)` signature is unchanged. Unlike a
+    /// `broadcast::Receiver`, this buffers events emitted before the consumer
+    /// starts draining, so there is no subscribe-before-publish race.
+    ///
+    /// [`take_persistence_receiver`]: WalletManager::take_persistence_receiver
+    /// [`new`]: WalletManager::new
+    persistence_receiver: Option<mpsc::UnboundedReceiver<WalletEvent>>,
 }
 
 impl<T: WalletInfoInterface + Send + Sync + 'static> WalletManager<T> {
     /// Create a new wallet manager
     pub fn new(network: Network) -> Self {
+        let (persistence_sender, persistence_receiver) = mpsc::unbounded_channel();
         Self {
             network,
             wallets: BTreeMap::new(),
             wallet_infos: BTreeMap::new(),
             structural_revision: 0,
             event_sender: broadcast::Sender::new(DEFAULT_WALLET_EVENT_CAPACITY),
+            persistence_sender,
+            persistence_receiver: Some(persistence_receiver),
         }
+    }
+
+    /// Emit a wallet event to BOTH the incidental broadcast fan-out and the
+    /// lossless persistence channel (dashpay/platform#4069).
+    ///
+    /// This is the single emit choke point, so both channels observe events in
+    /// the same order (the manager is the only producer). The persistence send
+    /// is a non-blocking, non-dropping `mpsc` enqueue: it is safe to call from
+    /// the synchronous emit paths that run while this manager's `RwLock` write
+    /// guard is held, whereas a bounded blocking send there would deadlock the
+    /// persistence consumer (which needs a `read()` lock to drain). See the
+    /// `persistence_sender` field docs for the full rationale.
+    fn emit_event(&self, event: WalletEvent) {
+        // Lossless path: the persistence consumer must never miss a
+        // row-bearing or watermark event, or its durable sync height freezes.
+        // `send` only fails once the consumer half has been dropped (manager
+        // shutdown) — at which point there is nothing left to persist to.
+        let _ = self.persistence_sender.send(event.clone());
+        // Lossy-tolerant fan-out for incidental subscribers (dash-spv
+        // `EventHandler` dispatch, tests). A `Lagged` drop here never affects
+        // the durable watermark.
+        let _ = self.event_sender.send(event);
     }
 
     /// Increment the structural revision for wallet/account additions or removals.
