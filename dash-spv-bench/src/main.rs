@@ -152,9 +152,7 @@ async fn main() -> Result<()> {
     let wallet_probe = wallet.clone();
 
     let handler = Arc::new(BenchEventHandler::new(dashboard.clone()));
-    let network = dash_spv::network::PeerNetworkManager::new(&config)
-        .await
-        .map_err(|e| anyhow!("network new: {e}"))?;
+    let network = dash_spv::network::PeerNetworkManager::new(&config).await;
 
     let client = DashSpvClient::new(
         config,

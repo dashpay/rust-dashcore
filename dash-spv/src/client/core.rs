@@ -105,7 +105,7 @@ pub(super) type PersistentSyncCoordinator<W> = SyncCoordinator<
 /// The generic design is an intentional, beneficial architectural choice for a library.
 pub struct DashSpvClient<W: WalletInterface, N: NetworkManager, S: StorageManager> {
     pub(super) config: Arc<RwLock<ClientConfig>>,
-    pub(super) network: Arc<Mutex<N>>,
+    pub(super) network: Arc<N>,
     pub(super) storage: Arc<Mutex<S>>,
     /// External wallet implementation (required)
     pub(super) wallet: Arc<RwLock<W>>,
@@ -114,6 +114,7 @@ pub struct DashSpvClient<W: WalletInterface, N: NetworkManager, S: StorageManage
     /// `true` while running, `false` once a stop is requested. Stored as a
     /// `watch` so a stop is observed immediately rather than polled.
     pub(super) running: Arc<watch::Sender<bool>>,
+    pub(super) stop_requested: Arc<std::sync::atomic::AtomicBool>,
     pub(super) event_handlers: Arc<Vec<Arc<dyn super::EventHandler>>>,
 }
 
@@ -127,6 +128,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> Clone for DashSpv
             masternode_engine: self.masternode_engine.clone(),
             sync_coordinator: Arc::clone(&self.sync_coordinator),
             running: Arc::clone(&self.running),
+            stop_requested: Arc::clone(&self.stop_requested),
             event_handlers: Arc::clone(&self.event_handlers),
         }
     }

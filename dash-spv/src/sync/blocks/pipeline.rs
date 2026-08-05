@@ -1,40 +1,33 @@
 //! Blocks pipeline implementation.
 //!
-//! Handles concurrent block downloads with timeout and retry logic.
-//! Uses the generic DownloadCoordinator for core mechanics.
+//! Declares wanted blocks to the network manager (the broker) and buffers the
+//! arrivals for height-ordered processing. The broker owns pacing, timeouts and
+//! retries — this pipeline keeps no in-flight queue of its own.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
-use std::time::Duration;
+use std::sync::Arc;
 
 use crate::error::SyncResult;
-use crate::network::RequestSender;
-use crate::sync::download_coordinator::{DownloadConfig, DownloadCoordinator};
+use crate::network::NetworkManager;
 use crate::types::HashedBlock;
+use dashcore::network::message::NetworkMessage;
+use dashcore::network::message_blockdata::Inventory;
 use dashcore::BlockHash;
 use key_wallet_manager::{FilterMatchKey, WalletId};
 
-/// Maximum number of concurrent block downloads.
-const MAX_CONCURRENT_BLOCK_DOWNLOADS: usize = 20;
-
-/// Timeout for block downloads before retry.
-const BLOCK_TIMEOUT: Duration = Duration::from_secs(30);
-
-/// Maximum blocks per GetData request, kept a bit lower for better download distribution to multiple peers
-const BLOCKS_PER_REQUEST: usize = 8;
-
 /// Pipeline for downloading blocks with height-ordered processing.
 ///
-/// Uses DownloadCoordinator<BlockHash> for core download mechanics.
-/// This is a thin wrapper that handles building GetData inventory messages.
-/// Tracks block heights to enable ordered processing and buffers downloaded blocks.
+/// Holds no request queue of its own: it declares the blocks it wants to the
+/// network manager (the broker de-duplicates, paces, times out and retries), and
+/// buffers the arrivals for height-ordered processing. A block is "wanted" for
+/// exactly as long as it sits in `hash_to_height`.
 pub(super) struct BlocksPipeline {
-    /// Core download coordinator (handles pending, in-flight, timeouts).
-    coordinator: DownloadCoordinator<BlockHash>,
-    /// Heights queued or in-flight (waiting for download).
+    /// Heights still wanted (block requested, not yet downloaded).
     pending_heights: BTreeSet<u32>,
     /// Downloaded blocks ready to process (height -> block, with its cached hash).
     downloaded: BTreeMap<u32, HashedBlock>,
-    /// Map hash -> height for looking up height when block arrives.
+    /// Wanted blocks: hash -> height. A block leaves this map once downloaded.
+    /// Doubles as the "is this block wanted?" set for validating arrivals.
     hash_to_height: HashMap<BlockHash, u32>,
     /// Per-block interested wallets, populated when the block is queued.
     /// Only those wallets get the block processed.
@@ -44,9 +37,9 @@ pub(super) struct BlocksPipeline {
 impl std::fmt::Debug for BlocksPipeline {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("BlocksPipeline")
-            .field("coordinator", &self.coordinator)
             .field("pending_heights", &self.pending_heights.len())
             .field("downloaded", &self.downloaded.len())
+            .field("wanted", &self.hash_to_height.len())
             .finish()
     }
 }
@@ -61,11 +54,6 @@ impl BlocksPipeline {
     /// Create a new blocks pipeline.
     pub(super) fn new() -> Self {
         Self {
-            coordinator: DownloadCoordinator::new(
-                DownloadConfig::default()
-                    .with_max_concurrent(MAX_CONCURRENT_BLOCK_DOWNLOADS)
-                    .with_timeout(BLOCK_TIMEOUT),
-            ),
             pending_heights: BTreeSet::new(),
             downloaded: BTreeMap::new(),
             hash_to_height: HashMap::new(),
@@ -74,81 +62,81 @@ impl BlocksPipeline {
     }
 
     /// Queue blocks with their heights and per-block interested wallet sets.
+    ///
+    /// Returns how many were not already tracked, which is what "blocks requested"
+    /// means for progress: a block enters the wanted set once, however many times it
+    /// is later re-declared to the broker.
     pub(super) fn queue(
         &mut self,
         blocks: impl IntoIterator<Item = (FilterMatchKey, BTreeSet<WalletId>)>,
-    ) {
+    ) -> usize {
+        let mut newly_tracked = 0;
         for (key, wallets) in blocks {
             let hash = *key.hash();
             let already_tracked =
                 self.hash_to_height.contains_key(&hash) || self.hash_to_wallets.contains_key(&hash);
             if !already_tracked {
-                self.coordinator.enqueue([hash]);
                 self.pending_heights.insert(key.height());
                 self.hash_to_height.insert(hash, key.height());
+                newly_tracked += 1;
             }
             self.hash_to_wallets.entry(hash).or_default().extend(wallets);
         }
+        newly_tracked
     }
 
     /// Check if the pipeline has completed all work.
     ///
-    /// Returns true when no blocks are pending, downloading, or waiting to be processed.
+    /// Returns true when no blocks are wanted, downloading, or waiting to be processed.
     pub(super) fn is_complete(&self) -> bool {
-        self.coordinator.is_empty() && self.downloaded.is_empty() && self.pending_heights.is_empty()
+        self.hash_to_height.is_empty()
+            && self.downloaded.is_empty()
+            && self.pending_heights.is_empty()
     }
 
-    /// Check if there are pending requests to make.
+    /// Check if there are blocks still to download.
     pub(super) fn has_pending_requests(&self) -> bool {
-        self.coordinator.available_to_send() > 0
+        !self.hash_to_height.is_empty()
     }
 
-    /// Send pending block requests up to the concurrency limit.
+    /// Declare every wanted block to the network manager.
     ///
-    /// Sends multiple smaller GetData messages to distribute requests across peers.
-    /// Returns the number of blocks requested.
-    pub(super) async fn send_pending(&mut self, requests: &RequestSender) -> SyncResult<usize> {
-        let mut total_sent = 0;
-
-        while self.coordinator.available_to_send() > 0 {
-            // Take a batch of up to BLOCKS_PER_REQUEST
-            let count = self.coordinator.available_to_send().min(BLOCKS_PER_REQUEST);
-            let hashes = self.coordinator.take_pending(count);
-            if hashes.is_empty() {
-                break;
-            }
-
-            requests.request_blocks(hashes.clone())?;
-            self.coordinator.mark_sent(&hashes);
-            total_sent += hashes.len();
-
-            tracing::debug!(
-                "Requested {} blocks ({} downloading, {} pending)",
-                hashes.len(),
-                self.coordinator.active_count(),
-                self.coordinator.pending_count()
-            );
+    /// Fired freely (on queue, on arrival, on tick): the broker de-duplicates, so
+    /// re-declaring a block already queued or on the wire is a no-op, and it owns
+    /// pacing (one `getdata` per block, throttled by each peer's measured capacity)
+    /// and retry (re-inject on timeout after dropping the dead peer). Re-declaring
+    /// each tick is the safety net if a peer drops before the broker retries.
+    ///
+    /// Returns the number of blocks declared (offered, not necessarily newly sent).
+    pub(super) async fn send_pending(
+        &mut self,
+        network: &Arc<dyn NetworkManager>,
+    ) -> SyncResult<usize> {
+        if self.hash_to_height.is_empty() {
+            return Ok(0);
         }
-
-        Ok(total_sent)
+        let hashes: Vec<BlockHash> = self.hash_to_height.keys().copied().collect();
+        for hash in &hashes {
+            network.send(NetworkMessage::GetData(vec![Inventory::Block(*hash)])).await;
+        }
+        tracing::debug!("Declared {} wanted block(s) to the broker", hashes.len());
+        Ok(hashes.len())
     }
 
     /// Handle a received block using internal height mapping.
     ///
-    /// Looks up the height from the internal hash_to_height map and stores
-    /// the block in the downloaded buffer for height-ordered processing.
-    /// Returns `true` if this was a tracked block, `false` if unrequested.
+    /// Looks up the height from the internal `hash_to_height` map and stores the
+    /// block in the downloaded buffer for height-ordered processing.
+    /// Returns `true` if this was a wanted block, `false` if unrequested.
     pub(super) fn receive_block(&mut self, block: &HashedBlock) -> bool {
         let hash = *block.hash();
-        if !self.coordinator.receive(&hash) {
+        // Not in the wanted set => unrequested or already downloaded; ignore.
+        let Some(height) = self.hash_to_height.remove(&hash) else {
             tracing::debug!("Ignoring unrequested block: {}", hash);
             return false;
-        }
-
-        if let Some(height) = self.hash_to_height.remove(&hash) {
-            self.pending_heights.remove(&height);
-            self.downloaded.insert(height, block.clone());
-        }
+        };
+        self.pending_heights.remove(&height);
+        self.downloaded.insert(height, block.clone());
         true
     }
 
@@ -188,20 +176,6 @@ impl BlocksPipeline {
         self.hash_to_wallets.entry(hash).or_default().extend(wallets);
         self.downloaded.insert(height, block);
     }
-
-    /// Check for timed out downloads and re-queue them.
-    pub(super) fn handle_timeouts(&mut self) {
-        self.coordinator.check_and_retry_timeouts();
-    }
-
-    /// Move in-flight `getdata` requests back to pending after a peer
-    /// disconnect so the next `send_pending` reissues them to the new peer.
-    /// `pending_heights`, `downloaded`, `hash_to_height`, and `hash_to_wallets`
-    /// are preserved so already-received blocks are not re-fetched and the
-    /// per-block wallet routing stays intact.
-    pub(super) fn requeue_in_flight(&mut self) {
-        self.coordinator.requeue_in_flight();
-    }
 }
 
 #[cfg(test)]
@@ -210,10 +184,6 @@ mod tests {
     use dashcore_hashes::Hash;
 
     use super::*;
-
-    fn test_hash(n: u8) -> BlockHash {
-        BlockHash::from_byte_array([n; 32])
-    }
 
     fn make_test_block(n: u8) -> Block {
         use dashcore::blockdata::block::Header;
@@ -234,8 +204,7 @@ mod tests {
     #[test]
     fn test_blocks_pipeline_new() {
         let pipeline = BlocksPipeline::new();
-        assert_eq!(pipeline.coordinator.pending_count(), 0);
-        assert_eq!(pipeline.coordinator.active_count(), 0);
+        assert!(pipeline.hash_to_height.is_empty());
         assert!(pipeline.is_complete());
     }
 
@@ -245,7 +214,7 @@ mod tests {
         let block = make_test_block(1);
         pipeline.queue([(FilterMatchKey::new(100, block.block_hash()), BTreeSet::new())]);
 
-        assert_eq!(pipeline.coordinator.pending_count(), 1);
+        assert_eq!(pipeline.hash_to_height.len(), 1);
         assert!(!pipeline.is_complete());
         assert!(pipeline.has_pending_requests());
     }
@@ -262,7 +231,7 @@ mod tests {
             (FilterMatchKey::new(102, block3.block_hash()), BTreeSet::new()),
         ]);
 
-        assert_eq!(pipeline.coordinator.pending_count(), 3);
+        assert_eq!(pipeline.hash_to_height.len(), 3);
         assert_eq!(pipeline.pending_heights.len(), 3);
         assert!(pipeline.pending_heights.contains(&100));
         assert!(pipeline.pending_heights.contains(&101));
@@ -275,17 +244,10 @@ mod tests {
         let block = make_test_block(1);
         let hash = block.block_hash();
 
-        // Queue with height tracking
         pipeline.queue([(FilterMatchKey::new(100, block.block_hash()), BTreeSet::new())]);
 
-        // Simulate sending via coordinator
-        let hashes = pipeline.coordinator.take_pending(1);
-        pipeline.coordinator.mark_sent(&hashes);
-        assert_eq!(pipeline.coordinator.active_count(), 1);
-
-        // Receive block
         assert!(pipeline.receive_block(&HashedBlock::from(&block)));
-        assert_eq!(pipeline.coordinator.active_count(), 0);
+        assert!(pipeline.hash_to_height.is_empty());
         assert_eq!(pipeline.downloaded.len(), 1);
         assert!(pipeline.pending_heights.is_empty());
         assert_eq!(*pipeline.downloaded.get(&100).unwrap().hash(), hash);
@@ -301,84 +263,6 @@ mod tests {
     }
 
     #[test]
-    fn test_max_concurrent() {
-        let mut pipeline = BlocksPipeline::new();
-
-        // Queue more blocks than max concurrent
-        for i in 0..=MAX_CONCURRENT_BLOCK_DOWNLOADS {
-            let block = make_test_block(i as u8);
-            pipeline.queue([(FilterMatchKey::new(i as u32, block.block_hash()), BTreeSet::new())]);
-        }
-
-        // Take and mark as downloading up to limit
-        let to_send = pipeline.coordinator.available_to_send();
-        let hashes = pipeline.coordinator.take_pending(to_send);
-        pipeline.coordinator.mark_sent(&hashes);
-
-        assert_eq!(pipeline.coordinator.active_count(), MAX_CONCURRENT_BLOCK_DOWNLOADS);
-        assert_eq!(pipeline.coordinator.pending_count(), 1);
-        assert!(!pipeline.has_pending_requests());
-    }
-
-    #[test]
-    fn test_requeue_in_flight_preserves_downloaded_and_pending_heights() {
-        let mut pipeline = BlocksPipeline::new();
-        let block_a = make_test_block(1);
-        let block_b = make_test_block(2);
-        let hash_a = block_a.block_hash();
-        let hash_b = block_b.block_hash();
-
-        // A: queued and sent — will be requeued.
-        pipeline.queue([(FilterMatchKey::new(100, hash_a), BTreeSet::from([[1u8; 32]]))]);
-        let sent = pipeline.coordinator.take_pending(1);
-        pipeline.coordinator.mark_sent(&sent);
-        assert_eq!(pipeline.coordinator.active_count(), 1);
-
-        // B: already received, sitting in `downloaded` — must survive requeue.
-        pipeline.add_from_storage(HashedBlock::from(&block_b), 200, BTreeSet::from([[2u8; 32]]));
-
-        pipeline.requeue_in_flight();
-
-        assert_eq!(pipeline.coordinator.active_count(), 0);
-        assert_eq!(pipeline.coordinator.pending_count(), 1);
-        assert!(pipeline.pending_heights.contains(&100));
-        assert_eq!(pipeline.hash_to_height.get(&hash_a), Some(&100));
-        assert!(pipeline.hash_to_wallets.contains_key(&hash_a));
-        assert!(pipeline.downloaded.contains_key(&200));
-        assert!(pipeline.hash_to_wallets.contains_key(&hash_b));
-    }
-
-    #[test]
-    fn test_timeout_requeues() {
-        // Create pipeline with very short timeout for testing
-        let mut pipeline = BlocksPipeline {
-            coordinator: DownloadCoordinator::new(
-                DownloadConfig::default()
-                    .with_max_concurrent(MAX_CONCURRENT_BLOCK_DOWNLOADS)
-                    .with_timeout(Duration::from_millis(10)),
-            ),
-            pending_heights: BTreeSet::new(),
-            downloaded: BTreeMap::new(),
-            hash_to_height: HashMap::new(),
-            hash_to_wallets: HashMap::new(),
-        };
-
-        // Use coordinator directly to set up in-flight state
-        let hash = test_hash(1);
-        pipeline.coordinator.enqueue([hash]);
-        let hashes = pipeline.coordinator.take_pending(1);
-        pipeline.coordinator.mark_sent(&hashes);
-
-        // Wait for timeout
-        std::thread::sleep(Duration::from_millis(20));
-
-        pipeline.handle_timeouts();
-
-        assert_eq!(pipeline.coordinator.active_count(), 0);
-        assert_eq!(pipeline.coordinator.pending_count(), 1);
-    }
-
-    #[test]
     fn test_take_next_ordered_block_in_order() {
         let mut pipeline = BlocksPipeline::new();
         let block1 = make_test_block(1);
@@ -386,30 +270,23 @@ mod tests {
         let hash1 = block1.block_hash();
         let hash2 = block2.block_hash();
 
-        // Use add_from_storage to test ordering logic without network
-        // Add block 2 first (out of order)
         pipeline.add_from_storage(HashedBlock::from(&block2), 101, BTreeSet::new());
-        // Also track height 100 as pending to simulate waiting
         pipeline.pending_heights.insert(100);
 
         // Cannot take block 2 yet - waiting for block at height 100
         assert!(pipeline.take_next_ordered_block().is_none());
 
-        // Add block 1
         pipeline.pending_heights.remove(&100);
         pipeline.add_from_storage(HashedBlock::from(&block1), 100, BTreeSet::new());
 
-        // Now block 1 is ready (lowest height)
         let (block, height, _) = pipeline.take_next_ordered_block().unwrap();
         assert_eq!(height, 100);
         assert_eq!(*block.hash(), hash1);
 
-        // Block 2 is now ready
         let (block, height, _) = pipeline.take_next_ordered_block().unwrap();
         assert_eq!(height, 101);
         assert_eq!(*block.hash(), hash2);
 
-        // No more blocks
         assert!(pipeline.take_next_ordered_block().is_none());
     }
 
@@ -418,17 +295,13 @@ mod tests {
         let mut pipeline = BlocksPipeline::new();
         let block2 = make_test_block(2);
 
-        // Add block at height 101, but height 100 is still pending
         pipeline.pending_heights.insert(100);
         pipeline.add_from_storage(HashedBlock::from(&block2), 101, BTreeSet::new());
 
-        // Cannot take block 2 - block at height 100 is still pending
         assert!(pipeline.take_next_ordered_block().is_none());
 
-        // Clear the pending height
         pipeline.pending_heights.remove(&100);
 
-        // Now block 2 is ready
         let (_, height, _) = pipeline.take_next_ordered_block().unwrap();
         assert_eq!(height, 101);
     }
@@ -440,7 +313,6 @@ mod tests {
         let hash = block.block_hash();
 
         pipeline.add_from_storage(HashedBlock::from(&block), 100, BTreeSet::new());
-
         assert_eq!(pipeline.downloaded.len(), 1);
 
         let (taken_block, height, _) = pipeline.take_next_ordered_block().unwrap();
@@ -453,12 +325,10 @@ mod tests {
         let mut pipeline = BlocksPipeline::new();
         assert!(pipeline.is_complete());
 
-        // Adding to downloaded makes it incomplete
         let block = make_test_block(1);
         pipeline.add_from_storage(HashedBlock::from(&block), 100, BTreeSet::new());
         assert!(!pipeline.is_complete());
 
-        // Take the block
         pipeline.take_next_ordered_block();
         assert!(pipeline.is_complete());
     }
@@ -468,7 +338,6 @@ mod tests {
         let mut pipeline = BlocksPipeline::new();
         assert!(pipeline.is_complete());
 
-        // Pending heights make it incomplete
         pipeline.pending_heights.insert(100);
         assert!(!pipeline.is_complete());
 
@@ -478,18 +347,12 @@ mod tests {
 
     #[test]
     fn test_queue_propagates_wallet_set_through_take_next() {
-        // A block queued with a non-empty wallet set must yield that exact
-        // wallet set when taken in height order via `take_next_ordered_block`.
         let mut pipeline = BlocksPipeline::new();
         let block = make_test_block(1);
         let hash = block.block_hash();
         let wallets: BTreeSet<WalletId> = BTreeSet::from([[1u8; 32], [2u8; 32]]);
 
         pipeline.queue([(FilterMatchKey::new(100, hash), wallets.clone())]);
-
-        // Drive the block through receive_block to land it in `downloaded`.
-        let hashes = pipeline.coordinator.take_pending(1);
-        pipeline.coordinator.mark_sent(&hashes);
         assert!(pipeline.receive_block(&HashedBlock::from(&block)));
 
         let (taken_block, height, taken_wallets) = pipeline.take_next_ordered_block().unwrap();
@@ -500,9 +363,6 @@ mod tests {
 
     #[test]
     fn test_queue_merges_wallet_sets_for_repeat_hashes() {
-        // Queueing the same block hash twice with different wallet sets must
-        // produce the union when the block is later taken from the pipeline,
-        // and must not double-count it in the coordinator's pending state.
         let mut pipeline = BlocksPipeline::new();
         let block = make_test_block(1);
         let hash = block.block_hash();
@@ -510,50 +370,13 @@ mod tests {
         let wallets_b: BTreeSet<WalletId> = BTreeSet::from([[2u8; 32], [3u8; 32]]);
 
         pipeline.queue([(FilterMatchKey::new(100, hash), wallets_a.clone())]);
-        assert_eq!(pipeline.coordinator.pending_count(), 1);
+        assert_eq!(pipeline.hash_to_height.len(), 1);
         pipeline.queue([(FilterMatchKey::new(100, hash), wallets_b.clone())]);
-        // Re-queueing must not double the coordinator's pending count.
-        assert_eq!(pipeline.coordinator.pending_count(), 1);
+        // Re-queueing must not double the wanted count.
+        assert_eq!(pipeline.hash_to_height.len(), 1);
 
-        // Land the block in `downloaded` to retrieve it.
-        let hashes = pipeline.coordinator.take_pending(1);
-        assert_eq!(hashes.len(), 1);
-        pipeline.coordinator.mark_sent(&hashes);
         assert!(pipeline.receive_block(&HashedBlock::from(&block)));
 
-        let (_, _, taken_wallets) = pipeline.take_next_ordered_block().unwrap();
-        let mut expected = wallets_a;
-        expected.extend(wallets_b);
-        assert_eq!(taken_wallets, expected);
-    }
-
-    #[test]
-    fn test_queue_does_not_re_enqueue_in_flight_hash() {
-        // A late-arriving wallet match for a block already in flight must
-        // merge the wallet id without re-enqueueing the hash. Re-enqueueing
-        // would cause a duplicate request and corrupt the coordinator's
-        // pending/in-flight state.
-        let mut pipeline = BlocksPipeline::new();
-        let block = make_test_block(1);
-        let hash = block.block_hash();
-        let wallets_a: BTreeSet<WalletId> = BTreeSet::from([[1u8; 32]]);
-        let wallets_b: BTreeSet<WalletId> = BTreeSet::from([[2u8; 32]]);
-
-        pipeline.queue([(FilterMatchKey::new(100, hash), wallets_a.clone())]);
-        // Move the hash to in-flight.
-        let hashes = pipeline.coordinator.take_pending(1);
-        pipeline.coordinator.mark_sent(&hashes);
-        assert_eq!(pipeline.coordinator.pending_count(), 0);
-        assert_eq!(pipeline.coordinator.active_count(), 1);
-
-        // A second queue call for the same hash must not push it back to
-        // pending while it is in flight.
-        pipeline.queue([(FilterMatchKey::new(100, hash), wallets_b.clone())]);
-        assert_eq!(pipeline.coordinator.pending_count(), 0);
-        assert_eq!(pipeline.coordinator.active_count(), 1);
-
-        // Late wallet ids are still merged for when the block arrives.
-        assert!(pipeline.receive_block(&HashedBlock::from(&block)));
         let (_, _, taken_wallets) = pipeline.take_next_ordered_block().unwrap();
         let mut expected = wallets_a;
         expected.extend(wallets_b);
@@ -562,9 +385,6 @@ mod tests {
 
     #[test]
     fn test_queue_does_not_re_enqueue_downloaded_hash() {
-        // A late-arriving wallet match for a block already received and sitting
-        // in `downloaded` (but not yet consumed by `take_next_ordered_block`)
-        // must merge the wallet id without re-enqueueing the hash.
         let mut pipeline = BlocksPipeline::new();
         let block = make_test_block(1);
         let hash = block.block_hash();
@@ -572,20 +392,15 @@ mod tests {
         let wallets_b: BTreeSet<WalletId> = BTreeSet::from([[2u8; 32]]);
 
         pipeline.queue([(FilterMatchKey::new(100, hash), wallets_a.clone())]);
-        let hashes = pipeline.coordinator.take_pending(1);
-        pipeline.coordinator.mark_sent(&hashes);
         assert!(pipeline.receive_block(&HashedBlock::from(&block)));
         assert_eq!(pipeline.downloaded.len(), 1);
-        assert_eq!(pipeline.coordinator.pending_count(), 0);
-        assert_eq!(pipeline.coordinator.active_count(), 0);
+        assert!(pipeline.hash_to_height.is_empty());
 
         // Late-arriving match for the same hash must not re-enqueue.
         pipeline.queue([(FilterMatchKey::new(100, hash), wallets_b.clone())]);
-        assert_eq!(pipeline.coordinator.pending_count(), 0);
-        assert_eq!(pipeline.coordinator.active_count(), 0);
+        assert!(pipeline.hash_to_height.is_empty());
         assert_eq!(pipeline.downloaded.len(), 1);
 
-        // Late wallet ids are still merged for when the block is taken.
         let (_, _, taken_wallets) = pipeline.take_next_ordered_block().unwrap();
         let mut expected = wallets_a;
         expected.extend(wallets_b);
@@ -594,8 +409,6 @@ mod tests {
 
     #[test]
     fn test_add_from_storage_merges_wallet_sets() {
-        // The `add_from_storage` path must merge wallet sets for repeat
-        // additions of the same block hash, matching `queue`'s semantics.
         let mut pipeline = BlocksPipeline::new();
         let block = make_test_block(1);
         let wallets_a: BTreeSet<WalletId> = BTreeSet::from([[1u8; 32]]);
@@ -615,19 +428,14 @@ mod tests {
         let mut pipeline = BlocksPipeline::new();
         let block = make_test_block(1);
 
-        // Queue and mark as sent via coordinator
         pipeline.queue([(FilterMatchKey::new(100, block.block_hash()), BTreeSet::new())]);
-        let hashes = pipeline.coordinator.take_pending(1);
-        pipeline.coordinator.mark_sent(&hashes);
 
-        // First receive
-        let result = pipeline.receive_block(&HashedBlock::from(&block));
-        assert!(result);
+        // First receive returns the height.
+        assert!(pipeline.receive_block(&HashedBlock::from(&block)));
         assert_eq!(pipeline.downloaded.len(), 1);
 
-        // Duplicate receive (not tracked anymore since already completed)
-        let result = pipeline.receive_block(&HashedBlock::from(&block));
-        assert!(!result);
+        // Duplicate receive: no longer wanted.
+        assert!(!pipeline.receive_block(&HashedBlock::from(&block)));
         assert_eq!(pipeline.downloaded.len(), 1);
     }
 }

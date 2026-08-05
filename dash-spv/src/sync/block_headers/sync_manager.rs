@@ -1,5 +1,5 @@
 use crate::error::SyncResult;
-use crate::network::{Message, MessageType, NetworkEvent, RequestSender};
+use crate::network::{MessageType, NetworkEvent, NetworkManager};
 use crate::storage::{BlockHeaderStorage, MetadataStorage};
 use crate::sync::sync_manager::ensure_not_started;
 use crate::sync::{
@@ -8,7 +8,11 @@ use crate::sync::{
 };
 use async_trait::async_trait;
 use dashcore::network::message::NetworkMessage;
+use dashcore::network::message_blockdata::GetHeadersMessage;
 use dashcore::BlockHash;
+use dashcore_hashes::Hash;
+use std::net::SocketAddr;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 /// Timeout waiting for unsolicited header messages after a block announcement.
@@ -37,17 +41,20 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> SyncManager for BlockHeadersMana
     }
 
     fn on_disconnect(&mut self) {
-        // Drop only per-peer in-flight bookkeeping. Segment topology and
-        // validated chain state per segment (current_tip_hash, current_height,
-        // buffered_headers, complete) are preserved so a reconnect can resume
-        // from where the disconnected peer left off without re-fetching headers
-        // we already have.
-        self.pipeline.clear_in_flight();
+        // The network manager re-queues in-flight requests itself and paces the
+        // re-declared `getheaders` to the new peer. Segment topology and validated
+        // chain state per segment (current_tip_hash, current_height,
+        // buffered_headers, complete) are preserved so a reconnect can resume from
+        // where the disconnected peer left off without re-fetching headers we
+        // already have. Only the peer-scoped announcement bookkeeping is dropped.
         self.pending_announcements.clear();
         self.announced_peers.clear();
     }
 
-    async fn start_sync(&mut self, requests: &RequestSender) -> SyncResult<Vec<SyncEvent>> {
+    async fn start_sync(
+        &mut self,
+        network: &Arc<dyn NetworkManager>,
+    ) -> SyncResult<Vec<SyncEvent>> {
         ensure_not_started(self.state(), self.identifier())?;
         self.progress.set_state(SyncState::Syncing);
 
@@ -78,7 +85,7 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> SyncManager for BlockHeadersMana
         }
 
         // Send initial batch of requests
-        let sent = self.pipeline.send_pending(requests)?;
+        let sent = self.pipeline.send_pending(network).await?;
         tracing::info!("Pipeline: sent {} initial requests", sent);
 
         Ok(vec![SyncEvent::SyncStart {
@@ -88,17 +95,18 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> SyncManager for BlockHeadersMana
 
     async fn handle_message(
         &mut self,
-        msg: Message,
-        requests: &RequestSender,
+        _peer: SocketAddr,
+        msg: NetworkMessage,
+        network: &Arc<dyn NetworkManager>,
     ) -> SyncResult<Vec<SyncEvent>> {
-        match msg.inner() {
+        match &msg {
             NetworkMessage::Headers(headers) => {
                 // Always route through pipeline when initialized
-                self.handle_headers_pipeline(headers, requests).await
+                self.handle_headers_pipeline(headers, network).await
             }
 
             NetworkMessage::Inv(inv) => {
-                self.handle_inventory(inv, requests).await?;
+                self.handle_inventory(inv, network).await?;
                 Ok(vec![])
             }
 
@@ -108,27 +116,23 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> SyncManager for BlockHeadersMana
 
     async fn handle_sync_event(
         &mut self,
-        _event: &SyncEvent,
-        _requests: &RequestSender,
+        event: &SyncEvent,
+        network: &Arc<dyn NetworkManager>,
     ) -> SyncResult<Vec<SyncEvent>> {
-        // BlockHeadersManager doesn't react to events from other managers
-        Ok(vec![])
+        match event {
+            SyncEvent::HeaderBackfillNeeded {
+                from_height,
+            } => self.backfill_from(*from_height, network).await,
+            _ => Ok(vec![]),
+        }
     }
 
-    async fn tick(&mut self, requests: &RequestSender) -> SyncResult<Vec<SyncEvent>> {
+    async fn tick(&mut self, network: &Arc<dyn NetworkManager>) -> SyncResult<Vec<SyncEvent>> {
         if !self.pipeline.is_initialized() {
             return Ok(vec![]);
         }
 
-        self.pipeline.handle_timeouts();
-
-        // During initial sync, send more requests and log progress
         if self.state() == SyncState::Syncing {
-            let sent = self.pipeline.send_pending(requests)?;
-            if sent > 0 {
-                tracing::debug!("Tick: pipeline sent {} more requests", sent);
-            }
-
             return Ok(vec![]);
         }
 
@@ -152,7 +156,7 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> SyncManager for BlockHeadersMana
 
                 // Reset tip segment and send requests via pipeline
                 self.pipeline.reset_tip_segment();
-                self.pipeline.send_pending(requests)?;
+                self.pipeline.send_pending(network).await?;
 
                 for hash in stale {
                     self.pending_announcements.remove(&hash);
@@ -166,12 +170,10 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> SyncManager for BlockHeadersMana
     async fn handle_network_event(
         &mut self,
         event: &NetworkEvent,
-        requests: &RequestSender,
+        network: &Arc<dyn NetworkManager>,
     ) -> SyncResult<Vec<SyncEvent>> {
         match event {
-            NetworkEvent::PeerConnected {
-                address,
-            } => {
+            NetworkEvent::PeerConnected(address) => {
                 // When synced, send GetHeaders to new peers so Dash Core learns our tip
                 // and sends header announcements instead of inv. Skip when the
                 // pipeline has an active catch-up request to avoid the empty
@@ -183,47 +185,51 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> SyncManager for BlockHeadersMana
                 {
                     let tip = self.tip().await?;
                     tracing::info!("Announcing tip {} to new peer {}", tip.height(), address);
-                    requests.request_block_headers_from_peer(*tip.hash(), *address)?;
+                    // Peer-pinned send: this must reach THIS peer so it learns our
+                    // tip, not whichever peer the router would otherwise pick.
+                    network
+                        .send_to(
+                            *address,
+                            NetworkMessage::GetHeaders(GetHeadersMessage::new(
+                                vec![*tip.hash()],
+                                BlockHash::all_zeros(),
+                            )),
+                        )
+                        .await;
                     self.announced_peers.insert(*address);
                 }
             }
-            NetworkEvent::PeerDisconnected {
-                address,
-            } => {
+            NetworkEvent::PeerDisconnected(address) => {
                 self.announced_peers.remove(address);
             }
             NetworkEvent::PeersUpdated {
                 connected_count,
                 best_height,
-                ..
             } => {
-                if let Some(best_height) = best_height {
-                    self.progress.update_target_height(*best_height);
+                self.progress.update_target_height(*best_height);
+                {
                     let mut metadata_storage = self.metadata_storage.write().await;
                     metadata_storage.store_last_target_height(*best_height).await?;
                 }
                 if *connected_count == 0 {
                     self.stop_sync();
-                } else if *connected_count > 0 {
+                } else {
                     if self.state() == SyncState::WaitingForConnections {
-                        return self.start_sync(requests).await;
+                        return self.start_sync(network).await;
                     }
                     // When already synced but behind peer height, request missing headers
-                    if self.state() == SyncState::Synced {
-                        if let Some(best_height) = best_height {
-                            if *best_height > self.progress.tip_height()
-                                && !self.pipeline.tip_segment_has_pending_request()
-                            {
-                                tracing::info!(
-                                    "Peer height {} > our height {}, requesting headers to catch up",
-                                    best_height,
-                                    self.progress.tip_height()
-                                );
-                                // Reset tip segment and send requests via pipeline
-                                self.pipeline.reset_tip_segment();
-                                self.pipeline.send_pending(requests)?;
-                            }
-                        }
+                    if self.state() == SyncState::Synced
+                        && *best_height > self.progress.tip_height()
+                        && !self.pipeline.tip_segment_has_pending_request()
+                    {
+                        tracing::info!(
+                            "Peer height {} > our height {}, requesting headers to catch up",
+                            best_height,
+                            self.progress.tip_height()
+                        );
+                        // Reset tip segment and send requests via pipeline
+                        self.pipeline.reset_tip_segment();
+                        self.pipeline.send_pending(network).await?;
                     }
                 }
             }

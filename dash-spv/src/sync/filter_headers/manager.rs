@@ -10,7 +10,7 @@ use tokio::sync::RwLock;
 
 use super::pipeline::FilterHeadersPipeline;
 use crate::error::SyncResult;
-use crate::network::RequestSender;
+use crate::network::NetworkManager;
 use crate::storage::{BlockHeaderStorage, FilterHeaderStorage};
 use crate::sync::filter_headers::util::compute_filter_headers;
 use crate::sync::progress::ProgressPercentage;
@@ -40,6 +40,9 @@ pub struct FilterHeadersManager<H: BlockHeaderStorage, FH: FilterHeaderStorage> 
     /// Whether block header sync has completed. Gates FilterHeadersSyncComplete emission
     /// to ensure it never fires before BlockHeaderSyncComplete.
     pub(super) block_headers_synced: bool,
+    /// Filling in a range below the stored one, where the storage tip stays put
+    /// while the pipeline walks the low range.
+    pub(super) backfilling: bool,
 }
 
 impl<H: BlockHeaderStorage, FH: FilterHeaderStorage> FilterHeadersManager<H, FH> {
@@ -89,6 +92,7 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage> FilterHeadersManager<H, FH>
             filter_header_storage,
             pipeline: FilterHeadersPipeline::default(),
             checkpoint_start_height: None,
+            backfilling: false,
             block_headers_synced: false,
         })
     }
@@ -132,8 +136,70 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage> FilterHeadersManager<H, FH>
         Ok(count)
     }
 
+    /// Re-sync filter headers from a header floor that just moved down.
+    ///
+    /// `start_download` derives its start from the filter-header tip, so it can
+    /// only ever move forward and would skip a range that became reachable
+    /// below it. Re-initialize the pipeline at the new floor instead: the range
+    /// above it is re-requested and stored back at the same heights, which
+    /// keeps progress monotonic and avoids a second, backwards download path.
+    pub(super) async fn resync_from_floor(
+        &mut self,
+        start_height: u32,
+        network: &Arc<dyn NetworkManager>,
+    ) -> SyncResult<Vec<SyncEvent>> {
+        // Only fetch what is actually missing: everything from the stored start
+        // upwards is already there, and re-storing it would overwrite it.
+        let stored_start = self.filter_header_storage.read().await.get_filter_start_height().await;
+        let Some(target_height) = stored_start.map(|start| start.saturating_sub(1)) else {
+            return Ok(vec![]);
+        };
+        if start_height > target_height {
+            return Ok(vec![]);
+        }
+
+        tracing::info!(
+            "Filling in filter headers {}..{} below the stored range",
+            start_height,
+            target_height
+        );
+
+        let header_storage = self.header_storage.read().await;
+        self.pipeline.init(&*header_storage, start_height, target_height).await?;
+        drop(header_storage);
+
+        // Filter verification chains from the header below the range, so the
+        // first batch has to store the predecessor the peer sends with it —
+        // the same thing a fresh checkpoint sync does. Genesis has none.
+        self.checkpoint_start_height = (start_height > 0).then_some(start_height);
+        self.backfilling = true;
+        self.progress.update_current_height(start_height.saturating_sub(1));
+        self.pipeline.send_pending(network).await?;
+        self.set_state(SyncState::Syncing);
+
+        Ok(vec![])
+    }
+
+    /// Tip to report to other managers: the highest filter header stored, which
+    /// during a backfill is above the range the pipeline is currently walking.
+    pub(super) async fn reported_tip(&self) -> u32 {
+        let stored_tip = self
+            .filter_header_storage
+            .read()
+            .await
+            .get_filter_tip_height()
+            .await
+            .ok()
+            .flatten()
+            .unwrap_or(0);
+        stored_tip.max(self.progress.current_height())
+    }
+
     /// Start or resume filter header download.
-    async fn start_download(&mut self, requests: &RequestSender) -> SyncResult<Vec<SyncEvent>> {
+    async fn start_download(
+        &mut self,
+        network: &Arc<dyn NetworkManager>,
+    ) -> SyncResult<Vec<SyncEvent>> {
         // Get current filter tip
         let filter_headers_tip =
             self.filter_header_storage.read().await.get_filter_tip_height().await?.unwrap_or(0);
@@ -178,8 +244,8 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage> FilterHeadersManager<H, FH>
             .await?;
         drop(header_storage);
 
-        // Send initial requests
-        self.pipeline.send_pending(requests)?;
+        // Declare initial batches to the broker
+        self.pipeline.send_pending(network).await?;
 
         self.set_state(SyncState::Syncing);
 
@@ -193,10 +259,18 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage> FilterHeadersManager<H, FH>
     pub(super) async fn handle_new_headers(
         &mut self,
         tip_height: u32,
-        requests: &RequestSender,
+        network: &Arc<dyn NetworkManager>,
     ) -> SyncResult<Vec<SyncEvent>> {
         self.progress.update_block_header_tip_height(tip_height);
         self.update_target_height(tip_height);
+
+        // While filling in a range below the stored one the pipeline is aimed at
+        // that range, so extending it towards the tip here would queue the whole
+        // already-stored span above it. The fill rebases onto the tip when it
+        // finishes.
+        if self.backfilling {
+            return Ok(vec![]);
+        }
 
         // Nothing to do if caught up to available headers
         if self.progress.current_height() >= self.progress.block_header_tip_height() {
@@ -227,12 +301,12 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage> FilterHeadersManager<H, FH>
                         .await?;
                 }
                 drop(header_storage);
-                self.pipeline.send_pending(requests)?;
+                self.pipeline.send_pending(network).await?;
                 Ok(vec![])
             }
             SyncState::WaitingForConnections | SyncState::WaitForEvents => {
                 // Need full startup (calculates start from storage, handles checkpoints)
-                self.start_download(requests).await
+                self.start_download(network).await
             }
             _ => Ok(vec![]),
         }
@@ -267,18 +341,12 @@ mod tests {
             .expect("Failed to create FilterHeadersManager")
     }
 
-    fn create_test_request_sender(
-    ) -> (RequestSender, tokio::sync::mpsc::UnboundedReceiver<crate::network::NetworkRequest>) {
-        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
-        (RequestSender::new(tx), rx)
-    }
-
     #[tokio::test]
     async fn test_filter_headers_manager_new() {
         let manager = create_test_manager().await;
         assert_eq!(manager.identifier(), ManagerIdentifier::FilterHeader);
         assert_eq!(manager.state(), SyncState::WaitForEvents);
-        assert_eq!(manager.wanted_message_types(), vec![MessageType::CFHeaders]);
+        assert_eq!(manager.wanted_message_types(), [MessageType::CfHeaders]);
         assert!(!manager.block_headers_synced);
     }
 
@@ -331,8 +399,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_block_headers_synced_event_gating() {
+        use crate::network::NetworkManager;
+        use crate::test_utils::MockNetworkManager;
+
         let mut manager = create_test_manager().await;
-        let (sender, _rx) = create_test_request_sender();
+        let network: Arc<dyn NetworkManager> = Arc::new(MockNetworkManager::new());
 
         // Filter headers caught up to block header tip and target
         manager.progress.update_current_height(1000);
@@ -344,7 +415,7 @@ mod tests {
         let event = SyncEvent::BlockHeadersStored {
             tip_height: 1000,
         };
-        let events = manager.handle_sync_event(&event, &sender).await.unwrap();
+        let events = manager.handle_sync_event(&event, &network).await.unwrap();
         assert!(!manager.block_headers_synced);
         assert!(!events.iter().any(|e| matches!(e, SyncEvent::FilterHeadersSyncComplete { .. })));
 
@@ -352,7 +423,7 @@ mod tests {
         let event = SyncEvent::BlockHeaderSyncComplete {
             tip_height: 1000,
         };
-        let events = manager.handle_sync_event(&event, &sender).await.unwrap();
+        let events = manager.handle_sync_event(&event, &network).await.unwrap();
         assert!(manager.block_headers_synced);
         assert!(events.iter().any(|e| matches!(e, SyncEvent::FilterHeadersSyncComplete { .. })));
         assert_eq!(manager.state(), SyncState::Synced);
@@ -360,8 +431,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_block_header_sync_complete_during_active_download() {
+        use crate::network::NetworkManager;
+        use crate::test_utils::MockNetworkManager;
+
         let mut manager = create_test_manager().await;
-        let (sender, _rx) = create_test_request_sender();
+        let network: Arc<dyn NetworkManager> = Arc::new(MockNetworkManager::new());
 
         // Filter headers caught up to block tip, but target is higher (more headers coming)
         manager.progress.update_current_height(1000);
@@ -373,7 +447,7 @@ mod tests {
         let event = SyncEvent::BlockHeaderSyncComplete {
             tip_height: 1000,
         };
-        let events = manager.handle_sync_event(&event, &sender).await.unwrap();
+        let events = manager.handle_sync_event(&event, &network).await.unwrap();
 
         assert!(manager.block_headers_synced);
         assert!(!events.iter().any(|e| matches!(e, SyncEvent::FilterHeadersSyncComplete { .. })));

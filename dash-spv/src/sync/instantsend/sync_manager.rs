@@ -1,11 +1,13 @@
 use crate::error::SyncResult;
-use crate::network::{Message, MessageType, RequestSender};
+use crate::network::{MessageType, NetworkManager};
 use crate::sync::{
     InstantSendManager, ManagerIdentifier, SyncEvent, SyncManager, SyncManagerProgress, SyncState,
 };
 use async_trait::async_trait;
 use dashcore::network::message::NetworkMessage;
 use dashcore::network::message_blockdata::Inventory;
+use std::net::SocketAddr;
+use std::sync::Arc;
 
 #[async_trait]
 impl SyncManager for InstantSendManager {
@@ -22,7 +24,7 @@ impl SyncManager for InstantSendManager {
     }
 
     fn wanted_message_types(&self) -> &'static [MessageType] {
-        &[MessageType::ISLock, MessageType::Inv]
+        &[MessageType::IsDLock, MessageType::Inv]
     }
 
     fn on_disconnect(&mut self) {
@@ -31,10 +33,11 @@ impl SyncManager for InstantSendManager {
 
     async fn handle_message(
         &mut self,
-        msg: Message,
-        requests: &RequestSender,
+        peer: SocketAddr,
+        msg: NetworkMessage,
+        network: &Arc<dyn NetworkManager>,
     ) -> SyncResult<Vec<SyncEvent>> {
-        match msg.inner() {
+        match &msg {
             NetworkMessage::ISLock(instantlock) => self.process_instantlock(instantlock).await,
             NetworkMessage::Inv(inv) => {
                 // Check for InstantSendLock inventory items
@@ -49,7 +52,7 @@ impl SyncManager for InstantSendManager {
                         "Received {} InstantSendLock announcements, requesting via getdata",
                         islocks_to_request.len()
                     );
-                    requests.request_inventory(islocks_to_request, msg.peer_address())?;
+                    network.send_to(peer, NetworkMessage::GetData(islocks_to_request)).await;
                 }
                 Ok(vec![])
             }
@@ -60,7 +63,7 @@ impl SyncManager for InstantSendManager {
     async fn handle_sync_event(
         &mut self,
         event: &SyncEvent,
-        _requests: &RequestSender,
+        _network: &Arc<dyn NetworkManager>,
     ) -> SyncResult<Vec<SyncEvent>> {
         // Drop buffered events that arrive between `stop_sync` and the next
         // `start_sync`. `pending_instantlocks` is cleared on disconnect, and
@@ -100,7 +103,7 @@ impl SyncManager for InstantSendManager {
         Ok(vec![])
     }
 
-    async fn tick(&mut self, _requests: &RequestSender) -> SyncResult<Vec<SyncEvent>> {
+    async fn tick(&mut self, _network: &Arc<dyn NetworkManager>) -> SyncResult<Vec<SyncEvent>> {
         // Prune old entries periodically
         self.prune_old_entries();
         Ok(vec![])

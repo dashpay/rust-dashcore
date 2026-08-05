@@ -24,7 +24,7 @@ async fn create_test_client(
         .with_restrict_to_configured_peers(true);
 
     // Create network manager
-    let network_manager = PeerNetworkManager::new(&config).await.unwrap();
+    let network_manager = PeerNetworkManager::new(&config).await;
 
     // Create storage manager
     let storage_manager = DiskStorageManager::new(&config).await.expect("Failed to create storage");

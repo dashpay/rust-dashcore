@@ -22,7 +22,7 @@ use super::filter::build_wallet_bloom_filter;
 use super::BLOOM_FALSE_POSITIVE_RATE;
 use crate::client::config::MempoolStrategy;
 use crate::error::SyncResult;
-use crate::network::RequestSender;
+use crate::network::NetworkManager;
 use crate::sync::mempool::MempoolProgress;
 use crate::sync::SyncEvent;
 use crate::types::UnconfirmedTransaction;
@@ -111,30 +111,36 @@ impl<W: WalletInterface> MempoolManager<W> {
     pub(super) async fn activate_peer(
         &mut self,
         peer: SocketAddr,
-        requests: &RequestSender,
+        network: &Arc<dyn NetworkManager>,
     ) -> SyncResult<()> {
         tracing::info!("Activating mempool on peer {} (strategy: {:?})", peer, self.strategy);
 
+        // Addressed to THIS peer, not handed to the router: relay is per-peer state on the
+        // remote node, so a `filterclear`/`filterload` that lands on a different peer than
+        // the one we mean to activate simply leaves this one mute.
         match self.strategy {
             MempoolStrategy::BloomFilter => {
-                self.load_bloom_filter(peer, requests).await?;
+                self.load_bloom_filter(peer, network).await?;
             }
             MempoolStrategy::FetchAll => {
-                requests.send_filter_clear(peer)?;
+                network.send_to(peer, NetworkMessage::FilterClear).await;
             }
         }
-        requests.request_mempool(peer)?;
+        network.send_to(peer, NetworkMessage::MemPool).await;
 
         self.peers.insert(peer, Some(VecDeque::new()));
         Ok(())
     }
 
     /// Activate mempool relay on all connected but not-yet-activated peers.
-    pub(super) async fn activate_all_peers(&mut self, requests: &RequestSender) -> SyncResult<()> {
+    pub(super) async fn activate_all_peers(
+        &mut self,
+        network: &Arc<dyn NetworkManager>,
+    ) -> SyncResult<()> {
         let inactive: Vec<SocketAddr> =
             self.peers.iter().filter(|(_, v)| v.is_none()).map(|(k, _)| *k).collect();
         for peer in inactive {
-            self.activate_peer(peer, requests).await?;
+            self.activate_peer(peer, network).await?;
         }
         Ok(())
     }
@@ -143,7 +149,7 @@ impl<W: WalletInterface> MempoolManager<W> {
     async fn load_bloom_filter(
         &mut self,
         peer: SocketAddr,
-        requests: &RequestSender,
+        network: &Arc<dyn NetworkManager>,
     ) -> SyncResult<()> {
         let wallet = self.wallet.read().await;
         let addresses = wallet.monitored_addresses();
@@ -170,13 +176,16 @@ impl<W: WalletInterface> MempoolManager<W> {
             filter_load.filter.len()
         );
 
-        requests.send_filter_load(filter_load, peer)?;
+        network.send_to(peer, NetworkMessage::FilterLoad(filter_load)).await;
 
         Ok(())
     }
 
     /// Rebuild the bloom filter on all activated peers.
-    pub(super) async fn rebuild_filter(&mut self, requests: &RequestSender) -> SyncResult<()> {
+    pub(super) async fn rebuild_filter(
+        &mut self,
+        network: &Arc<dyn NetworkManager>,
+    ) -> SyncResult<()> {
         if self.strategy != MempoolStrategy::BloomFilter {
             return Ok(());
         }
@@ -189,9 +198,9 @@ impl<W: WalletInterface> MempoolManager<W> {
         }
 
         for peer in activated {
-            requests.send_filter_clear(peer)?;
-            self.load_bloom_filter(peer, requests).await?;
-            requests.request_mempool(peer)?;
+            network.send_to(peer, NetworkMessage::FilterClear).await;
+            self.load_bloom_filter(peer, network).await?;
+            network.send_to(peer, NetworkMessage::MemPool).await;
         }
 
         Ok(())
@@ -205,7 +214,7 @@ impl<W: WalletInterface> MempoolManager<W> {
         &mut self,
         inv: &[Inventory],
         peer: SocketAddr,
-        requests: &RequestSender,
+        network: &Arc<dyn NetworkManager>,
     ) -> SyncResult<Vec<SyncEvent>> {
         // Acceptance detection must run before any early return: an inv for
         // one of our own broadcasts from a peer we did NOT send it to proves
@@ -244,7 +253,7 @@ impl<W: WalletInterface> MempoolManager<W> {
 
         if enqueued > 0 {
             tracing::debug!("Enqueued {} mempool txids for download", enqueued);
-            self.send_queued(requests).await?;
+            self.send_queued(network).await?;
         }
 
         Ok(events)
@@ -299,7 +308,10 @@ impl<W: WalletInterface> MempoolManager<W> {
     ///
     /// Deduplicates at send time against `pending_requests` and `mempool_state`
     /// in case a transaction was received between enqueue and send.
-    pub(super) async fn send_queued(&mut self, requests: &RequestSender) -> SyncResult<()> {
+    pub(super) async fn send_queued(
+        &mut self,
+        network: &Arc<dyn NetworkManager>,
+    ) -> SyncResult<()> {
         let mut available = MAX_IN_FLIGHT.saturating_sub(self.pending_requests.len());
         let has_queued = self.peers.values().any(|v| v.as_ref().is_some_and(|q| !q.is_empty()));
         if available == 0 || !has_queued {
@@ -349,7 +361,10 @@ impl<W: WalletInterface> MempoolManager<W> {
                 peer,
                 total_queued,
             );
-            requests.request_inventory(inventory, peer)?;
+            // Ask the peer that ANNOUNCED these txids, not whichever the router favours:
+            // a mempool transaction only exists on the nodes that have it, and the queue
+            // was built per-peer precisely so each one is asked for what it offered.
+            network.send_to(peer, NetworkMessage::GetData(inventory)).await;
         }
         Ok(())
     }
@@ -364,7 +379,7 @@ impl<W: WalletInterface> MempoolManager<W> {
         &mut self,
         tx: Transaction,
         peer: SocketAddr,
-        requests: &RequestSender,
+        network: &Arc<dyn NetworkManager>,
     ) -> SyncResult<Vec<SyncEvent>> {
         let txid = tx.txid();
         self.pending_requests.remove(&txid);
@@ -373,7 +388,7 @@ impl<W: WalletInterface> MempoolManager<W> {
         // Send self-originated transactions to the network regardless of
         // wallet relevance — the caller explicitly asked to broadcast.
         if is_local {
-            self.start_broadcast(&tx, requests);
+            self.start_broadcast(&tx, network).await;
         }
 
         // Skip if already tracked (e.g., locally broadcast then received from a peer)
@@ -422,7 +437,11 @@ impl<W: WalletInterface> MempoolManager<W> {
     ///
     /// Idempotent per txid: repeated local dispatches of the same transaction
     /// do not resend (the rebroadcast timer handles resends).
-    pub(super) fn start_broadcast(&mut self, tx: &Transaction, requests: &RequestSender) {
+    pub(super) async fn start_broadcast(
+        &mut self,
+        tx: &Transaction,
+        network: &Arc<dyn NetworkManager>,
+    ) {
         let txid = tx.txid();
         if self.broadcasts.contains_key(&txid) {
             return;
@@ -442,7 +461,9 @@ impl<W: WalletInterface> MempoolManager<W> {
             if state.holdout.contains(peer) {
                 continue;
             }
-            if requests.send_transaction(tx.clone(), *peer).is_ok() {
+            // Addressed sends, not router sends: the holdout only means something
+            // if we control exactly which peers received the transaction.
+            if network.send_to(*peer, NetworkMessage::Tx(tx.clone())).await {
                 state.sent_to.insert(*peer);
             }
         }
@@ -615,14 +636,14 @@ impl<W: WalletInterface> MempoolManager<W> {
     /// - `Accepted`/`Uncertain`: plain broadcast to all peers (the holdout no
     ///   longer matters; a late echo from a new peer can still upgrade
     ///   `Uncertain` to `Accepted`).
-    pub(super) async fn rebroadcast_if_due(&mut self, requests: &RequestSender) {
-        self.rebroadcast_if_due_at(requests, Instant::now()).await
+    pub(super) async fn rebroadcast_if_due(&mut self, network: &Arc<dyn NetworkManager>) {
+        self.rebroadcast_if_due_at(network, Instant::now()).await
     }
 
     /// `now`-injected variant of [`Self::rebroadcast_if_due`]. Tests project `now`
     /// forward instead of subtracting from `Instant::now()`, which underflows on
     /// Windows when the QPC-based monotonic clock has a small value at boot.
-    async fn rebroadcast_if_due_at(&mut self, requests: &RequestSender, now: Instant) {
+    async fn rebroadcast_if_due_at(&mut self, network: &Arc<dyn NetworkManager>, now: Instant) {
         let current_peers: Vec<SocketAddr> = self.peers.keys().copied().collect();
         let mut count: usize = 0;
         for (txid, state) in &mut self.broadcasts {
@@ -658,18 +679,21 @@ impl<W: WalletInterface> MempoolManager<W> {
                     // recipients are gone); relay through everyone rather
                     // than letting the transaction stall.
                     if !current_peers.is_empty() {
-                        let _ = requests.broadcast(NetworkMessage::Tx(state.transaction.clone()));
+                        network.broadcast(NetworkMessage::Tx(state.transaction.clone()));
                         state.sent_to.extend(current_peers.iter().copied());
                     }
                 } else {
                     for peer in targets {
-                        if requests.send_transaction(state.transaction.clone(), peer).is_ok() {
+                        if network
+                            .send_to(peer, NetworkMessage::Tx(state.transaction.clone()))
+                            .await
+                        {
                             state.sent_to.insert(peer);
                         }
                     }
                 }
             } else {
-                let _ = requests.broadcast(NetworkMessage::Tx(state.transaction.clone()));
+                network.broadcast(NetworkMessage::Tx(state.transaction.clone()));
             }
             tracing::debug!("Rebroadcast unconfirmed transaction {}", txid);
             state.last_broadcast = now;
@@ -766,20 +790,16 @@ impl<W: WalletInterface> fmt::Debug for MempoolManager<W> {
             .finish()
     }
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::network::NetworkRequest;
     use dashcore::hashes::Hash;
-    use dashcore::network::message::NetworkMessage;
-    use dashcore::{Address, BlockHash, Network, ScriptBuf, Transaction};
+    use dashcore::{Address, BlockHash, Network, ScriptBuf};
     use key_wallet::transaction_checking::TransactionContext;
     use key_wallet_manager::test_utils::MockWallet;
 
     use crate::sync::SyncState;
-    use crate::test_utils::test_socket_address;
-    use tokio::sync::mpsc;
+    use crate::test_utils::{test_socket_address, MockNetworkManager};
 
     fn dummy_instant_lock(txid: Txid) -> InstantLock {
         InstantLock {
@@ -796,12 +816,8 @@ mod tests {
         }
     }
 
-    fn create_test_manager(
-    ) -> (MempoolManager<MockWallet>, RequestSender, mpsc::UnboundedReceiver<NetworkRequest>) {
+    fn create_test_manager() -> MempoolManager<MockWallet> {
         let wallet = Arc::new(RwLock::new(MockWallet::new()));
-        let (tx, rx) = mpsc::unbounded_channel::<NetworkRequest>();
-        let requests = RequestSender::new(tx);
-
         let mut manager = MempoolManager::new(
             wallet,
             MempoolStrategy::FetchAll,
@@ -810,63 +826,117 @@ mod tests {
             BroadcastConfig::default(),
         );
         manager.progress.set_state(SyncState::Synced);
-
-        (manager, requests, rx)
+        manager
     }
 
-    fn create_bloom_manager(
-    ) -> (MempoolManager<MockWallet>, RequestSender, mpsc::UnboundedReceiver<NetworkRequest>) {
-        let wallet = Arc::new(RwLock::new(MockWallet::new()));
-        let (tx, rx) = mpsc::unbounded_channel::<NetworkRequest>();
-        let requests = RequestSender::new(tx);
-
+    /// Create a manager with BloomFilter strategy where the wallet reports
+    /// mempool transactions as relevant. BloomFilter strategy skips local
+    /// address pre-filtering, relying on the wallet for definitive checks.
+    fn create_relevant_manager() -> (MempoolManager<MockWallet>, Arc<RwLock<MockWallet>>) {
+        let mut mock = MockWallet::new();
+        mock.set_mempool_relevant(true);
+        let wallet = Arc::new(RwLock::new(mock));
         let manager = MempoolManager::new(
-            wallet,
+            wallet.clone(),
             MempoolStrategy::BloomFilter,
             1000,
             0,
             BroadcastConfig::default(),
         );
+        (manager, wallet)
+    }
 
-        (manager, requests, rx)
+    /// Create a BloomFilter-strategy manager with an empty (default) wallet.
+    fn create_bloom_manager() -> MempoolManager<MockWallet> {
+        let wallet = Arc::new(RwLock::new(MockWallet::new()));
+        MempoolManager::new(
+            wallet,
+            MempoolStrategy::BloomFilter,
+            1000,
+            0,
+            BroadcastConfig::default(),
+        )
+    }
+
+    /// Create a BloomFilter-strategy manager whose wallet monitors `addresses`.
+    fn create_bloom_manager_with_addresses(addresses: Vec<Address>) -> MempoolManager<MockWallet> {
+        let mut mock = MockWallet::new();
+        mock.set_addresses(addresses);
+        let wallet = Arc::new(RwLock::new(mock));
+        MempoolManager::new(
+            wallet,
+            MempoolStrategy::BloomFilter,
+            1000,
+            0,
+            BroadcastConfig::default(),
+        )
+    }
+
+    /// Create a test P2PKH address from a byte pattern.
+    fn test_address(byte: u8) -> Address {
+        // Build OP_DUP OP_HASH160 <20-byte-hash> OP_EQUALVERIFY OP_CHECKSIG
+        let mut script_bytes = vec![0x76, 0xa9, 0x14]; // OP_DUP OP_HASH160 PUSH20
+        script_bytes.extend_from_slice(&[byte; 20]);
+        script_bytes.push(0x88); // OP_EQUALVERIFY
+        script_bytes.push(0xac); // OP_CHECKSIG
+        let script = ScriptBuf::from(script_bytes);
+        Address::from_script(&script, Network::Testnet).unwrap()
+    }
+
+    /// Build a mock network manager and a trait-object handle to pass to
+    /// manager methods. Returns `(mock, network)` where `mock` is used for
+    /// assertions and `network` is passed by reference into the manager.
+    fn mock_network() -> (Arc<MockNetworkManager>, Arc<dyn NetworkManager>) {
+        let mock = Arc::new(MockNetworkManager::new());
+        let network: Arc<dyn NetworkManager> = mock.clone();
+        (mock, network)
     }
 
     #[tokio::test]
     async fn test_activation_fetch_all() {
         let peer = test_socket_address(1);
-        let (mut manager, requests, mut rx) = create_test_manager();
-        manager.activate_peer(peer, &requests).await.unwrap();
+        let mut manager = create_test_manager();
+        let (mock, network) = mock_network();
+        manager.activate_peer(peer, &network).await.unwrap();
 
-        // FetchAll activation sends filterclear then mempool to the chosen peer
-        let msg1 = rx.recv().await.unwrap();
-        assert!(
-            matches!(msg1, NetworkRequest::SendMessageToPeer(NetworkMessage::FilterClear, p) if p == peer)
-        );
-        let msg2 = rx.recv().await.unwrap();
-        assert!(
-            matches!(msg2, NetworkRequest::SendMessageToPeer(NetworkMessage::MemPool, p) if p == peer)
-        );
+        // FetchAll activation sends filterclear then mempool to the chosen peer.
+        let sent = mock.sent_to_messages();
+        assert_eq!(sent.len(), 2);
+        assert_eq!(sent[0].0, peer);
+        assert!(matches!(sent[0].1, NetworkMessage::FilterClear));
+        assert_eq!(sent[1].0, peer);
+        assert!(matches!(sent[1].1, NetworkMessage::MemPool));
         assert!(matches!(manager.peers.get(&peer), Some(Some(_))));
     }
 
     #[tokio::test]
     async fn test_activation_bloom_filter_skips_empty_wallet() {
-        let (mut manager, requests, mut rx) = create_bloom_manager();
-        manager.activate_peer(test_socket_address(1), &requests).await.unwrap();
+        let mut manager = create_bloom_manager();
+        let (mock, network) = mock_network();
+        manager.activate_peer(test_socket_address(1), &network).await.unwrap();
 
-        // No addresses in mock wallet, so only MemPool should be sent (no FilterLoad)
-        let mut found_filter_load = false;
-        while let Ok(msg) = rx.try_recv() {
-            if matches!(msg, NetworkRequest::SendMessageToPeer(NetworkMessage::FilterLoad(_), _)) {
-                found_filter_load = true;
-            }
-        }
+        // No addresses in mock wallet, so only MemPool should be sent (no FilterLoad).
+        let found_filter_load =
+            mock.sent_to_messages().iter().any(|(_, m)| matches!(m, NetworkMessage::FilterLoad(_)));
         assert!(!found_filter_load, "should not send FilterLoad for empty wallet");
     }
 
     #[tokio::test]
+    async fn test_bloom_filter_loaded_with_addresses() {
+        let addr = test_address(0xab);
+        let mut manager = create_bloom_manager_with_addresses(vec![addr]);
+        let (mock, network) = mock_network();
+        manager.activate_peer(test_socket_address(1), &network).await.unwrap();
+
+        let found_filter_load =
+            mock.sent_to_messages().iter().any(|(_, m)| matches!(m, NetworkMessage::FilterLoad(_)));
+        assert!(found_filter_load, "expected FilterLoad for wallet with addresses");
+    }
+
+    #[tokio::test]
     async fn test_handle_inv_deduplication() {
-        let (mut manager, requests, _rx) = create_test_manager();
+        let mut manager = create_test_manager();
+        let (_mock, network) = mock_network();
         let peer = test_socket_address(1);
         manager.peers.insert(peer, Some(VecDeque::new()));
 
@@ -874,12 +944,12 @@ mod tests {
         let inv = vec![Inventory::Transaction(txid)];
 
         // First call should add to pending
-        let events = manager.handle_inv(&inv, peer, &requests).await.unwrap();
+        let events = manager.handle_inv(&inv, peer, &network).await.unwrap();
         assert!(events.is_empty());
         assert!(manager.pending_requests.contains_key(&txid));
 
         // Second call with same txid should be filtered out
-        let events = manager.handle_inv(&inv, peer, &requests).await.unwrap();
+        let events = manager.handle_inv(&inv, peer, &network).await.unwrap();
         assert!(events.is_empty());
         assert_eq!(manager.pending_requests.len(), 1);
     }
@@ -887,9 +957,6 @@ mod tests {
     #[tokio::test]
     async fn test_handle_inv_capacity_limit() {
         let wallet = Arc::new(RwLock::new(MockWallet::new()));
-        let (tx, _rx) = mpsc::unbounded_channel::<NetworkRequest>();
-        let requests = RequestSender::new(tx);
-
         let mut manager = MempoolManager::new(
             wallet,
             MempoolStrategy::FetchAll,
@@ -897,6 +964,7 @@ mod tests {
             0,
             BroadcastConfig::default(),
         );
+        let (_mock, network) = mock_network();
         let peer = test_socket_address(1);
         manager.peers.insert(peer, Some(VecDeque::new()));
 
@@ -919,7 +987,7 @@ mod tests {
         // New transactions should be filtered out
         let new_txid = Txid::from_byte_array([99u8; 32]);
         let inv = vec![Inventory::Transaction(new_txid)];
-        let events = manager.handle_inv(&inv, peer, &requests).await.unwrap();
+        let events = manager.handle_inv(&inv, peer, &network).await.unwrap();
         assert!(events.is_empty());
         assert!(!manager.pending_requests.contains_key(&new_txid));
     }
@@ -927,9 +995,6 @@ mod tests {
     #[tokio::test]
     async fn test_handle_inv_pending_requests_limit() {
         let wallet = Arc::new(RwLock::new(MockWallet::new()));
-        let (tx, _rx) = mpsc::unbounded_channel::<NetworkRequest>();
-        let requests = RequestSender::new(tx);
-
         let mut manager = MempoolManager::new(
             wallet,
             MempoolStrategy::FetchAll,
@@ -938,35 +1003,355 @@ mod tests {
             BroadcastConfig::default(),
         );
         manager.progress.set_state(SyncState::Synced);
+        let (_mock, network) = mock_network();
         let peer = test_socket_address(1);
         manager.peers.insert(peer, Some(VecDeque::new()));
 
         // Fill pending requests to capacity
         let inv1: Vec<Inventory> =
             (0..2).map(|i| Inventory::Transaction(Txid::from_byte_array([i; 32]))).collect();
-        manager.handle_inv(&inv1, peer, &requests).await.unwrap();
+        manager.handle_inv(&inv1, peer, &network).await.unwrap();
         assert_eq!(manager.pending_requests.len(), 2);
 
         // Additional requests should be rejected when pending is at capacity
         let extra_txid = Txid::from_byte_array([99; 32]);
         let inv2 = vec![Inventory::Transaction(extra_txid)];
-        manager.handle_inv(&inv2, peer, &requests).await.unwrap();
+        manager.handle_inv(&inv2, peer, &network).await.unwrap();
         assert!(!manager.pending_requests.contains_key(&extra_txid));
+    }
+
+    #[tokio::test]
+    async fn test_handle_inv_non_transaction_filtered() {
+        let mut manager = create_test_manager();
+        let (_mock, network) = mock_network();
+        let peer = test_socket_address(1);
+        manager.peers.insert(peer, Some(VecDeque::new()));
+
+        let inv = vec![
+            Inventory::Block(BlockHash::all_zeros()),
+            Inventory::Transaction(Txid::from_byte_array([1u8; 32])),
+        ];
+
+        let events = manager.handle_inv(&inv, peer, &network).await.unwrap();
+        assert!(events.is_empty());
+        // Only the transaction should be tracked, not the block
+        assert_eq!(manager.pending_requests.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_handle_inv_dedup_against_queue() {
+        let mut manager = create_test_manager();
+        let (_mock, network) = mock_network();
+        let peer = test_socket_address(1);
+        manager.peers.insert(peer, Some(VecDeque::new()));
+
+        // Fill pending to capacity so items go to queue
+        for i in 0..MAX_IN_FLIGHT as u16 {
+            let mut bytes = [0u8; 32];
+            bytes[0..2].copy_from_slice(&i.to_le_bytes());
+            manager.pending_requests.insert(Txid::from_byte_array(bytes), Instant::now());
+        }
+
+        let txid = Txid::from_byte_array([0xff; 32]);
+        let inv = vec![Inventory::Transaction(txid)];
+
+        // First call enqueues
+        manager.handle_inv(&inv, peer, &network).await.unwrap();
+        assert_eq!(
+            manager.peers.values().filter_map(|v| v.as_ref()).map(|q| q.len()).sum::<usize>(),
+            1
+        );
+
+        // Second call with same txid should be deduped
+        manager.handle_inv(&inv, peer, &network).await.unwrap();
+        assert_eq!(
+            manager.peers.values().filter_map(|v| v.as_ref()).map(|q| q.len()).sum::<usize>(),
+            1
+        );
+    }
+
+    #[tokio::test]
+    async fn test_in_flight_limit() {
+        let mut manager = create_test_manager();
+        let (_mock, network) = mock_network();
+        let peer = test_socket_address(1);
+        manager.peers.insert(peer, Some(VecDeque::new()));
+
+        // Send 200 INVs — only MAX_IN_FLIGHT should go to pending, rest queued
+        let inv: Vec<Inventory> = (0..200u16)
+            .map(|i| {
+                let mut bytes = [0u8; 32];
+                bytes[0..2].copy_from_slice(&i.to_le_bytes());
+                Inventory::Transaction(Txid::from_byte_array(bytes))
+            })
+            .collect();
+
+        manager.handle_inv(&inv, peer, &network).await.unwrap();
+        assert_eq!(manager.pending_requests.len(), MAX_IN_FLIGHT);
+        assert_eq!(
+            manager.peers.values().filter_map(|v| v.as_ref()).map(|q| q.len()).sum::<usize>(),
+            100
+        );
+    }
+
+    #[tokio::test]
+    async fn test_send_queued_drains_after_response() {
+        let mut manager = create_test_manager();
+        let (_mock, network) = mock_network();
+        let peer = test_socket_address(1);
+        manager.peers.insert(peer, Some(VecDeque::new()));
+
+        // Fill with 150 INVs
+        let inv: Vec<Inventory> = (0..150u16)
+            .map(|i| {
+                let mut bytes = [0u8; 32];
+                bytes[0..2].copy_from_slice(&i.to_le_bytes());
+                Inventory::Transaction(Txid::from_byte_array(bytes))
+            })
+            .collect();
+
+        manager.handle_inv(&inv, peer, &network).await.unwrap();
+        assert_eq!(manager.pending_requests.len(), MAX_IN_FLIGHT);
+        assert_eq!(
+            manager.peers.values().filter_map(|v| v.as_ref()).map(|q| q.len()).sum::<usize>(),
+            50
+        );
+
+        // Simulate receiving 10 responses (freeing 10 slots)
+        let pending_txids: Vec<Txid> = manager.pending_requests.keys().take(10).copied().collect();
+        for txid in &pending_txids {
+            manager.pending_requests.remove(txid);
+        }
+        assert_eq!(manager.pending_requests.len(), 90);
+
+        // send_queued should fill the freed slots
+        manager.send_queued(&network).await.unwrap();
+        assert_eq!(manager.pending_requests.len(), MAX_IN_FLIGHT);
+        assert_eq!(
+            manager.peers.values().filter_map(|v| v.as_ref()).map(|q| q.len()).sum::<usize>(),
+            40
+        );
+    }
+
+    #[tokio::test]
+    async fn test_send_queued_skips_already_received() {
+        let mut manager = create_test_manager();
+        let (_mock, network) = mock_network();
+        let peer = test_socket_address(1);
+
+        // Create a real transaction and get its actual txid
+        let tx = Transaction {
+            version: 1,
+            lock_time: 0xaa,
+            input: vec![],
+            output: vec![],
+            special_transaction_payload: None,
+        };
+        let txid = tx.txid();
+
+        // Enqueue the txid on an activated peer
+        manager.peers.insert(peer, Some(VecDeque::from([txid])));
+
+        // Simulate the transaction arriving before send
+        manager.transactions.insert(
+            txid,
+            UnconfirmedTransaction::new(tx, Amount::from_sat(0), false, false, Vec::new(), 0),
+        );
+
+        manager.send_queued(&network).await.unwrap();
+        // Txid should have been skipped, not added to pending
+        assert!(manager.pending_requests.is_empty());
+        assert!(manager.peers.values().filter_map(|v| v.as_ref()).all(|q| q.is_empty()));
+    }
+
+    #[tokio::test]
+    async fn test_send_queued_noop_at_capacity() {
+        let mut manager = create_test_manager();
+        let (_mock, network) = mock_network();
+
+        // Fill pending to MAX_IN_FLIGHT
+        for i in 0..MAX_IN_FLIGHT as u16 {
+            let mut bytes = [0u8; 32];
+            bytes[0..2].copy_from_slice(&i.to_le_bytes());
+            manager.pending_requests.insert(Txid::from_byte_array(bytes), Instant::now());
+        }
+
+        // Add something to the queue on an activated peer
+        manager.peers.insert(
+            test_socket_address(1),
+            Some(VecDeque::from([Txid::from_byte_array([0xff; 32])])),
+        );
+
+        manager.send_queued(&network).await.unwrap();
+        // Queue should remain unchanged (one peer with one txid)
+        assert_eq!(
+            manager.peers.values().filter_map(|v| v.as_ref()).map(|q| q.len()).sum::<usize>(),
+            1
+        );
+        assert_eq!(manager.pending_requests.len(), MAX_IN_FLIGHT);
+    }
+
+    #[tokio::test]
+    async fn test_seen_txids_deduplication_window() {
+        let mut manager = create_test_manager();
+        let (_mock, network) = mock_network();
+        let peer = test_socket_address(1);
+        manager.peers.insert(peer, Some(VecDeque::new()));
+
+        let txid = Txid::from_byte_array([1u8; 32]);
+        let inv = vec![Inventory::Transaction(txid)];
+
+        // A fresh seen_txids entry should cause handle_inv to skip the txid
+        manager.seen_txids.insert(txid, Instant::now());
+        manager.handle_inv(&inv, peer, &network).await.unwrap();
+        assert!(manager.pending_requests.is_empty(), "seen txid should be skipped");
+
+        // An expired entry should allow the txid to be accepted again
+        manager.seen_txids.insert(txid, Instant::now() - SEEN_TXID_EXPIRY - Duration::from_secs(1));
+        manager.handle_inv(&inv, peer, &network).await.unwrap();
+        assert!(
+            manager.pending_requests.contains_key(&txid),
+            "expired seen txid should be accepted"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_rebuild_filter_clears_and_reloads() {
+        let addr = test_address(0xab);
+        let mut manager = create_bloom_manager_with_addresses(vec![addr]);
+        let (mock, network) = mock_network();
+        let peer = test_socket_address(1);
+
+        manager.activate_peer(peer, &network).await.unwrap();
+
+        // Drain activation messages
+        mock.clear_sent();
+
+        manager.rebuild_filter(&network).await.unwrap();
+
+        // Verify message sequence: FilterClear, FilterLoad, MemPool
+        let sent = mock.sent_to_messages();
+        assert_eq!(sent.len(), 3);
+        assert!(matches!(sent[0].1, NetworkMessage::FilterClear));
+        assert!(matches!(sent[1].1, NetworkMessage::FilterLoad(_)));
+        assert!(matches!(sent[2].1, NetworkMessage::MemPool));
+    }
+
+    #[tokio::test]
+    async fn test_rebuild_filter_no_activated_peers_noop() {
+        let mut manager = create_bloom_manager();
+        let (mock, network) = mock_network();
+        // No activation, so no activated peers
+        assert!(manager.peers.values().all(|v| v.is_none()));
+
+        manager.rebuild_filter(&network).await.unwrap();
+        assert!(mock.sent_to_messages().is_empty());
+    }
+
+    fn test_transaction(version: u16) -> Transaction {
+        Transaction {
+            version,
+            lock_time: 0,
+            input: vec![],
+            output: vec![],
+            special_transaction_payload: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn test_rebroadcast_sends_old_pending_broadcasts() {
+        let mut manager = create_test_manager();
+        let (mock, network) = mock_network();
+        let peer = test_socket_address(1);
+        manager.peers.insert(peer, Some(VecDeque::new()));
+
+        let tx = test_transaction(10);
+        let txid = tx.txid();
+
+        let t0 = Instant::now();
+        let later = t0 + REBROADCAST_INTERVAL + Duration::from_secs(1);
+
+        let mut state = TxBroadcastState::new(tx, t0);
+        state.sent_to.insert(peer);
+        manager.broadcasts.insert(txid, state);
+
+        manager.rebroadcast_if_due_at(&network, later).await;
+
+        // Pending entries are resent via targeted sends (respecting the holdout)
+        let sends = mock.sent_to_messages();
+        assert_eq!(sends.len(), 1, "expected a rebroadcast message");
+        assert_eq!(sends[0].0, peer);
+        assert!(
+            matches!(sends[0].1, NetworkMessage::Tx(_)),
+            "expected targeted Tx, got {:?}",
+            sends[0].1
+        );
+
+        // Timestamp should be reset to `later`, so a second call at the same instant
+        // must not rebroadcast.
+        mock.clear_sent();
+        manager.rebroadcast_if_due_at(&network, later).await;
+        assert!(
+            mock.sent_to_messages().is_empty(),
+            "should not rebroadcast immediately after reset"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_rebroadcast_uncertain_uses_full_broadcast() {
+        let mut manager = create_test_manager();
+        let (mock, network) = mock_network();
+        let peer = test_socket_address(1);
+        manager.peers.insert(peer, Some(VecDeque::new()));
+
+        let tx = test_transaction(12);
+        let txid = tx.txid();
+
+        let t0 = Instant::now();
+        let later = t0 + REBROADCAST_INTERVAL + Duration::from_secs(1);
+
+        let mut state = TxBroadcastState::new(tx, t0);
+        state.sent_to.insert(peer);
+        state.status = BroadcastStatus::Uncertain;
+        manager.broadcasts.insert(txid, state);
+
+        manager.rebroadcast_if_due_at(&network, later).await;
+
+        let broadcasts = mock.broadcast_messages();
+        assert_eq!(broadcasts.len(), 1, "expected a rebroadcast message");
+        assert!(
+            matches!(broadcasts[0], NetworkMessage::Tx(_)),
+            "expected broadcast Tx, got {:?}",
+            broadcasts[0]
+        );
+    }
+
+    #[tokio::test]
+    async fn test_rebroadcast_skips_recent_transactions() {
+        let mut manager = create_test_manager();
+        let (mock, network) = mock_network();
+        let peer = test_socket_address(1);
+        manager.peers.insert(peer, Some(VecDeque::new()));
+
+        let tx = test_transaction(11);
+        let txid = tx.txid();
+
+        // Add a broadcast that was just sent (within the rebroadcast interval)
+        let mut state = TxBroadcastState::new(tx, Instant::now());
+        state.sent_to.insert(peer);
+        manager.broadcasts.insert(txid, state);
+
+        manager.rebroadcast_if_due(&network).await;
+
+        assert!(
+            mock.sent_to_messages().is_empty() && mock.broadcast_messages().is_empty(),
+            "recently sent transactions should not be rebroadcast"
+        );
     }
 
     #[test]
     fn test_prune_pending_requests_timeout() {
-        let wallet = Arc::new(RwLock::new(MockWallet::new()));
-        let (tx, _rx) = mpsc::unbounded_channel::<NetworkRequest>();
-        let _requests = RequestSender::new(tx);
-
-        let mut manager = MempoolManager::new(
-            wallet,
-            MempoolStrategy::FetchAll,
-            1000,
-            0,
-            BroadcastConfig::default(),
-        );
+        let mut manager = create_test_manager();
 
         let fresh_txid = Txid::from_byte_array([1; 32]);
         let stale_txid = Txid::from_byte_array([2; 32]);
@@ -984,7 +1369,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_handle_tx_irrelevant() {
-        let (mut manager, requests, _rx) = create_test_manager();
+        let mut manager = create_test_manager();
+        let (_mock, network) = mock_network();
 
         let tx = Transaction {
             version: 1,
@@ -995,7 +1381,7 @@ mod tests {
         };
         let txid = tx.txid();
 
-        let events = manager.handle_tx(tx, test_socket_address(1), &requests).await.unwrap();
+        let events = manager.handle_tx(tx, test_socket_address(1), &network).await.unwrap();
         // MockWallet returns is_relevant=false by default
         assert!(events.is_empty());
         assert_eq!(manager.progress.received(), 1);
@@ -1005,26 +1391,9 @@ mod tests {
         assert_eq!(manager.progress.relevant(), 0);
     }
 
-    #[tokio::test]
-    async fn test_handle_inv_non_transaction_filtered() {
-        let (mut manager, requests, _rx) = create_test_manager();
-        let peer = test_socket_address(1);
-        manager.peers.insert(peer, Some(VecDeque::new()));
-
-        let inv = vec![
-            Inventory::Block(BlockHash::all_zeros()),
-            Inventory::Transaction(Txid::from_byte_array([1u8; 32])),
-        ];
-
-        let events = manager.handle_inv(&inv, peer, &requests).await.unwrap();
-        assert!(events.is_empty());
-        // Only the transaction should be tracked, not the block
-        assert_eq!(manager.pending_requests.len(), 1);
-    }
-
     #[test]
     fn test_prune_expired() {
-        let (mut manager, _requests, _rx) = create_test_manager();
+        let mut manager = create_test_manager();
 
         let fresh_tx = Transaction {
             version: 1,
@@ -1068,31 +1437,10 @@ mod tests {
         assert_eq!(manager.progress.removed(), 1);
     }
 
-    /// Create a manager with BloomFilter strategy where the wallet reports
-    /// mempool transactions as relevant. BloomFilter strategy skips local
-    /// address pre-filtering, relying on the wallet for definitive checks.
-    fn create_relevant_manager(
-    ) -> (MempoolManager<MockWallet>, RequestSender, Arc<RwLock<MockWallet>>) {
-        let mut mock = MockWallet::new();
-        mock.set_mempool_relevant(true);
-        let wallet = Arc::new(RwLock::new(mock));
-        let (tx, _rx) = mpsc::unbounded_channel::<NetworkRequest>();
-        let requests = RequestSender::new(tx);
-
-        let manager = MempoolManager::new(
-            wallet.clone(),
-            MempoolStrategy::BloomFilter,
-            1000,
-            0,
-            BroadcastConfig::default(),
-        );
-
-        (manager, requests, wallet)
-    }
-
     #[tokio::test]
     async fn test_handle_tx_relevant_stores_transaction() {
-        let (mut manager, requests, _wallet) = create_relevant_manager();
+        let (mut manager, _wallet) = create_relevant_manager();
+        let (_mock, network) = mock_network();
 
         let tx = Transaction {
             version: 1,
@@ -1103,7 +1451,7 @@ mod tests {
         };
         let txid = tx.txid();
 
-        let events = manager.handle_tx(tx, test_socket_address(1), &requests).await.unwrap();
+        let events = manager.handle_tx(tx, test_socket_address(1), &network).await.unwrap();
         assert!(events.is_empty());
 
         // Verify transaction was stored
@@ -1120,7 +1468,7 @@ mod tests {
             output: vec![],
             special_transaction_payload: None,
         };
-        let events = manager.handle_tx(tx2, test_socket_address(1), &requests).await.unwrap();
+        let events = manager.handle_tx(tx2, test_socket_address(1), &network).await.unwrap();
         assert!(events.is_empty());
 
         assert_eq!(manager.transactions.len(), 1);
@@ -1131,7 +1479,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_handle_tx_local_records_send() {
-        let (mut manager, requests, _wallet) = create_relevant_manager();
+        let (mut manager, _wallet) = create_relevant_manager();
+        let (_mock, network) = mock_network();
 
         let tx = Transaction {
             version: 2,
@@ -1144,7 +1493,7 @@ mod tests {
 
         // Use the unspecified address to simulate a locally broadcast transaction
         let local_addr = SocketAddr::from(([0, 0, 0, 0], 0));
-        manager.handle_tx(tx, local_addr, &requests).await.unwrap();
+        manager.handle_tx(tx, local_addr, &network).await.unwrap();
 
         assert!(manager.transactions.contains_key(&txid));
         assert!(
@@ -1155,7 +1504,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_handle_tx_remote_does_not_record_send() {
-        let (mut manager, requests, _wallet) = create_relevant_manager();
+        let (mut manager, _wallet) = create_relevant_manager();
+        let (_mock, network) = mock_network();
 
         let tx = Transaction {
             version: 3,
@@ -1166,7 +1516,7 @@ mod tests {
         };
         let txid = tx.txid();
 
-        manager.handle_tx(tx, test_socket_address(1), &requests).await.unwrap();
+        manager.handle_tx(tx, test_socket_address(1), &network).await.unwrap();
 
         assert!(manager.transactions.contains_key(&txid));
         assert!(
@@ -1177,7 +1527,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_handle_tx_clears_pending_request() {
-        let (mut manager, requests, _wallet) = create_relevant_manager();
+        let (mut manager, _wallet) = create_relevant_manager();
+        let (_mock, network) = mock_network();
 
         let tx = Transaction {
             version: 1,
@@ -1192,7 +1543,7 @@ mod tests {
         manager.pending_requests.insert(txid, Instant::now());
         assert!(manager.pending_requests.contains_key(&txid));
 
-        manager.handle_tx(tx, test_socket_address(1), &requests).await.unwrap();
+        manager.handle_tx(tx, test_socket_address(1), &network).await.unwrap();
         // Pending request should be cleared regardless of relevance
         assert!(!manager.pending_requests.contains_key(&txid));
 
@@ -1200,56 +1551,9 @@ mod tests {
         assert!(manager.transactions.contains_key(&txid));
     }
 
-    fn create_bloom_manager_with_addresses(
-        addresses: Vec<Address>,
-    ) -> (MempoolManager<MockWallet>, RequestSender, mpsc::UnboundedReceiver<NetworkRequest>) {
-        let mut mock = MockWallet::new();
-        mock.set_addresses(addresses);
-        let wallet = Arc::new(RwLock::new(mock));
-        let (tx, rx) = mpsc::unbounded_channel::<NetworkRequest>();
-        let requests = RequestSender::new(tx);
-
-        let manager = MempoolManager::new(
-            wallet,
-            MempoolStrategy::BloomFilter,
-            1000,
-            0,
-            BroadcastConfig::default(),
-        );
-
-        (manager, requests, rx)
-    }
-
-    /// Create a test P2PKH address from a byte pattern.
-    fn test_address(byte: u8) -> Address {
-        // Build OP_DUP OP_HASH160 <20-byte-hash> OP_EQUALVERIFY OP_CHECKSIG
-        let mut script_bytes = vec![0x76, 0xa9, 0x14]; // OP_DUP OP_HASH160 PUSH20
-        script_bytes.extend_from_slice(&[byte; 20]);
-        script_bytes.push(0x88); // OP_EQUALVERIFY
-        script_bytes.push(0xac); // OP_CHECKSIG
-        let script = ScriptBuf::from(script_bytes);
-        Address::from_script(&script, Network::Testnet).unwrap()
-    }
-
-    #[tokio::test]
-    async fn test_bloom_filter_loaded_with_addresses() {
-        let addr = test_address(0xab);
-
-        let (mut manager, requests, mut rx) = create_bloom_manager_with_addresses(vec![addr]);
-        manager.activate_peer(test_socket_address(1), &requests).await.unwrap();
-
-        let mut found_filter_load = false;
-        while let Ok(msg) = rx.try_recv() {
-            if matches!(msg, NetworkRequest::SendMessageToPeer(NetworkMessage::FilterLoad(_), _)) {
-                found_filter_load = true;
-            }
-        }
-        assert!(found_filter_load, "expected FilterLoad for wallet with addresses");
-    }
-
     #[tokio::test]
     async fn test_mark_instant_send_emits_status_change() {
-        let (mut manager, _requests, _rx) = create_test_manager();
+        let mut manager = create_test_manager();
 
         let tx = Transaction {
             version: 1,
@@ -1291,7 +1595,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_mark_instant_send_stores_pending_for_unknown() {
-        let (mut manager, _requests, _rx) = create_test_manager();
+        let mut manager = create_test_manager();
 
         let unknown_txid = Txid::from_byte_array([0xbb; 32]);
         manager.process_instant_send(dummy_instant_lock(unknown_txid)).await;
@@ -1306,100 +1610,9 @@ mod tests {
         assert!(manager.pending_is_locks.contains_key(&unknown_txid));
     }
 
-    #[tokio::test]
-    async fn test_in_flight_limit() {
-        let (mut manager, requests, _rx) = create_test_manager();
-        let peer = test_socket_address(1);
-        manager.peers.insert(peer, Some(VecDeque::new()));
-
-        // Send 200 INVs — only MAX_IN_FLIGHT should go to pending, rest queued
-        let inv: Vec<Inventory> = (0..200u16)
-            .map(|i| {
-                let mut bytes = [0u8; 32];
-                bytes[0..2].copy_from_slice(&i.to_le_bytes());
-                Inventory::Transaction(Txid::from_byte_array(bytes))
-            })
-            .collect();
-
-        manager.handle_inv(&inv, peer, &requests).await.unwrap();
-        assert_eq!(manager.pending_requests.len(), MAX_IN_FLIGHT);
-        assert_eq!(
-            manager.peers.values().filter_map(|v| v.as_ref()).map(|q| q.len()).sum::<usize>(),
-            100
-        );
-    }
-
-    #[tokio::test]
-    async fn test_send_queued_drains_after_response() {
-        let (mut manager, requests, _rx) = create_test_manager();
-        let peer = test_socket_address(1);
-        manager.peers.insert(peer, Some(VecDeque::new()));
-
-        // Fill with 150 INVs
-        let inv: Vec<Inventory> = (0..150u16)
-            .map(|i| {
-                let mut bytes = [0u8; 32];
-                bytes[0..2].copy_from_slice(&i.to_le_bytes());
-                Inventory::Transaction(Txid::from_byte_array(bytes))
-            })
-            .collect();
-
-        manager.handle_inv(&inv, peer, &requests).await.unwrap();
-        assert_eq!(manager.pending_requests.len(), MAX_IN_FLIGHT);
-        assert_eq!(
-            manager.peers.values().filter_map(|v| v.as_ref()).map(|q| q.len()).sum::<usize>(),
-            50
-        );
-
-        // Simulate receiving 10 responses (freeing 10 slots)
-        let pending_txids: Vec<Txid> = manager.pending_requests.keys().take(10).copied().collect();
-        for txid in &pending_txids {
-            manager.pending_requests.remove(txid);
-        }
-        assert_eq!(manager.pending_requests.len(), 90);
-
-        // send_queued should fill the freed slots
-        manager.send_queued(&requests).await.unwrap();
-        assert_eq!(manager.pending_requests.len(), MAX_IN_FLIGHT);
-        assert_eq!(
-            manager.peers.values().filter_map(|v| v.as_ref()).map(|q| q.len()).sum::<usize>(),
-            40
-        );
-    }
-
-    #[tokio::test]
-    async fn test_send_queued_skips_already_received() {
-        let (mut manager, requests, _rx) = create_test_manager();
-        let peer = test_socket_address(1);
-
-        // Create a real transaction and get its actual txid
-        let tx = Transaction {
-            version: 1,
-            lock_time: 0xaa,
-            input: vec![],
-            output: vec![],
-            special_transaction_payload: None,
-        };
-        let txid = tx.txid();
-
-        // Enqueue the txid on an activated peer
-        manager.peers.insert(peer, Some(VecDeque::from([txid])));
-
-        // Simulate the transaction arriving before send
-        manager.transactions.insert(
-            txid,
-            UnconfirmedTransaction::new(tx, Amount::from_sat(0), false, false, Vec::new(), 0),
-        );
-
-        manager.send_queued(&requests).await.unwrap();
-        // Txid should have been skipped, not added to pending
-        assert!(manager.pending_requests.is_empty());
-        assert!(manager.peers.values().filter_map(|v| v.as_ref()).all(|q| q.is_empty()));
-    }
-
     #[test]
     fn test_clear_pending_clears_queue() {
-        let (mut manager, _requests, _rx) = create_test_manager();
+        let mut manager = create_test_manager();
 
         manager.pending_requests.insert(Txid::from_byte_array([1; 32]), Instant::now());
         manager
@@ -1416,34 +1629,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_send_queued_noop_at_capacity() {
-        let (mut manager, requests, _rx) = create_test_manager();
-
-        // Fill pending to MAX_IN_FLIGHT
-        for i in 0..MAX_IN_FLIGHT as u16 {
-            let mut bytes = [0u8; 32];
-            bytes[0..2].copy_from_slice(&i.to_le_bytes());
-            manager.pending_requests.insert(Txid::from_byte_array(bytes), Instant::now());
-        }
-
-        // Add something to the queue on an activated peer
-        manager.peers.insert(
-            test_socket_address(1),
-            Some(VecDeque::from([Txid::from_byte_array([0xff; 32])])),
-        );
-
-        manager.send_queued(&requests).await.unwrap();
-        // Queue should remain unchanged (one peer with one txid)
-        assert_eq!(
-            manager.peers.values().filter_map(|v| v.as_ref()).map(|q| q.len()).sum::<usize>(),
-            1
-        );
-        assert_eq!(manager.pending_requests.len(), MAX_IN_FLIGHT);
-    }
-
-    #[tokio::test]
     async fn test_instant_send_before_transaction() {
-        let (mut manager, requests, wallet) = create_relevant_manager();
+        let (mut manager, wallet) = create_relevant_manager();
+        let (_mock, network) = mock_network();
 
         let tx = Transaction {
             version: 1,
@@ -1459,7 +1647,7 @@ mod tests {
         assert!(manager.pending_is_locks.contains_key(&txid));
 
         // Transaction arrives
-        manager.handle_tx(tx, test_socket_address(1), &requests).await.unwrap();
+        manager.handle_tx(tx, test_socket_address(1), &network).await.unwrap();
 
         // Pending IS lock consumed
         assert!(manager.pending_is_locks.is_empty());
@@ -1481,7 +1669,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_instant_send_before_irrelevant_transaction() {
-        let (mut manager, requests, _rx) = create_test_manager();
+        let mut manager = create_test_manager();
+        let (_mock, network) = mock_network();
 
         let tx = Transaction {
             version: 1,
@@ -1497,7 +1686,7 @@ mod tests {
         assert!(manager.pending_is_locks.contains_key(&txid));
 
         // Transaction arrives but wallet says it's not relevant
-        manager.handle_tx(tx, test_socket_address(1), &requests).await.unwrap();
+        manager.handle_tx(tx, test_socket_address(1), &network).await.unwrap();
 
         // Pending IS lock cleaned up (no leak)
         assert!(manager.pending_is_locks.is_empty());
@@ -1508,7 +1697,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_pending_is_locks_capacity_limit() {
-        let (mut manager, _requests, _rx) = create_test_manager();
+        let mut manager = create_test_manager();
 
         // Fill pending IS locks to capacity
         for i in 0..MAX_PENDING_IS_LOCKS {
@@ -1528,7 +1717,7 @@ mod tests {
 
     #[test]
     fn test_prune_expired_removes_is_lock_for_expired_tx() {
-        let (mut manager, _requests, _rx) = create_test_manager();
+        let mut manager = create_test_manager();
 
         let tx = Transaction {
             version: 1,
@@ -1570,7 +1759,7 @@ mod tests {
 
     #[test]
     fn test_prune_expired_removes_stale_pending_is_locks() {
-        let (mut manager, _requests, _rx) = create_test_manager();
+        let mut manager = create_test_manager();
 
         let test_timeout = Duration::from_secs(2);
 
@@ -1603,64 +1792,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_handle_inv_dedup_against_queue() {
-        let (mut manager, requests, _rx) = create_test_manager();
-        let peer = test_socket_address(1);
-        manager.peers.insert(peer, Some(VecDeque::new()));
-
-        // Fill pending to capacity so items go to queue
-        for i in 0..MAX_IN_FLIGHT as u16 {
-            let mut bytes = [0u8; 32];
-            bytes[0..2].copy_from_slice(&i.to_le_bytes());
-            manager.pending_requests.insert(Txid::from_byte_array(bytes), Instant::now());
-        }
-
-        let txid = Txid::from_byte_array([0xff; 32]);
-        let inv = vec![Inventory::Transaction(txid)];
-
-        // First call enqueues
-        manager.handle_inv(&inv, peer, &requests).await.unwrap();
-        assert_eq!(
-            manager.peers.values().filter_map(|v| v.as_ref()).map(|q| q.len()).sum::<usize>(),
-            1
-        );
-
-        // Second call with same txid should be deduped
-        manager.handle_inv(&inv, peer, &requests).await.unwrap();
-        assert_eq!(
-            manager.peers.values().filter_map(|v| v.as_ref()).map(|q| q.len()).sum::<usize>(),
-            1
-        );
-    }
-
-    #[tokio::test]
-    async fn test_bloom_filter_load_failure_propagates() {
-        let addr = test_address(0xab);
-        let mut mock = MockWallet::new();
-        mock.set_addresses(vec![addr]);
-        let wallet = Arc::new(RwLock::new(mock));
-        let (tx, rx) = mpsc::unbounded_channel::<NetworkRequest>();
-        let requests = RequestSender::new(tx);
-
-        let mut manager = MempoolManager::new(
-            wallet,
-            MempoolStrategy::BloomFilter,
-            1000,
-            0,
-            BroadcastConfig::default(),
-        );
-
-        // Drop receiver so send_filter_load fails
-        drop(rx);
-
-        // activate() should propagate the error
-        let result = manager.activate_peer(test_socket_address(1), &requests).await;
-        assert!(result.is_err());
-    }
-
-    #[tokio::test]
     async fn test_handle_tx_relevant_populates_wallet_effect_fields() {
-        let (mut manager, requests, wallet) = create_relevant_manager();
+        let (mut manager, wallet) = create_relevant_manager();
+        let (_mock, network) = mock_network();
 
         let tx = Transaction {
             version: 1,
@@ -1679,7 +1813,7 @@ mod tests {
             w.set_mempool_addresses(vec![addr.clone()]);
         }
 
-        manager.handle_tx(tx, test_socket_address(1), &requests).await.unwrap();
+        manager.handle_tx(tx, test_socket_address(1), &network).await.unwrap();
 
         let stored = manager.transactions.get(&txid).unwrap();
         assert_eq!(stored.net_amount, 50000);
@@ -1691,7 +1825,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_handle_tx_outgoing_transaction() {
-        let (mut manager, requests, wallet) = create_relevant_manager();
+        let (mut manager, wallet) = create_relevant_manager();
+        let (_mock, network) = mock_network();
 
         let tx = Transaction {
             version: 1,
@@ -1707,7 +1842,7 @@ mod tests {
             w.set_mempool_net_amount(-30000);
         }
 
-        manager.handle_tx(tx, test_socket_address(1), &requests).await.unwrap();
+        manager.handle_tx(tx, test_socket_address(1), &network).await.unwrap();
 
         let stored = manager.transactions.get(&txid).unwrap();
         assert_eq!(stored.net_amount, -30000);
@@ -1718,7 +1853,7 @@ mod tests {
 
     #[test]
     fn test_peer_connected_creates_entry() {
-        let (mut manager, _requests, _rx) = create_test_manager();
+        let mut manager = create_test_manager();
         let peer = test_socket_address(1);
 
         assert!(!manager.peers.contains_key(&peer));
@@ -1729,7 +1864,7 @@ mod tests {
 
     #[test]
     fn test_peer_disconnected_redistributes_queue() {
-        let (mut manager, _requests, _rx) = create_test_manager();
+        let mut manager = create_test_manager();
         let peer1 = test_socket_address(1);
         let peer2 = test_socket_address(2);
 
@@ -1750,7 +1885,7 @@ mod tests {
 
     #[test]
     fn test_peer_disconnected_no_peers_drops_queue() {
-        let (mut manager, _requests, _rx) = create_test_manager();
+        let mut manager = create_test_manager();
         let peer = test_socket_address(1);
 
         manager.peers.insert(peer, Some(VecDeque::from([Txid::from_byte_array([1; 32])])));
@@ -1762,7 +1897,7 @@ mod tests {
 
     #[test]
     fn test_prune_pending_requeues_to_activated_peer() {
-        let (mut manager, _requests, _rx) = create_test_manager();
+        let mut manager = create_test_manager();
         let peer = test_socket_address(1);
         manager.peers.insert(peer, Some(VecDeque::new()));
 
@@ -1779,7 +1914,7 @@ mod tests {
 
     #[test]
     fn test_prune_pending_drops_when_no_peers() {
-        let (mut manager, _requests, _rx) = create_test_manager();
+        let mut manager = create_test_manager();
 
         let txid = Txid::from_byte_array([1; 32]);
         manager
@@ -1794,7 +1929,7 @@ mod tests {
 
     #[test]
     fn test_remove_confirmed_removes_txids() {
-        let (mut manager, _requests, _rx) = create_test_manager();
+        let mut manager = create_test_manager();
 
         let mut txids = Vec::new();
         for i in 0..3u32 {
@@ -1843,7 +1978,7 @@ mod tests {
 
     #[test]
     fn test_remove_confirmed_unknown_txids_noop() {
-        let (mut manager, _requests, _rx) = create_test_manager();
+        let mut manager = create_test_manager();
 
         let unknown = vec![Txid::from_byte_array([0xaa; 32]), Txid::from_byte_array([0xbb; 32])];
 
@@ -1853,155 +1988,9 @@ mod tests {
         assert_eq!(manager.progress.removed(), 0);
     }
 
-    #[tokio::test]
-    async fn test_rebuild_filter_clears_and_reloads() {
-        let addr = test_address(0xab);
-        let (mut manager, requests, mut rx) = create_bloom_manager_with_addresses(vec![addr]);
-        let peer = test_socket_address(1);
-
-        manager.activate_peer(peer, &requests).await.unwrap();
-
-        // Drain activation messages
-        while rx.try_recv().is_ok() {}
-
-        manager.rebuild_filter(&requests).await.unwrap();
-
-        // Verify message sequence: FilterClear, FilterLoad, MemPool
-        let msg1 = rx.try_recv().unwrap();
-        assert!(matches!(msg1, NetworkRequest::SendMessageToPeer(NetworkMessage::FilterClear, _)));
-        let msg2 = rx.try_recv().unwrap();
-        assert!(matches!(
-            msg2,
-            NetworkRequest::SendMessageToPeer(NetworkMessage::FilterLoad(_), _)
-        ));
-        let msg3 = rx.try_recv().unwrap();
-        assert!(matches!(msg3, NetworkRequest::SendMessageToPeer(NetworkMessage::MemPool, _)));
-    }
-
-    #[tokio::test]
-    async fn test_rebuild_filter_no_activated_peers_noop() {
-        let (mut manager, requests, mut rx) = create_bloom_manager();
-        // No activation, so no activated peers
-        assert!(manager.peers.values().all(|v| v.is_none()));
-
-        manager.rebuild_filter(&requests).await.unwrap();
-        assert!(rx.try_recv().is_err());
-    }
-
-    #[tokio::test]
-    async fn test_seen_txids_deduplication_window() {
-        let (mut manager, requests, _rx) = create_test_manager();
-        let peer = test_socket_address(1);
-        manager.peers.insert(peer, Some(VecDeque::new()));
-
-        let txid = Txid::from_byte_array([1u8; 32]);
-        let inv = vec![Inventory::Transaction(txid)];
-
-        // A fresh seen_txids entry should cause handle_inv to skip the txid
-        manager.seen_txids.insert(txid, Instant::now());
-        manager.handle_inv(&inv, peer, &requests).await.unwrap();
-        assert!(manager.pending_requests.is_empty(), "seen txid should be skipped");
-
-        // An expired entry should allow the txid to be accepted again
-        manager.seen_txids.insert(txid, Instant::now() - SEEN_TXID_EXPIRY - Duration::from_secs(1));
-        manager.handle_inv(&inv, peer, &requests).await.unwrap();
-        assert!(
-            manager.pending_requests.contains_key(&txid),
-            "expired seen txid should be accepted"
-        );
-    }
-
-    fn test_transaction(version: u16) -> Transaction {
-        Transaction {
-            version,
-            lock_time: 0,
-            input: vec![],
-            output: vec![],
-            special_transaction_payload: None,
-        }
-    }
-
-    #[tokio::test]
-    async fn test_rebroadcast_sends_old_pending_broadcasts() {
-        let (mut manager, requests, mut rx) = create_test_manager();
-        let peer = test_socket_address(1);
-        manager.peers.insert(peer, Some(VecDeque::new()));
-
-        let tx = test_transaction(10);
-        let txid = tx.txid();
-
-        let t0 = Instant::now();
-        let later = t0 + REBROADCAST_INTERVAL + Duration::from_secs(1);
-
-        let mut state = TxBroadcastState::new(tx, t0);
-        state.sent_to.insert(peer);
-        manager.broadcasts.insert(txid, state);
-
-        manager.rebroadcast_if_due_at(&requests, later).await;
-
-        // Pending entries are resent via targeted sends (respecting the holdout)
-        let msg = rx.try_recv().expect("expected a rebroadcast message");
-        assert!(
-            matches!(msg, NetworkRequest::SendMessageToPeer(NetworkMessage::Tx(_), p) if p == peer),
-            "expected SendMessageToPeer(Tx), got {:?}",
-            msg
-        );
-
-        // Timestamp should be reset to `later`, so a second call at the same instant
-        // must not rebroadcast.
-        manager.rebroadcast_if_due_at(&requests, later).await;
-        assert!(rx.try_recv().is_err(), "should not rebroadcast immediately after reset");
-    }
-
-    #[tokio::test]
-    async fn test_rebroadcast_uncertain_uses_full_broadcast() {
-        let (mut manager, requests, mut rx) = create_test_manager();
-        let peer = test_socket_address(1);
-        manager.peers.insert(peer, Some(VecDeque::new()));
-
-        let tx = test_transaction(12);
-        let txid = tx.txid();
-
-        let t0 = Instant::now();
-        let later = t0 + REBROADCAST_INTERVAL + Duration::from_secs(1);
-
-        let mut state = TxBroadcastState::new(tx, t0);
-        state.sent_to.insert(peer);
-        state.status = BroadcastStatus::Uncertain;
-        manager.broadcasts.insert(txid, state);
-
-        manager.rebroadcast_if_due_at(&requests, later).await;
-
-        let msg = rx.try_recv().expect("expected a rebroadcast message");
-        assert!(
-            matches!(msg, NetworkRequest::BroadcastMessage(NetworkMessage::Tx(_))),
-            "expected BroadcastMessage(Tx), got {:?}",
-            msg
-        );
-    }
-
-    #[tokio::test]
-    async fn test_rebroadcast_skips_recent_transactions() {
-        let (mut manager, requests, mut rx) = create_test_manager();
-        let peer = test_socket_address(1);
-        manager.peers.insert(peer, Some(VecDeque::new()));
-
-        let tx = test_transaction(11);
-        let txid = tx.txid();
-
-        // Add a broadcast that was just sent (within the rebroadcast interval)
-        let mut state = TxBroadcastState::new(tx, Instant::now());
-        state.sent_to.insert(peer);
-        manager.broadcasts.insert(txid, state);
-
-        manager.rebroadcast_if_due(&requests).await;
-
-        assert!(rx.try_recv().is_err(), "recently sent transactions should not be rebroadcast");
-    }
-
     #[test]
     fn test_peer_disconnect_keeps_other_peers_intact() {
-        let (mut manager, _requests, _rx) = create_test_manager();
+        let mut manager = create_test_manager();
         let peer1 = test_socket_address(1);
         let peer2 = test_socket_address(2);
 
@@ -2022,14 +2011,12 @@ mod tests {
     const LOCAL_SENTINEL: SocketAddr =
         SocketAddr::new(std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED), 0);
 
-    fn drain_tx_sends(rx: &mut mpsc::UnboundedReceiver<NetworkRequest>) -> Vec<SocketAddr> {
-        let mut sends = Vec::new();
-        while let Ok(msg) = rx.try_recv() {
-            if let NetworkRequest::SendMessageToPeer(NetworkMessage::Tx(_), peer) = msg {
-                sends.push(peer);
-            }
-        }
-        sends
+    /// Peers that received a `tx` via a targeted send, in order.
+    fn tx_send_targets(mock: &MockNetworkManager) -> Vec<SocketAddr> {
+        mock.sent_to_messages()
+            .into_iter()
+            .filter_map(|(peer, msg)| matches!(msg, NetworkMessage::Tx(_)).then_some(peer))
+            .collect()
     }
 
     fn accepted_event_count(events: &[SyncEvent]) -> usize {
@@ -2049,17 +2036,17 @@ mod tests {
 
     #[tokio::test]
     async fn test_local_tx_sends_to_half_of_peers() {
-        let (mut manager, requests, mut rx) = create_test_manager();
+        let mut manager = create_test_manager();
+        let (mock, network) = mock_network();
         for i in 1..=4 {
             manager.peers.insert(test_socket_address(i), None);
         }
 
         let tx = test_transaction(20);
         let txid = tx.txid();
-        manager.handle_tx(tx, LOCAL_SENTINEL, &requests).await.unwrap();
+        manager.handle_tx(tx, LOCAL_SENTINEL, &network).await.unwrap();
 
-        let sends = drain_tx_sends(&mut rx);
-        assert_eq!(sends.len(), 2, "should send to half of 4 peers");
+        assert_eq!(tx_send_targets(&mock).len(), 2, "should send to half of 4 peers");
 
         let state = manager.broadcasts.get(&txid).expect("broadcast tracked");
         assert_eq!(state.sent_to.len(), 2);
@@ -2068,29 +2055,32 @@ mod tests {
         assert_eq!(state.status, BroadcastStatus::Pending);
 
         // A second local dispatch of the same tx must not resend
+        mock.clear_sent();
         let tx = test_transaction(20);
-        manager.handle_tx(tx, LOCAL_SENTINEL, &requests).await.unwrap();
-        assert!(drain_tx_sends(&mut rx).is_empty(), "idempotent per txid");
+        manager.handle_tx(tx, LOCAL_SENTINEL, &network).await.unwrap();
+        assert!(tx_send_targets(&mock).is_empty(), "idempotent per txid");
     }
 
     #[tokio::test]
     async fn test_local_tx_single_peer_no_holdout() {
-        let (mut manager, requests, mut rx) = create_test_manager();
+        let mut manager = create_test_manager();
+        let (mock, network) = mock_network();
         let peer = test_socket_address(1);
         manager.peers.insert(peer, None);
 
         let tx = test_transaction(21);
         let txid = tx.txid();
-        manager.handle_tx(tx, LOCAL_SENTINEL, &requests).await.unwrap();
+        manager.handle_tx(tx, LOCAL_SENTINEL, &network).await.unwrap();
 
-        assert_eq!(drain_tx_sends(&mut rx), vec![peer]);
+        assert_eq!(tx_send_targets(&mock), vec![peer]);
         let state = manager.broadcasts.get(&txid).unwrap();
         assert!(state.holdout.is_empty(), "single peer leaves nobody to hold out");
     }
 
     #[tokio::test]
     async fn test_echo_from_holdout_peer_accepts_once() {
-        let (mut manager, requests, mut rx) = create_test_manager();
+        let mut manager = create_test_manager();
+        let (_mock, network) = mock_network();
         let recipient = test_socket_address(1);
         let holdout = test_socket_address(2);
         manager.peers.insert(recipient, None);
@@ -2102,30 +2092,28 @@ mod tests {
         state.sent_to.insert(recipient);
         state.holdout.insert(holdout);
         manager.broadcasts.insert(txid, state);
-        drain_tx_sends(&mut rx);
 
         let inv = vec![Inventory::Transaction(txid)];
 
         // Echo from the recipient peer carries no information
-        let events = manager.handle_inv(&inv, recipient, &requests).await.unwrap();
+        let events = manager.handle_inv(&inv, recipient, &network).await.unwrap();
         assert_eq!(accepted_event_count(&events), 0);
         assert_eq!(manager.broadcasts[&txid].status, BroadcastStatus::Pending);
 
         // Echo from the holdout peer proves propagation
-        let events = manager.handle_inv(&inv, holdout, &requests).await.unwrap();
+        let events = manager.handle_inv(&inv, holdout, &network).await.unwrap();
         assert_eq!(accepted_event_count(&events), 1);
         assert_eq!(manager.broadcasts[&txid].status, BroadcastStatus::Accepted);
 
         // A repeat announcement must not emit a second event
-        let events = manager.handle_inv(&inv, holdout, &requests).await.unwrap();
+        let events = manager.handle_inv(&inv, holdout, &network).await.unwrap();
         assert_eq!(accepted_event_count(&events), 0);
     }
 
     #[tokio::test]
     async fn test_echo_detected_when_mempool_full() {
         let wallet = Arc::new(RwLock::new(MockWallet::new()));
-        let (tx_chan, _rx) = mpsc::unbounded_channel::<NetworkRequest>();
-        let requests = RequestSender::new(tx_chan);
+        let (_mock, network) = mock_network();
         let mut manager = MempoolManager::new(
             wallet,
             MempoolStrategy::FetchAll,
@@ -2151,13 +2139,14 @@ mod tests {
 
         // The mempool-full early return must not swallow the acceptance echo
         let inv = vec![Inventory::Transaction(txid)];
-        let events = manager.handle_inv(&inv, holdout, &requests).await.unwrap();
+        let events = manager.handle_inv(&inv, holdout, &network).await.unwrap();
         assert_eq!(accepted_event_count(&events), 1);
     }
 
     #[tokio::test]
     async fn test_timeout_uncertain_then_late_echo_upgrades() {
-        let (mut manager, requests, _rx) = create_test_manager();
+        let mut manager = create_test_manager();
+        let (_mock, network) = mock_network();
         let holdout = test_socket_address(2);
 
         let tx = test_transaction(28);
@@ -2187,33 +2176,35 @@ mod tests {
 
         // A late echo still upgrades the outcome to accepted
         let inv = vec![Inventory::Transaction(txid)];
-        let events = manager.handle_inv(&inv, holdout, &requests).await.unwrap();
+        let events = manager.handle_inv(&inv, holdout, &network).await.unwrap();
         assert_eq!(accepted_event_count(&events), 1);
         assert_eq!(manager.broadcasts[&txid].status, BroadcastStatus::Accepted);
     }
 
     #[tokio::test]
     async fn test_zero_peers_at_broadcast_sends_on_next_tick() {
-        let (mut manager, requests, mut rx) = create_test_manager();
+        let mut manager = create_test_manager();
+        let (mock, network) = mock_network();
 
         // No peers connected at broadcast time
         let tx = test_transaction(29);
         let txid = tx.txid();
-        manager.handle_tx(tx, LOCAL_SENTINEL, &requests).await.unwrap();
-        assert!(drain_tx_sends(&mut rx).is_empty());
+        manager.handle_tx(tx, LOCAL_SENTINEL, &network).await.unwrap();
+        assert!(tx_send_targets(&mock).is_empty());
         assert!(manager.broadcasts[&txid].sent_to.is_empty());
 
         // A peer connects; the never-sent broadcast is due immediately
         let peer = test_socket_address(1);
         manager.peers.insert(peer, None);
-        manager.rebroadcast_if_due(&requests).await;
-        assert_eq!(drain_tx_sends(&mut rx), vec![peer]);
+        manager.rebroadcast_if_due(&network).await;
+        assert_eq!(tx_send_targets(&mock), vec![peer]);
         assert!(manager.broadcasts[&txid].sent_to.contains(&peer));
     }
 
     #[tokio::test]
     async fn test_holdout_sticky_across_rebroadcasts() {
-        let (mut manager, requests, mut rx) = create_test_manager();
+        let mut manager = create_test_manager();
+        let (mock, network) = mock_network();
         let recipient = test_socket_address(1);
         let holdout = test_socket_address(2);
         manager.peers.insert(recipient, None);
@@ -2228,16 +2219,17 @@ mod tests {
         manager.broadcasts.insert(txid, state);
 
         let later = t0 + REBROADCAST_INTERVAL + Duration::from_secs(1);
-        manager.rebroadcast_if_due_at(&requests, later).await;
+        manager.rebroadcast_if_due_at(&network, later).await;
 
         // Only the original recipient is resent to; the holdout stays withheld
-        assert_eq!(drain_tx_sends(&mut rx), vec![recipient]);
+        assert_eq!(tx_send_targets(&mock), vec![recipient]);
         assert_eq!(manager.broadcasts[&txid].holdout, [holdout].into_iter().collect());
     }
 
     #[tokio::test]
     async fn test_holdout_repicked_when_all_holdouts_disconnect() {
-        let (mut manager, requests, mut rx) = create_test_manager();
+        let mut manager = create_test_manager();
+        let (mock, network) = mock_network();
         let recipient = test_socket_address(1);
         let new_peer = test_socket_address(3);
         manager.peers.insert(recipient, None);
@@ -2253,11 +2245,11 @@ mod tests {
         manager.broadcasts.insert(txid, state);
 
         let later = t0 + REBROADCAST_INTERVAL + Duration::from_secs(1);
-        manager.rebroadcast_if_due_at(&requests, later).await;
+        manager.rebroadcast_if_due_at(&network, later).await;
 
         // The never-sent connected peer becomes the replacement holdout,
         // so the resend goes only to the original recipient.
-        assert_eq!(drain_tx_sends(&mut rx), vec![recipient]);
+        assert_eq!(tx_send_targets(&mock), vec![recipient]);
         assert!(manager.broadcasts[&txid].holdout.contains(&new_peer));
         assert!(!manager.broadcasts[&txid].sent_to.contains(&new_peer));
     }
@@ -2265,8 +2257,7 @@ mod tests {
     #[tokio::test]
     async fn test_acceptance_threshold_two_requires_two_peers() {
         let wallet = Arc::new(RwLock::new(MockWallet::new()));
-        let (tx_chan, _rx) = mpsc::unbounded_channel::<NetworkRequest>();
-        let requests = RequestSender::new(tx_chan);
+        let (_mock, network) = mock_network();
         let mut manager = MempoolManager::new(
             wallet,
             MempoolStrategy::FetchAll,
@@ -2288,10 +2279,10 @@ mod tests {
         manager.broadcasts.insert(txid, state);
 
         let inv = vec![Inventory::Transaction(txid)];
-        let events = manager.handle_inv(&inv, holdout1, &requests).await.unwrap();
+        let events = manager.handle_inv(&inv, holdout1, &network).await.unwrap();
         assert_eq!(accepted_event_count(&events), 0, "one echo below threshold");
 
-        let events = manager.handle_inv(&inv, holdout2, &requests).await.unwrap();
+        let events = manager.handle_inv(&inv, holdout2, &network).await.unwrap();
         assert_eq!(accepted_event_count(&events), 1, "second distinct peer meets threshold");
         assert!(matches!(
             events.as_slice(),
@@ -2306,7 +2297,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_clear_pending_preserves_broadcasts() {
-        let (mut manager, _requests, _rx) = create_test_manager();
+        let mut manager = create_test_manager();
 
         let tx = test_transaction(33);
         let txid = tx.txid();
@@ -2322,7 +2313,7 @@ mod tests {
 
     #[test]
     fn test_prune_expired_removes_old_broadcasts() {
-        let (mut manager, _requests, _rx) = create_test_manager();
+        let mut manager = create_test_manager();
         let timeout = Duration::from_secs(2);
 
         let fresh = test_transaction(34);

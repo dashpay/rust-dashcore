@@ -1,5 +1,5 @@
 use crate::error::SyncResult;
-use crate::network::{Message, MessageType, RequestSender};
+use crate::network::{MessageType, NetworkManager};
 use crate::storage::{BlockHeaderStorage, MetadataStorage};
 use crate::sync::{
     ChainLockManager, ManagerIdentifier, SyncEvent, SyncManager, SyncManagerProgress, SyncState,
@@ -7,6 +7,8 @@ use crate::sync::{
 use async_trait::async_trait;
 use dashcore::network::message::NetworkMessage;
 use dashcore::network::message_blockdata::Inventory;
+use std::net::SocketAddr;
+use std::sync::Arc;
 
 #[async_trait]
 impl<H: BlockHeaderStorage, M: MetadataStorage> SyncManager for ChainLockManager<H, M> {
@@ -23,7 +25,7 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> SyncManager for ChainLockManager
     }
 
     fn wanted_message_types(&self) -> &'static [MessageType] {
-        &[MessageType::CLSig, MessageType::Inv]
+        &[MessageType::ChainLock, MessageType::Inv]
     }
 
     fn on_disconnect(&mut self) {
@@ -33,10 +35,11 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> SyncManager for ChainLockManager
 
     async fn handle_message(
         &mut self,
-        msg: Message,
-        requests: &RequestSender,
+        peer: SocketAddr,
+        msg: NetworkMessage,
+        network: &Arc<dyn NetworkManager>,
     ) -> SyncResult<Vec<SyncEvent>> {
-        match msg.inner() {
+        match &msg {
             NetworkMessage::CLSig(chainlock) => self.process_chainlock(chainlock).await,
             NetworkMessage::Inv(inv) => {
                 // Check for ChainLock inventory items, filtering out already-requested ones
@@ -58,12 +61,14 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> SyncManager for ChainLockManager
                         "Received {} ChainLock announcements, requesting via getdata",
                         chainlocks_to_request.len()
                     );
-                    requests
-                        .request_inventory(chainlocks_to_request.clone(), msg.peer_address())?;
-
-                    for item in &chainlocks_to_request {
-                        if let Inventory::ChainLock(hash) = item {
-                            self.requested_chainlocks.insert(*hash);
+                    if network
+                        .send_to(peer, NetworkMessage::GetData(chainlocks_to_request.clone()))
+                        .await
+                    {
+                        for item in &chainlocks_to_request {
+                            if let Inventory::ChainLock(hash) = item {
+                                self.requested_chainlocks.insert(*hash);
+                            }
                         }
                     }
                 }
@@ -76,7 +81,7 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> SyncManager for ChainLockManager
     async fn handle_sync_event(
         &mut self,
         event: &SyncEvent,
-        _requests: &RequestSender,
+        _network: &Arc<dyn NetworkManager>,
     ) -> SyncResult<Vec<SyncEvent>> {
         // `MasternodeStateUpdated` fires on every MnListDiff / QRInfo
         // update; the work below is strictly one-shot startup work, so
@@ -109,11 +114,6 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> SyncManager for ChainLockManager
             }]);
         }
 
-        Ok(vec![])
-    }
-
-    async fn tick(&mut self, _requests: &RequestSender) -> SyncResult<Vec<SyncEvent>> {
-        // No periodic work needed
         Ok(vec![])
     }
 

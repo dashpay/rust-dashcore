@@ -1,4 +1,5 @@
 use dashcore::{CompactTarget, Header, Target};
+use dashcore_hashes::Hash as _;
 
 use crate::chain::Checkpoint;
 
@@ -22,5 +23,69 @@ impl Checkpoint {
             protocol_version: None,
             nonce: block_header.nonce,
         }
+    }
+
+    /// Build a checkpoint from `node`'s chain at `height`.
+    ///
+    /// The values have to be the chain's real ones: the client anchors on
+    /// `block_hash` as a trusted hash and links later headers against it, so a
+    /// fabricated one breaks header sync instead of exercising it.
+    pub fn from_node(node: &crate::test_utils::DashCoreNode, height: u32) -> Checkpoint {
+        let block_hash = node.get_block_hash(height);
+        let header = node.get_block_header(&block_hash);
+        let info = node.get_block_header_info(&block_hash);
+
+        Checkpoint {
+            height,
+            block_hash,
+            prev_blockhash: header.prev_blockhash,
+            timestamp: header.time,
+            target: Target::from_compact(header.bits),
+            // Held in a `BlockHash` (X11) but sourced from a `TxMerkleNode`
+            // (sha256d), so it goes through raw bytes — as the client does to
+            // convert it back.
+            merkle_root: Some(dashcore::BlockHash::from_byte_array(
+                header.merkle_root.to_byte_array(),
+            )),
+            chain_work: format!("0x{}", hex::encode(&info.chainwork)),
+            masternode_list_name: None,
+            protocol_version: None,
+            nonce: header.nonce,
+        }
+    }
+}
+
+impl<W, N, S> crate::client::DashSpvClient<W, N, S>
+where
+    W: key_wallet_manager::WalletInterface,
+    N: crate::network::NetworkManager,
+    S: crate::storage::StorageManager,
+{
+    /// `DashSpvClient::new`, anchored on checkpoints taken from `node`'s chain
+    /// at `heights` instead of the ones bundled for the network. The client then
+    /// never downloads the headers below the one it anchors on.
+    ///
+    /// The anchor only takes effect once the client's resolved start height
+    /// reaches the checkpoint: `start_from_height`, or failing that the earliest
+    /// wallet birth height.
+    pub async fn new_anchored_at_checkpoint(
+        config: crate::client::ClientConfig,
+        network: N,
+        storage: S,
+        wallet: std::sync::Arc<tokio::sync::RwLock<W>>,
+        event_handlers: Vec<std::sync::Arc<dyn crate::client::EventHandler>>,
+        node: &crate::test_utils::DashCoreNode,
+        heights: &[u32],
+    ) -> crate::error::Result<Self> {
+        let checkpoints = heights.iter().map(|h| Checkpoint::from_node(node, *h)).collect();
+        Self::new_with_checkpoints(
+            config,
+            network,
+            storage,
+            wallet,
+            event_handlers,
+            Some(checkpoints),
+        )
+        .await
     }
 }

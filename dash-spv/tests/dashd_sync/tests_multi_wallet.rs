@@ -7,6 +7,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
 
+use dash_spv::client::ClientConfig;
 use dash_spv::Network;
 use dashcore::{Address, Amount};
 
@@ -14,7 +15,7 @@ use super::helpers::{
     count_wallet_transactions, get_spendable_balance, wait_for_sync, wait_for_wallet_synced,
     EMPTY_MNEMONIC, SECONDARY_MNEMONIC,
 };
-use super::setup::{create_and_start_client, TestContext};
+use super::setup::{create_and_start_client, create_and_start_client_at_checkpoint, TestContext};
 use dash_spv::test_utils::{create_test_wallet, default_test_account_options, TestChain};
 use key_wallet::account::ManagedAccountTrait;
 
@@ -652,4 +653,246 @@ async fn test_runtime_add_with_tip_advance_during_rescan() {
     assert!(w2_has_funding, "W2 should hold funding tx {}", w2_funding_txid);
 
     client_handle.stop().await;
+}
+
+/// Every txid a wallet holds, confirmed or immature.
+async fn wallet_txids(
+    wallet: &Arc<RwLock<WalletManager<ManagedWalletInfo>>>,
+    wallet_id: &key_wallet_manager::WalletId,
+) -> HashSet<String> {
+    let reader = wallet.read().await;
+    let info = reader.get_wallet_info(wallet_id).expect("wallet info");
+    let mut txids: HashSet<String> = info
+        .accounts()
+        .all_accounts()
+        .iter()
+        .flat_map(|a| a.transactions().keys())
+        .map(|txid| txid.to_string())
+        .collect();
+    txids.extend(info.immature_transactions().iter().map(|tx| tx.txid().to_string()));
+    txids
+}
+
+/// Fixture txids in blocks within `range`, from the wallet JSON's
+/// `confirmations` (`height = tip - confirmations + 1`).
+fn fixture_txids_in_range(ctx: &TestContext, range: std::ops::Range<u32>) -> HashSet<String> {
+    ctx.dashd
+        .wallet
+        .transactions
+        .iter()
+        .filter_map(|tx| {
+            let confirmations = tx.get("confirmations")?.as_u64()? as u32;
+            let tx_height = ctx.dashd.initial_height.checked_sub(confirmations)? + 1;
+            let txid = tx.get("txid")?.as_str()?;
+            range.contains(&tx_height).then(|| txid.to_string())
+        })
+        .collect()
+}
+
+/// A wallet added below the checkpoint the client is anchored on cannot see its
+/// own history: the client holds no headers or filter headers below that
+/// checkpoint, so no rescan can reach those blocks.
+///
+/// Two checkpoints, so the backfill has to anchor on the lower one rather than
+/// on genesis — the shape a real client sees, since mainnet and testnet bundle a
+/// checkpoint every 50k blocks. Three wallets, one per height that matters:
+///
+/// 1. Born at the upper checkpoint. It has no regtest history: its job is to
+///    anchor the client there, leaving nothing stored below it.
+/// 2. The funded wallet, born at the lower checkpoint and added while the client
+///    runs. Reaching its history means backfilling from that checkpoint up to
+///    the upper one — and never below it. A third checkpoint sits in between, so
+///    that backfill has to span more than one segment.
+/// 3. The funded wallet again, re-imported from seed at height 0, which has to
+///    backfill a second time, now down to genesis.
+///
+/// Only one fixture mnemonic is cheap to scan, so (1) is unfunded: the other
+/// funded wallet in the fixture is the miner's, which owns a coinbase in every
+/// block and would drag the whole chain's blocks down with it.
+///
+/// Regtest ships no checkpoints, hence the injected ones.
+#[tokio::test]
+async fn test_wallet_added_below_checkpoint_cannot_see_its_history() {
+    let Some(ctx) = TestContext::new(TestChain::Full).await else {
+        return;
+    };
+    let tip = ctx.dashd.initial_height;
+    let lower_checkpoint = tip / 4;
+    let middle_checkpoint = tip * 3 / 8;
+    let upper_checkpoint = tip / 2;
+    let anchor_birth = upper_checkpoint;
+    let funded_birth = lower_checkpoint;
+
+    // What the funded wallet owns in the span only a backfill can reach: at or
+    // above its birth height, but below the checkpoint the client anchored on.
+    let unreachable_without_backfill = fixture_txids_in_range(&ctx, funded_birth..upper_checkpoint);
+    assert!(
+        !unreachable_without_backfill.is_empty(),
+        "fixture has no transactions in [{funded_birth}, {upper_checkpoint}) to find"
+    );
+
+    // Wallet 1: no regtest history, only its birth height matters here.
+    let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new(Network::Regtest)));
+    {
+        let mut guard = wallet.write().await;
+        guard
+            .create_wallet_from_mnemonic(
+                EMPTY_MNEMONIC,
+                anchor_birth,
+                default_test_account_options(),
+            )
+            .expect("add the anchoring wallet born at the upper checkpoint");
+    }
+
+    let mut client_handle = create_and_start_client_at_checkpoint(
+        &ctx.client_config,
+        Arc::clone(&wallet),
+        &ctx.dashd.node,
+        &[lower_checkpoint, middle_checkpoint, upper_checkpoint],
+    )
+    .await;
+    wait_for_sync(&mut client_handle.progress_receiver, tip).await;
+
+    // Wallet 2: the funded one, born at the lower checkpoint, added mid-flight.
+    let funded_id = {
+        let mut guard = client_handle.client.wallet().write().await;
+        guard
+            .create_wallet_from_mnemonic(
+                &ctx.dashd.wallet.mnemonic,
+                funded_birth,
+                default_test_account_options(),
+            )
+            .expect("add the funded wallet below the checkpoint")
+    };
+
+    // Own budget rather than `wait_for_wallet_synced`: dropping the scan floor
+    // reissues every filter batch, and a batch lost to a transient send failure
+    // is only retried after the download coordinator's 30s timeout — the same
+    // value as `SYNC_TIMEOUT`.
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(180);
+    loop {
+        let (synced, _) = wallet_heights(&wallet, &funded_id).await;
+        if synced >= tip {
+            break;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "the funded wallet never caught up: stuck at synced_height {synced}, target {tip}",
+        );
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
+
+    let found = wallet_txids(&wallet, &funded_id).await;
+    client_handle.stop().await;
+    // Release the storage lock: the re-import below reuses this directory.
+    drop(client_handle);
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    // Control: the same wallet at the same birth height on a client that never
+    // anchored above it, so it needs no backfill. Comparing against it keeps this
+    // test about the backfill — whatever a mid-chain birth height costs a wallet
+    // on its own shows up in both runs alike.
+    let control_dir = tempfile::TempDir::new().expect("control storage dir");
+    let mut control_config = ClientConfig::regtest()
+        .with_storage_path(control_dir.path().to_path_buf())
+        .without_masternodes();
+    control_config.add_peer(ctx.dashd.addr);
+
+    let control_wallet =
+        Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new(Network::Regtest)));
+    let control_id = {
+        let mut guard = control_wallet.write().await;
+        guard
+            .create_wallet_from_mnemonic(
+                &ctx.dashd.wallet.mnemonic,
+                funded_birth,
+                default_test_account_options(),
+            )
+            .expect("add the funded wallet to the control client")
+    };
+    let mut control_handle =
+        create_and_start_client(&control_config, Arc::clone(&control_wallet)).await;
+    wait_for_sync(&mut control_handle.progress_receiver, tip).await;
+    wait_for_wallet_synced(&control_wallet, &control_id, tip).await;
+    let control_found = wallet_txids(&control_wallet, &control_id).await;
+    control_handle.stop().await;
+    drop(control_handle);
+
+    let reachable_by_control: HashSet<String> =
+        unreachable_without_backfill.intersection(&control_found).cloned().collect();
+    assert!(
+        !reachable_by_control.is_empty(),
+        "the control client found none of the {} transactions in [{funded_birth}, \
+         {upper_checkpoint}), so this run proves nothing",
+        unreachable_without_backfill.len(),
+    );
+
+    let mut missing: Vec<_> = reachable_by_control.difference(&found).cloned().collect();
+    missing.sort_unstable();
+    assert!(
+        missing.is_empty(),
+        "the wallet was added below the checkpoint the client anchored on and is missing {} of \
+         the {} transactions in [{funded_birth}, {upper_checkpoint}) that the control client \
+         found without a backfill: {missing:?}",
+        missing.len(),
+        reachable_by_control.len(),
+    );
+
+    // Wallet 3: the same wallet re-imported from seed at height 0, on the storage
+    // the first backfill left reaching down to the lower checkpoint. That has to backfill
+    // again, this time all the way to genesis — and a wallet scanning from 0
+    // carries no gap-limit handicap, so it must end up with the whole balance
+    // dashd reports.
+    let reimported =
+        Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new(Network::Regtest)));
+    let reimported_id = {
+        let mut guard = reimported.write().await;
+        guard
+            .create_wallet_from_mnemonic(
+                &ctx.dashd.wallet.mnemonic,
+                0,
+                default_test_account_options(),
+            )
+            .expect("re-import the funded wallet at height 0")
+    };
+    let mut reimported_handle = create_and_start_client_at_checkpoint(
+        &ctx.client_config,
+        Arc::clone(&reimported),
+        &ctx.dashd.node,
+        &[lower_checkpoint, middle_checkpoint, upper_checkpoint],
+    )
+    .await;
+
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(180);
+    loop {
+        let (synced, _) = wallet_heights(&reimported, &reimported_id).await;
+        if synced >= tip {
+            break;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "the re-imported wallet never caught up: stuck at synced_height {synced}, \
+             target {tip}",
+        );
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
+
+    assert_eq!(
+        get_spendable_balance(&reimported, &reimported_id).await,
+        (ctx.dashd.wallet.balance * 1e8).round() as u64,
+        "a wallet re-imported at height 0 must end up with the whole balance, so the second \
+         backfill has to reach genesis",
+    );
+
+    // A block mined after the backfills must extend the filter headers from the
+    // real tip. The fill left the pipeline aimed at the range below the old
+    // floor, so anything that resumes from there would re-request the span that
+    // is already stored.
+    if ctx.dashd.supports_mining {
+        let miner_address = ctx.dashd.node.get_new_address_from_wallet("default");
+        ctx.dashd.node.generate_blocks(1, &miner_address);
+        wait_for_sync(&mut reimported_handle.progress_receiver, tip + 1).await;
+    }
+
+    reimported_handle.stop().await;
 }

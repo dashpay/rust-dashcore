@@ -6,8 +6,11 @@
 //! - Protect against deep reorganizations
 //! - Bootstrap masternode lists at specific heights
 
-use dashcore::{BlockHash, CompactTarget, Network, Target};
+use dashcore::block::{Header as BlockHeader, Version};
+use dashcore::{BlockHash, CompactTarget, Network, Target, TxMerkleNode};
 use dashcore_hashes::{hex, Hash};
+
+use crate::types::HashedBlockHeader;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -54,6 +57,22 @@ impl Checkpoint {
     /// Check if this checkpoint has an associated masternode list
     pub fn has_masternode_list(&self) -> bool {
         self.masternode_list_name.is_some()
+    }
+
+    /// The header to anchor the chain on at this checkpoint.
+    pub(crate) fn anchor_header(&self) -> HashedBlockHeader {
+        let header = BlockHeader {
+            version: Version::from_consensus(0),
+            prev_blockhash: self.prev_blockhash,
+            merkle_root: self
+                .merkle_root
+                .map(|h| TxMerkleNode::from_byte_array(*h.as_byte_array()))
+                .unwrap_or_else(TxMerkleNode::all_zeros),
+            time: self.timestamp,
+            bits: CompactTarget::from_consensus(self.target.to_compact_lossy().to_consensus()),
+            nonce: self.nonce,
+        };
+        HashedBlockHeader::with_trusted_hash(header, self.block_hash)
     }
 }
 

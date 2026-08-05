@@ -13,10 +13,11 @@ use tokio::sync::RwLock;
 
 use super::pipeline::MnListDiffPipeline;
 use crate::error::{SyncError, SyncResult};
-use crate::network::RequestSender;
+use crate::network::NetworkManager;
 use crate::storage::BlockHeaderStorage;
 use crate::sync::{MasternodesProgress, SyncEvent, SyncManager, SyncState};
-use dashcore::network::message_qrinfo::QRInfo;
+use dashcore::network::message::NetworkMessage;
+use dashcore::network::message_qrinfo::{GetQRInfo, QRInfo};
 use dashcore::BlockHash;
 use std::collections::BTreeSet;
 
@@ -392,7 +393,7 @@ impl<H: BlockHeaderStorage> MasternodesManager<H> {
     /// lightweight completion path when the response drains the pipeline.
     pub(super) async fn send_tip_mnlistdiff_update(
         &mut self,
-        requests: &RequestSender,
+        network: &Arc<dyn NetworkManager>,
     ) -> SyncResult<Vec<SyncEvent>> {
         let new_tip_hash = {
             let storage = self.header_storage.read().await;
@@ -414,7 +415,7 @@ impl<H: BlockHeaderStorage> MasternodesManager<H> {
 
         self.sync_state.pipeline_mode = PipelineMode::Incremental;
         self.sync_state.mnlistdiff_pipeline.queue_requests(vec![(base_hash, new_tip_hash)]);
-        self.sync_state.mnlistdiff_pipeline.send_pending(requests)?;
+        self.sync_state.mnlistdiff_pipeline.send_pending(network).await?;
         Ok(vec![])
     }
 
@@ -439,7 +440,7 @@ impl<H: BlockHeaderStorage> MasternodesManager<H> {
     /// would have done had the intermediate events not been dropped.
     pub(super) async fn complete_pipeline(
         &mut self,
-        requests: &RequestSender,
+        network: &Arc<dyn NetworkManager>,
     ) -> SyncResult<Vec<SyncEvent>> {
         match std::mem::take(&mut self.sync_state.pipeline_mode) {
             PipelineMode::QuorumValidation {
@@ -457,7 +458,7 @@ impl<H: BlockHeaderStorage> MasternodesManager<H> {
                         );
                         self.sync_state.qrinfo_retry_count = 0;
                         self.sync_state.clear_pending();
-                        match self.send_qrinfo_for_tip(requests).await {
+                        match self.send_qrinfo_for_tip(network).await {
                             Ok(extra) => events.extend(extra),
                             Err(e) => tracing::warn!(
                                 error = %e,
@@ -509,7 +510,7 @@ impl<H: BlockHeaderStorage> MasternodesManager<H> {
     /// Called when BlockHeaderSyncComplete is received, ensuring we have all headers.
     pub(super) async fn send_qrinfo_for_tip(
         &mut self,
-        requests: &RequestSender,
+        network: &Arc<dyn NetworkManager>,
     ) -> SyncResult<Vec<SyncEvent>> {
         // Get info from storage
         let (tip_height, tip_block_hash) = {
@@ -541,11 +542,16 @@ impl<H: BlockHeaderStorage> MasternodesManager<H> {
             tip_height,
             base_hashes.len()
         );
-        // Send before mutating state. If the request errors (e.g. no peers
-        // connected during a reconnect race), the `?` propagates and we leave
-        // `WaitingForConnections` intact instead of stranding the manager in
-        // `Syncing` with `qrinfo_in_flight = None`, which `tick` cannot recover.
-        requests.request_qr_info(base_hashes, tip_block_hash, true)?;
+        // Fire the QRInfo. The broker does not track qrinfo (no `RequestKey`),
+        // so the manager owns its timeout/retry via `qrinfo_in_flight`; there is
+        // no `request_answered` for it. `send` is fire-and-forget and infallible.
+        network
+            .send(NetworkMessage::GetQRInfo(GetQRInfo {
+                base_block_hashes: base_hashes,
+                block_request_hash: tip_block_hash,
+                extra_share: true,
+            }))
+            .await;
         self.progress.add_qr_infos_requested(1);
         self.sync_state.record_qrinfo_attempt(tip_height);
         self.sync_state.start_waiting_for_qrinfo(tip_block_hash);
@@ -618,15 +624,12 @@ impl<H: BlockHeaderStorage> std::fmt::Debug for MasternodesManager<H> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::network::{MessageType, NetworkRequest};
+    use crate::network::MessageType;
     use crate::storage::{DiskStorageManager, PersistentBlockHeaderStorage, StorageManager};
     use crate::sync::sync_manager::SyncManager;
     use crate::sync::{ManagerIdentifier, SyncManagerProgress};
-    use dashcore::block::Header;
     use dashcore::hashes::Hash;
-    use dashcore::network::message::NetworkMessage;
     use dashcore::sml::masternode_list::MasternodeList;
-    use tokio::sync::mpsc;
 
     type TestMasternodesManager = MasternodesManager<PersistentBlockHeaderStorage>;
 
@@ -640,54 +643,12 @@ mod tests {
         create_test_manager_for(dashcore::Network::Testnet).await
     }
 
-    /// Build a regtest manager whose engine has a single list at `tip` and
-    /// whose block header storage is populated with dummy headers up to
-    /// `tip`, in `Synced` state with `pipeline_mode = Incremental` and
-    /// `block_header_tip_height = tip`. Storage must be populated so that
-    /// `send_qrinfo_for_tip` finds a tip and reaches the network dispatch;
-    /// otherwise it short-circuits at `storage.get_tip()` and the catch-up
-    /// path can't be observed at the network layer. Returns the manager, a
-    /// `RequestSender`, and the matching receiver so the caller binds it
-    /// (the channel closes when the receiver drops).
-    async fn make_synced_incremental_manager(
-        tip: u32,
-    ) -> (TestMasternodesManager, RequestSender, mpsc::UnboundedReceiver<NetworkRequest>) {
-        let storage = DiskStorageManager::with_temp_dir().await.unwrap();
-        let block_headers = storage.block_headers();
-        block_headers
-            .write()
-            .await
-            .store_headers(
-                &Header::dummy_batch(0..tip + 1)
-                    .iter()
-                    .map(crate::types::HashedBlockHeader::from)
-                    .collect::<Vec<_>>(),
-            )
-            .await
-            .unwrap();
-        let engine = engine_with_lists(&[(tip, 1)]);
-        let mut manager = MasternodesManager::new(
-            block_headers,
-            Arc::new(RwLock::new(engine)),
-            dashcore::Network::Regtest,
-        )
-        .await;
-        manager.set_state(SyncState::Synced);
-        manager.sync_state.pipeline_mode = PipelineMode::Incremental;
-        manager.progress.update_block_header_tip_height(tip);
-        let (tx, rx) = mpsc::unbounded_channel();
-        (manager, RequestSender::new(tx), rx)
-    }
-
     #[tokio::test]
     async fn test_masternode_manager_new() {
         let manager = create_test_manager().await;
         assert_eq!(manager.identifier(), ManagerIdentifier::Masternode);
         assert_eq!(manager.state(), SyncState::WaitingForConnections);
-        assert_eq!(
-            manager.wanted_message_types(),
-            vec![MessageType::MnListDiff, MessageType::QRInfo]
-        );
+        assert_eq!(manager.wanted_message_types(), [MessageType::MnListDiff, MessageType::QrInfo]);
     }
 
     #[tokio::test]
@@ -927,6 +888,44 @@ mod tests {
         assert_eq!(manager.progress.current_height(), 0);
     }
 
+    /// Build a `Synced` manager already in the `Incremental` pipeline mode with
+    /// `tip` block headers stored and a single masternode list at `tip`, plus a
+    /// [`MockNetworkManager`] to inspect what requests it fires.
+    async fn make_synced_incremental_manager(
+        tip: u32,
+    ) -> (TestMasternodesManager, Arc<dyn NetworkManager>, Arc<crate::test_utils::MockNetworkManager>)
+    {
+        use dashcore::Header;
+
+        let storage = DiskStorageManager::with_temp_dir().await.unwrap();
+        let block_headers = storage.block_headers();
+        block_headers
+            .write()
+            .await
+            .store_headers(
+                &Header::dummy_batch(0..tip + 1)
+                    .iter()
+                    .map(crate::types::HashedBlockHeader::from)
+                    .collect::<Vec<_>>(),
+            )
+            .await
+            .unwrap();
+        let engine = engine_with_lists(&[(tip, 1)]);
+        let mut manager = MasternodesManager::new(
+            block_headers,
+            Arc::new(RwLock::new(engine)),
+            dashcore::Network::Regtest,
+        )
+        .await;
+        manager.set_state(SyncState::Synced);
+        manager.sync_state.pipeline_mode = PipelineMode::Incremental;
+        manager.progress.update_block_header_tip_height(tip);
+
+        let mock = Arc::new(crate::test_utils::MockNetworkManager::new());
+        let network: Arc<dyn NetworkManager> = mock.clone();
+        (manager, network, mock)
+    }
+
     /// `complete_pipeline` after `Incremental` re-evaluates the cycle gate at
     /// the latest tip and fires a catch-up QRInfo when the gate picks
     /// `QuorumValidation`. When a batch of headers lands while a prior
@@ -940,9 +939,9 @@ mod tests {
     /// `rotation_cycles` from 0 to 1.
     #[tokio::test]
     async fn test_complete_incremental_fires_catch_up_when_window_missed() {
-        let (mut manager, requests, mut rx) = make_synced_incremental_manager(70).await;
+        let (mut manager, network, mock) = make_synced_incremental_manager(70).await;
 
-        manager.complete_pipeline(&requests).await.expect("complete_pipeline succeeds");
+        manager.complete_pipeline(&network).await.expect("complete_pipeline succeeds");
 
         assert_eq!(
             manager.sync_state.current_cycle_height,
@@ -963,34 +962,37 @@ mod tests {
             manager.sync_state.qrinfo_in_flight.is_some(),
             "the catch-up branch must mark a QRInfo as in flight"
         );
-        let queued = rx.try_recv().expect("a NetworkRequest must be queued by the catch-up");
+        let sent = mock.sent_messages();
         assert!(
-            matches!(queued, NetworkRequest::SendMessage(NetworkMessage::GetQRInfo(_))),
-            "the queued request must be a `GetQRInfo`, got {:?}",
-            queued
+            sent.iter().any(|m| matches!(m, NetworkMessage::GetQRInfo(_))),
+            "the catch-up must send a `GetQRInfo`, got {:?}",
+            sent
         );
     }
 
-    /// `send_qrinfo_for_tip` must not strand the manager in `Syncing` when
-    /// the network send fails. A buffered `BlockHeaderSyncComplete` consumed
-    /// during `WaitingForConnections` reaches `send_qrinfo_for_tip` while no
-    /// peers are connected. If state transitions before the failing send,
-    /// `tick` cannot recover because it gates on `qrinfo_in_flight.is_some()`.
+    /// `send_qrinfo_for_tip` fires the QRInfo request and moves the manager out
+    /// of `WaitingForConnections`. The old `dev` test asserted the send-failure
+    /// path preserved state, but `NetworkManager::send` is now an infallible
+    /// fire-and-forget declaration to the broker, so there is no failing-send
+    /// branch left to exercise. Adapted to assert the normal-send outcome: a
+    /// `GetQRInfo` is emitted, `qrinfo_in_flight` is set, and the state advances
+    /// to `Syncing` (the manager is never stranded in `WaitingForConnections`).
     #[tokio::test]
-    async fn test_send_qrinfo_for_tip_preserves_state_when_send_fails() {
-        let (mut manager, requests, rx) = make_synced_incremental_manager(70).await;
+    async fn test_send_qrinfo_for_tip_fires_and_transitions_from_waiting() {
+        let (mut manager, network, mock) = make_synced_incremental_manager(70).await;
         manager.set_state(SyncState::WaitingForConnections);
-        drop(rx);
 
-        let err = manager
-            .send_qrinfo_for_tip(&requests)
-            .await
-            .expect_err("send must fail when the receiver is dropped");
-        assert!(matches!(err, SyncError::Network(_)), "expected Network error, got {:?}", err);
+        manager.send_qrinfo_for_tip(&network).await.expect("send_qrinfo_for_tip succeeds");
 
-        assert_eq!(manager.state(), SyncState::WaitingForConnections);
-        assert!(manager.sync_state.qrinfo_in_flight.is_none());
-        assert_eq!(manager.progress.qr_infos_requested(), 0);
+        assert_eq!(manager.state(), SyncState::Syncing);
+        assert!(manager.sync_state.qrinfo_in_flight.is_some());
+        assert_eq!(manager.progress.qr_infos_requested(), 1);
+        let sent = mock.sent_messages();
+        assert!(
+            sent.iter().any(|m| matches!(m, NetworkMessage::GetQRInfo(_))),
+            "send_qrinfo_for_tip must send a `GetQRInfo`, got {:?}",
+            sent
+        );
     }
 
     /// When the cycle gate picks `Incremental` after an `Incremental`
@@ -1000,9 +1002,9 @@ mod tests {
     /// through to `Incremental` and no QRInfo fires.
     #[tokio::test]
     async fn test_complete_incremental_does_not_fire_when_gate_picks_incremental() {
-        let (mut manager, requests, _rx) = make_synced_incremental_manager(50).await;
+        let (mut manager, network, mock) = make_synced_incremental_manager(50).await;
 
-        manager.complete_pipeline(&requests).await.expect("complete_pipeline succeeds");
+        manager.complete_pipeline(&network).await.expect("complete_pipeline succeeds");
 
         assert!(
             manager.sync_state.qrinfo_in_flight.is_none(),
@@ -1012,6 +1014,10 @@ mod tests {
             manager.progress.qr_infos_requested(),
             0,
             "no QRInfo must be requested when the gate picks Incremental"
+        );
+        assert!(
+            mock.sent_messages().is_empty(),
+            "no request must be sent when the gate picks Incremental"
         );
     }
 }

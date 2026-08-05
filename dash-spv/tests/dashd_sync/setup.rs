@@ -1,9 +1,8 @@
 use dash_spv::client::config::MempoolStrategy;
 use dash_spv::network::NetworkEvent;
-use dash_spv::storage::{PeerStorage, PersistentPeerStorage, PersistentStorage};
 use dash_spv::test_utils::{
     create_test_wallet, init_test_logging, next_unused_receive_address, retain_test_dir,
-    DashdTestContext, TestChain, TestEventHandler,
+    DashCoreNode, DashdTestContext, TestChain, TestEventHandler,
 };
 use dash_spv::{
     client::{ClientConfig, DashSpvClient},
@@ -12,8 +11,6 @@ use dash_spv::{
     sync::{ProgressPercentage, SyncEvent, SyncProgress},
     LoggingGuard, Network,
 };
-use dashcore::network::address::AddrV2Message;
-use dashcore::network::constants::ServiceFlags;
 use dashcore::Txid;
 use key_wallet::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
@@ -281,8 +278,26 @@ pub(super) async fn create_and_start_client(
     config: &ClientConfig,
     wallet: Arc<RwLock<WalletManager<ManagedWalletInfo>>>,
 ) -> ClientHandle {
-    let network_manager =
-        PeerNetworkManager::new(config).await.expect("Failed to create network manager");
+    create_and_start_client_inner(config, wallet, None).await
+}
+
+/// `create_and_start_client`, anchored on a checkpoint from `node`'s chain at
+/// `height`.
+pub(super) async fn create_and_start_client_at_checkpoint(
+    config: &ClientConfig,
+    wallet: Arc<RwLock<WalletManager<ManagedWalletInfo>>>,
+    node: &DashCoreNode,
+    heights: &[u32],
+) -> ClientHandle {
+    create_and_start_client_inner(config, wallet, Some((node, heights))).await
+}
+
+async fn create_and_start_client_inner(
+    config: &ClientConfig,
+    wallet: Arc<RwLock<WalletManager<ManagedWalletInfo>>>,
+    checkpoint: Option<(&DashCoreNode, &[u32])>,
+) -> ClientHandle {
+    let network_manager = PeerNetworkManager::new(config).await;
     let storage_manager =
         DiskStorageManager::new(config).await.expect("Failed to create storage manager");
 
@@ -291,10 +306,28 @@ pub(super) async fn create_and_start_client(
     let sync_event_receiver = handler.subscribe_sync_events();
     let network_event_receiver = handler.subscribe_network_events();
 
-    let client =
-        DashSpvClient::new(config.clone(), network_manager, storage_manager, wallet, vec![handler])
-            .await
-            .expect("Failed to create client");
+    let client = match checkpoint {
+        Some((node, heights)) => DashSpvClient::new_anchored_at_checkpoint(
+            config.clone(),
+            network_manager,
+            storage_manager,
+            wallet,
+            vec![handler],
+            node,
+            heights,
+        )
+        .await
+        .expect("Failed to create checkpoint-anchored client"),
+        None => DashSpvClient::new(
+            config.clone(),
+            network_manager,
+            storage_manager,
+            wallet,
+            vec![handler],
+        )
+        .await
+        .expect("Failed to create client"),
+    };
 
     let wallet_event_receiver = {
         let w = client.wallet().read().await;
@@ -329,12 +362,10 @@ pub(super) async fn create_non_exclusive_test_config(
     storage_path: PathBuf,
     peer_addr: std::net::SocketAddr,
 ) -> ClientConfig {
-    let config = ClientConfig::regtest().with_storage_path(storage_path).without_masternodes();
-    // Seed the peer store so the client can discover our dashd node
-    let peer_store = PersistentPeerStorage::open(config.storage_path.clone())
-        .await
-        .expect("Failed to open peer storage");
-    let msg = AddrV2Message::new(peer_addr, ServiceFlags::NETWORK);
-    peer_store.save_peers(&[msg]).await.expect("Failed to seed peer store");
+    let mut config = ClientConfig::regtest().with_storage_path(storage_path).without_masternodes();
+    // Non-exclusive discovery: add the node as a configured peer while leaving
+    // `restrict_to_configured_peers` false. (Peer storage was removed, so this
+    // replaces seeding it on disk.)
+    config.add_peer(peer_addr);
     config
 }

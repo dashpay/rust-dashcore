@@ -10,6 +10,7 @@
 
 use super::{ClientConfig, DashSpvClient, EventHandler};
 use crate::chain::checkpoints::CheckpointManager;
+use crate::chain::Checkpoint;
 use crate::error::{Result, SpvError};
 use crate::network::NetworkManager;
 use crate::storage::{
@@ -20,13 +21,8 @@ use crate::sync::{
     BlockHeadersManager, BlocksManager, ChainLockManager, FilterHeadersManager, FiltersManager,
     InstantSendManager, Managers, MasternodesManager, MempoolManager, SyncCoordinator,
 };
-use crate::types::HashedBlockHeader;
-use dashcore::block::{Header as BlockHeader, Version};
 use dashcore::network::constants::NetworkExt;
-use dashcore::pow::CompactTarget;
 use dashcore::sml::masternode_list_engine::MasternodeListEngine;
-use dashcore::TxMerkleNode;
-use dashcore_hashes::Hash;
 use key_wallet_manager::WalletInterface;
 use std::sync::Arc;
 use tokio::sync::{watch, Mutex, RwLock};
@@ -36,9 +32,25 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
     pub async fn new(
         config: ClientConfig,
         network: N,
+        storage: S,
+        wallet: Arc<RwLock<W>>,
+        event_handlers: Vec<Arc<dyn EventHandler>>,
+    ) -> Result<Self> {
+        Self::new_with_checkpoints(config, network, storage, wallet, event_handlers, None).await
+    }
+
+    /// `new`, with the option to replace the checkpoints bundled for the network.
+    ///
+    /// Reachable from outside the crate through `test_utils`: regtest and devnet
+    /// bundle none, which otherwise leaves the checkpoint-anchored path
+    /// untestable.
+    pub(crate) async fn new_with_checkpoints(
+        config: ClientConfig,
+        network: N,
         mut storage: S,
         wallet: Arc<RwLock<W>>,
         event_handlers: Vec<Arc<dyn EventHandler>>,
+        checkpoints: Option<Vec<Checkpoint>>,
     ) -> Result<Self> {
         tracing::info!("{}", crate::version_info());
 
@@ -61,9 +73,20 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
             }
         };
 
+        let checkpoint_manager = Arc::new(match checkpoints {
+            Some(checkpoints) => CheckpointManager::new(checkpoints),
+            None => CheckpointManager::for_network(config.network),
+        });
+
         // Initialize genesis block or checkpoint before creating managers,
         // so they can read the tip from storage during construction.
-        Self::initialize_genesis_block(&config, start_from_height, &mut storage).await?;
+        Self::initialize_genesis_block(
+            &config,
+            &checkpoint_manager,
+            start_from_height,
+            &mut storage,
+        )
+        .await?;
 
         let masternode_engine = {
             if config.enable_masternodes {
@@ -82,17 +105,18 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
             PersistentBlockStorage,
             PersistentMetadataStorage,
             W,
-        > = Managers::default();
-
-        let checkpoint_manager = Arc::new(CheckpointManager::for_network(config.network));
-        managers.block_headers = Some(
-            BlockHeadersManager::new(
-                storage.block_headers(),
-                storage.metadata(),
-                checkpoint_manager,
-            )
-            .await?,
-        );
+        > = Managers {
+            block_headers: Some(
+                BlockHeadersManager::new(
+                    storage.block_headers(),
+                    storage.metadata(),
+                    checkpoint_manager,
+                    config.network,
+                )
+                .await?,
+            ),
+            ..Default::default()
+        };
 
         if config.enable_filters {
             managers.filter_headers = Some(
@@ -156,12 +180,13 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
 
         let client = Self {
             config: Arc::new(RwLock::new(config)),
-            network: Arc::new(Mutex::new(network)),
+            network: Arc::new(network),
             storage,
             wallet,
             masternode_engine,
             sync_coordinator: Arc::new(Mutex::new(sync_coordinator)),
             running: Arc::new(watch::Sender::new(false)),
+            stop_requested: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             event_handlers: Arc::new(event_handlers),
         };
 
@@ -183,32 +208,53 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
             return Err(SpvError::Config("Client already running".to_string()));
         }
 
-        // Start all sync tasks before connecting to the network to make sure initial connection
-        // events are handled correctly in the sync coordinator.
-        if let Err(e) =
-            self.sync_coordinator.lock().await.start(&mut *self.network.lock().await).await
-        {
+        // Fresh lifecycle: clear any stop request left over from a previous run so
+        // this start can complete. A `stop()` arriving *after* this point (while we
+        // connect below) is recorded and honored by the guarded transition at the end.
+        self.stop_requested.store(false, std::sync::atomic::Ordering::SeqCst);
+
+        // Spawn every sync task BEFORE connecting, so each manager has subscribed by the
+        // time the network announces its peers. The network manager used to connect inside
+        // `new()`, which meant `PeersUpdated` and every `PeerConnected` fired into the void
+        // — and the mempool manager, whose peer set is built from those events, stayed empty
+        // and never sent the `filterload` that enables transaction relay.
+        let network: Arc<dyn NetworkManager> = self.network.clone();
+        if let Err(e) = self.sync_coordinator.lock().await.start(&network).await {
             tracing::error!("Failed to start sync coordinator: {}", e);
             return Err(SpvError::Sync(e));
         }
 
-        // Connect to network
-        self.network.lock().await.connect().await?;
+        self.network.start();
 
-        // Only mark as running after all startup operations succeed.
-        // `send_replace` always stores the value regardless of receiver count,
-        // so this is correct even when `run()` has not subscribed yet.
-        self.running.send_replace(true);
+        // Only mark as running after all startup operations succeed — and only if
+        // no `stop()` raced in while we were connecting. The check runs inside the
+        // watch lock (via `send_if_modified`), and `stop()` sets `stop_requested`
+        // before it flips `running`, so the two orderings are both safe:
+        //   - we win the lock first: set running=true; a later stop() flips it false.
+        //   - stop() won: `stop_requested` is already true here, so we leave running
+        //     false and the run loop tears down immediately instead of syncing forever.
+        // `send_if_modified` stores the value regardless of receiver count, so this
+        // is correct even when `run()` has not subscribed yet.
+        self.running.send_if_modified(|running| {
+            if self.stop_requested.load(std::sync::atomic::Ordering::SeqCst) {
+                false
+            } else {
+                *running = true;
+                true
+            }
+        });
 
         Ok(())
     }
 
     /// Stop the SPV client.
     pub async fn stop(&self) -> Result<()> {
-        // Check if already stopped
-        if !*self.running.borrow() {
-            return Ok(());
-        }
+        // Record the stop request BEFORE flipping `running`, so a `start()` still
+        // connecting observes it (under the watch lock) and declines to mark the
+        // client running. Otherwise a stop that arrives mid-startup would be lost:
+        // `start()` would flip running true afterwards and the run task would sync
+        // forever, hanging `run_handle.await`.
+        self.stop_requested.store(true, std::sync::atomic::Ordering::SeqCst);
 
         // Flip the running state before tearing anything down so a concurrent
         // `run()` loop wakes immediately and breaks out before it can lock the
@@ -216,14 +262,23 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
         // shutdown below.
         self.running.send_replace(false);
 
+        // Always tear down, even if `running` was never true: a stop that raced
+        // startup leaves `running` false yet `start()` may already have spawned
+        // the coordinator's manager tasks and connected the network, so those must
+        // still be stopped. Every step below is idempotent (cancelling an already
+        // cancelled token, draining an empty task set, persisting again), so the
+        // normal double call — this stop() plus the run loop's own final stop() —
+        // is safe.
+
         // Shut down sync coordinator: signals cancellation and waits for manager
         // tasks to drain before we tear down the network and storage layers.
         if let Err(e) = self.sync_coordinator.lock().await.shutdown().await {
             tracing::warn!("Error shutting down sync coordinator: {}", e);
         }
 
-        // Disconnect from network
-        self.network.lock().await.disconnect().await?;
+        // Tear down the network layer: stops the router/pump and cancels every
+        // peer reader so no more messages arrive after stop() returns.
+        self.network.stop();
 
         // Shutdown storage to ensure all data is persisted
         {
@@ -245,6 +300,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
     /// Called before creating managers so they can read the tip during construction.
     async fn initialize_genesis_block(
         config: &ClientConfig,
+        checkpoint_manager: &CheckpointManager,
         start_from_height: Option<u32>,
         storage: &mut S,
     ) -> Result<()> {
@@ -259,8 +315,6 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
 
         // Check if we should use a checkpoint instead of genesis
         if let Some(start_height) = start_from_height {
-            let checkpoint_manager = CheckpointManager::for_network(config.network);
-
             // Find the best checkpoint at or before the requested height
             if let Some(checkpoint) = checkpoint_manager.last_checkpoint_before_height(start_height)
             {
@@ -271,29 +325,9 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
                         start_height
                     );
 
-                    // The checkpoint stores the trusted block hash but not the block version,
-                    // so a reconstructed header cannot be hashed back to that value. Anchor on
-                    // the trusted hash directly: chain linkage compares against the stored hash,
-                    // and `time`/`bits` (used for difficulty checks of later headers) come from
-                    // the checkpoint. The version is irrelevant since the hash is never recomputed.
-                    let checkpoint_header = BlockHeader {
-                        version: Version::from_consensus(0),
-                        prev_blockhash: checkpoint.prev_blockhash,
-                        merkle_root: checkpoint
-                            .merkle_root
-                            .map(|h| TxMerkleNode::from_byte_array(*h.as_byte_array()))
-                            .unwrap_or_else(TxMerkleNode::all_zeros),
-                        time: checkpoint.timestamp,
-                        bits: CompactTarget::from_consensus(
-                            checkpoint.target.to_compact_lossy().to_consensus(),
-                        ),
-                        nonce: checkpoint.nonce,
-                    };
-                    let anchor = HashedBlockHeader::with_trusted_hash(
-                        checkpoint_header,
-                        checkpoint.block_hash,
-                    );
-                    storage.store_headers_at_height(&[anchor], checkpoint.height).await?;
+                    storage
+                        .store_headers_at_height(&[checkpoint.anchor_header()], checkpoint.height)
+                        .await?;
 
                     tracing::info!(
                         "✅ Initialized from checkpoint at height {}, skipping {} headers",

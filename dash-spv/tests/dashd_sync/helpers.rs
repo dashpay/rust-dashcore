@@ -220,6 +220,36 @@ pub(super) async fn wait_for_mempool_tx(
     }
 }
 
+/// Wait for a wallet `TransactionDetected` event for a *specific* txid
+pub(super) async fn wait_for_mempool_txid(
+    receiver: &mut broadcast::Receiver<WalletEvent>,
+    expected: Txid,
+) -> bool {
+    let timeout = tokio::time::sleep(Duration::from_secs(30));
+    tokio::pin!(timeout);
+
+    loop {
+        tokio::select! {
+            _ = &mut timeout => return false,
+            result = receiver.recv() => {
+                match result {
+                    Ok(WalletEvent::TransactionDetected { ref record, .. })
+                        if record.txid == expected
+                            && matches!(
+                                record.context,
+                                TransactionContext::Mempool | TransactionContext::InstantSend(_)
+                            ) =>
+                    {
+                        return true;
+                    }
+                    Ok(_) => continue,
+                    Err(_) => return false,
+                }
+            }
+        }
+    }
+}
+
 /// Wait for the mempool manager to reach `Synced` state via the progress watch channel.
 /// Returns `true` if the state is reached within the timeout, `false` otherwise.
 pub(super) async fn wait_for_mempool_synced(

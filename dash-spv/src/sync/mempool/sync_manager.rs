@@ -1,12 +1,14 @@
 use super::manager::MEMPOOL_TX_EXPIRY;
 use crate::error::SyncResult;
-use crate::network::{Message, MessageType, NetworkEvent, RequestSender};
+use crate::network::{MessageType, NetworkEvent, NetworkManager};
 use crate::sync::{
     ManagerIdentifier, MempoolManager, SyncEvent, SyncManager, SyncManagerProgress, SyncState,
 };
 use async_trait::async_trait;
 use dashcore::network::message::NetworkMessage;
 use key_wallet_manager::WalletInterface;
+use std::net::SocketAddr;
+use std::sync::Arc;
 
 #[async_trait]
 impl<W: WalletInterface + 'static> SyncManager for MempoolManager<W> {
@@ -26,9 +28,12 @@ impl<W: WalletInterface + 'static> SyncManager for MempoolManager<W> {
         &[MessageType::Inv, MessageType::Tx]
     }
 
-    async fn start_sync(&mut self, requests: &RequestSender) -> SyncResult<Vec<SyncEvent>> {
+    async fn start_sync(
+        &mut self,
+        network: &Arc<dyn NetworkManager>,
+    ) -> SyncResult<Vec<SyncEvent>> {
         // After a full disconnect, re-activate mempool on all connected peers
-        self.activate_all_peers(requests).await?;
+        self.activate_all_peers(network).await?;
         let has_activated = self.peers.values().any(|v| v.is_some());
         if has_activated {
             self.set_state(SyncState::Synced);
@@ -39,20 +44,55 @@ impl<W: WalletInterface + 'static> SyncManager for MempoolManager<W> {
         Ok(vec![])
     }
 
+    /// Track the peer set as the network reports it.
+    ///
+    /// This is the only thing that seeds `self.peers`, and it works only because the
+    /// network manager connects in `start` — after the coordinator has subscribed us.
+    /// Everything else here (relay activation, and so every transaction and InstantSend
+    /// lock we ever see) hangs off it.
+    async fn handle_network_event(
+        &mut self,
+        event: &NetworkEvent,
+        network: &Arc<dyn NetworkManager>,
+    ) -> SyncResult<Vec<SyncEvent>> {
+        match event {
+            NetworkEvent::PeerConnected(addr) => {
+                self.handle_peer_connected(*addr);
+                // If synced, activate the new peer immediately; otherwise
+                // `FiltersSyncComplete` (or `start_sync`) will.
+                if self.state() == SyncState::Synced
+                    && self.peers.get(addr).is_some_and(|v| v.is_none())
+                {
+                    tracing::info!("Activating mempool on newly connected peer {}", addr);
+                    self.activate_peer(*addr, network).await?;
+                }
+                Ok(vec![])
+            }
+            NetworkEvent::PeerDisconnected(addr) => {
+                // Hands this peer's queued txids to another activated one rather than
+                // dropping them.
+                self.handle_peer_disconnected(*addr);
+                Ok(vec![])
+            }
+            _ => {
+                crate::sync::sync_manager::default_handle_network_event(self, event, network).await
+            }
+        }
+    }
+
     fn on_disconnect(&mut self) {
         self.clear_pending();
     }
 
     async fn handle_message(
         &mut self,
-        msg: Message,
-        requests: &RequestSender,
+        peer: SocketAddr,
+        msg: NetworkMessage,
+        network: &Arc<dyn NetworkManager>,
     ) -> SyncResult<Vec<SyncEvent>> {
-        match msg.inner() {
-            NetworkMessage::Inv(inv) => self.handle_inv(inv, msg.peer_address(), requests).await,
-            NetworkMessage::Tx(tx) => {
-                self.handle_tx(tx.clone(), msg.peer_address(), requests).await
-            }
+        match msg {
+            NetworkMessage::Tx(tx) => self.handle_tx(tx, peer, network).await,
+            NetworkMessage::Inv(inv) => self.handle_inv(&inv, peer, network).await,
             _ => Ok(vec![]),
         }
     }
@@ -60,7 +100,7 @@ impl<W: WalletInterface + 'static> SyncManager for MempoolManager<W> {
     async fn handle_sync_event(
         &mut self,
         event: &SyncEvent,
-        requests: &RequestSender,
+        network: &Arc<dyn NetworkManager>,
     ) -> SyncResult<Vec<SyncEvent>> {
         match event {
             // Activate as soon as filter sync completes — the wallet's address
@@ -69,7 +109,7 @@ impl<W: WalletInterface + 'static> SyncManager for MempoolManager<W> {
                 ..
             } => {
                 if self.state() != SyncState::Synced {
-                    self.activate_all_peers(requests).await?;
+                    self.activate_all_peers(network).await?;
                     let has_activated = self.peers.values().any(|v| v.is_some());
                     if has_activated {
                         self.set_state(SyncState::Synced);
@@ -102,11 +142,11 @@ impl<W: WalletInterface + 'static> SyncManager for MempoolManager<W> {
         }
     }
 
-    async fn tick(&mut self, requests: &RequestSender) -> SyncResult<Vec<SyncEvent>> {
+    async fn tick(&mut self, network: &Arc<dyn NetworkManager>) -> SyncResult<Vec<SyncEvent>> {
         // Broadcast bookkeeping runs regardless of sync state: broadcasts can
         // be initiated (and time out) before the mempool phase is synced.
         let events = self.expire_broadcasts();
-        self.rebroadcast_if_due(requests).await;
+        self.rebroadcast_if_due(network).await;
 
         if self.state() != SyncState::Synced {
             return Ok(events);
@@ -119,7 +159,7 @@ impl<W: WalletInterface + 'static> SyncManager for MempoolManager<W> {
         self.prune_pending_requests();
 
         // Send queued getdata requests now that slots may have freed up
-        self.send_queued(requests).await?;
+        self.send_queued(network).await?;
 
         // Rebuild bloom filter if the wallet's monitored set has changed.
         //
@@ -134,52 +174,11 @@ impl<W: WalletInterface + 'static> SyncManager for MempoolManager<W> {
         let current_revision = self.wallet.read().await.monitor_revision();
         if current_revision != self.last_monitor_revision {
             tracing::info!("Wallet monitor revision changed, rebuilding bloom filter");
-            self.rebuild_filter(requests).await?;
+            self.rebuild_filter(network).await?;
             self.last_monitor_revision = current_revision;
         }
 
         Ok(events)
-    }
-
-    async fn handle_network_event(
-        &mut self,
-        event: &NetworkEvent,
-        requests: &RequestSender,
-    ) -> SyncResult<Vec<SyncEvent>> {
-        match event {
-            NetworkEvent::PeerConnected {
-                address,
-            } => {
-                self.handle_peer_connected(*address);
-                // If synced, activate the new peer immediately
-                if self.state() == SyncState::Synced
-                    && self.peers.get(address).is_some_and(|v| v.is_none())
-                {
-                    tracing::info!("Activating mempool on newly connected peer {}", address);
-                    self.activate_peer(*address, requests).await?;
-                }
-            }
-            NetworkEvent::PeerDisconnected {
-                address,
-            } => {
-                self.handle_peer_disconnected(*address);
-            }
-            NetworkEvent::PeersUpdated {
-                connected_count,
-                best_height,
-                ..
-            } => {
-                if let Some(best_height) = best_height {
-                    self.update_target_height(*best_height);
-                }
-                if *connected_count == 0 {
-                    self.stop_sync();
-                } else if self.state() == SyncState::WaitingForConnections {
-                    return self.start_sync(requests).await;
-                }
-            }
-        }
-        Ok(vec![])
     }
 
     fn progress(&self) -> SyncManagerProgress {
@@ -191,35 +190,48 @@ impl<W: WalletInterface + 'static> SyncManager for MempoolManager<W> {
 mod tests {
     use super::*;
     use crate::client::config::MempoolStrategy;
-    use crate::network::NetworkRequest;
     use crate::sync::BroadcastConfig;
-    use crate::test_utils::test_socket_address;
+    use crate::test_utils::{test_socket_address, MockNetworkManager};
     use dashcore::hashes::Hash;
     use key_wallet_manager::test_utils::MockWallet;
     use std::collections::{BTreeMap, BTreeSet};
-    use std::sync::Arc;
-    use tokio::sync::{mpsc, RwLock};
+    use tokio::sync::RwLock;
 
-    fn create_test_manager(
-    ) -> (MempoolManager<MockWallet>, RequestSender, mpsc::UnboundedReceiver<NetworkRequest>) {
+    fn create_test_manager() -> MempoolManager<MockWallet> {
         let wallet = Arc::new(RwLock::new(MockWallet::new()));
-        let (tx, rx) = mpsc::unbounded_channel::<NetworkRequest>();
-        let requests = RequestSender::new(tx);
+        MempoolManager::new(wallet, MempoolStrategy::FetchAll, 1000, 0, BroadcastConfig::default())
+    }
 
-        let manager = MempoolManager::new(
-            wallet,
-            MempoolStrategy::FetchAll,
-            1000,
-            0,
-            BroadcastConfig::default(),
-        );
+    /// Build a mock network manager and a trait-object handle to pass to
+    /// manager methods. Returns `(mock, network)` where `mock` is used for
+    /// assertions and `network` is passed by reference into the manager.
+    fn mock_network() -> (Arc<MockNetworkManager>, Arc<dyn NetworkManager>) {
+        let mock = Arc::new(MockNetworkManager::new());
+        let network: Arc<dyn NetworkManager> = mock.clone();
+        (mock, network)
+    }
 
-        (manager, requests, rx)
+    /// Did the manager send a `filterload` to any peer?
+    fn sent_filter_load(mock: &MockNetworkManager) -> bool {
+        mock.sent_to_messages().iter().any(|(_, m)| matches!(m, NetworkMessage::FilterLoad(_)))
+    }
+
+    /// Did the manager send any bloom-filter message to any peer?
+    fn sent_any_filter_message(mock: &MockNetworkManager) -> bool {
+        mock.sent_to_messages()
+            .iter()
+            .any(|(_, m)| matches!(m, NetworkMessage::FilterLoad(_) | NetworkMessage::FilterClear))
+    }
+
+    fn filters_synced() -> SyncEvent {
+        SyncEvent::FiltersSyncComplete {
+            tip_height: 1000,
+        }
     }
 
     #[test]
     fn test_sync_manager_trait_basics() {
-        let (mut manager, _, _rx) = create_test_manager();
+        let mut manager = create_test_manager();
 
         assert_eq!(manager.identifier(), ManagerIdentifier::Mempool);
         assert_eq!(manager.state(), SyncState::WaitForEvents);
@@ -237,15 +249,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_filters_sync_complete_activates() {
-        let (mut manager, requests, _rx) = create_test_manager();
-        let peer = crate::test_utils::test_socket_address(1);
+        let mut manager = create_test_manager();
+        let (_mock, network) = mock_network();
+        let peer = test_socket_address(1);
         manager.handle_peer_connected(peer);
 
-        let event = SyncEvent::FiltersSyncComplete {
-            tip_height: 1000,
-        };
-
-        let events = manager.handle_sync_event(&event, &requests).await.unwrap();
+        let events = manager.handle_sync_event(&filters_synced(), &network).await.unwrap();
         assert!(events.is_empty());
         assert_eq!(manager.state(), SyncState::Synced);
         assert!(matches!(manager.peers.get(&peer), Some(Some(_))));
@@ -253,35 +262,31 @@ mod tests {
 
     #[tokio::test]
     async fn test_filters_sync_complete_subsequent_is_noop() {
-        let (mut manager, requests, _rx) = create_test_manager();
-        manager.handle_peer_connected(crate::test_utils::test_socket_address(1));
+        let mut manager = create_test_manager();
+        let (_mock, network) = mock_network();
+        manager.handle_peer_connected(test_socket_address(1));
 
         // Activate first
-        let event0 = SyncEvent::FiltersSyncComplete {
-            tip_height: 1000,
-        };
-        manager.handle_sync_event(&event0, &requests).await.unwrap();
+        manager.handle_sync_event(&filters_synced(), &network).await.unwrap();
 
         // Subsequent filter sync completions should not change state
         let event1 = SyncEvent::FiltersSyncComplete {
             tip_height: 1001,
         };
-        let events = manager.handle_sync_event(&event1, &requests).await.unwrap();
+        let events = manager.handle_sync_event(&event1, &network).await.unwrap();
         assert!(events.is_empty());
         assert_eq!(manager.state(), SyncState::Synced);
     }
 
     #[tokio::test]
     async fn test_reactivation_after_disconnect() {
-        let (mut manager, requests, _rx) = create_test_manager();
+        let mut manager = create_test_manager();
+        let (_mock, network) = mock_network();
         let peer = test_socket_address(1);
         manager.handle_peer_connected(peer);
 
         // Initial activation
-        let event = SyncEvent::FiltersSyncComplete {
-            tip_height: 1000,
-        };
-        let events = manager.handle_sync_event(&event, &requests).await.unwrap();
+        let events = manager.handle_sync_event(&filters_synced(), &network).await.unwrap();
         assert!(events.is_empty());
         assert_eq!(manager.state(), SyncState::Synced);
 
@@ -292,60 +297,53 @@ mod tests {
         let event = SyncEvent::FiltersSyncComplete {
             tip_height: 1001,
         };
-        let events = manager.handle_sync_event(&event, &requests).await.unwrap();
+        let events = manager.handle_sync_event(&event, &network).await.unwrap();
         assert!(events.is_empty());
         assert_eq!(manager.state(), SyncState::Synced);
     }
 
     #[tokio::test]
     async fn test_peer_connect_activates_when_synced() {
-        let (mut manager, requests, _rx) = create_test_manager();
+        let mut manager = create_test_manager();
+        let (_mock, network) = mock_network();
         let peer1 = test_socket_address(1);
         manager.handle_peer_connected(peer1);
 
         // Activate via SyncComplete
-        let event = SyncEvent::FiltersSyncComplete {
-            tip_height: 1000,
-        };
-        manager.handle_sync_event(&event, &requests).await.unwrap();
+        manager.handle_sync_event(&filters_synced(), &network).await.unwrap();
         assert!(matches!(manager.peers.get(&peer1), Some(Some(_))));
 
         // New peer connects while synced => should activate immediately
         let peer2 = test_socket_address(2);
-        let connect = NetworkEvent::PeerConnected {
-            address: peer2,
-        };
-        let events = manager.handle_network_event(&connect, &requests).await.unwrap();
+        let events = manager
+            .handle_network_event(&NetworkEvent::PeerConnected(peer2), &network)
+            .await
+            .unwrap();
         assert!(events.is_empty());
         assert!(matches!(manager.peers.get(&peer2), Some(Some(_))));
     }
 
     #[tokio::test]
     async fn test_network_event_peer_connect_disconnect() {
-        let (mut manager, requests, _rx) = create_test_manager();
+        let mut manager = create_test_manager();
+        let (_mock, network) = mock_network();
 
         let peer1 = test_socket_address(1);
         let peer2 = test_socket_address(2);
 
         // Connecting peers should return empty events (not synced yet)
-        let connect1 = NetworkEvent::PeerConnected {
-            address: peer1,
-        };
-        let events = manager.handle_network_event(&connect1, &requests).await.unwrap();
+        let connect1 = NetworkEvent::PeerConnected(peer1);
+        let events = manager.handle_network_event(&connect1, &network).await.unwrap();
         assert!(events.is_empty());
         assert!(manager.peers.contains_key(&peer1));
 
-        let connect2 = NetworkEvent::PeerConnected {
-            address: peer2,
-        };
-        let events = manager.handle_network_event(&connect2, &requests).await.unwrap();
+        let connect2 = NetworkEvent::PeerConnected(peer2);
+        let events = manager.handle_network_event(&connect2, &network).await.unwrap();
         assert!(events.is_empty());
         assert_eq!(manager.peers.len(), 2);
 
-        let disconnect1 = NetworkEvent::PeerDisconnected {
-            address: peer1,
-        };
-        let events = manager.handle_network_event(&disconnect1, &requests).await.unwrap();
+        let disconnect1 = NetworkEvent::PeerDisconnected(peer1);
+        let events = manager.handle_network_event(&disconnect1, &network).await.unwrap();
         assert!(events.is_empty());
 
         // Still have peer2 available
@@ -353,21 +351,19 @@ mod tests {
         assert_eq!(manager.peers.len(), 1);
 
         // Disconnecting an already-disconnected peer should not error
-        let events = manager.handle_network_event(&disconnect1, &requests).await.unwrap();
+        let events = manager.handle_network_event(&disconnect1, &network).await.unwrap();
         assert!(events.is_empty());
     }
 
     #[tokio::test]
     async fn test_block_processed_removes_confirmed_txids() {
-        let (mut manager, requests, _rx) = create_test_manager();
+        let mut manager = create_test_manager();
+        let (_mock, network) = mock_network();
         let peer = test_socket_address(1);
         manager.handle_peer_connected(peer);
 
         // Activate
-        let sync = SyncEvent::FiltersSyncComplete {
-            tip_height: 1000,
-        };
-        manager.handle_sync_event(&sync, &requests).await.unwrap();
+        manager.handle_sync_event(&filters_synced(), &network).await.unwrap();
 
         // Add transactions to mempool
         let mut txids = Vec::new();
@@ -401,7 +397,8 @@ mod tests {
             new_scripts: BTreeMap::new(),
             confirmed_txids: txids.clone(),
         };
-        let events = manager.handle_sync_event(&event, &requests).await.unwrap();
+        // No broadcasts were tracked, so confirming them emits nothing.
+        let events = manager.handle_sync_event(&event, &network).await.unwrap();
         assert!(events.is_empty());
 
         assert!(manager.transactions.is_empty());
@@ -409,15 +406,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_instant_lock_received_marks_transaction() {
-        let (mut manager, requests, _rx) = create_test_manager();
+        let mut manager = create_test_manager();
+        let (_mock, network) = mock_network();
         let peer = test_socket_address(1);
         manager.handle_peer_connected(peer);
 
         // Activate
-        let sync = SyncEvent::FiltersSyncComplete {
-            tip_height: 1000,
-        };
-        manager.handle_sync_event(&sync, &requests).await.unwrap();
+        manager.handle_sync_event(&filters_synced(), &network).await.unwrap();
 
         // Add a transaction to mempool
         let tx = dashcore::Transaction {
@@ -448,7 +443,8 @@ mod tests {
             instant_lock: is_lock,
             validated: true,
         };
-        let events = manager.handle_sync_event(&event, &requests).await.unwrap();
+        // The transaction was not self-broadcast, so no broadcast result fires.
+        let events = manager.handle_sync_event(&event, &network).await.unwrap();
         assert!(events.is_empty());
 
         assert!(manager.transactions.get(&txid).unwrap().is_instant_send);
@@ -456,33 +452,27 @@ mod tests {
 
     #[tokio::test]
     async fn test_peer_disconnect_removes_from_peers() {
-        let (mut manager, requests, _rx) = create_test_manager();
+        let mut manager = create_test_manager();
+        let (_mock, network) = mock_network();
         let peer = test_socket_address(1);
         manager.handle_peer_connected(peer);
 
         // Activate
-        let sync = SyncEvent::FiltersSyncComplete {
-            tip_height: 1000,
-        };
-        manager.handle_sync_event(&sync, &requests).await.unwrap();
+        manager.handle_sync_event(&filters_synced(), &network).await.unwrap();
 
         // Disconnect the only peer
-        let disconnect = NetworkEvent::PeerDisconnected {
-            address: peer,
-        };
-        let events = manager.handle_network_event(&disconnect, &requests).await.unwrap();
+        let disconnect = NetworkEvent::PeerDisconnected(peer);
+        let events = manager.handle_network_event(&disconnect, &network).await.unwrap();
         assert!(events.is_empty());
         assert!(manager.peers.is_empty());
     }
 
     #[tokio::test]
     async fn test_sync_complete_no_peers_stays_inactive() {
-        let (mut manager, requests, _rx) = create_test_manager();
+        let mut manager = create_test_manager();
+        let (_mock, network) = mock_network();
 
-        let event = SyncEvent::FiltersSyncComplete {
-            tip_height: 1000,
-        };
-        let events = manager.handle_sync_event(&event, &requests).await.unwrap();
+        let events = manager.handle_sync_event(&filters_synced(), &network).await.unwrap();
 
         assert!(events.is_empty());
         assert_eq!(manager.state(), SyncState::WaitForEvents);
@@ -491,78 +481,65 @@ mod tests {
 
     #[tokio::test]
     async fn test_start_sync_no_peers_stays_waiting() {
-        let (mut manager, requests, _rx) = create_test_manager();
+        let mut manager = create_test_manager();
+        let (_mock, network) = mock_network();
 
         // Simulate full disconnect setting state to WaitingForConnections
         manager.set_state(SyncState::WaitingForConnections);
 
         // start_sync with no peers should stay in WaitingForConnections
-        let events = manager.start_sync(&requests).await.unwrap();
+        let events = manager.start_sync(&network).await.unwrap();
         assert!(events.is_empty());
         assert_eq!(manager.state(), SyncState::WaitingForConnections);
     }
 
     #[tokio::test]
     async fn test_disconnect_recovery_reactivates_on_reconnect() {
-        let (mut manager, requests, _rx) = create_test_manager();
+        let mut manager = create_test_manager();
+        let (_mock, network) = mock_network();
         let peer = test_socket_address(1);
         manager.handle_peer_connected(peer);
 
         // Activate via SyncComplete
-        let event = SyncEvent::FiltersSyncComplete {
-            tip_height: 1000,
-        };
-        manager.handle_sync_event(&event, &requests).await.unwrap();
+        manager.handle_sync_event(&filters_synced(), &network).await.unwrap();
         assert_eq!(manager.state(), SyncState::Synced);
 
-        // Disconnect peer
-        let disconnect = NetworkEvent::PeerDisconnected {
-            address: peer,
-        };
-        manager.handle_network_event(&disconnect, &requests).await.unwrap();
+        // Every peer drops: the coordinator resets the manager to
+        // WaitingForConnections after `on_disconnect`.
+        manager
+            .handle_network_event(&NetworkEvent::PeerDisconnected(peer), &network)
+            .await
+            .unwrap();
+        manager.on_disconnect();
+        manager.set_state(SyncState::WaitingForConnections);
 
-        // PeersUpdated with 0 triggers stop_sync
-        let update = NetworkEvent::PeersUpdated {
-            connected_count: 0,
-            addresses: vec![],
-            best_height: None,
-        };
-        manager.handle_network_event(&update, &requests).await.unwrap();
-        assert_eq!(manager.state(), SyncState::WaitingForConnections);
-
-        // PeersUpdated with 1 but no peers tracked yet: stays WaitingForConnections
+        // PeersUpdated with no peers tracked yet: nothing to activate, so the
+        // manager stays waiting.
         let update = NetworkEvent::PeersUpdated {
             connected_count: 1,
-            addresses: vec![peer],
-            best_height: Some(1000),
+            best_height: 1000,
         };
-        manager.handle_network_event(&update, &requests).await.unwrap();
+        manager.handle_network_event(&update, &network).await.unwrap();
         assert_eq!(manager.state(), SyncState::WaitingForConnections);
 
         // Peer reconnects and PeersUpdated fires again
         manager.handle_peer_connected(peer);
-        let update = NetworkEvent::PeersUpdated {
-            connected_count: 1,
-            addresses: vec![peer],
-            best_height: Some(1000),
-        };
-        manager.handle_network_event(&update, &requests).await.unwrap();
+        manager.handle_network_event(&update, &network).await.unwrap();
         assert_eq!(manager.state(), SyncState::Synced);
         assert!(matches!(manager.peers.get(&peer), Some(Some(_))));
     }
 
     #[tokio::test]
     async fn test_block_processed_confirmed_txids_does_not_eagerly_rebuild() {
-        let mut mock = MockWallet::new();
+        let mut mock_wallet = MockWallet::new();
         let script = dashcore::ScriptBuf::from_bytes(vec![
             0x76, 0xa9, 0x14, 0xab, 0xab, 0xab, 0xab, 0xab, 0xab, 0xab, 0xab, 0xab, 0xab, 0xab,
             0xab, 0xab, 0xab, 0xab, 0xab, 0xab, 0xab, 0xab, 0xab, 0x88, 0xac,
         ]);
         let addr = dashcore::Address::from_script(&script, dashcore::Network::Testnet).unwrap();
-        mock.set_addresses(vec![addr]);
-        let wallet = Arc::new(RwLock::new(mock));
-        let (tx, mut rx) = mpsc::unbounded_channel::<NetworkRequest>();
-        let requests = RequestSender::new(tx);
+        mock_wallet.set_addresses(vec![addr]);
+        let wallet = Arc::new(RwLock::new(mock_wallet));
+        let (mock, network) = mock_network();
 
         let mut manager = MempoolManager::new(
             wallet,
@@ -576,13 +553,10 @@ mod tests {
         manager.handle_peer_connected(peer);
 
         // Activate
-        let sync = SyncEvent::FiltersSyncComplete {
-            tip_height: 1000,
-        };
-        manager.handle_sync_event(&sync, &requests).await.unwrap();
+        manager.handle_sync_event(&filters_synced(), &network).await.unwrap();
 
-        // Drain activation messages
-        while rx.try_recv().is_ok() {}
+        // Drop the activation messages
+        mock.clear_sent();
 
         // BlockProcessed does not eagerly rebuild — the tick handles it via
         // the revision check. Verify no FilterLoad is sent from the event handler.
@@ -593,24 +567,19 @@ mod tests {
             new_scripts: BTreeMap::new(),
             confirmed_txids: vec![dashcore::Txid::all_zeros()],
         };
-        manager.handle_sync_event(&event, &requests).await.unwrap();
+        manager.handle_sync_event(&event, &network).await.unwrap();
 
-        let has_filter_load = std::iter::from_fn(|| rx.try_recv().ok()).any(|req| {
-            matches!(req, NetworkRequest::SendMessageToPeer(NetworkMessage::FilterLoad(_), _))
-        });
-        assert!(!has_filter_load, "BlockProcessed should not eagerly rebuild filter");
+        assert!(!sent_filter_load(&mock), "BlockProcessed should not eagerly rebuild filter");
     }
 
     #[tokio::test]
     async fn test_block_processed_no_changes_no_rebuild_flag() {
-        let (mut manager, requests, _rx) = create_test_manager();
+        let mut manager = create_test_manager();
+        let (_mock, network) = mock_network();
         let peer = test_socket_address(1);
         manager.handle_peer_connected(peer);
 
-        let sync = SyncEvent::FiltersSyncComplete {
-            tip_height: 1000,
-        };
-        manager.handle_sync_event(&sync, &requests).await.unwrap();
+        manager.handle_sync_event(&filters_synced(), &network).await.unwrap();
 
         // BlockProcessed with no confirmed txids and no new addresses
         let event = SyncEvent::BlockProcessed {
@@ -620,7 +589,7 @@ mod tests {
             new_scripts: BTreeMap::new(),
             confirmed_txids: vec![],
         };
-        manager.handle_sync_event(&event, &requests).await.unwrap();
+        manager.handle_sync_event(&event, &network).await.unwrap();
     }
 
     #[tokio::test]
@@ -633,12 +602,11 @@ mod tests {
             dashcore::Address::from_script(&script, dashcore::Network::Testnet).unwrap()
         };
 
-        let mut mock = MockWallet::new();
-        mock.set_addresses(vec![addr.clone()]);
-        let initial_revision = mock.monitor_revision();
-        let wallet = Arc::new(RwLock::new(mock));
-        let (tx, mut rx) = mpsc::unbounded_channel::<NetworkRequest>();
-        let requests = RequestSender::new(tx);
+        let mut mock_wallet = MockWallet::new();
+        mock_wallet.set_addresses(vec![addr.clone()]);
+        let initial_revision = mock_wallet.monitor_revision();
+        let wallet = Arc::new(RwLock::new(mock_wallet));
+        let (mock, network) = mock_network();
 
         let mut manager = MempoolManager::new(
             wallet.clone(),
@@ -652,18 +620,15 @@ mod tests {
         manager.handle_peer_connected(peer);
 
         // Activate — this snapshots the monitor revision
-        let sync = SyncEvent::FiltersSyncComplete {
-            tip_height: 1000,
-        };
-        manager.handle_sync_event(&sync, &requests).await.unwrap();
+        manager.handle_sync_event(&filters_synced(), &network).await.unwrap();
         assert_eq!(manager.state(), SyncState::Synced);
 
-        // Drain activation messages
-        while rx.try_recv().is_ok() {}
+        // Drop the activation messages
+        mock.clear_sent();
 
         // tick with unchanged revision should not rebuild
-        manager.tick(&requests).await.unwrap();
-        assert!(rx.try_recv().is_err(), "no messages expected when revision unchanged");
+        manager.tick(&network).await.unwrap();
+        assert!(mock.sent_to_messages().is_empty(), "no messages expected when revision unchanged");
 
         // Simulate wallet adding new addresses (bumps revision)
         {
@@ -680,26 +645,22 @@ mod tests {
         }
 
         // tick should detect stale filter and rebuild
-        manager.tick(&requests).await.unwrap();
-
-        let mut found_filter_load = false;
-        while let Ok(msg) = rx.try_recv() {
-            if matches!(msg, NetworkRequest::SendMessageToPeer(NetworkMessage::FilterLoad(_), _)) {
-                found_filter_load = true;
-            }
-        }
-        assert!(found_filter_load, "expected FilterLoad after monitor revision change");
+        manager.tick(&network).await.unwrap();
+        assert!(sent_filter_load(&mock), "expected FilterLoad after monitor revision change");
 
         // Subsequent tick should not rebuild again (revision was snapshotted)
-        manager.tick(&requests).await.unwrap();
-        assert!(rx.try_recv().is_err(), "no messages expected after revision re-snapshot");
+        mock.clear_sent();
+        manager.tick(&network).await.unwrap();
+        assert!(
+            mock.sent_to_messages().is_empty(),
+            "no messages expected after revision re-snapshot"
+        );
     }
 
     #[tokio::test]
     async fn test_tick_skips_rebuild_for_fetch_all_strategy() {
         let wallet = Arc::new(RwLock::new(MockWallet::new()));
-        let (tx, mut rx) = mpsc::unbounded_channel::<NetworkRequest>();
-        let requests = RequestSender::new(tx);
+        let (mock, network) = mock_network();
 
         let mut manager = MempoolManager::new(
             wallet.clone(),
@@ -712,11 +673,8 @@ mod tests {
         let peer = test_socket_address(1);
         manager.handle_peer_connected(peer);
 
-        let sync = SyncEvent::FiltersSyncComplete {
-            tip_height: 1000,
-        };
-        manager.handle_sync_event(&sync, &requests).await.unwrap();
-        while rx.try_recv().is_ok() {}
+        manager.handle_sync_event(&filters_synced(), &network).await.unwrap();
+        mock.clear_sent();
 
         // Bump revision
         {
@@ -725,18 +683,11 @@ mod tests {
         }
 
         // tick should not send any filter messages for FetchAll
-        manager.tick(&requests).await.unwrap();
-        let mut found_filter = false;
-        while let Ok(msg) = rx.try_recv() {
-            if matches!(
-                msg,
-                NetworkRequest::SendMessageToPeer(NetworkMessage::FilterLoad(_), _)
-                    | NetworkRequest::SendMessageToPeer(NetworkMessage::FilterClear, _)
-            ) {
-                found_filter = true;
-            }
-        }
-        assert!(!found_filter, "FetchAll should not send filter messages on revision change");
+        manager.tick(&network).await.unwrap();
+        assert!(
+            !sent_any_filter_message(&mock),
+            "FetchAll should not send filter messages on revision change"
+        );
     }
 
     #[tokio::test]
@@ -749,12 +700,11 @@ mod tests {
             dashcore::Address::from_script(&script, dashcore::Network::Testnet).unwrap()
         };
 
-        let mut mock = MockWallet::new();
-        mock.set_addresses(vec![addr]);
-        let initial_revision = mock.monitor_revision();
-        let wallet = Arc::new(RwLock::new(mock));
-        let (tx, mut rx) = mpsc::unbounded_channel::<NetworkRequest>();
-        let requests = RequestSender::new(tx);
+        let mut mock_wallet = MockWallet::new();
+        mock_wallet.set_addresses(vec![addr]);
+        let initial_revision = mock_wallet.monitor_revision();
+        let wallet = Arc::new(RwLock::new(mock_wallet));
+        let (mock, network) = mock_network();
 
         let mut manager = MempoolManager::new(
             wallet.clone(),
@@ -767,11 +717,8 @@ mod tests {
         let peer = test_socket_address(1);
         manager.handle_peer_connected(peer);
 
-        let sync = SyncEvent::FiltersSyncComplete {
-            tip_height: 1000,
-        };
-        manager.handle_sync_event(&sync, &requests).await.unwrap();
-        while rx.try_recv().is_ok() {}
+        manager.handle_sync_event(&filters_synced(), &network).await.unwrap();
+        mock.clear_sent();
 
         // Simulate UTXO set change (new outpoint added)
         {
@@ -783,28 +730,23 @@ mod tests {
         }
 
         // tick should detect the revision change and rebuild
-        manager.tick(&requests).await.unwrap();
-
-        let found_filter_load = std::iter::from_fn(|| rx.try_recv().ok()).any(|msg| {
-            matches!(msg, NetworkRequest::SendMessageToPeer(NetworkMessage::FilterLoad(_), _))
-        });
-        assert!(found_filter_load, "expected FilterLoad after outpoint change");
+        manager.tick(&network).await.unwrap();
+        assert!(sent_filter_load(&mock), "expected FilterLoad after outpoint change");
     }
 
     #[tokio::test]
     async fn test_handle_tx_does_not_eagerly_rebuild_filter() {
-        let mut mock = MockWallet::new();
-        mock.set_mempool_relevant(true);
+        let mut mock_wallet = MockWallet::new();
+        mock_wallet.set_mempool_relevant(true);
         let script = dashcore::ScriptBuf::from_bytes(vec![
             0x76, 0xa9, 0x14, 0xab, 0xab, 0xab, 0xab, 0xab, 0xab, 0xab, 0xab, 0xab, 0xab, 0xab,
             0xab, 0xab, 0xab, 0xab, 0xab, 0xab, 0xab, 0xab, 0xab, 0x88, 0xac,
         ]);
         let addr = dashcore::Address::from_script(&script, dashcore::Network::Testnet).unwrap();
-        mock.set_addresses(vec![addr]);
-        let initial_revision = mock.monitor_revision();
-        let wallet = Arc::new(RwLock::new(mock));
-        let (tx_chan, mut rx) = mpsc::unbounded_channel::<NetworkRequest>();
-        let requests = RequestSender::new(tx_chan);
+        mock_wallet.set_addresses(vec![addr]);
+        let initial_revision = mock_wallet.monitor_revision();
+        let wallet = Arc::new(RwLock::new(mock_wallet));
+        let (mock, network) = mock_network();
 
         let mut manager = MempoolManager::new(
             wallet.clone(),
@@ -817,11 +759,8 @@ mod tests {
         let peer = test_socket_address(1);
         manager.handle_peer_connected(peer);
 
-        let sync = SyncEvent::FiltersSyncComplete {
-            tip_height: 1000,
-        };
-        manager.handle_sync_event(&sync, &requests).await.unwrap();
-        while rx.try_recv().is_ok() {}
+        manager.handle_sync_event(&filters_synced(), &network).await.unwrap();
+        mock.clear_sent();
 
         // handle_tx with a relevant transaction should NOT eagerly rebuild
         let tx = dashcore::Transaction {
@@ -831,12 +770,9 @@ mod tests {
             output: vec![],
             special_transaction_payload: None,
         };
-        manager.handle_tx(tx, test_socket_address(1), &requests).await.unwrap();
+        manager.handle_tx(tx, test_socket_address(1), &network).await.unwrap();
 
-        let has_filter_load = std::iter::from_fn(|| rx.try_recv().ok()).any(|msg| {
-            matches!(msg, NetworkRequest::SendMessageToPeer(NetworkMessage::FilterLoad(_), _))
-        });
-        assert!(!has_filter_load, "handle_tx should not eagerly rebuild filter");
+        assert!(!sent_filter_load(&mock), "handle_tx should not eagerly rebuild filter");
 
         // But the next tick should catch it if the wallet revision changed
         // (MockWallet bumps revision when set_mempool_relevant triggers processing)
@@ -844,11 +780,8 @@ mod tests {
             let mut w = wallet.write().await;
             w.set_addresses(vec![dashcore::Address::dummy(dashcore::Network::Testnet, 0)]);
         }
-        manager.tick(&requests).await.unwrap();
+        manager.tick(&network).await.unwrap();
 
-        let found_filter_load = std::iter::from_fn(|| rx.try_recv().ok()).any(|msg| {
-            matches!(msg, NetworkRequest::SendMessageToPeer(NetworkMessage::FilterLoad(_), _))
-        });
-        assert!(found_filter_load, "tick should rebuild after revision change");
+        assert!(sent_filter_load(&mock), "tick should rebuild after revision change");
     }
 }
