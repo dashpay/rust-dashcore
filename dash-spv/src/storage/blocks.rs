@@ -33,6 +33,17 @@ pub trait BlockStorage: Send + Sync + 'static {
     /// A crash between `truncate_above` and `persist` may leave orphaned segment
     /// files on disk and cause the storage to reopen at the pre-truncation tip.
     async fn truncate_above(&mut self, target_height: CoreBlockHeight) -> StorageResult<()>;
+
+    /// Declare the highest block height that has been applied to every
+    /// interested wallet, allowing the storage to stop holding those block
+    /// bodies in memory.
+    ///
+    /// Blocks at or below this height stay readable: `load_block` reloads them
+    /// from disk on demand. The watermark may move backwards when a rescan
+    /// re-processes lower heights.
+    ///
+    /// Defaults to a no-op for implementations that hold no in-memory cache.
+    async fn set_committed_height(&mut self, _height: CoreBlockHeight) {}
 }
 
 /// Persistent storage for full blocks using segmented files.
@@ -80,6 +91,10 @@ impl BlockStorage for PersistentBlockStorage {
 
     async fn truncate_above(&mut self, target_height: u32) -> StorageResult<()> {
         self.blocks.write().await.truncate_above(target_height).await
+    }
+
+    async fn set_committed_height(&mut self, height: u32) {
+        self.blocks.write().await.set_committed_height(height);
     }
 }
 
@@ -141,6 +156,49 @@ mod tests {
 
         assert_eq!(storage.load_block(2).await.unwrap(), Some(HashedBlock::dummy(2, vec![])));
         assert_eq!(storage.load_block(3).await.unwrap(), None);
+    }
+
+    /// Block bodies are the dominant memory consumer during a long backfill.
+    /// Once applied, they must leave memory while staying loadable from disk —
+    /// `handle_sync_event` re-reads stored blocks by height on resume/rescan.
+    #[tokio::test]
+    async fn test_committed_blocks_are_released_but_still_loadable() {
+        let temp_dir = TempDir::new().unwrap();
+        let mut storage = PersistentBlockStorage::open(temp_dir.path()).await.unwrap();
+
+        // One block in each of segments 0, 1 and 2 (50_000 heights per segment).
+        // Carry real transaction payloads so the reload proves the block bodies
+        // round-trip, not merely that a slot is occupied.
+        let txs = vec![dashcore::Transaction::dummy_empty()];
+        let low = HashedBlock::dummy(10, txs.clone());
+        let mid = HashedBlock::dummy(50_010, txs.clone());
+        let tip = HashedBlock::dummy(100_010, txs);
+
+        storage.store_block(10, low.clone()).await.unwrap();
+        storage.store_block(50_010, mid.clone()).await.unwrap();
+        storage.store_block(100_010, tip.clone()).await.unwrap();
+        storage.persist(temp_dir.path()).await.unwrap();
+
+        assert_eq!(storage.blocks.read().await.resident_segment_ids(), vec![0, 1, 2]);
+
+        // Everything below segment 2 has been applied to the wallets.
+        storage.set_committed_height(99_999).await;
+        storage.persist(temp_dir.path()).await.unwrap();
+
+        // Segments 0 and 1 are gone from memory; the frontier segment stays.
+        assert_eq!(
+            storage.blocks.read().await.resident_segment_ids(),
+            vec![2],
+            "applied block segments must be released"
+        );
+
+        // All three blocks still load, byte-identically, via the disk fallback.
+        assert_eq!(storage.load_block(10).await.unwrap(), Some(low));
+        assert_eq!(storage.load_block(50_010).await.unwrap(), Some(mid));
+        assert_eq!(storage.load_block(100_010).await.unwrap(), Some(tip));
+
+        // Gaps inside a released segment still report absent, not sentinel data.
+        assert_eq!(storage.load_block(11).await.unwrap(), None);
     }
 
     #[tokio::test]
