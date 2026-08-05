@@ -89,7 +89,7 @@ impl MnListDiffPipeline {
             requests.request_mnlist_diff(base_hash, target_hash)?;
             self.coordinator.mark_sent(&[target_hash]);
 
-            tracing::debug!(
+            tracing::trace!(
                 "Sent GetMnListDiff: base={}, target={} ({} active, {} pending)",
                 base_hash,
                 target_hash,

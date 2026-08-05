@@ -5,13 +5,14 @@
 
 use dashcore::blockdata::transaction::special_transaction::asset_lock::AssetLockPayload;
 use dashcore::blockdata::transaction::special_transaction::TransactionPayload;
-use dashcore::{Transaction, TxOut};
+use dashcore::{OutPoint, Transaction, TxOut};
 use secp256k1::PublicKey;
 use std::fmt;
 
 use crate::managed_account::managed_account_trait::ManagedAccountTrait;
-use crate::managed_account::ManagedCoreKeysAccount;
+use crate::managed_account::{ManagedCoreKeysAccount, ReservationToken};
 use crate::signer::Signer;
+use crate::wallet::managed_wallet_info::coin_selection::SelectionStrategy;
 use crate::wallet::managed_wallet_info::fee::FeeRate;
 use crate::wallet::managed_wallet_info::transaction_builder::{BuilderError, TransactionBuilder};
 use crate::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
@@ -35,6 +36,43 @@ pub enum AssetLockFundingType {
     AssetLockAddressTopUp,
     /// Asset lock shielded address top-up: m/9'/coinType'/5'/5'/index'
     AssetLockShieldedAddressTopUp,
+}
+
+/// Which wallet account supplies the funding UTXOs (and signs the inputs)
+/// of an asset lock transaction.
+///
+/// `Bip44` is the standard spendable balance — the historical behavior of
+/// the builders below. `CoinJoin` lets mixed coins fund an asset lock
+/// directly, without first sweeping them through a transparent BIP44
+/// address (which would link the mixed UTXOs to a reusable transparent
+/// address for an extra hop).
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AssetLockFundingAccount {
+    /// Standard BIP44 account (`m/44'/coinType'/index'`).
+    Bip44 {
+        /// BIP44 account index.
+        account_index: u32,
+    },
+    /// CoinJoin account (`m/9'/coinType'/4'/index'`).
+    CoinJoin {
+        /// CoinJoin account index.
+        account_index: u32,
+    },
+}
+
+impl AssetLockFundingAccount {
+    /// The account index within its family.
+    pub fn account_index(&self) -> u32 {
+        match self {
+            Self::Bip44 {
+                account_index,
+            }
+            | Self::CoinJoin {
+                account_index,
+            } => *account_index,
+        }
+    }
 }
 
 /// Per-credit-output funding specification.
@@ -72,6 +110,18 @@ pub struct AssetLockResult {
     /// Per-credit-output key material. See [`AssetLockCreditKeys`] for
     /// ordering and variant semantics.
     pub keys: AssetLockCreditKeys,
+    /// Owner token for the reservation this build took on the funding inputs,
+    /// or `None` if the funding account carried no reservation set.
+    ///
+    /// The caller broadcasts `transaction` and, on a rejected broadcast, must
+    /// release the reserved inputs with
+    /// [`ManagedCoreFundsAccount::release_reservation_if_owner`] passing this
+    /// token — never the unconditional `release_reservation`. See
+    /// `ReservationSet::release_if_owner` for why owner-guarded release is
+    /// required here (`dashpay/platform#4185`).
+    ///
+    /// [`ManagedCoreFundsAccount::release_reservation_if_owner`]: crate::managed_account::ManagedCoreFundsAccount::release_reservation_if_owner
+    pub reservation_token: Option<ReservationToken>,
 }
 
 /// Errors specific to asset lock transaction building.
@@ -93,7 +143,7 @@ pub enum AssetLockError {
     SigningFailed(String),
     /// The wallet does not have a private key (watch-only).
     WatchOnlyWallet,
-    /// The specified BIP44 account was not found.
+    /// The specified funding account (BIP44 or CoinJoin, by index) was not found.
     AccountNotFound(u32),
     /// No change address available.
     NoChangeAddress,
@@ -114,7 +164,7 @@ impl fmt::Display for AssetLockError {
             Self::Signer(msg) => write!(f, "Signer error: {msg}"),
             Self::SigningFailed(msg) => write!(f, "Signing failed: {msg}"),
             Self::WatchOnlyWallet => write!(f, "Cannot sign with watch-only wallet"),
-            Self::AccountNotFound(idx) => write!(f, "BIP44 account {} not found", idx),
+            Self::AccountNotFound(idx) => write!(f, "funding account {} not found", idx),
             Self::NoChangeAddress => write!(f, "No change address available"),
             Self::Builder(e) => write!(f, "Transaction builder error: {e}"),
         }
@@ -168,6 +218,28 @@ fn resolve_funding_account(
     }
 }
 
+/// Shared guard for both asset-lock builders: a drain rewrites exactly one
+/// credit output, and CoinJoin accounts have no change-address pool semantics
+/// for asset locks (change would need re-denomination), so they only support
+/// the whole-balance drain.
+fn validate_drain_funding(
+    funding_account: AssetLockFundingAccount,
+    credit_output_count: usize,
+    drain: bool,
+) -> Result<(), AssetLockError> {
+    if drain && credit_output_count != 1 {
+        return Err(AssetLockError::Builder(BuilderError::InvalidData(
+            "drain asset lock requires exactly one credit output".into(),
+        )));
+    }
+    if matches!(funding_account, AssetLockFundingAccount::CoinJoin { .. }) && !drain {
+        return Err(AssetLockError::Builder(BuilderError::InvalidData(
+            "CoinJoin-funded asset locks support drain mode only".into(),
+        )));
+    }
+    Ok(())
+}
+
 impl ManagedWalletInfo {
     /// Build and sign an asset lock transaction.
     ///
@@ -176,12 +248,20 @@ impl ManagedWalletInfo {
     ///
     /// The transaction is built first, and keys are only derived after a successful
     /// build — so no addresses are consumed if the build fails.
+    ///
+    /// `funding_account` picks which account family supplies (and signs) the
+    /// funding UTXOs — see [`AssetLockFundingAccount`]. `drain` locks the
+    /// account's whole spendable balance: every final UTXO is consumed and
+    /// the single credit output's value is rewritten to `Σ inputs − fee`
+    /// (the caller's credit-output value is ignored; exactly one credit
+    /// output is required).
     pub async fn build_asset_lock(
         &mut self,
         wallet: &Wallet,
-        account_index: u32,
+        funding_account: AssetLockFundingAccount,
         credit_output_fundings: Vec<CreditOutputFunding>,
         fee_per_kb: u64,
+        drain: bool,
     ) -> Result<AssetLockResult, AssetLockError> {
         // Surface watch-only / no-private-key wallets here so we don't reserve
         // a change index before the build can possibly succeed.
@@ -191,50 +271,102 @@ impl ManagedWalletInfo {
         let network = self.network;
         let height = self.last_processed_height();
 
-        let acc = &wallet
-            .get_bip44_account(account_index)
-            .ok_or(AssetLockError::AccountNotFound(account_index))?;
+        let account_index = funding_account.account_index();
+        let acc = match funding_account {
+            AssetLockFundingAccount::Bip44 {
+                ..
+            } => wallet
+                .get_bip44_account(account_index)
+                .ok_or(AssetLockError::AccountNotFound(account_index))?,
+            AssetLockFundingAccount::CoinJoin {
+                ..
+            } => wallet
+                .get_coinjoin_account(account_index)
+                .ok_or(AssetLockError::AccountNotFound(account_index))?,
+        };
 
-        let funds_acc = self
-            .accounts
-            .standard_bip44_accounts
-            .get_mut(&account_index)
-            .ok_or(AssetLockError::AccountNotFound(account_index))?;
+        let funds_acc = match funding_account {
+            AssetLockFundingAccount::Bip44 {
+                ..
+            } => self
+                .accounts
+                .standard_bip44_accounts
+                .get_mut(&account_index)
+                .ok_or(AssetLockError::AccountNotFound(account_index))?,
+            AssetLockFundingAccount::CoinJoin {
+                ..
+            } => self
+                .accounts
+                .coinjoin_accounts
+                .get_mut(&account_index)
+                .ok_or(AssetLockError::AccountNotFound(account_index))?,
+        };
+
+        validate_drain_funding(funding_account, credit_output_fundings.len(), drain)?;
 
         let credit_outputs: Vec<TxOut> =
             credit_output_fundings.iter().map(|f| f.output.clone()).collect();
 
         // Build first, derive credit keys after — a build failure must not
         // consume any funding-key indices.
-        let (transaction, fee) = TransactionBuilder::new()
+        let mut builder = TransactionBuilder::new()
             .set_fee_rate(FeeRate::new(fee_per_kb))
             .set_current_height(height)
             .set_special_payload(TransactionPayload::AssetLockPayloadType(AssetLockPayload::new(
                 credit_outputs,
-            )))
+            )));
+        if drain {
+            builder = builder.set_selection_strategy(SelectionStrategy::All);
+        }
+        let (transaction, fee, reservation_token) = builder
             .set_funding(funds_acc, acc)
             .require_final_inputs()
-            .build_signed(wallet, |addr| funds_acc.address_derivation_path(&addr))
+            .build_signed_reserved(wallet, |addr| funds_acc.address_derivation_path(&addr))
             .await?;
 
-        // Derive one private key per credit output.
-        let mut keys = Vec::with_capacity(credit_output_fundings.len());
-        for funding in &credit_output_fundings {
-            let funding_key_account = resolve_funding_account(
-                &mut self.accounts,
-                funding.funding_type,
-                funding.identity_index,
-            )?;
-            let key = funding_key_account
-                .next_private_key(&root_xpriv, network)
-                .map_err(|e| AssetLockError::KeyDerivation(e.to_string()))?;
-            keys.push(key);
-        }
+        // The build above reserved the funding inputs. Clone the reservation
+        // handle (a shared `Arc` view of the same set) now, before the loop
+        // below re-borrows `self.accounts` — a mid-loop failure can no longer
+        // reach `funds_acc` to release, and the caller never received the token
+        // to release it either, so a leaked reservation would strand the
+        // already-signed inputs until the 24-block TTL sweep. Owner-guarded
+        // release only (see `ReservationSet::release_if_owner`,
+        // `dashpay/platform#4185`).
+        let reservations = funds_acc.reservations().clone();
+        let reserved: Vec<OutPoint> =
+            transaction.input.iter().map(|input| input.previous_output).collect();
+
+        // Derive one private key per credit output. On any failure, release
+        // this build's own reservation before returning.
+        let keys = match (|| -> Result<Vec<[u8; 32]>, AssetLockError> {
+            let mut keys = Vec::with_capacity(credit_output_fundings.len());
+            for funding in &credit_output_fundings {
+                let funding_key_account = resolve_funding_account(
+                    &mut self.accounts,
+                    funding.funding_type,
+                    funding.identity_index,
+                )?;
+                let key = funding_key_account
+                    .next_private_key(&root_xpriv, network)
+                    .map_err(|e| AssetLockError::KeyDerivation(e.to_string()))?;
+                keys.push(key);
+            }
+            Ok(keys)
+        })() {
+            Ok(keys) => keys,
+            Err(e) => {
+                if let Some(token) = reservation_token {
+                    reservations.release_if_owner(&reserved, token);
+                }
+                return Err(e);
+            }
+        };
 
         Ok(AssetLockResult {
             transaction,
             fee,
             keys: AssetLockCreditKeys::Private(keys),
+            reservation_token,
         })
     }
 
@@ -253,40 +385,82 @@ impl ManagedWalletInfo {
     /// one per credit output in payload order. The caller uses the paths to
     /// request signatures from the same signer when later consuming the
     /// credits on Platform.
+    ///
+    /// `funding_account` / `drain` — see [`Self::build_asset_lock`].
     pub async fn build_asset_lock_with_signer<S: Signer>(
         &mut self,
         wallet: &Wallet,
-        account_index: u32,
+        funding_account: AssetLockFundingAccount,
         credit_output_fundings: Vec<CreditOutputFunding>,
         fee_per_kb: u64,
+        drain: bool,
         signer: &S,
     ) -> Result<AssetLockResult, AssetLockError> {
         let height = self.last_processed_height();
 
-        let acc = wallet
-            .get_bip44_account(account_index)
-            .ok_or(AssetLockError::AccountNotFound(account_index))?
-            .clone();
+        let account_index = funding_account.account_index();
+        let acc = match funding_account {
+            AssetLockFundingAccount::Bip44 {
+                ..
+            } => wallet
+                .get_bip44_account(account_index)
+                .ok_or(AssetLockError::AccountNotFound(account_index))?
+                .clone(),
+            AssetLockFundingAccount::CoinJoin {
+                ..
+            } => wallet
+                .get_coinjoin_account(account_index)
+                .ok_or(AssetLockError::AccountNotFound(account_index))?
+                .clone(),
+        };
 
-        let funds_acc = self
-            .accounts
-            .standard_bip44_accounts
-            .get_mut(&account_index)
-            .ok_or(AssetLockError::AccountNotFound(account_index))?;
+        let funds_acc = match funding_account {
+            AssetLockFundingAccount::Bip44 {
+                ..
+            } => self
+                .accounts
+                .standard_bip44_accounts
+                .get_mut(&account_index)
+                .ok_or(AssetLockError::AccountNotFound(account_index))?,
+            AssetLockFundingAccount::CoinJoin {
+                ..
+            } => self
+                .accounts
+                .coinjoin_accounts
+                .get_mut(&account_index)
+                .ok_or(AssetLockError::AccountNotFound(account_index))?,
+        };
+
+        validate_drain_funding(funding_account, credit_output_fundings.len(), drain)?;
 
         let credit_outputs: Vec<TxOut> =
             credit_output_fundings.iter().map(|f| f.output.clone()).collect();
 
-        let (transaction, fee) = TransactionBuilder::new()
+        let mut builder = TransactionBuilder::new()
             .set_fee_rate(FeeRate::new(fee_per_kb))
             .set_current_height(height)
             .set_special_payload(TransactionPayload::AssetLockPayloadType(AssetLockPayload::new(
                 credit_outputs,
-            )))
+            )));
+        if drain {
+            builder = builder.set_selection_strategy(SelectionStrategy::All);
+        }
+        let (transaction, fee, reservation_token) = builder
             .set_funding(funds_acc, &acc)
             .require_final_inputs()
-            .build_signed(signer, |addr| funds_acc.address_derivation_path(&addr))
+            .build_signed_reserved(signer, |addr| funds_acc.address_derivation_path(&addr))
             .await?;
+
+        // The build above reserved the funding inputs. Clone the reservation
+        // handle (a shared `Arc` view of the same set) before the bookkeeping
+        // loop below re-borrows `self.accounts`, so a failure during Phase 1–3
+        // — which runs after the transaction is already signed — can still
+        // release THIS build's reservation instead of stranding the signed
+        // inputs until the 24-block TTL sweep. Owner-guarded release only (see
+        // `ReservationSet::release_if_owner`, `dashpay/platform#4185`).
+        let reservations = funds_acc.reservations().clone();
+        let reserved: Vec<OutPoint> =
+            transaction.input.iter().map(|input| input.previous_output).collect();
 
         // Credit-output bookkeeping: for each funding, peek the next unused
         // path on its account, ask the signer for the matching pubkey, and
@@ -295,50 +469,65 @@ impl ManagedWalletInfo {
         // This protects against a signer failure mid-loop leaving earlier
         // fundings' pool indices irreversibly consumed: if `public_key`
         // errors, the current funding's index is still free, and no
-        // subsequent fundings have touched their pools yet.
-        let mut credit_output_keys = Vec::with_capacity(credit_output_fundings.len());
-        for funding in &credit_output_fundings {
-            // Phase 1 (sync): peek without marking used. Borrow is scoped
-            // to the block so we can re-resolve the account after the
-            // signer await.
-            let (path, index) = {
-                let funding_key_account = resolve_funding_account(
-                    &mut self.accounts,
-                    funding.funding_type,
-                    funding.identity_index,
-                )?;
-                funding_key_account
-                    .peek_next_path()
-                    .map_err(|e| AssetLockError::KeyDerivation(e.to_string()))?
-            };
+        // subsequent fundings have touched their pools yet. On any failure we
+        // also release this build's own reservation before returning.
+        let credit_output_keys = match async {
+            let mut credit_output_keys = Vec::with_capacity(credit_output_fundings.len());
+            for funding in &credit_output_fundings {
+                // Phase 1 (sync): peek without marking used. Borrow is scoped
+                // to the block so we can re-resolve the account after the
+                // signer await.
+                let (path, index) = {
+                    let funding_key_account = resolve_funding_account(
+                        &mut self.accounts,
+                        funding.funding_type,
+                        funding.identity_index,
+                    )?;
+                    funding_key_account
+                        .peek_next_path()
+                        .map_err(|e| AssetLockError::KeyDerivation(e.to_string()))?
+                };
 
-            // Phase 2 (async): signer round-trip. If this errors, we return
-            // without ever calling mark_first_pool_index_used — index stays
-            // free for a retry.
-            let pubkey = signer
-                .public_key(&path)
-                .await
-                .map_err(|e| AssetLockError::Signer(e.to_string()))?;
+                // Phase 2 (async): signer round-trip. If this errors, we return
+                // without ever calling mark_first_pool_index_used — index stays
+                // free for a retry.
+                let pubkey = signer
+                    .public_key(&path)
+                    .await
+                    .map_err(|e| AssetLockError::Signer(e.to_string()))?;
 
-            // Phase 3 (sync): signer succeeded, commit the index.
-            {
-                let funding_key_account = resolve_funding_account(
-                    &mut self.accounts,
-                    funding.funding_type,
-                    funding.identity_index,
-                )?;
-                funding_key_account
-                    .mark_first_pool_index_used(index)
-                    .map_err(|e| AssetLockError::KeyDerivation(e.to_string()))?;
+                // Phase 3 (sync): signer succeeded, commit the index.
+                {
+                    let funding_key_account = resolve_funding_account(
+                        &mut self.accounts,
+                        funding.funding_type,
+                        funding.identity_index,
+                    )?;
+                    funding_key_account
+                        .mark_first_pool_index_used(index)
+                        .map_err(|e| AssetLockError::KeyDerivation(e.to_string()))?;
+                }
+
+                credit_output_keys.push((pubkey, path));
             }
-
-            credit_output_keys.push((pubkey, path));
+            Ok::<_, AssetLockError>(credit_output_keys)
         }
+        .await
+        {
+            Ok(keys) => keys,
+            Err(e) => {
+                if let Some(token) = reservation_token {
+                    reservations.release_if_owner(&reserved, token);
+                }
+                return Err(e);
+            }
+        };
 
         Ok(AssetLockResult {
             transaction,
             fee,
             keys: AssetLockCreditKeys::Public(credit_output_keys),
+            reservation_token,
         })
     }
 }
@@ -411,6 +600,149 @@ mod tests {
         outpoint
     }
 
+    /// CoinJoin-account sibling of [`insert_funded_utxo`]: fund CoinJoin
+    /// account 0 with a UTXO at a fresh receive address.
+    fn insert_funded_coinjoin_utxo(
+        info: &mut ManagedWalletInfo,
+        wallet: &Wallet,
+        txid_byte: u8,
+        value: u64,
+        is_confirmed: bool,
+    ) -> OutPoint {
+        let account_xpub = wallet.get_coinjoin_account(0).unwrap().account_xpub;
+        let account = info.accounts.coinjoin_accounts.get_mut(&0).unwrap();
+        // CoinJoin accounts have no `next_receive_address` wrapper (that is
+        // Standard-only); draw from the external (mixed-coin) pool directly.
+        let funding_address = match account.managed_account_type_mut() {
+            crate::ManagedAccountType::CoinJoin {
+                external_addresses,
+                ..
+            } => external_addresses
+                .next_unused(&crate::KeySource::Public(account_xpub), true)
+                .unwrap(),
+            _ => unreachable!("coinjoin account must carry the CoinJoin managed type"),
+        };
+        let outpoint = OutPoint {
+            txid: Txid::from_byte_array([txid_byte; 32]),
+            vout: 0,
+        };
+        let utxo = Utxo {
+            outpoint,
+            txout: TxOut {
+                value,
+                script_pubkey: funding_address.script_pubkey(),
+            },
+            address: funding_address,
+            height: 1000,
+            is_coinbase: false,
+            is_confirmed,
+            is_instantlocked: false,
+            is_locked: false,
+            is_trusted: false,
+        };
+        account.utxos.insert(outpoint, utxo);
+        outpoint
+    }
+
+    /// Drain from the CoinJoin account: every CoinJoin UTXO is consumed, the
+    /// single credit output's value is rewritten to `Σ inputs − fee`, the
+    /// on-chain burn mirrors it exactly, and there is no change output.
+    #[tokio::test]
+    async fn test_drain_coinjoin_asset_lock() {
+        let (wallet, mut info) = test_wallet_and_info();
+        insert_funded_coinjoin_utxo(&mut info, &wallet, 0x41, 400_000, true);
+        insert_funded_coinjoin_utxo(&mut info, &wallet, 0x42, 300_000, true);
+        insert_funded_coinjoin_utxo(&mut info, &wallet, 0x43, 300_000, true);
+        info.update_last_processed_height(1100);
+
+        // The caller's credit amount (0) is ignored — drain rewrites it.
+        let result = info
+            .build_asset_lock(
+                &wallet,
+                AssetLockFundingAccount::CoinJoin {
+                    account_index: 0,
+                },
+                test_credit_outputs(&[0]),
+                1000,
+                true,
+            )
+            .await
+            .expect("drain from a funded CoinJoin account should succeed");
+
+        assert_eq!(result.transaction.input.len(), 3, "drain must consume every CoinJoin UTXO");
+        assert_eq!(result.transaction.output.len(), 1, "drain emits no change output");
+        let burn = &result.transaction.output[0];
+        assert!(burn.script_pubkey.is_op_return(), "single output must be the OP_RETURN burn");
+        assert_eq!(burn.value, 1_000_000 - result.fee, "burn must carry Σ inputs − fee");
+
+        let payload = match &result.transaction.special_transaction_payload {
+            Some(TransactionPayload::AssetLockPayloadType(p)) => p,
+            other => panic!("expected asset-lock payload, got {:?}", other),
+        };
+        assert_eq!(payload.credit_outputs.len(), 1);
+        assert_eq!(
+            payload.credit_outputs[0].value, burn.value,
+            "payload credit output must mirror the burn value"
+        );
+
+        for (i, txin) in result.transaction.input.iter().enumerate() {
+            assert!(!txin.script_sig.is_empty(), "input {i} not signed");
+        }
+    }
+
+    /// A drain build requires exactly one credit output — anything else is
+    /// rejected before any wallet state is touched.
+    #[tokio::test]
+    async fn test_drain_requires_single_credit_output() {
+        let (wallet, mut info) = test_wallet_and_info();
+        insert_funded_coinjoin_utxo(&mut info, &wallet, 0x44, 500_000, true);
+        info.update_last_processed_height(1100);
+
+        let result = info
+            .build_asset_lock(
+                &wallet,
+                AssetLockFundingAccount::CoinJoin {
+                    account_index: 0,
+                },
+                test_credit_outputs(&[0, 0]),
+                1000,
+                true,
+            )
+            .await;
+        assert!(
+            matches!(result, Err(AssetLockError::Builder(BuilderError::InvalidData(_)))),
+            "two credit outputs must be rejected in drain mode, got: {:?}",
+            result.err()
+        );
+    }
+
+    /// CoinJoin funding is drain-only: a partial (non-drain) CoinJoin-funded
+    /// build is rejected before any wallet state is touched (change would
+    /// need CoinJoin re-denomination, which the builder does not do).
+    #[tokio::test]
+    async fn test_coinjoin_funding_requires_drain() {
+        let (wallet, mut info) = test_wallet_and_info();
+        insert_funded_coinjoin_utxo(&mut info, &wallet, 0x45, 1_000_000, true);
+        info.update_last_processed_height(1100);
+
+        let result = info
+            .build_asset_lock(
+                &wallet,
+                AssetLockFundingAccount::CoinJoin {
+                    account_index: 0,
+                },
+                test_credit_outputs(&[200_000]),
+                1000,
+                false,
+            )
+            .await;
+        assert!(
+            matches!(result, Err(AssetLockError::Builder(BuilderError::InvalidData(_)))),
+            "non-drain CoinJoin funding must be rejected, got: {:?}",
+            result.err()
+        );
+    }
+
     // -- Error type tests --
 
     #[test]
@@ -419,7 +751,7 @@ mod tests {
             AssetLockError::WatchOnlyWallet.to_string(),
             "Cannot sign with watch-only wallet"
         );
-        assert_eq!(AssetLockError::AccountNotFound(5).to_string(), "BIP44 account 5 not found");
+        assert_eq!(AssetLockError::AccountNotFound(5).to_string(), "funding account 5 not found");
         assert_eq!(AssetLockError::NoChangeAddress.to_string(), "No change address available");
     }
 
@@ -435,15 +767,34 @@ mod tests {
     #[tokio::test]
     async fn test_empty_credit_outputs_rejected() {
         let (wallet, mut info) = test_wallet_and_info();
-        let result = info.build_asset_lock(&wallet, 0, vec![], 1000).await;
+        let result = info
+            .build_asset_lock(
+                &wallet,
+                AssetLockFundingAccount::Bip44 {
+                    account_index: 0,
+                },
+                vec![],
+                1000,
+                false,
+            )
+            .await;
         assert!(matches!(result, Err(AssetLockError::Builder(BuilderError::NoOutputs))));
     }
 
     #[tokio::test]
     async fn test_invalid_account_index() {
         let (wallet, mut info) = test_wallet_and_info();
-        let result =
-            info.build_asset_lock(&wallet, 99, test_credit_outputs(&[100_000]), 1000).await;
+        let result = info
+            .build_asset_lock(
+                &wallet,
+                AssetLockFundingAccount::Bip44 {
+                    account_index: 99,
+                },
+                test_credit_outputs(&[100_000]),
+                1000,
+                false,
+            )
+            .await;
         assert!(matches!(result, Err(AssetLockError::AccountNotFound(99))));
     }
 
@@ -451,7 +802,17 @@ mod tests {
     async fn test_insufficient_funds() {
         // Wallet has no UTXOs, so coin selection should fail
         let (wallet, mut info) = test_wallet_and_info();
-        let result = info.build_asset_lock(&wallet, 0, test_credit_outputs(&[500_000]), 1000).await;
+        let result = info
+            .build_asset_lock(
+                &wallet,
+                AssetLockFundingAccount::Bip44 {
+                    account_index: 0,
+                },
+                test_credit_outputs(&[500_000]),
+                1000,
+                false,
+            )
+            .await;
         assert!(
             matches!(result, Err(AssetLockError::Builder(_))),
             "Expected Builder error for insufficient funds, got: {:?}",
@@ -469,7 +830,17 @@ mod tests {
         insert_funded_utxo(&mut info, &wallet, 0x11, 1_000_000, false);
         info.update_last_processed_height(1100);
 
-        let result = info.build_asset_lock(&wallet, 0, test_credit_outputs(&[200_000]), 1000).await;
+        let result = info
+            .build_asset_lock(
+                &wallet,
+                AssetLockFundingAccount::Bip44 {
+                    account_index: 0,
+                },
+                test_credit_outputs(&[200_000]),
+                1000,
+                false,
+            )
+            .await;
         assert!(
             matches!(result, Err(AssetLockError::Builder(_))),
             "asset lock must not be built on unconfirmed funds, got: {:?}",
@@ -487,7 +858,15 @@ mod tests {
         info.update_last_processed_height(1100);
 
         let result = info
-            .build_asset_lock(&wallet, 0, test_credit_outputs(&[200_000]), 1000)
+            .build_asset_lock(
+                &wallet,
+                AssetLockFundingAccount::Bip44 {
+                    account_index: 0,
+                },
+                test_credit_outputs(&[200_000]),
+                1000,
+                false,
+            )
             .await
             .expect("confirmed funds should cover the asset lock");
         assert!(!result.transaction.input.is_empty());
@@ -605,7 +984,18 @@ mod tests {
             root,
             network: Network::Testnet,
         };
-        let result = info.build_asset_lock_with_signer(&wallet, 0, vec![], 1000, &signer).await;
+        let result = info
+            .build_asset_lock_with_signer(
+                &wallet,
+                AssetLockFundingAccount::Bip44 {
+                    account_index: 0,
+                },
+                vec![],
+                1000,
+                false,
+                &signer,
+            )
+            .await;
         assert!(matches!(result, Err(AssetLockError::Builder(BuilderError::NoOutputs))));
     }
 
@@ -626,9 +1016,12 @@ mod tests {
         let result = info
             .build_asset_lock_with_signer(
                 &wallet,
-                99,
+                AssetLockFundingAccount::Bip44 {
+                    account_index: 99,
+                },
                 test_credit_outputs(&[100_000]),
                 1000,
+                false,
                 &signer,
             )
             .await;
@@ -663,9 +1056,12 @@ mod tests {
         let result = info
             .build_asset_lock_with_signer(
                 &wallet,
-                0,
+                AssetLockFundingAccount::Bip44 {
+                    account_index: 0,
+                },
                 test_credit_outputs(&[100_000]),
                 1000,
+                false,
                 &NoDigestSigner,
             )
             .await;
@@ -698,7 +1094,16 @@ mod tests {
         let credit_amounts = [200_000u64, 300_000u64];
         let fundings = test_credit_outputs(&credit_amounts);
         let result = info
-            .build_asset_lock_with_signer(&wallet, 0, fundings, 1000, &signer)
+            .build_asset_lock_with_signer(
+                &wallet,
+                AssetLockFundingAccount::Bip44 {
+                    account_index: 0,
+                },
+                fundings,
+                1000,
+                false,
+                &signer,
+            )
             .await
             .expect("build_asset_lock_with_signer should succeed with funded wallet");
 
@@ -753,9 +1158,12 @@ mod tests {
         let result = info
             .build_asset_lock_with_signer(
                 &wallet,
-                0,
+                AssetLockFundingAccount::Bip44 {
+                    account_index: 0,
+                },
                 test_credit_outputs(&[500_000]),
                 1000,
+                false,
                 &signer,
             )
             .await;

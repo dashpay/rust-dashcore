@@ -27,3 +27,4 @@ pub mod transaction_record;
 pub use managed_account_ref::{ManagedAccountRef, ManagedAccountRefMut, OwnedManagedCoreAccount};
 pub use managed_core_funds_account::ManagedCoreFundsAccount;
 pub use managed_core_keys_account::ManagedCoreKeysAccount;
+pub use reservation::ReservationToken;

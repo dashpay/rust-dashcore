@@ -19,7 +19,7 @@ use crate::managed_account::address_pool;
 use crate::managed_account::managed_account_trait::ManagedAccountTrait;
 use crate::managed_account::managed_account_type::ManagedAccountType;
 use crate::managed_account::managed_core_keys_account::ManagedCoreKeysAccount;
-use crate::managed_account::reservation::ReservationSet;
+use crate::managed_account::reservation::{ReservationSet, ReservationToken};
 use crate::managed_account::transaction_record::{
     InputDetail, OutputDetail, OutputRole, TransactionDirection,
 };
@@ -128,6 +128,25 @@ impl ManagedCoreFundsAccount {
     /// processed back into the wallet, so this is only for abandoned builds.
     pub fn release_reservation(&self, tx: &Transaction) {
         self.reservations.release(tx.input.iter().map(|input| &input.previous_output));
+    }
+
+    /// Owner-guarded release of `tx`'s input reservations: releases an input
+    /// only if it is *still owned by* `token`, the [`ReservationToken`] returned
+    /// when this build reserved its inputs (from
+    /// [`build_unsigned_reserved`]/[`build_signed_reserved`]).
+    ///
+    /// This is the release a caller must use when it abandons a transaction
+    /// *after having `.await`ed something* between reserving and releasing —
+    /// above all the platform broadcast path — never the unconditional
+    /// [`Self::release_reservation`]. See `ReservationSet::release_if_owner` for
+    /// the release/re-reserve race this closes and why the owner check must live
+    /// inside key-wallet (`dashpay/platform#4185`).
+    ///
+    /// [`build_unsigned_reserved`]: crate::wallet::managed_wallet_info::transaction_builder::TransactionBuilder::build_unsigned_reserved
+    /// [`build_signed_reserved`]: crate::wallet::managed_wallet_info::transaction_builder::TransactionBuilder::build_signed_reserved
+    pub fn release_reservation_if_owner(&self, tx: &Transaction, token: ReservationToken) {
+        let outpoints: Vec<OutPoint> = tx.input.iter().map(|input| input.previous_output).collect();
+        self.reservations.release_if_owner(&outpoints, token);
     }
 
     /// Get a reference to the inner keys-account state.
@@ -614,6 +633,93 @@ impl ManagedCoreFundsAccount {
             Ok(addr)
         } else {
             Err("Cannot generate change address for non-standard account type")
+        }
+    }
+
+    /// Generate and reserve the next receive address.
+    ///
+    /// Like [`Self::next_receive_address`] but atomically reserves the returned
+    /// address so a concurrent hand-out cannot return the same one. The
+    /// reservation persists until funds arrive (promoting it to used),
+    /// [`Self::release_receive_reservation`] is called, or it is reclaimed by a
+    /// TTL sweep. `now` is a caller-supplied timestamp (seconds) stamping the
+    /// reservation. Only valid for Standard accounts.
+    ///
+    /// Derivation of fresh addresses on this path is unbounded, so callers are
+    /// assumed trusted. See [`address_pool::AddressPool::next_unused_and_reserve`].
+    pub fn next_receive_address_and_reserve(
+        &mut self,
+        account_xpub: Option<&ExtendedPubKey>,
+        now: u64,
+    ) -> Result<Address, &'static str> {
+        if let ManagedAccountType::Standard {
+            external_addresses,
+            ..
+        } = self.keys.managed_account_type_mut()
+        {
+            let key_source = match account_xpub {
+                Some(xpub) => address_pool::KeySource::Public(*xpub),
+                None => address_pool::KeySource::NoKeySource,
+            };
+
+            let addr = external_addresses.next_unused_and_reserve(&key_source, now).map_err(
+                |e| match e {
+                    crate::error::Error::NoKeySource => {
+                        "No unused addresses available and no key source provided"
+                    }
+                    _ => "Failed to generate receive address",
+                },
+            )?;
+            self.keys.bump_monitor_revision();
+            Ok(addr)
+        } else {
+            Err("Cannot generate receive address for non-standard account type")
+        }
+    }
+
+    /// Release a previously reserved receive address back to the available pool.
+    ///
+    /// Idempotent: returns `false` if the address is unknown to the external
+    /// pool or is not currently reserved. Bumps the monitor revision only when
+    /// a reservation is actually cleared.
+    pub fn release_receive_reservation(&mut self, address: &Address) -> bool {
+        if let ManagedAccountType::Standard {
+            external_addresses,
+            ..
+        } = self.keys.managed_account_type_mut()
+        {
+            if let Some(index) = external_addresses.address_index(address) {
+                if external_addresses.release_reservation(index) {
+                    self.keys.bump_monitor_revision();
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    /// Reclaim receive reservations older than `ttl`, returning their addresses
+    /// to the available pool.
+    ///
+    /// Backstop for reservations handed out but never funded and never
+    /// explicitly released, which would otherwise pin gap-limit headroom
+    /// forever. `now` and `ttl` are caller-supplied (seconds); the wallet keeps
+    /// no clock. Returns the number of reservations reclaimed and bumps the
+    /// monitor revision when that is non-zero. See
+    /// [`address_pool::AddressPool::sweep_expired_reservations`].
+    pub fn sweep_expired_receive_reservations(&mut self, now: u64, ttl: u64) -> usize {
+        if let ManagedAccountType::Standard {
+            external_addresses,
+            ..
+        } = self.keys.managed_account_type_mut()
+        {
+            let reclaimed = external_addresses.sweep_expired_reservations(now, ttl);
+            if reclaimed > 0 {
+                self.keys.bump_monitor_revision();
+            }
+            reclaimed
+        } else {
+            0
         }
     }
 
