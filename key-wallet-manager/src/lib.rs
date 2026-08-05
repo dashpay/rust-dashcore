@@ -221,9 +221,7 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletManager<T> {
             // last persisted height, so a lost consumer causes no durable
             // corruption (dashpay/platform#4069).
             if sender.send(event.clone()).is_err()
-                && !self
-                    .persistence_consumer_lost
-                    .swap(true, std::sync::atomic::Ordering::Relaxed)
+                && !self.persistence_consumer_lost.swap(true, std::sync::atomic::Ordering::Relaxed)
             {
                 tracing::error!(
                     "wallet-manager persistence consumer dropped its receiver while the manager is \
