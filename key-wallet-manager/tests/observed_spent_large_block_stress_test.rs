@@ -82,7 +82,7 @@ async fn wallet_relevant_spend_buried_in_large_noisy_block_still_caught() {
     let funding_tx = common::funding_tx(&funding_address, funding_value, 0xAB);
     let funding_outpoint = OutPoint::new(funding_tx.txid(), 0);
 
-    let spend_tx = common::spend_tx(funding_outpoint, funding_value - 1_000, 99);
+    let spend_tx = common::spend_tx(Network::Testnet, funding_outpoint, funding_value - 1_000, 99);
 
     // One large block: 5,000 unrelated noise transactions with the single
     // wallet-relevant spend buried in the middle — this is the realistic

@@ -56,7 +56,7 @@ async fn spend_processed_before_its_funding_tx_leaves_utxo_permanently_tracked()
 
     // Spend the funding UTXO (by its already-known txid) out to an external
     // address, so the wallet no longer owns this specific output afterward.
-    let spend = spend_tx(funding_outpoint, funding_value - 1_000, 99);
+    let spend = spend_tx(dashcore::Network::Testnet, funding_outpoint, funding_value - 1_000, 99);
 
     // Out-of-order delivery: the spend's block (height 200) is processed before
     // the funding's block (height 100).

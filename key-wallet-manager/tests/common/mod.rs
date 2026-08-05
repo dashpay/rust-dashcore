@@ -54,8 +54,8 @@ pub fn funding_tx(address: &Address, value: u64, input_seed: u8) -> Transaction 
 }
 
 /// A transaction spending `outpoint` and paying `value` to an unrelated
-/// external dummy address (`ext_id` selects a distinct address).
-pub fn spend_tx(outpoint: OutPoint, value: u64, ext_id: usize) -> Transaction {
+/// external dummy address on `network` (`ext_id` selects a distinct address).
+pub fn spend_tx(network: Network, outpoint: OutPoint, value: u64, ext_id: usize) -> Transaction {
     Transaction {
         version: 2,
         lock_time: 0,
@@ -67,7 +67,7 @@ pub fn spend_tx(outpoint: OutPoint, value: u64, ext_id: usize) -> Transaction {
         }],
         output: vec![TxOut {
             value,
-            script_pubkey: Address::dummy(Network::Testnet, ext_id).script_pubkey(),
+            script_pubkey: Address::dummy(network, ext_id).script_pubkey(),
         }],
         special_transaction_payload: None,
     }
