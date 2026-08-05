@@ -3,7 +3,7 @@
 //! This module provides high-level transaction building functionality
 //! using types from the dashcore crate.
 
-use crate::managed_account::reservation::ReservationSet;
+use crate::managed_account::reservation::{ReservationSet, ReservationToken};
 use crate::managed_account::ManagedCoreFundsAccount;
 use crate::wallet::managed_wallet_info::coin_selection::{
     CoinSelector, SelectionStrategy, CHANGE_OUTPUT_SIZE, TX_OUTPUT_SIZE,
@@ -282,7 +282,18 @@ impl TransactionBuilder {
         size
     }
 
-    fn assemble_unsigned(mut self) -> Result<(Transaction, Vec<Utxo>), BuilderError> {
+    /// Select inputs, build the unsigned transaction, and reserve the chosen
+    /// inputs. The optional [`ReservationToken`] is `Some` exactly when a
+    /// reservation set was attached (via [`set_funding`]) and identifies the
+    /// reservation this build just took, so a caller that later abandons the
+    /// build can release *only* its own inputs via
+    /// [`ReservationSet::release_if_owner`]. It is `None` for builds with no
+    /// reservation set (nothing was reserved, nothing to release).
+    ///
+    /// [`set_funding`]: Self::set_funding
+    fn assemble_unsigned(
+        mut self,
+    ) -> Result<(Transaction, Vec<Utxo>, Option<ReservationToken>), BuilderError> {
         if let Some(TransactionPayload::AssetLockPayloadType(p)) = &self.special_payload {
             if p.credit_outputs.is_empty() {
                 return Err(BuilderError::NoOutputs);
@@ -424,14 +435,16 @@ impl TransactionBuilder {
 
         // Reserve the chosen inputs so a concurrent build skips them until the
         // broadcast transaction is processed back into the wallet (which
-        // releases the reservation) or the TTL backstop reclaims it.
-        if let Some(reservations) = &self.reservations {
+        // releases the reservation) or the TTL backstop reclaims it. Keep the
+        // stamped owner token so the caller can release only this reservation
+        // if the build is later abandoned (see `release_if_owner`).
+        let reservation_token = self.reservations.as_ref().map(|reservations| {
             let outpoints: Vec<OutPoint> =
                 selected_inputs.iter().map(|utxo| utxo.outpoint).collect();
-            reservations.reserve(&outpoints, self.current_height);
-        }
+            reservations.reserve(&outpoints, self.current_height)
+        });
 
-        return Ok((transaction, selected_inputs));
+        return Ok((transaction, selected_inputs, reservation_token));
 
         // BIP-69: Sort outputs by amount first, then by scriptPubKey
         // lexicographically.
@@ -454,17 +467,31 @@ impl TransactionBuilder {
         }
     }
 
-    /// Build the unsigned transaction. The returned fee is the fee the
-    /// transaction actually pays: Σ(selected input values) − Σ(output values).
-    /// This can exceed the size-based fee target when a dust change remainder
-    /// (≤ 546 duffs) is dropped and left to miners.
-    pub fn build_unsigned(self) -> Result<(Transaction, u64), BuilderError> {
-        let (tx, inputs) = self.assemble_unsigned()?;
+    /// Build the unsigned transaction, returning it alongside the fee it pays
+    /// and the [`ReservationToken`] stamped onto the inputs this build reserved
+    /// (`None` when no reservation set is attached).
+    ///
+    /// The returned fee is the fee the transaction actually pays:
+    /// Σ(selected input values) − Σ(output values). This can exceed the
+    /// size-based fee target when a dust change remainder (≤ 546 duffs) is
+    /// dropped and left to miners.
+    ///
+    /// Hold the returned token when the transaction may be abandoned after an
+    /// `.await` that releases the wallet lock — most importantly the platform
+    /// broadcast path, which reserves inputs, awaits the broadcast, and on
+    /// rejection must release them — and release with
+    /// [`ManagedCoreFundsAccount::release_reservation_if_owner`]. See
+    /// `ReservationSet::release_if_owner` for why owner-guarded release is
+    /// required (`dashpay/platform#4185`).
+    pub fn build_unsigned_reserved(
+        self,
+    ) -> Result<(Transaction, u64, Option<ReservationToken>), BuilderError> {
+        let (tx, inputs, reservation) = self.assemble_unsigned()?;
 
         let total_input: u64 = inputs.iter().map(|utxo| utxo.value()).sum();
         let total_output: u64 = tx.output.iter().map(|out| out.value).sum();
 
-        Ok((tx, total_input.saturating_sub(total_output)))
+        Ok((tx, total_input.saturating_sub(total_output), reservation))
     }
 
     /// Build and sign the transaction. The `path_resolver` maps each input
@@ -482,20 +509,45 @@ impl TransactionBuilder {
         S: TransactionSigner + ?Sized + Sync,
         P: Fn(Address) -> Option<DerivationPath> + Send,
     {
+        let (tx, fee, _reservation) = self.build_signed_reserved(signer, path_resolver).await?;
+        Ok((tx, fee))
+    }
+
+    /// Like [`Self::build_signed`], but also returns the [`ReservationToken`]
+    /// stamped onto the inputs this build reserved (`None` when no reservation
+    /// set is attached), for callers that may later abandon the transaction
+    /// after awaiting a broadcast. See [`Self::build_unsigned_reserved`] for why
+    /// the token is needed and how to release with it.
+    pub async fn build_signed_reserved<S, P>(
+        self,
+        signer: &S,
+        path_resolver: P,
+    ) -> Result<(Transaction, u64, Option<ReservationToken>), BuilderError>
+    where
+        S: TransactionSigner + ?Sized + Sync,
+        P: Fn(Address) -> Option<DerivationPath> + Send,
+    {
         let reservations = self.reservations.clone();
 
-        let (tx, inputs) = self.assemble_unsigned()?;
+        let (tx, inputs, reservation) = self.assemble_unsigned()?;
         let total_input: u64 = inputs.iter().map(|utxo| utxo.value()).sum();
         // Signing never reaches the network for a local key, but an external
         // signer can fail. A failed sign means the reserved inputs are still
         // spendable, so release them now instead of stranding the funds until
         // the TTL backstop reclaims them.
+        //
+        // Release owner-guarded: `sign_tx` is an `.await`, and while it runs the
+        // TTL sweep could reclaim this build's reservation and a concurrent
+        // build could re-reserve the same outpoint under a new token. An
+        // unconditional release-by-outpoint would then free that other build's
+        // inputs (the double-spend window of `dashpay/platform#4185`), so we
+        // release only outpoints still owned by the token this build stamped.
         let reserved: Vec<OutPoint> = inputs.iter().map(|utxo| utxo.outpoint).collect();
         let tx = match signer.sign_tx(tx, inputs, path_resolver).await {
             Ok(tx) => tx,
             Err(err) => {
-                if let Some(reservations) = &reservations {
-                    reservations.release(reserved.iter());
+                if let (Some(reservations), Some(token)) = (&reservations, reservation) {
+                    reservations.release_if_owner(&reserved, token);
                 }
                 return Err(err);
             }
@@ -503,7 +555,7 @@ impl TransactionBuilder {
 
         let total_output: u64 = tx.output.iter().map(|out| out.value).sum();
 
-        Ok((tx, total_input.saturating_sub(total_output)))
+        Ok((tx, total_input.saturating_sub(total_output), reservation))
     }
 }
 
@@ -702,8 +754,8 @@ mod tests {
             .add_inputs([utxo])
             .add_output(&destination, 50000)
             .set_change_address(change)
-            .build_unsigned()
-            .map(|(tx, _)| tx);
+            .build_unsigned_reserved()
+            .map(|(tx, _, _)| tx);
 
         assert!(tx.is_ok());
         let transaction = tx.unwrap();
@@ -720,7 +772,7 @@ mod tests {
             .set_current_height(200)
             .add_inputs([utxo])
             .add_output(&destination, 50000)
-            .build_unsigned();
+            .build_unsigned_reserved();
 
         // Insufficient funds now surface via the coin selector wrapper too.
         assert!(matches!(
@@ -740,7 +792,7 @@ mod tests {
             .set_current_height(200)
             .add_inputs([utxo]) // no set_change_address
             .add_output(&destination, 100_000)
-            .build_unsigned();
+            .build_unsigned_reserved();
 
         assert!(
             matches!(result, Err(BuilderError::NoChangeAddress)),
@@ -844,7 +896,7 @@ mod tests {
             .set_change_address(change_address.clone())
             .add_inputs(utxos)
             .add_output(&recipient_address, 500000)
-            .build_unsigned()
+            .build_unsigned_reserved()
             .unwrap()
             .0;
 
@@ -873,7 +925,7 @@ mod tests {
             .set_change_address(change_address.clone())
             .add_inputs(utxos)
             .add_output(&recipient_address, 150000)
-            .build_unsigned()
+            .build_unsigned_reserved()
             .unwrap()
             .0;
 
@@ -893,14 +945,14 @@ mod tests {
         let recipient_address = Address::dummy(Network::Testnet, 0);
         let change_address = Address::dummy(Network::Testnet, 0);
 
-        let (tx, fee) = TransactionBuilder::new()
+        let (tx, fee, _) = TransactionBuilder::new()
             .set_current_height(200)
             .set_selection_strategy(SelectionStrategy::SmallestFirst)
             .set_fee_rate(FeeRate::normal())
             .set_change_address(change_address)
             .add_inputs(utxos)
             .add_output(&recipient_address, 150000)
-            .build_unsigned()
+            .build_unsigned_reserved()
             .unwrap();
 
         assert_eq!(tx.output.len(), 1, "dust change must be dropped");
@@ -926,13 +978,13 @@ mod tests {
             }],
         };
 
-        let (tx, fee) = TransactionBuilder::new()
+        let (tx, fee, _) = TransactionBuilder::new()
             .set_current_height(200)
             .set_fee_rate(FeeRate::normal())
             .set_change_address(change_address)
             .set_special_payload(TransactionPayload::AssetLockPayloadType(asset_lock_payload))
             .add_inputs(utxos)
-            .build_unsigned()
+            .build_unsigned_reserved()
             .unwrap();
 
         assert_eq!(tx.output.len(), 2, "OP_RETURN burn output + change");
@@ -1035,7 +1087,7 @@ mod tests {
             .add_output(&address1, 300000) // Higher amount
             .add_output(&address2, 100000) // Lower amount
             .add_output(&address1, 200000) // Middle amount
-            .build_unsigned()
+            .build_unsigned_reserved()
             .unwrap()
             .0;
 
@@ -1107,7 +1159,7 @@ mod tests {
             .add_inputs([utxo2.clone()])
             .add_inputs([utxo3.clone()])
             .add_output(&destination, 500000)
-            .build_unsigned()
+            .build_unsigned_reserved()
             .unwrap()
             .0;
 
@@ -1173,7 +1225,7 @@ mod tests {
             .set_special_payload(TransactionPayload::AssetLockPayloadType(asset_lock_payload))
             .add_output(&recipient_address, 50000)
             .add_inputs(utxos)
-            .build_unsigned()
+            .build_unsigned_reserved()
             .unwrap()
             .0;
 
@@ -1245,13 +1297,13 @@ mod tests {
         funds.utxos.insert(utxo.outpoint, utxo.clone());
 
         let destination = Address::dummy(Network::Testnet, 0);
-        let (tx, _) = TransactionBuilder::new()
+        let (tx, _, _) = TransactionBuilder::new()
             .set_current_height(200)
             .set_fee_rate(FeeRate::normal())
             .set_funding(&mut funds, &account)
             .set_change_address(Address::dummy(Network::Testnet, 1))
             .add_output(&destination, 500_000)
-            .build_unsigned()
+            .build_unsigned_reserved()
             .expect("build unsigned");
 
         // Every input the build selected is reserved, so a later build observes

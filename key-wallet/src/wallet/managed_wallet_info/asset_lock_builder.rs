@@ -5,12 +5,12 @@
 
 use dashcore::blockdata::transaction::special_transaction::asset_lock::AssetLockPayload;
 use dashcore::blockdata::transaction::special_transaction::TransactionPayload;
-use dashcore::{Transaction, TxOut};
+use dashcore::{OutPoint, Transaction, TxOut};
 use secp256k1::PublicKey;
 use std::fmt;
 
 use crate::managed_account::managed_account_trait::ManagedAccountTrait;
-use crate::managed_account::ManagedCoreKeysAccount;
+use crate::managed_account::{ManagedCoreKeysAccount, ReservationToken};
 use crate::signer::Signer;
 use crate::wallet::managed_wallet_info::coin_selection::SelectionStrategy;
 use crate::wallet::managed_wallet_info::fee::FeeRate;
@@ -110,6 +110,18 @@ pub struct AssetLockResult {
     /// Per-credit-output key material. See [`AssetLockCreditKeys`] for
     /// ordering and variant semantics.
     pub keys: AssetLockCreditKeys,
+    /// Owner token for the reservation this build took on the funding inputs,
+    /// or `None` if the funding account carried no reservation set.
+    ///
+    /// The caller broadcasts `transaction` and, on a rejected broadcast, must
+    /// release the reserved inputs with
+    /// [`ManagedCoreFundsAccount::release_reservation_if_owner`] passing this
+    /// token — never the unconditional `release_reservation`. See
+    /// `ReservationSet::release_if_owner` for why owner-guarded release is
+    /// required here (`dashpay/platform#4185`).
+    ///
+    /// [`ManagedCoreFundsAccount::release_reservation_if_owner`]: crate::managed_account::ManagedCoreFundsAccount::release_reservation_if_owner
+    pub reservation_token: Option<ReservationToken>,
 }
 
 /// Errors specific to asset lock transaction building.
@@ -306,30 +318,55 @@ impl ManagedWalletInfo {
         if drain {
             builder = builder.set_selection_strategy(SelectionStrategy::All);
         }
-        let (transaction, fee) = builder
+        let (transaction, fee, reservation_token) = builder
             .set_funding(funds_acc, acc)
             .require_final_inputs()
-            .build_signed(wallet, |addr| funds_acc.address_derivation_path(&addr))
+            .build_signed_reserved(wallet, |addr| funds_acc.address_derivation_path(&addr))
             .await?;
 
-        // Derive one private key per credit output.
-        let mut keys = Vec::with_capacity(credit_output_fundings.len());
-        for funding in &credit_output_fundings {
-            let funding_key_account = resolve_funding_account(
-                &mut self.accounts,
-                funding.funding_type,
-                funding.identity_index,
-            )?;
-            let key = funding_key_account
-                .next_private_key(&root_xpriv, network)
-                .map_err(|e| AssetLockError::KeyDerivation(e.to_string()))?;
-            keys.push(key);
-        }
+        // The build above reserved the funding inputs. Clone the reservation
+        // handle (a shared `Arc` view of the same set) now, before the loop
+        // below re-borrows `self.accounts` — a mid-loop failure can no longer
+        // reach `funds_acc` to release, and the caller never received the token
+        // to release it either, so a leaked reservation would strand the
+        // already-signed inputs until the 24-block TTL sweep. Owner-guarded
+        // release only (see `ReservationSet::release_if_owner`,
+        // `dashpay/platform#4185`).
+        let reservations = funds_acc.reservations().clone();
+        let reserved: Vec<OutPoint> =
+            transaction.input.iter().map(|input| input.previous_output).collect();
+
+        // Derive one private key per credit output. On any failure, release
+        // this build's own reservation before returning.
+        let keys = match (|| -> Result<Vec<[u8; 32]>, AssetLockError> {
+            let mut keys = Vec::with_capacity(credit_output_fundings.len());
+            for funding in &credit_output_fundings {
+                let funding_key_account = resolve_funding_account(
+                    &mut self.accounts,
+                    funding.funding_type,
+                    funding.identity_index,
+                )?;
+                let key = funding_key_account
+                    .next_private_key(&root_xpriv, network)
+                    .map_err(|e| AssetLockError::KeyDerivation(e.to_string()))?;
+                keys.push(key);
+            }
+            Ok(keys)
+        })() {
+            Ok(keys) => keys,
+            Err(e) => {
+                if let Some(token) = reservation_token {
+                    reservations.release_if_owner(&reserved, token);
+                }
+                return Err(e);
+            }
+        };
 
         Ok(AssetLockResult {
             transaction,
             fee,
             keys: AssetLockCreditKeys::Private(keys),
+            reservation_token,
         })
     }
 
@@ -408,11 +445,22 @@ impl ManagedWalletInfo {
         if drain {
             builder = builder.set_selection_strategy(SelectionStrategy::All);
         }
-        let (transaction, fee) = builder
+        let (transaction, fee, reservation_token) = builder
             .set_funding(funds_acc, &acc)
             .require_final_inputs()
-            .build_signed(signer, |addr| funds_acc.address_derivation_path(&addr))
+            .build_signed_reserved(signer, |addr| funds_acc.address_derivation_path(&addr))
             .await?;
+
+        // The build above reserved the funding inputs. Clone the reservation
+        // handle (a shared `Arc` view of the same set) before the bookkeeping
+        // loop below re-borrows `self.accounts`, so a failure during Phase 1–3
+        // — which runs after the transaction is already signed — can still
+        // release THIS build's reservation instead of stranding the signed
+        // inputs until the 24-block TTL sweep. Owner-guarded release only (see
+        // `ReservationSet::release_if_owner`, `dashpay/platform#4185`).
+        let reservations = funds_acc.reservations().clone();
+        let reserved: Vec<OutPoint> =
+            transaction.input.iter().map(|input| input.previous_output).collect();
 
         // Credit-output bookkeeping: for each funding, peek the next unused
         // path on its account, ask the signer for the matching pubkey, and
@@ -421,50 +469,65 @@ impl ManagedWalletInfo {
         // This protects against a signer failure mid-loop leaving earlier
         // fundings' pool indices irreversibly consumed: if `public_key`
         // errors, the current funding's index is still free, and no
-        // subsequent fundings have touched their pools yet.
-        let mut credit_output_keys = Vec::with_capacity(credit_output_fundings.len());
-        for funding in &credit_output_fundings {
-            // Phase 1 (sync): peek without marking used. Borrow is scoped
-            // to the block so we can re-resolve the account after the
-            // signer await.
-            let (path, index) = {
-                let funding_key_account = resolve_funding_account(
-                    &mut self.accounts,
-                    funding.funding_type,
-                    funding.identity_index,
-                )?;
-                funding_key_account
-                    .peek_next_path()
-                    .map_err(|e| AssetLockError::KeyDerivation(e.to_string()))?
-            };
+        // subsequent fundings have touched their pools yet. On any failure we
+        // also release this build's own reservation before returning.
+        let credit_output_keys = match async {
+            let mut credit_output_keys = Vec::with_capacity(credit_output_fundings.len());
+            for funding in &credit_output_fundings {
+                // Phase 1 (sync): peek without marking used. Borrow is scoped
+                // to the block so we can re-resolve the account after the
+                // signer await.
+                let (path, index) = {
+                    let funding_key_account = resolve_funding_account(
+                        &mut self.accounts,
+                        funding.funding_type,
+                        funding.identity_index,
+                    )?;
+                    funding_key_account
+                        .peek_next_path()
+                        .map_err(|e| AssetLockError::KeyDerivation(e.to_string()))?
+                };
 
-            // Phase 2 (async): signer round-trip. If this errors, we return
-            // without ever calling mark_first_pool_index_used — index stays
-            // free for a retry.
-            let pubkey = signer
-                .public_key(&path)
-                .await
-                .map_err(|e| AssetLockError::Signer(e.to_string()))?;
+                // Phase 2 (async): signer round-trip. If this errors, we return
+                // without ever calling mark_first_pool_index_used — index stays
+                // free for a retry.
+                let pubkey = signer
+                    .public_key(&path)
+                    .await
+                    .map_err(|e| AssetLockError::Signer(e.to_string()))?;
 
-            // Phase 3 (sync): signer succeeded, commit the index.
-            {
-                let funding_key_account = resolve_funding_account(
-                    &mut self.accounts,
-                    funding.funding_type,
-                    funding.identity_index,
-                )?;
-                funding_key_account
-                    .mark_first_pool_index_used(index)
-                    .map_err(|e| AssetLockError::KeyDerivation(e.to_string()))?;
+                // Phase 3 (sync): signer succeeded, commit the index.
+                {
+                    let funding_key_account = resolve_funding_account(
+                        &mut self.accounts,
+                        funding.funding_type,
+                        funding.identity_index,
+                    )?;
+                    funding_key_account
+                        .mark_first_pool_index_used(index)
+                        .map_err(|e| AssetLockError::KeyDerivation(e.to_string()))?;
+                }
+
+                credit_output_keys.push((pubkey, path));
             }
-
-            credit_output_keys.push((pubkey, path));
+            Ok::<_, AssetLockError>(credit_output_keys)
         }
+        .await
+        {
+            Ok(keys) => keys,
+            Err(e) => {
+                if let Some(token) = reservation_token {
+                    reservations.release_if_owner(&reserved, token);
+                }
+                return Err(e);
+            }
+        };
 
         Ok(AssetLockResult {
             transaction,
             fee,
             keys: AssetLockCreditKeys::Public(credit_output_keys),
+            reservation_token,
         })
     }
 }

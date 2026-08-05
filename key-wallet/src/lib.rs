@@ -60,6 +60,7 @@ pub use managed_account::address_pool::{AddressInfo, AddressPool, KeySource, Poo
 pub use managed_account::managed_account_type::ManagedAccountType;
 pub use managed_account::managed_platform_account::ManagedPlatformAccount;
 pub use managed_account::platform_address::PlatformP2PKHAddress;
+pub use managed_account::ReservationToken;
 pub use mnemonic::{Language, Mnemonic};
 pub use seed::Seed;
 pub use signer::{ExtendedPubKeySigner, Signer, SignerMethod, TransactionCategory};

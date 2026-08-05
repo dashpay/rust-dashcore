@@ -19,7 +19,7 @@ use crate::managed_account::address_pool;
 use crate::managed_account::managed_account_trait::ManagedAccountTrait;
 use crate::managed_account::managed_account_type::ManagedAccountType;
 use crate::managed_account::managed_core_keys_account::ManagedCoreKeysAccount;
-use crate::managed_account::reservation::ReservationSet;
+use crate::managed_account::reservation::{ReservationSet, ReservationToken};
 use crate::managed_account::transaction_record::{
     InputDetail, OutputDetail, OutputRole, TransactionDirection,
 };
@@ -128,6 +128,25 @@ impl ManagedCoreFundsAccount {
     /// processed back into the wallet, so this is only for abandoned builds.
     pub fn release_reservation(&self, tx: &Transaction) {
         self.reservations.release(tx.input.iter().map(|input| &input.previous_output));
+    }
+
+    /// Owner-guarded release of `tx`'s input reservations: releases an input
+    /// only if it is *still owned by* `token`, the [`ReservationToken`] returned
+    /// when this build reserved its inputs (from
+    /// [`build_unsigned_reserved`]/[`build_signed_reserved`]).
+    ///
+    /// This is the release a caller must use when it abandons a transaction
+    /// *after having `.await`ed something* between reserving and releasing —
+    /// above all the platform broadcast path — never the unconditional
+    /// [`Self::release_reservation`]. See `ReservationSet::release_if_owner` for
+    /// the release/re-reserve race this closes and why the owner check must live
+    /// inside key-wallet (`dashpay/platform#4185`).
+    ///
+    /// [`build_unsigned_reserved`]: crate::wallet::managed_wallet_info::transaction_builder::TransactionBuilder::build_unsigned_reserved
+    /// [`build_signed_reserved`]: crate::wallet::managed_wallet_info::transaction_builder::TransactionBuilder::build_signed_reserved
+    pub fn release_reservation_if_owner(&self, tx: &Transaction, token: ReservationToken) {
+        let outpoints: Vec<OutPoint> = tx.input.iter().map(|input| input.previous_output).collect();
+        self.reservations.release_if_owner(&outpoints, token);
     }
 
     /// Get a reference to the inner keys-account state.
