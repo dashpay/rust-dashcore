@@ -6,6 +6,7 @@ use dashcore::{BlockHash, TxIn, Txid};
 
 use crate::account::{AccountType, StandardAccountType, TransactionRecord};
 use crate::managed_account::managed_account_trait::ManagedAccountTrait;
+use crate::managed_account::reservation::ReservationToken;
 use crate::managed_account::transaction_record::TransactionDirection;
 use crate::managed_account::ManagedCoreFundsAccount;
 use crate::test_utils::TestWalletContext;
@@ -77,7 +78,7 @@ fn reservations_are_not_persisted() {
     let account = ManagedCoreFundsAccount::dummy_bip44();
     let outpoint = OutPoint::new(Txid::from([0x42; 32]), 0);
 
-    account.reservations().reserve(&[outpoint], 0);
+    account.reservations().reserve(&[outpoint], 0, ReservationToken::next());
     assert!(account.reservations().reserved(0).contains(&outpoint));
 
     let json = serde_json::to_string(&account).unwrap();
@@ -96,7 +97,7 @@ async fn processing_a_spend_releases_its_reservation() {
 
     let account = ctx.managed_wallet.first_bip44_managed_account_mut().expect("BIP44 account");
     assert!(account.utxos.contains_key(&funded));
-    account.reservations().reserve(&[funded], 0);
+    account.reservations().reserve(&[funded], 0, ReservationToken::next());
     assert!(account.reservations().reserved(0).contains(&funded));
 
     let spend = spending_tx(&[funded]);
@@ -114,7 +115,7 @@ async fn processing_a_spend_releases_its_reservation() {
 
     let account = ctx.managed_wallet.first_bip44_managed_account_mut().expect("BIP44 account");
     assert!(account.utxos.contains_key(&second_funded));
-    account.reservations().reserve(&[second_funded], 0);
+    account.reservations().reserve(&[second_funded], 0, ReservationToken::next());
     assert!(account.reservations().reserved(0).contains(&second_funded));
 
     let block_hash = BlockHash::from_slice(&[7u8; 32]).expect("hash");

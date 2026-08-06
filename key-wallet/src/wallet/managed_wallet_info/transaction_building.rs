@@ -4,122 +4,209 @@ use crate::managed_account::managed_account_trait::ManagedAccountTrait;
 use crate::signer::Signer;
 use crate::wallet::managed_wallet_info::coin_selection::SelectionStrategy;
 use crate::wallet::managed_wallet_info::fee::FeeRate;
-use crate::wallet::managed_wallet_info::transaction_builder::{BuilderError, TransactionBuilder};
+use crate::wallet::managed_wallet_info::transaction_builder::{
+    BuilderError, TransactionBuilder, TransactionSigner,
+};
 use crate::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
 use crate::wallet::ManagedWalletInfo;
-use crate::Wallet;
+use crate::{DerivationPath, Wallet};
 use dashcore::address::NetworkUnchecked;
 use dashcore::{Address, Transaction};
+use std::collections::HashMap;
 
 /// Account type preference for transaction building
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AccountTypePreference {
     BIP44,
     BIP32,
     CoinJoin,
 }
 
+impl AccountTypePreference {
+    /// The account types an empty source list draws from, in order.
+    ///
+    /// CoinJoin is deliberately absent: spending mixed outputs alongside
+    /// transparent ones in the same transaction links them and undoes the
+    /// mixing
+    pub const DEFAULT: [Self; 2] = [Self::BIP44, Self::BIP32];
+}
+
 impl ManagedWalletInfo {
+    /// Build and sign a transaction funded from the given account types at
+    /// `source_index`, signing with the wallet's own keys.
+    ///
+    /// Coin selection draws from the union of those accounts' UTXOs, and the
+    /// first of them supplies the change address. An empty `sources` means
+    /// [`AccountTypePreference::DEFAULT`], skipping the types absent at the
+    /// index; a non-empty one is taken literally and every account named must
+    /// exist.
     pub async fn build_and_sign_transaction(
         &mut self,
         wallet: &Wallet,
-        source: AccountTypePreference,
+        sources: &[AccountTypePreference],
         source_index: u32,
         outputs: Vec<(Address<NetworkUnchecked>, u64)>,
         fee_rate: FeeRate,
         strategy: SelectionStrategy,
     ) -> Result<(Transaction, u64), BuilderError> {
-        let height = self.last_processed_height();
-
-        let managed_account = match source {
-            AccountTypePreference::BIP44 => {
-                self.accounts.standard_bip44_accounts.get_mut(&source_index)
-            }
-            AccountTypePreference::BIP32 => {
-                self.accounts.standard_bip32_accounts.get_mut(&source_index)
-            }
-            AccountTypePreference::CoinJoin => {
-                self.accounts.coinjoin_accounts.get_mut(&source_index)
-            }
-        }
-        .ok_or_else(|| {
-            BuilderError::AccountNotFound(format!("managed account {source:?} #{source_index}"))
-        })?;
-        let account = match source {
-            AccountTypePreference::BIP44 => wallet.get_bip44_account(source_index),
-            AccountTypePreference::BIP32 => wallet.get_bip32_account(source_index),
-            AccountTypePreference::CoinJoin => wallet.get_coinjoin_account(source_index),
-        }
-        .ok_or_else(|| {
-            BuilderError::AccountNotFound(format!("wallet account {source:?} #{source_index}"))
-        })?;
-
-        let mut tx_builder = TransactionBuilder::new()
-            .set_fee_rate(fee_rate)
-            .set_selection_strategy(strategy)
-            .set_current_height(height)
-            .set_funding(managed_account, account);
-
-        for (address, value) in outputs {
-            let checked = address.require_network(wallet.network).map_err(|e| {
-                BuilderError::InvalidData(format!("Output address network mismatch: {}", e))
-            })?;
-            tx_builder = tx_builder.add_output(&checked, value);
-        }
-
-        tx_builder.build_signed(wallet, |addr| managed_account.address_derivation_path(&addr)).await
+        self.build_and_sign(wallet, sources, source_index, outputs, fee_rate, strategy, wallet)
+            .await
     }
 
+    /// [`Self::build_and_sign_transaction`] with signing delegated to an
+    /// external [`Signer`], so the private keys never have to be held by this
+    /// process.
     #[allow(clippy::too_many_arguments)]
     pub async fn build_and_sign_transaction_with_signer<S: Signer>(
         &mut self,
         wallet: &Wallet,
-        source: AccountTypePreference,
+        sources: &[AccountTypePreference],
         source_index: u32,
         outputs: Vec<(Address<NetworkUnchecked>, u64)>,
         fee_rate: FeeRate,
         strategy: SelectionStrategy,
         signer: &S,
     ) -> Result<(Transaction, u64), BuilderError> {
+        self.build_and_sign(wallet, sources, source_index, outputs, fee_rate, strategy, signer)
+            .await
+    }
+
+    /// [`Self::build_and_sign_transaction`] without the signing step, for
+    /// callers that sign the transaction themselves. Its inputs are reserved
+    /// just the same, so a build that is never broadcast holds them until the
+    /// reservation's TTL reclaims them.
+    pub fn build_unsigned_transaction(
+        &mut self,
+        wallet: &Wallet,
+        sources: &[AccountTypePreference],
+        source_index: u32,
+        outputs: Vec<(Address<NetworkUnchecked>, u64)>,
+        fee_rate: FeeRate,
+        strategy: SelectionStrategy,
+    ) -> Result<(Transaction, u64), BuilderError> {
+        let (builder, _paths) =
+            self.funded_builder(wallet, sources, source_index, outputs, fee_rate, strategy)?;
+        let (transaction, fee, _reservation) = builder.build_unsigned_reserved()?;
+        Ok((transaction, fee))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn build_and_sign<S: TransactionSigner + ?Sized + Sync>(
+        &mut self,
+        wallet: &Wallet,
+        sources: &[AccountTypePreference],
+        source_index: u32,
+        outputs: Vec<(Address<NetworkUnchecked>, u64)>,
+        fee_rate: FeeRate,
+        strategy: SelectionStrategy,
+        signer: &S,
+    ) -> Result<(Transaction, u64), BuilderError> {
+        let (builder, paths) =
+            self.funded_builder(wallet, sources, source_index, outputs, fee_rate, strategy)?;
+        builder.build_signed(signer, move |addr| paths.get(&addr).cloned()).await
+    }
+
+    /// A builder carrying the outputs and the funding of `sources`, ready to be
+    /// built with or without signing.
+    fn funded_builder(
+        &mut self,
+        wallet: &Wallet,
+        sources: &[AccountTypePreference],
+        source_index: u32,
+        outputs: Vec<(Address<NetworkUnchecked>, u64)>,
+        fee_rate: FeeRate,
+        strategy: SelectionStrategy,
+    ) -> Result<(TransactionBuilder, HashMap<Address, DerivationPath>), BuilderError> {
+        let outputs = outputs
+            .into_iter()
+            .map(|(address, value)| {
+                address.require_network(wallet.network).map(|checked| (checked, value)).map_err(
+                    |e| {
+                        BuilderError::InvalidData(format!("Output address network mismatch: {}", e))
+                    },
+                )
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+
         let height = self.last_processed_height();
-
-        let managed_account = match source {
-            AccountTypePreference::BIP44 => {
-                self.accounts.standard_bip44_accounts.get_mut(&source_index)
-            }
-            AccountTypePreference::BIP32 => {
-                self.accounts.standard_bip32_accounts.get_mut(&source_index)
-            }
-            AccountTypePreference::CoinJoin => {
-                self.accounts.coinjoin_accounts.get_mut(&source_index)
-            }
-        }
-        .ok_or_else(|| {
-            BuilderError::AccountNotFound(format!("managed account {source:?} #{source_index}"))
-        })?;
-        let account = match source {
-            AccountTypePreference::BIP44 => wallet.get_bip44_account(source_index),
-            AccountTypePreference::BIP32 => wallet.get_bip32_account(source_index),
-            AccountTypePreference::CoinJoin => wallet.get_coinjoin_account(source_index),
-        }
-        .ok_or_else(|| {
-            BuilderError::AccountNotFound(format!("wallet account {source:?} #{source_index}"))
-        })?;
-
-        let mut tx_builder = TransactionBuilder::new()
+        let builder = TransactionBuilder::new()
             .set_fee_rate(fee_rate)
             .set_selection_strategy(strategy)
-            .set_current_height(height)
-            .set_funding(managed_account, account);
+            .set_current_height(height);
+
+        let (mut builder, paths) = self.fund(wallet, sources, source_index, builder)?;
 
         for (address, value) in outputs {
-            let checked = address.require_network(wallet.network).map_err(|e| {
-                BuilderError::InvalidData(format!("Output address network mismatch: {}", e))
-            })?;
-            tx_builder = tx_builder.add_output(&checked, value);
+            builder = builder.add_output(&address, value);
         }
 
-        tx_builder.build_signed(signer, |addr| managed_account.address_derivation_path(&addr)).await
+        Ok((builder, paths))
+    }
+
+    /// Seed `builder` with the UTXOs of every funding account named by
+    /// `sources` at `source_index`, returning it alongside the derivation path
+    /// of each candidate input address, since the inputs can come from
+    /// different accounts.
+    fn fund(
+        &mut self,
+        wallet: &Wallet,
+        sources: &[AccountTypePreference],
+        source_index: u32,
+        mut builder: TransactionBuilder,
+    ) -> Result<(TransactionBuilder, HashMap<Address, DerivationPath>), BuilderError> {
+        let named_explicitly = !sources.is_empty();
+        let preferences = if named_explicitly {
+            sources
+        } else {
+            &AccountTypePreference::DEFAULT
+        };
+
+        let mut paths = HashMap::new();
+        let mut funded = 0usize;
+
+        for &preference in preferences {
+            let account = match preference {
+                AccountTypePreference::BIP44 => wallet.get_bip44_account(source_index),
+                AccountTypePreference::BIP32 => wallet.get_bip32_account(source_index),
+                AccountTypePreference::CoinJoin => wallet.get_coinjoin_account(source_index),
+            };
+            let managed_account = match preference {
+                AccountTypePreference::BIP44 => {
+                    self.accounts.standard_bip44_accounts.get_mut(&source_index)
+                }
+                AccountTypePreference::BIP32 => {
+                    self.accounts.standard_bip32_accounts.get_mut(&source_index)
+                }
+                AccountTypePreference::CoinJoin => {
+                    self.accounts.coinjoin_accounts.get_mut(&source_index)
+                }
+            };
+
+            let (Some(account), Some(managed_account)) = (account, managed_account) else {
+                if named_explicitly {
+                    return Err(BuilderError::AccountNotFound(format!(
+                        "account {preference:?} #{source_index}"
+                    )));
+                }
+                continue;
+            };
+
+            for utxo in managed_account.utxos.values() {
+                if let Some(path) = managed_account.address_derivation_path(&utxo.address) {
+                    paths.insert(utxo.address.clone(), path);
+                }
+            }
+            builder = builder.add_funding(managed_account, account);
+            funded += 1;
+        }
+
+        if funded == 0 {
+            return Err(BuilderError::AccountNotFound(format!(
+                "no funding account of any type at index {source_index}"
+            )));
+        }
+
+        Ok((builder, paths))
     }
 }
 #[cfg(test)]
@@ -539,7 +626,7 @@ mod tests {
         let result = info
             .build_and_sign_transaction_with_signer(
                 &wallet,
-                AccountTypePreference::BIP44,
+                &[AccountTypePreference::BIP44],
                 99,
                 dest_outputs(100_000),
                 FeeRate::normal(),
@@ -578,7 +665,7 @@ mod tests {
         let result = info
             .build_and_sign_transaction_with_signer(
                 &wallet,
-                AccountTypePreference::BIP44,
+                &[AccountTypePreference::BIP44],
                 0,
                 dest_outputs(100_000),
                 FeeRate::normal(),
@@ -644,7 +731,7 @@ mod tests {
         let (tx, fee) = info
             .build_and_sign_transaction_with_signer(
                 &wallet,
-                AccountTypePreference::BIP44,
+                &[AccountTypePreference::BIP44],
                 0,
                 dest_outputs(send_amount),
                 FeeRate::normal(),
@@ -685,7 +772,7 @@ mod tests {
         let result = info
             .build_and_sign_transaction_with_signer(
                 &wallet,
-                AccountTypePreference::BIP44,
+                &[AccountTypePreference::BIP44],
                 0,
                 dest_outputs(500_000),
                 FeeRate::normal(),
@@ -736,7 +823,7 @@ mod tests {
         let result = info
             .build_and_sign_transaction_with_signer(
                 &wallet,
-                AccountTypePreference::BIP44,
+                &[AccountTypePreference::BIP44],
                 0,
                 outputs,
                 FeeRate::normal(),
@@ -749,5 +836,89 @@ mod tests {
             "expected InvalidData for network-mismatched output, got: {:?}",
             result.err()
         );
+    }
+
+    // -- Multi-account funding --
+
+    use dashcore::{OutPoint, TxOut};
+    use std::collections::HashSet;
+    use test_case::test_case;
+
+    /// Put a confirmed 300k UTXO on a fresh receive address of the account at
+    /// index 0 and return its outpoint.
+    fn fund(
+        wallet: &Wallet,
+        info: &mut ManagedWalletInfo,
+        preference: AccountTypePreference,
+        txid_byte: u8,
+    ) -> OutPoint {
+        let (account_xpub, account) = match preference {
+            AccountTypePreference::BIP32 => (
+                wallet.get_bip32_account(0).unwrap().account_xpub,
+                info.accounts.standard_bip32_accounts.get_mut(&0).unwrap(),
+            ),
+            _ => (
+                wallet.get_bip44_account(0).unwrap().account_xpub,
+                info.accounts.standard_bip44_accounts.get_mut(&0).unwrap(),
+            ),
+        };
+        let address = account.next_receive_address(Some(&account_xpub), true).unwrap();
+        let outpoint = OutPoint {
+            txid: Txid::from_byte_array([txid_byte; 32]),
+            vout: 0,
+        };
+        account.utxos.insert(
+            outpoint,
+            Utxo {
+                outpoint,
+                txout: TxOut {
+                    value: 300_000,
+                    script_pubkey: address.script_pubkey(),
+                },
+                address,
+                height: 1000,
+                is_coinbase: false,
+                is_confirmed: true,
+                is_instantlocked: false,
+                is_locked: false,
+                is_trusted: false,
+            },
+        );
+        outpoint
+    }
+
+    /// Neither account covers the 500k target on its own, so the build only
+    /// succeeds by pooling both — and signing them proves the derivation paths
+    /// were collected across both accounts.
+    #[test_case(&[AccountTypePreference::BIP44, AccountTypePreference::BIP32] ; "named explicitly")]
+    #[test_case(&[] ; "empty list draws from every type")]
+    #[tokio::test]
+    async fn funding_pools_across_account_types(sources: &[AccountTypePreference]) {
+        let (wallet, mut info) = test_wallet_and_info();
+        let bip44 = fund(&wallet, &mut info, AccountTypePreference::BIP44, 0x11);
+        let bip32 = fund(&wallet, &mut info, AccountTypePreference::BIP32, 0x22);
+        info.update_last_processed_height(1100);
+
+        let (tx, _fee) = info
+            .build_and_sign_transaction(
+                &wallet,
+                sources,
+                0,
+                dest_outputs(500_000),
+                FeeRate::normal(),
+                SelectionStrategy::BranchAndBound,
+            )
+            .await
+            .expect("a 500k send funded by two 300k accounts");
+
+        let spent: HashSet<OutPoint> = tx.input.iter().map(|txin| txin.previous_output).collect();
+        assert_eq!(spent, HashSet::from([bip44, bip32]));
+
+        // Each account reserves what it contributed, in its own set, so a build
+        // funded from only one of them still skips the spent-to-be UTXO.
+        let bip44_account = info.accounts.standard_bip44_accounts.get(&0).unwrap();
+        let bip32_account = info.accounts.standard_bip32_accounts.get(&0).unwrap();
+        assert_eq!(bip44_account.reservations().reserved(1100), HashSet::from([bip44]));
+        assert_eq!(bip32_account.reservations().reserved(1100), HashSet::from([bip32]));
     }
 }

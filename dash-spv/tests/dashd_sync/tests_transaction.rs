@@ -370,7 +370,7 @@ async fn build_and_sign(
 
     TransactionBuilder::new()
         .set_current_height(height)
-        .set_funding(funds_account, &account)
+        .add_funding(funds_account, &account)
         .add_output(&dest, amount)
         .build_signed(w, |a| funds_account.address_derivation_path(&a))
         .await
@@ -605,7 +605,7 @@ async fn test_drain_account_into_another() {
         let (w, info) = lock.get_wallet_and_info_mut(&wallet_id).expect("wallet");
         info.build_and_sign_transaction(
             w,
-            AccountTypePreference::BIP32,
+            &[AccountTypePreference::BIP32],
             0,
             vec![(dest.as_unchecked().clone(), 0)],
             FeeRate::normal(),

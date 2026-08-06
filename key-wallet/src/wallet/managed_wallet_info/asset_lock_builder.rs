@@ -319,7 +319,7 @@ impl ManagedWalletInfo {
             builder = builder.set_selection_strategy(SelectionStrategy::All);
         }
         let (transaction, fee, reservation_token) = builder
-            .set_funding(funds_acc, acc)
+            .add_funding(funds_acc, acc)
             .require_final_inputs()
             .build_signed_reserved(wallet, |addr| funds_acc.address_derivation_path(&addr))
             .await?;
@@ -446,7 +446,7 @@ impl ManagedWalletInfo {
             builder = builder.set_selection_strategy(SelectionStrategy::All);
         }
         let (transaction, fee, reservation_token) = builder
-            .set_funding(funds_acc, &acc)
+            .add_funding(funds_acc, &acc)
             .require_final_inputs()
             .build_signed_reserved(signer, |addr| funds_acc.address_derivation_path(&addr))
             .await?;
