@@ -170,7 +170,7 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
                     account_balances: account_balances.clone(),
                     addresses_derived: project_derived_addresses(for_record),
                 };
-                let _ = self.event_sender.send(event);
+                self.emit_event(event);
             }
             // If any derivations were left unattributed (records vector
             // didn't cover every account that derived), log so the
@@ -204,7 +204,7 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
                         balance,
                         account_balances: account_balances.clone(),
                     };
-                    let _ = self.event_sender.send(event);
+                    self.emit_event(event);
                 }
             }
         }
@@ -282,7 +282,7 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
         if let Some(info) = self.wallet_infos.get_mut(wallet_id) {
             if height > info.synced_height() {
                 info.update_synced_height(height);
-                let _ = self.event_sender.send(WalletEvent::SyncHeightAdvanced {
+                self.emit_event(WalletEvent::SyncHeightAdvanced {
                     wallet_id: *wallet_id,
                     height,
                 });
@@ -314,6 +314,12 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
     }
 
     fn apply_chain_lock(&mut self, chain_lock: ChainLock) {
+        // Collect the events under the `iter_mut` borrow, then emit them once
+        // the mutable borrow of `self.wallet_infos` has ended. `emit_event`
+        // takes `&self`, which cannot overlap the live `iter_mut` borrow; the
+        // BTreeMap iteration order is preserved, so the emit order is
+        // unchanged.
+        let mut events = Vec::new();
         for (wallet_id, info) in self.wallet_infos.iter_mut() {
             let outcome = info.apply_chain_lock(chain_lock.clone());
 
@@ -323,12 +329,15 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
             // promoted nothing). Replays of the same chainlock (no
             // metadata advance) are silent.
             if outcome.metadata_advanced {
-                let _ = self.event_sender.send(WalletEvent::ChainLockProcessed {
+                events.push(WalletEvent::ChainLockProcessed {
                     wallet_id: *wallet_id,
                     chain_lock: chain_lock.clone(),
                     locked_transactions: outcome.locked_transactions,
                 });
             }
+        }
+        for event in events {
+            self.emit_event(event);
         }
     }
 
@@ -361,7 +370,7 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
             };
             let prior = prior_account_balances.remove(&wallet_id).unwrap_or_default();
             let account_balances = diff_account_balances(&prior, &info.account_balances());
-            let _ = self.event_sender().send(WalletEvent::TransactionInstantLocked {
+            self.emit_event(WalletEvent::TransactionInstantLocked {
                 wallet_id,
                 txid,
                 instant_lock: instant_lock.clone(),
@@ -501,7 +510,7 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletManager<T> {
                     account_balances,
                     addresses_derived,
                 };
-                let _ = self.event_sender.send(event);
+                self.emit_event(event);
             }
         }
     }

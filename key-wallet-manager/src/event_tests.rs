@@ -1339,3 +1339,169 @@ async fn test_block_processing_stamps_in_block_position() {
         "second tx in block.txdata must be stamped position 1"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Lossless persistence channel (dashpay/platform#4069)
+// ---------------------------------------------------------------------------
+
+/// A large burst of watermark events that the durable-persistence consumer
+/// does not drain until the very end is delivered **losslessly and in order**
+/// over the unbounded persistence channel — the exact property the platform
+/// consumer's durable sync watermark relies on. The bounded broadcast, by
+/// contrast, drops events (`Lagged`) under the same burst; that drop is the
+/// freeze root cause this dedicated channel removes.
+///
+/// This models a stalled/slow persistence consumer during a heavy SPV
+/// catch-up: neither receiver is drained while `BURST` monotonically
+/// increasing `SyncHeightAdvanced` watermarks are emitted. On the unbounded
+/// channel every watermark survives, so the watermark can keep advancing to
+/// the tip after the stall clears; on the broadcast it lags and the watermark
+/// would freeze.
+#[tokio::test]
+async fn persistence_channel_is_lossless_under_a_large_burst() {
+    // `BURST` far exceeds the broadcast ring (`DEFAULT_WALLET_EVENT_CAPACITY`
+    // == 1000), so the bounded broadcast is guaranteed to lag.
+    const BURST: u32 = 5000;
+
+    let (mut manager, wallet_id, _addr) = setup_manager_with_wallet();
+    // Take the lossless persistence receiver AND subscribe a bounded broadcast
+    // receiver before emitting; neither is drained during the burst.
+    let mut persistence_rx =
+        manager.take_persistence_receiver().expect("persistence receiver available once");
+    let mut broadcast_rx = manager.subscribe_events();
+
+    for h in 1..=BURST {
+        manager.update_wallet_synced_height(&wallet_id, h);
+    }
+
+    // Persistence channel: every watermark arrived, in order, no gaps.
+    let mut received: Vec<u32> = Vec::with_capacity(BURST as usize);
+    while let Ok(event) = persistence_rx.try_recv() {
+        match event {
+            WalletEvent::SyncHeightAdvanced {
+                wallet_id: w,
+                height,
+            } => {
+                assert_eq!(w, wallet_id, "watermark for the wrong wallet");
+                received.push(height);
+            }
+            other => panic!("unexpected event on persistence channel: {other:?}"),
+        }
+    }
+    assert_eq!(
+        received.len(),
+        BURST as usize,
+        "persistence channel dropped events: got {} of {BURST}",
+        received.len()
+    );
+    assert!(
+        received.windows(2).all(|w| w[0] + 1 == w[1]),
+        "persistence channel reordered or gapped the watermark stream"
+    );
+    assert_eq!(received.first().copied(), Some(1));
+    assert_eq!(received.last().copied(), Some(BURST), "final watermark must reach the tip");
+
+    // Broadcast channel: the same burst overflows the bounded ring and drops
+    // events — demonstrating why the persistence consumer must NOT use it.
+    let mut broadcast_lagged = false;
+    let mut broadcast_delivered = 0usize;
+    loop {
+        match broadcast_rx.try_recv() {
+            Ok(_) => broadcast_delivered += 1,
+            Err(tokio::sync::broadcast::error::TryRecvError::Lagged(_)) => broadcast_lagged = true,
+            Err(_) => break,
+        }
+    }
+    assert!(
+        broadcast_lagged,
+        "the bounded broadcast should have lagged under a {BURST}-event burst"
+    );
+    assert!(
+        broadcast_delivered < BURST as usize,
+        "broadcast should have dropped events but delivered all {BURST}"
+    );
+}
+
+/// The receiver is taken exactly once: the second call returns `None` and the
+/// first receiver keeps working. Platform's manager construction relies on
+/// exactly this (`take_persistence_receiver().expect(..)` on a fresh manager).
+#[tokio::test]
+async fn persistence_receiver_is_taken_exactly_once() {
+    let (mut manager, wallet_id, _addr) = setup_manager_with_wallet();
+    let mut first = manager.take_persistence_receiver().expect("first take must succeed");
+    assert!(manager.take_persistence_receiver().is_none(), "second take must return None");
+    manager.update_wallet_synced_height(&wallet_id, 1);
+    assert!(
+        matches!(
+            first.try_recv(),
+            Ok(WalletEvent::SyncHeightAdvanced {
+                height: 1,
+                ..
+            })
+        ),
+        "the first receiver must keep receiving after a second take attempt"
+    );
+}
+
+/// Late install (contract violation): events emitted before
+/// `take_persistence_receiver` are permanently absent from the persistence
+/// stream — the channel is created empty and only delivers from installation
+/// onward. The accessor warns (see its docs); this pins the behavioural half:
+/// no silent replay is invented.
+#[tokio::test]
+async fn late_install_delivers_only_post_install_events() {
+    let (mut manager, wallet_id, _addr) = setup_manager_with_wallet();
+    // Emitted BEFORE any consumer exists: reaches only the lossy broadcast.
+    manager.update_wallet_synced_height(&wallet_id, 7);
+
+    let mut rx =
+        manager.take_persistence_receiver().expect("late install still returns the receiver");
+    manager.update_wallet_synced_height(&wallet_id, 8);
+
+    match rx.try_recv() {
+        Ok(WalletEvent::SyncHeightAdvanced {
+            height,
+            ..
+        }) => {
+            assert_eq!(height, 8, "only post-install events may be delivered");
+        }
+        other => panic!("expected the post-install watermark, got {other:?}"),
+    }
+    assert!(
+        rx.try_recv().is_err(),
+        "the pre-install event must not be replayed into the persistence stream"
+    );
+}
+
+/// A consumer that drops its receiver while the manager is running must not
+/// wedge or panic the emit paths: in-memory processing continues and the
+/// broadcast fan-out still delivers (the lost-consumer anomaly is logged once
+/// inside `emit_event`).
+#[tokio::test]
+async fn dropped_persistence_consumer_does_not_wedge_emission() {
+    let (mut manager, wallet_id, _addr) = setup_manager_with_wallet();
+    let rx = manager.take_persistence_receiver().expect("receiver available once");
+    drop(rx);
+
+    let mut broadcast_rx = manager.subscribe_events();
+    // Two emissions: the first trips the log-once latch, the second proves
+    // emission keeps flowing afterwards.
+    manager.update_wallet_synced_height(&wallet_id, 21);
+    manager.update_wallet_synced_height(&wallet_id, 22);
+
+    let mut heights = Vec::new();
+    while let Ok(event) = broadcast_rx.try_recv() {
+        if let WalletEvent::SyncHeightAdvanced {
+            height,
+            ..
+        } = event
+        {
+            heights.push(height);
+        }
+    }
+    assert_eq!(
+        heights,
+        vec![21, 22],
+        "broadcast delivery must be unaffected by a lost persistence consumer"
+    );
+}
