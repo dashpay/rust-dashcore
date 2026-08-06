@@ -204,11 +204,6 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletManager<T> {
         self.event_sender.subscribe()
     }
 
-    /// Get a reference to the event sender for emitting events.
-    pub fn event_sender(&self) -> &broadcast::Sender<WalletEvent> {
-        &self.event_sender
-    }
-
     /// Install a durable persistence consumer and take its event receiver
     /// (dashpay/platform#4069).
     ///
