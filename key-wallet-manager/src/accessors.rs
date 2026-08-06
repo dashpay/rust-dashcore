@@ -231,6 +231,21 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletManager<T> {
             // A consumer has already been installed; the receiver is taken once.
             return None;
         }
+        // Installing after emission has begun violates the documented contract:
+        // everything emitted so far reached only the lossy broadcast and is
+        // permanently absent from the persistence stream, with no
+        // `Lagged`-style marker to reveal the gap. The receiver is still
+        // returned (delivery is lossless from this point on), but the gap must
+        // not be silent — it is exactly the invisible-loss failure mode this
+        // channel exists to eliminate.
+        if self.events_emitted.load(std::sync::atomic::Ordering::Relaxed) {
+            tracing::warn!(
+                "take_persistence_receiver called after wallet events were already emitted; \
+                 earlier events are absent from the persistence stream. Install the persistence \
+                 consumer before the manager is shared with any producer \
+                 (dashpay/platform#4069)."
+            );
+        }
         let (sender, receiver) = mpsc::unbounded_channel();
         self.persistence_sender = Some(sender);
         Some(receiver)

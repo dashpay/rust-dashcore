@@ -1421,3 +1421,87 @@ async fn persistence_channel_is_lossless_under_a_large_burst() {
         "broadcast should have dropped events but delivered all {BURST}"
     );
 }
+
+/// The receiver is taken exactly once: the second call returns `None` and the
+/// first receiver keeps working. Platform's manager construction relies on
+/// exactly this (`take_persistence_receiver().expect(..)` on a fresh manager).
+#[tokio::test]
+async fn persistence_receiver_is_taken_exactly_once() {
+    let (mut manager, wallet_id, _addr) = setup_manager_with_wallet();
+    let mut first = manager.take_persistence_receiver().expect("first take must succeed");
+    assert!(manager.take_persistence_receiver().is_none(), "second take must return None");
+    manager.update_wallet_synced_height(&wallet_id, 1);
+    assert!(
+        matches!(
+            first.try_recv(),
+            Ok(WalletEvent::SyncHeightAdvanced {
+                height: 1,
+                ..
+            })
+        ),
+        "the first receiver must keep receiving after a second take attempt"
+    );
+}
+
+/// Late install (contract violation): events emitted before
+/// `take_persistence_receiver` are permanently absent from the persistence
+/// stream — the channel is created empty and only delivers from installation
+/// onward. The accessor warns (see its docs); this pins the behavioural half:
+/// no silent replay is invented.
+#[tokio::test]
+async fn late_install_delivers_only_post_install_events() {
+    let (mut manager, wallet_id, _addr) = setup_manager_with_wallet();
+    // Emitted BEFORE any consumer exists: reaches only the lossy broadcast.
+    manager.update_wallet_synced_height(&wallet_id, 7);
+
+    let mut rx =
+        manager.take_persistence_receiver().expect("late install still returns the receiver");
+    manager.update_wallet_synced_height(&wallet_id, 8);
+
+    match rx.try_recv() {
+        Ok(WalletEvent::SyncHeightAdvanced {
+            height,
+            ..
+        }) => {
+            assert_eq!(height, 8, "only post-install events may be delivered");
+        }
+        other => panic!("expected the post-install watermark, got {other:?}"),
+    }
+    assert!(
+        rx.try_recv().is_err(),
+        "the pre-install event must not be replayed into the persistence stream"
+    );
+}
+
+/// A consumer that drops its receiver while the manager is running must not
+/// wedge or panic the emit paths: in-memory processing continues and the
+/// broadcast fan-out still delivers (the lost-consumer anomaly is logged once
+/// inside `emit_event`).
+#[tokio::test]
+async fn dropped_persistence_consumer_does_not_wedge_emission() {
+    let (mut manager, wallet_id, _addr) = setup_manager_with_wallet();
+    let rx = manager.take_persistence_receiver().expect("receiver available once");
+    drop(rx);
+
+    let mut broadcast_rx = manager.subscribe_events();
+    // Two emissions: the first trips the log-once latch, the second proves
+    // emission keeps flowing afterwards.
+    manager.update_wallet_synced_height(&wallet_id, 21);
+    manager.update_wallet_synced_height(&wallet_id, 22);
+
+    let mut heights = Vec::new();
+    while let Ok(event) = broadcast_rx.try_recv() {
+        if let WalletEvent::SyncHeightAdvanced {
+            height,
+            ..
+        } = event
+        {
+            heights.push(height);
+        }
+    }
+    assert_eq!(
+        heights,
+        vec![21, 22],
+        "broadcast delivery must be unaffected by a lost persistence consumer"
+    );
+}

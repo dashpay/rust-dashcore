@@ -177,6 +177,15 @@ pub struct WalletManager<T: WalletInfoInterface + Send + Sync + 'static = Manage
     /// running, so that anomaly is surfaced (logged) exactly once instead of on
     /// every subsequent emit.
     persistence_consumer_lost: std::sync::atomic::AtomicBool,
+    /// Latches `true` on the first [`emit_event`] call. Read by
+    /// [`take_persistence_receiver`] to warn when a persistence consumer
+    /// installs itself only AFTER events have already been emitted — those
+    /// events reached only the lossy broadcast and are permanently absent from
+    /// the persistence stream, with no `Lagged`-style marker to reveal the gap.
+    ///
+    /// [`emit_event`]: WalletManager::emit_event
+    /// [`take_persistence_receiver`]: WalletManager::take_persistence_receiver
+    events_emitted: std::sync::atomic::AtomicBool,
 }
 
 impl<T: WalletInfoInterface + Send + Sync + 'static> WalletManager<T> {
@@ -192,6 +201,7 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletManager<T> {
             // a consumer calls `take_persistence_receiver`. See that field's docs.
             persistence_sender: None,
             persistence_consumer_lost: std::sync::atomic::AtomicBool::new(false),
+            events_emitted: std::sync::atomic::AtomicBool::new(false),
         }
     }
 
@@ -206,6 +216,7 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletManager<T> {
     /// persistence consumer (which needs a `read()` lock to drain). See the
     /// `persistence_sender` field docs for the full rationale.
     fn emit_event(&self, event: WalletEvent) {
+        self.events_emitted.store(true, std::sync::atomic::Ordering::Relaxed);
         // Lossless path: the persistence consumer must never miss a row-bearing
         // or watermark event, or its durable sync height freezes. Only enqueue
         // once a consumer has installed itself (opt-in), so a manager with no
