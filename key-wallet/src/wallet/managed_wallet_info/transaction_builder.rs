@@ -241,6 +241,20 @@ impl TransactionBuilder {
         self.change_addr.is_some() || self.change_to_first_input
     }
 
+    /// Dust threshold for an output of `output_size` serialized bytes, mirroring Dash Core's
+    /// `GetDustThreshold`: the output is dust when spending it would cost more than a third of
+    /// its value at the dust relay fee, i.e. `3 * (output_size + 148)` duffs for the 148-byte
+    /// P2PKH input that would spend it.
+    ///
+    /// The flat 546 this replaces is exactly this formula for a 34-byte P2PKH output, so nothing
+    /// moves for the ordinary path. It matters for `change_to_first_input`, where change is
+    /// routed to whatever script VIN0 uses: a 43-byte output has a 573-duff threshold, so a
+    /// 550-duff change output would have passed a flat 546 check and then been rejected as dust
+    /// by the network.
+    fn dust_threshold(output_size: usize) -> u64 {
+        3 * (output_size as u64 + 148)
+    }
+
     fn estimated_change_output_size(&self) -> usize {
         if self.change_to_first_input {
             // Coin selection may choose any spendable input, then BIP-69 determines VIN0.
@@ -464,6 +478,8 @@ impl TransactionBuilder {
 
         let change_amount =
             total_input.saturating_sub(total_output).saturating_sub(selection.estimated_fee);
+        // Computed before `self.outputs` is moved out below.
+        let change_dust_threshold = Self::dust_threshold(self.estimated_change_output_size());
         let mut tx_outputs = match &self.special_payload {
             Some(TransactionPayload::AssetLockPayloadType(_)) => vec![TxOut {
                 value: total_output,
@@ -503,7 +519,7 @@ impl TransactionBuilder {
                 };
                 credit.value = drained;
             }
-        } else if change_amount > 546 {
+        } else if change_amount > change_dust_threshold {
             // Add change output if above dust threshold
             let change_script_pubkey = if self.change_to_first_input {
                 let Some(first_input) = selected_inputs.first() else {
@@ -1496,6 +1512,23 @@ mod tests {
             legacy_base_size(1, true, payload_size),
             "asset-lock sizing must stay byte-identical to the pre-OP_RETURN estimate"
         );
+    }
+
+    /// The dust threshold has to follow the change script, not assume P2PKH. Pins both ends:
+    /// the P2PKH case must still be exactly the 546 the flat literal used to hard-code, and a
+    /// larger routed script must demand proportionally more before change is worth creating.
+    #[test]
+    fn test_dust_threshold_follows_the_change_output_size() {
+        assert_eq!(
+            TransactionBuilder::dust_threshold(CHANGE_OUTPUT_SIZE),
+            546,
+            "P2PKH change must keep the historical 546-duff threshold"
+        );
+        // A 43-byte output (e.g. P2WSH) costs the same 148-byte input to spend, so its threshold
+        // is 3 * (43 + 148). A 550-duff change output clears 546 but is dust at this size.
+        assert_eq!(TransactionBuilder::dust_threshold(43), 573);
+        assert!(550 > TransactionBuilder::dust_threshold(CHANGE_OUTPUT_SIZE));
+        assert!(550 < TransactionBuilder::dust_threshold(43));
     }
 
     /// Pins the boundary itself, not just an under-sized fixture: exactly
