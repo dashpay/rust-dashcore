@@ -1893,16 +1893,63 @@ mod tests {
             if with_memo {
                 b = b.add_op_return(&memo).expect("memo within the ceiling").preserve_output_order();
             }
-            b.build_unsigned_reserved().expect("drain builds").1
+            let (tx, fee, _reservation) = b.build_unsigned_reserved().expect("drain builds");
+            (tx, fee)
         };
 
-        let plain_fee = build(false);
-        let memo_fee = build(true);
-        // 60 payload bytes + OP_RETURN + push opcode + the 8-byte value and its script varint.
+        let (plain_tx, plain_fee) = build(false);
+        let (memo_tx, memo_fee) = build(true);
+
+        // "Costs more" is too weak on its own: it passes even when the extra fee
+        // falls short of the bytes the carrier actually adds. Price the fee
+        // against the SERIALIZED transactions instead, so an under-priced data
+        // carrier — the case that lets a drain broadcast below the relay rate —
+        // fails here.
+        let plain_size = dashcore::consensus::serialize(&plain_tx).len() as u64;
+        let memo_size = dashcore::consensus::serialize(&memo_tx).len() as u64;
+
+        // These are unsigned transactions, so the fee must exceed the bytes on
+        // hand by the signature allowance the estimator adds per input. Both
+        // builds spend the same single input, so that allowance is identical:
+        // whatever the carrier costs shows up entirely as extra size.
         assert!(
-            memo_fee > plain_fee,
-            "a drain carrying a {}-byte memo must cost more than a bare drain ({memo_fee} vs {plain_fee})",
+            memo_fee > memo_size,
+            "the fee ({memo_fee}) must cover the {memo_size} serialized bytes plus signatures"
+        );
+        assert_eq!(
+            memo_fee - memo_size,
+            plain_fee - plain_size,
+            "the carrier must not disturb the per-input signature allowance"
+        );
+
+        // The heart of it: every byte the carrier adds is paid for, at the same
+        // rate as the rest of the transaction. Equality (not >=) is deliberate —
+        // it catches under-pricing AND a fee that silently drifts upward.
+        let size_delta = memo_size - plain_size;
+        let fee_delta = memo_fee - plain_fee;
+        assert!(
+            size_delta >= memo.len() as u64,
+            "a {}-byte memo must add at least its payload to the serialized size (added {size_delta})",
             memo.len()
+        );
+        assert_eq!(
+            fee_delta, size_delta,
+            "the {size_delta} bytes the carrier adds must be priced at the transaction's own rate"
+        );
+
+        // And the deliverable output shrank by exactly that extra fee: the
+        // zero-value carrier takes nothing from the destination beyond its bytes.
+        let deliverable = |tx: &Transaction| {
+            tx.output
+                .iter()
+                .find(|o| !o.script_pubkey.is_op_return())
+                .expect("one value carrier")
+                .value
+        };
+        assert_eq!(
+            deliverable(&plain_tx) - deliverable(&memo_tx),
+            fee_delta,
+            "the zero-value carrier must cost the destination exactly the extra fee"
         );
     }
 
