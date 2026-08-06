@@ -489,8 +489,8 @@ impl TransactionBuilder {
         };
 
         if self.selection_strategy == SelectionStrategy::All {
-            // Drain: the single output takes the whole balance minus fee (the caller's amount is
-            // ignored); no change.
+            // Drain: the single VALUE-CARRYING output takes the whole balance minus fee (the
+            // caller's amount is ignored); no change.
             let drained = total_input.saturating_sub(selection.estimated_fee);
             if drained == 0 {
                 return Err(BuilderError::InsufficientFunds {
@@ -498,10 +498,46 @@ impl TransactionBuilder {
                     required: selection.estimated_fee,
                 });
             }
-            let [out] = tx_outputs.as_mut_slice() else {
+            // Zero-value data carriers ride along with a drain. A MAYAChain deposit is the
+            // motivating case: the memo MUST be on-chain as an OP_RETURN beside the vault
+            // output, so refusing every second output made "swap my whole balance" impossible
+            // to express — callers had to guess the fee, subtract it themselves and send an
+            // explicit amount, which under-pays the destination whenever the guess is low.
+            // Data outputs claim none of the drained balance, and `effective_outputs_size`
+            // already prices their bytes into the fee, so the drain arithmetic is unchanged.
+            //
+            // An asset lock is the exception: ITS single output IS an OP_RETURN (the burn
+            // mirroring the payload credits), so it stays the value carrier.
+            let is_asset_lock =
+                matches!(self.special_payload, Some(TransactionPayload::AssetLockPayloadType(_)));
+            if !is_asset_lock
+                && tx_outputs.iter().any(|out| out.script_pubkey.is_op_return() && out.value != 0)
+            {
                 return Err(BuilderError::InvalidData(
-                    "SelectionStrategy::All requires exactly one output (the destination)".into(),
+                    "SelectionStrategy::All requires OP_RETURN outputs to be zero-value: a data \
+                     carrier with a value would claim part of the drained balance"
+                        .into(),
                 ));
+            }
+            let value_carriers = if is_asset_lock {
+                tx_outputs.len()
+            } else {
+                tx_outputs.iter().filter(|out| !out.script_pubkey.is_op_return()).count()
+            };
+            if value_carriers != 1 {
+                return Err(BuilderError::InvalidData(
+                    "SelectionStrategy::All requires exactly one spendable output (the \
+                     destination); only zero-value OP_RETURN data outputs may accompany it"
+                        .into(),
+                ));
+            }
+            let out = if is_asset_lock {
+                &mut tx_outputs[0]
+            } else {
+                tx_outputs
+                    .iter_mut()
+                    .find(|out| !out.script_pubkey.is_op_return())
+                    .expect("exactly one spendable output was just counted")
             };
             out.value = drained;
             // An asset-lock drain must also rewrite the payload's credit
@@ -1810,5 +1846,133 @@ mod tests {
         // stranding them until the TTL backstop reclaims them.
         funds.release_reservation(&tx);
         assert!(funds.reservations().reserved(200).is_empty());
+    }
+
+    /// A MAYACHAIN-style drain: sweep the wallet to the vault while the swap memo rides along
+    /// as a zero-value OP_RETURN. Before this was allowed, "swap my whole balance" could not be
+    /// expressed at all — the caller had to guess the fee and send an explicit amount.
+    #[test]
+    fn test_drain_allows_a_zero_value_op_return_beside_the_destination() {
+        let utxo = Utxo::dummy(0, 100_000, 100, false, true);
+        let vault = Address::dummy(Network::Testnet, 0);
+        let memo = b"=:ETH.ETH:0x1c7b17362c84287bd1184447e6dfeaf920c31bbe";
+
+        let (tx, fee, _reservation) = TransactionBuilder::new()
+            .set_current_height(200)
+            .add_inputs([utxo])
+            .add_output(&vault, 1) // ignored by a drain
+            .add_op_return(memo)
+            .expect("memo within the OP_RETURN ceiling")
+            .preserve_output_order()
+            .set_selection_strategy(SelectionStrategy::All)
+            .build_unsigned_reserved()
+            .expect("a drain with a data carrier builds");
+
+        assert_eq!(tx.output.len(), 2, "vault + memo, no change");
+        // The vault takes everything the fee does not.
+        assert_eq!(tx.output[0].value, 100_000 - fee);
+        assert_eq!(tx.output[0].script_pubkey, vault.script_pubkey());
+        // The memo is on-chain, zero-value, and still at VOUT1.
+        assert_eq!(tx.output[1].value, 0);
+        assert_eq!(tx.output[1].script_pubkey, op_return_script(memo));
+        // Nothing is left behind: inputs are fully accounted for by outputs + fee.
+        assert_eq!(tx.output.iter().map(|o| o.value).sum::<u64>() + fee, 100_000);
+    }
+
+    /// The data carrier's bytes must be paid for. A drain whose fee ignored the OP_RETURN would
+    /// under-pay the miner and risk a stuck deposit.
+    #[test]
+    fn test_drain_fee_covers_the_data_carrier_bytes() {
+        let memo = vec![0x4d; 60];
+        let build = |with_memo: bool| {
+            let mut b = TransactionBuilder::new()
+                .set_current_height(200)
+                .add_inputs([Utxo::dummy(0, 100_000, 100, false, true)])
+                .add_output(&Address::dummy(Network::Testnet, 0), 1)
+                .set_selection_strategy(SelectionStrategy::All);
+            if with_memo {
+                b = b.add_op_return(&memo).expect("memo within the ceiling").preserve_output_order();
+            }
+            b.build_unsigned_reserved().expect("drain builds").1
+        };
+
+        let plain_fee = build(false);
+        let memo_fee = build(true);
+        // 60 payload bytes + OP_RETURN + push opcode + the 8-byte value and its script varint.
+        assert!(
+            memo_fee > plain_fee,
+            "a drain carrying a {}-byte memo must cost more than a bare drain ({memo_fee} vs {plain_fee})",
+            memo.len()
+        );
+    }
+
+    /// Two spendable outputs remain ambiguous: a drain has one balance to give away.
+    #[test]
+    fn test_drain_still_rejects_two_spendable_outputs() {
+        let result = TransactionBuilder::new()
+            .set_current_height(200)
+            .add_inputs([Utxo::dummy(0, 100_000, 100, false, true)])
+            .add_output(&Address::dummy(Network::Testnet, 0), 1)
+            .add_output(&Address::dummy(Network::Testnet, 1), 1)
+            .set_selection_strategy(SelectionStrategy::All)
+            .build_unsigned_reserved();
+
+        match result {
+            Err(BuilderError::InvalidData(message)) => {
+                assert!(message.contains("exactly one spendable output"), "got: {message}");
+            }
+            other => panic!("expected the two-destination drain to be rejected, got {other:?}"),
+        }
+    }
+
+    /// A value-bearing OP_RETURN would claim part of the drained balance and overspend.
+    #[test]
+    fn test_drain_rejects_a_value_bearing_data_carrier() {
+        let mut builder = TransactionBuilder::new()
+            .set_current_height(200)
+            .add_inputs([Utxo::dummy(0, 100_000, 100, false, true)])
+            .add_output(&Address::dummy(Network::Testnet, 0), 1)
+            .add_op_return(b"memo")
+            .expect("memo within the ceiling")
+            .set_selection_strategy(SelectionStrategy::All);
+        // Reach past the builder API, which cannot express this, to prove the guard holds.
+        builder.outputs.last_mut().expect("the data output").value = 5_000;
+
+        match builder.build_unsigned_reserved() {
+            Err(BuilderError::InvalidData(message)) => {
+                assert!(message.contains("zero-value"), "got: {message}");
+            }
+            other => panic!("expected a value-bearing data carrier to be rejected, got {other:?}"),
+        }
+    }
+
+    /// An asset-lock drain is the one case whose value carrier IS an OP_RETURN (the burn
+    /// mirroring the payload credits) — it must keep working unchanged.
+    #[test]
+    fn test_asset_lock_drain_still_uses_its_burn_output_as_the_carrier() {
+        let credit_script = Address::dummy(Network::Testnet, 14).script_pubkey();
+        let (tx, fee, _reservation) = TransactionBuilder::new()
+            .set_current_height(200)
+            .add_inputs([Utxo::dummy(0, 100_000, 100, false, true)])
+            .set_special_payload(TransactionPayload::AssetLockPayloadType(AssetLockPayload {
+                version: 1,
+                credit_outputs: vec![TxOut {
+                    value: 1,
+                    script_pubkey: credit_script,
+                }],
+            }))
+            .set_selection_strategy(SelectionStrategy::All)
+            .build_unsigned_reserved()
+            .expect("asset-lock drain builds");
+
+        assert_eq!(tx.output.len(), 1);
+        assert_eq!(tx.output[0].value, 100_000 - fee);
+        assert!(tx.output[0].script_pubkey.is_op_return());
+        match tx.special_transaction_payload {
+            Some(TransactionPayload::AssetLockPayloadType(p)) => {
+                assert_eq!(p.credit_outputs[0].value, 100_000 - fee, "credits mirror the burn");
+            }
+            other => panic!("expected the asset-lock payload, got {other:?}"),
+        }
     }
 }
