@@ -917,31 +917,51 @@ impl ManagedAccountCollection {
         accounts
     }
 
-    /// Get all funds-bearing accounts (Standard BIP44/32, CoinJoin, DashPay).
+    /// Get the accounts whose funds belong to **this** wallet (Standard
+    /// BIP44/32, CoinJoin, DashPay receival).
     ///
     /// Use this from callsites that operate on balance / UTXO state — keys-only
     /// accounts (identity, asset-lock, provider) don't track those, so iterating
     /// [`Self::all_accounts`] and filtering via [`ManagedAccountRef::as_funds`]
     /// in those callsites is just noise.
+    ///
+    /// **`dashpay_external_accounts` are deliberately excluded.** A DashPay
+    /// external account is watch-only by construction: its addresses are derived
+    /// from a *contact's* xpub, so this wallet can observe those outputs but can
+    /// never sign for them. They are the contact's coins. Counting them here
+    /// made the wallet's own balance grow by whatever it had just paid out —
+    /// send 0.01 DASH to a contact and the total does not move, because the
+    /// amount leaves the standard account and reappears under the contact's —
+    /// and put unspendable outputs into `get_spendable_utxos`, where coin
+    /// selection can pick one and fail at signing time.
+    ///
+    /// Receival accounts stay: those addresses derive from *our* xpub and a
+    /// contact pays into them, so the funds are genuinely ours.
+    ///
+    /// Excluding them here does not stop the wallet seeing those transactions.
+    /// Detection runs through
+    /// [`transaction_checking`](crate::transaction_checking), whose
+    /// `AccountTypeToCheck` list still includes `DashpayExternalAccount`, and
+    /// the monitored-address / compact-filter set is built from
+    /// [`Self::all_accounts`], which also still includes it.
     pub fn all_funding_accounts(&self) -> Vec<&ManagedCoreFundsAccount> {
         let mut accounts = Vec::new();
         accounts.extend(self.standard_bip44_accounts.values());
         accounts.extend(self.standard_bip32_accounts.values());
         accounts.extend(self.coinjoin_accounts.values());
         accounts.extend(self.dashpay_receival_accounts.values());
-        accounts.extend(self.dashpay_external_accounts.values());
         accounts
     }
 
     /// Get all funds-bearing accounts mutably. See [`Self::all_funding_accounts`]
-    /// for which account types are visited.
+    /// for which account types are visited — in particular, why DashPay
+    /// *external* (watch-only) accounts are not among them.
     pub fn all_funding_accounts_mut(&mut self) -> Vec<&mut ManagedCoreFundsAccount> {
         let mut accounts = Vec::new();
         accounts.extend(self.standard_bip44_accounts.values_mut());
         accounts.extend(self.standard_bip32_accounts.values_mut());
         accounts.extend(self.coinjoin_accounts.values_mut());
         accounts.extend(self.dashpay_receival_accounts.values_mut());
-        accounts.extend(self.dashpay_external_accounts.values_mut());
         accounts
     }
 
@@ -1033,5 +1053,89 @@ impl ManagedAccountCollection {
         key: &PlatformPaymentAccountKey,
     ) -> Option<&mut ManagedPlatformAccount> {
         self.platform_payment_accounts.get_mut(key)
+    }
+}
+
+#[cfg(test)]
+mod dashpay_funding_scope_tests {
+    use super::*;
+    use crate::account::{Account, AccountType, StandardAccountType};
+    use crate::managed_account::ManagedCoreFundsAccount;
+    use crate::Network;
+
+    fn xpub() -> crate::bip32::ExtendedPubKey {
+        let seed = [7u8; 32];
+        let xpriv =
+            crate::bip32::ExtendedPrivKey::new_master(Network::Testnet, &seed).expect("master key");
+        {
+            let secp = secp256k1::Secp256k1::new();
+            crate::bip32::ExtendedPubKey::from_priv(&secp, &xpriv)
+        }
+    }
+
+    fn managed(account_type: AccountType) -> ManagedCoreFundsAccount {
+        ManagedCoreFundsAccount::from_account(&Account {
+            parent_wallet_id: Some([1u8; 32]),
+            account_type,
+            network: Network::Testnet,
+            account_xpub: xpub(),
+            is_watch_only: matches!(account_type, AccountType::DashpayExternalAccount { .. }),
+        })
+    }
+
+    /// A DashPay **external** account is watch-only — its addresses derive from
+    /// the contact's xpub, so those coins are the contact's and this wallet can
+    /// never sign for them. Counting them as funding made the wallet's balance
+    /// absorb whatever it had just paid out, and put unspendable outputs in
+    /// front of coin selection.
+    ///
+    /// A DashPay **receival** account derives from our own xpub and must stay.
+    #[test]
+    fn external_dashpay_accounts_are_not_funding_accounts() {
+        let mut collection = ManagedAccountCollection::default();
+        collection
+            .insert_funds_bearing_account(managed(AccountType::Standard {
+                index: 0,
+                standard_account_type: StandardAccountType::BIP44Account,
+            }))
+            .expect("standard");
+        collection
+            .insert_funds_bearing_account(managed(AccountType::DashpayReceivingFunds {
+                index: 0,
+                user_identity_id: [0xAA; 32],
+                friend_identity_id: [0xBB; 32],
+            }))
+            .expect("receival");
+        collection
+            .insert_funds_bearing_account(managed(AccountType::DashpayExternalAccount {
+                index: 0,
+                user_identity_id: [0xAA; 32],
+                friend_identity_id: [0xBB; 32],
+            }))
+            .expect("external");
+
+        let funding: Vec<AccountType> = collection
+            .all_funding_accounts()
+            .iter()
+            .map(|a| a.managed_account_type().to_account_type())
+            .collect();
+
+        assert!(
+            funding.iter().any(|t| matches!(t, AccountType::DashpayReceivingFunds { .. })),
+            "receival accounts hold our own coins and must fund"
+        );
+        assert!(
+            !funding.iter().any(|t| matches!(t, AccountType::DashpayExternalAccount { .. })),
+            "the contact's watch-only account must not count as this wallet's funds"
+        );
+        assert_eq!(
+            funding.len(),
+            collection.all_funding_accounts_mut().len(),
+            "the mutable view must visit exactly the same accounts"
+        );
+
+        // The account still exists and is still watched — only its role in
+        // balance/UTXO aggregation changed.
+        assert_eq!(collection.dashpay_external_accounts.len(), 1);
     }
 }
