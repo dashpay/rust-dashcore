@@ -165,11 +165,15 @@ impl ManagedCoreFundsAccount {
     }
 
     /// Add new UTXOs for received outputs, remove spent ones.
+    ///
+    /// Skips any output whose outpoint is already in `observed_spent` — it is
+    /// spent on-chain (dashpay/rust-dashcore#649), so the record stays consistent.
     fn update_utxos(
         &mut self,
         tx: &Transaction,
         account_match: &AccountMatch,
         context: TransactionContext,
+        observed_spent: &BTreeMap<OutPoint, CoreBlockHeight>,
     ) {
         // Update UTXOs only for spendable account types
         match self.keys.managed_account_type() {
@@ -238,6 +242,18 @@ impl ManagedCoreFundsAccount {
                                 tracing::debug!(
                                     outpoint = %outpoint,
                                     "Skipping UTXO already spent by previously processed transaction"
+                                );
+                                continue;
+                            }
+
+                            // #649 spend-first ordering: the spend was observed in an
+                            // earlier-processed block, so this output is genuinely spent
+                            // on-chain even though this account has never seen it before —
+                            // never insert it, so the record built below is born correct.
+                            if observed_spent.contains_key(&outpoint) {
+                                tracing::debug!(
+                                    outpoint = %outpoint,
+                                    "Skipping UTXO already observed spent in an earlier-processed block (#649)"
                                 );
                                 continue;
                             }
@@ -327,6 +343,7 @@ impl ManagedCoreFundsAccount {
         account_match: &AccountMatch,
         context: TransactionContext,
         transaction_type: TransactionType,
+        observed_spent: &BTreeMap<OutPoint, CoreBlockHeight>,
     ) -> Option<TransactionRecord> {
         let txid = tx.txid();
 
@@ -339,7 +356,13 @@ impl ManagedCoreFundsAccount {
         if !self.keys.has_transaction(&txid) {
             // Genuinely new sighting — delegate to record_transaction
             // (which handles finalize-on-record itself).
-            let record = self.record_transaction(tx, account_match, context, transaction_type);
+            let record = self.record_transaction(
+                tx,
+                account_match,
+                context,
+                transaction_type,
+                observed_spent,
+            );
             return Some(record);
         }
 
@@ -378,7 +401,7 @@ impl ManagedCoreFundsAccount {
         // chainlock catches up.
         #[cfg(not(feature = "keep-finalized-transactions"))]
         let drop_now = context.is_chain_locked();
-        self.update_utxos(tx, account_match, context);
+        self.update_utxos(tx, account_match, context, observed_spent);
         #[cfg(not(feature = "keep-finalized-transactions"))]
         if drop_now {
             self.keys.drop_finalized_transaction(&txid);
@@ -386,13 +409,21 @@ impl ManagedCoreFundsAccount {
         record_after
     }
 
-    /// Record a new transaction and update UTXOs for spendable account types
+    /// Record a new transaction and update UTXOs for spendable account types.
+    ///
+    /// `observed_spent` is the wallet-level `observed_spent_outpoints` view
+    /// (dashpay/rust-dashcore#649), read-only from `check_core_transaction`.
+    /// It is threaded into [`Self::update_utxos`], which skips inserting a UTXO
+    /// for any output whose outpoint is already observed spent on-chain, so a
+    /// coin whose spend was seen in an earlier-processed block is never
+    /// (re-)tracked as spendable.
     pub(crate) fn record_transaction(
         &mut self,
         tx: &Transaction,
         account_match: &AccountMatch,
         context: TransactionContext,
         transaction_type: TransactionType,
+        observed_spent: &BTreeMap<OutPoint, CoreBlockHeight>,
     ) -> TransactionRecord {
         let net_amount = account_match.received as i64 - account_match.sent as i64;
 
@@ -423,10 +454,12 @@ impl ManagedCoreFundsAccount {
             }
         }
 
-        // Use both UTXO-based input details and `account_match.sent` as signals
-        // that we created this transaction. The UTXO set may be incomplete
-        // (e.g., partial rescan) so `account_match.sent > 0` catches cases where
-        // the transaction still spent our funds even without matching UTXOs.
+        // Marks a transaction that spends our coins. `input_details` (built
+        // above) and `account_match.sent` (built in `check_transaction_with_index`)
+        // both derive from `self.utxos.get(&input.previous_output)` on this
+        // account, with no UTXO mutation between the two lookups, so they
+        // populate together; keeping both keeps this robust should the two
+        // call sites ever compute over different UTXO snapshots.
         let has_inputs = !input_details.is_empty() || account_match.sent > 0;
 
         let network = self.keys.network();
@@ -498,7 +531,7 @@ impl ManagedCoreFundsAccount {
         // feature is on (we want to keep the full record).
         #[cfg(not(feature = "keep-finalized-transactions"))]
         let drop_now = context.is_chain_locked();
-        self.update_utxos(tx, account_match, context);
+        self.update_utxos(tx, account_match, context, observed_spent);
         #[cfg(not(feature = "keep-finalized-transactions"))]
         if drop_now {
             self.keys.drop_finalized_transaction(&txid);
@@ -860,6 +893,21 @@ impl ManagedAccountTrait for ManagedCoreFundsAccount {
     }
 }
 
+/// Rebuild the account-local `spent_outpoints` set from recorded transactions.
+///
+/// Every input of every recorded transaction is a spend this account has seen,
+/// so its `previous_output` belongs in the derived set. The field is not
+/// persisted (`#[serde(skip)]`), so both [`Deserialize`] and the test reload
+/// simulation reconstruct it through here to stay in lockstep.
+#[cfg(any(feature = "serde", test))]
+fn rebuild_spent_outpoints(keys: &ManagedCoreKeysAccount) -> HashSet<OutPoint> {
+    keys.transactions()
+        .values()
+        .flat_map(|record| &record.transaction.input)
+        .map(|input| input.previous_output)
+        .collect()
+}
+
 #[cfg(feature = "serde")]
 impl<'de> Deserialize<'de> for ManagedCoreFundsAccount {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
@@ -875,13 +923,7 @@ impl<'de> Deserialize<'de> for ManagedCoreFundsAccount {
 
         let helper = Helper::deserialize(deserializer)?;
 
-        let spent_outpoints = helper
-            .keys
-            .transactions()
-            .values()
-            .flat_map(|record| &record.transaction.input)
-            .map(|input| input.previous_output)
-            .collect();
+        let spent_outpoints = rebuild_spent_outpoints(&helper.keys);
 
         Ok(ManagedCoreFundsAccount {
             keys: helper.keys,

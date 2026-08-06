@@ -22,6 +22,8 @@ mod keep_finalized_transactions_tests;
 
 mod managed_account_collection_tests;
 
+mod observed_spent_outpoints_tests;
+
 mod performance_tests;
 
 mod provider_key_derivation_tests;

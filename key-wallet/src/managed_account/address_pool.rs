@@ -1173,6 +1173,7 @@ impl AddressPool {
         for idx in indices_to_remove {
             if let Some(info) = self.addresses.remove(&idx) {
                 self.address_index.remove(&info.address);
+                self.script_pubkey_index.remove(&info.script_pubkey);
                 pruned += 1;
             }
         }

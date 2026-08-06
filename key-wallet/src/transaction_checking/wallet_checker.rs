@@ -6,8 +6,6 @@
 pub(crate) use super::account_checker::TransactionCheckResult;
 use super::transaction_context::TransactionContext;
 use super::transaction_router::TransactionRouter;
-#[cfg(test)]
-use crate::managed_account::managed_account_trait::ManagedAccountTrait;
 use crate::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
 use crate::wallet::managed_wallet_info::ManagedWalletInfo;
 use crate::{KeySource, Wallet};
@@ -61,6 +59,27 @@ impl WalletTransactionChecker for ManagedWalletInfo {
 
         // Check only relevant account types
         let mut result = self.accounts.check_transaction(tx, &relevant_types);
+
+        // #649: remember every spend seen in a block, independent of the
+        // spending tx's classification or whether the wallet can attribute it.
+        // Insert-only here (no account mutation), so a spend that IS attributed
+        // still has its `input_details` built from the live funding UTXO by
+        // `record_transaction` below. Mempool / IS-lock spends are deliberately
+        // never recorded — an unconfirmed spend must not invalidate a coin.
+        let block_height = if update_state {
+            context.block_info().map(|info| info.height())
+        } else {
+            None
+        };
+        if let Some(height) = block_height {
+            // The observed-spent map is persisted wallet state: growing it is a
+            // state modification in its own right, even when the tx is
+            // otherwise irrelevant — losing an entry across a restart would
+            // reopen #649 for that coin.
+            if self.record_observed_spends(tx, height) {
+                result.state_modified = true;
+            }
+        }
 
         if !update_state || !result.is_relevant {
             return result;
@@ -125,11 +144,12 @@ impl WalletTransactionChecker for ManagedWalletInfo {
                             result.updated_records.push(record.clone());
                         }
                     } else {
-                        let record = account.record_transaction(
+                        let record = account.record_transaction_with_observed_spends(
                             tx,
                             &account_match,
                             context.clone(),
                             tx_type,
+                            &self.observed_spent_outpoints,
                         );
                         account.mark_utxos_instant_send(&txid);
                         result.new_records.push(record);
@@ -156,15 +176,24 @@ impl WalletTransactionChecker for ManagedWalletInfo {
             };
 
             if is_new {
-                let record =
-                    account.record_transaction(tx, &account_match, context.clone(), tx_type);
+                let record = account.record_transaction_with_observed_spends(
+                    tx,
+                    &account_match,
+                    context.clone(),
+                    tx_type,
+                    &self.observed_spent_outpoints,
+                );
                 result.new_records.push(record);
                 result.state_modified = true;
             } else {
                 let existed_before = account.has_transaction(&tx.txid());
-                if let Some(record) =
-                    account.confirm_transaction(tx, &account_match, context.clone(), tx_type)
-                {
+                if let Some(record) = account.confirm_transaction_with_observed_spends(
+                    tx,
+                    &account_match,
+                    context.clone(),
+                    tx_type,
+                    &self.observed_spent_outpoints,
+                ) {
                     result.state_modified = true;
                     if existed_before {
                         result.updated_records.push(record);
@@ -241,6 +270,7 @@ impl WalletTransactionChecker for ManagedWalletInfo {
 mod tests {
     use super::*;
     use crate::account::account_type::StandardAccountType;
+    use crate::managed_account::managed_account_trait::ManagedAccountTrait;
     use crate::managed_account::transaction_record::{OutputRole, TransactionDirection};
     use crate::test_utils::TestWalletContext;
     use crate::transaction_checking::BlockInfo;
@@ -256,6 +286,7 @@ mod tests {
     use dashcore::TxOut;
     use dashcore::{Address, BlockHash, TxIn, Txid};
     use dashcore_hashes::Hash;
+    use std::collections::BTreeMap;
 
     /// Test wallet checker with unrelated transaction
     #[tokio::test]
@@ -1375,7 +1406,13 @@ mod tests {
         let block_context =
             TransactionContext::InBlock(BlockInfo::new(600, block_hash, 1700000000));
         let tx_type = TransactionRouter::classify_transaction(&tx);
-        let backfilled = account.confirm_transaction(&tx, &account_match, block_context, tx_type);
+        let backfilled = account.confirm_transaction(
+            &tx,
+            &account_match,
+            block_context,
+            tx_type,
+            &BTreeMap::new(),
+        );
         assert!(backfilled.is_some(), "Should return Some when backfilling a missing record");
 
         // Verify the transaction was recorded with block context
@@ -1426,7 +1463,13 @@ mod tests {
             .first_bip44_managed_account_mut()
             .expect("Should have BIP44 account");
         let tx_type = TransactionRouter::classify_transaction(&tx);
-        let confirmed = account.confirm_transaction(&tx, &account_match, block_context, tx_type);
+        let confirmed = account.confirm_transaction(
+            &tx,
+            &account_match,
+            block_context,
+            tx_type,
+            &BTreeMap::new(),
+        );
         assert!(confirmed.is_some(), "Should return Some when confirming unconfirmed tx");
 
         let record = account.transactions().get(&txid).expect("Should have record");

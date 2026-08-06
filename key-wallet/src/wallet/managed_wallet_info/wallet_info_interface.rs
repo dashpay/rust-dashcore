@@ -184,6 +184,16 @@ pub trait WalletInfoInterface: Sized + WalletTransactionChecker + ManagedAccount
     /// Return the durable wallet sync checkpoint height.
     fn synced_height(&self) -> CoreBlockHeight;
 
+    /// Return the current generation of the wallet's account set — a counter
+    /// bumped on every account addition. Filter-sync layers snapshot it at
+    /// scan time and refuse to certify coverage at commit time when it has
+    /// changed, since the scan did not include the added account's scripts
+    /// (dashpay/rust-dashcore#649). The default (constant `0`) opts an
+    /// implementation out of the check.
+    fn account_generation(&self) -> u64 {
+        0
+    }
+
     /// Return the highest chainlock that has been applied to this
     /// wallet, retaining the signing proof. Blocks at or below
     /// `chain_lock.block_height` are considered chainlock-finalized
@@ -303,6 +313,10 @@ impl WalletInfoInterface for ManagedWalletInfo {
         self.metadata.synced_height
     }
 
+    fn account_generation(&self) -> u64 {
+        self.account_generation
+    }
+
     fn last_applied_chain_lock(&self) -> Option<&ChainLock> {
         self.metadata.last_applied_chain_lock.as_ref()
     }
@@ -342,6 +356,11 @@ impl WalletInfoInterface for ManagedWalletInfo {
         if advance {
             self.metadata.last_applied_chain_lock = Some(chain_lock);
         }
+
+        // Evict observed-spent entries the promotion above just made final.
+        // Must run after both the per-account promotion and the metadata
+        // advance, so the finality boundary reflects this chainlock.
+        self.prune_finalized_observed_spends();
 
         ApplyChainLockOutcome {
             locked_transactions,
@@ -492,6 +511,9 @@ impl WalletInfoInterface for ManagedWalletInfo {
 
     fn update_synced_height(&mut self, current_height: u32) {
         self.metadata.synced_height = current_height;
+        // A newly committed checkpoint can lift the finality boundary when the
+        // chainlock was already ahead of the old synced_height.
+        self.prune_finalized_observed_spends();
     }
 
     fn matured_coinbase_records(

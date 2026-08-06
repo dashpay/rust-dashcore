@@ -574,8 +574,26 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
                 let scanned_wallets = batch.scanned_wallets().clone();
                 if !scanned_wallets.is_empty() {
                     let mut wallet = self.wallet.write().await;
-                    for wallet_id in &scanned_wallets {
-                        wallet.update_wallet_synced_height(wallet_id, end);
+                    for (wallet_id, generation_at_scan) in &scanned_wallets {
+                        // Generation guard: an account added after this batch
+                        // was scanned means the scan never tested the new
+                        // account's scripts, so the batch cannot certify
+                        // coverage for the wallet's CURRENT account set — no
+                        // matter where the account-add rewind left the
+                        // checkpoint (below the batch, inside its range, or
+                        // unmoved because it already sat at the birth floor).
+                        // The wallet stays behind and the tick rescan picks it
+                        // up (dashpay/rust-dashcore#649).
+                        if wallet.wallet_account_generation(wallet_id) != *generation_at_scan {
+                            continue;
+                        }
+                        // Contiguity guard: a batch extends a wallet's certified
+                        // coverage only if the wallet was already certified up to
+                        // the batch's start; a gap below the batch must be
+                        // rescanned, not silently certified.
+                        if wallet.wallet_synced_height(wallet_id).saturating_add(1) >= batch_start {
+                            wallet.update_wallet_synced_height(wallet_id, end);
+                        }
                     }
                 }
             }
@@ -821,15 +839,20 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
                 });
             }
         }
-        drop(wallet);
-
         // Every behind wallet's coverage advances to `batch_end` once this
         // batch commits. That includes wallets without any monitored
         // addresses: they have nothing to match against these filters, so the
         // batch fully accounts for their range and their `synced_height` must
         // advance to keep `wallets_behind` from listing them on every future
-        // batch.
-        let scanned_wallets: BTreeSet<WalletId> = behind.clone();
+        // batch. Each wallet's `account_generation` is snapshotted under the
+        // same read lock as the behind set: commit refuses to advance a wallet
+        // whose account set changed after this scan
+        // (dashpay/rust-dashcore#649).
+        let scanned_wallets: BTreeMap<WalletId, u64> = behind
+            .iter()
+            .map(|wallet_id| (*wallet_id, wallet.wallet_account_generation(wallet_id)))
+            .collect();
+        drop(wallet);
 
         if let Some(batch) = self.active_batches.get_mut(&batch_start) {
             batch.set_scanned_wallets(scanned_wallets);
@@ -1322,7 +1345,7 @@ mod tests {
         batch1.set_pending_blocks(0);
         batch1.mark_scanned();
         batch1.mark_rescan_complete();
-        batch1.set_scanned_wallets(BTreeSet::from([MOCK_WALLET_ID]));
+        batch1.set_scanned_wallets(BTreeMap::from([(MOCK_WALLET_ID, 0)]));
         manager.active_batches.insert(0, batch1);
 
         manager.try_commit_batches().await.unwrap();
@@ -1364,13 +1387,293 @@ mod tests {
         batch.set_pending_blocks(0);
         batch.mark_scanned();
         batch.mark_rescan_complete();
-        batch.set_scanned_wallets(BTreeSet::from([wallet_a]));
+        batch.set_scanned_wallets(BTreeMap::from([(wallet_a, 0)]));
         manager.active_batches.insert(0, batch);
 
         manager.try_commit_batches().await.unwrap();
         assert_eq!(manager.progress.committed_height(), 4999);
         assert_eq!(multi.read().await.wallet_synced_height(&wallet_a), 4999);
         assert_eq!(multi.read().await.wallet_synced_height(&wallet_b), 0);
+    }
+
+    /// Contiguity guard (dashpay/rust-dashcore#649): a batch scanned before an
+    /// account-add rewinds the wallet's checkpoint must NOT clobber the rewound
+    /// value forward at commit time — otherwise the account-addition rescan is
+    /// silently cancelled. The wallet stays behind and the tick picks it up.
+    #[tokio::test]
+    async fn mid_flight_account_add_does_not_clobber_rescan_floor() {
+        let wallet_a: WalletId = [0xAA; 32];
+        let multi = Arc::new(RwLock::new(MultiMockWallet::new()));
+        {
+            let mut w = multi.write().await;
+            // Already synced up to 4999, so the next batch legitimately starts at 5000.
+            w.insert_wallet(
+                wallet_a,
+                MockWalletState {
+                    synced_height: 4999,
+                    ..MockWalletState::default()
+                },
+            );
+        }
+        let mut manager = create_multi_test_manager(multi.clone()).await;
+        manager.set_state(SyncState::Syncing);
+
+        // Batch [5000..9999] scanned with wallet_a recorded, ready to commit.
+        let mut batch = FiltersBatch::new(5000, 9999, HashMap::new());
+        batch.set_pending_blocks(0);
+        batch.mark_scanned();
+        batch.mark_rescan_complete();
+        batch.set_scanned_wallets(BTreeMap::from([(wallet_a, 0)]));
+        manager.active_batches.insert(5000, batch);
+
+        // Simulate an account being added mid-flight: the wallet's checkpoint is
+        // rewound to just below birth, far below this batch's start.
+        multi.write().await.wallet_mut(&wallet_a).synced_height = 49;
+
+        manager.try_commit_batches().await.unwrap();
+
+        // committed_height still advances (chain progress), but the wallet's
+        // checkpoint is NOT dragged forward over the gap it must rescan.
+        assert_eq!(manager.progress.committed_height(), 9999);
+        assert_eq!(
+            multi.read().await.wallet_synced_height(&wallet_a),
+            49,
+            "the rewound checkpoint must survive commit — the batch is non-contiguous with it"
+        );
+        // The wallet is still behind, so the next tick rescans it.
+        assert!(
+            multi.read().await.wallets_behind(9999).contains(&wallet_a),
+            "the wallet remains behind and is picked up by the tick rescan"
+        );
+    }
+
+    /// The contiguity guard is transparent in normal operation: contiguous
+    /// ascending batches advance each wallet's checkpoint exactly as before.
+    #[tokio::test]
+    async fn contiguity_guard_permits_normal_advance() {
+        let wallet_a: WalletId = [0xCC; 32];
+        let multi = Arc::new(RwLock::new(MultiMockWallet::new()));
+        multi.write().await.insert_wallet(wallet_a, MockWalletState::default());
+        let mut manager = create_multi_test_manager(multi.clone()).await;
+        manager.set_state(SyncState::Syncing);
+
+        // First batch starts at 0 = synced_height (0) + ... the wallet is fresh,
+        // so this batch is contiguous and advances the checkpoint.
+        let mut batch1 = FiltersBatch::new(0, 4999, HashMap::new());
+        batch1.set_pending_blocks(0);
+        batch1.mark_scanned();
+        batch1.mark_rescan_complete();
+        batch1.set_scanned_wallets(BTreeMap::from([(wallet_a, 0)]));
+        manager.active_batches.insert(0, batch1);
+
+        manager.try_commit_batches().await.unwrap();
+        assert_eq!(multi.read().await.wallet_synced_height(&wallet_a), 4999);
+
+        // Second batch starts exactly at synced_height + 1 = 5000: still
+        // contiguous, so it advances too.
+        let mut batch2 = FiltersBatch::new(5000, 9999, HashMap::new());
+        batch2.set_pending_blocks(0);
+        batch2.mark_scanned();
+        batch2.mark_rescan_complete();
+        batch2.set_scanned_wallets(BTreeMap::from([(wallet_a, 0)]));
+        manager.active_batches.insert(5000, batch2);
+
+        manager.try_commit_batches().await.unwrap();
+        assert_eq!(
+            multi.read().await.wallet_synced_height(&wallet_a),
+            9999,
+            "contiguous ascending batches advance the checkpoint unchanged by the guard"
+        );
+    }
+
+    /// Marvin QA-001 round 2: two wallets in the SAME batch, only one of them
+    /// rewound mid-flight (simulating an account add on wallet_a only). The
+    /// contiguity guard must block wallet_a's advance while still advancing
+    /// wallet_b normally — a per-wallet leak here would either strand a
+    /// healthy wallet or silently clobber the rewound one.
+    #[tokio::test]
+    async fn contiguity_guard_is_per_wallet_not_batch_wide() {
+        let wallet_a: WalletId = [0xAA; 32];
+        let wallet_b: WalletId = [0xBB; 32];
+        let multi = Arc::new(RwLock::new(MultiMockWallet::new()));
+        {
+            let mut w = multi.write().await;
+            w.insert_wallet(
+                wallet_a,
+                MockWalletState {
+                    synced_height: 4999,
+                    ..MockWalletState::default()
+                },
+            );
+            w.insert_wallet(
+                wallet_b,
+                MockWalletState {
+                    synced_height: 4999,
+                    ..MockWalletState::default()
+                },
+            );
+        }
+        let mut manager = create_multi_test_manager(multi.clone()).await;
+        manager.set_state(SyncState::Syncing);
+
+        // Batch [5000..9999] scanned with BOTH wallets recorded.
+        let mut batch = FiltersBatch::new(5000, 9999, HashMap::new());
+        batch.set_pending_blocks(0);
+        batch.mark_scanned();
+        batch.mark_rescan_complete();
+        batch.set_scanned_wallets(BTreeMap::from([(wallet_a, 0), (wallet_b, 0)]));
+        manager.active_batches.insert(5000, batch);
+
+        // Only wallet_a gets an account added mid-flight (rewound). wallet_b
+        // is untouched and remains legitimately contiguous with this batch.
+        multi.write().await.wallet_mut(&wallet_a).synced_height = 49;
+
+        manager.try_commit_batches().await.unwrap();
+
+        assert_eq!(manager.progress.committed_height(), 9999);
+        assert_eq!(
+            multi.read().await.wallet_synced_height(&wallet_a),
+            49,
+            "wallet_a's rewound checkpoint must survive commit"
+        );
+        assert_eq!(
+            multi.read().await.wallet_synced_height(&wallet_b),
+            9999,
+            "wallet_b was legitimately contiguous and must still advance despite \
+             sharing a batch with a rewound wallet"
+        );
+    }
+
+    /// Generation guard, mid-batch rewind (Codex QA round 3): batch
+    /// [5000..9999] is scanned while the wallet sits at 9000, then an account
+    /// add rewinds the checkpoint to 7499 — INSIDE the batch's range. The
+    /// height-only contiguity check (7500 >= 5000) cannot see anything wrong,
+    /// but heights 7500..=9999 were scanned without the new account's scripts
+    /// (and 7500..=9000 were not attributed to this wallet at all), so the
+    /// commit must not certify them. The `account_generation` snapshot taken
+    /// at scan time is what blocks it (dashpay/rust-dashcore#649).
+    #[tokio::test]
+    async fn account_add_rewind_inside_batch_range_does_not_certify_unscanned_gap() {
+        let wallet_a: WalletId = [0xAA; 32];
+        let multi = Arc::new(RwLock::new(MultiMockWallet::new()));
+        multi.write().await.insert_wallet(
+            wallet_a,
+            MockWalletState {
+                synced_height: 9000,
+                ..MockWalletState::default()
+            },
+        );
+        let mut manager = create_multi_test_manager(multi.clone()).await;
+        manager.set_state(SyncState::Syncing);
+
+        // Batch [5000..9999] scanned while the wallet's generation was 0.
+        let mut batch = FiltersBatch::new(5000, 9999, HashMap::new());
+        batch.set_pending_blocks(0);
+        batch.mark_scanned();
+        batch.mark_rescan_complete();
+        batch.set_scanned_wallets(BTreeMap::from([(wallet_a, 0)]));
+        manager.active_batches.insert(5000, batch);
+
+        // Account added mid-flight: checkpoint rewound to birth-1 = 7499,
+        // generation bumped — both done by the same rewind in key-wallet.
+        {
+            let mut w = multi.write().await;
+            let state = w.wallet_mut(&wallet_a);
+            state.synced_height = 7499;
+            state.account_generation = 1;
+        }
+
+        manager.try_commit_batches().await.unwrap();
+
+        assert_eq!(manager.progress.committed_height(), 9999);
+        assert_eq!(
+            multi.read().await.wallet_synced_height(&wallet_a),
+            7499,
+            "a rewind INSIDE the batch range must survive commit: 7500..=9999 were \
+             scanned without the new account's scripts"
+        );
+        assert!(
+            multi.read().await.wallets_behind(9999).contains(&wallet_a),
+            "the wallet remains behind and is picked up by the tick rescan"
+        );
+    }
+
+    /// Generation guard, height-invisible account add: the wallet still sits
+    /// at its birth floor (999) when batch [1000..5999] is scanned, an account
+    /// is added (the rewind moves nothing — the checkpoint is already at the
+    /// floor), and the batch then commits. No height-based check can detect
+    /// this: the batch is perfectly contiguous with the unchanged checkpoint,
+    /// yet it was scanned without the new account's scripts. Only the
+    /// generation mismatch blocks the advance (dashpay/rust-dashcore#649).
+    #[tokio::test]
+    async fn account_add_with_unmoved_checkpoint_still_blocks_commit_advance() {
+        let wallet_a: WalletId = [0xAA; 32];
+        let multi = Arc::new(RwLock::new(MultiMockWallet::new()));
+        multi.write().await.insert_wallet(
+            wallet_a,
+            MockWalletState {
+                synced_height: 999,
+                ..MockWalletState::default()
+            },
+        );
+        let mut manager = create_multi_test_manager(multi.clone()).await;
+        manager.set_state(SyncState::Syncing);
+
+        let mut batch = FiltersBatch::new(1000, 5999, HashMap::new());
+        batch.set_pending_blocks(0);
+        batch.mark_scanned();
+        batch.mark_rescan_complete();
+        batch.set_scanned_wallets(BTreeMap::from([(wallet_a, 0)]));
+        manager.active_batches.insert(1000, batch);
+
+        // Account added mid-flight; the checkpoint is already at the birth
+        // floor so ONLY the generation moves.
+        multi.write().await.wallet_mut(&wallet_a).account_generation = 1;
+
+        manager.try_commit_batches().await.unwrap();
+
+        assert_eq!(manager.progress.committed_height(), 5999);
+        assert_eq!(
+            multi.read().await.wallet_synced_height(&wallet_a),
+            999,
+            "an account add that moved no heights must still block the advance — \
+             the batch was scanned without the new account's scripts"
+        );
+    }
+
+    /// A generation bump after commit does not retroactively matter, and an
+    /// unchanged generation lets contiguous batches advance exactly as before:
+    /// the guard is transparent in normal operation.
+    #[tokio::test]
+    async fn generation_guard_transparent_when_generation_unchanged() {
+        let wallet_a: WalletId = [0xDD; 32];
+        let multi = Arc::new(RwLock::new(MultiMockWallet::new()));
+        multi.write().await.insert_wallet(
+            wallet_a,
+            MockWalletState {
+                // A wallet whose generation is already nonzero (accounts were
+                // added before this scan): the snapshot captures the CURRENT
+                // value, so commit still advances.
+                account_generation: 3,
+                ..MockWalletState::default()
+            },
+        );
+        let mut manager = create_multi_test_manager(multi.clone()).await;
+        manager.set_state(SyncState::Syncing);
+
+        let mut batch = FiltersBatch::new(0, 4999, HashMap::new());
+        batch.set_pending_blocks(0);
+        batch.mark_scanned();
+        batch.mark_rescan_complete();
+        batch.set_scanned_wallets(BTreeMap::from([(wallet_a, 3)]));
+        manager.active_batches.insert(0, batch);
+
+        manager.try_commit_batches().await.unwrap();
+        assert_eq!(
+            multi.read().await.wallet_synced_height(&wallet_a),
+            4999,
+            "matching generation snapshot advances the checkpoint unchanged by the guard"
+        );
     }
 
     /// `scan_batch` with two wallets at different `synced_height` values:
@@ -1394,6 +1697,7 @@ mod tests {
                     addresses: vec![address_low.clone()],
                     synced_height: 10,
                     last_processed_height: 10,
+                    account_generation: 0,
                 },
             );
             // wallet_high is mostly synced: synced_height=50, only sees > 50.
@@ -1403,6 +1707,7 @@ mod tests {
                     addresses: vec![address_high.clone()],
                     synced_height: 50,
                     last_processed_height: 50,
+                    account_generation: 0,
                 },
             );
         }
@@ -1576,6 +1881,7 @@ mod tests {
                     addresses: vec![],
                     synced_height: 20,
                     last_processed_height: 20,
+                    account_generation: 0,
                 },
             );
             w.insert_wallet(
@@ -1584,6 +1890,7 @@ mod tests {
                     addresses: vec![],
                     synced_height: 60,
                     last_processed_height: 60,
+                    account_generation: 0,
                 },
             );
         }
@@ -1696,6 +2003,7 @@ mod tests {
                     addresses: vec![address.clone()],
                     synced_height: 0,
                     last_processed_height: 0,
+                    account_generation: 0,
                 },
             );
         }
@@ -1748,6 +2056,7 @@ mod tests {
                     addresses: vec![address.clone()],
                     synced_height: 0,
                     last_processed_height: 0,
+                    account_generation: 0,
                 },
             );
         }
@@ -1793,6 +2102,7 @@ mod tests {
                     addresses: vec![address.clone()],
                     synced_height: 0,
                     last_processed_height: 0,
+                    account_generation: 0,
                 },
             );
             w.insert_wallet(
@@ -1801,6 +2111,7 @@ mod tests {
                     addresses: vec![address.clone()],
                     synced_height: 0,
                     last_processed_height: 0,
+                    account_generation: 0,
                 },
             );
         }
@@ -1933,6 +2244,7 @@ mod tests {
                     addresses: vec![address_a.clone()],
                     synced_height: 0,
                     last_processed_height: 0,
+                    account_generation: 0,
                 },
             );
             w.insert_wallet(
@@ -1941,6 +2253,7 @@ mod tests {
                     addresses: vec![address_b.clone()],
                     synced_height: 0,
                     last_processed_height: 0,
+                    account_generation: 0,
                 },
             );
         }
