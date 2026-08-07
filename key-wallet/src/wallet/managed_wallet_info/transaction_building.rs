@@ -12,10 +12,10 @@ use crate::wallet::ManagedWalletInfo;
 use crate::{DerivationPath, Wallet};
 use dashcore::address::NetworkUnchecked;
 use dashcore::{Address, Transaction};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// Account type preference for transaction building
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum AccountTypePreference {
     BIP44,
     BIP32,
@@ -162,9 +162,15 @@ impl ManagedWalletInfo {
         };
 
         let mut paths = HashMap::new();
-        let mut funded = 0usize;
+        let mut funded: HashSet<AccountTypePreference> = HashSet::new();
 
         for &preference in preferences {
+            // Funding one account twice would offer coin selection every one of
+            // its UTXOs twice, letting it spend a single output as two inputs.
+            if funded.contains(&preference) {
+                continue;
+            }
+
             let account = match preference {
                 AccountTypePreference::BIP44 => wallet.get_bip44_account(source_index),
                 AccountTypePreference::BIP32 => wallet.get_bip32_account(source_index),
@@ -197,10 +203,10 @@ impl ManagedWalletInfo {
                 }
             }
             builder = builder.add_funding(managed_account, account);
-            funded += 1;
+            funded.insert(preference);
         }
 
-        if funded == 0 {
+        if funded.is_empty() {
             return Err(BuilderError::AccountNotFound(format!(
                 "no funding account of any type at index {source_index}"
             )));
@@ -885,6 +891,35 @@ mod tests {
             },
         );
         outpoint
+    }
+
+    /// Naming one account twice must not offer its UTXOs twice: a 400k target
+    /// is not met by a single 300k coin, however often its account is named.
+    #[tokio::test]
+    async fn naming_an_account_twice_does_not_double_its_funds() {
+        let (wallet, mut info) = test_wallet_and_info();
+        fund(&wallet, &mut info, AccountTypePreference::BIP44, 0x11);
+        info.update_last_processed_height(1100);
+
+        let result = info
+            .build_and_sign_transaction(
+                &wallet,
+                &[AccountTypePreference::BIP44, AccountTypePreference::BIP44],
+                0,
+                dest_outputs(400_000),
+                FeeRate::normal(),
+                SelectionStrategy::BranchAndBound,
+            )
+            .await;
+
+        assert!(
+            matches!(
+                result,
+                Err(BuilderError::InsufficientFunds { .. }) | Err(BuilderError::CoinSelection(_))
+            ),
+            "300k must not cover a 400k target, got: {:?}",
+            result.map(|(tx, _)| tx.input.len())
+        );
     }
 
     /// Neither account covers the 500k target on its own, so the build only
