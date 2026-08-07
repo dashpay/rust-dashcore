@@ -253,21 +253,23 @@ impl ManagedWalletInfo {
         };
 
         let mut paths = HashMap::new();
-        let mut funded: HashSet<AccountTypePreference> = HashSet::new();
+        let mut funded: HashSet<AccountType> = HashSet::new();
 
         for &preference in preferences {
-            // Funding one account twice would offer coin selection every one of
-            // its UTXOs twice, letting it spend a single output as two inputs.
-            if funded.contains(&preference) {
-                continue;
-            }
-
             let account_types = self.account_types_for(preference, source_index);
             if account_types.is_empty() && named_explicitly {
                 return Err(BuilderError::AccountNotFound(format!("account {preference}")));
             }
 
             for account_type in account_types {
+                // Sources overlap: a DashPay source names a set of accounts,
+                // and another source can name some of the same ones. Funding an
+                // account twice would offer coin selection every one of its
+                // UTXOs twice, letting it spend a single output as two inputs.
+                if funded.contains(&account_type) {
+                    continue;
+                }
+
                 let account = wallet.accounts.account_of_type(account_type);
                 let managed_account = self.accounts.funds_account_mut(&account_type);
 
@@ -286,7 +288,7 @@ impl ManagedWalletInfo {
                     }
                 }
                 builder = builder.add_funding(managed_account, account);
-                funded.insert(preference);
+                funded.insert(account_type);
             }
         }
 
@@ -1115,6 +1117,55 @@ mod tests {
             .expect("600k in against a 500k target leaves change");
         let bip44 = info.accounts.standard_bip44_accounts.get(&0).unwrap();
         assert!(bip44.managed_account_type().all_script_pubkeys().contains(&change.script_pubkey));
+    }
+
+    /// Overlapping DashPay sources must not fund an account twice. The build
+    /// drains, so every candidate input reaches the transaction and a coin
+    /// offered twice shows up as two inputs spending the same outpoint —
+    /// whichever way the sources are combined.
+    #[test_case(
+        vec![AccountTypePreference::AllDashpayReceivingFunds, friendship(0xaa, 0xbb)]
+        ; "all, then a friendship it already covers"
+    )]
+    #[test_case(
+        vec![friendship(0xaa, 0xbb), AccountTypePreference::AllDashpayReceivingFunds]
+        ; "a friendship, then all"
+    )]
+    #[test_case(
+        vec![
+            AccountTypePreference::DashpayIdentityReceivingFunds {
+                user_identity_id: [0xaa; 32],
+            },
+            friendship(0xaa, 0xbb),
+        ]
+        ; "an identity, then one of its friendships"
+    )]
+    #[tokio::test]
+    async fn overlapping_dashpay_sources_fund_each_account_once(
+        sources: Vec<AccountTypePreference>,
+    ) {
+        let (mut wallet, mut info) = test_wallet_and_info();
+        let first = add_funded_friendship(&mut wallet, &mut info, 0xaa, 0xbb, 0, 0x44);
+        let second = add_funded_friendship(&mut wallet, &mut info, 0xaa, 0xcc, 0, 0x55);
+        info.update_last_processed_height(1100);
+
+        let (tx, _fee) = info
+            .build_and_sign_transaction(
+                &wallet,
+                &sources,
+                0,
+                dest_outputs(400_000),
+                FeeRate::normal(),
+                SelectionStrategy::All,
+            )
+            .await
+            .expect("draining the two contacts' accounts");
+
+        // Draining spends every candidate, so an account funded twice would
+        // put its coin in here a second time.
+        let spent: Vec<OutPoint> = tx.input.iter().map(|txin| txin.previous_output).collect();
+        assert_eq!(spent.len(), 2, "the two contacts' coins, once each: {spent:?}");
+        assert_eq!(spent.iter().copied().collect::<HashSet<_>>(), HashSet::from([first, second]));
     }
 
     /// Two of our identities hold 300k each, so only a source spanning both
