@@ -148,16 +148,33 @@ impl TransactionBuilder {
     /// read-then-reserve window for a concurrent build.
     pub fn add_funding(mut self, funds_acc: &mut ManagedCoreFundsAccount, acc: &Account) -> Self {
         let reserved = funds_acc.reservations().reserved(self.current_height);
-        let candidates: Vec<Utxo> = funds_acc
-            .utxos
-            .values()
-            .filter(|utxo| !reserved.contains(&utxo.outpoint))
-            .cloned()
-            .collect();
-        self.funding.push((
-            funds_acc.reservations().clone(),
-            candidates.iter().map(|utxo| utxo.outpoint).collect(),
-        ));
+        // An outpoint the builder already holds — seeded by `add_inputs`, or
+        // offered by an earlier `add_funding` of an overlapping account — must
+        // not become a second candidate for the SAME outpoint. Coin selection
+        // does not deduplicate (and `SelectionStrategy::All` takes every
+        // candidate), so a duplicate would be spent twice in one transaction and
+        // Core rejects duplicate prevouts. This is additive funding's hazard
+        // specifically: the `set_funding` it replaced overwrote `inputs`, so a
+        // pre-seeded outpoint was silently dropped instead of duplicated.
+        let present: HashSet<OutPoint> = self.inputs.iter().map(|utxo| utxo.outpoint).collect();
+        let mut candidates: Vec<Utxo> = Vec::new();
+        // Every unreserved UTXO this account owns that ends up in the candidate
+        // pool — including one pre-seeded by `add_inputs` — so that if selection
+        // picks it, THIS account reserves it. Recording only the UTXOs added
+        // here would leave a pre-seeded input unreserved and free for a
+        // concurrent build to select.
+        let mut owned: HashSet<OutPoint> = HashSet::new();
+        for utxo in funds_acc.utxos.values() {
+            if reserved.contains(&utxo.outpoint) {
+                continue;
+            }
+            owned.insert(utxo.outpoint);
+            if present.contains(&utxo.outpoint) {
+                continue;
+            }
+            candidates.push(utxo.clone());
+        }
+        self.funding.push((funds_acc.reservations().clone(), owned));
         self.inputs.extend(candidates);
         if self.change_addr.is_none() {
             self.change_addr = funds_acc.next_change_address(Some(&acc.account_xpub), true).ok();
@@ -1773,6 +1790,58 @@ mod tests {
         let candidates: Vec<OutPoint> = builder.inputs.iter().map(|utxo| utxo.outpoint).collect();
         assert!(!candidates.contains(&reserved.outpoint));
         assert!(candidates.contains(&free.outpoint));
+    }
+
+    /// A UTXO seeded with `add_inputs` and then offered again by `add_funding`
+    /// must appear ONCE. Additive funding otherwise pushes a second candidate
+    /// for the same outpoint, and since coin selection does not deduplicate,
+    /// `SelectionStrategy::All` spends it twice — a transaction Core rejects
+    /// for duplicate prevouts.
+    #[test]
+    fn add_funding_does_not_duplicate_a_pre_seeded_input() {
+        let ctx = TestWalletContext::new_random();
+        let account =
+            ctx.wallet.accounts.standard_bip44_accounts.get(&0).expect("BIP44 account").clone();
+
+        let mut funds = ManagedCoreFundsAccount::dummy_bip44();
+        let seeded = Utxo::dummy(0x01, 500_000, 100, false, true);
+        let other = Utxo::dummy(0x02, 500_000, 100, false, true);
+        funds.utxos.insert(seeded.outpoint, seeded.clone());
+        funds.utxos.insert(other.outpoint, other.clone());
+
+        let builder = TransactionBuilder::new()
+            .set_current_height(200)
+            .set_selection_strategy(SelectionStrategy::All)
+            .add_inputs(vec![seeded.clone()])
+            .add_funding(&mut funds, &account)
+            .add_output(&ctx.receive_address, 100_000);
+
+        let candidates: Vec<OutPoint> = builder.inputs.iter().map(|utxo| utxo.outpoint).collect();
+        assert_eq!(
+            candidates.iter().filter(|op| **op == seeded.outpoint).count(),
+            1,
+            "the pre-seeded outpoint must be offered exactly once, got {candidates:?}"
+        );
+
+        let (tx, _fee, token) = builder.build_unsigned_reserved().expect("build");
+        let mut prevouts: Vec<OutPoint> = tx.input.iter().map(|i| i.previous_output).collect();
+        prevouts.sort_by_key(|op| (op.txid.to_byte_array(), op.vout));
+        let deduped = {
+            let mut d = prevouts.clone();
+            d.dedup();
+            d
+        };
+        assert_eq!(prevouts, deduped, "transaction must not contain duplicate prevouts");
+
+        // The pre-seeded input still belongs to this account, so a drain that
+        // spends it must RESERVE it — otherwise a concurrent build would see it
+        // as free and double-spend it.
+        assert!(token.is_some(), "a funded build stamps a reservation token");
+        let reserved = funds.reservations().reserved(200);
+        assert!(
+            reserved.contains(&seeded.outpoint),
+            "the pre-seeded input must be reserved by the account that owns it"
+        );
     }
 
     #[tokio::test]
