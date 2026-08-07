@@ -531,13 +531,21 @@ impl TransactionBuilder {
                         .into(),
                 ));
             }
-            let out = if is_asset_lock {
-                &mut tx_outputs[0]
+            // The count above already proves a carrier exists, so neither arm can
+            // come back empty today. Resolve it fallibly anyway: this is library
+            // code, and a later change to that invariant should surface as a typed
+            // error rather than a panic in a caller's process.
+            let carrier = if is_asset_lock {
+                tx_outputs.first_mut()
             } else {
-                tx_outputs
-                    .iter_mut()
-                    .find(|out| !out.script_pubkey.is_op_return())
-                    .expect("exactly one spendable output was just counted")
+                tx_outputs.iter_mut().find(|out| !out.script_pubkey.is_op_return())
+            };
+            let Some(out) = carrier else {
+                return Err(BuilderError::InvalidData(
+                    "SelectionStrategy::All found no spendable output to receive the drained \
+                     balance"
+                        .into(),
+                ));
             };
             out.value = drained;
             // An asset-lock drain must also rewrite the payload's credit
