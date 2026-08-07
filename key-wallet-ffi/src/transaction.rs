@@ -137,7 +137,7 @@ pub unsafe extern "C" fn wallet_build_and_sign_transaction(
                 manager
                     .build_and_sign_transaction(
                         &wallet_id,
-                        AccountTypePreference::BIP44,
+                        &[AccountTypePreference::BIP44],
                         account_index,
                         outputs,
                         FeeRate::new(fee_per_kb),

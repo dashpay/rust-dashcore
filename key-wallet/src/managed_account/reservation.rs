@@ -24,6 +24,7 @@
 //! why the check must be atomic under this set's mutex (`dashpay/platform#4185`).
 
 use std::collections::{HashMap, HashSet};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use dashcore::blockdata::transaction::OutPoint;
@@ -41,26 +42,38 @@ use dashcore::blockdata::transaction::OutPoint;
 /// the very double-spend this guards against.
 const RESERVATION_TTL_BLOCKS: u32 = 24;
 
-/// Opaque, per-`reserve`-call identity stamped onto every outpoint that call
-/// reserves.
+/// Opaque, per-build identity stamped onto every outpoint that build reserves.
 ///
 /// A token is the *proof of ownership* a build presents to the reservation
 /// set's `release_if_owner` so a release only removes the build's own
-/// reservation. Each `reserve` call mints a fresh token from a monotonic
-/// counter, so two reservations never share one — not even two reservations
-/// taken at the same block height, which is why the height (which collides
-/// freely) cannot serve as the identity.
+/// reservation. Tokens are minted from a process-wide counter, so two builds
+/// never share one — not even two reservations taken at the same block height,
+/// which is why the height (which collides freely) cannot serve as the
+/// identity, and not even across two accounts' sets, which is what lets one
+/// build funded from several accounts reserve in each of them under a single
+/// token.
 ///
-/// The inner counter is private and there is no public constructor: a token can
-/// only originate from a real `reserve` call. That is deliberate — it prevents a
-/// caller from forging a token that happens to match another build's ownership
-/// and releasing inputs out from under it.
+/// The inner counter is private and minting is crate-private: a token can only
+/// originate from this crate. That is deliberate — it prevents a caller from
+/// forging a token that happens to match another build's ownership and
+/// releasing inputs out from under it.
 ///
 /// Copy semantics let a build hold its token cheaply across an `.await` (e.g.
 /// the platform broadcast path in `dashpay/platform#4185`) and present it again
 /// when releasing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ReservationToken(u64);
+
+impl ReservationToken {
+    /// Mint a token, unique within this process.
+    ///
+    /// (Wraparound would need ~2^64 mints in one process lifetime, which is
+    /// unreachable in practice.)
+    pub(crate) fn next() -> Self {
+        static NEXT_TOKEN: AtomicU64 = AtomicU64::new(0);
+        Self(NEXT_TOKEN.fetch_add(1, Ordering::Relaxed))
+    }
+}
 
 /// A single reserved outpoint: when it was reserved (for the TTL backstop) and
 /// which build owns it (for owner-guarded release).
@@ -73,16 +86,10 @@ struct Reservation {
     owner: ReservationToken,
 }
 
-/// Mutex-guarded interior: the reservations keyed by outpoint plus the counter
-/// that mints the next [`ReservationToken`].
+/// Mutex-guarded interior: the reservations keyed by outpoint.
 #[derive(Debug, Default)]
 struct Reserved {
     entries: HashMap<OutPoint, Reservation>,
-    /// Monotonically increasing source of unique tokens. Never persisted and
-    /// only ever incremented, so within a process every issued token is unique.
-    /// (Wraparound would need ~2^64 reserves in one process lifetime, which is
-    /// unreachable in practice.)
-    next_token: u64,
 }
 
 /// Ephemeral, in-memory set of reserved outpoints. Cloning shares the
@@ -95,7 +102,7 @@ pub(crate) struct ReservationSet {
 
 impl ReservationSet {
     /// Recovers from a poisoned mutex rather than panicking: the guarded data is
-    /// a plain map plus a counter with no invariant a partial write could break,
+    /// a plain map with no invariant a partial write could break,
     /// and panicking here would strand all later coin selection in a
     /// long-running node.
     fn lock(&self) -> MutexGuard<'_, Reserved> {
@@ -115,24 +122,25 @@ impl ReservationSet {
         });
     }
 
-    /// Reserve `outpoints` as of `current_height`, dropping expired entries
-    /// first, and return the [`ReservationToken`] stamped onto all of them.
+    /// Reserve `outpoints` as of `current_height` on behalf of `owner`,
+    /// dropping expired entries first.
     ///
-    /// Every outpoint in a single call shares the one returned token: the caller
-    /// keeps it and later presents it to [`Self::release_if_owner`] to release
-    /// only what this call reserved. Re-reserving an outpoint (a later `reserve`
-    /// naming it again) refreshes its height *and* transfers ownership to the new
-    /// token — the previous owner's [`Self::release_if_owner`] then becomes a
-    /// no-op for it, which is precisely the behavior that closes the
+    /// The owner is the token the reserving build was minted, and it is what the
+    /// build later presents to [`Self::release_if_owner`] to release only what it
+    /// reserved — here and, for a build funded from several accounts, in every
+    /// other account's set it reserved in. Re-reserving an outpoint (a later
+    /// `reserve` naming it again) refreshes its height *and* transfers ownership
+    /// to the new owner — the previous owner's [`Self::release_if_owner`] then
+    /// becomes a no-op for it, which is precisely the behavior that closes the
     /// release/re-reserve race described in the module docs (`platform#4185`).
-    pub(crate) fn reserve(&self, outpoints: &[OutPoint], current_height: u32) -> ReservationToken {
+    pub(crate) fn reserve(
+        &self,
+        outpoints: &[OutPoint],
+        current_height: u32,
+        owner: ReservationToken,
+    ) {
         let mut reserved = self.lock();
         Self::sweep(&mut reserved, current_height);
-
-        let owner = ReservationToken(reserved.next_token);
-        // Increment even on an empty `outpoints` slice so a token is never
-        // reissued; wrapping is documented-unreachable but avoids a debug panic.
-        reserved.next_token = reserved.next_token.wrapping_add(1);
 
         for outpoint in outpoints {
             reserved.entries.insert(
@@ -143,7 +151,6 @@ impl ReservationSet {
                 },
             );
         }
-        owner
     }
 
     /// Return the currently reserved outpoints, dropping expired entries first.
@@ -224,7 +231,7 @@ mod tests {
         let a = outpoint(0x01, 0);
         let b = outpoint(0x02, 1);
 
-        set.reserve(&[a], 100);
+        set.reserve(&[a], 100, ReservationToken::next());
         assert!(set.reserved(100).contains(&a));
         assert!(!set.reserved(100).contains(&b));
         assert_eq!(set.reserved(100), HashSet::from([a]));
@@ -239,7 +246,7 @@ mod tests {
         let a = outpoint(0x03, 0);
         // Releasing an unreserved outpoint is a no-op.
         set.release([&a]);
-        set.reserve(&[a], 10);
+        set.reserve(&[a], 10, ReservationToken::next());
         set.release([&a]);
         set.release([&a]);
         assert!(!set.reserved(10).contains(&a));
@@ -249,7 +256,7 @@ mod tests {
     fn ttl_reclaims_stale_reservation_by_height() {
         let set = ReservationSet::default();
         let a = outpoint(0x04, 0);
-        set.reserve(&[a], 100);
+        set.reserve(&[a], 100, ReservationToken::next());
 
         // The boundary is exclusive, so the entry survives until exactly
         // `reserved_at + RESERVATION_TTL_BLOCKS`.
@@ -262,14 +269,14 @@ mod tests {
     fn zero_height_disables_sweep() {
         let set = ReservationSet::default();
         let a = outpoint(0x07, 0);
-        set.reserve(&[a], 0);
+        set.reserve(&[a], 0, ReservationToken::next());
 
         // Height 0 means the wallet has no processed height yet, so the elapsed
         // span is unknown and the sweep is suppressed: the reservation stands.
         assert!(set.reserved(0).contains(&a));
 
         // Once a real height is known the TTL backstop applies again.
-        set.reserve(&[a], 1);
+        set.reserve(&[a], 1, ReservationToken::next());
         assert!(set.reserved(1 + RESERVATION_TTL_BLOCKS).is_empty());
     }
 
@@ -277,10 +284,10 @@ mod tests {
     fn re_reserving_refreshes_the_ttl_height() {
         let set = ReservationSet::default();
         let a = outpoint(0x06, 0);
-        set.reserve(&[a], 100);
+        set.reserve(&[a], 100, ReservationToken::next());
         // A later reserve replaces the stored height, so the TTL is measured
         // from the most recent reservation, not the first.
-        set.reserve(&[a], 150);
+        set.reserve(&[a], 150, ReservationToken::next());
 
         assert_eq!(set.reserved(150 + RESERVATION_TTL_BLOCKS - 1), HashSet::from([a]));
         assert!(set.reserved(150 + RESERVATION_TTL_BLOCKS).is_empty());
@@ -293,18 +300,16 @@ mod tests {
         let a = outpoint(0x05, 0);
         // A reservation taken on one handle is visible through the other, which
         // is what lets a build's reservation outlive the wallet lock.
-        set.reserve(&[a], 1);
+        set.reserve(&[a], 1, ReservationToken::next());
         assert!(clone.reserved(1).contains(&a));
     }
 
     #[test]
-    fn each_reserve_call_mints_a_distinct_token() {
-        let set = ReservationSet::default();
-        // Two reserves at the SAME height must still get different tokens — the
-        // whole point of not keying ownership on height, which collides.
-        let token_a = set.reserve(&[outpoint(0x10, 0)], 100);
-        let token_b = set.reserve(&[outpoint(0x11, 0)], 100);
-        assert_ne!(token_a, token_b);
+    fn each_build_mints_a_distinct_token() {
+        // Two builds at the SAME height must still get different tokens — the
+        // whole point of not keying ownership on height, which collides. The
+        // counter is process-wide, so this holds across accounts' sets too.
+        assert_ne!(ReservationToken::next(), ReservationToken::next());
     }
 
     #[test]
@@ -313,8 +318,9 @@ mod tests {
         let mine = outpoint(0x20, 0);
         let theirs = outpoint(0x21, 0);
 
-        let my_token = set.reserve(&[mine], 100);
-        let _their_token = set.reserve(&[theirs], 100);
+        let my_token = ReservationToken::next();
+        set.reserve(&[mine], 100, my_token);
+        set.reserve(&[theirs], 100, ReservationToken::next());
 
         // Releasing with my token frees only my outpoint; theirs is untouched.
         set.release_if_owner(&[mine, theirs], my_token);
@@ -326,11 +332,12 @@ mod tests {
     fn release_if_owner_is_a_noop_for_unreserved_or_wrong_token() {
         let set = ReservationSet::default();
         let a = outpoint(0x22, 0);
-        let stale_token = set.reserve(&[a], 100);
+        let stale_token = ReservationToken::next();
+        set.reserve(&[a], 100, stale_token);
 
         // Simulate the outpoint being released and re-reserved by someone else.
         set.release([&a]);
-        let _new_token = set.reserve(&[a], 100);
+        set.reserve(&[a], 100, ReservationToken::next());
 
         // The stale token no longer owns `a`, so its release must not remove it.
         set.release_if_owner(&[a], stale_token);
@@ -354,14 +361,16 @@ mod tests {
         let x = outpoint(0x30, 0);
 
         // Build A reserves X.
-        let token_a = set.reserve(&[x], 100);
+        let token_a = ReservationToken::next();
+        set.reserve(&[x], 100, token_a);
         assert!(set.reserved(100).contains(&x));
 
         // TTL sweep reclaims A's reservation mid-await (modeled by advancing the
         // height past the TTL so the next reserve's sweep drops A's entry)...
         let swept_height = 100 + RESERVATION_TTL_BLOCKS;
         // ...and build B re-reserves the very same outpoint under a new token.
-        let token_b = set.reserve(&[x], swept_height);
+        let token_b = ReservationToken::next();
+        set.reserve(&[x], swept_height, token_b);
         assert_ne!(token_a, token_b);
         assert!(set.reserved(swept_height).contains(&x));
 

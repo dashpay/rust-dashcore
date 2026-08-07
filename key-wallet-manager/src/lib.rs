@@ -693,7 +693,7 @@ impl WalletManager<ManagedWalletInfo> {
     pub async fn build_and_sign_transaction(
         &mut self,
         wallet_id: &WalletId,
-        source: AccountTypePreference,
+        sources: &[AccountTypePreference],
         source_index: u32,
         outputs: Vec<(Address<NetworkUnchecked>, u64)>,
         fee_rate: FeeRate,
@@ -705,7 +705,7 @@ impl WalletManager<ManagedWalletInfo> {
             .ok_or(WalletError::WalletNotFound(*wallet_id))?;
 
         managed_wallet
-            .build_and_sign_transaction(wallet, source, source_index, outputs, fee_rate, strategy)
+            .build_and_sign_transaction(wallet, sources, source_index, outputs, fee_rate, strategy)
             .await
             .map_err(|e| WalletError::TransactionBuild(e.to_string()))
     }
