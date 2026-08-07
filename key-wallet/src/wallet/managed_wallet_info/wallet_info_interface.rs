@@ -129,18 +129,16 @@ pub trait WalletInfoInterface: Sized + WalletTransactionChecker + ManagedAccount
             .collect()
     }
 
-    /// The funds-bearing account selected by `(preference, index)`, if it exists.
+    /// The funds-bearing account selected by `(preference, index)`, if it
+    /// exists. `None` for a DashPay source naming a set of accounts rather than
+    /// one — those are only reachable through transaction building.
     fn funds_account(
         &self,
         preference: AccountTypePreference,
         index: u32,
     ) -> Option<&ManagedCoreFundsAccount> {
-        let accounts = self.accounts();
-        match preference {
-            AccountTypePreference::BIP44 => accounts.standard_bip44_accounts.get(&index),
-            AccountTypePreference::BIP32 => accounts.standard_bip32_accounts.get(&index),
-            AccountTypePreference::CoinJoin => accounts.coinjoin_accounts.get(&index),
-        }
+        let account_type = preference.account_type(index)?;
+        self.accounts().funds_account(&account_type)
     }
 
     /// Balance of the funds-bearing account selected by `(preference, index)`, if it exists.

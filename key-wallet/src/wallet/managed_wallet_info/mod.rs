@@ -451,6 +451,15 @@ impl ManagedWalletInfo {
                 debug_assert!(false, "CoinJoin accounts are spend-only in our current use cases");
                 None
             }
+            // DIP-15 contact accounts have a single address pool and no
+            // internal (change) branch, so they can never supply change.
+            AccountTypePreference::DashpayFriendshipReceivingFunds {
+                ..
+            }
+            | AccountTypePreference::DashpayIdentityReceivingFunds {
+                ..
+            }
+            | AccountTypePreference::AllDashpayReceivingFunds => None,
         };
 
         address
@@ -498,6 +507,16 @@ impl ManagedWalletInfo {
                 debug_assert!(false, "CoinJoin accounts are spend-only in our current use cases");
                 None
             }
+            // Addresses of a DIP-15 contact account are handed out through the
+            // contact flow that knows the identity pair, not through this
+            // index-addressed helper.
+            AccountTypePreference::DashpayFriendshipReceivingFunds {
+                ..
+            }
+            | AccountTypePreference::DashpayIdentityReceivingFunds {
+                ..
+            }
+            | AccountTypePreference::AllDashpayReceivingFunds => None,
         };
 
         address

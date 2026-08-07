@@ -17,7 +17,7 @@ use crate::managed_account::managed_platform_account::ManagedPlatformAccount;
 use crate::managed_account::{ManagedCoreFundsAccount, ManagedCoreKeysAccount};
 use crate::transaction_checking::account_checker::CoreAccountTypeMatch;
 use crate::KeySource;
-use crate::{Account, AccountCollection};
+use crate::{Account, AccountCollection, AccountType};
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
@@ -577,13 +577,76 @@ impl ManagedAccountCollection {
         ))
     }
 
+    /// Get the spendable account for an exact [`AccountType`]
+    pub fn funds_account(&self, account_type: &AccountType) -> Option<&ManagedCoreFundsAccount> {
+        match account_type {
+            AccountType::Standard {
+                index,
+                standard_account_type,
+            } => match standard_account_type {
+                crate::account::StandardAccountType::BIP44Account => {
+                    self.standard_bip44_accounts.get(index)
+                }
+                crate::account::StandardAccountType::BIP32Account => {
+                    self.standard_bip32_accounts.get(index)
+                }
+            },
+            AccountType::CoinJoin {
+                index,
+            } => self.coinjoin_accounts.get(index),
+            AccountType::DashpayReceivingFunds {
+                index,
+                user_identity_id,
+                friend_identity_id,
+            } => self.dashpay_receival_accounts.get(&DashpayAccountKey {
+                index: *index,
+                user_identity_id: *user_identity_id,
+                friend_identity_id: *friend_identity_id,
+            }),
+            _ => None,
+        }
+    }
+
+    /// Mutable twin of [`Self::funds_account`].
+    pub fn funds_account_mut(
+        &mut self,
+        account_type: &AccountType,
+    ) -> Option<&mut ManagedCoreFundsAccount> {
+        match account_type {
+            AccountType::Standard {
+                index,
+                standard_account_type,
+            } => match standard_account_type {
+                crate::account::StandardAccountType::BIP44Account => {
+                    self.standard_bip44_accounts.get_mut(index)
+                }
+                crate::account::StandardAccountType::BIP32Account => {
+                    self.standard_bip32_accounts.get_mut(index)
+                }
+            },
+            AccountType::CoinJoin {
+                index,
+            } => self.coinjoin_accounts.get_mut(index),
+            AccountType::DashpayReceivingFunds {
+                index,
+                user_identity_id,
+                friend_identity_id,
+            } => self.dashpay_receival_accounts.get_mut(&DashpayAccountKey {
+                index: *index,
+                user_identity_id: *user_identity_id,
+                friend_identity_id: *friend_identity_id,
+            }),
+            _ => None,
+        }
+    }
+
     /// Get a funds-bearing account by primary index across Standard BIP44,
     /// Standard BIP32, and CoinJoin accounts.
     ///
     /// Returns only [`ManagedCoreFundsAccount`] entries — keys-only accounts
     /// (identity / asset-lock / provider) are not reachable via this index
-    /// lookup. Use [`Self::get_by_account_type_match`] or direct field access
-    /// for those.
+    /// lookup. Use [`Self::funds_account`], [`Self::get_by_account_type_match`]
+    /// or direct field access for those.
     pub fn get(&self, index: u32) -> Option<&ManagedCoreFundsAccount> {
         if let Some(account) = self.standard_bip44_accounts.get(&index) {
             return Some(account);

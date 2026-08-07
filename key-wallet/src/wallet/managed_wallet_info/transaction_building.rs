@@ -1,5 +1,6 @@
 //! Transaction building functionality for managed wallets
 
+use crate::account::StandardAccountType;
 use crate::managed_account::managed_account_trait::ManagedAccountTrait;
 use crate::signer::Signer;
 use crate::wallet::managed_wallet_info::coin_selection::SelectionStrategy;
@@ -9,17 +10,26 @@ use crate::wallet::managed_wallet_info::transaction_builder::{
 };
 use crate::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
 use crate::wallet::ManagedWalletInfo;
-use crate::{DerivationPath, Wallet};
+use crate::{AccountType, DerivationPath, Wallet};
+use core::fmt;
 use dashcore::address::NetworkUnchecked;
 use dashcore::{Address, Transaction};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// Account type preference for transaction building
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum AccountTypePreference {
     BIP44,
     BIP32,
     CoinJoin,
+    DashpayFriendshipReceivingFunds {
+        user_identity_id: [u8; 32],
+        friend_identity_id: [u8; 32],
+    },
+    DashpayIdentityReceivingFunds {
+        user_identity_id: [u8; 32],
+    },
+    AllDashpayReceivingFunds,
 }
 
 impl AccountTypePreference {
@@ -27,8 +37,57 @@ impl AccountTypePreference {
     ///
     /// CoinJoin is deliberately absent: spending mixed outputs alongside
     /// transparent ones in the same transaction links them and undoes the
-    /// mixing
+    /// mixing. So are DashPay accounts: an index alone does not identify one,
+    /// and which contact to spend from is not something a default can pick.
     pub const DEFAULT: [Self; 2] = [Self::BIP44, Self::BIP32];
+
+    /// The single [`AccountType`] this preference selects at `index`, or `None`
+    /// for a DashPay source that names a set of accounts rather than one.
+    pub fn account_type(&self, index: u32) -> Option<AccountType> {
+        Some(match *self {
+            Self::BIP44 => AccountType::Standard {
+                index,
+                standard_account_type: StandardAccountType::BIP44Account,
+            },
+            Self::BIP32 => AccountType::Standard {
+                index,
+                standard_account_type: StandardAccountType::BIP32Account,
+            },
+            Self::CoinJoin => AccountType::CoinJoin {
+                index,
+            },
+            Self::DashpayFriendshipReceivingFunds {
+                user_identity_id,
+                friend_identity_id,
+            } => AccountType::DashpayReceivingFunds {
+                index,
+                user_identity_id,
+                friend_identity_id,
+            },
+            Self::DashpayIdentityReceivingFunds {
+                ..
+            }
+            | Self::AllDashpayReceivingFunds => return None,
+        })
+    }
+}
+
+impl fmt::Display for AccountTypePreference {
+    /// Elides the 32-byte identity hashes so error messages stay readable.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::BIP44 => f.write_str("BIP44"),
+            Self::BIP32 => f.write_str("BIP32"),
+            Self::CoinJoin => f.write_str("CoinJoin"),
+            Self::DashpayFriendshipReceivingFunds {
+                ..
+            } => f.write_str("DashpayReceiving{friendship}"),
+            Self::DashpayIdentityReceivingFunds {
+                ..
+            } => f.write_str("DashpayReceiving{identity}"),
+            Self::AllDashpayReceivingFunds => f.write_str("DashpayReceiving{all}"),
+        }
+    }
 }
 
 impl ManagedWalletInfo {
@@ -143,10 +202,42 @@ impl ManagedWalletInfo {
         Ok((builder, paths))
     }
 
+    /// The accounts a source resolves to: the one at `source_index` for the
+    /// standard families, and every DashPay receiving account the selector
+    /// picks for a DashPay source.
+    fn account_types_for(
+        &self,
+        preference: AccountTypePreference,
+        source_index: u32,
+    ) -> Vec<AccountType> {
+        let (identity, friend) = match preference {
+            AccountTypePreference::AllDashpayReceivingFunds => (None, None),
+            AccountTypePreference::DashpayIdentityReceivingFunds {
+                user_identity_id,
+            } => (Some(user_identity_id), None),
+            AccountTypePreference::DashpayFriendshipReceivingFunds {
+                user_identity_id,
+                friend_identity_id,
+            } => (Some(user_identity_id), Some(friend_identity_id)),
+            _ => return preference.account_type(source_index).into_iter().collect(),
+        };
+
+        self.accounts
+            .dashpay_receival_accounts
+            .keys()
+            .filter(|key| identity.is_none_or(|id| key.user_identity_id == id))
+            .filter(|key| friend.is_none_or(|id| key.friend_identity_id == id))
+            .map(|key| AccountType::DashpayReceivingFunds {
+                index: key.index,
+                user_identity_id: key.user_identity_id,
+                friend_identity_id: key.friend_identity_id,
+            })
+            .collect()
+    }
+
     /// Seed `builder` with the UTXOs of every funding account named by
-    /// `sources` at `source_index`, returning it alongside the derivation path
-    /// of each candidate input address, since the inputs can come from
-    /// different accounts.
+    /// `sources`, returning it alongside the derivation path of each candidate
+    /// input address, since the inputs can come from different accounts.
     fn fund(
         &mut self,
         wallet: &Wallet,
@@ -162,45 +253,46 @@ impl ManagedWalletInfo {
         };
 
         let mut paths = HashMap::new();
-        let mut funded = 0usize;
+        let mut funded: HashSet<AccountType> = HashSet::new();
 
         for &preference in preferences {
-            let account = match preference {
-                AccountTypePreference::BIP44 => wallet.get_bip44_account(source_index),
-                AccountTypePreference::BIP32 => wallet.get_bip32_account(source_index),
-                AccountTypePreference::CoinJoin => wallet.get_coinjoin_account(source_index),
-            };
-            let managed_account = match preference {
-                AccountTypePreference::BIP44 => {
-                    self.accounts.standard_bip44_accounts.get_mut(&source_index)
-                }
-                AccountTypePreference::BIP32 => {
-                    self.accounts.standard_bip32_accounts.get_mut(&source_index)
-                }
-                AccountTypePreference::CoinJoin => {
-                    self.accounts.coinjoin_accounts.get_mut(&source_index)
-                }
-            };
-
-            let (Some(account), Some(managed_account)) = (account, managed_account) else {
-                if named_explicitly {
-                    return Err(BuilderError::AccountNotFound(format!(
-                        "account {preference:?} #{source_index}"
-                    )));
-                }
-                continue;
-            };
-
-            for utxo in managed_account.utxos.values() {
-                if let Some(path) = managed_account.address_derivation_path(&utxo.address) {
-                    paths.insert(utxo.address.clone(), path);
-                }
+            let account_types = self.account_types_for(preference, source_index);
+            if account_types.is_empty() && named_explicitly {
+                return Err(BuilderError::AccountNotFound(format!("account {preference}")));
             }
-            builder = builder.add_funding(managed_account, account);
-            funded += 1;
+
+            for account_type in account_types {
+                // Sources overlap: a DashPay source names a set of accounts,
+                // and another source can name some of the same ones. Funding an
+                // account twice would offer coin selection every one of its
+                // UTXOs twice, letting it spend a single output as two inputs.
+                if funded.contains(&account_type) {
+                    continue;
+                }
+
+                let account = wallet.accounts.account_of_type(account_type);
+                let managed_account = self.accounts.funds_account_mut(&account_type);
+
+                let (Some(account), Some(managed_account)) = (account, managed_account) else {
+                    if named_explicitly {
+                        return Err(BuilderError::AccountNotFound(format!(
+                            "account {account_type}"
+                        )));
+                    }
+                    continue;
+                };
+
+                for utxo in managed_account.utxos.values() {
+                    if let Some(path) = managed_account.address_derivation_path(&utxo.address) {
+                        paths.insert(utxo.address.clone(), path);
+                    }
+                }
+                builder = builder.add_funding(managed_account, account);
+                funded.insert(account_type);
+            }
         }
 
-        if funded == 0 {
+        if funded.is_empty() {
             return Err(BuilderError::AccountNotFound(format!(
                 "no funding account of any type at index {source_index}"
             )));
@@ -840,29 +932,43 @@ mod tests {
 
     // -- Multi-account funding --
 
+    use crate::managed_account::managed_account_trait::ManagedAccountTrait;
+    use crate::wallet::managed_wallet_info::managed_account_operations::ManagedAccountOperations;
+    use crate::{KeySource, ManagedAccountType};
     use dashcore::{OutPoint, TxOut};
     use std::collections::HashSet;
     use test_case::test_case;
 
     /// Put a confirmed 300k UTXO on a fresh receive address of the account at
-    /// index 0 and return its outpoint.
+    /// `index` and return its outpoint.
     fn fund(
         wallet: &Wallet,
         info: &mut ManagedWalletInfo,
         preference: AccountTypePreference,
+        index: u32,
         txid_byte: u8,
     ) -> OutPoint {
-        let (account_xpub, account) = match preference {
-            AccountTypePreference::BIP32 => (
-                wallet.get_bip32_account(0).unwrap().account_xpub,
-                info.accounts.standard_bip32_accounts.get_mut(&0).unwrap(),
-            ),
-            _ => (
-                wallet.get_bip44_account(0).unwrap().account_xpub,
-                info.accounts.standard_bip44_accounts.get_mut(&0).unwrap(),
-            ),
+        let account_type = preference.account_type(index).expect("a single account");
+        let account_xpub = wallet
+            .accounts
+            .account_of_type(account_type)
+            .unwrap_or_else(|| panic!("wallet account {preference}"))
+            .account_xpub;
+        let account = info
+            .accounts
+            .funds_account_mut(&account_type)
+            .unwrap_or_else(|| panic!("managed account {preference}"));
+
+        // A contact account keeps a single pool and so has no receive-address
+        // helper of its own; its addresses come straight off that pool.
+        let address = match account.managed_account_type_mut() {
+            ManagedAccountType::DashpayReceivingFunds {
+                addresses,
+                ..
+            } => addresses.next_unused(&KeySource::Public(account_xpub), true).unwrap(),
+            _ => account.next_receive_address(Some(&account_xpub), true).unwrap(),
         };
-        let address = account.next_receive_address(Some(&account_xpub), true).unwrap();
+
         let outpoint = OutPoint {
             txid: Txid::from_byte_array([txid_byte; 32]),
             vout: 0,
@@ -887,6 +993,35 @@ mod tests {
         outpoint
     }
 
+    /// Naming one account twice must not offer its UTXOs twice: a 400k target
+    /// is not met by a single 300k coin, however often its account is named.
+    #[tokio::test]
+    async fn naming_an_account_twice_does_not_double_its_funds() {
+        let (wallet, mut info) = test_wallet_and_info();
+        fund(&wallet, &mut info, AccountTypePreference::BIP44, 0, 0x11);
+        info.update_last_processed_height(1100);
+
+        let result = info
+            .build_and_sign_transaction(
+                &wallet,
+                &[AccountTypePreference::BIP44, AccountTypePreference::BIP44],
+                0,
+                dest_outputs(400_000),
+                FeeRate::normal(),
+                SelectionStrategy::BranchAndBound,
+            )
+            .await;
+
+        assert!(
+            matches!(
+                result,
+                Err(BuilderError::InsufficientFunds { .. }) | Err(BuilderError::CoinSelection(_))
+            ),
+            "300k must not cover a 400k target, got: {:?}",
+            result.map(|(tx, _)| tx.input.len())
+        );
+    }
+
     /// Neither account covers the 500k target on its own, so the build only
     /// succeeds by pooling both — and signing them proves the derivation paths
     /// were collected across both accounts.
@@ -895,8 +1030,8 @@ mod tests {
     #[tokio::test]
     async fn funding_pools_across_account_types(sources: &[AccountTypePreference]) {
         let (wallet, mut info) = test_wallet_and_info();
-        let bip44 = fund(&wallet, &mut info, AccountTypePreference::BIP44, 0x11);
-        let bip32 = fund(&wallet, &mut info, AccountTypePreference::BIP32, 0x22);
+        let bip44 = fund(&wallet, &mut info, AccountTypePreference::BIP44, 0, 0x11);
+        let bip32 = fund(&wallet, &mut info, AccountTypePreference::BIP32, 0, 0x22);
         info.update_last_processed_height(1100);
 
         let (tx, _fee) = info
@@ -920,5 +1055,154 @@ mod tests {
         let bip32_account = info.accounts.standard_bip32_accounts.get(&0).unwrap();
         assert_eq!(bip44_account.reservations().reserved(1100), HashSet::from([bip44]));
         assert_eq!(bip32_account.reservations().reserved(1100), HashSet::from([bip32]));
+    }
+
+    // -- DashPay contact accounts --
+
+    /// A source naming the friendship between our identity `user` and `friend`.
+    fn friendship(user: u8, friend: u8) -> AccountTypePreference {
+        AccountTypePreference::DashpayFriendshipReceivingFunds {
+            user_identity_id: [user; 32],
+            friend_identity_id: [friend; 32],
+        }
+    }
+
+    /// Add that friendship's receiving account at `index` and fund it with 300k.
+    fn add_funded_friendship(
+        wallet: &mut Wallet,
+        info: &mut ManagedWalletInfo,
+        user: u8,
+        friend: u8,
+        index: u32,
+        txid_byte: u8,
+    ) -> OutPoint {
+        let account_type = friendship(user, friend).account_type(index).unwrap();
+        wallet.add_account(account_type, None).unwrap();
+        info.add_managed_account(wallet, account_type).unwrap();
+        fund(wallet, info, friendship(user, friend), index, txid_byte)
+    }
+
+    /// Funds received from a contact are spendable, across every account index
+    /// that contact holds funds at — 300k at each of two indices covers a 500k
+    /// target that neither covers alone. The DIP-15 contact path is 256-bit, so
+    /// the build only succeeds if it resolved for signing, and a contact account
+    /// has no internal pool, so BIP44 comes along for change.
+    #[tokio::test]
+    async fn dashpay_friendship_funds_a_spend_across_indices() {
+        let (mut wallet, mut info) = test_wallet_and_info();
+        let contact_0 = add_funded_friendship(&mut wallet, &mut info, 0xaa, 0xbb, 0, 0x44);
+        let contact_1 = add_funded_friendship(&mut wallet, &mut info, 0xaa, 0xbb, 1, 0x55);
+        info.update_last_processed_height(1100);
+
+        let send_amount = 500_000u64;
+        let (tx, _fee) = info
+            .build_and_sign_transaction(
+                &wallet,
+                &[friendship(0xaa, 0xbb), AccountTypePreference::BIP44],
+                0,
+                dest_outputs(send_amount),
+                FeeRate::normal(),
+                SelectionStrategy::BranchAndBound,
+            )
+            .await
+            .expect("a 500k send funded by one contact's accounts");
+
+        let spent: HashSet<OutPoint> = tx.input.iter().map(|txin| txin.previous_output).collect();
+        assert_eq!(spent, HashSet::from([contact_0, contact_1]));
+
+        let change = tx
+            .output
+            .iter()
+            .find(|out| out.value != send_amount)
+            .expect("600k in against a 500k target leaves change");
+        let bip44 = info.accounts.standard_bip44_accounts.get(&0).unwrap();
+        assert!(bip44.managed_account_type().all_script_pubkeys().contains(&change.script_pubkey));
+    }
+
+    /// Overlapping DashPay sources must not fund an account twice. The build
+    /// drains, so every candidate input reaches the transaction and a coin
+    /// offered twice shows up as two inputs spending the same outpoint —
+    /// whichever way the sources are combined.
+    #[test_case(
+        vec![AccountTypePreference::AllDashpayReceivingFunds, friendship(0xaa, 0xbb)]
+        ; "all, then a friendship it already covers"
+    )]
+    #[test_case(
+        vec![friendship(0xaa, 0xbb), AccountTypePreference::AllDashpayReceivingFunds]
+        ; "a friendship, then all"
+    )]
+    #[test_case(
+        vec![
+            AccountTypePreference::DashpayIdentityReceivingFunds {
+                user_identity_id: [0xaa; 32],
+            },
+            friendship(0xaa, 0xbb),
+        ]
+        ; "an identity, then one of its friendships"
+    )]
+    #[tokio::test]
+    async fn overlapping_dashpay_sources_fund_each_account_once(
+        sources: Vec<AccountTypePreference>,
+    ) {
+        let (mut wallet, mut info) = test_wallet_and_info();
+        let first = add_funded_friendship(&mut wallet, &mut info, 0xaa, 0xbb, 0, 0x44);
+        let second = add_funded_friendship(&mut wallet, &mut info, 0xaa, 0xcc, 0, 0x55);
+        info.update_last_processed_height(1100);
+
+        let (tx, _fee) = info
+            .build_and_sign_transaction(
+                &wallet,
+                &sources,
+                0,
+                dest_outputs(400_000),
+                FeeRate::normal(),
+                SelectionStrategy::All,
+            )
+            .await
+            .expect("draining the two contacts' accounts");
+
+        // Draining spends every candidate, so an account funded twice would
+        // put its coin in here a second time.
+        let spent: Vec<OutPoint> = tx.input.iter().map(|txin| txin.previous_output).collect();
+        assert_eq!(spent.len(), 2, "the two contacts' coins, once each: {spent:?}");
+        assert_eq!(spent.iter().copied().collect::<HashSet<_>>(), HashSet::from([first, second]));
+    }
+
+    /// Two of our identities hold 300k each, so only a source spanning both
+    /// covers a 500k target.
+    #[test_case(AccountTypePreference::AllDashpayReceivingFunds, true ; "every identity")]
+    #[test_case(
+        AccountTypePreference::DashpayIdentityReceivingFunds {
+            user_identity_id: [0xaa; 32],
+        },
+        false ; "a single identity"
+    )]
+    #[tokio::test]
+    async fn dashpay_sources_span_the_identities_they_name(
+        source: AccountTypePreference,
+        covers_target: bool,
+    ) {
+        let (mut wallet, mut info) = test_wallet_and_info();
+        add_funded_friendship(&mut wallet, &mut info, 0xaa, 0xbb, 0, 0x44);
+        add_funded_friendship(&mut wallet, &mut info, 0xcc, 0xdd, 0, 0x55);
+        info.update_last_processed_height(1100);
+
+        let result = info
+            .build_and_sign_transaction(
+                &wallet,
+                &[source, AccountTypePreference::BIP44],
+                0,
+                dest_outputs(500_000),
+                FeeRate::normal(),
+                SelectionStrategy::BranchAndBound,
+            )
+            .await;
+
+        assert_eq!(
+            result.is_ok(),
+            covers_target,
+            "got: {:?}",
+            result.map(|(tx, _)| tx.input.len())
+        );
     }
 }
