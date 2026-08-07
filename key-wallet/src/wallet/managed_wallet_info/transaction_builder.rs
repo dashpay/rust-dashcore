@@ -501,8 +501,9 @@ impl TransactionBuilder {
     /// `.await` that releases the wallet lock — most importantly the platform
     /// broadcast path, which reserves inputs, awaits the broadcast, and on
     /// rejection must release them — and release with
-    /// [`ManagedCoreFundsAccount::release_reservation_if_owner`] on the first
-    /// funding account, whose set holds the whole build's reservation. See
+    /// [`ManagedCoreFundsAccount::release_reservation_if_owner`] on *every*
+    /// funding account passed to [`Self::add_funding`]: each account reserves
+    /// only the inputs it contributed, in its own set. See
     /// `ReservationSet::release_if_owner` for why owner-guarded release is
     /// required (`dashpay/platform#4185`).
     pub fn build_unsigned_reserved(
