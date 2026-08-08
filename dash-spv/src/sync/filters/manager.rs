@@ -1163,18 +1163,20 @@ mod tests {
             .unwrap();
     }
 
-    /// Manager whose block headers start at `anchor` rather than genesis, the
-    /// checkpoint-sync shape where the chain is anchored above a wallet's birth
-    /// height. `get_start_height` is what the scan floor is derived from, so
-    /// this reproduces the mainnet setup without depending on `Network`:
-    /// `hd_wallet_sync_floor` is non-zero only for mainnet, which is why the
-    /// rest of the suite never exercised a non-zero floor.
-    ///
-    /// Headers and filters both cover `anchor..=anchor + span`. Filter headers
-    /// are stored so `handle_new_filter_headers` can drive a real download.
-    async fn create_anchored_test_manager(anchor: u32, span: u32) -> TestFiltersManager {
-        let manager = create_test_manager().await;
-
+    /// Give an existing manager the checkpoint-sync shape: block headers,
+    /// filter bodies and a filter header covering `anchor..=anchor + span`,
+    /// with nothing below `anchor`. Seeds the storage the manager already
+    /// holds, so its progress stays consistent with what it reads back.
+    async fn seed_anchored_storage<W: WalletInterface + 'static>(
+        manager: &FiltersManager<
+            PersistentBlockHeaderStorage,
+            PersistentFilterHeaderStorage,
+            PersistentFilterStorage,
+            W,
+        >,
+        anchor: u32,
+        span: u32,
+    ) {
         anchor_headers_at(&manager.header_storage, anchor, span + 1).await;
 
         let filter = BlockFilter::new(&[0u8; 32]);
@@ -1198,7 +1200,34 @@ mod tests {
             )
             .await
             .unwrap();
+    }
 
+    /// Drain every `GetCFilters` request queued on `rx`.
+    fn drain_getcfilters(rx: &mut tokio::sync::mpsc::UnboundedReceiver<NetworkRequest>) -> usize {
+        let mut count = 0;
+        while let Ok(request) = rx.try_recv() {
+            let (NetworkRequest::SendMessage(msg)
+            | NetworkRequest::SendMessageToPeer(msg, _)
+            | NetworkRequest::BroadcastMessage(msg)) = request;
+            if matches!(msg, NetworkMessage::GetCFilters(_)) {
+                count += 1;
+            }
+        }
+        count
+    }
+
+    /// Manager whose block headers start at `anchor` rather than genesis, the
+    /// checkpoint-sync shape where the chain is anchored above a wallet's birth
+    /// height. `get_start_height` is what the scan floor is derived from, so
+    /// this reproduces the mainnet setup without depending on `Network`:
+    /// `hd_wallet_sync_floor` is non-zero only for mainnet, which is why the
+    /// rest of the suite never exercised a non-zero floor.
+    ///
+    /// Headers and filters both cover `anchor..=anchor + span`. Filter headers
+    /// are stored so `handle_new_filter_headers` can drive a real download.
+    async fn create_anchored_test_manager(anchor: u32, span: u32) -> TestFiltersManager {
+        let manager = create_test_manager().await;
+        seed_anchored_storage(&manager, anchor, span).await;
         manager
     }
 
@@ -3390,28 +3419,19 @@ mod tests {
 
         manager.handle_new_filter_headers(200_010, &requests).await.unwrap();
 
-        let mut requested = 0;
-        while let Ok(request) = rx.try_recv() {
-            let (NetworkRequest::SendMessage(msg)
-            | NetworkRequest::SendMessageToPeer(msg, _)
-            | NetworkRequest::BroadcastMessage(msg)) = request;
-            if matches!(msg, NetworkMessage::GetCFilters(_)) {
-                requested += 1;
-            }
-        }
-        assert_eq!(requested, 1, "the initial download issues exactly one getcfilters");
+        assert_eq!(
+            drain_getcfilters(&mut rx),
+            1,
+            "the initial download issues exactly one getcfilters"
+        );
 
         manager.tick(&requests).await.unwrap();
 
-        while let Ok(request) = rx.try_recv() {
-            let (NetworkRequest::SendMessage(msg)
-            | NetworkRequest::SendMessageToPeer(msg, _)
-            | NetworkRequest::BroadcastMessage(msg)) = request;
-            assert!(
-                !matches!(msg, NetworkMessage::GetCFilters(_)),
-                "a tick re-requested filters that were still in flight"
-            );
-        }
+        assert_eq!(
+            drain_getcfilters(&mut rx),
+            0,
+            "a tick re-requested filters that were still in flight"
+        );
     }
 
     /// A wallet added at runtime reports `synced_height = 0` regardless of what
@@ -3431,18 +3451,21 @@ mod tests {
         );
 
         let mut manager = create_multi_test_manager(multi.clone()).await;
-        let anchored = create_anchored_test_manager(200_000, 10).await;
-        manager.header_storage = anchored.header_storage.clone();
-        manager.filter_storage = anchored.filter_storage.clone();
-        manager.filter_header_storage = anchored.filter_header_storage.clone();
-
-        // Wallet B joins fresh, below the anchor, exactly as a runtime add does.
-        multi.write().await.insert_wallet(wallet_b, MockWalletState::default());
+        seed_anchored_storage(&manager, 200_000, 10).await;
 
         let (tx, _rx) = unbounded_channel();
         let requests = RequestSender::new(tx);
 
+        // Reach the frontier with only wallet A present.
         manager.handle_new_filter_headers(200_010, &requests).await.unwrap();
+        manager.tick(&requests).await.unwrap();
+        assert!(manager.active_batches.is_empty());
+        assert_eq!(manager.progress.committed_height(), 200_010);
+
+        // Wallet B joins afterwards, reporting 0 like every runtime add does.
+        // This one genuinely needs a rescan, so the floor must not suppress it.
+        multi.write().await.insert_wallet(wallet_b, MockWalletState::default());
+
         for _ in 0..3 {
             manager.tick(&requests).await.unwrap();
         }
