@@ -50,6 +50,15 @@ pub struct ClientConfig {
     /// Whether to enable masternode syncing.
     pub enable_masternodes: bool,
 
+    /// Whether wallets created from this config include a CoinJoin account.
+    ///
+    /// The library core does not read this: it selects the account set at
+    /// wallet-creation time for callers that build wallets from this config
+    /// (the CLI does). The CoinJoin account watches two full address pools,
+    /// which roughly doubles the compact-filter watch set and with it the
+    /// number of false-positive block downloads.
+    pub enable_coinjoin: bool,
+
     /// Maximum number of peers to connect to.
     pub max_peers: u32,
 
@@ -111,6 +120,7 @@ impl Default for ClientConfig {
             validation_mode: ValidationMode::Full,
             enable_filters: true,
             enable_masternodes: true,
+            enable_coinjoin: false,
             max_peers: 3,
             user_agent: None,
             // Mempool defaults
@@ -186,6 +196,12 @@ impl ClientConfig {
     /// Disable masternodes.
     pub fn without_masternodes(mut self) -> Self {
         self.enable_masternodes = false;
+        self
+    }
+
+    /// Include a CoinJoin account in wallets created from this config.
+    pub fn with_coinjoin(mut self, enable: bool) -> Self {
+        self.enable_coinjoin = enable;
         self
     }
 

@@ -10,6 +10,7 @@ use dash_spv::{
     Network, ValidationMode,
 };
 use dashcore::sml::llmq_type::devnet_llmq_type_from_name;
+use key_wallet::wallet::initialization::WalletAccountCreationOptions;
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
 use key_wallet_manager::WalletManager;
 
@@ -101,6 +102,11 @@ struct Args {
     /// Disable masternode list synchronization
     #[arg(long)]
     no_masternodes: bool,
+
+    /// Create and watch a CoinJoin account (adds two full address pools to the
+    /// filter watch set, roughly doubling false-positive block downloads)
+    #[arg(long)]
+    enable_coinjoin: bool,
 
     /// Disable mempool transaction tracking
     #[arg(long)]
@@ -250,11 +256,20 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // Create the wallet manager
+    let account_creation_options = if config.enable_coinjoin {
+        WalletAccountCreationOptions::default()
+    } else {
+        tracing::warn!(
+            "CoinJoin account disabled: funds on m/9'/coin_type'/4' (mixed denominations) will \
+             not be discovered. Re-run with --enable-coinjoin if this seed ever mixed"
+        );
+        WalletAccountCreationOptions::default_without_coinjoin()
+    };
     let mut wallet_manager = WalletManager::<ManagedWalletInfo>::new(config.network);
     wallet_manager.create_wallet_from_mnemonic(
         mnemonic_phrase.as_str(),
         0,
-        key_wallet::wallet::initialization::WalletAccountCreationOptions::default(),
+        account_creation_options,
     )?;
     let wallet = Arc::new(tokio::sync::RwLock::new(wallet_manager));
 
@@ -307,6 +322,7 @@ fn build_client_config(args: &Args, data_dir: PathBuf) -> Result<ClientConfig, S
     if args.no_masternodes {
         config = config.without_masternodes();
     }
+    config = config.with_coinjoin(args.enable_coinjoin);
     if args.no_mempool {
         config.enable_mempool_tracking = false;
     } else {
@@ -542,5 +558,17 @@ mod tests {
         let devnet = config.devnet.as_ref().expect("devnet must be set");
         assert_eq!(devnet.name, "alpha");
         assert_eq!(config.network, Network::Devnet);
+    }
+
+    #[test]
+    fn enable_coinjoin_flag_round_trips_into_config() {
+        let tmp = TempDir::new().unwrap();
+
+        let config = build_client_config(&args(&[]), tmp.path().to_path_buf()).expect("ok");
+        assert!(!config.enable_coinjoin);
+
+        let config = build_client_config(&args(&["--enable-coinjoin"]), tmp.path().to_path_buf())
+            .expect("ok");
+        assert!(config.enable_coinjoin);
     }
 }

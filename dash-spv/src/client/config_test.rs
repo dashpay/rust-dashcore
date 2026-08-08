@@ -23,6 +23,7 @@ mod tests {
         assert_eq!(config.validation_mode, ValidationMode::Full);
         assert!(config.enable_filters);
         assert!(config.enable_masternodes);
+        assert!(!config.enable_coinjoin);
         assert_eq!(config.max_peers, 3);
 
         // Mempool defaults
@@ -166,10 +167,12 @@ mod tests {
 
     #[test]
     fn test_disable_features() {
-        let config = ClientConfig::default().without_filters().without_masternodes();
+        let config =
+            ClientConfig::default().without_filters().without_masternodes().with_coinjoin(true);
 
         assert!(!config.enable_filters);
         assert!(!config.enable_masternodes);
+        assert!(config.enable_coinjoin);
     }
 
     #[test]
