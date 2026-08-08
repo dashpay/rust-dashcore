@@ -213,6 +213,21 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
         }
         .max(header_start_height);
 
+        // An anchor above the wallet's birth height leaves a range that no scan
+        // will ever cover. Beyond the funds in it, BIP44 discovery is
+        // sequential, so usage hidden down there also stops the gap-limit
+        // window from advancing and can mask later addresses.
+        if header_start_height > wallet_birth_height {
+            tracing::warn!(
+                "Chain anchored at height {} but wallet birth height is {}: heights {}..{} will never be scanned, \
+                 so funds and address usage in that range stay invisible",
+                header_start_height,
+                wallet_birth_height,
+                wallet_birth_height,
+                header_start_height.saturating_sub(1)
+            );
+        }
+
         // The stored range is only usable for this scan when it actually
         // reaches down to `scan_start`. When headers previously synced from a
         // checkpoint above the wallet's birth height, only tip-region filters
@@ -514,6 +529,10 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
     async fn try_commit_batches(&mut self) -> SyncResult<Vec<SyncEvent>> {
         let mut events = Vec::new();
 
+        // Lowest height any scan can ever reach. Read once, before the wallet
+        // write lock below, so header storage is never locked underneath it.
+        let scan_floor = self.header_storage.read().await.get_start_height().await.unwrap_or(0);
+
         while let Some((&batch_start, batch)) = self.active_batches.first_key_value() {
             // Check if batch was scanned - can't commit until scanned
             if !batch.scanned() {
@@ -591,7 +610,22 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
                         // coverage only if the wallet was already certified up to
                         // the batch's start; a gap below the batch must be
                         // rescanned, not silently certified.
-                        if wallet.wallet_synced_height(wallet_id).saturating_add(1) >= batch_start {
+                        //
+                        // Heights below `scan_floor` are the one exception: no
+                        // batch can ever reach them, because the chain is
+                        // anchored at a checkpoint and no headers exist below
+                        // it. Treating that range as a gap leaves a wallet
+                        // whose `synced_height` sits under the anchor
+                        // permanently uncertifiable, which also starves the
+                        // account-add rescan that clears
+                        // dashpay/rust-dashcore#649. `scan_floor` itself is
+                        // scanned, so only heights strictly below it count as
+                        // out of scope. The guard is otherwise unchanged, so a
+                        // genuine gap above the floor still blocks the advance.
+                        let effective_synced = wallet
+                            .wallet_synced_height(wallet_id)
+                            .max(scan_floor.saturating_sub(1));
+                        if effective_synced.saturating_add(1) >= batch_start {
                             wallet.update_wallet_synced_height(wallet_id, end);
                         }
                     }
@@ -1110,6 +1144,93 @@ mod tests {
         .await
     }
 
+    /// Store `count` headers starting at `anchor`, so `get_start_height`
+    /// reports `anchor`. That is the value the scan floor is read from.
+    async fn anchor_headers_at(
+        storage: &Arc<RwLock<PersistentBlockHeaderStorage>>,
+        anchor: u32,
+        count: u32,
+    ) {
+        let headers = Header::dummy_batch(anchor..anchor + count);
+        storage
+            .write()
+            .await
+            .store_headers_at_height(
+                &headers.iter().map(HashedBlockHeader::from).collect::<Vec<_>>(),
+                anchor,
+            )
+            .await
+            .unwrap();
+    }
+
+    /// Give an existing manager the checkpoint-sync shape: block headers,
+    /// filter bodies and a filter header covering `anchor..=anchor + span`,
+    /// with nothing below `anchor`. Seeds the storage the manager already
+    /// holds, so its progress stays consistent with what it reads back.
+    async fn seed_anchored_storage<W: WalletInterface + 'static>(
+        manager: &FiltersManager<
+            PersistentBlockHeaderStorage,
+            PersistentFilterHeaderStorage,
+            PersistentFilterStorage,
+            W,
+        >,
+        anchor: u32,
+        span: u32,
+    ) {
+        anchor_headers_at(&manager.header_storage, anchor, span + 1).await;
+
+        let filter = BlockFilter::new(&[0u8; 32]);
+        {
+            let mut fs = manager.filter_storage.write().await;
+            for height in anchor..=anchor + span {
+                fs.store_filter(height, &filter.content).await.unwrap();
+            }
+        }
+
+        // Non-zero, since the segment store reads an all-zero filter header
+        // back as an empty slot.
+        let prev_filter_header = FilterHeader::from_byte_array([1u8; 32]);
+        manager
+            .filter_header_storage
+            .write()
+            .await
+            .store_filter_headers_at_height(
+                &[prev_filter_header, filter.filter_header(&prev_filter_header)],
+                anchor + span,
+            )
+            .await
+            .unwrap();
+    }
+
+    /// Drain every `GetCFilters` request queued on `rx`.
+    fn drain_getcfilters(rx: &mut tokio::sync::mpsc::UnboundedReceiver<NetworkRequest>) -> usize {
+        let mut count = 0;
+        while let Ok(request) = rx.try_recv() {
+            let (NetworkRequest::SendMessage(msg)
+            | NetworkRequest::SendMessageToPeer(msg, _)
+            | NetworkRequest::BroadcastMessage(msg)) = request;
+            if matches!(msg, NetworkMessage::GetCFilters(_)) {
+                count += 1;
+            }
+        }
+        count
+    }
+
+    /// Manager whose block headers start at `anchor` rather than genesis, the
+    /// checkpoint-sync shape where the chain is anchored above a wallet's birth
+    /// height. `get_start_height` is what the scan floor is derived from, so
+    /// this reproduces the mainnet setup without depending on `Network`:
+    /// `hd_wallet_sync_floor` is non-zero only for mainnet, which is why the
+    /// rest of the suite never exercised a non-zero floor.
+    ///
+    /// Headers and filters both cover `anchor..=anchor + span`. Filter headers
+    /// are stored so `handle_new_filter_headers` can drive a real download.
+    async fn create_anchored_test_manager(anchor: u32, span: u32) -> TestFiltersManager {
+        let manager = create_test_manager().await;
+        seed_anchored_storage(&manager, anchor, span).await;
+        manager
+    }
+
     /// Set up a manager fully synced to height 100: block headers stored
     /// through the boundary block 101, filter bodies and filter headers
     /// persisted through 100, and progress anchored at 100. The returned
@@ -1445,6 +1566,30 @@ mod tests {
             multi.read().await.wallets_behind(9999).contains(&wallet_a),
             "the wallet remains behind and is picked up by the tick rescan"
         );
+
+        // Under an anchor, only heights strictly below it are out of scope. A
+        // gap between the anchor and the batch is still a gap, so the floor
+        // must not be read as "anything below the batch is fine".
+        let wallet_b: WalletId = [0xBB; 32];
+        multi.write().await.insert_wallet(wallet_b, MockWalletState::default());
+        let mut manager = create_multi_test_manager(multi.clone()).await;
+        anchor_headers_at(&manager.header_storage, 200_000, 2).await;
+        manager.set_state(SyncState::Syncing);
+
+        let mut batch = FiltersBatch::new(205_000, 209_999, HashMap::new());
+        batch.set_pending_blocks(0);
+        batch.mark_scanned();
+        batch.mark_rescan_complete();
+        batch.set_scanned_wallets(BTreeMap::from([(wallet_b, 0)]));
+        manager.active_batches.insert(205_000, batch);
+
+        manager.try_commit_batches().await.unwrap();
+
+        assert_eq!(
+            multi.read().await.wallet_synced_height(&wallet_b),
+            0,
+            "heights 200000..204999 are reachable and were never scanned, so the batch cannot certify"
+        );
     }
 
     /// The contiguity guard is transparent in normal operation: contiguous
@@ -1638,6 +1783,32 @@ mod tests {
             999,
             "an account add that moved no heights must still block the advance — \
              the batch was scanned without the new account's scripts"
+        );
+
+        // Same thing under an anchor, where the contiguity check passes on the
+        // floor and the generation guard is the only thing left holding the
+        // advance back.
+        let wallet_b: WalletId = [0xBB; 32];
+        multi.write().await.insert_wallet(wallet_b, MockWalletState::default());
+        let mut manager = create_multi_test_manager(multi.clone()).await;
+        anchor_headers_at(&manager.header_storage, 200_000, 2).await;
+        manager.set_state(SyncState::Syncing);
+
+        let mut batch = FiltersBatch::new(200_000, 204_999, HashMap::new());
+        batch.set_pending_blocks(0);
+        batch.mark_scanned();
+        batch.mark_rescan_complete();
+        batch.set_scanned_wallets(BTreeMap::from([(wallet_b, 0)]));
+        manager.active_batches.insert(200_000, batch);
+
+        multi.write().await.wallet_mut(&wallet_b).account_generation = 1;
+
+        manager.try_commit_batches().await.unwrap();
+
+        assert_eq!(
+            multi.read().await.wallet_synced_height(&wallet_b),
+            0,
+            "the floor satisfies contiguity here, so the generation guard alone must block it"
         );
     }
 
@@ -3167,6 +3338,148 @@ mod tests {
         assert!(events.is_empty());
         assert_eq!(manager.progress.committed_height(), 100);
         assert_eq!(manager.state(), SyncState::Synced);
+        assert!(manager.active_batches.is_empty());
+
+        // A wallet below the anchor is "behind" by the raw comparison, yet
+        // needs nothing that any scan could reach. Restarting for it is what
+        // wiped the in-flight batches. 199_998 rather than only 0 so a fix
+        // keyed on "synced_height == 0" does not pass.
+        for synced in [0, 1, 199_998, 199_999, 200_000] {
+            let mut manager = create_anchored_test_manager(200_000, 10).await;
+            manager.wallet.write().await.update_wallet_synced_height(&MOCK_WALLET_ID, synced);
+            manager.set_state(SyncState::Synced);
+            manager.progress.update_committed_height(199_999);
+            manager.progress.update_stored_height(200_010);
+            manager.progress.update_filter_header_tip_height(200_010);
+            manager.progress.update_target_height(200_010);
+
+            let events = manager.tick(&requests).await.unwrap();
+
+            assert!(events.is_empty(), "synced_height {synced} produced events");
+            assert!(
+                manager.active_batches.is_empty(),
+                "synced_height {synced} triggered a rescan below the anchor"
+            );
+            assert_eq!(manager.progress.committed_height(), 199_999, "synced_height {synced}");
+            assert_eq!(manager.state(), SyncState::Synced, "synced_height {synced}");
+        }
+    }
+
+    /// A wallet whose `synced_height` sits below the chain anchor must still
+    /// reach `Synced`. This is the mainnet stall: the CLI creates wallets with
+    /// birth height 0 while `hd_wallet_sync_floor` anchors the chain at the
+    /// checkpoint above it, so `synced_height` stayed at 0 and every tick threw
+    /// the scan away and started over.
+    #[tokio::test]
+    async fn anchored_chain_advances_a_wallet_that_starts_below_the_anchor() {
+        let mut manager = create_anchored_test_manager(200_000, 10).await;
+        manager.wallet.write().await.set_addresses(vec![Address::dummy(Network::Regtest, 7)]);
+        assert_eq!(manager.wallet.read().await.wallet_synced_height(&MOCK_WALLET_ID), 0);
+
+        let (tx, _rx) = unbounded_channel();
+        let requests = RequestSender::new(tx);
+
+        manager.handle_new_filter_headers(200_010, &requests).await.unwrap();
+        assert!(
+            manager.active_batches.contains_key(&200_000),
+            "the first batch starts at the anchor, not at the wallet's synced_height"
+        );
+        assert_eq!(manager.progress.committed_height(), 199_999);
+
+        manager.tick(&requests).await.unwrap();
+
+        assert_eq!(
+            manager.wallet.read().await.wallet_synced_height(&MOCK_WALLET_ID),
+            200_010,
+            "the batch covers everything the wallet can ever be scanned for, so it certifies it"
+        );
+        assert_eq!(manager.progress.committed_height(), 200_010);
+        assert!(manager.active_batches.is_empty());
+        assert_eq!(manager.state(), SyncState::Synced);
+
+        // A second tick must be a no-op rather than the start of another round.
+        manager.tick(&requests).await.unwrap();
+        assert_eq!(manager.progress.committed_height(), 200_010);
+        assert!(manager.active_batches.is_empty());
+        assert_eq!(manager.wallet.read().await.wallet_synced_height(&MOCK_WALLET_ID), 200_010);
+    }
+
+    /// The observed symptom of the stall: the same range requested over and
+    /// over. A tick must not discard filters that are still in flight, which a
+    /// rescan does by replacing the whole pipeline.
+    #[tokio::test]
+    async fn anchored_chain_tick_does_not_rerequest_in_flight_filters() {
+        let mut manager = create_anchored_test_manager(200_000, 10).await;
+        // Drop the stored filters so the batch needs a real download.
+        manager.filter_storage.write().await.clear_filters().await.unwrap();
+        manager.progress.update_stored_height(0);
+
+        let (tx, mut rx) = unbounded_channel();
+        let requests = RequestSender::new(tx);
+
+        manager.handle_new_filter_headers(200_010, &requests).await.unwrap();
+
+        assert_eq!(
+            drain_getcfilters(&mut rx),
+            1,
+            "the initial download issues exactly one getcfilters"
+        );
+
+        manager.tick(&requests).await.unwrap();
+
+        assert_eq!(
+            drain_getcfilters(&mut rx),
+            0,
+            "a tick re-requested filters that were still in flight"
+        );
+    }
+
+    /// A wallet added at runtime reports `synced_height = 0` regardless of what
+    /// the client anchored at, so raising the birth height at construction does
+    /// not cover this path. It must converge, not rescan forever.
+    #[tokio::test]
+    async fn anchored_chain_converges_for_a_wallet_added_after_the_anchor() {
+        let wallet_a: WalletId = [0xA1; 32];
+        let wallet_b: WalletId = [0xB2; 32];
+        let multi = Arc::new(RwLock::new(MultiMockWallet::new()));
+        multi.write().await.insert_wallet(
+            wallet_a,
+            MockWalletState {
+                synced_height: 200_010,
+                ..MockWalletState::default()
+            },
+        );
+
+        let mut manager = create_multi_test_manager(multi.clone()).await;
+        seed_anchored_storage(&manager, 200_000, 10).await;
+
+        let (tx, _rx) = unbounded_channel();
+        let requests = RequestSender::new(tx);
+
+        // Reach the frontier with only wallet A present.
+        manager.handle_new_filter_headers(200_010, &requests).await.unwrap();
+        manager.tick(&requests).await.unwrap();
+        assert!(manager.active_batches.is_empty());
+        assert_eq!(manager.progress.committed_height(), 200_010);
+
+        // Wallet B joins afterwards, reporting 0 like every runtime add does.
+        // This one genuinely needs a rescan, so the floor must not suppress it.
+        multi.write().await.insert_wallet(wallet_b, MockWalletState::default());
+
+        for _ in 0..3 {
+            manager.tick(&requests).await.unwrap();
+        }
+
+        assert_eq!(
+            multi.read().await.wallet_synced_height(&wallet_b),
+            200_010,
+            "the newly added wallet is certified for everything above the anchor"
+        );
+        assert_eq!(
+            multi.read().await.wallet_synced_height(&wallet_a),
+            200_010,
+            "the already-synced wallet never regresses"
+        );
         assert!(manager.active_batches.is_empty());
     }
 
