@@ -3,9 +3,12 @@
 //! Tests full wallet lifecycle, account discovery, and complex scenarios.
 
 use crate::account::{AccountType, StandardAccountType};
+use crate::bip32::ExtendedPubKey;
 use crate::mnemonic::{Language, Mnemonic};
+use crate::wallet::initialization::WalletAccountCreationOptions;
 use crate::wallet::Wallet;
 use crate::Network;
+use std::collections::BTreeMap;
 
 #[test]
 fn test_wallet_multiple_accounts() {
@@ -148,4 +151,52 @@ fn test_wallet_with_all_account_types() {
     assert!(wallet.accounts.provider_owner_keys.is_some());
     assert!(wallet.accounts.provider_operator_keys.is_some());
     assert!(wallet.accounts.provider_platform_keys.is_some());
+
+    // `default_without_coinjoin` must always equal `Default` minus the CoinJoin
+    // account. The expectation is derived from the `Default` wallet so any
+    // account later added to `Default` makes this fail if the constructor
+    // does not track it.
+    let mnemonic = Mnemonic::from_phrase(
+        "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
+        Language::English,
+    )
+    .unwrap();
+    let default_wallet = Wallet::from_mnemonic(
+        mnemonic.clone(),
+        Network::Testnet,
+        WalletAccountCreationOptions::Default,
+    )
+    .unwrap();
+    let without_coinjoin_wallet = Wallet::from_mnemonic(
+        mnemonic,
+        Network::Testnet,
+        WalletAccountCreationOptions::default_without_coinjoin(),
+    )
+    .unwrap();
+
+    let account_map = |wallet: &Wallet| -> BTreeMap<AccountType, ExtendedPubKey> {
+        wallet
+            .accounts
+            .all_accounts()
+            .iter()
+            .map(|account| (account.account_type, account.account_xpub))
+            .collect()
+    };
+
+    let mut expected = account_map(&default_wallet);
+    assert!(
+        expected.keys().any(|account_type| matches!(account_type, AccountType::CoinJoin { .. })),
+        "Default must create a CoinJoin account for this comparison to be meaningful"
+    );
+    expected.retain(|account_type, _| !matches!(account_type, AccountType::CoinJoin { .. }));
+    assert_eq!(account_map(&without_coinjoin_wallet), expected);
+
+    assert_eq!(
+        without_coinjoin_wallet.accounts.provider_operator_keys.is_some(),
+        default_wallet.accounts.provider_operator_keys.is_some()
+    );
+    assert_eq!(
+        without_coinjoin_wallet.accounts.provider_platform_keys.is_some(),
+        default_wallet.accounts.provider_platform_keys.is_some()
+    );
 }

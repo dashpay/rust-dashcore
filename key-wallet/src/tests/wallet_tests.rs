@@ -29,6 +29,8 @@ fn test_wallet_creation_random() {
 
     // Verify default accounts were created (BIP44, CoinJoin, and special purpose)
     assert!(wallet.accounts.count() >= 2);
+    assert_eq!(wallet.accounts.coinjoin_accounts.len(), 1);
+    assert_eq!(wallet.accounts.platform_payment_accounts.len(), 1);
 
     // Verify wallet ID is set
     assert_ne!(wallet.wallet_id, [0u8; 32]);

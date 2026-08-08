@@ -94,6 +94,28 @@ pub enum WalletAccountCreationOptions {
     None,
 }
 
+impl WalletAccountCreationOptions {
+    /// The [`WalletAccountCreationOptions::Default`] account set without the CoinJoin account.
+    ///
+    /// The CoinJoin account watches two full address pools on `m/9'/coin_type'/4'`,
+    /// which roughly doubles a wallet's compact-filter watch set. Wallets that never
+    /// mix can use this to skip it while keeping every other default account.
+    ///
+    /// Must be kept in sync with the `Default` arm of `create_accounts_from_options`.
+    pub fn default_without_coinjoin() -> Self {
+        Self::AllAccounts(
+            BTreeSet::from([0]),
+            BTreeSet::from([0]),
+            BTreeSet::new(),
+            BTreeSet::new(),
+            BTreeSet::from([PlatformPaymentAccountSpec {
+                account: 0,
+                key_class: 0,
+            }]),
+        )
+    }
+}
+
 impl Wallet {
     /// Create a new wallet with a randomly generated mnemonic
     ///
