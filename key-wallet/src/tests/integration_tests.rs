@@ -151,11 +151,14 @@ fn test_wallet_with_all_account_types() {
     assert!(wallet.accounts.provider_owner_keys.is_some());
     assert!(wallet.accounts.provider_operator_keys.is_some());
     assert!(wallet.accounts.provider_platform_keys.is_some());
+}
 
-    // `default_without_coinjoin` must always equal `Default` minus the CoinJoin
-    // account. The expectation is derived from the `Default` wallet so any
+#[test]
+fn test_default_without_coinjoin_matches_default_minus_coinjoin() {
+    // The expectation is derived from the `Default` wallet so any ECDSA
     // account later added to `Default` makes this fail if the constructor
-    // does not track it.
+    // does not track it. BLS and EdDSA provider keys are excluded from
+    // `all_accounts()` and asserted separately below.
     let mnemonic = Mnemonic::from_phrase(
         "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
         Language::English,
@@ -191,12 +194,8 @@ fn test_wallet_with_all_account_types() {
     expected.retain(|account_type, _| !matches!(account_type, AccountType::CoinJoin { .. }));
     assert_eq!(account_map(&without_coinjoin_wallet), expected);
 
-    assert_eq!(
-        without_coinjoin_wallet.accounts.provider_operator_keys.is_some(),
-        default_wallet.accounts.provider_operator_keys.is_some()
-    );
-    assert_eq!(
-        without_coinjoin_wallet.accounts.provider_platform_keys.is_some(),
-        default_wallet.accounts.provider_platform_keys.is_some()
-    );
+    assert!(default_wallet.accounts.provider_operator_keys.is_some());
+    assert!(default_wallet.accounts.provider_platform_keys.is_some());
+    assert!(without_coinjoin_wallet.accounts.provider_operator_keys.is_some());
+    assert!(without_coinjoin_wallet.accounts.provider_platform_keys.is_some());
 }

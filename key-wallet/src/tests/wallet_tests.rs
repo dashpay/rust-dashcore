@@ -27,7 +27,7 @@ fn test_wallet_creation_random() {
     assert!(!wallet.is_watch_only());
     assert!(wallet.can_sign());
 
-    // Verify default accounts were created (BIP44, CoinJoin, and special purpose)
+    // Verify default accounts were created (BIP44, CoinJoin, PlatformPayment, and special purpose)
     assert!(wallet.accounts.count() >= 2);
     assert_eq!(wallet.accounts.coinjoin_accounts.len(), 1);
     assert_eq!(wallet.accounts.platform_payment_accounts.len(), 1);

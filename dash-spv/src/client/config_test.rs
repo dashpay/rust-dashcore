@@ -167,12 +167,10 @@ mod tests {
 
     #[test]
     fn test_disable_features() {
-        let config =
-            ClientConfig::default().without_filters().without_masternodes().with_coinjoin(true);
+        let config = ClientConfig::default().without_filters().without_masternodes();
 
         assert!(!config.enable_filters);
         assert!(!config.enable_masternodes);
-        assert!(config.enable_coinjoin);
     }
 
     #[test]

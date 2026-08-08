@@ -52,11 +52,11 @@ pub struct ClientConfig {
 
     /// Whether wallets created from this config include a CoinJoin account.
     ///
-    /// The library core does not read this: it selects the account set at
-    /// wallet-creation time for callers that build wallets from this config
-    /// (the CLI does). The CoinJoin account watches two full address pools,
-    /// which roughly doubles the compact-filter watch set and with it the
-    /// number of false-positive block downloads.
+    /// Nothing inside the client reads this. It exists so callers that build
+    /// a wallet from this config, such as the CLI, can pick the account set
+    /// at wallet-creation time. The CoinJoin account watches two full address
+    /// pools, which roughly doubles the compact-filter watch set and with it
+    /// the number of false-positive block downloads.
     pub enable_coinjoin: bool,
 
     /// Maximum number of peers to connect to.

@@ -255,7 +255,6 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         config = config.with_user_agent(user_agent);
     }
 
-    // Create the wallet manager
     let account_creation_options = if config.enable_coinjoin {
         WalletAccountCreationOptions::default()
     } else {
@@ -265,6 +264,8 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         );
         WalletAccountCreationOptions::default_without_coinjoin()
     };
+
+    // Create the wallet manager
     let mut wallet_manager = WalletManager::<ManagedWalletInfo>::new(config.network);
     wallet_manager.create_wallet_from_mnemonic(
         mnemonic_phrase.as_str(),
