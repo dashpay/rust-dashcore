@@ -213,6 +213,21 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
         }
         .max(header_start_height);
 
+        // An anchor above the wallet's birth height leaves a range that no scan
+        // will ever cover. Beyond the funds in it, BIP44 discovery is
+        // sequential, so usage hidden down there also stops the gap-limit
+        // window from advancing and can mask later addresses.
+        if header_start_height > wallet_birth_height {
+            tracing::warn!(
+                "Chain anchored at height {} but wallet birth height is {}: heights {}..{} will never be scanned, \
+                 so funds and address usage in that range stay invisible",
+                header_start_height,
+                wallet_birth_height,
+                wallet_birth_height,
+                header_start_height.saturating_sub(1)
+            );
+        }
+
         // The stored range is only usable for this scan when it actually
         // reaches down to `scan_start`. When headers previously synced from a
         // checkpoint above the wallet's birth height, only tip-region filters
@@ -514,6 +529,10 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
     async fn try_commit_batches(&mut self) -> SyncResult<Vec<SyncEvent>> {
         let mut events = Vec::new();
 
+        // Lowest height any scan can ever reach. Read once, before the wallet
+        // write lock below, so header storage is never locked underneath it.
+        let scan_floor = self.header_storage.read().await.get_start_height().await.unwrap_or(0);
+
         while let Some((&batch_start, batch)) = self.active_batches.first_key_value() {
             // Check if batch was scanned - can't commit until scanned
             if !batch.scanned() {
@@ -591,7 +610,22 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
                         // coverage only if the wallet was already certified up to
                         // the batch's start; a gap below the batch must be
                         // rescanned, not silently certified.
-                        if wallet.wallet_synced_height(wallet_id).saturating_add(1) >= batch_start {
+                        //
+                        // Heights below `scan_floor` are the one exception: no
+                        // batch can ever reach them, because the chain is
+                        // anchored at a checkpoint and no headers exist below
+                        // it. Treating that range as a gap leaves a wallet
+                        // whose `synced_height` sits under the anchor
+                        // permanently uncertifiable, which also starves the
+                        // account-add rescan that clears
+                        // dashpay/rust-dashcore#649. `scan_floor` itself is
+                        // scanned, so only heights strictly below it count as
+                        // out of scope. The guard is otherwise unchanged, so a
+                        // genuine gap above the floor still blocks the advance.
+                        let effective_synced = wallet
+                            .wallet_synced_height(wallet_id)
+                            .max(scan_floor.saturating_sub(1));
+                        if effective_synced.saturating_add(1) >= batch_start {
                             wallet.update_wallet_synced_height(wallet_id, end);
                         }
                     }
