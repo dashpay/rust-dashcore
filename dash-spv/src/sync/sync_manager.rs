@@ -133,6 +133,20 @@ pub trait SyncManager: Send + Sync + std::fmt::Debug {
     /// immediately to the new peer.
     fn on_disconnect(&mut self);
 
+    /// Requeue in-flight work after a single peer drops while others remain.
+    ///
+    /// Distinct from [`SyncManager::on_disconnect`], which runs only once every
+    /// peer is gone and is therefore free to discard peer-bound state wholesale.
+    /// Here the surviving peers can still serve the work, so an implementation
+    /// must requeue and nothing else.
+    ///
+    /// In-flight items carry no peer attribution, so an implementation requeues
+    /// everything outstanding, including requests a healthy peer is still going
+    /// to answer. Retry counts survive a requeue and every receive path treats a
+    /// response it no longer tracks as unrequested, so the cost is redundant
+    /// traffic rather than lost work or a corrupted retry budget.
+    fn on_peer_disconnect(&mut self) {}
+
     /// Handle an incoming network message.
     ///
     /// Returns events to emit to other managers.
@@ -171,27 +185,38 @@ pub trait SyncManager: Send + Sync + std::fmt::Debug {
         event: &NetworkEvent,
         requests: &RequestSender,
     ) -> SyncResult<Vec<SyncEvent>> {
-        // Default: transition from WaitingForConnections to Syncing when peers connect
-        if let NetworkEvent::PeersUpdated {
-            connected_count,
-            best_height,
-            ..
-        } = event
-        {
-            if let Some(best_height) = best_height {
-                self.update_target_height(*best_height);
+        match event {
+            // `PeersUpdated` carries only the surviving count, so a drop that
+            // leaves other peers connected is invisible there. `PeerDisconnected`
+            // precedes it for every removal path and is what makes the drop
+            // observable at all.
+            NetworkEvent::PeerDisconnected {
+                ..
+            } => self.on_peer_disconnect(),
+            // Default: transition from WaitingForConnections to Syncing when peers connect
+            NetworkEvent::PeersUpdated {
+                connected_count,
+                best_height,
+                ..
+            } => {
+                if let Some(best_height) = best_height {
+                    self.update_target_height(*best_height);
+                }
+                if *connected_count == 0 {
+                    tracing::info!("{} - no peers available, stopping sync", self.identifier());
+                    self.stop_sync();
+                } else if *connected_count > 0 && self.state() == SyncState::WaitingForConnections {
+                    tracing::info!(
+                        "{} - peers available ({}), starting sync",
+                        self.identifier(),
+                        connected_count
+                    );
+                    return self.start_sync(requests).await;
+                }
             }
-            if *connected_count == 0 {
-                tracing::info!("{} - no peers available, stopping sync", self.identifier());
-                self.stop_sync();
-            } else if *connected_count > 0 && self.state() == SyncState::WaitingForConnections {
-                tracing::info!(
-                    "{} - peers available ({}), starting sync",
-                    self.identifier(),
-                    connected_count
-                );
-                return self.start_sync(requests).await;
-            }
+            NetworkEvent::PeerConnected {
+                ..
+            } => {}
         }
         Ok(vec![])
     }

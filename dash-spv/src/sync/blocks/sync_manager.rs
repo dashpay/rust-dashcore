@@ -62,6 +62,10 @@ impl<H: BlockHeaderStorage, B: BlockStorage, W: WalletInterface + 'static> SyncM
         self.pipeline.requeue_in_flight();
     }
 
+    fn on_peer_disconnect(&mut self) {
+        self.pipeline.requeue_in_flight();
+    }
+
     async fn handle_message(
         &mut self,
         msg: Message,

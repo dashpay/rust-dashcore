@@ -47,6 +47,17 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> SyncManager for BlockHeadersMana
         self.announced_peers.clear();
     }
 
+    fn on_peer_disconnect(&mut self) {
+        // Only the active sync path reissues header requests. Dropping the
+        // in-flight marker in any other state would strand the request rather
+        // than retry it, and would also mask the tip announcement a freshly
+        // connected peer gets while a catch-up request is outstanding.
+        if self.state() != SyncState::Syncing {
+            return;
+        }
+        self.pipeline.clear_in_flight();
+    }
+
     async fn start_sync(&mut self, requests: &RequestSender) -> SyncResult<Vec<SyncEvent>> {
         ensure_not_started(self.state(), self.identifier())?;
         self.progress.set_state(SyncState::Syncing);
@@ -191,6 +202,14 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> SyncManager for BlockHeadersMana
                 address,
             } => {
                 self.announced_peers.remove(address);
+                self.on_peer_disconnect();
+                if self.state() == SyncState::Syncing {
+                    // Reissue before returning to the task loop. A segment
+                    // rejects headers whose request it no longer tracks, so
+                    // leaving the resend to the next tick would open a window
+                    // in which a surviving peer's reply looks unsolicited.
+                    self.pipeline.send_pending(requests)?;
+                }
             }
             NetworkEvent::PeersUpdated {
                 connected_count,

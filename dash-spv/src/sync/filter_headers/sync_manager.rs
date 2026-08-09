@@ -37,6 +37,10 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage> SyncManager for FilterHeade
         self.block_headers_synced = false;
     }
 
+    fn on_peer_disconnect(&mut self) {
+        self.pipeline.requeue_in_flight();
+    }
+
     async fn handle_message(
         &mut self,
         msg: Message,
