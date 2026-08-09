@@ -519,6 +519,11 @@ impl MasternodeListEngine {
     /// under their cycle boundary hash. This enables IS lock verification for
     /// the previous cycle after a fresh sync where `lastCommitmentPerIndex`
     /// only provides the current cycle's quorums.
+    ///
+    /// This is a best-effort enrichment step: any entry that does not verify,
+    /// whether skipped for missing context or cryptographically invalid, only
+    /// prevents the cycle from being stored. The authoritative rejection of
+    /// bad current-cycle data happens on the `lastCommitmentPerIndex` path.
     #[cfg(feature = "quorum_validation")]
     fn validate_and_store_previous_cycle_quorums(
         &mut self,
@@ -543,7 +548,16 @@ impl MasternodeListEngine {
                 .unwrap_or_default();
             match entry.verified {
                 LLMQEntryVerificationStatus::Verified => {}
-                LLMQEntryVerificationStatus::Invalid(ref e) => return Err(e.clone()),
+                LLMQEntryVerificationStatus::Invalid(_) => {
+                    tracing::warn!(
+                        "Previous-cycle quorum {} at cycle {} failed validation ({}); skipping storage",
+                        entry.quorum_entry.quorum_hash,
+                        cycle_hash,
+                        entry.verified
+                    );
+                    all_verified = false;
+                    break;
+                }
                 _ => {
                     // Can't fully validate (e.g. MN list at a required work
                     // block is missing because it's deeper than the QRInfo's
@@ -2197,6 +2211,50 @@ mod tests {
             "rejected QRInfo must not have stored cycle keyed at {} (stored keys: {:?})",
             target_key,
             corrupted_cycle_key
+        );
+    }
+
+    /// The previous-cycle path is best-effort enrichment, so a corrupt
+    /// aggregated signature there must only skip storing that cycle, never
+    /// abort the whole feed. The current cycle must still land verified.
+    #[cfg(feature = "quorum_validation")]
+    #[test]
+    fn feed_qr_info_degrades_previous_cycle_on_corrupt_aggregate_signature() {
+        let (mut engine, mut qr_info) = load_qrinfo_2240504_fixture();
+
+        let corrupt_position = qr_info
+            .mn_list_diff_h
+            .new_quorums
+            .iter()
+            .position(|q| q.llmq_type.is_rotating_quorum_type())
+            .expect("fixture must carry rotated quorums in the h diff");
+        let previous_cycle_key = {
+            let quorum = &qr_info.mn_list_diff_h.new_quorums[corrupt_position];
+            let quorum_height = engine
+                .block_container
+                .get_height(&quorum.quorum_hash)
+                .expect("fixture must carry the corrupted quorum's height");
+            let cycle_base = quorum_height
+                - u32::try_from(quorum.quorum_index.expect("rotated quorums carry an index"))
+                    .unwrap();
+            *engine.block_container.get_hash(&cycle_base).expect("expected cycle base hash")
+        };
+        qr_info.mn_list_diff_h.new_quorums[corrupt_position].all_commitment_aggregated_signature =
+            BLSSignature::from([0u8; 96]);
+
+        let feed_result = engine
+            .feed_qr_info(qr_info, true, true)
+            .expect("previous-cycle corruption must not abort the feed")
+            .expect("expected a feed result");
+
+        assert!(
+            !engine.rotated_quorums_per_cycle.contains_key(&previous_cycle_key),
+            "the corrupted previous cycle must not be stored"
+        );
+        assert!(feed_result.all_fully_verified(), "the current cycle must still verify fully");
+        assert!(
+            feed_result.stored_cycle_height.is_some(),
+            "the current cycle must still be stored"
         );
     }
 
