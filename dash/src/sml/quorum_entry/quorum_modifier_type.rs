@@ -92,12 +92,14 @@ impl LLMQModifierType {
     ///
     /// * `Ok(LLMQModifierType::CoreV20)` - If Core v20 is active at the given height, using a chain lock signature.
     /// * `Ok(LLMQModifierType::PreCoreV20)` - If Core v20 is not active, using a block hash.
-    /// * `Err(QuorumValidationError::RequiredChainLockNotPresent)` - If Core v20 is active but no chain lock signature is found.
     ///
     /// # Notes
     ///
     /// * Core v20 introduces the use of chain lock signatures instead of block hashes for quorum modifiers.
-    /// * This function checks if Core v20 is active at the given block height before selecting the appropriate modifier type.
+    /// * A work block whose coinbase carries no ChainLock yields an all-zero
+    ///   signature on the wire. Core then derives the modifier from the block
+    ///   hash instead, so a zeroed signature selects the block-hash form here
+    ///   as well.
     pub fn new_quorum_modifier_type(
         llmq_type: LLMQType,
         work_block_hash: BlockHash,
@@ -105,10 +107,65 @@ impl LLMQModifierType {
         best_cl_signature: BLSSignature,
         network: Network,
     ) -> Result<LLMQModifierType, QuorumValidationError> {
-        if work_block_height >= network.v20_activation_height() {
+        if work_block_height >= network.v20_activation_height() && !best_cl_signature.is_zeroed() {
             Ok(LLMQModifierType::CoreV20(llmq_type, work_block_height, best_cl_signature))
         } else {
             Ok(LLMQModifierType::PreCoreV20(llmq_type, work_block_hash))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use hashes::Hash;
+
+    use super::*;
+    use crate::Network;
+    use crate::sml::llmq_type::LLMQType;
+
+    #[test]
+    fn modifier_type_selection_by_height_and_signature() {
+        let work_block_hash = BlockHash::from_byte_array([7; 32]);
+        let post_v20_height = Network::Mainnet.v20_activation_height();
+        let pre_v20_height = post_v20_height - 1;
+
+        let modifier = LLMQModifierType::new_quorum_modifier_type(
+            LLMQType::Llmqtype60_75,
+            work_block_hash,
+            post_v20_height,
+            BLSSignature::from([1; 96]),
+            Network::Mainnet,
+        )
+        .unwrap();
+        assert!(
+            matches!(modifier, LLMQModifierType::CoreV20(_, height, _) if height == post_v20_height),
+            "post-v20 with a real signature must use the signature form"
+        );
+
+        let modifier = LLMQModifierType::new_quorum_modifier_type(
+            LLMQType::Llmqtype60_75,
+            work_block_hash,
+            post_v20_height,
+            BLSSignature::from([0; 96]),
+            Network::Mainnet,
+        )
+        .unwrap();
+        assert!(
+            matches!(modifier, LLMQModifierType::PreCoreV20(_, hash) if hash == work_block_hash),
+            "post-v20 with a zeroed signature must fall back to the block-hash form"
+        );
+
+        let modifier = LLMQModifierType::new_quorum_modifier_type(
+            LLMQType::Llmqtype60_75,
+            work_block_hash,
+            pre_v20_height,
+            BLSSignature::from([1; 96]),
+            Network::Mainnet,
+        )
+        .unwrap();
+        assert!(
+            matches!(modifier, LLMQModifierType::PreCoreV20(_, hash) if hash == work_block_hash),
+            "pre-v20 must use the block-hash form"
+        );
     }
 }
