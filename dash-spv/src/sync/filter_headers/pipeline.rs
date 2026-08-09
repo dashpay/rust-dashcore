@@ -254,6 +254,16 @@ impl FilterHeadersPipeline {
         ready
     }
 
+    /// Move in-flight `getcfheaders` requests back to pending after a peer
+    /// disconnect so the next `send_pending` reissues them.
+    ///
+    /// `batch_starts` must survive, since `send_pending` errors out on a pending
+    /// stop hash with no start height. `next_expected` and the out-of-order
+    /// buffer survive too, so already-received batches are not re-downloaded.
+    pub(super) fn requeue_in_flight(&mut self) {
+        self.coordinator.requeue_in_flight();
+    }
+
     /// Re-enqueue timed out requests for retry.
     pub(super) fn handle_timeouts(&mut self) {
         for stop_hash in self.coordinator.check_timeouts() {

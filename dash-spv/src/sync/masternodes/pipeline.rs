@@ -142,6 +142,15 @@ impl MnListDiffPipeline {
         tracing::debug!("Requeued MnListDiff for {} for retry", diff.block_hash);
     }
 
+    /// Move in-flight `getmnlistd` requests back to pending after a peer
+    /// disconnect so the next `send_pending` reissues them.
+    ///
+    /// `base_hashes` must survive, since `send_pending` drops a pending target
+    /// hash that has no base hash to pair it with.
+    pub(super) fn requeue_in_flight(&mut self) {
+        self.coordinator.requeue_in_flight();
+    }
+
     /// Handle timeouts, re-queuing timed out requests.
     pub(super) fn handle_timeouts(&mut self) {
         for target_hash in self.coordinator.check_timeouts() {

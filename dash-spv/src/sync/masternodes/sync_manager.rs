@@ -231,6 +231,12 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
         self.sync_state.last_processed_qrinfo_tip = None;
     }
 
+    fn on_peer_disconnect(&mut self) {
+        // The QRInfo request is tracked outside the pipeline with its own
+        // escalating timeout and attempt budget, so it is left to that path.
+        self.sync_state.mnlistdiff_pipeline.requeue_in_flight();
+    }
+
     async fn handle_message(
         &mut self,
         msg: Message,
