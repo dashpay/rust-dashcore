@@ -32,6 +32,8 @@ use crate::{BlockHash, QuorumHash};
 #[cfg(feature = "bincode")]
 use bincode::{Decode, Encode};
 use hashes::Hash;
+#[cfg(feature = "bincode")]
+use std::{env, fs};
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
@@ -753,6 +755,31 @@ impl MasternodeListEngine {
         Ok(self.block_container.get_height(&cycle_key))
     }
 
+    /// Best-effort capture of the pre-feed block container and the raw QRInfo
+    /// for offline reproduction of validation failures. Active only while
+    /// `DASH_SML_DUMP_QRINFO_DIR` is set, inert otherwise.
+    #[cfg(feature = "bincode")]
+    fn dump_qr_info_capture(&self, qr_info: &QRInfo) {
+        let Ok(dir) = env::var("DASH_SML_DUMP_QRINFO_DIR") else {
+            return;
+        };
+        if fs::create_dir_all(&dir).is_err() {
+            return;
+        }
+        let tip_height = self
+            .block_container
+            .get_height(&qr_info.mn_list_diff_tip.block_hash)
+            .unwrap_or_default();
+        if let Ok(bytes) =
+            bincode::encode_to_vec(&self.block_container, bincode::config::standard())
+        {
+            let _ = fs::write(format!("{dir}/block_container_{tip_height}.dat"), bytes);
+        }
+        if let Ok(bytes) = bincode::encode_to_vec(qr_info, bincode::config::standard()) {
+            let _ = fs::write(format!("{dir}/qrinfo_{tip_height}.dat"), bytes);
+        }
+    }
+
     /// Processes and applies a QRInfo message to the masternode list engine.
     ///
     /// The caller is expected to pre-populate [`Self::block_container`] with heights
@@ -773,6 +800,9 @@ impl MasternodeListEngine {
         verify_tip_non_rotated_quorums: bool,
         verify_rotated_quorums: bool,
     ) -> Result<Option<QRInfoFeedResult>, QuorumValidationError> {
+        #[cfg(feature = "bincode")]
+        self.dump_qr_info_capture(&qr_info);
+
         #[allow(unused_variables)]
         let QRInfo {
             quorum_snapshot_at_h_minus_c,
