@@ -405,13 +405,22 @@ impl MasternodeListEngine {
                 .rev()
                 .chain(sorted_used_mns_list.into_values().rev()),
         );
+        if sorted_combined_mns_list.is_empty() {
+            return vec![Vec::new(); quorum_count];
+        }
         match skip_type {
             LLMQQuarterUsageType::Snapshot(snapshot) => {
                 match snapshot.skip_list_mode {
-                    MNSkipListMode::NoSkipping => sorted_combined_mns_list
-                        .chunks(quarter_size)
-                        .map(|chunk| chunk.to_vec())
-                        .collect(),
+                    // One shared cursor fills every quarter and wraps back to
+                    // the front when the list runs out, so quarters reuse
+                    // masternodes once fewer than
+                    // `quorum_count * quarter_size` are available.
+                    MNSkipListMode::NoSkipping => {
+                        let mut combined = sorted_combined_mns_list.iter().cycle();
+                        (0..quorum_count)
+                            .map(|_| (&mut combined).take(quarter_size).copied().collect())
+                            .collect()
+                    }
                     MNSkipListMode::SkipFirst => {
                         let mut first_entry_index = 0;
                         let processed_skip_list =
@@ -511,5 +520,138 @@ impl MasternodeListEngine {
                 quarter_quorum_members
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::net::SocketAddr;
+
+    use hashes::Hash;
+
+    use super::*;
+    use crate::bls_sig_utils::BLSPublicKey;
+    use crate::hash_types::ConfirmedHash;
+    use crate::network::message_qrinfo::QuorumSnapshot;
+    use crate::sml::masternode_list_entry::{
+        EntryMasternodeType, MasternodeListEntry, MasternodeNetInfo,
+    };
+    use crate::{ProTxHash, PubkeyHash};
+
+    fn entry(byte: u8) -> QualifiedMasternodeListEntry {
+        MasternodeListEntry {
+            version: 2,
+            pro_reg_tx_hash: ProTxHash::from_byte_array([byte; 32]),
+            confirmed_hash: Some(ConfirmedHash::from_byte_array([byte; 32])),
+            service_address: MasternodeNetInfo::Legacy(SocketAddr::from(([127, 0, 0, 1], 9999))),
+            operator_public_key: BLSPublicKey::from([byte; 48]),
+            key_id_voting: PubkeyHash::from_byte_array([byte; 20]),
+            is_valid: true,
+            mn_type: EntryMasternodeType::Regular,
+        }
+        .into()
+    }
+
+    /// Entries in the score order `apply_skip_strategy_of_type` sees them:
+    /// descending scores under the given modifier, matching the combined
+    /// unused-then-used list for an all-unused input.
+    fn score_sorted(
+        entries: &[QualifiedMasternodeListEntry],
+        modifier: QuorumModifierHash,
+    ) -> Vec<&QualifiedMasternodeListEntry> {
+        MasternodeList::scores_for_quorum_for_masternodes(entries.iter(), modifier, false)
+            .into_values()
+            .rev()
+            .collect()
+    }
+
+    fn snapshot(mode: MNSkipListMode, skip_list: Vec<i32>) -> QuorumSnapshot {
+        QuorumSnapshot {
+            skip_list_mode: mode,
+            active_quorum_members: vec![],
+            skip_list,
+        }
+    }
+
+    fn pro_reg_tx_hashes(quarter: &[&QualifiedMasternodeListEntry]) -> Vec<ProTxHash> {
+        quarter.iter().map(|entry| entry.masternode_list_entry.pro_reg_tx_hash).collect()
+    }
+
+    #[test]
+    fn no_skipping_fills_quarters_with_circular_wrap_around() {
+        let entries: Vec<QualifiedMasternodeListEntry> = (1..=6).map(entry).collect();
+        let modifier = QuorumModifierHash::from_byte_array([9; 32]);
+        let sorted = score_sorted(&entries, modifier);
+
+        let quarters = MasternodeListEngine::apply_skip_strategy_of_type(
+            LLMQQuarterUsageType::Snapshot(snapshot(MNSkipListMode::NoSkipping, vec![])),
+            vec![],
+            entries.iter().collect(),
+            modifier,
+            3,
+            4,
+        );
+
+        assert_eq!(quarters.len(), 3);
+        let expected: Vec<Vec<ProTxHash>> = vec![
+            pro_reg_tx_hashes(&[sorted[0], sorted[1], sorted[2], sorted[3]]),
+            pro_reg_tx_hashes(&[sorted[4], sorted[5], sorted[0], sorted[1]]),
+            pro_reg_tx_hashes(&[sorted[2], sorted[3], sorted[4], sorted[5]]),
+        ];
+        let actual: Vec<Vec<ProTxHash>> =
+            quarters.iter().map(|quarter| pro_reg_tx_hashes(quarter)).collect();
+        assert_eq!(actual, expected, "one shared cursor must wrap around the combined list");
+    }
+
+    #[test]
+    fn empty_masternode_list_yields_empty_quarters_for_every_mode() {
+        let modifier = QuorumModifierHash::from_byte_array([9; 32]);
+        for mode in [
+            MNSkipListMode::NoSkipping,
+            MNSkipListMode::SkipFirst,
+            MNSkipListMode::SkipExcept,
+            MNSkipListMode::SkipAll,
+        ] {
+            let quarters = MasternodeListEngine::apply_skip_strategy_of_type(
+                LLMQQuarterUsageType::Snapshot(snapshot(mode, vec![])),
+                vec![],
+                vec![],
+                modifier,
+                4,
+                2,
+            );
+            assert_eq!(quarters.len(), 4);
+            assert!(
+                quarters.iter().all(Vec::is_empty),
+                "empty input must yield empty quarters in mode {:?}",
+                mode
+            );
+        }
+    }
+
+    #[test]
+    fn skip_first_decodes_relative_skip_list_entries() {
+        let entries: Vec<QualifiedMasternodeListEntry> = (1..=8).map(entry).collect();
+        let modifier = QuorumModifierHash::from_byte_array([9; 32]);
+        let sorted = score_sorted(&entries, modifier);
+
+        // The first skip entry is an absolute index, later entries are
+        // relative to it: [3, 2] skips absolute indexes 3 and 5.
+        let quarters = MasternodeListEngine::apply_skip_strategy_of_type(
+            LLMQQuarterUsageType::Snapshot(snapshot(MNSkipListMode::SkipFirst, vec![3, 2])),
+            vec![],
+            entries.iter().collect(),
+            modifier,
+            2,
+            2,
+        );
+
+        let expected: Vec<Vec<ProTxHash>> = vec![
+            pro_reg_tx_hashes(&[sorted[0], sorted[1]]),
+            pro_reg_tx_hashes(&[sorted[2], sorted[4]]),
+        ];
+        let actual: Vec<Vec<ProTxHash>> =
+            quarters.iter().map(|quarter| pro_reg_tx_hashes(quarter)).collect();
+        assert_eq!(actual, expected, "skipped indexes must be excluded from quarter fill");
     }
 }
