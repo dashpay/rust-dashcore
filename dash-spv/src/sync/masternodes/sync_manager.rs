@@ -13,7 +13,7 @@ use dashcore::sml::masternode_list_engine::{MasternodeListEngine, WORK_DIFF_DEPT
 use dashcore::{BlockHash, QuorumHash};
 use dashcore_hashes::Hash;
 use std::collections::{BTreeSet, HashSet};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// Per-attempt timeout schedule for QRInfo, indexed by the in-flight attempt's
 /// retry count (0 = initial send, N = N-th retry). Round-robin peer selection in
@@ -28,6 +28,19 @@ const QRINFO_TIMEOUT_SCHEDULE_SECS: [u64; 3] = [10, 30, 60];
 /// Maximum number of in-flight attempts (initial send plus retries) before
 /// giving up. Equal to `QRINFO_TIMEOUT_SCHEDULE_SECS.len()`.
 const MAX_RETRY_ATTEMPTS: u8 = QRINFO_TIMEOUT_SCHEDULE_SECS.len() as u8;
+
+/// How long the manager may sit in `Syncing` with no QRInfo in flight and an empty
+/// MnListDiff pipeline before `tick` re-dispatches a QRInfo.
+///
+/// That combination is a dead state: every retry path in `tick` is armed solely by
+/// `qrinfo_in_flight`, so once the slot is empty while `Syncing`, nothing fires
+/// again and masternode sync is stranded for the life of the process - which also
+/// strands InstantSend verification and every other masternode-list consumer.
+///
+/// Chosen shorter than the full retry ladder (`sum(QRINFO_TIMEOUT_SCHEDULE_SECS)
+/// = 100s`) because the two can never overlap: the ladder only runs while the slot
+/// is occupied, the watchdog only while it is empty.
+const QRINFO_STALL_WATCHDOG: Duration = Duration::from_secs(60);
 
 /// Returns the timeout for the in-flight QRInfo attempt with the given retry count.
 ///
@@ -225,8 +238,12 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
         &[MessageType::MnListDiff, MessageType::QRInfo]
     }
 
+    /// Keep the masternode work across a disconnect and invalidate only the
+    /// peer-bound network slots. See [`MasternodeSyncState::requeue_in_flight`].
     fn on_disconnect(&mut self) {
-        self.sync_state.clear_pending();
+        self.sync_state.requeue_in_flight();
+        // A fresh peer set earns a fresh retry budget, and the dedup guard must not
+        // reject a response for a tip whose earlier attempt died with the old peer.
         self.sync_state.qrinfo_retry_count = 0;
         self.sync_state.last_processed_qrinfo_tip = None;
     }
@@ -242,7 +259,6 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
                     return Ok(vec![]);
                 }
                 tracing::info!("Processing QRInfo message");
-                self.sync_state.qrinfo_received();
 
                 // Feed block heights to engine using internal storage
                 let storage = self.header_storage.read().await;
@@ -256,6 +272,19 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
                     Ok(qr_info_result) => qr_info_result,
                     Err(e) => {
                         tracing::error!("QRInfo feed into engine failed: {}", e);
+                        drop(engine);
+                        // The response is unusable, but the request slot has to stay
+                        // occupied. It is the only thing arming `tick`'s retry
+                        // ladder, so releasing it here - as this handler used to,
+                        // before the fallible steps - leaves the manager `Syncing`
+                        // with no QRInfo in flight and an empty diff pipeline, a
+                        // combination `tick` has no branch for. Masternode sync then
+                        // never resumes for the life of the process, taking
+                        // InstantSend verification and every other masternode-list
+                        // consumer with it. Flag the attempt instead: `tick` rotates
+                        // to the next peer, and the existing budget still gives up on
+                        // a deterministically-bad response after MAX_RETRY_ATTEMPTS.
+                        self.sync_state.qrinfo_rejected();
                         return Err(SyncError::MasternodeSyncFailed(e.to_string()));
                     }
                 };
@@ -314,6 +343,11 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
                 self.sync_state.pipeline_mode = PipelineMode::QuorumValidation {
                     qr_info_result,
                 };
+
+                // Every fallible step has now succeeded, so the request slot can
+                // finally be released. This must happen before the
+                // `has_pending_requests` check below, which reads it.
+                self.sync_state.qrinfo_received();
                 self.sync_state.mnlistdiff_pipeline.queue_requests(request_pairs);
                 self.sync_state.mnlistdiff_pipeline.send_pending(requests)?;
 
@@ -596,23 +630,36 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
             return Ok(vec![]);
         }
 
-        // Check for QRInfo timeout
+        // Check for a QRInfo attempt that is over: either the peer never answered
+        // (timeout), or it answered with something the engine rejected. Both
+        // consumed an attempt without producing any state, so both retry against
+        // the next peer on the same budget. A rejected response skips the
+        // remaining timeout - that peer has already had its turn.
         if let Some(in_flight) = self.sync_state.qrinfo_in_flight {
             let timeout = qrinfo_timeout_for(self.sync_state.qrinfo_retry_count);
-            if in_flight.wait_start.elapsed() > timeout {
+            let timed_out = in_flight.wait_start.elapsed() > timeout;
+            if timed_out || in_flight.rejected {
                 if self.sync_state.qrinfo_retry_count < MAX_RETRY_ATTEMPTS - 1 {
-                    tracing::warn!(
-                        timeout_secs = timeout.as_secs(),
-                        retry_count = self.sync_state.qrinfo_retry_count,
-                        "Timeout waiting for QRInfo response, retrying..."
-                    );
+                    if in_flight.rejected {
+                        tracing::warn!(
+                            retry_count = self.sync_state.qrinfo_retry_count,
+                            "QRInfo response rejected by the engine, retrying against another peer..."
+                        );
+                    } else {
+                        tracing::warn!(
+                            timeout_secs = timeout.as_secs(),
+                            retry_count = self.sync_state.qrinfo_retry_count,
+                            "Timeout waiting for QRInfo response, retrying..."
+                        );
+                    }
                     self.sync_state.qrinfo_retry_count += 1;
                     self.sync_state.clear_pending();
                     return self.send_qrinfo_for_tip(requests).await;
                 } else {
                     tracing::warn!(
-                        "QRInfo timeout after {} retries, skipping masternode sync",
-                        MAX_RETRY_ATTEMPTS
+                        attempts = MAX_RETRY_ATTEMPTS,
+                        last_attempt_rejected = in_flight.rejected,
+                        "QRInfo failed on every attempt, skipping masternode sync"
                     );
                     self.sync_state.clear_pending();
                     return self.complete_pipeline(requests).await;
@@ -624,8 +671,13 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
         // Check for MnListDiff timeouts via pipeline
         if self.sync_state.mnlistdiff_pipeline.active_count() > 0 {
             self.sync_state.mnlistdiff_pipeline.handle_timeouts();
+        }
 
-            // Send any re-queued requests
+        // Flush the pending queue. Besides re-queued timeouts, this is the only
+        // path that reissues requests a disconnect moved back to pending: every
+        // other `send_pending` call site hangs off a response handler, which
+        // cannot run while nothing is in flight.
+        if !self.sync_state.mnlistdiff_pipeline.is_complete() {
             self.sync_state.mnlistdiff_pipeline.send_pending(requests)?;
 
             // Check if complete after handling timeouts
@@ -633,6 +685,38 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
                 tracing::info!("MnListDiff pipeline complete");
                 return self.complete_pipeline(requests).await;
             }
+        }
+
+        // Stall watchdog. `Syncing` with no QRInfo in flight and an empty diff
+        // pipeline is a dead state: nothing outstanding will ever call back, and
+        // every branch above is gated on one of those two, so no code path can move
+        // this manager again. The known route in is a `send_qrinfo_for_tip` that
+        // failed after its caller had already cleared the slot; the watchdog also
+        // covers any future path that drops the slot without dispatching. It cannot
+        // race the retry ladder above, which only runs while the slot is occupied.
+        if self.state() == SyncState::Syncing
+            && self.sync_state.qrinfo_in_flight.is_none()
+            && self.sync_state.mnlistdiff_pipeline.is_complete()
+            && self
+                .sync_state
+                .last_qrinfo_dispatch
+                .is_some_and(|dispatched| dispatched.elapsed() > QRINFO_STALL_WATCHDOG)
+        {
+            tracing::warn!(
+                stalled_for_secs = self
+                    .sync_state
+                    .last_qrinfo_dispatch
+                    .map(|d| d.elapsed().as_secs())
+                    .unwrap_or_default(),
+                "Masternode sync stalled in Syncing with nothing in flight, re-dispatching QRInfo"
+            );
+            // Re-stamp before dispatching so a dispatch that fails (no peers, empty
+            // header storage) re-arms the watchdog for another full interval
+            // instead of retrying on every 100ms tick.
+            self.sync_state.last_qrinfo_dispatch = Some(Instant::now());
+            self.sync_state.qrinfo_retry_count = 0;
+            self.sync_state.clear_pending();
+            return self.send_qrinfo_for_tip(requests).await;
         }
 
         Ok(vec![])
@@ -648,14 +732,22 @@ mod tests {
     use super::super::manager::{MasternodeSyncState, QRInfoInFlight};
     use super::{
         feed_qrinfo_heights_to_engine, qrinfo_timeout_for, MAX_RETRY_ATTEMPTS,
-        QRINFO_TIMEOUT_SCHEDULE_SECS,
+        QRINFO_STALL_WATCHDOG, QRINFO_TIMEOUT_SCHEDULE_SECS,
     };
     use crate::error::StorageResult;
-    use crate::storage::{BlockHeaderStorage, BlockHeaderTip};
+    use crate::network::{Message, NetworkRequest, RequestSender};
+    use crate::storage::{
+        BlockHeaderStorage, BlockHeaderTip, DiskStorageManager, PersistentBlockHeaderStorage,
+        StorageManager,
+    };
+    use crate::sync::{MasternodesManager, SyncManager, SyncState};
     use crate::types::HashedBlockHeader;
+    use crate::SyncError;
     use async_trait::async_trait;
+    use dashcore::block::Header;
     use dashcore::bls_sig_utils::{BLSPublicKey, BLSSignature};
     use dashcore::hash_types::QuorumVVecHash;
+    use dashcore::network::message::NetworkMessage;
     use dashcore::network::message_qrinfo::{MNSkipListMode, QRInfo, QuorumSnapshot};
     use dashcore::network::message_sml::MnListDiff;
     use dashcore::sml::llmq_type::LLMQType;
@@ -665,7 +757,10 @@ mod tests {
     use dashcore_hashes::Hash;
     use std::collections::HashMap;
     use std::ops::Range;
+    use std::sync::Arc;
+    use std::time::Duration;
     use std::time::Instant;
+    use tokio::sync::{mpsc, RwLock};
 
     struct MockHeaderStorage(HashMap<BlockHash, u32>);
 
@@ -888,6 +983,7 @@ mod tests {
         let in_flight_b = QRInfoInFlight {
             tip: tip_b,
             wait_start: Instant::now(),
+            rejected: false,
         };
 
         // Same-tip duplicate is dropped even when a request is in flight.
@@ -945,6 +1041,254 @@ mod tests {
         assert!(
             !state.should_process_qrinfo(&qrinfo_with_tip(0xCC)),
             "response for non-active request tip must be dropped"
+        );
+    }
+
+    /// Same filler `QRInfo` as [`qrinfo_with_tip`], but carrying an explicit tip
+    /// hash so it can be aimed at whatever tip a live manager actually requested.
+    fn qrinfo_with_tip_hash(tip: BlockHash) -> QRInfo {
+        let mut qr_info = qrinfo_with_tip(0x00);
+        qr_info.mn_list_diff_tip.block_hash = tip;
+        qr_info
+    }
+
+    type TestMasternodesManager = MasternodesManager<PersistentBlockHeaderStorage>;
+
+    /// Build a regtest manager whose header storage holds dummy headers up to
+    /// `tip`, then fire the initial QRInfo so it sits in `Syncing` with a real
+    /// in-flight request, exactly as a fresh wallet does once headers catch up.
+    ///
+    /// Returns the manager, the `RequestSender`, the matching receiver (the caller
+    /// must bind it - the channel closes when it drops), and the tip hash the
+    /// in-flight request was made for. A response has to echo that hash to get
+    /// past `should_process_qrinfo`. The initial `GetQRInfo` is drained from the
+    /// receiver so callers only see what they trigger themselves.
+    async fn syncing_manager_awaiting_qrinfo(
+        tip: u32,
+    ) -> (TestMasternodesManager, RequestSender, mpsc::UnboundedReceiver<NetworkRequest>, BlockHash)
+    {
+        let storage = DiskStorageManager::with_temp_dir().await.unwrap();
+        let block_headers = storage.block_headers();
+        block_headers
+            .write()
+            .await
+            .store_headers(
+                &Header::dummy_batch(0..tip + 1)
+                    .iter()
+                    .map(HashedBlockHeader::from)
+                    .collect::<Vec<_>>(),
+            )
+            .await
+            .unwrap();
+        let engine = MasternodeListEngine::default_for_network(Network::Regtest);
+        let mut manager =
+            MasternodesManager::new(block_headers, Arc::new(RwLock::new(engine)), Network::Regtest)
+                .await;
+        manager.progress.update_block_header_tip_height(tip);
+
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let requests = RequestSender::new(tx);
+        manager.send_qrinfo_for_tip(&requests).await.expect("initial QRInfo dispatch succeeds");
+        assert_eq!(manager.state(), SyncState::Syncing);
+        let tip_hash = manager.sync_state.qrinfo_in_flight.expect("QRInfo in flight").tip;
+        rx.try_recv().expect("initial GetQRInfo is queued");
+        (manager, requests, rx, tip_hash)
+    }
+
+    /// A QRInfo the engine rejects must not release the request slot.
+    ///
+    /// `qrinfo_in_flight` is the only thing that arms `tick`'s retry ladder, so
+    /// the pre-fix ordering - release the slot, *then* run the fallible engine
+    /// feed - left the manager `Syncing` with nothing in flight and an empty diff
+    /// pipeline on any validation failure. `tick` has no branch for that state, so
+    /// masternode sync never resumed: observed once on testnet and twice on
+    /// mainnet as a frozen `Masternodes: Syncing 0/N | diffs_processed: 0,
+    /// qr_infos_requested: 1` for as long as the process lived, with InstantSend
+    /// verification and every masternode-list consumer dead behind it.
+    ///
+    /// With the slot kept armed and the attempt flagged, `tick` retries on the
+    /// existing budget. Each dispatch goes out through `send_distributed`, whose
+    /// round-robin lands it on a different peer than the one that served the bad
+    /// response, and a deterministically-bad response still terminates - after
+    /// `MAX_RETRY_ATTEMPTS` dispatches, not silently and not never.
+    #[tokio::test]
+    async fn test_rejected_qrinfo_retries_against_another_peer_then_gives_up() {
+        let (mut manager, requests, mut rx, tip_hash) = syncing_manager_awaiting_qrinfo(200).await;
+        let peer = "127.0.0.1:19999".parse().unwrap();
+        let bad_response =
+            || Message::new(peer, NetworkMessage::QRInfo(qrinfo_with_tip_hash(tip_hash)));
+
+        for attempt in 0..MAX_RETRY_ATTEMPTS - 1 {
+            let err = manager
+                .handle_message(bad_response(), &requests)
+                .await
+                .expect_err("the engine must reject this filler QRInfo");
+            assert!(
+                matches!(err, SyncError::MasternodeSyncFailed(_)),
+                "expected MasternodeSyncFailed, got {:?}",
+                err
+            );
+
+            let in_flight = manager
+                .sync_state
+                .qrinfo_in_flight
+                .expect("a rejected response must NOT release the request slot");
+            assert!(in_flight.rejected, "the spent attempt must be flagged for retry");
+            assert_eq!(
+                manager.sync_state.qrinfo_retry_count, attempt,
+                "the handler must not consume budget itself; `tick` owns the counter"
+            );
+
+            manager.tick(&requests).await.expect("tick retries the rejected attempt");
+            assert_eq!(manager.sync_state.qrinfo_retry_count, attempt + 1);
+            assert!(
+                matches!(
+                    rx.try_recv().expect("tick must dispatch a retry GetQRInfo"),
+                    NetworkRequest::SendMessage(NetworkMessage::GetQRInfo(_))
+                ),
+                "the retry must be a GetQRInfo"
+            );
+            assert!(
+                !manager.sync_state.qrinfo_in_flight.expect("slot re-armed").rejected,
+                "the retry must start as a clean attempt"
+            );
+        }
+
+        // Budget spent. The last rejection must terminate rather than dispatch
+        // again, and must not park the manager in `Syncing` forever.
+        manager
+            .handle_message(bad_response(), &requests)
+            .await
+            .expect_err("the engine must reject this filler QRInfo");
+        let _ = manager.tick(&requests).await;
+        assert!(
+            rx.try_recv().is_err(),
+            "the retry budget must stop dispatching after MAX_RETRY_ATTEMPTS"
+        );
+        assert_eq!(
+            manager.progress.qr_infos_requested(),
+            MAX_RETRY_ATTEMPTS as u32,
+            "exactly MAX_RETRY_ATTEMPTS dispatches: the initial one plus its retries"
+        );
+        assert_ne!(
+            manager.state(),
+            SyncState::Syncing,
+            "giving up must resolve the state, not leave it silently Syncing"
+        );
+    }
+
+    /// The stall watchdog is the backstop for every route into the stranded state
+    /// that keeping the in-flight flag cannot cover - notably a
+    /// `send_qrinfo_for_tip` that fails *after* its caller already cleared the
+    /// slot, which is exactly what `tick`'s own retry path does. `Syncing` with
+    /// nothing in flight and an empty diff pipeline has no other exit.
+    #[tokio::test]
+    async fn test_tick_watchdog_redispatches_after_stall() {
+        let (mut manager, requests, mut rx, _) = syncing_manager_awaiting_qrinfo(200).await;
+
+        // Strand the manager the way a dispatch failure would.
+        manager.sync_state.clear_pending();
+        assert_eq!(manager.state(), SyncState::Syncing);
+        assert!(manager.sync_state.qrinfo_in_flight.is_none());
+        assert!(manager.sync_state.mnlistdiff_pipeline.is_complete());
+
+        manager.tick(&requests).await.expect("tick succeeds");
+        assert!(
+            rx.try_recv().is_err(),
+            "the watchdog must stay quiet until its interval has elapsed"
+        );
+
+        manager.sync_state.last_qrinfo_dispatch = Some(
+            Instant::now()
+                .checked_sub(QRINFO_STALL_WATCHDOG + Duration::from_secs(1))
+                .expect("test host uptime must exceed the watchdog interval"),
+        );
+
+        manager.tick(&requests).await.expect("the watchdog re-dispatch succeeds");
+        assert!(
+            matches!(
+                rx.try_recv().expect("the watchdog must re-dispatch a GetQRInfo"),
+                NetworkRequest::SendMessage(NetworkMessage::GetQRInfo(_))
+            ),
+            "the watchdog must re-dispatch a GetQRInfo"
+        );
+        assert!(
+            manager.sync_state.qrinfo_in_flight.is_some(),
+            "the re-dispatch must re-arm the request slot"
+        );
+        assert_eq!(manager.sync_state.qrinfo_retry_count, 0, "recovery starts a fresh budget");
+    }
+
+    /// A disconnect must not throw masternode work away. `BlocksManager` and
+    /// `FiltersManager` both requeue their in-flight network slots; the masternode
+    /// manager used to call `clear_pending()`, which dropped the queued
+    /// `GetMnListDiff`s, the QRInfo slot, and any `qr_info_result` carried on
+    /// `pipeline_mode`, forcing a full QRInfo re-run on every reconnect.
+    #[tokio::test]
+    async fn test_on_disconnect_requeues_instead_of_clearing() {
+        let (mut manager, requests, _rx, tip_hash) = syncing_manager_awaiting_qrinfo(200).await;
+
+        let base = BlockHash::from_slice(&[0x11; 32]).unwrap();
+        let target = BlockHash::from_slice(&[0x22; 32]).unwrap();
+        manager.sync_state.mnlistdiff_pipeline.queue_requests(vec![(base, target)]);
+        manager.sync_state.mnlistdiff_pipeline.send_pending(&requests).expect("send succeeds");
+        assert_eq!(manager.sync_state.mnlistdiff_pipeline.active_count(), 1);
+
+        manager.on_disconnect();
+
+        assert_eq!(
+            manager.sync_state.mnlistdiff_pipeline.active_count(),
+            0,
+            "the dead peer's network slot must be released"
+        );
+        assert!(
+            !manager.sync_state.mnlistdiff_pipeline.is_complete(),
+            "but the request itself must survive, back in the pending queue"
+        );
+        assert_eq!(
+            manager.sync_state.qrinfo_in_flight.map(|in_flight| in_flight.tip),
+            Some(tip_hash),
+            "the QRInfo slot must stay armed so tick's ladder re-dispatches it"
+        );
+        assert_eq!(
+            manager.sync_state.qrinfo_retry_count, 0,
+            "a fresh peer set earns a fresh retry budget"
+        );
+        assert_eq!(
+            manager.sync_state.last_processed_qrinfo_tip, None,
+            "the dedup guard must not reject the reconnect's response"
+        );
+    }
+
+    /// `tick` must reissue MnListDiff requests that a disconnect moved back to
+    /// pending. Nothing else can: every other `send_pending` call site hangs off a
+    /// response handler, and after a disconnect no response is coming.
+    #[tokio::test]
+    async fn test_tick_reissues_requeued_mnlistdiffs() {
+        let (mut manager, requests, mut rx, _) = syncing_manager_awaiting_qrinfo(200).await;
+        manager.sync_state.qrinfo_received();
+
+        let base = BlockHash::from_slice(&[0x11; 32]).unwrap();
+        let target = BlockHash::from_slice(&[0x22; 32]).unwrap();
+        manager.sync_state.mnlistdiff_pipeline.queue_requests(vec![(base, target)]);
+        manager.sync_state.mnlistdiff_pipeline.send_pending(&requests).expect("send succeeds");
+        while rx.try_recv().is_ok() {}
+
+        manager.on_disconnect();
+        assert_eq!(manager.sync_state.mnlistdiff_pipeline.active_count(), 0);
+
+        manager.tick(&requests).await.expect("tick reissues the requeued request");
+        assert!(
+            matches!(
+                rx.try_recv().expect("tick must reissue the GetMnListDiff"),
+                NetworkRequest::SendMessage(NetworkMessage::GetMnListD(_))
+            ),
+            "the reissued request must be a GetMnListDiff"
+        );
+        assert_eq!(
+            manager.sync_state.mnlistdiff_pipeline.active_count(),
+            1,
+            "the reissued request must be tracked in flight again"
         );
     }
 }

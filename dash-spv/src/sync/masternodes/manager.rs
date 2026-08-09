@@ -73,6 +73,14 @@ pub(super) struct QRInfoInFlight {
     pub(super) tip: BlockHash,
     /// When the request was fired. Used by the timeout check.
     pub(super) wait_start: Instant,
+    /// Set when a peer answered but the engine rejected the response (bad
+    /// commitment signatures, unusable diffs).
+    ///
+    /// The attempt is over and produced no state, so it has to be retried exactly
+    /// like a silent peer - but without waiting out the rest of the timeout, since
+    /// this peer has already had its turn. `tick` treats the flag as an elapsed
+    /// timeout and rotates to the next peer on its next pass.
+    pub(super) rejected: bool,
 }
 
 /// Sync state for masternode list synchronization.
@@ -116,6 +124,19 @@ pub(super) struct MasternodeSyncState {
     /// (because a new request was already fired for a newer tip) but a late straggler from
     /// a previous tip's request still arrives.
     pub(super) last_processed_qrinfo_tip: Option<BlockHash>,
+    /// When a QRInfo request was last put on the wire. Read only by the stall
+    /// watchdog in `tick`, to tell "a request is legitimately still being worked"
+    /// apart from "this manager has been `Syncing` with nothing in flight and an
+    /// empty diff pipeline for a full minute" - a combination no other `tick`
+    /// branch can make progress from.
+    ///
+    /// Deliberately not derived from `MasternodesProgress::last_activity`, which is
+    /// bumped by unrelated block-header events and so would keep resetting the
+    /// watchdog while masternode sync itself made no progress at all.
+    ///
+    /// The watchdog re-stamps this when it fires, so a dispatch that fails (no
+    /// peers, empty header storage) cannot turn it into a per-tick retry loop.
+    pub(super) last_qrinfo_dispatch: Option<Instant>,
 }
 
 /// Pick the QRInfo base anchor for a request at `tip_height`: the highest stored
@@ -160,6 +181,22 @@ impl MasternodeSyncState {
         self.pipeline_mode = PipelineMode::default();
     }
 
+    /// Peer-disconnect counterpart to [`Self::clear_pending`].
+    ///
+    /// The outstanding requests went to a peer that is gone, but everything they
+    /// were fetching is still wanted, so keep the work and invalidate only the
+    /// network slots: in-flight `GetMnListDiff`s move back to the front of the
+    /// pending queue for the next `send_pending`, and the QRInfo slot stays armed
+    /// so `tick`'s retry ladder re-dispatches it (round-robin peer selection puts
+    /// the retry on a different peer).
+    ///
+    /// Mirrors `BlocksManager` and `FiltersManager`. The `clear_pending()` this
+    /// replaced also discarded the `qr_info_result` carried on `pipeline_mode`,
+    /// forcing a full QRInfo re-run after every disconnect.
+    pub(super) fn requeue_in_flight(&mut self) {
+        self.mnlistdiff_pipeline.requeue_in_flight();
+    }
+
     /// Record that a QRInfo request was actually fired for `tip_height`. Bumps
     /// the per-cycle attempt counter and sets the per-tip gate so subsequent
     /// calls to [`MasternodesManager::next_pipeline_mode`] at the same tip
@@ -169,15 +206,39 @@ impl MasternodeSyncState {
         self.current_cycle_attempts = self.current_cycle_attempts.saturating_add(1);
     }
 
+    /// Arm the QRInfo slot for a request that has just gone out on the wire.
+    ///
+    /// `last_qrinfo_dispatch` is stamped here rather than at the call site so the
+    /// stall watchdog's clock can never drift from the actual dispatch.
     fn start_waiting_for_qrinfo(&mut self, expected_tip: BlockHash) {
+        let now = Instant::now();
         self.qrinfo_in_flight = Some(QRInfoInFlight {
             tip: expected_tip,
-            wait_start: Instant::now(),
+            wait_start: now,
+            rejected: false,
         });
+        self.last_qrinfo_dispatch = Some(now);
     }
 
+    /// Release the QRInfo slot for a response that has been fully processed.
+    ///
+    /// Must not be called until every fallible step of the handler has succeeded:
+    /// the slot is the only thing arming `tick`'s retry ladder, so releasing it
+    /// before a step that can fail leaves the manager `Syncing` with nothing in
+    /// flight, which no `tick` branch can recover from.
     pub(super) fn qrinfo_received(&mut self) {
         self.qrinfo_in_flight = None;
+    }
+
+    /// Mark the in-flight QRInfo attempt as answered-but-unusable.
+    ///
+    /// Called when the engine rejects a response that already passed
+    /// [`Self::should_process_qrinfo`]. The slot stays occupied on purpose - see
+    /// [`Self::qrinfo_received`] - and `tick` retries it against the next peer.
+    pub(super) fn qrinfo_rejected(&mut self) {
+        if let Some(in_flight) = self.qrinfo_in_flight.as_mut() {
+            in_flight.rejected = true;
+        }
     }
 
     /// Decide whether an incoming QRInfo should be processed by the handler.
