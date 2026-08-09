@@ -1899,7 +1899,10 @@ mod tests {
                 .add_output(&Address::dummy(Network::Testnet, 0), 1)
                 .set_selection_strategy(SelectionStrategy::All);
             if with_memo {
-                b = b.add_op_return(&memo).expect("memo within the ceiling").preserve_output_order();
+                b = b
+                    .add_op_return(&memo)
+                    .expect("memo within the ceiling")
+                    .preserve_output_order();
             }
             let (tx, fee, _reservation) = b.build_unsigned_reserved().expect("drain builds");
             (tx, fee)
