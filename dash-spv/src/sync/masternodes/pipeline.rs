@@ -176,6 +176,10 @@ mod tests {
     use dashcore_hashes::Hash;
 
     use super::*;
+    use crate::network::NetworkRequest;
+    use dashcore::network::message::NetworkMessage;
+    use dashcore::network::message_sml::GetMnListDiff;
+    use tokio::sync::mpsc::unbounded_channel;
 
     /// Create a minimal MnListDiff for testing.
     fn create_test_diff(base_hash: BlockHash, target_hash: BlockHash) -> MnListDiff {
@@ -355,6 +359,48 @@ mod tests {
         assert!(pipeline.base_hashes.contains_key(&target));
         // Pipeline should not be considered complete
         assert!(!pipeline.is_complete());
+    }
+
+    /// A peer disconnect requeues every in-flight request, and each one must be
+    /// reissued with the base hash it was originally paired with.
+    #[test]
+    fn test_requeue_in_flight_reissues_with_base_hashes() {
+        let mut pipeline = MnListDiffPipeline::new();
+
+        let base1 = BlockHash::from_byte_array([0x01; 32]);
+        let target1 = BlockHash::from_byte_array([0x02; 32]);
+        let base2 = BlockHash::from_byte_array([0x03; 32]);
+        let target2 = BlockHash::from_byte_array([0x04; 32]);
+
+        pipeline.queue_requests(vec![(base1, target1), (base2, target2)]);
+
+        let (tx, mut rx) = unbounded_channel();
+        let requests = RequestSender::new(tx);
+        pipeline.send_pending(&requests).unwrap();
+        assert_eq!(pipeline.active_count(), 2);
+        while rx.try_recv().is_ok() {}
+
+        pipeline.requeue_in_flight();
+        assert_eq!(pipeline.active_count(), 0);
+        assert_eq!(pipeline.coordinator.pending_count(), 2);
+
+        pipeline.send_pending(&requests).unwrap();
+        assert_eq!(pipeline.active_count(), 2);
+
+        let mut reissued = Vec::new();
+        while let Ok(request) = rx.try_recv() {
+            match request {
+                NetworkRequest::SendMessage(NetworkMessage::GetMnListD(GetMnListDiff {
+                    base_block_hash,
+                    block_hash,
+                })) => reissued.push((base_block_hash, block_hash)),
+                other => panic!("Expected GetMnListD, got {:?}", other),
+            }
+        }
+        reissued.sort();
+        let mut expected = vec![(base1, target1), (base2, target2)];
+        expected.sort();
+        assert_eq!(reissued, expected);
     }
 
     #[test]
