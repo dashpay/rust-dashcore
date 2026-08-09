@@ -744,11 +744,32 @@ impl From<FFIAssetLockFundingType> for AssetLockFundingType {
     }
 }
 
+/// The funding sources an asset lock pools, in order — the FIRST source
+/// (BIP44) supplies the change address, so change from a pooled asset lock
+/// always returns to the transparent primary account.
+///
+/// CoinJoin is deliberately absent (spending mixed outputs alongside
+/// transparent ones links them and undoes the mixing — the same reasoning as
+/// `AccountTypePreference::DEFAULT`), and so are a contact's watch-only
+/// `DashpayExternalAccount` coins, which `AllDashpayReceivingFunds` excludes by
+/// construction (it selects only the receiving side the local seed can sign).
+const ASSET_LOCK_FUNDING_SOURCES: [AccountTypePreference; 3] = [
+    AccountTypePreference::BIP44,
+    AccountTypePreference::BIP32,
+    AccountTypePreference::AllDashpayReceivingFunds,
+];
+
 /// Build and sign an asset lock transaction for Core to Platform transfers.
 ///
 /// Creates a special transaction (type 8) with `AssetLockPayload` that locks
 /// Dash for Platform credits. Derives one unique private key per credit output
 /// from the specified funding account types.
+///
+/// Funding is POOLED across [`ASSET_LOCK_FUNDING_SOURCES`]: coin selection
+/// draws from the union of the BIP44, BIP32 and DashPay contact-receiving
+/// accounts the wallet has, so a lock no longer needs the whole amount sitting
+/// in one account (and change returns to BIP44). `account_index` addresses the
+/// standard families; DashPay accounts span their own indices.
 ///
 /// # Parameters
 ///
@@ -840,9 +861,8 @@ pub unsafe extern "C" fn wallet_build_and_sign_asset_lock_transaction(
 
             let result = unwrap_or_return!(managed_wallet.build_asset_lock(
                 wallet_ref.inner(),
-                key_wallet::wallet::managed_wallet_info::asset_lock_builder::AssetLockFundingAccount::Bip44 {
-                    account_index,
-                },
+                &ASSET_LOCK_FUNDING_SOURCES,
+                account_index,
                 fundings,
                 fee_per_kb,
                 false,

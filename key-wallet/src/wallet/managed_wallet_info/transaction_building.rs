@@ -90,15 +90,36 @@ impl fmt::Display for AccountTypePreference {
     }
 }
 
+/// A builder seeded with the funding of a resolved source list, plus what it
+/// took to seed it: the derivation path of every candidate input address
+/// (inputs can come from different accounts, so one account's resolver is not
+/// enough) and the accounts whose UTXOs were offered to selection, in funding
+/// order.
+///
+/// The offered accounts are not the accounts that end up *contributing* inputs
+/// — selection routinely takes nothing from most of them — but they are the
+/// accounts holding this build's reservations, so they are what a failure path
+/// must reconcile.
+pub(super) struct PooledFunding {
+    /// The builder, with one `add_funding` call per resolved account.
+    pub builder: TransactionBuilder,
+    /// Address → derivation path for every UTXO offered to selection.
+    pub paths: HashMap<Address, DerivationPath>,
+    /// The accounts funded, in funding order; the first supplied the change
+    /// address.
+    pub accounts: Vec<AccountType>,
+}
+
 impl ManagedWalletInfo {
     /// Build and sign a transaction funded from the given account types at
     /// `source_index`, signing with the wallet's own keys.
     ///
     /// Coin selection draws from the union of those accounts' UTXOs, and the
     /// first of them supplies the change address. An empty `sources` means
-    /// [`AccountTypePreference::DEFAULT`], skipping the types absent at the
-    /// index; a non-empty one is taken literally and every account named must
-    /// exist.
+    /// [`AccountTypePreference::DEFAULT`]. A *single* source is an explicit
+    /// request for that one account and errors if it is absent; a *pooled*
+    /// (multi-source) list skips the sources this wallet has nothing for and
+    /// errors only when none of them funds anything.
     pub async fn build_and_sign_transaction(
         &mut self,
         wallet: &Wallet,
@@ -193,7 +214,11 @@ impl ManagedWalletInfo {
             .set_selection_strategy(strategy)
             .set_current_height(height);
 
-        let (mut builder, paths) = self.fund(wallet, sources, source_index, builder)?;
+        let PooledFunding {
+            mut builder,
+            paths,
+            accounts: _,
+        } = self.fund(wallet, sources, source_index, builder)?;
 
         for (address, value) in outputs {
             builder = builder.add_output(&address, value);
@@ -238,26 +263,35 @@ impl ManagedWalletInfo {
     /// Seed `builder` with the UTXOs of every funding account named by
     /// `sources`, returning it alongside the derivation path of each candidate
     /// input address, since the inputs can come from different accounts.
-    fn fund(
+    ///
+    /// A single-source list is *strict*: it names one account and a caller that
+    /// asked for exactly those funds must not silently be given others', so a
+    /// missing account is an error. A pooled list (two or more sources, or the
+    /// empty list standing for [`AccountTypePreference::DEFAULT`]) is *lenient*:
+    /// a wallet with no BIP32 account and no DashPay contacts still funds from
+    /// the sources it does have, and only a list that funds nothing at all is an
+    /// error.
+    pub(super) fn fund(
         &mut self,
         wallet: &Wallet,
         sources: &[AccountTypePreference],
         source_index: u32,
         mut builder: TransactionBuilder,
-    ) -> Result<(TransactionBuilder, HashMap<Address, DerivationPath>), BuilderError> {
-        let named_explicitly = !sources.is_empty();
-        let preferences = if named_explicitly {
-            sources
+    ) -> Result<PooledFunding, BuilderError> {
+        let preferences = if sources.is_empty() {
+            &AccountTypePreference::DEFAULT[..]
         } else {
-            &AccountTypePreference::DEFAULT
+            sources
         };
+        let strict = preferences.len() == 1;
 
         let mut paths = HashMap::new();
+        let mut accounts: Vec<AccountType> = Vec::new();
         let mut funded: HashSet<AccountType> = HashSet::new();
 
         for &preference in preferences {
             let account_types = self.account_types_for(preference, source_index);
-            if account_types.is_empty() && named_explicitly {
+            if account_types.is_empty() && strict {
                 return Err(BuilderError::AccountNotFound(format!("account {preference}")));
             }
 
@@ -274,7 +308,7 @@ impl ManagedWalletInfo {
                 let managed_account = self.accounts.funds_account_mut(&account_type);
 
                 let (Some(account), Some(managed_account)) = (account, managed_account) else {
-                    if named_explicitly {
+                    if strict {
                         return Err(BuilderError::AccountNotFound(format!(
                             "account {account_type}"
                         )));
@@ -289,16 +323,21 @@ impl ManagedWalletInfo {
                 }
                 builder = builder.add_funding(managed_account, account);
                 funded.insert(account_type);
+                accounts.push(account_type);
             }
         }
 
-        if funded.is_empty() {
+        if accounts.is_empty() {
             return Err(BuilderError::AccountNotFound(format!(
-                "no funding account of any type at index {source_index}"
+                "no funding account of any named source at index {source_index}"
             )));
         }
 
-        Ok((builder, paths))
+        Ok(PooledFunding {
+            builder,
+            paths,
+            accounts,
+        })
     }
 }
 #[cfg(test)]
@@ -1019,6 +1058,54 @@ mod tests {
             ),
             "300k must not cover a 400k target, got: {:?}",
             result.map(|(tx, _)| tx.input.len())
+        );
+    }
+
+    /// A pooled list names sources a wallet may have nothing for — the default
+    /// send set names every DashPay contact, and most wallets have none. Those
+    /// are skipped, not fatal; a SINGLE named source stays strict, because a
+    /// caller asking for exactly one account's funds must not silently be given
+    /// another's.
+    #[tokio::test]
+    async fn a_pooled_list_skips_absent_sources_where_a_single_one_is_strict() {
+        let (wallet, mut info) = test_wallet_and_info();
+        let bip44 = fund(&wallet, &mut info, AccountTypePreference::BIP44, 0, 0x11);
+        info.update_last_processed_height(1100);
+
+        // Pooled: no contacts exist, so `AllDashpayReceivingFunds` resolves to
+        // nothing and the send still goes out of BIP44.
+        let (tx, _fee) = info
+            .build_and_sign_transaction(
+                &wallet,
+                &[
+                    AccountTypePreference::BIP44,
+                    AccountTypePreference::BIP32,
+                    AccountTypePreference::AllDashpayReceivingFunds,
+                ],
+                0,
+                dest_outputs(200_000),
+                FeeRate::normal(),
+                SelectionStrategy::BranchAndBound,
+            )
+            .await
+            .expect("a wallet with no contacts still sends from its standard accounts");
+        let spent: Vec<OutPoint> = tx.input.iter().map(|txin| txin.previous_output).collect();
+        assert_eq!(spent, vec![bip44]);
+
+        // Strict: that same absent source, named alone, is an error.
+        let result = info
+            .build_and_sign_transaction(
+                &wallet,
+                &[AccountTypePreference::AllDashpayReceivingFunds],
+                0,
+                dest_outputs(200_000),
+                FeeRate::normal(),
+                SelectionStrategy::BranchAndBound,
+            )
+            .await;
+        assert!(
+            matches!(result, Err(BuilderError::AccountNotFound(_))),
+            "a single named source must not fall back to other accounts"
         );
     }
 
