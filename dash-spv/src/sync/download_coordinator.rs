@@ -375,6 +375,21 @@ mod tests {
         assert_eq!(coord.retry_counts.get(&7), Some(&1));
         assert!(!coord.is_in_flight(&7));
         assert_eq!(coord.pending_count(), 1);
+
+        // A peer disconnect is not an attempt against the item's budget, so
+        // repeated requeues must not spend it.
+        let items = coord.take_pending(1);
+        coord.mark_sent(&items);
+        coord.requeue_in_flight();
+        assert_eq!(coord.retry_counts.get(&7), Some(&1));
+
+        // A genuine timeout still counts, and delivery still clears the budget.
+        let items = coord.take_pending(1);
+        coord.mark_sent(&items);
+        coord.enqueue_retry(7);
+        assert_eq!(coord.retry_counts.get(&7), Some(&2));
+        assert!(coord.receive(&7));
+        assert_eq!(coord.retry_counts.get(&7), None);
     }
 
     #[test]

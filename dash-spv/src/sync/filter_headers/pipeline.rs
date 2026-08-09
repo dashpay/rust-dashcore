@@ -277,6 +277,10 @@ mod tests {
     use dashcore_hashes::Hash;
 
     use super::*;
+    use crate::network::NetworkRequest;
+    use dashcore::hash_types::{FilterHash, FilterHeader};
+    use dashcore::network::message_filter::GetCFHeaders;
+    use tokio::sync::mpsc::unbounded_channel;
 
     #[test]
     fn test_cfheaders_pipeline_new() {
@@ -424,6 +428,60 @@ mod tests {
 
         let err = pipeline.send_pending(&requests).unwrap_err();
         assert!(matches!(err, SyncError::InvalidState(_)));
+    }
+
+    /// A peer disconnect requeues in-flight batches without discarding what the
+    /// pipeline has already made of the ones that came back, so the reissued
+    /// requests carry their original start heights and nothing is re-downloaded.
+    #[test]
+    fn test_requeue_in_flight_reissues_batches_and_keeps_progress() {
+        let mut pipeline = FilterHeadersPipeline::new();
+        pipeline.next_expected = 1;
+        pipeline.target_height = 6000;
+
+        let hash1 = BlockHash::from_byte_array([0x01; 32]);
+        let hash2 = BlockHash::from_byte_array([0x02; 32]);
+        pipeline.coordinator.mark_sent(&[hash1, hash2]);
+        pipeline.batch_starts.insert(hash1, 1);
+        pipeline.batch_starts.insert(hash2, 2001);
+
+        // A third batch already came back out of order and is waiting for the
+        // two above to be processed first.
+        pipeline.buffered.insert(
+            4001,
+            CFHeaders {
+                filter_type: 0,
+                stop_hash: BlockHash::from_byte_array([0x03; 32]),
+                previous_filter_header: FilterHeader::all_zeros(),
+                filter_hashes: vec![FilterHash::all_zeros()],
+            },
+        );
+
+        pipeline.requeue_in_flight();
+        assert_eq!(pipeline.coordinator.active_count(), 0);
+        assert_eq!(pipeline.coordinator.pending_count(), 2);
+
+        let (tx, mut rx) = unbounded_channel();
+        let requests = RequestSender::new(tx);
+        assert_eq!(pipeline.send_pending(&requests).unwrap(), 2);
+
+        let mut reissued = Vec::new();
+        while let Ok(request) = rx.try_recv() {
+            match request {
+                NetworkRequest::SendMessage(NetworkMessage::GetCFHeaders(GetCFHeaders {
+                    start_height,
+                    stop_hash,
+                    ..
+                })) => reissued.push((start_height, stop_hash)),
+                other => panic!("Expected GetCFHeaders, got {:?}", other),
+            }
+        }
+        reissued.sort();
+        assert_eq!(reissued, vec![(1, hash1), (2001, hash2)]);
+
+        assert_eq!(pipeline.next_expected(), 1);
+        assert_eq!(pipeline.buffered.len(), 1);
+        assert_eq!(pipeline.target_height, 6000);
     }
 
     #[test]
