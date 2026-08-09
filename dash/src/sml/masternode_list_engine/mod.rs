@@ -240,7 +240,10 @@ impl Default for MasternodeListEngine {
 }
 
 /// Builds a per-cycle quorum map keyed by `quorum_index`.
-/// Rejects missing, negative, or duplicate indices and validates the final count.
+/// Rejects missing, negative, out-of-range, or duplicate indices. The map may
+/// hold fewer entries than the active quorum count: a quorum whose commitment
+/// cannot be validated is left out, and IS lock verification fails cleanly
+/// with `QuorumIndexNotFound` when a lock selects an absent index.
 #[cfg(feature = "quorum_validation")]
 fn build_cycle_quorum_map(
     quorums: Vec<QualifiedQuorumEntry>,
@@ -269,12 +272,6 @@ fn build_cycle_quorum_map(
             )));
         }
         map.insert(key, quorum);
-    }
-    if map.len() != expected {
-        return Err(QuorumValidationError::CorruptedCodeExecution(format!(
-            "rotated quorums per cycle count mismatch: expected {expected}, got {}",
-            map.len()
-        )));
     }
     Ok(map)
 }
@@ -520,10 +517,14 @@ impl MasternodeListEngine {
     /// the previous cycle after a fresh sync where `lastCommitmentPerIndex`
     /// only provides the current cycle's quorums.
     ///
-    /// This is a best-effort enrichment step: any entry that does not verify,
-    /// whether skipped for missing context or cryptographically invalid, only
-    /// prevents the cycle from being stored. The authoritative rejection of
-    /// bad current-cycle data happens on the `lastCommitmentPerIndex` path.
+    /// This is a best-effort enrichment step: only entries that verify are
+    /// stored, and any that do not, whether skipped for missing context or
+    /// cryptographically invalid, are left out individually. A straggler from
+    /// a cycle older than the QRInfo's diff range can never verify here (its
+    /// quarter masternode lists are not shipped), and leaving it out means
+    /// only IS locks selecting exactly that quorum index fail while the rest
+    /// of the cycle verifies. The authoritative rejection of bad
+    /// current-cycle data happens on the `lastCommitmentPerIndex` path.
     #[cfg(feature = "quorum_validation")]
     fn validate_and_store_previous_cycle_quorums(
         &mut self,
@@ -540,7 +541,6 @@ impl MasternodeListEngine {
         let validation_statuses = self.validate_rotation_cycle_quorums_validation_statuses(
             entries.iter().collect::<Vec<_>>().as_slice(),
         );
-        let mut all_verified = true;
         for entry in entries.iter_mut() {
             entry.verified = validation_statuses
                 .get(&entry.quorum_entry.quorum_hash)
@@ -550,31 +550,24 @@ impl MasternodeListEngine {
                 LLMQEntryVerificationStatus::Verified => {}
                 LLMQEntryVerificationStatus::Invalid(_) => {
                     tracing::warn!(
-                        "Previous-cycle quorum {} at cycle {} failed validation ({}); skipping storage",
+                        "Previous-cycle quorum {} at cycle {} failed validation ({}); leaving it out",
                         entry.quorum_entry.quorum_hash,
                         cycle_hash,
                         entry.verified
                     );
-                    all_verified = false;
-                    break;
                 }
                 _ => {
-                    // Can't fully validate (e.g. MN list at a required work
-                    // block is missing because it's deeper than the QRInfo's
-                    // diff range). Don't store unverified quorums: IS lock
-                    // verification for this cycle will fail, which is correct.
                     tracing::debug!(
-                        "Previous-cycle quorum {} at cycle {} could not be validated ({}); skipping storage",
+                        "Previous-cycle quorum {} at cycle {} could not be validated ({}); leaving it out",
                         entry.quorum_entry.quorum_hash,
                         cycle_hash,
                         entry.verified
                     );
-                    all_verified = false;
-                    break;
                 }
             }
         }
-        if !all_verified {
+        entries.retain(|entry| matches!(entry.verified, LLMQEntryVerificationStatus::Verified));
+        if entries.is_empty() {
             return Ok(());
         }
 
@@ -1642,10 +1635,23 @@ mod tests {
         let err = build_cycle_quorum_map(quorums, ty).expect_err("duplicate index should fail");
         assert!(matches!(err, QuorumValidationError::CorruptedCodeExecution(_)));
 
-        // Wrong count is rejected
+        // A partial set is allowed: unvalidatable quorums stay out of the
+        // cycle map and IS locks selecting their index fail individually.
         let quorums = vec![make_qualified_quorum_entry(ty, Some(0))];
-        let err = build_cycle_quorum_map(quorums, ty).expect_err("wrong count should fail");
-        assert!(matches!(err, QuorumValidationError::CorruptedCodeExecution(_)));
+        let map = build_cycle_quorum_map(quorums, ty).expect("partial set should succeed");
+        assert_eq!(map.len(), 1);
+        assert!(map.contains_key(&0));
+
+        // An index at or above the active quorum count is rejected
+        let quorums = vec![make_qualified_quorum_entry(ty, Some(2))];
+        let err = build_cycle_quorum_map(quorums, ty).expect_err("out-of-range index should fail");
+        assert!(matches!(
+            err,
+            QuorumValidationError::InvalidQuorumIndex {
+                index: 2,
+                ..
+            }
+        ));
     }
 
     fn verify_masternode_list_quorums(
@@ -1892,6 +1898,27 @@ mod tests {
                 .values()
                 .all(|q| matches!(q.verified, LLMQEntryVerificationStatus::Verified)),
             "every stored quorum must be verified"
+        );
+
+        // The previous cycle's active set carries its own straggler at index
+        // 20 (from one cycle further back), whose quarter masternode lists
+        // are not shipped in this QRInfo. The verified rest of the set must
+        // still be stored so IS locks referencing the previous cycle verify.
+        let previous_cycle_hash = *engine
+            .block_container
+            .get_hash(&(current_cycle_base - 288))
+            .expect("expected previous cycle hash");
+        let previous_cycle = engine
+            .rotated_quorums_per_cycle
+            .get(&previous_cycle_hash)
+            .expect("expected the previous cycle's verified subset stored");
+        assert_eq!(previous_cycle.len(), 31);
+        assert!(!previous_cycle.contains_key(&20), "the unverifiable straggler must be left out");
+        assert!(
+            previous_cycle
+                .values()
+                .all(|q| matches!(q.verified, LLMQEntryVerificationStatus::Verified)),
+            "every stored previous-cycle quorum must be verified"
         );
     }
 
@@ -2215,8 +2242,9 @@ mod tests {
     }
 
     /// The previous-cycle path is best-effort enrichment, so a corrupt
-    /// aggregated signature there must only skip storing that cycle, never
-    /// abort the whole feed. The current cycle must still land verified.
+    /// aggregated signature there must only leave that quorum out of the
+    /// stored cycle, never abort the whole feed. The rest of the cycle and
+    /// the current cycle must still land verified.
     #[cfg(feature = "quorum_validation")]
     #[test]
     fn feed_qr_info_degrades_previous_cycle_on_corrupt_aggregate_signature() {
@@ -2228,6 +2256,8 @@ mod tests {
             .iter()
             .position(|q| q.llmq_type.is_rotating_quorum_type())
             .expect("fixture must carry rotated quorums in the h diff");
+        let corrupted_quorum_hash =
+            qr_info.mn_list_diff_h.new_quorums[corrupt_position].quorum_hash;
         let previous_cycle_key = {
             let quorum = &qr_info.mn_list_diff_h.new_quorums[corrupt_position];
             let quorum_height = engine
@@ -2247,9 +2277,19 @@ mod tests {
             .expect("previous-cycle corruption must not abort the feed")
             .expect("expected a feed result");
 
+        let previous_cycle = engine
+            .rotated_quorums_per_cycle
+            .get(&previous_cycle_key)
+            .expect("the rest of the previous cycle must still be stored");
         assert!(
-            !engine.rotated_quorums_per_cycle.contains_key(&previous_cycle_key),
-            "the corrupted previous cycle must not be stored"
+            !previous_cycle.values().any(|q| q.quorum_entry.quorum_hash == corrupted_quorum_hash),
+            "the corrupted quorum must be left out of the stored cycle"
+        );
+        assert!(
+            previous_cycle
+                .values()
+                .all(|q| matches!(q.verified, LLMQEntryVerificationStatus::Verified)),
+            "every stored previous-cycle quorum must be verified"
         );
         assert!(feed_result.all_fully_verified(), "the current cycle must still verify fully");
         assert!(
