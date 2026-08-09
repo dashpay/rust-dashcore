@@ -56,14 +56,16 @@ impl MasternodeListEngine {
             }
         }
 
-        let masternodes_by_quorum_hash = self.find_rotated_masternodes_for_quorums(quorums)?;
+        let masternodes_by_quorum_hash = self.find_rotated_masternodes_for_quorums(quorums);
 
         for quorum in quorums {
             let masternodes = masternodes_by_quorum_hash
                 .get(&quorum.quorum_entry.quorum_hash)
                 .ok_or(QuorumValidationError::CorruptedCodeExecution(
                     "expected quorum hash not present".to_string(),
-                ))?;
+                ))?
+                .as_ref()
+                .map_err(|e| e.clone())?;
             quorum.validate(masternodes.iter().enumerate().filter_map(
                 |(i, qualified_masternode_list_entry)| {
                     if *quorum.quorum_entry.signers.get(i)? {
@@ -102,22 +104,7 @@ impl MasternodeListEngine {
             }
         }
 
-        let masternodes_by_quorum_hash = match self.find_rotated_masternodes_for_quorums(quorums) {
-            Ok(masternodes_by_quorum_hash) => masternodes_by_quorum_hash,
-            Err(e) => {
-                let status: LLMQEntryVerificationStatus = e.into();
-                for quorum in quorums {
-                    if matches!(
-                        return_statuses.get(&quorum.quorum_entry.quorum_hash),
-                        Some(LLMQEntryVerificationStatus::Invalid(_))
-                    ) {
-                        continue;
-                    }
-                    return_statuses.insert(quorum.quorum_entry.quorum_hash, status.clone());
-                }
-                return return_statuses;
-            }
-        };
+        let masternodes_by_quorum_hash = self.find_rotated_masternodes_for_quorums(quorums);
 
         for quorum in quorums {
             if matches!(
@@ -126,16 +113,21 @@ impl MasternodeListEngine {
             ) {
                 continue;
             }
-            let masternodes = match masternodes_by_quorum_hash
-                .get(&quorum.quorum_entry.quorum_hash)
-                .ok_or(QuorumValidationError::CorruptedCodeExecution(
-                    "expected quorum hash not present".to_string(),
-                )) {
-                Ok(masternodes) => masternodes,
-                Err(e) => {
+            let masternodes = match masternodes_by_quorum_hash.get(&quorum.quorum_entry.quorum_hash)
+            {
+                Some(Ok(masternodes)) => masternodes,
+                Some(Err(e)) => {
+                    return_statuses.insert(quorum.quorum_entry.quorum_hash, e.clone().into());
+                    continue;
+                }
+                None => {
                     return_statuses.insert(
                         quorum.quorum_entry.quorum_hash,
-                        LLMQEntryVerificationStatus::Invalid(e.clone()),
+                        LLMQEntryVerificationStatus::Invalid(
+                            QuorumValidationError::CorruptedCodeExecution(
+                                "expected quorum hash not present".to_string(),
+                            ),
+                        ),
                     );
                     continue;
                 }
