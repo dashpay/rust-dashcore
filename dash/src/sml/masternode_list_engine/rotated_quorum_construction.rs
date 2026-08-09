@@ -71,63 +71,74 @@ impl MasternodeListEngine {
         Ok(rotated_members)
     }
 
+    /// Resolves the signing member set for each rotated quorum, per quorum.
+    ///
+    /// Entries of an active rotated quorum set do not all belong to the same
+    /// cycle (a failed DKG leaves the previous cycle's quorum in place at
+    /// that index), and older cycles may lack the history or signatures the
+    /// reconstruction needs. Each quorum therefore gets its own `Result`, so
+    /// one unresolvable straggler cannot poison the rest of the set.
     #[allow(dead_code)]
     pub(in crate::sml::masternode_list_engine) fn find_rotated_masternodes_for_quorums<'a>(
         &'a self,
         quorums: &'a [&'a QualifiedQuorumEntry],
-    ) -> Result<BTreeMap<QuorumHash, Vec<&'a QualifiedMasternodeListEntry>>, QuorumValidationError>
+    ) -> BTreeMap<QuorumHash, Result<Vec<&'a QualifiedMasternodeListEntry>, QuorumValidationError>>
     {
-        let mut return_btree_map = BTreeMap::new();
-        let mut cycles: BTreeMap<CoreBlockHeight, Vec<Vec<&QualifiedMasternodeListEntry>>> =
-            BTreeMap::new();
+        let mut members_by_quorum_hash = BTreeMap::new();
+        let mut cycles: BTreeMap<
+            CoreBlockHeight,
+            Result<Vec<Vec<&QualifiedMasternodeListEntry>>, QuorumValidationError>,
+        > = BTreeMap::new();
         for quorum in quorums {
-            let Some(quorum_block_height) =
-                self.block_container.get_height(&quorum.quorum_entry.quorum_hash)
-            else {
-                return Err(QuorumValidationError::RequiredBlockNotPresent(
-                    quorum.quorum_entry.quorum_hash, "getting height for a quorum hash when trying to find rotated masternodes for quorums".to_string()
-                ));
+            let quorum_hash = quorum.quorum_entry.quorum_hash;
+            let Some(quorum_block_height) = self.block_container.get_height(&quorum_hash) else {
+                members_by_quorum_hash.insert(
+                    quorum_hash,
+                    Err(QuorumValidationError::RequiredBlockNotPresent(
+                        quorum_hash,
+                        "getting height for a quorum hash when trying to find rotated masternodes for quorums".to_string(),
+                    )),
+                );
+                continue;
             };
             let llmq_type = quorum.quorum_entry.llmq_type;
             let Some(quorum_index) = quorum.quorum_entry.quorum_index else {
-                return Err(QuorumValidationError::RequiredQuorumIndexNotPresent(
-                    quorum.quorum_entry.quorum_hash,
-                ));
+                members_by_quorum_hash.insert(
+                    quorum_hash,
+                    Err(QuorumValidationError::RequiredQuorumIndexNotPresent(quorum_hash)),
+                );
+                continue;
             };
             let cycle_base_height = quorum_block_height - quorum_index as u32;
-            // Check if we already have the masternode list entries for this cycle base height
-            let masternode_list_entries_by_index =
-                if let Some(entries) = cycles.get(&cycle_base_height) {
-                    entries
-                } else {
-                    let Some(VerifyingChainLockSignaturesType::Rotating(rotating)) =
-                        quorum.verifying_chain_lock_signature
-                    else {
-                        return Err(QuorumValidationError::RequiredRotatedChainLockSigsNotPresent(
-                            quorum.quorum_entry.quorum_hash,
-                        ));
-                    };
-                    // Fetch the masternode list entries
-                    let new_entries = self.masternode_list_entry_members_for_rotated_quorum(
-                        llmq_type,
-                        cycle_base_height,
-                        rotating,
-                    )?;
-                    cycles.insert(cycle_base_height, new_entries);
-                    cycles.get(&cycle_base_height).expect("Entry must exist")
+            // Quorums of one cycle share their quarter signatures, so the
+            // reconstruction result is cached per cycle base height.
+            let members_by_index = cycles.entry(cycle_base_height).or_insert_with(|| {
+                let Some(VerifyingChainLockSignaturesType::Rotating(rotating)) =
+                    quorum.verifying_chain_lock_signature
+                else {
+                    return Err(QuorumValidationError::RequiredRotatedChainLockSigsNotPresent(
+                        quorum_hash,
+                    ));
                 };
-
-            let masternode_list_entries = masternode_list_entries_by_index
-                .get(quorum_index as usize)
-                .ok_or(QuorumValidationError::CorruptedCodeExecution(format!(
-                    "expected masternode list entry members for {}",
-                    quorum_index
-                )))?
-                .clone();
-            return_btree_map.insert(quorum.quorum_entry.quorum_hash, masternode_list_entries);
+                self.masternode_list_entry_members_for_rotated_quorum(
+                    llmq_type,
+                    cycle_base_height,
+                    rotating,
+                )
+            });
+            let result = match members_by_index {
+                Ok(members_by_index) => members_by_index.get(quorum_index as usize).cloned().ok_or(
+                    QuorumValidationError::CorruptedCodeExecution(format!(
+                        "expected masternode list entry members for {}",
+                        quorum_index
+                    )),
+                ),
+                Err(e) => Err(e.clone()),
+            };
+            members_by_quorum_hash.insert(quorum_hash, result);
         }
 
-        Ok(return_btree_map)
+        members_by_quorum_hash
     }
 
     /// Determines the required block heights for ChainLock signatures based on the provided `QRInfo`.
