@@ -744,14 +744,96 @@ impl From<FFIAssetLockFundingType> for AssetLockFundingType {
     }
 }
 
+/// Which family of accounts a funding source names.
+///
+/// The discriminant of [`FFIAccountTypePreference`]; the two `Dashpay…` kinds
+/// are the ones that read the identity IDs alongside it.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FFIAccountTypePreferenceKind {
+    /// The standard transparent account, `m/44'/coinType'/index'`.
+    BIP44 = 0,
+    /// The legacy standard account, `m/index'`.
+    BIP32 = 1,
+    /// Mixed CoinJoin funds. Asset locks accept these only as the *sole*
+    /// source, and only in drain mode — pooling mixed outputs with transparent
+    /// ones in one transaction links them and undoes the mixing.
+    CoinJoin = 2,
+    /// One contact's receiving account, named by both identity IDs.
+    DashpayFriendshipReceivingFunds = 3,
+    /// Every receiving account of one identity; reads `user_identity_id` only.
+    DashpayIdentityReceivingFunds = 4,
+    /// Every DashPay receiving account this wallet can sign for. Ignores both
+    /// identity ID fields.
+    AllDashpayReceivingFunds = 5,
+}
+
+/// A funding source offered to an asset lock's coin selection.
+///
+/// `kind` selects the family; the identity IDs are read only by the kinds that
+/// name one (see [`FFIAccountTypePreferenceKind`]) and may be left zeroed
+/// otherwise.
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct FFIAccountTypePreference {
+    /// Which family of accounts this source names.
+    pub kind: FFIAccountTypePreferenceKind,
+    /// The local identity whose accounts to draw from. Read by
+    /// `DashpayFriendshipReceivingFunds` and `DashpayIdentityReceivingFunds`.
+    pub user_identity_id: [u8; 32],
+    /// The contact on the other side of the friendship. Read by
+    /// `DashpayFriendshipReceivingFunds` only.
+    pub friend_identity_id: [u8; 32],
+}
+
+impl From<FFIAccountTypePreference> for AccountTypePreference {
+    fn from(ffi: FFIAccountTypePreference) -> Self {
+        match ffi.kind {
+            FFIAccountTypePreferenceKind::BIP44 => Self::BIP44,
+            FFIAccountTypePreferenceKind::BIP32 => Self::BIP32,
+            FFIAccountTypePreferenceKind::CoinJoin => Self::CoinJoin,
+            FFIAccountTypePreferenceKind::DashpayFriendshipReceivingFunds => {
+                Self::DashpayFriendshipReceivingFunds {
+                    user_identity_id: ffi.user_identity_id,
+                    friend_identity_id: ffi.friend_identity_id,
+                }
+            }
+            FFIAccountTypePreferenceKind::DashpayIdentityReceivingFunds => {
+                Self::DashpayIdentityReceivingFunds {
+                    user_identity_id: ffi.user_identity_id,
+                }
+            }
+            FFIAccountTypePreferenceKind::AllDashpayReceivingFunds => {
+                Self::AllDashpayReceivingFunds
+            }
+        }
+    }
+}
+
 /// Build and sign an asset lock transaction for Core to Platform transfers.
 ///
 /// Creates a special transaction (type 8) with `AssetLockPayload` that locks
 /// Dash for Platform credits. Derives one unique private key per credit output
 /// from the specified funding account types.
 ///
+/// Funding is POOLED across the caller's `funding_sources`: coin selection
+/// draws from the union of those accounts' UTXOs, so a lock no longer needs the
+/// whole amount sitting in one account. Which accounts to pool is the caller's
+/// policy — this layer applies no default and never widens the list — so a
+/// client that wants only the primary transparent balance passes a single
+/// `BIP44` source and gets exactly the pre-pooling behavior.
+///
 /// # Parameters
 ///
+/// - `funding_sources`: Array of `funding_sources_count` accounts to fund from,
+///   in priority order. The FIRST source supplies the change address, so pass
+///   the account that should receive change first. At least one is required.
+///   A single source is strict — it fails if the wallet has no such account —
+///   while a list of two or more skips the sources this wallet has nothing for
+///   and fails only if none of them funds anything.
+/// - `funding_sources_count`: Number of entries in `funding_sources`.
+/// - `account_index`: Index addressing the standard families (BIP44, BIP32,
+///   CoinJoin). DashPay sources span their own indices and ignore it.
 /// - `funding_types`: Array of `credit_outputs_count` funding account types,
 ///   one per credit output (registration, top-up, invitation, etc.)
 /// - `identity_indices`: Array of `credit_outputs_count` identity indices.
@@ -763,13 +845,16 @@ impl From<FFIAssetLockFundingType> for AssetLockFundingType {
 /// # Safety
 ///
 /// - All pointer parameters must be valid and non-null
-/// - All parallel arrays must have at least `credit_outputs_count` elements
+/// - `funding_sources` must have at least `funding_sources_count` elements
+/// - All other parallel arrays must have at least `credit_outputs_count` elements
 /// - `private_keys_out` must point to an array of `credit_outputs_count` × `[u8; 32]` buffers
 /// - Caller must free `tx_bytes_out` with `transaction_bytes_free`
 #[no_mangle]
 pub unsafe extern "C" fn wallet_build_and_sign_asset_lock_transaction(
     manager: *const FFIWalletManager,
     wallet: *const FFIWallet,
+    funding_sources: *const FFIAccountTypePreference,
+    funding_sources_count: usize,
     account_index: u32,
     funding_types: *const FFIAssetLockFundingType,
     identity_indices: *const u32,
@@ -786,6 +871,7 @@ pub unsafe extern "C" fn wallet_build_and_sign_asset_lock_transaction(
 ) -> bool {
     check_ptr!(manager, error);
     check_ptr!(wallet, error);
+    check_ptr!(funding_sources, error);
     check_ptr!(funding_types, error);
     check_ptr!(identity_indices, error);
     check_ptr!(credit_output_scripts, error);
@@ -801,6 +887,13 @@ pub unsafe extern "C" fn wallet_build_and_sign_asset_lock_transaction(
         return false;
     }
 
+    // No implicit default: an empty list would mean `AccountTypePreference::DEFAULT`
+    // one layer down, which is this layer picking the caller's funding policy.
+    if funding_sources_count == 0 {
+        (*error).set(FFIErrorCode::InvalidInput, "At least one funding source required");
+        return false;
+    }
+
     unsafe {
         let manager_ref = &*manager;
         let wallet_ref = &*wallet;
@@ -810,6 +903,12 @@ pub unsafe extern "C" fn wallet_build_and_sign_asset_lock_transaction(
         let amounts_slice = slice::from_raw_parts(credit_output_amounts, credit_outputs_count);
         let funding_types_slice = slice::from_raw_parts(funding_types, credit_outputs_count);
         let identity_indices_slice = slice::from_raw_parts(identity_indices, credit_outputs_count);
+
+        let funding_sources: Vec<AccountTypePreference> =
+            slice::from_raw_parts(funding_sources, funding_sources_count)
+                .iter()
+                .map(|&source| source.into())
+                .collect();
 
         // Convert FFI arrays to domain types
         let mut fundings = Vec::with_capacity(credit_outputs_count);
@@ -840,9 +939,8 @@ pub unsafe extern "C" fn wallet_build_and_sign_asset_lock_transaction(
 
             let result = unwrap_or_return!(managed_wallet.build_asset_lock(
                 wallet_ref.inner(),
-                key_wallet::wallet::managed_wallet_info::asset_lock_builder::AssetLockFundingAccount::Bip44 {
-                    account_index,
-                },
+                &funding_sources,
+                account_index,
                 fundings,
                 fee_per_kb,
                 false,
@@ -876,5 +974,65 @@ pub unsafe extern "C" fn wallet_build_and_sign_asset_lock_transaction(
             (*error).clean();
             true
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn preference(kind: FFIAccountTypePreferenceKind) -> FFIAccountTypePreference {
+        FFIAccountTypePreference {
+            kind,
+            user_identity_id: [7u8; 32],
+            friend_identity_id: [9u8; 32],
+        }
+    }
+
+    /// Every kind must map to its own preference. A transposed arm here would
+    /// silently fund an asset lock from an account the caller did not name —
+    /// and the build would succeed, so nothing downstream would catch it.
+    #[test]
+    fn every_funding_source_kind_maps_to_its_own_preference() {
+        use FFIAccountTypePreferenceKind as Kind;
+
+        assert_eq!(
+            AccountTypePreference::from(preference(Kind::BIP44)),
+            AccountTypePreference::BIP44
+        );
+        assert_eq!(
+            AccountTypePreference::from(preference(Kind::BIP32)),
+            AccountTypePreference::BIP32
+        );
+        assert_eq!(
+            AccountTypePreference::from(preference(Kind::CoinJoin)),
+            AccountTypePreference::CoinJoin
+        );
+        assert_eq!(
+            AccountTypePreference::from(preference(Kind::AllDashpayReceivingFunds)),
+            AccountTypePreference::AllDashpayReceivingFunds
+        );
+    }
+
+    /// The identity IDs ride alongside the tag rather than inside it, so the
+    /// kinds that read them must read the right ones — and a friendship source
+    /// must not collapse to the whole-identity one.
+    #[test]
+    fn dashpay_sources_carry_the_identity_ids_they_name() {
+        use FFIAccountTypePreferenceKind as Kind;
+
+        assert_eq!(
+            AccountTypePreference::from(preference(Kind::DashpayFriendshipReceivingFunds)),
+            AccountTypePreference::DashpayFriendshipReceivingFunds {
+                user_identity_id: [7u8; 32],
+                friend_identity_id: [9u8; 32],
+            }
+        );
+        assert_eq!(
+            AccountTypePreference::from(preference(Kind::DashpayIdentityReceivingFunds)),
+            AccountTypePreference::DashpayIdentityReceivingFunds {
+                user_identity_id: [7u8; 32],
+            }
+        );
     }
 }
