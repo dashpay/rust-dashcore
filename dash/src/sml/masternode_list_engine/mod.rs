@@ -31,6 +31,8 @@ use crate::transaction::special_transaction::quorum_commitment::QuorumEntry;
 use crate::{BlockHash, QuorumHash};
 #[cfg(feature = "bincode")]
 use bincode::{Decode, Encode};
+#[cfg(feature = "qrinfo-capture")]
+use bincode::{config, encode_to_vec};
 use hashes::Hash;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
@@ -774,12 +776,10 @@ impl MasternodeListEngine {
         if fs::create_dir_all(&dir).is_err() {
             return;
         }
-        if let Ok(bytes) =
-            bincode::encode_to_vec(&self.block_container, bincode::config::standard())
-        {
+        if let Ok(bytes) = encode_to_vec(&self.block_container, config::standard()) {
             let _ = fs::write(format!("{dir}/block_container_{tip_height}.dat"), bytes);
         }
-        if let Ok(bytes) = bincode::encode_to_vec(qr_info, bincode::config::standard()) {
+        if let Ok(bytes) = encode_to_vec(qr_info, config::standard()) {
             let _ = fs::write(format!("{dir}/qrinfo_{tip_height}.dat"), bytes);
         }
     }
