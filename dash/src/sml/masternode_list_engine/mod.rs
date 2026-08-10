@@ -1670,6 +1670,7 @@ mod tests {
     };
     #[cfg(feature = "quorum_validation")]
     use crate::sml::quorum_validation_error::QuorumValidationError;
+    use bincode::{Decode, config, decode_from_slice};
     use std::collections::BTreeMap;
     #[cfg(feature = "quorum_validation")]
     use std::collections::BTreeSet;
@@ -2037,6 +2038,10 @@ mod tests {
         }
     }
 
+    fn decode_fixture<T: Decode<()>>(bytes: &[u8]) -> T {
+        decode_from_slice(bytes, config::standard()).expect("expected to decode").0
+    }
+
     #[cfg(feature = "quorum_validation")]
     fn load_qrinfo_2240504_fixture() -> (MasternodeListEngine, QRInfo) {
         let mn_list_diff_bytes: &[u8] =
@@ -2049,21 +2054,14 @@ mod tests {
         let block_container_bytes: &[u8] =
             include_bytes!("../../../tests/data/test_DML_diffs/block_container_2240504.dat");
         let block_container: MasternodeListEngineBlockContainer =
-            bincode::decode_from_slice(block_container_bytes, bincode::config::standard())
-                .expect("expected to decode")
-                .0;
+            decode_fixture(block_container_bytes);
         let mn_list_diffs_bytes: &[u8] =
             include_bytes!("../../../tests/data/test_DML_diffs/mnlistdiffs_2240504.dat");
         let mn_list_diffs: BTreeMap<(CoreBlockHeight, CoreBlockHeight), MnListDiff> =
-            bincode::decode_from_slice(mn_list_diffs_bytes, bincode::config::standard())
-                .expect("expected to decode")
-                .0;
+            decode_fixture(mn_list_diffs_bytes);
         let qr_info_bytes: &[u8] =
             include_bytes!("../../../tests/data/test_DML_diffs/qrinfo_2240504.dat");
-        let qr_info: QRInfo =
-            bincode::decode_from_slice(qr_info_bytes, bincode::config::standard())
-                .expect("expected to decode")
-                .0;
+        let qr_info: QRInfo = decode_fixture(qr_info_bytes);
 
         engine.block_container = block_container;
         for ((_start_height, height), diff) in mn_list_diffs.into_iter() {
@@ -2084,15 +2082,10 @@ mod tests {
         let block_container_bytes: &[u8] =
             include_bytes!("../../../tests/data/test_DML_diffs/block_container_2518986.dat");
         let block_container: MasternodeListEngineBlockContainer =
-            bincode::decode_from_slice(block_container_bytes, bincode::config::standard())
-                .expect("expected to decode")
-                .0;
+            decode_fixture(block_container_bytes);
         let qr_info_bytes: &[u8] =
             include_bytes!("../../../tests/data/test_DML_diffs/qrinfo_2518986.dat");
-        let qr_info: QRInfo =
-            bincode::decode_from_slice(qr_info_bytes, bincode::config::standard())
-                .expect("expected to decode")
-                .0;
+        let qr_info: QRInfo = decode_fixture(qr_info_bytes);
 
         let mut engine = MasternodeListEngine {
             network: Network::Mainnet,
@@ -2115,11 +2108,7 @@ mod tests {
         let mixed_cycle_bases: BTreeSet<CoreBlockHeight> = qr_info
             .last_commitment_per_index
             .iter()
-            .filter_map(|q| {
-                let height = engine.block_container.get_height(&q.quorum_hash)?;
-                let index = u32::try_from(q.quorum_index?).ok()?;
-                height.checked_sub(index)
-            })
+            .filter_map(|q| engine.rotated_quorum_cycle_base(q))
             .collect();
         assert!(
             mixed_cycle_bases.len() > 1 && mixed_cycle_bases.contains(&current_cycle_base),
@@ -2161,12 +2150,14 @@ mod tests {
         );
 
         // The previous cycle's active set carries its own straggler at index
-        // 20 (from one cycle further back), whose quarter masternode lists
-        // are not shipped in this QRInfo. The verified rest of the set must
-        // still be stored so IS locks referencing the previous cycle verify.
+        // 20 (from one cycle further back), whose commitment block has no
+        // height in the captured container, so its cycle cannot be derived and
+        // it settles as skipped. The verified rest of the set must still be
+        // stored so IS locks referencing the previous cycle verify.
+        let dkg_interval = engine.network.isd_llmq_type().params().dkg_params.interval;
         let previous_cycle_hash = *engine
             .block_container
-            .get_hash(&(current_cycle_base - 288))
+            .get_hash(&(current_cycle_base - dkg_interval))
             .expect("expected previous cycle hash");
         let previous_cycle = engine
             .rotated_quorums_per_cycle
@@ -2244,10 +2235,7 @@ mod tests {
         let block_hex =
             include_str!("../../../tests/data/test_DML_diffs/masternode_list_engine.hex");
         let data = hex::decode(block_hex).expect("decode hex");
-        let mut mn_list_engine: MasternodeListEngine =
-            bincode::decode_from_slice(&data, bincode::config::standard())
-                .expect("expected to decode")
-                .0;
+        let mut mn_list_engine: MasternodeListEngine = decode_fixture(&data);
 
         assert_eq!(mn_list_engine.masternode_lists.len(), 29);
 
@@ -2280,10 +2268,7 @@ mod tests {
         let block_hex =
             include_str!("../../../tests/data/test_DML_diffs/masternode_list_engine.hex");
         let data = hex::decode(block_hex).expect("decode hex");
-        let mut mn_list_engine: MasternodeListEngine =
-            bincode::decode_from_slice(&data, bincode::config::standard())
-                .expect("expected to decode")
-                .0;
+        let mut mn_list_engine: MasternodeListEngine = decode_fixture(&data);
 
         assert_eq!(mn_list_engine.masternode_lists.len(), 29);
 
@@ -2315,10 +2300,7 @@ mod tests {
         let block_hex =
             include_str!("../../../tests/data/test_DML_diffs/masternode_list_engine.hex");
         let data = hex::decode(block_hex).expect("decode hex");
-        let mn_list_engine: MasternodeListEngine =
-            bincode::decode_from_slice(&data, bincode::config::standard())
-                .expect("expected to decode")
-                .0;
+        let mn_list_engine: MasternodeListEngine = decode_fixture(&data);
 
         for (cycle_hash, quorums) in mn_list_engine.rotated_quorums_per_cycle.iter() {
             for (index, quorum) in quorums.iter() {
@@ -2337,10 +2319,7 @@ mod tests {
         let block_hex =
             include_str!("../../../tests/data/test_DML_diffs/masternode_list_engine.hex");
         let data = hex::decode(block_hex).expect("decode hex");
-        let mn_list_engine: MasternodeListEngine =
-            bincode::decode_from_slice(&data, bincode::config::standard())
-                .expect("expected to decode")
-                .0;
+        let mn_list_engine: MasternodeListEngine = decode_fixture(&data);
 
         for quorums in mn_list_engine.rotated_quorums_per_cycle.values() {
             mn_list_engine
@@ -2574,23 +2553,41 @@ mod tests {
             qr_info.mn_list_diff_h.new_quorums[corrupt_position].quorum_hash;
         let previous_cycle_key = {
             let quorum = &qr_info.mn_list_diff_h.new_quorums[corrupt_position];
-            let quorum_height = engine
-                .block_container
-                .get_height(&quorum.quorum_hash)
-                .expect("fixture must carry the corrupted quorum's height");
-            let cycle_base = quorum_height
-                - u32::try_from(quorum.quorum_index.expect("rotated quorums carry an index"))
-                    .unwrap();
+            let cycle_base = engine
+                .rotated_quorum_cycle_base(quorum)
+                .expect("fixture must carry the corrupted quorum's cycle base");
             *engine.block_container.get_hash(&cycle_base).expect("expected cycle base hash")
         };
+        // A zeroed signature would be rejected by the structural check before
+        // any aggregate verification runs. Another quorum's signature is
+        // structurally sound and simply does not verify against this
+        // commitment.
+        let foreign_signature = qr_info
+            .mn_list_diff_h
+            .new_quorums
+            .iter()
+            .find(|q| {
+                q.llmq_type.is_rotating_quorum_type() && q.quorum_hash != corrupted_quorum_hash
+            })
+            .expect("fixture must carry a second rotated quorum in the h diff")
+            .all_commitment_aggregated_signature;
         qr_info.mn_list_diff_h.new_quorums[corrupt_position].all_commitment_aggregated_signature =
-            BLSSignature::from([0u8; 96]);
+            foreign_signature;
+        let h_block_hash = qr_info.mn_list_diff_h.block_hash;
 
         let feed_result = engine
             .feed_qr_info(qr_info, true, true)
             .expect("previous-cycle corruption must not abort the feed")
             .expect("expected a feed result");
 
+        let h_height =
+            engine.block_container.get_height(&h_block_hash).expect("expected the h height");
+        let rotating_at_h = engine
+            .masternode_lists
+            .get(&h_height)
+            .and_then(|list| list.quorums.get(&engine.network.isd_llmq_type()))
+            .expect("expected rotated quorums on the list at h")
+            .len();
         let previous_cycle = engine
             .rotated_quorums_per_cycle
             .get(&previous_cycle_key)
@@ -2598,6 +2595,11 @@ mod tests {
         assert!(
             !previous_cycle.values().any(|q| q.quorum_entry.quorum_hash == corrupted_quorum_hash),
             "the corrupted quorum must be left out of the stored cycle"
+        );
+        assert_eq!(
+            previous_cycle.len(),
+            rotating_at_h - 1,
+            "degradation must drop the corrupted quorum and nothing else"
         );
         assert!(
             previous_cycle
