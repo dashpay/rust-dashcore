@@ -667,7 +667,7 @@ impl MasternodeListEngine {
                 return invalid_count;
             }
         };
-        self.rotated_quorums_per_cycle.insert(cycle_hash, cycle_map);
+        self.rotated_quorums_per_cycle.entry(cycle_hash).or_default().extend(cycle_map);
         tracing::debug!(
             "Validated and stored previous-cycle rotated quorums under cycle hash {}",
             cycle_hash
@@ -731,6 +731,11 @@ impl MasternodeListEngine {
     /// Skipped entries, and a `verify_rotated_quorums == false` call can leave
     /// entries unverified, neither of which must downgrade it.
     ///
+    /// The number of entries a peer serves is not fixed, so verified entries
+    /// merge into the stored cycle per quorum index instead of replacing it.
+    /// A response carrying a subset completes the cycle, it never drops the
+    /// indices an earlier response already proved.
+    ///
     /// Returns the height of the stored cycle, or `None` if storage was
     /// skipped because the gate did not fire.
     #[cfg(feature = "quorum_validation")]
@@ -748,7 +753,7 @@ impl MasternodeListEngine {
         }
         let cycle_map =
             build_cycle_quorum_map(qualified_last_commitment_per_index, rotation_quorum_type)?;
-        *self.rotated_quorums_per_cycle.entry(cycle_key).or_default() = cycle_map;
+        self.rotated_quorums_per_cycle.entry(cycle_key).or_default().extend(cycle_map);
         Ok(self.block_container.get_height(&cycle_key))
     }
 
@@ -2731,7 +2736,26 @@ mod tests {
         assert_eq!(
             engine.rotated_quorums_per_cycle.get(&partial_key).map(|cycle| cycle.len()),
             Some(complete_cycle.len()),
-            "a complete cycle must replace a partially stored one"
+            "a complete cycle must complete a partially stored one"
+        );
+
+        // Completion only ever adds: a verified set smaller than what is
+        // already stored must leave the indices it does not carry in place,
+        // otherwise one genuine commitment served by a peer degrades the rest
+        // of the cycle.
+        let shrink_key = BlockHash::from_byte_array([0xEF; 32]);
+        let stored_before: BTreeMap<u16, QualifiedQuorumEntry> =
+            original_cycle.iter().skip(1).map(|(index, q)| (*index, q.clone())).collect();
+        engine.rotated_quorums_per_cycle.insert(shrink_key, stored_before.clone());
+        let single_entry =
+            vec![stored_before.values().next().expect("partial cycle non-empty").clone()];
+        engine
+            .store_cycle_if_fully_verified(shrink_key, single_entry, rotation_quorum_type)
+            .expect("gate must not error when merging a smaller verified set");
+        assert_eq!(
+            engine.rotated_quorums_per_cycle.get(&shrink_key),
+            Some(&stored_before),
+            "a smaller verified set must not shrink a larger stored cycle"
         );
     }
 }
