@@ -24,7 +24,12 @@ eddsa = ["key-wallet/eddsa"]
 keep-finalized-transactions = ["key-wallet/keep-finalized-transactions"]
 
 [dependencies]
-key-wallet = { path = "../key-wallet", default-features = false }
+# `getrandom` is required, not optional: `create_wallet_with_random_mnemonic`
+# calls `Mnemonic::generate`, which without this feature compiles to a stub that
+# always returns an error. Workspace builds and the dev-dependency below both
+# enable it via feature unification, so dropping it here fails only for external
+# consumers — and only at runtime.
+key-wallet = { path = "../key-wallet", default-features = false, features = ["getrandom"] }
 dashcore = { path = "../dash" }
 async-trait = "0.1"
 tokio = { version = "1", features = ["macros", "rt", "sync"] }
