@@ -566,12 +566,12 @@ impl MasternodeListEngine {
         &mut self,
         work_block_hash: BlockHash,
         sigs_by_work_height: &BTreeMap<CoreBlockHeight, BLSSignature>,
-    ) -> Result<(), QuorumValidationError> {
+    ) {
         let isd_type = self.network.isd_llmq_type();
         let Some((cycle_hash, mut entries)) =
             self.try_load_previous_cycle_entries(work_block_hash, isd_type, sigs_by_work_height)
         else {
-            return Ok(());
+            return;
         };
 
         let validation_statuses = self.validate_rotation_cycle_quorums_validation_statuses(
@@ -604,7 +604,7 @@ impl MasternodeListEngine {
         }
         entries.retain(|entry| matches!(entry.verified, LLMQEntryVerificationStatus::Verified));
         if entries.is_empty() {
-            return Ok(());
+            return;
         }
 
         // Mirror statuses into `quorum_statuses` and the MN list.
@@ -640,13 +640,22 @@ impl MasternodeListEngine {
             }
         }
 
-        let cycle_map = build_cycle_quorum_map(entries, isd_type)?;
+        let cycle_map = match build_cycle_quorum_map(entries, isd_type) {
+            Ok(cycle_map) => cycle_map,
+            Err(e) => {
+                tracing::warn!(
+                    "Previous-cycle rotated quorums at cycle {} could not be keyed by quorum index ({}), leaving the cycle unstored",
+                    cycle_hash,
+                    e
+                );
+                return;
+            }
+        };
         self.rotated_quorums_per_cycle.insert(cycle_hash, cycle_map);
         tracing::debug!(
             "Validated and stored previous-cycle rotated quorums under cycle hash {}",
             cycle_hash
         );
-        Ok(())
     }
 
     /// Block hashes referenced by a QRInfo message that the engine needs heights for.
@@ -1065,7 +1074,7 @@ impl MasternodeListEngine {
             self.validate_and_store_previous_cycle_quorums(
                 work_block_hash_h,
                 &rotation_sigs_by_work_height,
-            )?;
+            );
         }
 
         // Each entry gets the quarter signatures of its own cycle. A failed
