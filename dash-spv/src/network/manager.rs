@@ -1791,4 +1791,21 @@ impl PeerNetworkManager {
     pub(crate) async fn test_should_reject_after_handshake(&self, peer: &Peer) -> bool {
         Self::should_reject_after_handshake(&self.pool, peer, self.required_services).await
     }
+
+    pub(crate) async fn test_update_reputation(&self, addr: SocketAddr, reason: ChangeReason) {
+        self.reputation_manager.update_reputation(addr, reason).await;
+    }
+
+    pub(crate) async fn test_add_known_address(&self, addr: SocketAddr) {
+        self.addrv2_handler.add_known_address(addr, ServiceFlags::NETWORK).await;
+    }
+
+    pub(crate) async fn test_next_peer(&self) -> SocketAddr {
+        let peers = self.pool.get_all_peers().await;
+        self.next_peer(&peers).await.0
+    }
+
+    pub(crate) async fn test_evict_worst_stuck_peer(&self) {
+        self.evict_worst_stuck_peer().await;
+    }
 }

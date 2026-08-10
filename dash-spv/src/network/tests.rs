@@ -117,3 +117,105 @@ mod pool_tests {
         assert_eq!(manager.test_capability_rejected_count().await, 1);
     }
 }
+
+#[cfg(test)]
+mod selection_tests {
+    use crate::network::manager::PeerNetworkManager;
+    use crate::network::reputation::ChangeReason;
+    use crate::test_utils::test_socket_address;
+    use dashcore::network::constants::ServiceFlags;
+
+    async fn full_pool_with_bad_peer(bad: u8) -> (PeerNetworkManager, std::net::SocketAddr) {
+        let cf = ServiceFlags::COMPACT_FILTERS;
+        let manager = PeerNetworkManager::new_for_test(cf).await;
+        for i in 1u8..=8 {
+            manager.insert_test_peer(test_socket_address(i), cf).await;
+        }
+        let bad_addr = test_socket_address(bad);
+        // Two stalls put the peer past the eviction threshold.
+        manager.test_update_reputation(bad_addr, ChangeReason::RequestTimeout).await;
+        manager.test_update_reputation(bad_addr, ChangeReason::RequestTimeout).await;
+        (manager, bad_addr)
+    }
+
+    #[tokio::test]
+    async fn test_next_peer_excludes_low_scoring_peer() {
+        let cf = ServiceFlags::COMPACT_FILTERS;
+        let manager = PeerNetworkManager::new_for_test(cf).await;
+        let good1 = test_socket_address(1);
+        let good2 = test_socket_address(2);
+        let bad = test_socket_address(3);
+        manager.insert_test_peer(good1, cf).await;
+        manager.insert_test_peer(good2, cf).await;
+        manager.insert_test_peer(bad, cf).await;
+
+        // Push the bad peer well outside the good band.
+        manager.test_update_reputation(bad, ChangeReason::InvalidTransactionInBlock).await;
+
+        let mut seen_good1 = false;
+        let mut seen_good2 = false;
+        for _ in 0..20 {
+            let picked = manager.test_next_peer().await;
+            assert_ne!(picked, bad, "a low-scoring peer must not be routed to");
+            seen_good1 |= picked == good1;
+            seen_good2 |= picked == good2;
+        }
+        assert!(seen_good1 && seen_good2, "load should spread across the good band");
+    }
+
+    #[tokio::test]
+    async fn test_evict_worst_stuck_peer_removes_the_stalling_peer() {
+        let (manager, bad) = full_pool_with_bad_peer(3).await;
+        // A replacement must be available or eviction is a no-op.
+        manager.test_add_known_address(test_socket_address(99)).await;
+
+        manager.test_evict_worst_stuck_peer().await;
+
+        assert!(!manager.test_is_connected(&bad).await, "stalling peer should be evicted");
+        assert_eq!(manager.test_peer_count().await, 7);
+    }
+
+    #[tokio::test]
+    async fn test_evict_worst_stuck_peer_skips_without_replacement() {
+        let (manager, _bad) = full_pool_with_bad_peer(3).await;
+        // No known addresses -> no replacement candidate -> no eviction.
+        manager.test_evict_worst_stuck_peer().await;
+        assert_eq!(manager.test_peer_count().await, 8);
+    }
+
+    #[tokio::test]
+    async fn test_evict_worst_stuck_peer_skips_when_all_peers_bad() {
+        let cf = ServiceFlags::COMPACT_FILTERS;
+        let manager = PeerNetworkManager::new_for_test(cf).await;
+        for i in 1u8..=8 {
+            let addr = test_socket_address(i);
+            manager.insert_test_peer(addr, cf).await;
+            manager.test_update_reputation(addr, ChangeReason::RequestTimeout).await;
+            manager.test_update_reputation(addr, ChangeReason::RequestTimeout).await;
+        }
+        manager.test_add_known_address(test_socket_address(99)).await;
+
+        manager.test_evict_worst_stuck_peer().await;
+
+        // Every peer is equally bad, so the problem is systemic: evict none.
+        assert_eq!(manager.test_peer_count().await, 8);
+    }
+
+    #[tokio::test]
+    async fn test_evict_worst_stuck_peer_skips_when_pool_not_full() {
+        let cf = ServiceFlags::COMPACT_FILTERS;
+        let manager = PeerNetworkManager::new_for_test(cf).await;
+        for i in 1u8..=3 {
+            manager.insert_test_peer(test_socket_address(i), cf).await;
+        }
+        let bad = test_socket_address(2);
+        manager.test_update_reputation(bad, ChangeReason::RequestTimeout).await;
+        manager.test_update_reputation(bad, ChangeReason::RequestTimeout).await;
+        manager.test_add_known_address(test_socket_address(99)).await;
+
+        manager.test_evict_worst_stuck_peer().await;
+
+        // Pool is below max_peers, so eviction would be pure loss: skip.
+        assert_eq!(manager.test_peer_count().await, 3);
+    }
+}
