@@ -25,11 +25,11 @@ pub enum LLMQEntryVerificationSkipStatus {
     /// fetch.
     MissingChainLock(CoreBlockHeight, BlockHash),
     /// The quorum entry came through without an attached
-    /// `VerifyingChainLockSignaturesType::Rotating`. Typically happens when
-    /// a QRInfo's historical diff covers a block range in which no rotating
-    /// DKG successfully committed, so `apply_diff` extracts no
-    /// `rotation_sig` and `feed_qr_info` can't populate the 4-sig tuple for
-    /// the quorums in `lastCommitmentPerIndex`.
+    /// `VerifyingChainLockSignaturesType::Rotating`. Each of the four quarter
+    /// signatures is looked up by the work height of its quarter in the
+    /// `quorumsCLSigs` mapping the QRInfo's diffs carry, so a QRInfo that
+    /// covers none of a quorum's quarter work blocks, or whose quorum hash
+    /// heights are unknown, leaves the 4-sig tuple unpopulated.
     MissingRotationChainLockSigs(QuorumHash),
     /// A specific rotation chain-lock signature at offset `h - n` was not
     /// present for the masternode diff at the given block hash. The first

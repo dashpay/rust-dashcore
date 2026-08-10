@@ -211,40 +211,26 @@ mod tests {
 
         let broken_hash = QuorumHash::from_byte_array([1; 32]);
         let unknown_hash = QuorumHash::from_byte_array([2; 32]);
+        let second_unknown_hash = QuorumHash::from_byte_array([3; 32]);
         let broken = rotating_quorum(broken_hash, 0, false);
         let unknown_block = rotating_quorum(unknown_hash, 1, true);
+        let second_unknown_block = rotating_quorum(second_unknown_hash, 2, true);
 
-        let statuses =
-            engine.validate_rotation_cycle_quorums_validation_statuses(&[&broken, &unknown_block]);
+        let statuses = engine.validate_rotation_cycle_quorums_validation_statuses(&[
+            &broken,
+            &unknown_block,
+            &second_unknown_block,
+        ]);
 
         assert!(
             matches!(statuses.get(&broken_hash), Some(LLMQEntryVerificationStatus::Invalid(_))),
             "structurally-broken quorum must keep an Invalid status, got {:?}",
             statuses.get(&broken_hash),
         );
-        assert!(
-            matches!(statuses.get(&unknown_hash), Some(LLMQEntryVerificationStatus::Skipped(_))),
-            "infrastructure-error quorum must surface as Skipped, got {:?}",
-            statuses.get(&unknown_hash),
-        );
-    }
-
-    #[test]
-    fn rotation_cycle_statuses_classify_all_quorums_as_skipped_when_no_pre_existing_invalid() {
-        let engine = MasternodeListEngine::default();
-
-        let hash_a = QuorumHash::from_byte_array([3; 32]);
-        let hash_b = QuorumHash::from_byte_array([4; 32]);
-        let quorum_a = rotating_quorum(hash_a, 0, true);
-        let quorum_b = rotating_quorum(hash_b, 1, true);
-
-        let statuses =
-            engine.validate_rotation_cycle_quorums_validation_statuses(&[&quorum_a, &quorum_b]);
-
-        for hash in [hash_a, hash_b] {
+        for hash in [unknown_hash, second_unknown_hash] {
             assert!(
                 matches!(statuses.get(&hash), Some(LLMQEntryVerificationStatus::Skipped(_))),
-                "every quorum must be Skipped when find_rotated_masternodes_for_quorums errors and no entry was pre-marked Invalid, got {:?} for {:?}",
+                "each unresolvable quorum must surface as Skipped on its own, got {:?} for {:?}",
                 statuses.get(&hash),
                 hash,
             );

@@ -696,6 +696,14 @@ impl MasternodeListEngine {
     /// carried in the QRInfo. Rotating quorum hashes from every diff are included
     /// because each quorum's cycle base, and with it the work block its ChainLock
     /// signature belongs to, is derived from that hash's height.
+    ///
+    /// These hashes are what the QRInfo itself names, which is not everything
+    /// the feed can need. The cycle base block of a straggler from an older
+    /// cycle keys that cycle in storage, yet the QRInfo carries no hash for
+    /// it, so no enumeration over the message can produce it. A caller
+    /// holding its own header chain should additionally feed the heights
+    /// around each work block, as dash-spv does with
+    /// `work_height + WORK_DIFF_DEPTH`.
     pub fn qr_info_referenced_block_hashes(qr_info: &QRInfo) -> BTreeSet<BlockHash> {
         let mut hashes = BTreeSet::new();
 
@@ -2415,8 +2423,9 @@ mod tests {
         let (mut engine, mut qr_info) = load_qrinfo_2240504_fixture();
 
         // The post-V20 strict check requires every `new_quorums` slot to have
-        // a matching `quorums_chainlock_signatures` entry; clearing both keeps
-        // `apply_diff` happy while ensuring no per-diff rotating sig is captured.
+        // a matching `quorums_chainlock_signatures` entry, so clearing both
+        // keeps `apply_diff` happy while leaving no signature that could be
+        // keyed to a quarter work height.
         let strip = |diff: &mut MnListDiff| {
             diff.new_quorums.clear();
             diff.quorums_chainlock_signatures.clear();
@@ -2433,13 +2442,13 @@ mod tests {
             strip(diff);
         }
 
-        // The cycle key from `last_commitment_per_index` must still be present
-        // so the post-feed assertion is meaningful.
-        let expected_cycle_key = qr_info
-            .last_commitment_per_index
-            .first()
-            .map(|q| q.quorum_hash)
-            .expect("fixture has rotation commitments");
+        let entries: Vec<QualifiedQuorumEntry> =
+            qr_info.last_commitment_per_index.iter().cloned().map(Into::into).collect();
+        let expected_cycle_key = engine
+            .active_set_cycle_hash(entries.iter())
+            .expect("fixture must resolve the cycle key of its active set");
+        let entry_hash =
+            entries.first().expect("fixture has rotation commitments").quorum_entry.quorum_hash;
 
         let isd_type = engine.network.isd_llmq_type();
 
@@ -2461,7 +2470,7 @@ mod tests {
         let entry_status = engine
             .quorum_statuses
             .get(&isd_type)
-            .and_then(|m| m.get(&expected_cycle_key))
+            .and_then(|m| m.get(&entry_hash))
             .map(|(_, _, status)| status.clone());
         assert!(
             matches!(
@@ -2471,7 +2480,7 @@ mod tests {
                 ))
             ),
             "expected MissingRotationChainLockSigs skip for {}, got {:?}",
-            expected_cycle_key,
+            entry_hash,
             entry_status
         );
     }
