@@ -322,6 +322,21 @@ fn rotated_cycle_base_height(
     quorum_block_height.checked_sub(u32::try_from(quorum_index).ok()?)
 }
 
+/// The four quarter work block heights of the rotation cycle based at
+/// `cycle_base`, ordered oldest quarter first: `[B-3c-8, B-2c-8, B-c-8, B-8]`
+/// for cycle base `B` and DKG interval `c`.
+///
+/// A quarter reaching below the genesis block is `None`. Callers differ on
+/// what that means, so none is applied here: the required-height survey takes
+/// whichever quarters exist, while a reconstruction needs all four.
+fn cycle_quarter_work_heights(
+    cycle_base: CoreBlockHeight,
+    interval: u32,
+) -> [Option<CoreBlockHeight>; 4] {
+    [3, 2, 1, 0]
+        .map(|cycles_back: u32| cycle_base.checked_sub(cycles_back * interval + WORK_DIFF_DEPTH))
+}
+
 impl MasternodeListEngine {
     /// Creates a new MasternodeListEngine with the specified network configuration.
     ///
@@ -933,9 +948,8 @@ impl MasternodeListEngine {
     fn quarter_work_heights(&self, quorum: &QuorumEntry) -> Option<[CoreBlockHeight; 4]> {
         let cycle_base = self.rotated_quorum_cycle_base(quorum)?;
         let interval = quorum.llmq_type.params().dkg_params.interval;
-        let height_at =
-            |cycles_back: u32| cycle_base.checked_sub(cycles_back * interval + WORK_DIFF_DEPTH);
-        Some([height_at(3)?, height_at(2)?, height_at(1)?, height_at(0)?])
+        let [h3, h2, h1, h0] = cycle_quarter_work_heights(cycle_base, interval);
+        Some([h3?, h2?, h1?, h0?])
     }
 
     /// The four quarter ChainLock signatures for the cycle a rotated quorum

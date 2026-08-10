@@ -7,7 +7,7 @@ use crate::sml::llmq_type::LLMQType;
 use crate::sml::llmq_type::rotation::{LLMQQuarterReconstructionType, LLMQQuarterUsageType};
 use crate::sml::masternode_list::MasternodeList;
 use crate::sml::masternode_list_engine::{
-    MasternodeListEngine, WORK_DIFF_DEPTH, rotated_cycle_base_height,
+    MasternodeListEngine, cycle_quarter_work_heights, rotated_cycle_base_height,
 };
 use crate::sml::masternode_list_entry::qualified_masternode_list_entry::QualifiedMasternodeListEntry;
 use crate::sml::quorum_entry::qualified_quorum_entry::{
@@ -183,17 +183,11 @@ impl MasternodeListEngine {
                     "getting required cl_sig heights".to_string(),
                 ));
             };
-            let llmq_params = quorum.llmq_type.params();
-            let quorum_index = quorum_block_height % llmq_params.dkg_params.interval;
-            let cycle_base_height = quorum_block_height - quorum_index;
-            let cycle_length = llmq_params.dkg_params.interval;
-            for i in 0..=3 {
-                if let Some(work_height) =
-                    cycle_base_height.checked_sub(i * cycle_length + WORK_DIFF_DEPTH)
-                {
-                    required_heights.insert(work_height);
-                }
-            }
+            let cycle_length = quorum.llmq_type.params().dkg_params.interval;
+            let cycle_base_height = quorum_block_height - quorum_block_height % cycle_length;
+            required_heights.extend(
+                cycle_quarter_work_heights(cycle_base_height, cycle_length).iter().flatten(),
+            );
         }
         // We are going to validate the previous rotation as well
         if qr_info.quorum_snapshot_and_mn_list_diff_at_h_minus_4c.is_some() {
@@ -207,17 +201,14 @@ impl MasternodeListEngine {
                             "getting height for quorum hash for diff at h minus 4c".to_string(),
                         ));
                     };
-                    let llmq_params = quorum.llmq_type.params();
-                    let quorum_index = quorum_block_height % llmq_params.dkg_params.interval;
-                    let cycle_base_height = quorum_block_height - quorum_index;
-                    let cycle_length = llmq_params.dkg_params.interval;
-                    for i in 0..=3 {
-                        if let Some(work_height) =
-                            cycle_base_height.checked_sub(i * cycle_length + WORK_DIFF_DEPTH)
-                        {
-                            required_heights.insert(work_height);
-                        }
-                    }
+                    let cycle_length = quorum.llmq_type.params().dkg_params.interval;
+                    let cycle_base_height =
+                        quorum_block_height - quorum_block_height % cycle_length;
+                    required_heights.extend(
+                        cycle_quarter_work_heights(cycle_base_height, cycle_length)
+                            .iter()
+                            .flatten(),
+                    );
                 }
             }
         }
@@ -245,30 +236,29 @@ impl MasternodeListEngine {
         let llmq_params = quorum_llmq_type.params();
         let num_quorums = llmq_params.signing_active_quorum_count as usize;
         let cycle_length = llmq_params.dkg_params.interval;
-        let work_block_height_for_index = |index: u32| {
-            cycle_base_height
-                .checked_sub(index * cycle_length + WORK_DIFF_DEPTH)
-                .ok_or(QuorumValidationError::CycleBaseHeightTooLow(cycle_base_height))
-        };
+        let [work_height_3c, work_height_2c, work_height_c, work_height_h] =
+            cycle_quarter_work_heights(cycle_base_height, cycle_length).map(|work_height| {
+                work_height.ok_or(QuorumValidationError::CycleBaseHeightTooLow(cycle_base_height))
+            });
         // Reconstruct quorum members at h - 3c from snapshot
         let q_h_m_3c = self.quorum_quarter_members_by_reconstruction_type(
             quorum_llmq_type,
             LLMQQuarterReconstructionType::Snapshot,
-            work_block_height_for_index(3)?,
+            work_height_3c?,
             chain_lock_sigs[0],
         )?;
         // Reconstruct quorum members at h - 2c from snapshot
         let q_h_m_2c = self.quorum_quarter_members_by_reconstruction_type(
             quorum_llmq_type,
             LLMQQuarterReconstructionType::Snapshot,
-            work_block_height_for_index(2)?,
+            work_height_2c?,
             chain_lock_sigs[1],
         )?;
         // Reconstruct quorum members at h - c from snapshot
         let q_h_m_c = self.quorum_quarter_members_by_reconstruction_type(
             quorum_llmq_type,
             LLMQQuarterReconstructionType::Snapshot,
-            work_block_height_for_index(1)?,
+            work_height_c?,
             chain_lock_sigs[2],
         )?;
         // Determine quorum members at new index
@@ -278,7 +268,7 @@ impl MasternodeListEngine {
         let last_quarter = self.quorum_quarter_members_by_reconstruction_type(
             quorum_llmq_type,
             reconstruction_type,
-            work_block_height_for_index(0)?,
+            work_height_h?,
             chain_lock_sigs[3],
         )?;
         let mut quorum_members =
