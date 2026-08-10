@@ -16,7 +16,9 @@ use crate::managed_account::{ManagedCoreKeysAccount, ReservationToken};
 use crate::signer::Signer;
 use crate::wallet::managed_wallet_info::coin_selection::SelectionStrategy;
 use crate::wallet::managed_wallet_info::fee::FeeRate;
-use crate::wallet::managed_wallet_info::transaction_builder::{BuilderError, TransactionBuilder};
+use crate::wallet::managed_wallet_info::transaction_builder::{
+    BuilderError, TransactionBuilder, TransactionSigner,
+};
 use crate::wallet::managed_wallet_info::transaction_building::{
     AccountTypePreference, PooledFunding,
 };
@@ -24,7 +26,6 @@ use crate::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterfa
 use crate::wallet::managed_wallet_info::ManagedWalletInfo;
 use crate::wallet::Wallet;
 use crate::DerivationPath;
-use std::collections::HashSet;
 
 /// Which funding account to derive the one-time key from.
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -56,7 +57,9 @@ pub enum AssetLockFundingType {
 /// transparent BIP44 address (which would link the mixed UTXOs to a reusable
 /// transparent address for an extra hop).
 ///
-/// Convert with [`AccountTypePreference::from`] to hand one to a builder.
+/// To hand one to a builder it takes BOTH halves: [`AccountTypePreference::from`]
+/// for the family and [`Self::account_index`] for the builder's `source_index`.
+/// The conversion carries the family only.
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AssetLockFundingAccount {
@@ -86,6 +89,11 @@ impl AssetLockFundingAccount {
     }
 }
 
+/// The account *family* only — the index does not survive, because
+/// [`AccountTypePreference`] names a family and leaves the index to the
+/// builder's separate `source_index`. Pass
+/// [`AssetLockFundingAccount::account_index`] there, or the build silently
+/// funds index 0 instead of the account that was named.
 impl From<AssetLockFundingAccount> for AccountTypePreference {
     fn from(account: AssetLockFundingAccount) -> Self {
         match account {
@@ -297,20 +305,133 @@ fn contributing_accounts(
     offered: &[AccountType],
     transaction: &Transaction,
 ) -> Vec<AccountType> {
-    let spent: HashSet<OutPoint> =
-        transaction.input.iter().map(|input| input.previous_output).collect();
+    // Driven by the inputs, of which a transaction has few, rather than by each
+    // account's UTXO map, of which an offered account can hold many.
     offered
         .iter()
         .copied()
         .filter(|account_type| {
             accounts.funds_account(account_type).is_some_and(|account| {
-                account.utxos.keys().any(|outpoint| spent.contains(outpoint))
+                transaction
+                    .input
+                    .iter()
+                    .any(|input| account.utxos.contains_key(&input.previous_output))
             })
         })
         .collect()
 }
 
+/// The reservation a pooled build took, and the means to give it back.
+///
+/// A pooled build reserves in EACH contributing account's own set under the one
+/// owner token, so releasing a single account's set would strand the remaining
+/// inputs until the 24-block TTL sweep. Both builders reach their release paths
+/// *after* the transaction is already signed, and the caller never received the
+/// token on an error path — so this is the only thing that can free them.
+struct BuildReservations {
+    /// One handle per offered account. Offered rather than contributing,
+    /// because these are captured before the build reports who contributed;
+    /// releasing against an account that reserved nothing is a no-op.
+    sets: Vec<ReservationSet>,
+    /// The outpoints this build reserved.
+    reserved: Vec<OutPoint>,
+    /// The owner token, or `None` if no funding account carried a set.
+    token: Option<ReservationToken>,
+}
+
+impl BuildReservations {
+    /// Give back this build's reservation in every funded account.
+    ///
+    /// Owner-guarded only — never the unconditional `release_reservation` (see
+    /// `ReservationSet::release_if_owner`, `dashpay/platform#4185`).
+    fn release(&self) {
+        if let Some(token) = self.token {
+            for set in &self.sets {
+                set.release_if_owner(&self.reserved, token);
+            }
+        }
+    }
+}
+
+/// A built, funded and signed asset lock, before either builder does its own
+/// credit-key bookkeeping.
+struct SignedAssetLock {
+    transaction: Transaction,
+    fee: u64,
+    /// The accounts whose UTXOs were offered to coin selection, in funding
+    /// order; the first supplied the change address.
+    offered: Vec<AccountType>,
+    reservations: BuildReservations,
+}
+
 impl ManagedWalletInfo {
+    /// Everything both asset-lock builders do before they diverge: validate the
+    /// sources, assemble the payload, fund from the pooled accounts, capture
+    /// what a post-build failure must hand back, and sign.
+    ///
+    /// Shared deliberately rather than mirrored. The reservation capture is the
+    /// subtle half, and it has to happen between funding and signing: a fix
+    /// applied to one builder and not the other would silently reintroduce the
+    /// stranded-input bug on the path that was missed.
+    #[allow(clippy::too_many_arguments)]
+    async fn build_signed_asset_lock<T: TransactionSigner + ?Sized + Sync>(
+        &mut self,
+        wallet: &Wallet,
+        funding_sources: &[AccountTypePreference],
+        source_index: u32,
+        credit_outputs: Vec<TxOut>,
+        fee_per_kb: u64,
+        drain: bool,
+        signer: &T,
+    ) -> Result<SignedAssetLock, AssetLockError> {
+        validate_funding_sources(funding_sources, credit_outputs.len(), drain)?;
+
+        // Build first, derive credit keys after — a build failure must not
+        // consume any funding-key indices.
+        let mut builder = TransactionBuilder::new()
+            .set_fee_rate(FeeRate::new(fee_per_kb))
+            .set_current_height(self.last_processed_height())
+            .set_special_payload(TransactionPayload::AssetLockPayloadType(AssetLockPayload::new(
+                credit_outputs,
+            )))
+            .require_final_inputs();
+        if drain {
+            builder = builder.set_selection_strategy(SelectionStrategy::All);
+        }
+        let PooledFunding {
+            builder,
+            paths,
+            accounts: offered,
+        } = self.fund(wallet, funding_sources, source_index, builder)?;
+
+        // Clone each offered account's reservation handle (a shared `Arc` view
+        // of the same set) NOW, before either caller's bookkeeping re-borrows
+        // `self.accounts` — past that point a failure can no longer reach these
+        // accounts to release them.
+        let sets: Vec<ReservationSet> = offered
+            .iter()
+            .filter_map(|account_type| self.accounts.funds_account(account_type))
+            .map(|account| account.reservations().clone())
+            .collect();
+
+        let (transaction, fee, token) =
+            builder.build_signed_reserved(signer, move |addr| paths.get(&addr).cloned()).await?;
+
+        let reserved: Vec<OutPoint> =
+            transaction.input.iter().map(|input| input.previous_output).collect();
+
+        Ok(SignedAssetLock {
+            transaction,
+            fee,
+            offered,
+            reservations: BuildReservations {
+                sets,
+                reserved,
+                token,
+            },
+        })
+    }
+
     /// Build and sign an asset lock transaction.
     ///
     /// Creates a special transaction (type 8) with `AssetLockPayload` that locks
@@ -350,60 +471,26 @@ impl ManagedWalletInfo {
             wallet.root_extended_priv_key().map_err(|_| AssetLockError::WatchOnlyWallet)?.clone();
 
         let network = self.network;
-        let height = self.last_processed_height();
-
-        validate_funding_sources(funding_sources, credit_output_fundings.len(), drain)?;
 
         let credit_outputs: Vec<TxOut> =
             credit_output_fundings.iter().map(|f| f.output.clone()).collect();
 
-        // Build first, derive credit keys after — a build failure must not
-        // consume any funding-key indices.
-        let mut builder = TransactionBuilder::new()
-            .set_fee_rate(FeeRate::new(fee_per_kb))
-            .set_current_height(height)
-            .set_special_payload(TransactionPayload::AssetLockPayloadType(AssetLockPayload::new(
+        let SignedAssetLock {
+            transaction,
+            fee,
+            offered,
+            reservations,
+        } = self
+            .build_signed_asset_lock(
+                wallet,
+                funding_sources,
+                source_index,
                 credit_outputs,
-            )))
-            .require_final_inputs();
-        if drain {
-            builder = builder.set_selection_strategy(SelectionStrategy::All);
-        }
-        let PooledFunding {
-            builder,
-            paths,
-            accounts: offered,
-        } = self.fund(wallet, funding_sources, source_index, builder)?;
-
-        // The build below reserves the funding inputs in each contributing
-        // account's own set. Clone every offered account's reservation handle
-        // (a shared `Arc` view of the same set) now, before the loop further
-        // down re-borrows `self.accounts`: a mid-loop failure can no longer
-        // reach those accounts to release, and the caller never received the
-        // token to release with either, so a leaked reservation would strand
-        // the already-signed inputs until the 24-block TTL sweep. Offered
-        // rather than contributing, because the set is captured before the
-        // build tells us who contributed; releasing against an account that
-        // reserved nothing is a no-op. Owner-guarded release only (see
-        // `ReservationSet::release_if_owner`, `dashpay/platform#4185`).
-        let reservations: Vec<ReservationSet> = offered
-            .iter()
-            .filter_map(|account_type| self.accounts.funds_account(account_type))
-            .map(|account| account.reservations().clone())
-            .collect();
-
-        let (transaction, fee, reservation_token) =
-            builder.build_signed_reserved(wallet, move |addr| paths.get(&addr).cloned()).await?;
-
-        let reserved: Vec<OutPoint> =
-            transaction.input.iter().map(|input| input.previous_output).collect();
-        let release_reservations = || {
-            if let Some(token) = reservation_token {
-                for set in &reservations {
-                    set.release_if_owner(&reserved, token);
-                }
-            }
-        };
+                fee_per_kb,
+                drain,
+                wallet,
+            )
+            .await?;
 
         // Derive one private key per credit output. On any failure, release
         // this build's own reservation before returning.
@@ -424,7 +511,7 @@ impl ManagedWalletInfo {
         })() {
             Ok(keys) => keys,
             Err(e) => {
-                release_reservations();
+                reservations.release();
                 return Err(e);
             }
         };
@@ -434,7 +521,7 @@ impl ManagedWalletInfo {
             transaction,
             fee,
             keys: AssetLockCreditKeys::Private(keys),
-            reservation_token,
+            reservation_token: reservations.token,
             funding_accounts,
         })
     }
@@ -468,55 +555,25 @@ impl ManagedWalletInfo {
         drain: bool,
         signer: &S,
     ) -> Result<AssetLockResult, AssetLockError> {
-        let height = self.last_processed_height();
-
-        validate_funding_sources(funding_sources, credit_output_fundings.len(), drain)?;
-
         let credit_outputs: Vec<TxOut> =
             credit_output_fundings.iter().map(|f| f.output.clone()).collect();
 
-        let mut builder = TransactionBuilder::new()
-            .set_fee_rate(FeeRate::new(fee_per_kb))
-            .set_current_height(height)
-            .set_special_payload(TransactionPayload::AssetLockPayloadType(AssetLockPayload::new(
+        let SignedAssetLock {
+            transaction,
+            fee,
+            offered,
+            reservations,
+        } = self
+            .build_signed_asset_lock(
+                wallet,
+                funding_sources,
+                source_index,
                 credit_outputs,
-            )))
-            .require_final_inputs();
-        if drain {
-            builder = builder.set_selection_strategy(SelectionStrategy::All);
-        }
-        let PooledFunding {
-            builder,
-            paths,
-            accounts: offered,
-        } = self.fund(wallet, funding_sources, source_index, builder)?;
-
-        // The build below reserves the funding inputs in each contributing
-        // account's own set. Clone every offered account's reservation handle
-        // (a shared `Arc` view of the same set) before the bookkeeping loop
-        // further down re-borrows `self.accounts`, so a failure during Phase
-        // 1–3 — which runs after the transaction is already signed — can still
-        // release THIS build's reservation instead of stranding the signed
-        // inputs until the 24-block TTL sweep. Owner-guarded release only (see
-        // `ReservationSet::release_if_owner`, `dashpay/platform#4185`).
-        let reservations: Vec<ReservationSet> = offered
-            .iter()
-            .filter_map(|account_type| self.accounts.funds_account(account_type))
-            .map(|account| account.reservations().clone())
-            .collect();
-
-        let (transaction, fee, reservation_token) =
-            builder.build_signed_reserved(signer, move |addr| paths.get(&addr).cloned()).await?;
-
-        let reserved: Vec<OutPoint> =
-            transaction.input.iter().map(|input| input.previous_output).collect();
-        let release_reservations = || {
-            if let Some(token) = reservation_token {
-                for set in &reservations {
-                    set.release_if_owner(&reserved, token);
-                }
-            }
-        };
+                fee_per_kb,
+                drain,
+                signer,
+            )
+            .await?;
 
         // Credit-output bookkeeping: for each funding, peek the next unused
         // path on its account, ask the signer for the matching pubkey, and
@@ -572,7 +629,7 @@ impl ManagedWalletInfo {
         {
             Ok(keys) => keys,
             Err(e) => {
-                release_reservations();
+                reservations.release();
                 return Err(e);
             }
         };
@@ -582,7 +639,7 @@ impl ManagedWalletInfo {
             transaction,
             fee,
             keys: AssetLockCreditKeys::Public(credit_output_keys),
-            reservation_token,
+            reservation_token: reservations.token,
             funding_accounts,
         })
     }
@@ -596,6 +653,7 @@ mod tests {
     use crate::{Network, Utxo};
     use dashcore::{OutPoint, ScriptBuf, Txid};
     use dashcore_hashes::Hash;
+    use std::collections::HashSet;
     use test_case::test_case;
 
     fn test_credit_outputs(amounts: &[u64]) -> Vec<CreditOutputFunding> {

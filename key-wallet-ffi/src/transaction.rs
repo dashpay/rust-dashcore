@@ -851,6 +851,10 @@ impl From<FFIAccountTypePreference> for AccountTypePreference {
 ///
 /// - All pointer parameters must be valid and non-null
 /// - `funding_sources` must have at least `funding_sources_count` elements
+/// - Every `funding_sources[i].kind` must be a declared
+///   [`FFIAccountTypePreferenceKind`] discriminant (`0..=5`). Reading any other
+///   value as that enum is undefined behavior, so it cannot be rejected here —
+///   pass the generated C enum rather than a cast integer.
 /// - All other parallel arrays must have at least `credit_outputs_count` elements
 /// - `private_keys_out` must point to an array of `credit_outputs_count` × `[u8; 32]` buffers
 /// - Caller must free `tx_bytes_out` with `transaction_bytes_free`
