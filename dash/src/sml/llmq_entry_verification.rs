@@ -38,6 +38,12 @@ pub enum LLMQEntryVerificationSkipStatus {
     /// where the entire 4-sig tuple is absent.
     MissingRotationChainLockSig(u8, BlockHash),
     OtherContext(String),
+    /// At least one of the quarter chain-lock signatures used to reconstruct
+    /// this quorum was keyed by elimination rather than by a known quorum
+    /// height, so a verification failure says nothing about the quorum data
+    /// itself. Retry logic can resolve it by feeding the heights of the
+    /// rotated quorum hashes the QRInfo carries.
+    InferredRotationChainLockSigs(QuorumHash),
 }
 
 impl Display for LLMQEntryVerificationSkipStatus {
@@ -70,6 +76,9 @@ impl Display for LLMQEntryVerificationSkipStatus {
                 }
                 LLMQEntryVerificationSkipStatus::OtherContext(message) => {
                     format!("OtherContext({message})")
+                }
+                LLMQEntryVerificationSkipStatus::InferredRotationChainLockSigs(quorum_hash) => {
+                    format!("InferredRotationChainLockSigs({})", quorum_hash)
                 }
             }
             .as_str(),
@@ -249,6 +258,10 @@ mod tests {
             (
                 LLMQEntryVerificationSkipStatus::MissingRotationChainLockSig(2, h),
                 format!("MissingRotationChainLockSig(h - 2, {h})"),
+            ),
+            (
+                LLMQEntryVerificationSkipStatus::InferredRotationChainLockSigs(h),
+                format!("InferredRotationChainLockSigs({h})"),
             ),
         ];
 

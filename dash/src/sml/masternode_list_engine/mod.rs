@@ -1177,9 +1177,8 @@ impl MasternodeListEngine {
                             e
                         );
                         rotated_quorum.verified = LLMQEntryVerificationStatus::Skipped(
-                            LLMQEntryVerificationSkipStatus::OtherContext(
-                                "quarter chain lock signatures were inferred by elimination"
-                                    .to_string(),
+                            LLMQEntryVerificationSkipStatus::InferredRotationChainLockSigs(
+                                rotated_quorum.quorum_entry.quorum_hash,
                             ),
                         );
                     } else {
@@ -2561,8 +2560,8 @@ mod tests {
             matches!(
                 status,
                 LLMQEntryVerificationStatus::Skipped(
-                    LLMQEntryVerificationSkipStatus::OtherContext(_)
-                )
+                    LLMQEntryVerificationSkipStatus::InferredRotationChainLockSigs(hash)
+                ) if *hash == target
             ),
             "a failure under an inferred quarter signature must settle as Skipped, got {status}"
         );
