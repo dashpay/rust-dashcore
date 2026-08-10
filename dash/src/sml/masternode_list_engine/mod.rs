@@ -2173,6 +2173,39 @@ mod tests {
         );
     }
 
+    /// A rotated quorum's ChainLock signature is keyed by its own cycle base,
+    /// which is derived from the height of its commitment block, so a caller
+    /// that pre-feeds exactly what this preview lists must come away with a
+    /// height for every rotated quorum in every diff. The 2518986 fixture's
+    /// previous-cycle straggler at index 20 sits in the h-c diff, so a preview
+    /// that only walked `mn_list_diff_h` would leave its cycle underivable.
+    #[cfg(feature = "quorum_validation")]
+    #[test]
+    fn qr_info_referenced_block_hashes_cover_rotated_quorums_outside_the_h_diff() {
+        let (_engine, qr_info) = load_qrinfo_2518986_fixture();
+
+        let straggler = qr_info
+            .mn_list_diff_at_h_minus_c
+            .new_quorums
+            .iter()
+            .find(|q| q.llmq_type.is_rotating_quorum_type() && q.quorum_index == Some(20))
+            .expect("fixture must carry the previous cycle's index 20 quorum in the h-c diff")
+            .quorum_hash;
+        assert!(
+            !qr_info
+                .mn_list_diff_h
+                .new_quorums
+                .iter()
+                .any(|q| q.llmq_type.is_rotating_quorum_type() && q.quorum_hash == straggler),
+            "fixture invariant: the straggler must sit outside the h diff or this covers nothing"
+        );
+
+        assert!(
+            MasternodeListEngine::qr_info_referenced_block_hashes(&qr_info).contains(&straggler),
+            "the commitment block of a rotated quorum outside the h diff must be listed"
+        );
+    }
+
     #[test]
     fn validate_from_qr_info_and_mn_list_diffs() {
         let (mut masternode_list_engine, qr_info) = load_qrinfo_2240504_fixture();
