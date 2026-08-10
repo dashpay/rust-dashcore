@@ -24,6 +24,9 @@ use crate::wallet::managed_wallet_info::coin_selection::{
 use crate::wallet::managed_wallet_info::fee::FeeRate;
 use crate::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
 
+/// Fixed wallet seed so a failing test replays with the same keys every run.
+const SEED: [u8; 64] = [7; 64];
+
 /// Heights from the incident.
 const RECEIVE_HEIGHT: u32 = 758_983;
 const SPEND_HEIGHT: u32 = 1_510_203;
@@ -65,7 +68,7 @@ fn select(ctx: &TestWalletContext, target: u64) -> Result<u64, SelectionError> {
 /// Put the wallet in the state a restore lands in: scanning toward the chain
 /// tip from far below it, having applied a receive at `RECEIVE_HEIGHT`.
 async fn restored_wallet_mid_catch_up(amount: u64) -> (TestWalletContext, Transaction) {
-    let mut ctx = TestWalletContext::new_random();
+    let mut ctx = TestWalletContext::new_with_seed(SEED);
     ctx.managed_wallet.update_scan_target_height(CHAIN_TIP);
     ctx.managed_wallet.update_synced_height(RECEIVE_HEIGHT);
     ctx.managed_wallet.update_last_processed_height(RECEIVE_HEIGHT);
@@ -147,7 +150,7 @@ async fn coin_already_spent_above_the_frontier_is_never_selectable() {
 
 #[tokio::test]
 async fn receive_at_the_scan_target_is_selectable_immediately() {
-    let mut ctx = TestWalletContext::new_random();
+    let mut ctx = TestWalletContext::new_with_seed(SEED);
     ctx.managed_wallet.update_scan_target_height(CHAIN_TIP);
     ctx.managed_wallet.update_synced_height(CHAIN_TIP);
     ctx.managed_wallet.update_last_processed_height(CHAIN_TIP);
@@ -163,7 +166,7 @@ async fn receive_at_the_scan_target_is_selectable_immediately() {
 
 #[tokio::test]
 async fn mempool_receive_during_catch_up_stays_selectable() {
-    let mut ctx = TestWalletContext::new_random();
+    let mut ctx = TestWalletContext::new_with_seed(SEED);
     ctx.managed_wallet.update_scan_target_height(CHAIN_TIP);
     ctx.managed_wallet.update_synced_height(RECEIVE_HEIGHT);
     ctx.managed_wallet.update_last_processed_height(RECEIVE_HEIGHT);
@@ -181,7 +184,7 @@ async fn mempool_receive_during_catch_up_stays_selectable() {
 /// pre-existing unconditional behavior.
 #[tokio::test]
 async fn without_a_reported_scan_target_the_gate_stays_open() {
-    let mut ctx = TestWalletContext::new_random();
+    let mut ctx = TestWalletContext::new_with_seed(SEED);
     ctx.managed_wallet.update_last_processed_height(RECEIVE_HEIGHT);
 
     let tx = Transaction::dummy(&ctx.receive_address, 0..1, &[500_000]);
