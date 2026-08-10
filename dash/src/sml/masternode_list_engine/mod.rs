@@ -1041,8 +1041,7 @@ impl MasternodeListEngine {
         let maybe_sig_h_minus_c = self.apply_diff(mn_list_diff_at_h_minus_c, None, false, None)?;
         // The h-c cycle's rotated quorums live on `masternode_lists[h]` (mined
         // in the `(h-c, h]` diff range), not on `masternode_lists[h-c]` where
-        // the cycle two back resides; using h here is load-bearing for the
-        // sig alignment in `validate_and_store_previous_cycle_quorums`.
+        // the cycle two back resides.
         #[cfg(feature = "quorum_validation")]
         let work_block_hash_h = mn_list_diff_h.block_hash;
         let maybe_sig_h = self.apply_diff(mn_list_diff_h, None, false, None)?;
