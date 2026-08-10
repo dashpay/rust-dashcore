@@ -888,7 +888,12 @@ impl MasternodeListEngine {
                     else {
                         continue;
                     };
-                    let presumed_height = newest_work_height + WORK_DIFF_DEPTH + quorum_index;
+                    let Some(presumed_height) = WORK_DIFF_DEPTH
+                        .checked_add(quorum_index)
+                        .and_then(|offset| newest_work_height.checked_add(offset))
+                    else {
+                        continue;
+                    };
                     if let Some(block_hash) = self.block_container.get_hash(&presumed_height)
                         && *block_hash != quorum.quorum_hash
                     {
