@@ -289,11 +289,6 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
                     }
                 };
 
-                // Record the successfully processed tip so a late straggler carrying
-                // the same tip hash is dropped by `should_process_qrinfo`.
-                self.sync_state.last_processed_qrinfo_tip =
-                    Some(qr_info.mn_list_diff_tip.block_hash);
-
                 // Populate known_mn_list_heights from engine after QRInfo processing
                 self.sync_state.known_mn_list_heights =
                     engine.masternode_lists.keys().copied().collect();
@@ -347,6 +342,16 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
                 // Every fallible step has now succeeded, so the request slot can
                 // finally be released. This must happen before the
                 // `has_pending_requests` check below, which reads it.
+                //
+                // Only now record the processed tip for `should_process_qrinfo`'s
+                // dedup gate. Recording it any earlier - between fallible steps -
+                // turns the gate against the retry ladder: the slot stays armed
+                // after the error, but every retried response for the same tip is
+                // dropped at the handler entry, so the budget burns down with no
+                // way to succeed. A straggler can only arrive after this handler
+                // returns, so deferring the record loses nothing.
+                self.sync_state.last_processed_qrinfo_tip =
+                    Some(qr_info.mn_list_diff_tip.block_hash);
                 self.sync_state.qrinfo_received();
                 self.sync_state.mnlistdiff_pipeline.queue_requests(request_pairs);
                 self.sync_state.mnlistdiff_pipeline.send_pending(requests)?;
