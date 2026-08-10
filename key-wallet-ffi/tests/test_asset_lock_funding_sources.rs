@@ -42,16 +42,21 @@ fn source(kind: FFIAccountTypePreferenceKind) -> FFIAccountTypePreference {
     }
 }
 
+/// The networks every case below runs against. Account derivation is
+/// coin-type-scoped, so a guard that only ever saw one network could hide a
+/// network-conditional path.
+const NETWORKS: [FFINetwork; 2] = [FFINetwork::Mainnet, FFINetwork::Testnet];
+
 /// Drives the entry point against a freshly created (and therefore unfunded)
 /// wallet, returning the error it produced.
 ///
 /// The wallet has no UTXOs, so a call that gets past the argument guards fails
 /// in coin selection instead — which is exactly what distinguishes "rejected at
 /// the boundary" from "accepted and attempted".
-unsafe fn call_with_sources(sources: &[FFIAccountTypePreference]) -> FFIError {
+unsafe fn call_with_sources(network: FFINetwork, sources: &[FFIAccountTypePreference]) -> FFIError {
     let mut error = FFIError::default();
 
-    let manager = wallet_manager_create(FFINetwork::Testnet, &mut error);
+    let manager = wallet_manager_create(network, &mut error);
     assert!(!manager.is_null());
 
     let mnemonic = CString::new(TEST_MNEMONIC).unwrap();
@@ -124,14 +129,16 @@ unsafe fn call_with_sources(sources: &[FFIAccountTypePreference]) -> FFIError {
 /// funding policy this layer is not entitled to pick.
 #[test]
 fn an_empty_source_list_is_rejected() {
-    unsafe {
-        let error = call_with_sources(&[]);
-        assert_eq!(error.code, FFIErrorCode::InvalidInput);
-        let message = error_message(&error);
-        assert!(
-            message.contains("funding source"),
-            "the error must name the missing argument, got: {message}"
-        );
+    for network in NETWORKS {
+        unsafe {
+            let error = call_with_sources(network, &[]);
+            assert_eq!(error.code, FFIErrorCode::InvalidInput, "on {network:?}");
+            let message = error_message(&error);
+            assert!(
+                message.contains("funding source"),
+                "the error must name the missing argument on {network:?}, got: {message}"
+            );
+        }
     }
 }
 
@@ -139,16 +146,22 @@ fn an_empty_source_list_is_rejected() {
 /// failure comes from the empty wallet rather than from argument validation.
 #[test]
 fn a_named_source_reaches_the_builder() {
-    unsafe {
-        let error = call_with_sources(&[
-            source(FFIAccountTypePreferenceKind::BIP44),
-            source(FFIAccountTypePreferenceKind::BIP32),
-        ]);
-        assert_ne!(
-            error.code,
-            FFIErrorCode::InvalidInput,
-            "a pooled list is well-formed; the build must fail on funds, not on arguments"
-        );
+    for network in NETWORKS {
+        unsafe {
+            let error = call_with_sources(
+                network,
+                &[
+                    source(FFIAccountTypePreferenceKind::BIP44),
+                    source(FFIAccountTypePreferenceKind::BIP32),
+                ],
+            );
+            assert_ne!(
+                error.code,
+                FFIErrorCode::InvalidInput,
+                "a pooled list is well-formed on {network:?}; the build must fail on funds, \
+                 not on arguments"
+            );
+        }
     }
 }
 
@@ -157,12 +170,16 @@ fn a_named_source_reaches_the_builder() {
 /// must get told, not silently handed transparent funds instead.
 #[test]
 fn coinjoin_is_rejected_on_the_non_drain_entry_point() {
-    unsafe {
-        let error = call_with_sources(&[source(FFIAccountTypePreferenceKind::CoinJoin)]);
-        let message = error_message(&error);
-        assert!(
-            message.contains("drain"),
-            "the error must explain that CoinJoin is drain-only here, got: {message}"
-        );
+    for network in NETWORKS {
+        unsafe {
+            let error =
+                call_with_sources(network, &[source(FFIAccountTypePreferenceKind::CoinJoin)]);
+            let message = error_message(&error);
+            assert!(
+                message.contains("drain"),
+                "the error must explain that CoinJoin is drain-only on {network:?}, \
+                 got: {message}"
+            );
+        }
     }
 }
