@@ -137,7 +137,7 @@ async fn coin_already_spent_above_the_frontier_is_never_selectable() {
     ctx.managed_wallet.update_synced_height(CHAIN_TIP);
     ctx.managed_wallet.update_last_processed_height(CHAIN_TIP);
 
-    assert!(ctx.bip44_account().utxos.get(&outpoint).is_none(), "the spend removed the coin");
+    assert!(!ctx.bip44_account().utxos.contains_key(&outpoint), "the spend removed the coin");
     assert!(
         ctx.managed_wallet.get_spendable_utxos().is_empty(),
         "so a completed scan releases nothing"

@@ -183,7 +183,8 @@ pub trait WalletInfoInterface: Sized + WalletTransactionChecker + ManagedAccount
     fn synced_height(&self) -> CoreBlockHeight;
 
     /// Return the chain height the spend scan is working toward, or `0` if no
-    /// scanner has reported one. See [`WalletMetadata::scan_target_height`].
+    /// scanner has reported one. See
+    /// [`WalletMetadata::scan_target_height`](crate::wallet::metadata::WalletMetadata::scan_target_height).
     fn scan_target_height(&self) -> CoreBlockHeight {
         0
     }
