@@ -758,6 +758,9 @@ pub enum FFIAccountTypePreferenceKind {
     /// Mixed CoinJoin funds. Asset locks accept these only as the *sole*
     /// source, and only in drain mode — pooling mixed outputs with transparent
     /// ones in one transaction links them and undoes the mixing.
+    ///
+    /// `wallet_build_and_sign_asset_lock_transaction` never drains, so this
+    /// kind always fails there; it exists for the drain entry points.
     CoinJoin = 2,
     /// One contact's receiving account, named by both identity IDs.
     DashpayFriendshipReceivingFunds = 3,
@@ -830,7 +833,9 @@ impl From<FFIAccountTypePreference> for AccountTypePreference {
 ///   the account that should receive change first. At least one is required.
 ///   A single source is strict — it fails if the wallet has no such account —
 ///   while a list of two or more skips the sources this wallet has nothing for
-///   and fails only if none of them funds anything.
+///   and fails only if none of them funds anything. This entry point builds a
+///   non-drain lock, so `CoinJoin` is rejected here even as the sole source:
+///   mixed funds can only back a drain.
 /// - `funding_sources_count`: Number of entries in `funding_sources`.
 /// - `account_index`: Index addressing the standard families (BIP44, BIP32,
 ///   CoinJoin). DashPay sources span their own indices and ignore it.
