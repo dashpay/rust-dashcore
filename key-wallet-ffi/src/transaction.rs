@@ -77,13 +77,14 @@ pub struct FFITxOutput {
 /// - `wallet` must be a valid pointer to an FFIWallet
 /// - `account_index` must be a valid BIP44 account index present in the wallet
 /// - `outputs` must be a valid pointer to an array of FFITxOutput with at least `outputs_count` elements
-/// - `fee_rate` must be a valid variant of FFIFeeRate
+/// - `fee_per_kb` is the requested fee rate in duffs per kilobyte
 /// - `fee_out` must be a valid, non-null pointer to a `u64`; on success it receives the
 ///   calculated transaction fee in duffs
 /// - `tx_bytes_out` must be a valid pointer to store the transaction bytes pointer
 /// - `tx_len_out` must be a valid pointer to store the transaction length
 /// - `error` must be a valid pointer to an FFIError
-/// - The returned transaction bytes must be freed with `transaction_bytes_free`
+/// - On success, the returned transaction bytes must be freed by calling
+///   `transaction_bytes_free(*tx_bytes_out)`.
 #[no_mangle]
 pub unsafe extern "C" fn wallet_build_and_sign_transaction(
     manager: *const FFIWalletManager,
@@ -150,10 +151,7 @@ pub unsafe extern "C" fn wallet_build_and_sign_transaction(
 
             // Serialize the transaction
             let serialized = consensus::serialize(&transaction);
-            let size = serialized.len();
-
-            let boxed = serialized.into_boxed_slice();
-            let tx_bytes = Box::into_raw(boxed) as *mut u8;
+            let (tx_bytes, size) = transaction_bytes_into_ffi_buffer(serialized);
 
             *tx_bytes_out = tx_bytes;
             *tx_len_out = size;
@@ -248,18 +246,45 @@ pub unsafe extern "C" fn wallet_check_transaction(
     }
 }
 
-/// Free transaction bytes
+const TRANSACTION_BYTES_LEN_PREFIX_SIZE: usize = std::mem::size_of::<usize>();
+
+fn transaction_bytes_into_ffi_buffer(serialized: Vec<u8>) -> (*mut u8, usize) {
+    let len = serialized.len();
+    let mut allocation = Vec::with_capacity(TRANSACTION_BYTES_LEN_PREFIX_SIZE + len);
+    allocation.resize(TRANSACTION_BYTES_LEN_PREFIX_SIZE, 0);
+    unsafe {
+        ptr::write_unaligned(allocation.as_mut_ptr() as *mut usize, len);
+    }
+    allocation.extend_from_slice(&serialized);
+
+    let boxed = allocation.into_boxed_slice();
+    let data_ptr =
+        unsafe { (Box::into_raw(boxed) as *mut u8).add(TRANSACTION_BYTES_LEN_PREFIX_SIZE) };
+    (data_ptr, len)
+}
+
+/// Free transaction bytes returned by transaction-building FFI functions.
+///
+/// The returned pointer carries a small hidden length prefix so the C ABI can
+/// keep the historical one-argument free function while still reconstructing
+/// the original boxed slice layout correctly.
 ///
 /// # Safety
 ///
-/// - `tx_bytes` must be a valid pointer created by transaction functions or null
-/// - After calling this function, the pointer becomes invalid
+/// - `tx_bytes` must either be null, or a pointer previously returned by a
+///   `wallet_build_and_sign_*` FFI function and not yet freed.
+/// - After calling this function, the pointer becomes invalid and must not be
+///   used again.
 #[no_mangle]
 pub unsafe extern "C" fn transaction_bytes_free(tx_bytes: *mut u8) {
-    if !tx_bytes.is_null() {
-        unsafe {
-            let _ = Box::from_raw(tx_bytes);
-        }
+    if tx_bytes.is_null() {
+        return;
+    }
+    unsafe {
+        let allocation_ptr = tx_bytes.sub(TRANSACTION_BYTES_LEN_PREFIX_SIZE);
+        let tx_len = ptr::read_unaligned(allocation_ptr as *const usize);
+        let allocation_len = TRANSACTION_BYTES_LEN_PREFIX_SIZE + tx_len;
+        let _ = Box::from_raw(ptr::slice_from_raw_parts_mut(allocation_ptr, allocation_len));
     }
 }
 
@@ -765,7 +790,8 @@ impl From<FFIAssetLockFundingType> for AssetLockFundingType {
 /// - All pointer parameters must be valid and non-null
 /// - All parallel arrays must have at least `credit_outputs_count` elements
 /// - `private_keys_out` must point to an array of `credit_outputs_count` × `[u8; 32]` buffers
-/// - Caller must free `tx_bytes_out` with `transaction_bytes_free`
+/// - On success, the caller must free the returned transaction bytes by calling
+///   `transaction_bytes_free(*tx_bytes_out)`.
 #[no_mangle]
 pub unsafe extern "C" fn wallet_build_and_sign_asset_lock_transaction(
     manager: *const FFIWalletManager,
@@ -868,9 +894,8 @@ pub unsafe extern "C" fn wallet_build_and_sign_asset_lock_transaction(
             }
 
             let serialized = consensus::serialize(&result.transaction);
-            let size = serialized.len();
-            let boxed = serialized.into_boxed_slice();
-            *tx_bytes_out = Box::into_raw(boxed) as *mut u8;
+            let (tx_bytes, size) = transaction_bytes_into_ffi_buffer(serialized);
+            *tx_bytes_out = tx_bytes;
             *tx_len_out = size;
 
             (*error).clean();
@@ -878,3 +903,7 @@ pub unsafe extern "C" fn wallet_build_and_sign_asset_lock_transaction(
         })
     }
 }
+
+#[cfg(test)]
+#[path = "transaction_tests.rs"]
+mod tests;
