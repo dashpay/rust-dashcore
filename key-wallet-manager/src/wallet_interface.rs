@@ -137,6 +137,18 @@ pub trait WalletInterface: Send + Sync + 'static {
     /// Return the per-wallet committed sync checkpoint, or `0` if unknown.
     fn wallet_synced_height(&self, wallet_id: &WalletId) -> CoreBlockHeight;
 
+    /// Publish the chain height the spend scan is working toward — the tip of
+    /// the filter-header chain the scanner has committed to covering. It is a
+    /// property of the chain rather than of any one wallet, so it applies to
+    /// all of them.
+    ///
+    /// Until a wallet's `synced_height` reaches this, that wallet is catching
+    /// up and cannot tell whether an output it just discovered was already
+    /// spent in a block it has not scanned yet, so such outputs are held back
+    /// from coin selection. The default is a no-op, leaving the gate open —
+    /// a scanner must call this for it to engage.
+    fn update_scan_target_height(&mut self, _height: CoreBlockHeight) {}
+
     /// Return the generation of one wallet's account set — a counter bumped
     /// whenever an account is added to that wallet (`0` if unknown). Filter
     /// sync snapshots this per wallet when scanning a range and refuses to

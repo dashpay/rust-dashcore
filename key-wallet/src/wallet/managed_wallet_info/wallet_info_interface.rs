@@ -182,6 +182,25 @@ pub trait WalletInfoInterface: Sized + WalletTransactionChecker + ManagedAccount
     /// Return the durable wallet sync checkpoint height.
     fn synced_height(&self) -> CoreBlockHeight;
 
+    /// Return the chain height the spend scan is working toward, or `0` if no
+    /// scanner has reported one. See [`WalletMetadata::scan_target_height`].
+    fn scan_target_height(&self) -> CoreBlockHeight {
+        0
+    }
+
+    /// Record the chain height the spend scan is working toward. Called by the
+    /// scanner as the filter-header chain grows.
+    fn update_scan_target_height(&mut self, _height: CoreBlockHeight) {}
+
+    /// Whether the spend scan has covered every block up to the height it is
+    /// working toward — i.e. whether the wallet's UTXO set is net of all
+    /// on-chain spends rather than mid-catch-up. Always `true` when no
+    /// scanner has reported a target.
+    fn spend_scan_complete(&self) -> bool {
+        let target = self.scan_target_height();
+        target == 0 || self.synced_height() >= target
+    }
+
     /// Return the current generation of the wallet's account set — a counter
     /// bumped on every account addition. Filter-sync layers snapshot it at
     /// scan time and refuse to certify coverage at commit time when it has
@@ -309,6 +328,17 @@ impl WalletInfoInterface for ManagedWalletInfo {
 
     fn synced_height(&self) -> CoreBlockHeight {
         self.metadata.synced_height
+    }
+
+    fn scan_target_height(&self) -> CoreBlockHeight {
+        self.metadata.scan_target_height
+    }
+
+    fn update_scan_target_height(&mut self, height: CoreBlockHeight) {
+        self.metadata.scan_target_height = height;
+        // A target the scan has already reached must not strand UTXOs that
+        // were held back under an older, higher target.
+        self.promote_spend_scanned_utxos();
     }
 
     fn account_generation(&self) -> u64 {
@@ -512,6 +542,9 @@ impl WalletInfoInterface for ManagedWalletInfo {
         // A newly committed checkpoint can lift the finality boundary when the
         // chainlock was already ahead of the old synced_height.
         self.prune_finalized_observed_spends();
+        // ...and can complete the spend scan, releasing UTXOs held back
+        // during catch-up.
+        self.promote_spend_scanned_utxos();
     }
 
     fn matured_coinbase_records(

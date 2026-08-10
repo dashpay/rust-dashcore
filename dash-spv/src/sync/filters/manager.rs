@@ -273,6 +273,12 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
         self.processing_height = scan_start;
         self.next_batch_to_store = download_start;
 
+        // Arm the spend-scan gate before any block is applied. A restored
+        // wallet starts scanning from its birth height with the tip thousands
+        // of blocks above it, and every receive found in between must be held
+        // back until the scan gets there.
+        self.publish_scan_target(self.progress.filter_header_tip_height()).await;
+
         // Check if already at target (nothing to download)
         if scan_start > self.progress.filter_header_tip_height() {
             // Park the idle pipeline at the download frontier so a later
@@ -1025,6 +1031,20 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
         Ok(events)
     }
 
+    /// Tell the wallets how far this scan intends to reach.
+    ///
+    /// Coin selection uses the gap between a wallet's `synced_height` and this
+    /// target to hold back outputs discovered during catch-up, which a block
+    /// above the frontier may already have spent. Publishing a target of 0
+    /// would leave that gate open, so a not-yet-known tip is skipped rather
+    /// than published as 0.
+    async fn publish_scan_target(&self, tip_height: u32) {
+        if tip_height == 0 {
+            return;
+        }
+        self.wallet.write().await.update_scan_target_height(tip_height);
+    }
+
     /// Handle notification that new filter headers are available.
     /// Used by both FilterHeadersSyncComplete and FilterHeadersStored events.
     pub(super) async fn handle_new_filter_headers(
@@ -1034,6 +1054,7 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
     ) -> SyncResult<Vec<SyncEvent>> {
         self.progress.update_filter_header_tip_height(tip_height);
         self.update_target_height(tip_height);
+        self.publish_scan_target(tip_height).await;
 
         match self.state() {
             SyncState::Syncing | SyncState::Synced

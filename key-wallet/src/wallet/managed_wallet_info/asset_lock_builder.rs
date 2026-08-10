@@ -595,6 +595,7 @@ mod tests {
             is_instantlocked: false,
             is_locked: false,
             is_trusted: false,
+            spend_scanned: true,
         };
         account.utxos.insert(outpoint, utxo);
         outpoint
@@ -639,6 +640,7 @@ mod tests {
             is_instantlocked: false,
             is_locked: false,
             is_trusted: false,
+            spend_scanned: true,
         };
         account.utxos.insert(outpoint, utxo);
         outpoint

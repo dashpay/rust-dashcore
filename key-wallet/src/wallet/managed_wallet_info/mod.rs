@@ -376,6 +376,64 @@ impl ManagedWalletInfo {
         self.observed_spent_outpoints.retain(|_, height| *height > boundary);
     }
 
+    /// Hold back the UTXOs `tx` created from coin selection, because the wallet
+    /// applied `tx` from a block below the height its spend scan is working
+    /// toward.
+    ///
+    /// Blocks are scanned in ascending order, so a receive discovered during
+    /// catch-up says nothing about whether some higher, not-yet-scanned block
+    /// already spends it. Selecting it there builds a transaction the network
+    /// settled as a double-spend long ago; peers drop it silently, with no
+    /// reject message, and the funds it was meant to move are stranded.
+    ///
+    /// No-op when no scanner has reported a target, or when `tx` came from a
+    /// block at or above it — nothing above the tip can have spent it yet.
+    /// [`Self::promote_spend_scanned_utxos`] releases what this holds back.
+    pub(crate) fn hold_back_unscanned_utxos(
+        &mut self,
+        tx: &Transaction,
+        block_height: CoreBlockHeight,
+    ) {
+        let target = self.metadata.scan_target_height;
+        if target == 0 || block_height >= target {
+            return;
+        }
+        let txid = tx.txid();
+        for account in self.accounts.all_funding_accounts_mut() {
+            for vout in 0..tx.output.len() as u32 {
+                if let Some(utxo) = account.utxos.get_mut(&OutPoint {
+                    txid,
+                    vout,
+                }) {
+                    utxo.spend_scanned = false;
+                }
+            }
+        }
+    }
+
+    /// Release every UTXO held back by [`Self::hold_back_unscanned_utxos`],
+    /// once the spend scan reaches the height it was working toward.
+    ///
+    /// At that point every block up to the target has been matched against the
+    /// wallet's scripts and every matching block body applied, so a spend of a
+    /// tracked UTXO would already have removed it. Whatever is still in the set
+    /// is genuinely unspent as of the target.
+    ///
+    /// No-op while the scan is still behind, or when no scanner has reported a
+    /// target (in which case nothing was ever held back).
+    pub(crate) fn promote_spend_scanned_utxos(&mut self) {
+        if self.metadata.scan_target_height == 0
+            || self.metadata.synced_height < self.metadata.scan_target_height
+        {
+            return;
+        }
+        for account in self.accounts.all_funding_accounts_mut() {
+            for utxo in account.utxos.values_mut() {
+                utxo.spend_scanned = true;
+            }
+        }
+    }
+
     /// Invalidate the wallet's sync certificate when an account is added.
     ///
     /// `synced_height` certifies "every filter at or below this height was

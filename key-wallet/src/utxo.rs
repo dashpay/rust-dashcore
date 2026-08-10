@@ -39,6 +39,27 @@ pub struct Utxo {
     /// it is just our previously-tracked balance returning to us. Mirrors
     /// Bitcoin Core's `CWalletTx::IsTrusted` concept.
     pub is_trusted: bool,
+    /// Whether the wallet has scanned every block that could already have
+    /// spent this output.
+    ///
+    /// An output found while catching up on history is only *known* to be
+    /// unspent up to the scan frontier, which during catch-up sits far below
+    /// the chain tip. Spending it then builds a transaction the network has
+    /// long since seen double-spent, and peers drop it silently forever. So a
+    /// receive applied below the frontier starts unscanned, and is promoted in
+    /// bulk once the frontier reaches the height the scan is working toward.
+    ///
+    /// Defaults to `true` so wallets assembled by hand, and UTXOs
+    /// deserialized from persistence written before this field existed, keep
+    /// the previous unconditional behavior. Only a live scan demotes it.
+    #[cfg_attr(feature = "serde", serde(default = "spend_scanned_default"))]
+    pub spend_scanned: bool,
+}
+
+/// Serde default for [`Utxo::spend_scanned`]; see that field's docs.
+#[cfg(feature = "serde")]
+fn spend_scanned_default() -> bool {
+    true
 }
 
 impl Utxo {
@@ -60,6 +81,7 @@ impl Utxo {
             is_instantlocked: false,
             is_locked: false,
             is_trusted: false,
+            spend_scanned: true,
         }
     }
 
@@ -70,13 +92,14 @@ impl Utxo {
 
     /// Check if this UTXO can be spent at the given height.
     ///
-    /// A UTXO is spendable unless it is locked or (for coinbase)
+    /// A UTXO is spendable unless it is locked, not yet covered by the
+    /// wallet's spend scan (see [`Utxo::spend_scanned`]), or — for coinbase —
     /// immature. Mempool 0-conf outputs are spendable — callers that
     /// want to restrict to confirmed/InstantLocked UTXOs (e.g. the
     /// "spendable" balance bucket or conservative coin selection)
     /// should check `is_confirmed || is_instantlocked` themselves.
     pub fn is_spendable(&self, current_height: u32) -> bool {
-        if self.is_locked {
+        if self.is_locked || !self.spend_scanned {
             return false;
         }
         self.is_mature(current_height)

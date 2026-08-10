@@ -258,6 +258,13 @@ impl WalletTransactionChecker for ManagedWalletInfo {
             );
         }
 
+        // Any UTXO just created from a block below the spend-scan target is
+        // only known-unspent as of that block, not as of the tip. Hold it back
+        // from coin selection until the scan proves it survived to the target.
+        if let Some(height) = block_height {
+            self.hold_back_unscanned_utxos(tx, height);
+        }
+
         if update_balance {
             self.update_balance();
         }

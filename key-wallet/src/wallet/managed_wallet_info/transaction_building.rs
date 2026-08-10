@@ -805,6 +805,7 @@ mod tests {
             is_instantlocked: false,
             is_locked: false,
             is_trusted: false,
+            spend_scanned: true,
         };
         info.accounts
             .standard_bip44_accounts
@@ -988,6 +989,7 @@ mod tests {
                 is_instantlocked: false,
                 is_locked: false,
                 is_trusted: false,
+                spend_scanned: true,
             },
         );
         outpoint
