@@ -276,6 +276,19 @@ fn build_cycle_quorum_map(
     Ok(map)
 }
 
+/// Cycle base height, the height of the quorum-index-0 block, for a rotated
+/// quorum whose commitment sits at `quorum_block_height`.
+///
+/// `quorum_index` arrives from the wire as a signed value nothing bounds, so a
+/// negative or oversized index yields `None` instead of sign-extending into a
+/// wrapping subtraction.
+fn rotated_cycle_base_height(
+    quorum_block_height: CoreBlockHeight,
+    quorum_index: i16,
+) -> Option<CoreBlockHeight> {
+    quorum_block_height.checked_sub(u32::try_from(quorum_index).ok()?)
+}
+
 impl MasternodeListEngine {
     /// Creates a new MasternodeListEngine with the specified network configuration.
     ///
@@ -837,8 +850,7 @@ impl MasternodeListEngine {
     #[cfg(feature = "quorum_validation")]
     fn rotated_quorum_cycle_base(&self, quorum: &QuorumEntry) -> Option<CoreBlockHeight> {
         let height = self.block_container.get_height(&quorum.quorum_hash)?;
-        let index = u32::try_from(quorum.quorum_index?).ok()?;
-        height.checked_sub(index)
+        rotated_cycle_base_height(height, quorum.quorum_index?)
     }
 
     /// The four quarter ChainLock signatures for the cycle a rotated quorum
