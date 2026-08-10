@@ -338,23 +338,19 @@ impl PeerReputationManager {
         reputations.clone()
     }
 
-    /// Return the decay-applied score for each requested peer. Peers with no
-    /// record default to 0. Acquires only the reputation lock, so callers must
-    /// not hold a pool guard across this to keep a single lock order.
+    /// Return the current score for each requested peer. Peers with no record
+    /// default to 0. Takes a read lock and does not apply decay, so it stays cheap
+    /// on the routing hot path (decay is applied by `update_reputation` and the
+    /// periodic maintenance pass). Acquires only the reputation lock, so callers
+    /// must not hold a pool guard across this to keep a single lock order.
     pub async fn scores_for(
         &self,
         addrs: impl IntoIterator<Item = SocketAddr>,
     ) -> HashMap<SocketAddr, i32> {
-        let mut reputations = self.reputations.write().await;
+        let reputations = self.reputations.read().await;
         addrs
             .into_iter()
-            .map(|addr| {
-                let score = reputations.get_mut(&addr).map_or(0, |rep| {
-                    rep.apply_decay();
-                    rep.score
-                });
-                (addr, score)
-            })
+            .map(|addr| (addr, reputations.get(&addr).map_or(0, |rep| rep.score)))
             .collect()
     }
 

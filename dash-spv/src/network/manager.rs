@@ -529,14 +529,16 @@ impl PeerNetworkManager {
                         // Log all received messages at debug level to help troubleshoot
                         tracing::trace!("Received {:?} from {}", msg.cmd(), addr);
 
-                        // Reward peers that deliver substantive responses to our sync
-                        // requests, so productive peers rank above idle or stalling ones,
-                        // and clear the stall timer since the peer is answering us.
-                        if is_rewardable_response(msg.inner()) {
+                        // When a substantive response clears a tracked request, the
+                        // peer answered us: reward it so productive peers rank above
+                        // idle or stalling ones. Gating the reward on a cleared request
+                        // keeps the reputation write lock off the per-message hot path.
+                        if is_rewardable_response(msg.inner())
+                            && outstanding_requests.lock().await.remove(&addr).is_some()
+                        {
                             reputation_manager
                                 .update_reputation(addr, ChangeReason::ResponseDelivered)
                                 .await;
-                            outstanding_requests.lock().await.remove(&addr);
                         }
 
                         // Handle some messages directly
