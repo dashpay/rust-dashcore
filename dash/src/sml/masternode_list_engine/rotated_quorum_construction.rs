@@ -620,8 +620,8 @@ mod tests {
         let mut engine = MasternodeListEngine::default_for_network(Network::Mainnet);
         let negative_index_hash = QuorumHash::from_byte_array([1; 32]);
         let index_above_height_hash = QuorumHash::from_byte_array([2; 32]);
-        engine.block_container.feed_block_height(1000, negative_index_hash);
-        engine.block_container.feed_block_height(3, index_above_height_hash);
+        engine.feed_block_height(1000, negative_index_hash);
+        engine.feed_block_height(3, index_above_height_hash);
 
         let quorums =
             [rotated_quorum(negative_index_hash, -1), rotated_quorum(index_above_height_hash, 5)];

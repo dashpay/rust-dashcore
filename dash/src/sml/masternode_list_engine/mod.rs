@@ -617,7 +617,7 @@ impl MasternodeListEngine {
                 LLMQEntryVerificationStatus::Invalid(_) => {
                     invalid_count += 1;
                     tracing::warn!(
-                        "Previous-cycle quorum {} at cycle {} failed validation ({}); leaving it out",
+                        "Previous-cycle quorum {} at cycle {} failed validation ({}), leaving it out",
                         entry.quorum_entry.quorum_hash,
                         cycle_hash,
                         entry.verified
@@ -625,7 +625,7 @@ impl MasternodeListEngine {
                 }
                 _ => {
                     tracing::debug!(
-                        "Previous-cycle quorum {} at cycle {} could not be validated ({}); leaving it out",
+                        "Previous-cycle quorum {} at cycle {} could not be validated ({}), leaving it out",
                         entry.quorum_entry.quorum_hash,
                         cycle_hash,
                         entry.verified
@@ -1199,7 +1199,7 @@ impl MasternodeListEngine {
                         &rotated_quorum.quorum_entry,
                     ) {
                         tracing::warn!(
-                            "Rotated quorum {} failed validation ({}) under inferred quarter signatures; skipping it",
+                            "Rotated quorum {} failed validation ({}) under inferred quarter signatures, skipping it",
                             rotated_quorum.quorum_entry.quorum_hash,
                             e
                         );
@@ -1771,7 +1771,7 @@ mod tests {
     fn engine_knowing_blocks(blocks: &[(CoreBlockHeight, BlockHash)]) -> MasternodeListEngine {
         let mut engine = MasternodeListEngine::default_for_network(Network::Mainnet);
         for (height, block_hash) in blocks {
-            engine.block_container.feed_block_height(*height, *block_hash);
+            engine.feed_block_height(*height, *block_hash);
         }
         engine
     }
@@ -2560,7 +2560,7 @@ mod tests {
         let MasternodeListEngineBlockContainer::BTreeMapContainer(container) =
             &mut engine.block_container;
         for height in 2239488..2239488 + 32 {
-            if let Some(block_hash) = container.block_hashes.get(&height).copied() {
+            if let Some(block_hash) = container.block_hashes.remove(&height) {
                 container.block_heights.remove(&block_hash);
             }
         }

@@ -65,7 +65,7 @@ impl MasternodeListEngine {
                     "expected quorum hash not present".to_string(),
                 ))?
                 .as_ref()
-                .map_err(|e| e.clone())?;
+                .map_err(Clone::clone)?;
             quorum.validate(masternodes.iter().enumerate().filter_map(
                 |(i, qualified_masternode_list_entry)| {
                     if *quorum.quorum_entry.signers.get(i)? {
