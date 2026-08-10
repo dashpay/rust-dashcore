@@ -86,6 +86,9 @@ pub struct PeerNetworkManager {
     /// Instant of the previous stall sweep, used to detect a suspend/resume gap so
     /// a burst of stale requests on resume does not penalize every peer at once.
     last_maintenance_at: Arc<Mutex<Instant>>,
+    /// Instant of the last reputation-driven eviction, enforcing a cooldown so a
+    /// replacement can prove itself before another peer is dropped.
+    last_eviction_at: Arc<Mutex<Option<Instant>>>,
 }
 
 const CAPABILITY_REJECTED_TTL: Duration = Duration::from_secs(30 * 60);
@@ -105,6 +108,19 @@ const REQUEST_STALL_TIMEOUT: Duration = Duration::from_secs(45);
 /// outstanding request would look stale at once, so the sweep refreshes their
 /// timers and skips penalties for that round instead of blaming every peer.
 const SUSPEND_GAP: Duration = Duration::from_secs(90);
+
+/// A connected peer scoring at least this becomes an eviction candidate (two
+/// stalls at +10, or equivalent misbehavior). Well below the +100 ban line, so a
+/// peer is dropped and replaced long before it would be banned outright.
+const STUCK_PEER_EVICTION_SCORE: i32 = 20;
+
+/// Never evict a peer for reputation while at or below this many connections, so
+/// a small pool is never churned down toward zero usable peers.
+const MIN_CONNECTED_FLOOR: usize = 2;
+
+/// Minimum spacing between reputation-driven evictions, so a fresh replacement
+/// has time to connect and prove itself before another peer is dropped.
+const EVICTION_COOLDOWN: Duration = Duration::from_secs(30);
 
 fn required_services_from_config(config: &ClientConfig, exclusive_mode: bool) -> ServiceFlags {
     if exclusive_mode {
@@ -165,6 +181,7 @@ impl PeerNetworkManager {
             network_event_sender: broadcast::Sender::new(DEFAULT_NETWORK_EVENT_CAPACITY),
             outstanding_requests: Arc::new(Mutex::new(HashMap::new())),
             last_maintenance_at: Arc::new(Mutex::new(Instant::now())),
+            last_eviction_at: Arc::new(Mutex::new(None)),
         })
     }
 
@@ -960,7 +977,9 @@ impl PeerNetworkManager {
     /// A long gap since the previous sweep is treated as a process suspend and the
     /// timers are refreshed instead, so a backgrounded client does not blame every
     /// peer at once on resume.
-    async fn sweep_stalled_peers(&self) {
+    /// Returns true if this tick was treated as a suspend/resume grace tick, so
+    /// the caller can skip eviction rather than acting on stale pre-suspend state.
+    async fn sweep_stalled_peers(&self) -> bool {
         let now = Instant::now();
         let gap = {
             let mut last = self.last_maintenance_at.lock().await;
@@ -981,7 +1000,7 @@ impl PeerNetworkManager {
                 for sent in outstanding.values_mut() {
                     *sent = now;
                 }
-                return;
+                return true;
             }
 
             let stalled: Vec<SocketAddr> = outstanding
@@ -1001,6 +1020,79 @@ impl PeerNetworkManager {
             tracing::debug!("Peer {} stalled on a sync request, penalizing", addr);
             self.reputation_manager.update_reputation(addr, ChangeReason::RequestTimeout).await;
         }
+        false
+    }
+
+    /// Evict the single worst-scoring connected peer when it is clearly bad and a
+    /// healthy replacement is available, so the client stops staying stuck on a
+    /// peer that stalls. Heavily guarded so a small pool is never churned toward
+    /// zero: it keeps a connection floor, only acts on a full pool with a
+    /// replacement ready, skips when every peer is equally bad (a network or
+    /// device problem, not a peer problem), never drops the sole peer providing a
+    /// required service, and evicts at most one peer per cooldown.
+    async fn evict_worst_stuck_peer(&self) {
+        if let Some(t) = *self.last_eviction_at.lock().await {
+            if Instant::now().saturating_duration_since(t) < EVICTION_COOLDOWN {
+                return;
+            }
+        }
+
+        let connected = self.pool.get_connected_addresses().await;
+        let floor = self.max_peers.min(MIN_CONNECTED_FLOOR);
+        if connected.len() < self.max_peers || connected.len() <= floor {
+            return;
+        }
+
+        // A replacement must be ready, or eviction is pure loss.
+        let mut has_replacement = false;
+        for known in self.addrv2_handler.get_known_addresses().await {
+            let Ok(sa) = known.socket_addr() else {
+                continue;
+            };
+            if !connected.contains(&sa) && !self.is_capability_rejected(&sa).await {
+                has_replacement = true;
+                break;
+            }
+        }
+        if !has_replacement {
+            return;
+        }
+
+        let scores = self.reputation_manager.scores_for(connected.iter().copied()).await;
+        let Some(min_score) = scores.values().copied().min() else {
+            return;
+        };
+        let Some((worst_addr, worst_score)) = scores.into_iter().max_by_key(|(_, s)| *s) else {
+            return;
+        };
+
+        // The worst must be clearly bad, and at least one peer clearly better,
+        // otherwise the whole pool is bad and the problem is not this peer.
+        if worst_score < STUCK_PEER_EVICTION_SCORE || min_score >= STUCK_PEER_EVICTION_SCORE {
+            return;
+        }
+
+        if self.is_sole_service_provider(&worst_addr).await {
+            return;
+        }
+
+        tracing::info!(
+            "Evicting stalled peer {} (score {}) so a fresh peer can replace it",
+            worst_addr,
+            worst_score
+        );
+        let _ = self.disconnect_peer(&worst_addr, "poor reputation (stalled requests)").await;
+        *self.last_eviction_at.lock().await = Some(Instant::now());
+    }
+
+    /// Whether `addr` is the only connected peer advertising the required service,
+    /// so evicting it would strand a sync phase with no capable peer.
+    async fn is_sole_service_provider(&self, addr: &SocketAddr) -> bool {
+        if self.required_services == ServiceFlags::NONE {
+            return false;
+        }
+        let providers = self.pool.peers_with_service(self.required_services).await;
+        providers.len() == 1 && providers[0].0 == *addr
     }
 
     async fn maintenance_tick(&self) {
@@ -1033,10 +1125,15 @@ impl PeerNetworkManager {
         } else {
             // Penalize peers stalling on sync requests so they drop out of routing
             // and become eviction candidates before the top-up below.
-            self.sweep_stalled_peers().await;
+            let grace_tick = self.sweep_stalled_peers().await;
             // Evict peers that lack required services before top-up so replacements
             // can be pulled in during the same tick.
             self.evict_mismatched_peers().await;
+            // Drop one clearly-bad stalling peer, but never on a resume grace tick
+            // where scores reflect stale pre-suspend state.
+            if !grace_tick {
+                self.evict_worst_stuck_peer().await;
+            }
             // Re-read count after potential churn so top-up sees the current pool size.
             let count = self.pool.peer_count().await;
             if count < self.max_peers {
@@ -1502,6 +1599,7 @@ impl Clone for PeerNetworkManager {
             network_event_sender: self.network_event_sender.clone(),
             outstanding_requests: self.outstanding_requests.clone(),
             last_maintenance_at: self.last_maintenance_at.clone(),
+            last_eviction_at: self.last_eviction_at.clone(),
         }
     }
 }
@@ -1656,6 +1754,7 @@ impl PeerNetworkManager {
             network_event_sender: broadcast::Sender::new(DEFAULT_NETWORK_EVENT_CAPACITY),
             outstanding_requests: Arc::new(Mutex::new(HashMap::new())),
             last_maintenance_at: Arc::new(Mutex::new(Instant::now())),
+            last_eviction_at: Arc::new(Mutex::new(None)),
         }
     }
 
