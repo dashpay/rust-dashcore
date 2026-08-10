@@ -122,6 +122,13 @@ impl From<QuorumValidationError> for LLMQEntryVerificationStatus {
                     offset, block_hash,
                 ))
             }
+            // A cycle base sitting below the depth a rotation reconstruction
+            // reaches back to means the quarter lists cannot exist yet. That
+            // is missing history like its siblings above, so it degrades the
+            // one quorum instead of rejecting everything served with it.
+            QuorumValidationError::CycleBaseHeightTooLow(height) => {
+                Self::Skipped(LLMQEntryVerificationSkipStatus::MissedList(height))
+            }
             other => Self::Invalid(other),
         }
     }
@@ -207,6 +214,12 @@ mod tests {
                 LLMQEntryVerificationStatus::Skipped(
                     LLMQEntryVerificationSkipStatus::MissingRotationChainLockSig(2, h4),
                 ),
+            ),
+            (
+                QuorumValidationError::CycleBaseHeightTooLow(5),
+                LLMQEntryVerificationStatus::Skipped(LLMQEntryVerificationSkipStatus::MissedList(
+                    5,
+                )),
             ),
             (
                 QuorumValidationError::InvalidQuorumPublicKey,
