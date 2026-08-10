@@ -403,25 +403,27 @@ mod tests {
         assert_eq!(mnemonic.word_count(), 12);
     }
 
-    /// Every entropy byte behind a generated phrase must be independently
-    /// random. Guards the truncation half of the weak-seed-phrase bug class
-    /// (Milk Sad / CVE-2023-39910, Trust Wallet / CVE-2023-31290), where a
-    /// full-width entropy buffer carries only 32 or 48 bits of real variation
-    /// and the rest is zero-padding or a deterministic expansion.
+    /// Regression guard against zero-padded and stuck-bit entropy: a buffer
+    /// that is the right BIP-39 width but only partly filled, with the
+    /// remainder constant across draws.
     ///
     /// Checked per supported word count: the recovered entropy is the full
     /// BIP-39 width, it round-trips back to the same phrase, no two samples
-    /// collide, and *every* bit position takes both values across samples —
-    /// a stuck bit is exactly what a narrowed source leaves behind.
+    /// collide, and every bit position takes both values across samples.
     ///
-    /// The other half of that bug class — a full-width buffer filled from a
-    /// seeded PRNG (`mt19937(time(NULL))`) rather than the OS — is not
-    /// detectable statistically at this sample size. It is held by
-    /// construction instead: [`Mnemonic::generate`] must draw straight from
-    /// `getrandom` (the OS CSPRNG) and must never route through a seeded RNG.
+    /// This says nothing about how much real entropy those bits carry, and
+    /// must not be read as verifying that it is full-width. A generator that
+    /// expands a 32- or 48-bit seed through a hash or PRNG — the actual defect
+    /// in Milk Sad (CVE-2023-39910) and Trust Wallet (CVE-2023-31290) —
+    /// produces freely varying bits and passes every assertion below. No
+    /// statistical test at this sample size would separate it from a real
+    /// CSPRNG. That property is instead held by construction, and only review
+    /// can protect it: [`Mnemonic::generate`] must fill its entropy buffer
+    /// directly from `getrandom` (the OS CSPRNG) and must never route through
+    /// a seeded RNG.
     #[test]
     #[cfg(feature = "getrandom")]
-    fn generate_draws_full_width_entropy() {
+    fn generate_entropy_has_expected_width_and_no_stuck_bits() {
         // 64 samples already makes a stuck bit a 2^-63 event; 128 is margin.
         const SAMPLES: usize = 128;
 
@@ -462,8 +464,9 @@ mod tests {
             for (bit, &count) in ones.iter().enumerate() {
                 assert!(
                     count > 0 && count < SAMPLES,
-                    "{word_count}-word entropy bit {bit} is stuck at {} across all {SAMPLES} \
-                     draws — the entropy source is narrower than {bits} bits",
+                    "{word_count}-word entropy bit {bit} never varied across {SAMPLES} draws \
+                     (stuck at {}) — the buffer is zero-padded, or the source carries \
+                     fewer than {bits} bits",
                     u8::from(count > 0)
                 );
             }
