@@ -239,7 +239,7 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
     }
 
     /// Keep the masternode work across a disconnect and invalidate only the
-    /// peer-bound network slots. See [`MasternodeSyncState::requeue_in_flight`].
+    /// peer-bound network slots. See `MasternodeSyncState::requeue_in_flight`.
     fn on_disconnect(&mut self) {
         self.sync_state.requeue_in_flight();
         // A fresh peer set earns a fresh retry budget, and the dedup guard must not
