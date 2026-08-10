@@ -1014,10 +1014,7 @@ impl MasternodeListEngine {
         )?;
 
         #[cfg(feature = "quorum_validation")]
-        let rotation_quorum_type = last_commitment_per_index
-            .first()
-            .map(|quorum_entry| quorum_entry.llmq_type)
-            .unwrap_or(self.network.isd_llmq_type());
+        let rotation_quorum_type = self.network.isd_llmq_type();
 
         #[cfg(feature = "quorum_validation")]
         let mut stored_cycle_height: Option<CoreBlockHeight> = None;
