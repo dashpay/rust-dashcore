@@ -465,9 +465,8 @@ mod tests {
                 assert!(
                     count > 0 && count < SAMPLES,
                     "{word_count}-word entropy bit {bit} never varied across {SAMPLES} draws \
-                     (stuck at {}) — the buffer is zero-padded, or the source carries \
-                     fewer than {bits} bits",
-                    u8::from(count > 0)
+                     ({count} ones) — the buffer is zero-padded, or the source carries \
+                     fewer than {bits} bits"
                 );
             }
         }
