@@ -2,8 +2,9 @@ use dashcore::{
     consensus::encode,
     network::{
         address::Address,
-        constants::ServiceFlags,
+        constants::{ServiceFlags, NODE_HEADERS_COMPRESSED},
         message::{NetworkMessage, RawNetworkMessage, RawNetworkMessageCodec},
+        message_headers2::CompressionState,
         message_network::VersionMessage,
     },
     Network,
@@ -11,7 +12,7 @@ use dashcore::{
 use futures::lock::Mutex;
 use std::collections::VecDeque;
 use std::net::SocketAddr;
-use std::sync::atomic::{AtomicU32, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::sync::mpsc::UnboundedSender;
@@ -141,6 +142,12 @@ pub struct ConnectedPeer {
     cap: Arc<AtomicUsize>,
     /// Cumulative bytes downloaded from THIS peer, for per-peer throughput.
     bytes: Arc<AtomicU64>,
+    /// Whether to ask THIS peer for compressed headers (DIP-25). Set when it
+    /// advertises `NODE_HEADERS_COMPRESSED`, cleared by the reader if its
+    /// `headers2` ever fails to decompress, so the peer transparently falls back
+    /// to uncompressed `headers` instead of stalling the header pipeline.
+    /// Shared with the reader task, which is the only writer after connect.
+    headers2: Arc<AtomicBool>,
     /// Per-connection cancel token (child of the global shutdown). Cancelling it
     /// stops this peer's reader and closes the socket. Used to drop peers we
     /// probed but don't keep, so we only hold connections we actually use.
@@ -183,6 +190,19 @@ impl ConnectedPeer {
     }
 
     pub async fn send(&self, msg: &NetworkMessage) -> NetworkResult<()> {
+        // Upgrade a header request to its compressed form for peers that support
+        // it. The sync layer always declares a plain `getheaders` because it has
+        // no idea which peer the router will pick; the choice belongs here, where
+        // the peer is known. `Headers2` is decompressed back into `Headers` by the
+        // reader, so nothing above this layer sees the difference.
+        let upgraded = match msg {
+            NetworkMessage::GetHeaders(m) if self.headers2.load(Ordering::Relaxed) => {
+                Some(NetworkMessage::GetHeaders2(m.clone()))
+            }
+            _ => None,
+        };
+        let msg = upgraded.as_ref().unwrap_or(msg);
+
         // TODO: Take a reference to msg instead of cloning it
         let raw = RawNetworkMessage {
             magic: self.network.magic(),
@@ -395,7 +415,19 @@ impl DisconnectedPeer {
         }
 
         // Announce sendheaders only after the handshake is fully complete.
-        handshake_send(&mut writer, magic, NetworkMessage::SendHeaders).await?;
+        //
+        // Prefer the compressed variant when this peer advertises
+        // `NODE_HEADERS_COMPRESSED`: DIP-25 headers drop the fields that repeat
+        // from the previous header, which is roughly half the bytes of an initial
+        // header sync. Peers without the bit get plain `sendheaders`, so this is
+        // opportunistic — we never look for a peer that supports it.
+        let headers2 = Arc::new(AtomicBool::new(version.services.has(NODE_HEADERS_COMPRESSED)));
+        let announce = if headers2.load(Ordering::Relaxed) {
+            NetworkMessage::SendHeaders2
+        } else {
+            NetworkMessage::SendHeaders
+        };
+        handshake_send(&mut writer, magic, announce).await?;
 
         // Measure round-trip lag with a post-handshake ping/pong. Sending a ping
         // before the handshake completes makes some peers drop us, so we do it here.
@@ -439,6 +471,7 @@ impl DisconnectedPeer {
             in_flight.clone(),
             latency.clone(),
             token.clone(),
+            headers2.clone(),
         );
 
         tracing::debug!(
@@ -459,6 +492,7 @@ impl DisconnectedPeer {
             writer,
             cap,
             bytes: peer_bytes,
+            headers2,
             token,
         })
     }
@@ -474,8 +508,12 @@ fn spawn_reader(
     in_flight: Arc<AtomicUsize>,
     latency: Arc<Latency>,
     shutdown: CancellationToken,
+    headers2: Arc<AtomicBool>,
 ) {
     tokio::spawn(async move {
+        // DIP-25 compression is a delta against the previously received header, so
+        // the state is per connection and must persist across `headers2` messages.
+        let mut compression = CompressionState::default();
         loop {
             let next = tokio::select! {
                 _ = shutdown.cancelled() => break,
@@ -516,6 +554,45 @@ fn spawn_reader(
                                 break;
                             }
                         }
+                        NetworkMessage::Headers2(compressed) => {
+                            // Decompress here and hand the sync layer plain
+                            // `Headers`, so compression stays entirely inside the
+                            // network module.
+                            match compression.process_headers(&compressed.headers) {
+                                Ok(headers) => {
+                                    tracing::debug!(
+                                        target: "dash_spv::network",
+                                        "decompressed {} headers from {}",
+                                        headers.len(),
+                                        addr
+                                    );
+                                    if inbound
+                                        .send(PeerEvent::Message(
+                                            addr,
+                                            NetworkMessage::Headers(headers),
+                                        ))
+                                        .is_err()
+                                    {
+                                        break;
+                                    }
+                                }
+                                Err(e) => {
+                                    // Stop asking this peer for compressed headers.
+                                    // The request goes unanswered, so the broker
+                                    // times it out and re-sends it — as a plain
+                                    // `getheaders` now that the flag is off.
+                                    tracing::warn!(
+                                        target: "dash_spv::network",
+                                        "headers2 from {} failed to decompress ({}); \
+                                         falling back to uncompressed headers for this peer",
+                                        addr,
+                                        e
+                                    );
+                                    headers2.store(false, Ordering::Relaxed);
+                                    compression = CompressionState::default();
+                                }
+                            }
+                        }
                         payload => {
                             if inbound.send(PeerEvent::Message(addr, payload)).is_err() {
                                 break;
@@ -535,7 +612,10 @@ fn build_version(peer: SocketAddr) -> VersionMessage {
     let now = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
     let unspecified: SocketAddr = ([0u8, 0, 0, 0], 0).into();
     VersionMessage::new(
-        ServiceFlags::NONE,
+        // Advertise that we understand compressed headers (DIP-25) so peers that
+        // support them will honour our `sendheaders2`. We serve nothing, hence no
+        // other service bit.
+        ServiceFlags::NONE | NODE_HEADERS_COMPRESSED,
         now,
         Address::new(&peer, ServiceFlags::NETWORK),
         Address::new(&unspecified, ServiceFlags::NONE),
