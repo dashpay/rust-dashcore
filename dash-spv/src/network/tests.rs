@@ -124,6 +124,9 @@ mod selection_tests {
     use crate::network::reputation::ChangeReason;
     use crate::test_utils::test_socket_address;
     use dashcore::network::constants::ServiceFlags;
+    use std::collections::HashMap;
+    use std::net::SocketAddr;
+    use std::time::Duration;
 
     async fn full_pool_with_bad_peer(bad: u8) -> (PeerNetworkManager, std::net::SocketAddr) {
         let cf = ServiceFlags::COMPACT_FILTERS;
@@ -139,28 +142,65 @@ mod selection_tests {
     }
 
     #[tokio::test]
-    async fn test_next_peer_excludes_low_scoring_peer() {
+    async fn test_next_peer_excludes_slow_peer() {
         let cf = ServiceFlags::COMPACT_FILTERS;
         let manager = PeerNetworkManager::new_for_test(cf).await;
         let good1 = test_socket_address(1);
         let good2 = test_socket_address(2);
-        let bad = test_socket_address(3);
-        manager.insert_test_peer(good1, cf).await;
-        manager.insert_test_peer(good2, cf).await;
-        manager.insert_test_peer(bad, cf).await;
+        let slow = test_socket_address(3);
+        for addr in [good1, good2, slow] {
+            manager.insert_test_peer(addr, cf).await;
+        }
 
-        // Push the bad peer well outside the good band.
-        manager.test_update_reputation(bad, ChangeReason::InvalidTransactionInBlock).await;
+        manager.test_record_latency(good1, Duration::from_millis(40)).await;
+        manager.test_record_latency(good2, Duration::from_millis(60)).await;
+        manager.test_record_latency(slow, Duration::from_secs(10)).await;
 
         let mut seen_good1 = false;
         let mut seen_good2 = false;
         for _ in 0..20 {
             let picked = manager.test_next_peer().await;
-            assert_ne!(picked, bad, "a low-scoring peer must not be routed to");
+            assert_ne!(picked, slow, "a peer that has stopped answering must not be routed to");
             seen_good1 |= picked == good1;
             seen_good2 |= picked == good2;
         }
-        assert!(seen_good1 && seen_good2, "load should spread across the good band");
+        assert!(seen_good1 && seen_good2, "load should spread across the responsive peers");
+    }
+
+    /// The failure this guards against was seen on mainnet: one peer answered a
+    /// few requests before the others had answered any, that head start was enough
+    /// to rank it alone at the top, and from then on it took every request while
+    /// the peers it starved got none and so could never earn their way back. Here
+    /// the same head start must not stop the pool sharing the work.
+    #[tokio::test]
+    async fn test_next_peer_keeps_spreading_after_one_peer_gets_a_head_start() {
+        let cf = ServiceFlags::COMPACT_FILTERS;
+        let manager = PeerNetworkManager::new_for_test(cf).await;
+        let peers = [test_socket_address(1), test_socket_address(2), test_socket_address(3)];
+        for addr in peers {
+            manager.insert_test_peer(addr, cf).await;
+        }
+
+        // The head start: the first peer is measured, and fast, before the rest
+        // have answered anything at all.
+        for _ in 0..3 {
+            manager.test_record_latency(peers[0], Duration::from_millis(20)).await;
+        }
+
+        let mut picks: HashMap<SocketAddr, u32> = HashMap::new();
+        for _ in 0..300 {
+            let picked = manager.test_next_peer().await;
+            *picks.entry(picked).or_default() += 1;
+            manager.test_record_latency(picked, Duration::from_millis(50)).await;
+        }
+
+        for addr in peers {
+            assert_eq!(
+                picks.get(&addr).copied().unwrap_or(0),
+                100,
+                "every peer should keep an equal share, got {picks:?}"
+            );
+        }
     }
 
     #[tokio::test]

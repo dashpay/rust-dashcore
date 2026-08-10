@@ -15,6 +15,7 @@ use crate::error::{NetworkError, NetworkResult, SpvError as Error};
 use crate::network::addrv2::AddrV2Handler;
 use crate::network::constants::*;
 use crate::network::discovery::DnsDiscovery;
+use crate::network::latency::PeerLatency;
 use crate::network::pool::PeerPool;
 use crate::network::reputation::{ChangeReason, PeerReputationManager, ReputationAware};
 use crate::network::{
@@ -81,8 +82,11 @@ pub struct PeerNetworkManager {
     /// Network event bus for notifying about network/peer related changes.
     network_event_sender: broadcast::Sender<NetworkEvent>,
     /// Instant each connected peer's oldest unanswered sync request was sent.
-    /// Any substantive response clears the entry; a stale one marks a stalling peer.
+    /// Any substantive response clears the entry, a stale one marks a stalling peer.
     outstanding_requests: Arc<Mutex<HashMap<SocketAddr, Instant>>>,
+    /// Rolling response times per peer, used to route requests to the peers that
+    /// are actually answering fastest.
+    latency: Arc<Mutex<PeerLatency>>,
     /// Instant of the previous stall sweep, used to detect a suspend/resume gap so
     /// a burst of stale requests on resume does not penalize every peer at once.
     last_maintenance_at: Arc<Mutex<Instant>>,
@@ -92,11 +96,6 @@ pub struct PeerNetworkManager {
 }
 
 const CAPABILITY_REJECTED_TTL: Duration = Duration::from_secs(30 * 60);
-
-/// Peers within this many reputation points of the best-scoring eligible peer
-/// share request traffic round-robin. A peer scoring worse than this (e.g. one
-/// that just stalled a request) drops out of rotation until decay recovers it.
-const GOOD_BAND_DELTA: i32 = 5;
 
 /// A connected peer whose oldest sync request stays unanswered this long is
 /// treated as stalling and penalized. Any response resets its timer, so a peer
@@ -123,8 +122,9 @@ const SUSPEND_GAP: Duration = Duration::from_secs(90);
 /// decays back).
 ///
 /// Reachable only because a stalling peer's timer is re-armed rather than
-/// dropped: one stall already freezes it out of routing via `GOOD_BAND_DELTA`, so
-/// it receives no new requests and could otherwise never earn a second strike.
+/// dropped: one stall already records a mean response time that freezes the peer
+/// out of routing, so it receives no new request to re-arm from and could
+/// otherwise never earn a second strike.
 const STUCK_PEER_EVICTION_SCORE: i32 = 20;
 
 /// Never evict a peer for reputation while at or below this many connections, so
@@ -193,6 +193,7 @@ impl PeerNetworkManager {
             round_robin_counter: Arc::new(AtomicUsize::new(0)),
             network_event_sender: broadcast::Sender::new(DEFAULT_NETWORK_EVENT_CAPACITY),
             outstanding_requests: Arc::new(Mutex::new(HashMap::new())),
+            latency: Arc::new(Mutex::new(PeerLatency::default())),
             last_maintenance_at: Arc::new(Mutex::new(Instant::now())),
             last_eviction_at: Arc::new(Mutex::new(None)),
         })
@@ -304,6 +305,7 @@ impl PeerNetworkManager {
         let shutdown_token = self.shutdown_token.clone();
         let reputation_manager = self.reputation_manager.clone();
         let outstanding_requests = self.outstanding_requests.clone();
+        let latency = self.latency.clone();
         let user_agent = self.user_agent.clone();
         let required_services = self.required_services;
         let capability_rejected = self.capability_rejected.clone();
@@ -401,6 +403,7 @@ impl PeerNetworkManager {
                                 shutdown_token,
                                 reputation_manager.clone(),
                                 outstanding_requests,
+                                latency,
                                 connected_peer_count.clone(),
                                 headers2_disabled.clone(),
                                 message_dispatcher,
@@ -482,6 +485,7 @@ impl PeerNetworkManager {
         shutdown_token: CancellationToken,
         reputation_manager: Arc<PeerReputationManager>,
         outstanding_requests: Arc<Mutex<HashMap<SocketAddr, Instant>>>,
+        latency: Arc<Mutex<PeerLatency>>,
         connected_peer_count: Arc<AtomicUsize>,
         headers2_disabled: Arc<Mutex<HashSet<SocketAddr>>>,
         message_dispatcher: Arc<Mutex<MessageDispatcher>>,
@@ -542,16 +546,18 @@ impl PeerNetworkManager {
                         // Log all received messages at debug level to help troubleshoot
                         tracing::trace!("Received {:?} from {}", msg.cmd(), addr);
 
-                        // When a substantive response clears a tracked request, the
-                        // peer answered us: reward it so productive peers rank above
-                        // idle or stalling ones. Gating the reward on a cleared request
-                        // keeps the reputation write lock off the per-message hot path.
-                        if is_rewardable_response(msg.inner())
-                            && outstanding_requests.lock().await.remove(&addr).is_some()
-                        {
-                            reputation_manager
-                                .update_reputation(addr, ChangeReason::ResponseDelivered)
-                                .await;
+                        // A substantive response clearing a tracked request is the one
+                        // point where a peer's speed is observable, so time it here.
+                        // The elapsed time runs from the oldest request still
+                        // unanswered, so it counts queueing behind that peer's own
+                        // backlog as well as its service time. That is deliberate:
+                        // both delay us equally, and it lets a peer we are
+                        // over-feeding report itself as congested.
+                        if is_timed_response(msg.inner()) {
+                            let sent = outstanding_requests.lock().await.remove(&addr);
+                            if let Some(sent) = sent {
+                                latency.lock().await.record(addr, sent.elapsed());
+                            }
                         }
 
                         // Handle some messages directly
@@ -1006,6 +1012,7 @@ impl PeerNetworkManager {
         // Snapshot connected peers before taking the outstanding lock so this path
         // never holds the outstanding lock while touching the pool lock.
         let connected = self.pool.get_connected_addresses().await;
+        self.latency.lock().await.retain_connected(&connected);
 
         let stalled = {
             let mut outstanding = self.outstanding_requests.lock().await;
@@ -1018,24 +1025,36 @@ impl PeerNetworkManager {
                 return true;
             }
 
-            let stalled: Vec<SocketAddr> = outstanding
+            let stalled: Vec<(SocketAddr, Duration)> = outstanding
                 .iter()
-                .filter(|(_, sent)| now.saturating_duration_since(**sent) > REQUEST_STALL_TIMEOUT)
-                .map(|(addr, _)| *addr)
+                .filter_map(|(addr, sent)| {
+                    let waited = now.saturating_duration_since(*sent);
+                    (waited > REQUEST_STALL_TIMEOUT).then_some((*addr, waited))
+                })
                 .collect();
             // Re-arm rather than drop: one stall already freezes the peer out of
             // routing, so it gets no new request to re-arm the timer, and a still
             // unanswered request must keep counting for it to ever be evicted.
-            for addr in &stalled {
+            for (addr, _) in &stalled {
                 outstanding.insert(*addr, now);
             }
             stalled
         };
 
+        // Recording how long the request has gone unanswered keeps the stalling
+        // peer's measured mean fresh as well as bad, so it stays out of rotation
+        // instead of ageing back into it while it is still failing to answer.
+        {
+            let mut latency = self.latency.lock().await;
+            for (addr, waited) in &stalled {
+                latency.record(*addr, *waited);
+            }
+        }
+
         // A peer already at the eviction threshold is condemned, so further strikes
         // add nothing and would only march it toward an outright ban.
-        let scores = self.reputation_manager.scores_for(stalled.iter().copied()).await;
-        for addr in stalled {
+        let scores = self.reputation_manager.scores_for(stalled.iter().map(|(a, _)| *a)).await;
+        for (addr, _) in stalled {
             if scores.get(&addr).copied().unwrap_or(0) >= STUCK_PEER_EVICTION_SCORE {
                 continue;
             }
@@ -1389,25 +1408,34 @@ impl PeerNetworkManager {
         self.send_message_to_peer(&addr, &peer, message).await
     }
 
-    /// Pick a peer from `peers`, biased toward the best reputation scores.
+    /// Pick a peer from `peers`, rotating over those answering fastest.
     ///
-    /// Every peer within `GOOD_BAND_DELTA` of the best eligible score forms a
-    /// "good band" that is rotated through round-robin, so load still spreads
-    /// across the healthy peers while a clearly-worse peer drops out of rotation.
+    /// Selection reads measured response times rather than the misbehavior score.
+    /// A score only ever accuses a peer, so a peer that is merely untried scores
+    /// the same as a good one, and rewarding responses to break that tie makes the
+    /// first peer to answer pull away and take the whole rotation: it earns more
+    /// traffic, which earns it more reward, while the peers it starves get no
+    /// traffic and so can never earn their way back. Latency has no such ratchet.
+    /// It expires, so a starved peer becomes unmeasured and is retried, and it is
+    /// bounded by what the peer actually did rather than by how often we picked it.
+    ///
     /// The pool guard is already released by the caller (`get_all_peers` returns
-    /// owned `Arc`s), so acquiring the reputation lock here keeps a single order.
+    /// owned `Arc`s), so taking the latency lock here keeps a single lock order.
     async fn next_peer(
         &self,
         peers: &[(SocketAddr, Arc<RwLock<Peer>>)],
     ) -> (SocketAddr, Arc<RwLock<Peer>>) {
-        let scores = self.reputation_manager.scores_for(peers.iter().map(|(a, _)| *a)).await;
-        let best = scores.values().copied().min().unwrap_or(0);
-        let band: Vec<&(SocketAddr, Arc<RwLock<Peer>>)> = peers
-            .iter()
-            .filter(|(addr, _)| scores.get(addr).copied().unwrap_or(0) <= best + GOOD_BAND_DELTA)
-            .collect();
-        let idx = self.round_robin_counter.fetch_add(1, Ordering::Relaxed) % band.len();
-        let (addr, peer) = band[idx];
+        let addrs: Vec<SocketAddr> = peers.iter().map(|(addr, _)| *addr).collect();
+        let eligible_addrs = self.latency.lock().await.eligible(&addrs);
+        let eligible: Vec<&(SocketAddr, Arc<RwLock<Peer>>)> =
+            peers.iter().filter(|(addr, _)| eligible_addrs.contains(addr)).collect();
+
+        // `eligible` only ever narrows `peers`, and never to nothing: a peer with
+        // no fresh measurement always qualifies, so an empty result would mean
+        // every peer was measured and none was within reach of the fastest, which
+        // the fastest itself contradicts.
+        let idx = self.round_robin_counter.fetch_add(1, Ordering::Relaxed) % eligible.len();
+        let (addr, peer) = eligible[idx];
         (*addr, peer.clone())
     }
 
@@ -1620,6 +1648,7 @@ impl Clone for PeerNetworkManager {
             round_robin_counter: self.round_robin_counter.clone(),
             network_event_sender: self.network_event_sender.clone(),
             outstanding_requests: self.outstanding_requests.clone(),
+            latency: self.latency.clone(),
             last_maintenance_at: self.last_maintenance_at.clone(),
             last_eviction_at: self.last_eviction_at.clone(),
         }
@@ -1729,19 +1758,17 @@ fn is_tracked_request(msg: &NetworkMessage) -> bool {
     )
 }
 
-/// Whether an inbound message is a substantive response to one of our sync
-/// requests, and therefore evidence the peer is doing useful work. Unsolicited
-/// gossip (inv, tx, addr, ping) is excluded so the reward stays a real signal.
-fn is_rewardable_response(msg: &NetworkMessage) -> bool {
+/// Whether an inbound message answers one of the requests timed by
+/// `is_tracked_request`, and so can be used to measure the peer's response time.
+/// Unsolicited gossip (inv, tx, addr, ping) is excluded: it arrives unprompted and
+/// would clear a timer the peer has not actually answered.
+fn is_timed_response(msg: &NetworkMessage) -> bool {
     matches!(
         msg,
         NetworkMessage::Headers(_)
             | NetworkMessage::Headers2(_)
             | NetworkMessage::CFHeaders(_)
             | NetworkMessage::CFilter(_)
-            | NetworkMessage::Block(_)
-            | NetworkMessage::MnListDiff(_)
-            | NetworkMessage::QRInfo(_)
     )
 }
 
@@ -1777,6 +1804,7 @@ impl PeerNetworkManager {
             round_robin_counter: Arc::new(AtomicUsize::new(0)),
             network_event_sender: broadcast::Sender::new(DEFAULT_NETWORK_EVENT_CAPACITY),
             outstanding_requests: Arc::new(Mutex::new(HashMap::new())),
+            latency: Arc::new(Mutex::new(PeerLatency::default())),
             last_maintenance_at: Arc::new(Mutex::new(Instant::now())),
             last_eviction_at: Arc::new(Mutex::new(None)),
         }
@@ -1827,6 +1855,10 @@ impl PeerNetworkManager {
     pub(crate) async fn test_next_peer(&self) -> SocketAddr {
         let peers = self.pool.get_all_peers().await;
         self.next_peer(&peers).await.0
+    }
+
+    pub(crate) async fn test_record_latency(&self, addr: SocketAddr, elapsed: Duration) {
+        self.latency.lock().await.record(addr, elapsed);
     }
 
     pub(crate) async fn test_evict_worst_stuck_peer(&self) {
