@@ -278,6 +278,27 @@ fn build_cycle_quorum_map(
     Ok(map)
 }
 
+/// Every masternode list diff a QRInfo carries: the five named diffs, the
+/// optional h-4c diff, and the trailing diff list.
+///
+/// [`MasternodeListEngine::qr_info_referenced_block_hashes`] exists to tell a
+/// caller which heights to feed before [`MasternodeListEngine::feed_qr_info`]
+/// needs them, so both must walk the same set of diffs.
+fn qr_info_diffs(qr_info: &QRInfo) -> Vec<&MnListDiff> {
+    let mut diffs: Vec<&MnListDiff> = vec![
+        &qr_info.mn_list_diff_tip,
+        &qr_info.mn_list_diff_h,
+        &qr_info.mn_list_diff_at_h_minus_c,
+        &qr_info.mn_list_diff_at_h_minus_2c,
+        &qr_info.mn_list_diff_at_h_minus_3c,
+    ];
+    if let Some((_, diff)) = &qr_info.quorum_snapshot_and_mn_list_diff_at_h_minus_4c {
+        diffs.push(diff);
+    }
+    diffs.extend(&qr_info.mn_list_diff_list);
+    diffs
+}
+
 /// Cycle base height, the height of the quorum-index-0 block, for a rotated
 /// quorum whose commitment sits at `quorum_block_height`.
 ///
@@ -637,19 +658,7 @@ impl MasternodeListEngine {
     pub fn qr_info_referenced_block_hashes(qr_info: &QRInfo) -> BTreeSet<BlockHash> {
         let mut hashes = BTreeSet::new();
 
-        let mut diffs: Vec<&MnListDiff> = vec![
-            &qr_info.mn_list_diff_tip,
-            &qr_info.mn_list_diff_h,
-            &qr_info.mn_list_diff_at_h_minus_c,
-            &qr_info.mn_list_diff_at_h_minus_2c,
-            &qr_info.mn_list_diff_at_h_minus_3c,
-        ];
-        if let Some((_, diff)) = &qr_info.quorum_snapshot_and_mn_list_diff_at_h_minus_4c {
-            diffs.push(diff);
-        }
-        diffs.extend(&qr_info.mn_list_diff_list);
-
-        for diff in diffs {
+        for diff in qr_info_diffs(qr_info) {
             hashes.insert(diff.base_block_hash);
             hashes.insert(diff.block_hash);
             for quorum_entry in &diff.new_quorums {
@@ -960,20 +969,8 @@ impl MasternodeListEngine {
         self.dump_qr_info_capture(&qr_info);
 
         #[cfg(feature = "quorum_validation")]
-        let (rotation_sigs_by_work_height, inferred_work_heights) = {
-            let mut diffs: Vec<&MnListDiff> = vec![
-                &qr_info.mn_list_diff_tip,
-                &qr_info.mn_list_diff_h,
-                &qr_info.mn_list_diff_at_h_minus_c,
-                &qr_info.mn_list_diff_at_h_minus_2c,
-                &qr_info.mn_list_diff_at_h_minus_3c,
-            ];
-            if let Some((_, diff)) = &qr_info.quorum_snapshot_and_mn_list_diff_at_h_minus_4c {
-                diffs.push(diff);
-            }
-            diffs.extend(&qr_info.mn_list_diff_list);
-            self.rotation_cl_sigs_by_work_height(diffs)
-        };
+        let (rotation_sigs_by_work_height, inferred_work_heights) =
+            self.rotation_cl_sigs_by_work_height(qr_info_diffs(&qr_info));
 
         #[allow(unused_variables)]
         let QRInfo {
