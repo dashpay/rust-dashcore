@@ -80,6 +80,12 @@ pub struct PeerNetworkManager {
     round_robin_counter: Arc<AtomicUsize>,
     /// Network event bus for notifying about network/peer related changes.
     network_event_sender: broadcast::Sender<NetworkEvent>,
+    /// Instant each connected peer's oldest unanswered sync request was sent.
+    /// Any substantive response clears the entry; a stale one marks a stalling peer.
+    outstanding_requests: Arc<Mutex<HashMap<SocketAddr, Instant>>>,
+    /// Instant of the previous stall sweep, used to detect a suspend/resume gap so
+    /// a burst of stale requests on resume does not penalize every peer at once.
+    last_maintenance_at: Arc<Mutex<Instant>>,
 }
 
 const CAPABILITY_REJECTED_TTL: Duration = Duration::from_secs(30 * 60);
@@ -88,6 +94,17 @@ const CAPABILITY_REJECTED_TTL: Duration = Duration::from_secs(30 * 60);
 /// share request traffic round-robin. A peer scoring worse than this (e.g. one
 /// that just stalled a request) drops out of rotation until decay recovers it.
 const GOOD_BAND_DELTA: i32 = 5;
+
+/// A connected peer whose oldest sync request stays unanswered this long is
+/// treated as stalling and penalized. Any response resets its timer, so a peer
+/// streaming a large block is not punished for the download taking a while.
+const REQUEST_STALL_TIMEOUT: Duration = Duration::from_secs(45);
+
+/// If a maintenance sweep runs at least this long after the previous one, the
+/// process was likely suspended (e.g. an iOS app backgrounded). Every
+/// outstanding request would look stale at once, so the sweep refreshes their
+/// timers and skips penalties for that round instead of blaming every peer.
+const SUSPEND_GAP: Duration = Duration::from_secs(90);
 
 fn required_services_from_config(config: &ClientConfig, exclusive_mode: bool) -> ServiceFlags {
     if exclusive_mode {
@@ -146,6 +163,8 @@ impl PeerNetworkManager {
             request_rx: Arc::new(Mutex::new(Some(request_rx))),
             round_robin_counter: Arc::new(AtomicUsize::new(0)),
             network_event_sender: broadcast::Sender::new(DEFAULT_NETWORK_EVENT_CAPACITY),
+            outstanding_requests: Arc::new(Mutex::new(HashMap::new())),
+            last_maintenance_at: Arc::new(Mutex::new(Instant::now())),
         })
     }
 
@@ -254,6 +273,7 @@ impl PeerNetworkManager {
         let addrv2_handler = self.addrv2_handler.clone();
         let shutdown_token = self.shutdown_token.clone();
         let reputation_manager = self.reputation_manager.clone();
+        let outstanding_requests = self.outstanding_requests.clone();
         let user_agent = self.user_agent.clone();
         let required_services = self.required_services;
         let capability_rejected = self.capability_rejected.clone();
@@ -350,6 +370,7 @@ impl PeerNetworkManager {
                                 addrv2_handler,
                                 shutdown_token,
                                 reputation_manager.clone(),
+                                outstanding_requests,
                                 connected_peer_count.clone(),
                                 headers2_disabled.clone(),
                                 message_dispatcher,
@@ -430,6 +451,7 @@ impl PeerNetworkManager {
         addrv2_handler: Arc<AddrV2Handler>,
         shutdown_token: CancellationToken,
         reputation_manager: Arc<PeerReputationManager>,
+        outstanding_requests: Arc<Mutex<HashMap<SocketAddr, Instant>>>,
         connected_peer_count: Arc<AtomicUsize>,
         headers2_disabled: Arc<Mutex<HashSet<SocketAddr>>>,
         message_dispatcher: Arc<Mutex<MessageDispatcher>>,
@@ -491,11 +513,13 @@ impl PeerNetworkManager {
                         tracing::trace!("Received {:?} from {}", msg.cmd(), addr);
 
                         // Reward peers that deliver substantive responses to our sync
-                        // requests, so productive peers rank above idle or stalling ones.
+                        // requests, so productive peers rank above idle or stalling ones,
+                        // and clear the stall timer since the peer is answering us.
                         if is_rewardable_response(msg.inner()) {
                             reputation_manager
                                 .update_reputation(addr, ChangeReason::ResponseDelivered)
                                 .await;
+                            outstanding_requests.lock().await.remove(&addr);
                         }
 
                         // Handle some messages directly
@@ -931,6 +955,54 @@ impl PeerNetworkManager {
         }
     }
 
+    /// Penalize connected peers that have left a sync request unanswered past the
+    /// stall timeout, so they fall out of routing and become eviction candidates.
+    /// A long gap since the previous sweep is treated as a process suspend and the
+    /// timers are refreshed instead, so a backgrounded client does not blame every
+    /// peer at once on resume.
+    async fn sweep_stalled_peers(&self) {
+        let now = Instant::now();
+        let gap = {
+            let mut last = self.last_maintenance_at.lock().await;
+            let gap = now.saturating_duration_since(*last);
+            *last = now;
+            gap
+        };
+
+        // Snapshot connected peers before taking the outstanding lock so this path
+        // never holds the outstanding lock while touching the pool lock.
+        let connected = self.pool.get_connected_addresses().await;
+
+        let stalled = {
+            let mut outstanding = self.outstanding_requests.lock().await;
+            outstanding.retain(|addr, _| connected.contains(addr));
+
+            if gap > SUSPEND_GAP {
+                for sent in outstanding.values_mut() {
+                    *sent = now;
+                }
+                return;
+            }
+
+            let stalled: Vec<SocketAddr> = outstanding
+                .iter()
+                .filter(|(_, sent)| now.saturating_duration_since(**sent) > REQUEST_STALL_TIMEOUT)
+                .map(|(addr, _)| *addr)
+                .collect();
+            // Drop so the next request to the peer re-arms the timer instead of it
+            // being penalized again on every following sweep.
+            for addr in &stalled {
+                outstanding.remove(addr);
+            }
+            stalled
+        };
+
+        for addr in stalled {
+            tracing::debug!("Peer {} stalled on a sync request, penalizing", addr);
+            self.reputation_manager.update_reputation(addr, ChangeReason::RequestTimeout).await;
+        }
+    }
+
     async fn maintenance_tick(&self) {
         // Remove peers that the reader loop failed to clean up.
         // This should not trigger under normal operation.
@@ -959,6 +1031,9 @@ impl PeerNetworkManager {
                 }
             }
         } else {
+            // Penalize peers stalling on sync requests so they drop out of routing
+            // and become eviction candidates before the top-up below.
+            self.sweep_stalled_peers().await;
             // Evict peers that lack required services before top-up so replacements
             // can be pulled in during the same tick.
             self.evict_mismatched_peers().await;
@@ -1238,11 +1313,21 @@ impl PeerNetworkManager {
             other => other,
         };
 
-        let mut peer_guard = peer.write().await;
-        peer_guard
-            .send_message(message)
-            .await
-            .map_err(|e| NetworkError::ProtocolError(format!("Failed to send to {}: {}", addr, e)))
+        let is_request = is_tracked_request(&message);
+        let send_result = {
+            let mut peer_guard = peer.write().await;
+            peer_guard.send_message(message).await
+        };
+        let result = send_result
+            .map_err(|e| NetworkError::ProtocolError(format!("Failed to send to {}: {}", addr, e)));
+
+        // Arm the stall timer for request-type messages, keeping the oldest
+        // unanswered timestamp so a peer that never replies is caught. The peer
+        // lock is already released, so this only ever holds the outstanding lock.
+        if result.is_ok() && is_request {
+            self.outstanding_requests.lock().await.entry(*addr).or_insert_with(Instant::now);
+        }
+        result
     }
 
     /// Broadcast a message to all connected peers
@@ -1415,6 +1500,8 @@ impl Clone for PeerNetworkManager {
             request_rx: self.request_rx.clone(),
             round_robin_counter: self.round_robin_counter.clone(),
             network_event_sender: self.network_event_sender.clone(),
+            outstanding_requests: self.outstanding_requests.clone(),
+            last_maintenance_at: self.last_maintenance_at.clone(),
         }
     }
 }
@@ -1505,6 +1592,21 @@ impl NetworkManager for PeerNetworkManager {
     }
 }
 
+/// Whether an outbound message is a sync request we expect a response to, and
+/// therefore worth timing for stall detection.
+fn is_tracked_request(msg: &NetworkMessage) -> bool {
+    matches!(
+        msg,
+        NetworkMessage::GetHeaders(_)
+            | NetworkMessage::GetHeaders2(_)
+            | NetworkMessage::GetCFHeaders(_)
+            | NetworkMessage::GetCFilters(_)
+            | NetworkMessage::GetData(_)
+            | NetworkMessage::GetMnListD(_)
+            | NetworkMessage::GetQRInfo(_)
+    )
+}
+
 /// Whether an inbound message is a substantive response to one of our sync
 /// requests, and therefore evidence the peer is doing useful work. Unsolicited
 /// gossip (inv, tx, addr, ping) is excluded so the reward stays a real signal.
@@ -1552,6 +1654,8 @@ impl PeerNetworkManager {
             request_rx: Arc::new(Mutex::new(Some(request_rx))),
             round_robin_counter: Arc::new(AtomicUsize::new(0)),
             network_event_sender: broadcast::Sender::new(DEFAULT_NETWORK_EVENT_CAPACITY),
+            outstanding_requests: Arc::new(Mutex::new(HashMap::new())),
+            last_maintenance_at: Arc::new(Mutex::new(Instant::now())),
         }
     }
 
