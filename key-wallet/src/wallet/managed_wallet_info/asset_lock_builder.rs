@@ -332,8 +332,9 @@ impl ManagedWalletInfo {
     /// `drain` locks the sourced accounts' whole spendable balance: every final
     /// UTXO is consumed and the single credit output's value is rewritten to
     /// `Σ inputs − fee` (the caller's credit-output value is ignored; exactly
-    /// one credit output is required). CoinJoin funding is drain-only and
-    /// cannot be pooled — see [`validate_funding_sources`].
+    /// one credit output is required). CoinJoin funding is drain-only and must
+    /// be the sole source: pooling mixed outputs with transparent ones in one
+    /// transaction links them and undoes the mixing.
     pub async fn build_asset_lock(
         &mut self,
         wallet: &Wallet,
