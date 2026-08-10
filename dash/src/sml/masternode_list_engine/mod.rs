@@ -34,7 +34,7 @@ use bincode::{Decode, Encode};
 use hashes::Hash;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
-#[cfg(feature = "bincode")]
+#[cfg(feature = "qrinfo-capture")]
 use std::{env, fs};
 
 /// Depth offset between cycle boundary and work block (matches Dash Core WORK_DIFF_DEPTH)
@@ -711,20 +711,29 @@ impl MasternodeListEngine {
     }
 
     /// Best-effort capture of the pre-feed block container and the raw QRInfo
-    /// for offline reproduction of validation failures. Active only while
-    /// `DASH_SML_DUMP_QRINFO_DIR` is set, inert otherwise.
-    #[cfg(feature = "bincode")]
+    /// for offline reproduction of validation failures. Compiled in only under
+    /// the `qrinfo-capture` feature, and active only while the environment
+    /// variable `DASH_SML_DUMP_QRINFO_DIR` names a directory to write into.
+    ///
+    /// Each capture writes two bincode encoded files into that directory,
+    /// `block_container_<tip height>.dat` and `qrinfo_<tip height>.dat`, both
+    /// decodable with `bincode::config::standard()`. A QRInfo whose tip height
+    /// the block container cannot resolve is not captured at all, since every
+    /// such capture would land on the same pair of names and overwrite the
+    /// previous one.
+    #[cfg(feature = "qrinfo-capture")]
     fn dump_qr_info_capture(&self, qr_info: &QRInfo) {
         let Ok(dir) = env::var("DASH_SML_DUMP_QRINFO_DIR") else {
+            return;
+        };
+        let Some(tip_height) =
+            self.block_container.get_height(&qr_info.mn_list_diff_tip.block_hash)
+        else {
             return;
         };
         if fs::create_dir_all(&dir).is_err() {
             return;
         }
-        let tip_height = self
-            .block_container
-            .get_height(&qr_info.mn_list_diff_tip.block_hash)
-            .unwrap_or_default();
         if let Ok(bytes) =
             bincode::encode_to_vec(&self.block_container, bincode::config::standard())
         {
@@ -947,7 +956,7 @@ impl MasternodeListEngine {
         verify_tip_non_rotated_quorums: bool,
         verify_rotated_quorums: bool,
     ) -> Result<Option<QRInfoFeedResult>, QuorumValidationError> {
-        #[cfg(feature = "bincode")]
+        #[cfg(feature = "qrinfo-capture")]
         self.dump_qr_info_capture(&qr_info);
 
         #[cfg(feature = "quorum_validation")]
