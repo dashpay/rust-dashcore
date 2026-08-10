@@ -27,6 +27,7 @@ use async_trait::async_trait;
 use dashcore::network::address::{AddrV2, AddrV2Message};
 use dashcore::network::constants::ServiceFlags;
 use dashcore::network::message::NetworkMessage;
+use dashcore::network::message_blockdata::Inventory;
 use dashcore::network::message_headers2::CompressionState;
 use dashcore::Network;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
@@ -101,13 +102,22 @@ const CAPABILITY_REJECTED_TTL: Duration = Duration::from_secs(30 * 60);
 /// treated as stalling and penalized. Any response resets its timer, so a peer
 /// streaming a large block is not punished for the download taking a while.
 ///
-/// Only small, fast responses are timed (see `is_tracked_request`), so this is
-/// generous: a filter, filter-header or header response is at most a few tens of
-/// KB and arrives in well under a second on any usable link. Large payloads
-/// (blocks, masternode diffs, quorum info) are deliberately not timed here, since
-/// their transfer can legitimately exceed this on a slow mobile link; the sync
-/// layer's own download timeouts already retry those elsewhere.
+/// Only kinds whose response time is a fair measure of the peer are judged here
+/// (see `RequestKind::response_time_is_fair`), so this is generous: a filter,
+/// filter-header or header response is at most a few tens of KB and arrives in
+/// well under a second on any usable link. Large payloads are excluded, since
+/// their transfer can legitimately exceed this on a slow mobile link.
 pub(super) const REQUEST_STALL_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// A peer whose request of some kind has gone unanswered this long stops being
+/// picked for further requests of that same kind, until it answers.
+///
+/// This is routing only, never a penalty, so it can be far stricter than
+/// `REQUEST_STALL_TIMEOUT` without risking an honest peer: the cost of skipping
+/// one wrongly is that another peer serves the request instead. It must stay
+/// below the sync layer's own retry timeouts, so that a peer which dropped a
+/// request is already out of the rotation by the time that request is reissued.
+pub(super) const REQUEST_OWED_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// If a maintenance sweep runs at least this long after the previous one, the
 /// process was likely suspended (e.g. an iOS app backgrounded). Every
@@ -561,7 +571,9 @@ impl PeerNetworkManager {
                         if let Some(kind) = timed_response_kind(msg.inner()) {
                             let sent = outstanding_requests.lock().await.remove(&(addr, kind));
                             if let Some(sent) = sent {
-                                latency.lock().await.record(addr, sent.elapsed());
+                                if kind.response_time_is_fair() {
+                                    latency.lock().await.record(addr, sent.elapsed());
+                                }
                             }
                         }
 
@@ -1032,6 +1044,7 @@ impl PeerNetworkManager {
 
             let aged: Vec<((SocketAddr, RequestKind), Duration)> = outstanding
                 .iter()
+                .filter(|((_, kind), _)| kind.response_time_is_fair())
                 .filter_map(|(key, sent)| {
                     let waited = now.saturating_duration_since(*sent);
                     (waited > REQUEST_STALL_TIMEOUT).then_some((*key, waited))
@@ -1415,11 +1428,61 @@ impl PeerNetworkManager {
             };
         }
 
+        let selected_peers = match tracked_request_kind(&message) {
+            Some(kind) => self.without_peers_owing(kind, selected_peers).await,
+            None => selected_peers,
+        };
+
         let (addr, peer) = self.next_peer(&selected_peers).await;
 
         tracing::trace!("Distributing {} request to peer {}", message.cmd(), addr);
 
         self.send_message_to_peer(&addr, &peer, message).await
+    }
+
+    /// Drop peers that already owe us a response of `kind` from the candidates.
+    ///
+    /// A peer that silently discards a request is invisible to latency-based
+    /// routing: latency only ever records a response, so a peer that answers
+    /// nothing is never measured and keeps its turn in the rotation. It then wins
+    /// the retry of the very request it just dropped, which is how one such peer
+    /// turned a 30s block timeout into 60s and 120s stalls, with filter sync
+    /// halted behind it the whole time.
+    ///
+    /// The bar is what the peer owes rather than what it did wrong, so this needs
+    /// no judgement about how slow is too slow and never accuses an honest peer on
+    /// a slow link. It is also self-clearing: the peer becomes a candidate again
+    /// the moment it answers, or the moment the request is satisfied elsewhere.
+    ///
+    /// Skipping is only ever a preference. If every candidate owes us something,
+    /// the full set is kept, because refusing to send is worse than sending to a
+    /// busy peer.
+    async fn without_peers_owing(
+        &self,
+        kind: RequestKind,
+        peers: Vec<(SocketAddr, Arc<RwLock<Peer>>)>,
+    ) -> Vec<(SocketAddr, Arc<RwLock<Peer>>)> {
+        let now = Instant::now();
+        let owing: HashSet<SocketAddr> = {
+            let outstanding = self.outstanding_requests.lock().await;
+            outstanding
+                .iter()
+                .filter(|((_, k), sent)| {
+                    *k == kind && now.saturating_duration_since(**sent) > REQUEST_OWED_TIMEOUT
+                })
+                .map(|((addr, _), _)| *addr)
+                .collect()
+        };
+
+        if owing.is_empty() {
+            return peers;
+        }
+        let free: Vec<(SocketAddr, Arc<RwLock<Peer>>)> =
+            peers.iter().filter(|(addr, _)| !owing.contains(addr)).cloned().collect();
+        if free.is_empty() {
+            return peers;
+        }
+        free
     }
 
     /// Pick a peer from `peers`, rotating over those answering fastest.
@@ -1773,16 +1836,41 @@ enum RequestKind {
     Headers,
     FilterHeaders,
     Filters,
+    Blocks,
+}
+
+impl RequestKind {
+    /// Whether how long this kind took is a fair measure of the peer, and so may
+    /// be scored against it: recorded as its response time, and penalized when it
+    /// exceeds `REQUEST_STALL_TIMEOUT`.
+    ///
+    /// Only kinds with a small, fixed-size response qualify. A header, filter or
+    /// filter-header reply is at most tens of KB and arrives in well under a
+    /// second on any usable link, so a slow one really is a slow peer. A block
+    /// body is megabytes and the peer sends nothing until the transfer finishes,
+    /// so its elapsed time measures the payload rather than the peer: scoring it
+    /// would both punish an honest peer on a slow link and, because response
+    /// times feed one shared routing metric, push that peer out of serving
+    /// filters and headers it was answering perfectly well.
+    ///
+    /// Blocks are still tracked, because an unanswered block request is exactly
+    /// what should stop us handing that peer the next one. The judgement just
+    /// stays at routing: the peer is skipped while it owes us, never scored.
+    fn response_time_is_fair(self) -> bool {
+        !matches!(self, RequestKind::Blocks)
+    }
 }
 
 /// The kind of timer an outbound message arms, or `None` if it is not timed.
 ///
-/// Only requests whose response is small enough that a healthy peer always answers
-/// promptly are timed, which is what makes a fixed stall timeout fair. Block,
-/// masternode-diff and quorum-info requests are excluded on purpose: those
-/// payloads can be megabytes and a peer sends nothing until the transfer
-/// completes, so timing them would punish honest peers on slow links. The sync
-/// layer's own download timeouts already retry those elsewhere.
+/// A `getdata` only arms the block timer when it actually asks for blocks. The
+/// mempool sends `getdata` for transactions, which a `block` response would never
+/// clear, so timing those would leave a timer armed forever against a peer that
+/// answered everything it was asked.
+///
+/// Masternode-diff and quorum-info requests stay untimed: they are issued as a
+/// single burst against one peer rather than as a rotation, so knowing the peer
+/// owes us one changes nothing about where the next one goes.
 fn tracked_request_kind(msg: &NetworkMessage) -> Option<RequestKind> {
     match msg {
         NetworkMessage::GetHeaders(_) | NetworkMessage::GetHeaders2(_) => {
@@ -1790,6 +1878,10 @@ fn tracked_request_kind(msg: &NetworkMessage) -> Option<RequestKind> {
         }
         NetworkMessage::GetCFHeaders(_) => Some(RequestKind::FilterHeaders),
         NetworkMessage::GetCFilters(_) => Some(RequestKind::Filters),
+        NetworkMessage::GetData(inv) => inv
+            .iter()
+            .any(|item| matches!(item, Inventory::Block(_)))
+            .then_some(RequestKind::Blocks),
         _ => None,
     }
 }
@@ -1802,6 +1894,7 @@ fn timed_response_kind(msg: &NetworkMessage) -> Option<RequestKind> {
         NetworkMessage::Headers(_) | NetworkMessage::Headers2(_) => Some(RequestKind::Headers),
         NetworkMessage::CFHeaders(_) => Some(RequestKind::FilterHeaders),
         NetworkMessage::CFilter(_) => Some(RequestKind::Filters),
+        NetworkMessage::Block(_) => Some(RequestKind::Blocks),
         _ => None,
     }
 }
@@ -1888,6 +1981,17 @@ impl PeerNetworkManager {
 
     pub(crate) async fn test_next_peer(&self) -> SocketAddr {
         let peers = self.pool.get_all_peers().await;
+        self.next_peer(&peers).await.0
+    }
+
+    /// Pick the peer `send_distributed` would route `msg` to, including the skip
+    /// of peers that still owe a response of that kind.
+    pub(crate) async fn test_route(&self, msg: &NetworkMessage) -> SocketAddr {
+        let peers = self.pool.get_all_peers().await;
+        let peers = match tracked_request_kind(msg) {
+            Some(kind) => self.without_peers_owing(kind, peers).await,
+            None => peers,
+        };
         self.next_peer(&peers).await.0
     }
 

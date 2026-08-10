@@ -120,13 +120,17 @@ mod pool_tests {
 
 #[cfg(test)]
 mod selection_tests {
-    use crate::network::manager::{PeerNetworkManager, REQUEST_STALL_TIMEOUT};
+    use crate::network::manager::{
+        PeerNetworkManager, REQUEST_OWED_TIMEOUT, REQUEST_STALL_TIMEOUT,
+    };
     use crate::network::reputation::ChangeReason;
     use crate::test_utils::test_socket_address;
+    use dashcore::blockdata::block::{Block, Header, Version};
     use dashcore::network::constants::ServiceFlags;
     use dashcore::network::message::NetworkMessage;
+    use dashcore::network::message_blockdata::Inventory;
     use dashcore::network::message_filter::{CFilter, GetCFHeaders, GetCFilters};
-    use dashcore::BlockHash;
+    use dashcore::{BlockHash, CompactTarget, TxMerkleNode, Txid};
     use dashcore_hashes::Hash;
     use std::collections::HashMap;
     use std::net::SocketAddr;
@@ -153,6 +157,28 @@ mod selection_tests {
             filter_type: 0,
             block_hash: BlockHash::all_zeros(),
             filter: vec![],
+        })
+    }
+
+    fn get_blocks() -> NetworkMessage {
+        NetworkMessage::GetData(vec![Inventory::Block(BlockHash::all_zeros())])
+    }
+
+    fn get_transactions() -> NetworkMessage {
+        NetworkMessage::GetData(vec![Inventory::Transaction(Txid::all_zeros())])
+    }
+
+    fn block_response() -> NetworkMessage {
+        NetworkMessage::Block(Block {
+            header: Header {
+                version: Version::ONE,
+                prev_blockhash: BlockHash::all_zeros(),
+                merkle_root: TxMerkleNode::all_zeros(),
+                time: 0,
+                bits: CompactTarget::from_consensus(0),
+                nonce: 0,
+            },
+            txdata: vec![],
         })
     }
 
@@ -287,6 +313,111 @@ mod selection_tests {
                 "every peer should keep an equal share, got {picks:?}"
             );
         }
+    }
+
+    /// A peer sitting on a block request must not be handed the retry of that
+    /// same request.
+    ///
+    /// Seen on mainnet: one of three peers silently dropped every `getdata` it
+    /// received. Latency only ever records a response, so a peer answering
+    /// nothing was never measured and kept its turn in the rotation, which it
+    /// then used to win the retry of the request it had just dropped. Filter sync
+    /// commits behind the missing block, so the client spent 66% of a 16 minute
+    /// run frozen, in stalls of exactly one, two and four block timeouts.
+    #[tokio::test(start_paused = true)]
+    async fn test_peer_owing_a_block_is_skipped_until_it_answers() {
+        let cf = ServiceFlags::COMPACT_FILTERS;
+        let manager = PeerNetworkManager::new_for_test(cf).await;
+        let silent = test_socket_address(1);
+        let good = test_socket_address(2);
+        for addr in [silent, good] {
+            manager.insert_test_peer(addr, cf).await;
+        }
+
+        manager.test_arm_request(silent, &get_blocks()).await;
+        tokio::time::advance(REQUEST_OWED_TIMEOUT + Duration::from_secs(1)).await;
+
+        for _ in 0..10 {
+            assert_eq!(
+                manager.test_route(&get_blocks()).await,
+                good,
+                "a peer already sitting on a block request must not be sent another"
+            );
+        }
+
+        // Answering clears the debt, and the peer is a candidate again.
+        manager.test_deliver_response(silent, &block_response()).await;
+        let mut picks: HashMap<SocketAddr, u32> = HashMap::new();
+        for _ in 0..10 {
+            *picks.entry(manager.test_route(&get_blocks()).await).or_default() += 1;
+        }
+        assert!(picks.contains_key(&silent), "a peer that answered must be routed to again");
+    }
+
+    /// The skip is a preference, not a rule: with every peer owing a response,
+    /// refusing to send is worse than sending to a busy peer.
+    #[tokio::test(start_paused = true)]
+    async fn test_routing_falls_back_when_every_peer_owes_a_block() {
+        let cf = ServiceFlags::COMPACT_FILTERS;
+        let manager = PeerNetworkManager::new_for_test(cf).await;
+        let peers = [test_socket_address(1), test_socket_address(2)];
+        for addr in peers {
+            manager.insert_test_peer(addr, cf).await;
+            manager.test_arm_request(addr, &get_blocks()).await;
+        }
+        tokio::time::advance(REQUEST_OWED_TIMEOUT + Duration::from_secs(1)).await;
+
+        assert!(peers.contains(&manager.test_route(&get_blocks()).await));
+    }
+
+    /// Blocks are routed away from, never penalized for. A block body can be
+    /// megabytes and a peer sends nothing until the transfer completes, so a slow
+    /// link is indistinguishable from a peer ignoring us and must not cost
+    /// reputation or trigger eviction.
+    #[tokio::test(start_paused = true)]
+    async fn test_unanswered_block_request_does_not_penalize_the_peer() {
+        let cf = ServiceFlags::COMPACT_FILTERS;
+        let manager = PeerNetworkManager::new_for_test(cf).await;
+        let peer = test_socket_address(1);
+        manager.insert_test_peer(peer, cf).await;
+
+        manager.test_arm_request(peer, &get_blocks()).await;
+        tokio::time::advance(REQUEST_STALL_TIMEOUT + Duration::from_secs(1)).await;
+        manager.test_sweep_stalled_peers().await;
+
+        assert_eq!(
+            manager.test_score(peer).await,
+            0,
+            "a slow block transfer must not be scored as a stall"
+        );
+    }
+
+    /// The mempool asks for transactions with the same `getdata` message blocks
+    /// use, and a `block` response would never arrive to clear that timer. Timing
+    /// it would leave a peer permanently owing a response it was never asked for.
+    #[tokio::test(start_paused = true)]
+    async fn test_transaction_getdata_does_not_arm_the_block_timer() {
+        let cf = ServiceFlags::COMPACT_FILTERS;
+        let manager = PeerNetworkManager::new_for_test(cf).await;
+        // Only one peer is sent the tx request, so a wrongly armed block timer
+        // shows up as that peer being skipped rather than being hidden by the
+        // all-peers-owing fallback.
+        let mempool_peer = test_socket_address(1);
+        let idle_peer = test_socket_address(2);
+        for addr in [mempool_peer, idle_peer] {
+            manager.insert_test_peer(addr, cf).await;
+        }
+        manager.test_arm_request(mempool_peer, &get_transactions()).await;
+        tokio::time::advance(REQUEST_OWED_TIMEOUT + Duration::from_secs(1)).await;
+
+        let mut picks: HashMap<SocketAddr, u32> = HashMap::new();
+        for _ in 0..20 {
+            *picks.entry(manager.test_route(&get_blocks()).await).or_default() += 1;
+        }
+        assert!(
+            picks.contains_key(&mempool_peer),
+            "a pending tx request must not make a peer look like it owes a block, got {picks:?}"
+        );
     }
 
     #[tokio::test]
