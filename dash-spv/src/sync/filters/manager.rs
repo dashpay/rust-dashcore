@@ -860,7 +860,12 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
         let mut wallet_states: Vec<WalletScanState> = Vec::new();
         for wallet_id in &behind {
             let synced = wallet.wallet_synced_height(wallet_id);
-            let scripts = wallet.monitored_script_pubkeys_for(wallet_id);
+            // The scan query, not the full monitored set: spent single-use
+            // (CoinJoin) addresses are pruned so the per-filter match cost
+            // stays bounded by active UTXOs + gap lookahead instead of
+            // growing with every historical mixing round
+            // (dashpay/rust-dashcore#948).
+            let scripts = wallet.scan_script_pubkeys_for(wallet_id);
             // Bare owner/voting key hashes a compact filter carries beyond the
             // wallet's scriptPubKeys.
             let elements = wallet.monitored_filter_elements_for(wallet_id);
@@ -1929,6 +1934,64 @@ mod tests {
         let attr_70 = blocks.get(&key_70).expect("entry for height 70");
         assert!(attr_70.contains(&wallet_low));
         assert!(!attr_70.contains(&wallet_high));
+    }
+
+    /// `scan_batch` matches filters against the wallet's scan query
+    /// (`scan_script_pubkeys_for`), not the full monitored set: a monitored
+    /// script pruned from the scan query — a spent single-use CoinJoin
+    /// address (dashpay/rust-dashcore#948) — must not pull its block in.
+    #[tokio::test]
+    async fn test_scan_batch_uses_pruned_scan_query() {
+        let wallet_id: WalletId = [0x03; 32];
+        let dead_address = dashcore::Address::dummy(Network::Regtest, 1);
+        let live_address = dashcore::Address::dummy(Network::Regtest, 2);
+
+        let multi = Arc::new(RwLock::new(MultiMockWallet::new()));
+        {
+            let mut w = multi.write().await;
+            w.insert_wallet(
+                wallet_id,
+                MockWalletState {
+                    addresses: vec![dead_address.clone(), live_address.clone()],
+                    synced_height: 0,
+                    last_processed_height: 0,
+                    account_generation: 0,
+                },
+            );
+            // The scan query excludes the dead address.
+            w.set_scan_addresses(wallet_id, vec![live_address.clone()]);
+        }
+        let mut manager = create_multi_test_manager(multi).await;
+        manager.set_state(SyncState::Syncing);
+
+        let mut filters: HashMap<FilterMatchKey, BlockFilter> = HashMap::new();
+        let (key_dead, f_dead) = filter_for_address(30, &dead_address);
+        let (key_live, f_live) = filter_for_address(60, &live_address);
+        filters.insert(key_dead.clone(), f_dead);
+        filters.insert(key_live.clone(), f_live);
+
+        let mut batch = FiltersBatch::new(0, 99, filters);
+        batch.mark_verified();
+        manager.active_batches.insert(0, batch);
+        manager.progress.update_stored_height(99);
+
+        let events = manager.scan_batch(0).await.unwrap();
+
+        let blocks = events
+            .iter()
+            .find_map(|e| match e {
+                SyncEvent::BlocksNeeded {
+                    blocks,
+                } => Some(blocks),
+                _ => None,
+            })
+            .expect("BlocksNeeded event");
+
+        assert!(blocks.contains_key(&key_live), "block paying the scan-query address is needed");
+        assert!(
+            !blocks.contains_key(&key_dead),
+            "block paying only the pruned address must not be downloaded"
+        );
     }
 
     /// `rescan_batch` with multiple wallets in `scripts_by_wallet`:
