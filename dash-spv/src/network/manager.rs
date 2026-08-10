@@ -370,9 +370,14 @@ impl PeerNetworkManager {
                             // Record successful connection
                             reputation_manager.record_successful_connection(addr).await;
 
-                            // Add to pool
+                            // Both ways this can fail, a full pool and an address
+                            // already connected, are ordinary outcomes of dialling
+                            // several candidates for the same slot: one wins and the
+                            // rest arrive to find it taken. Topping up after an
+                            // eviction does exactly that, so logging it as an error
+                            // reports routine contention as a fault.
                             if let Err(e) = pool.add_peer(addr, peer).await {
-                                tracing::error!("Failed to add peer to pool: {}", e);
+                                tracing::debug!("Not adding peer {} to pool: {}", addr, e);
                                 return;
                             }
 
