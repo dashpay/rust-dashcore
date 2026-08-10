@@ -66,6 +66,14 @@ pub struct QRInfoFeedResult {
     /// the cycle hash had no resolvable height. The cycle stored by
     /// `validate_and_store_previous_cycle_quorums` is not reflected here.
     pub stored_cycle_height: Option<CoreBlockHeight>,
+    /// Previous-cycle rotated quorums that failed validation outright and were
+    /// left out of the cycle stored by
+    /// `validate_and_store_previous_cycle_quorums`. That path is best-effort
+    /// enrichment and never fails the feed, so this is the only signal a
+    /// caller gets that a peer served rotated commitments which do not verify.
+    /// Entries left out for missing context are not counted, and
+    /// `all_fully_verified` is unaffected: it reports on the current cycle.
+    pub previous_cycle_invalid_count: usize,
 }
 
 impl QRInfoFeedResult {
@@ -561,22 +569,27 @@ impl MasternodeListEngine {
     /// only IS locks selecting exactly that quorum index fail while the rest
     /// of the cycle verifies. The authoritative rejection of bad
     /// current-cycle data happens on the `lastCommitmentPerIndex` path.
+    ///
+    /// Returns how many entries were left out for failing validation outright,
+    /// as opposed to lacking the context to be validated at all, so the caller
+    /// can judge the peer that served them.
     #[cfg(feature = "quorum_validation")]
     fn validate_and_store_previous_cycle_quorums(
         &mut self,
         work_block_hash: BlockHash,
         sigs_by_work_height: &BTreeMap<CoreBlockHeight, BLSSignature>,
-    ) {
+    ) -> usize {
         let isd_type = self.network.isd_llmq_type();
         let Some((cycle_hash, mut entries)) =
             self.try_load_previous_cycle_entries(work_block_hash, isd_type, sigs_by_work_height)
         else {
-            return;
+            return 0;
         };
 
         let validation_statuses = self.validate_rotation_cycle_quorums_validation_statuses(
             entries.iter().collect::<Vec<_>>().as_slice(),
         );
+        let mut invalid_count = 0;
         for entry in entries.iter_mut() {
             entry.verified = validation_statuses
                 .get(&entry.quorum_entry.quorum_hash)
@@ -585,6 +598,7 @@ impl MasternodeListEngine {
             match entry.verified {
                 LLMQEntryVerificationStatus::Verified => {}
                 LLMQEntryVerificationStatus::Invalid(_) => {
+                    invalid_count += 1;
                     tracing::warn!(
                         "Previous-cycle quorum {} at cycle {} failed validation ({}); leaving it out",
                         entry.quorum_entry.quorum_hash,
@@ -604,7 +618,7 @@ impl MasternodeListEngine {
         }
         entries.retain(|entry| matches!(entry.verified, LLMQEntryVerificationStatus::Verified));
         if entries.is_empty() {
-            return;
+            return invalid_count;
         }
 
         // Mirror statuses into `quorum_statuses` and the MN list.
@@ -648,7 +662,7 @@ impl MasternodeListEngine {
                     cycle_hash,
                     e
                 );
-                return;
+                return invalid_count;
             }
         };
         self.rotated_quorums_per_cycle.insert(cycle_hash, cycle_map);
@@ -656,6 +670,7 @@ impl MasternodeListEngine {
             "Validated and stored previous-cycle rotated quorums under cycle hash {}",
             cycle_hash
         );
+        invalid_count
     }
 
     /// Block hashes referenced by a QRInfo message that the engine needs heights for.
@@ -1040,6 +1055,8 @@ impl MasternodeListEngine {
         let mut newly_qualified_count: usize = 0;
         #[cfg(feature = "quorum_validation")]
         let mut fully_verified_count: usize = 0;
+        #[cfg(feature = "quorum_validation")]
+        let mut previous_cycle_invalid_count: usize = 0;
         if let Some((quorum_snapshot_at_h_minus_4c, mn_list_diff_at_h_minus_4c)) =
             quorum_snapshot_and_mn_list_diff_at_h_minus_4c
         {
@@ -1078,7 +1095,7 @@ impl MasternodeListEngine {
         // still missing settle as `Skipped` individually.
         #[cfg(feature = "quorum_validation")]
         if can_verify_previous {
-            self.validate_and_store_previous_cycle_quorums(
+            previous_cycle_invalid_count = self.validate_and_store_previous_cycle_quorums(
                 work_block_hash_h,
                 &rotation_sigs_by_work_height,
             );
@@ -1319,6 +1336,7 @@ impl MasternodeListEngine {
                 newly_qualified_count,
                 fully_verified_count,
                 stored_cycle_height,
+                previous_cycle_invalid_count,
             }))
         }
         #[cfg(not(feature = "quorum_validation"))]
@@ -2586,6 +2604,10 @@ mod tests {
                 .values()
                 .all(|q| matches!(q.verified, LLMQEntryVerificationStatus::Verified)),
             "every stored previous-cycle quorum must be verified"
+        );
+        assert_eq!(
+            feed_result.previous_cycle_invalid_count, 1,
+            "the dropped previous-cycle quorum must be reported back to the caller"
         );
         assert!(feed_result.all_fully_verified(), "the current cycle must still verify fully");
         assert!(
