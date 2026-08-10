@@ -21,8 +21,8 @@ mod tests {
         manager.update_reputation(peer, ChangeReason::HandshakeFailed).await;
         assert_eq!(score(&manager, &peer).await, 10);
 
-        manager.update_reputation(peer, ChangeReason::LongUptime).await;
-        assert_eq!(score(&manager, &peer).await, 5);
+        manager.update_reputation(peer, ChangeReason::ResponseDelivered).await;
+        assert_eq!(score(&manager, &peer).await, 8);
     }
 
     #[tokio::test]
@@ -49,8 +49,8 @@ mod tests {
         let peer1: SocketAddr = "10.0.0.1:8333".parse().unwrap();
         let peer2: SocketAddr = "10.0.0.2:8333".parse().unwrap();
 
-        manager.update_reputation(peer1, ChangeReason::LongUptime).await;
-        manager.update_reputation(peer1, ChangeReason::LongUptime).await;
+        manager.update_reputation(peer1, ChangeReason::ResponseDelivered).await;
+        manager.update_reputation(peer1, ChangeReason::ResponseDelivered).await;
         manager.update_reputation(peer2, ChangeReason::InvalidTransactionInBlock).await;
 
         let temp_dir = tempfile::TempDir::new().unwrap();
@@ -62,7 +62,7 @@ mod tests {
         let new_manager = PeerReputationManager::new();
         new_manager.load_from_storage(&peer_storage).await.unwrap();
 
-        assert_eq!(score(&new_manager, &peer1).await, -10);
+        assert_eq!(score(&new_manager, &peer1).await, -4);
         assert_eq!(score(&new_manager, &peer2).await, 20);
     }
 
@@ -74,7 +74,9 @@ mod tests {
         let neutral_peer = AddrV2Message::dummy(0, "2.2.2.2".parse().unwrap(), 8333);
         let bad_peer = AddrV2Message::dummy(0, "3.3.3.3".parse().unwrap(), 8333);
 
-        manager.update_reputation(good_peer.socket_addr().unwrap(), ChangeReason::LongUptime).await;
+        manager
+            .update_reputation(good_peer.socket_addr().unwrap(), ChangeReason::ResponseDelivered)
+            .await;
         manager
             .update_reputation(
                 bad_peer.socket_addr().unwrap(),
