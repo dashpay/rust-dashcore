@@ -84,6 +84,11 @@ pub struct PeerNetworkManager {
 
 const CAPABILITY_REJECTED_TTL: Duration = Duration::from_secs(30 * 60);
 
+/// Peers within this many reputation points of the best-scoring eligible peer
+/// share request traffic round-robin. A peer scoring worse than this (e.g. one
+/// that just stalled a request) drops out of rotation until decay recovers it.
+const GOOD_BAND_DELTA: i32 = 5;
+
 fn required_services_from_config(config: &ClientConfig, exclusive_mode: bool) -> ServiceFlags {
     if exclusive_mode {
         return ServiceFlags::NONE;
@@ -1127,10 +1132,10 @@ impl PeerNetworkManager {
                     tracing::warn!("No peers support {}, cannot send {}", flags, message.cmd());
                     return Err(NetworkError::ProtocolError(format!("No peers support {}", flags)));
                 }
-                None => self.next_peer(&peers),
+                None => self.next_peer(&peers).await,
             }
         } else {
-            self.next_peer(&peers)
+            self.next_peer(&peers).await
         };
 
         self.send_message_to_peer(&addr, &peer, message).await
@@ -1183,20 +1188,33 @@ impl PeerNetworkManager {
             };
         }
 
-        let (addr, peer) = self.next_peer(&selected_peers);
+        let (addr, peer) = self.next_peer(&selected_peers).await;
 
         tracing::trace!("Distributing {} request to peer {}", message.cmd(), addr);
 
         self.send_message_to_peer(&addr, &peer, message).await
     }
 
-    /// Pick the next peer from `peers` using round-robin rotation.
-    fn next_peer(
+    /// Pick a peer from `peers`, biased toward the best reputation scores.
+    ///
+    /// Every peer within `GOOD_BAND_DELTA` of the best eligible score forms a
+    /// "good band" that is rotated through round-robin, so load still spreads
+    /// across the healthy peers while a clearly-worse peer drops out of rotation.
+    /// The pool guard is already released by the caller (`get_all_peers` returns
+    /// owned `Arc`s), so acquiring the reputation lock here keeps a single order.
+    async fn next_peer(
         &self,
         peers: &[(SocketAddr, Arc<RwLock<Peer>>)],
     ) -> (SocketAddr, Arc<RwLock<Peer>>) {
-        let idx = self.round_robin_counter.fetch_add(1, Ordering::Relaxed) % peers.len();
-        (peers[idx].0, peers[idx].1.clone())
+        let scores = self.reputation_manager.scores_for(peers.iter().map(|(a, _)| *a)).await;
+        let best = scores.values().copied().min().unwrap_or(0);
+        let band: Vec<&(SocketAddr, Arc<RwLock<Peer>>)> = peers
+            .iter()
+            .filter(|(addr, _)| scores.get(addr).copied().unwrap_or(0) <= best + GOOD_BAND_DELTA)
+            .collect();
+        let idx = self.round_robin_counter.fetch_add(1, Ordering::Relaxed) % band.len();
+        let (addr, peer) = band[idx];
+        (*addr, peer.clone())
     }
 
     /// Send a message to the given peer.

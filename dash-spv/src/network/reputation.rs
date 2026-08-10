@@ -335,6 +335,26 @@ impl PeerReputationManager {
         reputations.clone()
     }
 
+    /// Return the decay-applied score for each requested peer. Peers with no
+    /// record default to 0. Acquires only the reputation lock, so callers must
+    /// not hold a pool guard across this to keep a single lock order.
+    pub async fn scores_for(
+        &self,
+        addrs: impl IntoIterator<Item = SocketAddr>,
+    ) -> HashMap<SocketAddr, i32> {
+        let mut reputations = self.reputations.write().await;
+        addrs
+            .into_iter()
+            .map(|addr| {
+                let score = reputations.get_mut(&addr).map_or(0, |rep| {
+                    rep.apply_decay();
+                    rep.score
+                });
+                (addr, score)
+            })
+            .collect()
+    }
+
     /// Clear banned status for a peer (admin function)
     pub async fn unban_peer(&self, peer: &SocketAddr) {
         let mut reputations = self.reputations.write().await;
