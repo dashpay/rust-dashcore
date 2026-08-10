@@ -684,14 +684,21 @@ impl MasternodeListEngine {
         hashes
     }
 
-    /// `true` iff `rotated_quorums_per_cycle` already holds a non-empty cycle
-    /// for `cycle_hash` whose every entry is `Verified`. Used by the storage
-    /// gate to refuse downgrading a cycle and by the previous-cycle revalidation
-    /// path to skip work that would not improve trust.
+    /// `true` iff `rotated_quorums_per_cycle` already holds a complete cycle
+    /// for `cycle_hash`: one `Verified` entry for every active rotation slot.
+    /// Used by the storage gate to refuse downgrading a cycle and by the
+    /// previous-cycle revalidation path to skip work that would not improve
+    /// trust.
+    ///
+    /// A cycle stored with only part of its set stays open on both counts. The
+    /// entries it lacks are the ones whose context the QRInfo that stored it
+    /// did not carry, and a later QRInfo carrying that context must be able to
+    /// complete the cycle rather than be refused as a downgrade.
     #[cfg(feature = "quorum_validation")]
     fn is_cycle_fully_verified(&self, cycle_hash: &BlockHash) -> bool {
+        let expected = self.network.isd_llmq_type().active_quorum_count() as usize;
         self.rotated_quorums_per_cycle.get(cycle_hash).is_some_and(|existing| {
-            !existing.is_empty()
+            existing.len() == expected
                 && existing
                     .values()
                     .all(|q| matches!(q.verified, LLMQEntryVerificationStatus::Verified))
@@ -2642,6 +2649,32 @@ mod tests {
         assert!(
             !engine.rotated_quorums_per_cycle.contains_key(&fresh_key),
             "gate must not write a degraded cycle"
+        );
+
+        // A cycle stored with only part of its set is not a cycle the gate may
+        // protect: the entries it lacks are exactly what a later QRInfo is
+        // expected to supply.
+        let partial_key = BlockHash::from_byte_array([0xCD; 32]);
+        let complete_cycle: Vec<QualifiedQuorumEntry> = original_cycle.values().cloned().collect();
+        let partial_cycle: BTreeMap<u16, QualifiedQuorumEntry> =
+            original_cycle.iter().skip(1).map(|(index, q)| (*index, q.clone())).collect();
+        assert_eq!(
+            partial_cycle.len() + 1,
+            complete_cycle.len(),
+            "the partial cycle must be missing exactly one entry"
+        );
+        engine.rotated_quorums_per_cycle.insert(partial_key, partial_cycle);
+        engine
+            .store_cycle_if_fully_verified(
+                partial_key,
+                complete_cycle.clone(),
+                rotation_quorum_type,
+            )
+            .expect("gate must not error when completing a partial cycle");
+        assert_eq!(
+            engine.rotated_quorums_per_cycle.get(&partial_key).map(|cycle| cycle.len()),
+            Some(complete_cycle.len()),
+            "a complete cycle must replace a partially stored one"
         );
     }
 }
