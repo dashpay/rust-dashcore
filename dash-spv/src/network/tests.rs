@@ -132,7 +132,7 @@ mod selection_tests {
             manager.insert_test_peer(test_socket_address(i), cf).await;
         }
         let bad_addr = test_socket_address(bad);
-        // Two stalls put the peer past the eviction threshold.
+        // Two consecutive stalls reach the eviction threshold.
         manager.test_update_reputation(bad_addr, ChangeReason::RequestTimeout).await;
         manager.test_update_reputation(bad_addr, ChangeReason::RequestTimeout).await;
         (manager, bad_addr)
