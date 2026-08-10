@@ -10,9 +10,10 @@
 use dash_network::ffi::FFINetwork;
 use key_wallet_ffi::error::{FFIError, FFIErrorCode};
 use key_wallet_ffi::transaction::{
-    wallet_build_and_sign_asset_lock_transaction, FFIAccountTypePreference,
+    transaction_bytes_free, wallet_build_and_sign_asset_lock_transaction, FFIAccountTypePreference,
     FFIAccountTypePreferenceKind, FFIAssetLockFundingType,
 };
+use key_wallet_ffi::wallet::wallet_free_const;
 use key_wallet_ffi::wallet_manager::{
     wallet_manager_add_wallet_from_mnemonic_with_options, wallet_manager_create,
     wallet_manager_free, wallet_manager_free_wallet_ids, wallet_manager_get_wallet,
@@ -106,6 +107,12 @@ unsafe fn call_with_sources(sources: &[FFIAccountTypePreference]) -> FFIError {
     );
     assert!(!ok, "an unfunded wallet cannot produce an asset lock");
 
+    // Nothing here is expected to produce a transaction, but a future case that
+    // does must not leak it past the sanitizer.
+    transaction_bytes_free(tx_bytes);
+    // `wallet_manager_get_wallet` hands back an independently boxed clone, so
+    // it has to be freed separately from the manager.
+    wallet_free_const(wallet);
     wallet_manager_free_wallet_ids(wallet_ids, wallet_count);
     wallet_manager_free(manager);
 
