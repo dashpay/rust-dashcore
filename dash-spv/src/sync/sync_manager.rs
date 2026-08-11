@@ -182,20 +182,6 @@ pub trait SyncManager: Send + Sync + std::fmt::Debug {
     /// survive so reconnect resumes instead of restarting.
     fn on_disconnect(&mut self);
 
-    /// Requeue in-flight work after a single peer drops while others remain.
-    ///
-    /// Distinct from [`SyncManager::on_disconnect`], which runs only once every
-    /// peer is gone and is therefore free to discard peer-bound state wholesale.
-    /// Here the surviving peers can still serve the work, so an implementation
-    /// must requeue and nothing else.
-    ///
-    /// In-flight items carry no peer attribution, so an implementation requeues
-    /// everything outstanding, including requests a healthy peer is still going
-    /// to answer. Retry counts survive a requeue and every receive path treats a
-    /// response it no longer tracks as unrequested, so the cost is redundant
-    /// traffic rather than lost work or a corrupted retry budget.
-    fn on_peer_disconnect(&mut self) {}
-
     /// Handle an incoming network message.
     ///
     /// Returns events to emit to other managers.
