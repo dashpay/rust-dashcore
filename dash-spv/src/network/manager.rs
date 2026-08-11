@@ -11,7 +11,7 @@ use std::{
 use dashcore::network::constants::ServiceFlags;
 use dashcore::network::message::NetworkMessage;
 use dashcore::network::message_blockdata::Inventory;
-use futures::future::join_all;
+use futures::stream::{FuturesUnordered, StreamExt};
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 use tokio::sync::{broadcast, Mutex, Notify};
 use tokio::task::JoinHandle;
@@ -20,27 +20,24 @@ use tokio_util::sync::CancellationToken;
 /// Bounded concurrent handshakes per probe round.
 const CONNECT_CHUNK: usize = 16;
 
-/// Candidates probed per improve round (at cap). Small to bound connect/close churn
-/// while still discovering a better peer over time.
-const IMPROVE_PROBE: usize = 4;
-
-/// Handshake ping below which a peer is "decent": preferred when filling, and the
-/// bar a candidate must clear to be allowed to displace a slow connected peer.
-const DECENT_LAG_MS: u32 = 100;
-
 /// Handshake ping at/above which a peer is "very bad": taken only as a last resort,
 /// when nothing better is connectable and the set would otherwise be empty.
 const BAD_LAG_MS: u32 = 1000;
 
-/// A candidate displaces the worst connected peer only if its ping is at most this
-/// fraction of the worst peer's — i.e. clearly, not marginally, better.
-const SWAP_IMPROVEMENT: u32 = 2;
+/// A connected peer is underserving when its mean service time exceeds the best
+/// connected peer's by this multiple
+const SLOW_SERVICE_MULTIPLIER: f64 = 4.0;
+
+/// Absolute slack alongside [`SLOW_SERVICE_MULTIPLIER`], so that when every peer
+/// is fast in absolute terms the multiple does not split hairs over jitter.
+const SLOW_SERVICE_MARGIN_MS: f64 = 500.0;
+
+/// Completed requests a peer needs before its mean is trusted for eviction. One
+/// slow response early in a connection says nothing about how it serves.
+const MIN_SERVICE_SAMPLES: u64 = 4;
 
 /// How often the supervisor re-checks a below-cap set and probes to keep filling.
 const FILL_TICK: Duration = Duration::from_secs(2);
-
-/// How often the supervisor probes for a better peer once the set is at capacity.
-const IMPROVE_TICK: Duration = Duration::from_secs(5);
 
 /// Cap on remembered (ranked) backup addresses, as a multiple of `max_peers`.
 const BACKUP_MULTIPLE: usize = 8;
@@ -206,6 +203,9 @@ struct OnWire {
 }
 
 pub struct PeerNetworkManager {
+    /// Wakes the peer supervisor when the peer set needs attention: a peer was
+    /// lost, or one was measured to be underserving
+    peer_wake: Arc<Notify>,
     connected_peers: Arc<Mutex<Vec<(ConnectedPeer, State)>>>,
     other_peers: Arc<Mutex<Vec<DisconnectedPeer>>>,
     discoverer: Arc<Mutex<PeerDiscoverer>>,
@@ -322,6 +322,7 @@ impl PeerNetworkManager {
         let bytes = Arc::new(AtomicU64::new(0));
         let global_cap = Arc::new(AtomicUsize::new(max_peers.saturating_mul(4).max(8)));
         let best_tip = Arc::new(AtomicU32::new(0));
+        let peer_wake = Arc::new(Notify::new());
 
         // Detached like the bandwidth controller and reconnector below: torn down
         // via the shutdown token, not by holding their handles.
@@ -333,6 +334,8 @@ impl PeerNetworkManager {
             msg_queue.clone(),
             requests.clone(),
             shutdown.clone(),
+            peer_wake.clone(),
+            max_peers,
         );
 
         spawn_router(
@@ -348,6 +351,8 @@ impl PeerNetworkManager {
             connected_peers.clone(),
             msg_queue.clone(),
             shutdown.clone(),
+            peer_wake.clone(),
+            max_peers,
         );
 
         spawn_bandwidth_controller(
@@ -355,12 +360,14 @@ impl PeerNetworkManager {
             global_cap.clone(),
             connected_peers.clone(),
             shutdown.clone(),
+            peer_wake.clone(),
         );
 
         // The peer supervisor is spawned by `start()`, not here: it must not emit
         // `PeersUpdated` until the sync managers have subscribed (see `start`).
 
         PeerNetworkManager {
+            peer_wake,
             connected_peers,
             other_peers,
             discoverer,
@@ -404,6 +411,7 @@ impl PeerNetworkManager {
             self.best_tip.clone(),
             self.max_peers,
             self.required_services,
+            self.peer_wake.clone(),
         );
     }
 
@@ -743,6 +751,7 @@ fn spawn_bandwidth_controller(
     cap: Arc<AtomicUsize>,
     connected: Arc<Mutex<Vec<(ConnectedPeer, State)>>>,
     shutdown: CancellationToken,
+    peer_wake: Arc<Notify>,
 ) -> JoinHandle<()> {
     const WINDOW: Duration = Duration::from_millis(500);
     const FLOOR_PER_PEER: usize = 2; // global floor = peers · this
@@ -769,6 +778,11 @@ fn spawn_bandwidth_controller(
         let mut hold = 0u32; // consecutive plateau windows
                              // Per-peer cap state across windows, keyed by peer address.
         let mut peer_caps: HashMap<SocketAddr, PeerCapState> = HashMap::new();
+        // Last peer reported as underserving. The supervisor is woken on the
+        // TRANSITION only: re-notifying every window would turn a peer that stays
+        // slow into a probe every 500ms, which is exactly the churn the improve
+        // timer used to cause.
+        let mut last_underserving: Option<SocketAddr> = None;
         let mut ticker = tokio::time::interval(WINDOW);
         loop {
             tokio::select! {
@@ -920,6 +934,17 @@ fn spawn_bandwidth_controller(
                 }
                 // Drop state for peers that have disconnected.
                 peer_caps.retain(|addr, _| live.contains(addr));
+
+                // The service times were just refreshed, so this is the cheapest
+                // place to notice a peer falling behind the rest — no extra timer
+                // and no extra lock. Only the transition wakes the supervisor;
+                // while the same peer stays slow we stay quiet, so a peer with no
+                // available replacement is not re-probed every window.
+                let underserving = underserving_peer(&g);
+                if underserving.is_some() && underserving != last_underserving {
+                    peer_wake.notify_one();
+                }
+                last_underserving = underserving;
             }
             if cap_min == usize::MAX {
                 cap_min = 0;
@@ -958,13 +983,6 @@ fn spawn_bandwidth_controller(
     })
 }
 
-/// Keep the peer set topped up.
-///
-/// Peers are connected once, in `start`; nothing put them back afterwards, so a client
-/// whose peers all dropped — while idle or mid-sync — would simply sit there with zero
-/// peers forever. This watches the count and refills it back to `max_peers`, pulling
-/// fresh candidates from the discoverer when the backup list runs dry.
-#[allow(clippy::too_many_arguments)]
 /// Sort key for a connected peer's handshake ping: lower is better, and an
 /// unmeasured lag (0) sorts as worst.
 fn lag_key(peer: &ConnectedPeer) -> u32 {
@@ -983,10 +1001,13 @@ fn lag_key(peer: &ConnectedPeer) -> u32 {
 ///   (handshake ping under [`BAD_LAG_MS`]), emitting `PeersUpdated` as they connect
 ///   so sync starts on the first one. A "very bad" peer is taken only as a last
 ///   resort — when the set would otherwise be empty and nothing better connected.
-/// - At cap it probes a few candidates every [`IMPROVE_TICK`] and, if one is clearly
-///   better (ping ≤ worst / [`SWAP_IMPROVEMENT`]) than the slowest connected peer,
-///   swaps it in. The displaced peer is handed to [`retire_drained`] so its in-flight
-///   requests finish (or time out) before its socket closes.
+/// - At cap it does nothing until woken. The wake-up comes from a peer being lost
+///   or from one being measured as underserving the rest, at which point it probes
+///   for a replacement. There is no periodic improvement pass: probing costs a
+///   connect plus a full handshake per candidate, all closed again, so a set that
+///   is serving evenly never pays for it. The displaced peer is handed to
+///   [`retire_drained`] so its in-flight requests finish (or time out) before its
+///   socket closes.
 /// - A peer kicked by the timeout monitor just drops the set below cap, so the next
 ///   fill round refills it — the same path as any other deficit.
 ///
@@ -1004,22 +1025,23 @@ struct Supervisor {
     best_tip: Arc<AtomicU32>,
     max_peers: usize,
     required_services: ServiceFlags,
+    /// Fired when something happened that may warrant changing the peer set: a
+    /// peer was lost, or one was measured to be underserving. The supervisor
+    /// does nothing until one of those occurs
+    wake: Arc<Notify>,
 }
 
 impl Supervisor {
     async fn run(self) {
         loop {
-            let at_cap = self.connected.lock().await.len() >= self.max_peers;
-            let dur = if at_cap {
-                self.improve_round().await;
-                IMPROVE_TICK
-            } else {
-                self.fill_round().await;
-                FILL_TICK
-            };
+            self.repair_round().await;
+
+            let short = self.connected.lock().await.len() < self.max_peers;
+
             tokio::select! {
                 _ = self.shutdown.cancelled() => break,
-                _ = tokio::time::sleep(dur) => {}
+                _ = self.wake.notified() => {}
+                _ = tokio::time::sleep(FILL_TICK), if short => {}
             }
         }
     }
@@ -1041,25 +1063,6 @@ impl Supervisor {
         let mut seen = HashSet::new();
         out.retain(|p| !live.contains(&p.addr()) && seen.insert(p.addr()));
         out
-    }
-
-    /// Connect a batch in parallel, keeping the successful handshakes and advancing
-    /// `best_tip` from whatever chain height they advertise.
-    async fn connect_chunk(&self, batch: Vec<DisconnectedPeer>) -> Vec<ConnectedPeer> {
-        let results = join_all(batch.into_iter().map(|c| {
-            c.connect(
-                self.inbound.clone(),
-                self.shutdown.clone(),
-                self.bytes.clone(),
-                self.required_services,
-            )
-        }))
-        .await;
-        let peers: Vec<ConnectedPeer> = results.into_iter().filter_map(Result::ok).collect();
-        for p in &peers {
-            self.best_tip.fetch_max(p.version().start_height.max(0) as u32, Ordering::Relaxed);
-        }
-        peers
     }
 
     /// Close probed-but-unused peers and remember them as ranked backups, keeping the
@@ -1089,36 +1092,124 @@ impl Supervisor {
         });
     }
 
-    /// Below cap: probe and accept decent peers, emitting `PeersUpdated` as they land.
-    async fn fill_round(&self) {
-        if self.max_peers.saturating_sub(self.connected.lock().await.len()) == 0 {
+    /// One pass at whatever the peer set needs: fill a deficit, replace a peer that
+    /// is underserving the rest, or both.
+    ///
+    /// Filling and replacing were separate rounds when the supervisor ran on a
+    /// timer, because each had its own schedule. Now that it only runs for cause
+    /// they are the same operation — probe candidates, then put each arrival where
+    /// it does the most good — and keeping them apart only meant two probe sizes,
+    /// two acceptance rules and two copies of the bookkeeping.
+    async fn repair_round(&self) {
+        let (deficit, slow) = {
+            let peers = self.connected.lock().await;
+            let deficit = self.max_peers.saturating_sub(peers.len());
+            // Only look for a laggard once the set is full: below cap every arrival
+            // is wanted anyway, and replacing while short would just churn.
+            let slow = (deficit == 0).then(|| underserving_peer(&peers)).flatten();
+            (deficit, slow)
+        };
+        if deficit == 0 && slow.is_none() {
             return;
         }
-        let batch = self.next_candidates(CONNECT_CHUNK).await;
+
+        // Scale the probe to the need: a few candidates to find one replacement, a
+        // full chunk when several slots are open and sync is waiting on them.
+        let want = (deficit.max(1) * 4).min(CONNECT_CHUNK);
+        let batch = self.next_candidates(want).await;
         if batch.is_empty() {
             return;
         }
-        let mut probed = self.connect_chunk(batch).await;
-        probed.sort_by_key(lag_key); // best first
+
+        // Take each peer the moment ITS OWN handshake lands rather than waiting for
+        // the batch to settle. Sync can start on the first peer, so holding the
+        // fastest hostage to the slowest delays the whole client for no gain — and
+        // with a batch barrier one unreachable address sets that delay.
+        //
+        // Completion order is itself a latency ranking (the quickest handshake is
+        // the nearest peer), so this keeps the "best first" preference a sort used
+        // to provide. The batch is still drained to the end, but only to bank the
+        // rest as backups — nothing waits on that.
+        let mut inflight: FuturesUnordered<_> = batch
+            .into_iter()
+            .map(|c| {
+                c.connect(
+                    self.inbound.clone(),
+                    self.shutdown.clone(),
+                    self.bytes.clone(),
+                    self.required_services,
+                )
+            })
+            .collect();
 
         let mut accepted = 0usize;
+        let mut replaced: Option<SocketAddr> = None;
         let mut leftover: Vec<ConnectedPeer> = Vec::new();
-        for peer in probed {
+        while let Some(result) = inflight.next().await {
+            let Ok(peer) = result else {
+                continue;
+            };
+            self.best_tip.fetch_max(peer.version().start_height.max(0) as u32, Ordering::Relaxed);
+
             let lag = peer.lag_ms();
-            let acceptable = lag > 0 && lag < BAD_LAG_MS;
-            if acceptable && self.connected.lock().await.len() < self.max_peers {
-                let addr = peer.addr();
-                self.connected.lock().await.push((peer, State {}));
-                let _ = self.events.send(NetworkEvent::PeerConnected(addr));
-                accepted += 1;
-            } else {
+            if lag == 0 || lag >= BAD_LAG_MS {
                 leftover.push(peer);
+                continue;
+            }
+
+            let mut changed = true;
+            let displaced = {
+                let mut peers = self.connected.lock().await;
+                if peers.len() < self.max_peers {
+                    let addr = peer.addr();
+                    peers.push((peer, State {}));
+                    let _ = self.events.send(NetworkEvent::PeerConnected(addr));
+                    accepted += 1;
+                    None
+                } else if let Some(pos) = slow
+                    .filter(|_| replaced.is_none())
+                    // Re-find by address under the lock: the set can change between
+                    // measuring and acting, and the laggard may already be gone.
+                    .and_then(|s| peers.iter().position(|(p, _)| p.addr() == s))
+                {
+                    let new_addr = peer.addr();
+                    let (old, _) = peers.swap_remove(pos);
+                    peers.push((peer, State {}));
+                    replaced = Some(new_addr);
+                    Some(old)
+                } else {
+                    leftover.push(peer);
+                    changed = false;
+                    None
+                }
+            };
+
+            if let Some(old) = displaced {
+                let old_addr = old.addr();
+                tracing::info!(
+                    target: "dash_spv::network",
+                    "peer supervisor: swapped out slow {} for {}",
+                    old_addr,
+                    replaced.expect("set with the displacing peer"),
+                );
+                // Keep the displaced peer alive until its in-flight requests drain
+                // or time out — don't strand work already routed to it.
+                retire_drained(old, self.shutdown.clone());
+                let _ = self.events.send(NetworkEvent::PeerDisconnected(old_addr));
+            }
+
+            // Announce only what actually changed this round-trip: the first
+            // arrival is what takes the sync managers out of
+            // `WaitingForConnections`, and a swap changes who is serving. A
+            // candidate that went to the bench changed nothing.
+            if changed {
+                self.announce_update().await;
             }
         }
 
         // Last resort: never sit at zero peers. If nothing decent connected and the
-        // set is empty, take the least-bad handshake we got so sync can start; the
-        // improve loop upgrades it once a decent peer appears.
+        // set is empty, take the least-bad handshake we got so sync can start; a
+        // later round upgrades it once a decent peer appears.
         if accepted == 0 && self.connected.lock().await.is_empty() && !leftover.is_empty() {
             leftover.sort_by_key(lag_key);
             let peer = leftover.remove(0);
@@ -1131,13 +1222,13 @@ impl Supervisor {
             );
             self.connected.lock().await.push((peer, State {}));
             let _ = self.events.send(NetworkEvent::PeerConnected(addr));
+            self.announce_update().await;
             accepted += 1;
         }
 
         self.stash_backups(leftover).await;
 
         if accepted > 0 {
-            self.announce_update().await;
             tracing::info!(
                 target: "dash_spv::network",
                 "peer supervisor: +{} peers -> {}",
@@ -1146,58 +1237,43 @@ impl Supervisor {
             );
         }
     }
+}
 
-    /// At cap: probe a few candidates and swap the slowest connected peer for a
-    /// clearly-faster one, retiring the displaced peer so its in-flight work drains.
-    async fn improve_round(&self) {
-        let batch = self.next_candidates(IMPROVE_PROBE).await;
-        if batch.is_empty() {
-            return;
-        }
-        let mut probed = self.connect_chunk(batch).await;
-        probed.sort_by_key(lag_key); // best first
-
-        let mut swapped: Option<(SocketAddr, ConnectedPeer)> = None;
-        if let Some(cand_lag) = probed.first().map(ConnectedPeer::lag_ms) {
-            if cand_lag > 0 && cand_lag < DECENT_LAG_MS {
-                let mut peers = self.connected.lock().await;
-                if let Some((pos, worst_lag)) = peers
-                    .iter()
-                    .enumerate()
-                    .map(|(i, (p, _))| (i, lag_key(p)))
-                    .max_by_key(|&(_, l)| l)
-                {
-                    let clearly_better = worst_lag > DECENT_LAG_MS
-                        && cand_lag.saturating_mul(SWAP_IMPROVEMENT) <= worst_lag;
-                    if clearly_better && peers.len() >= self.max_peers {
-                        let candidate = probed.remove(0);
-                        let new_addr = candidate.addr();
-                        let (old, _) = peers.swap_remove(pos);
-                        peers.push((candidate, State {}));
-                        swapped = Some((new_addr, old));
-                    }
-                }
-            }
-        }
-
-        if let Some((new_addr, old)) = swapped {
-            let old_addr = old.addr();
-            tracing::info!(
-                target: "dash_spv::network",
-                "peer supervisor: swapped out slow {} for faster {}",
-                old_addr,
-                new_addr,
-            );
-            // Keep the displaced peer alive until its in-flight requests drain or time
-            // out, then close it — don't strand work already routed to it.
-            retire_drained(old, self.shutdown.clone());
-            let _ = self.events.send(NetworkEvent::PeerConnected(new_addr));
-            let _ = self.events.send(NetworkEvent::PeerDisconnected(old_addr));
-            self.announce_update().await;
-        }
-
-        self.stash_backups(probed).await;
+/// The connected peer that is clearly underserving the rest, if any.
+///
+/// Judged on measured service time — how long a peer takes to answer the pipeline
+/// requests routed to it — rather than the handshake ping, which is a single
+/// sample taken at connect and says nothing about how a peer serves filters or
+/// blocks. A peer with too few completed requests is not judged at all: absence
+/// of evidence is not evidence of slowness.
+///
+/// `None` means every peer is serving within reach of the best, which is the
+/// signal that there is nothing to improve and no reason to probe.
+fn underserving_peer(peers: &[(ConnectedPeer, State)]) -> Option<SocketAddr> {
+    let measured: Vec<(SocketAddr, f64)> = peers
+        .iter()
+        .filter_map(|(p, _)| {
+            let (count, avg_ms, _) = p.latency_stats();
+            (count >= MIN_SERVICE_SAMPLES).then_some((p.addr(), avg_ms))
+        })
+        .collect();
+    // Comparing needs a reference point: with fewer than two measured peers there
+    // is no "the rest" to be slow against.
+    if measured.len() < 2 {
+        return None;
     }
+    let best = measured.iter().map(|&(_, ms)| ms).fold(f64::INFINITY, f64::min);
+    let threshold = (best * SLOW_SERVICE_MULTIPLIER).max(best + SLOW_SERVICE_MARGIN_MS);
+    let (addr, worst) =
+        measured.iter().copied().max_by(|a, b| a.1.total_cmp(&b.1)).expect("non-empty");
+    (worst > threshold).then(|| {
+        tracing::debug!(
+            target: "dash_spv::network",
+            "{} serving at {:.0}ms vs best {:.0}ms — a replacement is worth probing for",
+            addr, worst, best,
+        );
+        addr
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1212,6 +1288,7 @@ fn spawn_peer_supervisor(
     best_tip: Arc<AtomicU32>,
     max_peers: usize,
     required_services: ServiceFlags,
+    wake: Arc<Notify>,
 ) -> JoinHandle<()> {
     tokio::spawn(
         Supervisor {
@@ -1225,6 +1302,7 @@ fn spawn_peer_supervisor(
             best_tip,
             max_peers,
             required_services,
+            wake,
         }
         .run(),
     )
@@ -1259,6 +1337,8 @@ fn spawn_timeout_monitor(
     connected: Arc<Mutex<Vec<(ConnectedPeer, State)>>>,
     queue: Arc<MsgQueue>,
     shutdown: CancellationToken,
+    peer_wake: Arc<Notify>,
+    max_peers: usize,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
         let mut ticker = tokio::time::interval(TIMEOUT_CHECK);
@@ -1339,7 +1419,7 @@ fn spawn_timeout_monitor(
 
             // Drop the culprits still in the active set (some may already be gone
             // — a retired-drained peer isn't here — which is fine).
-            let dropped = {
+            let (dropped, remaining) = {
                 let mut peers = connected.lock().await;
                 let before = peers.len();
                 peers.retain(|(p, _)| {
@@ -1350,8 +1430,14 @@ fn spawn_timeout_monitor(
                         true
                     }
                 });
-                before - peers.len()
+                (before - peers.len(), peers.len())
             };
+            // Evicting a peer leaves the set short. Wake the supervisor now instead
+            // of letting it find out on its next round: with the improve timer gone
+            // there may not be a next round until something asks for one.
+            if dropped > 0 && remaining < max_peers {
+                peer_wake.notify_one();
+            }
 
             tracing::warn!(
                 target: "dash_spv::network",
@@ -1404,6 +1490,8 @@ fn spawn_pump(
     queue: Arc<MsgQueue>,
     requests: Registry,
     shutdown: CancellationToken,
+    peer_wake: Arc<Notify>,
+    max_peers: usize,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
         // Per-peer received-message counter to check load balance across peers.
@@ -1509,6 +1597,11 @@ fn spawn_pump(
                         guard.retain(|(peer, _)| peer.addr() != addr);
                         guard.len()
                     };
+
+                    // Losing a peer is the main reason the set needs refilling
+                    if remaining < max_peers {
+                        peer_wake.notify_one();
+                    }
 
                     // A peer vanishing takes its in-flight requests with it: every
                     // request routed to it is now dead and no one else is tracking it.

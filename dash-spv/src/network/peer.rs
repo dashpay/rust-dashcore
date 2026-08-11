@@ -30,6 +30,7 @@ use tokio_util::sync::CancellationToken;
 use crate::{error::NetworkResult, NetworkError};
 
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const USER_AGENT: &str = concat!("/dash-spv:", env!("CARGO_PKG_VERSION"), "/");
 
 /// Per-peer response-latency tracker: the time each pipeline request spends in
@@ -348,9 +349,18 @@ impl DisconnectedPeer {
         bytes: Arc<AtomicU64>,
         required_services: ServiceFlags,
     ) -> NetworkResult<ConnectedPeer> {
-        let stream = TcpStream::connect(&self.addr).await.map_err(|e| {
-            NetworkError::ConnectionFailed(format!("Failed to connect to {}: {}", self.addr, e))
-        })?;
+        let stream = tokio::time::timeout(CONNECT_TIMEOUT, TcpStream::connect(&self.addr))
+            .await
+            .map_err(|_| {
+                NetworkError::ConnectionFailed(format!(
+                    "Connection to {} timed out after {}s",
+                    self.addr,
+                    CONNECT_TIMEOUT.as_secs()
+                ))
+            })?
+            .map_err(|e| {
+                NetworkError::ConnectionFailed(format!("Failed to connect to {}: {}", self.addr, e))
+            })?;
 
         let peer_bytes = Arc::new(AtomicU64::new(0));
         let (read_half, mut writer) = stream.into_split();
