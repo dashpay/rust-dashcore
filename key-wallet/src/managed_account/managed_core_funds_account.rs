@@ -30,7 +30,7 @@ use crate::wallet::balance::WalletCoreBalance;
 use crate::{ExtendedPubKey, Network};
 use dashcore::blockdata::transaction::OutPoint;
 use dashcore::prelude::CoreBlockHeight;
-use dashcore::{Address, Transaction, Txid};
+use dashcore::{Address, ScriptBuf, Transaction, Txid};
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -162,6 +162,28 @@ impl ManagedCoreFundsAccount {
     /// Check if an outpoint was spent by a previously recorded transaction.
     fn is_outpoint_spent(&self, outpoint: &OutPoint) -> bool {
         self.spent_outpoints.contains(outpoint)
+    }
+
+    /// Cached scriptPubKeys for every address that could still receive or hold
+    /// funds under a single-use address discipline: addresses not yet used
+    /// (the gap-limit lookahead, including reserved ones) plus used addresses
+    /// that still hold at least one unspent output.
+    ///
+    /// A used address whose outputs are all spent is omitted. That is only
+    /// sound for account types whose addresses are single-use by protocol
+    /// (CoinJoin — reuse would link mixing rounds), where nothing ever pays a
+    /// spent-and-emptied address again; callers must not apply this to
+    /// account types where address reuse is merely discouraged.
+    pub fn unspent_or_unused_script_pubkeys(&self) -> Vec<ScriptBuf> {
+        let funded: HashSet<&ScriptBuf> =
+            self.utxos.values().map(|utxo| &utxo.txout.script_pubkey).collect();
+        self.managed_account_type()
+            .address_pools()
+            .iter()
+            .flat_map(|pool| pool.addresses.values())
+            .filter(|info| !info.is_used() || funded.contains(&info.script_pubkey))
+            .map(|info| info.script_pubkey.clone())
+            .collect()
     }
 
     /// Add new UTXOs for received outputs, remove spent ones.
