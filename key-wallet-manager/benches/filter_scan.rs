@@ -31,7 +31,8 @@ use key_wallet::wallet::initialization::WalletAccountCreationOptions;
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
 use key_wallet::{KeySource, ManagedAccountType, Network, Utxo};
 use key_wallet_manager::{
-    check_compact_filters_for_elements, FilterMatchKey, WalletInterface, WalletManager,
+    check_compact_filters_for_elements, check_compact_filters_for_query, FilterMatchKey,
+    WalletInterface, WalletManager,
 };
 
 /// Denominated coins still unspent in the CoinJoin account — the wallet's
@@ -185,6 +186,58 @@ fn bench_filter_scan(c: &mut Criterion) {
         });
     }
     assembly.finish();
+
+    // Full per-batch cost with and without the revision-keyed cache,
+    // mirroring dash-spv's `scan_batch` for a single behind wallet.
+    //
+    // "rebuilt" is the pre-cache shape: collect the scan scripts and bare
+    // elements from the wallet, clone them into the union set, group the
+    // per-wallet attribution query, and match (the union query is grouped
+    // inside the matcher). "cached" is the post-cache shape: a revision
+    // check, then matching with the pre-assembled query. The difference is
+    // the assembly work the cache moves from once-per-batch to
+    // once-per-wallet-change.
+    let mut per_batch = c.benchmark_group("scan_batch_query");
+    per_batch.sample_size(10);
+    per_batch.throughput(Throughput::Elements(u64::from(FILTERS)));
+    for used in USED_ADDRESSES {
+        let (manager, wallet_id) = wallet_with_mixing_history(used);
+
+        per_batch.bench_with_input(BenchmarkId::new("rebuilt", used), &(), |b, _| {
+            b.iter(|| {
+                let scripts = manager.scan_script_pubkeys_for(black_box(&wallet_id));
+                let elements = manager.monitored_filter_elements_for(&wallet_id);
+                let union_scripts = scripts.clone();
+                let mut attribution_query: FilterQuery =
+                    scripts.iter().map(|s| s.as_bytes()).collect();
+                for element in &elements {
+                    attribution_query.push(element);
+                }
+                black_box(&attribution_query);
+                check_compact_filters_for_elements(
+                    black_box(&filters),
+                    &union_scripts,
+                    &elements,
+                    0,
+                )
+            })
+        });
+
+        let scripts = manager.scan_script_pubkeys_for(&wallet_id);
+        let elements = manager.monitored_filter_elements_for(&wallet_id);
+        let mut cached_query: FilterQuery = scripts.iter().map(|s| s.as_bytes()).collect();
+        for element in &elements {
+            cached_query.push(element);
+        }
+        per_batch.bench_with_input(BenchmarkId::new("cached", used), &cached_query, |b, query| {
+            b.iter(|| {
+                let revision = manager.wallet_monitor_revision(black_box(&wallet_id));
+                black_box(revision);
+                check_compact_filters_for_query(black_box(&filters), black_box(query), 0)
+            })
+        });
+    }
+    per_batch.finish();
 }
 
 criterion_group!(benches, bench_filter_scan);
