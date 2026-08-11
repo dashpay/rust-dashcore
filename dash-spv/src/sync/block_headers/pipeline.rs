@@ -423,8 +423,7 @@ mod tests {
         pipeline.segments = vec![tip_seg];
 
         // Simulate an unsolicited header arriving from a peer (no in-flight request)
-        let mut header = Header::dummy(1);
-        header.prev_blockhash = tip_hash;
+        let header = Header::dummy_chain(1, tip_hash).remove(0);
 
         let matched = pipeline.receive_headers(&[header]).unwrap();
         assert_eq!(matched, Some(0), "Tip segment should accept unsolicited post-sync headers");
@@ -457,8 +456,7 @@ mod tests {
         pipeline.segments = vec![segment_0, segment_1];
 
         // Create a header whose prev_blockhash is the shared hash
-        let mut header = Header::dummy(1);
-        header.prev_blockhash = shared_hash;
+        let header = Header::dummy_chain(1, shared_hash).remove(0);
 
         // Route headers should go to segment 1, not the completed segment 0
         let matched = pipeline.receive_headers(&[header]).unwrap();
@@ -477,8 +475,7 @@ mod tests {
         let mut tip_seg = SegmentState::new(0, 1000, tip_hash, None, None);
         tip_seg.current_height = 1001;
         // Simulate that we already received a header and advanced the tip
-        let mut first_header = Header::dummy(1);
-        first_header.prev_blockhash = tip_hash;
+        let first_header = Header::dummy_chain(1, tip_hash).remove(0);
         let new_tip_hash = first_header.block_hash();
         tip_seg.current_tip_hash = new_tip_hash;
 
@@ -511,8 +508,7 @@ mod tests {
         completed.buffered_headers.push(HashedBlockHeader::from(completed_header));
 
         let mut mid = SegmentState::new(1, 100, shared_hash, Some(200), None);
-        let mut mid_header = Header::dummy(2);
-        mid_header.prev_blockhash = shared_hash;
+        let mid_header = Header::dummy_chain(1, shared_hash).remove(0);
         mid.receive_headers(&[mid_header]).unwrap();
         let mid_preserved_tip = mid.current_tip_hash;
         let mid_preserved_height = mid.current_height;

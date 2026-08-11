@@ -233,12 +233,7 @@ mod tests {
         let hash = BlockHash::dummy(1);
         let mut segment = SegmentState::new(0, 0, hash, None, None);
 
-        // Create dummy headers that chain from all-zeros
-        let headers: Vec<Header> = (1..=10).map(Header::dummy).collect();
-
-        // Manually fix the prev_blockhash of first header
-        let mut first = headers[0];
-        first.prev_blockhash = hash;
+        let first = Header::dummy_chain(1, hash).remove(0);
 
         let processed = segment.receive_headers(&[first]).unwrap();
 
@@ -258,9 +253,8 @@ mod tests {
         let mut segment =
             SegmentState::new(0, 0, start_hash, Some(1), Some(expected_checkpoint_hash));
 
-        // Create a header that will be at height 1 but with a different hash
-        let mut header = Header::dummy(1);
-        header.prev_blockhash = start_hash;
+        // A valid header at height 1 whose hash is not the expected checkpoint.
+        let header = Header::dummy_chain(1, start_hash).remove(0);
 
         // The header's hash won't match the expected checkpoint hash
         let hashed = HashedBlockHeader::from(header);
@@ -289,8 +283,7 @@ mod tests {
     fn test_segment_checkpoint_match_completes_segment() {
         let start_hash = BlockHash::dummy(0);
         // Create a header first to get its hash for the checkpoint
-        let mut header = Header::dummy(1);
-        header.prev_blockhash = start_hash;
+        let header = Header::dummy_chain(1, start_hash).remove(0);
         let hashed = HashedBlockHeader::from(header);
         let header_hash = *hashed.hash();
 

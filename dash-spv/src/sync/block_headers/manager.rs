@@ -119,6 +119,25 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> BlockHeadersManager<H, M> {
         Ok(tip)
     }
 
+    /// Rebuild the download pipeline from what is durably stored.
+    ///
+    /// Storage is the only thing that survives a rejected batch, so re-seeding
+    /// from its tip discards whatever the pipeline had buffered and re-requests
+    /// the range. The peer that served the bad batch is not excluded — nothing
+    /// can exclude it yet — but the request is re-declared to the broker, which
+    /// paces it across the peer set, so a retry is not guaranteed to land on the
+    /// same one.
+    async fn restart_pipeline_from_storage(
+        &mut self,
+        network: &Arc<dyn NetworkManager>,
+    ) -> SyncResult<()> {
+        let tip = self.tip().await?;
+        let target = self.progress.target_height().max(tip.height());
+        self.pipeline.init(tip.height(), *tip.hash(), target);
+        self.pipeline.send_pending(network).await?;
+        Ok(())
+    }
+
     /// Handle incoming headers message (used for both initial sync and post-sync).
     pub(super) async fn handle_headers_pipeline(
         &mut self,
@@ -174,31 +193,55 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> BlockHeadersManager<H, M> {
         let ready_batches = self.pipeline.take_ready_to_store();
 
         for (_start_height, batch_headers) in ready_batches {
-            if !batch_headers.is_empty() {
-                // Validate chain continuity with current tip
-                let tip = self.tip().await?;
-                if batch_headers[0].header().prev_blockhash != *tip.hash() {
-                    return Err(SyncError::Validation(format!(
-                        "Segment chain break: expected prev {}, got {}",
-                        tip.hash(),
-                        batch_headers[0].header().prev_blockhash
-                    )));
-                }
-
-                // Clear any pending announcements for headers we're storing
-                for header in &batch_headers {
-                    self.pending_announcements.remove(header.hash());
-                }
-
-                let new_tip = self.store_headers(&batch_headers).await?;
-                // Update target if we've exceeded it (post-sync case)
-                if new_tip.height() > self.progress.target_height() {
-                    self.progress.update_target_height(new_tip.height());
-                }
-                events.push(SyncEvent::BlockHeadersStored {
-                    tip_height: new_tip.height(),
-                });
+            if batch_headers.is_empty() {
+                continue;
             }
+
+            // `take_ready_to_store` has already emptied this batch out of the
+            // pipeline and advanced the segment past it, so a failure here cannot
+            // just propagate: the headers exist nowhere, storage never moved, and
+            // every later batch would trip the continuity check against a tip that
+            // can never advance — one bad batch from any peer wedging header sync
+            // for the rest of the session. Rebuild from storage instead.
+            let tip = self.tip().await?;
+            let result = if batch_headers[0].header().prev_blockhash != *tip.hash() {
+                Err(SyncError::Validation(format!(
+                    "Segment chain break: expected prev {}, got {}",
+                    tip.hash(),
+                    batch_headers[0].header().prev_blockhash
+                )))
+            } else {
+                // Validates internal continuity and PoW before anything is written.
+                self.store_headers(&batch_headers).await
+            };
+
+            let new_tip = match result {
+                Ok(new_tip) => new_tip,
+                Err(e) => {
+                    tracing::warn!(
+                        "Rejected a batch of {} headers ({}); re-syncing the pipeline from the stored tip {}",
+                        batch_headers.len(),
+                        e,
+                        tip.height(),
+                    );
+                    self.restart_pipeline_from_storage(network).await?;
+                    return Err(e);
+                }
+            };
+
+            // Only now that the headers are durable: an announcement dropped for a
+            // batch that was then rejected would never be requested again.
+            for header in &batch_headers {
+                self.pending_announcements.remove(header.hash());
+            }
+
+            // Update target if we've exceeded it (post-sync case)
+            if new_tip.height() > self.progress.target_height() {
+                self.progress.update_target_height(new_tip.height());
+            }
+            events.push(SyncEvent::BlockHeadersStored {
+                tip_height: new_tip.height(),
+            });
         }
 
         // After storing unsolicited post-sync headers, mark the tip complete so the next header goes through
@@ -312,6 +355,61 @@ mod tests {
         manager.pipeline.init(tip.height(), *tip.hash(), tip.height());
         manager.progress.set_state(SyncState::Synced);
         manager
+    }
+
+    /// A batch that links to the stored tip but fails validation must not wedge
+    /// header sync.
+    ///
+    /// `take_ready_to_store` empties the batch out of the pipeline and advances
+    /// the segment before anything is validated, so a rejected batch used to
+    /// leave the headers nowhere and storage unmoved — and every later batch then
+    /// failed the continuity check against a tip that could never advance. Any
+    /// peer could trigger it once, permanently.
+    #[tokio::test]
+    async fn a_rejected_batch_does_not_wedge_header_sync() {
+        let mut manager = create_test_manager().await;
+        let tip = manager.tip().await.unwrap();
+        let tip_hash = *tip.hash();
+        manager.pipeline.init(0, tip_hash, 0);
+        manager.pipeline.mark_tip_complete();
+        manager.progress.set_state(SyncState::Synced);
+
+        let mock = Arc::new(MockNetworkManager::new());
+        let network: Arc<dyn NetworkManager> = mock.clone();
+
+        // Links to the tip, so the pipeline takes it — but the second header does
+        // not follow the first, which the validator rejects once the batch is
+        // already out of the pipeline.
+        let good = Header::dummy_chain(1, tip_hash).remove(0);
+        let mut broken = Header::dummy(9);
+        broken.prev_blockhash = BlockHash::dummy(200);
+
+        let rejected = manager.handle_headers_pipeline(&[good, broken], &network).await;
+        assert!(rejected.is_err(), "a batch failing validation must be reported");
+        assert_eq!(
+            manager.tip().await.unwrap().height(),
+            tip.height(),
+            "nothing from a rejected batch may reach storage"
+        );
+
+        // The wedge: sync must still be able to move afterwards. Before the fix
+        // this failed forever with a chain break, because the segment had been
+        // advanced past headers that were never stored.
+        let good_again = Header::dummy_chain(1, tip_hash).remove(0);
+        let events = manager
+            .handle_headers_pipeline(&[good_again], &network)
+            .await
+            .expect("header sync must recover from a rejected batch");
+        assert!(
+            matches!(
+                events.as_slice(),
+                [SyncEvent::BlockHeadersStored {
+                    tip_height: 1
+                }]
+            ),
+            "the re-sent header must store, got {:?}",
+            events
+        );
     }
 
     #[tokio::test]
