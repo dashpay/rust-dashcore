@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::{broadcast, Mutex, RwLock, Semaphore};
+use tokio::sync::{broadcast, Mutex, OwnedSemaphorePermit, RwLock, Semaphore};
 use tokio::task::JoinSet;
 use tokio::time;
 
@@ -43,20 +43,21 @@ fn headers2_decompression_parallelism() -> usize {
         .unwrap_or(1)
 }
 
-enum Headers2DecompressionOutcome {
-    Headers(Vec<(Header, BlockHash)>),
+enum HeaderDispatchOutcome {
+    Compressed(Vec<(Header, BlockHash)>),
+    Regular(Vec<Header>),
     Invalid(String),
     TaskFailed(String),
 }
 
-/// Releases parallel decompression results in wire order because a header announcement can
-/// depend on the preceding message from the same peer.
-struct OrderedHeaders2Results<T> {
+/// Releases header messages in wire order because an announcement can depend on the preceding
+/// message from the same peer.
+struct OrderedHeaderResults<T> {
     next_sequence: u64,
     completed: BTreeMap<u64, T>,
 }
 
-impl<T> Default for OrderedHeaders2Results<T> {
+impl<T> Default for OrderedHeaderResults<T> {
     fn default() -> Self {
         Self {
             next_sequence: 0,
@@ -65,10 +66,10 @@ impl<T> Default for OrderedHeaders2Results<T> {
     }
 }
 
-impl<T> OrderedHeaders2Results<T> {
+impl<T> OrderedHeaderResults<T> {
     fn complete(&mut self, sequence: u64, result: T) -> Vec<T> {
         let replaced = self.completed.insert(sequence, result);
-        debug_assert!(replaced.is_none(), "headers2 sequence completed twice");
+        debug_assert!(replaced.is_none(), "header sequence completed twice");
 
         let mut ready = Vec::new();
         while let Some(result) = self.completed.remove(&self.next_sequence) {
@@ -76,6 +77,80 @@ impl<T> OrderedHeaders2Results<T> {
             self.next_sequence += 1;
         }
         ready
+    }
+}
+
+#[derive(Clone)]
+struct HeaderDispatchContext {
+    addr: SocketAddr,
+    session_token: CancellationToken,
+    ordered_results:
+        Arc<Mutex<OrderedHeaderResults<(HeaderDispatchOutcome, OwnedSemaphorePermit)>>>,
+    message_dispatcher: Arc<Mutex<MessageDispatcher>>,
+    headers2_disabled: Arc<Mutex<HashSet<SocketAddr>>>,
+    reputation_manager: Arc<PeerReputationManager>,
+}
+
+impl HeaderDispatchContext {
+    async fn complete(
+        &self,
+        sequence: u64,
+        outcome: HeaderDispatchOutcome,
+        permit: OwnedSemaphorePermit,
+    ) {
+        if self.session_token.is_cancelled() {
+            return;
+        }
+
+        let mut ordered_results = self.ordered_results.lock().await;
+        // Retain each permit while its result waits for earlier messages, keeping the reorder
+        // buffer within the worker limit. Keep the ordering lock through dispatch so another
+        // completed task cannot overtake this batch after its sequence has been released.
+        let ready = ordered_results.complete(sequence, (outcome, permit));
+
+        for (outcome, _permit) in ready {
+            if self.session_token.is_cancelled() {
+                return;
+            }
+
+            match outcome {
+                HeaderDispatchOutcome::Compressed(headers_with_hashes) => {
+                    tracing::info!(
+                        "Decompressed {} headers from {} - forwarding as regular Headers",
+                        headers_with_hashes.len(),
+                        self.addr
+                    );
+                    let message = Message::new_headers(self.addr, headers_with_hashes);
+                    let mut message_dispatcher = self.message_dispatcher.lock().await;
+                    if self.session_token.is_cancelled() {
+                        return;
+                    }
+                    message_dispatcher.dispatch(&message);
+                }
+                HeaderDispatchOutcome::Regular(headers) => {
+                    let message = Message::new(self.addr, NetworkMessage::Headers(headers));
+                    let mut message_dispatcher = self.message_dispatcher.lock().await;
+                    if self.session_token.is_cancelled() {
+                        return;
+                    }
+                    message_dispatcher.dispatch(&message);
+                }
+                HeaderDispatchOutcome::Invalid(e) => {
+                    tracing::error!(
+                        "Headers2 decompression failed from {}: {} - disabling headers2",
+                        self.addr,
+                        e
+                    );
+                    self.headers2_disabled.lock().await.insert(self.addr);
+                    self.reputation_manager
+                        .update_reputation(self.addr, ChangeReason::Headers2DecompressionFailed)
+                        .await;
+                }
+                HeaderDispatchOutcome::TaskFailed(e) => {
+                    tracing::error!("Headers2 decompression task failed for {}: {}", self.addr, e);
+                }
+            }
+        }
     }
 }
 
@@ -560,13 +635,21 @@ impl PeerNetworkManager {
         tokio::spawn(async move {
             tracing::debug!("Starting peer reader loop for {}", addr);
             let mut loop_iteration = 0;
-            let mut headers2_sequence = 0_u64;
-            let ordered_headers2_results = Arc::new(Mutex::new(OrderedHeaders2Results::default()));
+            let mut header_sequence = 0_u64;
+            let session_token = shutdown_token.child_token();
+            let header_dispatch = HeaderDispatchContext {
+                addr,
+                session_token: session_token.clone(),
+                ordered_results: Arc::new(Mutex::new(OrderedHeaderResults::default())),
+                message_dispatcher: message_dispatcher.clone(),
+                headers2_disabled: headers2_disabled.clone(),
+                reputation_manager: reputation_manager.clone(),
+            };
             loop {
                 loop_iteration += 1;
 
                 // Check shutdown signal first with detailed logging
-                if shutdown_token.is_cancelled() {
+                if session_token.is_cancelled() {
                     tracing::info!("Breaking peer reader loop for {} - shutdown signal received (iteration {})", addr, loop_iteration);
                     break;
                 }
@@ -600,7 +683,7 @@ impl PeerNetworkManager {
                         _ = tokio::time::sleep(MESSAGE_POLL_INTERVAL) => {
                             Ok(None)
                         },
-                        _ = shutdown_token.cancelled() => {
+                        _ = session_token.cancelled() => {
                             tracing::info!("Breaking peer reader loop for {} - shutdown signal received while reading (iteration {})", addr, loop_iteration);
                             break;
                         }
@@ -643,81 +726,58 @@ impl PeerNetworkManager {
                                         Err(_) => break,
                                     }
                                 }
-                                _ = shutdown_token.cancelled() => break,
+                                _ = session_token.cancelled() => break,
                             };
-                            let message_dispatcher = message_dispatcher.clone();
-                            let headers2_disabled = headers2_disabled.clone();
-                            let reputation_manager = reputation_manager.clone();
-                            let shutdown_token = shutdown_token.clone();
-                            let ordered_headers2_results = ordered_headers2_results.clone();
-                            let sequence = headers2_sequence;
-                            headers2_sequence += 1;
+                            let header_dispatch = header_dispatch.clone();
+                            let sequence = header_sequence;
+                            header_sequence += 1;
                             tokio::spawn(async move {
                                 let result = tokio::task::spawn_blocking(move || {
                                     let mut state = CompressionState::default();
                                     state.process_headers_with_hashes(&headers2.headers)
                                 })
                                 .await;
-                                if shutdown_token.is_cancelled() {
+                                if header_dispatch.session_token.is_cancelled() {
                                     return;
                                 }
 
                                 let outcome = match result {
                                     Ok(Ok(headers_with_hashes)) => {
-                                        Headers2DecompressionOutcome::Headers(headers_with_hashes)
+                                        HeaderDispatchOutcome::Compressed(headers_with_hashes)
                                     }
-                                    Ok(Err(e)) => {
-                                        Headers2DecompressionOutcome::Invalid(e.to_string())
-                                    }
-                                    Err(e) => {
-                                        Headers2DecompressionOutcome::TaskFailed(e.to_string())
-                                    }
+                                    Ok(Err(e)) => HeaderDispatchOutcome::Invalid(e.to_string()),
+                                    Err(e) => HeaderDispatchOutcome::TaskFailed(e.to_string()),
                                 };
-                                let ready = ordered_headers2_results
-                                    .lock()
-                                    .await
-                                    // Retain the permit while this result waits for earlier messages,
-                                    // keeping the reorder buffer within the worker limit.
-                                    .complete(sequence, (outcome, permit));
+                                header_dispatch.complete(sequence, outcome, permit).await;
+                            });
+                            continue;
+                        }
+                        if let NetworkMessage::Headers(headers) = inner {
+                            tracing::info!(
+                                "📨 Received Headers message from {} with {} headers! (regular uncompressed)",
+                                addr,
+                                headers.len()
+                            );
+                            let peer_guard = peer.read().await;
+                            if peer_guard.supports_headers2() {
+                                tracing::warn!("⚠️  Peer {} supports headers2 but sent regular headers - possible protocol issue", addr);
+                            }
+                            drop(peer_guard);
 
-                                for (outcome, _permit) in ready {
-                                    match outcome {
-                                        Headers2DecompressionOutcome::Headers(
-                                            headers_with_hashes,
-                                        ) => {
-                                            tracing::info!(
-                                                "Decompressed {} headers from {} - forwarding as regular Headers",
-                                                headers_with_hashes.len(),
-                                                addr
-                                            );
-                                            let message =
-                                                Message::new_headers(addr, headers_with_hashes);
-                                            message_dispatcher.lock().await.dispatch(&message);
-                                        }
-                                        Headers2DecompressionOutcome::Invalid(e) => {
-                                            tracing::error!(
-                                                "Headers2 decompression failed from {}: {} - disabling headers2",
-                                                addr,
-                                                e
-                                            );
-                                            headers2_disabled.lock().await.insert(addr);
-                                            reputation_manager
-                                                .update_reputation(
-                                                    addr,
-                                                    ChangeReason::Headers2DecompressionFailed,
-                                                )
-                                                .await;
-                                        }
-                                        Headers2DecompressionOutcome::TaskFailed(e) => {
-                                            tracing::error!(
-                                                "Headers2 decompression task failed for {}: {}",
-                                                addr,
-                                                e
-                                            );
-                                        }
+                            let permit = tokio::select! {
+                                permit = headers2_decompression_semaphore.clone().acquire_owned() => {
+                                    match permit {
+                                        Ok(permit) => permit,
+                                        Err(_) => break,
                                     }
                                 }
-                            });
+                                _ = session_token.cancelled() => break,
+                            };
+                            let sequence = header_sequence;
+                            header_sequence += 1;
+                            header_dispatch
+                                .complete(sequence, HeaderDispatchOutcome::Regular(headers), permit)
+                                .await;
                             continue;
                         }
                         let msg = Message::new(addr, inner);
@@ -818,22 +878,9 @@ impl PeerNetworkManager {
                                 }
                                 continue;
                             }
-                            NetworkMessage::Headers(headers) => {
-                                // Log headers messages specifically
-                                tracing::info!(
-                                    "📨 Received Headers message from {} with {} headers! (regular uncompressed)",
-                                    addr,
-                                    headers.len()
-                                );
-                                // Check if peer supports headers2
-                                let peer_guard = peer.read().await;
-                                if peer_guard.supports_headers2() {
-                                    tracing::warn!("⚠️  Peer {} supports headers2 but sent regular headers - possible protocol issue", addr);
-                                }
-                                drop(peer_guard);
-                                // Forward to client
+                            NetworkMessage::Headers(_) | NetworkMessage::Headers2(_) => {
+                                unreachable!()
                             }
-                            NetworkMessage::Headers2(_) => unreachable!(),
                             NetworkMessage::GetHeaders(_) => {
                                 // SPV clients don't serve headers to peers
                                 tracing::debug!(
@@ -950,6 +997,7 @@ impl PeerNetworkManager {
             }
 
             // Remove from pool and notify consumers
+            session_token.cancel();
             tracing::warn!("Disconnecting from {} (peer reader loop ended)", addr);
             Self::remove_peer_and_notify(
                 &pool,
@@ -2141,15 +2189,126 @@ impl PeerNetworkManager {
 }
 
 #[cfg(test)]
-mod headers2_ordering_tests {
-    use super::OrderedHeaders2Results;
+mod header_ordering_tests {
+    use super::*;
+    use crate::test_utils::test_socket_address;
+
+    fn context(
+        session_token: CancellationToken,
+    ) -> (HeaderDispatchContext, UnboundedReceiver<Message>) {
+        let mut dispatcher = MessageDispatcher::default();
+        let receiver = dispatcher.message_receiver(&[MessageType::Headers]);
+        (
+            HeaderDispatchContext {
+                addr: test_socket_address(1),
+                session_token,
+                ordered_results: Arc::new(Mutex::new(OrderedHeaderResults::default())),
+                message_dispatcher: Arc::new(Mutex::new(dispatcher)),
+                headers2_disabled: Arc::new(Mutex::new(HashSet::new())),
+                reputation_manager: Arc::new(PeerReputationManager::new()),
+            },
+            receiver,
+        )
+    }
 
     #[test]
     fn completed_decompressions_are_released_in_receive_order() {
-        let mut results = OrderedHeaders2Results::default();
+        let mut results = OrderedHeaderResults::default();
 
         assert!(results.complete(2, "third").is_empty());
         assert_eq!(results.complete(0, "first"), ["first"]);
         assert_eq!(results.complete(1, "second"), ["second", "third"]);
+    }
+
+    #[tokio::test]
+    async fn compressed_and_regular_headers_are_dispatched_in_wire_order() {
+        let (context, mut receiver) = context(CancellationToken::new());
+        let semaphore = Arc::new(Semaphore::new(2));
+        let first = Header::dummy(1);
+        let first_hash = first.block_hash();
+        let second = Header::dummy(2);
+
+        context
+            .complete(
+                1,
+                HeaderDispatchOutcome::Regular(vec![second]),
+                semaphore.clone().acquire_owned().await.unwrap(),
+            )
+            .await;
+        assert!(receiver.try_recv().is_err());
+
+        context
+            .complete(
+                0,
+                HeaderDispatchOutcome::Compressed(vec![(first, first_hash)]),
+                semaphore.clone().acquire_owned().await.unwrap(),
+            )
+            .await;
+
+        let first_message = receiver.recv().await.unwrap();
+        assert_eq!(first_message.header_hashes(), Some([first_hash].as_slice()));
+        assert_eq!(first_message.inner(), &NetworkMessage::Headers(vec![first]));
+        let second_message = receiver.recv().await.unwrap();
+        assert_eq!(second_message.header_hashes(), None);
+        assert_eq!(second_message.inner(), &NetworkMessage::Headers(vec![second]));
+        assert_eq!(semaphore.available_permits(), 2);
+    }
+
+    #[tokio::test]
+    async fn ended_peer_session_discards_headers_and_releases_permit() {
+        let session_token = CancellationToken::new();
+        let (context, mut receiver) = context(session_token.clone());
+        let semaphore = Arc::new(Semaphore::new(1));
+        let permit = semaphore.clone().acquire_owned().await.unwrap();
+        session_token.cancel();
+
+        context.complete(0, HeaderDispatchOutcome::Regular(vec![Header::dummy(1)]), permit).await;
+
+        assert!(receiver.try_recv().is_err());
+        assert_eq!(semaphore.available_permits(), 1);
+    }
+
+    #[tokio::test]
+    async fn failed_decompression_does_not_block_later_headers() {
+        let (context, mut receiver) = context(CancellationToken::new());
+        let semaphore = Arc::new(Semaphore::new(2));
+        let header = Header::dummy(1);
+
+        context
+            .complete(
+                1,
+                HeaderDispatchOutcome::Regular(vec![header]),
+                semaphore.clone().acquire_owned().await.unwrap(),
+            )
+            .await;
+        context
+            .complete(
+                0,
+                HeaderDispatchOutcome::TaskFailed("cancelled".to_owned()),
+                semaphore.clone().acquire_owned().await.unwrap(),
+            )
+            .await;
+
+        assert_eq!(receiver.recv().await.unwrap().inner(), &NetworkMessage::Headers(vec![header]));
+        assert_eq!(semaphore.available_permits(), 2);
+    }
+
+    #[tokio::test]
+    async fn invalid_decompression_disables_headers2_and_penalizes_peer() {
+        let (context, mut receiver) = context(CancellationToken::new());
+        let semaphore = Arc::new(Semaphore::new(1));
+
+        context
+            .complete(
+                0,
+                HeaderDispatchOutcome::Invalid("invalid compressed header".to_owned()),
+                semaphore.clone().acquire_owned().await.unwrap(),
+            )
+            .await;
+
+        assert!(receiver.try_recv().is_err());
+        assert!(context.headers2_disabled.lock().await.contains(&context.addr));
+        assert!(context.reputation_manager.scores_for([context.addr]).await[&context.addr] > 0);
+        assert_eq!(semaphore.available_permits(), 1);
     }
 }
