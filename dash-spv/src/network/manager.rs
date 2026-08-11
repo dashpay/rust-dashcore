@@ -1581,11 +1581,20 @@ fn spawn_pump(
                     // peers send these unprompted; ignoring them left the pool
                     // frozen at whatever the seeds and one DNS lookup returned, with
                     // no way to learn about the network as addresses went stale.
-                    if let NetworkMessage::AddrV2(addrs) = &msg {
-                        let learned = discoverer
-                            .lock()
-                            .await
-                            .learn(addrs.iter().filter_map(|a| a.socket_addr().ok()));
+                    // Both spellings: we ask for `sendaddrv2` at handshake, but a
+                    // peer that ignored it answers `getaddr` with legacy `addr`,
+                    // and dropping that would waste the round trip.
+                    let gossiped: Option<Vec<SocketAddr>> = match &msg {
+                        NetworkMessage::AddrV2(addrs) => {
+                            Some(addrs.iter().filter_map(|a| a.socket_addr().ok()).collect())
+                        }
+                        NetworkMessage::Addr(addrs) => {
+                            Some(addrs.iter().filter_map(|(_, a)| a.socket_addr().ok()).collect())
+                        }
+                        _ => None,
+                    };
+                    if let Some(gossiped) = gossiped {
+                        let learned = discoverer.lock().await.learn(gossiped);
                         if learned > 0 {
                             tracing::debug!(
                                 target: "dash_spv::network",
