@@ -43,6 +43,13 @@ struct WalletScanState {
 }
 
 /// Maximum number of batches to scan ahead while waiting for blocks.
+///
+/// Raising this does not buy more throughput while a batch is stalled on a block.
+/// Every scanned batch queues its matched blocks into one FIFO download window,
+/// so a deeper lookahead fills that window with blocks belonging to batches that
+/// cannot commit for a long time, ahead of the blocks the committing batch is
+/// actually waiting on. Block downloads would have to be ordered by height
+/// before this could go higher.
 const MAX_LOOKAHEAD_BATCHES: usize = 3;
 
 /// Filters manager for downloading and matching compact block filters.
@@ -1419,10 +1426,36 @@ mod tests {
         assert_eq!(manager.progress.filter_header_tip_height(), 600);
     }
 
+    /// Lookahead is what lets scanning continue past a batch that cannot commit
+    /// because a block it matched is still downloading, so it must actually reach
+    /// the cap rather than stopping at whatever the first pass created.
     #[tokio::test]
-    async fn test_max_lookahead_constant() {
-        // Verify the constant is set to expected value
-        assert_eq!(MAX_LOOKAHEAD_BATCHES, 3);
+    async fn test_lookahead_fills_to_the_cap_and_stops() {
+        let mut manager = create_test_manager().await;
+        manager.set_state(SyncState::Syncing);
+
+        // Far more headroom than the cap, so the cap is what stops it. The
+        // filters themselves are still downloading, which is the state lookahead
+        // exists for: the batches are created empty and scanned once they land.
+        let tip = BATCH_PROCESSING_SIZE * (MAX_LOOKAHEAD_BATCHES as u32 + 4);
+        manager.processing_height = 1;
+        manager.progress.update_filter_header_tip_height(tip);
+        manager.progress.update_target_height(tip);
+
+        manager.try_create_lookahead_batches().await.unwrap();
+
+        assert_eq!(manager.active_batches.len(), MAX_LOOKAHEAD_BATCHES);
+
+        // A second pass adds nothing while the batches are still uncommitted.
+        manager.try_create_lookahead_batches().await.unwrap();
+        assert_eq!(manager.active_batches.len(), MAX_LOOKAHEAD_BATCHES);
+
+        // The batches must tile the range contiguously from the processing head.
+        let mut expected_start = manager.processing_height;
+        for (&start, batch) in &manager.active_batches {
+            assert_eq!(start, expected_start);
+            expected_start = batch.end_height() + 1;
+        }
     }
 
     #[tokio::test]

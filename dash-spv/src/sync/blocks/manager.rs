@@ -173,6 +173,7 @@ mod tests {
     };
     use crate::sync::{ManagerIdentifier, SyncEvent, SyncManagerProgress};
     use crate::types::HashedBlock;
+
     use key_wallet_manager::test_utils::{MockWallet, MOCK_WALLET_ID};
     use std::collections::BTreeSet;
 

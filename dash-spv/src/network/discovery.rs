@@ -1,3 +1,17 @@
+//! Peer discovery for Dash network.
+//!
+//! Peer discovery is seeded from two sources, in priority order:
+//!
+//! 1. A hardcoded masternode IP list for the network, embedded at compile time
+//!    from `dash-spv/seeds/<network>.txt`. This file is regenerated weekly by
+//!    CI from a live Dash Core node (see `masternode-seeds-fetcher`).
+//! 2. DNS seed queries as a backup. DNS resolution failures are logged but are
+//!    not fatal — as long as the embedded list yields at least one peer, the
+//!    client can bootstrap.
+//!
+//! Results from both sources are merged and deduplicated. Addresses gossiped by
+//! connected peers are folded in later via [`PeerDiscoverer::learn`].
+
 use std::net::SocketAddr;
 
 use dashcore::Network;
@@ -112,6 +126,10 @@ impl PeerDiscoverer {
 
         addresses.sort();
         addresses.dedup();
+        // Dedup needs the sort above, but a sorted list makes every client pick
+        // the same lowest-address peers via `take`/`truncate`, herding testers
+        // onto a handful of nodes. Shuffle so clients fan out across the set.
+        addresses.shuffle(&mut rand::thread_rng());
 
         addresses
     }

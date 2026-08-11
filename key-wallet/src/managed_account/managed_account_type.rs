@@ -408,6 +408,13 @@ impl ManagedAccountType {
         self.address_pools().iter().flat_map(|pool| pool.all_script_pubkeys()).collect()
     }
 
+    /// Is this account a chain owned by a DashPay contact rather than by
+    /// this wallet? See [`AccountType::is_contact_owned`] — this is the
+    /// same predicate viewed from the managed side.
+    pub fn is_contact_owned(&self) -> bool {
+        self.to_account_type().is_contact_owned()
+    }
+
     /// Get the account type as the original enum
     pub fn to_account_type(&self) -> AccountType {
         match self {

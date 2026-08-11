@@ -14,7 +14,6 @@ use key_wallet::wallet::initialization::WalletAccountCreationOptions;
 use key_wallet::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
 use key_wallet::wallet::ManagedWalletInfo;
 use key_wallet_manager::WalletManager;
-use std::collections::BTreeSet;
 use tokio::sync::RwLock;
 use tracing_subscriber::prelude::*;
 
@@ -138,13 +137,16 @@ async fn main() -> Result<()> {
     let storage_manager =
         DiskStorageManager::new(&config).await.map_err(|e| anyhow!("storage manager: {e}"))?;
 
-    // Wallets: one BIP44 account 0 per mnemonic, so filter matches drive block download.
     let mut wallet_manager = WalletManager::<ManagedWalletInfo>::new(network);
     let birth_height = start_height.unwrap_or(0);
     let mut wallet_ids = Vec::with_capacity(mnemonics.len());
     for mnemonic in &mnemonics {
         let id = wallet_manager
-            .create_wallet_from_mnemonic(mnemonic, birth_height, account_creation_options())
+            .create_wallet_from_mnemonic(
+                mnemonic,
+                birth_height,
+                WalletAccountCreationOptions::default(),
+            )
             .map_err(|e| anyhow!("wallet from mnemonic: {e}"))?;
         wallet_ids.push(id);
     }
@@ -223,15 +225,4 @@ async fn main() -> Result<()> {
     tracing::info!("run outputs written to {}", output_dir.display());
 
     Ok(())
-}
-
-fn account_creation_options() -> WalletAccountCreationOptions {
-    WalletAccountCreationOptions::SpecificAccounts(
-        BTreeSet::from([0]),
-        BTreeSet::new(),
-        BTreeSet::new(),
-        BTreeSet::new(),
-        BTreeSet::new(),
-        None,
-    )
 }
