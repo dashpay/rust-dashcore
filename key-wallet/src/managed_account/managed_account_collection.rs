@@ -988,7 +988,11 @@ impl ManagedAccountCollection {
     /// [`Self::all_accounts`] and filtering via [`ManagedAccountRef::as_funds`]
     /// in those callsites is just noise.
     ///
-    /// **`dashpay_external_accounts` are deliberately excluded.** A DashPay
+    /// **`dashpay_external_accounts` are deliberately excluded** — they are
+    /// the only funds-bearing accounts that are
+    /// [contact-owned](crate::account::AccountType::is_contact_owned), and
+    /// that predicate is the canonical statement of the policy applied here.
+    /// A DashPay
     /// external account is watch-only by construction: its addresses are derived
     /// from a *contact's* xpub, so this wallet can observe those outputs but can
     /// never sign for them. They are the contact's coins. Counting them here
@@ -1190,6 +1194,17 @@ mod dashpay_funding_scope_tests {
         assert!(
             !funding.iter().any(|t| matches!(t, AccountType::DashpayExternalAccount { .. })),
             "the contact's watch-only account must not count as this wallet's funds"
+        );
+        assert!(
+            funding.iter().all(|t| !t.is_contact_owned()),
+            "all_funding_accounts must exclude exactly what AccountType::is_contact_owned flags"
+        );
+        assert!(
+            collection
+                .dashpay_external_accounts
+                .values()
+                .all(|a| a.managed_account_type().is_contact_owned()),
+            "the managed-side predicate must agree"
         );
         assert_eq!(
             funding.len(),
