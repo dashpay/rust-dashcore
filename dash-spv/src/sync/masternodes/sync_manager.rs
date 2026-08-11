@@ -627,8 +627,10 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
             return Ok(vec![]);
         }
 
-        // Check for MnListDiff timeouts via pipeline
-        if self.sync_state.mnlistdiff_pipeline.active_count() > 0 {
+        // Check for MnListDiff timeouts via pipeline. Gate on outstanding work
+        // rather than in-flight requests: a peer disconnect requeues in-flight
+        // items as pending, and this send is the only path that reissues them.
+        if !self.sync_state.mnlistdiff_pipeline.is_complete() {
             self.sync_state.mnlistdiff_pipeline.handle_timeouts();
 
             // Send any re-queued requests
