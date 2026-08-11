@@ -1,6 +1,6 @@
 //! Peer network manager for SPV client
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -29,7 +29,7 @@ use dashcore::network::constants::ServiceFlags;
 use dashcore::network::message::NetworkMessage;
 use dashcore::network::message_blockdata::Inventory;
 use dashcore::network::message_headers2::CompressionState;
-use dashcore::Network;
+use dashcore::{BlockHash, Header, Network};
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
@@ -41,6 +41,42 @@ fn headers2_decompression_parallelism() -> usize {
     std::thread::available_parallelism()
         .map(|parallelism| parallelism.get().min(MAX_CONCURRENT_HEADERS2_DECOMPRESSIONS))
         .unwrap_or(1)
+}
+
+enum Headers2DecompressionOutcome {
+    Headers(Vec<(Header, BlockHash)>),
+    Invalid(String),
+    TaskFailed(String),
+}
+
+/// Releases parallel decompression results in wire order because a header announcement can
+/// depend on the preceding message from the same peer.
+struct OrderedHeaders2Results<T> {
+    next_sequence: u64,
+    completed: BTreeMap<u64, T>,
+}
+
+impl<T> Default for OrderedHeaders2Results<T> {
+    fn default() -> Self {
+        Self {
+            next_sequence: 0,
+            completed: BTreeMap::new(),
+        }
+    }
+}
+
+impl<T> OrderedHeaders2Results<T> {
+    fn complete(&mut self, sequence: u64, result: T) -> Vec<T> {
+        let replaced = self.completed.insert(sequence, result);
+        debug_assert!(replaced.is_none(), "headers2 sequence completed twice");
+
+        let mut ready = Vec::new();
+        while let Some(result) = self.completed.remove(&self.next_sequence) {
+            ready.push(result);
+            self.next_sequence += 1;
+        }
+        ready
+    }
 }
 
 /// Peer network manager
@@ -524,6 +560,8 @@ impl PeerNetworkManager {
         tokio::spawn(async move {
             tracing::debug!("Starting peer reader loop for {}", addr);
             let mut loop_iteration = 0;
+            let mut headers2_sequence = 0_u64;
+            let ordered_headers2_results = Arc::new(Mutex::new(OrderedHeaders2Results::default()));
             loop {
                 loop_iteration += 1;
 
@@ -611,49 +649,72 @@ impl PeerNetworkManager {
                             let headers2_disabled = headers2_disabled.clone();
                             let reputation_manager = reputation_manager.clone();
                             let shutdown_token = shutdown_token.clone();
+                            let ordered_headers2_results = ordered_headers2_results.clone();
+                            let sequence = headers2_sequence;
+                            headers2_sequence += 1;
                             tokio::spawn(async move {
                                 let result = tokio::task::spawn_blocking(move || {
                                     let mut state = CompressionState::default();
                                     state.process_headers_with_hashes(&headers2.headers)
                                 })
                                 .await;
-                                drop(permit);
-
                                 if shutdown_token.is_cancelled() {
                                     return;
                                 }
 
-                                match result {
+                                let outcome = match result {
                                     Ok(Ok(headers_with_hashes)) => {
-                                        tracing::info!(
-                                            "Decompressed {} headers from {} - forwarding as regular Headers",
-                                            headers_with_hashes.len(),
-                                            addr
-                                        );
-                                        let message =
-                                            Message::new_headers(addr, headers_with_hashes);
-                                        message_dispatcher.lock().await.dispatch(&message);
+                                        Headers2DecompressionOutcome::Headers(headers_with_hashes)
                                     }
                                     Ok(Err(e)) => {
-                                        tracing::error!(
-                                            "Headers2 decompression failed from {}: {} - disabling headers2",
-                                            addr,
-                                            e
-                                        );
-                                        headers2_disabled.lock().await.insert(addr);
-                                        reputation_manager
-                                            .update_reputation(
-                                                addr,
-                                                ChangeReason::Headers2DecompressionFailed,
-                                            )
-                                            .await;
+                                        Headers2DecompressionOutcome::Invalid(e.to_string())
                                     }
                                     Err(e) => {
-                                        tracing::error!(
-                                            "Headers2 decompression task failed for {}: {}",
-                                            addr,
-                                            e
-                                        );
+                                        Headers2DecompressionOutcome::TaskFailed(e.to_string())
+                                    }
+                                };
+                                let ready = ordered_headers2_results
+                                    .lock()
+                                    .await
+                                    // Retain the permit while this result waits for earlier messages,
+                                    // keeping the reorder buffer within the worker limit.
+                                    .complete(sequence, (outcome, permit));
+
+                                for (outcome, _permit) in ready {
+                                    match outcome {
+                                        Headers2DecompressionOutcome::Headers(
+                                            headers_with_hashes,
+                                        ) => {
+                                            tracing::info!(
+                                                "Decompressed {} headers from {} - forwarding as regular Headers",
+                                                headers_with_hashes.len(),
+                                                addr
+                                            );
+                                            let message =
+                                                Message::new_headers(addr, headers_with_hashes);
+                                            message_dispatcher.lock().await.dispatch(&message);
+                                        }
+                                        Headers2DecompressionOutcome::Invalid(e) => {
+                                            tracing::error!(
+                                                "Headers2 decompression failed from {}: {} - disabling headers2",
+                                                addr,
+                                                e
+                                            );
+                                            headers2_disabled.lock().await.insert(addr);
+                                            reputation_manager
+                                                .update_reputation(
+                                                    addr,
+                                                    ChangeReason::Headers2DecompressionFailed,
+                                                )
+                                                .await;
+                                        }
+                                        Headers2DecompressionOutcome::TaskFailed(e) => {
+                                            tracing::error!(
+                                                "Headers2 decompression task failed for {}: {}",
+                                                addr,
+                                                e
+                                            );
+                                        }
                                     }
                                 }
                             });
@@ -2076,5 +2137,19 @@ impl PeerNetworkManager {
 
     pub(crate) async fn test_evict_worst_stuck_peer(&self) {
         self.evict_worst_stuck_peer().await;
+    }
+}
+
+#[cfg(test)]
+mod headers2_ordering_tests {
+    use super::OrderedHeaders2Results;
+
+    #[test]
+    fn completed_decompressions_are_released_in_receive_order() {
+        let mut results = OrderedHeaders2Results::default();
+
+        assert!(results.complete(2, "third").is_empty());
+        assert_eq!(results.complete(0, "first"), ["first"]);
+        assert_eq!(results.complete(1, "second"), ["second", "third"]);
     }
 }
