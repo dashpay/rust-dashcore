@@ -164,6 +164,7 @@ impl MnListDiffPipeline {
     }
 
     /// Get the number of in-flight requests.
+    #[cfg(test)]
     pub(super) fn active_count(&self) -> usize {
         self.coordinator.active_count()
     }
