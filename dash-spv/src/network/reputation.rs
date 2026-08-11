@@ -7,40 +7,40 @@
 
 use crate::storage::PeerStorage;
 use dashcore::network::address::AddrV2Message;
+use rand::seq::SliceRandom;
 use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 use tokio::sync::RwLock;
 
-/// Reason for a peer reputation change. Each reason owns its score delta
-/// (positive = penalty, negative = reward) and a human-readable label.
+/// Reason a peer's misbehavior score rose. Each reason owns its penalty and a
+/// human-readable label. There is deliberately no reason that lowers the score:
+/// only decay does that, so the score cannot be earned down by a peer that is
+/// merely busy. Useful behavior is measured by [`super::latency`] instead.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ChangeReason {
     HandshakeFailed,
     ConnectionFailed,
     Headers2DecompressionFailed,
-    ReadTimeout,
+    RequestTimeout,
     PingFailed,
     InvalidTransactionInBlock,
     ManuallyBanned,
-    LongUptime,
 }
 
 impl ChangeReason {
-    /// Score delta for this reason: positive for misbehavior (penalty),
-    /// negative for good behavior (reward).
+    /// Penalty this reason adds to a peer's misbehavior score.
     pub fn score(&self) -> i32 {
         match self {
             ChangeReason::HandshakeFailed => 10,
             ChangeReason::ConnectionFailed => 2,
             ChangeReason::Headers2DecompressionFailed => 10,
-            ChangeReason::ReadTimeout => 5,
+            ChangeReason::RequestTimeout => 10,
             ChangeReason::PingFailed => 5,
             ChangeReason::InvalidTransactionInBlock => 20,
             ChangeReason::ManuallyBanned => 100,
-            ChangeReason::LongUptime => -5,
         }
     }
 }
@@ -51,11 +51,10 @@ impl std::fmt::Display for ChangeReason {
             ChangeReason::HandshakeFailed => "Handshake failed",
             ChangeReason::ConnectionFailed => "Connection failed",
             ChangeReason::Headers2DecompressionFailed => "Headers2 decompression failed",
-            ChangeReason::ReadTimeout => "Read timeout",
+            ChangeReason::RequestTimeout => "Request timed out",
             ChangeReason::PingFailed => "Ping failed",
             ChangeReason::InvalidTransactionInBlock => "Invalid transaction type in block",
             ChangeReason::ManuallyBanned => "Manually banned",
-            ChangeReason::LongUptime => "Long connection uptime",
         };
         f.write_str(label)
     }
@@ -73,12 +72,29 @@ const DECAY_AMOUNT: i32 = 5;
 /// Maximum misbehavior score before a peer is banned
 const MAX_MISBEHAVIOR_SCORE: i32 = 100;
 
-/// Minimum score (most positive reputation)
-const MIN_MISBEHAVIOR_SCORE: i32 = -50;
+/// Minimum score. Zero, because this score only measures misbehavior and "none
+/// observed" is as clean as a peer can be. Letting it run negative would bank
+/// credit that a peer could later spend on misbehaving: decay alone would carry a
+/// long-lived peer far below zero, and it would then need several extra strikes to
+/// reach eviction, making the peers most likely to be quietly failing the hardest
+/// ones to remove. How useful a peer actually is, as opposed to how badly it is
+/// behaving, is measured by [`super::latency`] instead.
+const MIN_MISBEHAVIOR_SCORE: i32 = 0;
+
+/// Highest score a peer may load with after a restart. A persisted near-ban
+/// score can then never ban a peer on its first post-restart penalty, which
+/// would otherwise let stale suspicion lock the client out of known-good peers.
+const RESTART_SCORE_CEILING: i32 = 40;
 
 const MAX_BAN_COUNT: u32 = 1000;
 
 const MAX_ACTION_COUNT: u64 = 1_000_000;
+
+/// Lowest score any earlier version could persist, back when answering a request
+/// earned credit below zero. A stored score in that range is stale rather than
+/// corrupt, so it is clamped quietly: warning would fire once per persisted peer
+/// on the first run after an upgrade.
+const LEGACY_MIN_SCORE: i32 = -50;
 
 fn clamp_peer_score<'de, D>(deserializer: D) -> Result<i32, D::Error>
 where
@@ -87,7 +103,9 @@ where
     let mut v = i32::deserialize(deserializer)?;
 
     if v < MIN_MISBEHAVIOR_SCORE {
-        tracing::warn!("Peer has invalid score {v}, clamping to min {MIN_MISBEHAVIOR_SCORE}");
+        if v < LEGACY_MIN_SCORE {
+            tracing::warn!("Peer has invalid score {v}, clamping to min {MIN_MISBEHAVIOR_SCORE}");
+        }
         v = MIN_MISBEHAVIOR_SCORE
     } else if v > MAX_MISBEHAVIOR_SCORE {
         tracing::warn!("Peer has invalid score {v}, clamping to max {MAX_MISBEHAVIOR_SCORE}");
@@ -157,6 +175,12 @@ pub struct PeerReputation {
     /// Last connection time
     #[serde(skip)]
     pub last_connection: Option<Instant>,
+
+    /// Wall-clock time this reputation was last persisted. Used to credit decay
+    /// for time the client spent offline, since the monotonic `last_update`
+    /// resets on load and cannot measure downtime.
+    #[serde(default = "SystemTime::now")]
+    pub last_seen: SystemTime,
 }
 
 impl Default for PeerReputation {
@@ -171,6 +195,7 @@ impl Default for PeerReputation {
             connection_attempts: 0,
             successful_connections: 0,
             last_connection: None,
+            last_seen: SystemTime::now(),
         }
     }
 }
@@ -325,6 +350,22 @@ impl PeerReputationManager {
         reputations.clone()
     }
 
+    /// Return the current score for each requested peer. Peers with no record
+    /// default to 0. Takes a read lock and does not apply decay, so a caller sees
+    /// the score as of the last `update_reputation` or maintenance pass. Acquires
+    /// only the reputation lock, so callers must not hold a pool guard across this
+    /// to keep a single lock order.
+    pub async fn scores_for(
+        &self,
+        addrs: impl IntoIterator<Item = SocketAddr>,
+    ) -> HashMap<SocketAddr, i32> {
+        let reputations = self.reputations.read().await;
+        addrs
+            .into_iter()
+            .map(|addr| (addr, reputations.get(&addr).map_or(0, |rep| rep.score)))
+            .collect()
+    }
+
     /// Clear banned status for a peer (admin function)
     pub async fn unban_peer(&self, peer: &SocketAddr) {
         let mut reputations = self.reputations.write().await;
@@ -337,7 +378,11 @@ impl PeerReputationManager {
 
     /// Save reputation data to persistent storage
     pub async fn save_to_storage(&self, storage: &impl PeerStorage) -> std::io::Result<()> {
-        let reputations = self.reputations.read().await;
+        let now = SystemTime::now();
+        let mut reputations = self.reputations.write().await;
+        for reputation in reputations.values_mut() {
+            reputation.last_seen = now;
+        }
 
         storage.save_peers_reputation(&reputations).await.map_err(std::io::Error::other)
     }
@@ -364,10 +409,20 @@ impl PeerReputationManager {
                 continue;
             }
 
-            // Apply initial decay based on ban count
-            if reputation.ban_count > 0 {
-                reputation.score = reputation.score.max(50); // Start with higher score for previously banned peers
+            // Credit decay for the wall-clock time the client spent offline. The
+            // monotonic `last_update` reset to now on load, so without this a peer
+            // never recovers while the client is closed.
+            if let Ok(offline) = SystemTime::now().duration_since(reputation.last_seen) {
+                let intervals = offline.as_secs() / DECAY_INTERVAL.as_secs();
+                if intervals > 0 {
+                    let intervals_i32 = intervals.min(i32::MAX as u64) as i32;
+                    let decay = intervals_i32.saturating_mul(DECAY_AMOUNT);
+                    reputation.score = (reputation.score - decay).max(MIN_MISBEHAVIOR_SCORE);
+                }
             }
+
+            // Never let a peer return one strike short of a ban after a restart.
+            reputation.score = reputation.score.min(RESTART_SCORE_CEILING);
 
             reputations.insert(addr, reputation);
             loaded_count += 1;
@@ -421,6 +476,10 @@ impl ReputationAware for PeerReputationManager {
             }
         }
 
+        // Shuffle before the stable sort so equal-scored candidates (e.g. every
+        // peer at score 0 on a fresh install) are returned in random order
+        // rather than a fixed address order that herds clients onto the same nodes.
+        peer_scores.shuffle(&mut rand::thread_rng());
         // Sort by score (lower is better)
         peer_scores.sort_by_key(|(_, score)| *score);
 

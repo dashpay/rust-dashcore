@@ -12,6 +12,7 @@
 //! Results from both sources are merged and deduplicated.
 
 use dashcore::Network;
+use rand::seq::SliceRandom;
 use std::net::SocketAddr;
 
 /// DNS discovery for finding initial peers.
@@ -60,6 +61,10 @@ impl DnsDiscovery {
 
         addresses.sort();
         addresses.dedup();
+        // Dedup needs the sort above, but a sorted list makes every client pick
+        // the same lowest-address peers via `take`/`truncate`, herding testers
+        // onto a handful of nodes. Shuffle so clients fan out across the set.
+        addresses.shuffle(&mut rand::thread_rng());
 
         tracing::info!(
             "Discovered {} unique peer addresses for {:?} ({} from embedded seeds + DNS)",

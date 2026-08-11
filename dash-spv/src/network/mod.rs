@@ -5,6 +5,7 @@ pub mod constants;
 pub mod discovery;
 mod event;
 pub mod handshake;
+mod latency;
 pub mod manager;
 mod message_dispatcher;
 pub mod peer;
