@@ -34,10 +34,6 @@ use key_wallet_manager::{
     check_compact_filters_for_elements, FilterMatchKey, WalletInterface, WalletManager,
 };
 
-/// Deterministic test mnemonic (throwaway; same one the unit tests use).
-const MNEMONIC: &str =
-    "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
-
 /// Denominated coins still unspent in the CoinJoin account — the wallet's
 /// active mixing balance, which stays in the scan query.
 const LIVE_UTXOS: usize = 200;
@@ -56,10 +52,14 @@ type Manager = WalletManager<ManagedWalletInfo>;
 /// Build a wallet whose CoinJoin account carries `used` spent single-use
 /// addresses, [`LIVE_UTXOS`] still-funded ones, and the default gap-limit
 /// lookahead of unused addresses above them.
+///
+/// The wallet is created from a fresh random mnemonic each run: the
+/// workload is defined entirely by the pool/UTXO counts, so the timings
+/// are stable across runs without pinning key material.
 fn wallet_with_mixing_history(used: u32) -> (Manager, [u8; 32]) {
     let mut manager = Manager::new(Network::Regtest);
     let wallet_id = manager
-        .create_wallet_from_mnemonic(MNEMONIC, 0, WalletAccountCreationOptions::Default)
+        .create_wallet_with_random_mnemonic(WalletAccountCreationOptions::Default)
         .expect("create wallet");
 
     let key_source = KeySource::Public(
