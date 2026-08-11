@@ -276,11 +276,8 @@ struct MsgQueue {
     notify: Notify,
 }
 
-/// Strict drain priority: control traffic first, then blocks (they gate the scan
-/// and complete fast), then filters (the bytes), then filter headers, then block
-/// headers.
 const DRAIN_PRIORITY: [MsgClass; 5] =
-    [MsgClass::Other, MsgClass::Blocks, MsgClass::CFilters, MsgClass::CfHeaders, MsgClass::Headers];
+    [MsgClass::Other, MsgClass::Blocks, MsgClass::CfHeaders, MsgClass::CFilters, MsgClass::Headers];
 
 struct State {}
 
@@ -2046,8 +2043,8 @@ mod tests {
             vec![
                 MsgClass::Other,
                 MsgClass::Blocks,
-                MsgClass::CFilters,
                 MsgClass::CfHeaders,
+                MsgClass::CFilters,
                 MsgClass::Headers
             ]
         );

@@ -479,8 +479,6 @@ impl DisconnectedPeer {
         };
         handshake_send(&mut writer, magic, announce).await?;
 
-        handshake_send(&mut writer, magic, NetworkMessage::GetAddr).await?;
-
         // Measure round-trip lag with a post-handshake ping/pong. Sending a ping
         // before the handshake completes makes some peers drop us, so we do it here.
         let mut lag_ms: u32 = 0;
@@ -504,6 +502,8 @@ impl DisconnectedPeer {
                 }
             }
         }
+
+        let _ = handshake_send(&mut writer, magic, NetworkMessage::GetAddr).await;
 
         let writer = Arc::new(Mutex::new(writer));
         let in_flight = Arc::new(AtomicUsize::new(0));
