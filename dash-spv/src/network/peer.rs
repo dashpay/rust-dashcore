@@ -31,6 +31,7 @@ use crate::{error::NetworkResult, NetworkError};
 
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+const WRITE_TIMEOUT: Duration = Duration::from_secs(5);
 const USER_AGENT: &str = concat!("/dash-spv:", env!("CARGO_PKG_VERSION"), "/");
 
 /// Per-peer response-latency tracker: the time each pipeline request spends in
@@ -127,70 +128,43 @@ pub enum PeerEvent {
     Disconnected(SocketAddr),
 }
 
-pub struct ConnectedPeer {
-    network: Network,
+/// Everything the router needs to pick a peer and write to it, detached from the
+/// peer set so it can be cloned, releasing the lock on the peer itself
+#[derive(Clone)]
+pub(crate) struct PeerHandle {
     addr: SocketAddr,
-    version: VersionMessage,
-    lag_ms: AtomicU32,
-    in_flight: Arc<AtomicUsize>,
-    latency: Arc<Latency>,
+    network: Network,
     writer: Arc<Mutex<OwnedWriteHalf>>,
+    in_flight: Arc<AtomicUsize>,
     /// This peer's measured serving capacity — the number of requests it can have
     /// in flight before ITS responses start queuing (its bandwidth-delay product).
     /// Sized continuously by the bandwidth controller from the peer's own
     /// completion rate and service time, mirroring how the global budget is sized
     /// from our download rate. Fast peers earn a high cap, slow peers a low one.
     cap: Arc<AtomicUsize>,
-    /// Cumulative bytes downloaded from THIS peer, for per-peer throughput.
-    bytes: Arc<AtomicU64>,
+    latency: Arc<Latency>,
     /// Whether to ask THIS peer for compressed headers (DIP-25). Set when it
     /// advertises `NODE_HEADERS_COMPRESSED`, cleared by the reader if its
     /// `headers2` ever fails to decompress, so the peer transparently falls back
     /// to uncompressed `headers` instead of stalling the header pipeline.
     /// Shared with the reader task, which is the only writer after connect.
     headers2: Arc<AtomicBool>,
-    /// Per-connection cancel token (child of the global shutdown). Cancelling it
-    /// stops this peer's reader and closes the socket. Used to drop peers we
-    /// probed but don't keep, so we only hold connections we actually use.
-    token: CancellationToken,
 }
 
-pub struct DisconnectedPeer {
-    network: Network,
-    addr: SocketAddr,
-    /// Handshake ping measured the last time we were connected to this peer, if any.
-    /// Lets the supervisor rank backups by measured quality instead of treating every
-    /// disconnected address as an unknown. `None` for an address we have never probed.
-    lag_ms: Option<u32>,
-}
-
-impl ConnectedPeer {
-    pub fn addr(&self) -> SocketAddr {
+impl PeerHandle {
+    pub(crate) fn addr(&self) -> SocketAddr {
         self.addr
     }
 
-    pub fn version(&self) -> &VersionMessage {
-        &self.version
-    }
-
-    /// Net in-flight to this peer: `+1` per message we send it, `-1` per message
-    /// we read from it (managed internally by `send` and the reader task). The
-    /// router reads this to send to the least-loaded peer.
-    pub fn in_flight(&self) -> usize {
+    pub(crate) fn in_flight(&self) -> usize {
         self.in_flight.load(Ordering::Relaxed)
     }
 
-    pub fn disconnect(self) -> DisconnectedPeer {
-        DisconnectedPeer {
-            network: self.network,
-            addr: self.addr,
-            // Carry the measured handshake ping (0 means unmeasured) so the supervisor
-            // can rank this address against others without re-probing it.
-            lag_ms: (self.lag_ms() > 0).then(|| self.lag_ms()),
-        }
+    pub(crate) fn cap(&self) -> usize {
+        self.cap.load(Ordering::Relaxed)
     }
 
-    pub async fn send(&self, msg: &NetworkMessage) -> NetworkResult<()> {
+    pub(crate) async fn send(&self, msg: &NetworkMessage) -> NetworkResult<()> {
         // Upgrade a header request to its compressed form for peers that support
         // it. The sync layer always declares a plain `getheaders` because it has
         // no idea which peer the router will pick; the choice belongs here, where
@@ -222,16 +196,86 @@ impl ConnectedPeer {
             self.latency.on_send().await;
         }
 
-        if let Err(e) = self.writer.lock().await.write_all(&serialized).await {
+        let write = async {
+            let mut writer = self.writer.lock().await;
+            writer.write_all(&serialized).await
+        };
+        let outcome = match tokio::time::timeout(WRITE_TIMEOUT, write).await {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(e)) => Err(format!("Write failed: {}", e)),
+            // A write that never completes means the peer stopped reading. Treat
+            // it exactly like a failed write: give the unit back and let the
+            // caller re-queue, rather than waiting on a socket that will not move.
+            Err(_) => Err(format!("Write stalled for {}s", WRITE_TIMEOUT.as_secs())),
+        };
+        if let Err(reason) = outcome {
             // Nothing reached the peer, so no response will free this unit.
             if accounted {
                 self.in_flight.fetch_sub(1, Ordering::Relaxed);
                 self.latency.cancel_one().await;
             }
-            tracing::warn!("Disconnecting {} due to write error: {}", self.addr, e);
-            return Err(NetworkError::ConnectionFailed(format!("Write failed: {}", e)));
+            tracing::warn!("Disconnecting {} due to write error: {}", self.addr, reason);
+            return Err(NetworkError::ConnectionFailed(reason));
         }
         Ok(())
+    }
+}
+
+pub struct ConnectedPeer {
+    handle: PeerHandle,
+    version: VersionMessage,
+    lag_ms: AtomicU32,
+    /// Cumulative bytes downloaded from THIS peer, for per-peer throughput.
+    bytes: Arc<AtomicU64>,
+    /// Per-connection cancel token (child of the global shutdown). Cancelling it
+    /// stops this peer's reader and closes the socket. Used to drop peers we
+    /// probed but don't keep, so we only hold connections we actually use.
+    token: CancellationToken,
+}
+
+pub struct DisconnectedPeer {
+    network: Network,
+    addr: SocketAddr,
+    /// Handshake ping measured the last time we were connected to this peer, if any.
+    /// Lets the supervisor rank backups by measured quality instead of treating every
+    /// disconnected address as an unknown. `None` for an address we have never probed.
+    lag_ms: Option<u32>,
+}
+
+impl ConnectedPeer {
+    pub fn addr(&self) -> SocketAddr {
+        self.handle.addr()
+    }
+
+    pub fn version(&self) -> &VersionMessage {
+        &self.version
+    }
+
+    /// A detached view of this peer for the router: routing decisions and writes
+    /// without holding the peer set's lock.
+    pub(crate) fn handle(&self) -> PeerHandle {
+        self.handle.clone()
+    }
+
+    /// Net in-flight to this peer: `+1` per message we send it, `-1` per message
+    /// we read from it (managed internally by `send` and the reader task). The
+    /// router reads this to send to the least-loaded peer.
+    pub fn in_flight(&self) -> usize {
+        self.handle.in_flight()
+    }
+
+    pub fn disconnect(self) -> DisconnectedPeer {
+        DisconnectedPeer {
+            network: self.handle.network,
+            addr: self.handle.addr,
+            // Carry the measured handshake ping (0 means unmeasured) so the supervisor
+            // can rank this address against others without re-probing it.
+            lag_ms: (self.lag_ms() > 0).then(|| self.lag_ms()),
+        }
+    }
+
+    pub async fn send(&self, msg: &NetworkMessage) -> NetworkResult<()> {
+        self.handle().send(msg).await
     }
 
     /// Note that `n` earlier pipeline requests have fully completed, freeing that
@@ -240,23 +284,24 @@ impl ConnectedPeer {
     /// own; single-response requests are decremented directly in the reader.
     pub(crate) async fn response_completed(&self, n: usize) {
         let _ = self
+            .handle
             .in_flight
             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| Some(v.saturating_sub(n)));
         for _ in 0..n {
-            self.latency.complete_one().await;
+            self.handle.latency.complete_one().await;
         }
     }
 
     /// Per-peer response latency: (completed requests, average ms, worst ms).
     pub(crate) fn latency_stats(&self) -> (u64, f64, f64) {
-        self.latency.snapshot()
+        self.handle.latency.snapshot()
     }
 
     /// Cumulative (completed request count, total service-time ns) for this peer.
     /// The bandwidth controller diffs these across a window to size this peer's
     /// in-flight cap independently by Little's Law.
     pub(crate) fn latency_totals(&self) -> (u64, u64) {
-        self.latency.totals()
+        self.handle.latency.totals()
     }
 
     /// Handshake round-trip latency in ms (0 if unmeasured).
@@ -270,11 +315,6 @@ impl ConnectedPeer {
         self.token.cancel();
     }
 
-    /// This peer's current measured in-flight capacity (its serving BDP).
-    pub(crate) fn cap(&self) -> usize {
-        self.cap.load(Ordering::Relaxed)
-    }
-
     /// Cumulative bytes downloaded from this peer. The controller diffs it across
     /// a window for this peer's throughput.
     pub(crate) fn bytes_read(&self) -> u64 {
@@ -283,7 +323,7 @@ impl ConnectedPeer {
 
     /// Update this peer's measured in-flight capacity (called by the controller).
     pub(crate) fn set_cap(&self, n: usize) {
-        self.cap.store(n, Ordering::Relaxed);
+        self.handle.cap.store(n, Ordering::Relaxed);
     }
 }
 
@@ -495,16 +535,18 @@ impl DisconnectedPeer {
         );
 
         Ok(ConnectedPeer {
-            network: self.network,
-            addr: self.addr,
+            handle: PeerHandle {
+                addr: self.addr,
+                network: self.network,
+                writer,
+                in_flight,
+                cap,
+                latency,
+                headers2,
+            },
             version,
             lag_ms: AtomicU32::new(lag_ms),
-            in_flight,
-            latency,
-            writer,
-            cap,
             bytes: peer_bytes,
-            headers2,
             token,
         })
     }

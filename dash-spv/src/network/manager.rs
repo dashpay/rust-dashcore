@@ -71,7 +71,7 @@ const DRAIN_POLL: Duration = Duration::from_secs(1);
 use crate::{
     network::{
         discovery::PeerDiscoverer,
-        peer::{ConnectedPeer, DisconnectedPeer, PeerEvent},
+        peer::{ConnectedPeer, DisconnectedPeer, PeerEvent, PeerHandle},
     },
     ClientConfig,
 };
@@ -501,8 +501,10 @@ impl PeerNetworkManager {
     pub fn broadcast(&self, msg: NetworkMessage) {
         let peers = self.connected_peers.clone();
         tokio::spawn(async move {
-            let guard = peers.lock().await;
-            for (peer, _) in guard.iter() {
+            let handles: Vec<PeerHandle> =
+                peers.lock().await.iter().map(|(p, _)| p.handle()).collect();
+
+            for peer in handles {
                 let _ = peer.send(&msg).await;
             }
         });
@@ -560,7 +562,8 @@ fn spawn_router(
                 }
             }
 
-            let peers = connected.lock().await;
+            let peers: Vec<PeerHandle> =
+                connected.lock().await.iter().map(|(p, _)| p.handle()).collect();
             let sent =
                 route_tick(&queue, &peers, global_cap.load(Ordering::Relaxed), &requests).await;
             drop(peers);
@@ -608,7 +611,7 @@ fn request_keys(msg: &NetworkMessage) -> Vec<RequestKey> {
 
 async fn route_tick(
     queue: &MsgQueue,
-    peers: &[(ConnectedPeer, State)],
+    peers: &[PeerHandle],
     global_cap: usize,
     requests: &Registry,
 ) -> usize {
@@ -622,9 +625,8 @@ async fn route_tick(
     // time — fast peers carry more, slow peers less, with no fixed constant. The
     // global cap is our measured download capacity. Whichever binds first limits
     // this round, so we ride each peer's real ceiling without over-committing.
-    let total_in_flight: usize = peers.iter().map(|(p, _)| p.in_flight()).sum();
-    let per_peer_room: usize =
-        peers.iter().map(|(p, _)| p.cap().saturating_sub(p.in_flight())).sum();
+    let total_in_flight: usize = peers.iter().map(PeerHandle::in_flight).sum();
+    let per_peer_room: usize = peers.iter().map(|p| p.cap().saturating_sub(p.in_flight())).sum();
     let global_room = global_cap.saturating_sub(total_in_flight);
     let capacity = per_peer_room.min(global_room);
     if capacity == 0 {
@@ -645,10 +647,10 @@ async fn route_tick(
     let mut msgs = msgs.into_iter();
     for msg in msgs.by_ref() {
         // Send to the peer with the most free measured capacity.
-        let Some((peer, _)) = peers
+        let Some(peer) = peers
             .iter()
-            .filter(|(p, _)| p.in_flight() < p.cap())
-            .max_by_key(|(p, _)| p.cap().saturating_sub(p.in_flight()))
+            .filter(|p| p.in_flight() < p.cap())
+            .max_by_key(|p| p.cap().saturating_sub(p.in_flight()))
         else {
             unsent.push(msg); // every peer is at its measured cap
             break;
