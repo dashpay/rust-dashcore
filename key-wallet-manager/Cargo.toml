@@ -39,6 +39,11 @@ key-wallet = { path = "../key-wallet", features = ["test-utils", "bincode"] }
 dashcore = { path = "../dash", features = ["test-utils"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 hex = "0.4"
+criterion = "0.8.1"
+
+[[bench]]
+name = "filter_scan"
+harness = false
 
 [lints.rust]
 unexpected_cfgs = { level = "allow", check-cfg = ['cfg(bench)', 'cfg(fuzzing)'] }

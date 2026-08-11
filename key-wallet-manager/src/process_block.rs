@@ -230,6 +230,10 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
             .unwrap_or_default()
     }
 
+    fn scan_script_pubkeys_for(&self, wallet_id: &WalletId) -> Vec<ScriptBuf> {
+        self.wallet_infos.get(wallet_id).map(|info| info.scan_script_pubkeys()).unwrap_or_default()
+    }
+
     fn monitored_filter_elements_for(&self, wallet_id: &WalletId) -> Vec<Vec<u8>> {
         self.wallet_infos
             .get(wallet_id)
@@ -745,6 +749,34 @@ mod tests {
             result.involved_addresses.contains(&addr),
             "involved_addresses should contain the target address"
         );
+    }
+
+    #[tokio::test]
+    async fn test_scan_script_pubkeys_for_prunes_spent_coinjoin_addresses() {
+        use key_wallet::account::ManagedAccountTrait;
+
+        let (mut manager, wallet_id, _addr) = setup_manager_with_wallet();
+
+        // Untouched wallet: the scan set equals the monitored set.
+        let monitored = manager.monitored_script_pubkeys_for(&wallet_id);
+        assert_eq!(manager.scan_script_pubkeys_for(&wallet_id), monitored);
+
+        // Mark a CoinJoin address used with no unspent output — a spent
+        // single-use address. The scan query drops it; the monitored set
+        // keeps it.
+        let info = manager.get_wallet_info_mut(&wallet_id).expect("wallet info");
+        let coinjoin = info.accounts.coinjoin_accounts.get_mut(&0).expect("CoinJoin account 0");
+        let spent_addr = coinjoin.all_addresses().first().cloned().expect("CoinJoin address");
+        assert!(coinjoin.mark_address_used(&spent_addr));
+
+        let monitored = manager.monitored_script_pubkeys_for(&wallet_id);
+        let scan = manager.scan_script_pubkeys_for(&wallet_id);
+        assert!(monitored.contains(&spent_addr.script_pubkey()));
+        assert!(!scan.contains(&spent_addr.script_pubkey()));
+        assert_eq!(scan.len(), monitored.len() - 1);
+
+        // Unknown wallet id yields an empty scan set.
+        assert!(manager.scan_script_pubkeys_for(&[0xff; 32]).is_empty());
     }
 
     #[tokio::test]

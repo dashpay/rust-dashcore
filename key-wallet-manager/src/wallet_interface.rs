@@ -88,6 +88,21 @@ pub trait WalletInterface: Send + Sync + 'static {
     /// Get cached scriptPubKeys for every address monitored by `wallet_id`.
     fn monitored_script_pubkeys_for(&self, wallet_id: &WalletId) -> Vec<ScriptBuf>;
 
+    /// Get the scriptPubKeys `wallet_id` wants matched during a forward
+    /// compact-filter scan.
+    ///
+    /// Defaults to [`Self::monitored_script_pubkeys_for`]. Implementations may
+    /// return a subset when some monitored scripts can no longer be paid in
+    /// practice — the managed-wallet implementation drops CoinJoin addresses
+    /// whose outputs are all spent, since those are single-use by protocol and
+    /// their monotonic growth dominates per-filter matching cost late in a
+    /// mixing-heavy recovery scan (dashpay/rust-dashcore#948). Block
+    /// processing still checks transactions against the full monitored set, so
+    /// pruning only narrows which blocks the filter scan downloads.
+    fn scan_script_pubkeys_for(&self, wallet_id: &WalletId) -> Vec<ScriptBuf> {
+        self.monitored_script_pubkeys_for(wallet_id)
+    }
+
     /// Get the bare `hash160` compact-filter elements monitored by `wallet_id`
     /// that are not covered by its scriptPubKeys.
     ///
