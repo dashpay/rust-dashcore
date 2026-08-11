@@ -336,6 +336,7 @@ impl PeerNetworkManager {
             shutdown.clone(),
             peer_wake.clone(),
             max_peers,
+            discoverer.clone(),
         );
 
         spawn_router(
@@ -1482,6 +1483,7 @@ fn retire_drained(peer: ConnectedPeer, shutdown: CancellationToken) {
     });
 }
 
+#[allow(clippy::too_many_arguments)]
 fn spawn_pump(
     mut inbound: UnboundedReceiver<PeerEvent>,
     subscribers: Subscribers,
@@ -1492,6 +1494,7 @@ fn spawn_pump(
     shutdown: CancellationToken,
     peer_wake: Arc<Notify>,
     max_peers: usize,
+    discoverer: Arc<Mutex<PeerDiscoverer>>,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
         // Per-peer received-message counter to check load balance across peers.
@@ -1555,6 +1558,32 @@ fn spawn_pump(
                             lat,
                         );
                     }
+                    // Peer address gossip: fold it into the discovery pool instead
+                    // of dropping it. We advertise `sendaddrv2` at handshake, so
+                    // peers send these unprompted; ignoring them left the pool
+                    // frozen at whatever the seeds and one DNS lookup returned, with
+                    // no way to learn about the network as addresses went stale.
+                    if let NetworkMessage::AddrV2(addrs) = &msg {
+                        let learned = discoverer
+                            .lock()
+                            .await
+                            .learn(addrs.iter().filter_map(|a| a.socket_addr().ok()));
+                        if learned > 0 {
+                            tracing::debug!(
+                                target: "dash_spv::network",
+                                "learned {} new peer address(es) from {}",
+                                learned,
+                                addr
+                            );
+                            // Fresh candidates are exactly what a short set was
+                            // waiting for, so tell the supervisor rather than making
+                            // it find out on its next tick.
+                            if connected.lock().await.len() < max_peers {
+                                peer_wake.notify_one();
+                            }
+                        }
+                    }
+
                     let mt = MessageType::from_cmd(msg.cmd());
                     // Single-message responses free a slot in the peer's reader;
                     // wake the router so it can use the freed capacity. `cfilter`

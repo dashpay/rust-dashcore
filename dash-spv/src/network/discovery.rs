@@ -31,6 +31,39 @@ impl PeerDiscoverer {
         }
     }
 
+    /// Fold addresses learned from a connected peer (`addr`/`addrv2` gossip) into
+    /// the pool.
+    ///
+    /// Without this the pool is whatever the seeds and one DNS lookup produced at
+    /// startup and never grows, so a client whose known addresses all go stale has
+    /// nothing left to try. Ignored when the client was pinned to configured peers:
+    /// there, "these peers and no others" is the point.
+    ///
+    /// Returns how many were new, so the caller can wake the supervisor only when
+    /// there is genuinely something fresh to connect to.
+    pub fn learn(&mut self, addresses: impl IntoIterator<Item = SocketAddr>) -> usize {
+        if !self.fixed.is_empty() || self.restrict_to_configured_peers {
+            return 0;
+        }
+        // Only extend a pool that exists: before the first `get` there is nothing
+        // to add to, and discovery will run anyway.
+        let Some(pool) = self.discovered.as_mut() else {
+            return 0;
+        };
+        let known: std::collections::HashSet<SocketAddr> = pool.iter().copied().collect();
+        let fresh: Vec<SocketAddr> = addresses.into_iter().filter(|a| !known.contains(a)).collect();
+        // Dedup within the batch too — one `addrv2` can repeat an address.
+        let mut seen = std::collections::HashSet::new();
+        let mut added = 0;
+        for addr in fresh {
+            if seen.insert(addr) {
+                pool.push(addr);
+                added += 1;
+            }
+        }
+        added
+    }
+
     /// Up to `count` addresses to try, sampled at random from whatever source applies.
     pub async fn get(&mut self, count: usize) -> Vec<DisconnectedPeer> {
         let pool = if !self.fixed.is_empty() {
