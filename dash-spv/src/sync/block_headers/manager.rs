@@ -145,18 +145,18 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> BlockHeadersManager<H, M> {
             );
         }
 
-        // Send more requests during initial sync or active post-sync catch-up.
-        // Skip for unsolicited headers.
+        // Process ready-to-store segments
+        let mut events = Vec::new();
+        let ready_batches = self.pipeline.take_ready_to_store();
+
+        // Draining can expose new segments at the end of the active window, so
+        // refill only after next_to_store has advanced. Skip unsolicited headers.
         if was_syncing || !tip_was_complete {
             let sent = self.pipeline.send_pending(requests)?;
             if sent > 0 {
                 tracing::debug!("Pipeline sent {} more requests", sent);
             }
         }
-
-        // Process ready-to-store segments
-        let mut events = Vec::new();
-        let ready_batches = self.pipeline.take_ready_to_store();
 
         for (_start_height, batch_headers) in ready_batches {
             if !batch_headers.is_empty() {
@@ -263,6 +263,8 @@ mod tests {
     use crate::storage::{
         DiskStorageManager, PersistentBlockHeaderStorage, PersistentMetadataStorage, StorageManager,
     };
+    use crate::sync::block_headers::pipeline::ACTIVE_SEGMENT_WINDOW;
+    use crate::sync::block_headers::segment_state::SegmentState;
     use crate::sync::{ManagerIdentifier, SyncManager, SyncManagerProgress};
     use dashcore::network::message::NetworkMessage;
     use tokio::sync::mpsc::unbounded_channel;
@@ -370,6 +372,61 @@ mod tests {
 
         // Tip segment marked complete again for the next unsolicited header
         assert!(manager.pipeline.is_tip_complete());
+    }
+
+    #[tokio::test]
+    async fn test_response_cycle_refills_window_after_ordered_drain() {
+        let mut manager = create_test_manager().await;
+        let stored_tip = manager.tip().await.unwrap();
+        let chain = Header::dummy_chain(ACTIVE_SEGMENT_WINDOW, *stored_tip.hash());
+
+        let mut segments = Vec::new();
+        for (id, header) in chain.iter().enumerate() {
+            let start_hash = if id == 0 {
+                *stored_tip.hash()
+            } else {
+                chain[id - 1].block_hash()
+            };
+            let target_hash = header.block_hash();
+            let mut segment = SegmentState::new(
+                id,
+                id as u32,
+                start_hash,
+                Some(id as u32 + 1),
+                Some(target_hash),
+            );
+            if id == 0 {
+                segment.coordinator.mark_sent(&[start_hash]);
+            } else {
+                segment.current_tip_hash = target_hash;
+                segment.current_height = id as u32 + 1;
+                segment.complete = true;
+                segment.buffered_headers.push((*header).into());
+            }
+            segments.push(segment);
+        }
+        let next_locator = chain.last().expect("non-empty chain").block_hash();
+        segments.push(SegmentState::new(
+            ACTIVE_SEGMENT_WINDOW,
+            ACTIVE_SEGMENT_WINDOW as u32,
+            next_locator,
+            None,
+            None,
+        ));
+        manager.pipeline.set_segments_for_test(segments);
+        manager.progress.set_state(SyncState::Syncing);
+
+        let (requests, mut rx) = create_test_request_sender();
+        let events = manager.handle_headers_pipeline(&[chain[0].into()], &requests).await.unwrap();
+
+        assert_eq!(events.len(), ACTIVE_SEGMENT_WINDOW);
+        match rx.try_recv().expect("response cycle did not refill active window") {
+            NetworkRequest::SendMessage(NetworkMessage::GetHeaders(request)) => {
+                assert_eq!(request.locator_hashes[0], next_locator);
+            }
+            other => panic!("Expected GetHeaders, got {other:?}"),
+        }
+        assert!(rx.try_recv().is_err());
     }
 
     #[tokio::test]

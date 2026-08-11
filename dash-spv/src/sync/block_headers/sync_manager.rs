@@ -117,7 +117,7 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> SyncManager for BlockHeadersMana
                             .iter()
                             .zip(hashes)
                             .map(|(header, hash)| {
-                                crate::types::HashedBlockHeader::with_hash(*header, *hash)
+                                crate::types::HashedBlockHeader::with_trusted_hash(*header, *hash)
                             })
                             .collect()
                     } else {

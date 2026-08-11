@@ -11,13 +11,13 @@ use dashcore::block::Header;
 use dashcore::BlockHash;
 
 use crate::chain::CheckpointManager;
-use crate::error::SyncResult;
+use crate::error::{SyncError, SyncResult};
 use crate::network::RequestSender;
 use crate::sync::block_headers::segment_state::SegmentState;
 use crate::types::HashedBlockHeader;
 
 /// Keep enough checkpoint segments active to saturate decompression while bounding buffered data.
-const ACTIVE_SEGMENT_WINDOW: usize = 8;
+pub(super) const ACTIVE_SEGMENT_WINDOW: usize = 8;
 
 /// Pipeline for parallel header downloads across checkpoint-defined segments.
 ///
@@ -178,6 +178,13 @@ impl HeadersPipeline {
                 // If tip segment was completed but receives new headers (post-sync),
                 // reset it so take_ready_to_store() can process the new headers
                 if segment.complete && segment.target_height.is_none() {
+                    if headers.len() != 1 {
+                        return Err(SyncError::InvalidState(format!(
+                            "Tip segment {}: received {} unsolicited headers after sync",
+                            segment.segment_id,
+                            headers.len()
+                        )));
+                    }
                     segment.complete = false;
                     self.next_to_store = idx;
                     // Mark as in-flight so the coordinator accepts these unsolicited headers
@@ -338,6 +345,13 @@ impl HeadersPipeline {
             .find(|s| s.target_height.is_none())
             .is_some_and(|s| !s.complete && s.coordinator.active_count() > 0)
     }
+
+    #[cfg(test)]
+    pub(super) fn set_segments_for_test(&mut self, segments: Vec<SegmentState>) {
+        self.segments = segments;
+        self.next_to_store = 0;
+        self.initialized = true;
+    }
 }
 
 #[cfg(test)]
@@ -491,6 +505,76 @@ mod tests {
         assert!(!pipeline.segments[0].complete, "Tip segment should be reset to non-complete");
         assert_eq!(pipeline.segments[0].buffered_headers.len(), 1);
         assert_eq!(pipeline.segments[0].current_height, 1001);
+    }
+
+    #[test]
+    fn test_completed_tip_rejects_unsolicited_header_batch_without_mutation() {
+        let tip_hash = BlockHash::dummy(99);
+        let mut tip = SegmentState::new(0, 1000, tip_hash, None, None);
+        tip.complete = true;
+
+        let cm = create_test_checkpoint_manager(true);
+        let mut pipeline = HeadersPipeline::new(cm);
+        pipeline.initialized = true;
+        pipeline.next_to_store = 1;
+        pipeline.segments = vec![tip];
+
+        let headers = Header::dummy_chain(2, tip_hash)
+            .into_iter()
+            .map(HashedBlockHeader::from)
+            .collect::<Vec<_>>();
+        let result = pipeline.receive_headers(&headers);
+
+        assert!(matches!(result, Err(SyncError::InvalidState(_))));
+        assert!(pipeline.segments[0].complete);
+        assert_eq!(pipeline.segments[0].current_tip_hash, tip_hash);
+        assert_eq!(pipeline.segments[0].current_height, 1000);
+        assert!(pipeline.segments[0].buffered_headers.is_empty());
+        assert_eq!(pipeline.segments[0].coordinator.active_count(), 0);
+        assert_eq!(pipeline.next_to_store, 1);
+    }
+
+    #[test]
+    fn test_draining_active_window_exposes_next_segment_for_refill() {
+        let mut segments = Vec::new();
+        for id in 0..ACTIVE_SEGMENT_WINDOW {
+            let start_hash = BlockHash::dummy(id as u32);
+            let mut segment =
+                SegmentState::new(id, id as u32, start_hash, Some(id as u32 + 1), None);
+            segment.complete = true;
+            segment.buffered_headers.push(Header::dummy(id as u32).into());
+            segments.push(segment);
+        }
+        segments.push(SegmentState::new(
+            ACTIVE_SEGMENT_WINDOW,
+            ACTIVE_SEGMENT_WINDOW as u32,
+            BlockHash::dummy(ACTIVE_SEGMENT_WINDOW as u32),
+            None,
+            None,
+        ));
+
+        let cm = create_test_checkpoint_manager(true);
+        let mut pipeline = HeadersPipeline::new(cm);
+        pipeline.set_segments_for_test(segments);
+        let (sender, mut rx) = create_test_request_sender();
+
+        assert_eq!(pipeline.send_pending(&sender).unwrap(), 0);
+        assert_eq!(pipeline.take_ready_to_store().len(), ACTIVE_SEGMENT_WINDOW);
+        assert_eq!(pipeline.next_to_store, ACTIVE_SEGMENT_WINDOW);
+        assert_eq!(pipeline.send_pending(&sender).unwrap(), 1);
+
+        match rx.try_recv().expect("newly exposed segment was not requested") {
+            NetworkRequest::SendMessage(
+                dashcore::network::message::NetworkMessage::GetHeaders(request),
+            ) => {
+                assert_eq!(
+                    request.locator_hashes[0],
+                    BlockHash::dummy(ACTIVE_SEGMENT_WINDOW as u32)
+                )
+            }
+            other => panic!("Expected GetHeaders, got {other:?}"),
+        }
+        assert!(rx.try_recv().is_err());
     }
 
     #[test]

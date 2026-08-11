@@ -27,21 +27,16 @@ pub struct HashedBlockHeader {
 }
 
 impl HashedBlockHeader {
-    /// Pair a header with a hash already computed by the network decoder.
-    pub(crate) fn with_hash(header: BlockHeader, hash: BlockHash) -> Self {
+    /// Pair a header with a known, trusted hash without recomputing it from the header.
+    ///
+    /// The caller guarantees the hash is correct. This is used for hashes computed by the
+    /// network decoder and for checkpoint anchors whose reconstructed header bytes would not
+    /// reproduce the trusted checkpoint hash.
+    pub(crate) fn with_trusted_hash(header: BlockHeader, hash: BlockHash) -> Self {
         Self {
             header,
             hash,
         }
-    }
-
-    /// Pair a header with a known, trusted hash without recomputing it from the header.
-    ///
-    /// The caller guarantees the hash is correct. This is used to anchor the chain at a
-    /// checkpoint whose hash is trusted but whose exact header bytes (the block version)
-    /// are not stored, so hashing the reconstructed header would not reproduce it.
-    pub(crate) fn with_trusted_hash(header: BlockHeader, hash: BlockHash) -> Self {
-        Self::with_hash(header, hash)
     }
 
     pub fn header(&self) -> &BlockHeader {
