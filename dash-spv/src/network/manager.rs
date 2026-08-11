@@ -1309,6 +1309,39 @@ fn spawn_peer_supervisor(
     )
 }
 
+/// Pull every on-wire request routed to one of `gone` back to `Queued`, returning
+/// the messages to put back on the send queue.
+///
+/// Both ways of losing a peer must do this, and do it identically: the timeout
+/// monitor kicking a stalled peer, and the pump seeing its socket close. A
+/// request whose peer is gone is tracked by nobody — the monitor only watches
+/// connected peers — so leaving it `OnWire` strands it in the registry forever
+/// while the pipeline that owns it waits for a response that can never arrive.
+///
+/// The key stays registered, as `Queued`, rather than being removed: the request
+/// is still wanted, so de-duplication must keep holding for it while the message
+/// sits back on the queue, or a pipeline re-declaring it would queue a duplicate.
+async fn requeue_requests_from(
+    requests: &Registry,
+    gone: &HashSet<SocketAddr>,
+) -> Vec<NetworkMessage> {
+    let mut reinject = Vec::new();
+    let mut reqs = requests.lock().await;
+    let keys: Vec<RequestKey> = reqs
+        .iter()
+        .filter_map(|(k, s)| match s {
+            ReqState::OnWire(o) if gone.contains(&o.peer) => Some(k.clone()),
+            _ => None,
+        })
+        .collect();
+    for key in keys {
+        if let Some(ReqState::OnWire(o)) = reqs.insert(key, ReqState::Queued) {
+            reinject.push(o.msg);
+        }
+    }
+    reinject
+}
+
 /// Time requests out and evict the peers that stalled on them.
 ///
 /// A peer is a culprit when it has in-flight work (`in_flight > 0`) AND no bytes
@@ -1401,22 +1434,7 @@ fn spawn_timeout_monitor(
             // Pull every on-wire request routed to a culprit (fresh ones included —
             // the connection is going away, so they are dead too) and re-inject its
             // message (key kept as Queued so de-dup still holds).
-            let mut reinject: Vec<NetworkMessage> = Vec::new();
-            {
-                let mut reqs = requests.lock().await;
-                let keys: Vec<RequestKey> = reqs
-                    .iter()
-                    .filter_map(|(k, s)| match s {
-                        ReqState::OnWire(o) if culprits.contains(&o.peer) => Some(k.clone()),
-                        _ => None,
-                    })
-                    .collect();
-                for key in keys {
-                    if let Some(ReqState::OnWire(o)) = reqs.insert(key, ReqState::Queued) {
-                        reinject.push(o.msg);
-                    }
-                }
-            }
+            let reinject = requeue_requests_from(&requests, &culprits).await;
 
             // Drop the culprits still in the active set (some may already be gone
             // — a retired-drained peer isn't here — which is fine).
@@ -1638,22 +1656,7 @@ fn spawn_pump(
                     // retries them on a live peer — the timeout monitor only watches
                     // connected peers, so a request whose peer is already gone would
                     // otherwise leak in the registry forever.
-                    let mut reinject: Vec<NetworkMessage> = Vec::new();
-                    {
-                        let mut reqs = requests.lock().await;
-                        let keys: Vec<RequestKey> = reqs
-                            .iter()
-                            .filter_map(|(k, s)| match s {
-                                ReqState::OnWire(o) if o.peer == addr => Some(k.clone()),
-                                _ => None,
-                            })
-                            .collect();
-                        for key in keys {
-                            if let Some(ReqState::OnWire(o)) = reqs.insert(key, ReqState::Queued) {
-                                reinject.push(o.msg);
-                            }
-                        }
-                    }
+                    let reinject = requeue_requests_from(&requests, &HashSet::from([addr])).await;
 
                     tracing::info!(
                         target: "dash_spv::network",
@@ -1833,6 +1836,111 @@ mod tests {
             Txid::from_byte_array([1; 32])
         )]))
         .is_empty());
+    }
+
+    use crate::test_utils::test_socket_address;
+
+    // ---- losing a peer requeues its work ----
+    //
+    // These cover centrally what dashpay/rust-dashcore#941, #943 and #953 each
+    // fixed per sync manager before the network module was rewritten. The
+    // per-manager `on_peer_disconnect` hooks are gone: the broker owns a
+    // request from send to response, so it is the only thing that knows which
+    // peer was carrying what. Three separate regressions landed in this area,
+    // so it is worth pinning down.
+
+    /// Mark `msg`'s request as on the wire to `peer`, the state the broker puts
+    /// it in once the router hands it over.
+    async fn mark_on_wire(net: &PeerNetworkManager, msg: &NetworkMessage, peer: SocketAddr) {
+        let mut reqs = net.requests.lock().await;
+        for key in request_keys(msg) {
+            reqs.insert(
+                key,
+                ReqState::OnWire(Box::new(OnWire {
+                    peer,
+                    last_progress: Instant::now(),
+                    msg: msg.clone(),
+                })),
+            );
+        }
+    }
+
+    async fn state_of(net: &PeerNetworkManager, key: &RequestKey) -> Option<&'static str> {
+        net.requests.lock().await.get(key).map(|s| match s {
+            ReqState::Queued => "queued",
+            ReqState::OnWire(_) => "on_wire",
+        })
+    }
+
+    /// A peer that goes away takes its in-flight requests with it, and nothing
+    /// else is tracking them: the timeout monitor only watches connected peers.
+    /// They must go back on the queue for another peer to serve.
+    #[tokio::test]
+    async fn losing_a_peer_requeues_the_requests_it_was_carrying() {
+        let net = broker().await;
+        let (gone, kept) = (test_socket_address(1), test_socket_address(2));
+
+        let doomed = get_cfilters(0);
+        let survivor = get_cfilters(1000);
+        mark_on_wire(&net, &doomed, gone).await;
+        mark_on_wire(&net, &survivor, kept).await;
+
+        let reinjected = requeue_requests_from(&net.requests, &HashSet::from([gone])).await;
+
+        assert_eq!(reinjected.len(), 1, "only the departed peer's work comes back");
+        assert!(matches!(reinjected[0], NetworkMessage::GetCFilters(ref g) if g.start_height == 0));
+        assert_eq!(
+            state_of(&net, &RequestKey::CFilters(1000)).await,
+            Some("on_wire"),
+            "a healthy peer's request must not be disturbed"
+        );
+    }
+
+    /// The requeued request keeps its registry key. Dropping it would let a
+    /// pipeline that re-declares the same request queue a second copy, so the
+    /// peer's departure would cost duplicate traffic on top of the retry.
+    #[tokio::test]
+    async fn a_requeued_request_still_de_duplicates() {
+        let net = broker().await;
+        let peer = test_socket_address(1);
+
+        let msg = get_cfilters(0);
+        mark_on_wire(&net, &msg, peer).await;
+        requeue_requests_from(&net.requests, &HashSet::from([peer])).await;
+
+        assert_eq!(
+            state_of(&net, &RequestKey::CFilters(0)).await,
+            Some("queued"),
+            "the request is wanted again, not forgotten"
+        );
+
+        net.send(get_cfilters(0)).await;
+        assert_eq!(
+            net.msg_queue.len(),
+            0,
+            "re-declaring a requeued request must not queue a duplicate"
+        );
+    }
+
+    /// Requeuing is what makes the retry possible, but only the response
+    /// clears the key — otherwise a request whose peer died would be dropped
+    /// from tracking and never retried by anyone.
+    #[tokio::test]
+    async fn a_requeued_request_is_only_cleared_by_its_response() {
+        let net = broker().await;
+        let peer = test_socket_address(1);
+
+        let msg = get_cfilters(0);
+        mark_on_wire(&net, &msg, peer).await;
+        requeue_requests_from(&net.requests, &HashSet::from([peer])).await;
+        assert_eq!(state_of(&net, &RequestKey::CFilters(0)).await, Some("queued"));
+
+        net.request_answered(RequestKey::CFilters(0)).await;
+        assert_eq!(
+            state_of(&net, &RequestKey::CFilters(0)).await,
+            None,
+            "the response, and only the response, retires the request"
+        );
     }
 
     // ---- de-duplication ----
