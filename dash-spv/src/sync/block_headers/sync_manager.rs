@@ -14,6 +14,11 @@ use std::time::{Duration, Instant};
 /// Timeout waiting for unsolicited header messages after a block announcement.
 pub(super) const UNSOLICITED_HEADERS_WAIT_TIMEOUT: Duration = Duration::from_secs(3);
 
+/// Maximum age of a staged fork branch before it is dropped from the buffer.
+/// Set well above the block spacing so a branch survives long enough for the
+/// next fork block to arrive and extend it.
+const FORK_BUFFER_TTL: Duration = Duration::from_secs(600);
+
 #[async_trait]
 impl<H: BlockHeaderStorage, M: MetadataStorage> SyncManager for BlockHeadersManager<H, M> {
     fn identifier(&self) -> ManagerIdentifier {
@@ -78,7 +83,8 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> SyncManager for BlockHeadersMana
         }
 
         // Send initial batch of requests
-        let sent = self.pipeline.send_pending(requests)?;
+        let locator = self.build_locator().await?;
+        let sent = self.pipeline.send_pending(requests, &locator)?;
         tracing::info!("Pipeline: sent {} initial requests", sent);
 
         Ok(vec![SyncEvent::SyncStart {
@@ -94,7 +100,8 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> SyncManager for BlockHeadersMana
         match msg.inner() {
             NetworkMessage::Headers(headers) => {
                 // Always route through pipeline when initialized
-                self.handle_headers_pipeline(headers, requests).await
+                let peer = msg.peer_address();
+                self.handle_headers_pipeline(headers, peer, requests).await
             }
 
             NetworkMessage::Inv(inv) => {
@@ -121,10 +128,18 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> SyncManager for BlockHeadersMana
         }
 
         self.pipeline.handle_timeouts();
+        let evicted = self.fork_buffer.expire_stale(FORK_BUFFER_TTL);
+        if evicted > 0 {
+            tracing::debug!("Expired {} stale fork branches", evicted);
+        }
 
-        // During initial sync, send more requests and log progress
+        // During initial sync, send more requests and log progress. A retry that
+        // fires before the tip segment has advanced past storage still needs the
+        // full fork-finding locator, so build it only when the tip segment is
+        // anchored at the storage tip.
         if self.state() == SyncState::Syncing {
-            let sent = self.pipeline.send_pending(requests)?;
+            let locator = self.tip_retry_locator().await?;
+            let sent = self.pipeline.send_pending(requests, &locator)?;
             if sent > 0 {
                 tracing::debug!("Tick: pipeline sent {} more requests", sent);
             }
@@ -152,7 +167,8 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> SyncManager for BlockHeadersMana
 
                 // Reset tip segment and send requests via pipeline
                 self.pipeline.reset_tip_segment();
-                self.pipeline.send_pending(requests)?;
+                let locator = self.build_locator().await?;
+                self.pipeline.send_pending(requests, &locator)?;
 
                 for hash in stale {
                     self.pending_announcements.remove(&hash);
@@ -182,8 +198,9 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> SyncManager for BlockHeadersMana
                     && !self.pipeline.tip_segment_has_pending_request()
                 {
                     let tip = self.tip().await?;
+                    let locator = self.build_locator().await?;
                     tracing::info!("Announcing tip {} to new peer {}", tip.height(), address);
-                    requests.request_block_headers_from_peer(*tip.hash(), *address)?;
+                    requests.request_block_headers_from_peer(locator, *address)?;
                     self.announced_peers.insert(*address);
                 }
             }
@@ -191,6 +208,7 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> SyncManager for BlockHeadersMana
                 address,
             } => {
                 self.announced_peers.remove(address);
+                self.fork_buffer.remove_peer(*address);
             }
             NetworkEvent::PeersUpdated {
                 connected_count,
@@ -221,7 +239,8 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> SyncManager for BlockHeadersMana
                                 );
                                 // Reset tip segment and send requests via pipeline
                                 self.pipeline.reset_tip_segment();
-                                self.pipeline.send_pending(requests)?;
+                                let locator = self.build_locator().await?;
+                                self.pipeline.send_pending(requests, &locator)?;
                             }
                         }
                     }

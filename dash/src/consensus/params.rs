@@ -60,6 +60,9 @@ pub struct Params {
     pub allow_min_difficulty_blocks: bool,
     /// Determines whether retargeting is disabled for this network or not.
     pub no_pow_retargeting: bool,
+    /// Height at which the Dark Gravity Wave v3 retargeting algorithm activates
+    /// (`nPowDGWHeight`). Below it dashd uses the pre-DGW retargeting rules.
+    pub pow_dgw_height: u32,
 }
 
 impl Params {
@@ -79,6 +82,7 @@ impl Params {
                 pow_target_timespan: 14 * 24 * 60 * 60, // 2 weeks.
                 allow_min_difficulty_blocks: false,
                 no_pow_retargeting: false,
+                pow_dgw_height: 34140,
             },
             Network::Testnet => Params {
                 network: Network::Testnet,
@@ -93,6 +97,7 @@ impl Params {
                 pow_target_timespan: 14 * 24 * 60 * 60, // 2 weeks.
                 allow_min_difficulty_blocks: true,
                 no_pow_retargeting: false,
+                pow_dgw_height: 4002,
             },
             Network::Devnet => Params {
                 network: Network::Devnet,
@@ -105,8 +110,9 @@ impl Params {
                 pow_limit: Work::DEVNET_MIN,
                 pow_target_spacing: 10 * 60,            // 10 minutes.
                 pow_target_timespan: 14 * 24 * 60 * 60, // 2 weeks.
-                allow_min_difficulty_blocks: false,
+                allow_min_difficulty_blocks: true,
                 no_pow_retargeting: false,
+                pow_dgw_height: 4001,
             },
             Network::Regtest => Params {
                 network: Network::Regtest,
@@ -121,6 +127,7 @@ impl Params {
                 pow_target_timespan: 14 * 24 * 60 * 60, // 2 weeks.
                 allow_min_difficulty_blocks: true,
                 no_pow_retargeting: true,
+                pow_dgw_height: 34140,
             },
         }
     }

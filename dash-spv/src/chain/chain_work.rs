@@ -38,25 +38,9 @@ impl ChainWork {
         }
     }
 
-    /// Create ChainWork from accumulated work at a given height plus a new header
-    ///
-    /// IMPORTANT: This is a temporary approximation that returns only the work from
-    /// the current header. For accurate cumulative work calculation, callers should
-    /// track the actual cumulative work by summing individual block work values.
-    ///
-    /// TODO: This function should be refactored to accept the previous cumulative work
-    /// as a parameter, or callers should maintain cumulative work separately.
-    pub fn from_height_and_header(_height: u32, header: &BlockHeader) -> Self {
-        // Currently returns only the work from the current header
-        // This is incorrect for cumulative work but better than adding height bytes
-        // which has no relation to proof-of-work
-        Self::from_header(header)
-    }
-
-    /// Add the work from a header to this cumulative work
-    pub fn add_header(self, header: &BlockHeader) -> Self {
-        let header_work = Self::from_header(header);
-        self.combine(header_work)
+    /// Sum the per-header work of `headers` onto `base`.
+    pub(crate) fn accumulate(base: ChainWork, headers: &[BlockHeader]) -> ChainWork {
+        headers.iter().fold(base, |acc, h| acc.combine(Self::from_header(h)))
     }
 
     /// Add two ChainWork values

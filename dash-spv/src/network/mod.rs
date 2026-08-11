@@ -109,23 +109,20 @@ impl RequestSender {
         self.send_message_to_peer(NetworkMessage::GetData(inventory), peer_address)
     }
 
-    pub fn request_block_headers(&self, start_hash: BlockHash) -> NetworkResult<()> {
+    pub fn request_block_headers(&self, locator: Vec<BlockHash>) -> NetworkResult<()> {
         self.send_message(NetworkMessage::GetHeaders(GetHeadersMessage::new(
-            vec![start_hash],
+            locator,
             BlockHash::all_zeros(),
         )))
     }
 
     pub fn request_block_headers_from_peer(
         &self,
-        start_hash: BlockHash,
+        locator: Vec<BlockHash>,
         address: SocketAddr,
     ) -> NetworkResult<()> {
         self.send_message_to_peer(
-            NetworkMessage::GetHeaders(GetHeadersMessage::new(
-                vec![start_hash],
-                BlockHash::all_zeros(),
-            )),
+            NetworkMessage::GetHeaders(GetHeadersMessage::new(locator, BlockHash::all_zeros())),
             address,
         )
     }
