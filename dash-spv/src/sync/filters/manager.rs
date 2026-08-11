@@ -139,7 +139,11 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
     }
 
     /// Returns true if there is no in-flight processing state.
-    fn is_idle(&self) -> bool {
+    ///
+    /// `pub(super)` so the resume decision in `start_sync` can be taken on the
+    /// same predicate `start_download` asserts. Checking a subset there is how
+    /// a disconnect/reconnect cycle used to reach that assert.
+    pub(super) fn is_idle(&self) -> bool {
         self.active_batches.is_empty()
             && self.tracker.is_empty()
             && self.pending_batches.is_empty()
@@ -3075,6 +3079,39 @@ mod tests {
         manager.handle_new_filter_headers(101, &requests).await.unwrap();
         assert!(!manager.active_batches.contains_key(&0));
         assert_eq!(manager.active_batches.keys().next(), Some(&101));
+    }
+
+    /// A verified batch waiting in `pending_batches` outlives the last active
+    /// one, so a reconnect used to fall through the resume guard — which asked
+    /// only about `active_batches` — into `start_download`, whose
+    /// `debug_assert!(is_idle())` then aborted the process. It is reachable in
+    /// the field: `on_disconnect` preserves this state by design, and a build
+    /// with debug assertions on turns the mismatch into a crash rather than a
+    /// log line.
+    #[tokio::test]
+    async fn test_start_sync_resumes_when_only_pending_batches_survive() {
+        let (mut manager, _headers, _filter) = setup_synced_manager_at_tip().await;
+
+        // What a disconnect leaves behind after the last active batch finished
+        // downloading but before its verified output was processed.
+        manager.pending_batches.insert(FiltersBatch::new(0, 99, HashMap::new()));
+        assert!(manager.active_batches.is_empty(), "the guard's old predicate says idle");
+        assert!(!manager.is_idle(), "the invariant start_download asserts says otherwise");
+
+        manager.set_state(SyncState::WaitingForConnections);
+        let (tx, _rx) = unbounded_channel();
+        let requests = RequestSender::new(tx);
+
+        // Must resume rather than start a fresh download over the top of it.
+        let events = manager.start_sync(&requests).await.unwrap();
+
+        assert!(events.is_empty(), "resuming emits no SyncStart");
+        assert_eq!(manager.state(), SyncState::Syncing);
+        assert_eq!(
+            manager.pending_batches.len(),
+            1,
+            "the surviving batch must not be discarded by the resume"
+        );
     }
 
     /// A fully synced node that reconnects and then sees one new block must
