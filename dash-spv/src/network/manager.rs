@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::{broadcast, Mutex, RwLock};
+use tokio::sync::{broadcast, Mutex, RwLock, Semaphore};
 use tokio::task::JoinSet;
 use tokio::time;
 
@@ -35,6 +35,13 @@ use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 
 const DEFAULT_NETWORK_EVENT_CAPACITY: usize = 10000;
+const MAX_CONCURRENT_HEADERS2_DECOMPRESSIONS: usize = 4;
+
+fn headers2_decompression_parallelism() -> usize {
+    std::thread::available_parallelism()
+        .map(|parallelism| parallelism.get().min(MAX_CONCURRENT_HEADERS2_DECOMPRESSIONS))
+        .unwrap_or(1)
+}
 
 /// Peer network manager
 pub struct PeerNetworkManager {
@@ -72,6 +79,8 @@ pub struct PeerNetworkManager {
     connected_peer_count: Arc<AtomicUsize>,
     /// Disable headers2 after decompression failure
     headers2_disabled: Arc<Mutex<HashSet<SocketAddr>>>,
+    /// Global bound for CPU-heavy headers2 decompression work.
+    headers2_decompression_semaphore: Arc<Semaphore>,
     /// Dispatcher for unbounded and message-type filtered message distribution.
     message_dispatcher: Arc<Mutex<MessageDispatcher>>,
     /// Request queue sender, cloneable handle for sending requests to the network manager.
@@ -197,6 +206,9 @@ impl PeerNetworkManager {
             capability_rejected: Arc::new(RwLock::new(HashMap::new())),
             connected_peer_count: Arc::new(AtomicUsize::new(0)),
             headers2_disabled: Arc::new(Mutex::new(HashSet::new())),
+            headers2_decompression_semaphore: Arc::new(Semaphore::new(
+                headers2_decompression_parallelism(),
+            )),
             message_dispatcher: Arc::new(Mutex::new(MessageDispatcher::default())),
             request_tx,
             request_rx: Arc::new(Mutex::new(Some(request_rx))),
@@ -321,6 +333,7 @@ impl PeerNetworkManager {
         let capability_rejected = self.capability_rejected.clone();
         let connected_peer_count = self.connected_peer_count.clone();
         let headers2_disabled = self.headers2_disabled.clone();
+        let headers2_decompression_semaphore = self.headers2_decompression_semaphore.clone();
         let message_dispatcher = self.message_dispatcher.clone();
         let network_event_sender = self.network_event_sender.clone();
 
@@ -421,6 +434,7 @@ impl PeerNetworkManager {
                                 latency,
                                 connected_peer_count.clone(),
                                 headers2_disabled.clone(),
+                                headers2_decompression_semaphore.clone(),
                                 message_dispatcher,
                                 network_event_sender.clone(),
                             )
@@ -503,14 +517,13 @@ impl PeerNetworkManager {
         latency: Arc<Mutex<PeerLatency>>,
         connected_peer_count: Arc<AtomicUsize>,
         headers2_disabled: Arc<Mutex<HashSet<SocketAddr>>>,
+        headers2_decompression_semaphore: Arc<Semaphore>,
         message_dispatcher: Arc<Mutex<MessageDispatcher>>,
         network_event_sender: broadcast::Sender<NetworkEvent>,
     ) {
         tokio::spawn(async move {
             tracing::debug!("Starting peer reader loop for {}", addr);
             let mut loop_iteration = 0;
-            let mut headers2_state = CompressionState::default();
-
             loop {
                 loop_iteration += 1;
 
@@ -576,6 +589,77 @@ impl PeerNetworkManager {
                                 }
                             }
                         }
+
+                        let inner = msg.into_inner();
+                        if let NetworkMessage::Headers2(headers2) = inner {
+                            tracing::info!(
+                                "Received Headers2 from {} with {} compressed headers - decompressing",
+                                addr,
+                                headers2.headers.len()
+                            );
+
+                            let permit = tokio::select! {
+                                permit = headers2_decompression_semaphore.clone().acquire_owned() => {
+                                    match permit {
+                                        Ok(permit) => permit,
+                                        Err(_) => break,
+                                    }
+                                }
+                                _ = shutdown_token.cancelled() => break,
+                            };
+                            let message_dispatcher = message_dispatcher.clone();
+                            let headers2_disabled = headers2_disabled.clone();
+                            let reputation_manager = reputation_manager.clone();
+                            let shutdown_token = shutdown_token.clone();
+                            tokio::spawn(async move {
+                                let result = tokio::task::spawn_blocking(move || {
+                                    let mut state = CompressionState::default();
+                                    state.process_headers_with_hashes(&headers2.headers)
+                                })
+                                .await;
+                                drop(permit);
+
+                                if shutdown_token.is_cancelled() {
+                                    return;
+                                }
+
+                                match result {
+                                    Ok(Ok(headers_with_hashes)) => {
+                                        tracing::info!(
+                                            "Decompressed {} headers from {} - forwarding as regular Headers",
+                                            headers_with_hashes.len(),
+                                            addr
+                                        );
+                                        let message =
+                                            Message::new_headers(addr, headers_with_hashes);
+                                        message_dispatcher.lock().await.dispatch(&message);
+                                    }
+                                    Ok(Err(e)) => {
+                                        tracing::error!(
+                                            "Headers2 decompression failed from {}: {} - disabling headers2",
+                                            addr,
+                                            e
+                                        );
+                                        headers2_disabled.lock().await.insert(addr);
+                                        reputation_manager
+                                            .update_reputation(
+                                                addr,
+                                                ChangeReason::Headers2DecompressionFailed,
+                                            )
+                                            .await;
+                                    }
+                                    Err(e) => {
+                                        tracing::error!(
+                                            "Headers2 decompression task failed for {}: {}",
+                                            addr,
+                                            e
+                                        );
+                                    }
+                                }
+                            });
+                            continue;
+                        }
+                        let msg = Message::new(addr, inner);
 
                         // Handle some messages directly
                         match &msg.inner() {
@@ -688,45 +772,7 @@ impl PeerNetworkManager {
                                 drop(peer_guard);
                                 // Forward to client
                             }
-                            NetworkMessage::Headers2(headers2) => {
-                                // Decompress headers in network layer and forward as regular Headers
-                                tracing::info!(
-                                    "Received Headers2 from {} with {} compressed headers - decompressing",
-                                    addr,
-                                    headers2.headers.len()
-                                );
-
-                                match headers2_state.process_headers(&headers2.headers) {
-                                    Ok(headers) => {
-                                        tracing::info!(
-                                            "Decompressed {} headers from {} - forwarding as regular Headers",
-                                            headers.len(),
-                                            addr
-                                        );
-                                        // Forward as regular Headers message
-                                        let headers_msg = NetworkMessage::Headers(headers);
-                                        let message = Message::new(msg.peer_address(), headers_msg);
-                                        message_dispatcher.lock().await.dispatch(&message);
-                                        continue; // Already sent, don't forward the original Headers2
-                                    }
-                                    Err(e) => {
-                                        tracing::error!(
-                                            "Headers2 decompression failed from {}: {} - disabling headers2",
-                                            addr,
-                                            e
-                                        );
-                                        headers2_disabled.lock().await.insert(addr);
-                                        // Apply reputation penalty
-                                        reputation_manager
-                                            .update_reputation(
-                                                addr,
-                                                ChangeReason::Headers2DecompressionFailed,
-                                            )
-                                            .await;
-                                        continue; // Don't forward corrupted message
-                                    }
-                                }
-                            }
+                            NetworkMessage::Headers2(_) => unreachable!(),
                             NetworkMessage::GetHeaders(_) => {
                                 // SPV clients don't serve headers to peers
                                 tracing::debug!(
@@ -1725,6 +1771,7 @@ impl Clone for PeerNetworkManager {
             capability_rejected: self.capability_rejected.clone(),
             connected_peer_count: self.connected_peer_count.clone(),
             headers2_disabled: self.headers2_disabled.clone(),
+            headers2_decompression_semaphore: self.headers2_decompression_semaphore.clone(),
             message_dispatcher: self.message_dispatcher.clone(),
             request_tx: self.request_tx.clone(),
             request_rx: self.request_rx.clone(),
@@ -1925,6 +1972,9 @@ impl PeerNetworkManager {
             capability_rejected: Arc::new(RwLock::new(HashMap::new())),
             connected_peer_count: Arc::new(AtomicUsize::new(0)),
             headers2_disabled: Arc::new(Mutex::new(HashSet::new())),
+            headers2_decompression_semaphore: Arc::new(Semaphore::new(
+                headers2_decompression_parallelism(),
+            )),
             message_dispatcher: Arc::new(Mutex::new(MessageDispatcher::default())),
             request_tx,
             request_rx: Arc::new(Mutex::new(Some(request_rx))),

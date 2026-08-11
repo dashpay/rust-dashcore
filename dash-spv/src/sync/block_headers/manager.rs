@@ -19,6 +19,7 @@ use crate::sync::block_headers::HeadersPipeline;
 use crate::sync::{BlockHeadersProgress, ProgressPercentage, SyncEvent, SyncManager, SyncState};
 use crate::types::HashedBlockHeader;
 use crate::validation::{BlockHeaderValidator, Validator};
+#[cfg(test)]
 use dashcore::block::Header;
 use dashcore::network::message_blockdata::Inventory;
 use dashcore::BlockHash;
@@ -122,7 +123,7 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> BlockHeadersManager<H, M> {
     /// Handle incoming headers message (used for both initial sync and post-sync).
     pub(super) async fn handle_headers_pipeline(
         &mut self,
-        headers: &[Header],
+        headers: &[HashedBlockHeader],
         requests: &RequestSender,
     ) -> SyncResult<Vec<SyncEvent>> {
         if !self.pipeline.is_initialized() {
@@ -140,7 +141,7 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> BlockHeadersManager<H, M> {
         if matched.is_none() && !headers.is_empty() {
             tracing::debug!(
                 "Headers not matched by pipeline (prev_hash: {}), may be post-sync update",
-                headers[0].prev_blockhash
+                headers[0].header().prev_blockhash
             );
         }
 
@@ -353,7 +354,7 @@ mod tests {
 
         let header = Header::dummy_chain(1, tip_hash).remove(0);
 
-        let events = manager.handle_headers_pipeline(&[header], &sender).await.unwrap();
+        let events = manager.handle_headers_pipeline(&[header.into()], &sender).await.unwrap();
 
         // Header should have been stored
         assert_eq!(events.len(), 1);
@@ -462,7 +463,7 @@ mod tests {
         // segment's current_tip_hash to advanced_hash.
         let header = Header::dummy_chain(1, initial_locator).remove(0);
         let advanced_hash = header.block_hash();
-        manager.handle_headers_pipeline(&[header], &requests).await.unwrap();
+        manager.handle_headers_pipeline(&[header.into()], &requests).await.unwrap();
 
         // Drain the follow-up GetHeaders that send_pending issued.
         match rx.try_recv().expect("follow-up GetHeaders not sent") {

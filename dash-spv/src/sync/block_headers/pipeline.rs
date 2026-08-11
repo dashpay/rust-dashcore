@@ -6,6 +6,7 @@
 
 use std::sync::Arc;
 
+#[cfg(test)]
 use dashcore::block::Header;
 use dashcore::BlockHash;
 
@@ -14,6 +15,9 @@ use crate::error::SyncResult;
 use crate::network::RequestSender;
 use crate::sync::block_headers::segment_state::SegmentState;
 use crate::types::HashedBlockHeader;
+
+/// Keep enough checkpoint segments active to saturate decompression while bounding buffered data.
+const ACTIVE_SEGMENT_WINDOW: usize = 8;
 
 /// Pipeline for parallel header downloads across checkpoint-defined segments.
 ///
@@ -121,7 +125,8 @@ impl HeadersPipeline {
     /// Returns the number of requests sent.
     pub fn send_pending(&mut self, requests: &RequestSender) -> SyncResult<usize> {
         let mut sent = 0;
-        for segment in &mut self.segments {
+        let window_end = (self.next_to_store + ACTIVE_SEGMENT_WINDOW).min(self.segments.len());
+        for segment in &mut self.segments[self.next_to_store..window_end] {
             // Skip completed segments
             if segment.complete {
                 continue;
@@ -137,7 +142,7 @@ impl HeadersPipeline {
     /// Try to match incoming headers to the correct segment.
     /// Returns the segment index if matched, or None if headers don't belong to any segment.
     /// Returns an error if checkpoint validation fails.
-    pub fn receive_headers(&mut self, headers: &[Header]) -> SyncResult<Option<usize>> {
+    pub fn receive_headers(&mut self, headers: &[HashedBlockHeader]) -> SyncResult<Option<usize>> {
         if headers.is_empty() {
             // Empty response means the peer has no more headers after our locator.
             // Route to the tip segment (target_height is None) if it has in-flight requests.
@@ -159,7 +164,7 @@ impl HeadersPipeline {
             return Ok(None);
         }
 
-        let prev_hash = headers[0].prev_blockhash;
+        let prev_hash = headers[0].header().prev_blockhash;
 
         // Find the segment that matches
         for (idx, segment) in self.segments.iter_mut().enumerate() {
@@ -189,7 +194,7 @@ impl HeadersPipeline {
 
         // Check if these are duplicate headers from another peer. The first
         // header's hash matches a segment's current tip, meaning we already have it.
-        let first_hash = headers[0].block_hash();
+        let first_hash = *headers[0].hash();
         if self.segments.iter().any(|s| s.current_tip_hash == first_hash) {
             tracing::debug!("Ignoring duplicate header {} from another peer", first_hash);
             return Ok(None);
@@ -409,8 +414,14 @@ mod tests {
 
         let sent = pipeline.send_pending(&sender).unwrap();
 
-        // Should send at least one request per segment
-        assert!(sent >= pipeline.segment_count());
+        assert_eq!(sent, ACTIVE_SEGMENT_WINDOW.min(pipeline.segment_count()));
+
+        assert!(pipeline.segments[..sent]
+            .iter()
+            .all(|segment| segment.coordinator.active_count() == 1));
+        assert!(pipeline.segments[sent..]
+            .iter()
+            .all(|segment| segment.coordinator.active_count() == 0));
 
         // Verify messages were queued
         let mut count = 0;
@@ -418,6 +429,16 @@ mod tests {
             count += 1;
         }
         assert_eq!(count, sent);
+
+        if pipeline.segment_count() > ACTIVE_SEGMENT_WINDOW {
+            pipeline.segments[0].complete = true;
+            pipeline.next_to_store = 1;
+
+            assert_eq!(pipeline.send_pending(&sender).unwrap(), 1);
+            assert_eq!(pipeline.segments[ACTIVE_SEGMENT_WINDOW].coordinator.active_count(), 1);
+            assert!(rx.try_recv().is_ok());
+            assert!(rx.try_recv().is_err());
+        }
     }
 
     #[test]
@@ -464,7 +485,7 @@ mod tests {
         let mut header = Header::dummy(1);
         header.prev_blockhash = tip_hash;
 
-        let matched = pipeline.receive_headers(&[header]).unwrap();
+        let matched = pipeline.receive_headers(&[header.into()]).unwrap();
         assert_eq!(matched, Some(0), "Tip segment should accept unsolicited post-sync headers");
 
         assert!(!pipeline.segments[0].complete, "Tip segment should be reset to non-complete");
@@ -502,7 +523,7 @@ mod tests {
         pipeline.segments[1].coordinator.mark_sent(&[shared_hash]);
 
         // Route headers should go to segment 1, not the completed segment 0
-        let matched = pipeline.receive_headers(&[header]).unwrap();
+        let matched = pipeline.receive_headers(&[header.into()]).unwrap();
         assert_eq!(matched, Some(1), "Headers should route to segment 1, not completed segment 0");
 
         // Segment 0 should still have no extra buffered headers
@@ -530,7 +551,7 @@ mod tests {
 
         // Another peer sends the same header (prev_blockhash is old tip, first
         // header hash matches the segment's current tip)
-        let matched = pipeline.receive_headers(&[first_header]).unwrap();
+        let matched = pipeline.receive_headers(&[first_header.into()]).unwrap();
         assert_eq!(matched, None, "Duplicate headers should be silently ignored");
         assert!(pipeline.segments[0].buffered_headers.is_empty());
     }
@@ -553,7 +574,7 @@ mod tests {
         mid.coordinator.mark_sent(&[shared_hash]);
         let mut mid_header = Header::dummy(2);
         mid_header.prev_blockhash = shared_hash;
-        mid.receive_headers(&[mid_header]).unwrap();
+        mid.receive_headers(&[mid_header.into()]).unwrap();
         let mid_preserved_tip = mid.current_tip_hash;
         let mid_preserved_height = mid.current_height;
         let mid_preserved_buffered = mid.buffered_headers.len();
