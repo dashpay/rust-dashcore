@@ -11,7 +11,7 @@ use dashcore::block::Header;
 use dashcore::BlockHash;
 
 use crate::chain::CheckpointManager;
-use crate::error::{SyncError, SyncResult};
+use crate::error::SyncResult;
 use crate::network::RequestSender;
 use crate::sync::block_headers::segment_state::SegmentState;
 use crate::types::HashedBlockHeader;
@@ -178,16 +178,11 @@ impl HeadersPipeline {
                 // If tip segment was completed but receives new headers (post-sync),
                 // reset it so take_ready_to_store() can process the new headers
                 if segment.complete && segment.target_height.is_none() {
-                    if headers.len() != 1 {
-                        return Err(SyncError::InvalidState(format!(
-                            "Tip segment {}: received {} unsolicited headers after sync",
-                            segment.segment_id,
-                            headers.len()
-                        )));
-                    }
                     segment.complete = false;
                     self.next_to_store = idx;
-                    // Mark as in-flight so the coordinator accepts these unsolicited headers
+                    // A headers announcement may contain multiple consecutive headers. The
+                    // coordinator tracks the response by its first previous hash, just like a
+                    // requested headers batch.
                     segment.coordinator.mark_sent(&[prev_hash]);
                     tracing::debug!(
                         "Tip segment {} receiving post-sync headers, reset for continued processing",
@@ -508,7 +503,7 @@ mod tests {
     }
 
     #[test]
-    fn test_completed_tip_rejects_unsolicited_header_batch_without_mutation() {
+    fn test_completed_tip_accepts_unsolicited_header_batch() {
         let tip_hash = BlockHash::dummy(99);
         let mut tip = SegmentState::new(0, 1000, tip_hash, None, None);
         tip.complete = true;
@@ -523,15 +518,15 @@ mod tests {
             .into_iter()
             .map(HashedBlockHeader::from)
             .collect::<Vec<_>>();
-        let result = pipeline.receive_headers(&headers);
+        let matched = pipeline.receive_headers(&headers).unwrap();
 
-        assert!(matches!(result, Err(SyncError::InvalidState(_))));
-        assert!(pipeline.segments[0].complete);
-        assert_eq!(pipeline.segments[0].current_tip_hash, tip_hash);
-        assert_eq!(pipeline.segments[0].current_height, 1000);
-        assert!(pipeline.segments[0].buffered_headers.is_empty());
+        assert_eq!(matched, Some(0));
+        assert!(!pipeline.segments[0].complete);
+        assert_eq!(pipeline.segments[0].current_tip_hash, *headers[1].hash());
+        assert_eq!(pipeline.segments[0].current_height, 1002);
+        assert_eq!(pipeline.segments[0].buffered_headers, headers);
         assert_eq!(pipeline.segments[0].coordinator.active_count(), 0);
-        assert_eq!(pipeline.next_to_store, 1);
+        assert_eq!(pipeline.next_to_store, 0);
     }
 
     #[test]

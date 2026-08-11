@@ -342,7 +342,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_unsolicited_post_sync_header_does_not_trigger_get_headers() {
+    async fn test_unsolicited_post_sync_header_batch_does_not_trigger_get_headers() {
         let mut manager = create_test_manager().await;
         let tip = manager.tip().await.unwrap();
         let tip_hash = *tip.hash();
@@ -354,16 +354,19 @@ mod tests {
 
         let (sender, mut rx) = create_test_request_sender();
 
-        let header = Header::dummy_chain(1, tip_hash).remove(0);
+        let headers = Header::dummy_chain(2, tip_hash)
+            .into_iter()
+            .map(HashedBlockHeader::from)
+            .collect::<Vec<_>>();
 
-        let events = manager.handle_headers_pipeline(&[header.into()], &sender).await.unwrap();
+        let events = manager.handle_headers_pipeline(&headers, &sender).await.unwrap();
 
         // Header should have been stored
         assert_eq!(events.len(), 1);
         assert!(matches!(
             events[0],
             SyncEvent::BlockHeadersStored {
-                tip_height: 1
+                tip_height: 2
             }
         ));
 
