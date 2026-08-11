@@ -47,6 +47,10 @@ impl<
         self.filter_pipeline.requeue_in_flight();
     }
 
+    fn on_peer_disconnect(&mut self) {
+        self.filter_pipeline.requeue_in_flight();
+    }
+
     async fn start_sync(&mut self, requests: &RequestSender) -> SyncResult<Vec<SyncEvent>> {
         ensure_not_started(self.state(), self.identifier())?;
 
