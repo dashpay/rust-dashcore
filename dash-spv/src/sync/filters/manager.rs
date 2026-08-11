@@ -23,7 +23,9 @@ use crate::validation::{FilterValidationInput, FilterValidator, Validator};
 use crate::sync::progress::ProgressPercentage;
 use dashcore::hash_types::FilterHeader;
 use key_wallet_manager::WalletInterface;
-use key_wallet_manager::{check_compact_filters_for_elements, FilterMatchKey, WalletId};
+use key_wallet_manager::{
+    check_compact_filters_for_elements, check_compact_filters_for_query, FilterMatchKey, WalletId,
+};
 use tokio::sync::RwLock;
 
 /// Batch size for processing filters.
@@ -35,11 +37,26 @@ struct WalletScanState {
     id: WalletId,
     /// The wallet's committed sync checkpoint; heights at or below it are skipped.
     synced: u32,
-    /// Monitored scriptPubKeys.
+    /// The wallet's cached scan query (see [`CachedWalletQuery`]).
+    cached: Arc<CachedWalletQuery>,
+}
+
+/// One wallet's forward-scan query, built once and reused across every batch
+/// until the wallet's monitor revision moves (an address derived, an account
+/// added, or a UTXO created or spent — the only events that can change the
+/// scan set). Rebuilding per batch would re-collect and re-group the same
+/// scripts hundreds of times over a long catch-up while nothing changed.
+struct CachedWalletQuery {
+    /// The `wallet_monitor_revision` this entry was built at.
+    revision: u64,
+    /// Pruned scan scriptPubKeys, kept for assembling the union query.
     scripts: Vec<ScriptBuf>,
-    /// Bare `hash160` filter elements (owner/voting key hashes) a compact
-    /// filter carries beyond the scriptPubKeys.
+    /// Bare filter elements (owner/voting key hashes, watched outpoints),
+    /// kept for assembling the union query.
     elements: Vec<Vec<u8>>,
+    /// Pre-grouped query over `scripts` + `elements`, used to attribute
+    /// matched blocks to this wallet.
+    query: FilterQuery,
 }
 
 /// Maximum number of batches to scan ahead while waiting for blocks.
@@ -84,6 +101,28 @@ pub struct FiltersManager<
     /// `BlockProcessed` and the per-wallet record of which wallets already
     /// have a given processed block applied.
     pub(super) tracker: BlockMatchTracker,
+
+    // === Scan-query caches ===
+    /// Per-wallet scan queries keyed by the wallet's monitor revision;
+    /// entries are rebuilt lazily in `scan_batch` when the revision moves.
+    /// Entries for removed wallets linger harmlessly (never matched again);
+    /// the map is bounded by the number of wallets ever managed.
+    scan_query_cache: HashMap<WalletId, Arc<CachedWalletQuery>>,
+    /// The union query over the behind set, keyed by the exact
+    /// `(wallet, revision)` pairs it was assembled from. Reused as long as
+    /// the behind set and every member's revision are unchanged.
+    union_query_cache: Option<CachedUnionQuery>,
+}
+
+/// The assembled union scan query and the per-wallet revisions it reflects.
+struct CachedUnionQuery {
+    /// Sorted `(wallet, revision)` pairs the union was built from; any
+    /// difference — a wallet entering or leaving the behind set, or a
+    /// revision moving — invalidates the entry.
+    key: Vec<(WalletId, u64)>,
+    /// The pre-grouped union query over every member wallet's scripts and
+    /// bare elements.
+    query: Arc<FilterQuery>,
 }
 
 impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: WalletInterface>
@@ -128,6 +167,8 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
             active_batches: BTreeMap::new(),
             processing_height: 0,
             tracker: BlockMatchTracker::new(),
+            scan_query_cache: HashMap::new(),
+            union_query_cache: None,
         }
     }
 
@@ -860,21 +901,43 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
         let mut wallet_states: Vec<WalletScanState> = Vec::new();
         for wallet_id in &behind {
             let synced = wallet.wallet_synced_height(wallet_id);
-            // The scan query, not the full monitored set: spent single-use
-            // (CoinJoin) addresses are pruned so the per-filter match cost
-            // stays bounded by active UTXOs + gap lookahead instead of
-            // growing with every historical mixing round
-            // (dashpay/rust-dashcore#948).
-            let scripts = wallet.scan_script_pubkeys_for(wallet_id);
-            // Bare owner/voting key hashes a compact filter carries beyond the
-            // wallet's scriptPubKeys.
-            let elements = wallet.monitored_filter_elements_for(wallet_id);
-            if !scripts.is_empty() || !elements.is_empty() {
+            // Reuse the wallet's cached scan query unless its monitor
+            // revision moved (an address derived, an account added, or a
+            // UTXO created/spent — the only events that can change the scan
+            // set). During a quiet catch-up the revision never moves, so
+            // hundreds of consecutive batches share one query.
+            let revision = wallet.wallet_monitor_revision(wallet_id);
+            let cached = match self.scan_query_cache.get(wallet_id) {
+                Some(entry) if entry.revision == revision => Arc::clone(entry),
+                _ => {
+                    // The scan query, not the full monitored set: spent
+                    // single-use (CoinJoin) addresses are pruned so the
+                    // per-filter match cost stays bounded by active UTXOs +
+                    // gap lookahead instead of growing with every historical
+                    // mixing round (dashpay/rust-dashcore#948).
+                    let scripts = wallet.scan_script_pubkeys_for(wallet_id);
+                    // Bare owner/voting key hashes a compact filter carries
+                    // beyond the wallet's scriptPubKeys.
+                    let elements = wallet.monitored_filter_elements_for(wallet_id);
+                    let mut query: FilterQuery = scripts.iter().map(|s| s.as_bytes()).collect();
+                    for element in &elements {
+                        query.push(element);
+                    }
+                    let entry = Arc::new(CachedWalletQuery {
+                        revision,
+                        scripts,
+                        elements,
+                        query,
+                    });
+                    self.scan_query_cache.insert(*wallet_id, Arc::clone(&entry));
+                    entry
+                }
+            };
+            if !cached.scripts.is_empty() || !cached.elements.is_empty() {
                 wallet_states.push(WalletScanState {
                     id: *wallet_id,
                     synced,
-                    scripts,
-                    elements,
+                    cached,
                 });
             }
         }
@@ -909,28 +972,36 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
             return Ok(events);
         }
 
-        // Single-pass union-then-attribute: build the union of all scripts
-        // and bare elements across behind wallets, run the filters once, then
-        // for each matched block re-test per-wallet queries to attribute the
-        // match correctly.
-        let union_scripts: Vec<ScriptBuf> =
-            wallet_states.iter().flat_map(|s| s.scripts.iter().cloned()).collect();
-        let union_elements: Vec<Vec<u8>> =
-            wallet_states.iter().flat_map(|s| s.elements.iter().cloned()).collect();
+        // Single-pass union-then-attribute: match the union query over all
+        // behind wallets once, then for each matched block re-test the
+        // per-wallet cached queries to attribute the match correctly.
+        //
+        // The union query is itself cached: it only changes when the behind
+        // set changes or a member wallet's revision moves, so consecutive
+        // batches over a stable wallet set reuse the assembled query as-is.
         let min_synced = wallet_states.iter().map(|s| s.synced).min().unwrap_or(0);
-
-        // Pre-group each wallet's scripts and bare elements by length once;
-        // reused across every matched filter.
-        let wallet_queries: Vec<(WalletId, u32, FilterQuery)> = wallet_states
-            .iter()
-            .map(|s| {
-                let mut query: FilterQuery = s.scripts.iter().map(|sp| sp.as_bytes()).collect();
-                for element in &s.elements {
-                    query.push(element);
+        let union_key: Vec<(WalletId, u64)> =
+            wallet_states.iter().map(|s| (s.id, s.cached.revision)).collect();
+        let union_query = match &self.union_query_cache {
+            Some(cached) if cached.key == union_key => Arc::clone(&cached.query),
+            _ => {
+                let mut query = FilterQuery::new();
+                for state in &wallet_states {
+                    for script in &state.cached.scripts {
+                        query.push(script.as_bytes());
+                    }
+                    for element in &state.cached.elements {
+                        query.push(element);
+                    }
                 }
-                (s.id, s.synced, query)
-            })
-            .collect();
+                let query = Arc::new(query);
+                self.union_query_cache = Some(CachedUnionQuery {
+                    key: union_key,
+                    query: Arc::clone(&query),
+                });
+                query
+            }
+        };
 
         let block_to_wallets = {
             let Some(batch) = self.active_batches.get(&batch_start) else {
@@ -938,12 +1009,7 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
             };
             let batch_filters = batch.filters();
 
-            let matches = check_compact_filters_for_elements(
-                batch_filters,
-                &union_scripts,
-                &union_elements,
-                min_synced,
-            );
+            let matches = check_compact_filters_for_query(batch_filters, &union_query, min_synced);
             let mut block_to_wallets: BTreeMap<FilterMatchKey, BTreeSet<WalletId>> =
                 BTreeMap::new();
             for key in matches {
@@ -955,11 +1021,11 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
                     );
                     continue;
                 };
-                for (wallet_id, wallet_synced, query) in &wallet_queries {
-                    if key.height() <= *wallet_synced {
+                for state in &wallet_states {
+                    if key.height() <= state.synced {
                         continue;
                     }
-                    let matched = match filter.match_any(key.hash(), query) {
+                    let matched = match filter.match_any(key.hash(), &state.cached.query) {
                         Ok(matched) => matched,
                         Err(e) => {
                             tracing::warn!(
@@ -971,7 +1037,7 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
                         }
                     };
                     if matched {
-                        block_to_wallets.entry(key.clone()).or_default().insert(*wallet_id);
+                        block_to_wallets.entry(key.clone()).or_default().insert(state.id);
                     }
                 }
             }
@@ -1992,6 +2058,92 @@ mod tests {
             !blocks.contains_key(&key_dead),
             "block paying only the pruned address must not be downloaded"
         );
+    }
+
+    /// The scan query is cached per wallet keyed by `wallet_monitor_revision`
+    /// and only rebuilt when that revision moves: a scripts change without a
+    /// revision bump keeps serving the cached query, and a revision bump picks
+    /// the change up. (Real wallets bump the revision on every address/UTXO
+    /// change, so a silent change cannot happen there; this pins the cache's
+    /// contract.)
+    #[tokio::test]
+    async fn test_scan_batch_caches_query_by_wallet_revision() {
+        let wallet_id: WalletId = [0x04; 32];
+        let address_a = dashcore::Address::dummy(Network::Regtest, 1);
+        let address_b = dashcore::Address::dummy(Network::Regtest, 2);
+
+        let multi = Arc::new(RwLock::new(MultiMockWallet::new()));
+        {
+            let mut w = multi.write().await;
+            w.insert_wallet(
+                wallet_id,
+                MockWalletState {
+                    addresses: vec![address_a.clone(), address_b.clone()],
+                    synced_height: 0,
+                    last_processed_height: 0,
+                    account_generation: 0,
+                },
+            );
+            w.set_scan_addresses(wallet_id, vec![address_a.clone()]);
+        }
+        let multi_handle = Arc::clone(&multi);
+        let mut manager = create_multi_test_manager(multi).await;
+        manager.set_state(SyncState::Syncing);
+
+        fn seed_batch(
+            manager: &mut MultiTestFiltersManager,
+            address_a: &dashcore::Address,
+            address_b: &dashcore::Address,
+            start: u32,
+            height_a: u32,
+            height_b: u32,
+        ) -> (FilterMatchKey, FilterMatchKey) {
+            let mut filters: HashMap<FilterMatchKey, BlockFilter> = HashMap::new();
+            let (key_a, f_a) = filter_for_address(height_a, address_a);
+            let (key_b, f_b) = filter_for_address(height_b, address_b);
+            filters.insert(key_a.clone(), f_a);
+            filters.insert(key_b.clone(), f_b);
+            let mut batch = FiltersBatch::new(start, start + 99, filters);
+            batch.mark_verified();
+            manager.active_batches.insert(start, batch);
+            (key_a, key_b)
+        }
+
+        let needed = |events: &[SyncEvent]| -> BTreeMap<FilterMatchKey, BTreeSet<WalletId>> {
+            events
+                .iter()
+                .find_map(|e| match e {
+                    SyncEvent::BlocksNeeded {
+                        blocks,
+                    } => Some(blocks.clone()),
+                    _ => None,
+                })
+                .unwrap_or_default()
+        };
+
+        manager.progress.update_stored_height(299);
+
+        // Batch 1: the scan query is [A]; only A's block is needed.
+        let (key_a, key_b) = seed_batch(&mut manager, &address_a, &address_b, 0, 30, 60);
+        let blocks = needed(&manager.scan_batch(0).await.unwrap());
+        assert!(blocks.contains_key(&key_a));
+        assert!(!blocks.contains_key(&key_b));
+
+        // Batch 2: scripts change to [B] but the revision does not move —
+        // the cached [A] query keeps being served.
+        multi_handle.write().await.set_scan_addresses(wallet_id, vec![address_b.clone()]);
+        let (key_a, key_b) = seed_batch(&mut manager, &address_a, &address_b, 100, 130, 160);
+        let blocks = needed(&manager.scan_batch(100).await.unwrap());
+        assert!(blocks.contains_key(&key_a), "unchanged revision must reuse the cached query");
+        assert!(!blocks.contains_key(&key_b));
+
+        // Batch 3: the revision moves — the cache is rebuilt and the [B]
+        // query takes effect.
+        multi_handle.write().await.set_wallet_revision(wallet_id, 1);
+        let (key_a, key_b) = seed_batch(&mut manager, &address_a, &address_b, 200, 230, 260);
+        let blocks = needed(&manager.scan_batch(200).await.unwrap());
+        assert!(blocks.contains_key(&key_b), "revision bump must rebuild the cached query");
+        assert!(!blocks.contains_key(&key_a));
     }
 
     /// `rescan_batch` with multiple wallets in `scripts_by_wallet`:

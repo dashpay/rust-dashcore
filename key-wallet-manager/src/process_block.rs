@@ -249,6 +249,16 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
         self.monitor_revision()
     }
 
+    fn wallet_monitor_revision(&self, wallet_id: &WalletId) -> u64 {
+        // Account-level revisions cover address derivations and UTXO
+        // changes; `account_generation` covers a freshly added account whose
+        // own revision is still zero.
+        self.wallet_infos
+            .get(wallet_id)
+            .map(|info| info.monitor_revision() + info.account_generation())
+            .unwrap_or(0)
+    }
+
     async fn earliest_required_height(&self) -> CoreBlockHeight {
         self.wallet_infos.values().map(|info| info.birth_height()).min().unwrap_or(0)
     }
@@ -777,6 +787,52 @@ mod tests {
 
         // Unknown wallet id yields an empty scan set.
         assert!(manager.scan_script_pubkeys_for(&[0xff; 32]).is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_wallet_monitor_revision_tracks_scan_set_changes() {
+        let (mut manager, wallet_id, addr) = setup_manager_with_wallet();
+
+        let initial = manager.wallet_monitor_revision(&wallet_id);
+
+        // A UTXO change (mempool tx paying us) must move the revision — it
+        // can retire or fund addresses in the scan set.
+        let tx = create_tx_paying_to(&addr, 0xe0);
+        manager.process_mempool_transaction(&tx, None).await;
+        let after_utxo = manager.wallet_monitor_revision(&wallet_id);
+        assert!(after_utxo > initial, "UTXO change must advance the wallet revision");
+
+        // Adding a managed account must move it even before that account has
+        // any activity of its own (its account-level revision starts at
+        // zero): `add_managed_account` bumps the wallet's
+        // `account_generation`, which the per-wallet revision folds in.
+        manager
+            .create_account(
+                &wallet_id,
+                AccountType::Standard {
+                    index: 7,
+                    standard_account_type: StandardAccountType::BIP44Account,
+                },
+                None,
+            )
+            .unwrap();
+        {
+            use key_wallet::wallet::managed_wallet_info::managed_account_operations::ManagedAccountOperations;
+            let (wallet, info) = manager.get_wallet_and_info_mut(&wallet_id).expect("wallet");
+            info.add_managed_account(
+                wallet,
+                AccountType::Standard {
+                    index: 7,
+                    standard_account_type: StandardAccountType::BIP44Account,
+                },
+            )
+            .expect("add managed account");
+        }
+        let after_account = manager.wallet_monitor_revision(&wallet_id);
+        assert!(after_account > after_utxo, "account add must advance the wallet revision");
+
+        // Unknown wallets report zero.
+        assert_eq!(manager.wallet_monitor_revision(&[0xff; 32]), 0);
     }
 
     #[tokio::test]

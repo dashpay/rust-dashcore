@@ -182,6 +182,22 @@ pub trait WalletInterface: Send + Sync + 'static {
         0
     }
 
+    /// Return a revision counter for one wallet that increments whenever that
+    /// wallet's monitored set can have changed — an address derived, an
+    /// account added, or a UTXO created or spent (spends matter because they
+    /// can retire a single-use CoinJoin address from the scan query, see
+    /// [`Self::scan_script_pubkeys_for`]). Filter sync caches each wallet's
+    /// scan query keyed by this value and rebuilds it only when the value
+    /// moves, instead of re-collecting the scripts every batch.
+    ///
+    /// Any monotonically advancing value that never misses a relevant change
+    /// is valid; over-reporting (bumping on unrelated changes) only costs a
+    /// rebuild. The default delegates to the global [`Self::monitor_revision`],
+    /// which is exactly such a conservative over-approximation.
+    fn wallet_monitor_revision(&self, _wallet_id: &WalletId) -> u64 {
+        self.monitor_revision()
+    }
+
     /// Reclaim expired receive-address reservations across every managed
     /// wallet, returning the total number reclaimed.
     ///

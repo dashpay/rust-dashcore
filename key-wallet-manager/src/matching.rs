@@ -48,11 +48,31 @@ pub fn check_compact_filters_for_elements(
     for element in extra_elements {
         query.push(element);
     }
+    check_compact_filters_for_query(input, &query, min_height)
+}
+
+/// Check compact filters against a pre-built [`FilterQuery`], returning the
+/// keys that matched.
+///
+/// Same semantics as [`check_compact_filters_for_elements`], which builds the
+/// query from scripts and bare elements and delegates here. Callers that
+/// match the same query set across many batches (e.g. `dash-spv`'s filter
+/// scan, whose query only changes when the wallet's monitored set does) can
+/// build the query once, cache it, and skip the per-call collect-and-group
+/// step entirely.
+///
+/// Entries with `key.height() <= min_height` are skipped. Pass `0` to test
+/// every filter in the input.
+pub fn check_compact_filters_for_query(
+    input: &HashMap<FilterMatchKey, BlockFilter>,
+    query: &FilterQuery,
+    min_height: CoreBlockHeight,
+) -> BTreeSet<FilterMatchKey> {
     let match_filter = |(key, filter): (&FilterMatchKey, &BlockFilter)| {
         if key.height() <= min_height {
             return None;
         }
-        match filter.match_any(key.hash(), &query) {
+        match filter.match_any(key.hash(), query) {
             Ok(true) => Some(key.clone()),
             Ok(false) => None,
             Err(e) => {

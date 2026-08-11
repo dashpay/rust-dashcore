@@ -21,7 +21,9 @@ mod wallet_interface;
 
 pub use error::WalletError;
 pub use events::{DerivedAddress, WalletEvent};
-pub use matching::{check_compact_filters_for_elements, FilterMatchKey};
+pub use matching::{
+    check_compact_filters_for_elements, check_compact_filters_for_query, FilterMatchKey,
+};
 pub use wallet_interface::{BlockProcessingResult, MempoolTransactionResult, WalletInterface};
 
 use dashcore::blockdata::transaction::Transaction;

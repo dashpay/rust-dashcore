@@ -23,7 +23,7 @@ use std::collections::HashMap;
 use std::hint::black_box;
 
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
-use dashcore::bip158::BlockFilter;
+use dashcore::bip158::{BlockFilter, FilterQuery};
 use dashcore::hashes::Hash;
 use dashcore::{Address, Block, OutPoint, Transaction, TxOut, Txid};
 use key_wallet::account::ManagedAccountTrait;
@@ -168,6 +168,23 @@ fn bench_filter_scan(c: &mut Criterion) {
     }
 
     group.finish();
+
+    // What the revision-keyed query cache saves per batch: re-collecting the
+    // wallet's scan scripts and re-grouping them into a `FilterQuery`. With
+    // the cache, this cost is paid once per wallet change instead of once
+    // per batch.
+    let mut assembly = c.benchmark_group("query_assembly");
+    for used in USED_ADDRESSES {
+        let (manager, wallet_id) = wallet_with_mixing_history(used);
+        assembly.bench_with_input(BenchmarkId::new("pruned", used), &(), |b, _| {
+            b.iter(|| {
+                let scripts = manager.scan_script_pubkeys_for(black_box(&wallet_id));
+                let query: FilterQuery = scripts.iter().map(|s| s.as_bytes()).collect();
+                black_box(query)
+            })
+        });
+    }
+    assembly.finish();
 }
 
 criterion_group!(benches, bench_filter_scan);

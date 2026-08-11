@@ -394,6 +394,11 @@ pub struct MultiMockWallet {
     /// hand the filter scan a pruned query while the monitored set stays full
     /// (dashpay/rust-dashcore#948).
     scan_addresses: std::collections::BTreeMap<WalletId, Vec<Address>>,
+    /// Per-wallet override for `wallet_monitor_revision`. Wallets absent here
+    /// report revision `0`. Lets tests drive the filter scan's revision-keyed
+    /// query cache: mutate the scripts without bumping the revision to prove
+    /// the cache is reused, bump it to prove the cache is rebuilt.
+    wallet_revisions: std::collections::BTreeMap<WalletId, u64>,
     event_sender: broadcast::Sender<WalletEvent>,
     /// Track every block processed for assertions.
     processed: Arc<Mutex<Vec<(WalletId, dashcore::BlockHash, u32)>>>,
@@ -411,6 +416,7 @@ impl MultiMockWallet {
         Self {
             wallets: std::collections::BTreeMap::new(),
             scan_addresses: std::collections::BTreeMap::new(),
+            wallet_revisions: std::collections::BTreeMap::new(),
             event_sender,
             processed: Arc::new(Mutex::new(Vec::new())),
         }
@@ -425,6 +431,14 @@ impl MultiMockWallet {
     /// returns these addresses' scripts instead of the monitored set.
     pub fn set_scan_addresses(&mut self, wallet_id: WalletId, addresses: Vec<Address>) {
         self.scan_addresses.insert(wallet_id, addresses);
+    }
+
+    /// Set one wallet's `wallet_monitor_revision`. A consumer caching scan
+    /// queries by revision must rebuild its cache for this wallet after the
+    /// value changes, and may keep serving the cached query while it does
+    /// not.
+    pub fn set_wallet_revision(&mut self, wallet_id: WalletId, revision: u64) {
+        self.wallet_revisions.insert(wallet_id, revision);
     }
 
     /// Mutable access to a wallet's state, panicking if absent.
@@ -483,6 +497,10 @@ impl WalletInterface for MultiMockWallet {
             Some(addresses) => addresses.iter().map(|a| a.script_pubkey()).collect(),
             None => self.monitored_script_pubkeys_for(wallet_id),
         }
+    }
+
+    fn wallet_monitor_revision(&self, wallet_id: &WalletId) -> u64 {
+        self.wallet_revisions.get(wallet_id).copied().unwrap_or(0)
     }
 
     fn watched_outpoints(&self) -> Vec<OutPoint> {
