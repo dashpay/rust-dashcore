@@ -276,8 +276,18 @@ struct MsgQueue {
     notify: Notify,
 }
 
+/// Order follows the dependency chain: block headers unblock filter headers,
+/// which unblock filters, which unblock blocks. Whatever is furthest upstream
+/// goes first, because under a strict drain last place means starved for as long
+/// as the classes ahead stay busy — and starving the head of the chain stalls
+/// everything behind it. Blocks go last despite being the bulk: they gate a
+/// filter batch's commit, not the discovery of more work.
+///
+/// Measured: with block headers last, raising the filter lookahead (far more
+/// filter traffic queued) pushed a 700ms-RTT header sync from 37s to 93s with no
+/// other change.
 const DRAIN_PRIORITY: [MsgClass; 5] =
-    [MsgClass::Other, MsgClass::Blocks, MsgClass::CfHeaders, MsgClass::CFilters, MsgClass::Headers];
+    [MsgClass::Other, MsgClass::Headers, MsgClass::CfHeaders, MsgClass::CFilters, MsgClass::Blocks];
 
 struct State {}
 
@@ -359,6 +369,7 @@ impl PeerNetworkManager {
             connected_peers.clone(),
             shutdown.clone(),
             peer_wake.clone(),
+            msg_queue.clone(),
         );
 
         // The peer supervisor is spawned by `start()`, not here: it must not emit
@@ -643,11 +654,23 @@ async fn route_tick(
     let mut on_wire: Vec<(NetworkMessage, SocketAddr)> = Vec::new();
     let mut msgs = msgs.into_iter();
     for msg in msgs.by_ref() {
-        // Send to the peer with the most free measured capacity.
+        // Send to the least-loaded peer RELATIVE TO ITS OWN capacity.
+        //
+        // Absolute free room concentrates load: the peer with the biggest cap has
+        // the most free slots, so it wins every round, saturates, and its cap
+        // grows — while the peers it outbid stay idle, never saturate, and so
+        // never grow. Measured at 50ms, that split three identical peers into one
+        // at cap 12 and two stuck at 2. A ratio spreads work in proportion to
+        // measured capacity instead: a peer twice as capable takes twice the
+        // work, but nobody is starved down to nothing.
+        //
+        // Cross-multiplied to compare `in_flight/cap` without floats; `cap` is
+        // clamped to at least `FLOOR_PER_PEER`, and the filter above already
+        // drops anyone at their limit, so neither side can be zero.
         let Some(peer) = peers
             .iter()
             .filter(|p| p.in_flight() < p.cap())
-            .max_by_key(|p| p.cap().saturating_sub(p.in_flight()))
+            .min_by(|a, b| (a.in_flight() * b.cap()).cmp(&(b.in_flight() * a.cap())))
         else {
             unsent.push(msg); // every peer is at its measured cap
             break;
@@ -712,6 +735,22 @@ struct PeerCapState {
     /// stale baseline expire and re-track the current cost, instead of one cheap
     /// early sample pinning it forever.
     min_w_age: u32,
+    /// Smoothed service time in seconds, carried ACROSS windows. Completions are
+    /// sparse — one `getcfilters` covers a thousand filters — so most windows see
+    /// none; without a value that persists, the controller has no opinion on the
+    /// peer for the 94% of windows that are empty, and its cap cannot move.
+    w_ema: f64,
+    /// Windows since this peer last completed anything. Distinguishes "quiet
+    /// because nothing was routed here" from "sitting on work it will never
+    /// answer" — only the latter must stop the probe.
+    dry_windows: u32,
+    /// Windows since `max_lambda` last took a new high, so a stale peak expires
+    /// instead of pinning the BDP estimate for the rest of the session.
+    max_lambda_age: u32,
+    /// Best completion rate seen from this peer (BBR's `max_bw`, in requests/s).
+    /// Paired with `min_w` it gives the peer's bandwidth-delay product, which is
+    /// the in-flight it takes to keep its pipe full.
+    max_lambda: f64,
     /// Smoothed cap, so it doesn't jitter window to window.
     cap_ema: f64,
 }
@@ -752,23 +791,50 @@ fn spawn_bandwidth_controller(
     connected: Arc<Mutex<Vec<(ConnectedPeer, State)>>>,
     shutdown: CancellationToken,
     peer_wake: Arc<Notify>,
+    queue: Arc<MsgQueue>,
 ) -> JoinHandle<()> {
     const WINDOW: Duration = Duration::from_millis(500);
     const FLOOR_PER_PEER: usize = 2; // global floor = peers · this
-    const PEER_CEIL: usize = 32; // per-connection sanity bound on in-flight
+                                     // Bootstrap ceiling, used until the peer has been measured. Once it has, the
+                                     // real ceiling is derived from its own bandwidth-delay product below: a fixed
+                                     // number cannot be right for both a peer 50ms away and one 700ms away, since
+                                     // the second needs fourteen times the in-flight for the same throughput.
+    const BOOTSTRAP_CEIL: usize = 32;
+    // Absolute backstop, not a tuning knob: only catches a peer whose service time
+    // never inflates no matter what we send it.
+    const HARD_CEIL: usize = 512;
+    // How far past the BDP target the probe may reach. `CAP_GAIN` is where we aim
+    // (BBR's cwnd); this is the headroom that lets us discover the pipe is bigger
+    // than the last measurement proved.
+    // Headroom above the target, not a second multiplier on it. At 4.0 the bound
+    // sat at twice BBR's cwnd, and since a rate peak takes MAX_LAMBDA_WINDOW to
+    // expire, that was room enough to walk a fast peer to the hard ceiling.
+    const PROBE_GAIN: f64 = 2.5;
     const RISE: f64 = 1.05; // throughput must climb 5% to justify a bigger cap
     const DROP: f64 = 0.85; // throughput below this·last => over-commit, back off
     const REPROBE: u32 = 8; // plateau windows to hold before nudging the cap up
-    const IDLE_BPS: f64 = 1.0e6; // downlink under 1 MB/s = idle, hold the cap
+                            // Idle means NOTHING WANTS TO BE SENT, not "few bytes are moving". Reading a
+                            // low byte rate as idle is a feedback trap: a budget that has backed off to
+                            // its floor cannot produce throughput, low throughput reads as idle, and idle
+                            // holds the budget — so it stays at the floor with the send queue backed up
+                            // (measured: a queue averaging 382 messages, peaking at 1742, against a
+                            // budget of 8). The queue is the honest demand signal.
     const EMA_ALPHA: f64 = 0.5; // smoothing for the noisy per-window rate
                                 // Per-peer cap: AIMED driven purely by THIS peer's service-time (lag). There is
                                 // NO hard per-peer request limit — a peer with headroom keeps growing, so we
                                 // fill the peers we have instead of recruiting more. It only backs off when its
                                 // own lag inflates past the uncongested baseline.
-    const CAP_GROW: f64 = 1.0; // additive increase per window while lag is flat
+    const CAP_GROW: f64 = 1.25; // multiplicative probe per window while W is flat
     const CAP_BACKOFF: f64 = 0.8; // multiplicative decrease when lag inflates
     const W_INFLATE: f64 = 1.5; // W above min_W·this => this peer is backing up
     const MIN_W_WINDOW: u32 = 20; // windows before a stale min_W baseline is re-tracked
+    const MAX_LAMBDA_WINDOW: u32 = 20; // windows before a stale rate peak is re-tracked
+    const W_EMA_ALPHA: f64 = 0.3; // weight of a new service-time sample
+    const DRY_LIMIT: u32 = 20; // windows sitting on work with no completion => stop probing
+                               // In-flight target, as a multiple of the peer's BDP. Two is where BBR puts
+                               // cwnd: exactly one BDP fills the pipe with no margin, so any jitter
+                               // underruns it.
+    const CAP_GAIN: f64 = 2.0;
     let window_s = WINDOW.as_secs_f64();
 
     tokio::spawn(async move {
@@ -776,7 +842,10 @@ fn spawn_bandwidth_controller(
         let mut rate_ema = 0.0f64; // smoothed downlink bytes/s
         let mut last_rate = 0.0f64; // smoothed rate at the previous cap adjustment
         let mut hold = 0u32; // consecutive plateau windows
-                             // Per-peer cap state across windows, keyed by peer address.
+                             // Sum of the per-peer caps from the previous window: they are computed
+                             // after the host budget below, so the budget uses the last known value.
+        let mut last_sum_peer_cap = 0usize;
+        // Per-peer cap state across windows, keyed by peer address.
         let mut peer_caps: HashMap<SocketAddr, PeerCapState> = HashMap::new();
         // Last peer reported as underserving. The supervisor is woken on the
         // TRANSITION only: re-notifying every window would turn a peer that stays
@@ -811,15 +880,29 @@ fn spawn_bandwidth_controller(
             if npeers == 0 {
                 continue;
             }
-            let floor = (npeers * FLOOR_PER_PEER).max(FLOOR_PER_PEER);
-            let ceiling = (npeers * PEER_CEIL).max(floor + 1);
+            // Never bind below what the peers themselves justify. Each per-peer cap
+            // is that peer's bandwidth-delay product, which is already the honest
+            // answer to "how much can this connection hold" — so a host budget
+            // under their sum throttles peers that measured they could take more.
+            //
+            // That is not hypothetical: at 700ms RTT the responses to everything
+            // in flight land together, so the per-window byte rate swings between
+            // a burst and nothing, and the hill-climb below reads each trough as
+            // over-commitment and backs off. Measured on a VPN'd mainnet sync,
+            // the budget sat at 17 while the peers were sized for 49, with 141
+            // messages queued and the router reporting it had no work to send.
+            let floor = (npeers * FLOOR_PER_PEER).max(FLOOR_PER_PEER).max(last_sum_peer_cap);
+            // Backstop only: the host budget is driven by the throughput hill-climb
+            // below, which backs off on its own when the peers are over-committed.
+            let ceiling = (npeers * HARD_CEIL).max(floor + 1);
             let step = npeers.max(4); // ~one extra slot per peer per window
             let cur = cap.load(Ordering::Relaxed);
 
             // Gradient hill-climb on smoothed throughput.
-            let (new, action) = if rate_ema < IDLE_BPS {
-                // Nothing meaningful downloading (e.g. the commit tail): hold the
-                // budget steady so it is ready when the download resumes.
+            let idle = queue.len() == 0;
+            let (new, action) = if idle {
+                // Genuinely nothing queued (e.g. the commit tail): hold the budget
+                // steady so it is ready when the download resumes.
                 (cur, "idle")
             } else if cur <= floor || rate_ema >= last_rate * RISE {
                 // Still gaining (or at the floor): push the budget up.
@@ -872,46 +955,116 @@ fn spawn_bandwidth_controller(
                     let rate = d_bytes as f64 / window_s; // this peer's downlink (bytes/s)
 
                     let (lambda, w) = if dc == 0 {
-                        // No completions this window: either idle (no work queued to
-                        // it) or stalled — the timeout monitor kicks a stalled peer at
-                        // REQUEST_TIMEOUT. Keep at least the floor so the router can
-                        // hand it work to bootstrap/keep measuring, but don't grow blind.
-                        st.cap_ema = st.cap_ema.max(FLOOR_PER_PEER as f64);
-                        (0.0, 0.0)
+                        // No completions this window. That is the NORMAL case, not an
+                        // anomaly: one `getcfilters` covers a thousand filters and one
+                        // `getheaders` up to eight thousand headers, so a 150k-block
+                        // sync completes a few hundred requests spread over hundreds of
+                        // windows — measured at 94% of windows empty. Treating each
+                        // empty window as "no information" is what pinned every cap at
+                        // the floor: the old code could only grow on a window that
+                        // completed something, so the cap advanced once per ~8s and
+                        // never reached a useful depth. Carry the smoothed values
+                        // instead and let the decision below run on them.
+                        st.dry_windows += 1;
+                        (0.0, st.w_ema)
                     } else {
+                        st.dry_windows = 0;
                         let lambda = dc as f64 / window_s; // completions/sec
                         let w = (dt as f64 / dc as f64) / 1e9; // avg service time (s)
-                                                               // Windowed min-W baseline (BBR-style min filter): take a new low
-                                                               // immediately, otherwise let the baseline go stale and re-track
-                                                               // the current cost after MIN_W_WINDOW windows. Without the reset,
-                                                               // one low sample from a cheap phase (fast headers) pins the
-                                                               // baseline forever and every later heavier request (cfilters)
-                                                               // reads as inflated => the cap decays to the floor and never
-                                                               // recovers, throttling the very phase we want parallel.
+                        st.w_ema = if st.w_ema == 0.0 {
+                            w
+                        } else {
+                            W_EMA_ALPHA * w + (1.0 - W_EMA_ALPHA) * st.w_ema
+                        };
+                        // Windowed max, mirroring the min-W filter below. A plain
+                        // running max never forgets: one burst window — several
+                        // batches landing together — pins the peak for the whole
+                        // session, and since the BDP is `max_lambda · min_W`, both
+                        // the target and the ceiling stay inflated on evidence that
+                        // has long expired.
+                        if lambda > st.max_lambda {
+                            st.max_lambda = lambda;
+                            st.max_lambda_age = 0;
+                        } else {
+                            st.max_lambda_age += 1;
+                            if st.max_lambda_age >= MAX_LAMBDA_WINDOW {
+                                st.max_lambda = lambda;
+                                st.max_lambda_age = 0;
+                            }
+                        }
+                        // Windowed min-W baseline (BBR-style min filter): take a new low
+                        // immediately, otherwise let the baseline go stale and re-track
+                        // the current cost after MIN_W_WINDOW windows. Without the reset,
+                        // one low sample from a cheap phase (fast headers) pins the
+                        // baseline forever and every later heavier request (cfilters)
+                        // reads as inflated => the cap decays to the floor and never
+                        // recovers, throttling the very phase we want parallel.
                         if st.min_w == 0.0 || w < st.min_w {
                             st.min_w = w;
                             st.min_w_age = 0;
                         } else {
                             st.min_w_age += 1;
-                            if st.min_w_age >= MIN_W_WINDOW {
+                            // Re-track only when the queue is not ours. Above the BDP
+                            // the extra service time IS our own backlog, so adopting
+                            // it as the uncongested baseline raises the bar the
+                            // degradation check measures against — which stops the
+                            // check firing and licenses more growth, which inflates W
+                            // further. That loop is what walked two mainnet peers all
+                            // the way to the hard ceiling of 512 in flight.
+                            let queue_is_ours = p.in_flight() as f64 > st.max_lambda * st.min_w;
+                            if st.min_w_age >= MIN_W_WINDOW && !queue_is_ours {
                                 st.min_w = w;
                                 st.min_w_age = 0;
                             }
                         }
-                        // AIMED on this peer's own lag: additive-increase while its
-                        // service time sits at the uncongested baseline (headroom),
-                        // multiplicative-decrease the moment it inflates (backing up).
-                        if st.cap_ema == 0.0 {
-                            st.cap_ema = FLOOR_PER_PEER as f64;
-                        } else if w > st.min_w * W_INFLATE {
-                            st.cap_ema = (st.cap_ema * CAP_BACKOFF).max(FLOOR_PER_PEER as f64);
-                        } else {
-                            st.cap_ema = (st.cap_ema + CAP_GROW).min(PEER_CEIL as f64);
-                        }
                         (lambda, w)
                     };
 
-                    let cap_peer = (st.cap_ema.round() as usize).clamp(FLOOR_PER_PEER, PEER_CEIL);
+                    // Size this peer by Little's Law, the way BBR sizes a congestion
+                    // window: the in-flight needed to keep a pipe full is its
+                    // bandwidth-delay product, `λ · min_W`, and the target is a small
+                    // multiple of it. `min_W` is the peer's UNCONGESTED service time —
+                    // a windowed minimum, so it measures distance, not queueing. That
+                    // is what makes this fair to a far peer: at the same completion
+                    // rate, a peer 700ms away has fourteen times the BDP of one 50ms
+                    // away and is given fourteen times the in-flight, instead of both
+                    // being held to the same small number and the far one delivering a
+                    // fourteenth of the throughput.
+                    let bdp_raw = if st.min_w > 0.0 {
+                        st.max_lambda * st.min_w
+                    } else {
+                        0.0
+                    };
+                    let bdp = bdp_raw * CAP_GAIN;
+                    // Ceiling from this peer's own BDP, not a constant. Until it has
+                    // been measured we fall back to the bootstrap value, which is
+                    // only there to let the first requests flow.
+                    let peer_ceil =
+                        ((bdp_raw * PROBE_GAIN) as usize).clamp(BOOTSTRAP_CEIL, HARD_CEIL);
+
+                    // λ is only ever measured under the cap we granted, so the BDP
+                    // above can never discover capacity we never used. Probe past it
+                    // while the peer shows no strain — this is BBR's ProbeBW — and
+                    // fall back the moment its own service time inflates over its
+                    // baseline. Growth is per WINDOW, not per completion, so a peer
+                    // answering in large sparse batches still converges.
+                    let degraded = st.w_ema > 0.0 && st.w_ema > st.min_w * W_INFLATE;
+                    let saturated = p.in_flight() + 1 >= st.cap_ema.round() as usize;
+                    // A peer holding work it never answers must not be probed further;
+                    // the timeout monitor is what removes it.
+                    let stuck = st.dry_windows >= DRY_LIMIT && p.in_flight() > 0;
+
+                    if st.cap_ema == 0.0 {
+                        st.cap_ema = FLOOR_PER_PEER as f64;
+                    } else if degraded {
+                        st.cap_ema = (st.cap_ema * CAP_BACKOFF).max(FLOOR_PER_PEER as f64);
+                    } else if saturated && !stuck {
+                        st.cap_ema = (st.cap_ema * CAP_GROW).min(peer_ceil as f64);
+                    }
+                    // Never sit below what the measurements already justify.
+                    st.cap_ema = st.cap_ema.max(bdp.min(peer_ceil as f64));
+
+                    let cap_peer = (st.cap_ema.round() as usize).clamp(FLOOR_PER_PEER, peer_ceil);
                     p.set_cap(cap_peer);
 
                     tracing::debug!(
@@ -949,6 +1102,7 @@ fn spawn_bandwidth_controller(
             if cap_min == usize::MAX {
                 cap_min = 0;
             }
+            last_sum_peer_cap = cap_sum;
 
             // `bind` names the constraint the router is hitting: `global` if the
             // host budget is the smaller room, `peers` if the summed per-peer caps
@@ -2042,10 +2196,10 @@ mod tests {
             drained,
             vec![
                 MsgClass::Other,
-                MsgClass::Blocks,
+                MsgClass::Headers,
                 MsgClass::CfHeaders,
                 MsgClass::CFilters,
-                MsgClass::Headers
+                MsgClass::Blocks
             ]
         );
         assert_eq!(q.len(), 0);
