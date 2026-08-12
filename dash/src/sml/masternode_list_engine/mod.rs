@@ -742,7 +742,7 @@ impl MasternodeListEngine {
     /// cycle keys that cycle in storage, yet the QRInfo carries no hash for
     /// it, so no enumeration over the message can produce it. A caller
     /// holding its own header chain should additionally feed the heights
-    /// around each work block, as dash-spv does with
+    /// around each work block, above all the cycle base at
     /// `work_height + WORK_DIFF_DEPTH`.
     pub fn qr_info_referenced_block_hashes(qr_info: &QRInfo) -> BTreeSet<BlockHash> {
         let mut hashes = BTreeSet::new();
