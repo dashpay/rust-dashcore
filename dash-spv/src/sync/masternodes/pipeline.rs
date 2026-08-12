@@ -55,6 +55,16 @@ impl MnListDiffPipeline {
         self.base_hashes.clear();
     }
 
+    /// Move in-flight requests back to the front of the pending queue.
+    ///
+    /// Used on peer disconnect: the `GetMnListDiff`s went to a peer that is gone,
+    /// but the diffs themselves are still wanted. The `base_hashes` mapping each
+    /// retry needs is preserved, so the next `send_pending` reissues them to the
+    /// new peer.
+    pub(super) fn requeue_in_flight(&mut self) {
+        self.coordinator.requeue_in_flight();
+    }
+
     /// Queue MnListDiff requests.
     ///
     /// Each request is a (base_hash, target_hash) pair.
