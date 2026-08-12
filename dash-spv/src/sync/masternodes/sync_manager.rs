@@ -296,11 +296,13 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
 
                 if let Some(ref qr_info_result) = qr_info_result {
                     tracing::info!(
-                        "QRInfo processed: stored_cycle_height={:?}, rotated_quorum_count={}, fully_verified_count={}, newly_qualified_count={}, previous_cycle_invalid_count={}",
+                        "QRInfo processed: stored_cycle_height={:?}, rotated_quorum_count={}/{}, fully_verified_count={}, newly_qualified_count={}, cycle_key_unresolved={}, previous_cycle_invalid_count={}",
                         qr_info_result.stored_cycle_height,
                         qr_info_result.rotated_quorum_count,
+                        qr_info_result.expected_rotated_quorum_count,
                         qr_info_result.fully_verified_count,
                         qr_info_result.newly_qualified_count,
+                        qr_info_result.cycle_key_unresolved,
                         qr_info_result.previous_cycle_invalid_count,
                     );
                     // If every rotated quorum in this QRInfo ended up Verified,

@@ -69,9 +69,15 @@ pub struct QRInfoFeedResult {
     /// the storage gate fired and the cycle was inserted into
     /// `rotated_quorums_per_cycle`. `None` when storage was skipped because
     /// `last_commitment_per_index` was empty, the gate blocked the write, or
-    /// the cycle hash had no resolvable height. The cycle stored by
+    /// the cycle key was unresolvable, which `cycle_key_unresolved`
+    /// distinguishes from the other two. The cycle stored by
     /// `validate_and_store_previous_cycle_quorums` is not reflected here.
     pub stored_cycle_height: Option<CoreBlockHeight>,
+    /// `true` when the served active set has no resolvable cycle base, which
+    /// leaves the feed without a key to store the cycle under however well it
+    /// verified. Distinguishes that from a `stored_cycle_height` of `None`
+    /// caused by the storage gate refusing the write.
+    pub cycle_key_unresolved: bool,
     /// Previous-cycle rotated quorums that failed validation outright and were
     /// left out of the cycle stored by
     /// `validate_and_store_previous_cycle_quorums`. That path is best-effort
@@ -1172,6 +1178,18 @@ impl MasternodeListEngine {
             .collect::<Result<Vec<QualifiedQuorumEntry>, QuorumValidationError>>()?;
 
         #[cfg(feature = "quorum_validation")]
+        let cycle_key = self.active_set_cycle_hash(qualified_last_commitment_per_index.iter());
+        #[cfg(feature = "quorum_validation")]
+        let cycle_key_unresolved = cycle_key.is_none() && rotated_quorum_count > 0;
+        #[cfg(feature = "quorum_validation")]
+        if cycle_key_unresolved {
+            tracing::warn!(
+                "None of the {} rotated quorums served resolves a cycle base, so the cycle cannot be stored under any key",
+                rotated_quorum_count
+            );
+        }
+
+        #[cfg(feature = "quorum_validation")]
         if verify_rotated_quorums {
             let mut updates: Vec<(
                 BTreeSet<CoreBlockHeight>,
@@ -1222,8 +1240,6 @@ impl MasternodeListEngine {
                     }
                 }
             }
-
-            let cycle_key = self.active_set_cycle_hash(qualified_last_commitment_per_index.iter());
 
             for rotated_quorum in qualified_last_commitment_per_index.iter() {
                 let masternode_lists_having_quorum_hash_for_quorum_type =
@@ -1348,9 +1364,7 @@ impl MasternodeListEngine {
                     }
                 }
             }
-        } else if let Some(cycle_key) =
-            self.active_set_cycle_hash(qualified_last_commitment_per_index.iter())
-        {
+        } else if let Some(cycle_key) = cycle_key {
             fully_verified_count = qualified_last_commitment_per_index
                 .iter()
                 .filter(|q| matches!(q.verified, LLMQEntryVerificationStatus::Verified))
@@ -1374,6 +1388,7 @@ impl MasternodeListEngine {
             Ok(Some(QRInfoFeedResult {
                 rotated_quorum_count,
                 expected_rotated_quorum_count: rotation_quorum_type.active_quorum_count() as usize,
+                cycle_key_unresolved,
                 newly_qualified_count,
                 fully_verified_count,
                 stored_cycle_height,
@@ -2512,6 +2527,35 @@ mod tests {
             "expected MissingRotationChainLockSigs skip for {}, got {:?}",
             entry_hash,
             entry_status
+        );
+    }
+
+    /// An active set whose cycle base no entry resolves cannot be stored under
+    /// any key, however well it verified. The caller has to be able to tell
+    /// that apart from the storage gate refusing a degraded cycle, because
+    /// only the former is fixed by feeding more block heights.
+    #[cfg(feature = "quorum_validation")]
+    #[test]
+    fn feed_qr_info_reports_an_unresolvable_cycle_key() {
+        let (mut engine, qr_info) = load_qrinfo_2240504_fixture();
+
+        let MasternodeListEngineBlockContainer::BTreeMapContainer(container) =
+            &mut engine.block_container;
+        for quorum in qr_info.last_commitment_per_index.iter() {
+            if let Some(height) = container.block_heights.remove(&quorum.quorum_hash) {
+                container.block_hashes.remove(&height);
+            }
+        }
+
+        let feed_result = engine
+            .feed_qr_info(qr_info, false, false)
+            .expect("an unresolvable cycle key must not abort the feed")
+            .expect("expected a feed result");
+
+        assert!(feed_result.cycle_key_unresolved, "the unresolvable cycle key must be reported");
+        assert!(
+            feed_result.stored_cycle_height.is_none(),
+            "a cycle without a key must not be stored"
         );
     }
 
