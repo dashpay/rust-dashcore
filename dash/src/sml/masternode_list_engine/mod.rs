@@ -83,7 +83,7 @@ pub struct QRInfoFeedResult {
     /// `validate_and_store_previous_cycle_quorums`. That path is best-effort
     /// enrichment and never fails the feed, so this is the only signal a
     /// caller gets that a peer served rotated commitments which do not verify.
-    /// Entries left out for missing context are not counted, and
+    /// Entries left out for missing or inferred context are not counted, and
     /// `all_fully_verified` is unaffected: it reports on the current cycle.
     pub previous_cycle_invalid_count: usize,
 }
@@ -604,12 +604,15 @@ impl MasternodeListEngine {
     ///
     /// Returns how many entries were left out for failing validation outright,
     /// as opposed to lacking the context to be validated at all, so the caller
-    /// can judge the peer that served them.
+    /// can judge the peer that served them. A failure under a quarter
+    /// signature keyed by elimination is a gap in that context too and is not
+    /// counted.
     #[cfg(feature = "quorum_validation")]
     fn validate_and_store_previous_cycle_quorums(
         &mut self,
         work_block_hash: BlockHash,
         sigs_by_work_height: &BTreeMap<CoreBlockHeight, BLSSignature>,
+        inferred_work_heights: &BTreeSet<CoreBlockHeight>,
     ) -> usize {
         let isd_type = self.network.isd_llmq_type();
         let Some((cycle_hash, mut entries)) =
@@ -629,6 +632,26 @@ impl MasternodeListEngine {
                 .unwrap_or_default();
             match entry.verified {
                 LLMQEntryVerificationStatus::Verified => {}
+                // A quarter signature keyed by elimination may belong to
+                // another cycle, which reconstructs the wrong member set and
+                // fails the aggregate check. That is a gap in the supplied
+                // context rather than something the peer can be blamed for.
+                LLMQEntryVerificationStatus::Invalid(_)
+                    if self
+                        .quarter_sigs_are_inferred(inferred_work_heights, &entry.quorum_entry) =>
+                {
+                    tracing::debug!(
+                        "Previous-cycle quorum {} at cycle {} failed validation ({}) under inferred quarter signatures, leaving it out",
+                        entry.quorum_entry.quorum_hash,
+                        cycle_hash,
+                        entry.verified
+                    );
+                    entry.verified = LLMQEntryVerificationStatus::Skipped(
+                        LLMQEntryVerificationSkipStatus::InferredRotationChainLockSigs(
+                            entry.quorum_entry.quorum_hash,
+                        ),
+                    );
+                }
                 LLMQEntryVerificationStatus::Invalid(_) => {
                     invalid_count += 1;
                     tracing::warn!(
@@ -1156,6 +1179,7 @@ impl MasternodeListEngine {
             previous_cycle_invalid_count = self.validate_and_store_previous_cycle_quorums(
                 work_block_hash_h,
                 &rotation_sigs_by_work_height,
+                &inferred_work_heights,
             );
         }
 
@@ -1745,6 +1769,7 @@ mod tests {
     #[cfg(feature = "quorum_validation")]
     use {
         super::build_cycle_quorum_map,
+        super::qr_info_diffs,
         crate::BlockHash,
         crate::QuorumHash,
         crate::bls_sig_utils::{BLSPublicKey, BLSSignature},
@@ -2750,6 +2775,29 @@ mod tests {
             foreign_signature;
         let h_block_hash = qr_info.mn_list_diff_h.block_hash;
 
+        // The captured container has no height for the commitments of the
+        // cycle that keys the corrupted quorum's oldest quarter, leaving that
+        // quarter to the elimination pass. Feeding the height of that cycle's
+        // index 0 commitment keys it exactly, so the failure below is the
+        // peer's and not a guess of ours.
+        let [oldest_quarter, ..] = engine
+            .quarter_work_heights(&qr_info.mn_list_diff_h.new_quorums[corrupt_position])
+            .expect("fixture must resolve the corrupted quorum's quarter work heights");
+        let interval = engine.network.isd_llmq_type().params().dkg_params.interval;
+        let keying_commitment = qr_info_diffs(&qr_info)
+            .into_iter()
+            .find(|diff| {
+                engine.block_container.get_height(&diff.block_hash)
+                    == Some(oldest_quarter + interval)
+            })
+            .expect("fixture must carry the diff holding that cycle's commitments")
+            .new_quorums
+            .iter()
+            .find(|q| q.llmq_type.is_rotating_quorum_type() && q.quorum_index == Some(0))
+            .expect("that diff must carry the cycle's index 0 commitment")
+            .quorum_hash;
+        engine.feed_block_height(oldest_quarter + WORK_DIFF_DEPTH, keying_commitment);
+
         let feed_result = engine
             .feed_qr_info(qr_info, true, true)
             .expect("previous-cycle corruption must not abort the feed")
@@ -2790,6 +2838,27 @@ mod tests {
         assert!(
             feed_result.stored_cycle_height.is_some(),
             "the current cycle must still be stored"
+        );
+
+        // Without that height the same quarter is keyed by elimination, and a
+        // signature that may belong to another cycle rebuilds the wrong member
+        // set on its own. The identical corruption must then leave the quorum
+        // out without blaming the peer for it.
+        let (mut engine, mut qr_info) = load_qrinfo_2240504_fixture();
+        qr_info.mn_list_diff_h.new_quorums[corrupt_position].all_commitment_aggregated_signature =
+            foreign_signature;
+        let feed_result = engine
+            .feed_qr_info(qr_info, true, true)
+            .expect("previous-cycle corruption must not abort the feed")
+            .expect("expected a feed result");
+        assert_eq!(
+            feed_result.previous_cycle_invalid_count, 0,
+            "a failure under an inferred quarter signature is a gap in our context, not the peer's fault"
+        );
+        assert_eq!(
+            engine.rotated_quorums_per_cycle.get(&previous_cycle_key).map(|cycle| cycle.len()),
+            Some(rotating_at_h - 1),
+            "the quorum must still be left out of the stored cycle"
         );
     }
 
