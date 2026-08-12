@@ -49,6 +49,10 @@ pub const WORK_DIFF_DEPTH: u32 = 8;
 pub struct QRInfoFeedResult {
     /// Total number of rotated quorums in `last_commitment_per_index`.
     pub rotated_quorum_count: usize,
+    /// Rotated quorums an active set of this network's rotation quorum type
+    /// holds. The length a peer serves is peer-controlled, so a set shorter
+    /// than this covers only part of the cycle however well it verifies.
+    pub expected_rotated_quorum_count: usize,
     /// Rotated quorums for which no cached `QualifiedQuorumEntry` existed and one
     /// was constructed fresh. Incremented independently of `verify_rotated_quorums`
     /// and the final verification outcome. Pair with `fully_verified_count` to
@@ -79,13 +83,18 @@ pub struct QRInfoFeedResult {
 }
 
 impl QRInfoFeedResult {
-    /// Returns true when every rotated quorum in this QRInfo settled as
-    /// `LLMQEntryVerificationStatus::Verified`, the exact condition under which
-    /// `feed_qr_info` stores the cycle in `rotated_quorums_per_cycle`. Use this
-    /// as the trust gate for callers that need to know the cycle is fully
-    /// validated.
+    /// Returns true when this QRInfo proved the whole active rotation set:
+    /// it carried every quorum of the set and each one settled as
+    /// `LLMQEntryVerificationStatus::Verified`. Use this as the trust gate for
+    /// callers that need to know the cycle is fully validated.
+    ///
+    /// A peer serving a shorter set leaves the omitted indices unproven, and
+    /// treating that as a validated cycle would stop a caller from asking for
+    /// the rest until the next cycle, so the length is part of the gate.
     pub fn all_fully_verified(&self) -> bool {
-        self.rotated_quorum_count > 0 && self.fully_verified_count == self.rotated_quorum_count
+        self.expected_rotated_quorum_count > 0
+            && self.rotated_quorum_count == self.expected_rotated_quorum_count
+            && self.fully_verified_count == self.rotated_quorum_count
     }
 }
 
@@ -1364,6 +1373,7 @@ impl MasternodeListEngine {
         {
             Ok(Some(QRInfoFeedResult {
                 rotated_quorum_count,
+                expected_rotated_quorum_count: rotation_quorum_type.active_quorum_count() as usize,
                 newly_qualified_count,
                 fully_verified_count,
                 stored_cycle_height,
@@ -2201,6 +2211,26 @@ mod tests {
                 .values()
                 .all(|q| matches!(q.verified, LLMQEntryVerificationStatus::Verified)),
             "every stored previous-cycle quorum must be verified"
+        );
+
+        // How many commitments a peer serves is up to the peer. A set one
+        // entry short still verifies entry by entry, yet the index it omits
+        // stays unproven, so the cycle must not read as fully validated.
+        let (mut engine, mut qr_info) = load_qrinfo_2518986_fixture();
+        qr_info.last_commitment_per_index.pop().expect("fixture must carry commitments");
+        let feed_result = engine
+            .feed_qr_info(qr_info, true, true)
+            .expect("a truncated active set must still feed cleanly")
+            .expect("expected a feed result");
+        assert_eq!(feed_result.rotated_quorum_count, 31);
+        assert_eq!(
+            feed_result.fully_verified_count, 31,
+            "every served entry of the truncated set must still verify"
+        );
+        assert_eq!(feed_result.expected_rotated_quorum_count, 32);
+        assert!(
+            !feed_result.all_fully_verified(),
+            "a set covering part of the cycle must not read as fully verified"
         );
     }
 
