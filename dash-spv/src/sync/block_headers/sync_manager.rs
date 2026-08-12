@@ -104,8 +104,27 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> SyncManager for BlockHeadersMana
     ) -> SyncResult<Vec<SyncEvent>> {
         match msg.inner() {
             NetworkMessage::Headers(headers) => {
+                let hashed_headers: Vec<crate::types::HashedBlockHeader> =
+                    if let Some(hashes) = msg.header_hashes() {
+                        if hashes.len() != headers.len() {
+                            return Err(crate::error::SyncError::InvalidState(format!(
+                                "headers2 hash count mismatch: {} headers, {} hashes",
+                                headers.len(),
+                                hashes.len()
+                            )));
+                        }
+                        headers
+                            .iter()
+                            .zip(hashes)
+                            .map(|(header, hash)| {
+                                crate::types::HashedBlockHeader::with_trusted_hash(*header, *hash)
+                            })
+                            .collect()
+                    } else {
+                        headers.iter().map(crate::types::HashedBlockHeader::from).collect()
+                    };
                 // Always route through pipeline when initialized
-                self.handle_headers_pipeline(headers, requests).await
+                self.handle_headers_pipeline(&hashed_headers, requests).await
             }
 
             NetworkMessage::Inv(inv) => {

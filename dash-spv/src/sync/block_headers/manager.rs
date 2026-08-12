@@ -19,6 +19,7 @@ use crate::sync::block_headers::HeadersPipeline;
 use crate::sync::{BlockHeadersProgress, ProgressPercentage, SyncEvent, SyncManager, SyncState};
 use crate::types::HashedBlockHeader;
 use crate::validation::{BlockHeaderValidator, Validator};
+#[cfg(test)]
 use dashcore::block::Header;
 use dashcore::network::message_blockdata::Inventory;
 use dashcore::BlockHash;
@@ -122,7 +123,7 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> BlockHeadersManager<H, M> {
     /// Handle incoming headers message (used for both initial sync and post-sync).
     pub(super) async fn handle_headers_pipeline(
         &mut self,
-        headers: &[Header],
+        headers: &[HashedBlockHeader],
         requests: &RequestSender,
     ) -> SyncResult<Vec<SyncEvent>> {
         if !self.pipeline.is_initialized() {
@@ -140,22 +141,22 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> BlockHeadersManager<H, M> {
         if matched.is_none() && !headers.is_empty() {
             tracing::debug!(
                 "Headers not matched by pipeline (prev_hash: {}), may be post-sync update",
-                headers[0].prev_blockhash
+                headers[0].header().prev_blockhash
             );
         }
 
-        // Send more requests during initial sync or active post-sync catch-up.
-        // Skip for unsolicited headers.
+        // Process ready-to-store segments
+        let mut events = Vec::new();
+        let ready_batches = self.pipeline.take_ready_to_store();
+
+        // Draining can expose new segments at the end of the active window, so
+        // refill only after next_to_store has advanced. Skip unsolicited headers.
         if was_syncing || !tip_was_complete {
             let sent = self.pipeline.send_pending(requests)?;
             if sent > 0 {
                 tracing::debug!("Pipeline sent {} more requests", sent);
             }
         }
-
-        // Process ready-to-store segments
-        let mut events = Vec::new();
-        let ready_batches = self.pipeline.take_ready_to_store();
 
         for (_start_height, batch_headers) in ready_batches {
             if !batch_headers.is_empty() {
@@ -262,6 +263,8 @@ mod tests {
     use crate::storage::{
         DiskStorageManager, PersistentBlockHeaderStorage, PersistentMetadataStorage, StorageManager,
     };
+    use crate::sync::block_headers::pipeline::ACTIVE_SEGMENT_WINDOW;
+    use crate::sync::block_headers::segment_state::SegmentState;
     use crate::sync::{ManagerIdentifier, SyncManager, SyncManagerProgress};
     use dashcore::network::message::NetworkMessage;
     use tokio::sync::mpsc::unbounded_channel;
@@ -339,7 +342,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_unsolicited_post_sync_header_does_not_trigger_get_headers() {
+    async fn test_unsolicited_post_sync_header_batch_does_not_trigger_get_headers() {
         let mut manager = create_test_manager().await;
         let tip = manager.tip().await.unwrap();
         let tip_hash = *tip.hash();
@@ -351,16 +354,19 @@ mod tests {
 
         let (sender, mut rx) = create_test_request_sender();
 
-        let header = Header::dummy_chain(1, tip_hash).remove(0);
+        let headers = Header::dummy_chain(2, tip_hash)
+            .into_iter()
+            .map(HashedBlockHeader::from)
+            .collect::<Vec<_>>();
 
-        let events = manager.handle_headers_pipeline(&[header], &sender).await.unwrap();
+        let events = manager.handle_headers_pipeline(&headers, &sender).await.unwrap();
 
         // Header should have been stored
         assert_eq!(events.len(), 1);
         assert!(matches!(
             events[0],
             SyncEvent::BlockHeadersStored {
-                tip_height: 1
+                tip_height: 2
             }
         ));
 
@@ -369,6 +375,61 @@ mod tests {
 
         // Tip segment marked complete again for the next unsolicited header
         assert!(manager.pipeline.is_tip_complete());
+    }
+
+    #[tokio::test]
+    async fn test_response_cycle_refills_window_after_ordered_drain() {
+        let mut manager = create_test_manager().await;
+        let stored_tip = manager.tip().await.unwrap();
+        let chain = Header::dummy_chain(ACTIVE_SEGMENT_WINDOW, *stored_tip.hash());
+
+        let mut segments = Vec::new();
+        for (id, header) in chain.iter().enumerate() {
+            let start_hash = if id == 0 {
+                *stored_tip.hash()
+            } else {
+                chain[id - 1].block_hash()
+            };
+            let target_hash = header.block_hash();
+            let mut segment = SegmentState::new(
+                id,
+                id as u32,
+                start_hash,
+                Some(id as u32 + 1),
+                Some(target_hash),
+            );
+            if id == 0 {
+                segment.coordinator.mark_sent(&[start_hash]);
+            } else {
+                segment.current_tip_hash = target_hash;
+                segment.current_height = id as u32 + 1;
+                segment.complete = true;
+                segment.buffered_headers.push((*header).into());
+            }
+            segments.push(segment);
+        }
+        let next_locator = chain.last().expect("non-empty chain").block_hash();
+        segments.push(SegmentState::new(
+            ACTIVE_SEGMENT_WINDOW,
+            ACTIVE_SEGMENT_WINDOW as u32,
+            next_locator,
+            None,
+            None,
+        ));
+        manager.pipeline.set_segments_for_test(segments);
+        manager.progress.set_state(SyncState::Syncing);
+
+        let (requests, mut rx) = create_test_request_sender();
+        let events = manager.handle_headers_pipeline(&[chain[0].into()], &requests).await.unwrap();
+
+        assert_eq!(events.len(), ACTIVE_SEGMENT_WINDOW);
+        match rx.try_recv().expect("response cycle did not refill active window") {
+            NetworkRequest::SendMessage(NetworkMessage::GetHeaders(request)) => {
+                assert_eq!(request.locator_hashes[0], next_locator);
+            }
+            other => panic!("Expected GetHeaders, got {other:?}"),
+        }
+        assert!(rx.try_recv().is_err());
     }
 
     #[tokio::test]
@@ -462,7 +523,7 @@ mod tests {
         // segment's current_tip_hash to advanced_hash.
         let header = Header::dummy_chain(1, initial_locator).remove(0);
         let advanced_hash = header.block_hash();
-        manager.handle_headers_pipeline(&[header], &requests).await.unwrap();
+        manager.handle_headers_pipeline(&[header.into()], &requests).await.unwrap();
 
         // Drain the follow-up GetHeaders that send_pending issued.
         match rx.try_recv().expect("follow-up GetHeaders not sent") {
