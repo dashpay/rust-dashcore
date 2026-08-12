@@ -348,6 +348,11 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
         }
         self.active_batches.insert(scan_start, batch);
         self.progress.update_committed_height(scan_start.saturating_sub(1));
+        // Roll the storage watermark back in step with the scan position. This
+        // is also the rescan entry point (the `tick` trigger resets progress
+        // and re-enters here), so it keeps storage from releasing the range
+        // this scan is about to re-read.
+        self.filter_storage.write().await.set_committed_height(scan_start.saturating_sub(1)).await;
 
         // Only scan if all filters for the batch are already loaded
         if self.progress.stored_height() >= batch_end {
@@ -637,6 +642,13 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
                         }
                     }
                 }
+                // A batch commits only once every matched block in it has been
+                // downloaded and applied, so filters at or below `end` are
+                // fully consumed. Let storage release them from memory on the
+                // next persist; they remain readable through `load_filters`,
+                // which reloads from disk. The wallet guard above is out of
+                // scope here and no storage guard is held.
+                self.filter_storage.write().await.set_committed_height(end).await;
             }
             // Drop processed-wallet records for the committed range. Below the
             // new committed_height a new wallet can only get here via the

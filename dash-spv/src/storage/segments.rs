@@ -83,6 +83,14 @@ pub struct SegmentCache<I: Persistable> {
     /// Segment ids whose backing files must be removed on the next `persist`.
     /// Populated by `truncate_above` for segments that are dropped entirely.
     to_delete: HashSet<u32>,
+    /// Highest height whose items are durably persisted *and* fully consumed
+    /// by every reader, as declared by the owning sync manager through
+    /// [`SegmentCache::set_committed_height`].
+    ///
+    /// `None` — the default — disables committed-height release entirely, so a
+    /// cache whose owner never declares a watermark keeps exactly the residency
+    /// behavior it had before this field existed.
+    committed_height: Option<u32>,
 }
 
 impl<I: Persistable> SegmentCache<I> {
@@ -98,6 +106,7 @@ impl<I: Persistable> SegmentCache<I> {
             start_height: None,
             segments_dir: segments_dir.clone(),
             to_delete: HashSet::new(),
+            committed_height: None,
         };
 
         // Building the metadata
@@ -445,6 +454,15 @@ impl<I: Persistable> SegmentCache<I> {
 
         self.tip_height = Some(target_height);
 
+        // The watermark must never claim heights that no longer exist: a
+        // rescan re-reads this range, and a stale high watermark would keep
+        // releasing segments it is actively refilling.
+        if let Some(committed) = self.committed_height {
+            if committed > target_height {
+                self.committed_height = Some(target_height);
+            }
+        }
+
         Ok(())
     }
 
@@ -493,6 +511,8 @@ impl<I: Persistable> SegmentCache<I> {
         self.evicted.clear();
         self.tip_height = None;
         self.start_height = None;
+        // Nothing is stored, so nothing is committed.
+        self.committed_height = None;
 
         Ok(())
     }
@@ -527,6 +547,123 @@ impl<I: Persistable> SegmentCache<I> {
                 tracing::error!("Failed to persist segment with id {id}: {e}");
             }
         }
+
+        // After the writes above, so segments cleaned by *this* pass are
+        // eligible immediately. A segment whose persist failed is still Dirty
+        // and is therefore skipped.
+        let released = self.release_committed_segments();
+        if released > 0 {
+            tracing::debug!(
+                "SegmentCache: released {} committed segment(s) below height {:?}; {} resident",
+                released,
+                self.committed_height,
+                self.segments.len(),
+            );
+        }
+    }
+
+    /// Declare the highest height whose items are durably persisted and fully
+    /// consumed, so the cache may stop holding them in memory.
+    ///
+    /// Segments lying *entirely* at or below `height` are released from memory
+    /// by the next [`SegmentCache::persist`], once they are `Clean`. The
+    /// on-disk file remains the source of truth and a later read of a released
+    /// height transparently reloads the segment through the same lazy path used
+    /// for any never-resident segment — the data a reader observes is
+    /// unchanged, only the resident-set size is.
+    ///
+    /// The watermark may move **backwards**: a wallet rescan rolls it back
+    /// before re-reading lower heights. A regression only ever narrows the
+    /// release window, so it is always safe. Callers therefore assign rather
+    /// than accumulate, and no monotonicity is enforced here.
+    pub fn set_committed_height(&mut self, height: u32) {
+        self.committed_height = Some(height);
+    }
+
+    /// The committed-height watermark, or `None` when the owner has never
+    /// declared one (in which case no committed-height release occurs).
+    ///
+    /// Test-only for now — nothing reads the watermark back in production.
+    /// Promote it to an unconditional accessor when a caller needs it.
+    #[cfg(test)]
+    #[inline]
+    pub fn committed_height(&self) -> Option<u32> {
+        self.committed_height
+    }
+
+    /// Sorted ids of the segments currently held in memory. Test-only hook for
+    /// asserting residency from the storage wrappers.
+    #[cfg(test)]
+    pub(crate) fn resident_segment_ids(&self) -> Vec<u32> {
+        let mut ids: Vec<u32> = self.segments.keys().copied().collect();
+        ids.sort_unstable();
+        ids
+    }
+
+    /// Release the in-memory items of every fully-committed clean segment,
+    /// keeping the on-disk file as the source of truth.
+    ///
+    /// This is what stops a long backfill from pinning every segment it ever
+    /// touched. `MAX_ACTIVE_SEGMENTS` alone cannot: a scan spanning fewer than
+    /// ten segments never trips the LRU, so every downloaded item stays
+    /// resident until the process dies.
+    ///
+    /// Releasing a `Clean` segment is invisible to readers. `Clean` is reachable
+    /// only via [`Segment::load`] from an existing file or a successful
+    /// [`Segment::persist`], so a clean segment's items are byte-identical to
+    /// its backing file, and `get_segment_mut` reloads exactly those bytes on
+    /// the next access.
+    ///
+    /// Three classes are deliberately kept:
+    /// - `Dirty` segments — their contents exist *only* in memory, so dropping
+    ///   them would lose data outright.
+    /// - The segment holding the sync frontier (`tip_height`) — it is still
+    ///   being written, and releasing it would force a reload on the very next
+    ///   store.
+    /// - Any segment not entirely at or below the watermark, so a partially
+    ///   committed segment is never released out from under an active reader.
+    ///
+    /// Segments queued in `to_delete` cannot appear here: both `truncate_above`
+    /// and `clear` remove a segment from `self.segments` in the same step that
+    /// queues it, so the two sets are disjoint by construction.
+    ///
+    /// Returns the number of segments released.
+    fn release_committed_segments(&mut self) -> usize {
+        let Some(committed) = self.committed_height else {
+            return 0;
+        };
+
+        // Still-written frontier; never release it.
+        let frontier_segment = self.tip_height.map(Self::height_to_segment_id);
+
+        let items_per_segment = Segment::<I>::ITEMS_PER_SEGMENT as u64;
+        let committed = committed as u64;
+
+        // Widened to u64 so a segment id near u32::MAX cannot overflow the
+        // range arithmetic; such a segment simply fails the comparison.
+        let releasable: Vec<u32> = self
+            .segments
+            .iter()
+            .filter(|(id, segment)| {
+                if segment.state != SegmentState::Clean {
+                    return false;
+                }
+
+                if Some(**id) == frontier_segment {
+                    return false;
+                }
+
+                let last_height = (**id as u64) * items_per_segment + items_per_segment - 1;
+                last_height <= committed
+            })
+            .map(|(id, _)| *id)
+            .collect();
+
+        for id in &releasable {
+            self.segments.remove(id);
+        }
+
+        releasable.len()
     }
 
     #[inline]
@@ -1305,6 +1442,206 @@ mod tests {
             SegmentCache::<Vec<u8>>::parse_segment_id(&<Vec<u8>>::segment_file_name(7)),
             Some(7)
         );
+    }
+
+    /// The headline guarantee: a committed, clean segment is dropped from
+    /// memory on persist, and a later read transparently reloads it from disk
+    /// byte-identically.
+    ///
+    /// This is the leak that pinned a 350k-block backfill in RAM: the scan
+    /// spans fewer than `MAX_ACTIVE_SEGMENTS`, so the LRU never fires and every
+    /// item stays resident until the process dies.
+    #[tokio::test]
+    async fn test_release_committed_segments_reloads_from_disk() {
+        let tmp_dir = TempDir::new().unwrap();
+
+        const ITEMS_PER_SEGMENT: u32 = Segment::<FilterHeader>::ITEMS_PER_SEGMENT;
+
+        // Dense across segments 0 and 1, plus a few items into segment 2 so the
+        // frontier lives above the range we expect to be released.
+        let items = FilterHeader::dummy_batch(0..ITEMS_PER_SEGMENT * 2 + 5);
+
+        let mut cache = SegmentCache::<FilterHeader>::load_or_new(tmp_dir.path()).await.unwrap();
+        cache.store_items_at_height(&items, 0).await.unwrap();
+        cache.persist(tmp_dir.path()).await;
+
+        // Baseline: without a watermark nothing is released, which is exactly
+        // the pre-fix behavior.
+        assert_eq!(cache.committed_height(), None);
+        assert_eq!(cache.segments.len(), 3, "no watermark declared, so nothing is released");
+
+        // Segments 0 and 1 are now fully committed (their last heights are
+        // ITEMS_PER_SEGMENT-1 and 2*ITEMS_PER_SEGMENT-1).
+        cache.set_committed_height(ITEMS_PER_SEGMENT * 2 - 1);
+        cache.persist(tmp_dir.path()).await;
+
+        assert!(!cache.segments.contains_key(&0), "committed clean segment 0 must be released");
+        assert!(!cache.segments.contains_key(&1), "committed clean segment 1 must be released");
+        assert!(cache.segments.contains_key(&2), "frontier segment must stay resident");
+        assert_eq!(cache.segments.len(), 1);
+
+        // The cache-level watermarks are unaffected by residency.
+        assert_eq!(cache.start_height(), Some(0));
+        assert_eq!(cache.tip_height(), Some(ITEMS_PER_SEGMENT * 2 + 4));
+
+        // Reading the released range reloads both segments from disk and
+        // returns exactly the bytes that were written.
+        let reread = cache.get_items(0..ITEMS_PER_SEGMENT * 2).await.unwrap();
+        assert_eq!(reread, items[0..(ITEMS_PER_SEGMENT * 2) as usize]);
+
+        // Single-item reads across the boundary agree too.
+        assert_eq!(cache.get_item(0).await.unwrap(), Some(items[0]));
+        assert_eq!(
+            cache.get_item(ITEMS_PER_SEGMENT).await.unwrap(),
+            Some(items[ITEMS_PER_SEGMENT as usize])
+        );
+    }
+
+    /// Never release a segment that is dirty (its items exist only in memory),
+    /// the frontier segment (still being written), or a segment only partially
+    /// below the watermark.
+    #[tokio::test]
+    async fn test_release_skips_dirty_frontier_and_partial_segments() {
+        let tmp_dir = TempDir::new().unwrap();
+
+        const ITEMS_PER_SEGMENT: u32 = Segment::<FilterHeader>::ITEMS_PER_SEGMENT;
+
+        let mut cache = SegmentCache::<FilterHeader>::load_or_new(tmp_dir.path()).await.unwrap();
+
+        // Sparse writes into segments 0, 1 and 2.
+        cache.store_items_at_height(&FilterHeader::dummy_batch(0..1), 10).await.unwrap();
+        cache
+            .store_items_at_height(&FilterHeader::dummy_batch(1..2), ITEMS_PER_SEGMENT + 10)
+            .await
+            .unwrap();
+        cache
+            .store_items_at_height(&FilterHeader::dummy_batch(2..3), ITEMS_PER_SEGMENT * 2 + 10)
+            .await
+            .unwrap();
+
+        // A watermark above everything, but nothing has been persisted yet, so
+        // all three segments are Dirty and none may be released.
+        cache.set_committed_height(u32::MAX);
+        let released = cache.release_committed_segments();
+        assert_eq!(released, 0, "dirty segments must never be released");
+        assert_eq!(cache.segments.len(), 3);
+
+        cache.persist(tmp_dir.path()).await;
+        // persist() cleaned all three, then released every non-frontier one.
+        assert_eq!(cache.segments.keys().copied().collect::<Vec<_>>(), vec![2]);
+
+        // Now verify the partial-coverage rule: a watermark inside segment 0
+        // does not release it, because its upper heights are not yet committed.
+        let mut cache = SegmentCache::<FilterHeader>::load_or_new(tmp_dir.path()).await.unwrap();
+        let _ = cache.get_segment_mut(&0).await.unwrap();
+        assert!(cache.segments.contains_key(&0));
+
+        cache.set_committed_height(ITEMS_PER_SEGMENT - 2); // one short of the segment's last height
+        assert_eq!(cache.release_committed_segments(), 0, "partially committed segment must stay");
+        assert!(cache.segments.contains_key(&0));
+
+        cache.set_committed_height(ITEMS_PER_SEGMENT - 1); // exactly the last height
+        assert_eq!(cache.release_committed_segments(), 1, "fully committed segment is releasable");
+        assert!(!cache.segments.contains_key(&0));
+    }
+
+    /// The rescan path re-reads heights far below the watermark. Those segments
+    /// were released, so this exercises the lazy reload under the access
+    /// pattern `reset_for_rescan` / `start_download` produce.
+    #[tokio::test]
+    async fn test_released_segments_serve_a_rescan_reread() {
+        let tmp_dir = TempDir::new().unwrap();
+
+        const ITEMS_PER_SEGMENT: u32 = Segment::<FilterHeader>::ITEMS_PER_SEGMENT;
+
+        let items = FilterHeader::dummy_batch(0..ITEMS_PER_SEGMENT * 2 + 5);
+
+        let mut cache = SegmentCache::<FilterHeader>::load_or_new(tmp_dir.path()).await.unwrap();
+        cache.store_items_at_height(&items, 0).await.unwrap();
+        cache.set_committed_height(ITEMS_PER_SEGMENT * 2 - 1);
+        cache.persist(tmp_dir.path()).await;
+        assert_eq!(cache.segments.len(), 1);
+
+        // A wallet appears behind the scan: the manager rolls the watermark
+        // back and re-reads from a low height.
+        cache.set_committed_height(0);
+        let rescanned = cache.get_items(5..ITEMS_PER_SEGMENT + 5).await.unwrap();
+        assert_eq!(rescanned, items[5..(ITEMS_PER_SEGMENT + 5) as usize]);
+
+        // With the watermark rolled back, the re-read segments are retained
+        // rather than being dropped again underneath the rescan.
+        cache.persist(tmp_dir.path()).await;
+        assert!(cache.segments.contains_key(&0), "rolled-back watermark must stop re-release");
+
+        // And the data still round-trips after a full reopen.
+        let mut reloaded = SegmentCache::<FilterHeader>::load_or_new(tmp_dir.path()).await.unwrap();
+        assert_eq!(reloaded.tip_height(), Some(ITEMS_PER_SEGMENT * 2 + 4));
+        assert_eq!(
+            reloaded.get_items(0..ITEMS_PER_SEGMENT * 2 + 5).await.unwrap(),
+            items,
+            "released-then-reloaded data must survive a process restart byte-identically"
+        );
+    }
+
+    /// The watermark must never outlive the data it refers to: `truncate_above`
+    /// clamps it and `clear` drops it, so a later scan of the same range is not
+    /// released out from under itself.
+    #[tokio::test]
+    async fn test_committed_height_follows_truncate_and_clear() {
+        let tmp_dir = TempDir::new().unwrap();
+
+        let items = FilterHeader::dummy_batch(0..30);
+
+        let mut cache = SegmentCache::<FilterHeader>::load_or_new(tmp_dir.path()).await.unwrap();
+        cache.store_items_at_height(&items, 0).await.unwrap();
+
+        cache.set_committed_height(25);
+        assert_eq!(cache.committed_height(), Some(25));
+
+        // Truncating above a height below the watermark clamps it.
+        cache.truncate_above(10).await.unwrap();
+        assert_eq!(cache.committed_height(), Some(10));
+
+        // Truncating above the watermark leaves it alone.
+        cache.set_committed_height(5);
+        cache.truncate_above(8).await.unwrap();
+        assert_eq!(cache.committed_height(), Some(5));
+
+        cache.clear().unwrap();
+        assert_eq!(cache.committed_height(), None, "an empty cache has nothing committed");
+    }
+
+    /// A released segment must still accept new writes into its unused slots,
+    /// reloading the existing contents first rather than silently starting from
+    /// a blank segment (which would drop the persisted items on the next write).
+    #[tokio::test]
+    async fn test_store_into_released_segment_preserves_existing_items() {
+        let tmp_dir = TempDir::new().unwrap();
+
+        const ITEMS_PER_SEGMENT: u32 = Segment::<FilterHeader>::ITEMS_PER_SEGMENT;
+
+        let mut cache = SegmentCache::<FilterHeader>::load_or_new(tmp_dir.path()).await.unwrap();
+        cache.store_items_at_height(&FilterHeader::dummy_batch(0..10), 0).await.unwrap();
+        cache
+            .store_items_at_height(&FilterHeader::dummy_batch(50..55), ITEMS_PER_SEGMENT)
+            .await
+            .unwrap();
+
+        cache.set_committed_height(ITEMS_PER_SEGMENT - 1);
+        cache.persist(tmp_dir.path()).await;
+        assert!(!cache.segments.contains_key(&0), "segment 0 released");
+
+        // Write into a gap in the released segment.
+        cache.store_items_at_height(&FilterHeader::dummy_batch(90..95), 100).await.unwrap();
+
+        // Both the reloaded originals and the new items are present.
+        assert_eq!(cache.get_items(0..10).await.unwrap(), FilterHeader::dummy_batch(0..10));
+        assert_eq!(cache.get_items(100..105).await.unwrap(), FilterHeader::dummy_batch(90..95));
+
+        cache.persist(tmp_dir.path()).await;
+        let mut reloaded = SegmentCache::<FilterHeader>::load_or_new(tmp_dir.path()).await.unwrap();
+        assert_eq!(reloaded.get_items(0..10).await.unwrap(), FilterHeader::dummy_batch(0..10));
+        assert_eq!(reloaded.get_items(100..105).await.unwrap(), FilterHeader::dummy_batch(90..95));
     }
 
     #[test]
