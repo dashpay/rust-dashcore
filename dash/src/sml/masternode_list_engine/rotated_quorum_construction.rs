@@ -15,6 +15,7 @@ use crate::sml::quorum_entry::qualified_quorum_entry::{
 };
 use crate::sml::quorum_entry::quorum_modifier_type::LLMQModifierType;
 use crate::sml::quorum_validation_error::QuorumValidationError;
+use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, BTreeSet};
 
 impl MasternodeListEngine {
@@ -93,10 +94,8 @@ impl MasternodeListEngine {
     ) -> BTreeMap<QuorumHash, Result<Vec<&'a QualifiedMasternodeListEntry>, QuorumValidationError>>
     {
         let mut members_by_quorum_hash = BTreeMap::new();
-        let mut cycles: BTreeMap<
-            CoreBlockHeight,
-            Result<Vec<Vec<&QualifiedMasternodeListEntry>>, QuorumValidationError>,
-        > = BTreeMap::new();
+        let mut cycles: BTreeMap<CoreBlockHeight, Vec<Vec<&QualifiedMasternodeListEntry>>> =
+            BTreeMap::new();
         for quorum in quorums {
             let quorum_hash = quorum.quorum_entry.quorum_hash;
             let Some(quorum_block_height) = self.block_container.get_height(&quorum_hash) else {
@@ -129,31 +128,44 @@ impl MasternodeListEngine {
                 );
                 continue;
             };
-            // Quorums of one cycle share their quarter signatures, so the
-            // reconstruction result is cached per cycle base height.
-            let members_by_index = cycles.entry(cycle_base_height).or_insert_with(|| {
-                let Some(VerifyingChainLockSignaturesType::Rotating(rotating)) =
-                    quorum.verifying_chain_lock_signature
-                else {
-                    return Err(QuorumValidationError::RequiredRotatedChainLockSigsNotPresent(
-                        quorum_hash,
-                    ));
-                };
-                self.masternode_list_entry_members_for_rotated_quorum(
-                    llmq_type,
-                    cycle_base_height,
-                    rotating,
-                )
-            });
-            let result = match members_by_index {
-                Ok(members_by_index) => members_by_index.get(quorum_index as usize).cloned().ok_or(
-                    QuorumValidationError::CorruptedCodeExecution(format!(
-                        "expected masternode list entry members for {}",
-                        quorum_index
-                    )),
-                ),
-                Err(e) => Err(e.clone()),
+            // Quorums of one cycle share their quarter signatures, so a
+            // reconstruction is cached per cycle base height. Only a
+            // successful one is cached: a quorum that carries no signatures
+            // fails on its own account and must leave the cycle open for the
+            // siblings that do carry them.
+            let members_by_index = match cycles.entry(cycle_base_height) {
+                Entry::Occupied(cached) => cached.into_mut(),
+                Entry::Vacant(slot) => {
+                    let Some(VerifyingChainLockSignaturesType::Rotating(rotating)) =
+                        quorum.verifying_chain_lock_signature
+                    else {
+                        members_by_quorum_hash.insert(
+                            quorum_hash,
+                            Err(QuorumValidationError::RequiredRotatedChainLockSigsNotPresent(
+                                quorum_hash,
+                            )),
+                        );
+                        continue;
+                    };
+                    match self.masternode_list_entry_members_for_rotated_quorum(
+                        llmq_type,
+                        cycle_base_height,
+                        rotating,
+                    ) {
+                        Ok(members_by_index) => slot.insert(members_by_index),
+                        Err(e) => {
+                            members_by_quorum_hash.insert(quorum_hash, Err(e));
+                            continue;
+                        }
+                    }
+                }
             };
+            let result = members_by_index.get(quorum_index as usize).cloned().ok_or(
+                QuorumValidationError::CorruptedCodeExecution(format!(
+                    "expected masternode list entry members for {}",
+                    quorum_index
+                )),
+            );
             members_by_quorum_hash.insert(quorum_hash, result);
         }
 
@@ -648,6 +660,44 @@ mod tests {
                 "expected an invalid index error, got {result:?}"
             );
         }
+    }
+
+    /// Every quorum of a cycle resolves the member sets from its own quarter
+    /// signatures, and one that carries none cannot stand in for the cycle.
+    /// Caching its failure would leave every sibling unverifiable on a
+    /// commitment the sibling itself has everything to verify.
+    #[test]
+    fn a_quorum_without_rotating_signatures_leaves_its_cycle_open() {
+        let mut engine = MasternodeListEngine::default_for_network(Network::Mainnet);
+        let cycle_base = LLMQType::Llmqtype60_75.params().dkg_params.interval * 100;
+        let without_sigs_hash = QuorumHash::from_byte_array([1; 32]);
+        let with_sigs_hash = QuorumHash::from_byte_array([2; 32]);
+        engine.feed_block_height(cycle_base, without_sigs_hash);
+        engine.feed_block_height(cycle_base + 1, with_sigs_hash);
+
+        let mut with_sigs = rotated_quorum(with_sigs_hash, 1);
+        with_sigs.verifying_chain_lock_signature =
+            Some(VerifyingChainLockSignaturesType::Rotating([BLSSignature::from([1; 96]); 4]));
+        let quorums = [rotated_quorum(without_sigs_hash, 0), with_sigs];
+        let borrowed: Vec<&QualifiedQuorumEntry> = quorums.iter().collect();
+
+        let results = engine.find_rotated_masternodes_for_quorums(&borrowed);
+        assert!(
+            matches!(
+                results.get(&without_sigs_hash),
+                Some(Err(QuorumValidationError::RequiredRotatedChainLockSigsNotPresent(_)))
+            ),
+            "a quorum without signatures must fail on its own account, got {:?}",
+            results.get(&without_sigs_hash)
+        );
+        assert!(
+            matches!(
+                results.get(&with_sigs_hash),
+                Some(Err(QuorumValidationError::RequiredBlockHeightNotPresent(_)))
+            ),
+            "a sibling carrying signatures must reach the reconstruction, got {:?}",
+            results.get(&with_sigs_hash)
+        );
     }
 
     #[test]
