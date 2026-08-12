@@ -15,6 +15,7 @@ use crate::sml::quorum_entry::qualified_quorum_entry::{
 };
 use crate::sml::quorum_entry::quorum_modifier_type::LLMQModifierType;
 use crate::sml::quorum_validation_error::QuorumValidationError;
+use crate::transaction::special_transaction::quorum_commitment::QuorumEntry;
 use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -153,43 +154,47 @@ impl MasternodeListEngine {
     ) -> Result<BTreeSet<u32>, QuorumValidationError> {
         let mut required_heights = BTreeSet::new();
         for quorum in &qr_info.last_commitment_per_index {
-            let Some(quorum_block_height) = self.block_container.get_height(&quorum.quorum_hash)
-            else {
-                return Err(QuorumValidationError::RequiredBlockNotPresent(
-                    quorum.quorum_hash,
-                    "getting required cl_sig heights".to_string(),
-                ));
-            };
-            let cycle_length = quorum.llmq_type.params().dkg_params.interval;
-            let cycle_base_height = quorum_block_height - quorum_block_height % cycle_length;
-            required_heights.extend(
-                cycle_quarter_work_heights(cycle_base_height, cycle_length).iter().flatten(),
-            );
+            self.extend_with_quarter_work_heights(
+                &mut required_heights,
+                quorum,
+                "getting required cl_sig heights",
+            )?;
         }
         // We are going to validate the previous rotation as well
         if qr_info.quorum_snapshot_and_mn_list_diff_at_h_minus_4c.is_some() {
             for quorum in &qr_info.mn_list_diff_h.new_quorums {
                 if quorum.llmq_type.is_rotating_quorum_type() {
-                    let Some(quorum_block_height) =
-                        self.block_container.get_height(&quorum.quorum_hash)
-                    else {
-                        return Err(QuorumValidationError::RequiredBlockNotPresent(
-                            quorum.quorum_hash,
-                            "getting height for quorum hash for diff at h minus 4c".to_string(),
-                        ));
-                    };
-                    let cycle_length = quorum.llmq_type.params().dkg_params.interval;
-                    let cycle_base_height =
-                        quorum_block_height - quorum_block_height % cycle_length;
-                    required_heights.extend(
-                        cycle_quarter_work_heights(cycle_base_height, cycle_length)
-                            .iter()
-                            .flatten(),
-                    );
+                    self.extend_with_quarter_work_heights(
+                        &mut required_heights,
+                        quorum,
+                        "getting height for quorum hash for diff at h minus 4c",
+                    )?;
                 }
             }
         }
         Ok(required_heights)
+    }
+
+    /// Adds the four quarter work block heights of the cycle a rotated quorum
+    /// sits in to `required_heights`, naming `context` if the quorum's own
+    /// height is missing.
+    fn extend_with_quarter_work_heights(
+        &self,
+        required_heights: &mut BTreeSet<u32>,
+        quorum: &QuorumEntry,
+        context: &str,
+    ) -> Result<(), QuorumValidationError> {
+        let Some(quorum_block_height) = self.block_container.get_height(&quorum.quorum_hash) else {
+            return Err(QuorumValidationError::RequiredBlockNotPresent(
+                quorum.quorum_hash,
+                context.to_string(),
+            ));
+        };
+        let cycle_length = quorum.llmq_type.params().dkg_params.interval;
+        let cycle_base_height = quorum_block_height - quorum_block_height % cycle_length;
+        required_heights
+            .extend(cycle_quarter_work_heights(cycle_base_height, cycle_length).iter().flatten());
+        Ok(())
     }
 
     /// Retrieves the masternode list members responsible for a rotated quorum at the given cycle base height.
@@ -534,7 +539,6 @@ mod tests {
     use crate::sml::masternode_list_entry::{
         EntryMasternodeType, MasternodeListEntry, MasternodeNetInfo,
     };
-    use crate::transaction::special_transaction::quorum_commitment::QuorumEntry;
     use crate::{ProTxHash, PubkeyHash};
 
     fn entry(byte: u8) -> QualifiedMasternodeListEntry {
