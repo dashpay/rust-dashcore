@@ -20,6 +20,8 @@ use crate::sml::llmq_entry_verification::LLMQEntryVerificationSkipStatus;
 use crate::sml::llmq_entry_verification::LLMQEntryVerificationStatus;
 use crate::sml::llmq_type::LLMQType;
 #[cfg(feature = "quorum_validation")]
+use crate::sml::llmq_type::devnet_isd_type_override;
+#[cfg(feature = "quorum_validation")]
 use crate::sml::llmq_type::network::NetworkLLMQExt;
 use crate::sml::masternode_list::MasternodeList;
 use crate::sml::masternode_list::from_diff::TryIntoWithBlockHashLookup;
@@ -1040,6 +1042,27 @@ impl MasternodeListEngine {
         })
     }
 
+    /// The rotation quorum type an active set is keyed by.
+    ///
+    /// Configuration wins wherever the deployed type is fixed: wire data must
+    /// never decide which type this engine trusts. A devnet is deployed with
+    /// whichever DIP24 type it was launched with, so without an explicit
+    /// override there is no configured type to hold against the commitments
+    /// and the served ones name it instead. Guessing there rejects every
+    /// quorum index the guessed type has no slot for.
+    #[cfg(feature = "quorum_validation")]
+    fn rotation_quorum_type(&self, served: &[QuorumEntry]) -> LLMQType {
+        let configured = self.network.isd_llmq_type();
+        if self.network != Network::Devnet || devnet_isd_type_override().is_some() {
+            return configured;
+        }
+        served
+            .iter()
+            .map(|quorum| quorum.llmq_type)
+            .find(|llmq_type| llmq_type.is_rotating_quorum_type())
+            .unwrap_or(configured)
+    }
+
     /// Cycle hash for an active rotated quorum set: the block hash at the
     /// newest cycle base among the entries. The entry at quorum index 0 does
     /// not necessarily belong to the set's own cycle (a failed DKG leaves an
@@ -1126,7 +1149,7 @@ impl MasternodeListEngine {
         )?;
 
         #[cfg(feature = "quorum_validation")]
-        let rotation_quorum_type = self.network.isd_llmq_type();
+        let rotation_quorum_type = self.rotation_quorum_type(&last_commitment_per_index);
 
         #[cfg(feature = "quorum_validation")]
         let mut stored_cycle_height: Option<CoreBlockHeight> = None;
@@ -1749,6 +1772,8 @@ mod tests {
     use crate::sml::llmq_type::LLMQType::{
         Llmqtype50_60, Llmqtype60_75, Llmqtype400_60, Llmqtype400_85,
     };
+    #[cfg(feature = "quorum_validation")]
+    use crate::sml::llmq_type::devnet_isd_type_override;
     use crate::sml::llmq_type::network::NetworkLLMQExt;
     use crate::sml::masternode_list::MasternodeList;
     #[cfg(feature = "quorum_validation")]
@@ -1967,6 +1992,41 @@ mod tests {
             sigs,
             BTreeMap::from([(older_work_height, sig), (work_height, other_sig)]),
             "a repeated non-zero signature belongs to the cycle it already keys"
+        );
+    }
+
+    /// Which rotation type an active set is keyed by decides which quorum
+    /// indices exist at all, so a wrong one rejects genuine commitments. It
+    /// comes from configuration wherever the deployment fixes it, and only a
+    /// devnet that was never told its type reads it off the commitments.
+    #[cfg(feature = "quorum_validation")]
+    #[test]
+    fn rotation_quorum_type_reads_the_served_type_only_on_an_unconfigured_devnet() {
+        let served =
+            [make_quorum_entry(LLMQType::LlmqtypeTestDIP0024, QuorumHash::all_zeros(), Some(0))];
+        let non_rotating =
+            [make_quorum_entry(LLMQType::Llmqtype50_60, QuorumHash::all_zeros(), Some(0))];
+
+        for network in [Network::Mainnet, Network::Testnet, Network::Regtest] {
+            let engine = MasternodeListEngine::default_for_network(network);
+            assert_eq!(
+                engine.rotation_quorum_type(&served),
+                network.isd_llmq_type(),
+                "a network with a deployed type must ignore what a peer serves"
+            );
+        }
+
+        // The devnet override is a process-wide `OnceLock` another test in
+        // this binary may have set, so the expectation follows it.
+        let engine = MasternodeListEngine::default_for_network(Network::Devnet);
+        assert_eq!(
+            engine.rotation_quorum_type(&served),
+            devnet_isd_type_override().unwrap_or(LLMQType::LlmqtypeTestDIP0024)
+        );
+        assert_eq!(
+            engine.rotation_quorum_type(&non_rotating),
+            Network::Devnet.isd_llmq_type(),
+            "only a rotating type may be adopted from the wire"
         );
     }
 
