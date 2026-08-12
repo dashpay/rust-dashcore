@@ -34,50 +34,15 @@ impl MasternodeListEngine {
         &'a self,
         quorum: &'a QualifiedQuorumEntry,
     ) -> Result<Vec<&'a QualifiedMasternodeListEntry>, QuorumValidationError> {
-        let Some(quorum_block_height) =
-            self.block_container.get_height(&quorum.quorum_entry.quorum_hash)
-        else {
-            return Err(QuorumValidationError::RequiredBlockNotPresent(
-                quorum.quorum_entry.quorum_hash,
-                "getting height when finding rotated masternodes for quorum".to_string(),
-            ));
-        };
-        let llmq_type = quorum.quorum_entry.llmq_type;
-        let Some(quorum_index) = quorum.quorum_entry.quorum_index else {
-            return Err(QuorumValidationError::RequiredQuorumIndexNotPresent(
-                quorum.quorum_entry.quorum_hash,
-            ));
-        };
-        let Some(cycle_base_height) = rotated_cycle_base_height(quorum_block_height, quorum_index)
-        else {
-            return Err(QuorumValidationError::InvalidQuorumIndex {
-                quorum_hash: quorum.quorum_entry.quorum_hash,
-                index: quorum_index,
-            });
-        };
-
-        let Some(VerifyingChainLockSignaturesType::Rotating(rotating)) =
-            quorum.verifying_chain_lock_signature
-        else {
-            return Err(QuorumValidationError::RequiredRotatedChainLockSigsNotPresent(
-                quorum.quorum_entry.quorum_hash,
-            ));
-        };
-
-        let rotated_members = self
-            .masternode_list_entry_members_for_rotated_quorum(
-                llmq_type,
-                cycle_base_height,
-                rotating,
-            )?
-            .get(quorum_index as usize)
-            .ok_or(QuorumValidationError::CorruptedCodeExecution(format!(
-                "expected masternode list entry members for {}",
-                quorum_index
-            )))?
-            .clone();
-
-        Ok(rotated_members)
+        let quorum_hash = quorum.quorum_entry.quorum_hash;
+        self.find_rotated_masternodes_for_quorums(&[quorum]).remove(&quorum_hash).unwrap_or_else(
+            || {
+                Err(QuorumValidationError::CorruptedCodeExecution(format!(
+                    "expected a rotated masternode result for {}",
+                    quorum_hash
+                )))
+            },
+        )
     }
 
     /// Resolves the signing member set for each rotated quorum, per quorum.
@@ -90,7 +55,7 @@ impl MasternodeListEngine {
     #[allow(dead_code)]
     pub(in crate::sml::masternode_list_engine) fn find_rotated_masternodes_for_quorums<'a>(
         &'a self,
-        quorums: &'a [&'a QualifiedQuorumEntry],
+        quorums: &[&'a QualifiedQuorumEntry],
     ) -> BTreeMap<QuorumHash, Result<Vec<&'a QualifiedMasternodeListEntry>, QuorumValidationError>>
     {
         let mut members_by_quorum_hash = BTreeMap::new();
