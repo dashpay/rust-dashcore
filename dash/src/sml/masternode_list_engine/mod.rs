@@ -963,10 +963,21 @@ impl MasternodeListEngine {
 
     /// Cycle base height (the height of the quorum-index-0 block) for a
     /// rotated quorum, derived from the quorum's own hash and index.
+    ///
+    /// The index arrives from the wire and nothing ties it to the block the
+    /// commitment was mined in, so it is only accepted while it names a slot
+    /// of the active set and lands the base on a DKG interval boundary. Any
+    /// other index shifts the base into a cycle the quorum does not belong
+    /// to, and a base derived from that keys another cycle's work block.
     #[cfg(feature = "quorum_validation")]
     fn rotated_quorum_cycle_base(&self, quorum: &QuorumEntry) -> Option<CoreBlockHeight> {
         let height = self.block_container.get_height(&quorum.quorum_hash)?;
-        rotated_cycle_base_height(height, quorum.quorum_index?)
+        let quorum_index = quorum.quorum_index?;
+        if u32::try_from(quorum_index).ok()? >= quorum.llmq_type.active_quorum_count() {
+            return None;
+        }
+        let cycle_base = rotated_cycle_base_height(height, quorum_index)?;
+        (cycle_base % quorum.llmq_type.params().dkg_params.interval == 0).then_some(cycle_base)
     }
 
     /// The four quarter work block heights for the cycle a rotated quorum
@@ -1838,6 +1849,31 @@ mod tests {
         let (sigs, inferred) = engine.rotation_cl_sigs_by_work_height([&diff]);
         assert_eq!(sigs, BTreeMap::from([(work_height, sig)]));
         assert!(inferred.is_empty(), "a known quorum height must key exactly");
+
+        // Nothing on the wire ties a `quorum_index` to the block its
+        // commitment was mined in. Index 4 moves the base one block off the
+        // cycle boundary, index 3 + c moves it a whole cycle back onto the
+        // older cycle's work block, and either one exactly-keying would
+        // replace a genuine signature with this group's.
+        for shifted_index in [4, 3 + interval as i16] {
+            let shifted = make_cl_sig_diff(
+                end_hash,
+                vec![make_quorum_entry(isd_type, quorum_hash, Some(shifted_index))],
+                vec![(sig, vec![0])],
+            );
+            let (sigs, inferred) = engine.rotation_cl_sigs_by_work_height([&shifted]);
+            assert_eq!(
+                sigs,
+                BTreeMap::from([(work_height, sig)]),
+                "index {} must not key a work block of its own choosing",
+                shifted_index
+            );
+            assert_eq!(
+                inferred,
+                BTreeSet::from([work_height]),
+                "a rejected index leaves only the diff's own cycle to key by elimination"
+            );
+        }
 
         // Without that height the only remaining group is keyed by
         // elimination, and the caller is told the key was inferred.
