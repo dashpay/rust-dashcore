@@ -1103,9 +1103,22 @@ impl MasternodeListEngine {
         #[cfg(feature = "qrinfo-capture")]
         self.dump_qr_info_capture(&qr_info);
 
+        // Keying every diff's signatures costs a walk over all of them plus
+        // the elimination pass, and nothing reads the result when the engine
+        // already holds a qualified quorum for every entry of the active set
+        // and no h-4c share opens the previous cycle for revalidation.
         #[cfg(feature = "quorum_validation")]
         let (rotation_sigs_by_work_height, inferred_work_heights) =
-            self.rotation_cl_sigs_by_work_height(qr_info_diffs(&qr_info));
+            if qr_info.quorum_snapshot_and_mn_list_diff_at_h_minus_4c.is_some()
+                || qr_info
+                    .last_commitment_per_index
+                    .iter()
+                    .any(|quorum_entry| self.known_qualified_quorum_entry(quorum_entry).is_none())
+            {
+                self.rotation_cl_sigs_by_work_height(qr_info_diffs(&qr_info))
+            } else {
+                Default::default()
+            };
 
         #[allow(unused_variables)]
         let QRInfo {
