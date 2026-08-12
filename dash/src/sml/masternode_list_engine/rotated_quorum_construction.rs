@@ -727,20 +727,24 @@ mod tests {
         let modifier = QuorumModifierHash::from_byte_array([9; 32]);
         let sorted = score_sorted(&entries, modifier);
 
-        // The first skip entry is an absolute index, later entries are
-        // relative to it: [3, 2] skips absolute indexes 3 and 5.
+        // The first skip entry is an absolute index. Every later entry is an
+        // offset from that first skipped index, not from the preceding one, so
+        // [3, 2, 3] skips absolute indexes 3, 5 and 6, which leaves the second
+        // quarter one short and wraps it back to the front for its last member.
+        // Reading the offsets cumulatively instead would skip 3, 5 and 8,
+        // keeping index 6 and never reaching the wrap.
         let quarters = MasternodeListEngine::apply_skip_strategy_of_type(
-            LLMQQuarterUsageType::Snapshot(snapshot(MNSkipListMode::SkipFirst, vec![3, 2])),
+            LLMQQuarterUsageType::Snapshot(snapshot(MNSkipListMode::SkipFirst, vec![3, 2, 3])),
             vec![],
             entries.iter().collect(),
             modifier,
             2,
-            2,
+            3,
         );
 
         let expected: Vec<Vec<ProTxHash>> = vec![
-            pro_reg_tx_hashes(&[sorted[0], sorted[1]]),
-            pro_reg_tx_hashes(&[sorted[2], sorted[4]]),
+            pro_reg_tx_hashes(&[sorted[0], sorted[1], sorted[2]]),
+            pro_reg_tx_hashes(&[sorted[4], sorted[7], sorted[0]]),
         ];
         let actual: Vec<Vec<ProTxHash>> =
             quarters.iter().map(|quarter| pro_reg_tx_hashes(quarter)).collect();
