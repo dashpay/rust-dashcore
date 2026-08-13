@@ -1080,7 +1080,21 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
                 // re-init via `start_download` — that would clobber existing
                 // batches. Instead extend the target and let the eventual
                 // `start_sync` (driven by `PeersUpdated`) resume from here.
-                if !self.active_batches.is_empty() {
+                //
+                // `is_idle()` for the same reason `start_sync` uses it: this is
+                // the second route into `start_download`, and it asserts all
+                // four conditions. `active_batches` alone is a strict subset —
+                // a batch that finished downloading leaves it while its
+                // verified output waits in `pending_batches` and its blocks
+                // wait in the tracker, and `on_disconnect` moves the pipeline's
+                // in-flight slots to pending rather than clearing them.
+                //
+                // Extending the target is the right answer for all four, not
+                // just for active batches: `handle_message` keeps running
+                // regardless of state (filters always want `CFilter`), so
+                // `store_and_match_batches` drains the leftovers, and the next
+                // filter-header event re-enters here once genuinely idle.
+                if !self.is_idle() {
                     self.filter_pipeline.extend_target(tip_height);
                     return Ok(vec![]);
                 }
@@ -3079,6 +3093,32 @@ mod tests {
         manager.handle_new_filter_headers(101, &requests).await.unwrap();
         assert!(!manager.active_batches.contains_key(&0));
         assert_eq!(manager.active_batches.keys().next(), Some(&101));
+    }
+
+    /// The same predicate mismatch on the OTHER route into `start_download`.
+    ///
+    /// A filter-header event arriving while the manager sits in `WaitForEvents`
+    /// takes `handle_new_filter_headers`, not `start_sync` — and that arm asked
+    /// the same subset question. A verified batch waiting in `pending_batches`
+    /// with `active_batches` already empty therefore fell through to
+    /// `start_download` and its `debug_assert!(is_idle())`.
+    #[tokio::test]
+    async fn test_new_filter_headers_resumes_when_only_pending_batches_survive() {
+        let (mut manager, _headers, _filter) = setup_synced_manager_at_tip().await;
+
+        manager.pending_batches.insert(FiltersBatch::new(0, 99, HashMap::new()));
+        assert!(manager.active_batches.is_empty(), "the old predicate says idle");
+        assert!(!manager.is_idle(), "the invariant start_download asserts says otherwise");
+
+        manager.set_state(SyncState::WaitForEvents);
+        let (tx, _rx) = unbounded_channel();
+        let requests = RequestSender::new(tx);
+
+        // Must extend the target and leave the surviving work alone.
+        let events = manager.handle_new_filter_headers(200, &requests).await.unwrap();
+
+        assert!(events.is_empty(), "extending the target emits nothing");
+        assert_eq!(manager.pending_batches.len(), 1, "the surviving batch must not be discarded");
     }
 
     /// A verified batch waiting in `pending_batches` outlives the last active
