@@ -2060,6 +2060,105 @@ mod tests {
         assert_eq!(ctx.managed_wallet.balance.spendable(), change_amount);
     }
 
+    /// A loser can spend inputs the winner does not. Sweeping it frees those
+    /// coins from the spent set, but their `Utxo` values were discarded when
+    /// the loser was recorded — so the sweep alone cannot put them back, and
+    /// the coins must be recoverable by the rescan the release enables.
+    #[tokio::test]
+    async fn test_a_swept_losers_extra_input_is_recoverable_by_rescan() {
+        let mut ctx = TestWalletContext::new_random();
+        let external_address = Address::p2pkh(
+            &dashcore::PublicKey::from_slice(&[0x02; 33]).expect("pubkey"),
+            Network::Testnet,
+        );
+
+        // One funding transaction pays us twice: A and B.
+        let funding_tx = Transaction::dummy(&ctx.receive_address, 0..2, &[500_000, 400_000]);
+        let funding_context = TransactionContext::InBlock(BlockInfo::new(
+            100,
+            BlockHash::from_slice(&[1u8; 32]).expect("hash"),
+            1_700_000_000,
+        ));
+        ctx.check_transaction(&funding_tx, funding_context.clone()).await;
+        assert_eq!(ctx.managed_wallet.balance.confirmed(), 900_000);
+
+        let coin_a = OutPoint {
+            txid: funding_tx.txid(),
+            vout: 0,
+        };
+        let coin_b = OutPoint {
+            txid: funding_tx.txid(),
+            vout: 1,
+        };
+        let spend =
+            |inputs: Vec<OutPoint>, change: &Address, change_amount: u64, sent: u64| Transaction {
+                version: 2,
+                lock_time: 0,
+                input: inputs
+                    .into_iter()
+                    .map(|previous_output| TxIn {
+                        previous_output,
+                        script_sig: ScriptBuf::new(),
+                        sequence: 0xffffffff,
+                        witness: dashcore::Witness::new(),
+                    })
+                    .collect(),
+                output: vec![
+                    TxOut {
+                        value: sent,
+                        script_pubkey: external_address.script_pubkey(),
+                    },
+                    TxOut {
+                        value: change_amount,
+                        script_pubkey: change.script_pubkey(),
+                    },
+                ],
+                special_transaction_payload: None,
+            };
+
+        // The loser spends A and B; the winner spends only A, and confirms.
+        let loser_change = ctx
+            .managed_wallet
+            .first_bip44_managed_account_mut()
+            .expect("account")
+            .next_change_address(Some(&ctx.xpub), true)
+            .expect("change address");
+        let loser = spend(vec![coin_a, coin_b], &loser_change, 99_000, 800_000);
+        ctx.check_transaction(&loser, TransactionContext::Mempool).await;
+
+        let winner_change = ctx
+            .managed_wallet
+            .first_bip44_managed_account_mut()
+            .expect("account")
+            .next_change_address(Some(&ctx.xpub), true)
+            .expect("change address");
+        let winner = spend(vec![coin_a], &winner_change, 99_000, 400_000);
+        ctx.check_transaction(
+            &winner,
+            TransactionContext::InBlock(BlockInfo::new(
+                101,
+                BlockHash::from_slice(&[2u8; 32]).expect("hash"),
+                1_700_000_100,
+            )),
+        )
+        .await;
+
+        // The loser is gone, and B is not credited — its `Utxo` was
+        // discarded when the loser was recorded and cannot be invented.
+        assert!(!ctx.bip44_account().transactions().contains_key(&loser.txid()));
+        assert!(!ctx.bip44_account().utxos.contains_key(&coin_b));
+
+        // But B was freed from the spent set, so re-delivering the funding
+        // block restores it. That is what makes the loss recoverable rather
+        // than permanent.
+        ctx.check_transaction(&funding_tx, funding_context).await;
+        assert!(
+            ctx.bip44_account().utxos.contains_key(&coin_b),
+            "a rescan must be able to rediscover the loser's extra input"
+        );
+        assert_eq!(ctx.managed_wallet.balance.confirmed(), 499_000, "B plus the winner's change");
+    }
+
     /// An InstantSend lock is final, so it settles the winner's inputs just as
     /// a block would — including when the winner was already sitting in the
     /// mempool alongside its loser, which is the transition that skips

@@ -284,6 +284,30 @@ impl ManagedCoreFundsAccount {
                 let txid = tx.txid();
                 let mut utxos_changed = false;
 
+                // A transaction whose input a *block* already spent can never
+                // confirm — unless this arrival is that block delivery itself.
+                // The conflict sweep below only fires when the arriving
+                // transaction is final, so without this the reverse order
+                // (winner confirms, loser arrives afterwards as mempool)
+                // credits the loser's outputs with nothing left to remove
+                // them, and `is_spendable` would hand them to coin selection.
+                let doomed_by_a_settled_spend = !context.confirmed()
+                    && !matches!(context, TransactionContext::InstantSend(_))
+                    && tx
+                        .input
+                        .iter()
+                        .any(|input| observed_spent.contains_key(&input.previous_output));
+                if doomed_by_a_settled_spend {
+                    // Deliberately before any mutation: the record built by
+                    // the caller stands, so history still shows the attempt,
+                    // but nothing it created enters the UTXO set.
+                    tracing::info!(
+                        %txid,
+                        "Not crediting a transaction whose input a block already spent"
+                    );
+                    return;
+                }
+
                 let network = self.keys.network();
 
                 // Insert UTXOs for outputs paying to our addresses
@@ -431,6 +455,14 @@ impl ManagedCoreFundsAccount {
     /// network — so the correct source of truth is a rescan, which releasing
     /// them from `spent_outpoints` now permits.
     ///
+    /// Reservations are deliberately left alone. A recorded transaction has
+    /// already handed its inputs from the ephemeral set to `spent_outpoints`
+    /// (see `update_utxos`), so there is nothing of this build's left to
+    /// release — while an unconditional release here could free a reservation
+    /// a *newer* build has since taken over the same outpoints, which
+    /// `ReservationSet::release` documents as forbidden for exactly this
+    /// caller shape.
+    ///
     /// Returns what was actually removed.
     pub(crate) fn apply_abandon(&mut self, abandoned: &BTreeSet<Txid>) -> AbandonRemoval {
         let doomed: Vec<OutPoint> = self
@@ -446,10 +478,8 @@ impl ManagedCoreFundsAccount {
 
         let mut records = 0;
         for txid in abandoned {
-            if let Some(record) = self.keys.transactions_mut().remove(txid) {
+            if self.keys.transactions_mut().remove(txid).is_some() {
                 records += 1;
-                self.reservations
-                    .release(record.transaction.input.iter().map(|input| &input.previous_output));
             }
         }
 
@@ -488,12 +518,20 @@ impl ManagedCoreFundsAccount {
     /// mempool, and un-applying it would re-expose its inputs to coin
     /// selection and invite a double-spend.
     ///
-    /// Only the loser's *outputs* are reverted, which needs no recovery of
-    /// discarded state: its inputs are correctly accounted for by `tx`, the
-    /// transaction that actually spent them. Reverting a transaction whose
-    /// fate is unknown would additionally require restoring the spent parents,
-    /// and the `Utxo` values removed for them — with their flags — are not
-    /// retained anywhere.
+    /// Only the loser's *outputs* are reverted. Where the winner spends every
+    /// input the loser did — the ordinary resend — that is complete: those
+    /// inputs are correctly accounted for by `tx`, the transaction that
+    /// actually spent them.
+    ///
+    /// A loser may also spend inputs the winner does not. Those coins are
+    /// freed from `spent_outpoints` below, but they cannot be re-credited
+    /// here: `update_utxos` discarded their `Utxo` — and its flags — when the
+    /// loser was recorded, and `InputDetail` keeps only index/value/address.
+    /// The release is what makes them recoverable: a rescan re-delivering the
+    /// funding transaction inserts them again. Until that rescan they are
+    /// absent from the balance, and if the funding transaction was itself
+    /// chainlock-finalized its record may already have been dropped, in which
+    /// case recovery needs a rescan deep enough to re-fetch the block.
     ///
     /// Scope: account-local. A loser recorded here has its outputs dropped
     /// here; a loser whose change landed in a *different* account is not
