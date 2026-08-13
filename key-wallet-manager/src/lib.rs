@@ -24,14 +24,16 @@ pub use events::{DerivedAddress, WalletEvent};
 pub use matching::{check_compact_filters_for_elements, FilterMatchKey};
 pub use wallet_interface::{BlockProcessingResult, MempoolTransactionResult, WalletInterface};
 
-use dashcore::blockdata::transaction::Transaction;
+use dashcore::blockdata::transaction::{OutPoint, Transaction};
 use dashcore::prelude::CoreBlockHeight;
+use dashcore::Txid;
 use key_wallet::account::AccountCollection;
 use key_wallet::managed_account::transaction_record::TransactionRecord;
 use key_wallet::transaction_checking::{DerivedAddressInfo, TransactionContext};
 use key_wallet::wallet::managed_wallet_info::coin_selection::SelectionStrategy;
 use key_wallet::wallet::managed_wallet_info::transaction_building::AccountTypePreference;
 use key_wallet::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
+use key_wallet::wallet::managed_wallet_info::AbandonOutcome;
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
 use key_wallet::{AccountType, Address, ExtendedPrivKey, Mnemonic, Network, Wallet};
 use key_wallet::{ExtendedPubKey, WalletCoreBalance};
@@ -662,6 +664,51 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletManager<T> {
 }
 
 impl WalletManager<ManagedWalletInfo> {
+    /// Abandon `root` in `wallet_id`, and every recorded transaction
+    /// descending from it, then recompute the balance.
+    ///
+    /// The manager-level entry point for
+    /// [`ManagedWalletInfo::abandon_transaction_with_spends`] — the only
+    /// production path that clears a transaction the network never accepted.
+    /// The conflict sweep cannot reach that case: it needs a competing final
+    /// spend to prove the loser dead, and a transaction nobody ever saw has
+    /// no competitor. Its outputs would otherwise be credited forever, and as
+    /// trusted self-send change they are counted confirmed and are spendable.
+    ///
+    /// `external_spends` maps an outpoint to the transaction a caller's
+    /// persistence mirror recorded as spending it, for descendants whose own
+    /// records the load path never restored. Pass an empty map to walk only
+    /// the recorded transactions.
+    ///
+    /// **This asserts the root is dead; it does not establish it.** There is
+    /// no negative signal on the p2p network — Dash Core removed BIP61
+    /// `reject` — so silence is not proof, and abandoning a transaction that
+    /// is merely quiet re-exposes its inputs to coin selection. Settled roots
+    /// are refused, but the judgement otherwise belongs to the caller that
+    /// owns broadcast policy.
+    ///
+    /// Returns `None` when the wallet is unknown.
+    pub fn abandon_transaction(
+        &mut self,
+        wallet_id: &WalletId,
+        root: Txid,
+        external_spends: &BTreeMap<OutPoint, Txid>,
+    ) -> Option<AbandonOutcome> {
+        let info = self.get_wallet_info_mut(wallet_id)?;
+        let outcome = info.abandon_transaction_with_spends(root, external_spends);
+        if !outcome.is_empty() {
+            info.update_balance();
+            tracing::info!(
+                %root,
+                abandoned = outcome.abandoned.len(),
+                records_removed = outcome.records_removed,
+                utxos_removed = outcome.utxos_removed,
+                "Abandoned a dead transaction and everything built on it"
+            );
+        }
+        Some(outcome)
+    }
+
     /// Get receive address from a specific wallet and account
     pub fn next_receive_address(
         &mut self,

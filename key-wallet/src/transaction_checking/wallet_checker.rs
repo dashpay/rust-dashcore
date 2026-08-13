@@ -2067,6 +2067,73 @@ mod tests {
         assert_eq!(ctx.managed_wallet.balance.spendable(), change_amount);
     }
 
+    /// The rescan recovery above has a boundary: a funding transaction that
+    /// was chainlock-finalized keeps only its txid, so re-delivering it is not
+    /// a new sighting and never reaches the only production UTXO insert site.
+    /// The coin stays absent. Documented rather than fixed — recovering it
+    /// needs a rescan deep enough to re-fetch the block, which is above this
+    /// layer.
+    #[tokio::test]
+    async fn test_rescan_recovery_does_not_reach_a_finalized_funding_transaction() {
+        let mut ctx = TestWalletContext::new_random();
+        let external_address = Address::p2pkh(
+            &dashcore::PublicKey::from_slice(&[0x02; 33]).expect("pubkey"),
+            Network::Testnet,
+        );
+
+        let funding_tx = Transaction::dummy(&ctx.receive_address, 0..1, &[1_000_000]);
+        let finalized = TransactionContext::InChainLockedBlock(BlockInfo::new(
+            100,
+            BlockHash::from_slice(&[5u8; 32]).expect("hash"),
+            1_700_000_000,
+        ));
+        ctx.check_transaction(&funding_tx, finalized.clone()).await;
+
+        let change_address = ctx
+            .managed_wallet
+            .first_bip44_managed_account_mut()
+            .expect("account")
+            .next_change_address(Some(&ctx.xpub), true)
+            .expect("change address");
+        let spend = Transaction {
+            version: 2,
+            lock_time: 0,
+            input: vec![TxIn {
+                previous_output: OutPoint {
+                    txid: funding_tx.txid(),
+                    vout: 0,
+                },
+                script_sig: ScriptBuf::new(),
+                sequence: 0xffffffff,
+                witness: dashcore::Witness::new(),
+            }],
+            output: vec![
+                TxOut {
+                    value: 900_000,
+                    script_pubkey: external_address.script_pubkey(),
+                },
+                TxOut {
+                    value: 99_000,
+                    script_pubkey: change_address.script_pubkey(),
+                },
+            ],
+            special_transaction_payload: None,
+        };
+        ctx.check_transaction(&spend, TransactionContext::Mempool).await;
+
+        ctx.managed_wallet.abandon_transaction(spend.txid());
+        ctx.managed_wallet.update_balance();
+
+        // Re-delivering the funding block does not bring the coin back.
+        ctx.check_transaction(&funding_tx, finalized).await;
+        assert_eq!(
+            ctx.managed_wallet.balance.confirmed(),
+            0,
+            "a finalized funding record blocks the redelivery path this \
+             recovery depends on"
+        );
+    }
+
     /// A winner that spends our coin but pays only external addresses matches
     /// nothing: its outputs are not ours, and the input it shares with the
     /// loser was already removed from `utxos` when the loser was recorded. It
@@ -2603,7 +2670,11 @@ mod tests {
         assert_eq!(ctx.managed_wallet.balance.unconfirmed(), 0);
 
         // The real coin the chain consumed is released from the spent set, so
-        // a rescan can rediscover it rather than being told it is spent.
+        // a rescan can rediscover it — but only while its funding record is
+        // still live. A chainlock-finalized funding transaction keeps just its
+        // txid, so `has_transaction` stays true, `is_new` stays false, and
+        // `confirm_transaction` returns before reaching `update_utxos` — the
+        // only production insert site. See the sibling test below.
         let rediscovered = ctx
             .check_transaction(
                 &funding_tx,

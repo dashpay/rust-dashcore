@@ -521,9 +521,15 @@ impl ManagedCoreFundsAccount {
     /// loser was recorded, and `InputDetail` keeps only index/value/address.
     /// The release is what makes them recoverable: a rescan re-delivering the
     /// funding transaction inserts them again. Until that rescan they are
-    /// absent from the balance, and if the funding transaction was itself
-    /// chainlock-finalized its record may already have been dropped, in which
-    /// case recovery needs a rescan deep enough to re-fetch the block.
+    /// absent from the balance.
+    ///
+    /// That recovery has a boundary worth knowing. A funding transaction that
+    /// was chainlock-finalized keeps only its txid, so `has_transaction` stays
+    /// true and re-delivery is not a new sighting — `confirm_transaction`
+    /// returns before `update_utxos`, the only production insert site, and the
+    /// coin does not come back. Recovering it needs a rescan deep enough to
+    /// re-fetch the block, which is above this layer. Since Dash chainlocks
+    /// within a block or two, that is the normal posture for older coins.
     ///
     /// Scope: account-local. A loser recorded here has its outputs dropped
     /// here; a loser whose change landed in a *different* account is not
