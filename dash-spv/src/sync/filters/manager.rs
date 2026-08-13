@@ -42,6 +42,31 @@ struct WalletScanState {
     elements: Vec<Vec<u8>>,
 }
 
+/// Escalating gap-probe widths for adaptive BIP44 discovery.
+///
+/// Steady-state discovery derives only `gap_limit` (typically 30) addresses
+/// past the highest used index, so a run of unused indices longer than the
+/// gap limit stalls discovery silently — real mainnet wallets have hundreds
+/// of such runs (the worst observed is exactly 100). When a batch with wallet
+/// activity reaches its commit fixpoint, the manager probes each rung in
+/// order against the chain's own filters: derive the widened window, re-match
+/// this batch and every later scanned batch, and resume the normal chase on
+/// any hit. Only when the maximum rung finds nothing is the stall considered
+/// genuine wallet-end-of-history and the batch allowed to commit.
+///
+/// The ladder is finite and per-wallet progress through it is monotone
+/// between resets (a reset requires new usage or a new derivation — real
+/// progress), so probing can never loop unboundedly. The last rung equals
+/// [`key_wallet::gap_limit::MAX_GAP_LIMIT`]: pools cannot derive wider, so it
+/// is also the hard cap on how large an unused-index run discovery can cross.
+const PROBE_GAP_LADDER: [u32; 3] = [100, 300, 1000];
+
+/// The top rung must be exactly the widest window a pool can derive.
+const _: () = assert!(
+    PROBE_GAP_LADDER[PROBE_GAP_LADDER.len() - 1] == key_wallet::gap_limit::MAX_GAP_LIMIT,
+    "probe ladder must end at MAX_GAP_LIMIT"
+);
+
 /// Maximum number of batches to scan ahead while waiting for blocks.
 ///
 /// Raising this does not buy more throughput while a batch is stalled on a block.
@@ -99,6 +124,16 @@ pub struct FiltersManager<
     /// verification rescan whenever the generations differ, so a batch can
     /// never commit while scripts it has not been matched against exist.
     pub(super) script_generation: u64,
+    /// Per-wallet progress through [`PROBE_GAP_LADDER`]: the index of the
+    /// next rung to try when a commit-time probe runs for the wallet. An
+    /// index past the end means the full ladder found nothing — probing is
+    /// terminal for that wallet until real progress resets the entry
+    /// (a relevant transaction confirmed or new scripts derived for the
+    /// wallet, both signalled through `BlockProcessed`), because a moving
+    /// usage frontier makes the next stall a new stall. Persisting the level
+    /// across passes lets escalation resume where it left off instead of
+    /// restarting at the lowest rung every time.
+    pub(super) probe_levels: HashMap<WalletId, usize>,
 }
 
 impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: WalletInterface>
@@ -144,6 +179,7 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
             processing_height: 0,
             tracker: BlockMatchTracker::new(),
             script_generation: 0,
+            probe_levels: HashMap::new(),
         }
     }
 
@@ -165,6 +201,9 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
         self.tracker.clear();
         self.pending_batches.clear();
         self.filter_pipeline = FiltersPipeline::new();
+        // A scan restarting from a lower height is a fresh chase; any
+        // recorded probe exhaustion belonged to the abandoned one.
+        self.probe_levels.clear();
     }
 
     async fn load_filters(
@@ -580,27 +619,37 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
 
             // Check if rescan is needed and not done
             if !batch.rescan_complete() {
-                // Take per-wallet collected scripts from the batch
-                let scripts_by_wallet = self
+                // Take per-wallet collected scripts from EVERY scanned active
+                // batch, not just the committing one. A later batch's blocks
+                // collect their derivations into that batch, but its own
+                // collected-scripts rescan used to run only once it became
+                // the lowest batch — so while an earlier batch was being
+                // considered for commit, a chase running inside a later
+                // batch stalled with fresh scripts sitting unrescanned. The
+                // quiescence gate above then saw a lull that wasn't a wallet
+                // fixpoint at all. Draining every batch's collected scripts
+                // here keeps the whole chase moving no matter which batch
+                // owns the deriving blocks; each script set is rescanned
+                // against every scanned batch, a superset of the old
+                // "donor batch and everything after it" coverage.
+                let scanned_starts: Vec<u32> = self
                     .active_batches
-                    .get_mut(&batch_start)
-                    .map(|b| b.take_collected_scripts())
-                    .unwrap_or_default();
+                    .iter()
+                    .filter(|(_, batch)| batch.scanned())
+                    .map(|(&start, _)| start)
+                    .collect();
+                let mut scripts_by_wallet: HashMap<WalletId, HashSet<ScriptBuf>> = HashMap::new();
+                for start in &scanned_starts {
+                    if let Some(donor) = self.active_batches.get_mut(start) {
+                        for (wallet_id, scripts) in donor.take_collected_scripts() {
+                            scripts_by_wallet.entry(wallet_id).or_default().extend(scripts);
+                        }
+                    }
+                }
 
                 if !scripts_by_wallet.is_empty() {
-                    // Rescan current batch
-                    events.extend(self.rescan_batch(batch_start, &scripts_by_wallet).await?);
-
-                    // Also rescan later batches that are already scanned
-                    let later_batches: Vec<u32> = self
-                        .active_batches
-                        .iter()
-                        .filter(|(&start, batch)| start > batch_start && batch.scanned())
-                        .map(|(&start, _)| start)
-                        .collect();
-
-                    for later_start in later_batches {
-                        events.extend(self.rescan_batch(later_start, &scripts_by_wallet).await?);
+                    for start in &scanned_starts {
+                        events.extend(self.rescan_batch(*start, &scripts_by_wallet).await?);
                     }
 
                     // Newly derived scripts also have to reach ranges that
@@ -636,12 +685,13 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
                     events
                         .extend(self.rescan_committed_range(batch_start, &backward_scripts).await?);
 
-                    // Check if the backward sweep found more blocks
-                    if let Some(batch) = self.active_batches.get(&batch_start) {
-                        if batch.pending_blocks() > 0 {
-                            // Found more blocks, can't commit yet
-                            break;
-                        }
+                    // If the backward sweep found blocks for ANY batch the
+                    // lull is over: the chase resumes and no batch may seal
+                    // until the quiescence gate above is satisfied again
+                    // (#959's stronger any-batch form of #866's per-batch
+                    // pending check).
+                    if self.active_batches.values().any(|batch| batch.pending_blocks() > 0) {
+                        break;
                     }
                 }
 
@@ -664,6 +714,15 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
                     .is_some_and(|b| b.full_match_generation() != self.script_generation);
                 if needs_verification {
                     let generation_now = self.script_generation;
+                    tracing::debug!(
+                        "Verification rescan for batch {}: full-set match generation {} -> {}",
+                        batch_start,
+                        self.active_batches
+                            .get(&batch_start)
+                            .map(|b| b.full_match_generation())
+                            .unwrap_or(0),
+                        generation_now
+                    );
                     let wallet_ids: Vec<WalletId> = self
                         .active_batches
                         .get(&batch_start)
@@ -690,6 +749,25 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
                             break;
                         }
                     }
+                }
+
+                // Adaptive gap-probe escalation. The gates above prove this
+                // batch is at its commit fixpoint: verification against the
+                // full current script sets found nothing and no blocks are in
+                // flight anywhere. But "full current script sets" only reach
+                // `gap_limit` past each pool's usage frontier, so a run of
+                // unused indices longer than the gap limit stalls discovery
+                // right here with everything looking clean. Before sealing
+                // the batch, probe successively wider windows against its
+                // filters; any hit resumes the chase, and only a clean pass
+                // at the maximum width lets the batch commit.
+                let (probe_events, probe_found_blocks) = self.run_probe_ladder(batch_start).await?;
+                events.extend(probe_events);
+                if probe_found_blocks {
+                    // The chase resumes: the found blocks must be processed
+                    // (possibly deriving further scripts) before this batch
+                    // may seal.
+                    break;
                 }
 
                 // Mark rescan as complete
@@ -769,6 +847,107 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
         }
 
         Ok(events)
+    }
+
+    /// Run the adaptive gap-probe ladder for the committing batch.
+    ///
+    /// Called only at the batch's commit fixpoint (verification clean, no
+    /// blocks in flight anywhere). For every wallet that had at least one
+    /// filter match in this batch, walk [`PROBE_GAP_LADDER`] from the
+    /// wallet's recorded rung: derive the widened window via
+    /// [`WalletInterface::probe_extend_gap`], and re-match the freshly
+    /// derived scripts against this batch and every later already-scanned
+    /// batch. A rung that derives nothing new (the pool is already generated
+    /// that deep past the current frontier) escalates immediately; a rung
+    /// whose rescan finds blocks returns `(events, true)` so the caller
+    /// breaks out of the commit loop and the normal chase consumes the
+    /// blocks. Exhausting the ladder with no finds records the wallet as
+    /// probe-terminal (until progress resets it) and returns `false`,
+    /// letting the batch commit.
+    ///
+    /// Later unscanned batches need no explicit pass here: they scan against
+    /// the wallets' full script sets when their filters arrive, and the
+    /// probed tail is part of those sets from now on. For the same reason the
+    /// probe does not bump `script_generation` — every already-scanned batch
+    /// is re-matched with exactly the derived delta right here, so no batch
+    /// can commit without having seen the probed scripts.
+    async fn run_probe_ladder(&mut self, batch_start: u32) -> SyncResult<(Vec<SyncEvent>, bool)> {
+        let candidates: Vec<WalletId> = self
+            .active_batches
+            .get(&batch_start)
+            .map(|batch| {
+                batch
+                    .matched_wallets()
+                    .iter()
+                    .filter(|id| batch.scanned_wallets().contains_key(*id))
+                    .copied()
+                    .collect()
+            })
+            .unwrap_or_default();
+        if candidates.is_empty() {
+            return Ok((Vec::new(), false));
+        }
+
+        let later_scanned: Vec<u32> = self
+            .active_batches
+            .iter()
+            .filter(|(&start, batch)| start > batch_start && batch.scanned())
+            .map(|(&start, _)| start)
+            .collect();
+
+        let mut events = Vec::new();
+        for wallet_id in candidates {
+            let mut level = self.probe_levels.get(&wallet_id).copied().unwrap_or(0);
+            while level < PROBE_GAP_LADDER.len() {
+                let probe_gap = PROBE_GAP_LADDER[level];
+                let new_scripts = self.wallet.write().await.probe_extend_gap(&wallet_id, probe_gap);
+                if new_scripts.is_empty() {
+                    // Already derived at least this deep past the current
+                    // frontier (an earlier pass probed this rung and nothing
+                    // moved since) — escalate.
+                    level += 1;
+                    self.probe_levels.insert(wallet_id, level);
+                    continue;
+                }
+
+                let scripts_by_wallet: HashMap<WalletId, HashSet<ScriptBuf>> =
+                    HashMap::from([(wallet_id, new_scripts.iter().cloned().collect())]);
+                let mut probe_events = self.rescan_batch(batch_start, &scripts_by_wallet).await?;
+                for later_start in &later_scanned {
+                    probe_events.extend(self.rescan_batch(*later_start, &scripts_by_wallet).await?);
+                }
+                let blocks_found: usize = probe_events
+                    .iter()
+                    .map(|event| match event {
+                        SyncEvent::BlocksNeeded {
+                            blocks,
+                        } => blocks.len(),
+                        _ => 0,
+                    })
+                    .sum();
+                tracing::info!(
+                    "Gap probe: wallet {} batch {} probe_gap {} derived {} scripts, found {} blocks",
+                    hex::encode(&wallet_id[..4]),
+                    batch_start,
+                    probe_gap,
+                    new_scripts.len(),
+                    blocks_found,
+                );
+                events.extend(probe_events);
+
+                if blocks_found > 0 {
+                    // Resume at this rung: the same width re-derives from the
+                    // new frontier once the found blocks advance it.
+                    self.probe_levels.insert(wallet_id, level);
+                    return Ok((events, true));
+                }
+                level += 1;
+                self.probe_levels.insert(wallet_id, level);
+            }
+            // Ladder exhausted with no finds: terminal for this wallet until
+            // a confirmed transaction or new derivation resets its level.
+        }
+        Ok((events, false))
     }
 
     /// Scan any active batches where filters are available but not yet scanned.
@@ -929,6 +1108,11 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
 
         if !block_to_wallets.is_empty() {
             self.progress.add_matched(block_to_wallets.len() as u32);
+            // Activity marker for the gap-probe ladder: this wallet has
+            // matches in this batch's range.
+            if let Some(batch) = self.active_batches.get_mut(&batch_start) {
+                batch.note_matched_wallets(block_to_wallets.values().flatten());
+            }
         }
         for (key, wallets) in block_to_wallets {
             match self.tracker.track_for_new_scripts(&key, batch_start, wallets) {
@@ -1130,6 +1314,11 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
         }
 
         self.progress.add_matched(block_to_wallets.len() as u32);
+        // Activity marker for the gap-probe ladder: these wallets have
+        // matches in this batch's range.
+        if let Some(batch) = self.active_batches.get_mut(&batch_start) {
+            batch.note_matched_wallets(block_to_wallets.values().flatten());
+        }
 
         // Either (re)queue the block via `BlocksNeeded` or skip if every
         // candidate wallet already has it processed. In-flight blocks still
@@ -4069,18 +4258,41 @@ mod tests {
         );
     }
 
+    /// Result of a [`run_dust_restore`] sync fixpoint.
+    struct DustRestoreOutcome {
+        /// Transactions the wallet discovered.
+        found: usize,
+        /// Transactions the chain paid to the wallet.
+        expected: usize,
+        /// Highest derivation index the chain actually used (ground truth).
+        max_used_index: u32,
+        /// External pool's `highest_used` at the fixpoint.
+        highest_used: Option<u32>,
+        /// External pool's total generated address count at the fixpoint.
+        total_generated: u32,
+    }
+
     /// Drive a full filter-sync + gap-limit discovery loop over a synthetic
     /// dust-spam restore with the real `WalletManager<ManagedWalletInfo>`.
     ///
-    /// The chain pays external addresses `0..n_addr` of the wallet inside a
+    /// The chain pays `N_ADDR` external addresses of the wallet inside a
     /// dense activity window that straddles a `BATCH_PROCESSING_SIZE`
     /// boundary, at a per-block address consumption far above the gap
     /// limit. `shuffle_indices` controls whether payments land in derivation
     /// order (the easy case) or shuffled across the window the way mempool
     /// waves are actually mined.
     ///
-    /// Returns `(txs_found, txs_expected)` once the sync reaches a fixpoint.
-    async fn run_dust_restore(shuffle_indices: bool) -> (usize, usize) {
+    /// `holes` carves runs of permanently unused indices into the usage
+    /// space: each `(threshold, gap)` entry shifts every used index at or
+    /// above `threshold` up by `gap`, so the used-index sequence jumps
+    /// straight from `threshold - 1` to `threshold + gap` — a run of `gap`
+    /// consecutive unused indices, the shape that stalls plain gap-limit
+    /// discovery whenever `gap` exceeds the gap limit. Real restored
+    /// wallets are full of these (the production wallet that motivated the
+    /// probe ladder has 273 runs of 30+, the longest exactly 100).
+    ///
+    /// Returns a [`DustRestoreOutcome`] once the sync reaches a fixpoint.
+    async fn run_dust_restore(shuffle_indices: bool, holes: &[(u32, u32)]) -> DustRestoreOutcome {
         use key_wallet::managed_account::managed_account_trait::ManagedAccountTrait;
         use key_wallet::transaction_checking::transaction_router::AccountTypeToCheck;
         use key_wallet::wallet::initialization::WalletAccountCreationOptions;
@@ -4097,6 +4309,18 @@ mod tests {
         const N_ADDR: u32 = ACTIVITY_BLOCKS * ADDRS_PER_BLOCK;
 
         let network = Network::Testnet;
+
+        // Used-index mapping: slot `k` (the k-th payment in usage order)
+        // lands on derivation index `k` shifted up by every hole at or below
+        // it. With no holes this is the identity.
+        let index_of = |slot: u32| -> u32 {
+            slot + holes
+                .iter()
+                .filter(|(threshold, _)| slot >= *threshold)
+                .map(|(_, g)| g)
+                .sum::<u32>()
+        };
+        let max_used_index = index_of(N_ADDR - 1);
 
         // Wallet under test.
         let mut wm: WalletManager<ManagedWalletInfo> = WalletManager::new(network);
@@ -4124,9 +4348,9 @@ mod tests {
                 .into_iter()
                 .find(|p| p.is_external())
                 .expect("external pool");
-            pool.address_range(0, N_ADDR, &key_source).expect("derive addresses")
+            pool.address_range(0, max_used_index + 1, &key_source).expect("derive addresses")
         };
-        assert_eq!(addresses.len(), N_ADDR as usize);
+        assert_eq!(addresses.len(), (max_used_index + 1) as usize);
 
         // Index-to-slot assignment: identity for the ordered case, or a
         // deterministic Fisher-Yates driven by an LCG for the mined-out-of-
@@ -4155,7 +4379,7 @@ mod tests {
                     .map(|j| {
                         let pos = (i * ADDRS_PER_BLOCK + j) as usize;
                         Transaction::dummy(
-                            &addresses[assignment[pos]],
+                            &addresses[index_of(assignment[pos] as u32) as usize],
                             (j as u8)..(j as u8 + 1),
                             &[546],
                         )
@@ -4296,8 +4520,22 @@ mod tests {
 
         let w = wallet.read().await;
         let info = w.get_wallet_info(&wallet_id).unwrap();
-        let tx_count = info.first_bip44_managed_account().unwrap().transactions().len();
-        (tx_count, N_ADDR as usize)
+        let account = info.first_bip44_managed_account().unwrap();
+        let tx_count = account.transactions().len();
+        let external_stats = account
+            .managed_account_type()
+            .address_pools()
+            .into_iter()
+            .find(|p| p.is_external())
+            .expect("external pool")
+            .stats();
+        DustRestoreOutcome {
+            found: tx_count,
+            expected: N_ADDR as usize,
+            max_used_index,
+            highest_used: external_stats.highest_used,
+            total_generated: external_stats.total_generated,
+        }
     }
 
     /// Control case: dust mined in derivation order. The gap-limit chase can
@@ -4305,8 +4543,11 @@ mod tests {
     /// the commit-time verification rescan.
     #[tokio::test(flavor = "multi_thread")]
     async fn dust_restore_discovers_all_txs_when_mined_in_index_order() {
-        let (found, expected) = run_dust_restore(false).await;
-        assert_eq!(found, expected, "in-order dust restore must discover every transaction");
+        let outcome = run_dust_restore(false, &[]).await;
+        assert_eq!(
+            outcome.found, outcome.expected,
+            "in-order dust restore must discover every transaction"
+        );
     }
 
     /// Regression test for the sequential-address restore stall
@@ -4328,14 +4569,74 @@ mod tests {
     /// 880k+ transactions.
     #[tokio::test(flavor = "multi_thread")]
     async fn dust_restore_discovers_all_txs_when_mined_out_of_order() {
-        let (found, expected) = run_dust_restore(true).await;
+        let outcome = run_dust_restore(true, &[]).await;
         assert_eq!(
-            found,
-            expected,
+            outcome.found,
+            outcome.expected,
             "out-of-order dust restore lost {} of {} transactions — \
              a filter batch committed while it still held matchable blocks",
-            expected - found,
-            expected
+            outcome.expected - outcome.found,
+            outcome.expected
         );
+    }
+
+    /// Shared assertions for the gap-hole scenarios: full discovery, the
+    /// frontier resting exactly on the true last used index, and bounded pool
+    /// growth (the probed tail may reach `MAX_GAP_LIMIT` past the frontier,
+    /// plus slack for a steady-state window derived on top — pools only
+    /// grow, never past that).
+    fn assert_hole_outcome(outcome: &DustRestoreOutcome, scenario: &str) {
+        assert_eq!(
+            outcome.found,
+            outcome.expected,
+            "{}: lost {} of {} transactions — discovery stalled on an unused-index run",
+            scenario,
+            outcome.expected - outcome.found,
+            outcome.expected
+        );
+        assert_eq!(
+            outcome.highest_used,
+            Some(outcome.max_used_index),
+            "{}: final usage frontier must equal the true max used index",
+            scenario
+        );
+        let growth_cap = outcome.max_used_index + 1 + key_wallet::gap_limit::MAX_GAP_LIMIT + 64;
+        assert!(
+            outcome.total_generated <= growth_cap,
+            "{}: runaway pool growth — generated {} addresses, cap {}",
+            scenario,
+            outcome.total_generated,
+            growth_cap
+        );
+    }
+
+    /// A run of 54 consecutive unused indices — the first stall point of the
+    /// production wallet that motivated the probe ladder. Plain gap-30
+    /// discovery freezes at its lower edge; the first probe rung (100) must
+    /// carry the chase across it so every transaction is discovered.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn dust_restore_crosses_gap_hole_of_54() {
+        let outcome = run_dust_restore(true, &[(1000, 54)]).await;
+        assert_hole_outcome(&outcome, "hole-54 restore");
+    }
+
+    /// A run of 150 consecutive unused indices: past the first probe rung
+    /// (100), so discovery must escalate to the second (300) to cross it.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn dust_restore_crosses_gap_hole_of_150_via_escalation() {
+        let outcome = run_dust_restore(false, &[(1000, 150)]).await;
+        assert_hole_outcome(&outcome, "hole-150 restore");
+    }
+
+    /// Terminal termination: after the last real payment the probe ladder
+    /// must exhaust (nothing past the frontier through the maximum probe),
+    /// the sync must reach its fixpoint rather than hang, the frontier must
+    /// rest exactly on the true last used index, and the pool must not have
+    /// grown unboundedly. Two holes force the ladder to fire mid-chase more
+    /// than once before the terminal pass.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn dust_restore_terminates_after_last_payment() {
+        let outcome = run_dust_restore(true, &[(800, 54), (2000, 100)]).await;
+        assert_hole_outcome(&outcome, "terminal-termination restore");
     }
 }
