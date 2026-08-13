@@ -21,3 +21,12 @@ debug = 1
 
 [profile.dev]
 # Default to unwinding for most crates
+
+[profile.dev.package.dashcore_hashes]
+# Debug-build siphash is ~50x slower than optimized, and BIP158 compact-filter
+# matching hashes every query element against every filter — the dust-restore
+# and gap-probe tests in dash-spv spend most of their wall time there.
+# dashcore_hashes is a rarely-edited leaf crate, so optimizing it in dev
+# costs one slightly longer cold build and speeds every filter/hash-heavy
+# test severalfold.
+opt-level = 2
