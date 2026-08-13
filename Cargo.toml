@@ -49,3 +49,20 @@ debug = 1
 [profile.dev.package.dash-pow]
 # Unoptimized X11 is slow enough to stall header sync
 opt-level = 3
+
+[profile.dev.package.dashcore_hashes]
+# Debug-build siphash is ~50x slower than optimized, and BIP158 compact-filter
+# matching hashes every query element against every filter — the dust-restore
+# and gap-probe tests in dash-spv spend most of their wall time there.
+# dashcore_hashes is a rarely-edited leaf crate, so optimizing it in dev
+# costs one slightly longer cold build and speeds every filter/hash-heavy
+# test severalfold.
+opt-level = 2
+
+[profile.test.package.dashcore]
+# BIP158 Golomb-Rice decoding and matching live here. Unoptimized, a dashd_sync
+# restore whose gap probe matches ~1,400 derived scripts against every scanned
+# filter batch takes over a minute; optimized it takes about three seconds.
+# Test profile only: dashcore is edited often, so plain dev builds stay fast
+# and debuggable.
+opt-level = 2
