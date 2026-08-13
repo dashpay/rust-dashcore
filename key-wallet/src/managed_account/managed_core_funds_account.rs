@@ -70,6 +70,16 @@ pub struct ManagedCoreFundsAccount {
     reservations: ReservationSet,
 }
 
+/// What [`ManagedCoreFundsAccount::apply_abandon`] removed from one account.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct AbandonRemoval {
+    /// UTXOs the abandoned transactions had contributed.
+    pub utxos: usize,
+    /// Transaction records actually dropped — a txid the account never held
+    /// removes nothing.
+    pub records: usize,
+}
+
 impl ManagedCoreFundsAccount {
     /// Create a new managed funds account
     pub fn new(managed_account_type: ManagedAccountType, network: Network) -> Self {
@@ -421,33 +431,42 @@ impl ManagedCoreFundsAccount {
     /// network — so the correct source of truth is a rescan, which releasing
     /// them from `spent_outpoints` now permits.
     ///
-    /// Returns the number of UTXOs removed.
-    pub(crate) fn apply_abandon(&mut self, abandoned: &BTreeSet<Txid>) -> usize {
+    /// Returns what was actually removed.
+    pub(crate) fn apply_abandon(&mut self, abandoned: &BTreeSet<Txid>) -> AbandonRemoval {
         let doomed: Vec<OutPoint> = self
             .utxos
             .keys()
             .filter(|outpoint| abandoned.contains(&outpoint.txid))
             .copied()
             .collect();
-        let removed = doomed.len();
+        let utxos = doomed.len();
         for outpoint in doomed {
             self.utxos.remove(&outpoint);
         }
 
+        let mut records = 0;
         for txid in abandoned {
             if let Some(record) = self.keys.transactions_mut().remove(txid) {
-                for input in &record.transaction.input {
-                    self.spent_outpoints.remove(&input.previous_output);
-                }
+                records += 1;
                 self.reservations
                     .release(record.transaction.input.iter().map(|input| &input.previous_output));
             }
         }
 
-        if removed > 0 {
+        // Re-derive rather than removing each abandoned record's inputs
+        // individually: an outpoint a surviving transaction also spends must
+        // stay marked, and only the surviving set can say which those are.
+        if records > 0 {
+            self.spent_outpoints = rebuild_spent_outpoints(&self.keys);
+        }
+
+        if utxos > 0 {
             self.keys.bump_monitor_revision();
         }
-        removed
+        AbandonRemoval {
+            utxos,
+            records,
+        }
     }
 
     /// Drop the outputs of any recorded unconfirmed transaction that `tx`
@@ -1121,7 +1140,6 @@ impl ManagedAccountTrait for ManagedCoreFundsAccount {
 /// so its `previous_output` belongs in the derived set. The field is not
 /// persisted (`#[serde(skip)]`), so both [`Deserialize`] and the test reload
 /// simulation reconstruct it through here to stay in lockstep.
-#[cfg(any(feature = "serde", test))]
 fn rebuild_spent_outpoints(keys: &ManagedCoreKeysAccount) -> HashSet<OutPoint> {
     keys.transactions()
         .values()

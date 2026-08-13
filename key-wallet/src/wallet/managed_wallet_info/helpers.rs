@@ -3,7 +3,6 @@
 use super::ManagedWalletInfo;
 use crate::account::account_collection::PlatformPaymentAccountKey;
 use crate::account::ManagedCoreFundsAccount;
-use crate::managed_account::managed_account_ref::{ManagedAccountRef, ManagedAccountRefMut};
 use crate::managed_account::managed_platform_account::ManagedPlatformAccount;
 use crate::managed_account::ManagedCoreKeysAccount;
 use dashcore::{OutPoint, Txid};
@@ -16,12 +15,19 @@ pub struct AbandonOutcome {
     pub abandoned: BTreeSet<Txid>,
     /// How many UTXOs those transactions had contributed.
     pub utxos_removed: usize,
+    /// How many transaction records were actually dropped. Distinct from
+    /// `abandoned.len()`, which counts what was *asked* for.
+    pub records_removed: usize,
 }
 
 impl AbandonOutcome {
     /// Whether anything was actually removed.
+    ///
+    /// `abandoned` always contains the root, whether or not the wallet held
+    /// anything for it, so it cannot answer this on its own — a root the
+    /// wallet never recorded removes nothing.
     pub fn is_empty(&self) -> bool {
-        self.abandoned.is_empty() && self.utxos_removed == 0
+        self.records_removed == 0 && self.utxos_removed == 0
     }
 }
 
@@ -87,10 +93,8 @@ impl ManagedWalletInfo {
         // terminates; a spend cycle is impossible anyway.
         loop {
             let mut found = BTreeSet::new();
-            for account in self.accounts.all_accounts() {
-                if let ManagedAccountRef::Funds(funds) = account {
-                    funds.collect_spenders_of(&abandoned, &mut found);
-                }
+            for funds in self.accounts.all_funding_accounts() {
+                funds.collect_spenders_of(&abandoned, &mut found);
             }
             // Same step over the external view: anything spending an output of
             // an abandoned transaction is itself abandoned.
@@ -107,15 +111,17 @@ impl ManagedWalletInfo {
         }
 
         let mut utxos_removed = 0;
-        for account in self.accounts.all_accounts_mut() {
-            if let ManagedAccountRefMut::Funds(funds) = account {
-                utxos_removed += funds.apply_abandon(&abandoned);
-            }
+        let mut records_removed = 0;
+        for funds in self.accounts.all_funding_accounts_mut() {
+            let removed = funds.apply_abandon(&abandoned);
+            utxos_removed += removed.utxos;
+            records_removed += removed.records;
         }
 
         AbandonOutcome {
             abandoned,
             utxos_removed,
+            records_removed,
         }
     }
     // BIP44 Account Helpers

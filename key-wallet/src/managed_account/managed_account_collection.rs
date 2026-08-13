@@ -950,10 +950,8 @@ impl ManagedAccountCollection {
     /// removes spent parents as it goes.
     pub(crate) fn final_parents_of(&self, tx: &Transaction) -> BTreeSet<OutPoint> {
         let mut parents = BTreeSet::new();
-        for account in self.all_accounts() {
-            if let ManagedAccountRef::Funds(funds) = account {
-                funds.collect_final_parents(tx, &mut parents);
-            }
+        for funds in self.all_funding_accounts() {
+            funds.collect_final_parents(tx, &mut parents);
         }
         parents
     }
