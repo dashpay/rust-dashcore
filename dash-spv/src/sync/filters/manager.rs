@@ -3118,6 +3118,21 @@ mod tests {
         let events = manager.handle_new_filter_headers(200, &requests).await.unwrap();
 
         assert!(events.is_empty(), "extending the target emits nothing");
+        // `pending_batches` alone does not prove the guard held: `start_download`
+        // preserves it too, so a broken guard would reinitialize the pipeline and
+        // still leave this at 1. The state and the absence of a fresh active
+        // batch are what tell resuming from restarting — and unlike the
+        // `debug_assert` inside `start_download`, they still hold in a release
+        // build, where that assert is compiled out.
+        assert_eq!(
+            manager.state(),
+            SyncState::WaitForEvents,
+            "the arm must return without changing state"
+        );
+        assert!(
+            manager.active_batches.is_empty(),
+            "must not start a fresh download over the surviving work"
+        );
         assert_eq!(manager.pending_batches.len(), 1, "the surviving batch must not be discarded");
     }
 
@@ -3147,6 +3162,13 @@ mod tests {
 
         assert!(events.is_empty(), "resuming emits no SyncStart");
         assert_eq!(manager.state(), SyncState::Syncing);
+        // See the sibling test: `start_download` keeps `pending_batches`, so only
+        // the absence of a new active batch proves this resumed rather than
+        // restarted, and it proves it without relying on a debug assertion.
+        assert!(
+            manager.active_batches.is_empty(),
+            "must not start a fresh download over the surviving work"
+        );
         assert_eq!(
             manager.pending_batches.len(),
             1,
