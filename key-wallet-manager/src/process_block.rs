@@ -234,6 +234,16 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
         self.wallet_infos.get(wallet_id).map(|info| info.scan_script_pubkeys()).unwrap_or_default()
     }
 
+    fn probe_extend_gap(&mut self, wallet_id: &WalletId, probe_gap: u32) -> Vec<ScriptBuf> {
+        let Some((wallet, info)) = self.get_wallet_and_info_mut(wallet_id) else {
+            return Vec::new();
+        };
+        let derived = info.accounts_mut().probe_extend_gap_with(probe_gap, |to_check, index| {
+            wallet.key_source_for_account_type(to_check, index)
+        });
+        derived.into_iter().map(|address_info| address_info.script_pubkey).collect()
+    }
+
     fn monitored_filter_elements_for(&self, wallet_id: &WalletId) -> Vec<Vec<u8>> {
         self.wallet_infos
             .get(wallet_id)
@@ -777,6 +787,49 @@ mod tests {
 
         // Unknown wallet id yields an empty scan set.
         assert!(manager.scan_script_pubkeys_for(&[0xff; 32]).is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_probe_extend_gap_derives_tail_and_keeps_steady_policy() {
+        let (mut manager, wallet_id, _addr) = setup_manager_with_wallet();
+
+        let monitored_before = manager.monitored_script_pubkeys_for(&wallet_id).len();
+        let revision_before = manager.monitor_revision();
+
+        // First probe widens every funds pool to 100 past its frontier.
+        let derived = manager.probe_extend_gap(&wallet_id, 100);
+        assert!(!derived.is_empty(), "fresh wallet pools must derive up to the probe width");
+
+        // The derived tail joins the monitored set and bumps the revision.
+        let monitored_after = manager.monitored_script_pubkeys_for(&wallet_id);
+        assert_eq!(monitored_after.len(), monitored_before + derived.len());
+        for script in &derived {
+            assert!(monitored_after.contains(script), "derived script must be monitored");
+        }
+        assert!(manager.monitor_revision() > revision_before);
+
+        // Re-probing the same width with an unmoved frontier derives nothing;
+        // escalation derives only the delta.
+        assert!(manager.probe_extend_gap(&wallet_id, 100).is_empty());
+        let escalated = manager.probe_extend_gap(&wallet_id, 300);
+        assert!(!escalated.is_empty());
+        assert!(manager.probe_extend_gap(&wallet_id, 300).is_empty());
+
+        // The steady-state policy is restored: ordinary gap maintenance after
+        // marking an address used must not derive out to the probe width
+        // again (the tail is already there).
+        let scripts_before_use = manager.monitored_script_pubkeys_for(&wallet_id).len();
+        let addr = manager.monitored_addresses()[0].clone();
+        let tx = create_tx_paying_to(&addr, 0xee);
+        manager.process_mempool_transaction(&tx, None).await;
+        assert_eq!(
+            manager.monitored_script_pubkeys_for(&wallet_id).len(),
+            scripts_before_use,
+            "steady-state maintenance must find the probed tail already derived"
+        );
+
+        // Unknown wallet id probes nothing.
+        assert!(manager.probe_extend_gap(&[0xff; 32], 100).is_empty());
     }
 
     #[tokio::test]

@@ -103,6 +103,28 @@ pub trait WalletInterface: Send + Sync + 'static {
         self.monitored_script_pubkeys_for(wallet_id)
     }
 
+    /// Probe-widen every derivable address pool of `wallet_id` so each is
+    /// generated at least `probe_gap` indices past its usage frontier, and
+    /// return the scriptPubKeys of the addresses that derivation freshly
+    /// created (empty when everything was already derived that deep).
+    ///
+    /// This is the wallet half of adaptive gap-probe escalation: BIP44
+    /// discovery derives only `gap_limit` addresses past the highest used
+    /// index, so a run of unused indices longer than the gap limit stalls
+    /// discovery silently. When filter sync suspects such a stall it calls
+    /// this with an escalating `probe_gap` and re-matches the returned
+    /// scripts against the chain's compact filters; any hit resumes the
+    /// normal chase past the hole.
+    ///
+    /// Implementations must restore the steady-state gap limit before
+    /// returning — the probe is a one-shot widened derivation, not a policy
+    /// change — but must NOT un-derive: pools only grow, and the probed tail
+    /// stays monitored. The default is a no-op returning empty, for
+    /// implementations without derivable pools.
+    fn probe_extend_gap(&mut self, _wallet_id: &WalletId, _probe_gap: u32) -> Vec<ScriptBuf> {
+        Vec::new()
+    }
+
     /// Get the bare `hash160` compact-filter elements monitored by `wallet_id`
     /// that are not covered by its scriptPubKeys.
     ///
