@@ -502,7 +502,7 @@ impl ManagedCoreFundsAccount {
     /// funding account and so the same change account — but not every one.
     ///
     /// Returns whether any UTXO was removed.
-    fn drop_conflicted_transactions(
+    pub(crate) fn drop_conflicted_transactions(
         &mut self,
         tx: &Transaction,
         context: &TransactionContext,
@@ -517,7 +517,7 @@ impl ManagedCoreFundsAccount {
 
         // A finalized transaction keeps only its txid, so a chainlocked record
         // can never be a loser here — and must not be, since it is settled.
-        let losers: Vec<Txid> = self
+        let mut losers: BTreeSet<Txid> = self
             .keys
             .transactions()
             .iter()
@@ -533,21 +533,60 @@ impl ManagedCoreFundsAccount {
             .map(|(txid, _)| *txid)
             .collect();
 
+        if losers.is_empty() {
+            return false;
+        }
+
+        // A loser's change may already have funded further unconfirmed
+        // transactions. Those can never exist either — their parent cannot —
+        // so leaving their outputs credited would preserve the very
+        // phantom-balance class this sweep exists to remove. Walk the
+        // unconfirmed descendant closure; confirmed records are never
+        // followed, since a transaction in a block spent something real.
+        loop {
+            let mut found = BTreeSet::new();
+            for (txid, record) in self.keys.transactions() {
+                if record.is_confirmed() || losers.contains(txid) || *txid == winner {
+                    continue;
+                }
+                if record
+                    .transaction
+                    .input
+                    .iter()
+                    .any(|input| losers.contains(&input.previous_output.txid))
+                {
+                    found.insert(*txid);
+                }
+            }
+            let before = losers.len();
+            losers.extend(found);
+            if losers.len() == before {
+                break;
+            }
+        }
+
         let mut changed = false;
-        for loser in losers {
+        for loser in &losers {
             let removed: Vec<OutPoint> =
-                self.utxos.keys().filter(|outpoint| outpoint.txid == loser).copied().collect();
+                self.utxos.keys().filter(|outpoint| outpoint.txid == *loser).copied().collect();
             for outpoint in removed {
                 self.utxos.remove(&outpoint);
                 changed = true;
             }
-            self.keys.transactions_mut().remove(&loser);
+            self.keys.transactions_mut().remove(loser);
             tracing::info!(
                 conflicted_txid = %loser,
                 winning_txid = %winner,
                 "Dropped a conflicted transaction: its input was spent by a final transaction"
             );
         }
+
+        // Re-derive rather than removing each loser's inputs individually: a
+        // loser spending A+B against a winner that spends only A must leave A
+        // marked (the winner still spends it) and free B, and only the
+        // surviving records can draw that line.
+        self.spent_outpoints = rebuild_spent_outpoints(&self.keys);
+
         changed
     }
 

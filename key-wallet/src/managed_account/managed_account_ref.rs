@@ -409,6 +409,15 @@ impl<'a> ManagedAccountRefMut<'a> {
     ///
     /// Returns `true` if any UTXO was newly marked. Always returns `false`
     /// for the [`Keys`](Self::Keys) variant (no UTXOs to mark).
+    /// Drop the outputs of any recorded unconfirmed transaction that `tx`
+    /// provably beat to one of its inputs. No-op for the
+    /// [`Keys`](Self::Keys) variant, which tracks no UTXOs.
+    pub(crate) fn sweep_conflicts_for(&mut self, tx: &Transaction, context: &TransactionContext) {
+        if let ManagedAccountRefMut::Funds(a) = self {
+            a.drop_conflicted_transactions(tx, context);
+        }
+    }
+
     pub fn mark_utxos_instant_send(&mut self, txid: &Txid) -> bool {
         match self {
             ManagedAccountRefMut::Funds(a) => a.mark_utxos_instant_send(txid),

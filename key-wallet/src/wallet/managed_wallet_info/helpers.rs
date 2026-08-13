@@ -3,6 +3,7 @@
 use super::ManagedWalletInfo;
 use crate::account::account_collection::PlatformPaymentAccountKey;
 use crate::account::ManagedCoreFundsAccount;
+use crate::managed_account::managed_account_trait::ManagedAccountTrait;
 use crate::managed_account::managed_platform_account::ManagedPlatformAccount;
 use crate::managed_account::ManagedCoreKeysAccount;
 use dashcore::{OutPoint, Txid};
@@ -32,6 +33,17 @@ impl AbandonOutcome {
 }
 
 impl ManagedWalletInfo {
+    /// Whether any account holds `txid` as confirmed or chainlock-finalized.
+    ///
+    /// A finalized transaction may keep only its txid, so both the retained
+    /// set and the live record have to be consulted.
+    fn transaction_is_settled(&self, txid: &Txid) -> bool {
+        self.accounts.all_funding_accounts().into_iter().any(|funds| {
+            funds.transaction_is_finalized(txid)
+                || funds.transactions().get(txid).is_some_and(|r| r.is_confirmed())
+        })
+    }
+
     /// Abandon `root` and every recorded transaction descending from it.
     ///
     /// A transaction the network never accepted still mutated this wallet:
@@ -81,11 +93,29 @@ impl ManagedWalletInfo {
     /// that one abandoned output funded the next transaction along. Callers
     /// with a persistence mirror can supply `external_spends`, mapping an
     /// outpoint to the transaction that spent it, and the walk follows both.
+    ///
+    /// An external spender the wallet holds as confirmed or finalized is
+    /// **not** followed: the mirror carries no confirmation state of its own,
+    /// so without this check a stale row could name a settled transaction and
+    /// have its record and UTXOs deleted. The same guard rejects a confirmed
+    /// root outright — a transaction in a block spent something real, and
+    /// nothing built on it is fiction.
     pub fn abandon_transaction_with_spends(
         &mut self,
         root: Txid,
         external_spends: &BTreeMap<OutPoint, Txid>,
     ) -> AbandonOutcome {
+        if self.transaction_is_settled(&root) {
+            tracing::warn!(
+                txid = %root,
+                "refusing to abandon a transaction the wallet holds as settled"
+            );
+            return AbandonOutcome {
+                abandoned: BTreeSet::new(),
+                utxos_removed: 0,
+                records_removed: 0,
+            };
+        }
         let mut abandoned = BTreeSet::from([root]);
 
         // Transitive closure over recorded spenders. Each pass can only add
@@ -99,7 +129,7 @@ impl ManagedWalletInfo {
             // Same step over the external view: anything spending an output of
             // an abandoned transaction is itself abandoned.
             for (outpoint, spender) in external_spends {
-                if abandoned.contains(&outpoint.txid) {
+                if abandoned.contains(&outpoint.txid) && !self.transaction_is_settled(spender) {
                     found.insert(*spender);
                 }
             }

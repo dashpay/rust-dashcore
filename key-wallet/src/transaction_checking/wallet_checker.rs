@@ -148,6 +148,14 @@ impl WalletTransactionChecker for ManagedWalletInfo {
                     };
                     if account.transactions().contains_key(&txid) {
                         account.mark_utxos_instant_send(&txid);
+                        // An IS lock is final, so it settles this transaction's
+                        // inputs just as a block would. A competing spend
+                        // recorded earlier in the mempool can now never
+                        // confirm, and this sweep is the only thing that drops
+                        // its outputs — the `record_transaction` path below
+                        // runs it via `update_utxos`, but a transaction we
+                        // already hold never reaches that path.
+                        account.sweep_conflicts_for(tx, &context);
                         if let Some(record) = account.transactions_mut().get_mut(&txid) {
                             record.update_context(context.clone());
                             result.updated_records.push(record.clone());
@@ -2050,6 +2058,102 @@ mod tests {
         assert_eq!(ctx.managed_wallet.balance.confirmed(), change_amount);
         assert_eq!(ctx.managed_wallet.balance.unconfirmed(), 0);
         assert_eq!(ctx.managed_wallet.balance.spendable(), change_amount);
+    }
+
+    /// An InstantSend lock is final, so it settles the winner's inputs just as
+    /// a block would — including when the winner was already sitting in the
+    /// mempool alongside its loser, which is the transition that skips
+    /// `record_transaction` and so skips the sweep it carries.
+    #[tokio::test]
+    async fn test_instant_send_on_an_existing_mempool_tx_drops_its_conflict() {
+        let mut ctx = TestWalletContext::new_random();
+        let external_address = Address::p2pkh(
+            &dashcore::PublicKey::from_slice(&[0x02; 33]).expect("pubkey"),
+            Network::Testnet,
+        );
+
+        let funding_value = 1_000_000u64;
+        let funding_tx = Transaction::dummy(&ctx.receive_address, 0..1, &[funding_value]);
+        ctx.check_transaction(
+            &funding_tx,
+            TransactionContext::InBlock(BlockInfo::new(
+                100,
+                BlockHash::from_slice(&[1u8; 32]).expect("hash"),
+                1_700_000_000,
+            )),
+        )
+        .await;
+
+        let funding_outpoint = OutPoint {
+            txid: funding_tx.txid(),
+            vout: 0,
+        };
+        let spend_of = |change: &Address, change_amount: u64, sent: u64| Transaction {
+            version: 2,
+            lock_time: 0,
+            input: vec![TxIn {
+                previous_output: funding_outpoint,
+                script_sig: ScriptBuf::new(),
+                sequence: 0xffffffff,
+                witness: dashcore::Witness::new(),
+            }],
+            output: vec![
+                TxOut {
+                    value: sent,
+                    script_pubkey: external_address.script_pubkey(),
+                },
+                TxOut {
+                    value: change_amount,
+                    script_pubkey: change.script_pubkey(),
+                },
+            ],
+            special_transaction_payload: None,
+        };
+
+        // Both competing spends land in the mempool, loser first.
+        let loser_change = ctx
+            .managed_wallet
+            .first_bip44_managed_account_mut()
+            .expect("account")
+            .next_change_address(Some(&ctx.xpub), true)
+            .expect("change address");
+        let loser = spend_of(&loser_change, 399_000, 600_000);
+        ctx.check_transaction(&loser, TransactionContext::Mempool).await;
+
+        let winner_change = ctx
+            .managed_wallet
+            .first_bip44_managed_account_mut()
+            .expect("account")
+            .next_change_address(Some(&ctx.xpub), true)
+            .expect("change address");
+        let winner = spend_of(&winner_change, 299_000, 700_000);
+        ctx.check_transaction(&winner, TransactionContext::Mempool).await;
+
+        let loser_change_outpoint = OutPoint {
+            txid: loser.txid(),
+            vout: 1,
+        };
+        assert!(
+            ctx.bip44_account().utxos.contains_key(&loser_change_outpoint),
+            "both are live while neither is final"
+        );
+
+        // The winner is InstantSend-locked. It is already recorded, so this
+        // takes the update-in-place branch rather than recording afresh.
+        let is_lock = InstantLock {
+            txid: winner.txid(),
+            ..InstantLock::default()
+        };
+        ctx.check_transaction(&winner, TransactionContext::InstantSend(is_lock)).await;
+
+        assert!(
+            !ctx.bip44_account().utxos.contains_key(&loser_change_outpoint),
+            "an IS lock settles the input, so the loser's change must not survive"
+        );
+        assert!(
+            !ctx.bip44_account().transactions().contains_key(&loser.txid()),
+            "the loser's record must be dropped too"
+        );
     }
 
     /// Abandoning a transaction that never reached the network must take the
