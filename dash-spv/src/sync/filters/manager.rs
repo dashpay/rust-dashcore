@@ -130,9 +130,14 @@ pub struct FiltersManager<
     /// terminal for that wallet until real progress resets the entry
     /// (a relevant transaction confirmed or new scripts derived for the
     /// wallet, both signalled through `BlockProcessed`), because a moving
-    /// usage frontier makes the next stall a new stall. Persisting the level
+    /// usage frontier makes the next stall a new stall. Keeping the level
     /// across passes lets escalation resume where it left off instead of
     /// restarting at the lowest rung every time.
+    ///
+    /// In-memory only, like the rest of the manager's scan state: a restart
+    /// re-probes from the lowest rung, which at worst repeats a few
+    /// derive-nothing rungs (each a cheap no-op against the already-derived
+    /// pool tail) before reaching the recorded depth again.
     pub(super) probe_levels: HashMap<WalletId, usize>,
 }
 
