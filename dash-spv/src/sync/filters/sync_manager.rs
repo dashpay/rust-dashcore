@@ -167,6 +167,15 @@ impl<
                 // `tracker.track` residual.
                 self.tracker.record_processed(*height, *block_hash, wallets);
 
+                // Any derivation re-arms the commit-time verification rescan
+                // of every active batch — including batches this block does
+                // not belong to, and even when the block's own batch is
+                // already gone (in which case the scripts would otherwise be
+                // dropped without ever being matched).
+                if new_scripts.values().any(|scripts| !scripts.is_empty()) {
+                    self.script_generation += 1;
+                }
+
                 // Check if this block is part of our tracked blocks
                 if let Some((_, batch_start)) = self.tracker.finish_in_flight(block_hash) {
                     if let Some(batch) = self.active_batches.get_mut(&batch_start) {

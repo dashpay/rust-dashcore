@@ -91,6 +91,14 @@ pub struct FiltersManager<
     /// `BlockProcessed` and the per-wallet record of which wallets already
     /// have a given processed block applied.
     pub(super) tracker: BlockMatchTracker,
+    /// Monotone counter bumped every time block processing derives new
+    /// scripts (gap-limit pool extension), regardless of which batch — if
+    /// any — owns the block. Batches record the generation they were last
+    /// matched against the full script sets at
+    /// ([`FiltersBatch::full_match_generation`]); commit runs a
+    /// verification rescan whenever the generations differ, so a batch can
+    /// never commit while scripts it has not been matched against exist.
+    pub(super) script_generation: u64,
 }
 
 impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: WalletInterface>
@@ -135,6 +143,7 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
             active_batches: BTreeMap::new(),
             processing_height: 0,
             tracker: BlockMatchTracker::new(),
+            script_generation: 0,
         }
     }
 
@@ -589,6 +598,54 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
                         }
                     }
                 }
+
+                // Verification rescan: an empty `collected_scripts` only means
+                // no scripts were derived from THIS batch's blocks since the
+                // last wave — scripts derived from blocks owned by other
+                // batches (or whose batch is already gone) were never matched
+                // against this batch's filters. Committing on that empty-wave
+                // signal alone is what permanently lost transactions during
+                // sequential-address restores: one backfill-only wave ended
+                // the gap-limit chase while the batch still held matchable
+                // blocks, and committed batches are never rescanned. Re-match
+                // with the wallets' full current script sets whenever any
+                // derivation happened since the batch's last full-set match,
+                // and only mark the rescan complete once that turns up
+                // nothing.
+                let needs_verification = self
+                    .active_batches
+                    .get(&batch_start)
+                    .is_some_and(|b| b.full_match_generation() != self.script_generation);
+                if needs_verification {
+                    let generation_now = self.script_generation;
+                    let wallet_ids: Vec<WalletId> = self
+                        .active_batches
+                        .get(&batch_start)
+                        .map(|b| b.scanned_wallets().keys().copied().collect())
+                        .unwrap_or_default();
+                    let mut full_sets: HashMap<WalletId, HashSet<ScriptBuf>> = HashMap::new();
+                    {
+                        let wallet = self.wallet.read().await;
+                        for wallet_id in wallet_ids {
+                            full_sets.insert(
+                                wallet_id,
+                                wallet.scan_script_pubkeys_for(&wallet_id).into_iter().collect(),
+                            );
+                        }
+                    }
+                    events.extend(self.rescan_batch(batch_start, &full_sets).await?);
+                    if let Some(batch) = self.active_batches.get_mut(&batch_start) {
+                        // The rescan above matched the full sets as of
+                        // `generation_now`; derivations triggered by any
+                        // blocks it found will bump the generation again and
+                        // re-arm the verification on the next pass.
+                        batch.set_full_match_generation(generation_now);
+                        if batch.pending_blocks() > 0 {
+                            break;
+                        }
+                    }
+                }
+
                 // Mark rescan as complete
                 if let Some(batch) = self.active_batches.get_mut(&batch_start) {
                     batch.mark_rescan_complete();
@@ -914,6 +971,9 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
 
         if let Some(batch) = self.active_batches.get_mut(&batch_start) {
             batch.set_scanned_wallets(scanned_wallets);
+            // This scan matches against the full current script sets, so the
+            // batch is up to date with every derivation so far.
+            batch.set_full_match_generation(self.script_generation);
         }
 
         if filters_empty {
@@ -3851,6 +3911,276 @@ mod tests {
             )),
             "expected FiltersSyncComplete, got {:?}",
             events
+        );
+    }
+
+    /// Drive a full filter-sync + gap-limit discovery loop over a synthetic
+    /// dust-spam restore with the real `WalletManager<ManagedWalletInfo>`.
+    ///
+    /// The chain pays external addresses `0..n_addr` of the wallet inside a
+    /// dense activity window that straddles a `BATCH_PROCESSING_SIZE`
+    /// boundary, at a per-block address consumption far above the gap
+    /// limit. `shuffle_indices` controls whether payments land in derivation
+    /// order (the easy case) or shuffled across the window the way mempool
+    /// waves are actually mined.
+    ///
+    /// Returns `(txs_found, txs_expected)` once the sync reaches a fixpoint.
+    async fn run_dust_restore(shuffle_indices: bool) -> (usize, usize) {
+        use key_wallet::managed_account::managed_account_trait::ManagedAccountTrait;
+        use key_wallet::transaction_checking::transaction_router::AccountTypeToCheck;
+        use key_wallet::wallet::initialization::WalletAccountCreationOptions;
+        use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
+        use key_wallet_manager::WalletManager;
+        use std::collections::VecDeque;
+
+        const MNEMONIC: &str = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
+        const TOTAL_HEIGHTS: u32 = 5120; // batch 1 = 0..4999, batch 2 = 5000..5119
+        const ACTIVITY_START: u32 = 4940;
+        const ACTIVITY_BLOCKS: u32 = 120; // straddles the 4999/5000 batch boundary
+        const ADDRS_PER_BLOCK: u32 = 25; // burns ~25 fresh indices per block vs gap limit 30
+        const ACTIVITY_END: u32 = ACTIVITY_START + ACTIVITY_BLOCKS - 1;
+        const N_ADDR: u32 = ACTIVITY_BLOCKS * ADDRS_PER_BLOCK;
+
+        let network = Network::Testnet;
+
+        // Wallet under test.
+        let mut wm: WalletManager<ManagedWalletInfo> = WalletManager::new(network);
+        let wallet_id = wm
+            .create_wallet_from_mnemonic(MNEMONIC, 0, WalletAccountCreationOptions::Default)
+            .expect("create wallet");
+        let wallet = Arc::new(RwLock::new(wm));
+
+        // Throwaway manager from the same mnemonic just to derive the target
+        // external addresses 0..N_ADDR the "spammer" pays.
+        let mut deriv: WalletManager<ManagedWalletInfo> = WalletManager::new(network);
+        let deriv_id = deriv
+            .create_wallet_from_mnemonic(MNEMONIC, 0, WalletAccountCreationOptions::Default)
+            .expect("create derivation wallet");
+        let key_source = deriv
+            .get_wallet(&deriv_id)
+            .unwrap()
+            .key_source_for_account_type(&AccountTypeToCheck::StandardBIP44, Some(0));
+        let addresses: Vec<Address> = {
+            let info = deriv.get_wallet_info_mut(&deriv_id).unwrap();
+            let account = info.first_bip44_managed_account_mut().unwrap();
+            let pool = account
+                .managed_account_type_mut()
+                .address_pools_mut()
+                .into_iter()
+                .find(|p| p.is_external())
+                .expect("external pool");
+            pool.address_range(0, N_ADDR, &key_source).expect("derive addresses")
+        };
+        assert_eq!(addresses.len(), N_ADDR as usize);
+
+        // Index-to-slot assignment: identity for the ordered case, or a
+        // deterministic Fisher-Yates driven by an LCG for the mined-out-of-
+        // order case (no rand dependency, fully reproducible).
+        let assignment: Vec<usize> = {
+            let mut v: Vec<usize> = (0..N_ADDR as usize).collect();
+            if shuffle_indices {
+                let mut state: u64 = 0x243F_6A88_85A3_08D3;
+                for i in (1..v.len()).rev() {
+                    state =
+                        state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+                    let j = (state >> 33) as usize % (i + 1);
+                    v.swap(i, j);
+                }
+            }
+            v
+        };
+
+        // Build the chain: dust spam inside the activity window, unrelated
+        // single-tx blocks everywhere else.
+        let mut blocks: Vec<Block> = Vec::with_capacity(TOTAL_HEIGHTS as usize);
+        for h in 0..TOTAL_HEIGHTS {
+            let txs = if (ACTIVITY_START..=ACTIVITY_END).contains(&h) {
+                let i = h - ACTIVITY_START;
+                (0..ADDRS_PER_BLOCK)
+                    .map(|j| {
+                        let pos = (i * ADDRS_PER_BLOCK + j) as usize;
+                        Transaction::dummy(
+                            &addresses[assignment[pos]],
+                            (j as u8)..(j as u8 + 1),
+                            &[546],
+                        )
+                    })
+                    .collect()
+            } else {
+                vec![Transaction::dummy(
+                    &Address::dummy(network, (1_000_000u32 + h) as usize),
+                    0..1,
+                    &[1000],
+                )]
+            };
+            blocks.push(Block::dummy(h, txs));
+        }
+
+        // Seed storage: block headers + filter bodies for the whole range.
+        let storage = DiskStorageManager::with_temp_dir().await.unwrap();
+        {
+            let hashed: Vec<HashedBlockHeader> =
+                blocks.iter().map(|b| HashedBlockHeader::from(&b.header)).collect();
+            storage
+                .block_headers()
+                .write()
+                .await
+                .store_headers_at_height(&hashed, 0)
+                .await
+                .unwrap();
+            let filters_handle = storage.filters();
+            let mut fs = filters_handle.write().await;
+            for (h, block) in blocks.iter().enumerate() {
+                let filter = BlockFilter::dummy(block);
+                fs.store_filter(h as u32, &filter.content).await.unwrap();
+            }
+        }
+
+        let mut manager: FiltersManager<
+            PersistentBlockHeaderStorage,
+            PersistentFilterHeaderStorage,
+            PersistentFilterStorage,
+            WalletManager<ManagedWalletInfo>,
+        > = FiltersManager::new(
+            wallet.clone(),
+            storage.block_headers(),
+            storage.filter_headers(),
+            storage.filters(),
+        )
+        .await;
+
+        let (tx, mut _rx) = unbounded_channel();
+        let requests = RequestSender::new(tx);
+
+        manager.set_state(SyncState::WaitingForConnections);
+        let mut queue: VecDeque<SyncEvent> =
+            manager.start_sync(&requests).await.expect("start_sync").into_iter().collect();
+
+        // Simulated block delivery: requested blocks arrive a few rounds
+        // later, lowest height first, mirroring BlocksPipeline's height-
+        // ordered processing.
+        let mut in_flight: BTreeMap<u32, (FilterMatchKey, BTreeSet<WalletId>, u64)> =
+            BTreeMap::new();
+
+        let mut guard = 0u64;
+        let mut round = 0u64;
+        let mut idle_rounds = 0u32;
+        loop {
+            round += 1;
+            guard += 1;
+            assert!(guard < 3_000_000, "sync loop failed to converge");
+            while _rx.try_recv().is_ok() {}
+
+            let mut had_activity = false;
+            while let Some(event) = queue.pop_front() {
+                had_activity = true;
+                match &event {
+                    SyncEvent::BlocksNeeded {
+                        blocks: needed,
+                    } => {
+                        for (key, wallets) in needed {
+                            in_flight
+                                .entry(key.height())
+                                .and_modify(|(_, w, _)| w.extend(wallets.iter().copied()))
+                                .or_insert_with(|| (key.clone(), wallets.clone(), round + 3));
+                        }
+                    }
+                    SyncEvent::BlockProcessed {
+                        ..
+                    } => {
+                        let evs =
+                            manager.handle_sync_event(&event, &requests).await.expect("handle");
+                        queue.extend(evs);
+                    }
+                    _ => {}
+                }
+            }
+
+            // Production ticks every 100ms regardless of pending downloads.
+            let evs = manager.tick(&requests).await.expect("tick");
+            if !evs.is_empty() {
+                had_activity = true;
+                queue.extend(evs);
+            }
+
+            // Deliver up to 4 ready blocks, lowest height first.
+            let ready: Vec<u32> = in_flight
+                .iter()
+                .filter(|(_, (_, _, ready_at))| *ready_at <= round)
+                .map(|(h, _)| *h)
+                .take(4)
+                .collect();
+            for h in ready {
+                let (key, wallets, _) = in_flight.remove(&h).unwrap();
+                let block = &blocks[key.height() as usize];
+                let mut w = wallet.write().await;
+                let result =
+                    w.process_block_for_wallets(block, *key.hash(), key.height(), &wallets).await;
+                drop(w);
+                had_activity = true;
+                let confirmed: Vec<dashcore::Txid> =
+                    result.new_txids.iter().chain(result.existing_txids.iter()).cloned().collect();
+                queue.push_back(SyncEvent::BlockProcessed {
+                    block_hash: *key.hash(),
+                    height: key.height(),
+                    wallets: wallets.clone(),
+                    new_scripts: result.new_scripts,
+                    confirmed_txids: confirmed,
+                });
+            }
+
+            if !had_activity && in_flight.is_empty() && queue.is_empty() {
+                idle_rounds += 1;
+                if idle_rounds > 10 {
+                    break;
+                }
+            } else {
+                idle_rounds = 0;
+            }
+        }
+
+        let w = wallet.read().await;
+        let info = w.get_wallet_info(&wallet_id).unwrap();
+        let tx_count = info.first_bip44_managed_account().unwrap().transactions().len();
+        (tx_count, N_ADDR as usize)
+    }
+
+    /// Control case: dust mined in derivation order. The gap-limit chase can
+    /// always keep up block by block, so discovery completes even without
+    /// the commit-time verification rescan.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn dust_restore_discovers_all_txs_when_mined_in_index_order() {
+        let (found, expected) = run_dust_restore(false).await;
+        assert_eq!(found, expected, "in-order dust restore must discover every transaction");
+    }
+
+    /// Regression test for the sequential-address restore stall
+    /// (gap-limit chase ending on a backfill-only wave).
+    ///
+    /// Payments to sequentially derived addresses are mined out of
+    /// derivation order, the way mempool waves actually land in blocks.
+    /// Discovery then advances in waves: each processed wave extends the
+    /// pools, and the extended window must be re-matched against the
+    /// batch's filters. Before the commit-time verification rescan, a wave
+    /// whose visible transactions all paid already-derived indices ended
+    /// the chase ("no new scripts collected") and committed the batch while
+    /// it still held blocks paying indices past the window — permanently
+    /// unrecoverable, because committed batches are never rescanned. This
+    /// scenario lost ~40% of the transactions.
+    ///
+    /// Observed in production on a mainnet wallet with 345k used
+    /// addresses: discovery froze at index 2,400 and silently missed
+    /// 880k+ transactions.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn dust_restore_discovers_all_txs_when_mined_out_of_order() {
+        let (found, expected) = run_dust_restore(true).await;
+        assert_eq!(
+            found,
+            expected,
+            "out-of-order dust restore lost {} of {} transactions — \
+             a filter batch committed while it still held matchable blocks",
+            expected - found,
+            expected
         );
     }
 }
