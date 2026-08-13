@@ -411,33 +411,25 @@ impl ManagedCoreFundsAccount {
         }
     }
 
-    /// Collect the txids of recorded unconfirmed transactions that spend an
-    /// output of any transaction in `abandoned`.
+    /// Drop the spent-marks that `freed` contributed, keeping every mark a
+    /// surviving record still claims.
     ///
-    /// One step of the descendant walk driven by
-    /// [`ManagedWalletInfo::abandon_transaction`]. A confirmed or finalized
-    /// transaction is never a descendant for this purpose: it is settled on
-    /// chain, so whatever it spent was real.
-    ///
-    /// [`ManagedWalletInfo::abandon_transaction`]: crate::wallet::managed_wallet_info::ManagedWalletInfo::abandon_transaction
-    pub(crate) fn collect_spenders_of(
-        &self,
-        abandoned: &BTreeSet<Txid>,
-        into: &mut BTreeSet<Txid>,
-    ) {
-        for (txid, record) in self.keys.transactions() {
-            if record.is_confirmed() || abandoned.contains(txid) {
-                continue;
-            }
-            let spends_abandoned = record
-                .transaction
-                .input
-                .iter()
-                .any(|input| abandoned.contains(&input.previous_output.txid));
-            if spends_abandoned {
-                into.insert(*txid);
-            }
+    /// Deliberately *not* a wholesale rebuild from the live records. Under the
+    /// default `keep-finalized-transactions = off` a chainlocked spend's
+    /// record is reduced to its txid, so its inputs survive only as marks
+    /// already in this set — reassigning from the record map would silently
+    /// drop them and let a later backfill re-credit coins that are spent on
+    /// chain. Only outpoints the removed records actually contributed are
+    /// considered, and a removed record's input stays marked when a survivor
+    /// spends it too (a loser spending A+B against a winner spending only A
+    /// must leave A marked and free B).
+    fn release_spent_marks(&mut self, freed: &HashSet<OutPoint>) {
+        if freed.is_empty() {
+            return;
         }
+        let still_spent = rebuild_spent_outpoints(&self.keys);
+        self.spent_outpoints
+            .retain(|outpoint| !freed.contains(outpoint) || still_spent.contains(outpoint));
     }
 
     /// Remove every trace of `abandoned` from this account.
@@ -477,17 +469,15 @@ impl ManagedCoreFundsAccount {
         }
 
         let mut records = 0;
+        let mut freed: HashSet<OutPoint> = HashSet::new();
         for txid in abandoned {
-            if self.keys.transactions_mut().remove(txid).is_some() {
+            if let Some(record) = self.keys.transactions_mut().remove(txid) {
                 records += 1;
+                freed.extend(record.transaction.input.iter().map(|input| input.previous_output));
             }
         }
-
-        // Re-derive rather than removing each abandoned record's inputs
-        // individually: an outpoint a surviving transaction also spends must
-        // stay marked, and only the surviving set can say which those are.
         if records > 0 {
-            self.spent_outpoints = rebuild_spent_outpoints(&self.keys);
+            self.release_spent_marks(&freed);
         }
 
         if utxos > 0 {
@@ -562,8 +552,17 @@ impl ManagedCoreFundsAccount {
             .transactions()
             .iter()
             .filter(|(txid, record)| {
+                // Precedence, per DIP-10: a chainlock is final over
+                // everything, an InstantSend lock is final against a double
+                // spend, and a plain block is provisional until its own
+                // chainlock lands. So an IS-locked record may only be evicted
+                // by a chainlocked arrival — a plain `InBlock` winner cannot
+                // overrule a lock the network already signed, and the block
+                // it arrived in can still reorg away.
+                let loser_is_locked = record.context.is_instant_send();
                 **txid != winner
                     && !record.is_confirmed()
+                    && (!loser_is_locked || context.is_chain_locked())
                     && record
                         .transaction
                         .input
@@ -586,7 +585,11 @@ impl ManagedCoreFundsAccount {
         loop {
             let mut found = BTreeSet::new();
             for (txid, record) in self.keys.transactions() {
-                if record.is_confirmed() || losers.contains(txid) || *txid == winner {
+                if record.is_confirmed()
+                    || record.context.is_instant_send()
+                    || losers.contains(txid)
+                    || *txid == winner
+                {
                     continue;
                 }
                 if record
@@ -606,6 +609,7 @@ impl ManagedCoreFundsAccount {
         }
 
         let mut changed = false;
+        let mut freed: HashSet<OutPoint> = HashSet::new();
         for loser in &losers {
             let removed: Vec<OutPoint> =
                 self.utxos.keys().filter(|outpoint| outpoint.txid == *loser).copied().collect();
@@ -613,19 +617,16 @@ impl ManagedCoreFundsAccount {
                 self.utxos.remove(&outpoint);
                 changed = true;
             }
-            self.keys.transactions_mut().remove(loser);
+            if let Some(record) = self.keys.transactions_mut().remove(loser) {
+                freed.extend(record.transaction.input.iter().map(|input| input.previous_output));
+            }
             tracing::info!(
                 conflicted_txid = %loser,
                 winning_txid = %winner,
                 "Dropped a conflicted transaction: its input was spent by a final transaction"
             );
         }
-
-        // Re-derive rather than removing each loser's inputs individually: a
-        // loser spending A+B against a winner that spends only A must leave A
-        // marked (the winner still spends it) and free B, and only the
-        // surviving records can draw that line.
-        self.spent_outpoints = rebuild_spent_outpoints(&self.keys);
+        self.release_spent_marks(&freed);
 
         changed
     }

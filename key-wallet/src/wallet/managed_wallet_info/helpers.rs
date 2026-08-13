@@ -3,6 +3,8 @@
 use super::ManagedWalletInfo;
 use crate::account::account_collection::PlatformPaymentAccountKey;
 use crate::account::ManagedCoreFundsAccount;
+use crate::account::TransactionRecord;
+use crate::managed_account::managed_account_ref::ManagedAccountRefMut;
 use crate::managed_account::managed_account_trait::ManagedAccountTrait;
 use crate::managed_account::managed_platform_account::ManagedPlatformAccount;
 use crate::managed_account::ManagedCoreKeysAccount;
@@ -32,15 +34,50 @@ impl AbandonOutcome {
     }
 }
 
+/// Txids in `records` that spend an output of anything in `abandoned`.
+///
+/// Settled records are never followed — what they spent was real. An
+/// InstantSend lock settles a transaction against a double spend just as a
+/// block does, and `is_confirmed()` does not cover it.
+fn collect_spenders_of_records(
+    records: &std::collections::BTreeMap<Txid, TransactionRecord>,
+    abandoned: &BTreeSet<Txid>,
+    into: &mut BTreeSet<Txid>,
+) {
+    for (txid, record) in records {
+        if record.is_confirmed() || record.context.is_instant_send() || abandoned.contains(txid) {
+            continue;
+        }
+        if record
+            .transaction
+            .input
+            .iter()
+            .any(|input| abandoned.contains(&input.previous_output.txid))
+        {
+            into.insert(*txid);
+        }
+    }
+}
+
 impl ManagedWalletInfo {
-    /// Whether any account holds `txid` as confirmed or chainlock-finalized.
+    /// Whether any account holds `txid` as settled by the network.
+    ///
+    /// Settled means chainlock-finalized, in a block, **or InstantSend-locked**
+    /// — an IS lock is final against a double spend under DIP-10, so the coins
+    /// it moved are as irreversibly gone as a block's. `is_confirmed()` covers
+    /// only the first two, which is why the lock is checked explicitly.
     ///
     /// A finalized transaction may keep only its txid, so both the retained
-    /// set and the live record have to be consulted.
+    /// set and the live record have to be consulted. Keys-only accounts are
+    /// included: they hold records too, and a settled record there is just as
+    /// authoritative.
     fn transaction_is_settled(&self, txid: &Txid) -> bool {
-        self.accounts.all_funding_accounts().into_iter().any(|funds| {
-            funds.transaction_is_finalized(txid)
-                || funds.transactions().get(txid).is_some_and(|r| r.is_confirmed())
+        self.accounts.all_accounts().into_iter().any(|account| {
+            account.transaction_is_finalized(txid)
+                || account
+                    .transactions()
+                    .get(txid)
+                    .is_some_and(|r| r.is_confirmed() || r.context.is_instant_send())
         })
     }
 
@@ -54,9 +91,12 @@ impl ManagedWalletInfo {
     /// sits in the `unconfirmed` bucket permanently, as money the wallet
     /// displays and does not have.
     ///
-    /// The walk is transitive and wallet-wide: pooled funding spreads a
+    /// The walk is transitive and wallet-wide — every account that holds
+    /// records, funds-bearing or keys-only. Pooled funding spreads a
     /// transaction's inputs across account families, so a descendant's change
-    /// can land in an account that holds none of the root. Confirmed and
+    /// can land in an account holding none of the root; and an asset-lock
+    /// funding transaction is recorded in both its funding account and the
+    /// identity account it pays. Confirmed and
     /// finalized transactions are never followed — they are settled on chain,
     /// so whatever they spent was real.
     ///
@@ -123,8 +163,8 @@ impl ManagedWalletInfo {
         // terminates; a spend cycle is impossible anyway.
         loop {
             let mut found = BTreeSet::new();
-            for funds in self.accounts.all_funding_accounts() {
-                funds.collect_spenders_of(&abandoned, &mut found);
+            for account in self.accounts.all_accounts() {
+                collect_spenders_of_records(account.transactions(), &abandoned, &mut found);
             }
             // Same step over the external view: anything spending an output of
             // an abandoned transaction is itself abandoned.
@@ -142,10 +182,27 @@ impl ManagedWalletInfo {
 
         let mut utxos_removed = 0;
         let mut records_removed = 0;
-        for funds in self.accounts.all_funding_accounts_mut() {
-            let removed = funds.apply_abandon(&abandoned);
-            utxos_removed += removed.utxos;
-            records_removed += removed.records;
+        for account in self.accounts.all_accounts_mut() {
+            match account {
+                ManagedAccountRefMut::Funds(funds) => {
+                    let removed = funds.apply_abandon(&abandoned);
+                    utxos_removed += removed.utxos;
+                    records_removed += removed.records;
+                }
+                // Keys-only accounts hold no UTXOs, but they do hold records
+                // — an asset-lock funding transaction is recorded in both its
+                // funding account and the identity account it pays. Leaving
+                // the record here makes `is_new` false on a later re-sighting,
+                // so the funds account never re-records the transaction and
+                // never re-marks its input spent.
+                ManagedAccountRefMut::Keys(keys) => {
+                    for txid in &abandoned {
+                        if keys.transactions_mut().remove(txid).is_some() {
+                            records_removed += 1;
+                        }
+                    }
+                }
+            }
         }
 
         AbandonOutcome {
