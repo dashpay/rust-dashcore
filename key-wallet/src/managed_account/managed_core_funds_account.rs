@@ -367,12 +367,96 @@ impl ManagedCoreFundsAccount {
                     }
                 }
 
+                utxos_changed |= self.drop_conflicted_transactions(tx, &context);
+
                 if utxos_changed {
                     self.keys.bump_monitor_revision();
                 }
             }
             _ => {}
         }
+    }
+
+    /// Drop the outputs of any recorded unconfirmed transaction that `tx`
+    /// provably beat to one of its inputs.
+    ///
+    /// When `tx` arrives with a final context — in a block, or InstantSend
+    /// locked — every input it spends is settled under Dash consensus. Any
+    /// *other* transaction we recorded that spends the same outpoint can
+    /// therefore never confirm, and the UTXOs it contributed (its change) are
+    /// money that does not exist. Nothing else removes them: the loser is not
+    /// in a block, so no block processing revisits it, and mempool expiry in
+    /// dash-spv only drops its own tracking without telling the wallet. Left
+    /// alone they sit in the `unconfirmed` bucket permanently.
+    ///
+    /// This is deliberately narrow. It fires only on proof — a conflicting
+    /// spend that is itself final — never on a timeout: the p2p network has no
+    /// negative signal (modern Dash Core removed BIP61 `reject`), so a
+    /// transaction that merely went quiet may still be alive in a miner's
+    /// mempool, and un-applying it would re-expose its inputs to coin
+    /// selection and invite a double-spend.
+    ///
+    /// Only the loser's *outputs* are reverted, which needs no recovery of
+    /// discarded state: its inputs are correctly accounted for by `tx`, the
+    /// transaction that actually spent them. Reverting a transaction whose
+    /// fate is unknown would additionally require restoring the spent parents,
+    /// and the `Utxo` values removed for them — with their flags — are not
+    /// retained anywhere.
+    ///
+    /// Scope: account-local. A loser recorded here has its outputs dropped
+    /// here; a loser whose change landed in a *different* account is not
+    /// reached, because both the transaction records and the UTXO set are
+    /// per-account. That covers the ordinary shape — a resend keeps the same
+    /// funding account and so the same change account — but not every one.
+    ///
+    /// Returns whether any UTXO was removed.
+    fn drop_conflicted_transactions(
+        &mut self,
+        tx: &Transaction,
+        context: &TransactionContext,
+    ) -> bool {
+        if !(context.confirmed() || matches!(context, TransactionContext::InstantSend(_))) {
+            return false;
+        }
+
+        let winner = tx.txid();
+        let spent: BTreeSet<OutPoint> =
+            tx.input.iter().map(|input| input.previous_output).collect();
+
+        // A finalized transaction keeps only its txid, so a chainlocked record
+        // can never be a loser here — and must not be, since it is settled.
+        let losers: Vec<Txid> = self
+            .keys
+            .transactions()
+            .iter()
+            .filter(|(txid, record)| {
+                **txid != winner
+                    && !record.is_confirmed()
+                    && record
+                        .transaction
+                        .input
+                        .iter()
+                        .any(|input| spent.contains(&input.previous_output))
+            })
+            .map(|(txid, _)| *txid)
+            .collect();
+
+        let mut changed = false;
+        for loser in losers {
+            let removed: Vec<OutPoint> =
+                self.utxos.keys().filter(|outpoint| outpoint.txid == loser).copied().collect();
+            for outpoint in removed {
+                self.utxos.remove(&outpoint);
+                changed = true;
+            }
+            self.keys.transactions_mut().remove(&loser);
+            tracing::info!(
+                conflicted_txid = %loser,
+                winning_txid = %winner,
+                "Dropped a conflicted transaction: its input was spent by a final transaction"
+            );
+        }
+        changed
     }
 
     /// Re-process an existing transaction with updated context (e.g.,

@@ -2052,6 +2052,114 @@ mod tests {
         assert_eq!(ctx.managed_wallet.balance.spendable(), change_amount);
     }
 
+    /// A transaction that loses a race for its inputs can never confirm, so
+    /// the change it contributed is money that does not exist. Nothing else
+    /// removes it — the loser is in no block, so no block processing revisits
+    /// it — and it would otherwise sit in the `unconfirmed` bucket forever.
+    #[tokio::test]
+    async fn test_conflicting_confirmed_spend_drops_the_losing_transactions_outputs() {
+        let mut ctx = TestWalletContext::new_random();
+        let external_address = Address::p2pkh(
+            &dashcore::PublicKey::from_slice(&[0x02; 33]).expect("pubkey"),
+            Network::Testnet,
+        );
+
+        // Confirmed funding UTXO.
+        let funding_value = 1_000_000u64;
+        let funding_tx = Transaction::dummy(&ctx.receive_address, 0..1, &[funding_value]);
+        ctx.check_transaction(
+            &funding_tx,
+            TransactionContext::InBlock(BlockInfo::new(
+                100,
+                BlockHash::from_slice(&[1u8; 32]).expect("hash"),
+                1_700_000_000,
+            )),
+        )
+        .await;
+
+        let funding_outpoint = OutPoint {
+            txid: funding_tx.txid(),
+            vout: 0,
+        };
+        let spend_of = |change_address: &Address, change_amount: u64, sent: u64| Transaction {
+            version: 2,
+            lock_time: 0,
+            input: vec![TxIn {
+                previous_output: funding_outpoint,
+                script_sig: ScriptBuf::new(),
+                sequence: 0xffffffff,
+                witness: dashcore::Witness::new(),
+            }],
+            output: vec![
+                TxOut {
+                    value: sent,
+                    script_pubkey: external_address.script_pubkey(),
+                },
+                TxOut {
+                    value: change_amount,
+                    script_pubkey: change_address.script_pubkey(),
+                },
+            ],
+            special_transaction_payload: None,
+        };
+
+        // First attempt: broadcast into the mempool, change comes back to us.
+        let first_change = ctx
+            .managed_wallet
+            .first_bip44_managed_account_mut()
+            .expect("account")
+            .next_change_address(Some(&ctx.xpub), true)
+            .expect("change address");
+        let loser = spend_of(&first_change, 399_000, 600_000);
+        ctx.check_transaction(&loser, TransactionContext::Mempool).await;
+
+        let loser_change = OutPoint {
+            txid: loser.txid(),
+            vout: 1,
+        };
+        assert!(
+            ctx.bip44_account().utxos.contains_key(&loser_change),
+            "the first attempt's change is tracked while it is still live"
+        );
+
+        // Second attempt spends the same input and confirms in a block. The
+        // first attempt can now never confirm.
+        let second_change = ctx
+            .managed_wallet
+            .first_bip44_managed_account_mut()
+            .expect("account")
+            .next_change_address(Some(&ctx.xpub), true)
+            .expect("change address");
+        let winner = spend_of(&second_change, 299_000, 700_000);
+        ctx.check_transaction(
+            &winner,
+            TransactionContext::InBlock(BlockInfo::new(
+                101,
+                BlockHash::from_slice(&[2u8; 32]).expect("hash"),
+                1_700_000_100,
+            )),
+        )
+        .await;
+
+        assert!(
+            !ctx.bip44_account().utxos.contains_key(&loser_change),
+            "the losing transaction's change must not survive as spendable money"
+        );
+        assert!(
+            !ctx.bip44_account().transactions().contains_key(&loser.txid()),
+            "the losing transaction's record must be dropped too"
+        );
+
+        // Only the winner's change remains, and it is the whole balance.
+        let winner_change = OutPoint {
+            txid: winner.txid(),
+            vout: 1,
+        };
+        assert!(ctx.bip44_account().utxos.contains_key(&winner_change));
+        assert_eq!(ctx.managed_wallet.balance.unconfirmed(), 0);
+        assert_eq!(ctx.managed_wallet.balance.confirmed(), 299_000);
+    }
+
     /// Pooled funding spans account families — an asset lock draws from BIP44,
     /// BIP32 and the DashPay contact-receiving accounts at once — so the
     /// trusted-self-send check must be answered by the whole wallet, not by
