@@ -236,10 +236,7 @@ enum MsgClass {
     /// Control traffic (mempool, tx, ping, chainlock/islock `getdata`,
     /// `filterload`…): always first, few, and usually something is blocked on it.
     Other,
-    /// Block `getdata` — the wallet's matched blocks. Highest bulk priority: a
-    /// matched block gates the gap-limit cascade and completes in a single reply,
-    /// so getting it out first keeps the scan advancing instead of stalling behind
-    /// the streaming filter backlog.
+    /// Block getdata
     Blocks,
     /// `getcfilters` — the bulk of the bytes.
     CFilters,
@@ -277,17 +274,15 @@ struct MsgQueue {
 }
 
 /// Order follows the dependency chain: block headers unblock filter headers,
-/// which unblock filters, which unblock blocks. Whatever is furthest upstream
-/// goes first, because under a strict drain last place means starved for as long
-/// as the classes ahead stay busy — and starving the head of the chain stalls
-/// everything behind it. Blocks go last despite being the bulk: they gate a
-/// filter batch's commit, not the discovery of more work.
+/// which unblock filters. Whatever is furthest upstream goes first, because under
+/// a strict drain last place means starved for as long as the classes ahead stay
+/// busy — and starving the head of the chain stalls everything behind it.
 ///
 /// Measured: with block headers last, raising the filter lookahead (far more
 /// filter traffic queued) pushed a 700ms-RTT header sync from 37s to 93s with no
 /// other change.
 const DRAIN_PRIORITY: [MsgClass; 5] =
-    [MsgClass::Other, MsgClass::Headers, MsgClass::CfHeaders, MsgClass::CFilters, MsgClass::Blocks];
+    [MsgClass::Other, MsgClass::Headers, MsgClass::CfHeaders, MsgClass::Blocks, MsgClass::CFilters];
 
 struct State {}
 
@@ -1868,7 +1863,7 @@ impl MsgQueue {
     }
 
     /// Take up to `n` messages in strict priority order ([`DRAIN_PRIORITY`]):
-    /// control traffic, then blocks, filters, filter headers, block headers. A
+    /// control traffic, then block headers, filter headers, blocks, filters. A
     /// class is fully drained (up to the remaining budget) before the next is
     /// touched, so a large backlog of one type never blocks another behind it.
     async fn pop_n(&self, n: usize) -> Vec<NetworkMessage> {
@@ -2178,16 +2173,16 @@ mod tests {
     }
 
     /// A backlog of one class must never block another behind it: the router
-    /// drains control first, then blocks, filters, filter headers, block headers.
+    /// drains control first, then block headers, filter headers, blocks, filters.
     #[tokio::test]
     async fn queue_drains_in_strict_priority_order() {
         let q = MsgQueue::new();
 
         // Pushed in reverse priority on purpose.
-        q.push(get_headers(1)).await;
-        q.push(get_cfheaders(1)).await;
         q.push(get_cfilters(0)).await;
         q.push(NetworkMessage::GetData(vec![Inventory::Block(BlockHash::dummy(1))])).await;
+        q.push(get_cfheaders(1)).await;
+        q.push(get_headers(1)).await;
         q.push(NetworkMessage::MemPool).await;
         assert_eq!(q.len(), 5);
 
@@ -2198,8 +2193,8 @@ mod tests {
                 MsgClass::Other,
                 MsgClass::Headers,
                 MsgClass::CfHeaders,
-                MsgClass::CFilters,
-                MsgClass::Blocks
+                MsgClass::Blocks,
+                MsgClass::CFilters
             ]
         );
         assert_eq!(q.len(), 0);

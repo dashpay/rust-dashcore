@@ -61,9 +61,11 @@ async fn main() -> Result<()> {
     let log_file = std::fs::File::create(output_dir.join("run.log")).context("create run.log")?;
     let terminal_filter = tracing_subscriber::EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn,dash_spv_bench=info"));
-    let file_filter = tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
-        tracing_subscriber::EnvFilter::new("warn,dash_spv=debug,dash_spv_bench=debug")
-    });
+    let file_filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| {
+            tracing_subscriber::EnvFilter::new("warn,dash_spv=debug,dash_spv_bench=debug")
+        })
+        .add_directive("peer_speed=debug".parse().expect("valid directive"));
     tracing_subscriber::registry()
         .with(
             tracing_subscriber::fmt::layer()
@@ -130,6 +132,7 @@ async fn main() -> Result<()> {
             config.max_peers = n;
         }
     }
+    config.enable_masternodes = false;
     for addr in &peers {
         config.add_peer(*addr);
     }
