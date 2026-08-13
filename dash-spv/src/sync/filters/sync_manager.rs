@@ -193,6 +193,13 @@ impl<
                 // confirmed relevant transaction must also reset the level or
                 // discovery would stay probe-terminal while the frontier
                 // walks through the tail.
+                //
+                // The confirmed-tx reset is deliberately coarse: the event
+                // does not attribute `confirmed_txids` per wallet, so every
+                // wallet the block was processed for is reset. Over-resetting
+                // only re-arms probing that would otherwise have stayed
+                // terminal — safe, at worst a few extra probe rungs — while
+                // under-resetting could permanently stall discovery.
                 for (wallet_id, scripts) in new_scripts {
                     if !scripts.is_empty() {
                         self.probe_levels.remove(wallet_id);
