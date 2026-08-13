@@ -1066,6 +1066,41 @@ impl AddressPool {
         self.maintain_gap_limit(key_source)
     }
 
+    /// Derive the window a temporarily widened gap limit of `probe_gap` would
+    /// require, then restore the steady-state gap limit.
+    ///
+    /// This is the primitive behind adaptive gap-probe escalation: BIP44
+    /// discovery with the steady-state gap limit stalls on any run of unused
+    /// indices longer than that limit, so a caller that suspects a stall can
+    /// probe a deeper window against external evidence (e.g. compact block
+    /// filters) without changing the pool's ongoing derivation policy.
+    ///
+    /// The restore deliberately does NOT un-derive: pools only grow, so the
+    /// probed tail stays derived (and monitored) even though future
+    /// [`Self::maintain_gap_limit`] calls anchor at `highest_used +
+    /// steady_gap` again. Returns the freshly derived [`AddressInfo`] entries;
+    /// empty when the pool is already generated at least `probe_gap` past its
+    /// usage frontier (or `probe_gap` does not widen the steady-state limit).
+    ///
+    /// `probe_gap` is capped at [`crate::gap_limit::MAX_GAP_LIMIT`] like any
+    /// other gap limit.
+    pub fn probe_gap_limit(
+        &mut self,
+        probe_gap: u32,
+        key_source: &KeySource,
+    ) -> Result<Vec<AddressInfo>> {
+        let steady = self.gap_limit;
+        if probe_gap <= steady {
+            return Ok(Vec::new());
+        }
+        let result = self.set_gap_limit(probe_gap, key_source);
+        // Restore the steady-state policy without un-deriving. Even if the
+        // widened derivation failed partway, whatever was derived stays and
+        // the ongoing policy must not remain at the probe width.
+        self.gap_limit = steady;
+        result
+    }
+
     /// Generate addresses to maintain the gap limit.
     ///
     /// Returns the freshly generated [`AddressInfo`] entries (in derivation
@@ -1438,6 +1473,61 @@ mod tests {
         pool.set_gap_limit(crate::gap_limit::MAX_GAP_LIMIT + 500, &key_source).unwrap();
         assert_eq!(pool.gap_limit, crate::gap_limit::MAX_GAP_LIMIT);
         assert_eq!(pool.addresses.len(), crate::gap_limit::MAX_GAP_LIMIT as usize);
+    }
+
+    #[test]
+    fn test_probe_gap_limit_widens_once_and_restores_policy() {
+        let base_path = DerivationPath::from(vec![ChildNumber::from_normal_idx(0).unwrap()]);
+        let key_source = test_key_source();
+
+        let mut pool = AddressPool::new(
+            base_path,
+            AddressPoolType::External,
+            5,
+            Network::Testnet,
+            &key_source,
+        )
+        .unwrap();
+        assert_eq!(pool.addresses.len(), 5);
+
+        // A probe not wider than the steady-state gap derives nothing.
+        assert!(pool.probe_gap_limit(5, &key_source).unwrap().is_empty());
+        assert!(pool.probe_gap_limit(3, &key_source).unwrap().is_empty());
+        assert_eq!(pool.addresses.len(), 5);
+
+        // Probing to 20 derives the widened window but leaves the steady
+        // policy at 5, and the derived tail stays.
+        let derived = pool.probe_gap_limit(20, &key_source).unwrap();
+        assert_eq!(derived.len(), 15);
+        assert_eq!(pool.gap_limit, 5);
+        assert_eq!(pool.addresses.len(), 20);
+        assert_eq!(pool.highest_generated, Some(19));
+
+        // Re-probing the same width with an unmoved frontier is a no-op.
+        assert!(pool.probe_gap_limit(20, &key_source).unwrap().is_empty());
+
+        // Usage moves the frontier; the same probe width re-derives relative
+        // to it while still restoring the steady gap limit.
+        assert!(pool.mark_index_used(7));
+        let derived = pool.probe_gap_limit(20, &key_source).unwrap();
+        assert_eq!(derived.len(), 8); // indices 20..=27 (7 + 20)
+        assert_eq!(pool.gap_limit, 5);
+        assert_eq!(pool.highest_generated, Some(27));
+
+        // Ordinary maintenance keeps anchoring at the steady gap and finds
+        // the probed tail already derived.
+        assert!(pool.maintain_gap_limit(&key_source).unwrap().is_empty());
+
+        // The probe width is capped at MAX_GAP_LIMIT.
+        let derived =
+            pool.probe_gap_limit(crate::gap_limit::MAX_GAP_LIMIT + 500, &key_source).unwrap();
+        assert_eq!(
+            pool.highest_generated,
+            Some(7 + crate::gap_limit::MAX_GAP_LIMIT),
+            "probe must clamp at MAX_GAP_LIMIT past the frontier"
+        );
+        assert_eq!(derived.len(), (crate::gap_limit::MAX_GAP_LIMIT - 20) as usize);
+        assert_eq!(pool.gap_limit, 5);
     }
 
     #[test]
