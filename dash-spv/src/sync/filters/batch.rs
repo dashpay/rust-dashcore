@@ -171,6 +171,7 @@ impl FiltersBatch {
     /// empty.
     pub(super) fn take_backward_scripts(&mut self) -> HashMap<WalletId, HashSet<ScriptBuf>> {
         std::mem::take(&mut self.backward_scripts)
+    }
     /// Record wallets whose queries matched at least one of this batch's
     /// filters during a scan or rescan (the "activity batch" marker).
     pub(super) fn note_matched_wallets<'a>(
