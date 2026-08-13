@@ -632,18 +632,15 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
                 // owns the deriving blocks; each script set is rescanned
                 // against every scanned batch, a superset of the old
                 // "donor batch and everything after it" coverage.
-                let scanned_starts: Vec<u32> = self
-                    .active_batches
-                    .iter()
-                    .filter(|(_, batch)| batch.scanned())
-                    .map(|(&start, _)| start)
-                    .collect();
+                let mut scanned_starts: Vec<u32> = Vec::new();
                 let mut scripts_by_wallet: HashMap<WalletId, HashSet<ScriptBuf>> = HashMap::new();
-                for start in &scanned_starts {
-                    if let Some(donor) = self.active_batches.get_mut(start) {
-                        for (wallet_id, scripts) in donor.take_collected_scripts() {
-                            scripts_by_wallet.entry(wallet_id).or_default().extend(scripts);
-                        }
+                for (&start, donor) in self.active_batches.iter_mut() {
+                    if !donor.scanned() {
+                        continue;
+                    }
+                    scanned_starts.push(start);
+                    for (wallet_id, scripts) in donor.take_collected_scripts() {
+                        scripts_by_wallet.entry(wallet_id).or_default().extend(scripts);
                     }
                 }
 
@@ -673,19 +670,16 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
                 // derivation happened since the batch's last full-set match,
                 // and only mark the rescan complete once that turns up
                 // nothing.
-                let needs_verification = self
-                    .active_batches
-                    .get(&batch_start)
-                    .is_some_and(|b| b.full_match_generation() != self.script_generation);
+                let last_full_match =
+                    self.active_batches.get(&batch_start).map(|b| b.full_match_generation());
+                let needs_verification =
+                    last_full_match.is_some_and(|generation| generation != self.script_generation);
                 if needs_verification {
                     let generation_now = self.script_generation;
                     tracing::debug!(
                         "Verification rescan for batch {}: full-set match generation {} -> {}",
                         batch_start,
-                        self.active_batches
-                            .get(&batch_start)
-                            .map(|b| b.full_match_generation())
-                            .unwrap_or(0),
+                        last_full_match.unwrap_or(0),
                         generation_now
                     );
                     let wallet_ids: Vec<WalletId> = self
@@ -846,16 +840,20 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
             return Ok((Vec::new(), false));
         }
 
-        let later_scanned: Vec<u32> = self
-            .active_batches
-            .iter()
-            .filter(|(&start, batch)| start > batch_start && batch.scanned())
-            .map(|(&start, _)| start)
-            .collect();
+        // Every probe rescan covers this batch plus each later batch that has
+        // already been scanned.
+        let mut rescan_targets = vec![batch_start];
+        rescan_targets.extend(
+            self.active_batches
+                .iter()
+                .filter(|(&start, batch)| start > batch_start && batch.scanned())
+                .map(|(&start, _)| start),
+        );
 
         let mut events = Vec::new();
         for wallet_id in candidates {
             let mut level = self.probe_levels.get(&wallet_id).copied().unwrap_or(0);
+            let mut found_blocks = false;
             while level < PROBE_GAP_LADDER.len() {
                 let probe_gap = PROBE_GAP_LADDER[level];
                 let new_scripts = self.wallet.write().await.probe_extend_gap(&wallet_id, probe_gap);
@@ -864,23 +862,22 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
                     // frontier (an earlier pass probed this rung and nothing
                     // moved since) — escalate.
                     level += 1;
-                    self.probe_levels.insert(wallet_id, level);
                     continue;
                 }
 
                 let scripts_by_wallet: HashMap<WalletId, HashSet<ScriptBuf>> =
                     HashMap::from([(wallet_id, new_scripts.iter().cloned().collect())]);
-                let mut probe_events = self.rescan_batch(batch_start, &scripts_by_wallet).await?;
-                for later_start in &later_scanned {
-                    probe_events.extend(self.rescan_batch(*later_start, &scripts_by_wallet).await?);
+                let mut probe_events = Vec::new();
+                for start in &rescan_targets {
+                    probe_events.extend(self.rescan_batch(*start, &scripts_by_wallet).await?);
                 }
                 let blocks_found: usize = probe_events
                     .iter()
-                    .map(|event| match event {
+                    .filter_map(|event| match event {
                         SyncEvent::BlocksNeeded {
                             blocks,
-                        } => blocks.len(),
-                        _ => 0,
+                        } => Some(blocks.len()),
+                        _ => None,
                     })
                     .sum();
                 tracing::info!(
@@ -896,14 +893,18 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
                 if blocks_found > 0 {
                     // Resume at this rung: the same width re-derives from the
                     // new frontier once the found blocks advance it.
-                    self.probe_levels.insert(wallet_id, level);
-                    return Ok((events, true));
+                    found_blocks = true;
+                    break;
                 }
                 level += 1;
-                self.probe_levels.insert(wallet_id, level);
             }
-            // Ladder exhausted with no finds: terminal for this wallet until
-            // a confirmed transaction or new derivation resets its level.
+            // Past the last rung means the ladder is exhausted with no finds:
+            // terminal for this wallet until a confirmed transaction or new
+            // derivation resets its level.
+            self.probe_levels.insert(wallet_id, level);
+            if found_blocks {
+                return Ok((events, true));
+            }
         }
         Ok((events, false))
     }

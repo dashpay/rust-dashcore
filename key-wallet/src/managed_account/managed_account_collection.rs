@@ -7,7 +7,7 @@ use std::collections::BTreeMap;
 
 use crate::account::account_collection::{DashpayAccountKey, PlatformPaymentAccountKey};
 use crate::gap_limit::DIP17_GAP_LIMIT;
-use crate::managed_account::address_pool::AddressPoolType;
+use crate::managed_account::address_pool::{AddressInfo, AddressPoolType};
 use crate::managed_account::managed_account_ref::{
     ManagedAccountRef, ManagedAccountRefMut, OwnedManagedCoreAccount,
 };
@@ -16,6 +16,7 @@ use crate::managed_account::managed_account_type::ManagedAccountType;
 use crate::managed_account::managed_platform_account::ManagedPlatformAccount;
 use crate::managed_account::{ManagedCoreFundsAccount, ManagedCoreKeysAccount};
 use crate::transaction_checking::account_checker::CoreAccountTypeMatch;
+use crate::transaction_checking::transaction_router::AccountTypeToCheck;
 use crate::KeySource;
 use crate::{Account, AccountCollection, AccountType};
 #[cfg(feature = "serde")]
@@ -1008,26 +1009,18 @@ impl ManagedAccountCollection {
     /// get their monitor revision bumped.
     ///
     /// [`AddressPool::probe_gap_limit`]: crate::managed_account::address_pool::AddressPool::probe_gap_limit
-    /// [`AccountTypeToCheck`]: crate::transaction_checking::transaction_router::AccountTypeToCheck
     pub fn probe_extend_gap_with<F>(
         &mut self,
         probe_gap: u32,
         key_source_for: F,
-    ) -> Vec<crate::managed_account::address_pool::AddressInfo>
+    ) -> Vec<AddressInfo>
     where
-        F: Fn(
-            &crate::transaction_checking::transaction_router::AccountTypeToCheck,
-            Option<u32>,
-        ) -> KeySource,
+        F: Fn(&AccountTypeToCheck, Option<u32>) -> KeySource,
     {
         let mut derived = Vec::new();
         for account in self.all_funding_accounts_mut() {
             let account_type = account.managed_account_type().to_account_type();
-            let Ok(to_check) =
-                crate::transaction_checking::transaction_router::AccountTypeToCheck::try_from(
-                    account_type,
-                )
-            else {
+            let Ok(to_check) = AccountTypeToCheck::try_from(account_type) else {
                 continue;
             };
             let key_source = key_source_for(&to_check, account_type.index());
