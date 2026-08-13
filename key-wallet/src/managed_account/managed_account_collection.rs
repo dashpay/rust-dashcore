@@ -3,7 +3,10 @@
 //! This module provides a structure for managing multiple accounts
 //! across different networks in a hierarchical manner.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
+
+use dashcore::blockdata::transaction::OutPoint;
+use dashcore::Transaction;
 
 use crate::account::account_collection::{DashpayAccountKey, PlatformPaymentAccountKey};
 use crate::gap_limit::DIP17_GAP_LIMIT;
@@ -932,6 +935,27 @@ impl ManagedAccountCollection {
         accounts.extend(self.dashpay_external_accounts.values().map(ManagedAccountRef::Funds));
 
         accounts
+    }
+
+    /// Union, across every funds-bearing account, of the outpoints among
+    /// `tx`'s inputs that the wallet holds as final UTXOs.
+    ///
+    /// A single account can only answer this for the coins it owns, but
+    /// pooled funding (asset locks draw from BIP44 + BIP32 + the DashPay
+    /// contact-receiving accounts) routinely spreads one transaction's inputs
+    /// across several. The union is what makes the trusted-self-send check in
+    /// [`ManagedCoreFundsAccount::record_transaction`] see the whole wallet.
+    ///
+    /// Must be taken before any account processes `tx` — `update_utxos`
+    /// removes spent parents as it goes.
+    pub(crate) fn final_parents_of(&self, tx: &Transaction) -> BTreeSet<OutPoint> {
+        let mut parents = BTreeSet::new();
+        for account in self.all_accounts() {
+            if let ManagedAccountRef::Funds(funds) = account {
+                funds.collect_final_parents(tx, &mut parents);
+            }
+        }
+        parents
     }
 
     /// Get all accounts in the collection as mutable

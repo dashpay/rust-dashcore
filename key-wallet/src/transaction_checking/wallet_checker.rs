@@ -85,6 +85,15 @@ impl WalletTransactionChecker for ManagedWalletInfo {
             return result;
         }
 
+        // Wallet-wide view of this transaction's input parents, taken while
+        // every account is still readable and before any `update_utxos` call
+        // starts removing spent parents. Without it a pooled self-send — the
+        // normal shape for asset locks, which fund from BIP44 + BIP32 + the
+        // DashPay contact-receiving accounts — is not recognised as ours by
+        // the account holding the change, and that change lands in the
+        // `unconfirmed` bucket.
+        let external_final_parents = self.accounts.final_parents_of(tx);
+
         // Check if this transaction already exists in any affected account
         let txid = tx.txid();
         let mut is_new = true;
@@ -150,6 +159,7 @@ impl WalletTransactionChecker for ManagedWalletInfo {
                             context.clone(),
                             tx_type,
                             &self.observed_spent_outpoints,
+                            &external_final_parents,
                         );
                         account.mark_utxos_instant_send(&txid);
                         result.new_records.push(record);
@@ -182,6 +192,7 @@ impl WalletTransactionChecker for ManagedWalletInfo {
                     context.clone(),
                     tx_type,
                     &self.observed_spent_outpoints,
+                    &external_final_parents,
                 );
                 result.new_records.push(record);
                 result.state_modified = true;
@@ -193,6 +204,7 @@ impl WalletTransactionChecker for ManagedWalletInfo {
                     context.clone(),
                     tx_type,
                     &self.observed_spent_outpoints,
+                    &external_final_parents,
                 ) {
                     result.state_modified = true;
                     if existed_before {
@@ -286,7 +298,7 @@ mod tests {
     use dashcore::TxOut;
     use dashcore::{Address, BlockHash, TxIn, Txid};
     use dashcore_hashes::Hash;
-    use std::collections::BTreeMap;
+    use std::collections::{BTreeMap, BTreeSet};
 
     /// Test wallet checker with unrelated transaction
     #[tokio::test]
@@ -1412,6 +1424,7 @@ mod tests {
             block_context,
             tx_type,
             &BTreeMap::new(),
+            &BTreeSet::new(),
         );
         assert!(backfilled.is_some(), "Should return Some when backfilling a missing record");
 
@@ -1469,6 +1482,7 @@ mod tests {
             block_context,
             tx_type,
             &BTreeMap::new(),
+            &BTreeSet::new(),
         );
         assert!(confirmed.is_some(), "Should return Some when confirming unconfirmed tx");
 
@@ -2036,6 +2050,102 @@ mod tests {
         assert_eq!(ctx.managed_wallet.balance.confirmed(), change_amount);
         assert_eq!(ctx.managed_wallet.balance.unconfirmed(), 0);
         assert_eq!(ctx.managed_wallet.balance.spendable(), change_amount);
+    }
+
+    /// Pooled funding spans account families — an asset lock draws from BIP44,
+    /// BIP32 and the DashPay contact-receiving accounts at once — so the
+    /// trusted-self-send check must be answered by the whole wallet, not by
+    /// the single account that happens to hold the change. Here the only input
+    /// belongs to the BIP32 account while the change lands on BIP44: the
+    /// transaction is still entirely ours, and its change must be trusted.
+    #[tokio::test]
+    async fn test_self_send_change_is_trusted_when_parent_is_in_a_sibling_account() {
+        let mut ctx = TestWalletContext::new_random();
+        let external_address = Address::p2pkh(
+            &dashcore::PublicKey::from_slice(&[0x02; 33]).expect("pubkey"),
+            Network::Testnet,
+        );
+
+        // Fund the *BIP32* account, confirmed in a block.
+        let bip32_xpub = ctx
+            .wallet
+            .accounts
+            .standard_bip32_accounts
+            .get(&0)
+            .expect("BIP32 account")
+            .account_xpub;
+        let bip32_address = ctx
+            .managed_wallet
+            .first_bip32_managed_account_mut()
+            .expect("BIP32 managed account")
+            .next_receive_address(Some(&bip32_xpub), true)
+            .expect("BIP32 receive address");
+
+        let funding_value = 1_000_000u64;
+        let funding_tx = Transaction::dummy(&bip32_address, 0..1, &[funding_value]);
+        let block_context = TransactionContext::InBlock(BlockInfo::new(
+            100,
+            BlockHash::from_slice(&[7u8; 32]).expect("hash"),
+            1_700_000_000,
+        ));
+        ctx.check_transaction(&funding_tx, block_context).await;
+        assert_eq!(ctx.managed_wallet.balance.confirmed(), funding_value);
+
+        // Change goes to the BIP44 account, which holds none of the inputs.
+        let change_address = ctx
+            .managed_wallet
+            .first_bip44_managed_account_mut()
+            .expect("account")
+            .next_change_address(Some(&ctx.xpub), true)
+            .expect("change address");
+
+        let send_amount = 600_000u64;
+        let fee = 1_000u64;
+        let change_amount = funding_value - send_amount - fee;
+        let spend_tx = Transaction {
+            version: 2,
+            lock_time: 0,
+            input: vec![TxIn {
+                previous_output: OutPoint {
+                    txid: funding_tx.txid(),
+                    vout: 0,
+                },
+                script_sig: ScriptBuf::new(),
+                sequence: 0xffffffff,
+                witness: dashcore::Witness::new(),
+            }],
+            output: vec![
+                TxOut {
+                    value: send_amount,
+                    script_pubkey: external_address.script_pubkey(),
+                },
+                TxOut {
+                    value: change_amount,
+                    script_pubkey: change_address.script_pubkey(),
+                },
+            ],
+            special_transaction_payload: None,
+        };
+
+        let result = ctx.check_transaction(&spend_tx, TransactionContext::Mempool).await;
+        assert!(result.is_relevant);
+
+        let change_outpoint = OutPoint {
+            txid: spend_tx.txid(),
+            vout: 1,
+        };
+        let change_utxo =
+            ctx.bip44_account().utxos.get(&change_outpoint).expect("change UTXO recorded");
+        assert!(!change_utxo.is_confirmed);
+        assert!(
+            change_utxo.is_trusted,
+            "change of a wallet-owned transfer must be trusted even when the spent \
+             parent lives in a sibling account"
+        );
+
+        // And therefore it is confirmed, not unconfirmed, in the balance split.
+        assert_eq!(ctx.managed_wallet.balance.unconfirmed(), 0);
+        assert_eq!(ctx.managed_wallet.balance.confirmed(), change_amount);
     }
 
     /// Sibling of `test_self_send_change_in_mempool_lands_in_confirmed_balance`:
