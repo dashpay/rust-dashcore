@@ -6,8 +6,8 @@ use crate::account::ManagedCoreFundsAccount;
 use crate::managed_account::managed_account_ref::{ManagedAccountRef, ManagedAccountRefMut};
 use crate::managed_account::managed_platform_account::ManagedPlatformAccount;
 use crate::managed_account::ManagedCoreKeysAccount;
-use dashcore::Txid;
-use std::collections::BTreeSet;
+use dashcore::{OutPoint, Txid};
+use std::collections::{BTreeMap, BTreeSet};
 
 /// What [`ManagedWalletInfo::abandon_transaction`] removed.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -59,6 +59,23 @@ impl ManagedWalletInfo {
     /// Does not recompute the balance — callers batching several abandons
     /// should run [`update_balance`](Self::update_balance) once at the end.
     pub fn abandon_transaction(&mut self, root: Txid) -> AbandonOutcome {
+        self.abandon_transaction_with_spends(root, &BTreeMap::new())
+    }
+
+    /// [`abandon_transaction`](Self::abandon_transaction), with an external
+    /// view of who spent what.
+    ///
+    /// The descendant walk normally reads recorded transactions, but a caller
+    /// restoring a wallet may hold UTXOs whose creating transactions were
+    /// never put back into the in-memory map — leaving the walk unable to see
+    /// that one abandoned output funded the next transaction along. Callers
+    /// with a persistence mirror can supply `external_spends`, mapping an
+    /// outpoint to the transaction that spent it, and the walk follows both.
+    pub fn abandon_transaction_with_spends(
+        &mut self,
+        root: Txid,
+        external_spends: &BTreeMap<OutPoint, Txid>,
+    ) -> AbandonOutcome {
         let mut abandoned = BTreeSet::from([root]);
 
         // Transitive closure over recorded spenders. Each pass can only add
@@ -69,6 +86,13 @@ impl ManagedWalletInfo {
             for account in self.accounts.all_accounts() {
                 if let ManagedAccountRef::Funds(funds) = account {
                     funds.collect_spenders_of(&abandoned, &mut found);
+                }
+            }
+            // Same step over the external view: anything spending an output of
+            // an abandoned transaction is itself abandoned.
+            for (outpoint, spender) in external_spends {
+                if abandoned.contains(&outpoint.txid) {
+                    found.insert(*spender);
                 }
             }
             let before = abandoned.len();
