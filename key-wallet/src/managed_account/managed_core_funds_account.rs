@@ -377,6 +377,79 @@ impl ManagedCoreFundsAccount {
         }
     }
 
+    /// Collect the txids of recorded unconfirmed transactions that spend an
+    /// output of any transaction in `abandoned`.
+    ///
+    /// One step of the descendant walk driven by
+    /// [`ManagedWalletInfo::abandon_transaction`]. A confirmed or finalized
+    /// transaction is never a descendant for this purpose: it is settled on
+    /// chain, so whatever it spent was real.
+    ///
+    /// [`ManagedWalletInfo::abandon_transaction`]: crate::wallet::managed_wallet_info::ManagedWalletInfo::abandon_transaction
+    pub(crate) fn collect_spenders_of(
+        &self,
+        abandoned: &BTreeSet<Txid>,
+        into: &mut BTreeSet<Txid>,
+    ) {
+        for (txid, record) in self.keys.transactions() {
+            if record.is_confirmed() || abandoned.contains(txid) {
+                continue;
+            }
+            let spends_abandoned = record
+                .transaction
+                .input
+                .iter()
+                .any(|input| abandoned.contains(&input.previous_output.txid));
+            if spends_abandoned {
+                into.insert(*txid);
+            }
+        }
+    }
+
+    /// Remove every trace of `abandoned` from this account.
+    ///
+    /// Drops the outputs those transactions contributed and their records, and
+    /// releases the outpoints they spent from `spent_outpoints` so the coins
+    /// become eligible for rediscovery.
+    ///
+    /// The released parents are deliberately **not** re-inserted into `utxos`.
+    /// `update_utxos` discards the `Utxo` when it removes a spent parent, and
+    /// `InputDetail` keeps only index/value/address, so the flags that decide
+    /// which balance bucket a restored coin belongs in are not retained
+    /// anywhere. Inventing them would be a guess. What these coins genuinely
+    /// are is unspent on chain — the abandoned transaction never reached the
+    /// network — so the correct source of truth is a rescan, which releasing
+    /// them from `spent_outpoints` now permits.
+    ///
+    /// Returns the number of UTXOs removed.
+    pub(crate) fn apply_abandon(&mut self, abandoned: &BTreeSet<Txid>) -> usize {
+        let doomed: Vec<OutPoint> = self
+            .utxos
+            .keys()
+            .filter(|outpoint| abandoned.contains(&outpoint.txid))
+            .copied()
+            .collect();
+        let removed = doomed.len();
+        for outpoint in doomed {
+            self.utxos.remove(&outpoint);
+        }
+
+        for txid in abandoned {
+            if let Some(record) = self.keys.transactions_mut().remove(txid) {
+                for input in &record.transaction.input {
+                    self.spent_outpoints.remove(&input.previous_output);
+                }
+                self.reservations
+                    .release(record.transaction.input.iter().map(|input| &input.previous_output));
+            }
+        }
+
+        if removed > 0 {
+            self.keys.bump_monitor_revision();
+        }
+        removed
+    }
+
     /// Drop the outputs of any recorded unconfirmed transaction that `tx`
     /// provably beat to one of its inputs.
     ///

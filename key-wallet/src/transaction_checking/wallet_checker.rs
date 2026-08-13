@@ -2052,6 +2052,129 @@ mod tests {
         assert_eq!(ctx.managed_wallet.balance.spendable(), change_amount);
     }
 
+    /// Abandoning a transaction that never reached the network must take the
+    /// transactions built on its change with it. This reproduces the shape
+    /// seen on a testnet device: an asset-lock funding transaction stuck at
+    /// `Built` whose broadcast never happened, then two further self-sends
+    /// chained onto its phantom change. Five UTXOs from three transactions,
+    /// none of which the network ever saw, and the whole chain has to go.
+    #[tokio::test]
+    async fn test_abandoning_an_unbroadcast_root_cascades_to_its_descendants() {
+        let mut ctx = TestWalletContext::new_random();
+        let external_address = Address::p2pkh(
+            &dashcore::PublicKey::from_slice(&[0x02; 33]).expect("pubkey"),
+            Network::Testnet,
+        );
+
+        // A real, confirmed coin funds the chain.
+        let funding_value = 100_000_000u64;
+        let funding_tx = Transaction::dummy(&ctx.receive_address, 0..1, &[funding_value]);
+        ctx.check_transaction(
+            &funding_tx,
+            TransactionContext::InBlock(BlockInfo::new(
+                100,
+                BlockHash::from_slice(&[1u8; 32]).expect("hash"),
+                1_700_000_000,
+            )),
+        )
+        .await;
+        assert_eq!(ctx.managed_wallet.balance.confirmed(), funding_value);
+
+        // Build a three-link chain, each link spending its parent's change.
+        // Every one of them stays in the mempool: nothing was ever broadcast.
+        let mut parent = OutPoint {
+            txid: funding_tx.txid(),
+            vout: 0,
+        };
+        let mut change_left = funding_value;
+        let mut chain = Vec::new();
+        for sent in [40_000_000u64, 20_000_000, 5_000_000] {
+            let fee = 226u64;
+            let change = change_left - sent - fee;
+            let change_address = ctx
+                .managed_wallet
+                .first_bip44_managed_account_mut()
+                .expect("account")
+                .next_change_address(Some(&ctx.xpub), true)
+                .expect("change address");
+            let tx = Transaction {
+                version: 2,
+                lock_time: 0,
+                input: vec![TxIn {
+                    previous_output: parent,
+                    script_sig: ScriptBuf::new(),
+                    sequence: 0xffffffff,
+                    witness: dashcore::Witness::new(),
+                }],
+                output: vec![
+                    TxOut {
+                        value: sent,
+                        script_pubkey: external_address.script_pubkey(),
+                    },
+                    TxOut {
+                        value: change,
+                        script_pubkey: change_address.script_pubkey(),
+                    },
+                ],
+                special_transaction_payload: None,
+            };
+            ctx.check_transaction(&tx, TransactionContext::Mempool).await;
+            parent = OutPoint {
+                txid: tx.txid(),
+                vout: 1,
+            };
+            change_left = change;
+            chain.push(tx);
+        }
+
+        let root = chain[0].txid();
+        // Only the tip's change is tracked — each link consumed its parent's.
+        assert_eq!(ctx.bip44_account().utxos.len(), 1, "one live change output");
+
+        let outcome = ctx.managed_wallet.abandon_transaction(root);
+        ctx.managed_wallet.update_balance();
+
+        assert_eq!(
+            outcome.abandoned.len(),
+            3,
+            "the root and both descendants must be abandoned, got {:?}",
+            outcome.abandoned
+        );
+        for tx in &chain {
+            assert!(
+                outcome.abandoned.contains(&tx.txid()),
+                "chain member {} must be abandoned",
+                tx.txid()
+            );
+            assert!(
+                !ctx.bip44_account().transactions().contains_key(&tx.txid()),
+                "chain member {} must lose its record",
+                tx.txid()
+            );
+        }
+        assert!(ctx.bip44_account().utxos.is_empty(), "no phantom output may survive the cascade");
+        assert_eq!(ctx.managed_wallet.balance.unconfirmed(), 0);
+
+        // The real coin the chain consumed is released from the spent set, so
+        // a rescan can rediscover it rather than being told it is spent.
+        let rediscovered = ctx
+            .check_transaction(
+                &funding_tx,
+                TransactionContext::InBlock(BlockInfo::new(
+                    100,
+                    BlockHash::from_slice(&[1u8; 32]).expect("hash"),
+                    1_700_000_000,
+                )),
+            )
+            .await;
+        assert!(rediscovered.is_relevant);
+        assert_eq!(
+            ctx.managed_wallet.balance.confirmed(),
+            funding_value,
+            "the funding coin comes back on rescan — the chain never spent it on chain"
+        );
+    }
+
     /// A transaction that loses a race for its inputs can never confirm, so
     /// the change it contributed is money that does not exist. Nothing else
     /// removes it — the loser is in no block, so no block processing revisits

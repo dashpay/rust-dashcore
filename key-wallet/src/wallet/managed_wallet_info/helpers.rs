@@ -3,10 +3,93 @@
 use super::ManagedWalletInfo;
 use crate::account::account_collection::PlatformPaymentAccountKey;
 use crate::account::ManagedCoreFundsAccount;
+use crate::managed_account::managed_account_ref::{ManagedAccountRef, ManagedAccountRefMut};
 use crate::managed_account::managed_platform_account::ManagedPlatformAccount;
 use crate::managed_account::ManagedCoreKeysAccount;
+use dashcore::Txid;
+use std::collections::BTreeSet;
+
+/// What [`ManagedWalletInfo::abandon_transaction`] removed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AbandonOutcome {
+    /// Every transaction dropped: the root and its recorded descendants.
+    pub abandoned: BTreeSet<Txid>,
+    /// How many UTXOs those transactions had contributed.
+    pub utxos_removed: usize,
+}
+
+impl AbandonOutcome {
+    /// Whether anything was actually removed.
+    pub fn is_empty(&self) -> bool {
+        self.abandoned.is_empty() && self.utxos_removed == 0
+    }
+}
 
 impl ManagedWalletInfo {
+    /// Abandon `root` and every recorded transaction descending from it.
+    ///
+    /// A transaction the network never accepted still mutated this wallet:
+    /// its outputs were credited and its inputs marked spent. Nothing reverses
+    /// that on its own — the transaction is in no block, so no block
+    /// processing revisits it — and further transactions can be built on its
+    /// change, each inheriting the same fiction. Left alone the whole chain
+    /// sits in the `unconfirmed` bucket permanently, as money the wallet
+    /// displays and does not have.
+    ///
+    /// The walk is transitive and wallet-wide: pooled funding spreads a
+    /// transaction's inputs across account families, so a descendant's change
+    /// can land in an account that holds none of the root. Confirmed and
+    /// finalized transactions are never followed — they are settled on chain,
+    /// so whatever they spent was real.
+    ///
+    /// **This call asserts that the root is dead; it does not establish it.**
+    /// The p2p network has no negative signal — modern Dash Core removed BIP61
+    /// `reject` — so silence is not proof, and a transaction that merely went
+    /// quiet may still be live in a miner's mempool. Abandoning such a
+    /// transaction re-exposes its inputs to coin selection and invites a
+    /// double-spend. Only call this where the death is known: a build that
+    /// provably never reached the network, or an explicit user decision. The
+    /// judgement belongs to the layer that owns broadcast policy.
+    ///
+    /// The coins the abandoned transactions consumed are released from the
+    /// spent set so a rescan can rediscover them; see
+    /// [`ManagedCoreFundsAccount::apply_abandon`] for why they are not
+    /// re-credited directly.
+    ///
+    /// Does not recompute the balance — callers batching several abandons
+    /// should run [`update_balance`](Self::update_balance) once at the end.
+    pub fn abandon_transaction(&mut self, root: Txid) -> AbandonOutcome {
+        let mut abandoned = BTreeSet::from([root]);
+
+        // Transitive closure over recorded spenders. Each pass can only add
+        // txids, and the set is bounded by the recorded transactions, so this
+        // terminates; a spend cycle is impossible anyway.
+        loop {
+            let mut found = BTreeSet::new();
+            for account in self.accounts.all_accounts() {
+                if let ManagedAccountRef::Funds(funds) = account {
+                    funds.collect_spenders_of(&abandoned, &mut found);
+                }
+            }
+            let before = abandoned.len();
+            abandoned.extend(found);
+            if abandoned.len() == before {
+                break;
+            }
+        }
+
+        let mut utxos_removed = 0;
+        for account in self.accounts.all_accounts_mut() {
+            if let ManagedAccountRefMut::Funds(funds) = account {
+                utxos_removed += funds.apply_abandon(&abandoned);
+            }
+        }
+
+        AbandonOutcome {
+            abandoned,
+            utxos_removed,
+        }
+    }
     // BIP44 Account Helpers
 
     /// Get the first BIP44 managed account
