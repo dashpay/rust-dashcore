@@ -8,7 +8,9 @@ use crate::managed_account::managed_account_ref::ManagedAccountRefMut;
 use crate::managed_account::managed_account_trait::ManagedAccountTrait;
 use crate::managed_account::managed_platform_account::ManagedPlatformAccount;
 use crate::managed_account::ManagedCoreKeysAccount;
-use dashcore::{OutPoint, Txid};
+use crate::transaction_checking::TransactionContext;
+use crate::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
+use dashcore::{OutPoint, Transaction, Txid};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// What [`ManagedWalletInfo::abandon_transaction`] removed.
@@ -60,6 +62,35 @@ fn collect_spenders_of_records(
 }
 
 impl ManagedWalletInfo {
+    /// Drop the outputs of every recorded transaction that `tx` provably beat
+    /// to one of its inputs, across the whole wallet.
+    ///
+    /// Wallet-wide on purpose, and deliberately not gated on relevance. Two
+    /// separate gaps make an account-local, relevance-gated sweep miss the
+    /// cases that matter:
+    ///
+    /// * Pooled funding puts a loser's change in an account the winner never
+    ///   touches, so sweeping only the winner's accounts leaves it credited —
+    ///   and as *trusted* change it is counted confirmed and is spendable.
+    /// * Relevance is computed from matching outputs and from inputs still
+    ///   present in `utxos`, but the loser already removed the shared input.
+    ///   A winner that spends our coin and pays only external addresses is
+    ///   therefore classified irrelevant, and no account is visited at all.
+    ///
+    /// Returns whether anything was removed.
+    pub fn sweep_conflicts(&mut self, tx: &Transaction, context: &TransactionContext) -> bool {
+        let mut changed = false;
+        for account in self.accounts.all_accounts_mut() {
+            if let ManagedAccountRefMut::Funds(funds) = account {
+                changed |= funds.drop_conflicted_transactions(tx, context);
+            }
+        }
+        if changed {
+            self.update_balance();
+        }
+        changed
+    }
+
     /// Whether any account holds `txid` as settled by the network.
     ///
     /// Settled means chainlock-finalized, in a block, **or InstantSend-locked**
@@ -118,7 +149,7 @@ impl ManagedWalletInfo {
     ///
     /// Does not recompute the balance — callers batching several abandons
     /// should run `update_balance`
-    /// ([`WalletInfoInterface`](crate::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface))
+    /// (from [`WalletInfoInterface`])
     /// once at the end.
     pub fn abandon_transaction(&mut self, root: Txid) -> AbandonOutcome {
         self.abandon_transaction_with_spends(root, &BTreeMap::new())

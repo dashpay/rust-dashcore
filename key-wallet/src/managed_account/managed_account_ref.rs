@@ -405,15 +405,6 @@ impl<'a> ManagedAccountRefMut<'a> {
         }
     }
 
-    /// Drop the outputs of any recorded unconfirmed transaction that `tx`
-    /// provably beat to one of its inputs. No-op for the
-    /// [`Keys`](Self::Keys) variant, which tracks no UTXOs.
-    pub(crate) fn sweep_conflicts_for(&mut self, tx: &Transaction, context: &TransactionContext) {
-        if let ManagedAccountRefMut::Funds(a) = self {
-            a.drop_conflicted_transactions(tx, context);
-        }
-    }
-
     /// Mark all UTXOs belonging to `txid` as InstantSend-locked.
     ///
     /// Returns `true` if any UTXO was newly marked. Always returns `false`

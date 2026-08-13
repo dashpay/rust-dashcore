@@ -580,15 +580,32 @@ impl WalletInfoInterface for ManagedWalletInfo {
             return false;
         }
         let mut any_changed = false;
+        // Kept for the sweep below: it needs the locked transaction's inputs,
+        // and this signature carries only its txid.
+        let mut locked_transaction = None;
         for mut account in self.accounts.all_accounts_mut() {
             if account.mark_utxos_instant_send(txid) {
                 any_changed = true;
             }
             if let Some(record) = account.transactions_mut().get_mut(txid) {
                 record.update_context(TransactionContext::InstantSend(lock.clone()));
+                if locked_transaction.is_none() {
+                    locked_transaction = Some(record.transaction.clone());
+                }
             }
         }
-        if any_changed {
+        // An IS lock settles this transaction's inputs, so any recorded
+        // competing spend can never confirm. This is the path the live
+        // dash-spv pipeline takes for a lock arriving after the transaction is
+        // already tracked (`process_instant_send_lock`), and it had no sweep —
+        // the one in `check_core_transaction` is only reachable on a first
+        // sighting that already carries the lock.
+        let swept = locked_transaction.is_some_and(|tx| {
+            self.sweep_conflicts(&tx, &TransactionContext::InstantSend(lock.clone()))
+        });
+        if any_changed && !swept {
+            // `sweep_conflicts` recomputes on its own when it removes
+            // something, so this only covers the marking-only case.
             self.update_balance();
         }
         any_changed
