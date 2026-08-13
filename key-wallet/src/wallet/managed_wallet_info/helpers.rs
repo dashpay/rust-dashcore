@@ -52,12 +52,16 @@ impl ManagedWalletInfo {
     /// judgement belongs to the layer that owns broadcast policy.
     ///
     /// The coins the abandoned transactions consumed are released from the
-    /// spent set so a rescan can rediscover them; see
-    /// [`ManagedCoreFundsAccount::apply_abandon`] for why they are not
-    /// re-credited directly.
+    /// spent set so a rescan can rediscover them, rather than being
+    /// re-credited directly: the `Utxo` removed for a spent parent is
+    /// discarded by `update_utxos` and `InputDetail` keeps only
+    /// index/value/address, so the flags that decide a restored coin's
+    /// balance bucket are not retained anywhere.
     ///
     /// Does not recompute the balance — callers batching several abandons
-    /// should run [`update_balance`](Self::update_balance) once at the end.
+    /// should run `update_balance`
+    /// ([`WalletInfoInterface`](crate::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface))
+    /// once at the end.
     pub fn abandon_transaction(&mut self, root: Txid) -> AbandonOutcome {
         self.abandon_transaction_with_spends(root, &BTreeMap::new())
     }
