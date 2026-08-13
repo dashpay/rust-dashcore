@@ -154,12 +154,27 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> SyncManager for BlockHeadersMana
 
         // During initial sync, send more requests and log progress
         if self.state() == SyncState::Syncing {
+            // Take, refill, then store — the same order `handle_headers_pipeline`
+            // uses, since draining can expose a segment the refill should pick
+            // up in this pass rather than the next one.
+            let ready_batches = self.pipeline.take_ready_to_store();
+
             let sent = self.pipeline.send_pending(requests)?;
             if sent > 0 {
                 tracing::debug!("Tick: pipeline sent {} more requests", sent);
             }
 
-            return Ok(vec![]);
+            // Promotion is otherwise reachable only from `handle_headers_pipeline`,
+            // i.e. only when a `Headers` message arrives — so a sync has no way to
+            // finish itself once the final segment completes, because no further
+            // `Headers` will come. That is not hypothetical: a testnet restore was
+            // found frozen with 1,046,289 headers buffered in memory and the stored
+            // tip stuck at 1,474,000, peers connected and chain locks still
+            // arriving, until the app was restarted. Retrying on the 100ms tick
+            // makes a missed promotion self-heal whatever caused it to be missed.
+            let mut events = self.store_ready_batches(ready_batches).await?;
+            events.extend(self.finalize_sync_if_complete(requests).await?);
+            return Ok(events);
         }
 
         // Post-sync: check for stale block announcements
