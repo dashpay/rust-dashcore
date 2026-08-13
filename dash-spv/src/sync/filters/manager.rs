@@ -560,6 +560,19 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
                 break;
             }
 
+            // A block in flight for ANY active batch may still derive new
+            // scripts when it lands, and those scripts may match THIS
+            // batch's filters. Sealing now would race that delivery — the
+            // same knowledge-behind-the-watermark loss the verification
+            // rescan exists to prevent, just through a narrower window.
+            // Hold the commit until nothing is in flight anywhere; the
+            // pending blocks drain through the normal event flow and either
+            // bump the script generation (re-arming the verification below)
+            // or leave the lull intact, at which point the commit proceeds.
+            if self.active_batches.values().any(|other| other.pending_blocks() > 0) {
+                break;
+            }
+
             // Check if rescan is needed and not done
             if !batch.rescan_complete() {
                 // Take per-wallet collected scripts from the batch
