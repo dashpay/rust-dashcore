@@ -43,6 +43,16 @@ pub(super) struct FiltersBatch {
     /// once, instead of the whole history being reloaded per derivation
     /// round.
     backward_scripts: HashMap<WalletId, HashSet<ScriptBuf>>,
+    /// The manager's script-derivation generation observed the last time
+    /// this batch's filters were matched against the wallets' FULL script
+    /// sets (the initial scan, or a commit-time verification rescan).
+    ///
+    /// Commit compares this against the current generation to decide
+    /// whether a verification rescan is still needed: scripts derived from
+    /// blocks owned by OTHER batches never land in this batch's
+    /// `collected_scripts`, so "no collected scripts left" alone does not
+    /// prove this batch has nothing more to match.
+    full_match_generation: u64,
 }
 
 impl FiltersBatch {
@@ -63,6 +73,7 @@ impl FiltersBatch {
             scanned_wallets: BTreeMap::new(),
             collected_scripts: HashMap::new(),
             backward_scripts: HashMap::new(),
+            full_match_generation: 0,
         }
     }
     /// Start height of this batch (inclusive).
@@ -113,6 +124,14 @@ impl FiltersBatch {
     /// Returns whether rescan has been completed for this batch.
     pub(super) fn rescan_complete(&self) -> bool {
         self.rescan_complete
+    }
+    /// The script-derivation generation at this batch's last full-set match.
+    pub(super) fn full_match_generation(&self) -> u64 {
+        self.full_match_generation
+    }
+    /// Record the script-derivation generation this batch was fully matched at.
+    pub(super) fn set_full_match_generation(&mut self, generation: u64) {
+        self.full_match_generation = generation;
     }
     /// Mark rescan as complete for this batch.
     pub(super) fn mark_rescan_complete(&mut self) {
