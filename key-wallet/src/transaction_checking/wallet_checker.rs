@@ -2291,7 +2291,7 @@ mod tests {
         };
         let mut change_left = funding_value;
         let mut chain = Vec::new();
-        for sent in [40_000_000u64, 20_000_000, 5_000_000] {
+        for (link, sent) in [40_000_000u64, 20_000_000, 5_000_000].into_iter().enumerate() {
             let fee = 226u64;
             let change = change_left - sent - fee;
             let change_address = ctx
@@ -2300,6 +2300,39 @@ mod tests {
                 .expect("account")
                 .next_change_address(Some(&ctx.xpub), true)
                 .expect("change address");
+            // The tip pays us twice, and nothing spends it onward, so both
+            // outputs are still live when the cascade runs — exercising the
+            // per-txid removal loops against a transaction contributing more
+            // than one UTXO. A filter that dropped only the first would
+            // otherwise pass every test here.
+            let split = link == 2;
+            let (change_a, change_b) = if split {
+                (change / 2, change - change / 2)
+            } else {
+                (change, 0)
+            };
+            let mut outputs = vec![
+                TxOut {
+                    value: sent,
+                    script_pubkey: external_address.script_pubkey(),
+                },
+                TxOut {
+                    value: change_a,
+                    script_pubkey: change_address.script_pubkey(),
+                },
+            ];
+            if split {
+                let second = ctx
+                    .managed_wallet
+                    .first_bip44_managed_account_mut()
+                    .expect("account")
+                    .next_change_address(Some(&ctx.xpub), true)
+                    .expect("change address");
+                outputs.push(TxOut {
+                    value: change_b,
+                    script_pubkey: second.script_pubkey(),
+                });
+            }
             let tx = Transaction {
                 version: 2,
                 lock_time: 0,
@@ -2309,16 +2342,7 @@ mod tests {
                     sequence: 0xffffffff,
                     witness: dashcore::Witness::new(),
                 }],
-                output: vec![
-                    TxOut {
-                        value: sent,
-                        script_pubkey: external_address.script_pubkey(),
-                    },
-                    TxOut {
-                        value: change,
-                        script_pubkey: change_address.script_pubkey(),
-                    },
-                ],
+                output: outputs,
                 special_transaction_payload: None,
             };
             ctx.check_transaction(&tx, TransactionContext::Mempool).await;
@@ -2331,8 +2355,10 @@ mod tests {
         }
 
         let root = chain[0].txid();
-        // Only the tip's change is tracked — each link consumed its parent's.
-        assert_eq!(ctx.bip44_account().utxos.len(), 1, "one live change output");
+        // The tip's change, plus the first link's second output — that one is
+        // never spent onward, so the cascade has to drop two UTXOs for one of
+        // the txids rather than assuming one each.
+        assert_eq!(ctx.bip44_account().utxos.len(), 2, "live change outputs");
 
         let outcome = ctx.managed_wallet.abandon_transaction(root);
         ctx.managed_wallet.update_balance();
@@ -2356,6 +2382,14 @@ mod tests {
             );
         }
         assert!(ctx.bip44_account().utxos.is_empty(), "no phantom output may survive the cascade");
+        // The load-bearing assertion. Trusted self-send change is bucketed as
+        // *confirmed*, so `unconfirmed() == 0` holds before the abandon too
+        // and proves nothing on its own.
+        assert_eq!(
+            ctx.managed_wallet.balance.confirmed(),
+            0,
+            "the phantom counts as confirmed, so that is where its absence must show"
+        );
         assert_eq!(ctx.managed_wallet.balance.unconfirmed(), 0);
 
         // The real coin the chain consumed is released from the spent set, so
@@ -2482,8 +2516,11 @@ mod tests {
             vout: 1,
         };
         assert!(ctx.bip44_account().utxos.contains_key(&winner_change));
-        assert_eq!(ctx.managed_wallet.balance.unconfirmed(), 0);
+        // Without the sweep this is 698_000 — the loser's change is trusted
+        // self-send change and lands in the confirmed bucket, so only the
+        // exact total catches a regression.
         assert_eq!(ctx.managed_wallet.balance.confirmed(), 299_000);
+        assert_eq!(ctx.managed_wallet.balance.unconfirmed(), 0);
     }
 
     /// Pooled funding spans account families — an asset lock draws from BIP44,

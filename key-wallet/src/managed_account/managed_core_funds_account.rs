@@ -509,7 +509,9 @@ impl ManagedCoreFundsAccount {
     /// money that does not exist. Nothing else removes them: the loser is not
     /// in a block, so no block processing revisits it, and mempool expiry in
     /// dash-spv only drops its own tracking without telling the wallet. Left
-    /// alone they sit in the `unconfirmed` bucket permanently.
+    /// alone they are counted permanently — and as *confirmed*, not merely
+    /// unconfirmed, whenever the trusted-self-send rule applies to them,
+    /// which also makes them selectable by coin selection.
     ///
     /// This is deliberately narrow. It fires only on proof — a conflicting
     /// spend that is itself final — never on a timeout: the p2p network has no
@@ -1215,8 +1217,14 @@ impl ManagedAccountTrait for ManagedCoreFundsAccount {
 ///
 /// Every input of every recorded transaction is a spend this account has seen,
 /// so its `previous_output` belongs in the derived set. The field is not
-/// persisted (`#[serde(skip)]`), so both [`Deserialize`] and the test reload
-/// simulation reconstruct it through here to stay in lockstep.
+/// serialized (`#[serde(skip_serializing)]`), so [`Deserialize`] and the test
+/// reload simulation reconstruct it through here to stay in lockstep.
+///
+/// **Derives only from live records.** Under the default
+/// `keep-finalized-transactions = off`, a chainlocked record is dropped to
+/// just its txid, so its inputs survive only as entries already in the set —
+/// which a wholesale rebuild would discard. Callers pruning a subset of
+/// records must retain the rest rather than reassigning from this.
 fn rebuild_spent_outpoints(keys: &ManagedCoreKeysAccount) -> HashSet<OutPoint> {
     keys.transactions()
         .values()

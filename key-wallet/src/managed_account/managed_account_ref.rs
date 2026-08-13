@@ -405,10 +405,6 @@ impl<'a> ManagedAccountRefMut<'a> {
         }
     }
 
-    /// Mark all UTXOs belonging to `txid` as InstantSend-locked.
-    ///
-    /// Returns `true` if any UTXO was newly marked. Always returns `false`
-    /// for the [`Keys`](Self::Keys) variant (no UTXOs to mark).
     /// Drop the outputs of any recorded unconfirmed transaction that `tx`
     /// provably beat to one of its inputs. No-op for the
     /// [`Keys`](Self::Keys) variant, which tracks no UTXOs.
@@ -418,6 +414,10 @@ impl<'a> ManagedAccountRefMut<'a> {
         }
     }
 
+    /// Mark all UTXOs belonging to `txid` as InstantSend-locked.
+    ///
+    /// Returns `true` if any UTXO was newly marked. Always returns `false`
+    /// for the [`Keys`](Self::Keys) variant (no UTXOs to mark).
     pub fn mark_utxos_instant_send(&mut self, txid: &Txid) -> bool {
         match self {
             ManagedAccountRefMut::Funds(a) => a.mark_utxos_instant_send(txid),
