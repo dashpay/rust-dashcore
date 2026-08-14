@@ -84,6 +84,26 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
             for (wallet_id, records) in check_result.per_wallet_updated_records {
                 per_wallet_updated.entry(wallet_id).or_default().extend(records);
             }
+            // Emitted per transaction rather than batched into the block
+            // event: a sweep names the transaction that superseded the
+            // removed ones, and that attribution is lost once the block's
+            // transactions are folded together.
+            for (wallet_id, txids) in check_result.per_wallet_swept {
+                if txids.is_empty() {
+                    continue;
+                }
+                let Some(info) = self.wallet_infos.get(&wallet_id) else {
+                    continue;
+                };
+                let event = WalletEvent::TransactionsSwept {
+                    wallet_id,
+                    txids,
+                    superseded_by: tx.txid(),
+                    balance: info.balance(),
+                    account_balances: BTreeMap::new(),
+                };
+                self.emit_event(event);
+            }
         }
 
         self.finalize_block_advance(
@@ -183,6 +203,29 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
                      emitted TransactionDetected record; ignoring"
                 );
             }
+        }
+
+        // Removals, before the additive events: a consumer applying these in
+        // order sees the dead rows deleted first, so a replacement paying the
+        // same address cannot be clobbered by the delete that follows it.
+        for (wallet_id, txids) in std::mem::take(&mut check_result.per_wallet_swept) {
+            if txids.is_empty() {
+                continue;
+            }
+            let Some(info) = self.wallet_infos.get(&wallet_id) else {
+                continue;
+            };
+            let event = WalletEvent::TransactionsSwept {
+                wallet_id,
+                txids,
+                superseded_by: tx.txid(),
+                balance: info.balance(),
+                account_balances: per_wallet_account_diff
+                    .get(&wallet_id)
+                    .cloned()
+                    .unwrap_or_default(),
+            };
+            self.emit_event(event);
         }
 
         if let Some(lock) = instant_lock {

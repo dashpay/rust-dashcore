@@ -77,18 +77,24 @@ impl ManagedWalletInfo {
     ///   A winner that spends our coin and pays only external addresses is
     ///   therefore classified irrelevant, and no account is visited at all.
     ///
-    /// Returns whether anything was removed.
-    pub fn sweep_conflicts(&mut self, tx: &Transaction, context: &TransactionContext) -> bool {
-        let mut changed = false;
+    /// Returns the txids removed, so a caller mirroring wallet state can
+    /// learn those rows are gone — nothing else in the event surface reports
+    /// a removal, and a mirror that misses it replays the dead transaction.
+    pub fn sweep_conflicts(&mut self, tx: &Transaction, context: &TransactionContext) -> Vec<Txid> {
+        let mut swept = Vec::new();
         for account in self.accounts.all_accounts_mut() {
             if let ManagedAccountRefMut::Funds(funds) = account {
-                changed |= funds.drop_conflicted_transactions(tx, context);
+                swept.extend(funds.drop_conflicted_transactions(tx, context));
             }
         }
-        if changed {
+        if !swept.is_empty() {
             self.update_balance();
+            // One transaction can be recorded in several accounts, so the
+            // per-account results overlap.
+            swept.sort_unstable();
+            swept.dedup();
         }
-        changed
+        swept
     }
 
     /// Whether any account holds `txid` as settled by the network.

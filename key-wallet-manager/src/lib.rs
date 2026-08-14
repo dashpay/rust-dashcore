@@ -96,6 +96,12 @@ pub struct CheckTransactionsResult {
     /// Records whose state was updated by this check (confirmation or
     /// InstantSend lock on a previously stored record), grouped by wallet.
     pub per_wallet_updated_records: BTreeMap<WalletId, Vec<TransactionRecord>>,
+    /// Transactions this check *removed*, grouped by wallet: recorded spends
+    /// the arriving transaction provably beat to one of its inputs. See
+    /// [`crate::events::WalletEvent::TransactionsSwept`]
+    /// — a consumer mirroring wallet state must delete these rows, since no
+    /// other signal on the bus reports a removal.
+    pub per_wallet_swept: BTreeMap<WalletId, Vec<Txid>>,
 }
 
 impl CheckTransactionsResult {
@@ -628,6 +634,19 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletManager<T> {
                             .or_default()
                             .extend(check_result.updated_records);
                     }
+                }
+
+                // Gathered outside the relevance branch above: a sweep can
+                // fire for a transaction this wallet finds irrelevant — the
+                // shared input is gone from `utxos` and the winner may pay
+                // only external addresses — and the removal still has to
+                // reach the consumer.
+                if !check_result.swept_transactions.is_empty() {
+                    result
+                        .per_wallet_swept
+                        .entry(*wallet_id)
+                        .or_default()
+                        .extend(check_result.swept_transactions);
                 }
 
                 if !check_result.new_addresses.is_empty() {

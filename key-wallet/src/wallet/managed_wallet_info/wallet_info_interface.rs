@@ -270,6 +270,14 @@ pub trait WalletInfoInterface: Sized + WalletTransactionChecker + ManagedAccount
     /// Mark UTXOs for a transaction as InstantSend-locked across all accounts
     /// and update the corresponding transaction record context.
     /// Returns `true` if any UTXO was newly marked.
+    /// Apply an InstantSend lock: mark the transaction's UTXOs, rewrite its
+    /// record context, and drop any competing spend the lock now settles.
+    ///
+    /// Returns whether wallet state changed in any of those ways — callers
+    /// use it to refresh balances and to decide whether to emit
+    /// `TransactionInstantLocked`. An outgoing transaction can own no UTXOs
+    /// of ours and still change state by rewriting its context or by the
+    /// sweep removing a loser, so this is broader than "a UTXO was marked".
     fn mark_instant_send_utxos(&mut self, txid: &Txid, lock: &InstantLock) -> bool;
 
     /// Return the aggregated monitor revision across all accounts.
@@ -589,6 +597,7 @@ impl WalletInfoInterface for ManagedWalletInfo {
             }
             if let Some(record) = account.transactions_mut().get_mut(txid) {
                 record.update_context(TransactionContext::InstantSend(lock.clone()));
+                any_changed = true;
                 if locked_transaction.is_none() {
                     locked_transaction = Some(record.transaction.clone());
                 }
@@ -601,14 +610,14 @@ impl WalletInfoInterface for ManagedWalletInfo {
         // the one in `check_core_transaction` is only reachable on a first
         // sighting that already carries the lock.
         let swept = locked_transaction.is_some_and(|tx| {
-            self.sweep_conflicts(&tx, &TransactionContext::InstantSend(lock.clone()))
+            !self.sweep_conflicts(&tx, &TransactionContext::InstantSend(lock.clone())).is_empty()
         });
         if any_changed && !swept {
             // `sweep_conflicts` recomputes on its own when it removes
             // something, so this only covers the marking-only case.
             self.update_balance();
         }
-        any_changed
+        any_changed || swept
     }
 
     fn monitor_revision(&self) -> u64 {

@@ -89,11 +89,11 @@ impl WalletTransactionChecker for ManagedWalletInfo {
         // below with the loser still credited. Sweep first, wallet-wide, next
         // to `record_observed_spends` above for the same reason it is
         // unconditional.
-        if update_state
-            && (context.confirmed() || context.is_instant_send())
-            && self.sweep_conflicts(tx, &context)
-        {
-            result.state_modified = true;
+        if update_state && (context.confirmed() || context.is_instant_send()) {
+            result.swept_transactions = self.sweep_conflicts(tx, &context);
+            if !result.swept_transactions.is_empty() {
+                result.state_modified = true;
+            }
         }
 
         if !update_state || !result.is_relevant {
@@ -2632,9 +2632,10 @@ mod tests {
         }
 
         let root = chain[0].txid();
-        // The tip's change, plus the first link's second output — that one is
-        // never spent onward, so the cascade has to drop two UTXOs for one of
-        // the txids rather than assuming one each.
+        // Both live UTXOs belong to the tip, which pays us twice and is spent
+        // onward by nothing — so the cascade has to drop two UTXOs for that
+        // one txid rather than assuming one each. The earlier links' change
+        // is consumed by the next link.
         assert_eq!(ctx.bip44_account().utxos.len(), 2, "live change outputs");
 
         let outcome = ctx.managed_wallet.abandon_transaction(root);

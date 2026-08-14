@@ -1021,6 +1021,24 @@ impl FFIWalletEventCallbacks {
     /// Dispatch a WalletEvent to the appropriate callback.
     pub fn dispatch(&self, event: &WalletEvent) {
         match event {
+            // TODO(sweep-ffi): no C callback is exposed for this variant yet,
+            // so a consumer of this FFI does not learn that the wallet dropped
+            // a superseded transaction and will keep mirroring the dead rows.
+            // Adding one is new ABI surface and wants its own review; logged
+            // meanwhile so the gap is observable rather than silent.
+            WalletEvent::TransactionsSwept {
+                wallet_id,
+                txids,
+                superseded_by,
+                ..
+            } => {
+                tracing::info!(
+                    wallet_id = %hex::encode(wallet_id),
+                    swept = txids.len(),
+                    %superseded_by,
+                    "TransactionsSwept has no FFI callback; consumers keep the removed rows"
+                );
+            }
             WalletEvent::TransactionDetected {
                 wallet_id,
                 record,

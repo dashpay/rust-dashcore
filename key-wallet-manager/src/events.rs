@@ -222,6 +222,29 @@ pub enum WalletEvent {
         /// full balance after the change — not a delta.
         account_balances: BTreeMap<AccountType, WalletCoreBalance>,
     },
+    /// Transactions were removed from the wallet: each was a recorded spend
+    /// that a later, final transaction provably beat to one of its inputs, so
+    /// it can never confirm. Their outputs are gone from the UTXO set and
+    /// their records deleted.
+    ///
+    /// The only removal-shaped event on this bus. A consumer mirroring wallet
+    /// state to disk must act on it — every other variant is additive, so
+    /// without this the mirror keeps the dead rows and replays them on the
+    /// next load, re-creating a balance the wallet has already corrected.
+    TransactionsSwept {
+        /// ID of the affected wallet.
+        wallet_id: WalletId,
+        /// Transactions removed. Delete these rows and any UTXO they created.
+        txids: Vec<Txid>,
+        /// The transaction whose arrival settled the inputs, for provenance.
+        superseded_by: Txid,
+        /// Wallet balance after the removal.
+        balance: WalletCoreBalance,
+        /// Post-event balance **snapshots** for accounts whose balance
+        /// changed as a result of this event. Each value is the account's
+        /// full balance after the change — not a delta.
+        account_balances: BTreeMap<AccountType, WalletCoreBalance>,
+    },
     /// A block was processed for a wallet. Carries records bucketed by what
     /// happened to them in this block, plus the post-block balance.
     /// `inserted` is records first stored in this block, `updated` is
@@ -332,6 +355,10 @@ impl WalletEvent {
                 wallet_id,
                 ..
             }
+            | WalletEvent::TransactionsSwept {
+                wallet_id,
+                ..
+            }
             | WalletEvent::TransactionInstantLocked {
                 wallet_id,
                 ..
@@ -379,6 +406,20 @@ impl fmt::Display for WalletEvent {
                 f,
                 "TransactionInstantLocked(txid={}, balance={}, account_balances={})",
                 txid,
+                balance,
+                format_account_balances(account_balances),
+            ),
+            WalletEvent::TransactionsSwept {
+                txids,
+                superseded_by,
+                balance,
+                account_balances,
+                ..
+            } => write!(
+                f,
+                "TransactionsSwept(count={}, superseded_by={}, balance={}, account_balances={})",
+                txids.len(),
+                superseded_by,
                 balance,
                 format_account_balances(account_balances),
             ),

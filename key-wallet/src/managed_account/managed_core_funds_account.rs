@@ -401,8 +401,6 @@ impl ManagedCoreFundsAccount {
                     }
                 }
 
-                utxos_changed |= self.drop_conflicted_transactions(tx, &context);
-
                 if utxos_changed {
                     self.keys.bump_monitor_revision();
                 }
@@ -537,14 +535,14 @@ impl ManagedCoreFundsAccount {
     /// per-account. That covers the ordinary shape — a resend keeps the same
     /// funding account and so the same change account — but not every one.
     ///
-    /// Returns whether any UTXO was removed.
+    /// Returns the txids it removed.
     pub(crate) fn drop_conflicted_transactions(
         &mut self,
         tx: &Transaction,
         context: &TransactionContext,
-    ) -> bool {
+    ) -> Vec<Txid> {
         if !(context.confirmed() || matches!(context, TransactionContext::InstantSend(_))) {
-            return false;
+            return Vec::new();
         }
 
         let winner = tx.txid();
@@ -579,7 +577,7 @@ impl ManagedCoreFundsAccount {
             .collect();
 
         if losers.is_empty() {
-            return false;
+            return Vec::new();
         }
 
         // A loser's change may already have funded further unconfirmed
@@ -614,8 +612,8 @@ impl ManagedCoreFundsAccount {
             }
         }
 
-        let mut changed = false;
         let mut freed: HashSet<OutPoint> = HashSet::new();
+        let mut changed = false;
         for loser in &losers {
             let removed: Vec<OutPoint> =
                 self.utxos.keys().filter(|outpoint| outpoint.txid == *loser).copied().collect();
@@ -633,8 +631,11 @@ impl ManagedCoreFundsAccount {
             );
         }
         self.release_spent_marks(&freed);
+        if changed {
+            self.keys.bump_monitor_revision();
+        }
 
-        changed
+        losers.into_iter().collect()
     }
 
     /// Re-process an existing transaction with updated context (e.g.,
