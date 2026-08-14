@@ -630,6 +630,15 @@ impl ManagedCoreFundsAccount {
                 "Dropped a conflicted transaction: its input was spent by a final transaction"
             );
         }
+        // Never free an outpoint the winner itself spends. `freed` collects
+        // every input of every removed loser, and the shared one is exactly
+        // what the winner consumed — releasing it would let a later rescan
+        // re-insert a coin that is spent on chain, and coin selection would
+        // then build a guaranteed double spend. `release_spent_marks` cannot
+        // catch this on its own: on the checker path the sweep runs before
+        // the winner is recorded, so no live record claims the outpoint yet.
+        // Only the loser's *extra* inputs are genuinely released.
+        freed.retain(|outpoint| !spent.contains(outpoint));
         self.release_spent_marks(&freed);
         if changed {
             self.keys.bump_monitor_revision();
