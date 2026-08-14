@@ -2768,6 +2768,134 @@ mod tests {
         assert_eq!(ctx.managed_wallet.balance.confirmed(), 499_000, "B plus the winner's change");
     }
 
+    /// A loser's change may already have funded further unconfirmed
+    /// transactions, and the sweep removes those too — that is the descendant
+    /// closure `drop_conflicted_transactions` walks. Their inputs land in
+    /// `freed` like any other, including the ones pointing at a removed
+    /// loser's own output.
+    ///
+    /// Such an outpoint must not be reported released. It is not a coin
+    /// becoming spendable: it is an output of a transaction being deleted for
+    /// never being able to confirm, so telling a mirror to mark it spendable
+    /// re-credits money that does not exist — the exact class of bug the
+    /// sweep exists to remove.
+    #[tokio::test]
+    async fn test_a_swept_descendants_claim_on_its_parents_output_is_not_released() {
+        let mut ctx = TestWalletContext::new_random();
+        let external_address = Address::p2pkh(
+            &dashcore::PublicKey::from_slice(&[0x02; 33]).expect("pubkey"),
+            Network::Testnet,
+        );
+
+        // Two confirmed coins: X, which the winner will take, and C, which
+        // only the descendant spends.
+        let funding_tx = Transaction::dummy(&ctx.receive_address, 0..2, &[500_000, 400_000]);
+        ctx.check_transaction(
+            &funding_tx,
+            TransactionContext::InBlock(BlockInfo::new(
+                100,
+                BlockHash::from_slice(&[1u8; 32]).expect("hash"),
+                1_700_000_000,
+            )),
+        )
+        .await;
+
+        let coin_x = OutPoint {
+            txid: funding_tx.txid(),
+            vout: 0,
+        };
+        let coin_c = OutPoint {
+            txid: funding_tx.txid(),
+            vout: 1,
+        };
+        let spend =
+            |inputs: Vec<OutPoint>, change: &Address, change_amount: u64, sent: u64| Transaction {
+                version: 2,
+                lock_time: 0,
+                input: inputs
+                    .into_iter()
+                    .map(|previous_output| TxIn {
+                        previous_output,
+                        script_sig: ScriptBuf::new(),
+                        sequence: 0xffffffff,
+                        witness: dashcore::Witness::new(),
+                    })
+                    .collect(),
+                output: vec![
+                    TxOut {
+                        value: sent,
+                        script_pubkey: external_address.script_pubkey(),
+                    },
+                    TxOut {
+                        value: change_amount,
+                        script_pubkey: change.script_pubkey(),
+                    },
+                ],
+                special_transaction_payload: None,
+            };
+
+        // The parent spends X and pays itself change.
+        let parent_change = ctx
+            .managed_wallet
+            .first_bip44_managed_account_mut()
+            .expect("account")
+            .next_change_address(Some(&ctx.xpub), true)
+            .expect("change address");
+        let parent = spend(vec![coin_x], &parent_change, 99_000, 400_000);
+        ctx.check_transaction(&parent, TransactionContext::Mempool).await;
+        let parent_change_outpoint = OutPoint {
+            txid: parent.txid(),
+            vout: 1,
+        };
+
+        // The descendant spends that change plus C — the ordinary shape of
+        // chaining a second spend before the first confirms.
+        let child_change = ctx
+            .managed_wallet
+            .first_bip44_managed_account_mut()
+            .expect("account")
+            .next_change_address(Some(&ctx.xpub), true)
+            .expect("change address");
+        let child = spend(vec![parent_change_outpoint, coin_c], &child_change, 89_000, 400_000);
+        ctx.check_transaction(&child, TransactionContext::Mempool).await;
+
+        // The winner takes X and confirms, sweeping the parent and, through
+        // the descendant closure, the child.
+        let winner_change = ctx
+            .managed_wallet
+            .first_bip44_managed_account_mut()
+            .expect("account")
+            .next_change_address(Some(&ctx.xpub), true)
+            .expect("change address");
+        let winner = spend(vec![coin_x], &winner_change, 99_000, 400_000);
+        let result = ctx
+            .check_transaction(
+                &winner,
+                TransactionContext::InBlock(BlockInfo::new(
+                    101,
+                    BlockHash::from_slice(&[2u8; 32]).expect("hash"),
+                    1_700_000_100,
+                )),
+            )
+            .await;
+
+        assert!(
+            result.swept_transactions.contains(&child.txid()),
+            "sanity: the descendant is swept with its parent"
+        );
+        assert!(
+            !result.released_outpoints.contains(&parent_change_outpoint),
+            "an output of a transaction being deleted is not a coin becoming \
+             spendable, got {:?}",
+            result.released_outpoints
+        );
+        assert_eq!(
+            result.released_outpoints,
+            vec![coin_c],
+            "only the real coin the descendant spent is released"
+        );
+    }
+
     /// A loser is removed from every account it was recorded in, and each of
     /// those accounts decides what it released from its own records alone. An
     /// account that never recorded the transaction still claiming one of the

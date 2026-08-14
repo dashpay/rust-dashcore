@@ -675,7 +675,19 @@ impl ManagedCoreFundsAccount {
             self.keys.bump_monitor_revision();
         }
 
-        let mut released_outpoints: Vec<OutPoint> = released.into_iter().collect();
+        // Report only coins that outlive this sweep. The descendant closure
+        // above removes transactions that spent a loser's *own* change, so
+        // `freed` holds outpoints belonging to the losers themselves — and
+        // those are not coins becoming spendable, they are outputs of
+        // transactions being deleted for never being able to confirm.
+        // Telling a mirror to mark one spendable re-credits money that does
+        // not exist, which is the class of bug this sweep exists to remove.
+        //
+        // Filtered here rather than out of `freed`, so the internal release
+        // is unchanged: an outpoint of a dead transaction is dead weight in
+        // `spent_outpoints` either way, and this stays a reporting change.
+        let mut released_outpoints: Vec<OutPoint> =
+            released.into_iter().filter(|outpoint| !losers.contains(&outpoint.txid)).collect();
         released_outpoints.sort_unstable();
         ConflictSweep {
             txids: losers.into_iter().collect(),

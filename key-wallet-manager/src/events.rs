@@ -258,6 +258,19 @@ pub enum WalletEvent {
         /// every input of every transaction it deletes here, so it only
         /// needs to know which of them came free, not which removal freed
         /// which.
+        ///
+        /// One pre-existing limitation, inherited from `release_spent_marks`
+        /// rather than introduced with this field: it decides what stays
+        /// spent from the wallet's *live* records, and under the default
+        /// `keep-finalized-transactions = off` a chainlocked record is pruned
+        /// to just its txid. So if this wallet ever recorded a second spend
+        /// of a coin an already-pruned chainlocked transaction took — which
+        /// needs that second spend to arrive after the pruning, since
+        /// otherwise the chainlocked arrival would have swept it — and that
+        /// second spend is later swept on a different input, the coin is
+        /// reported released though it is spent on chain. The inputs of a
+        /// pruned record survive nowhere else, so this cannot be resolved at
+        /// this layer.
         released_outpoints: Vec<OutPoint>,
         /// Wallet balance after the removal.
         balance: WalletCoreBalance,
