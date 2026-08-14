@@ -90,10 +90,12 @@ impl WalletTransactionChecker for ManagedWalletInfo {
         // to `record_observed_spends` above for the same reason it is
         // unconditional.
         if update_state && (context.confirmed() || context.is_instant_send()) {
-            result.swept_transactions = self.sweep_conflicts(tx, &context);
-            if !result.swept_transactions.is_empty() {
+            let sweep = self.sweep_conflicts(tx, &context);
+            if !sweep.is_empty() {
                 result.state_modified = true;
             }
+            result.swept_transactions = sweep.txids;
+            result.released_outpoints = sweep.released_outpoints;
         }
 
         if !update_state || !result.is_relevant {
@@ -2235,6 +2237,10 @@ mod tests {
             0,
             "and its change must stop counting as confirmed money"
         );
+        assert!(
+            result.released_outpoints.is_empty(),
+            "the ordinary case: the winner spends the loser's only input, so nothing is freed"
+        );
     }
 
     /// Pooled funding puts a loser's change in an account the winner never
@@ -2727,20 +2733,29 @@ mod tests {
             .next_change_address(Some(&ctx.xpub), true)
             .expect("change address");
         let winner = spend(vec![coin_a], &winner_change, 99_000, 400_000);
-        ctx.check_transaction(
-            &winner,
-            TransactionContext::InBlock(BlockInfo::new(
-                101,
-                BlockHash::from_slice(&[2u8; 32]).expect("hash"),
-                1_700_000_100,
-            )),
-        )
-        .await;
+        let result = ctx
+            .check_transaction(
+                &winner,
+                TransactionContext::InBlock(BlockInfo::new(
+                    101,
+                    BlockHash::from_slice(&[2u8; 32]).expect("hash"),
+                    1_700_000_100,
+                )),
+            )
+            .await;
 
         // The loser is gone, and B is not credited — its `Utxo` was
         // discarded when the loser was recorded and cannot be invented.
         assert!(!ctx.bip44_account().transactions().contains_key(&loser.txid()));
         assert!(!ctx.bip44_account().utxos.contains_key(&coin_b));
+
+        // The event carries exactly what was released: B, and not A — A is
+        // the winner's own input, still spent on chain by `winner` itself.
+        assert_eq!(
+            result.released_outpoints,
+            vec![coin_b],
+            "the sweep must name B as released and must not name A"
+        );
 
         // But B was freed from the spent set, so re-delivering the funding
         // block restores it. That is what makes the loss recoverable rather

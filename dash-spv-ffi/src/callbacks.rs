@@ -752,6 +752,28 @@ pub type OnTransactionDetectedCallback = Option<
     ),
 >;
 
+/// C representation of a Core [`OutPoint`](dashcore::OutPoint): the parent
+/// txid and output index of a coin.
+#[repr(C)]
+pub struct FFIOutPoint {
+    /// Parent transaction id.
+    pub txid: [u8; 32],
+    /// Output index within the parent transaction.
+    pub vout: u32,
+}
+
+impl FFIOutPoint {
+    fn from_slice(outpoints: &[dashcore::OutPoint]) -> Vec<Self> {
+        outpoints
+            .iter()
+            .map(|outpoint| FFIOutPoint {
+                txid: *outpoint.txid.as_byte_array(),
+                vout: outpoint.vout,
+            })
+            .collect()
+    }
+}
+
 /// Callback for `WalletEvent::TransactionsSwept`.
 ///
 /// Fires when the wallet removes transactions that a later, final transaction
@@ -766,6 +788,15 @@ pub type OnTransactionDetectedCallback = Option<
 ///
 /// `txids` points to `txids_count` consecutive 32-byte txids.
 /// `superseded_by` is the transaction whose arrival settled the inputs.
+/// `released_outpoints` points to `released_outpoints_count` outpoints freed
+/// by the removal: inputs the removed transactions claimed to spend that no
+/// surviving record spends too. Mark these coins spendable again. This is
+/// not the same set as `txids`' inputs — a loser spending A+B against a
+/// winner spending only A leaves A marked and frees only B — and it cannot
+/// be recomputed from `txids` on the consumer side: `superseded_by` need not
+/// be wallet-relevant at all (it can spend our coin while paying only
+/// external addresses), so it may never appear in any other callback. Null
+/// with a zero count when the removal released nothing.
 /// All pointer parameters are borrowed and only valid for the duration of the
 /// callback. `balance` is the wallet's balance *after* the removal;
 /// `account_balances` follows the same contract as on
@@ -776,6 +807,8 @@ pub type OnTransactionsSweptCallback = Option<
         txids: *const [u8; 32],
         txids_count: usize,
         superseded_by: *const [u8; 32],
+        released_outpoints: *const FFIOutPoint,
+        released_outpoints_count: usize,
         balance: *const FFIBalance,
         account_balances: *const FFIAccountBalance,
         account_balances_count: u32,
@@ -1058,6 +1091,7 @@ impl FFIWalletEventCallbacks {
                 wallet_id,
                 txids,
                 superseded_by,
+                released_outpoints,
                 balance,
                 account_balances,
             } => {
@@ -1067,6 +1101,12 @@ impl FFIWalletEventCallbacks {
                     let raw_txids: Vec<[u8; 32]> =
                         txids.iter().map(|t| t.to_byte_array()).collect();
                     let raw_superseded_by = superseded_by.to_byte_array();
+                    let ffi_released_outpoints = FFIOutPoint::from_slice(released_outpoints);
+                    let released_outpoints_ptr = if ffi_released_outpoints.is_empty() {
+                        ptr::null()
+                    } else {
+                        ffi_released_outpoints.as_ptr()
+                    };
                     let ffi_balance = FFIBalance::from(*balance);
                     let ffi_account_balances = FFIAccountBalance::from_map(account_balances);
                     let account_balances_ptr = if ffi_account_balances.is_empty() {
@@ -1080,6 +1120,8 @@ impl FFIWalletEventCallbacks {
                         raw_txids.as_ptr(),
                         raw_txids.len(),
                         &raw_superseded_by as *const [u8; 32],
+                        released_outpoints_ptr,
+                        ffi_released_outpoints.len(),
                         &ffi_balance as *const FFIBalance,
                         account_balances_ptr,
                         ffi_account_balances.len() as u32,
@@ -1087,6 +1129,7 @@ impl FFIWalletEventCallbacks {
                     );
 
                     drop(ffi_account_balances);
+                    drop(ffi_released_outpoints);
                 } else {
                     // Deliberately loud: every other wallet callback is
                     // additive, so a consumer that leaves this one unset keeps

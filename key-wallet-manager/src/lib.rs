@@ -102,6 +102,13 @@ pub struct CheckTransactionsResult {
     /// — a consumer mirroring wallet state must delete these rows, since no
     /// other signal on the bus reports a removal.
     pub per_wallet_swept: BTreeMap<WalletId, Vec<Txid>>,
+    /// Outpoints released as a side effect of `per_wallet_swept`, grouped by
+    /// wallet: inputs the removed transactions claimed to spend that no
+    /// surviving record spends too. Parallels `per_wallet_swept` rather than
+    /// folding into it because the two have different owners downstream —
+    /// see [`crate::events::WalletEvent::TransactionsSwept`] for why a
+    /// consumer needs this set named explicitly instead of re-deriving it.
+    pub per_wallet_released_outpoints: BTreeMap<WalletId, Vec<OutPoint>>,
 }
 
 impl CheckTransactionsResult {
@@ -647,6 +654,11 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletManager<T> {
                         .entry(*wallet_id)
                         .or_default()
                         .extend(check_result.swept_transactions);
+                    result
+                        .per_wallet_released_outpoints
+                        .entry(*wallet_id)
+                        .or_default()
+                        .extend(check_result.released_outpoints);
                 }
 
                 if !check_result.new_addresses.is_empty() {

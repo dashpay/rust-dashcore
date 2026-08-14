@@ -61,6 +61,28 @@ fn collect_spenders_of_records(
     }
 }
 
+/// What [`ManagedWalletInfo::sweep_conflicts`] removed from the wallet: the
+/// union, across every account swept, of a single [`ConflictSweep`].
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct WalletConflictSweep {
+    /// Loser txids removed, deduplicated — one transaction can be recorded
+    /// in several accounts, so the per-account results overlap.
+    pub txids: Vec<Txid>,
+    /// Outpoints released from `spent_outpoints` across every account swept,
+    /// deduplicated. Wallet-scoped rather than attributed per loser: a
+    /// caller mirroring wallet state holds every input of every loser it
+    /// deletes, so it only needs to know which of them came free, not which
+    /// loser freed which.
+    pub released_outpoints: Vec<OutPoint>,
+}
+
+impl WalletConflictSweep {
+    /// Whether the sweep removed anything.
+    pub fn is_empty(&self) -> bool {
+        self.txids.is_empty()
+    }
+}
+
 impl ManagedWalletInfo {
     /// Drop the outputs of every recorded transaction that `tx` provably beat
     /// to one of its inputs, across the whole wallet.
@@ -80,21 +102,33 @@ impl ManagedWalletInfo {
     /// Returns the txids removed, so a caller mirroring wallet state can
     /// learn those rows are gone — nothing else in the event surface reports
     /// a removal, and a mirror that misses it replays the dead transaction.
-    pub fn sweep_conflicts(&mut self, tx: &Transaction, context: &TransactionContext) -> Vec<Txid> {
-        let mut swept = Vec::new();
+    /// Also returns the outpoints released as a side effect, for the same
+    /// reason: the winner that triggered this sweep is not guaranteed to
+    /// appear anywhere else the caller can see, so it cannot re-derive which
+    /// of a loser's inputs are genuinely free again.
+    pub fn sweep_conflicts(
+        &mut self,
+        tx: &Transaction,
+        context: &TransactionContext,
+    ) -> WalletConflictSweep {
+        let mut result = WalletConflictSweep::default();
         for account in self.accounts.all_accounts_mut() {
             if let ManagedAccountRefMut::Funds(funds) = account {
-                swept.extend(funds.drop_conflicted_transactions(tx, context));
+                let swept = funds.drop_conflicted_transactions(tx, context);
+                result.txids.extend(swept.txids);
+                result.released_outpoints.extend(swept.released_outpoints);
             }
         }
-        if !swept.is_empty() {
+        if !result.txids.is_empty() {
             self.update_balance();
             // One transaction can be recorded in several accounts, so the
             // per-account results overlap.
-            swept.sort_unstable();
-            swept.dedup();
+            result.txids.sort_unstable();
+            result.txids.dedup();
+            result.released_outpoints.sort_unstable();
+            result.released_outpoints.dedup();
         }
-        swept
+        result
     }
 
     /// Whether any account holds `txid` as settled by the network.

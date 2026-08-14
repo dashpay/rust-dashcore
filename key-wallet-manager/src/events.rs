@@ -10,7 +10,7 @@ use std::fmt;
 use dashcore::ephemerealdata::chain_lock::ChainLock;
 use dashcore::ephemerealdata::instant_lock::InstantLock;
 use dashcore::prelude::CoreBlockHeight;
-use dashcore::{PublicKey, Txid};
+use dashcore::{OutPoint, PublicKey, Txid};
 use key_wallet::account::AccountType;
 use key_wallet::managed_account::address_pool::{AddressPoolType, PublicKeyType};
 use key_wallet::managed_account::transaction_record::TransactionRecord;
@@ -238,6 +238,27 @@ pub enum WalletEvent {
         txids: Vec<Txid>,
         /// The transaction whose arrival settled the inputs, for provenance.
         superseded_by: Txid,
+        /// Outpoints the sweep released: inputs the removed transactions
+        /// claimed to spend that no surviving record spends too (a loser
+        /// spending A+B against a winner spending only A leaves A marked and
+        /// frees B). Mark these coins spendable again.
+        ///
+        /// Upstream computes this distinction — see
+        /// `ManagedCoreFundsAccount::release_spent_marks` in key-wallet — and
+        /// then has nowhere else to put it: `superseded_by` need not be
+        /// wallet-relevant at all, so it can spend our coin while paying only
+        /// external addresses and never appear anywhere else in this
+        /// wallet's event stream. A consumer mirroring wallet state to disk
+        /// cannot recompute this set from the deleted `txids` alone — it
+        /// would have to know which of their inputs a *different*,
+        /// possibly-invisible transaction also claims — so guessing either
+        /// re-credits a coin the chain has already spent or leaves a
+        /// genuinely free one stranded as spent forever. Wallet-scoped
+        /// rather than attributed per removed transaction: a consumer holds
+        /// every input of every transaction it deletes here, so it only
+        /// needs to know which of them came free, not which removal freed
+        /// which.
+        released_outpoints: Vec<OutPoint>,
         /// Wallet balance after the removal.
         balance: WalletCoreBalance,
         /// Post-event balance **snapshots** for accounts whose balance
@@ -412,14 +433,16 @@ impl fmt::Display for WalletEvent {
             WalletEvent::TransactionsSwept {
                 txids,
                 superseded_by,
+                released_outpoints,
                 balance,
                 account_balances,
                 ..
             } => write!(
                 f,
-                "TransactionsSwept(count={}, superseded_by={}, balance={}, account_balances={})",
+                "TransactionsSwept(count={}, superseded_by={}, released={}, balance={}, account_balances={})",
                 txids.len(),
                 superseded_by,
+                released_outpoints.len(),
                 balance,
                 format_account_balances(account_balances),
             ),

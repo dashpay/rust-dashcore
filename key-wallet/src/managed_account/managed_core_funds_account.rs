@@ -80,6 +80,21 @@ pub(crate) struct AbandonRemoval {
     pub records: usize,
 }
 
+/// What [`ManagedCoreFundsAccount::drop_conflicted_transactions`] removed
+/// from one account.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct ConflictSweep {
+    /// Loser txids removed from this account.
+    pub txids: Vec<Txid>,
+    /// Outpoints released from `spent_outpoints` as a side effect: inputs
+    /// the removed losers claimed that no surviving record claims too. See
+    /// [`ManagedCoreFundsAccount::release_spent_marks`] — this is exactly
+    /// its return value, carried out so a caller mirroring wallet state can
+    /// learn which coins actually came free without redoing the
+    /// freed-versus-still-spent comparison itself.
+    pub released_outpoints: Vec<OutPoint>,
+}
+
 impl ManagedCoreFundsAccount {
     /// Create a new managed funds account
     pub fn new(managed_account_type: ManagedAccountType, network: Network) -> Self {
@@ -421,13 +436,23 @@ impl ManagedCoreFundsAccount {
     /// considered, and a removed record's input stays marked when a survivor
     /// spends it too (a loser spending A+B against a winner spending only A
     /// must leave A marked and free B).
-    fn release_spent_marks(&mut self, freed: &HashSet<OutPoint>) {
+    ///
+    /// Returns exactly the outpoints this call released — `freed` minus
+    /// whatever `still_spent` shows a survivor still claims. That
+    /// distinction is computed nowhere else: once this returns, freed-and-
+    /// released and freed-but-retained are indistinguishable in
+    /// `spent_outpoints` itself, so a caller that needs to tell a
+    /// persistence mirror which coins are genuinely free again has to catch
+    /// it here or not at all.
+    fn release_spent_marks(&mut self, freed: &HashSet<OutPoint>) -> HashSet<OutPoint> {
         if freed.is_empty() {
-            return;
+            return HashSet::new();
         }
         let still_spent = rebuild_spent_outpoints(&self.keys);
+        let released: HashSet<OutPoint> = freed.difference(&still_spent).copied().collect();
         self.spent_outpoints
             .retain(|outpoint| !freed.contains(outpoint) || still_spent.contains(outpoint));
+        released
     }
 
     /// Remove every trace of `abandoned` from this account.
@@ -535,14 +560,20 @@ impl ManagedCoreFundsAccount {
     /// per-account. That covers the ordinary shape — a resend keeps the same
     /// funding account and so the same change account — but not every one.
     ///
-    /// Returns the txids it removed.
+    /// Returns the txids it removed, together with the outpoints that
+    /// removal released from `spent_outpoints` (see
+    /// [`Self::release_spent_marks`]). The latter is not derivable by a
+    /// caller from the txids alone: the winner that triggers this sweep does
+    /// not have to be wallet-relevant, so it may hold none of the loser's
+    /// inputs anywhere the caller can see, and the loser's own record is
+    /// already gone by the time this returns.
     pub(crate) fn drop_conflicted_transactions(
         &mut self,
         tx: &Transaction,
         context: &TransactionContext,
-    ) -> Vec<Txid> {
+    ) -> ConflictSweep {
         if !(context.confirmed() || matches!(context, TransactionContext::InstantSend(_))) {
-            return Vec::new();
+            return ConflictSweep::default();
         }
 
         let winner = tx.txid();
@@ -577,7 +608,7 @@ impl ManagedCoreFundsAccount {
             .collect();
 
         if losers.is_empty() {
-            return Vec::new();
+            return ConflictSweep::default();
         }
 
         // A loser's change may already have funded further unconfirmed
@@ -639,12 +670,17 @@ impl ManagedCoreFundsAccount {
         // the winner is recorded, so no live record claims the outpoint yet.
         // Only the loser's *extra* inputs are genuinely released.
         freed.retain(|outpoint| !spent.contains(outpoint));
-        self.release_spent_marks(&freed);
+        let released = self.release_spent_marks(&freed);
         if changed {
             self.keys.bump_monitor_revision();
         }
 
-        losers.into_iter().collect()
+        let mut released_outpoints: Vec<OutPoint> = released.into_iter().collect();
+        released_outpoints.sort_unstable();
+        ConflictSweep {
+            txids: losers.into_iter().collect(),
+            released_outpoints,
+        }
     }
 
     /// Re-process an existing transaction with updated context (e.g.,

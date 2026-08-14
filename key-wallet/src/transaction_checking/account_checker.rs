@@ -13,7 +13,7 @@ use crate::managed_account::managed_account_type::ManagedAccountType;
 use crate::managed_account::transaction_record::TransactionRecord;
 use crate::Address;
 use dashcore::address::Payload;
-use dashcore::blockdata::transaction::Transaction;
+use dashcore::blockdata::transaction::{OutPoint, Transaction};
 use dashcore::hashes::Hash as _;
 use dashcore::transaction::TransactionPayload;
 use dashcore::ScriptBuf;
@@ -87,6 +87,19 @@ pub struct TransactionCheckResult {
     /// replay the dead transaction on the next load and re-create the phantom
     /// balance this removal just cleared.
     pub swept_transactions: Vec<Txid>,
+    /// Outpoints released from the wallet's spent-marks as a side effect of
+    /// `swept_transactions`: inputs the removed losers claimed to spend that
+    /// no surviving record spends too. Empty whenever `swept_transactions`
+    /// is.
+    ///
+    /// A consumer mirroring wallet state needs this named explicitly rather
+    /// than inferring it from the deleted records: the winner that triggered
+    /// the sweep does not have to be wallet-relevant at all (it can spend our
+    /// coin and pay only external addresses), so it may never appear
+    /// anywhere else in this wallet's output, leaving no other way to learn
+    /// which of a loser's inputs are genuinely free again versus still
+    /// claimed by a surviving transaction.
+    pub released_outpoints: Vec<OutPoint>,
 }
 
 /// Enum representing the type of Core account that matched with embedded data
@@ -417,6 +430,7 @@ impl ManagedAccountCollection {
             new_records: Vec::new(),
             updated_records: Vec::new(),
             swept_transactions: Vec::new(),
+            released_outpoints: Vec::new(),
         };
 
         for account_type in account_types {
