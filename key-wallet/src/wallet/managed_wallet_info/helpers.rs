@@ -62,7 +62,7 @@ fn collect_spenders_of_records(
 }
 
 /// What [`ManagedWalletInfo::sweep_conflicts`] removed from the wallet: the
-/// union, across every account swept, of a single [`ConflictSweep`].
+/// union, across every account swept, of the per-account `ConflictSweep`s.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct WalletConflictSweep {
     /// Loser txids removed, deduplicated — one transaction can be recorded
@@ -80,6 +80,40 @@ impl WalletConflictSweep {
     /// Whether the sweep removed anything.
     pub fn is_empty(&self) -> bool {
         self.txids.is_empty()
+    }
+
+    /// Drop outpoints some surviving record elsewhere in the wallet still
+    /// spends.
+    ///
+    /// Each account decides what it released from its own records alone
+    /// (`release_spent_marks` rebuilds the retained set from that account's
+    /// transactions), and a loser is removed from every account it was
+    /// recorded in. Pooled funding puts those accounts and the spender of a
+    /// given coin in different places: an account that removed a loser but
+    /// never recorded the transaction still claiming one of its inputs sees
+    /// nothing retaining that coin and reports it free. Unioning the
+    /// per-account answers then carries that mistake out of the wallet.
+    ///
+    /// Re-checking against every account's surviving records is the only
+    /// view that can settle it. Note this does not need to cover the winner
+    /// that triggered the sweep: `drop_conflicted_transactions` already
+    /// withholds the inputs it spends, which it must, since on the checker
+    /// path the sweep runs before the winner is recorded anywhere.
+    fn retain_unclaimed(
+        &mut self,
+        accounts: &crate::managed_account::managed_account_collection::ManagedAccountCollection,
+    ) {
+        if self.released_outpoints.is_empty() {
+            return;
+        }
+        let claimed: BTreeSet<OutPoint> = accounts
+            .all_accounts()
+            .into_iter()
+            .flat_map(|account| account.transactions().values())
+            .flat_map(|record| record.transaction.input.iter())
+            .map(|input| input.previous_output)
+            .collect();
+        self.released_outpoints.retain(|outpoint| !claimed.contains(outpoint));
     }
 }
 
@@ -127,6 +161,7 @@ impl ManagedWalletInfo {
             result.txids.dedup();
             result.released_outpoints.sort_unstable();
             result.released_outpoints.dedup();
+            result.retain_unclaimed(&self.accounts);
         }
         result
     }
