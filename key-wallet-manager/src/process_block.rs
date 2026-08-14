@@ -107,6 +107,12 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
                 };
                 self.emit_event(event);
             }
+            debug_assert!(
+                per_wallet_released.is_empty(),
+                "released outpoints for a wallet that emitted no sweep would be \
+                 dropped here, stranding those coins marked spent forever: {:?}",
+                per_wallet_released
+            );
         }
 
         self.finalize_block_advance(
@@ -234,6 +240,12 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
             };
             self.emit_event(event);
         }
+        debug_assert!(
+            per_wallet_released.is_empty(),
+            "released outpoints for a wallet that emitted no sweep would be dropped \
+             here, stranding those coins marked spent forever: {:?}",
+            per_wallet_released
+        );
 
         if let Some(lock) = instant_lock {
             for (wallet_id, records) in per_wallet_updated_records {

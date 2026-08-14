@@ -92,13 +92,14 @@ pub struct TransactionCheckResult {
     /// no surviving record spends too. Empty whenever `swept_transactions`
     /// is.
     ///
-    /// A consumer mirroring wallet state needs this named explicitly rather
-    /// than inferring it from the deleted records: the winner that triggered
-    /// the sweep does not have to be wallet-relevant at all (it can spend our
-    /// coin and pay only external addresses), so it may never appear
-    /// anywhere else in this wallet's output, leaving no other way to learn
-    /// which of a loser's inputs are genuinely free again versus still
-    /// claimed by a surviving transaction.
+    /// Named explicitly because it cannot be inferred downstream: the winner
+    /// that triggered the sweep need not be wallet-relevant, so it may never
+    /// appear in this wallet's output at all. See
+    /// [`ManagedCoreFundsAccount::drop_conflicted_transactions`], which
+    /// computes the distinction.
+    ///
+    /// [`ManagedCoreFundsAccount::drop_conflicted_transactions`]:
+    ///     crate::managed_account::ManagedCoreFundsAccount
     pub released_outpoints: Vec<OutPoint>,
 }
 

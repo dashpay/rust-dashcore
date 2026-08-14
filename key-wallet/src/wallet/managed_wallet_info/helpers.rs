@@ -77,9 +77,16 @@ pub struct WalletConflictSweep {
 }
 
 impl WalletConflictSweep {
-    /// Whether the sweep removed anything.
+    /// Whether the sweep changed nothing.
+    ///
+    /// Both fields are checked even though only a removal can free an
+    /// outpoint today, so the second can never be non-empty on its own.
+    /// Callers use this to decide whether wallet state was modified, and a
+    /// release that stopped riding along with a removal would otherwise stop
+    /// marking the wallet dirty — silently, and only visible later as a coin
+    /// still marked spent after a restart.
     pub fn is_empty(&self) -> bool {
-        self.txids.is_empty()
+        self.txids.is_empty() && self.released_outpoints.is_empty()
     }
 
     /// Drop outpoints some surviving record elsewhere in the wallet still
@@ -99,6 +106,11 @@ impl WalletConflictSweep {
     /// that triggered the sweep: `drop_conflicted_transactions` already
     /// withholds the inputs it spends, which it must, since on the checker
     /// path the sweep runs before the winner is recorded anywhere.
+    ///
+    /// Scans the records per candidate and stops at the first claim rather
+    /// than building the wallet's whole spent-input set: a sweep frees a
+    /// handful of coins at most, while the set it would be checked against
+    /// grows with the entire transaction history.
     fn retain_unclaimed(
         &mut self,
         accounts: &crate::managed_account::managed_account_collection::ManagedAccountCollection,
@@ -106,14 +118,14 @@ impl WalletConflictSweep {
         if self.released_outpoints.is_empty() {
             return;
         }
-        let claimed: BTreeSet<OutPoint> = accounts
-            .all_accounts()
-            .into_iter()
-            .flat_map(|account| account.transactions().values())
-            .flat_map(|record| record.transaction.input.iter())
-            .map(|input| input.previous_output)
-            .collect();
-        self.released_outpoints.retain(|outpoint| !claimed.contains(outpoint));
+        let accounts = accounts.all_accounts();
+        self.released_outpoints.retain(|outpoint| {
+            !accounts.iter().any(|account| {
+                account.transactions().values().any(|record| {
+                    record.transaction.input.iter().any(|input| input.previous_output == *outpoint)
+                })
+            })
+        });
     }
 }
 
@@ -137,9 +149,8 @@ impl ManagedWalletInfo {
     /// learn those rows are gone — nothing else in the event surface reports
     /// a removal, and a mirror that misses it replays the dead transaction.
     /// Also returns the outpoints released as a side effect, for the same
-    /// reason: the winner that triggered this sweep is not guaranteed to
-    /// appear anywhere else the caller can see, so it cannot re-derive which
-    /// of a loser's inputs are genuinely free again.
+    /// reason: the winner is not guaranteed to appear anywhere the caller can
+    /// see, so the set cannot be re-derived from the txids.
     pub fn sweep_conflicts(
         &mut self,
         tx: &Transaction,
