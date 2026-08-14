@@ -70,6 +70,16 @@ pub struct ManagedCoreFundsAccount {
     reservations: ReservationSet,
 }
 
+/// What [`ManagedCoreFundsAccount::apply_abandon`] removed from one account.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct AbandonRemoval {
+    /// UTXOs the abandoned transactions had contributed.
+    pub utxos: usize,
+    /// Transaction records actually dropped — a txid the account never held
+    /// removes nothing.
+    pub records: usize,
+}
+
 impl ManagedCoreFundsAccount {
     /// Create a new managed funds account
     pub fn new(managed_account_type: ManagedAccountType, network: Network) -> Self {
@@ -164,6 +174,23 @@ impl ManagedCoreFundsAccount {
         self.spent_outpoints.contains(outpoint)
     }
 
+    /// Collect the outpoints among `tx`'s inputs that this account holds as a
+    /// final UTXO — confirmed, InstantSend-locked, or trusted.
+    ///
+    /// Used at the wallet level to assemble the cross-account parent view that
+    /// [`Self::record_transaction`] needs: one account cannot tell whether a
+    /// pooled transaction's other inputs are ours, but the wallet can ask every
+    /// account and union the answers.
+    pub(crate) fn collect_final_parents(&self, tx: &Transaction, into: &mut BTreeSet<OutPoint>) {
+        for input in &tx.input {
+            if self.utxos.get(&input.previous_output).is_some_and(|parent| {
+                parent.is_confirmed || parent.is_instantlocked || parent.is_trusted
+            }) {
+                into.insert(input.previous_output);
+            }
+        }
+    }
+
     /// Cached scriptPubKeys for every address that could still receive or hold
     /// funds under a single-use address discipline: addresses not yet used
     /// (the gap-limit lookahead, including reserved ones) plus used addresses
@@ -190,12 +217,18 @@ impl ManagedCoreFundsAccount {
     ///
     /// Skips any output whose outpoint is already in `observed_spent` — it is
     /// spent on-chain (dashpay/rust-dashcore#649), so the record stays consistent.
+    ///
+    /// `external_final_parents` carries the wallet-level view of the inputs:
+    /// outpoints that a *sibling* account of the same wallet holds as final.
+    /// See [`Self::record_transaction`] for why a per-account view is not
+    /// enough. An empty set degrades this to the account-local check.
     fn update_utxos(
         &mut self,
         tx: &Transaction,
         account_match: &AccountMatch,
         context: TransactionContext,
         observed_spent: &BTreeMap<OutPoint, CoreBlockHeight>,
+        external_final_parents: &BTreeSet<OutPoint>,
     ) {
         // Update UTXOs only for spendable account types
         match self.keys.managed_account_type() {
@@ -233,14 +266,47 @@ impl ManagedCoreFundsAccount {
                 // they are only removed after the insert loop below. An unknown
                 // or non-final parent denies trust, so funds that the network
                 // may still drop never surface as confirmed.
+                //
+                // "Ours" is a wallet-level question, not an account-level one:
+                // pooled funding (asset locks draw from BIP44 + BIP32 + the
+                // DashPay contact-receiving accounts) routinely puts inputs
+                // from a sibling account into a transaction whose change lands
+                // here. Consulting only `self.utxos` would deny trust to our
+                // own transfer and file its change under `unconfirmed`, so the
+                // caller's wallet-wide view fills in the parents this account
+                // cannot see.
                 let all_inputs_final_and_ours = tx.input.iter().all(|input| {
                     self.utxos.get(&input.previous_output).is_some_and(|parent| {
                         parent.is_confirmed || parent.is_instantlocked || parent.is_trusted
-                    })
+                    }) || external_final_parents.contains(&input.previous_output)
                 });
 
                 let txid = tx.txid();
                 let mut utxos_changed = false;
+
+                // A transaction whose input a *block* already spent can never
+                // confirm — unless this arrival is that block delivery itself.
+                // The conflict sweep below only fires when the arriving
+                // transaction is final, so without this the reverse order
+                // (winner confirms, loser arrives afterwards as mempool)
+                // credits the loser's outputs with nothing left to remove
+                // them, and `is_spendable` would hand them to coin selection.
+                let doomed_by_a_settled_spend = !context.confirmed()
+                    && !matches!(context, TransactionContext::InstantSend(_))
+                    && tx
+                        .input
+                        .iter()
+                        .any(|input| observed_spent.contains_key(&input.previous_output));
+                if doomed_by_a_settled_spend {
+                    // Deliberately before any mutation: the record built by
+                    // the caller stands, so history still shows the attempt,
+                    // but nothing it created enters the UTXO set.
+                    tracing::info!(
+                        %txid,
+                        "Not crediting a transaction whose input a block already spent"
+                    );
+                    return;
+                }
 
                 let network = self.keys.network();
 
@@ -343,6 +409,244 @@ impl ManagedCoreFundsAccount {
         }
     }
 
+    /// Drop the spent-marks that `freed` contributed, keeping every mark a
+    /// surviving record still claims.
+    ///
+    /// Deliberately *not* a wholesale rebuild from the live records. Under the
+    /// default `keep-finalized-transactions = off` a chainlocked spend's
+    /// record is reduced to its txid, so its inputs survive only as marks
+    /// already in this set — reassigning from the record map would silently
+    /// drop them and let a later backfill re-credit coins that are spent on
+    /// chain. Only outpoints the removed records actually contributed are
+    /// considered, and a removed record's input stays marked when a survivor
+    /// spends it too (a loser spending A+B against a winner spending only A
+    /// must leave A marked and free B).
+    fn release_spent_marks(&mut self, freed: &HashSet<OutPoint>) {
+        if freed.is_empty() {
+            return;
+        }
+        let still_spent = rebuild_spent_outpoints(&self.keys);
+        self.spent_outpoints
+            .retain(|outpoint| !freed.contains(outpoint) || still_spent.contains(outpoint));
+    }
+
+    /// Remove every trace of `abandoned` from this account.
+    ///
+    /// Drops the outputs those transactions contributed and their records, and
+    /// releases the outpoints they spent from `spent_outpoints` so the coins
+    /// become eligible for rediscovery.
+    ///
+    /// The released parents are deliberately **not** re-inserted into `utxos`.
+    /// `update_utxos` discards the `Utxo` when it removes a spent parent, and
+    /// `InputDetail` keeps only index/value/address, so the flags that decide
+    /// which balance bucket a restored coin belongs in are not retained
+    /// anywhere. Inventing them would be a guess. What these coins genuinely
+    /// are is unspent on chain — the abandoned transaction never reached the
+    /// network — so the correct source of truth is a rescan, which releasing
+    /// them from `spent_outpoints` now permits.
+    ///
+    /// Reservations are deliberately left alone. A recorded transaction has
+    /// already handed its inputs from the ephemeral set to `spent_outpoints`
+    /// (see `update_utxos`), so there is nothing of this build's left to
+    /// release — while an unconditional release here could free a reservation
+    /// a *newer* build has since taken over the same outpoints, which
+    /// `ReservationSet::release` documents as forbidden for exactly this
+    /// caller shape.
+    ///
+    /// Returns what was actually removed.
+    pub(crate) fn apply_abandon(&mut self, abandoned: &BTreeSet<Txid>) -> AbandonRemoval {
+        let doomed: Vec<OutPoint> = self
+            .utxos
+            .keys()
+            .filter(|outpoint| abandoned.contains(&outpoint.txid))
+            .copied()
+            .collect();
+        let utxos = doomed.len();
+        for outpoint in doomed {
+            self.utxos.remove(&outpoint);
+        }
+
+        let mut records = 0;
+        let mut freed: HashSet<OutPoint> = HashSet::new();
+        for txid in abandoned {
+            if let Some(record) = self.keys.transactions_mut().remove(txid) {
+                records += 1;
+                freed.extend(record.transaction.input.iter().map(|input| input.previous_output));
+            }
+        }
+        if records > 0 {
+            self.release_spent_marks(&freed);
+        }
+
+        if utxos > 0 {
+            self.keys.bump_monitor_revision();
+        }
+        AbandonRemoval {
+            utxos,
+            records,
+        }
+    }
+
+    /// Drop the outputs of any recorded unconfirmed transaction that `tx`
+    /// provably beat to one of its inputs.
+    ///
+    /// When `tx` arrives with a final context — in a block, or InstantSend
+    /// locked — every input it spends is settled under Dash consensus. Any
+    /// *other* transaction we recorded that spends the same outpoint can
+    /// therefore never confirm, and the UTXOs it contributed (its change) are
+    /// money that does not exist. Nothing else removes them: the loser is not
+    /// in a block, so no block processing revisits it, and mempool expiry in
+    /// dash-spv only drops its own tracking without telling the wallet. Left
+    /// alone they are counted permanently — and as *confirmed*, not merely
+    /// unconfirmed, whenever the trusted-self-send rule applies to them,
+    /// which also makes them selectable by coin selection.
+    ///
+    /// This is deliberately narrow. It fires only on proof — a conflicting
+    /// spend that is itself final — never on a timeout: the p2p network has no
+    /// negative signal (modern Dash Core removed BIP61 `reject`), so a
+    /// transaction that merely went quiet may still be alive in a miner's
+    /// mempool, and un-applying it would re-expose its inputs to coin
+    /// selection and invite a double-spend.
+    ///
+    /// Only the loser's *outputs* are reverted. Where the winner spends every
+    /// input the loser did — the ordinary resend — that is complete: those
+    /// inputs are correctly accounted for by `tx`, the transaction that
+    /// actually spent them.
+    ///
+    /// A loser may also spend inputs the winner does not. Those coins are
+    /// freed from `spent_outpoints` below, but they cannot be re-credited
+    /// here: `update_utxos` discarded their `Utxo` — and its flags — when the
+    /// loser was recorded, and `InputDetail` keeps only index/value/address.
+    /// The release is what makes them recoverable: a rescan re-delivering the
+    /// funding transaction inserts them again. Until that rescan they are
+    /// absent from the balance.
+    ///
+    /// That recovery has a boundary worth knowing. A funding transaction that
+    /// was chainlock-finalized keeps only its txid, so `has_transaction` stays
+    /// true and re-delivery is not a new sighting — `confirm_transaction`
+    /// returns before `update_utxos`, the only production insert site, and the
+    /// coin does not come back. Recovering it needs a rescan deep enough to
+    /// re-fetch the block, which is above this layer. Since Dash chainlocks
+    /// within a block or two, that is the normal posture for older coins.
+    ///
+    /// Scope: account-local. A loser recorded here has its outputs dropped
+    /// here; a loser whose change landed in a *different* account is not
+    /// reached, because both the transaction records and the UTXO set are
+    /// per-account. That covers the ordinary shape — a resend keeps the same
+    /// funding account and so the same change account — but not every one.
+    ///
+    /// Returns the txids it removed.
+    pub(crate) fn drop_conflicted_transactions(
+        &mut self,
+        tx: &Transaction,
+        context: &TransactionContext,
+    ) -> Vec<Txid> {
+        if !(context.confirmed() || matches!(context, TransactionContext::InstantSend(_))) {
+            return Vec::new();
+        }
+
+        let winner = tx.txid();
+        let spent: BTreeSet<OutPoint> =
+            tx.input.iter().map(|input| input.previous_output).collect();
+
+        // A finalized transaction keeps only its txid, so a chainlocked record
+        // can never be a loser here — and must not be, since it is settled.
+        let mut losers: BTreeSet<Txid> = self
+            .keys
+            .transactions()
+            .iter()
+            .filter(|(txid, record)| {
+                // Precedence, per DIP-10: a chainlock is final over
+                // everything, an InstantSend lock is final against a double
+                // spend, and a plain block is provisional until its own
+                // chainlock lands. So an IS-locked record may only be evicted
+                // by a chainlocked arrival — a plain `InBlock` winner cannot
+                // overrule a lock the network already signed, and the block
+                // it arrived in can still reorg away.
+                let loser_is_locked = record.context.is_instant_send();
+                **txid != winner
+                    && !record.is_confirmed()
+                    && (!loser_is_locked || context.is_chain_locked())
+                    && record
+                        .transaction
+                        .input
+                        .iter()
+                        .any(|input| spent.contains(&input.previous_output))
+            })
+            .map(|(txid, _)| *txid)
+            .collect();
+
+        if losers.is_empty() {
+            return Vec::new();
+        }
+
+        // A loser's change may already have funded further unconfirmed
+        // transactions. Those can never exist either — their parent cannot —
+        // so leaving their outputs credited would preserve the very
+        // phantom-balance class this sweep exists to remove. Walk the
+        // unconfirmed descendant closure; confirmed records are never
+        // followed, since a transaction in a block spent something real.
+        loop {
+            let mut found = BTreeSet::new();
+            for (txid, record) in self.keys.transactions() {
+                if record.is_confirmed()
+                    || record.context.is_instant_send()
+                    || losers.contains(txid)
+                    || *txid == winner
+                {
+                    continue;
+                }
+                if record
+                    .transaction
+                    .input
+                    .iter()
+                    .any(|input| losers.contains(&input.previous_output.txid))
+                {
+                    found.insert(*txid);
+                }
+            }
+            let before = losers.len();
+            losers.extend(found);
+            if losers.len() == before {
+                break;
+            }
+        }
+
+        let mut freed: HashSet<OutPoint> = HashSet::new();
+        let mut changed = false;
+        for loser in &losers {
+            let removed: Vec<OutPoint> =
+                self.utxos.keys().filter(|outpoint| outpoint.txid == *loser).copied().collect();
+            for outpoint in removed {
+                self.utxos.remove(&outpoint);
+                changed = true;
+            }
+            if let Some(record) = self.keys.transactions_mut().remove(loser) {
+                freed.extend(record.transaction.input.iter().map(|input| input.previous_output));
+            }
+            tracing::info!(
+                conflicted_txid = %loser,
+                winning_txid = %winner,
+                "Dropped a conflicted transaction: its input was spent by a final transaction"
+            );
+        }
+        // Never free an outpoint the winner itself spends. `freed` collects
+        // every input of every removed loser, and the shared one is exactly
+        // what the winner consumed — releasing it would let a later rescan
+        // re-insert a coin that is spent on chain, and coin selection would
+        // then build a guaranteed double spend. `release_spent_marks` cannot
+        // catch this on its own: on the checker path the sweep runs before
+        // the winner is recorded, so no live record claims the outpoint yet.
+        // Only the loser's *extra* inputs are genuinely released.
+        freed.retain(|outpoint| !spent.contains(outpoint));
+        self.release_spent_marks(&freed);
+        if changed {
+            self.keys.bump_monitor_revision();
+        }
+
+        losers.into_iter().collect()
+    }
+
     /// Re-process an existing transaction with updated context (e.g.,
     /// mempool→block confirmation) and potentially new address matches
     /// from gap limit rescans.
@@ -366,6 +670,7 @@ impl ManagedCoreFundsAccount {
         context: TransactionContext,
         transaction_type: TransactionType,
         observed_spent: &BTreeMap<OutPoint, CoreBlockHeight>,
+        external_final_parents: &BTreeSet<OutPoint>,
     ) -> Option<TransactionRecord> {
         let txid = tx.txid();
 
@@ -384,6 +689,7 @@ impl ManagedCoreFundsAccount {
                 context,
                 transaction_type,
                 observed_spent,
+                external_final_parents,
             );
             return Some(record);
         }
@@ -423,7 +729,7 @@ impl ManagedCoreFundsAccount {
         // chainlock catches up.
         #[cfg(not(feature = "keep-finalized-transactions"))]
         let drop_now = context.is_chain_locked();
-        self.update_utxos(tx, account_match, context, observed_spent);
+        self.update_utxos(tx, account_match, context, observed_spent, external_final_parents);
         #[cfg(not(feature = "keep-finalized-transactions"))]
         if drop_now {
             self.keys.drop_finalized_transaction(&txid);
@@ -439,6 +745,14 @@ impl ManagedCoreFundsAccount {
     /// for any output whose outpoint is already observed spent on-chain, so a
     /// coin whose spend was seen in an earlier-processed block is never
     /// (re-)tracked as spendable.
+    ///
+    /// `external_final_parents` is the wallet-level answer to "are these
+    /// inputs ours and final" for parents this account does not hold. A
+    /// transaction funded from several accounts — the normal shape for asset
+    /// locks — is still our own self-send, and its change must not be filed
+    /// under `unconfirmed` merely because the sibling account's UTXOs are
+    /// invisible from here. Callers driving a single account directly pass an
+    /// empty set and get the account-local behavior.
     pub(crate) fn record_transaction(
         &mut self,
         tx: &Transaction,
@@ -446,6 +760,7 @@ impl ManagedCoreFundsAccount {
         context: TransactionContext,
         transaction_type: TransactionType,
         observed_spent: &BTreeMap<OutPoint, CoreBlockHeight>,
+        external_final_parents: &BTreeSet<OutPoint>,
     ) -> TransactionRecord {
         let net_amount = account_match.received as i64 - account_match.sent as i64;
 
@@ -553,7 +868,7 @@ impl ManagedCoreFundsAccount {
         // feature is on (we want to keep the full record).
         #[cfg(not(feature = "keep-finalized-transactions"))]
         let drop_now = context.is_chain_locked();
-        self.update_utxos(tx, account_match, context, observed_spent);
+        self.update_utxos(tx, account_match, context, observed_spent, external_final_parents);
         #[cfg(not(feature = "keep-finalized-transactions"))]
         if drop_now {
             self.keys.drop_finalized_transaction(&txid);
@@ -919,9 +1234,14 @@ impl ManagedAccountTrait for ManagedCoreFundsAccount {
 ///
 /// Every input of every recorded transaction is a spend this account has seen,
 /// so its `previous_output` belongs in the derived set. The field is not
-/// persisted (`#[serde(skip)]`), so both [`Deserialize`] and the test reload
-/// simulation reconstruct it through here to stay in lockstep.
-#[cfg(any(feature = "serde", test))]
+/// serialized (`#[serde(skip_serializing)]`), so [`Deserialize`] and the test
+/// reload simulation reconstruct it through here to stay in lockstep.
+///
+/// **Derives only from live records.** Under the default
+/// `keep-finalized-transactions = off`, a chainlocked record is dropped to
+/// just its txid, so its inputs survive only as entries already in the set —
+/// which a wholesale rebuild would discard. Callers pruning a subset of
+/// records must retain the rest rather than reassigning from this.
 fn rebuild_spent_outpoints(keys: &ManagedCoreKeysAccount) -> HashSet<OutPoint> {
     keys.transactions()
         .values()
