@@ -6,8 +6,8 @@ use std::time::Duration;
 use tokio::sync::RwLock;
 
 use super::helpers::{
-    count_wallet_transactions, get_spendable_balance, wait_for_mempool_tx, wait_for_sync,
-    wait_for_wallet_synced, EMPTY_MNEMONIC, SECONDARY_MNEMONIC,
+    count_wallet_transactions, get_spendable_balance, wait_for_mempool_tx, wait_for_mempool_txid,
+    wait_for_sync, wait_for_wallet_synced, EMPTY_MNEMONIC, SECONDARY_MNEMONIC,
 };
 use super::setup::{create_and_start_client, TestContext};
 use dash_spv::test_utils::{create_test_wallet, TestChain};
@@ -407,9 +407,10 @@ async fn test_spend_change_balance() {
         build_and_sign(&wallet, &wallet_id, &dest_a, 100_000_000).await.expect("build tx_a");
 
     client_handle.client.broadcast_transaction(&tx_a).await.expect("broadcast tx_a");
-    wait_for_mempool_tx(&mut client_handle.wallet_event_receiver, MEMPOOL_TIMEOUT)
-        .await
-        .expect("detect tx_a");
+    assert!(
+        wait_for_mempool_txid(&mut client_handle.wallet_event_receiver, tx_a.txid()).await,
+        "tx_a not detected in mempool",
+    );
 
     // The wallet's only UTXO now is the mempool change from tx_a, so a
     // successful build proves coin selection used it.
@@ -423,9 +424,10 @@ async fn test_spend_change_balance() {
     );
 
     client_handle.client.broadcast_transaction(&tx_b).await.expect("broadcast tx_b");
-    wait_for_mempool_tx(&mut client_handle.wallet_event_receiver, MEMPOOL_TIMEOUT)
-        .await
-        .expect("detect tx_b");
+    assert!(
+        wait_for_mempool_txid(&mut client_handle.wallet_event_receiver, tx_b.txid()).await,
+        "tx_b not detected in mempool",
+    );
 
     client_handle.stop().await;
 }
@@ -483,15 +485,15 @@ async fn test_concurrent_builds_do_not_double_spend() {
     // Both broadcasts succeed and both transactions reach the mempool: a
     // double-spend would have the second rejected by the network.
     client_handle.client.broadcast_transaction(&tx_a).await.expect("broadcast tx_a");
-    let detected_a = wait_for_mempool_tx(&mut client_handle.wallet_event_receiver, MEMPOOL_TIMEOUT)
-        .await
-        .expect("detect tx_a");
-    assert_eq!(detected_a, tx_a.txid());
+    assert!(
+        wait_for_mempool_txid(&mut client_handle.wallet_event_receiver, tx_a.txid()).await,
+        "tx_a not detected in mempool",
+    );
     client_handle.client.broadcast_transaction(&tx_b).await.expect("broadcast tx_b");
-    let detected_b = wait_for_mempool_tx(&mut client_handle.wallet_event_receiver, MEMPOOL_TIMEOUT)
-        .await
-        .expect("detect tx_b");
-    assert_eq!(detected_b, tx_b.txid());
+    assert!(
+        wait_for_mempool_txid(&mut client_handle.wallet_event_receiver, tx_b.txid()).await,
+        "tx_b not detected in mempool",
+    );
 
     client_handle.stop().await;
 }

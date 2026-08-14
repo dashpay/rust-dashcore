@@ -165,8 +165,7 @@ pub(super) async fn create_and_start_client(
     config: &ClientConfig,
     wallet: Arc<RwLock<WalletManager<ManagedWalletInfo>>>,
 ) -> ClientHandle {
-    let network_manager =
-        PeerNetworkManager::new(config).await.expect("Failed to create network manager");
+    let network_manager = PeerNetworkManager::new(config).await;
     let storage_manager =
         DiskStorageManager::new(config).await.expect("Failed to create storage manager");
 

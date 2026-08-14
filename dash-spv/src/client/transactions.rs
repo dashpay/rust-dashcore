@@ -30,21 +30,19 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
     /// With mempool tracking disabled there is no acceptance tracking and the
     /// transaction is simply sent to all connected peers.
     pub async fn broadcast_transaction(&self, tx: &dashcore::Transaction) -> Result<()> {
-        let network_guard = self.network.lock().await;
-
-        if network_guard.peer_count() == 0 {
+        if self.network.connected_count().await == 0 {
             return Err(SpvError::Network(NetworkError::NotConnected));
         }
 
         if !self.config.read().await.enable_mempool_tracking {
             // Legacy untracked path: fan out to every peer.
-            network_guard.broadcast(NetworkMessage::Tx(tx.clone())).await?;
+            self.network.broadcast(NetworkMessage::Tx(tx.clone()));
         }
 
         // Inject locally so the mempool manager picks it up through handle_tx.
         // With tracking enabled the manager performs the actual (targeted)
         // network send when it processes this message.
-        network_guard.dispatch_local(NetworkMessage::Tx(tx.clone())).await;
+        self.network.dispatch_local(NetworkMessage::Tx(tx.clone())).await;
 
         Ok(())
     }

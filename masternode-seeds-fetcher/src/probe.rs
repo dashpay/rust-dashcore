@@ -27,7 +27,7 @@ use tokio::net::TcpStream;
 use x509_parser::prelude::FromDer;
 use x509_parser::x509::X509Version;
 
-use dash_spv::network::Peer;
+use crate::peer::Peer;
 
 /// How long to give a single TCP connect before giving up.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);

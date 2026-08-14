@@ -10,7 +10,6 @@ mod io;
 mod lockfile;
 mod masternode;
 mod metadata;
-mod peers;
 mod segments;
 use crate::error::StorageResult;
 use crate::storage::lockfile::LockFile;
@@ -33,7 +32,6 @@ pub use crate::storage::filter_headers::{FilterHeaderStorage, PersistentFilterHe
 pub use crate::storage::filters::{FilterStorage, PersistentFilterStorage};
 pub use crate::storage::masternode::{MasternodeStateStorage, PersistentMasternodeStateStorage};
 pub use crate::storage::metadata::{MetadataStorage, PersistentMetadataStorage};
-pub use crate::storage::peers::{PeerStorage, PersistentPeerStorage};
 
 pub use types::*;
 

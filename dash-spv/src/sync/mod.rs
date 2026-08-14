@@ -3,7 +3,6 @@
 mod block_headers;
 mod blocks;
 mod chainlock;
-pub(super) mod download_coordinator;
 mod events;
 mod filter_headers;
 mod filters;

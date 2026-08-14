@@ -1,5 +1,5 @@
 use crate::error::{SyncError, SyncResult};
-use crate::network::{Message, MessageType, RequestSender};
+use crate::network::{InboundMessage, MessageType, NetworkManager, RequestKey};
 use crate::storage::{BlockHeaderStorage, FilterHeaderStorage, FilterStorage};
 use crate::sync::sync_manager::ensure_not_started;
 use crate::sync::{
@@ -8,6 +8,8 @@ use crate::sync::{
 use async_trait::async_trait;
 use dashcore::network::message::NetworkMessage;
 use key_wallet_manager::WalletInterface;
+use std::net::SocketAddr;
+use std::sync::Arc;
 
 #[async_trait]
 impl<
@@ -37,21 +39,19 @@ impl<
         &[MessageType::CFilter]
     }
 
-    /// Keep `active_batches`, the block-match tracker, pending verified
-    /// batches, and the filter pipeline's per-batch trackers. Move in-flight
-    /// `getcfilters` slots back to pending so the next `send_pending` reissues
-    /// them to the new peer immediately. Without this preservation, a re-scan
-    /// after reconnect would re-track the same block hashes and leak
-    /// `pending_blocks` counters that never reach zero.
-    fn on_disconnect(&mut self) {
-        self.filter_pipeline.requeue_in_flight();
-    }
+    /// Keep `active_batches`, the block-match tracker, pending verified batches,
+    /// and the filter pipeline's per-batch trackers across the disconnect.
+    /// In-flight `getcfilters` slots are re-queued by the network manager itself,
+    /// and the pipeline's wanted set is preserved so the next `send_pending`
+    /// reissues them to the new peer. Without this preservation, a re-scan after
+    /// reconnect would re-track the same block hashes and leak `pending_blocks`
+    /// counters that never reach zero.
+    fn on_disconnect(&mut self) {}
 
-    fn on_peer_disconnect(&mut self) {
-        self.filter_pipeline.requeue_in_flight();
-    }
-
-    async fn start_sync(&mut self, requests: &RequestSender) -> SyncResult<Vec<SyncEvent>> {
+    async fn start_sync(
+        &mut self,
+        network: &Arc<dyn NetworkManager>,
+    ) -> SyncResult<Vec<SyncEvent>> {
         ensure_not_started(self.state(), self.identifier())?;
 
         // Resume in-progress work preserved across a disconnect cycle.
@@ -75,7 +75,7 @@ impl<
         // and `try_process_batch` unconditionally. `send_pending` is a no-op
         // when the pipeline has nothing queued.
         if !self.is_idle() {
-            self.filter_pipeline.send_pending(requests, &*self.header_storage.read().await).await?;
+            self.filter_pipeline.send_pending(network, &*self.header_storage.read().await).await?;
             self.set_state(SyncState::Syncing);
             return Ok(vec![]);
         }
@@ -95,7 +95,7 @@ impl<
             let mut events = vec![SyncEvent::SyncStart {
                 identifier: self.identifier(),
             }];
-            events.extend(self.start_download(requests).await?);
+            events.extend(self.start_download(network).await?);
             return Ok(events);
         }
 
@@ -105,7 +105,7 @@ impl<
         // above this must not emit a SyncStart.
         if stored_filters_tip > 0 && stored_filters_tip == self.progress.committed_height() {
             self.progress.update_filter_header_tip_height(stored_filters_tip);
-            return self.start_download(requests).await;
+            return self.start_download(network).await;
         }
 
         // No stored filters to process - wait for FilterHeadersSyncComplete events
@@ -115,10 +115,11 @@ impl<
 
     async fn handle_message(
         &mut self,
-        msg: Message,
-        requests: &RequestSender,
+        peer: SocketAddr,
+        msg: InboundMessage,
+        network: &Arc<dyn NetworkManager>,
     ) -> SyncResult<Vec<SyncEvent>> {
-        let NetworkMessage::CFilter(cfilter) = msg.inner() else {
+        let NetworkMessage::CFilter(cfilter) = &*msg else {
             return Ok(vec![]);
         };
 
@@ -129,7 +130,7 @@ impl<
         let Some(h) = height else {
             tracing::warn!(
                 block_hash = %cfilter.block_hash,
-                peer = %msg.peer_address(),
+                peer = %peer,
                 "Received CFilter for unknown block hash, rejecting as invalid"
             );
             // TODO: should we penalize the peer a bit?
@@ -140,12 +141,21 @@ impl<
         };
 
         // Buffer filter in pipeline
-        self.filter_pipeline.receive_with_data(h, cfilter.block_hash, &cfilter.filter);
+        let batch_completed =
+            self.filter_pipeline.receive_with_data(h, cfilter.block_hash, &cfilter.filter);
 
-        // Send more requests if there are free slots
-        let header_storage = self.header_storage.read().await;
-        self.filter_pipeline.send_pending(requests, &*header_storage).await?;
-        drop(header_storage);
+        // A completed batch == one `getcfilters` request fully answered: free that
+        // peer's in-flight unit (the reader skips per-`cfilter` decrements) and stop
+        // the network manager tracking the batch for timeout.
+        if let Some(batch_start) = batch_completed {
+            network.request_completed(peer, 1).await;
+            network.request_answered(RequestKey::CFilters(batch_start)).await;
+        }
+
+        // No `send_pending` here: the whole wanted set is already declared to the
+        // broker, which paces it out as capacity frees. Re-declaring per received
+        // `cfilter` would re-scan every wanted batch on the hot path. The tick
+        // re-declares to pick up newly-available batches.
 
         Ok(self.store_and_match_batches().await?)
     }
@@ -153,20 +163,20 @@ impl<
     async fn handle_sync_event(
         &mut self,
         event: &SyncEvent,
-        requests: &RequestSender,
+        network: &Arc<dyn NetworkManager>,
     ) -> SyncResult<Vec<SyncEvent>> {
         match event {
             SyncEvent::FilterHeadersSyncComplete {
                 tip_height,
             } => {
-                return self.handle_new_filter_headers(*tip_height, requests).await;
+                return self.handle_new_filter_headers(*tip_height, network).await;
             }
 
             SyncEvent::FilterHeadersStored {
                 tip_height,
                 ..
             } => {
-                return self.handle_new_filter_headers(*tip_height, requests).await;
+                return self.handle_new_filter_headers(*tip_height, network).await;
             }
 
             // React to BlockProcessed events from the BlocksManager
@@ -215,7 +225,7 @@ impl<
         Ok(vec![])
     }
 
-    async fn tick(&mut self, requests: &RequestSender) -> SyncResult<Vec<SyncEvent>> {
+    async fn tick(&mut self, network: &Arc<dyn NetworkManager>) -> SyncResult<Vec<SyncEvent>> {
         // Detect a wallet that was added behind our scan progress and rescan
         // from its `synced_height`. Reset committed_height to the lowest
         // synced_height across the stale wallets only, so already-synced
@@ -248,12 +258,11 @@ impl<
                     );
                     self.reset_for_rescan();
                     self.progress.update_committed_height(stale_min_synced);
-                    return self.start_download(requests).await;
+                    return self.start_download(network).await;
                 }
             }
         }
 
-        // TODO: Get rid of the send pending in here? Or decouple it from the header storage?
         // Run tick when Syncing OR when Synced with pending work (new blocks arriving)
         let has_pending_work = !self.active_batches.is_empty();
         let should_tick = match self.state() {
@@ -265,12 +274,10 @@ impl<
             return Ok(vec![]);
         }
 
-        // Handle timeouts
-        self.filter_pipeline.handle_timeouts();
-
-        // Send pending requests (decoupled from processing)
+        // Timeouts/retry are the network manager's job now (the broker re-injects);
+        // just (re-)declare pending requests (decoupled from processing).
         let header_storage = self.header_storage.read().await;
-        self.filter_pipeline.send_pending(requests, &*header_storage).await?;
+        self.filter_pipeline.send_pending(network, &*header_storage).await?;
         drop(header_storage);
 
         // Store completed batches and do speculative matching
