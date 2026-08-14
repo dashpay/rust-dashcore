@@ -3,7 +3,7 @@ use crate::network::NetworkManager;
 use crate::types::HashedBlockHeader;
 use dashcore::network::message::NetworkMessage;
 use dashcore::network::message_blockdata::GetHeadersMessage;
-use dashcore::{BlockHash, Header};
+use dashcore::BlockHash;
 use dashcore_hashes::Hash;
 use std::sync::Arc;
 
@@ -92,7 +92,7 @@ impl SegmentState {
 
     /// Process received headers for this segment.
     /// Returns the number of headers processed, or an error if checkpoint validation fails.
-    pub(super) fn receive_headers(&mut self, headers: &[Header]) -> SyncResult<usize> {
+    pub(super) fn receive_headers(&mut self, headers: &[HashedBlockHeader]) -> SyncResult<usize> {
         if headers.is_empty() {
             // Empty response means we've reached the peer's tip for this segment
             self.complete = true;
@@ -116,8 +116,7 @@ impl SegmentState {
 
         // Process headers
         let mut processed = 0;
-        for header in headers {
-            let hashed = HashedBlockHeader::from(*header);
+        for hashed in headers {
             let hash = *hashed.hash();
             let height = self.current_height + processed as u32 + 1;
 
@@ -131,7 +130,7 @@ impl SegmentState {
                             self.segment_id,
                             target_height
                         );
-                        self.buffered_headers.push(hashed);
+                        self.buffered_headers.push(hashed.clone());
                         processed += 1;
                         self.complete = true;
                         break;
@@ -151,13 +150,13 @@ impl SegmentState {
                 }
             }
 
-            self.buffered_headers.push(hashed);
+            self.buffered_headers.push(hashed.clone());
             processed += 1;
         }
 
         // Update current tip for next request
         if processed > 0 {
-            self.current_tip_hash = headers[processed - 1].block_hash();
+            self.current_tip_hash = *headers[processed - 1].hash();
             self.current_height += processed as u32;
         }
 
@@ -235,7 +234,7 @@ mod tests {
 
         let first = Header::dummy_chain(1, hash).remove(0);
 
-        let processed = segment.receive_headers(&[first]).unwrap();
+        let processed = segment.receive_headers(&[first.into()]).unwrap();
 
         assert_eq!(processed, 1);
         assert_eq!(segment.buffered_headers.len(), 1);
@@ -262,7 +261,7 @@ mod tests {
         assert_ne!(*actual_hash, expected_checkpoint_hash);
 
         // Receiving this header should fail with a validation error
-        let result = segment.receive_headers(&[header]);
+        let result = segment.receive_headers(&[header.into()]);
         assert!(result.is_err());
 
         let err = result.unwrap_err();
@@ -291,7 +290,7 @@ mod tests {
         let mut segment = SegmentState::new(0, 0, start_hash, Some(1), Some(header_hash));
 
         // Receiving this header should succeed and complete the segment
-        let result = segment.receive_headers(&[header]);
+        let result = segment.receive_headers(&[header.into()]);
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), 1);
 
@@ -314,7 +313,7 @@ mod tests {
         header.prev_blockhash = start_hash;
 
         // Completed segment should return an invalid state error
-        let result = segment.receive_headers(&[header]);
+        let result = segment.receive_headers(&[header.into()]);
         assert!(result.is_err());
         match result.unwrap_err() {
             SyncError::InvalidState(msg) => {

@@ -384,6 +384,10 @@ impl filters::FilterStorage for DiskStorageManager {
     async fn truncate_above(&mut self, target_height: u32) -> StorageResult<()> {
         self.filters.write().await.truncate_above(target_height).await
     }
+
+    async fn set_committed_height(&mut self, height: u32) {
+        self.filters.write().await.set_committed_height(height).await;
+    }
 }
 
 #[async_trait]
@@ -398,6 +402,10 @@ impl BlockStorage for DiskStorageManager {
 
     async fn truncate_above(&mut self, target_height: u32) -> StorageResult<()> {
         self.blocks.write().await.truncate_above(target_height).await
+    }
+
+    async fn set_committed_height(&mut self, height: u32) {
+        self.blocks.write().await.set_committed_height(height).await;
     }
 }
 

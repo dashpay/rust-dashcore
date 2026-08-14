@@ -25,11 +25,11 @@ pub enum LLMQEntryVerificationSkipStatus {
     /// fetch.
     MissingChainLock(CoreBlockHeight, BlockHash),
     /// The quorum entry came through without an attached
-    /// `VerifyingChainLockSignaturesType::Rotating`. Typically happens when
-    /// a QRInfo's historical diff covers a block range in which no rotating
-    /// DKG successfully committed, so `apply_diff` extracts no
-    /// `rotation_sig` and `feed_qr_info` can't populate the 4-sig tuple for
-    /// the quorums in `lastCommitmentPerIndex`.
+    /// `VerifyingChainLockSignaturesType::Rotating`. Each of the four quarter
+    /// signatures is looked up by the work height of its quarter in the
+    /// `quorumsCLSigs` mapping the QRInfo's diffs carry, so a QRInfo that
+    /// covers none of a quorum's quarter work blocks, or whose quorum hash
+    /// heights are unknown, leaves the 4-sig tuple unpopulated.
     MissingRotationChainLockSigs(QuorumHash),
     /// A specific rotation chain-lock signature at offset `h - n` was not
     /// present for the masternode diff at the given block hash. The first
@@ -38,6 +38,12 @@ pub enum LLMQEntryVerificationSkipStatus {
     /// where the entire 4-sig tuple is absent.
     MissingRotationChainLockSig(u8, BlockHash),
     OtherContext(String),
+    /// At least one of the quarter chain-lock signatures used to reconstruct
+    /// this quorum was keyed by elimination rather than by a known quorum
+    /// height, so a verification failure says nothing about the quorum data
+    /// itself. Retry logic can resolve it by feeding the heights of the
+    /// rotated quorum hashes the QRInfo carries.
+    InferredRotationChainLockSigs(QuorumHash),
 }
 
 impl Display for LLMQEntryVerificationSkipStatus {
@@ -70,6 +76,9 @@ impl Display for LLMQEntryVerificationSkipStatus {
                 }
                 LLMQEntryVerificationSkipStatus::OtherContext(message) => {
                     format!("OtherContext({message})")
+                }
+                LLMQEntryVerificationSkipStatus::InferredRotationChainLockSigs(quorum_hash) => {
+                    format!("InferredRotationChainLockSigs({})", quorum_hash)
                 }
             }
             .as_str(),
@@ -121,6 +130,13 @@ impl From<QuorumValidationError> for LLMQEntryVerificationStatus {
                 Self::Skipped(LLMQEntryVerificationSkipStatus::MissingRotationChainLockSig(
                     offset, block_hash,
                 ))
+            }
+            // A cycle base sitting below the depth a rotation reconstruction
+            // reaches back to means the quarter lists cannot exist yet. That
+            // is missing history like its siblings above, so it degrades the
+            // one quorum instead of rejecting everything served with it.
+            QuorumValidationError::CycleBaseHeightTooLow(height) => {
+                Self::Skipped(LLMQEntryVerificationSkipStatus::MissedList(height))
             }
             other => Self::Invalid(other),
         }
@@ -209,6 +225,12 @@ mod tests {
                 ),
             ),
             (
+                QuorumValidationError::CycleBaseHeightTooLow(5),
+                LLMQEntryVerificationStatus::Skipped(LLMQEntryVerificationSkipStatus::MissedList(
+                    5,
+                )),
+            ),
+            (
                 QuorumValidationError::InvalidQuorumPublicKey,
                 LLMQEntryVerificationStatus::Invalid(QuorumValidationError::InvalidQuorumPublicKey),
             ),
@@ -236,6 +258,10 @@ mod tests {
             (
                 LLMQEntryVerificationSkipStatus::MissingRotationChainLockSig(2, h),
                 format!("MissingRotationChainLockSig(h - 2, {h})"),
+            ),
+            (
+                LLMQEntryVerificationSkipStatus::InferredRotationChainLockSigs(h),
+                format!("InferredRotationChainLockSigs({h})"),
             ),
         ];
 

@@ -241,12 +241,13 @@ impl fmt::Display for SyncEvent {
             } => match qr_info_result {
                 Some(s) => write!(
                     f,
-                    "MasternodeStateUpdated(height={}, qr_info={{stored_cycle_height={:?}, verified={}/{}, newly_qualified={}}})",
+                    "MasternodeStateUpdated(height={}, qr_info={{stored_cycle_height={:?}, verified={}/{}, newly_qualified={}, previous_cycle_invalid={}}})",
                     height,
                     s.stored_cycle_height,
                     s.fully_verified_count,
                     s.rotated_quorum_count,
                     s.newly_qualified_count,
+                    s.previous_cycle_invalid_count,
                 ),
                 None => write!(f, "MasternodeStateUpdated(height={})", height),
             },

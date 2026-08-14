@@ -77,6 +77,9 @@ impl<H: BlockHeaderStorage, B: BlockStorage, W: WalletInterface> BlocksManager<H
     /// in the correct sequence.
     pub(super) async fn process_buffered_blocks(&mut self) -> SyncResult<Vec<SyncEvent>> {
         let mut events = Vec::new();
+        // Highest height applied in this drain, used below to advance the
+        // storage's committed watermark exactly once.
+        let mut last_applied: Option<u32> = None;
 
         // Process blocks in height order using pipeline's ordering logic
         while let Some((block, height, interested)) = self.pipeline.take_next_ordered_block() {
@@ -124,6 +127,7 @@ impl<H: BlockHeaderStorage, B: BlockStorage, W: WalletInterface> BlocksManager<H
             // Only count new transactions to avoid double-counting during rescans
             self.progress.add_transactions(result.new_txids.len() as u32);
             self.progress.update_last_processed(height);
+            last_applied = Some(height);
 
             events.push(SyncEvent::BlockProcessed {
                 block_hash: hash,
@@ -132,6 +136,20 @@ impl<H: BlockHeaderStorage, B: BlockStorage, W: WalletInterface> BlocksManager<H
                 new_scripts,
                 confirmed_txids,
             });
+        }
+
+        // Blocks are drained in strict height order, so `last_applied` is the
+        // high-water mark of blocks now applied to every interested wallet.
+        // Telling storage lets it release those block bodies from memory on the
+        // next persist instead of pinning the whole backfill; they stay
+        // readable via `load_block`, which reloads them from disk.
+        //
+        // Set once per drain rather than per block: this takes the block
+        // storage write lock, and the loop above can run thousands of times.
+        // No other guard is held here, and the wallet lock inside the loop was
+        // dropped before this point.
+        if let Some(height) = last_applied {
+            self.block_storage.write().await.set_committed_height(height).await;
         }
 
         // Check if pipeline is empty

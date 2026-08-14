@@ -1,5 +1,5 @@
 use crate::error::SyncResult;
-use crate::network::{MessageType, NetworkManager, RequestKey};
+use crate::network::{InboundMessage, MessageType, NetworkManager, RequestKey};
 use crate::storage::{BlockHeaderStorage, BlockStorage};
 use crate::sync::sync_manager::ensure_not_started;
 use crate::sync::{
@@ -69,10 +69,10 @@ impl<H: BlockHeaderStorage, B: BlockStorage, W: WalletInterface + 'static> SyncM
     async fn handle_message(
         &mut self,
         _peer: SocketAddr,
-        msg: NetworkMessage,
+        msg: InboundMessage,
         network: &Arc<dyn NetworkManager>,
     ) -> SyncResult<Vec<SyncEvent>> {
-        let NetworkMessage::Block(block) = &msg else {
+        let NetworkMessage::Block(block) = &*msg else {
             return Ok(vec![]);
         };
 

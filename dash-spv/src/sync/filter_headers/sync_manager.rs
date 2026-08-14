@@ -1,5 +1,5 @@
 use crate::error::SyncResult;
-use crate::network::{MessageType, NetworkManager, RequestKey};
+use crate::network::{InboundMessage, MessageType, NetworkManager, RequestKey};
 use crate::storage::{BlockHeaderStorage, FilterHeaderStorage};
 use crate::sync::filter_headers::pipeline::FilterHeadersPipeline;
 use crate::sync::progress::ProgressPercentage;
@@ -8,7 +8,6 @@ use crate::sync::{
 };
 use crate::SyncError;
 use async_trait::async_trait;
-use dashcore::network::message::NetworkMessage;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
@@ -43,7 +42,7 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage> SyncManager for FilterHeade
     async fn handle_message(
         &mut self,
         _peer: SocketAddr,
-        msg: NetworkMessage,
+        msg: InboundMessage,
         network: &Arc<dyn NetworkManager>,
     ) -> SyncResult<Vec<SyncEvent>> {
         // Match response to get start height

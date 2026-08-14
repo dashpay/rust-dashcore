@@ -1,12 +1,11 @@
 use crate::error::SyncResult;
-use crate::network::{MessageType, NetworkEvent, NetworkManager};
+use crate::network::{InboundMessage, MessageType, NetworkEvent, NetworkManager};
 use crate::sync::{
     BlockHeadersProgress, BlocksProgress, ChainLockProgress, FilterHeadersProgress,
     FiltersProgress, InstantSendProgress, ManagerIdentifier, MasternodesProgress, MempoolProgress,
     SyncEvent, SyncState,
 };
 use async_trait::async_trait;
-use dashcore::network::message::NetworkMessage;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
@@ -51,7 +50,7 @@ impl SyncManagerProgress {
     }
 }
 
-pub type Inbound = (SocketAddr, Arc<NetworkMessage>);
+pub type Inbound = (SocketAddr, Arc<InboundMessage>);
 
 pub struct SyncManagerTaskContext {
     pub(super) message_receiver: UnboundedReceiver<Inbound>,
@@ -188,7 +187,7 @@ pub trait SyncManager: Send + Sync + std::fmt::Debug {
     async fn handle_message(
         &mut self,
         peer: SocketAddr,
-        msg: NetworkMessage,
+        msg: InboundMessage,
         network: &Arc<dyn NetworkManager>,
     ) -> SyncResult<Vec<SyncEvent>>;
 
@@ -429,7 +428,7 @@ mod tests {
         async fn handle_message(
             &mut self,
             _peer: SocketAddr,
-            _msg: NetworkMessage,
+            _msg: InboundMessage,
             _network: &Arc<dyn NetworkManager>,
         ) -> SyncResult<Vec<SyncEvent>> {
             Ok(vec![])

@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, HashSet, VecDeque},
+    collections::{BTreeMap, HashMap, HashSet, VecDeque},
     net::SocketAddr,
     sync::{
         atomic::{AtomicU32, AtomicU64, AtomicUsize, Ordering},
@@ -11,14 +11,58 @@ use std::{
 use dashcore::network::constants::ServiceFlags;
 use dashcore::network::message::NetworkMessage;
 use dashcore::network::message_blockdata::Inventory;
+use dashcore::{BlockHash, Header};
 use futures::stream::{FuturesUnordered, StreamExt};
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
-use tokio::sync::{broadcast, Mutex, Notify};
+use tokio::sync::{broadcast, Mutex, Notify, Semaphore};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
 /// Bounded concurrent handshakes per probe round.
 const CONNECT_CHUNK: usize = 16;
+
+/// Ceiling on `headers2` batches decompressed at once, across every peer.
+///
+/// Decompression is the one CPU-bound step in header sync, so it wants more than
+/// one core; but it runs on the blocking pool, which the rest of the client also
+/// uses, so it must not take the whole machine either.
+const MAX_CONCURRENT_HEADERS2_DECOMPRESSIONS: usize = 4;
+
+fn headers2_decompression_parallelism() -> usize {
+    std::thread::available_parallelism()
+        .map(|parallelism| parallelism.get().min(MAX_CONCURRENT_HEADERS2_DECOMPRESSIONS))
+        .unwrap_or(1)
+}
+
+/// Releases header messages in wire order because an announcement can depend on the preceding
+/// message from the same peer.
+pub(super) struct OrderedHeaderResults<T> {
+    next_sequence: u64,
+    completed: BTreeMap<u64, T>,
+}
+
+impl<T> Default for OrderedHeaderResults<T> {
+    fn default() -> Self {
+        Self {
+            next_sequence: 0,
+            completed: BTreeMap::new(),
+        }
+    }
+}
+
+impl<T> OrderedHeaderResults<T> {
+    pub(super) fn complete(&mut self, sequence: u64, result: T) -> Vec<T> {
+        let replaced = self.completed.insert(sequence, result);
+        debug_assert!(replaced.is_none(), "header sequence completed twice");
+
+        let mut ready = Vec::new();
+        while let Some(result) = self.completed.remove(&self.next_sequence) {
+            ready.push(result);
+            self.next_sequence += 1;
+        }
+        ready
+    }
+}
 
 /// Handshake ping at/above which a peer is "very bad": taken only as a last resort,
 /// when nothing better is connectable and the set would otherwise be empty.
@@ -76,11 +120,68 @@ use crate::{
     ClientConfig,
 };
 
+/// A peer message plus whatever the network layer worked out while decoding it.
+///
+/// Derefs to the message, so a manager that only cares about the payload reads it
+/// as if this type were not here.
+#[derive(Debug, Clone)]
+pub struct InboundMessage {
+    msg: NetworkMessage,
+    header_hashes: Option<Vec<BlockHash>>,
+}
+
+impl InboundMessage {
+    /// A message carrying nothing beyond itself.
+    pub(crate) fn new(msg: NetworkMessage) -> Self {
+        Self {
+            msg,
+            header_hashes: None,
+        }
+    }
+
+    /// Creates a headers message carrying hashes already computed during decompression.
+    ///
+    /// DIP-25 omits `prev_blockhash` and rebuilds it from the previous header, so
+    /// decompressing a batch has to hash every header in it. Those are the hashes the
+    /// header pipeline needs, and dropping them means hashing the chain a second time.
+    pub(crate) fn new_headers(headers_with_hashes: Vec<(Header, BlockHash)>) -> Self {
+        let (headers, hashes) = headers_with_hashes.into_iter().unzip();
+        Self {
+            msg: NetworkMessage::Headers(headers),
+            header_hashes: Some(hashes),
+        }
+    }
+
+    /// Returns cached hashes for a decompressed headers2 message.
+    pub fn header_hashes(&self) -> Option<&[BlockHash]> {
+        self.header_hashes.as_deref()
+    }
+
+    /// Consumes the wrapper and returns its network message.
+    pub fn into_inner(self) -> NetworkMessage {
+        self.msg
+    }
+}
+
+impl std::ops::Deref for InboundMessage {
+    type Target = NetworkMessage;
+
+    fn deref(&self) -> &Self::Target {
+        &self.msg
+    }
+}
+
+impl From<NetworkMessage> for InboundMessage {
+    fn from(msg: NetworkMessage) -> Self {
+        Self::new(msg)
+    }
+}
+
 /// An inbound message on its way to the managers that subscribed to its type.
 ///
 /// Shared rather than cloned: a `block` or `cfilter` carries its whole payload, and the
 /// pump would otherwise deep-copy it for every subscriber. See `spawn_pump`'s fan-out.
-pub type Inbound = (SocketAddr, Arc<NetworkMessage>);
+pub type Inbound = (SocketAddr, Arc<InboundMessage>);
 type Subscribers = Arc<Mutex<HashMap<MessageType, Vec<UnboundedSender<Inbound>>>>>;
 
 /// Every pipeline request the broker is handling, keyed by its identity, from the
@@ -224,6 +325,8 @@ pub struct PeerNetworkManager {
     required_services: ServiceFlags,
     /// Total bytes read from all peers. Held so `start` can hand it to the peers it connects.
     bytes: Arc<AtomicU64>,
+    /// Global bound for CPU-heavy headers2 decompression work.
+    headers2_decompression_semaphore: Arc<Semaphore>,
     // Cancelled by `stop()` to tear down the router, pump and every peer reader.
     shutdown: CancellationToken,
 }
@@ -385,6 +488,9 @@ impl PeerNetworkManager {
             max_peers,
             required_services,
             bytes,
+            headers2_decompression_semaphore: Arc::new(Semaphore::new(
+                headers2_decompression_parallelism(),
+            )),
             shutdown,
         }
     }
@@ -417,6 +523,7 @@ impl PeerNetworkManager {
             self.max_peers,
             self.required_services,
             self.peer_wake.clone(),
+            self.headers2_decompression_semaphore.clone(),
         );
     }
 
@@ -519,7 +626,7 @@ impl PeerNetworkManager {
     /// address that managers treat as locally-originated.
     pub async fn dispatch_local(&self, msg: NetworkMessage) {
         let local: SocketAddr = ([0, 0, 0, 0], 0).into();
-        let _ = self.inbound_tx.send(PeerEvent::Message(local, msg));
+        let _ = self.inbound_tx.send(PeerEvent::Message(local, msg.into()));
     }
 
     pub async fn subscribe(&self, kinds: &[MessageType]) -> UnboundedReceiver<Inbound> {
@@ -1407,6 +1514,8 @@ struct Supervisor {
     /// peer was lost, or one was measured to be underserving. The supervisor
     /// does nothing until one of those occurs
     wake: Arc<Notify>,
+    /// Handed to every peer it connects, so the bound is global rather than per connection.
+    headers2_decompression_semaphore: Arc<Semaphore>,
 }
 
 impl Supervisor {
@@ -1516,6 +1625,7 @@ impl Supervisor {
                     self.shutdown.clone(),
                     self.bytes.clone(),
                     self.required_services,
+                    self.headers2_decompression_semaphore.clone(),
                 )
             })
             .collect();
@@ -1667,6 +1777,7 @@ fn spawn_peer_supervisor(
     max_peers: usize,
     required_services: ServiceFlags,
     wake: Arc<Notify>,
+    headers2_decompression_semaphore: Arc<Semaphore>,
 ) -> JoinHandle<()> {
     tokio::spawn(
         Supervisor {
@@ -1681,6 +1792,7 @@ fn spawn_peer_supervisor(
             max_peers,
             required_services,
             wake,
+            headers2_decompression_semaphore,
         }
         .run(),
     )
@@ -1911,7 +2023,7 @@ fn spawn_pump(
                     // A `cfilter` is one piece of a `getcfilters` batch, which is only
                     // marked answered once the whole batch lands. Refresh that request's
                     // deadline so the timeout means "the pieces stopped coming".
-                    if matches!(msg, NetworkMessage::CFilter(_)) {
+                    if matches!(*msg, NetworkMessage::CFilter(_)) {
                         let mut reqs = requests.lock().await;
                         for state in reqs.values_mut() {
                             if let ReqState::OnWire(o) = state {
@@ -1961,7 +2073,7 @@ fn spawn_pump(
                     // Both spellings: we ask for `sendaddrv2` at handshake, but a
                     // peer that ignored it answers `getaddr` with legacy `addr`,
                     // and dropping that would waste the round trip.
-                    let gossiped: Option<Vec<SocketAddr>> = match &msg {
+                    let gossiped: Option<Vec<SocketAddr>> = match &*msg {
                         NetworkMessage::AddrV2(addrs) => {
                             Some(addrs.iter().filter_map(|a| a.socket_addr().ok()).collect())
                         }
@@ -2152,6 +2264,34 @@ mod tests {
             vec![BlockHash::dummy(locator)],
             BlockHash::dummy(0),
         ))
+    }
+
+    #[test]
+    fn completed_decompressions_are_released_in_receive_order() {
+        let mut results = OrderedHeaderResults::default();
+
+        assert!(results.complete(2, "third").is_empty());
+        assert_eq!(results.complete(0, "first"), ["first"]);
+        assert_eq!(results.complete(1, "second"), ["second", "third"]);
+    }
+
+    #[test]
+    fn a_batch_that_failed_to_decompress_still_releases_the_ones_behind_it() {
+        let mut results = OrderedHeaderResults::default();
+
+        assert!(results.complete(1, Some("second")).is_empty());
+        assert_eq!(results.complete(0, None), [None, Some("second")]);
+    }
+
+    #[test]
+    fn headers_carry_the_hashes_computed_while_decompressing_them() {
+        let header = Header::dummy(1);
+        let hash = header.block_hash();
+        let msg = InboundMessage::new_headers(vec![(header, hash)]);
+
+        assert_eq!(msg.header_hashes(), Some([hash].as_slice()));
+        assert_eq!(*msg, NetworkMessage::Headers(vec![header]));
+        assert_eq!(InboundMessage::new(NetworkMessage::Verack).header_hashes(), None);
     }
 
     fn get_cfilters(start: u32) -> NetworkMessage {
@@ -2575,7 +2715,7 @@ mod tests {
             .expect("channel open");
         assert!(peer.ip().is_unspecified(), "locally injected messages carry the sentinel address");
         assert_eq!(peer.port(), 0);
-        assert!(matches!(*msg, NetworkMessage::Tx(_)));
+        assert!(matches!(**msg, NetworkMessage::Tx(_)));
     }
 
     /// Subscriptions are per message type: a manager only wakes for what it asked for.
@@ -2624,7 +2764,7 @@ mod tests {
                 .await
                 .expect("both subscribers must be served")
                 .expect("channel open");
-            assert!(matches!(*msg, NetworkMessage::Inv(_)));
+            assert!(matches!(**msg, NetworkMessage::Inv(_)));
         }
     }
 
@@ -2661,7 +2801,7 @@ mod tests {
             .await
             .expect("the live subscriber must still be served")
             .expect("channel open");
-        assert!(matches!(*msg, NetworkMessage::Inv(_)));
+        assert!(matches!(**msg, NetworkMessage::Inv(_)));
     }
 
     /// Routing keys off the wire command: an unknown command has no type and is

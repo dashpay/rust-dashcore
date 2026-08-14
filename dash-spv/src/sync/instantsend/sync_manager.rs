@@ -1,5 +1,5 @@
 use crate::error::SyncResult;
-use crate::network::{MessageType, NetworkManager};
+use crate::network::{InboundMessage, MessageType, NetworkManager};
 use crate::sync::{
     InstantSendManager, ManagerIdentifier, SyncEvent, SyncManager, SyncManagerProgress, SyncState,
 };
@@ -42,10 +42,10 @@ impl SyncManager for InstantSendManager {
     async fn handle_message(
         &mut self,
         peer: SocketAddr,
-        msg: NetworkMessage,
+        msg: InboundMessage,
         network: &Arc<dyn NetworkManager>,
     ) -> SyncResult<Vec<SyncEvent>> {
-        match &msg {
+        match &*msg {
             NetworkMessage::ISLock(instantlock) => self.process_instantlock(instantlock).await,
             NetworkMessage::Inv(inv) => {
                 // Check for InstantSendLock inventory items

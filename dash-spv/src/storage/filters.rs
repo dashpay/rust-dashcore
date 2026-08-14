@@ -51,6 +51,17 @@ pub trait FilterStorage: Send + Sync + 'static {
     /// A crash between `truncate_above` and `persist` may leave orphaned segment
     /// files on disk and cause the storage to reopen at the pre-truncation tip.
     async fn truncate_above(&mut self, target_height: u32) -> StorageResult<()>;
+
+    /// Declare the highest filter height that has been scanned and committed
+    /// for every wallet, allowing the storage to stop holding those filters in
+    /// memory.
+    ///
+    /// Filters at or below this height stay readable: `load_filters` reloads
+    /// them from disk on demand. The watermark may move backwards when a
+    /// rescan rolls the scan position back.
+    ///
+    /// Defaults to a no-op for implementations that hold no in-memory cache.
+    async fn set_committed_height(&mut self, _height: u32) {}
 }
 
 pub struct PersistentFilterStorage {
@@ -109,6 +120,10 @@ impl FilterStorage for PersistentFilterStorage {
 
     async fn truncate_above(&mut self, target_height: u32) -> StorageResult<()> {
         self.filters.write().await.truncate_above(target_height).await
+    }
+
+    async fn set_committed_height(&mut self, height: u32) {
+        self.filters.write().await.set_committed_height(height);
     }
 }
 

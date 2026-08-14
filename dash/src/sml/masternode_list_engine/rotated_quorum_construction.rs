@@ -6,13 +6,17 @@ use crate::prelude::CoreBlockHeight;
 use crate::sml::llmq_type::LLMQType;
 use crate::sml::llmq_type::rotation::{LLMQQuarterReconstructionType, LLMQQuarterUsageType};
 use crate::sml::masternode_list::MasternodeList;
-use crate::sml::masternode_list_engine::MasternodeListEngine;
+use crate::sml::masternode_list_engine::{
+    MasternodeListEngine, cycle_quarter_work_heights, rotated_cycle_base_height,
+};
 use crate::sml::masternode_list_entry::qualified_masternode_list_entry::QualifiedMasternodeListEntry;
 use crate::sml::quorum_entry::qualified_quorum_entry::{
     QualifiedQuorumEntry, VerifyingChainLockSignaturesType,
 };
 use crate::sml::quorum_entry::quorum_modifier_type::LLMQModifierType;
 use crate::sml::quorum_validation_error::QuorumValidationError;
+use crate::transaction::special_transaction::quorum_commitment::QuorumEntry;
+use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, BTreeSet};
 
 impl MasternodeListEngine {
@@ -31,103 +35,107 @@ impl MasternodeListEngine {
         &'a self,
         quorum: &'a QualifiedQuorumEntry,
     ) -> Result<Vec<&'a QualifiedMasternodeListEntry>, QuorumValidationError> {
-        let Some(quorum_block_height) =
-            self.block_container.get_height(&quorum.quorum_entry.quorum_hash)
-        else {
-            return Err(QuorumValidationError::RequiredBlockNotPresent(
-                quorum.quorum_entry.quorum_hash,
-                "getting height when finding rotated masternodes for quorum".to_string(),
-            ));
-        };
-        let llmq_type = quorum.quorum_entry.llmq_type;
-        let Some(quorum_index) = quorum.quorum_entry.quorum_index else {
-            return Err(QuorumValidationError::RequiredQuorumIndexNotPresent(
-                quorum.quorum_entry.quorum_hash,
-            ));
-        };
-        let cycle_base_height = quorum_block_height - quorum_index as u32;
-
-        let Some(VerifyingChainLockSignaturesType::Rotating(rotating)) =
-            quorum.verifying_chain_lock_signature
-        else {
-            return Err(QuorumValidationError::RequiredRotatedChainLockSigsNotPresent(
-                quorum.quorum_entry.quorum_hash,
-            ));
-        };
-
-        let rotated_members = self
-            .masternode_list_entry_members_for_rotated_quorum(
-                llmq_type,
-                cycle_base_height,
-                rotating,
-            )?
-            .get(quorum_index as usize)
-            .ok_or(QuorumValidationError::CorruptedCodeExecution(format!(
-                "expected masternode list entry members for {}",
-                quorum_index
-            )))?
-            .clone();
-
-        Ok(rotated_members)
+        let quorum_hash = quorum.quorum_entry.quorum_hash;
+        self.find_rotated_masternodes_for_quorums(&[quorum]).remove(&quorum_hash).unwrap_or_else(
+            || {
+                Err(QuorumValidationError::CorruptedCodeExecution(format!(
+                    "expected a rotated masternode result for {}",
+                    quorum_hash
+                )))
+            },
+        )
     }
 
+    /// Resolves the signing member set for each rotated quorum, per quorum.
+    ///
+    /// Entries of an active rotated quorum set do not all belong to the same
+    /// cycle (a failed DKG leaves the previous cycle's quorum in place at
+    /// that index), and older cycles may lack the history or signatures the
+    /// reconstruction needs. Each quorum therefore gets its own `Result`, so
+    /// one unresolvable straggler cannot poison the rest of the set.
     #[allow(dead_code)]
     pub(in crate::sml::masternode_list_engine) fn find_rotated_masternodes_for_quorums<'a>(
         &'a self,
-        quorums: &'a [&'a QualifiedQuorumEntry],
-    ) -> Result<BTreeMap<QuorumHash, Vec<&'a QualifiedMasternodeListEntry>>, QuorumValidationError>
+        quorums: &[&'a QualifiedQuorumEntry],
+    ) -> BTreeMap<QuorumHash, Result<Vec<&'a QualifiedMasternodeListEntry>, QuorumValidationError>>
     {
-        let mut return_btree_map = BTreeMap::new();
+        let mut members_by_quorum_hash = BTreeMap::new();
         let mut cycles: BTreeMap<CoreBlockHeight, Vec<Vec<&QualifiedMasternodeListEntry>>> =
             BTreeMap::new();
         for quorum in quorums {
-            let Some(quorum_block_height) =
-                self.block_container.get_height(&quorum.quorum_entry.quorum_hash)
-            else {
-                return Err(QuorumValidationError::RequiredBlockNotPresent(
-                    quorum.quorum_entry.quorum_hash, "getting height for a quorum hash when trying to find rotated masternodes for quorums".to_string()
-                ));
+            let quorum_hash = quorum.quorum_entry.quorum_hash;
+            let Some(quorum_block_height) = self.block_container.get_height(&quorum_hash) else {
+                members_by_quorum_hash.insert(
+                    quorum_hash,
+                    Err(QuorumValidationError::RequiredBlockNotPresent(
+                        quorum_hash,
+                        "getting height for a quorum hash when trying to find rotated masternodes for quorums".to_string(),
+                    )),
+                );
+                continue;
             };
             let llmq_type = quorum.quorum_entry.llmq_type;
             let Some(quorum_index) = quorum.quorum_entry.quorum_index else {
-                return Err(QuorumValidationError::RequiredQuorumIndexNotPresent(
-                    quorum.quorum_entry.quorum_hash,
-                ));
+                members_by_quorum_hash.insert(
+                    quorum_hash,
+                    Err(QuorumValidationError::RequiredQuorumIndexNotPresent(quorum_hash)),
+                );
+                continue;
             };
-            let cycle_base_height = quorum_block_height - quorum_index as u32;
-            // Check if we already have the masternode list entries for this cycle base height
-            let masternode_list_entries_by_index =
-                if let Some(entries) = cycles.get(&cycle_base_height) {
-                    entries
-                } else {
+            let Some(cycle_base_height) =
+                rotated_cycle_base_height(quorum_block_height, quorum_index)
+            else {
+                members_by_quorum_hash.insert(
+                    quorum_hash,
+                    Err(QuorumValidationError::InvalidQuorumIndex {
+                        quorum_hash,
+                        index: quorum_index,
+                    }),
+                );
+                continue;
+            };
+            // Quorums of one cycle share their quarter signatures, so a
+            // reconstruction is cached per cycle base height. Only a
+            // successful one is cached: a quorum that carries no signatures
+            // fails on its own account and must leave the cycle open for the
+            // siblings that do carry them.
+            let members_by_index = match cycles.entry(cycle_base_height) {
+                Entry::Occupied(cached) => cached.into_mut(),
+                Entry::Vacant(slot) => {
                     let Some(VerifyingChainLockSignaturesType::Rotating(rotating)) =
                         quorum.verifying_chain_lock_signature
                     else {
-                        return Err(QuorumValidationError::RequiredRotatedChainLockSigsNotPresent(
-                            quorum.quorum_entry.quorum_hash,
-                        ));
+                        members_by_quorum_hash.insert(
+                            quorum_hash,
+                            Err(QuorumValidationError::RequiredRotatedChainLockSigsNotPresent(
+                                quorum_hash,
+                            )),
+                        );
+                        continue;
                     };
-                    // Fetch the masternode list entries
-                    let new_entries = self.masternode_list_entry_members_for_rotated_quorum(
+                    match self.masternode_list_entry_members_for_rotated_quorum(
                         llmq_type,
                         cycle_base_height,
                         rotating,
-                    )?;
-                    cycles.insert(cycle_base_height, new_entries);
-                    cycles.get(&cycle_base_height).expect("Entry must exist")
-                };
-
-            let masternode_list_entries = masternode_list_entries_by_index
-                .get(quorum_index as usize)
-                .ok_or(QuorumValidationError::CorruptedCodeExecution(format!(
+                    ) {
+                        Ok(members_by_index) => slot.insert(members_by_index),
+                        Err(e) => {
+                            members_by_quorum_hash.insert(quorum_hash, Err(e));
+                            continue;
+                        }
+                    }
+                }
+            };
+            let result = members_by_index.get(quorum_index as usize).cloned().ok_or(
+                QuorumValidationError::CorruptedCodeExecution(format!(
                     "expected masternode list entry members for {}",
                     quorum_index
-                )))?
-                .clone();
-            return_btree_map.insert(quorum.quorum_entry.quorum_hash, masternode_list_entries);
+                )),
+            );
+            members_by_quorum_hash.insert(quorum_hash, result);
         }
 
-        Ok(return_btree_map)
+        members_by_quorum_hash
     }
 
     /// Determines the required block heights for ChainLock signatures based on the provided `QRInfo`.
@@ -146,44 +154,47 @@ impl MasternodeListEngine {
     ) -> Result<BTreeSet<u32>, QuorumValidationError> {
         let mut required_heights = BTreeSet::new();
         for quorum in &qr_info.last_commitment_per_index {
-            let Some(quorum_block_height) = self.block_container.get_height(&quorum.quorum_hash)
-            else {
-                return Err(QuorumValidationError::RequiredBlockNotPresent(
-                    quorum.quorum_hash,
-                    "getting required cl_sig heights".to_string(),
-                ));
-            };
-            let llmq_params = quorum.llmq_type.params();
-            let quorum_index = quorum_block_height % llmq_params.dkg_params.interval;
-            let cycle_base_height = quorum_block_height - quorum_index;
-            let cycle_length = llmq_params.dkg_params.interval;
-            for i in 0..=3 {
-                required_heights.insert(cycle_base_height - i * cycle_length - 8);
-            }
+            self.extend_with_quarter_work_heights(
+                &mut required_heights,
+                quorum,
+                "getting required cl_sig heights",
+            )?;
         }
         // We are going to validate the previous rotation as well
         if qr_info.quorum_snapshot_and_mn_list_diff_at_h_minus_4c.is_some() {
             for quorum in &qr_info.mn_list_diff_h.new_quorums {
                 if quorum.llmq_type.is_rotating_quorum_type() {
-                    let Some(quorum_block_height) =
-                        self.block_container.get_height(&quorum.quorum_hash)
-                    else {
-                        return Err(QuorumValidationError::RequiredBlockNotPresent(
-                            quorum.quorum_hash,
-                            "getting height for quorum hash for diff at h minus 4c".to_string(),
-                        ));
-                    };
-                    let llmq_params = quorum.llmq_type.params();
-                    let quorum_index = quorum_block_height % llmq_params.dkg_params.interval;
-                    let cycle_base_height = quorum_block_height - quorum_index;
-                    let cycle_length = llmq_params.dkg_params.interval;
-                    for i in 0..=3 {
-                        required_heights.insert(cycle_base_height - i * cycle_length - 8);
-                    }
+                    self.extend_with_quarter_work_heights(
+                        &mut required_heights,
+                        quorum,
+                        "getting height for quorum hash for diff at h minus 4c",
+                    )?;
                 }
             }
         }
         Ok(required_heights)
+    }
+
+    /// Adds the four quarter work block heights of the cycle a rotated quorum
+    /// sits in to `required_heights`, naming `context` if the quorum's own
+    /// height is missing.
+    fn extend_with_quarter_work_heights(
+        &self,
+        required_heights: &mut BTreeSet<u32>,
+        quorum: &QuorumEntry,
+        context: &str,
+    ) -> Result<(), QuorumValidationError> {
+        let Some(quorum_block_height) = self.block_container.get_height(&quorum.quorum_hash) else {
+            return Err(QuorumValidationError::RequiredBlockNotPresent(
+                quorum.quorum_hash,
+                context.to_string(),
+            ));
+        };
+        let cycle_length = quorum.llmq_type.params().dkg_params.interval;
+        let cycle_base_height = quorum_block_height - quorum_block_height % cycle_length;
+        required_heights
+            .extend(cycle_quarter_work_heights(cycle_base_height, cycle_length).iter().flatten());
+        Ok(())
     }
 
     /// Retrieves the masternode list members responsible for a rotated quorum at the given cycle base height.
@@ -207,27 +218,29 @@ impl MasternodeListEngine {
         let llmq_params = quorum_llmq_type.params();
         let num_quorums = llmq_params.signing_active_quorum_count as usize;
         let cycle_length = llmq_params.dkg_params.interval;
-        let work_block_height_for_index =
-            |index: u32| (cycle_base_height - index * cycle_length) - 8;
+        let [work_height_3c, work_height_2c, work_height_c, work_height_h] =
+            cycle_quarter_work_heights(cycle_base_height, cycle_length).map(|work_height| {
+                work_height.ok_or(QuorumValidationError::CycleBaseHeightTooLow(cycle_base_height))
+            });
         // Reconstruct quorum members at h - 3c from snapshot
         let q_h_m_3c = self.quorum_quarter_members_by_reconstruction_type(
             quorum_llmq_type,
             LLMQQuarterReconstructionType::Snapshot,
-            work_block_height_for_index(3),
+            work_height_3c?,
             chain_lock_sigs[0],
         )?;
         // Reconstruct quorum members at h - 2c from snapshot
         let q_h_m_2c = self.quorum_quarter_members_by_reconstruction_type(
             quorum_llmq_type,
             LLMQQuarterReconstructionType::Snapshot,
-            work_block_height_for_index(2),
+            work_height_2c?,
             chain_lock_sigs[1],
         )?;
         // Reconstruct quorum members at h - c from snapshot
         let q_h_m_c = self.quorum_quarter_members_by_reconstruction_type(
             quorum_llmq_type,
             LLMQQuarterReconstructionType::Snapshot,
-            work_block_height_for_index(1),
+            work_height_c?,
             chain_lock_sigs[2],
         )?;
         // Determine quorum members at new index
@@ -237,7 +250,7 @@ impl MasternodeListEngine {
         let last_quarter = self.quorum_quarter_members_by_reconstruction_type(
             quorum_llmq_type,
             reconstruction_type,
-            work_block_height_for_index(0),
+            work_height_h?,
             chain_lock_sigs[3],
         )?;
         let mut quorum_members =
@@ -394,13 +407,22 @@ impl MasternodeListEngine {
                 .rev()
                 .chain(sorted_used_mns_list.into_values().rev()),
         );
+        if sorted_combined_mns_list.is_empty() {
+            return vec![Vec::new(); quorum_count];
+        }
         match skip_type {
             LLMQQuarterUsageType::Snapshot(snapshot) => {
                 match snapshot.skip_list_mode {
-                    MNSkipListMode::NoSkipping => sorted_combined_mns_list
-                        .chunks(quarter_size)
-                        .map(|chunk| chunk.to_vec())
-                        .collect(),
+                    // One shared cursor fills every quarter and wraps back to
+                    // the front when the list runs out, so quarters reuse
+                    // masternodes once fewer than
+                    // `quorum_count * quarter_size` are available.
+                    MNSkipListMode::NoSkipping => {
+                        let mut combined = sorted_combined_mns_list.iter().cycle();
+                        (0..quorum_count)
+                            .map(|_| (&mut combined).take(quarter_size).copied().collect())
+                            .collect()
+                    }
                     MNSkipListMode::SkipFirst => {
                         let mut first_entry_index = 0;
                         let processed_skip_list =
@@ -500,5 +522,232 @@ impl MasternodeListEngine {
                 quarter_quorum_members
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::net::SocketAddr;
+
+    use hashes::Hash;
+
+    use super::*;
+    use crate::Network;
+    use crate::bls_sig_utils::BLSPublicKey;
+    use crate::hash_types::{ConfirmedHash, QuorumVVecHash};
+    use crate::network::message_qrinfo::QuorumSnapshot;
+    use crate::sml::masternode_list_entry::{
+        EntryMasternodeType, MasternodeListEntry, MasternodeNetInfo,
+    };
+    use crate::{ProTxHash, PubkeyHash};
+
+    fn entry(byte: u8) -> QualifiedMasternodeListEntry {
+        MasternodeListEntry {
+            version: 2,
+            pro_reg_tx_hash: ProTxHash::from_byte_array([byte; 32]),
+            confirmed_hash: Some(ConfirmedHash::from_byte_array([byte; 32])),
+            service_address: MasternodeNetInfo::Legacy(SocketAddr::from(([127, 0, 0, 1], 9999))),
+            operator_public_key: BLSPublicKey::from([byte; 48]),
+            key_id_voting: PubkeyHash::from_byte_array([byte; 20]),
+            is_valid: true,
+            mn_type: EntryMasternodeType::Regular,
+        }
+        .into()
+    }
+
+    /// Entries in the score order `apply_skip_strategy_of_type` sees them:
+    /// descending scores under the given modifier, matching the combined
+    /// unused-then-used list for an all-unused input.
+    fn score_sorted(
+        entries: &[QualifiedMasternodeListEntry],
+        modifier: QuorumModifierHash,
+    ) -> Vec<&QualifiedMasternodeListEntry> {
+        MasternodeList::scores_for_quorum_for_masternodes(entries.iter(), modifier, false)
+            .into_values()
+            .rev()
+            .collect()
+    }
+
+    fn snapshot(mode: MNSkipListMode, skip_list: Vec<i32>) -> QuorumSnapshot {
+        QuorumSnapshot {
+            skip_list_mode: mode,
+            active_quorum_members: vec![],
+            skip_list,
+        }
+    }
+
+    fn pro_reg_tx_hashes(quarter: &[&QualifiedMasternodeListEntry]) -> Vec<ProTxHash> {
+        quarter.iter().map(|entry| entry.masternode_list_entry.pro_reg_tx_hash).collect()
+    }
+
+    fn rotated_quorum(quorum_hash: QuorumHash, quorum_index: i16) -> QualifiedQuorumEntry {
+        QuorumEntry {
+            version: 2,
+            llmq_type: LLMQType::Llmqtype60_75,
+            quorum_hash,
+            quorum_index: Some(quorum_index),
+            signers: vec![true],
+            valid_members: vec![true],
+            quorum_public_key: BLSPublicKey::from([0; 48]),
+            quorum_vvec_hash: QuorumVVecHash::all_zeros(),
+            threshold_sig: BLSSignature::from([0; 96]),
+            all_commitment_aggregated_signature: BLSSignature::from([0; 96]),
+        }
+        .into()
+    }
+
+    #[test]
+    fn unusable_quorum_index_is_rejected_instead_of_underflowing_the_cycle_base() {
+        let mut engine = MasternodeListEngine::default_for_network(Network::Mainnet);
+        let negative_index_hash = QuorumHash::from_byte_array([1; 32]);
+        let index_above_height_hash = QuorumHash::from_byte_array([2; 32]);
+        engine.feed_block_height(1000, negative_index_hash);
+        engine.feed_block_height(3, index_above_height_hash);
+
+        let quorums =
+            [rotated_quorum(negative_index_hash, -1), rotated_quorum(index_above_height_hash, 5)];
+
+        for quorum in quorums.iter() {
+            let error = engine
+                .find_rotated_masternodes_for_quorum(quorum)
+                .expect_err("an index the cycle base cannot absorb must surface as an error");
+            assert!(
+                matches!(error, QuorumValidationError::InvalidQuorumIndex { .. }),
+                "expected an invalid index error, got {error}"
+            );
+        }
+
+        let borrowed: Vec<&QualifiedQuorumEntry> = quorums.iter().collect();
+        let results = engine.find_rotated_masternodes_for_quorums(&borrowed);
+        assert_eq!(results.len(), 2);
+        for quorum in quorums.iter() {
+            let result = results
+                .get(&quorum.quorum_entry.quorum_hash)
+                .expect("every quorum must get its own result");
+            assert!(
+                matches!(result, Err(QuorumValidationError::InvalidQuorumIndex { .. })),
+                "expected an invalid index error, got {result:?}"
+            );
+        }
+    }
+
+    /// Every quorum of a cycle resolves the member sets from its own quarter
+    /// signatures, and one that carries none cannot stand in for the cycle.
+    /// Caching its failure would leave every sibling unverifiable on a
+    /// commitment the sibling itself has everything to verify.
+    #[test]
+    fn a_quorum_without_rotating_signatures_leaves_its_cycle_open() {
+        let mut engine = MasternodeListEngine::default_for_network(Network::Mainnet);
+        let cycle_base = LLMQType::Llmqtype60_75.params().dkg_params.interval * 100;
+        let without_sigs_hash = QuorumHash::from_byte_array([1; 32]);
+        let with_sigs_hash = QuorumHash::from_byte_array([2; 32]);
+        engine.feed_block_height(cycle_base, without_sigs_hash);
+        engine.feed_block_height(cycle_base + 1, with_sigs_hash);
+
+        let mut with_sigs = rotated_quorum(with_sigs_hash, 1);
+        with_sigs.verifying_chain_lock_signature =
+            Some(VerifyingChainLockSignaturesType::Rotating([BLSSignature::from([1; 96]); 4]));
+        let quorums = [rotated_quorum(without_sigs_hash, 0), with_sigs];
+        let borrowed: Vec<&QualifiedQuorumEntry> = quorums.iter().collect();
+
+        let results = engine.find_rotated_masternodes_for_quorums(&borrowed);
+        assert!(
+            matches!(
+                results.get(&without_sigs_hash),
+                Some(Err(QuorumValidationError::RequiredRotatedChainLockSigsNotPresent(_)))
+            ),
+            "a quorum without signatures must fail on its own account, got {:?}",
+            results.get(&without_sigs_hash)
+        );
+        assert!(
+            matches!(
+                results.get(&with_sigs_hash),
+                Some(Err(QuorumValidationError::RequiredBlockHeightNotPresent(_)))
+            ),
+            "a sibling carrying signatures must reach the reconstruction, got {:?}",
+            results.get(&with_sigs_hash)
+        );
+    }
+
+    #[test]
+    fn no_skipping_fills_quarters_with_circular_wrap_around() {
+        let entries: Vec<QualifiedMasternodeListEntry> = (1..=6).map(entry).collect();
+        let modifier = QuorumModifierHash::from_byte_array([9; 32]);
+        let sorted = score_sorted(&entries, modifier);
+
+        let quarters = MasternodeListEngine::apply_skip_strategy_of_type(
+            LLMQQuarterUsageType::Snapshot(snapshot(MNSkipListMode::NoSkipping, vec![])),
+            vec![],
+            entries.iter().collect(),
+            modifier,
+            3,
+            4,
+        );
+
+        assert_eq!(quarters.len(), 3);
+        let expected: Vec<Vec<ProTxHash>> = vec![
+            pro_reg_tx_hashes(&[sorted[0], sorted[1], sorted[2], sorted[3]]),
+            pro_reg_tx_hashes(&[sorted[4], sorted[5], sorted[0], sorted[1]]),
+            pro_reg_tx_hashes(&[sorted[2], sorted[3], sorted[4], sorted[5]]),
+        ];
+        let actual: Vec<Vec<ProTxHash>> =
+            quarters.iter().map(|quarter| pro_reg_tx_hashes(quarter)).collect();
+        assert_eq!(actual, expected, "one shared cursor must wrap around the combined list");
+    }
+
+    #[test]
+    fn empty_masternode_list_yields_empty_quarters_for_every_mode() {
+        let modifier = QuorumModifierHash::from_byte_array([9; 32]);
+        for mode in [
+            MNSkipListMode::NoSkipping,
+            MNSkipListMode::SkipFirst,
+            MNSkipListMode::SkipExcept,
+            MNSkipListMode::SkipAll,
+        ] {
+            let quarters = MasternodeListEngine::apply_skip_strategy_of_type(
+                LLMQQuarterUsageType::Snapshot(snapshot(mode, vec![])),
+                vec![],
+                vec![],
+                modifier,
+                4,
+                2,
+            );
+            assert_eq!(quarters.len(), 4);
+            assert!(
+                quarters.iter().all(Vec::is_empty),
+                "empty input must yield empty quarters in mode {:?}",
+                mode
+            );
+        }
+    }
+
+    #[test]
+    fn skip_first_decodes_relative_skip_list_entries() {
+        let entries: Vec<QualifiedMasternodeListEntry> = (1..=8).map(entry).collect();
+        let modifier = QuorumModifierHash::from_byte_array([9; 32]);
+        let sorted = score_sorted(&entries, modifier);
+
+        // The first skip entry is an absolute index. Every later entry is an
+        // offset from that first skipped index, not from the preceding one, so
+        // [3, 2, 3] skips absolute indexes 3, 5 and 6, which leaves the second
+        // quarter one short and wraps it back to the front for its last member.
+        // Reading the offsets cumulatively instead would skip 3, 5 and 8,
+        // keeping index 6 and never reaching the wrap.
+        let quarters = MasternodeListEngine::apply_skip_strategy_of_type(
+            LLMQQuarterUsageType::Snapshot(snapshot(MNSkipListMode::SkipFirst, vec![3, 2, 3])),
+            vec![],
+            entries.iter().collect(),
+            modifier,
+            2,
+            3,
+        );
+
+        let expected: Vec<Vec<ProTxHash>> = vec![
+            pro_reg_tx_hashes(&[sorted[0], sorted[1], sorted[2]]),
+            pro_reg_tx_hashes(&[sorted[4], sorted[7], sorted[0]]),
+        ];
+        let actual: Vec<Vec<ProTxHash>> =
+            quarters.iter().map(|quarter| pro_reg_tx_hashes(quarter)).collect();
+        assert_eq!(actual, expected, "skipped indexes must be excluded from quarter fill");
     }
 }

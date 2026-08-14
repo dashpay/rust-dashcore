@@ -1,6 +1,6 @@
 use super::manager::MEMPOOL_TX_EXPIRY;
 use crate::error::SyncResult;
-use crate::network::{MessageType, NetworkEvent, NetworkManager};
+use crate::network::{InboundMessage, MessageType, NetworkEvent, NetworkManager};
 use crate::sync::{
     ManagerIdentifier, MempoolManager, SyncEvent, SyncManager, SyncManagerProgress, SyncState,
 };
@@ -87,10 +87,10 @@ impl<W: WalletInterface + 'static> SyncManager for MempoolManager<W> {
     async fn handle_message(
         &mut self,
         peer: SocketAddr,
-        msg: NetworkMessage,
+        msg: InboundMessage,
         network: &Arc<dyn NetworkManager>,
     ) -> SyncResult<Vec<SyncEvent>> {
-        match msg {
+        match msg.into_inner() {
             NetworkMessage::Tx(tx) => self.handle_tx(tx, peer, network).await,
             NetworkMessage::Inv(inv) => self.handle_inv(&inv, peer, network).await,
             _ => Ok(vec![]),

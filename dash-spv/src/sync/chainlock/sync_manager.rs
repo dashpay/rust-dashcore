@@ -1,5 +1,5 @@
 use crate::error::SyncResult;
-use crate::network::{MessageType, NetworkManager};
+use crate::network::{InboundMessage, MessageType, NetworkManager};
 use crate::storage::{BlockHeaderStorage, MetadataStorage};
 use crate::sync::{
     ChainLockManager, ManagerIdentifier, SyncEvent, SyncManager, SyncManagerProgress, SyncState,
@@ -36,10 +36,10 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> SyncManager for ChainLockManager
     async fn handle_message(
         &mut self,
         peer: SocketAddr,
-        msg: NetworkMessage,
+        msg: InboundMessage,
         network: &Arc<dyn NetworkManager>,
     ) -> SyncResult<Vec<SyncEvent>> {
-        match &msg {
+        match &*msg {
             NetworkMessage::CLSig(chainlock) => self.process_chainlock(chainlock).await,
             NetworkMessage::Inv(inv) => {
                 // Check for ChainLock inventory items, filtering out already-requested ones

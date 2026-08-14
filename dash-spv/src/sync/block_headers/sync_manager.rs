@@ -1,5 +1,5 @@
 use crate::error::SyncResult;
-use crate::network::{MessageType, NetworkEvent, NetworkManager};
+use crate::network::{InboundMessage, MessageType, NetworkEvent, NetworkManager};
 use crate::storage::{BlockHeaderStorage, MetadataStorage};
 use crate::sync::sync_manager::ensure_not_started;
 use crate::sync::{
@@ -96,13 +96,32 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> SyncManager for BlockHeadersMana
     async fn handle_message(
         &mut self,
         _peer: SocketAddr,
-        msg: NetworkMessage,
+        msg: InboundMessage,
         network: &Arc<dyn NetworkManager>,
     ) -> SyncResult<Vec<SyncEvent>> {
-        match &msg {
+        match &*msg {
             NetworkMessage::Headers(headers) => {
+                let hashed_headers: Vec<crate::types::HashedBlockHeader> =
+                    if let Some(hashes) = msg.header_hashes() {
+                        if hashes.len() != headers.len() {
+                            return Err(crate::error::SyncError::InvalidState(format!(
+                                "headers2 hash count mismatch: {} headers, {} hashes",
+                                headers.len(),
+                                hashes.len()
+                            )));
+                        }
+                        headers
+                            .iter()
+                            .zip(hashes)
+                            .map(|(header, hash)| {
+                                crate::types::HashedBlockHeader::with_trusted_hash(*header, *hash)
+                            })
+                            .collect()
+                    } else {
+                        headers.iter().map(crate::types::HashedBlockHeader::from).collect()
+                    };
                 // Always route through pipeline when initialized
-                self.handle_headers_pipeline(headers, network).await
+                self.handle_headers_pipeline(&hashed_headers, network).await
             }
 
             NetworkMessage::Inv(inv) => {

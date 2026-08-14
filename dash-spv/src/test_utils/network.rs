@@ -23,7 +23,9 @@ use dashcore::network::message::NetworkMessage;
 use tokio::sync::broadcast;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 
-use crate::network::{Inbound, MessageType, NetworkEvent, NetworkManager, RequestKey};
+use crate::network::{
+    Inbound, InboundMessage, MessageType, NetworkEvent, NetworkManager, RequestKey,
+};
 
 /// Deterministic loopback socket address for tests (`127.0.0.1:<id>`).
 pub fn test_socket_address(id: u8) -> SocketAddr {
@@ -116,6 +118,12 @@ impl MockNetworkManager {
     /// Deliver an inbound `(peer, message)` to every subscriber interested in
     /// its message type, as the real pump would.
     pub fn inject(&self, peer: SocketAddr, msg: NetworkMessage) {
+        self.inject_inbound(peer, msg.into())
+    }
+
+    /// Like [`Self::inject`], for a message carrying what the network layer worked
+    /// out while decoding it — the hashes that come free with `headers2`.
+    pub fn inject_inbound(&self, peer: SocketAddr, msg: InboundMessage) {
         let kind = MessageType::from_cmd(msg.cmd());
         let shared = std::sync::Arc::new(msg);
         let subs = self.subscribers.lock().expect("mock mutex poisoned");

@@ -16,6 +16,7 @@ use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering}
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::sync::mpsc::UnboundedSender;
+use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use tokio::{
     io::{AsyncRead, AsyncWriteExt, ReadBuf},
     net::{
@@ -27,6 +28,7 @@ use tokio_stream::StreamExt;
 use tokio_util::codec::FramedRead;
 use tokio_util::sync::CancellationToken;
 
+use crate::network::manager::{InboundMessage, OrderedHeaderResults};
 use crate::{error::NetworkResult, NetworkError};
 
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
@@ -124,7 +126,7 @@ type PeerReader = FramedRead<CountingReader<OwnedReadHalf>, RawNetworkMessageCod
 // and boxing every message would penalise the common small ones, so allow the size skew.
 #[allow(clippy::large_enum_variant)]
 pub enum PeerEvent {
-    Message(SocketAddr, NetworkMessage),
+    Message(SocketAddr, InboundMessage),
     Disconnected(SocketAddr),
 }
 
@@ -388,6 +390,7 @@ impl DisconnectedPeer {
         shutdown: CancellationToken,
         bytes: Arc<AtomicU64>,
         required_services: ServiceFlags,
+        headers2_decompression_semaphore: Arc<Semaphore>,
     ) -> NetworkResult<ConnectedPeer> {
         let stream = tokio::time::timeout(CONNECT_TIMEOUT, TcpStream::connect(&self.addr))
             .await
@@ -524,6 +527,7 @@ impl DisconnectedPeer {
             latency.clone(),
             token.clone(),
             headers2.clone(),
+            headers2_decompression_semaphore,
         );
 
         tracing::debug!(
@@ -552,6 +556,29 @@ impl DisconnectedPeer {
     }
 }
 
+/// A header message waiting its turn in the reorder buffer, holding the
+/// decompression permit that let it be decoded. Keeping the permit here rather
+/// than releasing it at the end of the decode is what bounds the buffer: nothing
+/// new is decoded while a finished batch is still waiting to be handed on.
+type HeaderSlot = (Option<InboundMessage>, OwnedSemaphorePermit);
+
+/// Forward header messages the reorder buffer released, reporting whether the
+/// receiver is still there.
+///
+/// Each slot carries its permit, released here with the message it was waiting
+/// behind, and an `Option` because a batch that failed to decompress still has to
+/// be completed — leave the sequence open and everything behind it waits forever.
+fn dispatch_headers(
+    inbound: &UnboundedSender<PeerEvent>,
+    addr: SocketAddr,
+    ready: Vec<HeaderSlot>,
+) -> bool {
+    ready
+        .into_iter()
+        .filter_map(|(msg, _permit)| msg)
+        .all(|msg| inbound.send(PeerEvent::Message(addr, msg)).is_ok())
+}
+
 #[allow(clippy::too_many_arguments)]
 fn spawn_reader(
     addr: SocketAddr,
@@ -563,11 +590,13 @@ fn spawn_reader(
     latency: Arc<Latency>,
     shutdown: CancellationToken,
     headers2: Arc<AtomicBool>,
+    headers2_decompression_semaphore: Arc<Semaphore>,
 ) {
     tokio::spawn(async move {
-        // DIP-25 compression is a delta against the previously received header, so
-        // the state is per connection and must persist across `headers2` messages.
-        let mut compression = CompressionState::default();
+        // Header messages leave this reader in wire order even though the
+        // compressed ones are decoded off-thread and finish out of order.
+        let header_order = Arc::new(Mutex::new(OrderedHeaderResults::default()));
+        let mut header_sequence = 0_u64;
         loop {
             let next = tokio::select! {
                 _ = shutdown.cancelled() => break,
@@ -609,46 +638,112 @@ fn spawn_reader(
                             }
                         }
                         NetworkMessage::Headers2(compressed) => {
-                            // Decompress here and hand the sync layer plain
-                            // `Headers`, so compression stays entirely inside the
-                            // network module.
-                            match compression.process_headers(&compressed.headers) {
-                                Ok(headers) => {
-                                    tracing::debug!(
-                                        target: "dash_spv::network",
-                                        "decompressed {} headers from {}",
-                                        headers.len(),
-                                        addr
-                                    );
-                                    if inbound
-                                        .send(PeerEvent::Message(
-                                            addr,
-                                            NetworkMessage::Headers(headers),
-                                        ))
-                                        .is_err()
-                                    {
-                                        break;
+                            // Decompression is the one CPU-bound step in header sync,
+                            // so it goes to the blocking pool rather than running on
+                            // this reader's worker, and several batches run at once.
+                            // Compression state is per message — DIP-25 resets its
+                            // history for every `headers2`, and `process_headers`
+                            // resets with it — so batches are independent and the
+                            // decode needs nothing from the one before.
+                            //
+                            // Holding a permit from before the spawn until after the
+                            // batch is released bounds the reorder buffer to the same
+                            // number: nothing is decoded that cannot yet be handed on.
+                            let permit = tokio::select! {
+                                permit = headers2_decompression_semaphore.clone().acquire_owned() => match permit {
+                                    Ok(permit) => permit,
+                                    Err(_) => break,
+                                },
+                                _ = shutdown.cancelled() => break,
+                            };
+                            let sequence = header_sequence;
+                            header_sequence += 1;
+
+                            let order = header_order.clone();
+                            let inbound = inbound.clone();
+                            let headers2 = headers2.clone();
+                            let shutdown = shutdown.clone();
+                            tokio::spawn(async move {
+                                let decoded = tokio::task::spawn_blocking(move || {
+                                    CompressionState::default()
+                                        .process_headers_with_hashes(&compressed.headers)
+                                })
+                                .await;
+                                if shutdown.is_cancelled() {
+                                    return;
+                                }
+                                let decompressed = match decoded {
+                                    Ok(Ok(decompressed)) => {
+                                        tracing::debug!(
+                                            target: "dash_spv::network",
+                                            "decompressed {} headers from {}",
+                                            decompressed.len(),
+                                            addr
+                                        );
+                                        Some(InboundMessage::new_headers(decompressed))
                                     }
-                                }
-                                Err(e) => {
-                                    // Stop asking this peer for compressed headers.
-                                    // The request goes unanswered, so the broker
-                                    // times it out and re-sends it — as a plain
-                                    // `getheaders` now that the flag is off.
-                                    tracing::warn!(
-                                        target: "dash_spv::network",
-                                        "headers2 from {} failed to decompress ({}); \
-                                         falling back to uncompressed headers for this peer",
-                                        addr,
-                                        e
-                                    );
-                                    headers2.store(false, Ordering::Relaxed);
-                                    compression = CompressionState::default();
-                                }
+                                    Ok(Err(e)) => {
+                                        // Stop asking this peer for compressed headers.
+                                        // The request goes unanswered, so the broker
+                                        // times it out and re-sends it — as a plain
+                                        // `getheaders` now that the flag is off.
+                                        tracing::warn!(
+                                            target: "dash_spv::network",
+                                            "headers2 from {} failed to decompress ({}); \
+                                             falling back to uncompressed headers for this peer",
+                                            addr,
+                                            e
+                                        );
+                                        headers2.store(false, Ordering::Relaxed);
+                                        None
+                                    }
+                                    Err(e) => {
+                                        tracing::warn!(
+                                            target: "dash_spv::network",
+                                            "headers2 decompression task for {} failed: {}",
+                                            addr,
+                                            e
+                                        );
+                                        None
+                                    }
+                                };
+                                // Keep the ordering lock through dispatch so another
+                                // batch that finished first cannot overtake this one
+                                // between its sequence being released and it being
+                                // sent.
+                                let mut order = order.lock().await;
+                                let ready = order.complete(sequence, (decompressed, permit));
+                                dispatch_headers(&inbound, addr, ready);
+                            });
+                        }
+                        NetworkMessage::Headers(headers) => {
+                            // Through the same queue as the compressed ones. A peer
+                            // that answers one request compressed and the next plain
+                            // would otherwise have the plain reply overtake a batch
+                            // still decoding — and the pipeline matches a batch by the
+                            // tip it extends, so out of order it matches nothing.
+                            // Nothing to decode, but it takes a permit like any other
+                            // header message so the reorder buffer stays bounded.
+                            let permit = tokio::select! {
+                                permit = headers2_decompression_semaphore.clone().acquire_owned() => match permit {
+                                    Ok(permit) => permit,
+                                    Err(_) => break,
+                                },
+                                _ = shutdown.cancelled() => break,
+                            };
+                            let sequence = header_sequence;
+                            header_sequence += 1;
+                            let mut order = header_order.lock().await;
+                            let ready = order.complete(
+                                sequence,
+                                (Some(NetworkMessage::Headers(headers).into()), permit),
+                            );
+                            if !dispatch_headers(&inbound, addr, ready) {
+                                break;
                             }
                         }
                         payload => {
-                            if inbound.send(PeerEvent::Message(addr, payload)).is_err() {
+                            if inbound.send(PeerEvent::Message(addr, payload.into())).is_err() {
                                 break;
                             }
                         }

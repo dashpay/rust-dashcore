@@ -139,7 +139,11 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
     }
 
     /// Returns true if there is no in-flight processing state.
-    fn is_idle(&self) -> bool {
+    ///
+    /// `pub(super)` so the resume decision in `start_sync` can be taken on the
+    /// same predicate `start_download` asserts. Checking a subset there is how
+    /// a disconnect/reconnect cycle used to reach that assert.
+    pub(super) fn is_idle(&self) -> bool {
         self.active_batches.is_empty()
             && self.tracker.is_empty()
             && self.pending_batches.is_empty()
@@ -348,6 +352,11 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
         }
         self.active_batches.insert(scan_start, batch);
         self.progress.update_committed_height(scan_start.saturating_sub(1));
+        // Roll the storage watermark back in step with the scan position. This
+        // is also the rescan entry point (the `tick` trigger resets progress
+        // and re-enters here), so it keeps storage from releasing the range
+        // this scan is about to re-read.
+        self.filter_storage.write().await.set_committed_height(scan_start.saturating_sub(1)).await;
 
         // Only scan if all filters for the batch are already loaded
         if self.progress.stored_height() >= batch_end {
@@ -637,6 +646,13 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
                         }
                     }
                 }
+                // A batch commits only once every matched block in it has been
+                // downloaded and applied, so filters at or below `end` are
+                // fully consumed. Let storage release them from memory on the
+                // next persist; they remain readable through `load_filters`,
+                // which reloads from disk. The wallet guard above is out of
+                // scope here and no storage guard is held.
+                self.filter_storage.write().await.set_committed_height(end).await;
             }
             // Drop processed-wallet records for the committed range. Below the
             // new committed_height a new wallet can only get here via the
@@ -1062,7 +1078,21 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
                 // re-init via `start_download` — that would clobber existing
                 // batches. Instead extend the target and let the eventual
                 // `start_sync` (driven by `PeersUpdated`) resume from here.
-                if !self.active_batches.is_empty() {
+                //
+                // `is_idle()` for the same reason `start_sync` uses it: this is
+                // the second route into `start_download`, and it asserts all
+                // four conditions. `active_batches` alone is a strict subset —
+                // a batch that finished downloading leaves it while its
+                // verified output waits in `pending_batches` and its blocks
+                // wait in the tracker, and `on_disconnect` moves the pipeline's
+                // in-flight slots to pending rather than clearing them.
+                //
+                // Extending the target is the right answer for all four, not
+                // just for active batches: `handle_message` keeps running
+                // regardless of state (filters always want `CFilter`), so
+                // `store_and_match_batches` drains the leftovers, and the next
+                // filter-header event re-enters here once genuinely idle.
+                if !self.is_idle() {
                     self.filter_pipeline.extend_target(tip_height);
                     return Ok(vec![]);
                 }
@@ -2905,6 +2935,85 @@ mod tests {
         assert_eq!(manager.active_batches.keys().next(), Some(&101));
     }
 
+    /// The same predicate mismatch on the OTHER route into `start_download`.
+    ///
+    /// A filter-header event arriving while the manager sits in `WaitForEvents`
+    /// takes `handle_new_filter_headers`, not `start_sync` — and that arm asked
+    /// the same subset question. A verified batch waiting in `pending_batches`
+    /// with `active_batches` already empty therefore fell through to
+    /// `start_download` and its `debug_assert!(is_idle())`.
+    #[tokio::test]
+    async fn test_new_filter_headers_resumes_when_only_pending_batches_survive() {
+        let (mut manager, _headers, _filter) = setup_synced_manager_at_tip().await;
+
+        manager.pending_batches.insert(FiltersBatch::new(0, 99, HashMap::new()));
+        assert!(manager.active_batches.is_empty(), "the old predicate says idle");
+        assert!(!manager.is_idle(), "the invariant start_download asserts says otherwise");
+
+        manager.set_state(SyncState::WaitForEvents);
+        let network = test_network().await;
+
+        // Must extend the target and leave the surviving work alone.
+        let events = manager.handle_new_filter_headers(200, &network).await.unwrap();
+
+        assert!(events.is_empty(), "extending the target emits nothing");
+        // `pending_batches` alone does not prove the guard held: `start_download`
+        // preserves it too, so a broken guard would reinitialize the pipeline and
+        // still leave this at 1. The state and the absence of a fresh active
+        // batch are what tell resuming from restarting — and unlike the
+        // `debug_assert` inside `start_download`, they still hold in a release
+        // build, where that assert is compiled out.
+        assert_eq!(
+            manager.state(),
+            SyncState::WaitForEvents,
+            "the arm must return without changing state"
+        );
+        assert!(
+            manager.active_batches.is_empty(),
+            "must not start a fresh download over the surviving work"
+        );
+        assert_eq!(manager.pending_batches.len(), 1, "the surviving batch must not be discarded");
+    }
+
+    /// A verified batch waiting in `pending_batches` outlives the last active
+    /// one, so a reconnect used to fall through the resume guard — which asked
+    /// only about `active_batches` — into `start_download`, whose
+    /// `debug_assert!(is_idle())` then aborted the process. It is reachable in
+    /// the field: `on_disconnect` preserves this state by design, and a build
+    /// with debug assertions on turns the mismatch into a crash rather than a
+    /// log line.
+    #[tokio::test]
+    async fn test_start_sync_resumes_when_only_pending_batches_survive() {
+        let (mut manager, _headers, _filter) = setup_synced_manager_at_tip().await;
+
+        // What a disconnect leaves behind after the last active batch finished
+        // downloading but before its verified output was processed.
+        manager.pending_batches.insert(FiltersBatch::new(0, 99, HashMap::new()));
+        assert!(manager.active_batches.is_empty(), "the guard's old predicate says idle");
+        assert!(!manager.is_idle(), "the invariant start_download asserts says otherwise");
+
+        manager.set_state(SyncState::WaitingForConnections);
+        let network = test_network().await;
+
+        // Must resume rather than start a fresh download over the top of it.
+        let events = manager.start_sync(&network).await.unwrap();
+
+        assert!(events.is_empty(), "resuming emits no SyncStart");
+        assert_eq!(manager.state(), SyncState::Syncing);
+        // See the sibling test: `start_download` keeps `pending_batches`, so only
+        // the absence of a new active batch proves this resumed rather than
+        // restarted, and it proves it without relying on a debug assertion.
+        assert!(
+            manager.active_batches.is_empty(),
+            "must not start a fresh download over the surviving work"
+        );
+        assert_eq!(
+            manager.pending_batches.len(),
+            1,
+            "the surviving batch must not be discarded by the resume"
+        );
+    }
+
     /// A fully synced node that reconnects and then sees one new block must
     /// commit it. `start_sync` takes the `stored == committed == tip` branch,
     /// reports `Synced`, and anchors the store and processing cursors at the
@@ -2953,7 +3062,10 @@ mod tests {
             block_hash: headers[101].block_hash(),
             filter: boundary_filter.content.clone(),
         };
-        manager.handle_message(peer, NetworkMessage::CFilter(cfilter), &network).await.unwrap();
+        manager
+            .handle_message(peer, NetworkMessage::CFilter(cfilter).into(), &network)
+            .await
+            .unwrap();
 
         // A trailing tick drives any residual processing to completion.
         manager.tick(&network).await.unwrap();
@@ -3021,7 +3133,10 @@ mod tests {
             block_hash: headers[101].block_hash(),
             filter: boundary_filter.content.clone(),
         };
-        manager.handle_message(peer, NetworkMessage::CFilter(cfilter), &network).await.unwrap();
+        manager
+            .handle_message(peer, NetworkMessage::CFilter(cfilter).into(), &network)
+            .await
+            .unwrap();
 
         // A trailing tick drives any residual processing to completion.
         manager.tick(&network).await.unwrap();
@@ -3061,7 +3176,10 @@ mod tests {
             block_hash: headers[101].block_hash(),
             filter: boundary_filter.content.clone(),
         };
-        manager.handle_message(peer, NetworkMessage::CFilter(cfilter), &network).await.unwrap();
+        manager
+            .handle_message(peer, NetworkMessage::CFilter(cfilter).into(), &network)
+            .await
+            .unwrap();
 
         manager.tick(&network).await.unwrap();
 

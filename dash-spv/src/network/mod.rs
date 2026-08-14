@@ -15,7 +15,7 @@ use tokio::sync::mpsc::UnboundedReceiver;
 pub use manager::NetworkEvent;
 // These form the `NetworkManager` trait's interface, which appears in the public
 // `DashSpvClient<W, N: NetworkManager, S>` bound, so they are part of the public API.
-pub use manager::{Inbound, MessageType, PeerNetworkManager, RequestKey};
+pub use manager::{Inbound, InboundMessage, MessageType, PeerNetworkManager, RequestKey};
 
 /// Abstraction over the peer-to-peer network manager.
 ///
