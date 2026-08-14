@@ -403,6 +403,75 @@ mod tests {
         assert_eq!(mnemonic.word_count(), 12);
     }
 
+    /// Regression guard against zero-padded and stuck-bit entropy: a buffer
+    /// that is the right BIP-39 width but only partly filled, with the
+    /// remainder constant across draws.
+    ///
+    /// Checked per supported word count: the recovered entropy is the full
+    /// BIP-39 width, it round-trips back to the same phrase, no two samples
+    /// collide, and every bit position takes both values across samples.
+    ///
+    /// This says nothing about how much real entropy those bits carry, and
+    /// must not be read as verifying that it is full-width. A generator that
+    /// expands a 32- or 48-bit seed through a hash or PRNG — the actual defect
+    /// in Milk Sad (CVE-2023-39910) and Trust Wallet (CVE-2023-31290) —
+    /// produces freely varying bits and passes every assertion below. No
+    /// statistical test at this sample size would separate it from a real
+    /// CSPRNG. That property is instead held by construction, and only review
+    /// can protect it: [`Mnemonic::generate`] must fill its entropy buffer
+    /// directly from `getrandom` (the OS CSPRNG) and must never route through
+    /// a seeded RNG.
+    #[test]
+    #[cfg(feature = "getrandom")]
+    fn generate_entropy_has_expected_width_and_no_stuck_bits() {
+        // 64 samples already makes a stuck bit a 2^-63 event; 128 is margin.
+        const SAMPLES: usize = 128;
+
+        for (word_count, entropy_bytes) in [(12, 16), (15, 20), (18, 24), (21, 28), (24, 32)] {
+            let bits = entropy_bytes * 8;
+            let mut seen = std::collections::HashSet::new();
+            let mut ones = vec![0usize; bits];
+
+            for _ in 0..SAMPLES {
+                let mnemonic = Mnemonic::generate(word_count, Language::English).unwrap();
+                assert_eq!(mnemonic.word_count(), word_count);
+
+                let entropy = mnemonic.inner.to_entropy();
+                assert_eq!(
+                    entropy.len(),
+                    entropy_bytes,
+                    "{word_count}-word phrase must carry {entropy_bytes} entropy bytes"
+                );
+
+                // The phrase encodes exactly this entropy — nothing was
+                // dropped or padded on the way in.
+                assert_eq!(
+                    Mnemonic::from_entropy(&entropy, Language::English).unwrap().phrase(),
+                    mnemonic.phrase(),
+                    "{word_count}-word entropy must round-trip to the same phrase"
+                );
+
+                for (i, byte) in entropy.iter().enumerate() {
+                    for k in 0..8 {
+                        if byte >> (7 - k) & 1 == 1 {
+                            ones[i * 8 + k] += 1;
+                        }
+                    }
+                }
+                assert!(seen.insert(entropy), "{word_count}-word entropy repeated across draws");
+            }
+
+            for (bit, &count) in ones.iter().enumerate() {
+                assert!(
+                    count > 0 && count < SAMPLES,
+                    "{word_count}-word entropy bit {bit} never varied across {SAMPLES} draws \
+                     ({count} ones) — the buffer is zero-padded, or the source carries \
+                     fewer than {bits} bits"
+                );
+            }
+        }
+    }
+
     #[test]
     fn test_mnemonic_validation() {
         let phrase = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
