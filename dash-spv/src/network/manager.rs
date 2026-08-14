@@ -365,6 +365,7 @@ impl PeerNetworkManager {
             shutdown.clone(),
             peer_wake.clone(),
             msg_queue.clone(),
+            requests.clone(),
         );
 
         // The peer supervisor is spawned by `start()`, not here: it must not emit
@@ -748,6 +749,81 @@ struct PeerCapState {
     max_lambda: f64,
     /// Smoothed cap, so it doesn't jitter window to window.
     cap_ema: f64,
+    /// Smoothed size of one response from this peer, in bytes. What converts a cap
+    /// (a count of requests) into the thing the link actually rations: a
+    /// `getcfilters` covering a thousand filters and a one-block `getdata` both
+    /// count as one request and are orders of magnitude apart on the wire.
+    resp_bytes_ema: f64,
+    /// Windows left before another soft-timeout cut may fire. A cut takes a whole
+    /// service time to show up in the peer's behaviour, so cutting every window
+    /// while the same stalled requests age would walk the cap to the floor on one
+    /// piece of evidence — TCP's "one reduction per feedback delay", same idea.
+    soft_cut_cooldown: u32,
+}
+
+/// One peer's request for capacity, before the shared link is taken into account.
+/// Collected for every peer first, because what any one of them may have in flight
+/// depends on what all of them together are asking for.
+struct PeerPlan {
+    addr: SocketAddr,
+    /// Cap this peer's own measurements justify, in requests.
+    want: usize,
+    /// Smoothed bytes per response, to price `want` on the wire.
+    resp_bytes: f64,
+    lambda: f64,
+    w: f64,
+    min_w: f64,
+    rate: f64,
+    total_bytes: u64,
+    in_flight: usize,
+    lag_ms: u32,
+}
+
+/// Factor to shrink every peer's requested cap by so that their combined bytes in
+/// flight fit what the shared link can hold — its bandwidth-delay product. Returns
+/// 1.0 when they already fit, or when there is nothing measured to bind with:
+/// scaling by a guess is worse than not scaling.
+///
+/// Only ever shrinks. Growing a peer past what its own service time justifies is
+/// the per-peer controller's job; this is purely the constraint that they are all
+/// queueing behind one downlink.
+fn link_share_scale(link_bytes: f64, priced_bytes: f64) -> f64 {
+    if !link_bytes.is_finite() || link_bytes <= 0.0 || priced_bytes <= 0.0 {
+        return 1.0;
+    }
+    (link_bytes / priced_bytes).min(1.0)
+}
+
+/// How long a request may sit on the wire making no progress before it counts as
+/// evidence that its peer is over-committed, derived from that peer's OWN
+/// UNCONGESTED cost: `min_w` is what a request from it takes when it is not backed
+/// up, so a multiple of that is anomalous for this peer specifically.
+///
+/// Relative, never absolute. At 700ms RTT a `getcfilters` covering a thousand
+/// filters legitimately takes seconds, so any fixed threshold small enough to
+/// catch a fast peer being burnt fires constantly on a far one and pins its cap at
+/// the floor.
+///
+/// Measured against `min_w` and NOT the smoothed `w_ema`, which is the whole
+/// trick: `w_ema` inflates *because of* the backlog we created, so scaling by it
+/// grows the threshold exactly when we are the ones over-committing. Observed on a
+/// mainnet sync — a peer given 40 in-flight answered in `w_ema` 7.3s (another
+/// 19.4s), putting a `3·w_ema` threshold at 22s and 58s against a 10s hard
+/// timeout: the peer was always evicted before the soft signal could fire, and it
+/// never fired once in a whole run.
+///
+/// Hence the cap at half the hard timeout: whatever the measurement says, the soft
+/// signal has to get its chance before the monitor gives up on the peer. Returns
+/// `None` while the peer is still unmeasured — no opinion rather than a guessed
+/// one.
+fn soft_timeout_threshold(min_w: f64) -> Option<Duration> {
+    /// Multiples of the peer's uncongested service time before we call it
+    /// over-committed.
+    const SOFT_GAIN: f64 = 3.0;
+    if min_w <= 0.0 {
+        return None;
+    }
+    Some(Duration::from_secs_f64(SOFT_GAIN * min_w).min(REQUEST_TIMEOUT / 2))
 }
 
 /// Sizes the host's GLOBAL in-flight budget from MEASURED download throughput and
@@ -787,6 +863,8 @@ fn spawn_bandwidth_controller(
     shutdown: CancellationToken,
     peer_wake: Arc<Notify>,
     queue: Arc<MsgQueue>,
+
+    requests: Registry,
 ) -> JoinHandle<()> {
     const WINDOW: Duration = Duration::from_millis(500);
     const FLOOR_PER_PEER: usize = 2; // global floor = peers · this
@@ -821,6 +899,10 @@ fn spawn_bandwidth_controller(
                                 // own lag inflates past the uncongested baseline.
     const CAP_GROW: f64 = 1.25; // multiplicative probe per window while W is flat
     const CAP_BACKOFF: f64 = 0.8; // multiplicative decrease when lag inflates
+                                  // Soft-timeout cut. Harder than CAP_BACKOFF: a request sitting untouched past
+                                  // several times the peer's own service time is stronger evidence of
+                                  // over-commitment than an inflated average, which a single slow reply can move.
+    const SOFT_BACKOFF: f64 = 0.7;
     const W_INFLATE: f64 = 1.5; // W above min_W·this => this peer is backing up
     const MIN_W_WINDOW: u32 = 20; // windows before a stale min_W baseline is re-tracked
     const MAX_LAMBDA_WINDOW: u32 = 20; // windows before a stale rate peak is re-tracked
@@ -835,6 +917,12 @@ fn spawn_bandwidth_controller(
     tokio::spawn(async move {
         let mut last_bytes = bytes.load(Ordering::Relaxed);
         let mut rate_ema = 0.0f64; // smoothed downlink bytes/s
+                                   // Best aggregate downlink seen, i.e. the measured ceiling of THIS link —
+                                   // the shared bottleneck every peer is really queueing behind. Windowed the
+                                   // same way as a peer's `max_lambda`, so a peak from a better moment expires
+                                   // instead of licensing an over-commitment for the rest of the session.
+        let mut max_rate = 0.0f64;
+        let mut max_rate_age = 0u32;
         let mut last_rate = 0.0f64; // smoothed rate at the previous cap adjustment
         let mut hold = 0u32; // consecutive plateau windows
                              // Sum of the per-peer caps from the previous window: they are computed
@@ -870,6 +958,17 @@ fn spawn_bandwidth_controller(
             } else {
                 EMA_ALPHA * dl_rate + (1.0 - EMA_ALPHA) * rate_ema
             };
+
+            if rate_ema > max_rate {
+                max_rate = rate_ema;
+                max_rate_age = 0;
+            } else {
+                max_rate_age += 1;
+                if max_rate_age >= MAX_LAMBDA_WINDOW {
+                    max_rate = rate_ema;
+                    max_rate_age = 0;
+                }
+            }
 
             let npeers = connected.lock().await.len();
             if npeers == 0 {
@@ -931,6 +1030,29 @@ fn spawn_bandwidth_controller(
             // request limit — a fast peer keeps growing so we fill the peers we have
             // instead of forcing new connections while there is still room for work.
             // The global cap above stays the host ceiling (route_tick binds by it).
+            // Longest any single on-wire request has gone without progress, per peer.
+            // This is the signal the completion-driven checks cannot give: `w_ema`
+            // and the degradation test only move on windows where something
+            // COMPLETES, measured at 6% of them, so for the other 94% the
+            // controller is blind to a peer sitting on work it is not getting
+            // through. A request still in flight reports on exactly that.
+            let stalled_for: HashMap<SocketAddr, Duration> = {
+                let now = Instant::now();
+                let reqs = requests.lock().await;
+                let mut worst: HashMap<SocketAddr, Duration> = HashMap::new();
+                for state in reqs.values() {
+                    if let ReqState::OnWire(o) = state {
+                        let idle = now.duration_since(o.last_progress);
+                        let e = worst.entry(o.peer).or_default();
+                        if idle > *e {
+                            *e = idle;
+                        }
+                    }
+                }
+                worst
+            };
+
+            let mut plans: Vec<PeerPlan> = Vec::new();
             let (mut cap_min, mut cap_max, mut cap_sum) = (usize::MAX, 0usize, 0usize);
             let mut inflight_sum = 0usize; // total requests on the wire right now
             {
@@ -966,6 +1088,12 @@ fn spawn_bandwidth_controller(
                         st.dry_windows = 0;
                         let lambda = dc as f64 / window_s; // completions/sec
                         let w = (dt as f64 / dc as f64) / 1e9; // avg service time (s)
+                        let resp = d_bytes as f64 / dc as f64; // avg bytes per response
+                        st.resp_bytes_ema = if st.resp_bytes_ema == 0.0 {
+                            resp
+                        } else {
+                            W_EMA_ALPHA * resp + (1.0 - W_EMA_ALPHA) * st.resp_bytes_ema
+                        };
                         st.w_ema = if st.w_ema == 0.0 {
                             w
                         } else {
@@ -1049,39 +1177,140 @@ fn spawn_bandwidth_controller(
                     // the timeout monitor is what removes it.
                     let stuck = st.dry_windows >= DRY_LIMIT && p.in_flight() > 0;
 
+                    // Soft timeout: this peer is holding a request it has not
+                    // touched in several times its own service time. It is not dead
+                    // — the hard timeout in the monitor is what judges that — it is
+                    // being given more than it can turn around, so take work away
+                    // from it and leave what is already in flight alone. Re-queueing
+                    // it elsewhere would re-send bytes that are still on their way,
+                    // which on a slow link is the one thing that makes it worse.
+                    st.soft_cut_cooldown = st.soft_cut_cooldown.saturating_sub(1);
+                    let burning = match (soft_timeout_threshold(st.min_w), stalled_for.get(&addr)) {
+                        (Some(limit), Some(idle)) => *idle > limit,
+                        _ => false,
+                    };
+
                     if st.cap_ema == 0.0 {
                         st.cap_ema = FLOOR_PER_PEER as f64;
+                    } else if burning && st.soft_cut_cooldown == 0 {
+                        st.cap_ema = (st.cap_ema * SOFT_BACKOFF).max(FLOOR_PER_PEER as f64);
+                        // Hold off until the smaller cap has had a service time to
+                        // take effect, so the same stalled request cannot cut again
+                        // every window on its way to being answered.
+                        st.soft_cut_cooldown =
+                            ((st.w_ema / window_s).ceil() as u32).clamp(2, MIN_W_WINDOW);
+                        tracing::debug!(
+                            target: "peer_speed",
+                            "{} soft timeout: idle {:?} > {:?}, cap -> {:.1}",
+                            addr,
+                            stalled_for.get(&addr).copied().unwrap_or_default(),
+                            soft_timeout_threshold(st.min_w).unwrap_or_default(),
+                            st.cap_ema,
+                        );
                     } else if degraded {
                         st.cap_ema = (st.cap_ema * CAP_BACKOFF).max(FLOOR_PER_PEER as f64);
                     } else if saturated && !stuck {
                         st.cap_ema = (st.cap_ema * CAP_GROW).min(peer_ceil as f64);
                     }
-                    // Never sit below what the measurements already justify.
-                    st.cap_ema = st.cap_ema.max(bdp.min(peer_ceil as f64));
+                    // Never sit below what the measurements already justify — unless
+                    // a request is stalled right now, which says the BDP (built from
+                    // a rate peak that takes MAX_LAMBDA_WINDOW windows to expire) is
+                    // describing capacity this peer no longer has. Without the
+                    // exception this line puts back exactly what the cut removed.
+                    if !burning {
+                        st.cap_ema = st.cap_ema.max(bdp.min(peer_ceil as f64));
+                    }
 
-                    let cap_peer = (st.cap_ema.round() as usize).clamp(FLOOR_PER_PEER, peer_ceil);
+                    let want = (st.cap_ema.round() as usize).clamp(FLOOR_PER_PEER, peer_ceil);
+                    plans.push(PeerPlan {
+                        addr,
+                        want,
+                        resp_bytes: st.resp_bytes_ema,
+                        lambda,
+                        w,
+                        min_w: st.min_w,
+                        rate,
+                        total_bytes: p.bytes_read(),
+                        in_flight: p.in_flight(),
+                        lag_ms: p.lag_ms(),
+                    });
+                    inflight_sum += p.in_flight();
+                }
+                // Drop state for peers that have disconnected.
+                peer_caps.retain(|addr, _| live.contains(addr));
+
+                // ---- phase two: ration the ONE link they all share ----
+                //
+                // Every cap above was estimated as if that peer owned the pipe, and
+                // then they were summed. Three peers each sizing themselves against
+                // the same downlink over-commit it threefold, which is what the
+                // budget/sum split was showing: `global_cap=71` against
+                // `sum_peer_cap=121`, and since the host floor takes the max with
+                // that sum, the peers' own over-estimate was pulling the budget up
+                // instead of being held down by it.
+                //
+                // The bound is in bytes, because bytes are what the link rations. A
+                // peer answering with 138 KB per reply and a cap of 100 has 13.8 MB
+                // outstanding; on a 5 MB/s line shared three ways that is many
+                // seconds of queue, and it showed up as a service time of 7.3s
+                // against an uncongested 0.95s.
+                let link_rate = max_rate.max(rate_ema); // measured ceiling, bytes/s
+                let w_ref = plans
+                    .iter()
+                    .map(|pl| pl.min_w)
+                    .filter(|m| *m > 0.0)
+                    .fold(f64::INFINITY, f64::min);
+                let priced: f64 = plans.iter().map(|pl| pl.want as f64 * pl.resp_bytes).sum();
+                // Only bind once there is something to bind with: an unpriced or
+                // unmeasured window leaves the per-peer answers untouched rather
+                // than scaling them by a guess.
+                let link_bytes = if w_ref.is_finite() {
+                    link_rate * w_ref * CAP_GAIN
+                } else {
+                    0.0
+                };
+                let scale = link_share_scale(link_bytes, priced);
+
+                for ((p, _), pl) in g.iter().zip(plans.iter()) {
+                    let cap_peer = if scale < 1.0 {
+                        ((pl.want as f64 * scale).round() as usize).max(FLOOR_PER_PEER)
+                    } else {
+                        pl.want
+                    };
                     p.set_cap(cap_peer);
 
                     tracing::debug!(
                         target: "peer_speed",
-                        "peer {}: cap={} in_flight={} lag={}ms lambda={:.1}/s W={:.0}ms rate={:.2} MB/s total={:.1} MB",
-                        addr,
+                        "peer {}: cap={} (want {}) in_flight={} lag={}ms lambda={:.1}/s W={:.0}ms minW={:.0}ms resp={:.0} KB rate={:.2} MB/s total={:.1} MB",
+                        pl.addr,
                         cap_peer,
-                        p.in_flight(),
-                        p.lag_ms(),
-                        lambda,
-                        w * 1e3,
-                        rate / 1e6,
-                        p.bytes_read() as f64 / 1e6,
+                        pl.want,
+                        pl.in_flight,
+                        pl.lag_ms,
+                        pl.lambda,
+                        pl.w * 1e3,
+                        pl.min_w * 1e3,
+                        pl.resp_bytes / 1e3,
+                        pl.rate / 1e6,
+                        pl.total_bytes as f64 / 1e6,
                     );
 
                     cap_min = cap_min.min(cap_peer);
                     cap_max = cap_max.max(cap_peer);
                     cap_sum += cap_peer;
-                    inflight_sum += p.in_flight();
                 }
-                // Drop state for peers that have disconnected.
-                peer_caps.retain(|addr, _| live.contains(addr));
+                if scale < 1.0 {
+                    tracing::debug!(
+                        target: "peer_speed",
+                        "link budget: {:.1} MB/s x {:.0}ms x{} = {:.1} MB vs {:.1} MB asked => scale {:.2}",
+                        link_rate / 1e6,
+                        w_ref * 1e3,
+                        CAP_GAIN,
+                        link_rate * w_ref * CAP_GAIN / 1e6,
+                        priced / 1e6,
+                        scale,
+                    );
+                }
 
                 // The service times were just refreshed, so this is the cheapest
                 // place to notice a peer falling behind the rest — no extra timer
@@ -2149,6 +2378,90 @@ mod tests {
             net.requests.lock().await.is_empty(),
             "untracked traffic must not enter the registry"
         );
+    }
+
+    // ---- the shared link is rationed in bytes ----
+
+    /// Peers whose combined demand already fits the link are left alone: this is a
+    /// constraint, not a second opinion on how fast each peer is.
+    #[test]
+    fn link_share_leaves_peers_alone_when_they_fit() {
+        assert_eq!(link_share_scale(9.5e6, 4.0e6), 1.0);
+        assert_eq!(link_share_scale(9.5e6, 9.5e6), 1.0);
+    }
+
+    /// The case measured on a real sync: three peers, 121 requests between them at
+    /// ~138 KB per reply, against a 5 MB/s link whose uncongested service time is
+    /// 950ms. Each peer had sized itself as if it owned the pipe, so their sum
+    /// asked for roughly 16.7 MB in flight where the link holds 9.5 MB.
+    #[test]
+    fn link_share_shrinks_peers_that_each_sized_themselves_for_the_whole_pipe() {
+        let link_bytes = 5.0e6 * 0.95 * 2.0; // rate x uncongested W x BBR gain
+        let priced = 121.0 * 138.0e3; // what the three peers asked for
+
+        let scale = link_share_scale(link_bytes, priced);
+
+        assert!((0.55..0.60).contains(&scale), "expected roughly 0.57, got {scale}");
+        let granted = (121.0 * scale).round() as usize;
+        assert!(
+            (65..=72).contains(&granted),
+            "121 requests should come down to about 69, got {granted}"
+        );
+    }
+
+    /// Nothing measured yet means no opinion — never a scale derived from zeroes.
+    #[test]
+    fn link_share_does_not_bind_on_unmeasured_input() {
+        assert_eq!(link_share_scale(0.0, 4.0e6), 1.0);
+        assert_eq!(link_share_scale(9.5e6, 0.0), 1.0);
+        assert_eq!(link_share_scale(f64::INFINITY, 4.0e6), 1.0);
+    }
+
+    // ---- soft timeout: relative to each peer's own service time ----
+
+    /// An unmeasured peer gets no opinion: guessing a threshold for a peer we have
+    /// never timed is how a fixed number sneaks back in.
+    #[test]
+    fn soft_timeout_has_no_threshold_until_the_peer_is_measured() {
+        assert_eq!(soft_timeout_threshold(0.0), None);
+    }
+
+    /// The whole point of the threshold being relative: a peer 700ms away is
+    /// allowed proportionally longer than a nearby one before we call it
+    /// over-committed, so distance alone never reads as congestion.
+    #[test]
+    fn soft_timeout_threshold_scales_with_the_peers_own_service_time() {
+        let near = soft_timeout_threshold(0.05).expect("measured");
+        let far = soft_timeout_threshold(0.7).expect("measured");
+
+        assert_eq!(near, Duration::from_secs_f64(0.15));
+        assert_eq!(far, Duration::from_secs_f64(2.1));
+        assert!(
+            far > near * 10,
+            "a far peer must get proportionally more room, got {far:?} vs {near:?}"
+        );
+    }
+
+    /// The threshold must NOT follow the inflated service time. `w_ema` rises
+    /// because of the backlog we created, so a threshold scaled by it grows just as
+    /// we start over-committing: measured at 7.3s and 19.4s on a real sync, which
+    /// put the soft threshold past the hard timeout and stopped it ever firing.
+    /// Only the uncongested baseline is a fair reference.
+    #[test]
+    fn soft_timeout_threshold_ignores_congestion_inflated_service_time() {
+        // Same uncongested baseline, wildly different current cost: same answer.
+        let idle_peer = soft_timeout_threshold(0.3).expect("measured");
+        assert_eq!(idle_peer, Duration::from_secs_f64(0.9));
+    }
+
+    /// However far a peer is, the soft signal has to get its chance before the
+    /// monitor evicts it — otherwise it is dead code, which is exactly what it was.
+    #[test]
+    fn soft_timeout_always_fires_before_the_hard_one() {
+        for min_w in [0.05, 0.7, 5.0, 60.0] {
+            let t = soft_timeout_threshold(min_w).expect("measured");
+            assert!(t < REQUEST_TIMEOUT, "min_w={min_w}: {t:?} must precede the hard timeout");
+        }
     }
 
     // ---- strict-priority scheduling ----
