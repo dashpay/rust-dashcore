@@ -752,6 +752,37 @@ pub type OnTransactionDetectedCallback = Option<
     ),
 >;
 
+/// Callback for `WalletEvent::TransactionsSwept`.
+///
+/// Fires when the wallet removes transactions that a later, final transaction
+/// provably beat to one of their inputs: they can never confirm, so their
+/// outputs are gone from the UTXO set and their records deleted.
+///
+/// **The only removal-shaped wallet callback.** Every other one is additive,
+/// so a consumer mirroring wallet state to disk must act on this — delete the
+/// named transactions and any UTXO they created. Ignoring it leaves the dead
+/// rows in the mirror, which replays them on the next load and re-creates a
+/// balance the wallet has already corrected.
+///
+/// `txids` points to `txids_count` consecutive 32-byte txids.
+/// `superseded_by` is the transaction whose arrival settled the inputs.
+/// All pointer parameters are borrowed and only valid for the duration of the
+/// callback. `balance` is the wallet's balance *after* the removal;
+/// `account_balances` follows the same contract as on
+/// [`OnTransactionDetectedCallback`].
+pub type OnTransactionsSweptCallback = Option<
+    extern "C" fn(
+        wallet_id: *const c_char,
+        txids: *const [u8; 32],
+        txids_count: usize,
+        superseded_by: *const [u8; 32],
+        balance: *const FFIBalance,
+        account_balances: *const FFIAccountBalance,
+        account_balances_count: u32,
+        user_data: *mut c_void,
+    ),
+>;
+
 /// Callback for `WalletEvent::TransactionInstantLocked`.
 ///
 /// Fires when an InstantSend lock is applied to a previously-seen off-chain
@@ -909,6 +940,7 @@ pub type OnWalletChainLockProcessedCallback = Option<
 pub struct FFIWalletEventCallbacks {
     pub on_transaction_detected: OnTransactionDetectedCallback,
     pub on_transaction_instant_locked: OnTransactionInstantLockedCallback,
+    pub on_transactions_swept: OnTransactionsSweptCallback,
     pub on_block_processed: OnWalletBlockProcessedCallback,
     pub on_sync_height_advanced: OnSyncHeightAdvancedCallback,
     pub on_chain_lock_processed: OnWalletChainLockProcessedCallback,
@@ -924,6 +956,7 @@ impl Default for FFIWalletEventCallbacks {
         Self {
             on_transaction_detected: None,
             on_transaction_instant_locked: None,
+            on_transactions_swept: None,
             on_block_processed: None,
             on_sync_height_advanced: None,
             on_chain_lock_processed: None,
@@ -1021,23 +1054,51 @@ impl FFIWalletEventCallbacks {
     /// Dispatch a WalletEvent to the appropriate callback.
     pub fn dispatch(&self, event: &WalletEvent) {
         match event {
-            // TODO(sweep-ffi): no C callback is exposed for this variant yet,
-            // so a consumer of this FFI does not learn that the wallet dropped
-            // a superseded transaction and will keep mirroring the dead rows.
-            // Adding one is new ABI surface and wants its own review; logged
-            // meanwhile so the gap is observable rather than silent.
             WalletEvent::TransactionsSwept {
                 wallet_id,
                 txids,
                 superseded_by,
-                ..
+                balance,
+                account_balances,
             } => {
-                tracing::info!(
-                    wallet_id = %hex::encode(wallet_id),
-                    swept = txids.len(),
-                    %superseded_by,
-                    "TransactionsSwept has no FFI callback; consumers keep the removed rows"
-                );
+                if let Some(cb) = self.on_transactions_swept {
+                    let wallet_id_hex = hex::encode(wallet_id);
+                    let c_wallet_id = CString::new(wallet_id_hex).unwrap_or_default();
+                    let raw_txids: Vec<[u8; 32]> =
+                        txids.iter().map(|t| t.to_byte_array()).collect();
+                    let raw_superseded_by = superseded_by.to_byte_array();
+                    let ffi_balance = FFIBalance::from(*balance);
+                    let ffi_account_balances = FFIAccountBalance::from_map(account_balances);
+                    let account_balances_ptr = if ffi_account_balances.is_empty() {
+                        ptr::null()
+                    } else {
+                        ffi_account_balances.as_ptr()
+                    };
+
+                    cb(
+                        c_wallet_id.as_ptr(),
+                        raw_txids.as_ptr(),
+                        raw_txids.len(),
+                        &raw_superseded_by as *const [u8; 32],
+                        &ffi_balance as *const FFIBalance,
+                        account_balances_ptr,
+                        ffi_account_balances.len() as u32,
+                        self.user_data,
+                    );
+
+                    drop(ffi_account_balances);
+                } else {
+                    // Deliberately loud: every other wallet callback is
+                    // additive, so a consumer that leaves this one unset keeps
+                    // transactions the wallet has already dropped.
+                    tracing::warn!(
+                        wallet_id = %hex::encode(wallet_id),
+                        swept = txids.len(),
+                        %superseded_by,
+                        "no on_transactions_swept callback set; the consumer will keep \
+                         mirroring transactions the wallet removed"
+                    );
+                }
             }
             WalletEvent::TransactionDetected {
                 wallet_id,

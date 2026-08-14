@@ -226,6 +226,34 @@ extern "C" fn on_transaction_detected(
     );
 }
 
+extern "C" fn on_transactions_swept(
+    wallet_id: *const c_char,
+    txids: *const [u8; 32],
+    txids_count: usize,
+    superseded_by: *const [u8; 32],
+    balance: *const FFIBalance,
+    _account_balances: *const dash_spv_ffi::FFIAccountBalance,
+    _account_balances_count: u32,
+    _user_data: *mut c_void,
+) {
+    let wallet_short = short_wallet(wallet_id);
+    if txids.is_null() || superseded_by.is_null() {
+        println!("[Wallet] TXs swept: wallet={}..., null payload", wallet_short);
+        return;
+    }
+    let list = unsafe { std::slice::from_raw_parts(txids, txids_count) };
+    let winner = unsafe { &*superseded_by };
+    let b = read_balance(balance);
+    println!(
+        "[Wallet] TXs swept: wallet={}..., removed=[{}], superseded_by={}, balance[confirmed={}, unconfirmed={}]",
+        wallet_short,
+        list.iter().map(hex::encode).collect::<Vec<_>>().join(","),
+        hex::encode(winner),
+        b.confirmed,
+        b.unconfirmed,
+    );
+}
+
 extern "C" fn on_transaction_instant_locked(
     wallet_id: *const c_char,
     txid: *const [u8; 32],
@@ -548,6 +576,7 @@ fn main() {
             wallet: FFIWalletEventCallbacks {
                 on_transaction_detected: Some(on_transaction_detected),
                 on_transaction_instant_locked: Some(on_transaction_instant_locked),
+                on_transactions_swept: Some(on_transactions_swept),
                 on_block_processed: Some(on_wallet_block_processed),
                 on_sync_height_advanced: Some(on_sync_height_advanced),
                 on_chain_lock_processed: Some(on_wallet_chain_lock_processed),
