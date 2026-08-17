@@ -752,6 +752,28 @@ pub type OnTransactionDetectedCallback = Option<
     ),
 >;
 
+/// C representation of a Core [`OutPoint`](dashcore::OutPoint): the parent
+/// txid and output index of a coin.
+#[repr(C)]
+pub struct FFIOutPoint {
+    /// Parent transaction id.
+    pub txid: [u8; 32],
+    /// Output index within the parent transaction.
+    pub vout: u32,
+}
+
+impl FFIOutPoint {
+    fn from_slice(outpoints: &[dashcore::OutPoint]) -> Vec<Self> {
+        outpoints
+            .iter()
+            .map(|outpoint| FFIOutPoint {
+                txid: *outpoint.txid.as_byte_array(),
+                vout: outpoint.vout,
+            })
+            .collect()
+    }
+}
+
 /// Callback for `WalletEvent::TransactionsSwept`.
 ///
 /// Fires when the wallet removes transactions that a later, final transaction
@@ -766,6 +788,15 @@ pub type OnTransactionDetectedCallback = Option<
 ///
 /// `txids` points to `txids_count` consecutive 32-byte txids.
 /// `superseded_by` is the transaction whose arrival settled the inputs.
+/// `released_outpoints` points to `released_outpoints_count` outpoints freed
+/// by the removal: inputs the removed transactions claimed to spend that no
+/// surviving record spends too. Mark these coins spendable again. This is
+/// not the same set as `txids`' inputs — a loser spending A+B against a
+/// winner spending only A leaves A marked and frees only B — and it cannot
+/// be recomputed from `txids` on the consumer side: `superseded_by` need not
+/// be wallet-relevant at all (it can spend our coin while paying only
+/// external addresses), so it may never appear in any other callback. Null
+/// with a zero count when the removal released nothing.
 /// All pointer parameters are borrowed and only valid for the duration of the
 /// callback. `balance` is the wallet's balance *after* the removal;
 /// `account_balances` follows the same contract as on
@@ -776,6 +807,8 @@ pub type OnTransactionsSweptCallback = Option<
         txids: *const [u8; 32],
         txids_count: usize,
         superseded_by: *const [u8; 32],
+        released_outpoints: *const FFIOutPoint,
+        released_outpoints_count: usize,
         balance: *const FFIBalance,
         account_balances: *const FFIAccountBalance,
         account_balances_count: u32,
@@ -1058,6 +1091,7 @@ impl FFIWalletEventCallbacks {
                 wallet_id,
                 txids,
                 superseded_by,
+                released_outpoints,
                 balance,
                 account_balances,
             } => {
@@ -1067,6 +1101,12 @@ impl FFIWalletEventCallbacks {
                     let raw_txids: Vec<[u8; 32]> =
                         txids.iter().map(|t| t.to_byte_array()).collect();
                     let raw_superseded_by = superseded_by.to_byte_array();
+                    let ffi_released_outpoints = FFIOutPoint::from_slice(released_outpoints);
+                    let released_outpoints_ptr = if ffi_released_outpoints.is_empty() {
+                        ptr::null()
+                    } else {
+                        ffi_released_outpoints.as_ptr()
+                    };
                     let ffi_balance = FFIBalance::from(*balance);
                     let ffi_account_balances = FFIAccountBalance::from_map(account_balances);
                     let account_balances_ptr = if ffi_account_balances.is_empty() {
@@ -1080,6 +1120,8 @@ impl FFIWalletEventCallbacks {
                         raw_txids.as_ptr(),
                         raw_txids.len(),
                         &raw_superseded_by as *const [u8; 32],
+                        released_outpoints_ptr,
+                        ffi_released_outpoints.len(),
                         &ffi_balance as *const FFIBalance,
                         account_balances_ptr,
                         ffi_account_balances.len() as u32,
@@ -1087,6 +1129,7 @@ impl FFIWalletEventCallbacks {
                     );
 
                     drop(ffi_account_balances);
+                    drop(ffi_released_outpoints);
                 } else {
                     // Deliberately loud: every other wallet callback is
                     // additive, so a consumer that leaves this one unset keeps
@@ -1315,6 +1358,115 @@ mod tests {
     use key_wallet_manager::{FilterMatchKey, WalletId};
     use std::collections::{BTreeMap, BTreeSet};
     use std::sync::atomic::{AtomicU32, Ordering};
+
+    /// A sweep with nothing released must hand the callback `null` and `0`,
+    /// not a dangling pointer into an empty `Vec`.
+    ///
+    /// This is the layer where getting it wrong does not fail an assertion:
+    /// a consumer reading `count` first sees zero and stops, but one that
+    /// dereferences the pointer defensively would read whatever the empty
+    /// allocation points at. The ordinary resend — the winner takes every
+    /// input the loser named — releases nothing, so this is the common case,
+    /// not the edge one.
+    #[test]
+    fn test_transactions_swept_dispatch_passes_null_when_nothing_released() {
+        static RELEASED_PTR_WAS_NULL: AtomicU32 = AtomicU32::new(u32::MAX);
+        static RELEASED_COUNT: AtomicU32 = AtomicU32::new(u32::MAX);
+
+        extern "C" fn cb(
+            _wallet_id: *const c_char,
+            _txids: *const [u8; 32],
+            _txids_count: usize,
+            _superseded_by: *const [u8; 32],
+            released: *const FFIOutPoint,
+            released_count: usize,
+            _balance: *const FFIBalance,
+            _account_balances: *const FFIAccountBalance,
+            _account_balances_count: u32,
+            _user: *mut c_void,
+        ) {
+            RELEASED_PTR_WAS_NULL.store(u32::from(released.is_null()), Ordering::SeqCst);
+            RELEASED_COUNT.store(released_count as u32, Ordering::SeqCst);
+        }
+
+        let callbacks = FFIWalletEventCallbacks {
+            on_transactions_swept: Some(cb),
+            ..FFIWalletEventCallbacks::default()
+        };
+
+        callbacks.dispatch(&WalletEvent::TransactionsSwept {
+            wallet_id: [7u8; 32],
+            txids: vec![Txid::from_byte_array([1u8; 32])],
+            superseded_by: Txid::from_byte_array([2u8; 32]),
+            released_outpoints: Vec::new(),
+            balance: WalletCoreBalance::default(),
+            account_balances: BTreeMap::new(),
+        });
+
+        assert_eq!(RELEASED_PTR_WAS_NULL.load(Ordering::SeqCst), 1, "expected a null pointer");
+        assert_eq!(RELEASED_COUNT.load(Ordering::SeqCst), 0);
+    }
+
+    /// The released outpoints must arrive intact and in order, and the
+    /// parameters after them must not be shifted by their insertion — the
+    /// balance a consumer reads has to be the balance, not an outpoint.
+    #[test]
+    fn test_transactions_swept_dispatch_marshals_released_outpoints() {
+        static FIRST_TXID: std::sync::Mutex<[u8; 32]> = std::sync::Mutex::new([0u8; 32]);
+        static VOUTS: std::sync::Mutex<Vec<u32>> = std::sync::Mutex::new(Vec::new());
+        static CONFIRMED: AtomicU32 = AtomicU32::new(u32::MAX);
+
+        extern "C" fn cb(
+            _wallet_id: *const c_char,
+            _txids: *const [u8; 32],
+            _txids_count: usize,
+            _superseded_by: *const [u8; 32],
+            released: *const FFIOutPoint,
+            released_count: usize,
+            balance: *const FFIBalance,
+            _account_balances: *const FFIAccountBalance,
+            _account_balances_count: u32,
+            _user: *mut c_void,
+        ) {
+            assert!(!released.is_null());
+            let entries = unsafe { std::slice::from_raw_parts(released, released_count) };
+            *FIRST_TXID.lock().expect("txid") = entries[0].txid;
+            *VOUTS.lock().expect("vouts") = entries.iter().map(|e| e.vout).collect();
+            CONFIRMED.store(unsafe { (*balance).confirmed } as u32, Ordering::SeqCst);
+        }
+
+        let callbacks = FFIWalletEventCallbacks {
+            on_transactions_swept: Some(cb),
+            ..FFIWalletEventCallbacks::default()
+        };
+
+        let parent = Txid::from_byte_array([9u8; 32]);
+        callbacks.dispatch(&WalletEvent::TransactionsSwept {
+            wallet_id: [7u8; 32],
+            txids: vec![Txid::from_byte_array([1u8; 32])],
+            superseded_by: Txid::from_byte_array([2u8; 32]),
+            released_outpoints: vec![
+                dashcore::OutPoint {
+                    txid: parent,
+                    vout: 3,
+                },
+                dashcore::OutPoint {
+                    txid: parent,
+                    vout: 7,
+                },
+            ],
+            balance: WalletCoreBalance::new(123_456, 0, 0, 0),
+            account_balances: BTreeMap::new(),
+        });
+
+        assert_eq!(*FIRST_TXID.lock().expect("txid"), *parent.as_byte_array());
+        assert_eq!(*VOUTS.lock().expect("vouts"), vec![3, 7]);
+        assert_eq!(
+            CONFIRMED.load(Ordering::SeqCst),
+            123_456,
+            "the balance parameter must not be shifted by the released-outpoint insertion"
+        );
+    }
 
     /// `BlocksNeeded` dispatch must pass exactly one entry per
     /// `FilterMatchKey` to the FFI callback (i.e. iterate keys, not

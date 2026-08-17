@@ -533,6 +533,111 @@ async fn test_block_with_index_less_account_tx_carries_account_type() {
     }
 }
 
+/// The sweep event's own coverage at the manager level: a block whose
+/// transaction beats a recorded mempool spend must emit `TransactionsSwept`
+/// naming the removed transaction and the coins its removal freed.
+///
+/// The released set is the half a consumer cannot recompute, so it is worth
+/// pinning where it is actually assembled — this exercises the per-wallet
+/// aggregation in `check_transactions` and the block path's emission
+/// together, neither of which the account-level sweep tests reach.
+#[tokio::test]
+async fn test_block_winner_emits_swept_event_naming_the_released_outpoints() {
+    let (mut manager, wallet_id, addr) = setup_manager_with_wallet();
+
+    // One funding transaction pays us twice, so the loser can spend a coin
+    // the winner does not.
+    let funding = Transaction {
+        version: 2,
+        lock_time: 0,
+        input: vec![TxIn {
+            previous_output: OutPoint {
+                txid: Txid::from_byte_array([0x5a; 32]),
+                vout: 0,
+            },
+            script_sig: ScriptBuf::new(),
+            sequence: u32::MAX,
+            witness: Witness::default(),
+        }],
+        output: vec![
+            TxOut {
+                value: 500_000,
+                script_pubkey: addr.script_pubkey(),
+            },
+            TxOut {
+                value: 400_000,
+                script_pubkey: addr.script_pubkey(),
+            },
+        ],
+        special_transaction_payload: None,
+    };
+    let funding_block = make_block(vec![funding.clone()], 0x5a, 1000);
+    let wallets = BTreeSet::from([wallet_id]);
+    manager
+        .process_block_for_wallets(&funding_block, funding_block.block_hash(), 100, &wallets)
+        .await;
+
+    let coin_a = OutPoint {
+        txid: funding.txid(),
+        vout: 0,
+    };
+    let coin_b = OutPoint {
+        txid: funding.txid(),
+        vout: 1,
+    };
+    let spend = |inputs: Vec<OutPoint>, value: u64| Transaction {
+        version: 2,
+        lock_time: 0,
+        input: inputs
+            .into_iter()
+            .map(|previous_output| TxIn {
+                previous_output,
+                script_sig: ScriptBuf::new(),
+                sequence: u32::MAX,
+                witness: Witness::default(),
+            })
+            .collect(),
+        output: vec![TxOut {
+            value,
+            script_pubkey: addr.script_pubkey(),
+        }],
+        special_transaction_payload: None,
+    };
+
+    let loser = spend(vec![coin_a, coin_b], 800_000);
+    manager.process_mempool_transaction(&loser, None).await;
+
+    // Subscribe only now: the funding block and the loser's arrival are
+    // setup, and the sweep is what this test is about.
+    let mut rx = manager.subscribe_events();
+
+    let winner = spend(vec![coin_a], 400_000);
+    let winner_block = make_block(vec![winner.clone()], 0x5b, 1100);
+    manager
+        .process_block_for_wallets(&winner_block, winner_block.block_hash(), 101, &wallets)
+        .await;
+
+    let events = drain_events(&mut rx);
+    let swept = events
+        .iter()
+        .find_map(|event| match event {
+            WalletEvent::TransactionsSwept {
+                wallet_id: wid,
+                txids,
+                superseded_by,
+                released_outpoints,
+                ..
+            } => Some((wid, txids, superseded_by, released_outpoints)),
+            _ => None,
+        })
+        .unwrap_or_else(|| panic!("a sweep must be emitted, got {:?}", events));
+
+    assert_eq!(swept.0, &wallet_id);
+    assert_eq!(swept.1, &vec![loser.txid()], "the beaten transaction is named");
+    assert_eq!(swept.2, &winner.txid(), "attributed to the transaction that beat it");
+    assert_eq!(swept.3, &vec![coin_b], "only the coin the winner did not take is released");
+}
+
 #[tokio::test]
 async fn test_empty_block_for_idle_wallet_emits_nothing() {
     let (mut manager, wallet_id, _addr) = setup_manager_with_wallet();

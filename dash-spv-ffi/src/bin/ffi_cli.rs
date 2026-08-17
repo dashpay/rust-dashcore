@@ -231,6 +231,8 @@ extern "C" fn on_transactions_swept(
     txids: *const [u8; 32],
     txids_count: usize,
     superseded_by: *const [u8; 32],
+    released_outpoints: *const dash_spv_ffi::FFIOutPoint,
+    released_outpoints_count: usize,
     balance: *const FFIBalance,
     _account_balances: *const dash_spv_ffi::FFIAccountBalance,
     _account_balances_count: u32,
@@ -243,12 +245,22 @@ extern "C" fn on_transactions_swept(
     }
     let list = unsafe { std::slice::from_raw_parts(txids, txids_count) };
     let winner = unsafe { &*superseded_by };
+    let released = if released_outpoints.is_null() {
+        &[][..]
+    } else {
+        unsafe { std::slice::from_raw_parts(released_outpoints, released_outpoints_count) }
+    };
     let b = read_balance(balance);
     println!(
-        "[Wallet] TXs swept: wallet={}..., removed=[{}], superseded_by={}, balance[confirmed={}, unconfirmed={}]",
+        "[Wallet] TXs swept: wallet={}..., removed=[{}], superseded_by={}, released=[{}], balance[confirmed={}, unconfirmed={}]",
         wallet_short,
         list.iter().map(hex::encode).collect::<Vec<_>>().join(","),
         hex::encode(winner),
+        released
+            .iter()
+            .map(|o| format!("{}:{}", hex::encode(o.txid), o.vout))
+            .collect::<Vec<_>>()
+            .join(","),
         b.confirmed,
         b.unconfirmed,
     );
