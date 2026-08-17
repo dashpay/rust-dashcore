@@ -1,0 +1,8 @@
+description: "Mainnet sync with the CLIENT's own link shaped: 8 Mbit."
+mode: mainnet
+max_peers: 3
+
+# Shapes the measured client's link. Its presence is what moves the client into
+# a container; without it the client runs on the host exactly as before.
+client:
+  rate_kbit: 8000

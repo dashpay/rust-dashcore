@@ -25,6 +25,15 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 COMPOSE_FILE=""            # local mode generates one here; deleted on exit
 DASH_VERSION="23.1.7"
 IMAGE="dash-spv-bench/dashd:${DASH_VERSION}"
+CLIENT_IMAGE="dash-spv-bench/client:1"
+# Rust image for the Linux build, taken from the workspace's own pin so the two
+# cannot drift: with a mismatched tag the image spends every run having rustup
+# fetch the pinned toolchain before it can compile anything.
+RUST_CHANNEL="$(sed -n 's/^channel *= *"\(.*\)"/\1/p' "${REPO_ROOT}/rust-toolchain.toml" 2>/dev/null || true)"
+RUST_IMAGE="rust:${RUST_CHANNEL:-1.89}-bookworm"
+# Separate from the host's `target/`: a different triple, and sharing one
+# directory across both would make every switch a full rebuild.
+LINUX_TARGET_DIR="target-linux"
 PROJECT="spv-bench"
 STATE="${SCRIPT_DIR}/.clonedir"
 FLAME_SVG="${SCRIPT_DIR}/profiles/flamegraph.svg"
@@ -85,10 +94,26 @@ build_netem() {
   echo "${a# }"
 }
 
+# The measured client's own link shaping, if the scenario asks for one.
+#
+# `peers:` shapes each dashd's egress, which models distance to a peer but never
+# the client's own pipe — with N peers at R kbit each the client still enjoys
+# N*R. A `client:` section shapes the one link everything shares, which is what a
+# phone or a home connection actually has, and it is the only shaping available
+# at all in testnet/mainnet mode where there are no peer containers.
+client_netem() {
+  local lat jit loss rate corrupt reorder
+  read -r lat jit loss rate corrupt reorder <<<"$("${YQ}" \
+    '[.client.latency_ms // 0, .client.jitter_ms // 0, .client.loss_pct // 0, .client.rate_kbit // 0, .client.corrupt_pct // 0, .client.reorder_pct // 0] | @tsv' \
+    "${SCN_FILE}")"
+  build_netem "${lat}" "${jit}" "${loss}" "${rate}" "${corrupt}" "${reorder}"
+}
+
 peers_summary() {
   local ng g count lat jit loss rate corrupt reorder tag out=""
   ng="$(scn '.peers | length')"
-  for g in $(seq 0 $((ng - 1))); do
+  case "${ng}" in ''|null|*[!0-9]*) ng=0 ;; esac
+  for ((g = 0; g < ng; g++)); do
     read -r count lat jit loss rate corrupt reorder <<<"$(_peer_group "${g}")"
     tag="${lat}ms"
     [ "${jit}" != 0 ] && tag="${tag}±${jit}"
@@ -126,11 +151,20 @@ HEADER
 services:
 ANCHOR
   local ng g count lat jit loss rate corrupt reorder netem n peer=0
+  # `null` when the scenario has no `peers:` at all, which is the normal shape
+  # for testnet/mainnet: there the peers are the real network and the only
+  # service to emit is the client.
   ng="$(scn '.peers | length')"
-  for g in $(seq 0 $((ng - 1))); do
+  # Arithmetic loops rather than `seq`: BSD seq (macOS) reads `seq 0 -1` as a
+  # descending range and prints "0 -1", where GNU seq prints nothing. An empty
+  # `peers:` — the normal shape for testnet/mainnet — hit exactly that and
+  # emitted two garbage peer services.
+  case "${ng}" in ''|null|*[!0-9]*) ng=0 ;; esac
+  for ((g = 0; g < ng; g++)); do
     read -r count lat jit loss rate corrupt reorder <<<"$(_peer_group "${g}")"
     netem="$(build_netem "${lat}" "${jit}" "${loss}" "${rate}" "${corrupt}" "${reorder}")"
-    for n in $(seq 1 "${count}"); do
+    case "${count}" in ''|null|*[!0-9]*) count=0 ;; esac
+    for ((n = 1; n <= count; n++)); do
       peer=$((peer + 1))
       cat >>"${out}" <<SERVICE
   dashd${peer}:
@@ -145,14 +179,57 @@ ANCHOR
 SERVICE
     done
   done
+  emit_client_service "${out}"
   echo "${peer}"
 }
+
+# The measured client, as a container, so `tc netem` can shape ITS link.
+#
+# Only emitted when the scenario has a `client:` section: without one the client
+# keeps running on the host exactly as before, so existing scenarios and the
+# numbers they produced stay comparable.
+emit_client_service() {
+  local out="$1"
+  [ -n "${CLIENT_NETEM}" ] || return 0
+  cat >>"${out}" <<SERVICE
+  client:
+    image: ${CLIENT_IMAGE}
+    build:
+      context: .
+      dockerfile: Dockerfile.client
+    container_name: spv-bench-client
+    cap_add: [NET_ADMIN]
+    environment:
+      NETEM_ARGS: "${CLIENT_NETEM}"
+      RUST_LOG: "\${RUST_LOG:-}"
+      BENCH_MODE: "${BENCH_MODE}"
+      BENCH_PEERS: "\${BENCH_PEERS:-}"
+      BENCH_MAX_PEERS: "\${BENCH_MAX_PEERS:-}"
+      BENCH_HEIGHT: "\${BENCH_HEIGHT:-}"
+      BENCH_START_HEIGHT: "\${BENCH_START_HEIGHT:-}"
+      BENCH_STORAGE_DIR: "/out"
+      BENCH_WALLET_FILE: "/wallets.txt"
+    volumes:
+      - "${SCRIPT_DIR}/${LINUX_TARGET_DIR}/release/dash-spv-bench:/usr/local/bin/dash-spv-bench:ro"
+      - "${BENCH_STORAGE_DIR}:/out"
+      - "${BENCH_WALLET_FILE}:/wallets.txt:ro"
+    command:
+      - |
+        if [ -n "\$\${NETEM_ARGS:-}" ]; then
+          tc qdisc add dev eth0 root netem \$\${NETEM_ARGS} \
+            && echo "client netem: \$\${NETEM_ARGS}" || echo "WARNING: client netem failed (NET_ADMIN/sch_netem?)"
+        fi
+        exec /usr/local/bin/dash-spv-bench
+SERVICE
+}
+
 
 MODE="$(scn '.mode // "local"')"
 case "${MODE}" in local | testnet | mainnet) ;; *) echo "Error: mode must be 'local', 'testnet' or 'mainnet' (got '${MODE}')" >&2; exit 1 ;; esac
 export BENCH_MODE="${MODE}"
 export CLONE_DIR="${CLONE_DIR:-/nonexistent}"
 
+CLIENT_NETEM="$(client_netem)"
 BENCH_CPUS="$(scn '.cpus // ""')"
 BENCH_MAX_PEERS="$(scn '.max_peers // ""')"   # only if set; else the ClientConfig default
 export BENCH_MAX_PEERS
@@ -207,13 +284,19 @@ if [ -n "${BENCH_CPUS}" ]; then
   fi
 fi
 
-if [ "${MODE}" = local ]; then
+# A compose file is needed for the peers (local mode) and for the client
+# container (any mode with a `client:` section) — testnet/mainnet shape the
+# client against the real network, with no peer services at all.
+if [ "${MODE}" = local ] || [ -n "${CLIENT_NETEM}" ]; then
   COMPOSE_FILE="$(mktemp "${SCRIPT_DIR}/.scenario.XXXXXX")"
   mv "${COMPOSE_FILE}" "${COMPOSE_FILE}.yml"
   COMPOSE_FILE="${COMPOSE_FILE}.yml"
   npeers="$(emit_compose "${COMPOSE_FILE}" "${BENCH_PEER_CPUS:-}")"
-  echo "==> scenario '$(basename "${SCN_FILE}" .yml)': ${npeers} peers [$(peers_summary)], cpus=${BENCH_CPUS:-<none>}, blocks=${BLOCKS}"
+  if [ "${MODE}" = local ]; then
+    echo "==> scenario '$(basename "${SCN_FILE}" .yml)': ${npeers} peers [$(peers_summary)], cpus=${BENCH_CPUS:-<none>}, blocks=${BLOCKS}"
+  fi
 fi
+[ -n "${CLIENT_NETEM}" ] && echo "==> client link shaped: ${CLIENT_NETEM}"
 
 compose() { docker compose -p "${PROJECT}" -f "${COMPOSE_FILE}" "$@"; }
 
@@ -250,7 +333,9 @@ bring_up() {
   teardown
   docker image inspect "${IMAGE}" >/dev/null 2>&1 || { echo "==> building peer image"; compose build; }
 
-  local services; services="$(compose config --services)"
+  # The client is in the same compose file but is not a peer: it must not be
+  # counted, started here, or waited on for "Done loading".
+  local services; services="$(compose config --services | grep -v '^client$' || true)"
   local n; n="$(echo ${services} | wc -w | tr -d ' ')"
   # BENCH_PEERS is derived from the generated peers (host ports 19401..).
   local peers_csv=""
@@ -286,9 +371,48 @@ bring_up() {
   fi
 
   echo "==> ${n} peers started"
+
+  # A containerised client shares the compose network with the peers, so it must
+  # reach them at their container addresses; the published host ports only exist
+  # for a client running on the host. Read the addresses back from the running
+  # containers rather than pinning a subnet in the compose file: a pinned subnet
+  # is one more thing that can collide with whatever else the machine has up,
+  # VPNs included, and it buys nothing a lookup does not.
+  if [ -n "${CLIENT_NETEM}" ]; then
+    local ip csv=""
+    for svc in ${services}; do
+      ip="$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "spv-bench-${svc}")"
+      [ -n "${ip}" ] || { echo "Error: could not resolve address of spv-bench-${svc}" >&2; exit 1; }
+      csv="${csv},${ip}:19400"
+    done
+    export BENCH_PEERS="${csv#,}"
+    echo "==> client will reach peers at ${BENCH_PEERS}"
+  fi
 }
 
 build_bin() {
+  if [ -n "${CLIENT_NETEM}" ]; then
+    # The client runs in a Linux container, so the binary has to be a Linux
+    # one; a host build is the wrong platform on macOS and cannot be mounted
+    # in. Built by a throwaway container that bind-mounts the workspace and a
+    # persistent Linux target dir, so this stays incremental — an image layer
+    # build would replay the whole workspace on every source change, which
+    # makes A/B runs unusable.
+    echo "==> building bench binary for linux (${RUST_IMAGE}, target dir ${LINUX_TARGET_DIR}/)"
+    mkdir -p "${SCRIPT_DIR}/${LINUX_TARGET_DIR}"
+    docker run --rm \
+      -v "${REPO_ROOT}:/src" \
+      -v "${SCRIPT_DIR}/${LINUX_TARGET_DIR}:/target" \
+      -v "spv-bench-cargo-registry:/usr/local/cargo/registry" \
+      -v "spv-bench-rustup:/usr/local/rustup" \
+      -w /src \
+      -e CARGO_TARGET_DIR=/target \
+      -e CARGO_PROFILE_RELEASE_DEBUG=line-tables-only \
+      "${RUST_IMAGE}" \
+      cargo build --release -p dash-spv-bench
+    BIN="${SCRIPT_DIR}/${LINUX_TARGET_DIR}/release/dash-spv-bench"
+    return 0
+  fi
   echo "==> building bench binary (release + line-table symbols)"
   ( cd "${REPO_ROOT}" && CARGO_PROFILE_RELEASE_DEBUG=line-tables-only \
       cargo build --release -p dash-spv-bench )
@@ -314,7 +438,16 @@ else
   echo "==> testnet mode, peers: ${BENCH_PEERS:-<DNS discovery>}"
 fi
 
-if [ "${FLAME}" -eq 0 ]; then
+if [ -n "${CLIENT_NETEM}" ]; then
+  # `run` rather than `up`: it streams the client's own stdout and gives back
+  # its exit code, which is what the report is read from. Profiling is not
+  # wired through the container, so `--flame` is refused rather than silently
+  # producing a graph of the host doing nothing.
+  [ "${FLAME}" -eq 0 ] || { echo "Error: --flame is not supported with a containerised client" >&2; exit 1; }
+  arm_teardown
+  echo "==> running sync in the client container"
+  compose run --rm --build client
+elif [ "${FLAME}" -eq 0 ]; then
   echo "==> running sync"
   "${CPU_PREFIX[@]+"${CPU_PREFIX[@]}"}" "${BIN}"
 elif [ "${FLAME_TOOL}" = perf ]; then
