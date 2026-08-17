@@ -158,6 +158,45 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> BlockHeadersManager<H, M> {
             }
         }
 
+        events.extend(self.store_ready_batches(ready_batches).await?);
+
+        // After storing unsolicited post-sync headers, mark the tip complete so the next header goes through
+        // the clean reset path. Don't mark complete during active catch-up.
+        if !was_syncing && tip_was_complete && !events.is_empty() {
+            self.pipeline.mark_tip_complete();
+        }
+
+        if was_syncing {
+            events.extend(self.finalize_sync_if_complete(requests).await?);
+        }
+
+        if matched.is_some() {
+            self.progress.bump_last_activity();
+        }
+        Ok(events)
+    }
+
+    /// Write segments that finished downloading into storage.
+    ///
+    /// Split out of [`Self::handle_headers_pipeline`] so `tick` can promote
+    /// headers too. Promotion used to be reachable only from there — i.e. only
+    /// when a `Headers` message arrived — which leaves a sync no way to finish
+    /// itself: once the last segment completes, no further `Headers` will ever
+    /// come, and the already-downloaded, already-validated tail simply stays in
+    /// memory. A testnet restore was found frozen exactly there, with 1,046,289
+    /// headers buffered and the stored tip stuck at 1,474,000 while peers
+    /// stayed connected and chain locks kept arriving.
+    ///
+    /// Takes the batches rather than draining them itself, so callers keep
+    /// `take_ready_to_store` → `send_pending` → store ordering: draining can
+    /// expose a new segment at the end of the active window, and the refill
+    /// should pick it up in the same pass.
+    pub(super) async fn store_ready_batches(
+        &mut self,
+        ready_batches: Vec<(u32, Vec<HashedBlockHeader>)>,
+    ) -> SyncResult<Vec<SyncEvent>> {
+        let mut events = Vec::new();
+
         for (_start_height, batch_headers) in ready_batches {
             if !batch_headers.is_empty() {
                 // Validate chain continuity with current tip
@@ -186,37 +225,42 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> BlockHeadersManager<H, M> {
             }
         }
 
-        // After storing unsolicited post-sync headers, mark the tip complete so the next header goes through
-        // the clean reset path. Don't mark complete during active catch-up.
-        if !was_syncing && tip_was_complete && !events.is_empty() {
-            self.pipeline.mark_tip_complete();
-        }
-
-        if was_syncing && self.pipeline.is_complete() {
-            // If blocks were announced during sync, request them before finalizing the sync
-            if !self.pending_announcements.is_empty() {
-                tracing::info!(
-                    "Pipeline complete but {} blocks announced during sync, requesting headers",
-                    self.pending_announcements.len()
-                );
-                self.pipeline.reset_tip_segment();
-                self.pipeline.send_pending(requests)?;
-            } else {
-                // Synced to the tip and no pending announcements, finalize and emit event
-                let tip = self.tip().await?;
-                self.progress.update_target_height(tip.height());
-                self.progress.set_state(SyncState::Synced);
-                tracing::info!("Headers sync complete at height {}", tip.height());
-                events.push(SyncEvent::BlockHeaderSyncComplete {
-                    tip_height: tip.height(),
-                });
-            }
-        }
-
-        if matched.is_some() {
-            self.progress.bump_last_activity();
-        }
         Ok(events)
+    }
+
+    /// Close out an initial sync whose pipeline has nothing left to download.
+    ///
+    /// Extracted alongside [`Self::store_ready_batches`] and for the same
+    /// reason: a promotion driven by `tick` has to be able to reach the
+    /// completion it just made possible, or the manager stores the last
+    /// segment and then sits in `Syncing` forever.
+    pub(super) async fn finalize_sync_if_complete(
+        &mut self,
+        requests: &RequestSender,
+    ) -> SyncResult<Vec<SyncEvent>> {
+        if !self.pipeline.is_complete() {
+            return Ok(Vec::new());
+        }
+
+        // If blocks were announced during sync, request them before finalizing the sync
+        if !self.pending_announcements.is_empty() {
+            tracing::info!(
+                "Pipeline complete but {} blocks announced during sync, requesting headers",
+                self.pending_announcements.len()
+            );
+            self.pipeline.reset_tip_segment();
+            self.pipeline.send_pending(requests)?;
+            return Ok(Vec::new());
+        }
+
+        // Synced to the tip and no pending announcements, finalize and emit event
+        let tip = self.tip().await?;
+        self.progress.update_target_height(tip.height());
+        self.progress.set_state(SyncState::Synced);
+        tracing::info!("Headers sync complete at height {}", tip.height());
+        Ok(vec![SyncEvent::BlockHeaderSyncComplete {
+            tip_height: tip.height(),
+        }])
     }
 
     /// Handle inventory announcements for new blocks.
@@ -299,6 +343,80 @@ mod tests {
         manager.pipeline.init(tip.height(), *tip.hash(), tip.height());
         manager.progress.set_state(SyncState::Synced);
         manager
+    }
+
+    /// Headers that finished downloading must reach storage even if no further
+    /// `Headers` message ever arrives.
+    ///
+    /// Promotion used to hang off `handle_headers_pipeline` alone, so the last
+    /// segment of a sync had nothing left to trigger it — the pipeline sat on
+    /// fully downloaded, fully validated headers forever. Seen in the field on
+    /// a testnet restore: 1,046,289 headers buffered, stored tip frozen at
+    /// 1,474,000, peers healthy, chain locks still arriving.
+    ///
+    /// Asserts the completion too, not just the store: a regression that keeps
+    /// the last segment but leaves the manager in `Syncing` is the same stall
+    /// wearing a different hat.
+    #[tokio::test]
+    async fn test_tick_promotes_buffered_headers_with_no_further_messages() {
+        let mut manager = create_test_manager().await;
+        let tip = manager.tip().await.unwrap();
+        let start_height = tip.height();
+
+        manager.pipeline.init(start_height, *tip.hash(), start_height + 2);
+        manager.progress.set_state(SyncState::Syncing);
+
+        let (sender, _rx) = create_test_request_sender();
+        // Issue the request the segment expects, so the headers below are a
+        // legitimate answer to it rather than unsolicited.
+        manager.pipeline.send_pending(&sender).unwrap();
+
+        // The headers land in the pipeline without the manager's own
+        // message-driven promotion running — the state the field stall was in.
+        let headers: Vec<HashedBlockHeader> =
+            Header::dummy_chain(2, *tip.hash()).iter().map(HashedBlockHeader::from).collect();
+        manager.pipeline.receive_headers(&headers).unwrap();
+        assert!(
+            manager.pipeline.total_buffered() > 0,
+            "precondition: headers are downloaded but not yet promoted"
+        );
+        assert_eq!(
+            manager.tip().await.unwrap().height(),
+            start_height,
+            "precondition: storage has not advanced"
+        );
+
+        // No further `Headers` will arrive. The periodic tick is the only
+        // thing left that can finish the job.
+        let events = manager.tick(&sender).await.unwrap();
+
+        assert!(
+            manager.tip().await.unwrap().height() > start_height,
+            "tick must promote buffered headers into storage"
+        );
+        assert!(
+            events.iter().any(|e| matches!(e, SyncEvent::BlockHeadersStored { .. })),
+            "the promotion must be reported, not done silently"
+        );
+
+        // Completing the pipeline must also be reachable from a tick: an empty
+        // response closes the tip segment, and the next tick has to announce
+        // the sync rather than leaving the manager in `Syncing` forever.
+        manager.pipeline.send_pending(&sender).unwrap();
+        manager.pipeline.receive_headers(&[]).unwrap();
+        assert!(manager.pipeline.is_complete(), "precondition: nothing left to download");
+
+        let events = manager.tick(&sender).await.unwrap();
+
+        assert_eq!(
+            manager.state(),
+            SyncState::Synced,
+            "a tick over a complete pipeline must finish the sync"
+        );
+        assert!(
+            events.iter().any(|e| matches!(e, SyncEvent::BlockHeaderSyncComplete { .. })),
+            "completion must be announced, or downstream managers never start"
+        );
     }
 
     #[tokio::test]
