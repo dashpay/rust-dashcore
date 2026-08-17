@@ -9,7 +9,7 @@
 #   --wallets <file>                   Wallets for this run: a file with one BIP39 mnemonic per
 #                                      line. No file => the run has no wallet.
 #
-# RUST_LOG can be set to tweak logging, e.g.  RUST_LOG=info ./run.sh scenarios/ideal-1-peer.yml
+# RUST_LOG can be set to tweak logging, e.g.  RUST_LOG=info ./run.sh scenarios/local.1ideal.yml
 # It is the tracing filter for BOTH log sinks and overrides the defaults, which are
 #   terminal = "warn,dash_spv_bench=info"  (kept light so the live bars stay readable)
 #   file     = "warn,dash_spv=debug,dash_spv_bench=debug"  (debug, for offline analysis)
@@ -198,7 +198,8 @@ emit_client_service() {
       context: .
       dockerfile: Dockerfile.client
     container_name: spv-bench-client
-    cap_add: [NET_ADMIN]
+    cap_add: [NET_ADMIN]${BENCH_CPUS:+
+    cpuset: "${BENCH_CPUS}"}
     environment:
       NETEM_ARGS: "${CLIENT_NETEM}"
       RUST_LOG: "\${RUST_LOG:-}"
@@ -276,7 +277,12 @@ if [ -n "${BENCH_CPUS}" ]; then
     BENCH_PEER_CPUS="${peer_cores#,}"
   fi
 
-  if command -v taskset >/dev/null 2>&1; then
+  if [ -n "${CLIENT_NETEM}" ]; then
+    # The client is a container: `cpuset` on the service does the pinning that
+    # `taskset` does for a host run, and it works on macOS where taskset does
+    # not exist at all. Emitted by `emit_client_service` from BENCH_CPUS.
+    echo "==> pinning the measured client container to CPUs ${BENCH_CPUS}${BENCH_PEER_CPUS:+; docker peers to ${BENCH_PEER_CPUS}}"
+  elif command -v taskset >/dev/null 2>&1; then
     CPU_PREFIX=(taskset -c "${BENCH_CPUS}")
     echo "==> pinning the measured run to CPUs ${BENCH_CPUS}${BENCH_PEER_CPUS:+; docker peers to ${BENCH_PEER_CPUS}}"
   else

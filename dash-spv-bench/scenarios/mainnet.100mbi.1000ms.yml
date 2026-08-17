@@ -1,0 +1,12 @@
+description: "Mainnet from genesis with the client's own link at 100 Mbit and 1000ms one-way delay (~2000ms RTT). One cell of the bandwidth x latency matrix."
+mode: mainnet
+max_peers: 3
+
+# Only the client is shaped: no `peers:` section, so the peers are the real
+# network and this is the whole of the scenario. `peers:` would shape each peer
+# separately, which is a different question — there N peers at R kbit still give
+# the client N*R, while here the 100 Mbit is the total the client ever gets,
+# shared across every peer it talks to.
+client:
+  latency_ms: 1000     # one-way, as netem applies it; RTT is about 2000ms
+  rate_kbit: 100000

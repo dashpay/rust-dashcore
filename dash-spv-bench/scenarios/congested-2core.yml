@@ -1,5 +1,0 @@
-description: "CPU-starved client (2 cores), 5 peers on a jittery 300ms link."
-cpus: "0-1"
-repeats: 3
-peers:
-  - { count: 5, latency_ms: 300, jitter_ms: 100 }

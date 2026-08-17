@@ -1,6 +1,0 @@
-description: "Two good peers plus one slow/lossy/capped peer (a bad peer in the set)."
-cpus: "0-3"
-repeats: 3
-peers:
-  - { count: 2, latency_ms: 50 }
-  - { count: 1, latency_ms: 800, loss_pct: 8, rate_kbit: 500 }
