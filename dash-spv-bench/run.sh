@@ -197,19 +197,19 @@ build_netem() {
   echo "${a# }"
 }
 
-# The measured client's own link shaping, if the scenario asks for one.
-#
-# `peers:` shapes each dashd's egress, which models distance to a peer but never
-# the client's own pipe — with N peers at R kbit each the client still enjoys
-# N*R. A `client:` section shapes the one link everything shares, which is what a
-# phone or a home connection actually has, and it is the only shaping available
-# at all in testnet/mainnet mode where there are no peer containers.
+# The measured client's own link shaping, if the scenario asks for one
 client_netem() {
   local lat jit loss rate corrupt reorder
   read -r lat jit loss rate corrupt reorder <<<"$("${YQ}" \
     '[.client.latency_ms // 0, .client.jitter_ms // 0, .client.loss_pct // 0, .client.rate_kbit // 0, .client.corrupt_pct // 0, .client.reorder_pct // 0] | @tsv' \
     "${SCN_FILE}")"
   build_netem "${lat}" "${jit}" "${loss}" "${rate}" "${corrupt}" "${reorder}"
+}
+
+# The client's bandwidth cap on its own, so the container can mirror it onto
+# ingress
+client_rate_kbit() {
+  "${YQ}" '.client.rate_kbit // 0' "${SCN_FILE}"
 }
 
 peers_summary() {
@@ -304,7 +304,9 @@ emit_client_service() {
     cap_add: [NET_ADMIN]${BENCH_CPUS:+
     cpuset: "${BENCH_CPUS}"}
     environment:
-      NETEM_ARGS: "${CLIENT_NETEM}"${RUST_LOG:+
+      NETEM_ARGS: "${CLIENT_NETEM}"
+      INGRESS_RATE_KBIT: "${CLIENT_RATE_KBIT}"
+      INGRESS_BURST_K: "${CLIENT_INGRESS_BURST_K}"${RUST_LOG:+
       RUST_LOG: "${RUST_LOG}"}
       BENCH_MODE: "${BENCH_MODE}"
       BENCH_PEERS: "\${BENCH_PEERS:-}"
@@ -321,7 +323,29 @@ emit_client_service() {
       - |
         if [ -n "\$\${NETEM_ARGS:-}" ]; then
           tc qdisc add dev eth0 root netem \$\${NETEM_ARGS} \
-            && echo "client netem: \$\${NETEM_ARGS}" || echo "WARNING: client netem failed (NET_ADMIN/sch_netem?)"
+            && echo "client netem (egress): \$\${NETEM_ARGS}" || echo "WARNING: client netem failed (NET_ADMIN/sch_netem?)"
+        fi
+        if [ -n "\$\${INGRESS_RATE_KBIT:-}" ] && [ "\$\${INGRESS_RATE_KBIT}" != 0 ]; then
+          if ip link add ifb0 type ifb 2>/dev/null \
+            && ip link set ifb0 up \
+            && tc qdisc add dev eth0 handle ffff: ingress \
+            && tc filter add dev eth0 parent ffff: protocol all prio 1 u32 \
+                 match u32 0 0 action mirred egress redirect dev ifb0 \
+            && tc qdisc add dev ifb0 root netem rate \$\${INGRESS_RATE_KBIT}kbit; then
+            echo "client netem (ingress): rate \$\${INGRESS_RATE_KBIT}kbit via ifb0"
+          else
+            tc qdisc del dev eth0 ingress 2>/dev/null || true
+            if tc qdisc add dev eth0 handle ffff: ingress 2>/dev/null \
+              && tc filter add dev eth0 parent ffff: protocol all prio 1 u32 \
+                   match u32 0 0 action police rate \$\${INGRESS_RATE_KBIT}kbit \
+                   burst \$\${INGRESS_BURST_K}k mtu 64k conform-exceed drop; then
+              echo "client police (ingress): rate \$\${INGRESS_RATE_KBIT}kbit burst \$\${INGRESS_BURST_K}k"
+              echo "NOTE: no ifb, so ingress is POLICED (drops) not shaped (queues) — throughput lands within ~3% but the loss pattern differs; do not compare against ifb runs"
+            else
+              echo "WARNING: ingress shaping failed (NET_ADMIN? no ifb and no act_police?)"
+              echo "WARNING: DOWNLOADS ARE UNSHAPED — rate_kbit is NOT enforced and this run is not comparable"
+            fi
+          fi
         fi
         exec /usr/local/bin/dash-spv-bench
 SERVICE
@@ -334,6 +358,14 @@ export BENCH_MODE="${MODE}"
 export CLONE_DIR="${CLONE_DIR:-/nonexistent}"
 
 CLIENT_NETEM="$(client_netem)"
+CLIENT_RATE_KBIT="$(client_rate_kbit)"
+case "${CLIENT_RATE_KBIT}" in
+  '' | *[!0-9]*) echo "Error: client.rate_kbit must be a whole number of kbit (got '${CLIENT_RATE_KBIT}')" >&2; exit 1 ;;
+esac
+# Burst for the policer fallback: ~0.5s of the rate (kbit/16 => kbytes), floored
+# so a very small rate still gets a workable bucket. Unused on the ifb path.
+CLIENT_INGRESS_BURST_K=$(( CLIENT_RATE_KBIT / 16 ))
+if [ "${CLIENT_INGRESS_BURST_K}" -lt 32 ]; then CLIENT_INGRESS_BURST_K=32; fi
 BENCH_CPUS="$(scn '.cpus // ""')"
 BENCH_MAX_PEERS="$(scn '.max_peers // ""')"   # only if set; else the ClientConfig default
 export BENCH_MAX_PEERS
