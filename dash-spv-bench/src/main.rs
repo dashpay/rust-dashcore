@@ -213,7 +213,7 @@ async fn main() -> Result<()> {
 
             let _ = writeln!(
                 report,
-                "wallet[{i}] txs={txs} confirmed_sat={confirmed} total_sat={total}"
+                "wallet[{i}] retained_records={txs} confirmed_sat={confirmed} total_sat={total}"
             );
         }
 
