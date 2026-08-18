@@ -1,5 +1,0 @@
-description: "No-lag ideal, single peer: 12 CPUs, 1 peer @ 0ms, full 1M sync."
-cpus: "0-11"
-repeats: 3
-peers:
-  - { count: 1, latency_ms: 0 }
