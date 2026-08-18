@@ -43,6 +43,17 @@ pub struct FilterHeadersManager<H: BlockHeaderStorage, FH: FilterHeaderStorage> 
 }
 
 impl<H: BlockHeaderStorage, FH: FilterHeaderStorage> FilterHeadersManager<H, FH> {
+    /// The tip height block-header storage holds right now.
+    ///
+    /// Distinct from `progress.block_header_tip_height()`, which is only ever
+    /// as fresh as the last `BlockHeadersStored` / `BlockHeaderSyncComplete`
+    /// this manager was handed. Storage can move without either arriving —
+    /// an out-of-order segment completing promotes a run of buffered headers —
+    /// so the tick reads storage directly to notice.
+    pub(super) async fn stored_block_header_tip(&self) -> Option<u32> {
+        self.header_storage.read().await.get_tip_height().await
+    }
+
     /// Transition to `Synced` and return `FilterHeadersSyncComplete` if block headers
     /// are done and filter headers have reached the target. Returns `None` if already
     /// `Synced` or conditions are not met.
@@ -250,6 +261,9 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage> std::fmt::Debug
 mod tests {
     use super::*;
     use crate::network::MessageType;
+    use crate::types::HashedBlockHeader;
+    use dashcore::{block::Version, BlockHash, CompactTarget, Header as BlockHeader};
+    use dashcore_hashes::Hash;
     use crate::storage::{
         DiskStorageManager, PersistentBlockHeaderStorage, PersistentFilterHeaderStorage,
         StorageManager,
@@ -377,6 +391,59 @@ mod tests {
 
         assert!(manager.block_headers_synced);
         assert!(!events.iter().any(|e| matches!(e, SyncEvent::FilterHeadersSyncComplete { .. })));
+    }
+
+    /// The tick must notice block-header storage advancing on its own.
+    ///
+    /// `handle_new_headers` — the only path that extends the CFHeaders queue —
+    /// runs off `BlockHeadersStored` / `BlockHeaderSyncComplete`. Storage can
+    /// move without either arriving, because a segment completing out of order
+    /// promotes a run of buffered headers. When that happened on a mainnet
+    /// restore the queue stayed at its old target and filter headers stopped
+    /// permanently, while block headers and ChainLocks carried on.
+    #[tokio::test]
+    async fn test_tick_extends_when_storage_tip_advanced_without_an_event() {
+        let storage = DiskStorageManager::with_temp_dir().await.unwrap();
+        let header_storage = storage.block_headers();
+        let mut manager =
+            FilterHeadersManager::new(header_storage.clone(), storage.filter_headers())
+                .await
+                .expect("Failed to create FilterHeadersManager");
+        let (sender, _rx) = create_test_request_sender();
+
+        // Mid-sync: this manager was last told the tip was 1000.
+        manager.progress.update_current_height(1000);
+        manager.progress.update_target_height(1000);
+        manager.progress.update_block_header_tip_height(1000);
+        manager.set_state(SyncState::Syncing);
+
+        // Storage moves past that on its own — no event is delivered.
+        let mut headers = Vec::new();
+        let mut prev = BlockHash::from_byte_array([0u8; 32]);
+        for nonce in 0..1200u32 {
+            let header = HashedBlockHeader::from(BlockHeader {
+                version: Version::from_consensus(1),
+                prev_blockhash: prev,
+                merkle_root: dashcore::TxMerkleNode::all_zeros(),
+                time: 0,
+                bits: CompactTarget::from_consensus(0x2100ffff),
+                nonce,
+            });
+            prev = *header.hash();
+            headers.push(header);
+        }
+        header_storage.write().await.store_headers_at_height(&headers, 0).await.unwrap();
+        let stored_tip = manager.stored_block_header_tip().await.expect("storage has a tip");
+        assert!(stored_tip > 1000, "test setup: storage tip must exceed the known tip");
+
+        let manager_ref: &mut TestSyncManager = &mut manager;
+        manager_ref.tick(&sender).await.unwrap();
+
+        assert_eq!(
+            manager.progress.block_header_tip_height(),
+            stored_tip,
+            "tick must pick up a tip that advanced without an event"
+        );
     }
 
     #[tokio::test]
