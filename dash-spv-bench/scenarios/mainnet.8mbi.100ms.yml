@@ -1,12 +1,7 @@
-description: "Mainnet from genesis with the client's own link at 8 Mbit and 100ms one-way delay (~200ms RTT). One cell of the bandwidth x latency matrix."
+description: "Mainnet from genesis with the client's own link at 8 Mbit and 100ms of added egress delay (~+100ms RTT). One cell of the bandwidth x latency matrix."
 mode: mainnet
 max_peers: 3
 
-# Only the client is shaped: no `peers:` section, so the peers are the real
-# network and this is the whole of the scenario. `peers:` would shape each peer
-# separately, which is a different question — there N peers at R kbit still give
-# the client N*R, while here the 8 Mbit is the total the client ever gets,
-# shared across every peer it talks to.
 client:
-  latency_ms: 100     # one-way, as netem applies it; RTT is about 200ms
+  latency_ms: 100
   rate_kbit: 8000

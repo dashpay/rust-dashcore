@@ -4,11 +4,6 @@ repeats: 3
 peers:
   - { count: 3, latency_ms: 50 }
 
-# The client's own link, uniform across every local scenario so the only thing
-# that varies between them is what the peers do. 150 Mbit with 5ms one-way
-# (~10ms RTT) is a nearby, unremarkable connection — enough headroom that the
-# client is not the bottleneck, but not the infinite loopback pipe an unshaped
-# host run gives, which flatters the client in a way no real deployment does.
 client:
   latency_ms: 5
   rate_kbit: 150000
