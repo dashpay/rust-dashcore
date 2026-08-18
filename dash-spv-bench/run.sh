@@ -134,15 +134,20 @@ if [ -z "${BENCH_BATCH:-}" ]; then
     # on, or one bad run costs every result after it.
     BENCH_BATCH=1 BENCH_ARCHIVE_DIR="${OUT_DIR}" BENCH_ARCHIVE_NAME="${name}" \
       "${SELF}" "${f}" "${child_flags[@]+"${child_flags[@]}"}" 2>&1 | tee "${log}" || true
-    wallet_line="$(grep -m1 -o 'confirmed_sat=[0-9]*' "${log}" || true)"
+    # Read the metrics from the summary the child archived, not from its stdout:
+    # the summary is written by the binary and is plain text either way, while a
+    # pty-captured log carries the bars' escape codes and carriage returns.
+    src="${log}"
+    if [ -s "${OUT_DIR}/${name}.summary.txt" ]; then src="${OUT_DIR}/${name}.summary.txt"; fi
+    wallet_line="$(grep -m1 -o 'confirmed_sat=[0-9]*' "${src}" || true)"
     printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
       "${name}" \
-      "$(metric "${log}" completed)" \
-      "$(metric "${log}" total_ms)" \
-      "$(metric "${log}" block_headers_ms)" \
-      "$(metric "${log}" filter_headers_ms)" \
-      "$(metric "${log}" filters_ms)" \
-      "$(metric "${log}" transactions)" \
+      "$(metric "${src}" completed)" \
+      "$(metric "${src}" total_ms)" \
+      "$(metric "${src}" block_headers_ms)" \
+      "$(metric "${src}" filter_headers_ms)" \
+      "$(metric "${src}" filters_ms)" \
+      "$(metric "${src}" transactions)" \
       "$(sed -n 's/.*confirmed_sat=\([0-9]*\).*/\1/p' <<<"${wallet_line}")" \
       >>"${TSV}"
   done
@@ -579,6 +584,16 @@ else
   echo "==> testnet mode, peers: ${BENCH_PEERS:-<DNS discovery>}"
 fi
 
+# Run the sync with its live output straight on the terminal instead of through
+# the batch wrapper's pipe
+run_live() {
+  if [ -w /dev/tty ]; then
+    "$@" >/dev/tty 2>&1
+  else
+    "$@"
+  fi
+}
+
 if [ -n "${CLIENT_NETEM}" ]; then
   # `run` rather than `up`: it streams the client's own stdout and gives back
   # its exit code, which is what the report is read from. Profiling is not
@@ -587,10 +602,10 @@ if [ -n "${CLIENT_NETEM}" ]; then
   [ "${FLAME}" -eq 0 ] || { echo "Error: --flame is not supported with a containerised client" >&2; exit 1; }
   arm_teardown
   echo "==> running sync in the client container"
-  compose run --rm --build client
+  run_live compose run --rm --build client
 elif [ "${FLAME}" -eq 0 ]; then
   echo "==> running sync"
-  "${CPU_PREFIX[@]+"${CPU_PREFIX[@]}"}" "${BIN}"
+  run_live "${CPU_PREFIX[@]+"${CPU_PREFIX[@]}"}" "${BIN}"
 elif [ "${FLAME_TOOL}" = perf ]; then
   echo "==> running sync under perf"
   mkdir -p "$(dirname "${FLAME_SVG}")"
