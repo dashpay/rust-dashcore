@@ -260,13 +260,14 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage> std::fmt::Debug
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::network::MessageType;
+    use crate::network::{MessageType, NetworkRequest};
     use crate::storage::{
         DiskStorageManager, PersistentBlockHeaderStorage, PersistentFilterHeaderStorage,
         StorageManager,
     };
     use crate::sync::{ManagerIdentifier, SyncManagerProgress};
     use crate::types::HashedBlockHeader;
+    use dashcore::network::message::NetworkMessage;
     use dashcore::{block::Version, BlockHash, CompactTarget, Header as BlockHeader};
     use dashcore_hashes::Hash;
 
@@ -409,7 +410,7 @@ mod tests {
             FilterHeadersManager::new(header_storage.clone(), storage.filter_headers())
                 .await
                 .expect("Failed to create FilterHeadersManager");
-        let (sender, _rx) = create_test_request_sender();
+        let (sender, mut rx) = create_test_request_sender();
 
         // Mid-sync: this manager was last told the tip was 1000.
         manager.progress.update_current_height(1000);
@@ -444,6 +445,43 @@ mod tests {
             stored_tip,
             "tick must pick up a tip that advanced without an event"
         );
+
+        // The tip alone is not the fix. `handle_new_headers` updates that
+        // field before it touches the pipeline, so a version that noticed the
+        // advance and then failed to queue anything would still satisfy the
+        // assertion above — and would leave sync exactly as stuck as before.
+        // What has to be true is that a request for the new range went out.
+        let mut requested_stops = Vec::new();
+        while let Ok(request) = rx.try_recv() {
+            match request {
+                NetworkRequest::SendMessage(NetworkMessage::GetCFHeaders(get)) => {
+                    requested_stops.push(get.stop_hash);
+                }
+                NetworkRequest::SendMessageToPeer(NetworkMessage::GetCFHeaders(get), _) => {
+                    requested_stops.push(get.stop_hash);
+                }
+                _ => {}
+            }
+        }
+        assert!(
+            !requested_stops.is_empty(),
+            "tick must queue and send CFHeaders requests for the newly available range"
+        );
+        // Every stop hash must be a header the new range actually contains, so
+        // a request built from the stale target cannot pass this.
+        let storage = header_storage.read().await;
+        for stop in &requested_stops {
+            let mut found = false;
+            for height in 1001..=stored_tip {
+                if let Ok(Some(header)) = storage.get_header(height).await {
+                    if header.hash() == stop {
+                        found = true;
+                        break;
+                    }
+                }
+            }
+            assert!(found, "CFHeaders stop hash {stop} is not in the newly discovered range");
+        }
     }
 
     #[tokio::test]
