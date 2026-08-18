@@ -25,6 +25,11 @@
 //!    only reach `active_batches`, and committed batches are gone. GREEN
 //!    since `rescan_committed_range` re-tests newly derived scripts against
 //!    the STORED filters below the committing batch.
+//! 4. [`committed_range_sweep_coalesces_across_batch_commits`] — the cost
+//!    side of #846's fix: N script-carrying commits share one drain-time
+//!    committed-range sweep instead of walking the stored history once per
+//!    commit, while a late-derived script still finds its
+//!    committed-prefix block before `FiltersSyncComplete`.
 //!
 //! Each test drives the manager exactly the way the production event loop
 //! does: `try_process_batch` → `BlocksNeeded` → (blocks-manager stand-in)
@@ -409,5 +414,165 @@ async fn coinjoin_gap_limit_stall_across_committed_batch() {
          suppression by (wallet, address/script) instead of block/commit progress, or \
          trigger a below-committed-height rescan for a wallet whose gap maintenance \
          derives scripts mid-sync."
+    );
+}
+
+/// Committed-range sweeps coalesce across batch commits.
+///
+/// Four batches; the last three each contain one in-window block whose
+/// processing derives new scripts (each funds the next run of CoinJoin
+/// indices, so gap maintenance extends the watch window at every commit).
+/// Per-commit sweeping walks the entire committed prefix once per
+/// script-carrying commit — on a real mainnet restore that shape produced
+/// 191 full-prefix sweeps totalling ~14.5 minutes. Coalesced, the
+/// accumulated scripts cross the stored history when the forward pipeline
+/// drains: one sweep, plus one follow-up round for the scripts derived from
+/// the block that sweep recovers.
+///
+/// The early block (height 10, beyond-window indices G+10..=G+21, unwatched
+/// when its batch scans and commits) pins the #846 correctness contract at
+/// the same time: the deferred sweep must still find it, and
+/// `FiltersSyncComplete` must not be emitted before it has been found and
+/// applied. `committed_range_sweeps` counts sweeps that reach the chunk walk
+/// in `rescan_committed_range`.
+#[tokio::test]
+async fn committed_range_sweep_coalesces_across_batch_commits() {
+    let (mut manager, wallet, wallet_id) = setup().await;
+    let addresses = coinjoin_external_addresses(&wallet, &wallet_id, (G + 22) as u32).await;
+
+    // Beyond-window block in the range that commits first (#846 shape).
+    let (block_early, filter_early, key_early) = block_paying(10, &addresses[(G + 10)..=(G + 21)]);
+    // One in-window block per later batch. Each extends `highest_used` by 30,
+    // so every one of these batches carries newly derived scripts into its
+    // commit. After block 110 the generated window reaches 29 + G >= G + 21,
+    // so the early block's scripts are among the first commit's derivations.
+    let (block_1, filter_1, key_1) = block_paying(110, &addresses[0..=29]);
+    let (block_2, filter_2, key_2) = block_paying(210, &addresses[30..=59]);
+    let (block_3, filter_3, key_3) = block_paying(310, &addresses[60..=89]);
+
+    // Persist headers and filters for the committed prefix 0..=299 — the
+    // range the drain-time sweep reloads from storage. Real data at the
+    // three block heights, filler elsewhere.
+    {
+        let mut header_storage = manager.header_storage.write().await;
+        let mut filter_storage = manager.filter_storage.write().await;
+        for height in 0..=299u32 {
+            let (header, filter_bytes) = match height {
+                10 => (block_early.header, filter_early.content.clone()),
+                110 => (block_1.header, filter_1.content.clone()),
+                210 => (block_2.header, filter_2.content.clone()),
+                _ => {
+                    let filler = Block::dummy(height, vec![]);
+                    let filter = BlockFilter::dummy(&filler);
+                    (filler.header, filter.content)
+                }
+            };
+            header_storage
+                .store_headers_at_height(&[header.into()], height)
+                .await
+                .expect("seed header");
+            filter_storage.store_filter(height, &filter_bytes).await.expect("seed filter");
+        }
+    }
+
+    let blocks: HashMap<BlockHash, Block> = HashMap::from([
+        (block_early.block_hash(), block_early),
+        (block_1.block_hash(), block_1),
+        (block_2.block_hash(), block_2),
+        (block_3.block_hash(), block_3),
+    ]);
+
+    for (start, filters) in [
+        (0u32, HashMap::from([(key_early, filter_early)])),
+        (100, HashMap::from([(key_1, filter_1)])),
+        (200, HashMap::from([(key_2, filter_2)])),
+        (300, HashMap::from([(key_3, filter_3)])),
+    ] {
+        let mut batch = FiltersBatch::new(start, start + 99, filters);
+        batch.mark_verified();
+        manager.active_batches.insert(start, batch);
+    }
+    manager.progress.update_stored_height(399);
+
+    // Drive the production event loop to quiescence like `drive_to_quiescence`
+    // does, additionally watching for `FiltersSyncComplete` so the completion
+    // contract can be asserted at the moment it is emitted.
+    let (tx, _rx) = unbounded_channel();
+    let requests = RequestSender::new(tx);
+    let mut events = manager.try_process_batch().await.unwrap();
+    let mut sync_complete_seen = false;
+    'rounds: for _round in 0..64 {
+        let mut pending: BTreeMap<(u32, BlockHash), BTreeSet<WalletId>> = BTreeMap::new();
+        for event in events.drain(..) {
+            match event {
+                SyncEvent::BlocksNeeded {
+                    blocks: needed,
+                } => {
+                    for (key, wallets) in needed {
+                        pending.entry((key.height(), *key.hash())).or_default().extend(wallets);
+                    }
+                }
+                SyncEvent::FiltersSyncComplete {
+                    ..
+                } => {
+                    let (highest_used, _, _) = coinjoin_pool_state(&wallet, &wallet_id).await;
+                    assert_eq!(
+                        highest_used,
+                        Some((G + 21) as u32),
+                        "FiltersSyncComplete emitted before the deferred committed-range \
+                         sweep recovered the height-10 block: a script derived after its \
+                         range committed was never tested against the committed prefix"
+                    );
+                    sync_complete_seen = true;
+                }
+                _ => {}
+            }
+        }
+        if pending.is_empty() {
+            break 'rounds;
+        }
+        for ((height, block_hash), wallets) in pending {
+            let block = blocks.get(&block_hash).expect("BlocksNeeded for an unknown test block");
+            let result = wallet
+                .write()
+                .await
+                .process_block_for_wallets(block, block_hash, height, &wallets)
+                .await;
+            let confirmed_txids = result.relevant_txids().cloned().collect();
+            let event = SyncEvent::BlockProcessed {
+                block_hash,
+                height,
+                wallets,
+                new_scripts: result.new_scripts,
+                confirmed_txids,
+            };
+            events.extend(
+                manager.handle_sync_event(&event, &requests).await.expect("BlockProcessed"),
+            );
+        }
+    }
+
+    assert!(sync_complete_seen, "the run must reach FiltersSyncComplete");
+
+    let (highest_used, _, used_count) = coinjoin_pool_state(&wallet, &wallet_id).await;
+    assert_eq!(
+        highest_used,
+        Some((G + 21) as u32),
+        "the height-10 block's beyond-window outputs must be recovered by the \
+         drain-time committed-range sweep (used_count={used_count})"
+    );
+    assert_eq!(used_count, 90 + 12, "indices 0..=89 and G+10..=G+21 must all be marked used");
+
+    assert!(
+        manager.committed_range_sweeps >= 1,
+        "the deferred committed-range sweep must still run before completion"
+    );
+    assert!(
+        manager.committed_range_sweeps <= 2,
+        "three script-carrying batch commits must share the committed-range sweep \
+         (one drain-time sweep plus one follow-up round for the scripts derived from \
+         the recovered block); got {} sweeps — one sweep per commit means the \
+         coalescing regressed",
+        manager.committed_range_sweeps
     );
 }
