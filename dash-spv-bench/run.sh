@@ -9,6 +9,19 @@
 #   --wallets <file>                   Wallets for this run: a file with one BIP39 mnemonic per
 #                                      line. No file => the run has no wallet.
 #
+#   ./run.sh 'scenarios/mainnet.*'     Several scenarios: any argument that is not a file is
+#   ./run.sh scenarios/local.*.yml     treated as a glob (quote it to let run.sh expand it, or
+#   ./run.sh scenarios/*.yml           let your shell do it). Patterns resolve against the
+#                                      current directory and then against scenarios/, so
+#                                      'mainnet.*' works from anywhere.
+#
+# Every invocation, one scenario or twenty, writes results/<timestamp>/ containing per scenario
+#   <name>.log         stdout of the run (build, bring-up, summary)
+#   <name>.run.log     the sync trace, kept because bench-storage/ is wiped by the next run
+#   <name>.summary.txt the metrics block
+# plus results.tsv and report.md over all of them. A scenario that fails is recorded and the
+# rest still run.
+#
 # RUST_LOG can be set to tweak logging, e.g.  RUST_LOG=info ./run.sh scenarios/local.1ideal.yml
 # It is the tracing filter for BOTH log sinks and overrides the defaults, which are
 #   terminal = "warn,dash_spv_bench=info"  (kept light so the live bars stay readable)
@@ -17,6 +30,8 @@
 # Outputs land in bench-storage/ (gitignored, wiped at the start of each run):
 #   run.log      full trace of the sync (debug by default) for offline analysis
 #   summary.txt  metrics + per-wallet tx/balance fingerprint (also printed to stdout)
+#
+# bench-storage/ is wiped at the start of every run, so both are archived into results/ too.
 #   plus the SPV storage the run produced (block_headers/, filters/, ...)
 set -euo pipefail
 
@@ -40,25 +55,113 @@ FLAME_SVG="${SCRIPT_DIR}/profiles/flamegraph.svg"
 FLAMEGRAPH_DIR="${SCRIPT_DIR}/.flamegraph"   # FlameGraph tooling clone (gitignored, inside the package)
 CHAIN_DIR="${SCRIPT_DIR}/chain-data"
 
+# Absolute, because the script `cd`s to its own directory below: a relative `$0`
+# stops resolving after that, which broke both `--help` and re-invoking self.
+SELF="${SCRIPT_DIR}/$(basename "${BASH_SOURCE[0]}")"
+
 INVOCATION_DIR="${PWD}"
 abspath() { case "$1" in /*) printf '%s\n' "$1" ;; *) printf '%s\n' "${INVOCATION_DIR%/}/$1" ;; esac; }
 
 cd "${SCRIPT_DIR}"
 
 FLAME=0
-SCN_FILE=""
+SCN_ARGS=()
 WALLETS_ARG=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --flame) FLAME=1; shift ;;
     --wallets) WALLETS_ARG="${2:?--wallets needs a file path}"; shift 2 ;;
-    -h | --help) sed -n '3,20p' "$0"; exit 0 ;;
+    -h | --help) sed -n '3,24p' "${SELF}"; exit 0 ;;
     -*) echo "unknown flag: $1" >&2; exit 1 ;;
-    *) SCN_FILE="$1"; shift ;;
+    *) SCN_ARGS+=("$1"); shift ;;
   esac
 done
-[ -n "${SCN_FILE}" ] || { echo "usage: $0 <scenario.yml> [--flame] [--wallets <file>]" >&2; exit 1; }
-SCN_FILE="$(abspath "${SCN_FILE}")"
+[ "${#SCN_ARGS[@]}" -gt 0 ] || { echo "usage: $0 <scenario.yml|pattern>... [--flame] [--wallets <file>]" >&2; exit 1; }
+
+# Resolve each argument to scenario files.
+#
+# A bare path stays a bare path, so the original single-file invocation is
+# untouched. Anything that is not a file is treated as a glob — which covers
+# both a quoted pattern (`'scenarios/mainnet.*'`, expanded here) and one the
+# caller's shell already expanded into several arguments. Patterns are tried
+# against the invocation directory first and then against `scenarios/`, so
+# `mainnet.*` works from anywhere.
+SCN_FILES=()
+for arg in "${SCN_ARGS[@]}"; do
+  if [ -f "${arg}" ] || [ -f "$(abspath "${arg}")" ]; then
+    SCN_FILES+=("$(abspath "${arg}")")
+    continue
+  fi
+  matched=0
+  while IFS= read -r hit; do
+    [ -f "${hit}" ] || continue
+    SCN_FILES+=("${hit}")
+    matched=1
+  done < <(cd "${INVOCATION_DIR}" 2>/dev/null && shopt -s nullglob && printf '%s\n' ${arg} | while IFS= read -r m; do abspath "${m}"; done
+           cd "${SCRIPT_DIR}/scenarios" 2>/dev/null && shopt -s nullglob && printf '%s\n' ${arg} | while IFS= read -r m; do printf '%s\n' "${SCRIPT_DIR}/scenarios/${m}"; done)
+  [ "${matched}" -eq 1 ] || { echo "Error: no scenario matched: ${arg}" >&2; exit 1; }
+done
+
+# Run each scenario through a fresh invocation of this script and collect the
+# numbers. Re-invoking rather than looping in place keeps the per-scenario path
+# — exports, compose, traps, teardown — byte for byte what a single-file run has
+# always done, so the extension cannot change the thing it is measuring.
+#
+# Taken for one scenario as much as for twenty: naming a file and naming a glob
+# that happens to match one file are the same request, and having them leave
+# their results in different shapes is a trap for anyone scripting on top. The
+# child is marked so it runs the scenario instead of wrapping it again.
+if [ -z "${BENCH_BATCH:-}" ]; then
+  RUN_TS="$(date +%Y%m%d-%H%M%S)"
+  OUT_DIR="${SCRIPT_DIR}/results/${RUN_TS}"
+  mkdir -p "${OUT_DIR}"
+  TSV="${OUT_DIR}/results.tsv"
+  REPORT="${OUT_DIR}/report.md"
+  printf 'scenario\tcompleted\ttotal_ms\tblock_headers_ms\tfilter_headers_ms\tfilters_ms\ttransactions\tconfirmed_sat\n' >"${TSV}"
+
+  child_flags=()
+  [ "${FLAME}" -eq 1 ] && child_flags+=(--flame)
+  [ -n "${WALLETS_ARG}" ] && child_flags+=(--wallets "${WALLETS_ARG}")
+
+  metric() { awk -F':[[:space:]]*' -v k="$2" '$1==k {gsub(/[[:space:]]+$/,"",$2); print $2; exit}' "$1"; }
+
+  echo "==> ${#SCN_FILES[@]} scenario(s); results in ${OUT_DIR}"
+  for f in "${SCN_FILES[@]}"; do
+    name="$(basename "${f}" .yml)"
+    log="${OUT_DIR}/${name}.log"
+    echo "===== ${name} ====="
+    # A scenario that fails must not take the batch with it: record it and move
+    # on, or one bad run costs every result after it.
+    BENCH_BATCH=1 BENCH_ARCHIVE_DIR="${OUT_DIR}" BENCH_ARCHIVE_NAME="${name}" \
+      "${SELF}" "${f}" "${child_flags[@]+"${child_flags[@]}"}" 2>&1 | tee "${log}" || true
+    wallet_line="$(grep -m1 -o 'confirmed_sat=[0-9]*' "${log}" || true)"
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+      "${name}" \
+      "$(metric "${log}" completed)" \
+      "$(metric "${log}" total_ms)" \
+      "$(metric "${log}" block_headers_ms)" \
+      "$(metric "${log}" filter_headers_ms)" \
+      "$(metric "${log}" filters_ms)" \
+      "$(metric "${log}" transactions)" \
+      "$(sed -n 's/.*confirmed_sat=\([0-9]*\).*/\1/p' <<<"${wallet_line}")" \
+      >>"${TSV}"
+  done
+
+  {
+    echo "# dash-spv bench — ${RUN_TS}"
+    echo
+    echo "| scenario | completed | total_ms | headers_ms | filter_headers_ms | filters_ms | transactions | confirmed_sat |"
+    echo "|---|---|---|---|---|---|---|---|"
+    tail -n +2 "${TSV}" | awk -F'\t' '{printf "| %s | %s | %s | %s | %s | %s | %s | %s |\n", $1,$2,$3,$4,$5,$6,$7,$8}'
+  } >"${REPORT}"
+
+  echo
+  echo "==> report: ${REPORT}"
+  cat "${REPORT}"
+  exit 0
+fi
+
+SCN_FILE="${SCN_FILES[0]}"
 [ -f "${SCN_FILE}" ] || { echo "Error: scenario file not found: ${SCN_FILE}" >&2; exit 1; }
 
 YQ_VERSION="v4.44.6"
@@ -201,8 +304,8 @@ emit_client_service() {
     cap_add: [NET_ADMIN]${BENCH_CPUS:+
     cpuset: "${BENCH_CPUS}"}
     environment:
-      NETEM_ARGS: "${CLIENT_NETEM}"
-      RUST_LOG: "\${RUST_LOG:-}"
+      NETEM_ARGS: "${CLIENT_NETEM}"${RUST_LOG:+
+      RUST_LOG: "${RUST_LOG}"}
       BENCH_MODE: "${BENCH_MODE}"
       BENCH_PEERS: "\${BENCH_PEERS:-}"
       BENCH_MAX_PEERS: "\${BENCH_MAX_PEERS:-}"
@@ -476,3 +579,21 @@ else
     | "${FLAMEGRAPH_DIR}/flamegraph.pl" --title "dash-spv sync" --colors hot > "${FLAME_SVG}"
   echo "==> wrote ${FLAME_SVG}"
 fi
+
+# Keep this run's outputs, which `bench-storage/` does not: it is wiped at the
+# start of every run, so without this the trace of anything but the most recent
+# scenario is gone — and in a batch that meant 15 of 16 syncs left nothing to
+# look at afterwards.
+#
+# The batch passes its own directory in, so a child archives straight into it
+# and there is one copy, named after the scenario. A lone run makes its own.
+ARCHIVE_DIR="${BENCH_ARCHIVE_DIR:-${SCRIPT_DIR}/results/$(date +%Y%m%d-%H%M%S)-$(basename "${SCN_FILE}" .yml)}"
+# Prefixed with the scenario only inside a batch, where one directory holds
+# every scenario. A lone run's directory is already named after it.
+ARCHIVE_NAME="${BENCH_ARCHIVE_NAME:-}"
+mkdir -p "${ARCHIVE_DIR}"
+for out in run.log summary.txt; do
+  [ -s "${BENCH_STORAGE_DIR}/${out}" ] || continue
+  cp "${BENCH_STORAGE_DIR}/${out}" "${ARCHIVE_DIR}/${ARCHIVE_NAME:+${ARCHIVE_NAME}.}${out}"
+done
+echo "==> logs archived to ${ARCHIVE_DIR}"
