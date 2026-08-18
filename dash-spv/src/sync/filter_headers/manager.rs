@@ -261,14 +261,14 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage> std::fmt::Debug
 mod tests {
     use super::*;
     use crate::network::MessageType;
-    use crate::types::HashedBlockHeader;
-    use dashcore::{block::Version, BlockHash, CompactTarget, Header as BlockHeader};
-    use dashcore_hashes::Hash;
     use crate::storage::{
         DiskStorageManager, PersistentBlockHeaderStorage, PersistentFilterHeaderStorage,
         StorageManager,
     };
     use crate::sync::{ManagerIdentifier, SyncManagerProgress};
+    use crate::types::HashedBlockHeader;
+    use dashcore::{block::Version, BlockHash, CompactTarget, Header as BlockHeader};
+    use dashcore_hashes::Hash;
 
     type TestFilterHeadersManager =
         FilterHeadersManager<PersistentBlockHeaderStorage, PersistentFilterHeaderStorage>;
