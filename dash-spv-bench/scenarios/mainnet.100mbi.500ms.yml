@@ -1,4 +1,4 @@
-description: "Mainnet from genesis with the client's own link at 100 Mbit and 500ms of added egress delay (~+500ms RTT). One cell of the bandwidth x latency matrix."
+description: "Mainnet from genesis with the client's own link capped at 100 Mbit each way and 500ms of one-way delay (~+500ms RTT). One cell of the bandwidth x latency matrix."
 mode: mainnet
 max_peers: 3
 
