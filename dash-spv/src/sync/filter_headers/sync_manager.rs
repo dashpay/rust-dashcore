@@ -60,8 +60,18 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage> SyncManager for FilterHeade
 
         // Try to receive (may buffer if out of order)
         if let Some(data) = self.pipeline.receive(start_height, cfheaders) {
-            // In order - process immediately
-            let count = self.process_cfheaders(&data, start_height).await?;
+            // In order - process immediately. `receive` already dropped this
+            // batch from the pipeline's trackers, so if the fallible store
+            // fails, re-enqueue it before propagating or the hole at
+            // `next_expected` is never revisited (see `requeue_failed`).
+            let stop_hash = data.stop_hash;
+            let count = match self.process_cfheaders(&data, start_height).await {
+                Ok(count) => count,
+                Err(e) => {
+                    self.pipeline.requeue_failed(start_height, stop_hash);
+                    return Err(e);
+                }
+            };
             if count == 0 {
                 return Err(SyncError::Network("CFHeaders batch contained no headers".to_string()));
             }
@@ -91,7 +101,17 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage> SyncManager for FilterHeade
             while !ready_batches.is_empty() {
                 // Take ownership and process each batch
                 for (height, data) in std::mem::take(&mut ready_batches) {
-                    let count = self.process_cfheaders(&data, height).await?;
+                    // A promoted buffered batch was likewise already dropped
+                    // from the trackers by `receive`; re-enqueue on a failed
+                    // store so the tick retries it.
+                    let stop_hash = data.stop_hash;
+                    let count = match self.process_cfheaders(&data, height).await {
+                        Ok(count) => count,
+                        Err(e) => {
+                            self.pipeline.requeue_failed(height, stop_hash);
+                            return Err(e);
+                        }
+                    };
                     if count == 0 {
                         return Err(SyncError::Network(
                             "CFHeaders batch contained no headers".to_string(),

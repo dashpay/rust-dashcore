@@ -263,6 +263,43 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> BlockHeadersManager<H, M> {
         }])
     }
 
+    /// Fire one fallback `GetHeaders` for block announcements that have gone
+    /// unanswered past the wait timeout, then drop them.
+    ///
+    /// Announced-but-unobtainable hashes (a peer that vanished, an orphan that
+    /// never reconnected) otherwise pin the manager: `finalize_sync_if_complete`
+    /// refuses to finish while any announcement is outstanding, so it resets the
+    /// tip segment and re-requests every pass. That recovery loop only aged the
+    /// stale entries out on the `Synced` branch of `tick`, which a `Syncing`
+    /// manager never reaches — so during initial sync the loop ran forever,
+    /// `BlockHeaderSyncComplete` never fired, and every downstream manager
+    /// stalled behind it. Sweeping here, from every state, bounds the loop. (#960)
+    pub(super) fn prune_stale_announcements(&mut self, requests: &RequestSender) -> SyncResult<()> {
+        let now = Instant::now();
+        let stale: Vec<BlockHash> = self
+            .pending_announcements
+            .iter()
+            .filter(|(_, announced_at)| {
+                now.duration_since(**announced_at)
+                    > super::sync_manager::UNSOLICITED_HEADERS_WAIT_TIMEOUT
+            })
+            .map(|(hash, _)| *hash)
+            .collect();
+
+        if stale.is_empty() {
+            return Ok(());
+        }
+
+        tracing::info!("Sending fallback GetHeaders for {} stale announcements", stale.len());
+        self.pipeline.reset_tip_segment();
+        self.pipeline.send_pending(requests)?;
+
+        for hash in stale {
+            self.pending_announcements.remove(&hash);
+        }
+        Ok(())
+    }
+
     /// Handle inventory announcements for new blocks.
     ///
     /// During initial sync, Dash Core sends inv (not header announcements) because
@@ -416,6 +453,65 @@ mod tests {
         assert!(
             events.iter().any(|e| matches!(e, SyncEvent::BlockHeaderSyncComplete { .. })),
             "completion must be announced, or downstream managers never start"
+        );
+    }
+
+    /// A block announced during initial sync that no peer will ever answer must
+    /// not pin the manager in `Syncing`. `finalize_sync_if_complete` refuses to
+    /// finish while any announcement is outstanding and re-requests it every
+    /// pass; the aging-out sweep that breaks that loop used to run only on the
+    /// `Synced` branch of `tick`, which a `Syncing` manager never reaches, so
+    /// the loop ran forever and `BlockHeaderSyncComplete` never fired. (#960)
+    #[tokio::test]
+    async fn test_syncing_prunes_unobtainable_announcement_and_finalizes() {
+        let mut manager = create_test_manager().await;
+        let tip = manager.tip().await.unwrap();
+        manager.pipeline.init(tip.height(), *tip.hash(), tip.height());
+        manager.progress.set_state(SyncState::Syncing);
+
+        let (requests, mut rx) = create_test_request_sender();
+
+        // Drive the single tip segment complete: nothing left to download.
+        manager.pipeline.send_pending(&requests).unwrap();
+        while rx.try_recv().is_ok() {}
+        manager.pipeline.receive_headers(&[]).unwrap();
+        assert!(manager.pipeline.is_complete());
+
+        // A phantom announcement, already aged past the wait timeout.
+        let phantom = BlockHash::dummy(123);
+        manager.pending_announcements.insert(
+            phantom,
+            std::time::Instant::now()
+                .checked_sub(std::time::Duration::from_secs(30))
+                .expect("monotonic clock has been running longer than 30s"),
+        );
+
+        // First tick: the sweep fires its fallback (which re-opens the tip
+        // segment) and drops the phantom so it can never block completion again.
+        let events = manager.tick(&requests).await.unwrap();
+        assert!(
+            !manager.pending_announcements.contains_key(&phantom),
+            "the stale announcement must be pruned"
+        );
+        assert!(!events.iter().any(|e| matches!(e, SyncEvent::BlockHeaderSyncComplete { .. })));
+        assert_eq!(manager.state(), SyncState::Syncing);
+
+        // The fallback GetHeaders is answered by the peer's tip: an empty
+        // response re-completes the tip segment.
+        while rx.try_recv().is_ok() {}
+        manager.pipeline.receive_headers(&[]).unwrap();
+        assert!(manager.pipeline.is_complete());
+
+        // Second tick: nothing stale remains, so finalize runs and the sync ends.
+        let events = manager.tick(&requests).await.unwrap();
+        assert_eq!(
+            manager.state(),
+            SyncState::Synced,
+            "with the announcement pruned, the tick must finish the sync"
+        );
+        assert!(
+            events.iter().any(|e| matches!(e, SyncEvent::BlockHeaderSyncComplete { .. })),
+            "completion must be announced so downstream managers start"
         );
     }
 

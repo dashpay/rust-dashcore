@@ -883,6 +883,17 @@ impl MasternodeListEngine {
         diffs.sort_by_key(|diff| self.block_container.get_height(&diff.block_hash));
 
         let mut sigs_by_work_height = BTreeMap::new();
+        // A work height maps to one work block, which has one ChainLock
+        // signature, so every genuine entry keying it carries the same
+        // signature. A second, DIFFERING signature for the same work height can
+        // only come from a crafted diff. This map is built from unvalidated wire
+        // data, and last-write-wins would let that crafted entry overwrite the
+        // genuine signature, reconstruct the wrong member set, and fail the
+        // aggregate check on honest data — a non-inferred `Invalid` that aborts
+        // the whole feed and wedges masternode sync. Record the conflict and
+        // drop the height entirely below, so the quorums resting on it degrade
+        // to a recoverable `Skipped` instead of a fatal `Invalid`. (#934)
+        let mut conflicting_work_heights = BTreeSet::new();
         for diff in &diffs {
             for sig_obj in &diff.quorums_chainlock_signatures {
                 for &index in &sig_obj.index_set {
@@ -896,10 +907,21 @@ impl MasternodeListEngine {
                         .rotated_quorum_cycle_base(quorum)
                         .and_then(|cycle_base| cycle_base.checked_sub(WORK_DIFF_DEPTH))
                     {
-                        sigs_by_work_height.insert(work_height, sig_obj.signature);
+                        match sigs_by_work_height.get(&work_height) {
+                            Some(existing) if *existing != sig_obj.signature => {
+                                conflicting_work_heights.insert(work_height);
+                            }
+                            Some(_) => {}
+                            None => {
+                                sigs_by_work_height.insert(work_height, sig_obj.signature);
+                            }
+                        }
                     }
                 }
             }
+        }
+        for work_height in &conflicting_work_heights {
+            sigs_by_work_height.remove(work_height);
         }
 
         let mut inferred_work_heights = BTreeSet::new();
@@ -907,6 +929,11 @@ impl MasternodeListEngine {
             let Some(newest_work_height) = self.diff_newest_work_height(diff) else {
                 continue;
             };
+            // A poisoned height must not be resurrected by the elimination pass
+            // either: leaving it unkeyed degrades its quorums to `Skipped`.
+            if conflicting_work_heights.contains(&newest_work_height) {
+                continue;
+            }
             if sigs_by_work_height.contains_key(&newest_work_height) {
                 continue;
             }
@@ -994,7 +1021,13 @@ impl MasternodeListEngine {
     /// of the active set and lands the base on a DKG interval boundary. Any
     /// other index shifts the base into a cycle the quorum does not belong
     /// to, and a base derived from that keys another cycle's work block.
-    #[cfg(feature = "quorum_validation")]
+    ///
+    /// Not feature-gated: the always-compiled rotated member reconstruction in
+    /// `find_rotated_masternodes_for_quorums` derives its cycle base here too,
+    /// so both paths agree on which indices resolve a cycle. `allow(dead_code)`
+    /// covers the build where `quorum_validation` is off and that reconstruction
+    /// is the only caller.
+    #[allow(dead_code)]
     fn rotated_quorum_cycle_base(&self, quorum: &QuorumEntry) -> Option<CoreBlockHeight> {
         let height = self.block_container.get_height(&quorum.quorum_hash)?;
         let quorum_index = quorum.quorum_index?;
@@ -2008,6 +2041,97 @@ mod tests {
         );
     }
 
+    /// A work height maps to one work block, which has one ChainLock signature,
+    /// so every genuine entry keying it carries the same signature. A second,
+    /// DIFFERING signature can only come from a crafted diff. Last-write-wins
+    /// would let it replace the genuine signature, reconstruct the wrong member
+    /// set, and fail the aggregate check on honest data — a non-inferred
+    /// `Invalid` that aborts the feed and wedges masternode sync. The height is
+    /// dropped on conflict so its quorums degrade to a recoverable `Skipped`
+    /// instead of serving a forged signature. (#934)
+    #[cfg(feature = "quorum_validation")]
+    #[test]
+    fn rotation_cl_sigs_by_work_height_drops_a_work_block_with_conflicting_signatures() {
+        let isd_type = Network::Mainnet.isd_llmq_type();
+        let interval = isd_type.params().dkg_params.interval;
+        let cycle_base = interval * 100;
+        let diff_end = cycle_base + interval - WORK_DIFF_DEPTH;
+        let work_height = cycle_base - WORK_DIFF_DEPTH;
+
+        let end_hash = BlockHash::from_byte_array([1; 32]);
+        let quorum_a = QuorumHash::from_byte_array([3; 32]);
+        let quorum_b = QuorumHash::from_byte_array([4; 32]);
+        let genuine_sig = BLSSignature::from([7; 96]);
+        let forged_sig = BLSSignature::from([8; 96]);
+
+        // Two commitments of the SAME cycle (indices 3 and 5 both key
+        // `work_height`) carrying DIFFERENT signatures — the second is forged.
+        let diff = make_cl_sig_diff(
+            end_hash,
+            vec![
+                make_quorum_entry(isd_type, quorum_a, Some(3)),
+                make_quorum_entry(isd_type, quorum_b, Some(5)),
+            ],
+            vec![(genuine_sig, vec![0]), (forged_sig, vec![1])],
+        );
+
+        let engine = engine_knowing_blocks(&[
+            (diff_end, end_hash),
+            (cycle_base + 3, quorum_a),
+            (cycle_base + 5, quorum_b),
+        ]);
+
+        let (sigs, inferred) = engine.rotation_cl_sigs_by_work_height([&diff]);
+        assert!(
+            !sigs.contains_key(&work_height),
+            "a work height with conflicting signatures must be dropped, got {sigs:?}"
+        );
+        assert!(
+            !inferred.contains(&work_height),
+            "a dropped height must not be resurrected as an inferred key"
+        );
+    }
+
+    /// A repeated, consistent signature for one work block is genuine and must
+    /// survive: it is the ChainLock the whole cycle shares. Only a conflicting
+    /// signature drops the height.
+    #[cfg(feature = "quorum_validation")]
+    #[test]
+    fn rotation_cl_sigs_by_work_height_keeps_a_work_block_with_a_repeated_signature() {
+        let isd_type = Network::Mainnet.isd_llmq_type();
+        let interval = isd_type.params().dkg_params.interval;
+        let cycle_base = interval * 100;
+        let diff_end = cycle_base + interval - WORK_DIFF_DEPTH;
+        let work_height = cycle_base - WORK_DIFF_DEPTH;
+
+        let end_hash = BlockHash::from_byte_array([1; 32]);
+        let quorum_a = QuorumHash::from_byte_array([3; 32]);
+        let quorum_b = QuorumHash::from_byte_array([4; 32]);
+        let sig = BLSSignature::from([7; 96]);
+
+        let diff = make_cl_sig_diff(
+            end_hash,
+            vec![
+                make_quorum_entry(isd_type, quorum_a, Some(3)),
+                make_quorum_entry(isd_type, quorum_b, Some(5)),
+            ],
+            vec![(sig, vec![0]), (sig, vec![1])],
+        );
+
+        let engine = engine_knowing_blocks(&[
+            (diff_end, end_hash),
+            (cycle_base + 3, quorum_a),
+            (cycle_base + 5, quorum_b),
+        ]);
+
+        let (sigs, _) = engine.rotation_cl_sigs_by_work_height([&diff]);
+        assert_eq!(
+            sigs.get(&work_height),
+            Some(&sig),
+            "a consistent repeated signature must be kept"
+        );
+    }
+
     /// Which rotation type an active set is keyed by decides which quorum
     /// indices exist at all, so a wrong one rejects genuine commitments. It
     /// comes from configuration wherever the deployment fixes it, and only a
@@ -2569,6 +2693,54 @@ mod tests {
                 .validate_rotation_cycle_quorums(quorums.values().collect::<Vec<_>>().as_slice())
                 .expect("expected to validated quorums");
         }
+    }
+
+    /// A rewritten, non-signature-covered quorum index in an active set must
+    /// not abort the whole feed. The unhardened cycle-base derivation used to
+    /// accept an out-of-range index, reconstruct against the wrong cycle, and
+    /// index the member set raw with it — reaching a `CorruptedCodeExecution`
+    /// (or, once hardened, an `InvalidQuorumIndex`) that a non-inferred `Invalid`
+    /// turns into a feed abort, wedging masternode sync. The index now degrades
+    /// the one quorum to `Skipped` and the feed still succeeds. (#934)
+    #[cfg(feature = "quorum_validation")]
+    #[test]
+    fn feed_qr_info_degrades_a_tampered_quorum_index_instead_of_aborting() {
+        let (mut engine, mut qr_info) = load_qrinfo_2240504_fixture();
+
+        let target = qr_info
+            .last_commitment_per_index
+            .first()
+            .expect("fixture must carry rotation commitments")
+            .quorum_hash;
+        let llmq_type = qr_info.last_commitment_per_index[0].llmq_type;
+        let active_count = llmq_type.active_quorum_count();
+        assert!(engine.block_container.get_height(&target).is_some());
+
+        // Rewrite index 0 to one well outside the active set (its own true
+        // index plus a whole cycle, the shape the audit observed).
+        qr_info.last_commitment_per_index[0].quorum_index =
+            Some(active_count as i16 + llmq_type.params().dkg_params.interval as i16);
+
+        let feed_result = engine
+            .feed_qr_info(qr_info, false, true)
+            .expect("a tampered quorum index must not abort the feed")
+            .expect("expected a feed result");
+
+        // The tampered entry degrades to Skipped and is never stored verified;
+        // a cycle holding a skipped entry is not stored.
+        let status = engine
+            .quorum_statuses
+            .get(&llmq_type)
+            .and_then(|m| m.get(&target))
+            .map(|(_, _, status)| status.clone());
+        assert!(
+            matches!(status, Some(LLMQEntryVerificationStatus::Skipped(_))),
+            "a tampered index must settle as Skipped, got {status:?}"
+        );
+        assert!(
+            feed_result.stored_cycle_height.is_none(),
+            "a cycle holding a skipped entry must not be stored"
+        );
     }
 
     #[cfg(feature = "quorum_validation")]

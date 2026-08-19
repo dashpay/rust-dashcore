@@ -206,6 +206,31 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage> FilterHeadersManager<H, FH>
         tip_height: u32,
         requests: &RequestSender,
     ) -> SyncResult<Vec<SyncEvent>> {
+        // `block_header_tip_height` is the watermark the tick's storage-tip
+        // check (`tip > block_header_tip_height`) uses to decide whether to
+        // re-arm this path. The fallible pipeline work below must not be marked
+        // done before it is queued: if the watermark advanced first and the
+        // work then failed (a storage error out of `init`/`extend_target`, or a
+        // `send_pending`), the next tick would see `tip == block_header_tip`,
+        // skip the retry, and filter-header sync would wedge for good. So
+        // advance the watermark, but restore it on failure so the tick retries.
+        // (#960)
+        let prev_block_header_tip = self.progress.block_header_tip_height();
+        let result = self.arm_pipeline_for_new_headers(tip_height, requests).await;
+        if result.is_err() {
+            self.progress.update_block_header_tip_height(prev_block_header_tip);
+        }
+        result
+    }
+
+    /// The fallible body of [`Self::handle_new_headers`]: advance the watermark
+    /// and target, then init or extend the pipeline and send. Kept separate so
+    /// the caller can restore the watermark if any step here fails.
+    async fn arm_pipeline_for_new_headers(
+        &mut self,
+        tip_height: u32,
+        requests: &RequestSender,
+    ) -> SyncResult<Vec<SyncEvent>> {
         self.progress.update_block_header_tip_height(tip_height);
         self.update_target_height(tip_height);
 
@@ -482,6 +507,73 @@ mod tests {
             }
             assert!(found, "CFHeaders stop hash {stop} is not in the newly discovered range");
         }
+    }
+
+    /// A storage failure in the pipeline work must leave the block-header
+    /// watermark where it was, so the tick's `tip > block_header_tip_height`
+    /// check re-arms this path and retries. Advancing the watermark first (as
+    /// the code used to) marked the range done before it was queued: the next
+    /// tick saw no advance, never retried, and filter-header sync wedged. (#960)
+    #[tokio::test]
+    async fn test_handle_new_headers_keeps_watermark_when_pipeline_work_fails() {
+        let storage = DiskStorageManager::with_temp_dir().await.unwrap();
+        let header_storage = storage.block_headers();
+        let mut manager =
+            FilterHeadersManager::new(header_storage.clone(), storage.filter_headers())
+                .await
+                .expect("Failed to create FilterHeadersManager");
+        let (sender, mut rx) = create_test_request_sender();
+
+        // Mid-sync, last told the tip was 1000. Block-header storage is empty,
+        // so the pipeline init below cannot resolve any batch's stop hash.
+        manager.progress.update_current_height(0);
+        manager.progress.update_block_header_tip_height(1000);
+        manager.set_state(SyncState::Syncing);
+
+        let err = manager.handle_new_headers(3000, &sender).await;
+        assert!(err.is_err(), "init over empty header storage must fail");
+        assert_eq!(
+            manager.progress.block_header_tip_height(),
+            1000,
+            "the watermark must be restored so the next tick retries"
+        );
+        assert!(manager.pipeline.is_complete(), "a failed init must not leave a half-built queue");
+        assert!(rx.try_recv().is_err(), "nothing should have been requested");
+
+        // The headers arrive; the retry now succeeds and advances the
+        // watermark, and a request for the range goes out.
+        let mut headers = Vec::new();
+        let mut prev = BlockHash::from_byte_array([0u8; 32]);
+        for nonce in 0..3100u32 {
+            let header = HashedBlockHeader::from(BlockHeader {
+                version: Version::from_consensus(1),
+                prev_blockhash: prev,
+                merkle_root: dashcore::TxMerkleNode::all_zeros(),
+                time: 0,
+                bits: CompactTarget::from_consensus(0x2100ffff),
+                nonce,
+            });
+            prev = *header.hash();
+            headers.push(header);
+        }
+        header_storage.write().await.store_headers_at_height(&headers, 0).await.unwrap();
+
+        manager
+            .handle_new_headers(3000, &sender)
+            .await
+            .expect("retry must succeed once headers land");
+        assert_eq!(
+            manager.progress.block_header_tip_height(),
+            3000,
+            "a successful arm advances the watermark"
+        );
+        assert!(
+            matches!(
+                rx.try_recv(),
+                Ok(NetworkRequest::SendMessage(NetworkMessage::GetCFHeaders(_)))
+            ),
+            "the retry must send CFHeaders requests for the range"
+        );
     }
 
     #[tokio::test]

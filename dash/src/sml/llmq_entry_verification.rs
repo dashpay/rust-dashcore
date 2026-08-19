@@ -138,6 +138,19 @@ impl From<QuorumValidationError> for LLMQEntryVerificationStatus {
             QuorumValidationError::CycleBaseHeightTooLow(height) => {
                 Self::Skipped(LLMQEntryVerificationSkipStatus::MissedList(height))
             }
+            // The quorum index is not signature-covered, so a peer can rewrite
+            // it, and an out-of-range index only means this engine cannot locate
+            // the quorum's cycle from what it holds — a fresh QRInfo from an
+            // honest peer resolves it. Classifying it `Skipped`, not `Invalid`,
+            // keeps a tampered index from aborting `feed_qr_info` and wedging
+            // masternode sync; the entry is never treated as verified either
+            // way, so this cannot cause a false accept. (#934)
+            QuorumValidationError::InvalidQuorumIndex {
+                quorum_hash,
+                index,
+            } => Self::Skipped(LLMQEntryVerificationSkipStatus::OtherContext(format!(
+                "invalid quorum index {index} for {quorum_hash}"
+            ))),
             other => Self::Invalid(other),
         }
     }
@@ -230,6 +243,24 @@ mod tests {
                     5,
                 )),
             ),
+            // A wire-supplied quorum index is not signature-covered, so an
+            // out-of-range one degrades the single quorum (Skipped), never
+            // aborts the feed (Invalid).
+            {
+                let quorum_hash = crate::QuorumHash::from_byte_array([6; 32]);
+                (
+                    QuorumValidationError::InvalidQuorumIndex {
+                        quorum_hash,
+                        index: 42,
+                    },
+                    LLMQEntryVerificationStatus::Skipped(
+                        LLMQEntryVerificationSkipStatus::OtherContext(format!(
+                            "invalid quorum index {} for {}",
+                            42, quorum_hash
+                        )),
+                    ),
+                )
+            },
             (
                 QuorumValidationError::InvalidQuorumPublicKey,
                 LLMQEntryVerificationStatus::Invalid(QuorumValidationError::InvalidQuorumPublicKey),

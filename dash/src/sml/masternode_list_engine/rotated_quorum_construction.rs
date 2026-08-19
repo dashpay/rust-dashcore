@@ -6,9 +6,7 @@ use crate::prelude::CoreBlockHeight;
 use crate::sml::llmq_type::LLMQType;
 use crate::sml::llmq_type::rotation::{LLMQQuarterReconstructionType, LLMQQuarterUsageType};
 use crate::sml::masternode_list::MasternodeList;
-use crate::sml::masternode_list_engine::{
-    MasternodeListEngine, cycle_quarter_work_heights, rotated_cycle_base_height,
-};
+use crate::sml::masternode_list_engine::{MasternodeListEngine, cycle_quarter_work_heights};
 use crate::sml::masternode_list_entry::qualified_masternode_list_entry::QualifiedMasternodeListEntry;
 use crate::sml::quorum_entry::qualified_quorum_entry::{
     QualifiedQuorumEntry, VerifyingChainLockSignaturesType,
@@ -64,7 +62,10 @@ impl MasternodeListEngine {
             BTreeMap::new();
         for quorum in quorums {
             let quorum_hash = quorum.quorum_entry.quorum_hash;
-            let Some(quorum_block_height) = self.block_container.get_height(&quorum_hash) else {
+            // Keep the missing-height case distinct (it maps to `Skipped` and
+            // tells the caller to refetch that block); the hardened resolver
+            // below re-derives the height itself.
+            if self.block_container.get_height(&quorum_hash).is_none() {
                 members_by_quorum_hash.insert(
                     quorum_hash,
                     Err(QuorumValidationError::RequiredBlockNotPresent(
@@ -73,7 +74,7 @@ impl MasternodeListEngine {
                     )),
                 );
                 continue;
-            };
+            }
             let llmq_type = quorum.quorum_entry.llmq_type;
             let Some(quorum_index) = quorum.quorum_entry.quorum_index else {
                 members_by_quorum_hash.insert(
@@ -82,8 +83,16 @@ impl MasternodeListEngine {
                 );
                 continue;
             };
-            let Some(cycle_base_height) =
-                rotated_cycle_base_height(quorum_block_height, quorum_index)
+            // Derive the cycle base through the hardened resolver, which rejects
+            // an index outside the active set or one that lands the base off a
+            // DKG interval boundary. `quorum_index` is not signature-covered, so
+            // a peer can rewrite it; the unhardened `rotated_cycle_base_height`
+            // used to accept any index that merely did not underflow, then index
+            // `members_by_index` raw with it below — a rewritten index reached a
+            // `CorruptedCodeExecution` that aborted the whole `feed_qr_info` and
+            // wedged masternode sync. Failing this one entry with a benign
+            // `InvalidQuorumIndex` (classified `Skipped`) degrades it instead. (#934)
+            let Some(cycle_base_height) = self.rotated_quorum_cycle_base(&quorum.quorum_entry)
             else {
                 members_by_quorum_hash.insert(
                     quorum_hash,
@@ -126,11 +135,19 @@ impl MasternodeListEngine {
                     }
                 }
             };
+            // Bounds-check the wire-supplied index before indexing the
+            // reconstructed set. The hardened cycle base above already confines
+            // the index to the active set, but the reconstruction can yield
+            // fewer indexed groups than that (a short final quarter), so a raw
+            // `get` can still miss. Report it as a benign, per-quorum
+            // `InvalidQuorumIndex` (classified `Skipped`) instead of the old
+            // `CorruptedCodeExecution`, which was treated as proof of corruption
+            // and aborted the whole feed. (#934)
             let result = members_by_index.get(quorum_index as usize).cloned().ok_or(
-                QuorumValidationError::CorruptedCodeExecution(format!(
-                    "expected masternode list entry members for {}",
-                    quorum_index
-                )),
+                QuorumValidationError::InvalidQuorumIndex {
+                    quorum_hash,
+                    index: quorum_index,
+                },
             );
             members_by_quorum_hash.insert(quorum_hash, result);
         }
@@ -629,6 +646,33 @@ mod tests {
                 "expected an invalid index error, got {result:?}"
             );
         }
+    }
+
+    /// An index outside the active set — but not underflowing the quorum height
+    /// — must be rejected before any reconstruction. The unhardened cycle-base
+    /// derivation accepted it, reconstructed against the wrong cycle, then
+    /// indexed the member set raw with the out-of-range value; the hardened
+    /// resolver rejects it as a clean per-quorum `InvalidQuorumIndex`. (#934)
+    #[test]
+    fn an_index_outside_the_active_set_is_rejected_before_reconstruction() {
+        let mut engine = MasternodeListEngine::default_for_network(Network::Mainnet);
+        let quorum_hash = QuorumHash::from_byte_array([7; 32]);
+        engine.feed_block_height(10_000, quorum_hash);
+
+        // Llmqtype60_75 has 32 active quorums, so 33 names no slot, yet it does
+        // not underflow height 10_000 — exactly the case the old derivation let
+        // through.
+        let active_count = LLMQType::Llmqtype60_75.active_quorum_count();
+        assert_eq!(active_count, 32, "test assumes the 60_75 active quorum count");
+        let quorum = rotated_quorum(quorum_hash, active_count as i16 + 1);
+
+        let error = engine
+            .find_rotated_masternodes_for_quorum(&quorum)
+            .expect_err("an index outside the active set must be rejected");
+        assert!(
+            matches!(error, QuorumValidationError::InvalidQuorumIndex { index, .. } if index == active_count as i16 + 1),
+            "expected InvalidQuorumIndex, got {error}"
+        );
     }
 
     /// Every quorum of a cycle resolves the member sets from its own quarter

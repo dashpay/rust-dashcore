@@ -176,10 +176,19 @@ impl HeadersPipeline {
                     continue;
                 }
                 // If tip segment was completed but receives new headers (post-sync),
-                // reset it so take_ready_to_store() can process the new headers
+                // reset it so take_ready_to_store() can process the new headers.
+                //
+                // Only ever move `next_to_store` back toward the tip, never
+                // forward: `send_pending` requests solely the window
+                // `[next_to_store, next_to_store + ACTIVE_SEGMENT_WINDOW)`, so
+                // jumping it forward past a still-downloading lower segment
+                // drops that segment out of the window for good and header sync
+                // hangs. When every lower segment is already stored
+                // `next_to_store` sits at (or past) this tip, so the min is a
+                // no-op there and only guards the out-of-order case. (#950)
                 if segment.complete && segment.target_height.is_none() {
                     segment.complete = false;
-                    self.next_to_store = idx;
+                    self.next_to_store = self.next_to_store.min(idx);
                     // A headers announcement may contain multiple consecutive headers. The
                     // coordinator tracks the response by its first previous hash, just like a
                     // requested headers batch.
@@ -320,8 +329,13 @@ impl HeadersPipeline {
         for (idx, segment) in self.segments.iter_mut().enumerate() {
             if segment.target_height.is_none() && segment.complete {
                 segment.complete = false;
-                // Reset next_to_store so buffered headers can be processed
-                self.next_to_store = idx;
+                // Reset next_to_store so buffered headers can be processed, but
+                // only ever backward toward the tip. Moving it forward past a
+                // lower segment that has not finished downloading would strand
+                // that segment outside `send_pending`'s active window and hang
+                // header sync; when the lower segments are all stored,
+                // `next_to_store` already sits at or past this tip. (#950)
+                self.next_to_store = self.next_to_store.min(idx);
                 tracing::debug!(
                     "Reset tip segment {} at height {} for continued syncing",
                     segment.segment_id,
@@ -695,6 +709,80 @@ mod tests {
         assert_eq!(pipeline.segments[2].current_tip_hash, tip_hash);
         assert_eq!(pipeline.segments[2].coordinator.active_count(), 0);
         assert!(pipeline.segments[2].can_send());
+    }
+
+    /// `reset_tip_segment` must not jump `next_to_store` forward past a lower
+    /// segment that is still downloading. `send_pending` only requests the
+    /// window `[next_to_store, next_to_store + ACTIVE_SEGMENT_WINDOW)`, so a
+    /// forward jump drops that segment out of the window for good and header
+    /// sync hangs. (#950)
+    #[test]
+    fn test_reset_tip_segment_does_not_skip_incomplete_lower_segment() {
+        let cm = create_test_checkpoint_manager(true);
+        let mut pipeline = HeadersPipeline::new(cm);
+
+        // Segment 0: a checkpoint segment still downloading.
+        let mid =
+            SegmentState::new(0, 0, BlockHash::dummy(0), Some(100), Some(BlockHash::dummy(1)));
+        // Segment 1: the open-ended tip, completed early by an empty response.
+        let mut tip = SegmentState::new(1, 100, BlockHash::dummy(1), None, None);
+        tip.complete = true;
+
+        pipeline.set_segments_for_test(vec![mid, tip]);
+        assert_eq!(pipeline.next_to_store, 0);
+
+        assert!(pipeline.reset_tip_segment(), "the complete tip segment must reset");
+        assert_eq!(
+            pipeline.next_to_store, 0,
+            "reset must not skip the still-downloading lower segment"
+        );
+
+        // The lower segment is still inside the window and gets requested.
+        let (sender, mut rx) = create_test_request_sender();
+        assert!(pipeline.send_pending(&sender).unwrap() >= 1);
+        let mut requested = Vec::new();
+        while let Ok(request) = rx.try_recv() {
+            if let NetworkRequest::SendMessage(
+                dashcore::network::message::NetworkMessage::GetHeaders(get),
+            ) = request
+            {
+                requested.push(get.locator_hashes[0]);
+            }
+        }
+        assert!(
+            requested.contains(&BlockHash::dummy(0)),
+            "the segment the reset skipped over must still be requested"
+        );
+    }
+
+    /// The same guard on the receive-path tip reset: an unsolicited post-sync
+    /// header for the completed tip must not advance `next_to_store` past a
+    /// lower segment that has not finished downloading. (#950)
+    #[test]
+    fn test_receive_tip_reset_does_not_skip_incomplete_lower_segment() {
+        let cm = create_test_checkpoint_manager(true);
+        let mut pipeline = HeadersPipeline::new(cm);
+
+        let tip_hash = BlockHash::dummy(50);
+        let mid =
+            SegmentState::new(0, 0, BlockHash::dummy(0), Some(100), Some(BlockHash::dummy(1)));
+        let mut tip = SegmentState::new(1, 1000, tip_hash, None, None);
+        tip.complete = true;
+
+        pipeline.set_segments_for_test(vec![mid, tip]);
+        assert_eq!(pipeline.next_to_store, 0);
+
+        // A post-sync header extending the tip routes to the tip segment.
+        let mut header = Header::dummy(1);
+        header.prev_blockhash = tip_hash;
+        let matched = pipeline.receive_headers(&[header.into()]).unwrap();
+
+        assert_eq!(matched, Some(1), "the header must route to the tip segment");
+        assert_eq!(
+            pipeline.next_to_store, 0,
+            "the tip reset must not skip the still-downloading lower segment"
+        );
+        assert!(!pipeline.segments[1].complete, "the tip segment must be reset to non-complete");
     }
 
     #[test]

@@ -93,9 +93,6 @@ pub enum QuorumValidationError {
         index: i16,
     },
 
-    #[error("Cycle base height {0} is below the history a rotated quorum reconstruction needs")]
-    CycleBaseHeightTooLow(CoreBlockHeight),
-
     #[error("Corrupted code execution: {0}")]
     CorruptedCodeExecution(String),
     #[error("Expected only rotated quorums, but got quorum {0} of type {1}")]
@@ -104,10 +101,62 @@ pub enum QuorumValidationError {
     /// Error indicating that a required feature is not turned on.
     #[error("Feature not turned on: {0}")]
     FeatureNotTurnedOn(String),
+
+    // Keep new variants appended at the end: with `bincode` the discriminant is
+    // the variant's ordinal, so inserting mid-enum shifts every later variant's
+    // encoding and makes a persisted engine blob decode as the wrong error on
+    // upgrade. This one was previously inserted between `InvalidQuorumIndex` and
+    // `CorruptedCodeExecution`, silently re-numbering the three variants after
+    // it; it now sits last so those keep their original discriminants. (#934)
+    #[error("Cycle base height {0} is below the history a rotated quorum reconstruction needs")]
+    CycleBaseHeightTooLow(CoreBlockHeight),
 }
 
 impl From<SmlError> for QuorumValidationError {
     fn from(value: SmlError) -> Self {
         QuorumValidationError::SMLError(value)
+    }
+}
+
+#[cfg(all(test, feature = "bincode"))]
+mod tests {
+    use super::*;
+    use bincode::{config, decode_from_slice, encode_to_vec};
+
+    /// `bincode` encodes an enum variant by its ordinal, so a persisted
+    /// `QuorumValidationError` blob is keyed to the variant order at write time.
+    /// `CycleBaseHeightTooLow` was once inserted between `InvalidQuorumIndex` and
+    /// `CorruptedCodeExecution`, shifting the three variants after it by one;
+    /// moving it to the end restores their discriminants so an engine blob
+    /// written before the shift still decodes as the variant it was saved as.
+    /// (#934)
+    #[test]
+    fn later_variants_keep_their_legacy_discriminants() {
+        // Legacy layout (before `CycleBaseHeightTooLow` existed) put
+        // `CorruptedCodeExecution` at ordinal 22, encoded as `[22, len, bytes]`
+        // under the standard config's varint tag.
+        let legacy = [22u8, 1, b'x'];
+        let (decoded, _): (QuorumValidationError, usize) =
+            decode_from_slice(&legacy, config::standard()).expect("legacy blob must decode");
+        assert_eq!(
+            decoded,
+            QuorumValidationError::CorruptedCodeExecution("x".to_string()),
+            "ordinal 22 must still decode as CorruptedCodeExecution, not the appended variant"
+        );
+
+        // The current encoder still writes that same discriminant.
+        let encoded = encode_to_vec(
+            QuorumValidationError::CorruptedCodeExecution("x".to_string()),
+            config::standard(),
+        )
+        .expect("encode");
+        assert_eq!(encoded, legacy, "CorruptedCodeExecution must encode at its legacy ordinal 22");
+
+        // The relocated variant sits last now and still round-trips.
+        let relocated = QuorumValidationError::CycleBaseHeightTooLow(5);
+        let bytes = encode_to_vec(&relocated, config::standard()).expect("encode");
+        let (back, _): (QuorumValidationError, usize) =
+            decode_from_slice(&bytes, config::standard()).expect("decode");
+        assert_eq!(back, relocated);
     }
 }

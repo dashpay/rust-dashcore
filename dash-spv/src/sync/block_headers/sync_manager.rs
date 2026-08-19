@@ -8,8 +8,7 @@ use crate::sync::{
 };
 use async_trait::async_trait;
 use dashcore::network::message::NetworkMessage;
-use dashcore::BlockHash;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 /// Timeout waiting for unsolicited header messages after a block announcement.
 pub(super) const UNSOLICITED_HEADERS_WAIT_TIMEOUT: Duration = Duration::from_secs(3);
@@ -152,6 +151,12 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> SyncManager for BlockHeadersMana
 
         self.pipeline.handle_timeouts();
 
+        // Age out announcements no peer will answer, in every state. This must
+        // run before the `Syncing` branch's `finalize_sync_if_complete`, which
+        // otherwise loops forever resetting the tip segment for a permanently
+        // unobtainable hash and never reaches `Synced`. (#960)
+        self.prune_stale_announcements(requests)?;
+
         // During initial sync, send more requests and log progress
         if self.state() == SyncState::Syncing {
             // Take, refill, then store — the same order `handle_headers_pipeline`
@@ -175,34 +180,6 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> SyncManager for BlockHeadersMana
             let mut events = self.store_ready_batches(ready_batches).await?;
             events.extend(self.finalize_sync_if_complete(requests).await?);
             return Ok(events);
-        }
-
-        // Post-sync: check for stale block announcements
-        if self.state() == SyncState::Synced {
-            let now = Instant::now();
-            let stale: Vec<BlockHash> = self
-                .pending_announcements
-                .iter()
-                .filter(|(_, announced_at)| {
-                    now.duration_since(**announced_at) > UNSOLICITED_HEADERS_WAIT_TIMEOUT
-                })
-                .map(|(hash, _)| *hash)
-                .collect();
-
-            if !stale.is_empty() {
-                tracing::info!(
-                    "Sending fallback GetHeaders for {} stale announcements",
-                    stale.len()
-                );
-
-                // Reset tip segment and send requests via pipeline
-                self.pipeline.reset_tip_segment();
-                self.pipeline.send_pending(requests)?;
-
-                for hash in stale {
-                    self.pending_announcements.remove(&hash);
-                }
-            }
         }
 
         Ok(vec![])

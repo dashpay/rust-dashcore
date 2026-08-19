@@ -64,6 +64,35 @@ impl FilterHeadersPipeline {
         }
     }
 
+    /// Resolve the stop hash and start height of every batch covering
+    /// `[start_height, target_height]`, without touching pipeline state.
+    ///
+    /// The stop-hash lookups are the only fallible step in `init` and
+    /// `extend_target`, and resolving them all up front lets those callers
+    /// commit their state changes in one infallible pass — so a missing header
+    /// leaves the pipeline exactly as it was and the caller can retry cleanly
+    /// instead of advancing `target_height` past batches that never got queued.
+    async fn resolve_batches(
+        storage: &impl BlockHeaderStorage,
+        start_height: u32,
+        target_height: u32,
+    ) -> SyncResult<Vec<(BlockHash, u32)>> {
+        let mut batches = Vec::new();
+        let mut current = start_height;
+        while current <= target_height {
+            let batch_end = (current + FILTER_HEADERS_BATCH_SIZE - 1).min(target_height);
+
+            let stop_hash =
+                storage.get_header(batch_end).await?.map(|h| *h.hash()).ok_or_else(|| {
+                    SyncError::Storage(format!("Missing header at height {}", batch_end))
+                })?;
+
+            batches.push((stop_hash, current));
+            current = batch_end + 1;
+        }
+        Ok(batches)
+    }
+
     /// Extend the pipeline to a new target height.
     ///
     /// Queues additional batches from the current target to the new target.
@@ -77,27 +106,18 @@ impl FilterHeadersPipeline {
             return Ok(());
         }
 
-        self.target_height = new_target;
+        // Resolve every batch before mutating state: `target_height` must not
+        // advance past batches a failed lookup left unqueued, or a later
+        // `extend_target(new_target)` returns early (`new_target <= old_target`)
+        // and the gap is never filled.
+        let batches = Self::resolve_batches(storage, old_target + 1, new_target).await?;
+        let added = batches.len();
 
-        // Queue batches from (old_target + 1) to new_target
-        let mut current = old_target + 1;
-        let mut added = 0;
-
-        while current <= new_target {
-            let batch_end = (current + FILTER_HEADERS_BATCH_SIZE - 1).min(new_target);
-
-            // Get stop hash for this batch
-            let stop_hash =
-                storage.get_header(batch_end).await?.map(|h| *h.hash()).ok_or_else(|| {
-                    SyncError::Storage(format!("Missing header at height {}", batch_end))
-                })?;
-
+        for (stop_hash, start) in batches {
             self.coordinator.enqueue([stop_hash]);
-            self.batch_starts.insert(stop_hash, current);
-            added += 1;
-
-            current = batch_end + 1;
+            self.batch_starts.insert(stop_hash, start);
         }
+        self.target_height = new_target;
 
         if added > 0 {
             tracing::info!(
@@ -130,27 +150,20 @@ impl FilterHeadersPipeline {
         start_height: u32,
         target_height: u32,
     ) -> SyncResult<()> {
+        // Resolve every stop hash before clearing and rebuilding state, so a
+        // missing header leaves the pipeline untouched and the caller retries
+        // cleanly rather than resuming from a half-built queue.
+        let batches = Self::resolve_batches(storage, start_height, target_height).await?;
+
         self.coordinator.clear();
         self.batch_starts.clear();
         self.buffered.clear();
         self.next_expected = start_height;
         self.target_height = target_height;
 
-        // Build request queue
-        let mut current = start_height;
-        while current <= target_height {
-            let batch_end = (current + FILTER_HEADERS_BATCH_SIZE - 1).min(target_height);
-
-            // Get stop hash for this batch
-            let stop_hash =
-                storage.get_header(batch_end).await?.map(|h| *h.hash()).ok_or_else(|| {
-                    SyncError::Storage(format!("Missing header at height {}", batch_end))
-                })?;
-
+        for (stop_hash, start) in batches {
             self.coordinator.enqueue([stop_hash]);
-            self.batch_starts.insert(stop_hash, current);
-
-            current = batch_end + 1;
+            self.batch_starts.insert(stop_hash, start);
         }
 
         tracing::info!(
@@ -238,6 +251,22 @@ impl FilterHeadersPipeline {
             // Already processed (duplicate)
             None
         }
+    }
+
+    /// Re-track a batch whose processing failed so a later `send_pending`
+    /// reissues it.
+    ///
+    /// `receive` clears a batch from the coordinator and `batch_starts` the
+    /// moment the bytes arrive, before the caller runs the fallible
+    /// `process_cfheaders`. If that storage write fails the batch would
+    /// otherwise vanish from every tracker while `next_expected` stays pinned
+    /// to it, and `extend_target` only ever appends above `target_height` — so
+    /// the hole is never revisited and filter-header sync stalls. Putting the
+    /// batch back on the retry queue with its start height restored makes the
+    /// next tick request it again.
+    pub(super) fn requeue_failed(&mut self, start_height: u32, stop_hash: BlockHash) {
+        self.batch_starts.insert(stop_hash, start_height);
+        self.coordinator.enqueue_retry(stop_hash);
     }
 
     /// Advance to the next expected height after processing.
@@ -482,6 +511,132 @@ mod tests {
         assert_eq!(pipeline.next_expected(), 1);
         assert_eq!(pipeline.buffered.len(), 1);
         assert_eq!(pipeline.target_height, 6000);
+    }
+
+    /// A batch whose `process_cfheaders` fails after `receive` already dropped
+    /// it from the trackers must be retryable: `requeue_failed` puts it back so
+    /// the next `send_pending` reissues it, and nothing is stranded with
+    /// `next_expected` pinned to a batch nothing tracks. (#964)
+    #[test]
+    fn test_requeue_failed_makes_a_dropped_batch_retryable() {
+        let mut pipeline = FilterHeadersPipeline::new();
+        pipeline.next_expected = 1;
+        pipeline.target_height = 2000;
+
+        let stop_hash = BlockHash::from_byte_array([0x07; 32]);
+        pipeline.coordinator.mark_sent(&[stop_hash]);
+        pipeline.batch_starts.insert(stop_hash, 1);
+
+        let cfheaders = CFHeaders {
+            filter_type: 0,
+            stop_hash,
+            previous_filter_header: FilterHeader::all_zeros(),
+            filter_hashes: vec![FilterHash::all_zeros()],
+        };
+
+        // In-order receive hands the batch to the caller and drops it from
+        // every tracker.
+        assert!(pipeline.receive(1, cfheaders).is_some());
+        assert!(!pipeline.coordinator.is_in_flight(&stop_hash));
+        assert!(!pipeline.batch_starts.contains_key(&stop_hash));
+
+        // Processing failed downstream: re-track the batch.
+        pipeline.requeue_failed(1, stop_hash);
+
+        // The next send_pending reissues exactly that batch with its original
+        // start height, and progress is untouched.
+        let (tx, mut rx) = unbounded_channel();
+        let requests = RequestSender::new(tx);
+        assert_eq!(pipeline.send_pending(&requests).unwrap(), 1);
+
+        let mut reissued = Vec::new();
+        while let Ok(request) = rx.try_recv() {
+            match request {
+                NetworkRequest::SendMessage(NetworkMessage::GetCFHeaders(GetCFHeaders {
+                    start_height,
+                    stop_hash,
+                    ..
+                })) => reissued.push((start_height, stop_hash)),
+                other => panic!("Expected GetCFHeaders, got {:?}", other),
+            }
+        }
+        assert_eq!(reissued, vec![(1, stop_hash)]);
+        assert_eq!(pipeline.next_expected(), 1);
+    }
+
+    /// A missing header mid-`extend_target` must leave `target_height` and the
+    /// queue untouched, or a later `extend_target` to the same target returns
+    /// early (`new_target <= old_target`) and the unqueued batches are lost —
+    /// filter-header sync stalls with the watermark parked above them. (#964)
+    #[tokio::test]
+    async fn test_extend_target_is_atomic_on_a_missing_header() {
+        use crate::storage::{BlockHeaderStorage, DiskStorageManager, StorageManager};
+        use crate::types::HashedBlockHeader;
+        use dashcore::{block::Version, BlockHash, CompactTarget, Header as BlockHeader};
+
+        let storage = DiskStorageManager::with_temp_dir().await.unwrap();
+        let header_storage = storage.block_headers();
+
+        // Store headers up to height 2000 only.
+        let mut headers = Vec::new();
+        let mut prev = BlockHash::from_byte_array([0u8; 32]);
+        for nonce in 0..2001u32 {
+            let header = HashedBlockHeader::from(BlockHeader {
+                version: Version::from_consensus(1),
+                prev_blockhash: prev,
+                merkle_root: dashcore::TxMerkleNode::all_zeros(),
+                time: 0,
+                bits: CompactTarget::from_consensus(0x2100ffff),
+                nonce,
+            });
+            prev = *header.hash();
+            headers.push(header);
+        }
+        header_storage.write().await.store_headers_at_height(&headers, 0).await.unwrap();
+
+        let mut pipeline = FilterHeadersPipeline::new();
+        {
+            let guard = header_storage.read().await;
+            pipeline.init(&*guard, 1, 2000).await.expect("init within stored range");
+        }
+        assert_eq!(pipeline.target_height, 2000);
+        let pending_after_init = pipeline.coordinator.pending_count();
+
+        // Extending past the stored headers fails at the first missing stop hash.
+        {
+            let guard = header_storage.read().await;
+            assert!(pipeline.extend_target(&*guard, 5000).await.is_err());
+        }
+        assert_eq!(
+            pipeline.target_height, 2000,
+            "a failed extend must not advance target_height past unqueued batches"
+        );
+        assert_eq!(
+            pipeline.coordinator.pending_count(),
+            pending_after_init,
+            "a failed extend must not enqueue a partial set of batches"
+        );
+
+        // Once the headers exist, the same extend succeeds and advances.
+        let mut more = Vec::new();
+        for nonce in 2001..5001u32 {
+            let header = HashedBlockHeader::from(BlockHeader {
+                version: Version::from_consensus(1),
+                prev_blockhash: prev,
+                merkle_root: dashcore::TxMerkleNode::all_zeros(),
+                time: 0,
+                bits: CompactTarget::from_consensus(0x2100ffff),
+                nonce,
+            });
+            prev = *header.hash();
+            more.push(header);
+        }
+        header_storage.write().await.store_headers_at_height(&more, 2001).await.unwrap();
+        {
+            let guard = header_storage.read().await;
+            pipeline.extend_target(&*guard, 5000).await.expect("extend within stored range");
+        }
+        assert_eq!(pipeline.target_height, 5000);
     }
 
     #[test]
