@@ -411,3 +411,178 @@ async fn coinjoin_gap_limit_stall_across_committed_batch() {
          derives scripts mid-sync."
     );
 }
+
+/// Born-wrong `TransactionRecord` is never corrected by the gap rescan
+/// (kotlin-sdk "TXO-store reconcile" field bug, 2026-08-19).
+///
+/// One block carries a funding tx paying in-window index 0 and a self-send
+/// spending it, paying index G-1 (in-window) and index G+10 (beyond the
+/// initial watch window). First processing records the self-send with the
+/// beyond-window output invisible: `net_amount = PAY - FUND` instead of
+/// `-fee`, and no `output_details` entry for vout 1 — a record born wrong,
+/// projected as-is into every persistence mirror by the emitted events.
+/// Marking G-1 used extends the window past G+10, the commit-time rescan
+/// (#820) re-matches the block, and re-processing runs `update_utxos`
+/// unconditionally — the account's UTXO set self-heals. But
+/// `confirm_transaction` only re-emits (and only mutates) the record when
+/// its *context* changed, so neither the in-memory record nor any event
+/// carries the correction. On-device this is the CoinJoin-funded-send shape:
+/// the store keeps `netAmount` = full input value with the change TXO row
+/// missing, and an engine reload from that store makes the funds vanish.
+#[tokio::test]
+async fn born_wrong_record_is_corrected_by_gap_rescan() {
+    use dashcore::ScriptBuf;
+    use key_wallet::managed_account::transaction_record::{OutputRole, TransactionRecord};
+    use key_wallet_manager::WalletEvent;
+
+    let (mut manager, wallet, wallet_id) = setup().await;
+    let addresses = coinjoin_external_addresses(&wallet, &wallet_id, (G + 11) as u32).await;
+    let mut events_rx = wallet.read().await.subscribe_events();
+
+    const FUND: u64 = 1_000_100_000; // 10.001 into in-window index 0
+    const PAY: u64 = 50_000_000; // 0.5 back to in-window index G-1
+    const HIDDEN: u64 = 950_000_000; // 9.5 to beyond-window index G+10
+    const FEE: u64 = FUND - PAY - HIDDEN; // 100_000
+
+    let funding = Transaction {
+        version: 1,
+        lock_time: 0,
+        input: vec![TxIn {
+            previous_output: OutPoint::new(Txid::from([0xABu8; 32]), 0),
+            script_sig: ScriptBuf::new(),
+            sequence: 0xffffffff,
+            witness: Witness::new(),
+        }],
+        output: vec![TxOut {
+            value: FUND,
+            script_pubkey: addresses[0].script_pubkey(),
+        }],
+        special_transaction_payload: None,
+    };
+    let send = Transaction {
+        version: 1,
+        lock_time: 0,
+        input: vec![TxIn {
+            previous_output: OutPoint::new(funding.txid(), 0),
+            script_sig: ScriptBuf::new(),
+            sequence: 0xffffffff,
+            witness: Witness::new(),
+        }],
+        output: vec![
+            TxOut {
+                value: PAY,
+                script_pubkey: addresses[G - 1].script_pubkey(),
+            },
+            TxOut {
+                value: HIDDEN,
+                script_pubkey: addresses[G + 10].script_pubkey(),
+            },
+        ],
+        special_transaction_payload: None,
+    };
+    let send_txid = send.txid();
+    let hidden_outpoint = OutPoint::new(send_txid, 1);
+
+    let block = Block::dummy(10, vec![funding, send]);
+    let filter = BlockFilter::dummy(&block);
+    let key = FilterMatchKey::new(10, block.block_hash());
+    let blocks: HashMap<BlockHash, Block> = HashMap::from([(block.block_hash(), block.clone())]);
+
+    let mut batch = FiltersBatch::new(0, 99, HashMap::from([(key, filter)]));
+    batch.mark_verified();
+    manager.active_batches.insert(0, batch);
+    manager.progress.update_stored_height(99);
+
+    let initial_events = manager.try_process_batch().await.unwrap();
+    drive_to_quiescence(&mut manager, &wallet, &blocks, initial_events).await;
+
+    {
+        let wm = wallet.read().await;
+        let info = wm.get_wallet_info(&wallet_id).expect("wallet info present");
+        let account =
+            info.coinjoin_managed_account_at_index(0).expect("CoinJoin account 0 present");
+
+        // Engine UTXO self-heal — already correct in the field. If this
+        // fails, the rescan re-processing itself regressed, which is a
+        // different bug than the one this test pins.
+        assert!(
+            account.utxos.contains_key(&hidden_outpoint),
+            "rescan re-processing must insert the beyond-window output into the \
+             account UTXO set (update_utxos runs unconditionally in confirm_transaction)"
+        );
+
+        // The engine's own record must be corrected by the same re-processing.
+        // Note the born-wrong shape is not a MISSING entry: the first
+        // processing classified the unattributable output as `Sent`
+        // (counterparty), so the correction is a role flip.
+        let record =
+            account.transactions().get(&send_txid).expect("send record present in account");
+        assert!(
+            record
+                .output_details
+                .iter()
+                .any(|o| o.index == 1
+                    && matches!(o.role, OutputRole::Received | OutputRole::Change)),
+            "the re-processed record must classify the beyond-window output (vout 1) as \
+             ours (Received/Change); a lingering Sent role means every store projection \
+             derived from this record drops the TXO. got: {:?}",
+            record.output_details,
+        );
+        assert_eq!(
+            record.net_amount,
+            -(FEE as i64),
+            "the re-processed record's net_amount must be recomputed from the now-\
+             complete ownership view (self-send nets -fee); the born-wrong value \
+             PAY-FUND = {} is what makes restored balances collapse on reload",
+            PAY as i64 - FUND as i64,
+        );
+    }
+
+    // The persistence mirror is built exclusively from the emitted events:
+    // whatever the last record-bearing event said about this txid is what
+    // every store on every platform now holds.
+    let mut last_record: Option<TransactionRecord> = None;
+    while let Ok(event) = events_rx.try_recv() {
+        match event {
+            WalletEvent::TransactionDetected {
+                record,
+                ..
+            } if record.txid == send_txid => {
+                last_record = Some(*record);
+            }
+            WalletEvent::BlockProcessed {
+                inserted,
+                updated,
+                ..
+            } => {
+                for r in inserted.into_iter().chain(updated) {
+                    if r.txid == send_txid {
+                        last_record = Some(r);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    let projected = last_record.expect("an event must have carried the send record");
+    assert!(
+        projected
+            .output_details
+            .iter()
+            .any(|o| o.index == 1 && matches!(o.role, OutputRole::Received | OutputRole::Change)),
+        "the LAST emitted record for the send must classify the beyond-window output \
+         (vout 1) as ours — the store mirrors are built from these events only, and \
+         without a corrective emission (confirm_transaction returning None when only \
+         ownership knowledge changed) every mirror keeps the born-wrong Sent role. \
+         got: {:?}",
+        projected.output_details,
+    );
+    assert_eq!(
+        projected.net_amount,
+        -(FEE as i64),
+        "the LAST emitted record's net_amount must be the corrected value; the field \
+         stores show the born-wrong {} shape (full input value) because no corrective \
+         event ever fires",
+        PAY as i64 - FUND as i64,
+    );
+}

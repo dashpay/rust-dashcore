@@ -237,6 +237,14 @@ impl ManagedCoreFundsAccount {
     /// outpoints that a *sibling* account of the same wallet holds as final.
     /// See [`Self::record_transaction`] for why a per-account view is not
     /// enough. An empty set degrades this to the account-local check.
+    /// Returns an [`OutputDetail`] for every output of `tx` this call
+    /// recognized as paying this account — including outputs whose UTXO
+    /// insertion was skipped because an earlier-processed block already
+    /// spent them (they are still ours and still belong on the record).
+    /// `record_transaction` ignores the return value (its details come from
+    /// the same match); `confirm_transaction` uses it to detect ownership
+    /// learned only on re-processing — the gap-limit rescan shape — and fold
+    /// the correction back into the already-stored record.
     fn update_utxos(
         &mut self,
         tx: &Transaction,
@@ -244,7 +252,8 @@ impl ManagedCoreFundsAccount {
         context: TransactionContext,
         observed_spent: &BTreeMap<OutPoint, CoreBlockHeight>,
         external_final_parents: &BTreeSet<OutPoint>,
-    ) {
+    ) -> Vec<OutputDetail> {
+        let mut recognized: Vec<OutputDetail> = Vec::new();
         // Update UTXOs only for spendable account types
         match self.keys.managed_account_type() {
             ManagedAccountType::Standard {
@@ -320,7 +329,9 @@ impl ManagedCoreFundsAccount {
                         %txid,
                         "Not crediting a transaction whose input a block already spent"
                     );
-                    return;
+                    // Nothing recognized either: a doomed transaction's
+                    // outputs must not be folded into any record.
+                    return recognized;
                 }
 
                 let network = self.keys.network();
@@ -333,6 +344,21 @@ impl ManagedCoreFundsAccount {
                                 txid,
                                 vout: vout as u32,
                             };
+
+                            // Report recognition before the spent-skips below:
+                            // an output of ours that is already spent on-chain
+                            // still belongs on the transaction's record and in
+                            // its net_amount.
+                            recognized.push(OutputDetail {
+                                index: vout as u32,
+                                role: if change_addrs.contains(&addr) {
+                                    OutputRole::Change
+                                } else {
+                                    OutputRole::Received
+                                },
+                                address: Some(addr.clone()),
+                                value: output.value,
+                            });
 
                             // Check if this outpoint was already spent by a transaction we've seen.
                             // This handles out-of-order block processing during rescan where a
@@ -422,6 +448,7 @@ impl ManagedCoreFundsAccount {
             }
             _ => {}
         }
+        recognized
     }
 
     /// Drop the spent-marks that `freed` contributed, keeping every mark a
@@ -767,14 +794,6 @@ impl ManagedCoreFundsAccount {
             }
         }
 
-        // Capture the (possibly updated) record before any pruning so the
-        // caller can still emit it in an event.
-        let record_after = if changed {
-            self.keys.transactions().get(&txid).cloned()
-        } else {
-            None
-        };
-
         // The chainlock is the trigger for dropping the full record under
         // the default feature configuration; an IS-lock alone is *not*
         // enough — we keep the record so the surrounding block
@@ -782,7 +801,82 @@ impl ManagedCoreFundsAccount {
         // chainlock catches up.
         #[cfg(not(feature = "keep-finalized-transactions"))]
         let drop_now = context.is_chain_locked();
-        self.update_utxos(tx, account_match, context, observed_spent, external_final_parents);
+        let recognized =
+            self.update_utxos(tx, account_match, context, observed_spent, external_final_parents);
+
+        // Gap-limit rescan correction: a re-processed block can recognize
+        // outputs the FIRST processing could not see (their addresses were
+        // beyond the watch window then, derived since). `update_utxos` above
+        // already healed the account's UTXO set; without the block below the
+        // stored record — and every persistence mirror built from emitted
+        // records — keeps the born-wrong shape forever: `net_amount` equal to
+        // the full input value and no `output_details` entry for the output.
+        // A reload from such a mirror is exactly the field fund-loss this
+        // corrects (kotlin-sdk TXO-store bug, 2026-08-19). Merge the newly
+        // recognized outputs into the record, recompute the derived fields,
+        // and signal the caller so a corrective event is emitted.
+        if let Some(tx_record) = self.keys.transactions_mut().get_mut(&txid) {
+            // An output the first processing could not attribute is not
+            // absent from the record — `record_transaction` classified it as
+            // `Sent` (counterparty). Recognition therefore corrects roles in
+            // place as well as filling genuine gaps.
+            let mut corrected = false;
+            for ours in recognized {
+                match tx_record.output_details.iter_mut().find(|o| o.index == ours.index) {
+                    Some(existing) => {
+                        if existing.role != ours.role {
+                            *existing = ours;
+                            corrected = true;
+                        }
+                    }
+                    None => {
+                        tx_record.output_details.push(ours);
+                        corrected = true;
+                    }
+                }
+            }
+            if corrected {
+                tx_record.output_details.sort_by_key(|o| o.index);
+                // Same derivations as `record_transaction`, over the now-
+                // complete details. `input_details` was built at first
+                // processing while the spent parents were still live, so the
+                // spend side needs no recomputation.
+                let owned: i64 = tx_record
+                    .output_details
+                    .iter()
+                    .filter(|o| matches!(o.role, OutputRole::Received | OutputRole::Change))
+                    .map(|o| o.value as i64)
+                    .sum();
+                let spent: i64 =
+                    tx_record.input_details.iter().map(|i| i.value as i64).sum();
+                tx_record.net_amount = owned - spent;
+                let has_inputs = !tx_record.input_details.is_empty();
+                let has_sent =
+                    tx_record.output_details.iter().any(|d| d.role == OutputRole::Sent);
+                let has_our_outputs = tx_record
+                    .output_details
+                    .iter()
+                    .any(|d| matches!(d.role, OutputRole::Received | OutputRole::Change));
+                if tx_record.direction != TransactionDirection::CoinJoin {
+                    tx_record.direction = if !has_sent && has_inputs && has_our_outputs {
+                        TransactionDirection::Internal
+                    } else if has_inputs {
+                        TransactionDirection::Outgoing
+                    } else {
+                        TransactionDirection::Incoming
+                    };
+                }
+                changed = true;
+            }
+        }
+
+        // Capture the (possibly updated) record before any pruning so the
+        // caller can still emit it in an event.
+        let record_after = if changed {
+            self.keys.transactions().get(&txid).cloned()
+        } else {
+            None
+        };
         #[cfg(not(feature = "keep-finalized-transactions"))]
         if drop_now {
             self.keys.drop_finalized_transaction(&txid);
