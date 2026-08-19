@@ -776,9 +776,11 @@ impl FFIOutPoint {
 
 /// Callback for `WalletEvent::TransactionsSwept`.
 ///
-/// Fires when the wallet removes transactions that a later, final transaction
-/// provably beat to one of their inputs: they can never confirm, so their
-/// outputs are gone from the UTXO set and their records deleted.
+/// Fires when the wallet removes transactions that can never confirm — either
+/// because a later, final transaction provably beat them to one of their
+/// inputs, or because the root was explicitly abandoned as never having
+/// reached the network and the removal cascaded to everything built on its
+/// change. Their outputs are gone from the UTXO set and their records deleted.
 ///
 /// **The only removal-shaped wallet callback.** Every other one is additive,
 /// so a consumer mirroring wallet state to disk must act on this — delete the
@@ -786,8 +788,14 @@ impl FFIOutPoint {
 /// rows in the mirror, which replays them on the next load and re-creates a
 /// balance the wallet has already corrected.
 ///
-/// `txids` points to `txids_count` consecutive 32-byte txids.
-/// `superseded_by` is the transaction whose arrival settled the inputs.
+/// `txids` points to `txids_count` consecutive 32-byte txids. On the abandon
+/// path this is what the abandon asked for, which may include a txid the
+/// wallet held no record for — a mirror can hold rows the load path never
+/// restored, so the delete is driven by the requested set.
+/// `superseded_by` is the transaction whose arrival settled the inputs. On the
+/// abandon path no such transaction exists and this repeats the abandoned
+/// root, which therefore also appears in `txids`; never assume it names a row
+/// that survives.
 /// `released_outpoints` points to `released_outpoints_count` outpoints freed
 /// by the removal: inputs the removed transactions claimed to spend that no
 /// surviving record spends too. Mark these coins spendable again. This is

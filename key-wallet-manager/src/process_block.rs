@@ -11,6 +11,7 @@ use key_wallet::account::AccountType;
 use key_wallet::managed_account::transaction_record::TransactionRecord;
 use key_wallet::transaction_checking::{BlockInfo, DerivedAddressInfo, TransactionContext};
 use key_wallet::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
+use key_wallet::wallet::managed_wallet_info::WalletConflictSweep;
 use key_wallet::WalletCoreBalance;
 use std::collections::{BTreeMap, BTreeSet};
 use tokio::sync::broadcast;
@@ -419,10 +420,23 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
         > = self.wallet_infos.iter().map(|(id, info)| (*id, info.account_balances())).collect();
 
         let mut affected_wallets = Vec::new();
+        // An IS lock settles the locked transaction's inputs, so it can beat a
+        // recorded competing spend just as a block does — and this is the live
+        // path for the ordinary ordering, transaction first and lock second
+        // (dash-spv routes an islock on an already-tracked mempool tx here).
+        // The removal has to reach consumers: every other event on this bus is
+        // additive, so a mirror that never hears it keeps the dead row and
+        // replays it on the next load, with the coins the sweep freed left
+        // marked spent forever.
+        let mut per_wallet_sweep: BTreeMap<WalletId, WalletConflictSweep> = BTreeMap::new();
         for (wallet_id, info) in self.wallet_infos.iter_mut() {
-            if info.mark_instant_send_utxos(&txid, &instant_lock) {
+            let outcome = info.mark_instant_send_utxos(&txid, &instant_lock);
+            if outcome.changed {
                 info.update_balance();
                 affected_wallets.push(*wallet_id);
+                if !outcome.sweep.is_empty() {
+                    per_wallet_sweep.insert(*wallet_id, outcome.sweep);
+                }
             }
         }
 
@@ -436,6 +450,20 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
             };
             let prior = prior_account_balances.remove(&wallet_id).unwrap_or_default();
             let account_balances = diff_account_balances(&prior, &info.account_balances());
+            // Removal before the additive event, matching the block and
+            // mempool paths: a consumer applying these in order sees the dead
+            // rows deleted first, so nothing that follows can be clobbered by
+            // a delete arriving after it.
+            if let Some(sweep) = per_wallet_sweep.remove(&wallet_id) {
+                self.emit_event(WalletEvent::TransactionsSwept {
+                    wallet_id,
+                    txids: sweep.txids,
+                    superseded_by: txid,
+                    released_outpoints: sweep.released_outpoints,
+                    balance: info.balance(),
+                    account_balances: account_balances.clone(),
+                });
+            }
             self.emit_event(WalletEvent::TransactionInstantLocked {
                 wallet_id,
                 txid,
@@ -444,6 +472,12 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
                 account_balances,
             });
         }
+        debug_assert!(
+            per_wallet_sweep.is_empty(),
+            "a sweep for a wallet that reported no change would be dropped here, \
+             stranding its released coins marked spent forever: {:?}",
+            per_wallet_sweep
+        );
     }
 
     async fn describe(&self) -> String {

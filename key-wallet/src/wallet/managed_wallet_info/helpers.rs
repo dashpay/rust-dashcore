@@ -23,6 +23,24 @@ pub struct AbandonOutcome {
     /// How many transaction records were actually dropped. Distinct from
     /// `abandoned.len()`, which counts what was *asked* for.
     pub records_removed: usize,
+    /// Outpoints the abandon released, deduplicated and reconciled across
+    /// every account: inputs the abandoned transactions claimed that nothing
+    /// surviving in this wallet claims too. Outpoints belonging to the
+    /// abandoned transactions themselves are excluded — those are outputs of
+    /// records being deleted, not coins coming free.
+    ///
+    /// The same set, and for the same reason, as
+    /// [`WalletConflictSweep::released_outpoints`]: a consumer mirroring
+    /// wallet state has to mark these coins spendable again, and cannot
+    /// derive the set from `abandoned` alone — that would require knowing
+    /// which of their inputs some *other* surviving transaction also claims.
+    ///
+    /// These coins are also re-credited to this wallet's own UTXO set where
+    /// their funding record survives, so the event and in-core coin selection
+    /// agree. See
+    /// `ManagedCoreFundsAccount::recredit_released_outpoints` for the one
+    /// case that cannot be — a chainlock-pruned funding record.
+    pub released_outpoints: Vec<OutPoint>,
 }
 
 impl AbandonOutcome {
@@ -31,9 +49,59 @@ impl AbandonOutcome {
     /// `abandoned` always contains the root, whether or not the wallet held
     /// anything for it, so it cannot answer this on its own — a root the
     /// wallet never recorded removes nothing.
+    ///
+    /// `released_outpoints` is checked too, on the same reasoning
+    /// [`WalletConflictSweep::is_empty`] gives: only a record removal can free
+    /// an outpoint today, so it can never be non-empty on its own, but a
+    /// release that stopped riding along with one would otherwise stop marking
+    /// the wallet dirty — silently, and visible only later as a coin still
+    /// marked spent after a restart.
     pub fn is_empty(&self) -> bool {
-        self.records_removed == 0 && self.utxos_removed == 0
+        self.records_removed == 0 && self.utxos_removed == 0 && self.released_outpoints.is_empty()
     }
+}
+
+/// Drop from `released` every outpoint some surviving record in `accounts`
+/// still spends.
+///
+/// Each account decides what it released from its own records alone
+/// (`release_spent_marks` rebuilds the retained set from that account's
+/// transactions), and a removed transaction is dropped from every account it
+/// was recorded in. Pooled funding puts those accounts and the spender of a
+/// given coin in different places: an account that removed a record but never
+/// held the transaction still claiming one of its inputs sees nothing
+/// retaining that coin and reports it free. Unioning the per-account answers
+/// then carries that mistake out of the wallet.
+///
+/// Re-checking against every account's surviving records is the only view that
+/// can settle it.
+///
+/// The surviving inputs are collected once and probed by hash, rather than
+/// rescanning the records per candidate. The released set is not inherently
+/// small: a peer can hand the wallet a transaction whose input vector is as
+/// large as it likes and whose output pays an address the wallet owns, and a
+/// later final transaction need conflict with only one of those inputs for the
+/// rest to become candidates. Scanning per candidate is `O(released × retained
+/// history)` against a wallet whose history the peer does not control either —
+/// tens of millions of comparisons, run while the manager holds the winner
+/// mutably and before the event can even reach persistence. Building the set is
+/// one pass over that same history and is never the worse trade: a single
+/// candidate already costs a full pass under the alternative.
+fn retain_unclaimed_outpoints(
+    released: &mut Vec<OutPoint>,
+    accounts: &crate::managed_account::managed_account_collection::ManagedAccountCollection,
+) {
+    if released.is_empty() {
+        return;
+    }
+    let claimed: HashSet<OutPoint> = accounts
+        .all_accounts()
+        .into_iter()
+        .flat_map(|account| account.transactions().values())
+        .flat_map(|record| record.transaction.input.iter())
+        .map(|input| input.previous_output)
+        .collect();
+    released.retain(|outpoint| !claimed.contains(outpoint));
 }
 
 /// Txids in `records` that spend an output of anything in `abandoned`.
@@ -90,50 +158,18 @@ impl WalletConflictSweep {
     }
 
     /// Drop outpoints some surviving record elsewhere in the wallet still
-    /// spends.
+    /// spends. See [`retain_unclaimed_outpoints`], which this shares with the
+    /// abandon path.
     ///
-    /// Each account decides what it released from its own records alone
-    /// (`release_spent_marks` rebuilds the retained set from that account's
-    /// transactions), and a loser is removed from every account it was
-    /// recorded in. Pooled funding puts those accounts and the spender of a
-    /// given coin in different places: an account that removed a loser but
-    /// never recorded the transaction still claiming one of its inputs sees
-    /// nothing retaining that coin and reports it free. Unioning the
-    /// per-account answers then carries that mistake out of the wallet.
-    ///
-    /// Re-checking against every account's surviving records is the only
-    /// view that can settle it. Note this does not need to cover the winner
-    /// that triggered the sweep: `drop_conflicted_transactions` already
-    /// withholds the inputs it spends, which it must, since on the checker
-    /// path the sweep runs before the winner is recorded anywhere.
-    ///
-    /// The surviving inputs are collected once and probed by hash, rather
-    /// than rescanning the records per candidate. The released set is not
-    /// inherently small: a peer can hand the wallet a transaction whose
-    /// input vector is as large as it likes and whose output pays an address
-    /// the wallet owns, and a later final transaction need conflict with
-    /// only one of those inputs for the rest to become candidates. Scanning
-    /// per candidate is `O(released × retained history)` against a wallet
-    /// whose history the peer does not control either — tens of millions of
-    /// comparisons, run while the manager holds the winner mutably and
-    /// before the event can even reach persistence. Building the set is one
-    /// pass over that same history and is never the worse trade: a single
-    /// candidate already costs a full pass under the alternative.
+    /// Note this does not need to cover the winner that triggered the sweep:
+    /// `drop_conflicted_transactions` already withholds the inputs it spends,
+    /// which it must, since on the checker path the sweep runs before the
+    /// winner is recorded anywhere.
     fn retain_unclaimed(
         &mut self,
         accounts: &crate::managed_account::managed_account_collection::ManagedAccountCollection,
     ) {
-        if self.released_outpoints.is_empty() {
-            return;
-        }
-        let claimed: HashSet<OutPoint> = accounts
-            .all_accounts()
-            .into_iter()
-            .flat_map(|account| account.transactions().values())
-            .flat_map(|record| record.transaction.input.iter())
-            .map(|input| input.previous_output)
-            .collect();
-        self.released_outpoints.retain(|outpoint| !claimed.contains(outpoint));
+        retain_unclaimed_outpoints(&mut self.released_outpoints, accounts);
     }
 }
 
@@ -159,6 +195,11 @@ impl ManagedWalletInfo {
     /// Also returns the outpoints released as a side effect, for the same
     /// reason: the winner is not guaranteed to appear anywhere the caller can
     /// see, so the set cannot be re-derived from the txids.
+    ///
+    /// The released coins are re-credited to this wallet's own UTXO set here
+    /// too, once the per-account answers have been reconciled — the reported
+    /// set and what coin selection can actually spend must not disagree. See
+    /// `ManagedCoreFundsAccount::recredit_released_outpoints`.
     pub fn sweep_conflicts(
         &mut self,
         tx: &Transaction,
@@ -173,7 +214,6 @@ impl ManagedWalletInfo {
             }
         }
         if !result.txids.is_empty() {
-            self.update_balance();
             // One transaction can be recorded in several accounts, so the
             // per-account results overlap.
             result.txids.sort_unstable();
@@ -181,8 +221,57 @@ impl ManagedWalletInfo {
             result.released_outpoints.sort_unstable();
             result.released_outpoints.dedup();
             result.retain_unclaimed(&self.accounts);
+            // Strictly after `retain_unclaimed`: a coin a sibling account's
+            // surviving record still spends must never be put back, and only
+            // the reconciled set is safe to act on.
+            self.recredit_released_outpoints(&result.released_outpoints);
+            // Last, so the balance reflects both the removals and the
+            // re-credits.
+            self.update_balance();
         }
         result
+    }
+
+    /// Offer `released` to every funds-bearing account; each takes the coins
+    /// it can prove are its own. Returns what was actually re-credited across
+    /// the wallet.
+    ///
+    /// An outpoint is owned by at most one account — ownership is decided from
+    /// the funding record's per-account output classification — so offering
+    /// the whole set to each account re-credits each coin exactly once.
+    ///
+    /// Outpoints this wallet has *seen spent in a block* are withheld, even
+    /// when the release said they were free. `release_spent_marks` answers
+    /// from the wallet's own records, and a block spend of our coin that we
+    /// could not attribute leaves no record to answer from: the spender pays
+    /// only external addresses and, if the funding transaction had not been
+    /// processed yet, never even matched (dashpay/rust-dashcore#649 — the same
+    /// reason `update_utxos` refuses to insert such an output in the first
+    /// place). Re-crediting one of those would hand coin selection a coin the
+    /// chain has already spent. The released set is still *reported* as-is:
+    /// that set's contract is a consumer-facing one with its own documented
+    /// limits, and narrowing it is a separate change from making in-core state
+    /// match it — this withholding only ever errs toward understating what we
+    /// can spend.
+    fn recredit_released_outpoints(&mut self, released: &[OutPoint]) -> Vec<OutPoint> {
+        if released.is_empty() {
+            return Vec::new();
+        }
+        let candidates: Vec<OutPoint> = released
+            .iter()
+            .filter(|outpoint| !self.observed_spent_outpoints.contains_key(outpoint))
+            .copied()
+            .collect();
+        if candidates.is_empty() {
+            return Vec::new();
+        }
+        let mut recredited = Vec::new();
+        for account in self.accounts.all_accounts_mut() {
+            if let ManagedAccountRefMut::Funds(funds) = account {
+                recredited.extend(funds.recredit_released_outpoints(&candidates));
+            }
+        }
+        recredited
     }
 
     /// Whether any account holds `txid` as settled by the network.
@@ -235,11 +324,13 @@ impl ManagedWalletInfo {
     /// judgement belongs to the layer that owns broadcast policy.
     ///
     /// The coins the abandoned transactions consumed are released from the
-    /// spent set so a rescan can rediscover them, rather than being
-    /// re-credited directly: the `Utxo` removed for a spent parent is
-    /// discarded by `update_utxos` and `InputDetail` keeps only
-    /// index/value/address, so the flags that decide a restored coin's
-    /// balance bucket are not retained anywhere.
+    /// spent set and re-credited to the UTXO set, rebuilt from their funding
+    /// transactions' own retained records — the abandon removes the spenders,
+    /// not what funded them. They are reported in
+    /// [`AbandonOutcome::released_outpoints`] so a persistence mirror can
+    /// follow. See `ManagedCoreFundsAccount::recredit_released_outpoints`
+    /// for the one case that cannot be rebuilt: a funding record already
+    /// pruned to its txid by a chainlock, which needs a rescan.
     ///
     /// Does not recompute the balance — callers batching several abandons
     /// should run `update_balance`
@@ -279,6 +370,7 @@ impl ManagedWalletInfo {
                 abandoned: BTreeSet::new(),
                 utxos_removed: 0,
                 records_removed: 0,
+                released_outpoints: Vec::new(),
             };
         }
         let mut abandoned = BTreeSet::from([root]);
@@ -307,12 +399,14 @@ impl ManagedWalletInfo {
 
         let mut utxos_removed = 0;
         let mut records_removed = 0;
+        let mut released_outpoints = Vec::new();
         for account in self.accounts.all_accounts_mut() {
             match account {
                 ManagedAccountRefMut::Funds(funds) => {
                     let removed = funds.apply_abandon(&abandoned);
                     utxos_removed += removed.utxos;
                     records_removed += removed.records;
+                    released_outpoints.extend(removed.released_outpoints);
                 }
                 // Keys-only accounts hold no UTXOs, but they do hold records
                 // — an asset-lock funding transaction is recorded in both its
@@ -330,10 +424,23 @@ impl ManagedWalletInfo {
             }
         }
 
+        // One transaction is recorded in every account it touched, so the
+        // per-account releases overlap.
+        released_outpoints.sort_unstable();
+        released_outpoints.dedup();
+        // A coin another account's surviving record still spends was never
+        // free; the per-account view cannot see that. Same reconciliation the
+        // conflict sweep runs, and for the same reason.
+        retain_unclaimed_outpoints(&mut released_outpoints, &self.accounts);
+        // Strictly after the reconciliation: only the settled set is safe to
+        // put back into coin selection.
+        self.recredit_released_outpoints(&released_outpoints);
+
         AbandonOutcome {
             abandoned,
             utxos_removed,
             records_removed,
+            released_outpoints,
         }
     }
     // BIP44 Account Helpers

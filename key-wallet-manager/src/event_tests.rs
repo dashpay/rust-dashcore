@@ -1163,6 +1163,222 @@ async fn test_instant_send_lock_event_does_not_carry_addresses_derived_field() {
     }
 }
 
+/// An InstantSend lock settles the locked transaction's inputs, so it beats a
+/// recorded competing spend exactly as a block does — and the removal has to
+/// reach consumers.
+///
+/// This is the live ordering for the ordinary case: dash-spv routes a lock
+/// arriving for an already-tracked mempool transaction straight to
+/// `process_instant_send_lock`, which is a different code path from the one a
+/// first sighting that already carries its lock takes. That path emitted only
+/// the additive `TransactionInstantLocked` while the sweep quietly deleted the
+/// loser's record and freed its coins, so a mirror kept the dead row, replayed
+/// it on the next load, and left the released coin marked spent forever.
+#[tokio::test]
+async fn test_instant_send_lock_emits_swept_event_before_the_lock_event() {
+    let (mut manager, wallet_id, addr) = setup_manager_with_wallet();
+
+    // One funding transaction pays us twice, so the loser can spend a coin
+    // the winner does not — that second coin is what gets released.
+    let funding = Transaction {
+        version: 2,
+        lock_time: 0,
+        input: vec![TxIn {
+            previous_output: OutPoint {
+                txid: Txid::from_byte_array([0x7a; 32]),
+                vout: 0,
+            },
+            script_sig: ScriptBuf::new(),
+            sequence: u32::MAX,
+            witness: Witness::default(),
+        }],
+        output: vec![
+            TxOut {
+                value: 500_000,
+                script_pubkey: addr.script_pubkey(),
+            },
+            TxOut {
+                value: 400_000,
+                script_pubkey: addr.script_pubkey(),
+            },
+        ],
+        special_transaction_payload: None,
+    };
+    let funding_block = make_block(vec![funding.clone()], 0x7a, 2000);
+    let wallets = BTreeSet::from([wallet_id]);
+    manager
+        .process_block_for_wallets(&funding_block, funding_block.block_hash(), 200, &wallets)
+        .await;
+
+    let coin_a = OutPoint {
+        txid: funding.txid(),
+        vout: 0,
+    };
+    let coin_b = OutPoint {
+        txid: funding.txid(),
+        vout: 1,
+    };
+    let spend = |inputs: Vec<OutPoint>, value: u64| Transaction {
+        version: 2,
+        lock_time: 0,
+        input: inputs
+            .into_iter()
+            .map(|previous_output| TxIn {
+                previous_output,
+                script_sig: ScriptBuf::new(),
+                sequence: u32::MAX,
+                witness: Witness::default(),
+            })
+            .collect(),
+        output: vec![TxOut {
+            value,
+            script_pubkey: addr.script_pubkey(),
+        }],
+        special_transaction_payload: None,
+    };
+
+    // Both competing spends sit in the mempool, neither final, so neither
+    // sweeps the other yet.
+    let loser = spend(vec![coin_a, coin_b], 880_000);
+    manager.process_mempool_transaction(&loser, None).await;
+    let winner = spend(vec![coin_a], 480_000);
+    manager.process_mempool_transaction(&winner, None).await;
+
+    // Subscribe only now: the setup above is not what this test is about.
+    let mut rx = manager.subscribe_events();
+
+    // The lock arrives for the already-tracked winner — the transition that
+    // goes through `process_instant_send_lock`, not through the checker.
+    let lock = InstantLock {
+        txid: winner.txid(),
+        cyclehash: CycleHash::from_byte_array([0x1a; 32]),
+        signature: BLSSignature::from([0x2b; 96]),
+        ..InstantLock::default()
+    };
+    manager.process_instant_send_lock(lock);
+
+    let events = drain_events(&mut rx);
+    let swept_index = events
+        .iter()
+        .position(|event| matches!(event, WalletEvent::TransactionsSwept { .. }))
+        .unwrap_or_else(|| {
+            panic!("the lock swept a conflict, so a removal must be emitted, got {:?}", events)
+        });
+    let locked_index = events
+        .iter()
+        .position(|event| matches!(event, WalletEvent::TransactionInstantLocked { .. }))
+        .unwrap_or_else(|| panic!("expected TransactionInstantLocked, got {:?}", events));
+    // Removal before the additive event, as on the block and mempool paths: a
+    // consumer applying them in order must not have a delete land on top of
+    // something that came after it.
+    assert!(
+        swept_index < locked_index,
+        "the removal must precede the lock event, got {:?}",
+        events
+    );
+
+    match &events[swept_index] {
+        WalletEvent::TransactionsSwept {
+            wallet_id: wid,
+            txids,
+            superseded_by,
+            released_outpoints,
+            ..
+        } => {
+            assert_eq!(*wid, wallet_id);
+            assert_eq!(txids, &vec![loser.txid()], "the beaten transaction is named");
+            assert_eq!(
+                *superseded_by,
+                winner.txid(),
+                "attributed to the transaction the lock settled"
+            );
+            assert_eq!(
+                released_outpoints,
+                &vec![coin_b],
+                "only the coin the winner did not take is released"
+            );
+        }
+        _ => unreachable!(),
+    }
+}
+
+/// Abandoning a transaction is a removal like any other, and consumers learn
+/// about removals from exactly one event. Without it a mirror keeps rows for
+/// transactions this wallet has decided never existed and replays them on the
+/// next load, re-creating the phantom balance the abandon just removed.
+#[tokio::test]
+async fn test_abandon_emits_swept_event_with_released_outpoints() {
+    let (mut manager, wallet_id, addr) = setup_manager_with_wallet();
+
+    // A real, confirmed coin.
+    let funding = create_tx_paying_to(&addr, 0x8a);
+    let funding_block = make_block(vec![funding.clone()], 0x8a, 2100);
+    let wallets = BTreeSet::from([wallet_id]);
+    manager
+        .process_block_for_wallets(&funding_block, funding_block.block_hash(), 300, &wallets)
+        .await;
+    let funding_outpoint = OutPoint {
+        txid: funding.txid(),
+        vout: 0,
+    };
+
+    // A spend of it that never reached the network. Its change is credited
+    // and, as a trusted self-send, counted confirmed and spendable.
+    let dead = Transaction {
+        version: 2,
+        lock_time: 0,
+        input: vec![TxIn {
+            previous_output: funding_outpoint,
+            script_sig: ScriptBuf::new(),
+            sequence: u32::MAX,
+            witness: Witness::default(),
+        }],
+        output: vec![TxOut {
+            value: TX_AMOUNT - 1_000,
+            script_pubkey: addr.script_pubkey(),
+        }],
+        special_transaction_payload: None,
+    };
+    manager.process_mempool_transaction(&dead, None).await;
+
+    let mut rx = manager.subscribe_events();
+    let outcome = manager
+        .abandon_transaction(&wallet_id, dead.txid(), &BTreeMap::new())
+        .expect("the wallet exists");
+    assert!(outcome.abandoned.contains(&dead.txid()));
+
+    let events = drain_events(&mut rx);
+    let swept = events
+        .iter()
+        .find_map(|event| match event {
+            WalletEvent::TransactionsSwept {
+                wallet_id: wid,
+                txids,
+                superseded_by,
+                released_outpoints,
+                balance,
+                ..
+            } => Some((wid, txids, superseded_by, released_outpoints, balance)),
+            _ => None,
+        })
+        .unwrap_or_else(|| panic!("an abandon must emit a removal, got {:?}", events));
+
+    assert_eq!(swept.0, &wallet_id);
+    assert_eq!(swept.1, &vec![dead.txid()], "the abandoned transaction is named");
+    // No competing transaction exists — that is what an abandon is — so the
+    // root stands in as its own provenance.
+    assert_eq!(swept.2, &dead.txid());
+    assert_eq!(
+        swept.3,
+        &vec![funding_outpoint],
+        "the coin the dead transaction claimed comes free"
+    );
+    // And the balance carried is the post-abandon one: the phantom change is
+    // gone, the real coin is back.
+    assert_eq!(swept.4.confirmed(), TX_AMOUNT);
+    assert_eq!(swept.4.spendable(), TX_AMOUNT);
+}
+
 // ---------------------------------------------------------------------------
 // ChainLock path
 // ---------------------------------------------------------------------------

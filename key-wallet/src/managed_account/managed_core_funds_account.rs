@@ -71,13 +71,24 @@ pub struct ManagedCoreFundsAccount {
 }
 
 /// What [`ManagedCoreFundsAccount::apply_abandon`] removed from one account.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct AbandonRemoval {
     /// UTXOs the abandoned transactions had contributed.
     pub utxos: usize,
     /// Transaction records actually dropped — a txid the account never held
     /// removes nothing.
     pub records: usize,
+    /// Outpoints released from `spent_outpoints` as a side effect: inputs the
+    /// abandoned transactions claimed that no surviving record claims too.
+    /// Exactly [`ManagedCoreFundsAccount::release_spent_marks`]' return value,
+    /// minus outpoints belonging to the abandoned transactions themselves —
+    /// those are outputs of records being deleted for never having existed,
+    /// not coins becoming spendable again.
+    ///
+    /// Carried out for the same reason [`ConflictSweep`] carries its own: the
+    /// freed-versus-still-spent distinction is computed nowhere else, so a
+    /// caller mirroring wallet state cannot recover it afterwards.
+    pub released_outpoints: Vec<OutPoint>,
 }
 
 /// What [`ManagedCoreFundsAccount::drop_conflicted_transactions`] removed
@@ -459,16 +470,15 @@ impl ManagedCoreFundsAccount {
     ///
     /// Drops the outputs those transactions contributed and their records, and
     /// releases the outpoints they spent from `spent_outpoints` so the coins
-    /// become eligible for rediscovery.
+    /// become spendable again.
     ///
-    /// The released parents are deliberately **not** re-inserted into `utxos`.
-    /// `update_utxos` discards the `Utxo` when it removes a spent parent, and
-    /// `InputDetail` keeps only index/value/address, so the flags that decide
-    /// which balance bucket a restored coin belongs in are not retained
-    /// anywhere. Inventing them would be a guess. What these coins genuinely
-    /// are is unspent on chain — the abandoned transaction never reached the
-    /// network — so the correct source of truth is a rescan, which releasing
-    /// them from `spent_outpoints` now permits.
+    /// The released outpoints are *reported*, not re-credited here. Whether a
+    /// coin one account released is genuinely free is a wallet-level question
+    /// — a surviving record in a sibling account may still claim it — so the
+    /// re-credit runs once, from
+    /// [`ManagedWalletInfo::abandon_transaction_with_spends`], after the
+    /// per-account answers have been reconciled. See
+    /// [`Self::recredit_released_outpoints`].
     ///
     /// Reservations are deliberately left alone. A recorded transaction has
     /// already handed its inputs from the ephemeral set to `spent_outpoints`
@@ -499,8 +509,18 @@ impl ManagedCoreFundsAccount {
                 freed.extend(record.transaction.input.iter().map(|input| input.previous_output));
             }
         }
+        let mut released_outpoints = Vec::new();
         if records > 0 {
-            self.release_spent_marks(&freed);
+            // Same filter the conflict sweep applies: an outpoint belonging to
+            // one of the abandoned transactions is an output of a record being
+            // deleted for never having existed, not a coin coming free.
+            // Reporting it would re-credit money that never was.
+            released_outpoints = self
+                .release_spent_marks(&freed)
+                .into_iter()
+                .filter(|outpoint| !abandoned.contains(&outpoint.txid))
+                .collect();
+            released_outpoints.sort_unstable();
         }
 
         if utxos > 0 {
@@ -509,7 +529,139 @@ impl ManagedCoreFundsAccount {
         AbandonRemoval {
             utxos,
             records,
+            released_outpoints,
         }
+    }
+
+    /// Re-credit the coins `released` names, for each one this account can
+    /// prove it owns and still holds unspent.
+    ///
+    /// A sweep or an abandon removes the record that claimed a coin and drops
+    /// the coin's spent-mark, but nothing puts the coin back in `utxos`:
+    /// `update_utxos` is the only insert site and it runs on a *new sighting*,
+    /// which a re-delivery of an already-known funding transaction is not.
+    /// Left there, `WalletEvent::TransactionsSwept` tells consumers the coin is
+    /// spendable again while this library's own coin selection cannot see it —
+    /// the wallet and its mirror disagree, in the direction that strands funds.
+    ///
+    /// The coin is rebuilt from the funding transaction's own retained record,
+    /// never invented. The sweep removes only the loser, so the parent record
+    /// is normally still here, and it carries the exact `TxOut` plus this
+    /// account's own classification of that output. Every field that decides
+    /// which balance bucket the coin lands in comes from there:
+    ///
+    /// * `txout` — `record.transaction.output[vout]`, exact script and value.
+    /// * `address` — the `OutputDetail` this account built for that index.
+    /// * `height` / `is_coinbase` / `is_confirmed` / `is_instantlocked` — the
+    ///   parent record's context and transaction, the same sources
+    ///   `update_utxos` reads.
+    ///
+    /// Two flags are not recoverable and are left at their defaults rather
+    /// than guessed, both conservatively:
+    ///
+    /// * `is_trusted` — `update_utxos` derives it from a wallet-wide view of
+    ///   the parent's *own* inputs, which are gone from `utxos` by now.
+    ///   `false` files an unconfirmed coin under `unconfirmed` instead of
+    ///   `confirmed`; understating a balance is the safe direction, and a
+    ///   confirmed parent does not depend on the flag at all.
+    /// * `is_locked` — a user-set spending lock that lived on the removed
+    ///   `Utxo` and nowhere else. `false` matches what a rescan re-delivering
+    ///   the funding transaction would produce, so this does not introduce a
+    ///   new divergence.
+    ///
+    /// Ownership is proven, not assumed: the funding record must be held by
+    /// *this* account and must classify the output as
+    /// [`OutputRole::Received`] or [`OutputRole::Change`]. That is this
+    /// account's own answer, computed when the transaction was recorded, so a
+    /// pooled transaction paying several accounts re-credits each output
+    /// exactly once, in the account that owns it. Outpoints whose funding
+    /// record this account does not hold are skipped in silence — another
+    /// account may own them, and the caller runs this over all of them.
+    ///
+    /// Skips anything already in `utxos` (nothing to restore) and anything
+    /// still in `spent_outpoints` (a surviving record here claims it, so
+    /// `release_spent_marks` deliberately kept the mark).
+    ///
+    /// **Residual.** A funding transaction that was chainlock-finalized keeps
+    /// only its txid under the default `keep-finalized-transactions = off`:
+    /// its record — and with it the `TxOut` — is gone, so its coins cannot be
+    /// rebuilt and stay absent until a rescan deep enough to re-fetch the
+    /// block, which is above this layer. Since Dash chainlocks within a block
+    /// or two, that is the normal posture for older coins. This is the one
+    /// case where the event still outruns in-core state, and it is bounded by
+    /// the same feature flag that causes it.
+    ///
+    /// Returns the outpoints actually re-credited.
+    pub(crate) fn recredit_released_outpoints(&mut self, released: &[OutPoint]) -> Vec<OutPoint> {
+        if released.is_empty() {
+            return Vec::new();
+        }
+        // Only account types that hold coins at all. Mirrors `update_utxos`,
+        // which is a no-op for everything else, so this cannot introduce a
+        // UTXO into an account that would never have had one.
+        if !matches!(
+            self.keys.managed_account_type(),
+            ManagedAccountType::Standard { .. }
+                | ManagedAccountType::CoinJoin { .. }
+                | ManagedAccountType::DashpayReceivingFunds { .. }
+                | ManagedAccountType::DashpayExternalAccount { .. }
+        ) {
+            return Vec::new();
+        }
+
+        let mut recredited = Vec::new();
+        for outpoint in released {
+            if self.utxos.contains_key(outpoint) || self.spent_outpoints.contains(outpoint) {
+                continue;
+            }
+            let Some(record) = self.keys.transactions().get(&outpoint.txid) else {
+                continue;
+            };
+            // This account's own verdict on that output, from when it recorded
+            // the transaction. Anything but a coin of ours is not ours to
+            // restore.
+            let Some(detail) =
+                record.output_details.iter().find(|detail| detail.index == outpoint.vout).filter(
+                    |detail| matches!(detail.role, OutputRole::Received | OutputRole::Change),
+                )
+            else {
+                continue;
+            };
+            let Some(address) = detail.address.clone() else {
+                continue;
+            };
+            let Some(output) = record.transaction.output.get(outpoint.vout as usize) else {
+                continue;
+            };
+            debug_assert_eq!(
+                detail.value, output.value,
+                "output detail and transaction disagree on the value of {}",
+                outpoint
+            );
+
+            let txout = dashcore::TxOut {
+                value: output.value,
+                script_pubkey: output.script_pubkey.clone(),
+            };
+            let height = record.context.block_info().map_or(0, |info| info.height);
+            let mut utxo =
+                Utxo::new(*outpoint, txout, address, height, record.transaction.is_coin_base());
+            utxo.is_confirmed = record.context.confirmed();
+            utxo.is_instantlocked = matches!(record.context, TransactionContext::InstantSend(_));
+            self.utxos.insert(*outpoint, utxo);
+            recredited.push(*outpoint);
+
+            tracing::info!(
+                %outpoint,
+                funding_txid = %outpoint.txid,
+                "Re-credited a coin freed by a removed spend"
+            );
+        }
+
+        if !recredited.is_empty() {
+            self.keys.bump_monitor_revision();
+        }
+        recredited
     }
 
     /// Drop the outputs of any recorded unconfirmed transaction that `tx`
@@ -539,20 +691,24 @@ impl ManagedCoreFundsAccount {
     /// actually spent them.
     ///
     /// A loser may also spend inputs the winner does not. Those coins are
-    /// freed from `spent_outpoints` below, but they cannot be re-credited
-    /// here: `update_utxos` discarded their `Utxo` — and its flags — when the
-    /// loser was recorded, and `InputDetail` keeps only index/value/address.
-    /// The release is what makes them recoverable: a rescan re-delivering the
-    /// funding transaction inserts them again. Until that rescan they are
-    /// absent from the balance.
+    /// freed from `spent_outpoints` below and reported in the result, but they
+    /// are not re-credited *here*: whether a coin one account released is
+    /// genuinely free is a wallet-level question, since a surviving record in
+    /// a sibling account may still claim it. The re-credit therefore runs once
+    /// from [`ManagedWalletInfo::sweep_conflicts`], after the per-account
+    /// answers have been reconciled — see
+    /// [`Self::recredit_released_outpoints`], which rebuilds each coin from
+    /// its funding transaction's own retained record.
     ///
     /// That recovery has a boundary worth knowing. A funding transaction that
-    /// was chainlock-finalized keeps only its txid, so `has_transaction` stays
-    /// true and re-delivery is not a new sighting — `confirm_transaction`
-    /// returns before `update_utxos`, the only production insert site, and the
-    /// coin does not come back. Recovering it needs a rescan deep enough to
-    /// re-fetch the block, which is above this layer. Since Dash chainlocks
-    /// within a block or two, that is the normal posture for older coins.
+    /// was chainlock-finalized keeps only its txid under the default
+    /// `keep-finalized-transactions = off`, so its `TxOut` is gone and the
+    /// coin cannot be rebuilt from anything the wallet still holds; nor can
+    /// re-delivery insert it, since `has_transaction` stays true and
+    /// `confirm_transaction` returns before `update_utxos`, the only other
+    /// insert site. Recovering it needs a rescan deep enough to re-fetch the
+    /// block, which is above this layer. Since Dash chainlocks within a block
+    /// or two, that is the normal posture for older coins.
     ///
     /// Scope: account-local. A loser recorded here has its outputs dropped
     /// here; a loser whose change landed in a *different* account is not

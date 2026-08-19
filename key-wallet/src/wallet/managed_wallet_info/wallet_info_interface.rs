@@ -14,6 +14,7 @@ use crate::transaction_checking::TransactionContext;
 use crate::transaction_checking::WalletTransactionChecker;
 use crate::wallet::managed_wallet_info::transaction_building::AccountTypePreference;
 use crate::wallet::managed_wallet_info::TransactionRecord;
+use crate::wallet::managed_wallet_info::WalletConflictSweep;
 use crate::wallet::ManagedWalletInfo;
 use crate::{Network, Utxo, Wallet, WalletCoreBalance};
 use dashcore::address::Payload;
@@ -43,6 +44,28 @@ pub struct ApplyChainLockOutcome {
     /// call. `false` when the incoming chainlock's height did not
     /// exceed the already-stored chainlock's height.
     pub metadata_advanced: bool,
+}
+
+/// Outcome of [`WalletInfoInterface::mark_instant_send_utxos`].
+///
+/// Captures both effects of applying an InstantSend lock so the manager-level
+/// emitter (in `key-wallet-manager`) can fire the removal event the sweep
+/// earns as well as `WalletEvent::TransactionInstantLocked`. Collapsing this
+/// to a bare "something changed" flag is what left the lock path emitting only
+/// the additive event while the sweep silently deleted records and freed
+/// coins: a consumer mirroring wallet state kept the dead rows and replayed
+/// them on its next load.
+#[derive(Debug, Clone, Default)]
+pub struct InstantSendLockOutcome {
+    /// Whether wallet state changed in any way — a UTXO newly marked
+    /// InstantSend-locked, a record's context rewritten, or a conflicting
+    /// spend swept. Callers use it to decide whether to refresh balances and
+    /// emit at all. An outgoing transaction can own no UTXOs of ours and
+    /// still change state, so this is broader than "a UTXO was marked".
+    pub changed: bool,
+    /// What the lock's conflict sweep removed, if anything. Empty when the
+    /// lock settled inputs nothing else claimed — the ordinary case.
+    pub sweep: WalletConflictSweep,
 }
 
 /// Trait that wallet info types must implement to work with WalletManager
@@ -267,18 +290,18 @@ pub trait WalletInfoInterface: Sized + WalletTransactionChecker + ManagedAccount
         new_height: CoreBlockHeight,
     ) -> Vec<TransactionRecord>;
 
-    /// Mark UTXOs for a transaction as InstantSend-locked across all accounts
-    /// and update the corresponding transaction record context.
-    /// Returns `true` if any UTXO was newly marked.
     /// Apply an InstantSend lock: mark the transaction's UTXOs, rewrite its
     /// record context, and drop any competing spend the lock now settles.
     ///
-    /// Returns whether wallet state changed in any of those ways — callers
-    /// use it to refresh balances and to decide whether to emit
-    /// `TransactionInstantLocked`. An outgoing transaction can own no UTXOs
-    /// of ours and still change state by rewriting its context or by the
-    /// sweep removing a loser, so this is broader than "a UTXO was marked".
-    fn mark_instant_send_utxos(&mut self, txid: &Txid, lock: &InstantLock) -> bool;
+    /// Returns both effects — see [`InstantSendLockOutcome`]. The sweep half
+    /// must be carried out to the caller, not just folded into a changed flag:
+    /// it names records that were deleted and coins that came free, and
+    /// nothing else in the event surface reports a removal.
+    fn mark_instant_send_utxos(
+        &mut self,
+        txid: &Txid,
+        lock: &InstantLock,
+    ) -> InstantSendLockOutcome;
 
     /// Return the aggregated monitor revision across all accounts.
     /// Increments whenever the monitored address set changes.
@@ -583,9 +606,13 @@ impl WalletInfoInterface for ManagedWalletInfo {
         matured
     }
 
-    fn mark_instant_send_utxos(&mut self, txid: &Txid, lock: &InstantLock) -> bool {
+    fn mark_instant_send_utxos(
+        &mut self,
+        txid: &Txid,
+        lock: &InstantLock,
+    ) -> InstantSendLockOutcome {
         if !self.instant_send_locks.insert(*txid) {
-            return false;
+            return InstantSendLockOutcome::default();
         }
         let mut any_changed = false;
         // Kept for the sweep below: it needs the locked transaction's inputs,
@@ -609,15 +636,18 @@ impl WalletInfoInterface for ManagedWalletInfo {
         // already tracked (`process_instant_send_lock`), and it had no sweep —
         // the one in `check_core_transaction` is only reachable on a first
         // sighting that already carries the lock.
-        let swept = locked_transaction.is_some_and(|tx| {
-            !self.sweep_conflicts(&tx, &TransactionContext::InstantSend(lock.clone())).is_empty()
-        });
-        if any_changed && !swept {
+        let sweep = locked_transaction
+            .map(|tx| self.sweep_conflicts(&tx, &TransactionContext::InstantSend(lock.clone())))
+            .unwrap_or_default();
+        if any_changed && sweep.is_empty() {
             // `sweep_conflicts` recomputes on its own when it removes
             // something, so this only covers the marking-only case.
             self.update_balance();
         }
-        any_changed || swept
+        InstantSendLockOutcome {
+            changed: any_changed || !sweep.is_empty(),
+            sweep,
+        }
     }
 
     fn monitor_revision(&self) -> u64 {

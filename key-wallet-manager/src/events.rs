@@ -222,10 +222,17 @@ pub enum WalletEvent {
         /// full balance after the change — not a delta.
         account_balances: BTreeMap<AccountType, WalletCoreBalance>,
     },
-    /// Transactions were removed from the wallet: each was a recorded spend
-    /// that a later, final transaction provably beat to one of its inputs, so
-    /// it can never confirm. Their outputs are gone from the UTXO set and
-    /// their records deleted.
+    /// Transactions were removed from the wallet because they can never
+    /// confirm. Their outputs are gone from the UTXO set and their records
+    /// deleted. Two paths produce this:
+    ///
+    /// * **Swept** — a later, final transaction (in a block, or InstantSend
+    ///   locked) provably beat them to one of their inputs.
+    /// * **Abandoned** — the caller asserted the root never reached the
+    ///   network, via [`crate::WalletManager::abandon_transaction`], and the
+    ///   removal cascaded to everything built on its change. There is no
+    ///   competing transaction in this case, by construction: it is the one
+    ///   the sweep cannot reach.
     ///
     /// The only removal-shaped event on this bus. A consumer mirroring wallet
     /// state to disk must act on it — every other variant is additive, so
@@ -235,8 +242,22 @@ pub enum WalletEvent {
         /// ID of the affected wallet.
         wallet_id: WalletId,
         /// Transactions removed. Delete these rows and any UTXO they created.
+        ///
+        /// On the abandon path this is everything the abandon *asked* for,
+        /// which can include a txid the in-memory wallet held no record for.
+        /// That is deliberate: a mirror can hold rows the load path never
+        /// restored — that asymmetry is exactly why
+        /// `abandon_transaction_with_spends` takes an external spend view —
+        /// so the delete has to be driven by the requested set, not by what
+        /// happened to be in memory.
         txids: Vec<Txid>,
         /// The transaction whose arrival settled the inputs, for provenance.
+        ///
+        /// On the abandon path there is no such transaction, and this carries
+        /// the abandoned root itself — which therefore also appears in
+        /// `txids`. Consumers must not assume it names a row that survives, or
+        /// indeed any row at all: on the sweep path it need not be
+        /// wallet-relevant either (see `released_outpoints`).
         superseded_by: Txid,
         /// Outpoints the sweep released: inputs the removed transactions
         /// claimed to spend that no surviving record spends too (a loser
@@ -271,6 +292,16 @@ pub enum WalletEvent {
         /// reported released though it is spent on chain. The inputs of a
         /// pruned record survive nowhere else, so this cannot be resolved at
         /// this layer.
+        ///
+        /// The wallet re-credits these coins to its own UTXO set as it emits
+        /// them, so "spendable again" means the same thing on both sides of
+        /// this event. One case cannot be: a funding transaction pruned to
+        /// its txid by a chainlock keeps no `TxOut` to rebuild the coin from,
+        /// so it stays absent from coin selection until a rescan re-fetches
+        /// the block, even though it is named here. Consumers are unaffected
+        /// — their own record of the coin is what they restore — but a caller
+        /// reading this library's balance back will see the difference. See
+        /// `ManagedCoreFundsAccount::recredit_released_outpoints`.
         released_outpoints: Vec<OutPoint>,
         /// Wallet balance after the removal.
         balance: WalletCoreBalance,

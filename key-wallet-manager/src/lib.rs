@@ -718,6 +718,16 @@ impl WalletManager<ManagedWalletInfo> {
     /// are refused, but the judgement otherwise belongs to the caller that
     /// owns broadcast policy.
     ///
+    /// Emits [`WalletEvent::TransactionsSwept`] naming the abandoned
+    /// transactions and the coins their removal freed, so a consumer mirroring
+    /// wallet state deletes the same rows. That is the only removal-shaped
+    /// event on the bus; without it the mirror keeps records for transactions
+    /// this wallet has decided never existed and replays them on its next
+    /// load, re-creating the phantom balance the abandon just removed.
+    /// `superseded_by` carries `root` — an abandon has no competing
+    /// transaction to attribute the removal to, which is precisely why it
+    /// exists (see the field's documentation).
+    ///
     /// Returns `None` when the wallet is unknown.
     pub fn abandon_transaction(
         &mut self,
@@ -725,18 +735,39 @@ impl WalletManager<ManagedWalletInfo> {
         root: Txid,
         external_spends: &BTreeMap<OutPoint, Txid>,
     ) -> Option<AbandonOutcome> {
+        // Snapshot before the abandon so the event can carry the diff: the
+        // cached per-account balances are still the pre-abandon ones here.
+        let prior = self.wallet_infos.get(wallet_id)?.account_balances();
+
         let info = self.get_wallet_info_mut(wallet_id)?;
         let outcome = info.abandon_transaction_with_spends(root, external_spends);
-        if !outcome.is_empty() {
-            info.update_balance();
-            tracing::info!(
-                %root,
-                abandoned = outcome.abandoned.len(),
-                records_removed = outcome.records_removed,
-                utxos_removed = outcome.utxos_removed,
-                "Abandoned a dead transaction and everything built on it"
-            );
+        if outcome.is_empty() {
+            return Some(outcome);
         }
+        info.update_balance();
+        tracing::info!(
+            %root,
+            abandoned = outcome.abandoned.len(),
+            records_removed = outcome.records_removed,
+            utxos_removed = outcome.utxos_removed,
+            released_outpoints = outcome.released_outpoints.len(),
+            "Abandoned a dead transaction and everything built on it"
+        );
+
+        // Read the post-abandon balances out while the borrow is still live,
+        // so the emit below needs no second lookup that could fail after the
+        // wallet has already been mutated.
+        let balance = info.balance();
+        let account_balances = events::diff_account_balances(&prior, &info.account_balances());
+        self.emit_event(WalletEvent::TransactionsSwept {
+            wallet_id: *wallet_id,
+            txids: outcome.abandoned.iter().copied().collect(),
+            superseded_by: root,
+            released_outpoints: outcome.released_outpoints.clone(),
+            balance,
+            account_balances,
+        });
+
         Some(outcome)
     }
 

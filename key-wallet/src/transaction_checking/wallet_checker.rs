@@ -2069,14 +2069,20 @@ mod tests {
         assert_eq!(ctx.managed_wallet.balance.spendable(), change_amount);
     }
 
-    /// The rescan recovery above has a boundary: a funding transaction that
-    /// was chainlock-finalized keeps only its txid, so re-delivering it is not
-    /// a new sighting and never reaches the only production UTXO insert site.
-    /// The coin stays absent. Documented rather than fixed — recovering it
-    /// needs a rescan deep enough to re-fetch the block, which is above this
-    /// layer.
+    /// The in-core restore above has one boundary, and it is the pruning of
+    /// finalized records, not the restore itself.
+    ///
+    /// Under the default `keep-finalized-transactions = off` a
+    /// chainlock-finalized funding transaction keeps only its txid: its
+    /// `TxOut` is gone, so the released coin cannot be rebuilt from anything
+    /// the wallet still holds, and re-delivery cannot insert it either
+    /// (`has_transaction` stays true, so `confirm_transaction` returns before
+    /// `update_utxos`). The coin stays absent until a rescan deep enough to
+    /// re-fetch the block, which is above this layer. With the feature on
+    /// nothing is pruned and the restore works normally — which is what pins
+    /// the pruning as the cause.
     #[tokio::test]
-    async fn test_rescan_recovery_does_not_reach_a_finalized_funding_transaction() {
+    async fn test_restore_cannot_reach_a_chainlock_pruned_funding_record() {
         let mut ctx = TestWalletContext::new_random();
         let external_address = Address::p2pkh(
             &dashcore::PublicKey::from_slice(&[0x02; 33]).expect("pubkey"),
@@ -2123,16 +2129,33 @@ mod tests {
         };
         ctx.check_transaction(&spend, TransactionContext::Mempool).await;
 
-        ctx.managed_wallet.abandon_transaction(spend.txid());
+        let outcome = ctx.managed_wallet.abandon_transaction(spend.txid());
         ctx.managed_wallet.update_balance();
 
-        // Re-delivering the funding block does not bring the coin back.
+        // Either way the coin is *reported* free: the release is decided from
+        // the spent-mark bookkeeping, which pruning does not touch.
+        let funding_outpoint = OutPoint {
+            txid: funding_tx.txid(),
+            vout: 0,
+        };
+        assert_eq!(outcome.released_outpoints, vec![funding_outpoint]);
+
+        // Re-delivering the funding block cannot help either — this is the
+        // path the restore used to depend on.
         ctx.check_transaction(&funding_tx, finalized).await;
+
+        #[cfg(not(feature = "keep-finalized-transactions"))]
         assert_eq!(
             ctx.managed_wallet.balance.confirmed(),
             0,
-            "a finalized funding record blocks the redelivery path this \
-             recovery depends on"
+            "a chainlock-pruned funding record keeps no output to rebuild the \
+             coin from, and blocks the redelivery path too"
+        );
+        #[cfg(feature = "keep-finalized-transactions")]
+        assert_eq!(
+            ctx.managed_wallet.balance.confirmed(),
+            1_000_000,
+            "with the record retained there is nothing to stop the restore"
         );
     }
 
@@ -2661,11 +2684,17 @@ mod tests {
     }
 
     /// A loser can spend inputs the winner does not. Sweeping it frees those
-    /// coins from the spent set, but their `Utxo` values were discarded when
-    /// the loser was recorded — so the sweep alone cannot put them back, and
-    /// the coins must be recoverable by the rescan the release enables.
+    /// coins from the spent set — and must put them back in the UTXO set in
+    /// the same breath.
+    ///
+    /// The sweep reports them released, which tells a consumer to mark them
+    /// spendable again; if this library's own coin selection could not see
+    /// them until some later rescan, the two would disagree about the same
+    /// coin, in the direction that strands funds. Nothing has to be invented
+    /// to avoid that: the sweep removes the *loser*, so the funding
+    /// transaction's record — and with it the exact `TxOut` — is still here.
     #[tokio::test]
-    async fn test_a_swept_losers_extra_input_is_recoverable_by_rescan() {
+    async fn test_a_swept_losers_extra_input_is_recredited_in_core() {
         let mut ctx = TestWalletContext::new_random();
         let external_address = Address::p2pkh(
             &dashcore::PublicKey::from_slice(&[0x02; 33]).expect("pubkey"),
@@ -2744,10 +2773,23 @@ mod tests {
             )
             .await;
 
-        // The loser is gone, and B is not credited — its `Utxo` was
-        // discarded when the loser was recorded and cannot be invented.
+        // The loser is gone, and B is credited again — rebuilt from the
+        // funding transaction's own retained record, which the sweep never
+        // touched.
         assert!(!ctx.bip44_account().transactions().contains_key(&loser.txid()));
-        assert!(!ctx.bip44_account().utxos.contains_key(&coin_b));
+        let restored = ctx
+            .bip44_account()
+            .utxos
+            .get(&coin_b)
+            .expect("the sweep must put the loser's extra input back");
+        assert_eq!(restored.txout.value, 400_000, "rebuilt from the funding output, not guessed");
+        assert_eq!(restored.address, ctx.receive_address, "and from its own address");
+        assert!(restored.is_confirmed, "the funding transaction is in a block");
+        assert!(!restored.is_locked, "a restored coin is selectable");
+        assert!(
+            !ctx.bip44_account().utxos.contains_key(&coin_a),
+            "A is the winner's own input and stays spent"
+        );
 
         // The event carries exactly what was released: B, and not A — A is
         // the winner's own input, still spent on chain by `winner` itself.
@@ -2757,15 +2799,157 @@ mod tests {
             "the sweep must name B as released and must not name A"
         );
 
-        // But B was freed from the spent set, so re-delivering the funding
-        // block restores it. That is what makes the loss recoverable rather
-        // than permanent.
-        ctx.check_transaction(&funding_tx, funding_context).await;
-        assert!(
-            ctx.bip44_account().utxos.contains_key(&coin_b),
-            "a rescan must be able to rediscover the loser's extra input"
-        );
+        // The balance agrees with the UTXO set: coin selection can spend B
+        // again, without waiting for a rescan.
         assert_eq!(ctx.managed_wallet.balance.confirmed(), 499_000, "B plus the winner's change");
+        assert_eq!(
+            ctx.managed_wallet.balance.spendable(),
+            499_000,
+            "the released coin has to be spendable, not merely reported free"
+        );
+
+        // Re-delivering the funding block changes nothing — the restore is
+        // idempotent, not a race against the rescan it used to depend on.
+        ctx.check_transaction(&funding_tx, funding_context).await;
+        assert!(ctx.bip44_account().utxos.contains_key(&coin_b));
+        assert_eq!(ctx.managed_wallet.balance.confirmed(), 499_000);
+    }
+
+    /// The restore must not undo dashpay/rust-dashcore#649.
+    ///
+    /// A block spend of our coin that we could not attribute — the spender
+    /// pays only external addresses, and during an out-of-order rescan the
+    /// funding transaction had not been processed yet, so nothing matched —
+    /// leaves no record for `release_spent_marks` to answer from. It reports
+    /// the coin free, because from the live records it is. `update_utxos`
+    /// already refuses to credit such an output; the restore has to refuse
+    /// too, or coin selection is handed a coin the chain has spent.
+    #[tokio::test]
+    async fn test_the_restore_withholds_a_coin_seen_spent_in_a_block() {
+        let mut ctx = TestWalletContext::new_random();
+        let external_address = Address::p2pkh(
+            &dashcore::PublicKey::from_slice(&[0x02; 33]).expect("pubkey"),
+            Network::Testnet,
+        );
+
+        // The funding transaction pays us twice, but is not delivered yet.
+        let funding_tx = Transaction::dummy(&ctx.receive_address, 0..2, &[500_000, 400_000]);
+        let coin_a = OutPoint {
+            txid: funding_tx.txid(),
+            vout: 0,
+        };
+        let coin_b = OutPoint {
+            txid: funding_tx.txid(),
+            vout: 1,
+        };
+        let spend = |inputs: Vec<OutPoint>, change: Option<&Address>, sent: u64| Transaction {
+            version: 2,
+            lock_time: 0,
+            input: inputs
+                .into_iter()
+                .map(|previous_output| TxIn {
+                    previous_output,
+                    script_sig: ScriptBuf::new(),
+                    sequence: 0xffffffff,
+                    witness: dashcore::Witness::new(),
+                })
+                .collect(),
+            output: match change {
+                Some(change) => vec![
+                    TxOut {
+                        value: sent,
+                        script_pubkey: external_address.script_pubkey(),
+                    },
+                    TxOut {
+                        value: 99_000,
+                        script_pubkey: change.script_pubkey(),
+                    },
+                ],
+                None => vec![TxOut {
+                    value: sent,
+                    script_pubkey: external_address.script_pubkey(),
+                }],
+            },
+            special_transaction_payload: None,
+        };
+
+        // Out-of-order rescan: the block that spends B arrives first. Nothing
+        // of ours matches — B is not in `utxos` yet and the outputs are
+        // external — but the spend is remembered.
+        let thief = spend(vec![coin_b], None, 390_000);
+        let thief_result = ctx
+            .check_transaction(
+                &thief,
+                TransactionContext::InBlock(BlockInfo::new(
+                    99,
+                    BlockHash::from_slice(&[9u8; 32]).expect("hash"),
+                    1_699_999_000,
+                )),
+            )
+            .await;
+        assert!(!thief_result.is_relevant, "the precondition: we cannot attribute this spend");
+        assert!(
+            ctx.managed_wallet.observed_spent_outpoints().contains_key(&coin_b),
+            "the precondition: #649 remembered the spend"
+        );
+
+        // Now the funding block arrives. A is credited; B is not — #649.
+        ctx.check_transaction(
+            &funding_tx,
+            TransactionContext::InBlock(BlockInfo::new(
+                100,
+                BlockHash::from_slice(&[1u8; 32]).expect("hash"),
+                1_700_000_000,
+            )),
+        )
+        .await;
+        assert!(ctx.bip44_account().utxos.contains_key(&coin_a));
+        assert!(!ctx.bip44_account().utxos.contains_key(&coin_b), "#649 withheld it");
+
+        // A loser claims both coins, then a winner takes A and confirms,
+        // sweeping the loser. B is freed from the spent bookkeeping — no live
+        // record claims it — so the sweep reports it released.
+        let loser_change = ctx
+            .managed_wallet
+            .first_bip44_managed_account_mut()
+            .expect("account")
+            .next_change_address(Some(&ctx.xpub), true)
+            .expect("change address");
+        let loser = spend(vec![coin_a, coin_b], Some(&loser_change), 800_000);
+        ctx.check_transaction(&loser, TransactionContext::Mempool).await;
+
+        let winner_change = ctx
+            .managed_wallet
+            .first_bip44_managed_account_mut()
+            .expect("account")
+            .next_change_address(Some(&ctx.xpub), true)
+            .expect("change address");
+        let winner = spend(vec![coin_a], Some(&winner_change), 400_000);
+        let result = ctx
+            .check_transaction(
+                &winner,
+                TransactionContext::InBlock(BlockInfo::new(
+                    101,
+                    BlockHash::from_slice(&[2u8; 32]).expect("hash"),
+                    1_700_000_100,
+                )),
+            )
+            .await;
+        assert!(
+            result.released_outpoints.contains(&coin_b),
+            "the precondition: from the live records alone B looks free"
+        );
+
+        // The load-bearing assertion: reported free, still not credited.
+        assert!(
+            !ctx.bip44_account().utxos.contains_key(&coin_b),
+            "a coin seen spent in a block must never be restored to coin selection"
+        );
+        assert_eq!(
+            ctx.managed_wallet.balance.confirmed(),
+            99_000,
+            "only the winner's change; B contributes nothing"
+        );
     }
 
     /// A loser's change may already have funded further unconfirmed
@@ -3024,6 +3208,22 @@ mod tests {
             !result.released_outpoints.contains(&coin_b),
             "B is still claimed by the rival, whichever account noticed"
         );
+        // And the withholding has to hold for the UTXO set too, not just the
+        // report. Re-crediting a coin a surviving record still spends would
+        // hand coin selection a guaranteed double spend — the reason the
+        // restore runs only over the wallet-reconciled released set.
+        let bip32_account =
+            ctx.managed_wallet.first_bip32_managed_account().expect("BIP32 account");
+        for account in [ctx.bip44_account(), bip32_account] {
+            assert!(
+                !account.utxos.contains_key(&coin_a),
+                "A must not be re-credited: the winner spent it on chain"
+            );
+            assert!(
+                !account.utxos.contains_key(&coin_b),
+                "B must not be re-credited: the rival still claims it"
+            );
+        }
     }
 
     /// An InstantSend lock is final, so it settles the winner's inputs just as
@@ -3249,23 +3449,37 @@ mod tests {
                 tx.txid()
             );
         }
-        assert!(ctx.bip44_account().utxos.is_empty(), "no phantom output may survive the cascade");
+        // Every phantom output is gone, and the one real coin the chain
+        // consumed is back — rebuilt from the funding transaction's own
+        // retained record, which the abandon never touched. The chain never
+        // reached the network, so nothing ever spent that coin.
+        let funding_outpoint = OutPoint {
+            txid: funding_tx.txid(),
+            vout: 0,
+        };
+        assert_eq!(
+            ctx.bip44_account().utxos.keys().collect::<Vec<_>>(),
+            vec![&funding_outpoint],
+            "only the real funding coin may survive the cascade"
+        );
+        assert_eq!(
+            outcome.released_outpoints,
+            vec![funding_outpoint],
+            "and the outcome must name it, so a persistence mirror follows"
+        );
         // The load-bearing assertion. Trusted self-send change is bucketed as
-        // *confirmed*, so `unconfirmed() == 0` holds before the abandon too
-        // and proves nothing on its own.
+        // *confirmed*, so the phantom counted as confirmed too; the balance
+        // returning to exactly the funding value is what proves the phantoms
+        // are gone and the real coin is not.
         assert_eq!(
             ctx.managed_wallet.balance.confirmed(),
-            0,
-            "the phantom counts as confirmed, so that is where its absence must show"
+            funding_value,
+            "the phantoms counted as confirmed, so that is where their absence must show"
         );
         assert_eq!(ctx.managed_wallet.balance.unconfirmed(), 0);
 
-        // The real coin the chain consumed is released from the spent set, so
-        // a rescan can rediscover it — but only while its funding record is
-        // still live. A chainlock-finalized funding transaction keeps just its
-        // txid, so `has_transaction` stays true, `is_new` stays false, and
-        // `confirm_transaction` returns before reaching `update_utxos` — the
-        // only production insert site. See the sibling test below.
+        // Re-delivering the funding block changes nothing: the coin is
+        // already back, and the restore does not depend on a rescan.
         let rediscovered = ctx
             .check_transaction(
                 &funding_tx,
@@ -3277,11 +3491,7 @@ mod tests {
             )
             .await;
         assert!(rediscovered.is_relevant);
-        assert_eq!(
-            ctx.managed_wallet.balance.confirmed(),
-            funding_value,
-            "the funding coin comes back on rescan — the chain never spent it on chain"
-        );
+        assert_eq!(ctx.managed_wallet.balance.confirmed(), funding_value);
     }
 
     /// A transaction that loses a race for its inputs can never confirm, so
