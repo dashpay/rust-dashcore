@@ -31,6 +31,11 @@ const MAX_STANDARD_TX_INPUTS: usize = 500;
 /// Public so callers can reject an over-long payload before handing over a builder
 /// `add_op_return` would consume.
 pub const MAX_STANDARD_OP_RETURN_BYTES: usize = 80;
+/// Relay-policy limit on the NUMBER of OP_RETURN outputs in one transaction. Dash Core's
+/// `IsStandardTx` tallies data carriers into `nDataOut` and rejects `nDataOut > 1` with the
+/// `multi-op-return` reason, so a second data output makes the transaction unrelayable: no
+/// node accepts it and nothing ever mines it.
+pub const MAX_STANDARD_OP_RETURN_OUTPUTS: usize = 1;
 
 /// Calculate varint size for a given number
 fn varint_size(n: usize) -> usize {
@@ -446,6 +451,16 @@ impl TransactionBuilder {
             if p.credit_outputs.is_empty() {
                 return Err(BuilderError::NoOutputs);
             }
+            // An asset-lock build replaces the caller's outputs wholesale with the single burn
+            // that mirrors the payload credits (see the `tx_outputs` match below), and its data
+            // slot is spoken for by that burn. A memo handed to `add_op_return` would therefore
+            // be dropped without a word — the caller believes their data is on-chain when the
+            // broadcast transaction never carried it. Refuse the combination instead: an
+            // unsupported request must fail loudly, not silently succeed as something else.
+            // Checked before coin selection so nothing is selected or reserved.
+            if self.outputs.iter().any(|out| out.script_pubkey.is_op_return()) {
+                return Err(BuilderError::OpReturnOnAssetLock);
+            }
         } else if self.outputs.is_empty() && self.special_payload.is_none() {
             return Err(BuilderError::NoOutputs);
         }
@@ -617,6 +632,29 @@ impl TransactionBuilder {
             tx_outputs.push(TxOut {
                 value: change_amount,
                 script_pubkey: change_script_pubkey,
+            });
+        }
+
+        // Standardness: Dash Core's `IsStandardTx` tallies every OP_RETURN output into
+        // `nDataOut` and rejects the transaction as `multi-op-return` once that count passes
+        // one. Such a transaction is not merely suboptimal, it is unrelayable — every node
+        // drops it on receipt, so it never reaches a mempool and can never be mined.
+        //
+        // A drain makes that outcome expensive rather than merely annoying. It spends the
+        // ENTIRE balance and reserves its inputs, so the wallet is left pointing at a
+        // transaction that cannot confirm and cannot be replaced: the sweep path only reclaims
+        // inputs once a competing transaction confirms, and for something no node ever relayed
+        // no competitor can exist. Recovery takes an explicit abandon. Rejecting the build is
+        // the only outcome that leaves the balance spendable.
+        //
+        // Counted on the FINAL output set — after the asset-lock burn substitution and the
+        // change push — so this measures the shape that would actually go on the wire, exactly
+        // as a validating node counts it, and cannot drift if a later path adds a data output.
+        let data_outputs = tx_outputs.iter().filter(|out| out.script_pubkey.is_op_return()).count();
+        if data_outputs > MAX_STANDARD_OP_RETURN_OUTPUTS {
+            return Err(BuilderError::TooManyOpReturnOutputs {
+                count: data_outputs,
+                max: MAX_STANDARD_OP_RETURN_OUTPUTS,
             });
         }
 
@@ -929,6 +967,16 @@ pub enum BuilderError {
         len: usize,
         max: usize,
     },
+    /// More OP_RETURN outputs than relay policy accepts. Dash Core's `IsStandardTx` rejects
+    /// `nDataOut > 1` as `multi-op-return`, so the transaction would never relay.
+    TooManyOpReturnOutputs {
+        count: usize,
+        max: usize,
+    },
+    /// An OP_RETURN output was supplied alongside an asset-lock payload. The asset-lock build
+    /// replaces the caller's outputs with the credit-mirroring burn, which already occupies the
+    /// transaction's one standard data slot, so the memo cannot be carried.
+    OpReturnOnAssetLock,
 }
 
 impl fmt::Display for BuilderError {
@@ -960,6 +1008,25 @@ impl fmt::Display for BuilderError {
                 max,
             } => {
                 write!(f, "OP_RETURN payload too large: {len} bytes (max {max})")
+            }
+            Self::TooManyOpReturnOutputs {
+                count,
+                max,
+            } => {
+                write!(
+                    f,
+                    "Too many OP_RETURN data outputs: {count} (max {max}); Dash Core's \
+                     IsStandardTx rejects nDataOut > {max} as multi-op-return, so the \
+                     transaction would not relay"
+                )
+            }
+            Self::OpReturnOnAssetLock => {
+                write!(
+                    f,
+                    "OP_RETURN data outputs are not supported on an asset-lock transaction: its \
+                     one data output is the burn mirroring the payload credits, so a memo would \
+                     be silently dropped"
+                )
             }
         }
     }
@@ -2126,5 +2193,179 @@ mod tests {
             }
             other => panic!("expected the asset-lock payload, got {other:?}"),
         }
+    }
+
+    /// Relay policy allows ONE OP_RETURN per transaction: Dash Core's `IsStandardTx` rejects
+    /// `nDataOut > 1` as `multi-op-return`. The #928 drain guard counted only VALUE carriers,
+    /// so a second memo sailed past it and produced a transaction no node will accept — and a
+    /// drain spends the whole balance with its inputs reserved, leaving funds stranded behind a
+    /// transaction that can never confirm and has no competitor to displace it.
+    #[test]
+    fn test_drain_rejects_a_second_data_carrier() {
+        let ctx = TestWalletContext::new_random();
+        let account =
+            ctx.wallet.accounts.standard_bip44_accounts.get(&0).expect("BIP44 account").clone();
+        let mut funds = ManagedCoreFundsAccount::dummy_bip44();
+        let utxo = Utxo::dummy(0x01, 1_000_000, 100, false, true);
+        funds.utxos.insert(utxo.outpoint, utxo.clone());
+
+        let result = TransactionBuilder::new()
+            .set_current_height(200)
+            .add_funding(&mut funds, &account)
+            .add_output(&Address::dummy(Network::Testnet, 0), 1)
+            .add_op_return(b"=:ETH.ETH:0x1c7b17362c84287bd1184447e6dfeaf920c31bbe")
+            .expect("first memo within the ceiling")
+            .add_op_return(b"a second memo")
+            .expect("second memo within the ceiling")
+            .preserve_output_order()
+            .set_selection_strategy(SelectionStrategy::All)
+            .build_unsigned_reserved();
+
+        match result {
+            Err(BuilderError::TooManyOpReturnOutputs {
+                count,
+                max,
+            }) => {
+                assert_eq!(count, 2);
+                assert_eq!(max, MAX_STANDARD_OP_RETURN_OUTPUTS);
+                // The message must name the rule that rejects it, so an operator reading the
+                // error can match it against Dash Core's reject reason.
+                let rendered = BuilderError::TooManyOpReturnOutputs {
+                    count,
+                    max,
+                }
+                .to_string();
+                assert!(rendered.contains("multi-op-return"), "got: {rendered}");
+            }
+            other => panic!("expected a second data carrier to be rejected, got {other:?}"),
+        }
+
+        // Nothing was built, so nothing may be held: a rejected build that still reserved its
+        // inputs would strand the balance just as effectively as the unrelayable transaction.
+        assert!(funds.reservations().reserved(200).is_empty());
+    }
+
+    /// The standardness rule is not drain-specific — an ordinary send with two memos is just as
+    /// unrelayable, so the guard sits on the final output set rather than inside the drain arm.
+    #[test]
+    fn test_ordinary_send_rejects_a_second_data_carrier() {
+        let result = TransactionBuilder::new()
+            .set_current_height(200)
+            .add_inputs([Utxo::dummy(0, 1_000_000, 100, false, true)])
+            .set_change_address(Address::dummy(Network::Testnet, 1))
+            .add_output(&Address::dummy(Network::Testnet, 0), 500_000)
+            .add_op_return(b"memo one")
+            .expect("first memo within the ceiling")
+            .add_op_return(b"memo two")
+            .expect("second memo within the ceiling")
+            .build_unsigned_reserved();
+
+        assert!(
+            matches!(
+                result,
+                Err(BuilderError::TooManyOpReturnOutputs {
+                    count: 2,
+                    ..
+                })
+            ),
+            "expected a two-memo send to be rejected, got {result:?}"
+        );
+    }
+
+    /// A single data carrier is still fine on an ordinary send: the guard draws the line at the
+    /// relay limit, it does not ban memos outright.
+    #[test]
+    fn test_ordinary_send_still_allows_one_data_carrier() {
+        let memo = b"=:ETH.ETH:0xabc";
+        let (tx, _fee, _reservation) = TransactionBuilder::new()
+            .set_current_height(200)
+            .add_inputs([Utxo::dummy(0, 1_000_000, 100, false, true)])
+            .set_change_address(Address::dummy(Network::Testnet, 1))
+            .add_output(&Address::dummy(Network::Testnet, 0), 500_000)
+            .add_op_return(memo)
+            .expect("memo within the ceiling")
+            .build_unsigned_reserved()
+            .expect("one data carrier builds");
+
+        assert_eq!(
+            tx.output.iter().filter(|o| o.script_pubkey.is_op_return()).count(),
+            1,
+            "the single memo survives"
+        );
+        assert!(tx.output.iter().any(|o| o.script_pubkey == op_return_script(memo)));
+    }
+
+    /// An asset-lock build swaps the caller's outputs for the credit-mirroring burn, so a memo
+    /// handed to `add_op_return` used to vanish without a word: the build succeeded and the
+    /// caller believed their data was on-chain. Memo-on-asset-lock is unsupported; the silent
+    /// drop was the defect, so it must surface as a typed error.
+    #[test]
+    fn test_asset_lock_rejects_an_op_return_memo() {
+        let credit_script = Address::dummy(Network::Testnet, 14).script_pubkey();
+        let build = |strategy: SelectionStrategy| {
+            TransactionBuilder::new()
+                .set_current_height(200)
+                .add_inputs([Utxo::dummy(0, 1_000_000, 100, false, true)])
+                .set_change_address(Address::dummy(Network::Testnet, 1))
+                .add_op_return(b"maya-memo")
+                .expect("memo within the ceiling")
+                .set_special_payload(TransactionPayload::AssetLockPayloadType(AssetLockPayload {
+                    version: 1,
+                    credit_outputs: vec![TxOut {
+                        value: 100_000,
+                        script_pubkey: credit_script.clone(),
+                    }],
+                }))
+                .set_selection_strategy(strategy)
+                .build_unsigned_reserved()
+        };
+
+        // Both the drain and the ordinary asset lock discard `self.outputs`, so both must refuse.
+        for strategy in [SelectionStrategy::All, SelectionStrategy::BranchAndBound] {
+            let result = build(strategy);
+            assert!(
+                matches!(result, Err(BuilderError::OpReturnOnAssetLock)),
+                "expected {strategy:?} asset lock to reject the memo, got {result:?}"
+            );
+        }
+
+        let rendered = BuilderError::OpReturnOnAssetLock.to_string();
+        assert!(rendered.contains("asset-lock"), "got: {rendered}");
+    }
+
+    /// Pins the DEFAULT (BIP-69) output order for a drain carrying a memo. All four #928 tests
+    /// called `preserve_output_order`, leaving the shape callers get by default untested.
+    ///
+    /// BIP-69 sorts by value ascending, so the zero-value data carrier lands at VOUT0 and the
+    /// destination follows. That is intended and is left as-is: output order carries no
+    /// consensus or relay meaning — `IsStandardTx` counts data outputs but never inspects their
+    /// position — and no consumer reads the memo positionally (`add_op_return` has no call site
+    /// outside this module, and the FFI does not expose it). A caller that needs a specific
+    /// layout, e.g. a vault expecting VOUT0, opts into `preserve_output_order` as the MAYA-style
+    /// test above does. This test exists so that shape changes deliberately rather than silently.
+    #[test]
+    fn test_drain_default_output_order_places_the_zero_value_memo_first() {
+        let vault = Address::dummy(Network::Testnet, 0);
+        let memo = b"=:ETH.ETH:0x1c7b17362c84287bd1184447e6dfeaf920c31bbe";
+
+        let (tx, fee, _reservation) = TransactionBuilder::new()
+            .set_current_height(200)
+            .add_inputs([Utxo::dummy(0, 100_000, 100, false, true)])
+            .add_output(&vault, 1) // ignored by a drain
+            .add_op_return(memo)
+            .expect("memo within the OP_RETURN ceiling")
+            .set_selection_strategy(SelectionStrategy::All)
+            .build_unsigned_reserved()
+            .expect("a default-ordered drain with a data carrier builds");
+
+        assert_eq!(tx.output.len(), 2, "vault + memo, no change");
+        // VOUT0 is the zero-value memo: BIP-69 orders by value, and 0 sorts first.
+        assert_eq!(tx.output[0].value, 0);
+        assert_eq!(tx.output[0].script_pubkey, op_return_script(memo));
+        // VOUT1 is the destination, holding the whole drained balance.
+        assert_eq!(tx.output[1].value, 100_000 - fee);
+        assert_eq!(tx.output[1].script_pubkey, vault.script_pubkey());
+        // The drain arithmetic is order-independent: nothing is left behind either way.
+        assert_eq!(tx.output.iter().map(|o| o.value).sum::<u64>() + fee, 100_000);
     }
 }
