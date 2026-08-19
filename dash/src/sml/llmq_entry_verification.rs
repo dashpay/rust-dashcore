@@ -143,8 +143,20 @@ impl From<QuorumValidationError> for LLMQEntryVerificationStatus {
             // the quorum's cycle from what it holds — a fresh QRInfo from an
             // honest peer resolves it. Classifying it `Skipped`, not `Invalid`,
             // keeps a tampered index from aborting `feed_qr_info` and wedging
-            // masternode sync; the entry is never treated as verified either
-            // way, so this cannot cause a false accept. (#934)
+            // masternode sync. This never marks the entry `Verified`, and the
+            // rotated-cycle stores (`rotated_quorums_per_cycle`) still retain
+            // only `Verified` entries. However, it does leave the entry
+            // reachable through `quorum_entry_for_hash_at_or_before_height`
+            // (masternode_list_engine/helpers.rs), which excludes only
+            // `Invalid` entries and is the lookup dash-spv-ffi's
+            // platform_integration uses to serve quorum public keys. That
+            // lookup already serves `Skipped` entries routinely —
+            // `Skipped(NotMarkedForVerification)` is the default status for
+            // quorums entering a stored list — so this reclassification
+            // neither creates that exposure nor widens it beyond entries
+            // already present in stored lists. Tightening that lookup to
+            // require `Verified` is a behavioral change deliberately left as
+            // a follow-up. (#934)
             QuorumValidationError::InvalidQuorumIndex {
                 quorum_hash,
                 index,
