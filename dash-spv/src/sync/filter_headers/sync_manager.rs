@@ -156,6 +156,30 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage> SyncManager for FilterHeade
         // Send pending requests (including retries)
         self.pipeline.send_pending(requests)?;
 
+        // Re-read the block-header tip and extend from here if it moved.
+        //
+        // `handle_new_headers` — the only thing that ever extends the
+        // CFHeaders queue — runs solely off `BlockHeaderSyncComplete` and
+        // `BlockHeadersStored`. Header storage can advance without either
+        // reaching this manager: a segment that completes out of order
+        // promotes a run of buffered headers, and on a mainnet scan that is
+        // how the last stretch of the chain lands. When it does, this
+        // manager keeps the target it was last told about, its queue drains,
+        // and nothing re-arms it — filter headers stop for good while block
+        // headers, ChainLocks and inv announcements carry on, so the client
+        // looks alive while sync is frozen. Observed on a mainnet restore:
+        // the queue was last extended to height 2_398_000, block headers
+        // reached 2_523_515 twenty-four minutes later, and filter headers
+        // never moved again.
+        //
+        // Same fix as promoting finished header segments from the tick
+        // (#960): trust the tick, not the message.
+        if let Some(tip) = self.stored_block_header_tip().await {
+            if tip > self.progress.block_header_tip_height() {
+                return self.handle_new_headers(tip, requests).await;
+            }
+        }
+
         Ok(vec![])
     }
 
