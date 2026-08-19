@@ -377,6 +377,35 @@ impl ManagedWalletInfo {
         self.observed_spent_outpoints.retain(|_, height| *height > boundary);
     }
 
+    /// Height at or below which [`Self::observed_spent_outpoints`] can no
+    /// longer answer "was this outpoint spent in a block?" — entries there may
+    /// already have been evicted by [`Self::prune_finalized_observed_spends`],
+    /// so absence from the map proves nothing about them.
+    ///
+    /// `None` until a chainlock has been applied: the prune is a no-op until
+    /// then, so nothing has ever been evicted and the map is authoritative at
+    /// every height.
+    ///
+    /// Once a chainlock exists this is *its* height, deliberately not the
+    /// `min(chain_lock, synced_height)` the prune itself computes. That
+    /// boundary describes a single run; a gate has to bound everything ever
+    /// evicted, across every run this wallet has performed. The applied
+    /// chainlock height is monotonic — [`WalletInfoInterface::apply_chain_lock`]
+    /// replaces the stored lock only on a strictly greater height — and every
+    /// past prune boundary was `min(chain_lock_then, synced_then)`, which is at
+    /// most `chain_lock_then`, which is at most this. So this is a sound upper
+    /// bound on the evicted range, where a recomputed `min()` is not:
+    /// [`Self::rewind_sync_checkpoint_for_new_account`] deliberately drops
+    /// `synced_height` to just below wallet birth when an account is added,
+    /// which would move a `min()`-derived boundary back *down* and re-admit
+    /// coins whose spend records an earlier, higher boundary had already
+    /// evicted.
+    ///
+    /// [`WalletInfoInterface::apply_chain_lock`]: crate::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface::apply_chain_lock
+    pub(crate) fn spend_proof_horizon(&self) -> Option<CoreBlockHeight> {
+        self.metadata.last_applied_chain_lock.as_ref().map(|lock| lock.block_height)
+    }
+
     /// Invalidate the wallet's sync certificate when an account is added.
     ///
     /// `synced_height` certifies "every filter at or below this height was

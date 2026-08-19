@@ -2952,6 +2952,327 @@ mod tests {
         );
     }
 
+    /// The #649 withholding must survive the eviction of the very map it
+    /// reads.
+    ///
+    /// `observed_spent_outpoints` is not permanent state:
+    /// `prune_finalized_observed_spends` drops every entry at or below the
+    /// finality boundary, which is exactly what keeps the map bounded. Gating
+    /// the re-credit on that map alone therefore answers "was this coin spent
+    /// in a block?" with "no" once the entry is gone — and rebuilds a coin the
+    /// chain has already consumed.
+    ///
+    /// The funding record here is learned from the mempool, so it carries no
+    /// block context and `apply_chain_lock` (which promotes and prunes only
+    /// `InBlock` records) never touches it. That is what makes this reproduce
+    /// under the default feature set too: the record-pruning that hides the
+    /// hole for confirmed funding records does not apply.
+    #[tokio::test]
+    async fn test_a_block_spent_coin_is_not_recredited_once_its_observed_spend_is_evicted() {
+        let mut ctx = TestWalletContext::new_random();
+        let external_address = Address::p2pkh(
+            &dashcore::PublicKey::from_slice(&[0x02; 33]).expect("pubkey"),
+            Network::Testnet,
+        );
+
+        let funding_tx = Transaction::dummy(&ctx.receive_address, 0..2, &[500_000, 400_000]);
+        let coin_a = OutPoint {
+            txid: funding_tx.txid(),
+            vout: 0,
+        };
+        let coin_b = OutPoint {
+            txid: funding_tx.txid(),
+            vout: 1,
+        };
+        let spend = |inputs: Vec<OutPoint>, change: Option<&Address>, sent: u64| Transaction {
+            version: 2,
+            lock_time: 0,
+            input: inputs
+                .into_iter()
+                .map(|previous_output| TxIn {
+                    previous_output,
+                    script_sig: ScriptBuf::new(),
+                    sequence: 0xffffffff,
+                    witness: dashcore::Witness::new(),
+                })
+                .collect(),
+            output: match change {
+                Some(change) => vec![
+                    TxOut {
+                        value: sent,
+                        script_pubkey: external_address.script_pubkey(),
+                    },
+                    TxOut {
+                        value: 99_000,
+                        script_pubkey: change.script_pubkey(),
+                    },
+                ],
+                None => vec![TxOut {
+                    value: sent,
+                    script_pubkey: external_address.script_pubkey(),
+                }],
+            },
+            special_transaction_payload: None,
+        };
+
+        // 1. Out-of-order delivery: the block at 101 that spends B is processed
+        //    before the funding block at 100. Unattributable, so only #649
+        //    remembers it.
+        let thief = spend(vec![coin_b], None, 390_000);
+        let thief_result = ctx
+            .check_transaction(
+                &thief,
+                TransactionContext::InBlock(BlockInfo::new(
+                    101,
+                    BlockHash::from_slice(&[9u8; 32]).expect("hash"),
+                    1_699_999_000,
+                )),
+            )
+            .await;
+        assert!(!thief_result.is_relevant);
+        assert!(ctx.managed_wallet.observed_spent_outpoints().contains_key(&coin_b));
+
+        // 2. The funding transaction is learned from the mempool (its record
+        //    therefore never carries a block context, so no chainlock ever
+        //    prunes it). A credited, B withheld by #649.
+        ctx.check_transaction(&funding_tx, TransactionContext::Mempool).await;
+        assert!(ctx.bip44_account().utxos.contains_key(&coin_a));
+        assert!(!ctx.bip44_account().utxos.contains_key(&coin_b), "#649 withheld it");
+
+        // 3. A loser claims A and B while the observed spend is still known, so
+        //    `doomed_by_a_settled_spend` refuses to credit it and never marks
+        //    B spent in the account.
+        let loser_change = ctx
+            .managed_wallet
+            .first_bip44_managed_account_mut()
+            .expect("account")
+            .next_change_address(Some(&ctx.xpub), true)
+            .expect("change address");
+        let loser = spend(vec![coin_a, coin_b], Some(&loser_change), 800_000);
+        ctx.check_transaction(&loser, TransactionContext::Mempool).await;
+        assert!(
+            !ctx.bip44_account().is_outpoint_spent_for_test(&coin_b),
+            "precondition: the doomed loser never marked B spent"
+        );
+
+        // 4. Sync advances: a chainlock lands over both blocks and the sync
+        //    checkpoint commits. #649's memory of the spend is evicted.
+        ctx.managed_wallet.apply_chain_lock(dashcore::ephemerealdata::chain_lock::ChainLock {
+            block_height: 101,
+            block_hash: BlockHash::from_slice(&[9u8; 32]).expect("hash"),
+            signature: dashcore::bls_sig_utils::BLSSignature::from([0u8; 96]),
+        });
+        ctx.managed_wallet.update_synced_height(101);
+        assert!(
+            !ctx.managed_wallet.observed_spent_outpoints().contains_key(&coin_b),
+            "precondition: the finality boundary evicted the observed spend"
+        );
+        assert!(
+            ctx.bip44_account().transactions().contains_key(&funding_tx.txid()),
+            "precondition: a mempool funding record survives the chainlock in every \
+             feature configuration, so record pruning is not a backstop here"
+        );
+
+        // 5. A winner takes A and confirms, sweeping the loser. B is released.
+        let winner_change = ctx
+            .managed_wallet
+            .first_bip44_managed_account_mut()
+            .expect("account")
+            .next_change_address(Some(&ctx.xpub), true)
+            .expect("change address");
+        let winner = spend(vec![coin_a], Some(&winner_change), 400_000);
+        let result = ctx
+            .check_transaction(
+                &winner,
+                TransactionContext::InBlock(BlockInfo::new(
+                    102,
+                    BlockHash::from_slice(&[2u8; 32]).expect("hash"),
+                    1_700_000_100,
+                )),
+            )
+            .await;
+        assert!(
+            result.released_outpoints.contains(&coin_b),
+            "the reported set is unchanged: B is still named as released"
+        );
+
+        // B is spent on chain at height 101. Its spent-status can no longer be
+        // cross-checked against `observed_spent_outpoints`, so the re-credit
+        // has to withhold it rather than guess.
+        assert!(
+            !ctx.bip44_account().utxos.contains_key(&coin_b),
+            "a coin a block already spent must never be re-credited to coin selection"
+        );
+        assert!(
+            !ctx.bip44_account().spendable_utxos(102).iter().any(|utxo| utxo.outpoint == coin_b),
+            "and it must not reach coin selection by any other route"
+        );
+        assert_eq!(
+            ctx.managed_wallet.balance.confirmed(),
+            99_000,
+            "only the winner's change; B contributes nothing"
+        );
+    }
+
+    /// The re-credit must not resurrect a coin `update_utxos` refused to
+    /// create.
+    ///
+    /// `update_utxos` never credits the outputs of a transaction whose input a
+    /// block already spent (`doomed_by_a_settled_spend`) — it can never
+    /// confirm, so its change is money that does not exist. The record is
+    /// deliberately kept, for history. A re-credit that reads that record as a
+    /// funding source without re-checking the same verdict materialises the
+    /// output the credit path had already rejected.
+    #[tokio::test]
+    async fn test_the_recredit_refuses_a_funding_record_that_can_never_confirm() {
+        let mut ctx = TestWalletContext::new_random();
+        let external_address = Address::p2pkh(
+            &dashcore::PublicKey::from_slice(&[0x02; 33]).expect("pubkey"),
+            Network::Testnet,
+        );
+
+        // Block 100: two real coins.
+        let genesis_tx = Transaction::dummy(&ctx.receive_address, 0..2, &[1_000_000, 300_000]);
+        let coin_p = OutPoint {
+            txid: genesis_tx.txid(),
+            vout: 0,
+        };
+        let coin_q = OutPoint {
+            txid: genesis_tx.txid(),
+            vout: 1,
+        };
+        ctx.check_transaction(
+            &genesis_tx,
+            TransactionContext::InBlock(BlockInfo::new(
+                100,
+                BlockHash::from_slice(&[1u8; 32]).expect("hash"),
+                1_700_000_000,
+            )),
+        )
+        .await;
+        assert!(ctx.bip44_account().utxos.contains_key(&coin_p));
+
+        let spend =
+            |inputs: Vec<OutPoint>, change: Option<&Address>, change_value: u64, sent: u64| {
+                Transaction {
+                    version: 2,
+                    lock_time: 0,
+                    input: inputs
+                        .into_iter()
+                        .map(|previous_output| TxIn {
+                            previous_output,
+                            script_sig: ScriptBuf::new(),
+                            sequence: 0xffffffff,
+                            witness: dashcore::Witness::new(),
+                        })
+                        .collect(),
+                    output: match change {
+                        Some(change) => vec![
+                            TxOut {
+                                value: sent,
+                                script_pubkey: external_address.script_pubkey(),
+                            },
+                            TxOut {
+                                value: change_value,
+                                script_pubkey: change.script_pubkey(),
+                            },
+                        ],
+                        None => vec![TxOut {
+                            value: sent,
+                            script_pubkey: external_address.script_pubkey(),
+                        }],
+                    },
+                    special_transaction_payload: None,
+                }
+            };
+
+        // Block 101: someone else spends P on chain, paying only externally.
+        let thief = spend(vec![coin_p], None, 0, 990_000);
+        ctx.check_transaction(
+            &thief,
+            TransactionContext::InBlock(BlockInfo::new(
+                101,
+                BlockHash::from_slice(&[9u8; 32]).expect("hash"),
+                1_700_000_100,
+            )),
+        )
+        .await;
+        assert!(ctx.managed_wallet.observed_spent_outpoints().contains_key(&coin_p));
+
+        // A doomed transaction of ours also spends P. `update_utxos` refuses to
+        // credit its change X — P is already spent in a block, so this can
+        // never confirm — but keeps the record.
+        let doomed_change = ctx
+            .managed_wallet
+            .first_bip44_managed_account_mut()
+            .expect("account")
+            .next_change_address(Some(&ctx.xpub), true)
+            .expect("change address");
+        let doomed = spend(vec![coin_p], Some(&doomed_change), 500_000, 490_000);
+        ctx.check_transaction(&doomed, TransactionContext::Mempool).await;
+        let coin_x = OutPoint {
+            txid: doomed.txid(),
+            vout: 1,
+        };
+        assert!(
+            !ctx.bip44_account().utxos.contains_key(&coin_x),
+            "precondition: the doomed transaction's change was never credited"
+        );
+        assert!(
+            ctx.bip44_account().transactions().contains_key(&doomed.txid()),
+            "precondition: but its record is kept for history"
+        );
+
+        // A later unconfirmed transaction claims that phantom output X plus a
+        // real coin Q.
+        let loser_change = ctx
+            .managed_wallet
+            .first_bip44_managed_account_mut()
+            .expect("account")
+            .next_change_address(Some(&ctx.xpub), true)
+            .expect("change address");
+        let loser = spend(vec![coin_x, coin_q], Some(&loser_change), 90_000, 700_000);
+        ctx.check_transaction(&loser, TransactionContext::Mempool).await;
+
+        // A winner takes Q and confirms, sweeping the loser. X is released.
+        let winner_change = ctx
+            .managed_wallet
+            .first_bip44_managed_account_mut()
+            .expect("account")
+            .next_change_address(Some(&ctx.xpub), true)
+            .expect("change address");
+        let winner = spend(vec![coin_q], Some(&winner_change), 200_000, 90_000);
+        let result = ctx
+            .check_transaction(
+                &winner,
+                TransactionContext::InBlock(BlockInfo::new(
+                    102,
+                    BlockHash::from_slice(&[2u8; 32]).expect("hash"),
+                    1_700_000_200,
+                )),
+            )
+            .await;
+        assert!(
+            result.released_outpoints.contains(&coin_x),
+            "the reported set is unchanged: X is still named as released"
+        );
+
+        assert!(
+            !ctx.bip44_account().utxos.contains_key(&coin_x),
+            "a coin must never be rebuilt from a transaction that can never confirm"
+        );
+        assert!(
+            !ctx.bip44_account().spendable_utxos(102).iter().any(|utxo| utxo.outpoint == coin_x),
+            "and it must not reach coin selection by any other route"
+        );
+        assert_eq!(
+            ctx.managed_wallet.balance.confirmed(),
+            200_000,
+            "only the winner's change; the phantom change X contributes nothing"
+        );
+        assert_eq!(ctx.managed_wallet.balance.unconfirmed(), 0);
+    }
+
     /// A loser's change may already have funded further unconfirmed
     /// transactions, and the sweep removes those too — that is the descendant
     /// closure `drop_conflicted_transactions` walks. Their inputs land in

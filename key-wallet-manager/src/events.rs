@@ -295,12 +295,26 @@ pub enum WalletEvent {
         ///
         /// The wallet re-credits these coins to its own UTXO set as it emits
         /// them, so "spendable again" means the same thing on both sides of
-        /// this event. One case cannot be: a funding transaction pruned to
-        /// its txid by a chainlock keeps no `TxOut` to rebuild the coin from,
-        /// so it stays absent from coin selection until a rescan re-fetches
-        /// the block, even though it is named here. Consumers are unaffected
-        /// — their own record of the coin is what they restore — but a caller
-        /// reading this library's balance back will see the difference. See
+        /// this event wherever the re-credit can be proven safe. Where it
+        /// cannot, the coin is named here but deliberately withheld from this
+        /// library's own coin selection until a rescan re-delivers its funding
+        /// transaction:
+        ///
+        /// * the funding transaction was pruned to its txid by a chainlock, so
+        ///   no `TxOut` survives to rebuild the coin from;
+        /// * the funding transaction can never confirm, because a block
+        ///   already spent one of *its* inputs — the credit path refuses such
+        ///   outputs too, and the re-credit must not disagree with it;
+        /// * the coin's own spent-status is no longer verifiable, because the
+        ///   observed-spent map that records block spends is pruned at the
+        ///   finality boundary and this coin's funding record sits at or below
+        ///   it. Absence from a pruned map is not evidence a coin is unspent.
+        ///
+        /// Consumers are unaffected — their own record of the coin is what
+        /// they restore, and this set is reported in full in every case — but
+        /// a caller reading this library's balance back will see the
+        /// difference. The divergence is one-directional by construction: core
+        /// holds at most what the event reports, never more. See
         /// `ManagedCoreFundsAccount::recredit_released_outpoints`.
         released_outpoints: Vec<OutPoint>,
         /// Wallet balance after the removal.

@@ -35,11 +35,15 @@ pub struct AbandonOutcome {
     /// derive the set from `abandoned` alone — that would require knowing
     /// which of their inputs some *other* surviving transaction also claims.
     ///
-    /// These coins are also re-credited to this wallet's own UTXO set where
-    /// their funding record survives, so the event and in-core coin selection
-    /// agree. See
-    /// `ManagedCoreFundsAccount::recredit_released_outpoints` for the one
-    /// case that cannot be — a chainlock-pruned funding record.
+    /// These coins are also re-credited to this wallet's own UTXO set, so the
+    /// event and in-core coin selection agree wherever the re-credit can be
+    /// proven safe. Where it cannot, this set is still reported in full and
+    /// the coin is withheld in core until a rescan — a deliberate,
+    /// balance-understating divergence. See
+    /// `ManagedCoreFundsAccount::recredit_released_outpoints` for the three
+    /// cases: a chainlock-pruned funding record, a funding record that can
+    /// never confirm, and a coin whose spent-status is no longer verifiable
+    /// against the observed-spent map.
     pub released_outpoints: Vec<OutPoint>,
 }
 
@@ -198,8 +202,10 @@ impl ManagedWalletInfo {
     ///
     /// The released coins are re-credited to this wallet's own UTXO set here
     /// too, once the per-account answers have been reconciled — the reported
-    /// set and what coin selection can actually spend must not disagree. See
-    /// `ManagedCoreFundsAccount::recredit_released_outpoints`.
+    /// set and what coin selection can actually spend should not disagree.
+    /// Where the re-credit cannot be proven safe it is withheld and the two
+    /// do diverge, always with core holding *less* than the event reports.
+    /// See `ManagedCoreFundsAccount::recredit_released_outpoints`.
     pub fn sweep_conflicts(
         &mut self,
         tx: &Transaction,
@@ -248,11 +254,23 @@ impl ManagedWalletInfo {
     /// processed yet, never even matched (dashpay/rust-dashcore#649 — the same
     /// reason `update_utxos` refuses to insert such an output in the first
     /// place). Re-crediting one of those would hand coin selection a coin the
-    /// chain has already spent. The released set is still *reported* as-is:
-    /// that set's contract is a consumer-facing one with its own documented
-    /// limits, and narrowing it is a separate change from making in-core state
-    /// match it — this withholding only ever errs toward understating what we
-    /// can spend.
+    /// chain has already spent.
+    ///
+    /// That membership test is necessary but not sufficient, and the map alone
+    /// cannot make it sufficient: `prune_finalized_observed_spends` evicts
+    /// entries at the finality boundary, so below
+    /// [`ManagedWalletInfo::spend_proof_horizon`] a miss means "no longer
+    /// recorded", not "never spent". The map and the horizon are therefore
+    /// both handed down to the accounts, which withhold any coin whose
+    /// spent-status is no longer cross-checkable and any coin whose funding
+    /// record can never confirm. See
+    /// [`ManagedCoreFundsAccount::recredit_released_outpoints`] for both
+    /// rules.
+    ///
+    /// The released set is still *reported* as-is: that set's contract is a
+    /// consumer-facing one with its own documented limits, and narrowing it is
+    /// a separate change from making in-core state match it — this withholding
+    /// only ever errs toward understating what we can spend.
     fn recredit_released_outpoints(&mut self, released: &[OutPoint]) -> Vec<OutPoint> {
         if released.is_empty() {
             return Vec::new();
@@ -265,10 +283,19 @@ impl ManagedWalletInfo {
         if candidates.is_empty() {
             return Vec::new();
         }
+        let horizon = self.spend_proof_horizon();
+        // Disjoint field borrows: the accounts are taken mutably while the
+        // observed-spent map is read, so the per-account gate can consult it
+        // without cloning a map that is bounded only by `MAX_OBSERVED_SPENT_OUTPOINTS`.
+        let observed_spent = &self.observed_spent_outpoints;
         let mut recredited = Vec::new();
         for account in self.accounts.all_accounts_mut() {
             if let ManagedAccountRefMut::Funds(funds) = account {
-                recredited.extend(funds.recredit_released_outpoints(&candidates));
+                recredited.extend(funds.recredit_released_outpoints(
+                    &candidates,
+                    observed_spent,
+                    horizon,
+                ));
             }
         }
         recredited
@@ -329,8 +356,10 @@ impl ManagedWalletInfo {
     /// not what funded them. They are reported in
     /// [`AbandonOutcome::released_outpoints`] so a persistence mirror can
     /// follow. See `ManagedCoreFundsAccount::recredit_released_outpoints`
-    /// for the one case that cannot be rebuilt: a funding record already
-    /// pruned to its txid by a chainlock, which needs a rescan.
+    /// for the cases that cannot be rebuilt and are withheld until a rescan:
+    /// a funding record already pruned to its txid by a chainlock, one a
+    /// settled spend has doomed, and one whose coin's spent-status can no
+    /// longer be cross-checked.
     ///
     /// Does not recompute the balance — callers batching several abandons
     /// should run `update_balance`

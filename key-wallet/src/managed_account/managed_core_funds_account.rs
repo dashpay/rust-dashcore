@@ -106,6 +106,27 @@ pub(crate) struct ConflictSweep {
     pub released_outpoints: Vec<OutPoint>,
 }
 
+/// Whether `tx` can never confirm because a block already spent one of its
+/// inputs (dashpay/rust-dashcore#649).
+///
+/// A block spend is settled under Dash consensus, so any *other* transaction
+/// claiming the same outpoint is dead — its outputs are money that does not
+/// exist. A block or InstantSend context on `tx` itself exempts it: that is
+/// the settled spend arriving, not a competitor for it.
+///
+/// The observed-spent map is authoritative only above the pruning boundary
+/// (see [`ManagedCoreFundsAccount::recredit_released_outpoints`]); a `false`
+/// here therefore means "not known doomed", not "provably alive".
+fn doomed_by_a_settled_spend(
+    tx: &Transaction,
+    context: &TransactionContext,
+    observed_spent: &BTreeMap<OutPoint, CoreBlockHeight>,
+) -> bool {
+    !context.confirmed()
+        && !context.is_instant_send()
+        && tx.input.iter().any(|input| observed_spent.contains_key(&input.previous_output))
+}
+
 impl ManagedCoreFundsAccount {
     /// Create a new managed funds account
     pub fn new(managed_account_type: ManagedAccountType, network: Network) -> Self {
@@ -197,6 +218,14 @@ impl ManagedCoreFundsAccount {
 
     /// Check if an outpoint was spent by a previously recorded transaction.
     fn is_outpoint_spent(&self, outpoint: &OutPoint) -> bool {
+        self.spent_outpoints.contains(outpoint)
+    }
+
+    /// Test-only read of the spent-mark set, which is otherwise private to
+    /// this module. Tests in sibling modules assert on spend bookkeeping
+    /// directly rather than inferring it from the balance.
+    #[cfg(test)]
+    pub(crate) fn is_outpoint_spent_for_test(&self, outpoint: &OutPoint) -> bool {
         self.spent_outpoints.contains(outpoint)
     }
 
@@ -317,13 +346,11 @@ impl ManagedCoreFundsAccount {
                 // (winner confirms, loser arrives afterwards as mempool)
                 // credits the loser's outputs with nothing left to remove
                 // them, and `is_spendable` would hand them to coin selection.
-                let doomed_by_a_settled_spend = !context.confirmed()
-                    && !matches!(context, TransactionContext::InstantSend(_))
-                    && tx
-                        .input
-                        .iter()
-                        .any(|input| observed_spent.contains_key(&input.previous_output));
-                if doomed_by_a_settled_spend {
+                //
+                // `recredit_released_outpoints` applies the same test to a
+                // funding record before rebuilding any of its outputs, which
+                // is why this lives in a shared function rather than inline.
+                if doomed_by_a_settled_spend(tx, &context, observed_spent) {
                     // Deliberately before any mutation: the record built by
                     // the caller stands, so history still shows the attempt,
                     // but nothing it created enters the UTXO set.
@@ -582,6 +609,47 @@ impl ManagedCoreFundsAccount {
     /// still in `spent_outpoints` (a surviving record here claims it, so
     /// `release_spent_marks` deliberately kept the mark).
     ///
+    /// # Sharing `update_utxos`' invariants
+    ///
+    /// This is a *fresh insert* into `utxos`, not a redelivery of a
+    /// transaction the chain has shown us again, so it has to clear the same
+    /// bars the credit path clears. Two of them cannot be answered by the
+    /// caller's `observed_spent_outpoints` membership test alone.
+    ///
+    /// **The funding record must still be able to confirm.** `update_utxos`
+    /// refuses to credit the outputs of a transaction whose input a block
+    /// already spent ([`doomed_by_a_settled_spend`]) while deliberately
+    /// keeping the record, for history. Reading that record back as a funding
+    /// source would materialise the very output the credit path rejected, so
+    /// the same test is applied here and a doomed funding record contributes
+    /// nothing.
+    ///
+    /// **The coin's spent-status must still be verifiable.**
+    /// `observed_spent_outpoints` is bounded state, not a permanent ledger:
+    /// `prune_finalized_observed_spends` evicts every entry at or below the
+    /// finality boundary. The map's safety argument was written for redelivery
+    /// paths, where the funding transaction arriving again is itself the
+    /// evidence; a re-credit has no such arrival, and absence from an evicting
+    /// map is not evidence that a coin is unspent. `spend_proof_horizon` is
+    /// the height at or below which an entry may already be gone. A coin is
+    /// re-credited only when its funding record sits in a block *above* that
+    /// horizon: a spend can never precede the output it spends, so any block
+    /// spend of such a coin is also above the horizon and would still be in
+    /// the map for the caller's test to find.
+    ///
+    /// Everything else is withheld — including every unconfirmed funding
+    /// record, which pins no lower bound on the spend window at all. A
+    /// mempool-context record does not mean the transaction is unmined: an
+    /// out-of-order rescan routinely holds one for a transaction the chain
+    /// mined long ago, which is exactly the shape dashpay/rust-dashcore#649
+    /// describes.
+    ///
+    /// Withholding leaves the coin where the code before this re-credit
+    /// existed left it — absent from coin selection until a rescan re-delivers
+    /// its funding transaction. That understates the spendable balance and can
+    /// never inflate it. The *reported* release set is unchanged either way;
+    /// see the note on `WalletConflictSweep::released_outpoints`.
+    ///
     /// **Residual.** A funding transaction that was chainlock-finalized keeps
     /// only its txid under the default `keep-finalized-transactions = off`:
     /// its record — and with it the `TxOut` — is gone, so its coins cannot be
@@ -592,7 +660,12 @@ impl ManagedCoreFundsAccount {
     /// the same feature flag that causes it.
     ///
     /// Returns the outpoints actually re-credited.
-    pub(crate) fn recredit_released_outpoints(&mut self, released: &[OutPoint]) -> Vec<OutPoint> {
+    pub(crate) fn recredit_released_outpoints(
+        &mut self,
+        released: &[OutPoint],
+        observed_spent: &BTreeMap<OutPoint, CoreBlockHeight>,
+        spend_proof_horizon: Option<CoreBlockHeight>,
+    ) -> Vec<OutPoint> {
         if released.is_empty() {
             return Vec::new();
         }
@@ -638,6 +711,40 @@ impl ManagedCoreFundsAccount {
                 "output detail and transaction disagree on the value of {}",
                 outpoint
             );
+
+            // The output is provably ours; the remaining question is whether
+            // it is still a coin. Both gates below mirror `update_utxos`, and
+            // both are evaluated here — after ownership — so the diagnostics
+            // name only coins this account would otherwise have restored.
+            if doomed_by_a_settled_spend(&record.transaction, &record.context, observed_spent) {
+                tracing::debug!(
+                    %outpoint,
+                    funding_txid = %outpoint.txid,
+                    "Withholding a released coin: a block already spent an input of its \
+                     funding transaction, which can therefore never confirm"
+                );
+                continue;
+            }
+            if let Some(horizon) = spend_proof_horizon {
+                // A spend can never precede the output it spends, so a coin
+                // funded strictly above the horizon can only have been spent
+                // above it too — where the observed-spent map is still
+                // authoritative and the caller's membership test was
+                // conclusive. Anything else, unconfirmed funding records
+                // included, leaves the question open.
+                let spend_window_is_provable =
+                    record.context.block_info().is_some_and(|info| info.height > horizon);
+                if !spend_window_is_provable {
+                    tracing::debug!(
+                        %outpoint,
+                        funding_txid = %outpoint.txid,
+                        horizon,
+                        "Withholding a released coin whose spent-status can no longer be \
+                         cross-checked against the observed-spent map; a rescan recovers it"
+                    );
+                    continue;
+                }
+            }
 
             let txout = dashcore::TxOut {
                 value: output.value,
