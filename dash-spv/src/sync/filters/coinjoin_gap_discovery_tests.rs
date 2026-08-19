@@ -412,6 +412,164 @@ async fn coinjoin_gap_limit_stall_across_committed_batch() {
     );
 }
 
+/// Cross-committed-batch discovery survives a process death between script
+/// derivation and the backward sweep's completion (the durable pending-sweep
+/// set; interrupted-restore fund loss, 2026-08-19).
+///
+/// Same funding shape as [`coinjoin_gap_limit_stall_across_committed_batch`]:
+/// block A (height 10, batch 0..=99) pays beyond-window indices G+10..=G+21;
+/// block B (height 110, batch 100..=199) pays in-window indices 0..=29.
+/// Batch 0 scans clean and COMMITS. Processing block B derives the missing
+/// scripts — at which point the session "crashes": the manager is dropped
+/// before the backward sweep's re-downloaded block is processed. The
+/// in-memory cascade is gone, batch 0 is committed, and nothing in a
+/// restarted session would ever look below the committed boundary again.
+///
+/// The durable pending-sweep set closes this: the scripts were persisted to
+/// metadata storage the moment they entered the manager, a restarted manager
+/// (same storage, `with_metadata`) reloads them, seeds them into its lowest
+/// active batch, and the ordinary commit-time cascade re-tests the stored
+/// filters below the committed boundary — recovering block A's outputs.
+#[tokio::test]
+async fn interrupted_sweep_is_replayed_after_restart() {
+    // Shared across the "restart": wallet (its pools/synced heights persist
+    // in the real system via the SDK store) and disk storage (headers,
+    // filters, metadata).
+    let mut wm = WalletManager::<ManagedWalletInfo>::new(Network::Regtest);
+    let wallet_id = wm
+        .create_wallet_from_mnemonic(TEST_MNEMONIC, 0, WalletAccountCreationOptions::Default)
+        .expect("create deterministic test wallet");
+    let wallet = Arc::new(RwLock::new(wm));
+    let storage = DiskStorageManager::with_temp_dir().await.unwrap();
+
+    let addresses = coinjoin_external_addresses(&wallet, &wallet_id, (G + 22) as u32).await;
+    let (block_a, filter_a, key_a) = block_paying(10, &addresses[(G + 10)..=(G + 21)]);
+    let (block_b, filter_b, key_b) = block_paying(110, &addresses[0..=29]);
+    let blocks: HashMap<BlockHash, Block> = HashMap::from([
+        (block_a.block_hash(), block_a.clone()),
+        (block_b.block_hash(), block_b),
+    ]);
+
+    // Persist headers+filters for the to-be-committed range (see the
+    // invariant note in the cross-committed-batch test).
+    {
+        let headers_arc = storage.block_headers();
+        let filters_arc = storage.filters();
+        let mut header_storage = headers_arc.write().await;
+        let mut filter_storage = filters_arc.write().await;
+        for height in 0..=99u32 {
+            let (header, filter_bytes) = if height == 10 {
+                (block_a.header, filter_a.content.clone())
+            } else {
+                let filler = Block::dummy(height, vec![]);
+                let filter = BlockFilter::dummy(&filler);
+                (filler.header, filter.content)
+            };
+            header_storage
+                .store_headers_at_height(&[header.into()], height)
+                .await
+                .expect("seed header");
+            filter_storage.store_filter(height, &filter_bytes).await.expect("seed filter");
+        }
+    }
+
+    // ── Session 1: batch 0 commits clean, block B derives scripts, CRASH ──
+    {
+        let mut manager = FiltersManager::new(
+            Arc::clone(&wallet),
+            storage.block_headers(),
+            storage.filter_headers(),
+            storage.filters(),
+        )
+        .await
+        .with_metadata(storage.metadata())
+        .await;
+        manager.set_state(SyncState::Syncing);
+
+        let mut batch_0 = FiltersBatch::new(0, 99, HashMap::from([(key_a, filter_a.clone())]));
+        batch_0.mark_verified();
+        manager.active_batches.insert(0, batch_0);
+        let mut batch_1 =
+            FiltersBatch::new(100, 199, HashMap::from([(key_b.clone(), filter_b.clone())]));
+        batch_1.mark_verified();
+        manager.active_batches.insert(100, batch_1);
+        manager.progress.update_stored_height(199);
+
+        // Initial pass: batch 0 matches nothing and commits; batch 1
+        // requests block B.
+        let initial_events = manager.try_process_batch().await.unwrap();
+        let needed: Vec<(u32, BlockHash, BTreeSet<WalletId>)> = initial_events
+            .iter()
+            .filter_map(|e| match e {
+                SyncEvent::BlocksNeeded {
+                    blocks: needed,
+                } => Some(needed.iter().map(|(k, w)| (k.height(), *k.hash(), w.clone()))),
+                _ => None,
+            })
+            .flatten()
+            .collect();
+        assert_eq!(needed.len(), 1, "only block B should be requested initially");
+
+        // Process block B once — derives the beyond-window scripts, which
+        // the manager must persist durably at this exact moment.
+        let (tx, _rx) = unbounded_channel();
+        let requests = RequestSender::new(tx);
+        for (height, block_hash, wallets) in needed {
+            let block = blocks.get(&block_hash).expect("known block");
+            let result = wallet
+                .write()
+                .await
+                .process_block_for_wallets(block, block_hash, height, &wallets)
+                .await;
+            let confirmed_txids = result.relevant_txids().cloned().collect();
+            let event = SyncEvent::BlockProcessed {
+                block_hash,
+                height,
+                wallets,
+                new_scripts: result.new_scripts,
+                confirmed_txids,
+            };
+            // The returned events (the sweep's own BlocksNeeded for block A
+            // among them) are deliberately DROPPED: the process dies here.
+            let _ = manager.handle_sync_event(&event, &requests).await.expect("BlockProcessed");
+        }
+        // manager dropped — in-memory cascade gone.
+    }
+
+    // ── Session 2: fresh manager over the same storage ──
+    let mut manager = FiltersManager::new(
+        Arc::clone(&wallet),
+        storage.block_headers(),
+        storage.filter_headers(),
+        storage.filters(),
+    )
+    .await
+    .with_metadata(storage.metadata())
+    .await;
+    manager.set_state(SyncState::Syncing);
+
+    // Production resume recreates batches from the committed frontier up;
+    // batch 0 is committed (synced_height advanced), so only batch 1 exists.
+    let mut batch_1 = FiltersBatch::new(100, 199, HashMap::from([(key_b, filter_b)]));
+    batch_1.mark_verified();
+    manager.active_batches.insert(100, batch_1);
+    manager.progress.update_stored_height(199);
+
+    let initial_events = manager.try_process_batch().await.unwrap();
+    drive_to_quiescence(&mut manager, &wallet, &blocks, initial_events).await;
+
+    let (highest_used, highest_generated, used_count) =
+        coinjoin_pool_state(&wallet, &wallet_id).await;
+    assert_eq!(
+        highest_used,
+        Some((G + 21) as u32),
+        "block A's outputs sit in a batch that committed before their scripts were \
+         derived, and the session died before the backward sweep finished — only the \
+         durable pending-sweep set can bring them back after the restart. \
+         highest_generated={highest_generated:?}, used_count={used_count}"
+    );
+}
+
 /// Born-wrong `TransactionRecord` is never corrected by the gap rescan
 /// (kotlin-sdk "TXO-store reconcile" field bug, 2026-08-19).
 ///

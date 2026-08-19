@@ -43,6 +43,13 @@ pub(super) struct FiltersBatch {
     /// once, instead of the whole history being reloaded per derivation
     /// round.
     backward_scripts: HashMap<WalletId, HashSet<ScriptBuf>>,
+    /// Every script this batch has taken through its rescan cascade
+    /// (forward + backward), retained until commit. This is the receipt the
+    /// durable pending-sweep set is cleared against: only a COMMIT proves
+    /// the whole fixpoint (including blocks the sweep re-downloaded)
+    /// completed, so scripts must stay persisted until then — a crash
+    /// mid-cascade replays them on the next start.
+    retired_scripts: HashMap<WalletId, HashSet<ScriptBuf>>,
 }
 
 impl FiltersBatch {
@@ -63,6 +70,7 @@ impl FiltersBatch {
             scanned_wallets: BTreeMap::new(),
             collected_scripts: HashMap::new(),
             backward_scripts: HashMap::new(),
+            retired_scripts: HashMap::new(),
         }
     }
     /// Start height of this batch (inclusive).
@@ -127,8 +135,14 @@ impl FiltersBatch {
         self.collected_scripts.entry(wallet_id).or_default().extend(scripts);
     }
     /// Take collected per-wallet scripts for rescan, leaving the map empty.
+    /// The taken scripts are also recorded in [`Self::retired_scripts`] so
+    /// the commit can clear them from the durable pending-sweep set.
     pub(super) fn take_collected_scripts(&mut self) -> HashMap<WalletId, HashSet<ScriptBuf>> {
-        std::mem::take(&mut self.collected_scripts)
+        let taken = std::mem::take(&mut self.collected_scripts);
+        for (wallet_id, scripts) in &taken {
+            self.retired_scripts.entry(*wallet_id).or_default().extend(scripts.iter().cloned());
+        }
+        taken
     }
     /// Queue already forward-rescanned scripts for the deferred backward
     /// sweep over the committed range.
@@ -144,6 +158,11 @@ impl FiltersBatch {
     /// empty.
     pub(super) fn take_backward_scripts(&mut self) -> HashMap<WalletId, HashSet<ScriptBuf>> {
         std::mem::take(&mut self.backward_scripts)
+    }
+    /// Every script this batch carried through its rescan cascade — see the
+    /// field docs; read at commit to clear the durable pending-sweep set.
+    pub(super) fn retired_scripts(&self) -> &HashMap<WalletId, HashSet<ScriptBuf>> {
+        &self.retired_scripts
     }
     /// Record the wallets that were behind for this batch at scan time, each
     /// with its `account_generation` snapshot.
