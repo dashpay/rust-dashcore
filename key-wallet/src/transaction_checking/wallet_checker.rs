@@ -81,9 +81,35 @@ impl WalletTransactionChecker for ManagedWalletInfo {
             }
         }
 
+        // A final arrival settles its inputs whether or not this transaction
+        // looks relevant to us. Relevance is computed from matching outputs
+        // and from inputs still present in `utxos` — but a recorded loser
+        // already removed the shared input, so a winner that spends our coin
+        // and pays only external addresses matches nothing and would return
+        // below with the loser still credited. Sweep first, wallet-wide, next
+        // to `record_observed_spends` above for the same reason it is
+        // unconditional.
+        if update_state && (context.confirmed() || context.is_instant_send()) {
+            let sweep = self.sweep_conflicts(tx, &context);
+            if !sweep.is_empty() {
+                result.state_modified = true;
+            }
+            result.swept_transactions = sweep.txids;
+            result.released_outpoints = sweep.released_outpoints;
+        }
+
         if !update_state || !result.is_relevant {
             return result;
         }
+
+        // Wallet-wide view of this transaction's input parents, taken while
+        // every account is still readable and before any `update_utxos` call
+        // starts removing spent parents. Without it a pooled self-send — the
+        // normal shape for asset locks, which fund from BIP44 + BIP32 + the
+        // DashPay contact-receiving accounts — is not recognised as ours by
+        // the account holding the change, and that change lands in the
+        // `unconfirmed` bucket.
+        let external_final_parents = self.accounts.final_parents_of(tx);
 
         // Check if this transaction already exists in any affected account
         let txid = tx.txid();
@@ -150,6 +176,7 @@ impl WalletTransactionChecker for ManagedWalletInfo {
                             context.clone(),
                             tx_type,
                             &self.observed_spent_outpoints,
+                            &external_final_parents,
                         );
                         account.mark_utxos_instant_send(&txid);
                         result.new_records.push(record);
@@ -182,6 +209,7 @@ impl WalletTransactionChecker for ManagedWalletInfo {
                     context.clone(),
                     tx_type,
                     &self.observed_spent_outpoints,
+                    &external_final_parents,
                 );
                 result.new_records.push(record);
                 result.state_modified = true;
@@ -193,6 +221,7 @@ impl WalletTransactionChecker for ManagedWalletInfo {
                     context.clone(),
                     tx_type,
                     &self.observed_spent_outpoints,
+                    &external_final_parents,
                 ) {
                     result.state_modified = true;
                     if existed_before {
@@ -286,7 +315,7 @@ mod tests {
     use dashcore::TxOut;
     use dashcore::{Address, BlockHash, TxIn, Txid};
     use dashcore_hashes::Hash;
-    use std::collections::BTreeMap;
+    use std::collections::{BTreeMap, BTreeSet};
 
     /// Test wallet checker with unrelated transaction
     #[tokio::test]
@@ -1412,6 +1441,7 @@ mod tests {
             block_context,
             tx_type,
             &BTreeMap::new(),
+            &BTreeSet::new(),
         );
         assert!(backfilled.is_some(), "Should return Some when backfilling a missing record");
 
@@ -1469,6 +1499,7 @@ mod tests {
             block_context,
             tx_type,
             &BTreeMap::new(),
+            &BTreeSet::new(),
         );
         assert!(confirmed.is_some(), "Should return Some when confirming unconfirmed tx");
 
@@ -2036,6 +2067,1428 @@ mod tests {
         assert_eq!(ctx.managed_wallet.balance.confirmed(), change_amount);
         assert_eq!(ctx.managed_wallet.balance.unconfirmed(), 0);
         assert_eq!(ctx.managed_wallet.balance.spendable(), change_amount);
+    }
+
+    /// The rescan recovery above has a boundary: a funding transaction that
+    /// was chainlock-finalized keeps only its txid, so re-delivering it is not
+    /// a new sighting and never reaches the only production UTXO insert site.
+    /// The coin stays absent. Documented rather than fixed — recovering it
+    /// needs a rescan deep enough to re-fetch the block, which is above this
+    /// layer.
+    #[tokio::test]
+    async fn test_rescan_recovery_does_not_reach_a_finalized_funding_transaction() {
+        let mut ctx = TestWalletContext::new_random();
+        let external_address = Address::p2pkh(
+            &dashcore::PublicKey::from_slice(&[0x02; 33]).expect("pubkey"),
+            Network::Testnet,
+        );
+
+        let funding_tx = Transaction::dummy(&ctx.receive_address, 0..1, &[1_000_000]);
+        let finalized = TransactionContext::InChainLockedBlock(BlockInfo::new(
+            100,
+            BlockHash::from_slice(&[5u8; 32]).expect("hash"),
+            1_700_000_000,
+        ));
+        ctx.check_transaction(&funding_tx, finalized.clone()).await;
+
+        let change_address = ctx
+            .managed_wallet
+            .first_bip44_managed_account_mut()
+            .expect("account")
+            .next_change_address(Some(&ctx.xpub), true)
+            .expect("change address");
+        let spend = Transaction {
+            version: 2,
+            lock_time: 0,
+            input: vec![TxIn {
+                previous_output: OutPoint {
+                    txid: funding_tx.txid(),
+                    vout: 0,
+                },
+                script_sig: ScriptBuf::new(),
+                sequence: 0xffffffff,
+                witness: dashcore::Witness::new(),
+            }],
+            output: vec![
+                TxOut {
+                    value: 900_000,
+                    script_pubkey: external_address.script_pubkey(),
+                },
+                TxOut {
+                    value: 99_000,
+                    script_pubkey: change_address.script_pubkey(),
+                },
+            ],
+            special_transaction_payload: None,
+        };
+        ctx.check_transaction(&spend, TransactionContext::Mempool).await;
+
+        ctx.managed_wallet.abandon_transaction(spend.txid());
+        ctx.managed_wallet.update_balance();
+
+        // Re-delivering the funding block does not bring the coin back.
+        ctx.check_transaction(&funding_tx, finalized).await;
+        assert_eq!(
+            ctx.managed_wallet.balance.confirmed(),
+            0,
+            "a finalized funding record blocks the redelivery path this \
+             recovery depends on"
+        );
+    }
+
+    /// A winner that spends our coin but pays only external addresses matches
+    /// nothing: its outputs are not ours, and the input it shares with the
+    /// loser was already removed from `utxos` when the loser was recorded. It
+    /// is therefore classified irrelevant — and the sweep still has to run,
+    /// or the loser's change stays credited with nothing left to clear it.
+    #[tokio::test]
+    async fn test_an_irrelevant_winner_still_sweeps_its_loser() {
+        let mut ctx = TestWalletContext::new_random();
+        let external_address = Address::p2pkh(
+            &dashcore::PublicKey::from_slice(&[0x02; 33]).expect("pubkey"),
+            Network::Testnet,
+        );
+
+        let funding_value = 1_000_000u64;
+        let funding_tx = Transaction::dummy(&ctx.receive_address, 0..1, &[funding_value]);
+        ctx.check_transaction(
+            &funding_tx,
+            TransactionContext::InBlock(BlockInfo::new(
+                100,
+                BlockHash::from_slice(&[1u8; 32]).expect("hash"),
+                1_700_000_000,
+            )),
+        )
+        .await;
+
+        let funding_outpoint = OutPoint {
+            txid: funding_tx.txid(),
+            vout: 0,
+        };
+        let input = || TxIn {
+            previous_output: funding_outpoint,
+            script_sig: ScriptBuf::new(),
+            sequence: 0xffffffff,
+            witness: dashcore::Witness::new(),
+        };
+
+        // The loser pays us change, so it is relevant and gets recorded.
+        let loser_change = ctx
+            .managed_wallet
+            .first_bip44_managed_account_mut()
+            .expect("account")
+            .next_change_address(Some(&ctx.xpub), true)
+            .expect("change address");
+        let loser = Transaction {
+            version: 2,
+            lock_time: 0,
+            input: vec![input()],
+            output: vec![
+                TxOut {
+                    value: 600_000,
+                    script_pubkey: external_address.script_pubkey(),
+                },
+                TxOut {
+                    value: 399_000,
+                    script_pubkey: loser_change.script_pubkey(),
+                },
+            ],
+            special_transaction_payload: None,
+        };
+        ctx.check_transaction(&loser, TransactionContext::Mempool).await;
+        assert_eq!(
+            ctx.managed_wallet.balance.confirmed(),
+            399_000,
+            "trusted self-send change counts as confirmed"
+        );
+
+        // The winner spends the same coin and pays only outside the wallet.
+        let winner = Transaction {
+            version: 2,
+            lock_time: 0,
+            input: vec![input()],
+            output: vec![TxOut {
+                value: 999_000,
+                script_pubkey: external_address.script_pubkey(),
+            }],
+            special_transaction_payload: None,
+        };
+        let result = ctx
+            .check_transaction(
+                &winner,
+                TransactionContext::InBlock(BlockInfo::new(
+                    101,
+                    BlockHash::from_slice(&[2u8; 32]).expect("hash"),
+                    1_700_000_100,
+                )),
+            )
+            .await;
+        assert!(
+            !result.is_relevant,
+            "the precondition: nothing about this winner matches the wallet"
+        );
+
+        assert!(
+            !ctx.bip44_account().transactions().contains_key(&loser.txid()),
+            "the loser must be swept even though the winner is irrelevant"
+        );
+        assert_eq!(
+            ctx.managed_wallet.balance.confirmed(),
+            0,
+            "and its change must stop counting as confirmed money"
+        );
+        assert!(
+            result.released_outpoints.is_empty(),
+            "the ordinary case: the winner spends the loser's only input, so nothing is freed"
+        );
+    }
+
+    /// Pooled funding puts a loser's change in an account the winner never
+    /// touches. Sweeping only the winner's matched accounts leaves it behind.
+    #[tokio::test]
+    async fn test_a_loser_in_a_sibling_account_is_swept() {
+        let mut ctx = TestWalletContext::new_random();
+        let external_address = Address::p2pkh(
+            &dashcore::PublicKey::from_slice(&[0x02; 33]).expect("pubkey"),
+            Network::Testnet,
+        );
+
+        // Fund the BIP32 account.
+        let bip32_xpub = ctx
+            .wallet
+            .accounts
+            .standard_bip32_accounts
+            .get(&0)
+            .expect("BIP32 account")
+            .account_xpub;
+        let bip32_address = ctx
+            .managed_wallet
+            .first_bip32_managed_account_mut()
+            .expect("BIP32 managed account")
+            .next_receive_address(Some(&bip32_xpub), true)
+            .expect("BIP32 receive address");
+        let funding_tx = Transaction::dummy(&bip32_address, 0..1, &[1_000_000]);
+        ctx.check_transaction(
+            &funding_tx,
+            TransactionContext::InBlock(BlockInfo::new(
+                100,
+                BlockHash::from_slice(&[3u8; 32]).expect("hash"),
+                1_700_000_000,
+            )),
+        )
+        .await;
+
+        let funding_outpoint = OutPoint {
+            txid: funding_tx.txid(),
+            vout: 0,
+        };
+        let spend = |change: &Address, change_amount: u64, sent: u64| Transaction {
+            version: 2,
+            lock_time: 0,
+            input: vec![TxIn {
+                previous_output: funding_outpoint,
+                script_sig: ScriptBuf::new(),
+                sequence: 0xffffffff,
+                witness: dashcore::Witness::new(),
+            }],
+            output: vec![
+                TxOut {
+                    value: sent,
+                    script_pubkey: external_address.script_pubkey(),
+                },
+                TxOut {
+                    value: change_amount,
+                    script_pubkey: change.script_pubkey(),
+                },
+            ],
+            special_transaction_payload: None,
+        };
+
+        // The loser's change lands on BIP44 — an account the winner, whose
+        // change goes back to BIP32, never matches.
+        let loser_change = ctx
+            .managed_wallet
+            .first_bip44_managed_account_mut()
+            .expect("account")
+            .next_change_address(Some(&ctx.xpub), true)
+            .expect("change address");
+        let loser = spend(&loser_change, 399_000, 600_000);
+        ctx.check_transaction(&loser, TransactionContext::Mempool).await;
+
+        let winner_change = ctx
+            .managed_wallet
+            .first_bip32_managed_account_mut()
+            .expect("BIP32 managed account")
+            .next_change_address(Some(&bip32_xpub), true)
+            .expect("BIP32 change address");
+        let winner = spend(&winner_change, 299_000, 700_000);
+        ctx.check_transaction(
+            &winner,
+            TransactionContext::InBlock(BlockInfo::new(
+                101,
+                BlockHash::from_slice(&[4u8; 32]).expect("hash"),
+                1_700_000_100,
+            )),
+        )
+        .await;
+
+        assert!(
+            !ctx.bip44_account().transactions().contains_key(&loser.txid()),
+            "a loser in a sibling account must be swept too"
+        );
+        assert_eq!(
+            ctx.managed_wallet.balance.confirmed(),
+            299_000,
+            "only the winner's change survives"
+        );
+    }
+
+    /// The reverse arrival order: the winner confirms first, and the loser
+    /// turns up afterwards from the mempool. No sweep can help — the sweep
+    /// fires on the *arriving* transaction being final, and here the arrival
+    /// is the loser. The refusal has to happen at record time.
+    #[tokio::test]
+    async fn test_a_loser_arriving_after_its_winner_is_never_credited() {
+        let mut ctx = TestWalletContext::new_random();
+        let external_address = Address::p2pkh(
+            &dashcore::PublicKey::from_slice(&[0x02; 33]).expect("pubkey"),
+            Network::Testnet,
+        );
+
+        let funding_tx = Transaction::dummy(&ctx.receive_address, 0..1, &[1_000_000]);
+        ctx.check_transaction(
+            &funding_tx,
+            TransactionContext::InBlock(BlockInfo::new(
+                100,
+                BlockHash::from_slice(&[8u8; 32]).expect("hash"),
+                1_700_000_000,
+            )),
+        )
+        .await;
+
+        let shared = OutPoint {
+            txid: funding_tx.txid(),
+            vout: 0,
+        };
+        let spend = |change: &Address, change_amount: u64, sent: u64| Transaction {
+            version: 2,
+            lock_time: 0,
+            input: vec![TxIn {
+                previous_output: shared,
+                script_sig: ScriptBuf::new(),
+                sequence: 0xffffffff,
+                witness: dashcore::Witness::new(),
+            }],
+            output: vec![
+                TxOut {
+                    value: sent,
+                    script_pubkey: external_address.script_pubkey(),
+                },
+                TxOut {
+                    value: change_amount,
+                    script_pubkey: change.script_pubkey(),
+                },
+            ],
+            special_transaction_payload: None,
+        };
+
+        // The winner confirms first.
+        let winner_change = ctx
+            .managed_wallet
+            .first_bip44_managed_account_mut()
+            .expect("account")
+            .next_change_address(Some(&ctx.xpub), true)
+            .expect("change address");
+        let winner = spend(&winner_change, 299_000, 700_000);
+        ctx.check_transaction(
+            &winner,
+            TransactionContext::InBlock(BlockInfo::new(
+                101,
+                BlockHash::from_slice(&[9u8; 32]).expect("hash"),
+                1_700_000_100,
+            )),
+        )
+        .await;
+        assert_eq!(ctx.managed_wallet.balance.confirmed(), 299_000);
+
+        // Then the loser turns up. Its input is provably spent, so its
+        // outputs must never be credited.
+        let loser_change = ctx
+            .managed_wallet
+            .first_bip44_managed_account_mut()
+            .expect("account")
+            .next_change_address(Some(&ctx.xpub), true)
+            .expect("change address");
+        let loser = spend(&loser_change, 399_000, 600_000);
+        ctx.check_transaction(&loser, TransactionContext::Mempool).await;
+
+        assert!(
+            !ctx.bip44_account().utxos.keys().any(|o| o.txid == loser.txid()),
+            "a transaction whose input a block already spent must not be credited"
+        );
+        assert_eq!(
+            ctx.managed_wallet.balance.confirmed(),
+            299_000,
+            "only the winner's change counts"
+        );
+    }
+
+    /// `abandon_transaction_with_spends`' external view: a descendant whose
+    /// own record the load path never restored, a stale row naming a settled
+    /// transaction that must not be followed, and a settled root refused
+    /// outright. None of these are reachable through the no-argument form.
+    #[tokio::test]
+    async fn test_abandon_honours_the_external_spend_view_and_refuses_settled() {
+        let mut ctx = TestWalletContext::new_random();
+        let external_address = Address::p2pkh(
+            &dashcore::PublicKey::from_slice(&[0x02; 33]).expect("pubkey"),
+            Network::Testnet,
+        );
+
+        let funding_tx = Transaction::dummy(&ctx.receive_address, 0..1, &[1_000_000]);
+        let block = TransactionContext::InBlock(BlockInfo::new(
+            100,
+            BlockHash::from_slice(&[7u8; 32]).expect("hash"),
+            1_700_000_000,
+        ));
+        ctx.check_transaction(&funding_tx, block.clone()).await;
+
+        let spend_of =
+            |parent: OutPoint, change: &Address, change_amount: u64, sent: u64| Transaction {
+                version: 2,
+                lock_time: 0,
+                input: vec![TxIn {
+                    previous_output: parent,
+                    script_sig: ScriptBuf::new(),
+                    sequence: 0xffffffff,
+                    witness: dashcore::Witness::new(),
+                }],
+                output: vec![
+                    TxOut {
+                        value: sent,
+                        script_pubkey: external_address.script_pubkey(),
+                    },
+                    TxOut {
+                        value: change_amount,
+                        script_pubkey: change.script_pubkey(),
+                    },
+                ],
+                special_transaction_payload: None,
+            };
+        let next_change = |ctx: &mut TestWalletContext| {
+            ctx.managed_wallet
+                .first_bip44_managed_account_mut()
+                .expect("account")
+                .next_change_address(Some(&ctx.xpub), true)
+                .expect("change address")
+        };
+
+        // Root, then a child spending its change.
+        let root_change = next_change(&mut ctx);
+        let root = spend_of(
+            OutPoint {
+                txid: funding_tx.txid(),
+                vout: 0,
+            },
+            &root_change,
+            399_000,
+            600_000,
+        );
+        ctx.check_transaction(&root, TransactionContext::Mempool).await;
+        let child_change = next_change(&mut ctx);
+        let child = spend_of(
+            OutPoint {
+                txid: root.txid(),
+                vout: 1,
+            },
+            &child_change,
+            298_000,
+            100_000,
+        );
+        ctx.check_transaction(&child, TransactionContext::Mempool).await;
+
+        // A settled root is refused outright, whatever the map says.
+        ctx.check_transaction(&funding_tx, block).await;
+        let refused = ctx.managed_wallet.abandon_transaction(funding_tx.txid());
+        assert!(refused.is_empty(), "a settled root must be refused: {refused:?}");
+
+        // Simulate the restore: the child's record is absent, so the plain
+        // walk cannot reach it — only the mirror's linkage can.
+        ctx.managed_wallet
+            .first_bip44_managed_account_mut()
+            .expect("account")
+            .keys_mut()
+            .transactions_mut()
+            .remove(&child.txid());
+
+        let plain = ctx.managed_wallet.abandon_transaction(root.txid());
+        assert_eq!(plain.abandoned.len(), 1, "without the map the walk stops at the root");
+        assert!(
+            ctx.bip44_account().utxos.keys().any(|o| o.txid == child.txid()),
+            "the child's output is still credited"
+        );
+
+        // Now with the map, plus a stale row naming the settled funding tx —
+        // which must not be followed.
+        let mut external = BTreeMap::new();
+        external.insert(
+            OutPoint {
+                txid: root.txid(),
+                vout: 1,
+            },
+            child.txid(),
+        );
+        external.insert(
+            OutPoint {
+                txid: child.txid(),
+                vout: 1,
+            },
+            funding_tx.txid(),
+        );
+        let outcome = ctx.managed_wallet.abandon_transaction_with_spends(root.txid(), &external);
+        ctx.managed_wallet.update_balance();
+
+        assert!(
+            outcome.abandoned.contains(&child.txid()),
+            "the map must reach a descendant whose record is gone"
+        );
+        assert!(
+            !outcome.abandoned.contains(&funding_tx.txid()),
+            "a settled spender named by a stale row must not be followed"
+        );
+        assert!(
+            !ctx.bip44_account().utxos.keys().any(|o| o.txid == child.txid()),
+            "the child's outputs must be gone"
+        );
+        assert!(
+            ctx.bip44_account().transactions().contains_key(&funding_tx.txid()),
+            "the settled funding record must survive"
+        );
+    }
+
+    /// The sweep must never free the outpoint the winner itself spends.
+    ///
+    /// Two of the three arrival paths hide this: a block winner is already in
+    /// `observed_spent_outpoints`, and a relevant winner re-marks the outpoint
+    /// when it is recorded. An InstantSend winner has neither — the context
+    /// carries no block info, so no observed spend is recorded, and an
+    /// irrelevant one is never recorded at all. Releasing the shared coin
+    /// there lets a rescan re-insert money that is spent on chain.
+    #[tokio::test]
+    async fn test_the_sweep_never_frees_the_winners_own_input() {
+        let mut ctx = TestWalletContext::new_random();
+        let external_address = Address::p2pkh(
+            &dashcore::PublicKey::from_slice(&[0x02; 33]).expect("pubkey"),
+            Network::Testnet,
+        );
+
+        let funding_tx = Transaction::dummy(&ctx.receive_address, 0..1, &[1_000_000]);
+        let funding_context = TransactionContext::InBlock(BlockInfo::new(
+            100,
+            BlockHash::from_slice(&[6u8; 32]).expect("hash"),
+            1_700_000_000,
+        ));
+        ctx.check_transaction(&funding_tx, funding_context.clone()).await;
+
+        let shared_input = OutPoint {
+            txid: funding_tx.txid(),
+            vout: 0,
+        };
+        let input = || TxIn {
+            previous_output: shared_input,
+            script_sig: ScriptBuf::new(),
+            sequence: 0xffffffff,
+            witness: dashcore::Witness::new(),
+        };
+
+        // Loser first: recorded, so the coin leaves `utxos`.
+        let loser_change = ctx
+            .managed_wallet
+            .first_bip44_managed_account_mut()
+            .expect("account")
+            .next_change_address(Some(&ctx.xpub), true)
+            .expect("change address");
+        let loser = Transaction {
+            version: 2,
+            lock_time: 0,
+            input: vec![input()],
+            output: vec![
+                TxOut {
+                    value: 600_000,
+                    script_pubkey: external_address.script_pubkey(),
+                },
+                TxOut {
+                    value: 399_000,
+                    script_pubkey: loser_change.script_pubkey(),
+                },
+            ],
+            special_transaction_payload: None,
+        };
+        ctx.check_transaction(&loser, TransactionContext::Mempool).await;
+
+        // The winner arrives InstantSend-locked and pays only outside the
+        // wallet: no block info to record an observed spend, and nothing
+        // about it matches, so it is never recorded either.
+        let winner = Transaction {
+            version: 2,
+            lock_time: 0,
+            input: vec![input()],
+            output: vec![TxOut {
+                value: 999_000,
+                script_pubkey: external_address.script_pubkey(),
+            }],
+            special_transaction_payload: None,
+        };
+        let is_lock = InstantLock {
+            txid: winner.txid(),
+            ..InstantLock::default()
+        };
+        let result = ctx.check_transaction(&winner, TransactionContext::InstantSend(is_lock)).await;
+        assert!(!result.is_relevant, "the precondition: the winner matches nothing");
+        assert!(
+            !ctx.bip44_account().transactions().contains_key(&loser.txid()),
+            "the loser is still swept"
+        );
+
+        // The shared coin is spent on chain by the winner. Re-delivering the
+        // funding block must not bring it back.
+        ctx.check_transaction(&funding_tx, funding_context).await;
+        assert!(
+            !ctx.bip44_account().utxos.contains_key(&shared_input),
+            "a rescan must not resurrect a coin the winner consumed"
+        );
+        assert_eq!(ctx.managed_wallet.balance.confirmed(), 0);
+    }
+
+    /// A loser can spend inputs the winner does not. Sweeping it frees those
+    /// coins from the spent set, but their `Utxo` values were discarded when
+    /// the loser was recorded — so the sweep alone cannot put them back, and
+    /// the coins must be recoverable by the rescan the release enables.
+    #[tokio::test]
+    async fn test_a_swept_losers_extra_input_is_recoverable_by_rescan() {
+        let mut ctx = TestWalletContext::new_random();
+        let external_address = Address::p2pkh(
+            &dashcore::PublicKey::from_slice(&[0x02; 33]).expect("pubkey"),
+            Network::Testnet,
+        );
+
+        // One funding transaction pays us twice: A and B.
+        let funding_tx = Transaction::dummy(&ctx.receive_address, 0..2, &[500_000, 400_000]);
+        let funding_context = TransactionContext::InBlock(BlockInfo::new(
+            100,
+            BlockHash::from_slice(&[1u8; 32]).expect("hash"),
+            1_700_000_000,
+        ));
+        ctx.check_transaction(&funding_tx, funding_context.clone()).await;
+        assert_eq!(ctx.managed_wallet.balance.confirmed(), 900_000);
+
+        let coin_a = OutPoint {
+            txid: funding_tx.txid(),
+            vout: 0,
+        };
+        let coin_b = OutPoint {
+            txid: funding_tx.txid(),
+            vout: 1,
+        };
+        let spend =
+            |inputs: Vec<OutPoint>, change: &Address, change_amount: u64, sent: u64| Transaction {
+                version: 2,
+                lock_time: 0,
+                input: inputs
+                    .into_iter()
+                    .map(|previous_output| TxIn {
+                        previous_output,
+                        script_sig: ScriptBuf::new(),
+                        sequence: 0xffffffff,
+                        witness: dashcore::Witness::new(),
+                    })
+                    .collect(),
+                output: vec![
+                    TxOut {
+                        value: sent,
+                        script_pubkey: external_address.script_pubkey(),
+                    },
+                    TxOut {
+                        value: change_amount,
+                        script_pubkey: change.script_pubkey(),
+                    },
+                ],
+                special_transaction_payload: None,
+            };
+
+        // The loser spends A and B; the winner spends only A, and confirms.
+        let loser_change = ctx
+            .managed_wallet
+            .first_bip44_managed_account_mut()
+            .expect("account")
+            .next_change_address(Some(&ctx.xpub), true)
+            .expect("change address");
+        let loser = spend(vec![coin_a, coin_b], &loser_change, 99_000, 800_000);
+        ctx.check_transaction(&loser, TransactionContext::Mempool).await;
+
+        let winner_change = ctx
+            .managed_wallet
+            .first_bip44_managed_account_mut()
+            .expect("account")
+            .next_change_address(Some(&ctx.xpub), true)
+            .expect("change address");
+        let winner = spend(vec![coin_a], &winner_change, 99_000, 400_000);
+        let result = ctx
+            .check_transaction(
+                &winner,
+                TransactionContext::InBlock(BlockInfo::new(
+                    101,
+                    BlockHash::from_slice(&[2u8; 32]).expect("hash"),
+                    1_700_000_100,
+                )),
+            )
+            .await;
+
+        // The loser is gone, and B is not credited — its `Utxo` was
+        // discarded when the loser was recorded and cannot be invented.
+        assert!(!ctx.bip44_account().transactions().contains_key(&loser.txid()));
+        assert!(!ctx.bip44_account().utxos.contains_key(&coin_b));
+
+        // The event carries exactly what was released: B, and not A — A is
+        // the winner's own input, still spent on chain by `winner` itself.
+        assert_eq!(
+            result.released_outpoints,
+            vec![coin_b],
+            "the sweep must name B as released and must not name A"
+        );
+
+        // But B was freed from the spent set, so re-delivering the funding
+        // block restores it. That is what makes the loss recoverable rather
+        // than permanent.
+        ctx.check_transaction(&funding_tx, funding_context).await;
+        assert!(
+            ctx.bip44_account().utxos.contains_key(&coin_b),
+            "a rescan must be able to rediscover the loser's extra input"
+        );
+        assert_eq!(ctx.managed_wallet.balance.confirmed(), 499_000, "B plus the winner's change");
+    }
+
+    /// A loser's change may already have funded further unconfirmed
+    /// transactions, and the sweep removes those too — that is the descendant
+    /// closure `drop_conflicted_transactions` walks. Their inputs land in
+    /// `freed` like any other, including the ones pointing at a removed
+    /// loser's own output.
+    ///
+    /// Such an outpoint must not be reported released. It is not a coin
+    /// becoming spendable: it is an output of a transaction being deleted for
+    /// never being able to confirm, so telling a mirror to mark it spendable
+    /// re-credits money that does not exist — the exact class of bug the
+    /// sweep exists to remove.
+    #[tokio::test]
+    async fn test_a_swept_descendants_claim_on_its_parents_output_is_not_released() {
+        let mut ctx = TestWalletContext::new_random();
+        let external_address = Address::p2pkh(
+            &dashcore::PublicKey::from_slice(&[0x02; 33]).expect("pubkey"),
+            Network::Testnet,
+        );
+
+        // Two confirmed coins: X, which the winner will take, and C, which
+        // only the descendant spends.
+        let funding_tx = Transaction::dummy(&ctx.receive_address, 0..2, &[500_000, 400_000]);
+        ctx.check_transaction(
+            &funding_tx,
+            TransactionContext::InBlock(BlockInfo::new(
+                100,
+                BlockHash::from_slice(&[1u8; 32]).expect("hash"),
+                1_700_000_000,
+            )),
+        )
+        .await;
+
+        let coin_x = OutPoint {
+            txid: funding_tx.txid(),
+            vout: 0,
+        };
+        let coin_c = OutPoint {
+            txid: funding_tx.txid(),
+            vout: 1,
+        };
+        let spend =
+            |inputs: Vec<OutPoint>, change: &Address, change_amount: u64, sent: u64| Transaction {
+                version: 2,
+                lock_time: 0,
+                input: inputs
+                    .into_iter()
+                    .map(|previous_output| TxIn {
+                        previous_output,
+                        script_sig: ScriptBuf::new(),
+                        sequence: 0xffffffff,
+                        witness: dashcore::Witness::new(),
+                    })
+                    .collect(),
+                output: vec![
+                    TxOut {
+                        value: sent,
+                        script_pubkey: external_address.script_pubkey(),
+                    },
+                    TxOut {
+                        value: change_amount,
+                        script_pubkey: change.script_pubkey(),
+                    },
+                ],
+                special_transaction_payload: None,
+            };
+
+        // The parent spends X and pays itself change.
+        let parent_change = ctx
+            .managed_wallet
+            .first_bip44_managed_account_mut()
+            .expect("account")
+            .next_change_address(Some(&ctx.xpub), true)
+            .expect("change address");
+        let parent = spend(vec![coin_x], &parent_change, 99_000, 400_000);
+        ctx.check_transaction(&parent, TransactionContext::Mempool).await;
+        let parent_change_outpoint = OutPoint {
+            txid: parent.txid(),
+            vout: 1,
+        };
+
+        // The descendant spends that change plus C — the ordinary shape of
+        // chaining a second spend before the first confirms.
+        let child_change = ctx
+            .managed_wallet
+            .first_bip44_managed_account_mut()
+            .expect("account")
+            .next_change_address(Some(&ctx.xpub), true)
+            .expect("change address");
+        let child = spend(vec![parent_change_outpoint, coin_c], &child_change, 89_000, 400_000);
+        ctx.check_transaction(&child, TransactionContext::Mempool).await;
+
+        // The winner takes X and confirms, sweeping the parent and, through
+        // the descendant closure, the child.
+        let winner_change = ctx
+            .managed_wallet
+            .first_bip44_managed_account_mut()
+            .expect("account")
+            .next_change_address(Some(&ctx.xpub), true)
+            .expect("change address");
+        let winner = spend(vec![coin_x], &winner_change, 99_000, 400_000);
+        let result = ctx
+            .check_transaction(
+                &winner,
+                TransactionContext::InBlock(BlockInfo::new(
+                    101,
+                    BlockHash::from_slice(&[2u8; 32]).expect("hash"),
+                    1_700_000_100,
+                )),
+            )
+            .await;
+
+        assert!(
+            result.swept_transactions.contains(&child.txid()),
+            "sanity: the descendant is swept with its parent"
+        );
+        assert!(
+            !result.released_outpoints.contains(&parent_change_outpoint),
+            "an output of a transaction being deleted is not a coin becoming \
+             spendable, got {:?}",
+            result.released_outpoints
+        );
+        assert_eq!(
+            result.released_outpoints,
+            vec![coin_c],
+            "only the real coin the descendant spent is released"
+        );
+    }
+
+    /// A loser is removed from every account it was recorded in, and each of
+    /// those accounts decides what it released from its own records alone. An
+    /// account that never recorded the transaction still claiming one of the
+    /// loser's inputs therefore sees nothing retaining that coin and calls it
+    /// free — so the wallet-level union has to re-check the released set
+    /// against every account before reporting it.
+    ///
+    /// Reachable through pooled funding: the loser's change lands in a second
+    /// account, which is where its removal reports the release, while the
+    /// surviving claim on that coin lives back in the funding account.
+    #[tokio::test]
+    async fn test_a_released_outpoint_another_account_still_claims_is_withheld() {
+        let mut ctx = TestWalletContext::new_random();
+        let external_address = Address::p2pkh(
+            &dashcore::PublicKey::from_slice(&[0x02; 33]).expect("pubkey"),
+            Network::Testnet,
+        );
+
+        // The BIP32 account is where the loser's change will land, which is
+        // what gets the loser recorded in an account that knows nothing about
+        // the coins it spent.
+        let bip32_xpub = ctx
+            .wallet
+            .accounts
+            .standard_bip32_accounts
+            .get(&0)
+            .expect("default options create BIP32 account 0")
+            .account_xpub;
+        let bip32_change = ctx
+            .managed_wallet
+            .first_bip32_managed_account_mut()
+            .expect("BIP32 account")
+            .next_receive_address(Some(&bip32_xpub), true)
+            .expect("BIP32 address");
+
+        let funding_tx = Transaction::dummy(&ctx.receive_address, 0..2, &[500_000, 400_000]);
+        ctx.check_transaction(
+            &funding_tx,
+            TransactionContext::InBlock(BlockInfo::new(
+                100,
+                BlockHash::from_slice(&[1u8; 32]).expect("hash"),
+                1_700_000_000,
+            )),
+        )
+        .await;
+
+        let coin_a = OutPoint {
+            txid: funding_tx.txid(),
+            vout: 0,
+        };
+        let coin_b = OutPoint {
+            txid: funding_tx.txid(),
+            vout: 1,
+        };
+        let spend =
+            |inputs: Vec<OutPoint>, change: &Address, change_amount: u64, sent: u64| Transaction {
+                version: 2,
+                lock_time: 0,
+                input: inputs
+                    .into_iter()
+                    .map(|previous_output| TxIn {
+                        previous_output,
+                        script_sig: ScriptBuf::new(),
+                        sequence: 0xffffffff,
+                        witness: dashcore::Witness::new(),
+                    })
+                    .collect(),
+                output: vec![
+                    TxOut {
+                        value: sent,
+                        script_pubkey: external_address.script_pubkey(),
+                    },
+                    TxOut {
+                        value: change_amount,
+                        script_pubkey: change.script_pubkey(),
+                    },
+                ],
+                special_transaction_payload: None,
+            };
+
+        // The loser spends A and B, paying its change into the BIP32 account.
+        let loser = spend(vec![coin_a, coin_b], &bip32_change, 99_000, 800_000);
+        ctx.check_transaction(&loser, TransactionContext::Mempool).await;
+
+        // A second unconfirmed transaction also claims B. Neither is final, so
+        // neither sweeps the other, and this one survives what follows.
+        let rival_change = ctx
+            .managed_wallet
+            .first_bip44_managed_account_mut()
+            .expect("account")
+            .next_change_address(Some(&ctx.xpub), true)
+            .expect("change address");
+        let rival = spend(vec![coin_b], &rival_change, 50_000, 340_000);
+        ctx.check_transaction(&rival, TransactionContext::Mempool).await;
+
+        // The winner takes A and confirms, sweeping the loser — but not the
+        // rival, which shares no input with it.
+        let winner_change = ctx
+            .managed_wallet
+            .first_bip44_managed_account_mut()
+            .expect("account")
+            .next_change_address(Some(&ctx.xpub), true)
+            .expect("change address");
+        let winner = spend(vec![coin_a], &winner_change, 99_000, 400_000);
+        let result = ctx
+            .check_transaction(
+                &winner,
+                TransactionContext::InBlock(BlockInfo::new(
+                    101,
+                    BlockHash::from_slice(&[2u8; 32]).expect("hash"),
+                    1_700_000_100,
+                )),
+            )
+            .await;
+
+        assert!(
+            !ctx.bip44_account().transactions().contains_key(&loser.txid()),
+            "sanity: the loser was swept"
+        );
+        assert!(
+            ctx.bip44_account().transactions().contains_key(&rival.txid()),
+            "sanity: the rival is unconfirmed but shares no input with the winner"
+        );
+        assert!(!result.released_outpoints.contains(&coin_a), "A is the winner's own input");
+        assert!(
+            !result.released_outpoints.contains(&coin_b),
+            "B is still claimed by the rival, whichever account noticed"
+        );
+    }
+
+    /// An InstantSend lock is final, so it settles the winner's inputs just as
+    /// a block would — including when the winner was already sitting in the
+    /// mempool alongside its loser, which is the transition that skips
+    /// `record_transaction` and so skips the sweep it carries.
+    #[tokio::test]
+    async fn test_instant_send_on_an_existing_mempool_tx_drops_its_conflict() {
+        let mut ctx = TestWalletContext::new_random();
+        let external_address = Address::p2pkh(
+            &dashcore::PublicKey::from_slice(&[0x02; 33]).expect("pubkey"),
+            Network::Testnet,
+        );
+
+        let funding_value = 1_000_000u64;
+        let funding_tx = Transaction::dummy(&ctx.receive_address, 0..1, &[funding_value]);
+        ctx.check_transaction(
+            &funding_tx,
+            TransactionContext::InBlock(BlockInfo::new(
+                100,
+                BlockHash::from_slice(&[1u8; 32]).expect("hash"),
+                1_700_000_000,
+            )),
+        )
+        .await;
+
+        let funding_outpoint = OutPoint {
+            txid: funding_tx.txid(),
+            vout: 0,
+        };
+        let spend_of = |change: &Address, change_amount: u64, sent: u64| Transaction {
+            version: 2,
+            lock_time: 0,
+            input: vec![TxIn {
+                previous_output: funding_outpoint,
+                script_sig: ScriptBuf::new(),
+                sequence: 0xffffffff,
+                witness: dashcore::Witness::new(),
+            }],
+            output: vec![
+                TxOut {
+                    value: sent,
+                    script_pubkey: external_address.script_pubkey(),
+                },
+                TxOut {
+                    value: change_amount,
+                    script_pubkey: change.script_pubkey(),
+                },
+            ],
+            special_transaction_payload: None,
+        };
+
+        // Both competing spends land in the mempool, loser first.
+        let loser_change = ctx
+            .managed_wallet
+            .first_bip44_managed_account_mut()
+            .expect("account")
+            .next_change_address(Some(&ctx.xpub), true)
+            .expect("change address");
+        let loser = spend_of(&loser_change, 399_000, 600_000);
+        ctx.check_transaction(&loser, TransactionContext::Mempool).await;
+
+        let winner_change = ctx
+            .managed_wallet
+            .first_bip44_managed_account_mut()
+            .expect("account")
+            .next_change_address(Some(&ctx.xpub), true)
+            .expect("change address");
+        let winner = spend_of(&winner_change, 299_000, 700_000);
+        ctx.check_transaction(&winner, TransactionContext::Mempool).await;
+
+        let loser_change_outpoint = OutPoint {
+            txid: loser.txid(),
+            vout: 1,
+        };
+        assert!(
+            ctx.bip44_account().utxos.contains_key(&loser_change_outpoint),
+            "both are live while neither is final"
+        );
+
+        // The winner is InstantSend-locked. It is already recorded, so this
+        // takes the update-in-place branch rather than recording afresh.
+        let is_lock = InstantLock {
+            txid: winner.txid(),
+            ..InstantLock::default()
+        };
+        ctx.check_transaction(&winner, TransactionContext::InstantSend(is_lock)).await;
+
+        assert!(
+            !ctx.bip44_account().utxos.contains_key(&loser_change_outpoint),
+            "an IS lock settles the input, so the loser's change must not survive"
+        );
+        assert!(
+            !ctx.bip44_account().transactions().contains_key(&loser.txid()),
+            "the loser's record must be dropped too"
+        );
+    }
+
+    /// Abandoning a transaction that never reached the network must take the
+    /// transactions built on its change with it. This reproduces the shape
+    /// seen on a testnet device: an asset-lock funding transaction stuck at
+    /// `Built` whose broadcast never happened, then two further self-sends
+    /// chained onto its phantom change. Five UTXOs from three transactions,
+    /// none of which the network ever saw, and the whole chain has to go.
+    #[tokio::test]
+    async fn test_abandoning_an_unbroadcast_root_cascades_to_its_descendants() {
+        let mut ctx = TestWalletContext::new_random();
+        let external_address = Address::p2pkh(
+            &dashcore::PublicKey::from_slice(&[0x02; 33]).expect("pubkey"),
+            Network::Testnet,
+        );
+
+        // A real, confirmed coin funds the chain.
+        let funding_value = 100_000_000u64;
+        let funding_tx = Transaction::dummy(&ctx.receive_address, 0..1, &[funding_value]);
+        ctx.check_transaction(
+            &funding_tx,
+            TransactionContext::InBlock(BlockInfo::new(
+                100,
+                BlockHash::from_slice(&[1u8; 32]).expect("hash"),
+                1_700_000_000,
+            )),
+        )
+        .await;
+        assert_eq!(ctx.managed_wallet.balance.confirmed(), funding_value);
+
+        // Build a three-link chain, each link spending its parent's change.
+        // Every one of them stays in the mempool: nothing was ever broadcast.
+        let mut parent = OutPoint {
+            txid: funding_tx.txid(),
+            vout: 0,
+        };
+        let mut change_left = funding_value;
+        let mut chain = Vec::new();
+        for (link, sent) in [40_000_000u64, 20_000_000, 5_000_000].into_iter().enumerate() {
+            let fee = 226u64;
+            let change = change_left - sent - fee;
+            let change_address = ctx
+                .managed_wallet
+                .first_bip44_managed_account_mut()
+                .expect("account")
+                .next_change_address(Some(&ctx.xpub), true)
+                .expect("change address");
+            // The tip pays us twice, and nothing spends it onward, so both
+            // outputs are still live when the cascade runs — exercising the
+            // per-txid removal loops against a transaction contributing more
+            // than one UTXO. A filter that dropped only the first would
+            // otherwise pass every test here.
+            let split = link == 2;
+            let (change_a, change_b) = if split {
+                (change / 2, change - change / 2)
+            } else {
+                (change, 0)
+            };
+            let mut outputs = vec![
+                TxOut {
+                    value: sent,
+                    script_pubkey: external_address.script_pubkey(),
+                },
+                TxOut {
+                    value: change_a,
+                    script_pubkey: change_address.script_pubkey(),
+                },
+            ];
+            if split {
+                let second = ctx
+                    .managed_wallet
+                    .first_bip44_managed_account_mut()
+                    .expect("account")
+                    .next_change_address(Some(&ctx.xpub), true)
+                    .expect("change address");
+                outputs.push(TxOut {
+                    value: change_b,
+                    script_pubkey: second.script_pubkey(),
+                });
+            }
+            let tx = Transaction {
+                version: 2,
+                lock_time: 0,
+                input: vec![TxIn {
+                    previous_output: parent,
+                    script_sig: ScriptBuf::new(),
+                    sequence: 0xffffffff,
+                    witness: dashcore::Witness::new(),
+                }],
+                output: outputs,
+                special_transaction_payload: None,
+            };
+            ctx.check_transaction(&tx, TransactionContext::Mempool).await;
+            parent = OutPoint {
+                txid: tx.txid(),
+                vout: 1,
+            };
+            change_left = change;
+            chain.push(tx);
+        }
+
+        let root = chain[0].txid();
+        // Both live UTXOs belong to the tip, which pays us twice and is spent
+        // onward by nothing — so the cascade has to drop two UTXOs for that
+        // one txid rather than assuming one each. The earlier links' change
+        // is consumed by the next link.
+        assert_eq!(ctx.bip44_account().utxos.len(), 2, "live change outputs");
+
+        let outcome = ctx.managed_wallet.abandon_transaction(root);
+        ctx.managed_wallet.update_balance();
+
+        assert_eq!(
+            outcome.abandoned.len(),
+            3,
+            "the root and both descendants must be abandoned, got {:?}",
+            outcome.abandoned
+        );
+        for tx in &chain {
+            assert!(
+                outcome.abandoned.contains(&tx.txid()),
+                "chain member {} must be abandoned",
+                tx.txid()
+            );
+            assert!(
+                !ctx.bip44_account().transactions().contains_key(&tx.txid()),
+                "chain member {} must lose its record",
+                tx.txid()
+            );
+        }
+        assert!(ctx.bip44_account().utxos.is_empty(), "no phantom output may survive the cascade");
+        // The load-bearing assertion. Trusted self-send change is bucketed as
+        // *confirmed*, so `unconfirmed() == 0` holds before the abandon too
+        // and proves nothing on its own.
+        assert_eq!(
+            ctx.managed_wallet.balance.confirmed(),
+            0,
+            "the phantom counts as confirmed, so that is where its absence must show"
+        );
+        assert_eq!(ctx.managed_wallet.balance.unconfirmed(), 0);
+
+        // The real coin the chain consumed is released from the spent set, so
+        // a rescan can rediscover it — but only while its funding record is
+        // still live. A chainlock-finalized funding transaction keeps just its
+        // txid, so `has_transaction` stays true, `is_new` stays false, and
+        // `confirm_transaction` returns before reaching `update_utxos` — the
+        // only production insert site. See the sibling test below.
+        let rediscovered = ctx
+            .check_transaction(
+                &funding_tx,
+                TransactionContext::InBlock(BlockInfo::new(
+                    100,
+                    BlockHash::from_slice(&[1u8; 32]).expect("hash"),
+                    1_700_000_000,
+                )),
+            )
+            .await;
+        assert!(rediscovered.is_relevant);
+        assert_eq!(
+            ctx.managed_wallet.balance.confirmed(),
+            funding_value,
+            "the funding coin comes back on rescan — the chain never spent it on chain"
+        );
+    }
+
+    /// A transaction that loses a race for its inputs can never confirm, so
+    /// the change it contributed is money that does not exist. Nothing else
+    /// removes it — the loser is in no block, so no block processing revisits
+    /// it — and it would otherwise sit in the `unconfirmed` bucket forever.
+    #[tokio::test]
+    async fn test_conflicting_confirmed_spend_drops_the_losing_transactions_outputs() {
+        let mut ctx = TestWalletContext::new_random();
+        let external_address = Address::p2pkh(
+            &dashcore::PublicKey::from_slice(&[0x02; 33]).expect("pubkey"),
+            Network::Testnet,
+        );
+
+        // Confirmed funding UTXO.
+        let funding_value = 1_000_000u64;
+        let funding_tx = Transaction::dummy(&ctx.receive_address, 0..1, &[funding_value]);
+        ctx.check_transaction(
+            &funding_tx,
+            TransactionContext::InBlock(BlockInfo::new(
+                100,
+                BlockHash::from_slice(&[1u8; 32]).expect("hash"),
+                1_700_000_000,
+            )),
+        )
+        .await;
+
+        let funding_outpoint = OutPoint {
+            txid: funding_tx.txid(),
+            vout: 0,
+        };
+        let spend_of = |change_address: &Address, change_amount: u64, sent: u64| Transaction {
+            version: 2,
+            lock_time: 0,
+            input: vec![TxIn {
+                previous_output: funding_outpoint,
+                script_sig: ScriptBuf::new(),
+                sequence: 0xffffffff,
+                witness: dashcore::Witness::new(),
+            }],
+            output: vec![
+                TxOut {
+                    value: sent,
+                    script_pubkey: external_address.script_pubkey(),
+                },
+                TxOut {
+                    value: change_amount,
+                    script_pubkey: change_address.script_pubkey(),
+                },
+            ],
+            special_transaction_payload: None,
+        };
+
+        // First attempt: broadcast into the mempool, change comes back to us.
+        let first_change = ctx
+            .managed_wallet
+            .first_bip44_managed_account_mut()
+            .expect("account")
+            .next_change_address(Some(&ctx.xpub), true)
+            .expect("change address");
+        let loser = spend_of(&first_change, 399_000, 600_000);
+        ctx.check_transaction(&loser, TransactionContext::Mempool).await;
+
+        let loser_change = OutPoint {
+            txid: loser.txid(),
+            vout: 1,
+        };
+        assert!(
+            ctx.bip44_account().utxos.contains_key(&loser_change),
+            "the first attempt's change is tracked while it is still live"
+        );
+
+        // Second attempt spends the same input and confirms in a block. The
+        // first attempt can now never confirm.
+        let second_change = ctx
+            .managed_wallet
+            .first_bip44_managed_account_mut()
+            .expect("account")
+            .next_change_address(Some(&ctx.xpub), true)
+            .expect("change address");
+        let winner = spend_of(&second_change, 299_000, 700_000);
+        ctx.check_transaction(
+            &winner,
+            TransactionContext::InBlock(BlockInfo::new(
+                101,
+                BlockHash::from_slice(&[2u8; 32]).expect("hash"),
+                1_700_000_100,
+            )),
+        )
+        .await;
+
+        assert!(
+            !ctx.bip44_account().utxos.contains_key(&loser_change),
+            "the losing transaction's change must not survive as spendable money"
+        );
+        assert!(
+            !ctx.bip44_account().transactions().contains_key(&loser.txid()),
+            "the losing transaction's record must be dropped too"
+        );
+
+        // Only the winner's change remains, and it is the whole balance.
+        let winner_change = OutPoint {
+            txid: winner.txid(),
+            vout: 1,
+        };
+        assert!(ctx.bip44_account().utxos.contains_key(&winner_change));
+        // Without the sweep this is 698_000 — the loser's change is trusted
+        // self-send change and lands in the confirmed bucket, so only the
+        // exact total catches a regression.
+        assert_eq!(ctx.managed_wallet.balance.confirmed(), 299_000);
+        assert_eq!(ctx.managed_wallet.balance.unconfirmed(), 0);
+    }
+
+    /// Pooled funding spans account families — an asset lock draws from BIP44,
+    /// BIP32 and the DashPay contact-receiving accounts at once — so the
+    /// trusted-self-send check must be answered by the whole wallet, not by
+    /// the single account that happens to hold the change. Here the only input
+    /// belongs to the BIP32 account while the change lands on BIP44: the
+    /// transaction is still entirely ours, and its change must be trusted.
+    #[tokio::test]
+    async fn test_self_send_change_is_trusted_when_parent_is_in_a_sibling_account() {
+        let mut ctx = TestWalletContext::new_random();
+        let external_address = Address::p2pkh(
+            &dashcore::PublicKey::from_slice(&[0x02; 33]).expect("pubkey"),
+            Network::Testnet,
+        );
+
+        // Fund the *BIP32* account, confirmed in a block.
+        let bip32_xpub = ctx
+            .wallet
+            .accounts
+            .standard_bip32_accounts
+            .get(&0)
+            .expect("BIP32 account")
+            .account_xpub;
+        let bip32_address = ctx
+            .managed_wallet
+            .first_bip32_managed_account_mut()
+            .expect("BIP32 managed account")
+            .next_receive_address(Some(&bip32_xpub), true)
+            .expect("BIP32 receive address");
+
+        let funding_value = 1_000_000u64;
+        let funding_tx = Transaction::dummy(&bip32_address, 0..1, &[funding_value]);
+        let block_context = TransactionContext::InBlock(BlockInfo::new(
+            100,
+            BlockHash::from_slice(&[7u8; 32]).expect("hash"),
+            1_700_000_000,
+        ));
+        ctx.check_transaction(&funding_tx, block_context).await;
+        assert_eq!(ctx.managed_wallet.balance.confirmed(), funding_value);
+
+        // Change goes to the BIP44 account, which holds none of the inputs.
+        let change_address = ctx
+            .managed_wallet
+            .first_bip44_managed_account_mut()
+            .expect("account")
+            .next_change_address(Some(&ctx.xpub), true)
+            .expect("change address");
+
+        let send_amount = 600_000u64;
+        let fee = 1_000u64;
+        let change_amount = funding_value - send_amount - fee;
+        let spend_tx = Transaction {
+            version: 2,
+            lock_time: 0,
+            input: vec![TxIn {
+                previous_output: OutPoint {
+                    txid: funding_tx.txid(),
+                    vout: 0,
+                },
+                script_sig: ScriptBuf::new(),
+                sequence: 0xffffffff,
+                witness: dashcore::Witness::new(),
+            }],
+            output: vec![
+                TxOut {
+                    value: send_amount,
+                    script_pubkey: external_address.script_pubkey(),
+                },
+                TxOut {
+                    value: change_amount,
+                    script_pubkey: change_address.script_pubkey(),
+                },
+            ],
+            special_transaction_payload: None,
+        };
+
+        let result = ctx.check_transaction(&spend_tx, TransactionContext::Mempool).await;
+        assert!(result.is_relevant);
+
+        let change_outpoint = OutPoint {
+            txid: spend_tx.txid(),
+            vout: 1,
+        };
+        let change_utxo =
+            ctx.bip44_account().utxos.get(&change_outpoint).expect("change UTXO recorded");
+        assert!(!change_utxo.is_confirmed);
+        assert!(
+            change_utxo.is_trusted,
+            "change of a wallet-owned transfer must be trusted even when the spent \
+             parent lives in a sibling account"
+        );
+
+        // And therefore it is confirmed, not unconfirmed, in the balance split.
+        assert_eq!(ctx.managed_wallet.balance.unconfirmed(), 0);
+        assert_eq!(ctx.managed_wallet.balance.confirmed(), change_amount);
     }
 
     /// Sibling of `test_self_send_change_in_mempool_lands_in_confirmed_balance`:

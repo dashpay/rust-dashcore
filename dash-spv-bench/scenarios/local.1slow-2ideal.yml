@@ -4,3 +4,7 @@ repeats: 3
 peers:
   - { count: 2, latency_ms: 50 }
   - { count: 1, latency_ms: 800, loss_pct: 8, rate_kbit: 500 }
+
+client:
+  latency_ms: 5
+  rate_kbit: 150000

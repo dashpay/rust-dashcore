@@ -104,8 +104,27 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> SyncManager for BlockHeadersMana
     ) -> SyncResult<Vec<SyncEvent>> {
         match msg.inner() {
             NetworkMessage::Headers(headers) => {
+                let hashed_headers: Vec<crate::types::HashedBlockHeader> =
+                    if let Some(hashes) = msg.header_hashes() {
+                        if hashes.len() != headers.len() {
+                            return Err(crate::error::SyncError::InvalidState(format!(
+                                "headers2 hash count mismatch: {} headers, {} hashes",
+                                headers.len(),
+                                hashes.len()
+                            )));
+                        }
+                        headers
+                            .iter()
+                            .zip(hashes)
+                            .map(|(header, hash)| {
+                                crate::types::HashedBlockHeader::with_trusted_hash(*header, *hash)
+                            })
+                            .collect()
+                    } else {
+                        headers.iter().map(crate::types::HashedBlockHeader::from).collect()
+                    };
                 // Always route through pipeline when initialized
-                self.handle_headers_pipeline(headers, requests).await
+                self.handle_headers_pipeline(&hashed_headers, requests).await
             }
 
             NetworkMessage::Inv(inv) => {
@@ -135,12 +154,27 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> SyncManager for BlockHeadersMana
 
         // During initial sync, send more requests and log progress
         if self.state() == SyncState::Syncing {
+            // Take, refill, then store — the same order `handle_headers_pipeline`
+            // uses, since draining can expose a segment the refill should pick
+            // up in this pass rather than the next one.
+            let ready_batches = self.pipeline.take_ready_to_store();
+
             let sent = self.pipeline.send_pending(requests)?;
             if sent > 0 {
                 tracing::debug!("Tick: pipeline sent {} more requests", sent);
             }
 
-            return Ok(vec![]);
+            // Promotion is otherwise reachable only from `handle_headers_pipeline`,
+            // i.e. only when a `Headers` message arrives — so a sync has no way to
+            // finish itself once the final segment completes, because no further
+            // `Headers` will come. That is not hypothetical: a testnet restore was
+            // found frozen with 1,046,289 headers buffered in memory and the stored
+            // tip stuck at 1,474,000, peers connected and chain locks still
+            // arriving, until the app was restarted. Retrying on the 100ms tick
+            // makes a missed promotion self-heal whatever caused it to be missed.
+            let mut events = self.store_ready_batches(ready_batches).await?;
+            events.extend(self.finalize_sync_if_complete(requests).await?);
+            return Ok(events);
         }
 
         // Post-sync: check for stale block announcements

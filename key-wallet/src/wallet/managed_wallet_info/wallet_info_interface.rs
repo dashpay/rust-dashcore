@@ -270,6 +270,14 @@ pub trait WalletInfoInterface: Sized + WalletTransactionChecker + ManagedAccount
     /// Mark UTXOs for a transaction as InstantSend-locked across all accounts
     /// and update the corresponding transaction record context.
     /// Returns `true` if any UTXO was newly marked.
+    /// Apply an InstantSend lock: mark the transaction's UTXOs, rewrite its
+    /// record context, and drop any competing spend the lock now settles.
+    ///
+    /// Returns whether wallet state changed in any of those ways — callers
+    /// use it to refresh balances and to decide whether to emit
+    /// `TransactionInstantLocked`. An outgoing transaction can own no UTXOs
+    /// of ours and still change state by rewriting its context or by the
+    /// sweep removing a loser, so this is broader than "a UTXO was marked".
     fn mark_instant_send_utxos(&mut self, txid: &Txid, lock: &InstantLock) -> bool;
 
     /// Return the aggregated monitor revision across all accounts.
@@ -580,18 +588,36 @@ impl WalletInfoInterface for ManagedWalletInfo {
             return false;
         }
         let mut any_changed = false;
+        // Kept for the sweep below: it needs the locked transaction's inputs,
+        // and this signature carries only its txid.
+        let mut locked_transaction = None;
         for mut account in self.accounts.all_accounts_mut() {
             if account.mark_utxos_instant_send(txid) {
                 any_changed = true;
             }
             if let Some(record) = account.transactions_mut().get_mut(txid) {
                 record.update_context(TransactionContext::InstantSend(lock.clone()));
+                any_changed = true;
+                if locked_transaction.is_none() {
+                    locked_transaction = Some(record.transaction.clone());
+                }
             }
         }
-        if any_changed {
+        // An IS lock settles this transaction's inputs, so any recorded
+        // competing spend can never confirm. This is the path the live
+        // dash-spv pipeline takes for a lock arriving after the transaction is
+        // already tracked (`process_instant_send_lock`), and it had no sweep —
+        // the one in `check_core_transaction` is only reachable on a first
+        // sighting that already carries the lock.
+        let swept = locked_transaction.is_some_and(|tx| {
+            !self.sweep_conflicts(&tx, &TransactionContext::InstantSend(lock.clone())).is_empty()
+        });
+        if any_changed && !swept {
+            // `sweep_conflicts` recomputes on its own when it removes
+            // something, so this only covers the marking-only case.
             self.update_balance();
         }
-        any_changed
+        any_changed || swept
     }
 
     fn monitor_revision(&self) -> u64 {

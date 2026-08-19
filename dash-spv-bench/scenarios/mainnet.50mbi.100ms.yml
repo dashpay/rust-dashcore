@@ -1,0 +1,7 @@
+description: "Mainnet from genesis with the client's own link capped at 50 Mbit each way and 100ms of one-way delay (~+100ms RTT). One cell of the bandwidth x latency matrix."
+mode: mainnet
+max_peers: 3
+
+client:
+  latency_ms: 100
+  rate_kbit: 50000
