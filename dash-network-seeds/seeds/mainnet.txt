@@ -224,7 +224,7 @@ regular 31.58.170.80:9999 - ok sync - - -
 regular 31.58.170.110:9999 - ok sync - - -
 regular 31.58.170.130:9999 - ok sync - - -
 regular 31.58.170.133:9999 - ok sync - - -
-regular 31.58.170.139:9999 - ok sync - - -
+regular 31.58.170.139:9999 - timeout ? - - -
 regular 31.58.170.180:9999 - ok sync - - -
 regular 31.58.170.181:9999 - ok sync - - -
 regular 31.58.170.213:9999 - ok sync - - -
@@ -328,7 +328,7 @@ regular 45.76.205.140:9999 - ok sync - - -
 regular 45.76.236.39:9999 - ok sync - - -
 evo 45.77.11.194:9999 443 ok sync ok ok expired
 regular 45.77.15.33:9999 - ok sync - - -
-evo 45.77.129.235:9999 443 ok sync ok ok valid
+evo 45.77.129.235:9999 443 ok sync ok ok expired
 regular 45.77.171.78:9999 - ok sync - - -
 regular 45.79.18.106:9999 - ok sync - - -
 evo 45.85.147.192:9999 443 ok sync ok ok valid
@@ -475,10 +475,10 @@ evo 65.108.0.153:9999 443 ok sync ok ok expired
 evo 65.108.0.158:9999 443 ok sync ok ok expired
 evo 65.108.4.194:9999 443 ok sync ok ok expired
 evo 65.108.4.195:9999 443 ok sync ok ok expired
-evo 65.108.4.196:9999 443 ok sync refused none no-handshake
-evo 65.108.4.213:9999 443 ok sync refused none no-handshake
+evo 65.108.4.196:9999 443 ok sync ok none no-handshake
+evo 65.108.4.213:9999 443 ok sync ok none no-handshake
 evo 65.108.74.75:9999 443 ok sync ok ok expired
-evo 65.108.74.78:9999 443 ok sync refused none no-handshake
+evo 65.108.74.78:9999 443 ok sync ok none no-handshake
 evo 65.108.74.79:9999 443 ok sync ok ok expired
 evo 65.108.74.95:9999 443 ok sync ok ok expired
 evo 65.108.74.109:9999 443 ok sync ok ok expired
@@ -509,6 +509,7 @@ regular 66.244.243.70:9999 - ok sync - - -
 evo 66.245.196.52:9999 443 ok sync ok ok valid
 regular 68.183.2.66:9999 - ok sync - - -
 regular 68.183.36.87:9999 - ok sync - - -
+regular 68.183.46.92:9999 - ok sync - - -
 regular 68.183.75.121:9999 - ok sync - - -
 regular 68.183.80.227:9999 - ok sync - - -
 regular 68.183.92.68:9999 - ok sync - - -
@@ -631,7 +632,7 @@ regular 85.209.241.73:9999 - ok sync - - -
 regular 85.209.241.74:9999 - ok sync - - -
 regular 85.209.241.78:9999 - ok sync - - -
 regular 85.209.241.79:9999 - ok sync - - -
-regular 85.209.241.80:9999 - ok sync - - -
+regular 85.209.241.80:9999 - error ? - - -
 regular 85.209.241.81:9999 - ok sync - - -
 regular 85.209.241.82:9999 - ok sync - - -
 regular 85.209.241.83:9999 - ok sync - - -
@@ -659,7 +660,7 @@ regular 85.209.241.172:9999 - ok sync - - -
 regular 85.209.241.177:9999 - ok sync - - -
 regular 85.209.241.179:9999 - ok sync - - -
 regular 85.209.241.185:9999 - ok sync - - -
-regular 85.209.241.187:9999 - ok sync - - -
+regular 85.209.241.187:9999 - error ? - - -
 regular 85.209.241.198:9999 - ok sync - - -
 regular 85.209.241.200:9999 - ok sync - - -
 regular 85.209.241.207:9999 - ok sync - - -
@@ -769,7 +770,7 @@ regular 91.198.108.40:9999 - ok sync - - -
 regular 91.198.108.41:9999 - error ? - - -
 evo 91.199.149.177:9999 443 ok sync ok ok expired
 evo 93.115.172.36:9999 443 ok sync ok ok valid
-evo 93.115.172.37:9999 443 ok sync ok ok valid
+evo 93.115.172.37:9999 443 error ? ok ok valid
 evo 93.115.172.38:9999 443 ok sync ok ok valid
 evo 93.115.172.39:9999 443 ok sync ok ok valid
 regular 93.115.172.193:9999 - ok sync - - -
@@ -784,8 +785,8 @@ regular 95.85.21.42:9999 - ok sync - - -
 regular 95.85.32.155:9999 - ok sync - - -
 regular 95.85.37.225:9999 - ok sync - - -
 regular 95.85.48.49:9999 - ok sync - - -
-regular 95.85.54.64:9999 - ok sync - - -
-evo 95.111.232.18:9999 443 ok sync ok ok valid
+regular 95.85.54.64:9999 - error ? - - -
+evo 95.111.232.18:9999 443 error ? ok ok valid
 evo 95.111.233.139:9999 443 ok sync ok ok valid
 evo 95.111.241.20:9999 443 ok sync ok ok valid
 evo 95.111.242.220:9999 443 ok sync ok ok valid
@@ -857,7 +858,7 @@ regular 104.131.160.119:9999 - ok sync - - -
 regular 104.131.180.71:9999 - ok sync - - -
 regular 104.131.193.7:9999 - ok sync - - -
 regular 104.131.236.114:9999 - ok sync - - -
-evo 104.156.154.179:9999 443 ok sync ok ok valid
+evo 104.156.154.179:9999 443 error ? ok ok valid
 regular 104.156.237.196:9999 - ok sync - - -
 regular 104.168.46.54:9999 - ok sync - - -
 regular 104.207.130.246:9999 - ok sync - - -
@@ -875,7 +876,6 @@ regular 104.248.46.23:9999 - ok sync - - -
 regular 104.248.137.183:9999 - ok sync - - -
 regular 104.248.138.204:9999 - ok sync - - -
 regular 104.248.159.169:9999 - ok sync - - -
-regular 104.248.167.243:9999 - ok sync - - -
 regular 104.248.172.106:9999 - ok sync - - -
 regular 106.55.9.22:9999 - ok sync - - -
 regular 107.170.7.146:9999 - ok sync - - -
@@ -918,7 +918,7 @@ evo 109.199.124.30:9999 443 ok sync ok ok valid
 evo 109.199.124.135:9999 443 ok sync ok ok valid
 regular 109.235.67.246:9999 - ok sync - - -
 evo 114.132.172.215:9999 443 ok sync ok ok valid
-regular 115.190.248.57:9999 - ok sync - - -
+regular 115.190.248.57:9999 - error ? - - -
 regular 116.203.244.222:9999 - ok sync - - -
 regular 123.193.64.166:9999 - ok sync - - -
 regular 128.140.58.30:9999 - ok sync - - -
@@ -975,7 +975,7 @@ evo 132.243.197.40:9999 443 ok sync ok ok valid
 regular 132.243.197.41:9999 - ok sync - - -
 regular 132.243.197.42:9999 - ok sync - - -
 regular 132.243.197.43:9999 - ok sync - - -
-regular 132.243.197.44:9999 - ok sync - - -
+regular 132.243.197.44:9999 - error ? - - -
 regular 132.243.197.45:9999 - ok sync - - -
 regular 132.243.197.46:9999 - ok sync - - -
 regular 132.243.197.47:9999 - ok sync - - -
@@ -989,7 +989,7 @@ regular 132.243.197.54:9999 - ok sync - - -
 regular 132.243.197.55:9999 - ok sync - - -
 regular 132.243.197.56:9999 - ok sync - - -
 regular 132.243.197.57:9999 - ok sync - - -
-regular 132.243.197.58:9999 - ok sync - - -
+regular 132.243.197.58:9999 - error ? - - -
 regular 132.243.197.59:9999 - ok sync - - -
 regular 132.243.197.61:9999 - ok sync - - -
 regular 132.243.197.62:9999 - ok sync - - -
@@ -1006,8 +1006,8 @@ regular 132.243.197.73:9999 - ok sync - - -
 regular 132.243.197.74:9999 - ok sync - - -
 regular 132.243.197.75:9999 - ok sync - - -
 regular 132.243.197.76:9999 - ok sync - - -
-regular 132.243.197.77:9999 - ok sync - - -
-regular 132.243.197.78:9999 - ok sync - - -
+regular 132.243.197.77:9999 - error ? - - -
+regular 132.243.197.78:9999 - error ? - - -
 regular 132.243.197.79:9999 - ok sync - - -
 regular 132.243.197.80:9999 - ok sync - - -
 regular 132.243.197.81:9999 - ok sync - - -
@@ -1319,7 +1319,7 @@ regular 151.244.85.29:9999 - ok sync - - -
 regular 151.244.85.31:9999 - ok sync - - -
 regular 151.244.85.33:9999 - ok sync - - -
 regular 151.244.85.34:9999 - ok sync - - -
-regular 151.244.85.36:9999 - ok sync - - -
+regular 151.244.85.36:9999 - error ? - - -
 regular 151.244.85.43:9999 - ok sync - - -
 regular 151.244.85.45:9999 - ok sync - - -
 regular 151.244.85.46:9999 - ok sync - - -
@@ -1328,6 +1328,7 @@ regular 151.244.85.48:9999 - ok sync - - -
 regular 151.244.85.50:9999 - ok sync - - -
 regular 151.244.85.52:9999 - ok sync - - -
 regular 151.244.85.54:9999 - ok sync - - -
+regular 151.244.85.58:9999 - ok sync - - -
 regular 151.244.85.64:9999 - ok sync - - -
 regular 151.244.85.65:9999 - ok sync - - -
 regular 151.244.85.67:9999 - ok sync - - -
@@ -1346,7 +1347,7 @@ regular 151.244.85.88:9999 - ok sync - - -
 regular 151.244.85.89:9999 - ok sync - - -
 regular 151.244.85.95:9999 - ok sync - - -
 regular 151.244.85.96:9999 - ok sync - - -
-regular 151.244.85.98:9999 - ok sync - - -
+regular 151.244.85.98:9999 - error ? - - -
 regular 151.244.85.100:9999 - ok sync - - -
 regular 151.244.85.106:9999 - ok sync - - -
 regular 151.244.85.107:9999 - ok sync - - -
@@ -1354,6 +1355,7 @@ regular 151.244.85.109:9999 - ok sync - - -
 regular 151.244.85.110:9999 - ok sync - - -
 regular 151.244.85.111:9999 - ok sync - - -
 regular 151.244.85.114:9999 - ok sync - - -
+regular 151.244.85.120:9999 - ok sync - - -
 regular 151.244.85.121:9999 - ok sync - - -
 regular 151.244.85.123:9999 - ok sync - - -
 regular 151.244.85.130:9999 - ok sync - - -
@@ -1505,8 +1507,8 @@ regular 162.212.35.104:9999 - ok sync - - -
 regular 162.212.35.105:9999 - ok sync - - -
 regular 162.212.35.106:9999 - ok sync - - -
 regular 162.212.35.107:9999 - ok sync - - -
-regular 162.212.35.108:9999 - ok sync - - -
-regular 162.212.35.109:9999 - ok sync - - -
+regular 162.212.35.108:9999 - error ? - - -
+regular 162.212.35.109:9999 - error ? - - -
 regular 162.243.59.230:9999 - ok sync - - -
 regular 162.243.76.23:9999 - ok sync - - -
 regular 162.243.136.66:9999 - ok sync - - -
@@ -1549,12 +1551,12 @@ regular 167.71.229.90:9999 - ok sync - - -
 evo 167.86.77.58:9999 443 ok sync ok ok valid
 evo 167.86.93.21:9999 443 ok sync ok ok valid
 evo 167.86.94.138:9999 443 ok sync ok ok valid
-evo 167.88.169.16:9999 443 ok sync ok ok valid
+evo 167.88.169.16:9999 443 ok sync ok ok expired
 regular 167.99.65.122:9999 - ok sync - - -
 regular 167.99.73.247:9999 - ok sync - - -
 regular 167.99.74.32:9999 - ok sync - - -
 regular 167.99.177.115:9999 - ok sync - - -
-regular 167.99.178.147:9999 - ok sync - - -
+regular 167.99.178.147:9999 - error ? - - -
 regular 167.99.182.250:9999 - ok sync - - -
 regular 167.99.185.82:9999 - ok sync - - -
 regular 167.99.199.59:9999 - ok sync - - -
@@ -1589,7 +1591,7 @@ regular 168.119.83.3:9999 - ok sync - - -
 regular 168.119.83.6:9999 - ok sync - - -
 regular 168.119.83.7:9999 - ok sync - - -
 regular 168.119.83.8:9999 - ok sync - - -
-regular 168.119.83.9:9999 - ok sync - - -
+regular 168.119.83.9:9999 - error ? - - -
 regular 168.119.83.10:9999 - ok sync - - -
 regular 168.119.83.11:9999 - ok sync - - -
 regular 168.119.83.12:9999 - ok sync - - -
@@ -1606,7 +1608,7 @@ regular 168.119.87.136:9999 - ok sync - - -
 regular 168.119.87.137:9999 - ok sync - - -
 regular 168.119.87.138:9999 - ok sync - - -
 regular 168.119.87.146:9999 - ok sync - - -
-regular 168.119.87.147:9999 - ok sync - - -
+regular 168.119.87.147:9999 - error ? - - -
 regular 168.119.87.149:9999 - ok sync - - -
 regular 168.119.87.150:9999 - ok sync - - -
 regular 168.119.87.152:9999 - ok sync - - -
@@ -1667,10 +1669,10 @@ regular 178.62.128.50:9999 - ok sync - - -
 regular 178.62.128.51:9999 - ok sync - - -
 regular 178.62.128.168:9999 - ok sync - - -
 regular 178.62.129.5:9999 - ok sync - - -
-regular 178.62.129.7:9999 - ok sync - - -
+regular 178.62.129.7:9999 - error ? - - -
 regular 178.62.149.161:9999 - ok sync - - -
 regular 178.62.149.233:9999 - ok sync - - -
-regular 178.62.152.222:9999 - ok sync - - -
+regular 178.62.152.222:9999 - error ? - - -
 regular 178.62.159.73:9999 - ok sync - - -
 regular 178.62.159.196:9999 - ok sync - - -
 regular 178.62.159.218:9999 - ok sync - - -
@@ -1690,7 +1692,7 @@ regular 178.62.171.69:9999 - ok sync - - -
 regular 178.62.171.227:9999 - ok sync - - -
 regular 178.62.172.188:9999 - ok sync - - -
 regular 178.62.172.195:9999 - ok sync - - -
-regular 178.62.172.196:9999 - ok sync - - -
+regular 178.62.172.196:9999 - error ? - - -
 regular 178.62.172.197:9999 - ok sync - - -
 regular 178.62.180.8:9999 - ok sync - - -
 regular 178.62.183.183:9999 - ok sync - - -
@@ -1786,14 +1788,14 @@ regular 185.112.249.55:9999 - ok sync - - -
 regular 185.164.163.55:9999 - ok sync - - -
 regular 185.164.163.59:9999 - ok sync - - -
 regular 185.164.163.85:9999 - ok sync - - -
-regular 185.164.163.132:9999 - ok sync - - -
+regular 185.164.163.132:9999 - error ? - - -
 regular 185.164.163.133:9999 - ok sync - - -
 regular 185.164.163.143:9999 - ok sync - - -
 regular 185.164.163.217:9999 - ok sync - - -
 regular 185.164.163.218:9999 - ok sync - - -
 regular 185.164.163.220:9999 - ok sync - - -
 regular 185.165.171.117:9999 - ok sync - - -
-evo 185.166.217.154:9999 443 ok sync ok ok expired
+evo 185.166.217.154:9999 443 ok sync ok ok valid
 regular 185.185.40.14:9999 - ok sync - - -
 regular 185.185.40.104:9999 - ok sync - - -
 regular 185.185.40.115:9999 - ok sync - - -
@@ -1884,8 +1886,8 @@ regular 188.40.182.195:9999 - ok sync - - -
 regular 188.40.182.196:9999 - ok sync - - -
 regular 188.40.182.205:9999 - ok sync - - -
 regular 188.40.182.207:9999 - ok sync - - -
-regular 188.40.182.208:9999 - ok sync - - -
-regular 188.40.182.209:9999 - ok sync - - -
+regular 188.40.182.208:9999 - error ? - - -
+regular 188.40.182.209:9999 - error ? - - -
 regular 188.40.182.210:9999 - ok sync - - -
 regular 188.40.182.211:9999 - ok sync - - -
 regular 188.40.182.212:9999 - ok sync - - -
@@ -1896,13 +1898,13 @@ regular 188.40.182.216:9999 - ok sync - - -
 regular 188.40.182.220:9999 - ok sync - - -
 regular 188.40.182.221:9999 - ok sync - - -
 regular 188.40.182.222:9999 - ok sync - - -
-regular 188.40.184.65:9999 - ok sync - - -
+regular 188.40.184.65:9999 - error ? - - -
 regular 188.40.184.67:9999 - ok sync - - -
 regular 188.40.184.68:9999 - ok sync - - -
 regular 188.40.184.69:9999 - ok sync - - -
 regular 188.40.184.72:9999 - ok sync - - -
 regular 188.40.185.128:9999 - ok sync - - -
-regular 188.40.185.129:9999 - ok sync - - -
+regular 188.40.185.129:9999 - error ? - - -
 regular 188.40.185.130:9999 - ok sync - - -
 regular 188.40.185.131:9999 - ok sync - - -
 regular 188.40.185.132:9999 - ok sync - - -
