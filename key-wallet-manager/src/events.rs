@@ -238,6 +238,25 @@ pub enum WalletEvent {
         txids: Vec<Txid>,
         /// The transaction whose arrival settled the inputs, for provenance.
         superseded_by: Txid,
+        /// Mined height of `superseded_by` when this sweep was triggered by
+        /// its arrival in a block; `None` when it was triggered by an
+        /// InstantSend-locked transaction still waiting to be mined (those
+        /// are the only two triggers — an unlocked mempool arrival never
+        /// sweeps, see `WalletTransactionChecker::check_core_transaction`).
+        ///
+        /// This is the winner's finality context, and only the emission site
+        /// has it: `superseded_by` need not be wallet-relevant (see
+        /// `released_outpoints` below), so a consumer cannot look the height
+        /// up in its own records — the winner may never appear anywhere else
+        /// in this wallet's event stream. A consumer durably mirroring the
+        /// removed spends (e.g. observed-spent rows kept so a restored
+        /// wallet does not re-credit the swept coins) needs it to retire
+        /// those rows soundly: a block-context sweep anchors the winner at a
+        /// height that chainlocks, giving the rows a finality horizon, while
+        /// an IS-locked winner has no mining deadline — aging its rows out
+        /// by wall clock would delete a genuine hold while the conflict is
+        /// still unmined.
+        winner_mined_height: Option<CoreBlockHeight>,
         /// Outpoints the sweep released: inputs the removed transactions
         /// claimed to spend that no surviving record spends too (a loser
         /// spending A+B against a winner spending only A leaves A marked and
@@ -446,15 +465,17 @@ impl fmt::Display for WalletEvent {
             WalletEvent::TransactionsSwept {
                 txids,
                 superseded_by,
+                winner_mined_height,
                 released_outpoints,
                 balance,
                 account_balances,
                 ..
             } => write!(
                 f,
-                "TransactionsSwept(count={}, superseded_by={}, released={}, balance={}, account_balances={})",
+                "TransactionsSwept(count={}, superseded_by={}, winner_mined_height={:?}, released={}, balance={}, account_balances={})",
                 txids.len(),
                 superseded_by,
+                winner_mined_height,
                 released_outpoints.len(),
                 balance,
                 format_account_balances(account_balances),
