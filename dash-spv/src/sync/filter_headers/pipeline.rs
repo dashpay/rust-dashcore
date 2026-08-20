@@ -177,6 +177,18 @@ impl FilterHeadersPipeline {
     }
 
     /// Send pending requests using a RequestSender (synchronous).
+    ///
+    /// `take_pending` pulls the whole slice off the queue up front, but only a
+    /// dispatched request reaches `mark_sent`. Every early exit below therefore
+    /// hands the batch it failed on — and every batch still queued behind it —
+    /// back to the coordinator first. Otherwise those batches end up in neither
+    /// tracker and nothing ever asks for them again: `handle_timeouts` and
+    /// `requeue_in_flight` both walk in-flight only, and `extend_target` only
+    /// appends above `target_height`. `next_expected` then stays pinned to the
+    /// lowest lost batch, the batches above it pile up in `buffered` so
+    /// `is_complete` never turns true, and because `handle_new_headers` re-inits
+    /// the pipeline only when it is complete, filter-header sync wedges for
+    /// good — the same failure mode `requeue_failed` exists to prevent. (#972)
     pub(super) fn send_pending(&mut self, requests: &RequestSender) -> SyncResult<usize> {
         let count = self.coordinator.available_to_send();
         if count == 0 {
@@ -186,15 +198,19 @@ impl FilterHeadersPipeline {
         let stop_hashes = self.coordinator.take_pending(count);
         let mut sent = 0;
 
-        for stop_hash in stop_hashes {
-            let Some(&start_height) = self.batch_starts.get(&stop_hash) else {
+        for (idx, &stop_hash) in stop_hashes.iter().enumerate() {
+            let Some(start_height) = self.batch_starts.get(&stop_hash).copied() else {
+                self.coordinator.return_unsent(stop_hashes[idx..].to_vec());
                 return Err(SyncError::InvalidState(format!(
                     "No batch_starts entry for pending stop_hash {}",
                     stop_hash
                 )));
             };
 
-            requests.request_filter_headers(start_height, stop_hash)?;
+            if let Err(e) = requests.request_filter_headers(start_height, stop_hash) {
+                self.coordinator.return_unsent(stop_hashes[idx..].to_vec());
+                return Err(e.into());
+            }
 
             self.coordinator.mark_sent(&[stop_hash]);
 
@@ -457,6 +473,94 @@ mod tests {
 
         let err = pipeline.send_pending(&requests).unwrap_err();
         assert!(matches!(err, SyncError::InvalidState(_)));
+    }
+
+    /// Collect the `GetCFHeaders` requests a test sender received, in order.
+    fn drain_getcfheaders(
+        rx: &mut tokio::sync::mpsc::UnboundedReceiver<NetworkRequest>,
+    ) -> Vec<(u32, BlockHash)> {
+        let mut requested = Vec::new();
+        while let Ok(request) = rx.try_recv() {
+            match request {
+                NetworkRequest::SendMessage(NetworkMessage::GetCFHeaders(GetCFHeaders {
+                    start_height,
+                    stop_hash,
+                    ..
+                })) => requested.push((start_height, stop_hash)),
+                other => panic!("Expected GetCFHeaders, got {:?}", other),
+            }
+        }
+        requested
+    }
+
+    /// Queue three consecutive batches with their start heights.
+    fn pipeline_with_three_queued_batches() -> (FilterHeadersPipeline, [BlockHash; 3]) {
+        let mut pipeline = FilterHeadersPipeline::new();
+        pipeline.next_expected = 1;
+        pipeline.target_height = 6000;
+
+        let hashes = [
+            BlockHash::from_byte_array([0x01; 32]),
+            BlockHash::from_byte_array([0x02; 32]),
+            BlockHash::from_byte_array([0x03; 32]),
+        ];
+        for (i, hash) in hashes.iter().enumerate() {
+            pipeline.coordinator.enqueue([*hash]);
+            pipeline.batch_starts.insert(*hash, 1 + 2000 * i as u32);
+        }
+        (pipeline, hashes)
+    }
+
+    /// A failed dispatch must not strand the batches `take_pending` already
+    /// pulled off the queue. They were removed from pending and never reached
+    /// `mark_sent`, so without the restore they are tracked nowhere:
+    /// `handle_timeouts` and `requeue_in_flight` walk in-flight only, and
+    /// `extend_target` only appends above `target_height`. `next_expected`
+    /// would stay pinned to the lowest of them forever. (#972)
+    #[test]
+    fn test_send_pending_returns_every_batch_when_dispatch_fails() {
+        let (mut pipeline, hashes) = pipeline_with_three_queued_batches();
+
+        // A dropped receiver fails every dispatch.
+        let (tx, rx) = unbounded_channel();
+        drop(rx);
+        assert!(pipeline.send_pending(&RequestSender::new(tx)).is_err());
+
+        assert_eq!(pipeline.coordinator.active_count(), 0, "nothing was dispatched");
+        assert_eq!(pipeline.coordinator.pending_count(), 3, "every batch is still queued");
+
+        // A working sender reissues all three, lowest first, with their
+        // original start heights.
+        let (tx, mut rx) = unbounded_channel();
+        assert_eq!(pipeline.send_pending(&RequestSender::new(tx)).unwrap(), 3);
+        assert_eq!(
+            drain_getcfheaders(&mut rx),
+            vec![(1, hashes[0]), (2001, hashes[1]), (4001, hashes[2])]
+        );
+    }
+
+    /// The same guard on the `InvalidState` exit, mid-run: batch 1 was
+    /// dispatched and stays in flight, while the batch that tripped the error
+    /// and the one still queued behind it go back to the front of the queue
+    /// instead of disappearing. (#972)
+    #[test]
+    fn test_send_pending_returns_remaining_batches_on_state_error() {
+        let (mut pipeline, hashes) = pipeline_with_three_queued_batches();
+        // Batch 2 loses its start height, so it trips the InvalidState exit.
+        pipeline.batch_starts.remove(&hashes[1]);
+
+        let (tx, mut rx) = unbounded_channel();
+        let err = pipeline.send_pending(&RequestSender::new(tx)).unwrap_err();
+        assert!(matches!(err, SyncError::InvalidState(_)));
+
+        // Only batch 1 went out, and it is accounted for as in flight.
+        assert_eq!(drain_getcfheaders(&mut rx), vec![(1, hashes[0])]);
+        assert!(pipeline.coordinator.is_in_flight(&hashes[0]));
+        assert_eq!(pipeline.coordinator.active_count(), 1);
+
+        // The failed batch and the one behind it are queued, in order.
+        assert_eq!(pipeline.coordinator.pending_count(), 2);
+        assert_eq!(pipeline.coordinator.take_pending(2), vec![hashes[1], hashes[2]]);
     }
 
     /// A peer disconnect requeues in-flight batches without discarding what the

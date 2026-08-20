@@ -152,6 +152,24 @@ impl<K: Hash + Eq + Clone> DownloadCoordinator<K> {
         }
     }
 
+    /// Return items `take_pending` handed out that were never dispatched.
+    ///
+    /// `take_pending` removes items from the queue before the caller sends
+    /// them, and only `mark_sent` moves them into in-flight — so a caller that
+    /// bails out between the two leaves those items in neither tracker, and
+    /// nothing puts them back: `check_timeouts` and `requeue_in_flight` both
+    /// walk in-flight only. This restores them to the front of the queue in
+    /// their original order, so the next send reissues them lowest-first and a
+    /// sequential consumer keeps making progress.
+    ///
+    /// Retry counts are deliberately left alone: the request never reached a
+    /// peer, so no peer failed to answer it.
+    pub(crate) fn return_unsent(&mut self, items: Vec<K>) {
+        for item in items.into_iter().rev() {
+            self.pending.push_front(item);
+        }
+    }
+
     /// Handle a received item.
     ///
     /// Returns true if the item was being tracked, false if unexpected.
@@ -360,6 +378,35 @@ mod tests {
         let mut requeued = items[..3].to_vec();
         requeued.sort();
         assert_eq!(requeued, vec![1, 2, 3]);
+    }
+
+    /// `return_unsent` must put items `take_pending` handed out but that were
+    /// never dispatched back at the *front* of the queue, in their original
+    /// order, without charging them a retry. Nothing else covers the gap
+    /// between `take_pending` and `mark_sent` — `check_timeouts` and
+    /// `requeue_in_flight` both walk in-flight only — so an item dropped there
+    /// is never requested again. (#972)
+    #[test]
+    fn test_return_unsent_restores_order_without_charging_a_retry() {
+        let mut coord: DownloadCoordinator<u32> = DownloadCoordinator::default();
+        coord.enqueue([1, 2, 3, 4]);
+
+        let taken = coord.take_pending(3);
+        assert_eq!(taken, vec![1, 2, 3]);
+        assert_eq!(coord.pending_count(), 1);
+
+        // The caller dispatched 1, then failed on 2 and gave back the rest.
+        coord.mark_sent(&[1]);
+        coord.return_unsent(taken[1..].to_vec());
+
+        assert!(coord.is_in_flight(&1), "the dispatched item stays in flight");
+        assert_eq!(coord.pending_count(), 3);
+        assert_eq!(
+            coord.take_pending(3),
+            vec![2, 3, 4],
+            "returned items go back ahead of what was never taken, in order"
+        );
+        assert!(coord.retry_counts.is_empty(), "a request that never left is not a retry");
     }
 
     #[test]
