@@ -493,6 +493,14 @@ async fn committed_range_sweep_coalesces_across_batch_commits() {
         manager.active_batches.insert(start, batch);
     }
     manager.progress.update_stored_height(399);
+    // Both halves of the drain gate have to be live, or the test only proves
+    // the `active_batches.len() == 1` half: with the tips left at their
+    // default 0, `end_height() >= filter_header_tip_height()` is trivially
+    // true and the comparison that keeps the sweep from firing while more
+    // batches are still to come is never exercised. Same for the target
+    // height, which `FiltersSyncComplete` is checked against below.
+    manager.progress.update_filter_header_tip_height(399);
+    manager.progress.update_target_height(399);
 
     // Drive the production event loop to quiescence like `drive_to_quiescence`
     // does, additionally watching for `FiltersSyncComplete` so the completion
