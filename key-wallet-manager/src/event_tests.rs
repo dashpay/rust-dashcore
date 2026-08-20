@@ -547,30 +547,7 @@ async fn test_block_winner_emits_swept_event_naming_the_released_outpoints() {
 
     // One funding transaction pays us twice, so the loser can spend a coin
     // the winner does not.
-    let funding = Transaction {
-        version: 2,
-        lock_time: 0,
-        input: vec![TxIn {
-            previous_output: OutPoint {
-                txid: Txid::from_byte_array([0x5a; 32]),
-                vout: 0,
-            },
-            script_sig: ScriptBuf::new(),
-            sequence: u32::MAX,
-            witness: Witness::default(),
-        }],
-        output: vec![
-            TxOut {
-                value: 500_000,
-                script_pubkey: addr.script_pubkey(),
-            },
-            TxOut {
-                value: 400_000,
-                script_pubkey: addr.script_pubkey(),
-            },
-        ],
-        special_transaction_payload: None,
-    };
+    let funding = create_tx_paying_amounts(&addr, 0x5a, &[500_000, 400_000]);
     let funding_block = make_block(vec![funding.clone()], 0x5a, 1000);
     let wallets = BTreeSet::from([wallet_id]);
     manager
@@ -585,33 +562,14 @@ async fn test_block_winner_emits_swept_event_naming_the_released_outpoints() {
         txid: funding.txid(),
         vout: 1,
     };
-    let spend = |inputs: Vec<OutPoint>, value: u64| Transaction {
-        version: 2,
-        lock_time: 0,
-        input: inputs
-            .into_iter()
-            .map(|previous_output| TxIn {
-                previous_output,
-                script_sig: ScriptBuf::new(),
-                sequence: u32::MAX,
-                witness: Witness::default(),
-            })
-            .collect(),
-        output: vec![TxOut {
-            value,
-            script_pubkey: addr.script_pubkey(),
-        }],
-        special_transaction_payload: None,
-    };
-
-    let loser = spend(vec![coin_a, coin_b], 800_000);
+    let loser = spend_to(&addr, vec![coin_a, coin_b], 800_000);
     manager.process_mempool_transaction(&loser, None).await;
 
     // Subscribe only now: the funding block and the loser's arrival are
     // setup, and the sweep is what this test is about.
     let mut rx = manager.subscribe_events();
 
-    let winner = spend(vec![coin_a], 400_000);
+    let winner = spend_to(&addr, vec![coin_a], 400_000);
     let winner_block = make_block(vec![winner.clone()], 0x5b, 1100);
     manager
         .process_block_for_wallets(&winner_block, winner_block.block_hash(), 101, &wallets)
@@ -1180,30 +1138,7 @@ async fn test_instant_send_lock_emits_swept_event_before_the_lock_event() {
 
     // One funding transaction pays us twice, so the loser can spend a coin
     // the winner does not — that second coin is what gets released.
-    let funding = Transaction {
-        version: 2,
-        lock_time: 0,
-        input: vec![TxIn {
-            previous_output: OutPoint {
-                txid: Txid::from_byte_array([0x7a; 32]),
-                vout: 0,
-            },
-            script_sig: ScriptBuf::new(),
-            sequence: u32::MAX,
-            witness: Witness::default(),
-        }],
-        output: vec![
-            TxOut {
-                value: 500_000,
-                script_pubkey: addr.script_pubkey(),
-            },
-            TxOut {
-                value: 400_000,
-                script_pubkey: addr.script_pubkey(),
-            },
-        ],
-        special_transaction_payload: None,
-    };
+    let funding = create_tx_paying_amounts(&addr, 0x7a, &[500_000, 400_000]);
     let funding_block = make_block(vec![funding.clone()], 0x7a, 2000);
     let wallets = BTreeSet::from([wallet_id]);
     manager
@@ -1218,30 +1153,12 @@ async fn test_instant_send_lock_emits_swept_event_before_the_lock_event() {
         txid: funding.txid(),
         vout: 1,
     };
-    let spend = |inputs: Vec<OutPoint>, value: u64| Transaction {
-        version: 2,
-        lock_time: 0,
-        input: inputs
-            .into_iter()
-            .map(|previous_output| TxIn {
-                previous_output,
-                script_sig: ScriptBuf::new(),
-                sequence: u32::MAX,
-                witness: Witness::default(),
-            })
-            .collect(),
-        output: vec![TxOut {
-            value,
-            script_pubkey: addr.script_pubkey(),
-        }],
-        special_transaction_payload: None,
-    };
 
     // Both competing spends sit in the mempool, neither final, so neither
     // sweeps the other yet.
-    let loser = spend(vec![coin_a, coin_b], 880_000);
+    let loser = spend_to(&addr, vec![coin_a, coin_b], 880_000);
     manager.process_mempool_transaction(&loser, None).await;
-    let winner = spend(vec![coin_a], 480_000);
+    let winner = spend_to(&addr, vec![coin_a], 480_000);
     manager.process_mempool_transaction(&winner, None).await;
 
     // Subscribe only now: the setup above is not what this test is about.

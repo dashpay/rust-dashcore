@@ -3533,18 +3533,18 @@ mod tests {
         // report. Re-crediting a coin a surviving record still spends would
         // hand coin selection a guaranteed double spend — the reason the
         // restore runs only over the wallet-reconciled released set.
-        let bip32_account =
-            ctx.managed_wallet.first_bip32_managed_account().expect("BIP32 account");
-        for account in [ctx.bip44_account(), bip32_account] {
-            assert!(
-                !account.utxos.contains_key(&coin_a),
-                "A must not be re-credited: the winner spent it on chain"
-            );
-            assert!(
-                !account.utxos.contains_key(&coin_b),
-                "B must not be re-credited: the rival still claims it"
-            );
-        }
+        // Wallet-wide, not per named account: a coin re-credited into any
+        // funding account is a coin coin selection can reach.
+        let live: Vec<OutPoint> =
+            ctx.managed_wallet.utxos().iter().map(|utxo| utxo.outpoint).collect();
+        assert!(
+            !live.contains(&coin_a),
+            "A must not be re-credited anywhere: the winner spent it on chain"
+        );
+        assert!(
+            !live.contains(&coin_b),
+            "B must not be re-credited anywhere: the rival still claims it"
+        );
     }
 
     /// An InstantSend lock is final, so it settles the winner's inputs just as
