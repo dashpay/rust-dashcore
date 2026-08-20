@@ -415,6 +415,18 @@ impl<'a> ManagedAccountRefMut<'a> {
             ManagedAccountRefMut::Keys(_) => false,
         }
     }
+
+    /// Drain spender records corrected by born-spent input attribution
+    /// during the last `record_transaction` / `confirm_transaction` call
+    /// (out-of-order funding — see
+    /// `ManagedCoreFundsAccount::attribute_born_spent_output`). Always
+    /// empty for the [`Keys`](Self::Keys) variant.
+    pub(crate) fn take_corrected_spender_records(&mut self) -> Vec<TransactionRecord> {
+        match self {
+            ManagedAccountRefMut::Funds(a) => a.take_corrected_spender_records(),
+            ManagedAccountRefMut::Keys(_) => Vec::new(),
+        }
+    }
 }
 
 /// Owned managed core account, either funds-bearing or keys-only.

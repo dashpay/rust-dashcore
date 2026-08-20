@@ -232,6 +232,19 @@ impl WalletTransactionChecker for ManagedWalletInfo {
                 }
             }
 
+            // Born-spent input attribution: processing THIS transaction may
+            // have corrected the records of EARLIER-processed spenders of
+            // its outputs (out-of-order funding during rescan/discovery).
+            // Surface the corrections as updated records so an event
+            // re-emits them to the persistence mirrors — without this the
+            // engine's records are right but every store keeps the
+            // income-only net (the inflated-history shape).
+            let corrected = account.take_corrected_spender_records();
+            if !corrected.is_empty() {
+                result.state_modified = true;
+                result.updated_records.extend(corrected);
+            }
+
             for address_info in account_match.account_type_match.all_involved_addresses() {
                 account.mark_address_used(&address_info.address);
             }
@@ -3591,5 +3604,101 @@ mod tests {
         assert!(!utxo.is_trusted, "external payment is not a self-send change");
         assert_eq!(ctx.managed_wallet.balance.confirmed(), 0);
         assert_eq!(ctx.managed_wallet.balance.unconfirmed(), payment_value);
+    }
+
+    /// Out-of-order funding (rescan block-download order): the SPENDER is
+    /// processed before the transaction that funded it. At spender-process
+    /// time its input is unknown, so the record is born income-only
+    /// (`net_amount = +received` — the inflated-history shape: 2026-08-20
+    /// field wallet showed 49 such rows summing +4.63 DASH of phantom net).
+    /// When the funding transaction is finally processed, its born-spent
+    /// output must be attributed onto the spender's record — corrected net,
+    /// input_details filled — and the corrected record must surface in
+    /// `updated_records` so an event re-emits it to persistence mirrors.
+    #[tokio::test]
+    async fn born_spent_attribution_corrects_out_of_order_spender() {
+        let mut ctx = TestWalletContext::new_random();
+        const FUND: u64 = 1_000_000;
+        const BACK: u64 = 900_000;
+
+        let funding_tx = Transaction::dummy(&ctx.receive_address, 0..1, &[FUND]);
+        let funded_outpoint = OutPoint {
+            txid: funding_tx.txid(),
+            vout: 0,
+        };
+        let spender_tx = Transaction {
+            version: 1,
+            lock_time: 0,
+            input: vec![TxIn {
+                previous_output: funded_outpoint,
+                script_sig: ScriptBuf::new(),
+                sequence: 0xffffffff,
+                witness: dashcore::Witness::new(),
+            }],
+            output: vec![TxOut {
+                value: BACK,
+                script_pubkey: ctx.receive_address.script_pubkey(),
+            }],
+            special_transaction_payload: None,
+        };
+        let spender_txid = spender_tx.txid();
+
+        // Spender first (height 2 processed before height 1).
+        let spender_context = TransactionContext::InBlock(BlockInfo::new(
+            2,
+            BlockHash::from_slice(&[3u8; 32]).expect("block hash"),
+            1_650_000_100,
+        ));
+        let result = ctx.check_transaction(&spender_tx, spender_context).await;
+        assert!(result.is_relevant && result.is_new_transaction);
+        {
+            let account =
+                ctx.managed_wallet.first_bip44_managed_account().expect("bip44 account");
+            let record = account.transactions().get(&spender_txid).expect("spender recorded");
+            assert_eq!(
+                record.net_amount, BACK as i64,
+                "pin the born-wrong shape: income-only net before the funding tx arrives"
+            );
+            assert!(record.input_details.is_empty());
+        }
+
+        // Funding second — out of order.
+        let funding_context = TransactionContext::InBlock(BlockInfo::new(
+            1,
+            BlockHash::from_slice(&[2u8; 32]).expect("block hash"),
+            1_650_000_000,
+        ));
+        let result = ctx.check_transaction(&funding_tx, funding_context).await;
+        assert!(result.is_relevant);
+
+        // The engine record is corrected...
+        {
+            let account =
+                ctx.managed_wallet.first_bip44_managed_account().expect("bip44 account");
+            let record = account.transactions().get(&spender_txid).expect("spender record");
+            assert_eq!(
+                record.net_amount,
+                BACK as i64 - FUND as i64,
+                "spent side attributed: net = received - spent"
+            );
+            assert_eq!(record.input_details.len(), 1);
+            assert_eq!(record.input_details[0].value, FUND);
+            // The born-spent funding output must NOT enter the UTXO set.
+            assert!(
+                !account.utxos.contains_key(&funded_outpoint),
+                "a born-spent output never becomes spendable"
+            );
+        }
+
+        // ...AND the correction surfaces as an updated record for the event
+        // pipeline — without this every persistence mirror keeps the
+        // income-only net forever.
+        let corrected = result
+            .updated_records
+            .iter()
+            .find(|r| r.txid == spender_txid)
+            .expect("corrected spender record must surface in updated_records");
+        assert_eq!(corrected.net_amount, BACK as i64 - FUND as i64);
+        assert_eq!(corrected.input_details.len(), 1);
     }
 }

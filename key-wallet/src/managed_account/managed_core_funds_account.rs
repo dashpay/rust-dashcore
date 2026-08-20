@@ -68,6 +68,18 @@ pub struct ManagedCoreFundsAccount {
     /// re-establish which coins are spent.
     #[cfg_attr(feature = "serde", serde(skip))]
     reservations: ReservationSet,
+    /// Spender records corrected as a side effect of processing a FUNDING
+    /// transaction after its spender (out-of-order block processing during
+    /// rescan/discovery): the spender was recorded with the spent input
+    /// unattributed (`net_amount` = income only — the inflated-history
+    /// shape, 2026-08-20 field wallet: 49 one-sided rows, +4.63 DASH of
+    /// phantom net). `update_utxos` patches the spender's record the moment
+    /// the funding output is seen born-spent and stages the corrected copy
+    /// here; `wallet_checker` drains it into `updated_records` so an event
+    /// re-emits the correction to every persistence mirror. Transient
+    /// working state, never persisted.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    corrected_spender_records: Vec<TransactionRecord>,
 }
 
 /// What [`ManagedCoreFundsAccount::apply_abandon`] removed from one account.
@@ -104,6 +116,7 @@ impl ManagedCoreFundsAccount {
             utxos: BTreeMap::new(),
             spent_outpoints: HashSet::new(),
             reservations: ReservationSet::default(),
+            corrected_spender_records: Vec::new(),
         }
     }
 
@@ -131,6 +144,7 @@ impl ManagedCoreFundsAccount {
             utxos: BTreeMap::new(),
             spent_outpoints: HashSet::new(),
             reservations: ReservationSet::default(),
+            corrected_spender_records: Vec::new(),
         }
     }
 
@@ -372,6 +386,19 @@ impl ManagedCoreFundsAccount {
                                     outpoint = %outpoint,
                                     "Skipping UTXO already spent by previously processed transaction"
                                 );
+                                // Born-spent: the spender ran BEFORE this
+                                // funding transaction, so its record was
+                                // built with this input unattributed
+                                // (income-only net — the inflated-history
+                                // shape). This is the one moment the missing
+                                // attribution is provable; patch the
+                                // spender's record and stage it for
+                                // re-emission.
+                                self.attribute_born_spent_output(
+                                    &outpoint,
+                                    output.value,
+                                    addr.clone(),
+                                );
                                 continue;
                             }
 
@@ -383,6 +410,15 @@ impl ManagedCoreFundsAccount {
                                 tracing::debug!(
                                     outpoint = %outpoint,
                                     "Skipping UTXO already observed spent in an earlier-processed block (#649)"
+                                );
+                                // Same born-spent shape via the wallet-level
+                                // observed-spends view: if this account also
+                                // holds the spender's record, its spent side
+                                // is missing this input too.
+                                self.attribute_born_spent_output(
+                                    &outpoint,
+                                    output.value,
+                                    addr.clone(),
                                 );
                                 continue;
                             }
@@ -449,6 +485,55 @@ impl ManagedCoreFundsAccount {
             _ => {}
         }
         recognized
+    }
+
+    /// Late input attribution for a spender processed before its funding
+    /// transaction (the born-spent hooks in [`Self::update_utxos`]). Finds
+    /// the recorded transaction spending `outpoint`, attributes the input
+    /// (index, value, address), recomputes the record's derived fields, and
+    /// stages the corrected copy in `corrected_spender_records` for the
+    /// caller to drain into an updated-records event. No-op when no record
+    /// spends the outpoint (spend observed from a transaction this account
+    /// never recorded, or a finalized record already dropped) or when the
+    /// input is already attributed.
+    fn attribute_born_spent_output(&mut self, outpoint: &OutPoint, value: u64, address: Address) {
+        let spender = self.keys.transactions().iter().find_map(|(txid, rec)| {
+            rec.transaction
+                .input
+                .iter()
+                .position(|i| &i.previous_output == outpoint)
+                .map(|pos| (*txid, pos as u32))
+        });
+        let Some((spender_txid, input_index)) = spender else {
+            return;
+        };
+        let Some(record) = self.keys.transactions_mut().get_mut(&spender_txid) else {
+            return;
+        };
+        if record.input_details.iter().any(|d| d.index == input_index) {
+            return;
+        }
+        record.input_details.push(InputDetail {
+            index: input_index,
+            value,
+            address,
+        });
+        record.input_details.sort_by_key(|d| d.index);
+        record.recompute_net_and_direction();
+        tracing::info!(
+            outpoint = %outpoint,
+            spender = %spender_txid,
+            corrected_net = record.net_amount,
+            "Attributed born-spent funding output onto its spender's record"
+        );
+        let corrected = record.clone();
+        self.corrected_spender_records.push(corrected);
+    }
+
+    /// Drain the spender records corrected by [`Self::update_utxos`]'s
+    /// born-spent attribution since the last drain.
+    pub(crate) fn take_corrected_spender_records(&mut self) -> Vec<TransactionRecord> {
+        std::mem::take(&mut self.corrected_spender_records)
     }
 
     /// Drop the spent-marks that `freed` contributed, keeping every mark a
@@ -837,35 +922,11 @@ impl ManagedCoreFundsAccount {
             }
             if corrected {
                 tx_record.output_details.sort_by_key(|o| o.index);
-                // Same derivations as `record_transaction`, over the now-
-                // complete details. `input_details` was built at first
-                // processing while the spent parents were still live, so the
-                // spend side needs no recomputation.
-                let owned: i64 = tx_record
-                    .output_details
-                    .iter()
-                    .filter(|o| matches!(o.role, OutputRole::Received | OutputRole::Change))
-                    .map(|o| o.value as i64)
-                    .sum();
-                let spent: i64 =
-                    tx_record.input_details.iter().map(|i| i.value as i64).sum();
-                tx_record.net_amount = owned - spent;
-                let has_inputs = !tx_record.input_details.is_empty();
-                let has_sent =
-                    tx_record.output_details.iter().any(|d| d.role == OutputRole::Sent);
-                let has_our_outputs = tx_record
-                    .output_details
-                    .iter()
-                    .any(|d| matches!(d.role, OutputRole::Received | OutputRole::Change));
-                if tx_record.direction != TransactionDirection::CoinJoin {
-                    tx_record.direction = if !has_sent && has_inputs && has_our_outputs {
-                        TransactionDirection::Internal
-                    } else if has_inputs {
-                        TransactionDirection::Outgoing
-                    } else {
-                        TransactionDirection::Incoming
-                    };
-                }
+                // Shared derivation over the now-complete details.
+                // `input_details` was built at first processing while the
+                // spent parents were still live, so the spend side needs no
+                // recomputation here.
+                tx_record.recompute_net_and_direction();
                 changed = true;
             }
         }
@@ -1420,6 +1481,7 @@ impl<'de> Deserialize<'de> for ManagedCoreFundsAccount {
             utxos: helper.utxos,
             spent_outpoints,
             reservations: ReservationSet::default(),
+            corrected_spender_records: Vec::new(),
         })
     }
 }
