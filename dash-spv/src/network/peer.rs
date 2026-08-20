@@ -31,6 +31,55 @@ use tokio_util::sync::CancellationToken;
 use crate::network::manager::{InboundMessage, OrderedHeaderResults};
 use crate::{error::NetworkResult, NetworkError};
 
+/// Hands out a fresh number to every connection, so one can be told apart from
+/// the next connection to the SAME address.
+static NEXT_CONNECTION: AtomicU64 = AtomicU64::new(0);
+
+/// Identifies one CONNECTION, not one address.
+///
+/// A close event can arrive long after the connection it belongs to left the peer
+/// set — a peer probed and stashed as a backup, or one retired to drain, reports
+/// in whenever its reader finally ends — and by then the supervisor may have
+/// reconnected to that same address. Keyed by address alone, that late report
+/// evicts the LIVE connection and hands its in-flight requests back: a leaked
+/// reader, a spurious disconnect to the sync layer, and healthy work re-sent.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub(crate) struct PeerId {
+    addr: SocketAddr,
+    connection: u64,
+}
+
+impl PeerId {
+    pub(crate) fn addr(&self) -> SocketAddr {
+        self.addr
+    }
+
+    /// A specific connection number at `addr`, for tests that need two distinct
+    /// connections to the same address.
+    #[cfg(test)]
+    pub(crate) fn for_test(addr: SocketAddr, connection: u64) -> Self {
+        PeerId {
+            addr,
+            connection,
+        }
+    }
+
+    /// An id for something that is not a real connection: the local sentinel that
+    /// `dispatch_local` injects under.
+    pub(crate) fn synthetic(addr: SocketAddr) -> Self {
+        PeerId {
+            addr,
+            connection: u64::MAX,
+        }
+    }
+}
+
+impl std::fmt::Display for PeerId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.addr)
+    }
+}
+
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const WRITE_TIMEOUT: Duration = Duration::from_secs(5);
@@ -126,15 +175,15 @@ type PeerReader = FramedRead<CountingReader<OwnedReadHalf>, RawNetworkMessageCod
 // and boxing every message would penalise the common small ones, so allow the size skew.
 #[allow(clippy::large_enum_variant)]
 pub enum PeerEvent {
-    Message(SocketAddr, InboundMessage),
-    Disconnected(SocketAddr),
+    Message(PeerId, InboundMessage),
+    Disconnected(PeerId),
 }
 
 /// Everything the router needs to pick a peer and write to it, detached from the
 /// peer set so it can be cloned, releasing the lock on the peer itself
 #[derive(Clone)]
 pub(crate) struct PeerHandle {
-    addr: SocketAddr,
+    id: PeerId,
     network: Network,
     writer: Arc<Mutex<OwnedWriteHalf>>,
     in_flight: Arc<AtomicUsize>,
@@ -155,7 +204,11 @@ pub(crate) struct PeerHandle {
 
 impl PeerHandle {
     pub(crate) fn addr(&self) -> SocketAddr {
-        self.addr
+        self.id.addr()
+    }
+
+    pub(crate) fn id(&self) -> PeerId {
+        self.id
     }
 
     pub(crate) fn in_flight(&self) -> usize {
@@ -216,7 +269,7 @@ impl PeerHandle {
                 self.in_flight.fetch_sub(1, Ordering::Relaxed);
                 self.latency.cancel_one().await;
             }
-            tracing::warn!("Disconnecting {} due to write error: {}", self.addr, reason);
+            tracing::warn!("Disconnecting {} due to write error: {}", self.id, reason);
             return Err(NetworkError::ConnectionFailed(reason));
         }
         Ok(())
@@ -249,6 +302,12 @@ impl ConnectedPeer {
         self.handle.addr()
     }
 
+    /// This CONNECTION's identity, which a later connection to the same address
+    /// does not share.
+    pub(crate) fn id(&self) -> PeerId {
+        self.handle.id()
+    }
+
     pub fn version(&self) -> &VersionMessage {
         &self.version
     }
@@ -269,15 +328,11 @@ impl ConnectedPeer {
     pub fn disconnect(self) -> DisconnectedPeer {
         DisconnectedPeer {
             network: self.handle.network,
-            addr: self.handle.addr,
+            addr: self.handle.addr(),
             // Carry the measured handshake ping (0 means unmeasured) so the supervisor
             // can rank this address against others without re-probing it.
             lag_ms: (self.lag_ms() > 0).then(|| self.lag_ms()),
         }
-    }
-
-    pub async fn send(&self, msg: &NetworkMessage) -> NetworkResult<()> {
-        self.handle().send(msg).await
     }
 
     /// Note that `n` earlier pipeline requests have fully completed, freeing that
@@ -497,6 +552,10 @@ impl DisconnectedPeer {
 
         let _ = handshake_send(&mut writer, magic, NetworkMessage::GetAddr).await;
 
+        let id = PeerId {
+            addr: self.addr,
+            connection: NEXT_CONNECTION.fetch_add(1, Ordering::Relaxed),
+        };
         let writer = Arc::new(Mutex::new(writer));
         let in_flight = Arc::new(AtomicUsize::new(0));
         let latency = Arc::new(Latency::default());
@@ -507,7 +566,7 @@ impl DisconnectedPeer {
         // `close()` to drop just this peer.
         let token = shutdown.child_token();
         spawn_reader(
-            self.addr,
+            id,
             magic,
             reader,
             writer.clone(),
@@ -527,7 +586,7 @@ impl DisconnectedPeer {
 
         Ok(ConnectedPeer {
             handle: PeerHandle {
-                addr: self.addr,
+                id,
                 network: self.network,
                 writer,
                 in_flight,
@@ -557,7 +616,7 @@ type HeaderSlot = (Option<InboundMessage>, OwnedSemaphorePermit);
 /// be completed — leave the sequence open and everything behind it waits forever.
 fn dispatch_headers(
     inbound: &UnboundedSender<PeerEvent>,
-    addr: SocketAddr,
+    addr: PeerId,
     ready: Vec<HeaderSlot>,
 ) -> bool {
     ready
@@ -568,7 +627,7 @@ fn dispatch_headers(
 
 #[allow(clippy::too_many_arguments)]
 fn spawn_reader(
-    addr: SocketAddr,
+    addr: PeerId,
     magic: u32,
     mut reader: PeerReader,
     writer: Arc<Mutex<OwnedWriteHalf>>,

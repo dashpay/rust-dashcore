@@ -5,8 +5,13 @@ use std::{
         atomic::{AtomicU32, AtomicU64, AtomicUsize, Ordering},
         Arc,
     },
-    time::{Duration, Instant},
+    time::Duration,
 };
+
+// Tokio's clock, not `std`'s, so the request-timeout machinery can be driven by a
+// test that pauses time instead of waiting `REQUEST_TIMEOUT` in real seconds.
+// Identical outside a test: unpaused, it reads the same monotonic clock.
+use tokio::time::Instant;
 
 use dashcore::network::constants::ServiceFlags;
 use dashcore::network::message::NetworkMessage;
@@ -105,18 +110,13 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 /// How often the timeout monitor scans the outstanding-request registry.
 const TIMEOUT_CHECK: Duration = Duration::from_secs(1);
 
-/// How long a retired peer (displaced during startup, see [`retire_drained`]) is
-/// kept alive to drain its in-flight responses before being force-closed.
-const RETIRE_DRAIN_CAP: Duration = Duration::from_secs(90);
-
-/// Poll interval for draining a retired peer's in-flight requests (see
-/// [`retire_drained`]). The drain is capped at [`RETIRE_DRAIN_CAP`].
-const DRAIN_POLL: Duration = Duration::from_secs(1);
 use crate::error::{NetworkError, NetworkResult};
 use crate::{
     network::{
         discovery::PeerDiscoverer,
-        peer::{is_pipeline_request, ConnectedPeer, DisconnectedPeer, PeerEvent, PeerHandle},
+        peer::{
+            is_pipeline_request, ConnectedPeer, DisconnectedPeer, PeerEvent, PeerHandle, PeerId,
+        },
     },
     ClientConfig,
 };
@@ -294,8 +294,10 @@ enum ReqState {
 
 /// A request currently on the wire, awaiting a response or a timeout.
 struct OnWire {
-    /// The peer the request was routed to.
-    peer: SocketAddr,
+    /// The CONNECTION the request was routed to. Not the address: a close event
+    /// for an earlier connection to the same address must not pull back the work
+    /// of the one that replaced it.
+    peer: PeerId,
     /// When this request last made progress: set on send, refreshed by every piece of
     /// a streaming response, so a peer streaming steadily is not judged stalled.
     last_progress: Instant,
@@ -571,8 +573,15 @@ impl PeerNetworkManager {
     ///
     /// Returns false if the peer is not connected (or the write failed).
     pub async fn send_to(&self, addr: SocketAddr, msg: NetworkMessage) -> bool {
-        let peers = self.connected_peers.lock().await;
-        let Some((peer, _)) = peers.iter().find(|(p, _)| p.addr() == addr) else {
+        // Snapshot the handle and drop the lock before writing. Holding the
+        // peer-set lock across a socket write blocks the router, the timeout
+        // monitor, the supervisor and the bandwidth controller behind one peer;
+        // `WRITE_TIMEOUT` bounds it, but 5s of that is still 5s of everything.
+        let handle = {
+            let peers = self.connected_peers.lock().await;
+            peers.iter().find(|(p, _)| p.addr() == addr).map(|(p, _)| p.handle())
+        };
+        let Some(peer) = handle else {
             return false;
         };
 
@@ -593,7 +602,7 @@ impl PeerNetworkManager {
             return;
         }
         if let Some((p, _)) =
-            self.connected_peers.lock().await.iter().find(|(p, _)| p.addr() == o.peer)
+            self.connected_peers.lock().await.iter().find(|(p, _)| p.id() == o.peer)
         {
             p.response_completed(1).await;
         }
@@ -627,7 +636,7 @@ impl PeerNetworkManager {
     /// address that managers treat as locally-originated.
     pub async fn dispatch_local(&self, msg: NetworkMessage) {
         let local: SocketAddr = ([0, 0, 0, 0], 0).into();
-        let _ = self.inbound_tx.send(PeerEvent::Message(local, msg.into()));
+        let _ = self.inbound_tx.send(PeerEvent::Message(PeerId::synthetic(local), msg.into()));
     }
 
     pub async fn subscribe(&self, kinds: &[MessageType]) -> UnboundedReceiver<Inbound> {
@@ -755,7 +764,7 @@ async fn route_tick(
     let mut unsent: Vec<NetworkMessage> = Vec::new();
     // Messages that made it onto the wire this round, recorded in the broker in one
     // lock acquisition after the send loop.
-    let mut on_wire: Vec<(NetworkMessage, SocketAddr)> = Vec::new();
+    let mut on_wire: Vec<(NetworkMessage, PeerId)> = Vec::new();
     let mut msgs = msgs.into_iter();
     for msg in msgs.by_ref() {
         // Send to the least-loaded peer RELATIVE TO ITS OWN capacity.
@@ -782,7 +791,7 @@ async fn route_tick(
         if peer.send(&msg).await.is_ok() {
             sent += 1;
             // Record which peer got it, so the monitor can attribute a stall to it.
-            on_wire.push((msg, peer.addr()));
+            on_wire.push((msg, peer.id()));
         } else {
             tracing::warn!(target: "dash_spv::network", "router: send to {} failed", peer.addr());
             unsent.push(msg);
@@ -873,7 +882,7 @@ struct PeerCapState {
 /// Collected for every peer first, because what any one of them may have in flight
 /// depends on what all of them together are asking for.
 struct PeerPlan {
-    addr: SocketAddr,
+    addr: PeerId,
     /// Cap this peer's own measurements justify, in requests.
     want: usize,
     /// Smoothed bytes per response, to price `want` on the wire.
@@ -1037,7 +1046,7 @@ fn spawn_bandwidth_controller(
                              // after the host budget below, so the budget uses the last known value.
         let mut last_sum_peer_cap = 0usize;
         // Per-peer cap state across windows, keyed by peer address.
-        let mut peer_caps: HashMap<SocketAddr, PeerCapState> = HashMap::new();
+        let mut peer_caps: HashMap<PeerId, PeerCapState> = HashMap::new();
         // Last peer reported as underserving. The supervisor is woken on the
         // TRANSITION only: re-notifying every window would turn a peer that stays
         // slow into a probe every 500ms, which is exactly the churn the improve
@@ -1144,10 +1153,10 @@ fn spawn_bandwidth_controller(
             // COMPLETES, measured at 6% of them, so for the other 94% the
             // controller is blind to a peer sitting on work it is not getting
             // through. A request still in flight reports on exactly that.
-            let stalled_for: HashMap<SocketAddr, Duration> = {
+            let stalled_for: HashMap<PeerId, Duration> = {
                 let now = Instant::now();
                 let reqs = requests.lock().await;
-                let mut worst: HashMap<SocketAddr, Duration> = HashMap::new();
+                let mut worst: HashMap<PeerId, Duration> = HashMap::new();
                 for state in reqs.values() {
                     if let ReqState::OnWire(o) = state {
                         let idle = now.duration_since(o.last_progress);
@@ -1165,9 +1174,9 @@ fn spawn_bandwidth_controller(
             let mut inflight_sum = 0usize; // total requests on the wire right now
             {
                 let g = connected.lock().await;
-                let live: HashSet<SocketAddr> = g.iter().map(|(p, _)| p.addr()).collect();
+                let live: HashSet<PeerId> = g.iter().map(|(p, _)| p.id()).collect();
                 for (p, _) in g.iter() {
-                    let addr = p.addr();
+                    let addr = p.id();
                     let (count, total_ns) = p.latency_totals();
                     let now_bytes = p.bytes_read();
                     let st = peer_caps.entry(addr).or_default();
@@ -1681,9 +1690,20 @@ impl Supervisor {
                     old_addr,
                     replaced.expect("set with the displacing peer"),
                 );
-                // Keep the displaced peer alive until its in-flight requests drain
-                // or time out — don't strand work already routed to it.
-                retire_drained(old, self.shutdown.clone());
+                // Close it. Its reader ends and reports the departure, and the
+                // pump pulls back every request routed to THIS connection and puts
+                // the messages on the queue for someone else — the same path any
+                // lost peer takes.
+                //
+                // It used to be kept alive for up to 90s so its in-flight
+                // responses could land instead of being re-sent. That could never
+                // work: a unit is released by `request_answered`, which resolves
+                // the peer out of the connected set, and a retired peer has left
+                // it — so `in_flight` never reached zero and the drain always ran
+                // the full cap. Closing at once is only safe because the departure
+                // names a connection: keyed by address it would have disturbed a
+                // reconnection to the same peer.
+                old.close();
                 let _ = self.events.send(NetworkEvent::PeerDisconnected(old_addr));
             }
 
@@ -1811,10 +1831,7 @@ fn spawn_peer_supervisor(
 /// The key stays registered, as `Queued`, rather than being removed: the request
 /// is still wanted, so de-duplication must keep holding for it while the message
 /// sits back on the queue, or a pipeline re-declaring it would queue a duplicate.
-async fn requeue_requests_from(
-    requests: &Registry,
-    gone: &HashSet<SocketAddr>,
-) -> Vec<NetworkMessage> {
+async fn requeue_requests_from(requests: &Registry, gone: &HashSet<PeerId>) -> Vec<NetworkMessage> {
     let mut reinject = Vec::new();
     let mut reqs = requests.lock().await;
     let keys: Vec<RequestKey> = reqs
@@ -1842,12 +1859,13 @@ async fn requeue_requests_from(
 /// so its liveness clock keeps resetting even while its OLDEST request sits waiting
 /// its turn. Only a peer that has stopped sending anything is worth dropping.
 ///
-/// Judging on the peer's own counters (not the broker registry) is deliberate: the
-/// registry can desync from a peer's real `in_flight` — correlating a response
-/// frees the registry key, while streaming in-flight units are freed on the peer
-/// separately — so a wedged peer can pin `in_flight == cap` (starving the router,
-/// which only sends to peers under cap) while showing zero registry entries. A
-/// registry-based check would miss exactly that peer.
+/// The peer's own counters are checked as well as the registry, not instead of it.
+/// They used to be the only reliable signal, because in-flight units were freed in
+/// two places that could drift apart; now a unit is charged in `PeerHandle::send`
+/// and released by `request_answered` alongside the registry entry, so the two
+/// track each other. The byte check is kept as the backstop for anything that
+/// escapes the registry — a peer that went quiet while owing us nothing the broker
+/// still knows about.
 ///
 /// When one is found we kick it immediately: every request routed to it is now
 /// dead, so we pull ALL its on-wire entries, re-inject their messages (retry to a
@@ -1867,7 +1885,7 @@ fn spawn_timeout_monitor(
     tokio::spawn(async move {
         let mut ticker = tokio::time::interval(TIMEOUT_CHECK);
         // Per-peer liveness: (bytes read at last progress, when it last rose).
-        let mut progress: HashMap<SocketAddr, (u64, Instant)> = HashMap::new();
+        let mut progress: HashMap<PeerId, (u64, Instant)> = HashMap::new();
         loop {
             tokio::select! {
                 _ = shutdown.cancelled() => break,
@@ -1886,13 +1904,13 @@ fn spawn_timeout_monitor(
             // requests and mid-stream progress) catches that: a peer with work
             // outstanding whose byte counter is frozen for a full REQUEST_TIMEOUT is
             // stuck and must be dropped, whatever the registry thinks.
-            let mut culprits: HashSet<SocketAddr> = {
+            let mut culprits: HashSet<PeerId> = {
                 let peers = connected.lock().await;
-                let live: HashSet<SocketAddr> = peers.iter().map(|(p, _)| p.addr()).collect();
+                let live: HashSet<PeerId> = peers.iter().map(|(p, _)| p.id()).collect();
                 progress.retain(|addr, _| live.contains(addr));
                 let mut culprits = HashSet::new();
                 for (peer, _) in peers.iter() {
-                    let addr = peer.addr();
+                    let addr = peer.id();
                     let bytes = peer.bytes_read();
                     let entry = progress.entry(addr).or_insert((bytes, now));
                     if bytes > entry.0 {
@@ -1932,7 +1950,7 @@ fn spawn_timeout_monitor(
                 let mut peers = connected.lock().await;
                 let before = peers.len();
                 peers.retain(|(p, _)| {
-                    if culprits.contains(&p.addr()) {
+                    if culprits.contains(&p.id()) {
                         p.close();
                         false
                     } else {
@@ -1965,32 +1983,6 @@ fn spawn_timeout_monitor(
     })
 }
 
-/// Retire a peer we are dropping from the active set WITHOUT stranding requests
-/// already on the wire to it. During startup the reconnector connects peers and
-/// the sync sends them pipeline requests before the probe has settled the final
-/// peer set; replacing the set would then drop those peers mid-request, and the
-/// stranded requests only recover on the pipelines' own (slow) timeout —
-/// occasionally stalling whole header segments for a run. Instead keep the
-/// connection alive in the background: its reader keeps delivering responses and
-/// decrementing `in_flight`. Close it once it has drained, or after
-/// `RETIRE_DRAIN_CAP` (a peer that never drains is dead), whichever comes first.
-fn retire_drained(peer: ConnectedPeer, shutdown: CancellationToken) {
-    if peer.in_flight() == 0 {
-        peer.close();
-        return;
-    }
-    tokio::spawn(async move {
-        let mut waited = Duration::ZERO;
-        while peer.in_flight() > 0 && waited < RETIRE_DRAIN_CAP {
-            tokio::select! {
-                _ = shutdown.cancelled() => return,
-                _ = tokio::time::sleep(DRAIN_POLL) => waited += DRAIN_POLL,
-            }
-        }
-        peer.close();
-    });
-}
-
 #[allow(clippy::too_many_arguments)]
 fn spawn_pump(
     mut inbound: UnboundedReceiver<PeerEvent>,
@@ -2018,7 +2010,8 @@ fn spawn_pump(
                 },
             };
             match event {
-                PeerEvent::Message(addr, msg) => {
+                PeerEvent::Message(peer, msg) => {
+                    let addr = peer.addr();
                     *recv_by_peer.entry(addr).or_insert(0) += 1;
                     total_recv += 1;
 
@@ -2029,7 +2022,7 @@ fn spawn_pump(
                         let mut reqs = requests.lock().await;
                         for state in reqs.values_mut() {
                             if let ReqState::OnWire(o) = state {
-                                if o.peer == addr
+                                if o.peer == peer
                                     && matches!(
                                         request_keys(&o.msg).first(),
                                         Some(RequestKey::CFilters(_))
@@ -2139,10 +2132,15 @@ fn spawn_pump(
                         }
                     }
                 }
-                PeerEvent::Disconnected(addr) => {
+                PeerEvent::Disconnected(peer) => {
+                    let addr = peer.addr();
+                    // By CONNECTION: this same event arrives for one that already
+                    // left the set (probed and stashed, or retired to drain), and
+                    // by then the supervisor may have reconnected to that address.
+                    // Matching on the address alone would evict the live one.
                     let remaining = {
                         let mut guard = connected.lock().await;
-                        guard.retain(|(peer, _)| peer.addr() != addr);
+                        guard.retain(|(p, _)| p.id() != peer);
                         guard.len()
                     };
 
@@ -2157,7 +2155,7 @@ fn spawn_pump(
                     // retries them on a live peer — the timeout monitor only watches
                     // connected peers, so a request whose peer is already gone would
                     // otherwise leak in the registry forever.
-                    let reinject = requeue_requests_from(&requests, &HashSet::from([addr])).await;
+                    let reinject = requeue_requests_from(&requests, &HashSet::from([peer])).await;
 
                     tracing::info!(
                         target: "dash_spv::network",
@@ -2374,6 +2372,11 @@ mod tests {
 
     use crate::test_utils::test_socket_address;
 
+    /// A distinct connection at `127.0.0.1:4000+id`.
+    fn test_peer(id: u8) -> PeerId {
+        PeerId::for_test(test_socket_address(id), id as u64)
+    }
+
     // ---- losing a peer requeues its work ----
     //
     // These cover centrally what dashpay/rust-dashcore#941, #943 and #953 each
@@ -2385,7 +2388,7 @@ mod tests {
 
     /// Mark `msg`'s request as on the wire to `peer`, the state the broker puts
     /// it in once the router hands it over.
-    async fn mark_on_wire(net: &PeerNetworkManager, msg: &NetworkMessage, peer: SocketAddr) {
+    async fn mark_on_wire(net: &PeerNetworkManager, msg: &NetworkMessage, peer: PeerId) {
         let mut reqs = net.requests.lock().await;
         for key in request_keys(msg) {
             reqs.insert(
@@ -2412,7 +2415,7 @@ mod tests {
     #[tokio::test]
     async fn losing_a_peer_requeues_the_requests_it_was_carrying() {
         let net = broker().await;
-        let (gone, kept) = (test_socket_address(1), test_socket_address(2));
+        let (gone, kept) = (test_peer(1), test_peer(2));
 
         let doomed = get_cfilters(0);
         let survivor = get_cfilters(1000);
@@ -2436,7 +2439,7 @@ mod tests {
     #[tokio::test]
     async fn a_requeued_request_still_de_duplicates() {
         let net = broker().await;
-        let peer = test_socket_address(1);
+        let peer = test_peer(1);
 
         let msg = get_cfilters(0);
         mark_on_wire(&net, &msg, peer).await;
@@ -2462,7 +2465,7 @@ mod tests {
     #[tokio::test]
     async fn a_requeued_request_is_only_cleared_by_its_response() {
         let net = broker().await;
-        let peer = test_socket_address(1);
+        let peer = test_peer(1);
 
         let msg = get_cfilters(0);
         mark_on_wire(&net, &msg, peer).await;
@@ -2487,9 +2490,7 @@ mod tests {
         let net = broker().await;
         let mut events = net.events();
 
-        net.inbound_tx
-            .send(PeerEvent::Disconnected(test_socket_address(1)))
-            .expect("the pump is running");
+        net.inbound_tx.send(PeerEvent::Disconnected(test_peer(1))).expect("the pump is running");
 
         let mut seen = Vec::new();
         for _ in 0..2 {
@@ -2512,6 +2513,174 @@ mod tests {
             "got {:?}",
             seen[1]
         );
+    }
+
+    // ---- the request timeout: the real monitor, on a paused clock ----
+    //
+    // These drive the spawned `spawn_timeout_monitor` task itself, not a helper
+    // extracted from it. `manager` reads tokio's clock, so `start_paused` lets a
+    // test step past `REQUEST_TIMEOUT` instantly instead of waiting ten seconds,
+    // and the monitor's own `interval` fires with it. No peers are needed: with an
+    // empty set the eviction drops nobody, but the requeue and the re-injection —
+    // which are what keep a stranded request alive — happen exactly as they would.
+
+    /// Run the spawned tasks until `cond` holds. Time is paused, so this steps the
+    /// clock rather than sleeping; without stepping, the monitor's ticker never
+    /// fires and nothing would ever happen.
+    async fn advance_until(step: Duration, mut cond: impl FnMut() -> bool) -> bool {
+        for _ in 0..64 {
+            if cond() {
+                return true;
+            }
+            tokio::time::advance(step).await;
+            tokio::task::yield_now().await;
+        }
+        cond()
+    }
+
+    fn cfilter_from(height_seed: u32) -> NetworkMessage {
+        NetworkMessage::CFilter(dashcore::network::message_filter::CFilter {
+            filter_type: 0,
+            block_hash: BlockHash::dummy(height_seed),
+            filter: vec![0u8; 4],
+        })
+    }
+
+    /// A request whose peer stops making progress must not be stranded: the broker
+    /// pulls it back to `Queued` and puts the message on the queue again, so the
+    /// router can hand it to somebody else.
+    #[tokio::test(start_paused = true)]
+    async fn a_request_that_stalls_is_pulled_back_and_re_queued() {
+        let net = broker().await;
+        let msg = get_cfilters(0);
+        mark_on_wire(&net, &msg, test_peer(1)).await;
+        assert_eq!(net.msg_queue.len(), 0, "nothing queued while it is on the wire");
+
+        let requeued = advance_until(TIMEOUT_CHECK, || net.msg_queue.len() == 1).await;
+
+        assert!(requeued, "the stalled request must go back on the queue");
+        assert_eq!(
+            state_of(&net, &RequestKey::CFilters(0)).await,
+            Some("queued"),
+            "and stay registered, or a re-declaration would queue a duplicate"
+        );
+    }
+
+    /// The clock alone must not condemn a request: well inside the timeout the
+    /// broker leaves it alone. Pins that the test above is measuring the threshold
+    /// and not just "the monitor ran".
+    #[tokio::test(start_paused = true)]
+    async fn a_request_within_the_timeout_is_left_alone() {
+        let net = broker().await;
+        mark_on_wire(&net, &get_cfilters(0), test_peer(1)).await;
+
+        // Several monitor ticks, still short of the deadline.
+        for _ in 0..4 {
+            tokio::time::advance(REQUEST_TIMEOUT / 8).await;
+            tokio::task::yield_now().await;
+        }
+
+        assert_eq!(state_of(&net, &RequestKey::CFilters(0)).await, Some("on_wire"));
+        assert_eq!(net.msg_queue.len(), 0, "a request still in time is not re-sent");
+    }
+
+    /// A `getcfilters` batch is up to a thousand `cfilter`s, so it is normal for it
+    /// to outlive the timeout while arriving. Each piece is progress and refreshes
+    /// the deadline; only the pieces STOPPING counts as a stall.
+    #[tokio::test(start_paused = true)]
+    async fn a_streaming_response_keeps_its_own_request_alive() {
+        let net = broker().await;
+        let peer = test_peer(1);
+        mark_on_wire(&net, &get_cfilters(0), peer).await;
+
+        // Two gaps that each stay under the deadline but together exceed it.
+        for _ in 0..2 {
+            tokio::time::advance(REQUEST_TIMEOUT - TIMEOUT_CHECK).await;
+            tokio::task::yield_now().await;
+            net.inbound_tx
+                .send(PeerEvent::Message(peer, cfilter_from(1).into()))
+                .expect("the pump is running");
+            tokio::task::yield_now().await;
+            tokio::task::yield_now().await;
+        }
+
+        assert_eq!(
+            state_of(&net, &RequestKey::CFilters(0)).await,
+            Some("on_wire"),
+            "a peer still streaming its batch has not stalled"
+        );
+        assert_eq!(net.msg_queue.len(), 0, "and nothing was re-sent behind its back");
+    }
+
+    /// The refresh is per peer: a `cfilter` from somebody else says nothing about
+    /// this request, so it must not hold the deadline open.
+    #[tokio::test(start_paused = true)]
+    async fn another_peers_stream_does_not_keep_this_request_alive() {
+        let net = broker().await;
+        mark_on_wire(&net, &get_cfilters(0), test_peer(1)).await;
+
+        let requeued = advance_until(TIMEOUT_CHECK, || net.msg_queue.len() == 1).await;
+        assert!(requeued);
+
+        let net2 = broker().await;
+        mark_on_wire(&net2, &get_cfilters(0), test_peer(1)).await;
+        for _ in 0..2 {
+            tokio::time::advance(REQUEST_TIMEOUT - TIMEOUT_CHECK).await;
+            tokio::task::yield_now().await;
+            net2.inbound_tx
+                .send(PeerEvent::Message(test_peer(2), cfilter_from(1).into()))
+                .expect("the pump is running");
+            tokio::task::yield_now().await;
+            tokio::task::yield_now().await;
+        }
+        assert_eq!(
+            state_of(&net2, &RequestKey::CFilters(0)).await,
+            Some("queued"),
+            "a stream from a different peer is not progress on this request"
+        );
+    }
+
+    // ---- a close event names a CONNECTION, not an address ----
+
+    /// A close for an earlier connection must not disturb the one that replaced
+    /// it at the same address. These arrive late by design: a peer probed and
+    /// stashed as a backup, or one retired to drain, reports in whenever its
+    /// reader finally ends, and `Disconnected` shares the unbounded inbound
+    /// channel with every `cfilter` — so under filter-sync load it can be read
+    /// long after the supervisor reconnected to that address.
+    #[tokio::test]
+    async fn a_late_close_does_not_take_the_replacement_connections_work() {
+        let net = broker().await;
+        let addr = test_socket_address(1);
+        let (old, new) = (PeerId::for_test(addr, 0), PeerId::for_test(addr, 1));
+
+        mark_on_wire(&net, &get_cfilters(0), new).await;
+
+        let pulled = requeue_requests_from(&net.requests, &HashSet::from([old])).await;
+
+        assert!(pulled.is_empty(), "the old connection was carrying nothing");
+        assert_eq!(
+            state_of(&net, &RequestKey::CFilters(0)).await,
+            Some("on_wire"),
+            "the live connection keeps its request"
+        );
+    }
+
+    /// And the connection that really went away still gives its work back.
+    #[tokio::test]
+    async fn the_connection_that_left_still_gives_its_work_back() {
+        let net = broker().await;
+        let addr = test_socket_address(1);
+        let (old, new) = (PeerId::for_test(addr, 0), PeerId::for_test(addr, 1));
+
+        mark_on_wire(&net, &get_cfilters(0), old).await;
+        mark_on_wire(&net, &get_cfilters(1000), new).await;
+
+        let pulled = requeue_requests_from(&net.requests, &HashSet::from([old])).await;
+
+        assert_eq!(pulled.len(), 1);
+        assert_eq!(state_of(&net, &RequestKey::CFilters(0)).await, Some("queued"));
+        assert_eq!(state_of(&net, &RequestKey::CFilters(1000)).await, Some("on_wire"));
     }
 
     // ---- de-duplication ----
