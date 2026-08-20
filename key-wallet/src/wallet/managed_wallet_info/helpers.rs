@@ -11,7 +11,7 @@ use crate::managed_account::ManagedCoreKeysAccount;
 use crate::transaction_checking::TransactionContext;
 use crate::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
 use dashcore::{OutPoint, Transaction, Txid};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 
 /// What [`ManagedWalletInfo::abandon_transaction`] removed.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -107,10 +107,18 @@ impl WalletConflictSweep {
     /// withholds the inputs it spends, which it must, since on the checker
     /// path the sweep runs before the winner is recorded anywhere.
     ///
-    /// Scans the records per candidate and stops at the first claim rather
-    /// than building the wallet's whole spent-input set: a sweep frees a
-    /// handful of coins at most, while the set it would be checked against
-    /// grows with the entire transaction history.
+    /// The surviving inputs are collected once and probed by hash, rather
+    /// than rescanning the records per candidate. The released set is not
+    /// inherently small: a peer can hand the wallet a transaction whose
+    /// input vector is as large as it likes and whose output pays an address
+    /// the wallet owns, and a later final transaction need conflict with
+    /// only one of those inputs for the rest to become candidates. Scanning
+    /// per candidate is `O(released × retained history)` against a wallet
+    /// whose history the peer does not control either — tens of millions of
+    /// comparisons, run while the manager holds the winner mutably and
+    /// before the event can even reach persistence. Building the set is one
+    /// pass over that same history and is never the worse trade: a single
+    /// candidate already costs a full pass under the alternative.
     fn retain_unclaimed(
         &mut self,
         accounts: &crate::managed_account::managed_account_collection::ManagedAccountCollection,
@@ -118,14 +126,14 @@ impl WalletConflictSweep {
         if self.released_outpoints.is_empty() {
             return;
         }
-        let accounts = accounts.all_accounts();
-        self.released_outpoints.retain(|outpoint| {
-            !accounts.iter().any(|account| {
-                account.transactions().values().any(|record| {
-                    record.transaction.input.iter().any(|input| input.previous_output == *outpoint)
-                })
-            })
-        });
+        let claimed: HashSet<OutPoint> = accounts
+            .all_accounts()
+            .into_iter()
+            .flat_map(|account| account.transactions().values())
+            .flat_map(|record| record.transaction.input.iter())
+            .map(|input| input.previous_output)
+            .collect();
+        self.released_outpoints.retain(|outpoint| !claimed.contains(outpoint));
     }
 }
 
@@ -633,5 +641,106 @@ impl ManagedWalletInfo {
     /// Get all accounts (mixed funds and keys variants).
     pub fn all_managed_accounts(&self) -> Vec<crate::managed_account::ManagedAccountRef<'_>> {
         self.accounts.all_accounts()
+    }
+}
+
+#[cfg(test)]
+mod retain_unclaimed_tests {
+    use super::*;
+    use crate::account::{AccountType, StandardAccountType};
+    use crate::managed_account::managed_account_trait::ManagedAccountTrait;
+    use crate::managed_account::transaction_record::{TransactionDirection, TransactionRecord};
+    use crate::managed_account::ManagedCoreFundsAccount;
+    use crate::transaction_checking::transaction_router::TransactionType;
+    use crate::transaction_checking::TransactionContext;
+    use dashcore::hashes::Hash;
+    use dashcore::{OutPoint, ScriptBuf, Transaction, TxIn, Txid, Witness};
+
+    fn outpoint(seed: u32) -> OutPoint {
+        let mut raw = [0u8; 32];
+        raw[..4].copy_from_slice(&seed.to_le_bytes());
+        OutPoint {
+            txid: Txid::from_byte_array(raw),
+            vout: 0,
+        }
+    }
+
+    /// A surviving record spending `input`, identified by `seed`.
+    fn record_spending(seed: u32, input: OutPoint) -> TransactionRecord {
+        let tx = Transaction {
+            version: 2,
+            lock_time: 0,
+            input: vec![TxIn {
+                previous_output: input,
+                script_sig: ScriptBuf::new(),
+                sequence: 0xffffffff,
+                witness: Witness::new(),
+            }],
+            output: vec![],
+            special_transaction_payload: None,
+        };
+        let mut record = TransactionRecord::new(
+            tx,
+            AccountType::Standard {
+                index: 0,
+                standard_account_type: StandardAccountType::BIP44Account,
+            },
+            TransactionContext::Mempool,
+            TransactionType::Standard,
+            TransactionDirection::Outgoing,
+            Vec::new(),
+            Vec::new(),
+            0,
+        );
+        let mut raw = [0u8; 32];
+        raw[..4].copy_from_slice(&seed.to_le_bytes());
+        raw[31] = 0xff;
+        record.txid = Txid::from_byte_array(raw);
+        record
+    }
+
+    /// A large release set against a large surviving history.
+    ///
+    /// Neither side is bounded by anything the wallet controls: a peer can
+    /// hand it a transaction with as many inputs as it likes that pays an
+    /// address the wallet owns, and the history is simply whatever the
+    /// wallet has retained. Probing the records per candidate is
+    /// `O(released × history)` — at these sizes that is 16 million input
+    /// comparisons, which is what this pins against; collecting the claimed
+    /// inputs once makes it one pass plus hashed lookups.
+    ///
+    /// The assertion is ordinary correctness: half the candidates are
+    /// claimed by a surviving record and must be withheld, half are not and
+    /// must survive. The size is the point.
+    #[test]
+    fn a_large_release_set_against_a_large_history_is_partitioned_correctly() {
+        const HISTORY: u32 = 4_000;
+        const RELEASED: u32 = 4_000;
+
+        let mut account = ManagedCoreFundsAccount::dummy_bip44();
+        // The first HISTORY outpoints are each claimed by a surviving record.
+        for seed in 0..HISTORY {
+            let record = record_spending(seed, outpoint(seed));
+            account.transactions_mut().insert(record.txid, record);
+        }
+        let mut accounts =
+            crate::managed_account::managed_account_collection::ManagedAccountCollection::new();
+        accounts.standard_bip44_accounts.insert(0, account);
+
+        // Candidates: the claimed half, plus an equal number nothing spends.
+        let mut sweep = WalletConflictSweep {
+            txids: vec![Txid::all_zeros()],
+            released_outpoints: (0..RELEASED * 2).map(outpoint).collect(),
+        };
+        sweep.retain_unclaimed(&accounts);
+
+        assert_eq!(
+            sweep.released_outpoints.len(),
+            RELEASED as usize,
+            "every claimed candidate is withheld and every unclaimed one survives"
+        );
+        assert!(sweep.released_outpoints.iter().all(|o| {
+            u32::from_le_bytes(o.txid.as_byte_array()[..4].try_into().expect("4 bytes")) >= HISTORY
+        }));
     }
 }

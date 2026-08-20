@@ -34,7 +34,7 @@ use dashcore::{Address, ScriptBuf, Transaction, Txid};
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
-use std::collections::{BTreeSet, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 
 /// Managed core funds account with mutable state including balance and UTXOs.
 ///
@@ -616,30 +616,35 @@ impl ManagedCoreFundsAccount {
         // so leaving their outputs credited would preserve the very
         // phantom-balance class this sweep exists to remove. Walk the
         // unconfirmed descendant closure; confirmed records are never
-        // followed, since a transaction in a block spent something real.
-        loop {
-            let mut found = BTreeSet::new();
-            for (txid, record) in self.keys.transactions() {
-                if record.is_confirmed()
-                    || record.context.is_instant_send()
-                    || losers.contains(txid)
-                    || *txid == winner
-                {
-                    continue;
-                }
-                if record
-                    .transaction
-                    .input
-                    .iter()
-                    .any(|input| losers.contains(&input.previous_output.txid))
-                {
-                    found.insert(*txid);
-                }
+        // followed, since a transaction in a block spent something real,
+        // and neither are InstantSend-locked ones, whose lock the network
+        // already signed.
+        //
+        // The walk builds a parent→children index in one pass and then
+        // follows a queue, so each record is looked at once. Rescanning the
+        // whole history per generation instead is O(depth × history): a peer
+        // that feeds the wallet a deep chain of unconfirmed wallet-relevant
+        // transactions and then finalizes a replacement for the root's input
+        // would make the sweep quadratic in everything the wallet retained,
+        // while the account is held mutably and before the sweep can reach
+        // persistence.
+        let mut children: HashMap<Txid, Vec<Txid>> = HashMap::new();
+        for (txid, record) in self.keys.transactions() {
+            note_descendant_walk_visit();
+            if record.is_confirmed() || record.context.is_instant_send() || *txid == winner {
+                continue;
             }
-            let before = losers.len();
-            losers.extend(found);
-            if losers.len() == before {
-                break;
+            for input in &record.transaction.input {
+                children.entry(input.previous_output.txid).or_default().push(*txid);
+            }
+        }
+        let mut queue: VecDeque<Txid> = losers.iter().copied().collect();
+        while let Some(parent) = queue.pop_front() {
+            for child in children.get(&parent).map(Vec::as_slice).unwrap_or_default() {
+                note_descendant_walk_visit();
+                if losers.insert(*child) {
+                    queue.push_back(*child);
+                }
             }
         }
 
@@ -1322,5 +1327,258 @@ impl<'de> Deserialize<'de> for ManagedCoreFundsAccount {
             spent_outpoints,
             reservations: ReservationSet::default(),
         })
+    }
+}
+
+/// Test-only visit counter for the descendant walk in
+/// [`ManagedCoreFundsAccount::drop_conflicted_transactions`].
+///
+/// Exists so a regression test can pin the walk to a linear number of record
+/// visits deterministically, instead of betting on wall-clock time. Compiled
+/// out of non-test builds; the production call is an empty inline function.
+#[cfg(test)]
+pub(crate) mod descendant_walk_instrumentation {
+    use std::cell::Cell;
+
+    thread_local! {
+        /// Records and index entries examined by the walk on this thread.
+        pub static VISITS: Cell<usize> = const { Cell::new(0) };
+    }
+
+    pub fn reset() {
+        VISITS.with(|visits| visits.set(0));
+    }
+
+    pub fn count() -> usize {
+        VISITS.with(Cell::get)
+    }
+}
+
+#[inline]
+fn note_descendant_walk_visit() {
+    #[cfg(test)]
+    descendant_walk_instrumentation::VISITS.with(|visits| visits.set(visits.get() + 1));
+}
+
+#[cfg(test)]
+mod conflict_sweep_walk_tests {
+    use super::*;
+    use crate::account::AccountType;
+    use crate::account::StandardAccountType;
+    use crate::transaction_checking::BlockInfo;
+    use dashcore::ephemerealdata::instant_lock::InstantLock;
+    use dashcore::hashes::Hash;
+    use dashcore::{BlockHash, TxIn, TxOut, Witness};
+
+    fn outpoint(seed: u32, vout: u32) -> OutPoint {
+        let mut raw = [0u8; 32];
+        raw[..4].copy_from_slice(&seed.to_le_bytes());
+        raw[31] = 0xaa;
+        OutPoint {
+            txid: Txid::from_byte_array(raw),
+            vout,
+        }
+    }
+
+    /// A transaction spending `inputs`, with two outputs so descendants and
+    /// branches have distinct vouts to claim.
+    fn spend(inputs: Vec<OutPoint>) -> Transaction {
+        Transaction {
+            version: 2,
+            lock_time: 0,
+            input: inputs
+                .into_iter()
+                .map(|previous_output| TxIn {
+                    previous_output,
+                    script_sig: ScriptBuf::new(),
+                    sequence: 0xffffffff,
+                    witness: Witness::new(),
+                })
+                .collect(),
+            output: vec![
+                TxOut {
+                    value: 10_000,
+                    script_pubkey: ScriptBuf::new(),
+                },
+                TxOut {
+                    value: 20_000,
+                    script_pubkey: ScriptBuf::new(),
+                },
+            ],
+            special_transaction_payload: None,
+        }
+    }
+
+    fn insert(
+        account: &mut ManagedCoreFundsAccount,
+        tx: &Transaction,
+        context: TransactionContext,
+    ) {
+        let record = TransactionRecord::new(
+            tx.clone(),
+            AccountType::Standard {
+                index: 0,
+                standard_account_type: StandardAccountType::BIP44Account,
+            },
+            context,
+            TransactionType::Standard,
+            TransactionDirection::Outgoing,
+            Vec::new(),
+            Vec::new(),
+            0,
+        );
+        account.keys.transactions_mut().insert(record.txid, record);
+    }
+
+    fn in_block(height: u32) -> TransactionContext {
+        TransactionContext::InBlock(BlockInfo::new(
+            height,
+            BlockHash::from_byte_array([height as u8; 32]),
+            1_700_000_000,
+        ))
+    }
+
+    /// The descendant closure sweeps a loser's whole unconfirmed chain —
+    /// including a diamond join reached through two swept parents, exactly
+    /// once — while the carve-outs hold: a confirmed record is never
+    /// followed, an InstantSend-locked record is never followed, and
+    /// everything reachable only through either of them survives, as does an
+    /// unrelated record.
+    #[test]
+    fn the_walk_sweeps_the_closure_and_respects_the_carve_outs() {
+        let mut account = ManagedCoreFundsAccount::dummy_bip44();
+        let contested = outpoint(0, 0);
+
+        // A chain of six unconfirmed spends rooted on the contested coin.
+        let mut chain = vec![spend(vec![contested])];
+        for depth in 1..6 {
+            let parent = chain[depth - 1].txid();
+            chain.push(spend(vec![OutPoint {
+                txid: parent,
+                vout: 0,
+            }]));
+        }
+        for tx in &chain {
+            insert(&mut account, tx, TransactionContext::Mempool);
+        }
+
+        // A diamond: one record claiming outputs of two swept ancestors.
+        let diamond = spend(vec![
+            OutPoint {
+                txid: chain[3].txid(),
+                vout: 1,
+            },
+            OutPoint {
+                txid: chain[4].txid(),
+                vout: 1,
+            },
+        ]);
+        insert(&mut account, &diamond, TransactionContext::Mempool);
+
+        // Carve-outs branching off the chain: a confirmed record and an
+        // IS-locked record, each with an unconfirmed child of its own.
+        let confirmed_branch = spend(vec![OutPoint {
+            txid: chain[2].txid(),
+            vout: 1,
+        }]);
+        insert(&mut account, &confirmed_branch, in_block(90));
+        let confirmed_child = spend(vec![OutPoint {
+            txid: confirmed_branch.txid(),
+            vout: 0,
+        }]);
+        insert(&mut account, &confirmed_child, TransactionContext::Mempool);
+
+        let locked_branch = spend(vec![OutPoint {
+            txid: chain[1].txid(),
+            vout: 1,
+        }]);
+        insert(
+            &mut account,
+            &locked_branch,
+            TransactionContext::InstantSend(InstantLock::default()),
+        );
+        let locked_child = spend(vec![OutPoint {
+            txid: locked_branch.txid(),
+            vout: 0,
+        }]);
+        insert(&mut account, &locked_child, TransactionContext::Mempool);
+
+        // A record with no connection to the chain at all.
+        let unrelated = spend(vec![outpoint(999, 0)]);
+        insert(&mut account, &unrelated, TransactionContext::Mempool);
+
+        // The winner takes the contested coin in a block.
+        let winner = spend(vec![contested, outpoint(1, 0)]);
+        let sweep = account.drop_conflicted_transactions(&winner, &in_block(100));
+
+        let mut expected: Vec<Txid> = chain.iter().map(Transaction::txid).collect();
+        expected.push(diamond.txid());
+        expected.sort_unstable();
+        let mut swept = sweep.txids.clone();
+        swept.sort_unstable();
+        assert_eq!(
+            swept, expected,
+            "the whole rooted chain and the diamond are swept, each exactly once, \
+             and nothing else"
+        );
+
+        for survivor in
+            [&confirmed_branch, &confirmed_child, &locked_branch, &locked_child, &unrelated]
+        {
+            assert!(
+                account.transactions().contains_key(&survivor.txid()),
+                "a record behind a carve-out must survive the sweep"
+            );
+        }
+        for loser in &expected {
+            assert!(!account.transactions().contains_key(loser), "a swept record must be gone");
+        }
+    }
+
+    /// A deep unconfirmed chain — the shape a peer controls — is swept with a
+    /// linear number of record visits.
+    ///
+    /// The bound is deterministic, counted by test-only instrumentation
+    /// rather than wall-clock time: one visit per retained record to build
+    /// the parent→children index, plus one per edge followed. The previous
+    /// per-generation rescan of the whole history would count roughly
+    /// depth × history visits here — about five million against a bound of
+    /// seventy-five hundred — so a regression to that shape fails loudly.
+    #[test]
+    fn a_deep_chain_is_swept_with_linearly_many_visits() {
+        const DEPTH: usize = 2_000;
+        const UNRELATED: u32 = 500;
+
+        let mut account = ManagedCoreFundsAccount::dummy_bip44();
+        let contested = outpoint(0, 0);
+
+        let mut chain = vec![spend(vec![contested])];
+        for depth in 1..DEPTH {
+            let parent = chain[depth - 1].txid();
+            chain.push(spend(vec![OutPoint {
+                txid: parent,
+                vout: 0,
+            }]));
+        }
+        for tx in &chain {
+            insert(&mut account, tx, TransactionContext::Mempool);
+        }
+        for seed in 0..UNRELATED {
+            let tx = spend(vec![outpoint(10_000 + seed, 0)]);
+            insert(&mut account, &tx, TransactionContext::Mempool);
+        }
+        let records = DEPTH + UNRELATED as usize;
+
+        let winner = spend(vec![contested, outpoint(1, 0)]);
+        descendant_walk_instrumentation::reset();
+        let sweep = account.drop_conflicted_transactions(&winner, &in_block(100));
+
+        assert_eq!(sweep.txids.len(), DEPTH, "every link of the chain is swept");
+        let visits = descendant_walk_instrumentation::count();
+        assert!(
+            visits <= 3 * records,
+            "the walk must stay linear in records plus edges: {visits} visits \
+             against {records} records"
+        );
     }
 }
