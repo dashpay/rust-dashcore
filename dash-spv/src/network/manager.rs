@@ -112,6 +112,7 @@ const RETIRE_DRAIN_CAP: Duration = Duration::from_secs(90);
 /// Poll interval for draining a retired peer's in-flight requests (see
 /// [`retire_drained`]). The drain is capped at [`RETIRE_DRAIN_CAP`].
 const DRAIN_POLL: Duration = Duration::from_secs(1);
+use crate::error::{NetworkError, NetworkResult};
 use crate::{
     network::{
         discovery::PeerDiscoverer,
@@ -600,16 +601,25 @@ impl PeerNetworkManager {
         self.msg_queue.notify.notify_one();
     }
 
-    pub fn broadcast(&self, msg: NetworkMessage) {
-        let peers = self.connected_peers.clone();
-        tokio::spawn(async move {
-            let handles: Vec<PeerHandle> =
-                peers.lock().await.iter().map(|(p, _)| p.handle()).collect();
+    /// Broadcast a message to all connected peers
+    pub async fn broadcast(&self, msg: NetworkMessage) -> NetworkResult<()> {
+        let handles: Vec<PeerHandle> =
+            self.connected_peers.lock().await.iter().map(|(p, _)| p.handle()).collect();
+        if handles.is_empty() {
+            return Err(NetworkError::ConnectionFailed("No connected peers".to_string()));
+        }
 
-            for peer in handles {
-                let _ = peer.send(&msg).await;
+        let mut writes: FuturesUnordered<_> = handles.iter().map(|peer| peer.send(&msg)).collect();
+        let mut delivered = 0;
+        while let Some(result) = writes.next().await {
+            if result.is_ok() {
+                delivered += 1;
             }
-        });
+        }
+        if delivered == 0 {
+            return Err(NetworkError::ConnectionFailed("All broadcast sends failed".to_string()));
+        }
+        Ok(())
     }
 
     /// Inject a message into the local pump as if it arrived from a peer, so
@@ -2163,16 +2173,7 @@ fn spawn_pump(
                     queue.notify.notify_one();
 
                     let _ = events.send(NetworkEvent::PeerDisconnected(addr));
-                    // The set shrank, so say how big it is now. Only the supervisor
-                    // used to announce and it runs only when a peer is ACCEPTED, so
-                    // the count could rise and never fall: `connected_count: 0` was
-                    // unreachable however many peers were lost, and that is the value
-                    // the sync layer acts on — it is what puts a manager back into
-                    // `WaitingForConnections` so the next arrival restarts it.
-                    //
-                    // Every departure passes through here, including a peer the
-                    // timeout monitor evicted: closing it ends its reader, which
-                    // reports in the same way.
+
                     let _ = events.send(NetworkEvent::PeersUpdated {
                         connected_count: remaining as u32,
                         best_height: best_tip.load(Ordering::Relaxed),
@@ -2789,8 +2790,8 @@ mod tests {
         let net = broker().await;
         assert_eq!(net.connected_count().await, 0);
         assert_eq!(net.tip(), 0);
-        // Broadcasting with no peers is a no-op, not a panic.
-        net.broadcast(NetworkMessage::MemPool);
+        // Broadcasting with no peers reaches nobody, and says so.
+        assert!(net.broadcast(NetworkMessage::MemPool).await.is_err());
     }
 
     /// `inv` goes to several managers at once, so the pump must fan the same

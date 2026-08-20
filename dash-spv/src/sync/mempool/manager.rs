@@ -674,26 +674,30 @@ impl<W: WalletInterface> MempoolManager<W> {
                 }
                 let targets: Vec<SocketAddr> =
                     current_peers.iter().filter(|p| !state.holdout.contains(*p)).copied().collect();
-                if targets.is_empty() {
-                    // Every connected peer is a holdout (all original
-                    // recipients are gone); relay through everyone rather
-                    // than letting the transaction stall.
-                    if !current_peers.is_empty() {
-                        network.broadcast(NetworkMessage::Tx(state.transaction.clone()));
-                        state.sent_to.extend(current_peers.iter().copied());
-                    }
+                // No targets means every connected peer is a holdout (the original
+                // recipients are gone): relay through everyone rather than letting
+                // the transaction stall. Addressed sends either way, so `sent_to`
+                // only records peers that actually took it — a peer listed there
+                // can never count as an acceptance signal, so crediting one that
+                // received nothing retires the evidence that would resolve this
+                // broadcast.
+                let targets = if targets.is_empty() {
+                    current_peers.clone()
                 } else {
-                    for peer in targets {
-                        if network
-                            .send_to(peer, NetworkMessage::Tx(state.transaction.clone()))
-                            .await
-                        {
-                            state.sent_to.insert(peer);
-                        }
+                    targets
+                };
+                for peer in targets {
+                    if network.send_to(peer, NetworkMessage::Tx(state.transaction.clone())).await {
+                        state.sent_to.insert(peer);
                     }
                 }
             } else {
-                network.broadcast(NetworkMessage::Tx(state.transaction.clone()));
+                // Best-effort keep-alive for an already-resolved broadcast.
+                if let Err(e) =
+                    network.broadcast(NetworkMessage::Tx(state.transaction.clone())).await
+                {
+                    tracing::debug!("Keep-alive relay of {} reached no peer: {}", txid, e);
+                }
             }
             tracing::debug!("Rebroadcast unconfirmed transaction {}", txid);
             state.last_broadcast = now;

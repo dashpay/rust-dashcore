@@ -148,8 +148,14 @@ impl NetworkManager for MockNetworkManager {
         true
     }
 
-    fn broadcast(&self, msg: NetworkMessage) {
+    async fn broadcast(&self, msg: NetworkMessage) -> crate::error::NetworkResult<()> {
         self.broadcasts.lock().expect("mock mutex poisoned").push(msg);
+        // No peer set here: `set_connected(0)` asks for a broadcast that reached
+        // nobody.
+        if self.connected.load(Ordering::SeqCst) == 0 {
+            return Err(crate::NetworkError::ConnectionFailed("No connected peers".to_string()));
+        }
+        Ok(())
     }
 
     async fn dispatch_local(&self, msg: NetworkMessage) {

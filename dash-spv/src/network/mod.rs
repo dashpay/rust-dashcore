@@ -2,6 +2,7 @@ mod discovery;
 mod manager;
 mod peer;
 
+use crate::error::NetworkResult;
 use async_trait::async_trait;
 use dashcore::network::message::NetworkMessage;
 use std::net::SocketAddr;
@@ -47,8 +48,8 @@ pub trait NetworkManager: Send + Sync + 'static {
     /// connected or the write failed.
     async fn send_to(&self, addr: SocketAddr, msg: NetworkMessage) -> bool;
 
-    /// Fire-and-forget send to every connected peer.
-    fn broadcast(&self, msg: NetworkMessage);
+    /// Broadcast a message to all connected peers.
+    async fn broadcast(&self, msg: NetworkMessage) -> NetworkResult<()>;
 
     /// Inject a message into the local pump as if received from a peer.
     async fn dispatch_local(&self, msg: NetworkMessage);
@@ -91,8 +92,8 @@ impl NetworkManager for PeerNetworkManager {
     async fn send_to(&self, addr: SocketAddr, msg: NetworkMessage) -> bool {
         self.send_to(addr, msg).await
     }
-    fn broadcast(&self, msg: NetworkMessage) {
-        self.broadcast(msg)
+    async fn broadcast(&self, msg: NetworkMessage) -> NetworkResult<()> {
+        self.broadcast(msg).await
     }
     async fn dispatch_local(&self, msg: NetworkMessage) {
         self.dispatch_local(msg).await
