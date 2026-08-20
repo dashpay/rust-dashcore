@@ -448,6 +448,29 @@ impl AddressPool {
         self.pool_type == AddressPoolType::External
     }
 
+    /// Derive every missing index in `0..=index`, leaving existing entries
+    /// (and their used flags) untouched. Returns how many holes were filled.
+    ///
+    /// A pool restored from a persistence mirror can be SPARSE: mirrors have
+    /// been observed dropping individual address rows, and a restore that
+    /// ingests the surviving rows as-is both inherits the holes and (by
+    /// advancing `highest_generated` to the max persisted index) suppresses
+    /// the gap-limit maintenance that would otherwise re-derive them. An
+    /// address missing from the pool makes every output paying it
+    /// permanently unrecognizable — funds invisible on every rescan. Since
+    /// derivation is pure arithmetic over the key source, holes are always
+    /// repairable; restore paths call this after ingesting persisted rows.
+    pub fn ensure_contiguous_to(&mut self, index: u32, key_source: &KeySource) -> Result<u32> {
+        let mut filled = 0u32;
+        for idx in 0..=index {
+            if !self.addresses.contains_key(&idx) {
+                self.generate_address_at_index(idx, key_source, true)?;
+                filled += 1;
+            }
+        }
+        Ok(filled)
+    }
+
     /// Generate addresses up to the specified count
     pub fn generate_addresses(
         &mut self,
@@ -1365,6 +1388,65 @@ mod tests {
         assert_eq!(addresses.len(), 10);
         assert_eq!(pool.highest_generated, Some(9));
         assert_eq!(pool.addresses.len(), 10);
+    }
+
+    /// A sparse pool (as restored from a lossy persistence mirror) must be
+    /// repairable to a contiguous one without disturbing surviving entries:
+    /// holes are re-derived, existing entries and their used flags are kept,
+    /// and the filled addresses match what direct derivation produces (so
+    /// recognition of outputs paying formerly-holed addresses works).
+    #[test]
+    fn test_ensure_contiguous_fills_holes_and_preserves_used() {
+        let base_path = DerivationPath::from(vec![ChildNumber::from_normal_idx(0).unwrap()]);
+        let key_source = test_key_source();
+
+        // The reference: a contiguous pool 0..=9.
+        let mut reference = AddressPool::new_without_generation(
+            base_path.clone(),
+            AddressPoolType::External,
+            20,
+            Network::Testnet,
+        );
+        reference.generate_addresses(10, &key_source, true).unwrap();
+
+        // The victim: same pool, then indices 3, 4, 7 dropped (mirror holes)
+        // with `highest_generated` still claiming full coverage — the exact
+        // post-restore shape.
+        let mut sparse = AddressPool::new_without_generation(
+            base_path,
+            AddressPoolType::External,
+            20,
+            Network::Testnet,
+        );
+        sparse.generate_addresses(10, &key_source, true).unwrap();
+        let used_addr = sparse.addresses[&5].address.clone();
+        sparse.mark_used(&used_addr);
+        for idx in [3u32, 4, 7] {
+            let info = sparse.addresses.remove(&idx).unwrap();
+            sparse.address_index.remove(&info.address);
+            sparse.script_pubkey_index.remove(&info.script_pubkey);
+        }
+        assert_eq!(sparse.addresses.len(), 7);
+        assert_eq!(sparse.highest_generated, Some(9), "watermark still claims coverage");
+
+        let filled = sparse.ensure_contiguous_to(9, &key_source).unwrap();
+        assert_eq!(filled, 3, "exactly the three holes are re-derived");
+        assert_eq!(sparse.addresses.len(), 10);
+        for idx in 0..=9u32 {
+            assert_eq!(
+                sparse.addresses.get(&idx).map(|i| &i.address),
+                reference.addresses.get(&idx).map(|i| &i.address),
+                "index {idx} must match direct derivation"
+            );
+            assert!(
+                sparse.address_index.contains_key(&reference.addresses[&idx].address),
+                "reverse lookup must cover index {idx}"
+            );
+        }
+        assert!(sparse.used_indices.contains(&5), "used flag survives the repair");
+
+        // Idempotent: a second pass finds nothing to fill.
+        assert_eq!(sparse.ensure_contiguous_to(9, &key_source).unwrap(), 0);
     }
 
     #[test]
