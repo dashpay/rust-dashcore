@@ -203,6 +203,17 @@ impl ManagedCoreFundsAccount {
         self.spent_outpoints.contains(outpoint)
     }
 
+    /// The outpoints this account knows were spent by recorded transactions.
+    /// Read-only view for store reconciliation: a persistence-mirror row
+    /// still marked unspent whose outpoint appears here lost its spend
+    /// update (the dashpay/platform#4425 stale-TXO class) and can safely be
+    /// flipped; an unspent mirror row appearing in NEITHER this set nor
+    /// [`Self::utxos`] is residue of a swept/abandoned transaction
+    /// (pre-rust-dashcore#971 stores).
+    pub fn spent_outpoints(&self) -> &HashSet<OutPoint> {
+        &self.spent_outpoints
+    }
+
     /// Collect the outpoints among `tx`'s inputs that this account holds as a
     /// final UTXO — confirmed, InstantSend-locked, or trusted.
     ///
