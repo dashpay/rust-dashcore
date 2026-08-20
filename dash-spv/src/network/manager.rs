@@ -115,7 +115,7 @@ const DRAIN_POLL: Duration = Duration::from_secs(1);
 use crate::{
     network::{
         discovery::PeerDiscoverer,
-        peer::{ConnectedPeer, DisconnectedPeer, PeerEvent, PeerHandle},
+        peer::{is_pipeline_request, ConnectedPeer, DisconnectedPeer, PeerEvent, PeerHandle},
     },
     ClientConfig,
 };
@@ -583,30 +583,20 @@ impl PeerNetworkManager {
         }
     }
 
-    /// Note that `n` streaming requests served by `peer` have fully completed
-    /// (e.g. a `getcfilters` batch whose last `cfilter` just arrived), freeing
-    /// that peer's in-flight units and waking the router. Single-response
-    /// requests are freed in the peer's own reader instead.
-    pub async fn request_completed(&self, peer: SocketAddr, n: usize) {
-        if n == 0 {
+    pub async fn request_answered(&self, key: RequestKey) {
+        let Some(ReqState::OnWire(o)) = self.requests.lock().await.remove(&key) else {
+            return;
+        };
+        if !is_pipeline_request(&o.msg) {
             return;
         }
         if let Some((p, _)) =
-            self.connected_peers.lock().await.iter().find(|(p, _)| p.addr() == peer)
+            self.connected_peers.lock().await.iter().find(|(p, _)| p.addr() == o.peer)
         {
-            p.response_completed(n).await;
+            p.response_completed(1).await;
         }
+        // A freed unit is capacity the router can use right now.
         self.msg_queue.notify.notify_one();
-    }
-
-    /// Report that a request's response arrived, so the broker stops tracking it
-    /// (no timeout, no retry, and its key is free to be requested again). The
-    /// owning manager calls this once it has correlated a response back to the
-    /// request key — the broker can't do it generically, since some responses
-    /// (e.g. an empty `headers`) carry nothing to match on. No-op if the key is
-    /// already gone (timed out first).
-    pub async fn request_answered(&self, key: RequestKey) {
-        self.requests.lock().await.remove(&key);
     }
 
     pub fn broadcast(&self, msg: NetworkMessage) {
@@ -2101,10 +2091,11 @@ fn spawn_pump(
                     }
 
                     let mt = MessageType::from_cmd(msg.cmd());
-                    // Single-message responses free a slot in the peer's reader;
-                    // wake the router so it can use the freed capacity. `cfilter`
-                    // is skipped — its batch frees a slot via `request_completed`,
-                    // which notifies once per ~1000 messages instead of each.
+                    // Cheap early wake on inbound traffic, so the router is up by
+                    // the time the owning manager correlates the response and frees
+                    // the slot (`request_answered` notifies again for the real
+                    // capacity). `cfilter` is skipped: a batch is ~1000 of them and
+                    // only its last one frees anything.
                     if mt != Some(MessageType::CFilter) {
                         queue.notify.notify_one();
                     }

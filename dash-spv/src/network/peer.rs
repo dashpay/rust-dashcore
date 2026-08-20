@@ -281,9 +281,7 @@ impl ConnectedPeer {
     }
 
     /// Note that `n` earlier pipeline requests have fully completed, freeing that
-    /// much in-flight work. Used for streaming responses (`getcfilters` -> many
-    /// `cfilter`s) that the reader can't attribute to a finished request on its
-    /// own; single-response requests are decremented directly in the reader.
+    /// much in-flight work.
     pub(crate) async fn response_completed(&self, n: usize) {
         let _ = self
             .handle
@@ -330,7 +328,11 @@ impl ConnectedPeer {
 }
 
 /// Pipeline requests we send and expect a response for (each adds one in-flight).
-fn is_pipeline_request(msg: &NetworkMessage) -> bool {
+///
+/// Also the broker's test for whether settling a request gives a unit back: only
+/// what was charged on the way out is released on the way in. A request tracked
+/// for de-dup and retry alone (`getmnlistdiff`) is not here and costs nothing.
+pub(super) fn is_pipeline_request(msg: &NetworkMessage) -> bool {
     match msg {
         NetworkMessage::GetHeaders(_)
         | NetworkMessage::GetHeaders2(_)
@@ -349,19 +351,6 @@ fn is_pipeline_request(msg: &NetworkMessage) -> bool {
         }
         _ => false,
     }
-}
-
-/// Single-message responses: the reader decrements one in-flight per message.
-/// `cfilter` is excluded — one `getcfilters` yields up to 1000 `cfilter`s, so its
-/// unit is freed once per batch by the filters pipeline via `response_completed`.
-fn is_single_response(msg: &NetworkMessage) -> bool {
-    matches!(
-        msg,
-        NetworkMessage::Headers(_)
-            | NetworkMessage::Headers2(_)
-            | NetworkMessage::CFHeaders(_)
-            | NetworkMessage::Block(_)
-    )
 }
 
 impl DisconnectedPeer {
@@ -523,8 +512,6 @@ impl DisconnectedPeer {
             reader,
             writer.clone(),
             inbound,
-            in_flight.clone(),
-            latency.clone(),
             token.clone(),
             headers2.clone(),
             headers2_decompression_semaphore,
@@ -586,8 +573,6 @@ fn spawn_reader(
     mut reader: PeerReader,
     writer: Arc<Mutex<OwnedWriteHalf>>,
     inbound: UnboundedSender<PeerEvent>,
-    in_flight: Arc<AtomicUsize>,
-    latency: Arc<Latency>,
     shutdown: CancellationToken,
     headers2: Arc<AtomicBool>,
     headers2_decompression_semaphore: Arc<Semaphore>,
@@ -611,15 +596,6 @@ fn spawn_reader(
                 Some(Ok(raw)) => {
                     if raw.magic != magic {
                         continue;
-                    }
-                    // A single-message response completes one unit of in-flight
-                    // work. Streaming responses (cfilter) are freed per batch by
-                    // the filters pipeline instead.
-                    if is_single_response(&raw.payload) {
-                        let _ = in_flight.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| {
-                            Some(v.saturating_sub(1))
-                        });
-                        latency.complete_one().await;
                     }
                     match raw.payload {
                         NetworkMessage::Ping(nonce) => {

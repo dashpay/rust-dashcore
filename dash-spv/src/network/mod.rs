@@ -27,9 +27,9 @@ pub use manager::{Inbound, InboundMessage, MessageType, PeerNetworkManager, Requ
 ///
 /// Requests are fire-and-forget: the implementation de-duplicates by request key,
 /// paces, times out and retries. Once a response is correlated to a request, the
-/// caller reports it via [`request_answered`](Self::request_answered) (and
-/// [`request_completed`](Self::request_completed) for streaming batches) so the
-/// implementation stops tracking it.
+/// caller reports it via [`request_answered`](Self::request_answered), the single
+/// call that both stops the tracking and gives the serving peer back the
+/// in-flight unit the request was holding.
 #[async_trait]
 pub trait NetworkManager: Send + Sync + 'static {
     /// Begin peer discovery/connection. Call *after* every consumer has
@@ -53,13 +53,10 @@ pub trait NetworkManager: Send + Sync + 'static {
     /// Inject a message into the local pump as if received from a peer.
     async fn dispatch_local(&self, msg: NetworkMessage);
 
-    /// Report that a request key has been answered so it stops being tracked
-    /// for timeout/retry.
+    /// Report that a request key has been answered: it stops being tracked for
+    /// timeout/retry, and the peer that was serving it gets its in-flight unit
+    /// back.
     async fn request_answered(&self, key: RequestKey);
-
-    /// Report that `n` streaming requests served by `peer` fully completed,
-    /// freeing that peer's in-flight units.
-    async fn request_completed(&self, peer: SocketAddr, n: usize);
 
     /// Subscribe to inbound messages of the given types. Each inbound item is a
     /// `(peer, message)` pair.
@@ -102,9 +99,6 @@ impl NetworkManager for PeerNetworkManager {
     }
     async fn request_answered(&self, key: RequestKey) {
         self.request_answered(key).await
-    }
-    async fn request_completed(&self, peer: SocketAddr, n: usize) {
-        self.request_completed(peer, n).await
     }
     async fn subscribe(&self, kinds: &[MessageType]) -> UnboundedReceiver<Inbound> {
         self.subscribe(kinds).await

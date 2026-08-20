@@ -44,7 +44,6 @@ pub struct MockNetworkManager {
     sent_to: Mutex<Vec<(SocketAddr, NetworkMessage)>>,
     broadcasts: Mutex<Vec<NetworkMessage>>,
     answered: Mutex<Vec<RequestKey>>,
-    completed: Mutex<Vec<(SocketAddr, usize)>>,
     subscribers: Mutex<Vec<Subscriber>>,
     events_tx: broadcast::Sender<NetworkEvent>,
     tip: AtomicU32,
@@ -65,7 +64,6 @@ impl MockNetworkManager {
             sent_to: Mutex::new(Vec::new()),
             broadcasts: Mutex::new(Vec::new()),
             answered: Mutex::new(Vec::new()),
-            completed: Mutex::new(Vec::new()),
             subscribers: Mutex::new(Vec::new()),
             events_tx,
             tip: AtomicU32::new(0),
@@ -91,11 +89,6 @@ impl MockNetworkManager {
     /// Every request key reported via [`NetworkManager::request_answered`].
     pub fn answered_keys(&self) -> Vec<RequestKey> {
         self.answered.lock().expect("mock mutex poisoned").clone()
-    }
-
-    /// Every `(peer, n)` reported via [`NetworkManager::request_completed`].
-    pub fn completed_requests(&self) -> Vec<(SocketAddr, usize)> {
-        self.completed.lock().expect("mock mutex poisoned").clone()
     }
 
     /// Clear all recorded sends (handy between phases of a test).
@@ -165,10 +158,6 @@ impl NetworkManager for MockNetworkManager {
 
     async fn request_answered(&self, key: RequestKey) {
         self.answered.lock().expect("mock mutex poisoned").push(key);
-    }
-
-    async fn request_completed(&self, peer: SocketAddr, n: usize) {
-        self.completed.lock().expect("mock mutex poisoned").push((peer, n));
     }
 
     async fn subscribe(&self, kinds: &[MessageType]) -> UnboundedReceiver<Inbound> {

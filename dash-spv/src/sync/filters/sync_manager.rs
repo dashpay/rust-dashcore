@@ -144,11 +144,10 @@ impl<
         let batch_completed =
             self.filter_pipeline.receive_with_data(h, cfilter.block_hash, &cfilter.filter);
 
-        // A completed batch == one `getcfilters` request fully answered: free that
-        // peer's in-flight unit (the reader skips per-`cfilter` decrements) and stop
-        // the network manager tracking the batch for timeout.
+        // A completed batch == one `getcfilters` request fully answered. That both
+        // stops the timeout tracking and gives the serving peer its in-flight unit
+        // back, so nothing has to attribute the individual `cfilter`s.
         if let Some(batch_start) = batch_completed {
-            network.request_completed(peer, 1).await;
             network.request_answered(RequestKey::CFilters(batch_start)).await;
         }
 
