@@ -442,6 +442,7 @@ impl PeerNetworkManager {
             peer_wake.clone(),
             max_peers,
             discoverer.clone(),
+            best_tip.clone(),
         );
 
         spawn_router(
@@ -1992,6 +1993,7 @@ fn spawn_pump(
     peer_wake: Arc<Notify>,
     max_peers: usize,
     discoverer: Arc<Mutex<PeerDiscoverer>>,
+    best_tip: Arc<AtomicU32>,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
         // Per-peer received-message counter to check load balance across peers.
@@ -2161,6 +2163,20 @@ fn spawn_pump(
                     queue.notify.notify_one();
 
                     let _ = events.send(NetworkEvent::PeerDisconnected(addr));
+                    // The set shrank, so say how big it is now. Only the supervisor
+                    // used to announce and it runs only when a peer is ACCEPTED, so
+                    // the count could rise and never fall: `connected_count: 0` was
+                    // unreachable however many peers were lost, and that is the value
+                    // the sync layer acts on — it is what puts a manager back into
+                    // `WaitingForConnections` so the next arrival restarts it.
+                    //
+                    // Every departure passes through here, including a peer the
+                    // timeout monitor evicted: closing it ends its reader, which
+                    // reports in the same way.
+                    let _ = events.send(NetworkEvent::PeersUpdated {
+                        connected_count: remaining as u32,
+                        best_height: best_tip.load(Ordering::Relaxed),
+                    });
                 }
             }
         }
@@ -2457,6 +2473,43 @@ mod tests {
             state_of(&net, &RequestKey::CFilters(0)).await,
             None,
             "the response, and only the response, retires the request"
+        );
+    }
+
+    // ---- the peer set announces departures, not just arrivals ----
+
+    /// Losing a peer must report the new COUNT, not just the address. Zero is what
+    /// the sync layer acts on, and with only the supervisor announcing (it runs
+    /// when a peer is accepted) the count could rise and never fall.
+    #[tokio::test]
+    async fn losing_a_peer_announces_the_new_count() {
+        let net = broker().await;
+        let mut events = net.events();
+
+        net.inbound_tx
+            .send(PeerEvent::Disconnected(test_socket_address(1)))
+            .expect("the pump is running");
+
+        let mut seen = Vec::new();
+        for _ in 0..2 {
+            seen.push(
+                tokio::time::timeout(Duration::from_secs(2), events.recv())
+                    .await
+                    .expect("the pump must report the departure")
+                    .expect("channel open"),
+            );
+        }
+        assert!(matches!(seen[0], NetworkEvent::PeerDisconnected(_)), "got {:?}", seen[0]);
+        assert!(
+            matches!(
+                seen[1],
+                NetworkEvent::PeersUpdated {
+                    connected_count: 0,
+                    ..
+                }
+            ),
+            "got {:?}",
+            seen[1]
         );
     }
 

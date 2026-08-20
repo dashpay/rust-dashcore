@@ -338,6 +338,23 @@ pub(super) async fn run_disconnect_loop(
                             assert!(saw_disconnect, "SPV should observe PeerDisconnected");
                             tracing::info!("SPV observed PeerDisconnected");
 
+                            // Losing every peer must be visible as a COUNT, not just
+                            // as a per-peer event: `connected_count: 0` is what sends
+                            // the sync managers back to `WaitingForConnections` so the
+                            // next arrival restarts them, and what an FFI consumer
+                            // bound to `on_peers_updated` sees. It used to be
+                            // unreachable, since only accepting a peer announced.
+                            let saw_empty = wait_for_network_event(
+                                &mut client_handle.network_event_receiver,
+                                |e| matches!(
+                                    e,
+                                    NetworkEvent::PeersUpdated { connected_count: 0, .. }
+                                ),
+                                Duration::from_secs(10),
+                            ).await;
+                            assert!(saw_empty, "SPV should report an empty peer set");
+                            tracing::info!("SPV observed PeersUpdated(0)");
+
                             let saw_reconnect = wait_for_network_event(
                                 &mut client_handle.network_event_receiver,
                                 |e| matches!(e, NetworkEvent::PeerConnected { .. }),
