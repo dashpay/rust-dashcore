@@ -710,7 +710,7 @@ fn spawn_router(
 /// it in the outstanding-request registry. Returns empty for non-pipeline
 /// messages (mirrors `is_pipeline_request` in `peer`: only these count toward a
 /// peer's in-flight and are timed out).
-fn request_keys(msg: &NetworkMessage) -> Vec<RequestKey> {
+pub(crate) fn request_keys(msg: &NetworkMessage) -> Vec<RequestKey> {
     match msg {
         NetworkMessage::GetHeaders(m) | NetworkMessage::GetHeaders2(m) => {
             m.locator_hashes.first().map(|h| RequestKey::Headers(*h)).into_iter().collect()

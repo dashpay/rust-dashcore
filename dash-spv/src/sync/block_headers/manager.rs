@@ -655,6 +655,10 @@ mod tests {
             best_height: 40_000,
         };
         manager.handle_network_event(&disconnect_event, &network).await.unwrap();
+        // Losing every peer takes their in-flight requests with them: the broker
+        // pulls each back to queued, so the keys stop de-duplicating and the
+        // request resumed below can go out.
+        mock.release_requests_in_play();
         assert_eq!(manager.state(), SyncState::WaitingForConnections);
         assert!(
             manager.pipeline.is_initialized(),
@@ -696,6 +700,10 @@ mod tests {
             best_height: tip.height(),
         };
         manager.handle_network_event(&disconnect_event, &network).await.unwrap();
+        // Losing every peer takes their in-flight requests with them: the broker
+        // pulls each back to queued, so the keys stop de-duplicating and the
+        // request resumed below can go out.
+        mock.release_requests_in_play();
         assert_eq!(manager.state(), SyncState::WaitingForConnections);
         assert!(manager.pipeline.is_initialized());
 

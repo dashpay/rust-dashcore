@@ -3473,10 +3473,19 @@ mod tests {
             vec![200_000],
             "a tick replaced the in-flight batch instead of leaving it alone"
         );
+        // The tick re-declares the in-flight batch, which the broker drops as a
+        // duplicate — so what must be observable is that NOTHING NEW went out and
+        // the batch is still the one being tracked. A re-declaration that reached
+        // the wire would mean the broker had forgotten it.
         assert_eq!(
             drain_getcfilters(&mock),
+            0,
+            "the tick requested something beyond the batch already in flight"
+        );
+        assert_eq!(
+            mock.requests_in_play(),
             1,
-            "the tick re-declares the one in-flight batch, and nothing beyond it"
+            "the in-flight batch stopped being tracked, so the tick would re-send it"
         );
     }
 

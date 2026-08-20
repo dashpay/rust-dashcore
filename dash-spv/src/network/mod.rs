@@ -17,6 +17,10 @@ pub use manager::NetworkEvent;
 // These form the `NetworkManager` trait's interface, which appears in the public
 // `DashSpvClient<W, N: NetworkManager, S>` bound, so they are part of the public API.
 pub use manager::{Inbound, InboundMessage, MessageType, PeerNetworkManager, RequestKey};
+// Not public: the mock network manager uses it to honour the same de-duplication
+// contract the real broker enforces, so a manager that mis-uses it fails a unit
+// test instead of only failing against a real peer.
+pub(crate) use manager::request_keys;
 
 /// Abstraction over the peer-to-peer network manager.
 ///
