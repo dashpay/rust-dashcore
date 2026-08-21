@@ -528,6 +528,44 @@ impl fmt::Display for WalletEvent {
 }
 
 #[cfg(test)]
+mod display_tests {
+    use super::*;
+    use std::collections::BTreeMap;
+
+    fn swept(winner_mined_height: Option<CoreBlockHeight>) -> WalletEvent {
+        WalletEvent::TransactionsSwept {
+            wallet_id: WalletId::from([7u8; 32]),
+            txids: vec![Txid::from_raw_hash(dashcore::hashes::Hash::from_byte_array([1u8; 32]))],
+            superseded_by: Txid::from_raw_hash(dashcore::hashes::Hash::from_byte_array([2u8; 32])),
+            winner_mined_height,
+            released_outpoints: Vec::new(),
+            balance: WalletCoreBalance::default(),
+            account_balances: BTreeMap::new(),
+        }
+    }
+
+    /// The winner's finality context is the first thing a reader of these
+    /// logs needs when a swept coin misbehaves, so `Display` must
+    /// distinguish the two triggers rather than printing one shape for
+    /// both. Both legs are asserted together: a formatter that dropped the
+    /// field would satisfy neither.
+    #[test]
+    fn transactions_swept_display_reports_the_winners_finality_context() {
+        let mined = format!("{}", swept(Some(1_000)));
+        assert!(
+            mined.contains("winner_mined_height=Some(1000)"),
+            "a block-triggered sweep must report the winner's height: {mined}"
+        );
+
+        let unmined = format!("{}", swept(None));
+        assert!(
+            unmined.contains("winner_mined_height=None"),
+            "an InstantSend-triggered sweep must report that no height exists yet: {unmined}"
+        );
+    }
+}
+
+#[cfg(test)]
 mod project_derived_addresses_tests {
     use super::*;
     use key_wallet::account::StandardAccountType;
