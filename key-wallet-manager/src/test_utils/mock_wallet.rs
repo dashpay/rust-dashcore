@@ -389,6 +389,11 @@ pub struct MockWalletState {
 /// enabling tests that exercise per-wallet attribution paths.
 pub struct MultiMockWallet {
     wallets: std::collections::BTreeMap<WalletId, MockWalletState>,
+    /// Per-wallet override for `scan_script_pubkeys_for`. Wallets absent here
+    /// fall back to the monitored set, mirroring the trait default. Lets tests
+    /// hand the filter scan a pruned query while the monitored set stays full
+    /// (dashpay/rust-dashcore#948).
+    scan_addresses: std::collections::BTreeMap<WalletId, Vec<Address>>,
     event_sender: broadcast::Sender<WalletEvent>,
     /// Track every block processed for assertions.
     processed: Arc<Mutex<Vec<(WalletId, dashcore::BlockHash, u32)>>>,
@@ -405,6 +410,7 @@ impl MultiMockWallet {
         let (event_sender, _) = broadcast::channel(16);
         Self {
             wallets: std::collections::BTreeMap::new(),
+            scan_addresses: std::collections::BTreeMap::new(),
             event_sender,
             processed: Arc::new(Mutex::new(Vec::new())),
         }
@@ -413,6 +419,12 @@ impl MultiMockWallet {
     /// Insert or replace a wallet's state.
     pub fn insert_wallet(&mut self, wallet_id: WalletId, state: MockWalletState) {
         self.wallets.insert(wallet_id, state);
+    }
+
+    /// Override the scan query for one wallet: `scan_script_pubkeys_for`
+    /// returns these addresses' scripts instead of the monitored set.
+    pub fn set_scan_addresses(&mut self, wallet_id: WalletId, addresses: Vec<Address>) {
+        self.scan_addresses.insert(wallet_id, addresses);
     }
 
     /// Mutable access to a wallet's state, panicking if absent.
@@ -464,6 +476,13 @@ impl WalletInterface for MultiMockWallet {
             .get(wallet_id)
             .map(|s| s.addresses.iter().map(|a| a.script_pubkey()).collect())
             .unwrap_or_default()
+    }
+
+    fn scan_script_pubkeys_for(&self, wallet_id: &WalletId) -> Vec<ScriptBuf> {
+        match self.scan_addresses.get(wallet_id) {
+            Some(addresses) => addresses.iter().map(|a| a.script_pubkey()).collect(),
+            None => self.monitored_script_pubkeys_for(wallet_id),
+        }
     }
 
     fn watched_outpoints(&self) -> Vec<OutPoint> {

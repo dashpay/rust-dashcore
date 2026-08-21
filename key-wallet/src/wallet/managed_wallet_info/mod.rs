@@ -7,6 +7,7 @@ pub mod asset_lock_builder;
 pub mod coin_selection;
 pub mod fee;
 pub mod helpers;
+pub use helpers::AbandonOutcome;
 pub mod managed_account_operations;
 pub mod managed_accounts;
 pub mod transaction_builder;

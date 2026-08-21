@@ -248,6 +248,12 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
         self.sync_state.last_processed_qrinfo_tip = None;
     }
 
+    fn on_peer_disconnect(&mut self) {
+        // The QRInfo request is tracked outside the pipeline with its own
+        // escalating timeout and attempt budget, so it is left to that path.
+        self.sync_state.mnlistdiff_pipeline.requeue_in_flight();
+    }
+
     async fn handle_message(
         &mut self,
         msg: Message,
@@ -314,11 +320,14 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
 
                 if let Some(ref qr_info_result) = qr_info_result {
                     tracing::info!(
-                        "QRInfo processed: stored_cycle_height={:?}, rotated_quorum_count={}, fully_verified_count={}, newly_qualified_count={}",
+                        "QRInfo processed: stored_cycle_height={:?}, rotated_quorum_count={}/{}, fully_verified_count={}, newly_qualified_count={}, cycle_key_unresolved={}, previous_cycle_invalid_count={}",
                         qr_info_result.stored_cycle_height,
                         qr_info_result.rotated_quorum_count,
+                        qr_info_result.expected_rotated_quorum_count,
                         qr_info_result.fully_verified_count,
                         qr_info_result.newly_qualified_count,
+                        qr_info_result.cycle_key_unresolved,
+                        qr_info_result.previous_cycle_invalid_count,
                     );
                     // If every rotated quorum in this QRInfo ended up Verified,
                     // mark the cycle validated so `next_pipeline_mode` will
@@ -673,8 +682,10 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
             return Ok(vec![]);
         }
 
-        // Check for MnListDiff timeouts via pipeline
-        if self.sync_state.mnlistdiff_pipeline.active_count() > 0 {
+        // Check for MnListDiff timeouts via pipeline. Gate on outstanding work
+        // rather than in-flight requests: a peer disconnect requeues in-flight
+        // items as pending, and this send is the only path that reissues them.
+        if !self.sync_state.mnlistdiff_pipeline.is_complete() {
             self.sync_state.mnlistdiff_pipeline.handle_timeouts();
         }
 

@@ -272,6 +272,8 @@ pub struct CompressionState {
     pub version_cache: Vec<i32>,
     /// Previous header for delta encoding
     pub prev_header: Option<Header>,
+    /// Cached X11 hash paired with the exact `prev_header` it was computed from.
+    prev_header_hash: Option<(Header, BlockHash)>,
 }
 
 impl CompressionState {
@@ -280,6 +282,7 @@ impl CompressionState {
         Self {
             version_cache: Vec::with_capacity(MAX_VERSION_CACHE_SIZE),
             prev_header: None,
+            prev_header_hash: None,
         }
     }
 
@@ -345,6 +348,7 @@ impl CompressionState {
         };
 
         self.prev_header = Some(*header);
+        self.prev_header_hash = None;
 
         CompressedHeader {
             flags,
@@ -363,10 +367,10 @@ impl CompressionState {
     /// Version offset decoding (matching C++ DIP-0025):
     /// - offset = 0: version NOT in cache, read full version from message
     /// - offset = 1-7: version at position (offset-1) in cache
-    pub fn decompress(
+    pub fn decompress_with_hash(
         &mut self,
         compressed: &CompressedHeader,
-    ) -> Result<Header, DecompressionError> {
+    ) -> Result<(Header, BlockHash), DecompressionError> {
         // Version (C++ semantics)
         let version = match compressed.flags.version_offset() {
             0 => {
@@ -389,7 +393,7 @@ impl CompressionState {
         let prev_blockhash = if let Some(hash) = compressed.prev_blockhash {
             hash
         } else {
-            self.prev_header.as_ref().ok_or(DecompressionError::MissingPreviousHeader)?.block_hash()
+            self.previous_header_hash().ok_or(DecompressionError::MissingPreviousHeader)?
         };
 
         // Timestamp
@@ -417,23 +421,48 @@ impl CompressionState {
             nonce: compressed.nonce,
         };
 
+        let hash = header.block_hash();
         self.prev_header = Some(header);
+        self.prev_header_hash = Some((header, hash));
 
-        Ok(header)
+        Ok((header, hash))
+    }
+
+    /// Decompress a header without retaining its computed X11 hash.
+    pub fn decompress(
+        &mut self,
+        compressed: &CompressedHeader,
+    ) -> Result<Header, DecompressionError> {
+        self.decompress_with_hash(compressed).map(|(header, _)| header)
     }
 
     pub fn process_headers(
         &mut self,
         headers: &[CompressedHeader],
     ) -> Result<Vec<Header>, ProcessError> {
+        self.process_headers_with_hashes(headers)
+            .map(|headers| headers.into_iter().map(|(header, _)| header).collect())
+    }
+
+    /// Decompress a self-contained headers2 batch and retain each computed X11 hash.
+    pub fn process_headers_with_hashes(
+        &mut self,
+        headers: &[CompressedHeader],
+    ) -> Result<Vec<(Header, BlockHash)>, ProcessError> {
+        // Dash Core resets compression history for every headers2 message.
+        self.version_cache.clear();
+        self.prev_header = None;
+        self.prev_header_hash = None;
+
         if headers.is_empty() {
             return Ok(Vec::new());
         }
 
         let mut decompressed = Vec::with_capacity(headers.len());
         for (i, compressed) in headers.iter().enumerate() {
-            let header =
-                self.decompress(compressed).map_err(|e| ProcessError::DecompressionError(i, e))?;
+            let header = self
+                .decompress_with_hash(compressed)
+                .map_err(|e| ProcessError::DecompressionError(i, e))?;
             decompressed.push(header);
         }
 
@@ -471,10 +500,16 @@ impl CompressionState {
 
     /// Check if the given hash matches the hash of the previous header
     fn is_sequential(&self, prev_hash: &BlockHash) -> bool {
-        if let Some(prev) = &self.prev_header {
-            prev.block_hash() == *prev_hash
-        } else {
-            false
+        self.previous_header_hash() == Some(*prev_hash)
+    }
+
+    fn previous_header_hash(&self) -> Option<BlockHash> {
+        match (self.prev_header.as_ref(), self.prev_header_hash.as_ref()) {
+            (Some(previous), Some((cached_header, cached_hash))) if previous == cached_header => {
+                Some(*cached_hash)
+            }
+            (Some(previous), _) => Some(previous.block_hash()),
+            (None, _) => None,
         }
     }
 }
@@ -825,6 +860,71 @@ mod tests {
         assert_eq!(decompressed.len(), 2);
         assert_eq!(decompressed[0], header1);
         assert_eq!(decompressed[1], header2);
+    }
+
+    #[test]
+    fn test_process_headers_with_hashes() {
+        let headers = create_test_chain(10);
+        let mut compress_state = CompressionState::new();
+        let compressed: Vec<_> =
+            headers.iter().map(|header| compress_state.compress(header)).collect();
+
+        let mut decompress_state = CompressionState::new();
+        let decompressed = decompress_state
+            .process_headers_with_hashes(&compressed)
+            .expect("valid headers2 batch");
+
+        for ((decoded, hash), expected) in decompressed.iter().zip(&headers) {
+            assert_eq!(decoded, expected);
+            assert_eq!(*hash, expected.block_hash());
+        }
+    }
+
+    #[test]
+    fn test_cached_hash_is_used_only_for_its_header() {
+        let original = create_test_header(1, 0);
+        let mut compress_state = CompressionState::new();
+        let compressed = compress_state.compress(&original);
+
+        let mut state = CompressionState::new();
+        let (_, original_hash) =
+            state.decompress_with_hash(&compressed).expect("valid compressed header");
+
+        let mut following = create_test_header(2, 1);
+        following.prev_blockhash = original_hash;
+
+        let mut replaced = state.clone();
+        replaced.prev_header = Some(create_test_header(99, 98));
+        assert_eq!(
+            replaced.compress(&following).prev_blockhash,
+            Some(original_hash),
+            "a hash cached for a replaced previous header must not suppress prev_blockhash"
+        );
+
+        state.prev_header = None;
+        assert_eq!(
+            state.compress(&following).prev_blockhash,
+            Some(original_hash),
+            "a hash cached for a cleared previous header must not suppress prev_blockhash"
+        );
+    }
+
+    #[test]
+    fn test_process_headers_resets_state_between_messages() {
+        let headers = create_test_chain(2);
+        let mut compress_state = CompressionState::new();
+        let compressed: Vec<_> =
+            headers.iter().map(|header| compress_state.compress(header)).collect();
+
+        let mut decompress_state = CompressionState::new();
+        decompress_state.process_headers(&compressed).expect("valid headers2 batch");
+
+        decompress_state.process_headers(&[]).expect("valid empty headers2 batch");
+        assert!(decompress_state.decompress(&compressed[1]).is_err());
+
+        // A compressed continuation cannot use state retained from the prior message.
+        let result = decompress_state.process_headers(&compressed[1..]);
+        assert!(matches!(result, Err(ProcessError::DecompressionError(0, _))));
     }
 
     #[test]

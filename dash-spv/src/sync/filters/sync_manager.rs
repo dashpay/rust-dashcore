@@ -47,6 +47,10 @@ impl<
         self.filter_pipeline.requeue_in_flight();
     }
 
+    fn on_peer_disconnect(&mut self) {
+        self.filter_pipeline.requeue_in_flight();
+    }
+
     async fn start_sync(&mut self, requests: &RequestSender) -> SyncResult<Vec<SyncEvent>> {
         ensure_not_started(self.state(), self.identifier())?;
 
@@ -55,7 +59,22 @@ impl<
         // any pending verified batches; calling `start_download` here would
         // insert a fresh batch at `scan_start` and clobber the existing one,
         // leaking its `pending_blocks` counter forever.
-        if !self.active_batches.is_empty() {
+        //
+        // The condition is `is_idle()` — the whole invariant `start_download`
+        // asserts — and not `active_batches` alone. They are not the same
+        // question: `on_disconnect` calls `requeue_in_flight`, which moves the
+        // pipeline's in-flight slots to *pending*, and a batch that finished
+        // downloading leaves `active_batches` while its verified output waits
+        // in `pending_batches` and its blocks wait in the tracker. Any of those
+        // three outlasting the last active batch used to fall through to
+        // `start_download` and trip its `debug_assert!(is_idle())` — an abort
+        // in any build with debug assertions on.
+        //
+        // Resuming is safe for all of them: this path sets `Syncing`, and
+        // `tick` in that state runs `send_pending`, `store_and_match_batches`
+        // and `try_process_batch` unconditionally. `send_pending` is a no-op
+        // when the pipeline has nothing queued.
+        if !self.is_idle() {
             self.filter_pipeline.send_pending(requests, &*self.header_storage.read().await).await?;
             self.set_state(SyncState::Syncing);
             return Ok(vec![]);

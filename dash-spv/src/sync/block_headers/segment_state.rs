@@ -2,7 +2,7 @@ use crate::error::{SyncError, SyncResult};
 use crate::network::RequestSender;
 use crate::sync::download_coordinator::{DownloadConfig, DownloadCoordinator};
 use crate::types::HashedBlockHeader;
-use dashcore::{BlockHash, Header};
+use dashcore::BlockHash;
 use std::time::Duration;
 
 /// Timeout for header requests.
@@ -85,7 +85,7 @@ impl SegmentState {
 
     /// Process received headers for this segment.
     /// Returns the number of headers processed, or an error if checkpoint validation fails.
-    pub(super) fn receive_headers(&mut self, headers: &[Header]) -> SyncResult<usize> {
+    pub(super) fn receive_headers(&mut self, headers: &[HashedBlockHeader]) -> SyncResult<usize> {
         if headers.is_empty() {
             // Empty response means we've reached the peer's tip for this segment
             self.complete = true;
@@ -110,7 +110,7 @@ impl SegmentState {
         }
 
         // Mark the request as received, reject if we never requested this hash
-        let prev_hash = headers[0].prev_blockhash;
+        let prev_hash = headers[0].header().prev_blockhash;
         if !self.coordinator.receive(&prev_hash) {
             return Err(SyncError::InvalidState(format!(
                 "Segment {}: received unrequested headers (prev_hash {})",
@@ -120,8 +120,7 @@ impl SegmentState {
 
         // Process headers
         let mut processed = 0;
-        for header in headers {
-            let hashed = HashedBlockHeader::from(*header);
+        for hashed in headers {
             let hash = *hashed.hash();
             let height = self.current_height + processed as u32 + 1;
 
@@ -135,7 +134,7 @@ impl SegmentState {
                             self.segment_id,
                             target_height
                         );
-                        self.buffered_headers.push(hashed);
+                        self.buffered_headers.push(hashed.clone());
                         processed += 1;
                         self.complete = true;
                         break;
@@ -155,13 +154,13 @@ impl SegmentState {
                 }
             }
 
-            self.buffered_headers.push(hashed);
+            self.buffered_headers.push(hashed.clone());
             processed += 1;
         }
 
         // Update current tip for next request
         if processed > 0 {
-            self.current_tip_hash = headers[processed - 1].block_hash();
+            self.current_tip_hash = *headers[processed - 1].hash();
             self.current_height += processed as u32;
         }
 
@@ -265,7 +264,7 @@ mod tests {
         let mut first = headers[0];
         first.prev_blockhash = hash;
 
-        let processed = segment.receive_headers(&[first]).unwrap();
+        let processed = segment.receive_headers(&[first.into()]).unwrap();
 
         assert_eq!(processed, 1);
         assert_eq!(segment.buffered_headers.len(), 1);
@@ -292,7 +291,7 @@ mod tests {
         assert_ne!(*actual_hash, expected_checkpoint_hash);
 
         // Receiving this header should fail with a validation error
-        let result = segment.receive_headers(&[header]);
+        let result = segment.receive_headers(&[header.into()]);
         assert!(result.is_err());
 
         let err = result.unwrap_err();
@@ -323,7 +322,7 @@ mod tests {
         segment.coordinator.mark_sent(&[start_hash]);
 
         // Receiving this header should succeed and complete the segment
-        let result = segment.receive_headers(&[header]);
+        let result = segment.receive_headers(&[header.into()]);
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), 1);
 
@@ -340,7 +339,7 @@ mod tests {
         let mut header = Header::dummy(1);
         header.prev_blockhash = start_hash;
 
-        let result = segment.receive_headers(&[header]);
+        let result = segment.receive_headers(&[header.into()]);
         assert!(result.is_err());
         match result.unwrap_err() {
             SyncError::InvalidState(msg) => {
@@ -365,7 +364,7 @@ mod tests {
         header.prev_blockhash = start_hash;
 
         // Completed segment should return an invalid state error
-        let result = segment.receive_headers(&[header]);
+        let result = segment.receive_headers(&[header.into()]);
         assert!(result.is_err());
         match result.unwrap_err() {
             SyncError::InvalidState(msg) => {
@@ -384,7 +383,7 @@ mod tests {
 
         let mut header = Header::dummy(1);
         header.prev_blockhash = start_hash;
-        segment.receive_headers(&[header]).unwrap();
+        segment.receive_headers(&[header.into()]).unwrap();
 
         let preserved_tip_hash = segment.current_tip_hash;
         let preserved_height = segment.current_height;

@@ -686,6 +686,7 @@ mod tests {
     use dashcore::block::Header;
     use dashcore::hashes::Hash;
     use dashcore::network::message::NetworkMessage;
+    use dashcore::network::message_sml::GetMnListDiff;
     use dashcore::sml::masternode_list::MasternodeList;
     use tokio::sync::mpsc;
 
@@ -1074,5 +1075,53 @@ mod tests {
             0,
             "no QRInfo must be requested when the gate picks Incremental"
         );
+    }
+
+    /// A single-peer disconnect requeues every in-flight `getmnlistd` request,
+    /// leaving the pipeline with pending work and nothing in flight. The next
+    /// tick must reissue that pending work: a tick that only acts while
+    /// requests are in flight strands the pipeline forever, since every
+    /// response arriving after the requeue is dropped as untracked and no
+    /// other path calls `send_pending`.
+    #[tokio::test]
+    async fn test_tick_reissues_requeued_requests_after_peer_disconnect() {
+        let mut manager = create_test_manager().await;
+        manager.set_state(SyncState::Syncing);
+
+        let base1 = anchor_hash(0x01);
+        let target1 = anchor_hash(0x02);
+        let base2 = anchor_hash(0x03);
+        let target2 = anchor_hash(0x04);
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let requests = RequestSender::new(tx);
+
+        manager
+            .sync_state
+            .mnlistdiff_pipeline
+            .queue_requests(vec![(base1, target1), (base2, target2)]);
+        manager.sync_state.mnlistdiff_pipeline.send_pending(&requests).unwrap();
+        assert_eq!(manager.sync_state.mnlistdiff_pipeline.active_count(), 2);
+        while rx.try_recv().is_ok() {}
+
+        manager.on_peer_disconnect();
+        assert_eq!(manager.sync_state.mnlistdiff_pipeline.active_count(), 0);
+
+        manager.tick(&requests).await.expect("tick succeeds");
+
+        let mut reissued = Vec::new();
+        while let Ok(request) = rx.try_recv() {
+            if let NetworkRequest::SendMessage(NetworkMessage::GetMnListD(GetMnListDiff {
+                base_block_hash,
+                block_hash,
+            })) = request
+            {
+                reissued.push((base_block_hash, block_hash));
+            }
+        }
+        reissued.sort();
+        let mut expected = vec![(base1, target1), (base2, target2)];
+        expected.sort();
+        assert_eq!(reissued, expected, "tick must reissue the requeued requests");
+        assert_eq!(manager.sync_state.mnlistdiff_pipeline.active_count(), 2);
     }
 }

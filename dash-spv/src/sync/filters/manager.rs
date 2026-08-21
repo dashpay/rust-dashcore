@@ -43,6 +43,13 @@ struct WalletScanState {
 }
 
 /// Maximum number of batches to scan ahead while waiting for blocks.
+///
+/// Raising this does not buy more throughput while a batch is stalled on a block.
+/// Every scanned batch queues its matched blocks into one FIFO download window,
+/// so a deeper lookahead fills that window with blocks belonging to batches that
+/// cannot commit for a long time, ahead of the blocks the committing batch is
+/// actually waiting on. Block downloads would have to be ordered by height
+/// before this could go higher.
 const MAX_LOOKAHEAD_BATCHES: usize = 3;
 
 /// Filters manager for downloading and matching compact block filters.
@@ -132,7 +139,11 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
     }
 
     /// Returns true if there is no in-flight processing state.
-    fn is_idle(&self) -> bool {
+    ///
+    /// `pub(super)` so the resume decision in `start_sync` can be taken on the
+    /// same predicate `start_download` asserts. Checking a subset there is how
+    /// a disconnect/reconnect cycle used to reach that assert.
+    pub(super) fn is_idle(&self) -> bool {
         self.active_batches.is_empty()
             && self.tracker.is_empty()
             && self.pending_batches.is_empty()
@@ -341,6 +352,11 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
         }
         self.active_batches.insert(scan_start, batch);
         self.progress.update_committed_height(scan_start.saturating_sub(1));
+        // Roll the storage watermark back in step with the scan position. This
+        // is also the rescan entry point (the `tick` trigger resets progress
+        // and re-enters here), so it keeps storage from releasing the range
+        // this scan is about to re-read.
+        self.filter_storage.write().await.set_committed_height(scan_start.saturating_sub(1)).await;
 
         // Only scan if all filters for the batch are already loaded
         if self.progress.stored_height() >= batch_end {
@@ -569,7 +585,40 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
                         events.extend(self.rescan_batch(later_start, &scripts_by_wallet).await?);
                     }
 
-                    // Check if rescan found more blocks
+                    // Newly derived scripts also have to reach ranges that
+                    // already committed: those blocks were matched against a
+                    // watch set that predates these scripts, and nothing else
+                    // ever looks below `committed_height` again (#846). That
+                    // backward sweep walks stored history — the expensive
+                    // direction — so defer it: accumulate the scripts here
+                    // and sweep once when the forward fixpoint is quiescent,
+                    // instead of re-walking the committed range on every
+                    // derivation round.
+                    if let Some(batch) = self.active_batches.get_mut(&batch_start) {
+                        batch.accumulate_backward_scripts(scripts_by_wallet);
+                        if batch.pending_blocks() > 0 {
+                            // Forward rescan found blocks; converge the
+                            // forward direction first.
+                            break;
+                        }
+                    }
+                }
+
+                // Forward direction quiescent: one combined backward sweep
+                // over the committed range with everything accumulated. Hits
+                // attribute to this batch, so scripts their processing
+                // derives re-enter through `collected_scripts` above and
+                // only genuinely new scripts get a follow-up sweep.
+                let backward_scripts = self
+                    .active_batches
+                    .get_mut(&batch_start)
+                    .map(|b| b.take_backward_scripts())
+                    .unwrap_or_default();
+                if !backward_scripts.is_empty() {
+                    events
+                        .extend(self.rescan_committed_range(batch_start, &backward_scripts).await?);
+
+                    // Check if the backward sweep found more blocks
                     if let Some(batch) = self.active_batches.get(&batch_start) {
                         if batch.pending_blocks() > 0 {
                             // Found more blocks, can't commit yet
@@ -630,6 +679,13 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
                         }
                     }
                 }
+                // A batch commits only once every matched block in it has been
+                // downloaded and applied, so filters at or below `end` are
+                // fully consumed. Let storage release them from memory on the
+                // next persist; they remain readable through `load_filters`,
+                // which reloads from disk. The wallet guard above is out of
+                // scope here and no storage guard is held.
+                self.filter_storage.write().await.set_committed_height(end).await;
             }
             // Drop processed-wallet records for the committed range. Below the
             // new committed_height a new wallet can only get here via the
@@ -781,6 +837,26 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
             }
         }
 
+        Ok(self.queue_new_script_matches(batch_start, block_to_wallets, "Rescan"))
+    }
+
+    /// Queue filter matches driven by newly derived scripts for
+    /// (re-)download — the shared tail of `rescan_batch` and
+    /// `rescan_committed_range`.
+    ///
+    /// These matches come from scripts that did not exist when their block
+    /// was first processed, so a processed record must not suppress the
+    /// re-download: the block has to be re-applied against the extended
+    /// pools (`track_for_new_scripts`). Genuinely new blocks are charged to
+    /// `batch_start`'s `pending_blocks` accounting so its commit waits for
+    /// them; blocks already on their way still get a fresh `BlocksNeeded`
+    /// so the pipeline merges late wallet ids into its pending wallet set.
+    fn queue_new_script_matches(
+        &mut self,
+        batch_start: u32,
+        block_to_wallets: BTreeMap<FilterMatchKey, BTreeSet<WalletId>>,
+        context: &str,
+    ) -> Vec<SyncEvent> {
         let mut events = Vec::new();
         let mut blocks_needed: BTreeMap<FilterMatchKey, BTreeSet<WalletId>> = BTreeMap::new();
         let mut new_blocks_count = 0;
@@ -789,10 +865,6 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
             self.progress.add_matched(block_to_wallets.len() as u32);
         }
         for (key, wallets) in block_to_wallets {
-            // Matches here are driven by scripts that did not exist when the
-            // block was first processed, so a processed record must not
-            // suppress the re-download: the block has to be re-applied
-            // against the extended pools.
             match self.tracker.track_for_new_scripts(&key, batch_start, wallets) {
                 BlockTrackResult::NewlyTracked {
                     wallets,
@@ -803,8 +875,6 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
                 BlockTrackResult::InFlight {
                     wallets,
                 } => {
-                    // Block already on its way; merge late wallet ids into the
-                    // pipeline's pending wallet set via a fresh BlocksNeeded.
                     blocks_needed.insert(key, wallets);
                 }
                 // Never returned by track_for_new_scripts.
@@ -817,7 +887,7 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
             if let Some(batch) = self.active_batches.get_mut(&batch_start) {
                 batch.set_pending_blocks(batch.pending_blocks() + new_blocks_count);
             }
-            tracing::info!("Rescan found {} additional blocks", new_blocks_count);
+            tracing::info!("{} found {} additional blocks", context, new_blocks_count);
         }
         if !blocks_needed.is_empty() {
             events.push(SyncEvent::BlocksNeeded {
@@ -825,7 +895,7 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
             });
         }
 
-        Ok(events)
+        events
     }
 
     /// Scan a specific batch, matching its filters against each behind-wallet's
@@ -860,7 +930,12 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
         let mut wallet_states: Vec<WalletScanState> = Vec::new();
         for wallet_id in &behind {
             let synced = wallet.wallet_synced_height(wallet_id);
-            let scripts = wallet.monitored_script_pubkeys_for(wallet_id);
+            // The scan query, not the full monitored set: spent single-use
+            // (CoinJoin) addresses are pruned so the per-filter match cost
+            // stays bounded by active UTXOs + gap lookahead instead of
+            // growing with every historical mixing round
+            // (dashpay/rust-dashcore#948).
+            let scripts = wallet.scan_script_pubkeys_for(wallet_id);
             // Bare owner/voting key hashes a compact filter carries beyond the
             // wallet's scriptPubKeys.
             let elements = wallet.monitored_filter_elements_for(wallet_id);
@@ -1025,6 +1100,97 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
         Ok(events)
     }
 
+    /// Re-test newly derived scriptPubKeys against the already-committed
+    /// filter range below `batch_start` (#846).
+    ///
+    /// A committed batch is gone from `active_batches` and every wallet's
+    /// `synced_height` has advanced past it, so `rescan_batch` can never
+    /// reach it again — but a script derived later by gap-limit maintenance
+    /// (CoinJoin index↔height inversions being the concrete case) may pay
+    /// out inside that range. The filters themselves are address-independent
+    /// BIP-158 commitments and are all persisted, so the committed range is
+    /// re-tested from storage — no network traffic — and only genuinely
+    /// matching blocks are re-downloaded, via the same
+    /// `track_for_new_scripts` path `rescan_batch` uses.
+    ///
+    /// Matched blocks attribute to the committing batch at `batch_start`:
+    /// its `pending_blocks` accounting defers the commit, and scripts their
+    /// processing derives collect into that batch, so the existing
+    /// commit-time fixpoint loop covers the backward direction too.
+    ///
+    /// Deliberately matches only `new_scripts` — not the wallets' bare
+    /// filter elements — since those were already watched when the range
+    /// was originally scanned; including them would re-download previously
+    /// processed blocks across the whole history.
+    pub(super) async fn rescan_committed_range(
+        &mut self,
+        batch_start: u32,
+        new_scripts: &HashMap<WalletId, HashSet<ScriptBuf>>,
+    ) -> SyncResult<Vec<SyncEvent>> {
+        let Some(range_end) = batch_start.checked_sub(1) else {
+            return Ok(vec![]);
+        };
+
+        let wallet_queries: Vec<(WalletId, Vec<ScriptBuf>)> = new_scripts
+            .iter()
+            .filter(|(_, scripts)| !scripts.is_empty())
+            .map(|(id, scripts)| (*id, scripts.iter().cloned().collect()))
+            .collect();
+        if wallet_queries.is_empty() {
+            return Ok(vec![]);
+        }
+
+        // Nothing relevant can precede the earliest wallet birth height, and
+        // nothing is loadable below the first stored filter.
+        let wallet_base = self.wallet.read().await.earliest_required_height().await;
+        let Some(filter_base) = self.filter_storage.read().await.filter_start_height().await else {
+            return Ok(vec![]);
+        };
+        let range_start = wallet_base.max(filter_base);
+        if range_start > range_end {
+            return Ok(vec![]);
+        }
+
+        tracing::info!(
+            "Rescan committed filters ({}-{}) for new scripts across {} wallets",
+            range_start,
+            range_end,
+            wallet_queries.len()
+        );
+
+        let mut block_to_wallets: BTreeMap<FilterMatchKey, BTreeSet<WalletId>> = BTreeMap::new();
+        let mut chunk_start = range_start;
+        while chunk_start <= range_end {
+            let chunk_end = (chunk_start + BATCH_PROCESSING_SIZE - 1).min(range_end);
+            // A chunk the storage cannot serve (e.g. filters pruned or never
+            // stored for a sub-range) is skipped rather than failing the
+            // commit: the sweep is best-effort recovery over whatever
+            // history is locally available.
+            let filters = match self.load_filters(chunk_start, chunk_end).await {
+                Ok(filters) => filters,
+                Err(e) => {
+                    tracing::warn!(
+                        "Committed-range rescan skipping {}-{}: {}",
+                        chunk_start,
+                        chunk_end,
+                        e
+                    );
+                    chunk_start = chunk_end + 1;
+                    continue;
+                }
+            };
+            for (wallet_id, scripts) in &wallet_queries {
+                let matches = check_compact_filters_for_elements(&filters, scripts, &[], 0);
+                for key in matches {
+                    block_to_wallets.entry(key).or_default().insert(*wallet_id);
+                }
+            }
+            chunk_start = chunk_end + 1;
+        }
+
+        Ok(self.queue_new_script_matches(batch_start, block_to_wallets, "Committed-range rescan"))
+    }
+
     /// Handle notification that new filter headers are available.
     /// Used by both FilterHeadersSyncComplete and FilterHeadersStored events.
     pub(super) async fn handle_new_filter_headers(
@@ -1064,7 +1230,21 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
                 // re-init via `start_download` — that would clobber existing
                 // batches. Instead extend the target and let the eventual
                 // `start_sync` (driven by `PeersUpdated`) resume from here.
-                if !self.active_batches.is_empty() {
+                //
+                // `is_idle()` for the same reason `start_sync` uses it: this is
+                // the second route into `start_download`, and it asserts all
+                // four conditions. `active_batches` alone is a strict subset —
+                // a batch that finished downloading leaves it while its
+                // verified output waits in `pending_batches` and its blocks
+                // wait in the tracker, and `on_disconnect` moves the pipeline's
+                // in-flight slots to pending rather than clearing them.
+                //
+                // Extending the target is the right answer for all four, not
+                // just for active batches: `handle_message` keeps running
+                // regardless of state (filters always want `CFilter`), so
+                // `store_and_match_batches` drains the leftovers, and the next
+                // filter-header event re-enters here once genuinely idle.
+                if !self.is_idle() {
                     self.filter_pipeline.extend_target(tip_height);
                     return Ok(vec![]);
                 }
@@ -1083,6 +1263,10 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
         f.debug_struct("FiltersManager").field("progress", &self.progress).finish()
     }
 }
+#[cfg(test)]
+#[path = "coinjoin_gap_discovery_tests.rs"]
+mod coinjoin_gap_discovery_tests;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1405,10 +1589,36 @@ mod tests {
         assert_eq!(manager.progress.filter_header_tip_height(), 600);
     }
 
+    /// Lookahead is what lets scanning continue past a batch that cannot commit
+    /// because a block it matched is still downloading, so it must actually reach
+    /// the cap rather than stopping at whatever the first pass created.
     #[tokio::test]
-    async fn test_max_lookahead_constant() {
-        // Verify the constant is set to expected value
-        assert_eq!(MAX_LOOKAHEAD_BATCHES, 3);
+    async fn test_lookahead_fills_to_the_cap_and_stops() {
+        let mut manager = create_test_manager().await;
+        manager.set_state(SyncState::Syncing);
+
+        // Far more headroom than the cap, so the cap is what stops it. The
+        // filters themselves are still downloading, which is the state lookahead
+        // exists for: the batches are created empty and scanned once they land.
+        let tip = BATCH_PROCESSING_SIZE * (MAX_LOOKAHEAD_BATCHES as u32 + 4);
+        manager.processing_height = 1;
+        manager.progress.update_filter_header_tip_height(tip);
+        manager.progress.update_target_height(tip);
+
+        manager.try_create_lookahead_batches().await.unwrap();
+
+        assert_eq!(manager.active_batches.len(), MAX_LOOKAHEAD_BATCHES);
+
+        // A second pass adds nothing while the batches are still uncommitted.
+        manager.try_create_lookahead_batches().await.unwrap();
+        assert_eq!(manager.active_batches.len(), MAX_LOOKAHEAD_BATCHES);
+
+        // The batches must tile the range contiguously from the processing head.
+        let mut expected_start = manager.processing_height;
+        for (&start, batch) in &manager.active_batches {
+            assert_eq!(start, expected_start);
+            expected_start = batch.end_height() + 1;
+        }
     }
 
     #[tokio::test]
@@ -1929,6 +2139,64 @@ mod tests {
         let attr_70 = blocks.get(&key_70).expect("entry for height 70");
         assert!(attr_70.contains(&wallet_low));
         assert!(!attr_70.contains(&wallet_high));
+    }
+
+    /// `scan_batch` matches filters against the wallet's scan query
+    /// (`scan_script_pubkeys_for`), not the full monitored set: a monitored
+    /// script pruned from the scan query — a spent single-use CoinJoin
+    /// address (dashpay/rust-dashcore#948) — must not pull its block in.
+    #[tokio::test]
+    async fn test_scan_batch_uses_pruned_scan_query() {
+        let wallet_id: WalletId = [0x03; 32];
+        let dead_address = dashcore::Address::dummy(Network::Regtest, 1);
+        let live_address = dashcore::Address::dummy(Network::Regtest, 2);
+
+        let multi = Arc::new(RwLock::new(MultiMockWallet::new()));
+        {
+            let mut w = multi.write().await;
+            w.insert_wallet(
+                wallet_id,
+                MockWalletState {
+                    addresses: vec![dead_address.clone(), live_address.clone()],
+                    synced_height: 0,
+                    last_processed_height: 0,
+                    account_generation: 0,
+                },
+            );
+            // The scan query excludes the dead address.
+            w.set_scan_addresses(wallet_id, vec![live_address.clone()]);
+        }
+        let mut manager = create_multi_test_manager(multi).await;
+        manager.set_state(SyncState::Syncing);
+
+        let mut filters: HashMap<FilterMatchKey, BlockFilter> = HashMap::new();
+        let (key_dead, f_dead) = filter_for_address(30, &dead_address);
+        let (key_live, f_live) = filter_for_address(60, &live_address);
+        filters.insert(key_dead.clone(), f_dead);
+        filters.insert(key_live.clone(), f_live);
+
+        let mut batch = FiltersBatch::new(0, 99, filters);
+        batch.mark_verified();
+        manager.active_batches.insert(0, batch);
+        manager.progress.update_stored_height(99);
+
+        let events = manager.scan_batch(0).await.unwrap();
+
+        let blocks = events
+            .iter()
+            .find_map(|e| match e {
+                SyncEvent::BlocksNeeded {
+                    blocks,
+                } => Some(blocks),
+                _ => None,
+            })
+            .expect("BlocksNeeded event");
+
+        assert!(blocks.contains_key(&key_live), "block paying the scan-query address is needed");
+        assert!(
+            !blocks.contains_key(&key_dead),
+            "block paying only the pruned address must not be downloaded"
+        );
     }
 
     /// `rescan_batch` with multiple wallets in `scripts_by_wallet`:
@@ -2979,6 +3247,87 @@ mod tests {
         manager.handle_new_filter_headers(101, &requests).await.unwrap();
         assert!(!manager.active_batches.contains_key(&0));
         assert_eq!(manager.active_batches.keys().next(), Some(&101));
+    }
+
+    /// The same predicate mismatch on the OTHER route into `start_download`.
+    ///
+    /// A filter-header event arriving while the manager sits in `WaitForEvents`
+    /// takes `handle_new_filter_headers`, not `start_sync` — and that arm asked
+    /// the same subset question. A verified batch waiting in `pending_batches`
+    /// with `active_batches` already empty therefore fell through to
+    /// `start_download` and its `debug_assert!(is_idle())`.
+    #[tokio::test]
+    async fn test_new_filter_headers_resumes_when_only_pending_batches_survive() {
+        let (mut manager, _headers, _filter) = setup_synced_manager_at_tip().await;
+
+        manager.pending_batches.insert(FiltersBatch::new(0, 99, HashMap::new()));
+        assert!(manager.active_batches.is_empty(), "the old predicate says idle");
+        assert!(!manager.is_idle(), "the invariant start_download asserts says otherwise");
+
+        manager.set_state(SyncState::WaitForEvents);
+        let (tx, _rx) = unbounded_channel();
+        let requests = RequestSender::new(tx);
+
+        // Must extend the target and leave the surviving work alone.
+        let events = manager.handle_new_filter_headers(200, &requests).await.unwrap();
+
+        assert!(events.is_empty(), "extending the target emits nothing");
+        // `pending_batches` alone does not prove the guard held: `start_download`
+        // preserves it too, so a broken guard would reinitialize the pipeline and
+        // still leave this at 1. The state and the absence of a fresh active
+        // batch are what tell resuming from restarting — and unlike the
+        // `debug_assert` inside `start_download`, they still hold in a release
+        // build, where that assert is compiled out.
+        assert_eq!(
+            manager.state(),
+            SyncState::WaitForEvents,
+            "the arm must return without changing state"
+        );
+        assert!(
+            manager.active_batches.is_empty(),
+            "must not start a fresh download over the surviving work"
+        );
+        assert_eq!(manager.pending_batches.len(), 1, "the surviving batch must not be discarded");
+    }
+
+    /// A verified batch waiting in `pending_batches` outlives the last active
+    /// one, so a reconnect used to fall through the resume guard — which asked
+    /// only about `active_batches` — into `start_download`, whose
+    /// `debug_assert!(is_idle())` then aborted the process. It is reachable in
+    /// the field: `on_disconnect` preserves this state by design, and a build
+    /// with debug assertions on turns the mismatch into a crash rather than a
+    /// log line.
+    #[tokio::test]
+    async fn test_start_sync_resumes_when_only_pending_batches_survive() {
+        let (mut manager, _headers, _filter) = setup_synced_manager_at_tip().await;
+
+        // What a disconnect leaves behind after the last active batch finished
+        // downloading but before its verified output was processed.
+        manager.pending_batches.insert(FiltersBatch::new(0, 99, HashMap::new()));
+        assert!(manager.active_batches.is_empty(), "the guard's old predicate says idle");
+        assert!(!manager.is_idle(), "the invariant start_download asserts says otherwise");
+
+        manager.set_state(SyncState::WaitingForConnections);
+        let (tx, _rx) = unbounded_channel();
+        let requests = RequestSender::new(tx);
+
+        // Must resume rather than start a fresh download over the top of it.
+        let events = manager.start_sync(&requests).await.unwrap();
+
+        assert!(events.is_empty(), "resuming emits no SyncStart");
+        assert_eq!(manager.state(), SyncState::Syncing);
+        // See the sibling test: `start_download` keeps `pending_batches`, so only
+        // the absence of a new active batch proves this resumed rather than
+        // restarted, and it proves it without relying on a debug assertion.
+        assert!(
+            manager.active_batches.is_empty(),
+            "must not start a fresh download over the surviving work"
+        );
+        assert_eq!(
+            manager.pending_batches.len(),
+            1,
+            "the surviving batch must not be discarded by the resume"
+        );
     }
 
     /// A fully synced node that reconnects and then sees one new block must

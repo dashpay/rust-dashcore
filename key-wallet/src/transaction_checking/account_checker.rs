@@ -13,10 +13,11 @@ use crate::managed_account::managed_account_type::ManagedAccountType;
 use crate::managed_account::transaction_record::TransactionRecord;
 use crate::Address;
 use dashcore::address::Payload;
-use dashcore::blockdata::transaction::Transaction;
+use dashcore::blockdata::transaction::{OutPoint, Transaction};
 use dashcore::hashes::Hash as _;
 use dashcore::transaction::TransactionPayload;
 use dashcore::ScriptBuf;
+use dashcore::Txid;
 
 /// Classification of an address within an account
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -76,6 +77,30 @@ pub struct TransactionCheckResult {
     /// applied to a previously stored record). Each record carries its owning
     /// `AccountType` on `record.account_type`.
     pub updated_records: Vec<TransactionRecord>,
+    /// Transactions this check *removed*: a recorded spend that the arriving
+    /// transaction provably beat to one of its inputs, plus anything built on
+    /// its outputs. They can never confirm, so their outputs were dropped
+    /// from the UTXO set and their records deleted.
+    ///
+    /// The only non-additive field here, and it exists because a consumer
+    /// mirroring wallet state cannot otherwise learn a row is gone — it would
+    /// replay the dead transaction on the next load and re-create the phantom
+    /// balance this removal just cleared.
+    pub swept_transactions: Vec<Txid>,
+    /// Outpoints released from the wallet's spent-marks as a side effect of
+    /// `swept_transactions`: inputs the removed losers claimed to spend that
+    /// no surviving record spends too. Empty whenever `swept_transactions`
+    /// is.
+    ///
+    /// Named explicitly because it cannot be inferred downstream: the winner
+    /// that triggered the sweep need not be wallet-relevant, so it may never
+    /// appear in this wallet's output at all. See
+    /// [`ManagedCoreFundsAccount::drop_conflicted_transactions`], which
+    /// computes the distinction.
+    ///
+    /// [`ManagedCoreFundsAccount::drop_conflicted_transactions`]:
+    ///     crate::managed_account::ManagedCoreFundsAccount
+    pub released_outpoints: Vec<OutPoint>,
 }
 
 /// Enum representing the type of Core account that matched with embedded data
@@ -405,6 +430,8 @@ impl ManagedAccountCollection {
             new_addresses: Vec::new(),
             new_records: Vec::new(),
             updated_records: Vec::new(),
+            swept_transactions: Vec::new(),
+            released_outpoints: Vec::new(),
         };
 
         for account_type in account_types {

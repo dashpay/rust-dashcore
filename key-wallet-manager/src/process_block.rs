@@ -84,6 +84,35 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
             for (wallet_id, records) in check_result.per_wallet_updated_records {
                 per_wallet_updated.entry(wallet_id).or_default().extend(records);
             }
+            // Emitted per transaction rather than batched into the block
+            // event: a sweep names the transaction that superseded the
+            // removed ones, and that attribution is lost once the block's
+            // transactions are folded together.
+            let mut per_wallet_released = check_result.per_wallet_released_outpoints;
+            for (wallet_id, txids) in check_result.per_wallet_swept {
+                if txids.is_empty() {
+                    continue;
+                }
+                let Some(info) = self.wallet_infos.get(&wallet_id) else {
+                    continue;
+                };
+                let released_outpoints = per_wallet_released.remove(&wallet_id).unwrap_or_default();
+                let event = WalletEvent::TransactionsSwept {
+                    wallet_id,
+                    txids,
+                    superseded_by: tx.txid(),
+                    released_outpoints,
+                    balance: info.balance(),
+                    account_balances: BTreeMap::new(),
+                };
+                self.emit_event(event);
+            }
+            debug_assert!(
+                per_wallet_released.is_empty(),
+                "released outpoints for a wallet that emitted no sweep would be \
+                 dropped here, stranding those coins marked spent forever: {:?}",
+                per_wallet_released
+            );
         }
 
         self.finalize_block_advance(
@@ -185,6 +214,39 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
             }
         }
 
+        // Removals, before the additive events: a consumer applying these in
+        // order sees the dead rows deleted first, so a replacement paying the
+        // same address cannot be clobbered by the delete that follows it.
+        let mut per_wallet_released =
+            std::mem::take(&mut check_result.per_wallet_released_outpoints);
+        for (wallet_id, txids) in std::mem::take(&mut check_result.per_wallet_swept) {
+            if txids.is_empty() {
+                continue;
+            }
+            let Some(info) = self.wallet_infos.get(&wallet_id) else {
+                continue;
+            };
+            let released_outpoints = per_wallet_released.remove(&wallet_id).unwrap_or_default();
+            let event = WalletEvent::TransactionsSwept {
+                wallet_id,
+                txids,
+                superseded_by: tx.txid(),
+                released_outpoints,
+                balance: info.balance(),
+                account_balances: per_wallet_account_diff
+                    .get(&wallet_id)
+                    .cloned()
+                    .unwrap_or_default(),
+            };
+            self.emit_event(event);
+        }
+        debug_assert!(
+            per_wallet_released.is_empty(),
+            "released outpoints for a wallet that emitted no sweep would be dropped \
+             here, stranding those coins marked spent forever: {:?}",
+            per_wallet_released
+        );
+
         if let Some(lock) = instant_lock {
             for (wallet_id, records) in per_wallet_updated_records {
                 if records.is_empty() {
@@ -228,6 +290,10 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
             .get(wallet_id)
             .map(|info| info.monitored_script_pubkeys())
             .unwrap_or_default()
+    }
+
+    fn scan_script_pubkeys_for(&self, wallet_id: &WalletId) -> Vec<ScriptBuf> {
+        self.wallet_infos.get(wallet_id).map(|info| info.scan_script_pubkeys()).unwrap_or_default()
     }
 
     fn monitored_filter_elements_for(&self, wallet_id: &WalletId) -> Vec<Vec<u8>> {
@@ -745,6 +811,34 @@ mod tests {
             result.involved_addresses.contains(&addr),
             "involved_addresses should contain the target address"
         );
+    }
+
+    #[tokio::test]
+    async fn test_scan_script_pubkeys_for_prunes_spent_coinjoin_addresses() {
+        use key_wallet::account::ManagedAccountTrait;
+
+        let (mut manager, wallet_id, _addr) = setup_manager_with_wallet();
+
+        // Untouched wallet: the scan set equals the monitored set.
+        let monitored = manager.monitored_script_pubkeys_for(&wallet_id);
+        assert_eq!(manager.scan_script_pubkeys_for(&wallet_id), monitored);
+
+        // Mark a CoinJoin address used with no unspent output — a spent
+        // single-use address. The scan query drops it; the monitored set
+        // keeps it.
+        let info = manager.get_wallet_info_mut(&wallet_id).expect("wallet info");
+        let coinjoin = info.accounts.coinjoin_accounts.get_mut(&0).expect("CoinJoin account 0");
+        let spent_addr = coinjoin.all_addresses().first().cloned().expect("CoinJoin address");
+        assert!(coinjoin.mark_address_used(&spent_addr));
+
+        let monitored = manager.monitored_script_pubkeys_for(&wallet_id);
+        let scan = manager.scan_script_pubkeys_for(&wallet_id);
+        assert!(monitored.contains(&spent_addr.script_pubkey()));
+        assert!(!scan.contains(&spent_addr.script_pubkey()));
+        assert_eq!(scan.len(), monitored.len() - 1);
+
+        // Unknown wallet id yields an empty scan set.
+        assert!(manager.scan_script_pubkeys_for(&[0xff; 32]).is_empty());
     }
 
     #[tokio::test]

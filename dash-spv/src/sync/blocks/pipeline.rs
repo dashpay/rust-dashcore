@@ -17,7 +17,12 @@ use key_wallet_manager::{FilterMatchKey, WalletId};
 const MAX_CONCURRENT_BLOCK_DOWNLOADS: usize = 20;
 
 /// Timeout for block downloads before retry.
-const BLOCK_TIMEOUT: Duration = Duration::from_secs(30);
+///
+/// A filter batch cannot commit while any block it matched is outstanding, so
+/// this is the price of a single peer dropping a request, paid with filter sync
+/// stopped. It stays comfortably above the transfer time of a full block on a
+/// slow link, but no longer treats a peer that will never answer as merely slow.
+const BLOCK_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// Maximum blocks per GetData request, kept a bit lower for better download distribution to multiple peers
 const BLOCKS_PER_REQUEST: usize = 8;
