@@ -144,8 +144,9 @@ fn encode_pending_sweep(pending: &HashMap<WalletId, HashSet<ScriptBuf>>) -> Vec<
 fn decode_pending_sweep(bytes: &[u8]) -> Option<HashMap<WalletId, HashSet<ScriptBuf>>> {
     let mut cursor = 0usize;
     let mut read = |n: usize| -> Option<&[u8]> {
-        let slice = bytes.get(cursor..cursor + n)?;
-        cursor += n;
+        let end = cursor.checked_add(n)?;
+        let slice = bytes.get(cursor..end)?;
+        cursor = end;
         Some(slice)
     };
     let wallet_count = u32::from_le_bytes(read(4)?.try_into().ok()?) as usize;
@@ -299,6 +300,13 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
     pub(super) fn reset_for_rescan(&mut self) {
         self.active_batches.clear();
         self.tracker.clear();
+        // The batches just discarded took the pending sweep's in-memory
+        // copy with them (`collected_scripts`), so the durable set must be
+        // re-seeded into whatever batch the rescan creates — which often
+        // starts at the SAME height as the one seeded before. Clearing the
+        // marker keeps the idempotence guard from mistaking the new batch
+        // for the old one and skipping the replay.
+        self.pending_seeded_into = None;
         self.pending_batches.clear();
         self.filter_pipeline = FiltersPipeline::new();
     }

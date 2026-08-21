@@ -445,10 +445,8 @@ async fn interrupted_sweep_is_replayed_after_restart() {
     let addresses = coinjoin_external_addresses(&wallet, &wallet_id, (G + 22) as u32).await;
     let (block_a, filter_a, key_a) = block_paying(10, &addresses[(G + 10)..=(G + 21)]);
     let (block_b, filter_b, key_b) = block_paying(110, &addresses[0..=29]);
-    let blocks: HashMap<BlockHash, Block> = HashMap::from([
-        (block_a.block_hash(), block_a.clone()),
-        (block_b.block_hash(), block_b),
-    ]);
+    let blocks: HashMap<BlockHash, Block> =
+        HashMap::from([(block_a.block_hash(), block_a.clone()), (block_b.block_hash(), block_b)]);
 
     // Persist headers+filters for the to-be-committed range (see the
     // invariant note in the cross-committed-batch test).
@@ -570,8 +568,10 @@ async fn interrupted_sweep_is_replayed_after_restart() {
     );
 }
 
-/// Born-wrong `TransactionRecord` is never corrected by the gap rescan
-/// (kotlin-sdk "TXO-store reconcile" field bug, 2026-08-19).
+/// A born-wrong `TransactionRecord` IS corrected by the gap rescan — both
+/// in the account and in the emitted event stream. Pins the fix for the
+/// kotlin-sdk "TXO-store reconcile" field bug (2026-08-19), where the
+/// correction never happened:
 ///
 /// One block carries a funding tx paying in-window index 0 and a self-send
 /// spending it, paying index G-1 (in-window) and index G+10 (beyond the
@@ -676,11 +676,9 @@ async fn born_wrong_record_is_corrected_by_gap_rescan() {
         let record =
             account.transactions().get(&send_txid).expect("send record present in account");
         assert!(
-            record
-                .output_details
-                .iter()
-                .any(|o| o.index == 1
-                    && matches!(o.role, OutputRole::Received | OutputRole::Change)),
+            record.output_details.iter().any(
+                |o| o.index == 1 && matches!(o.role, OutputRole::Received | OutputRole::Change)
+            ),
             "the re-processed record must classify the beyond-window output (vout 1) as \
              ours (Received/Change); a lingering Sent role means every store projection \
              derived from this record drops the TXO. got: {:?}",

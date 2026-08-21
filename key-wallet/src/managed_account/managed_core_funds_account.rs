@@ -68,18 +68,20 @@ pub struct ManagedCoreFundsAccount {
     /// re-establish which coins are spent.
     #[cfg_attr(feature = "serde", serde(skip))]
     reservations: ReservationSet,
-    /// Spender records corrected as a side effect of processing a FUNDING
-    /// transaction after its spender (out-of-order block processing during
-    /// rescan/discovery): the spender was recorded with the spent input
-    /// unattributed (`net_amount` = income only — the inflated-history
-    /// shape, 2026-08-20 field wallet: 49 one-sided rows, +4.63 DASH of
-    /// phantom net). `update_utxos` patches the spender's record the moment
-    /// the funding output is seen born-spent and stages the corrected copy
-    /// here; `wallet_checker` drains it into `updated_records` so an event
-    /// re-emits the correction to every persistence mirror. Transient
-    /// working state, never persisted.
+    /// Born-spent funding outputs staged by [`Self::update_utxos`]: this
+    /// account recognized an output of a FUNDING transaction that an
+    /// earlier-processed transaction already spent (out-of-order block
+    /// processing during rescan/discovery). The spender was recorded with
+    /// that input unattributed (`net_amount` = income only — the
+    /// inflated-history shape, 2026-08-20 field wallet: 49 one-sided rows,
+    /// +4.63 DASH of phantom net) — and the spender's record may live in a
+    /// SIBLING account (it matched wherever its own outputs landed), so the
+    /// correction must run at wallet scope: `wallet_checker` drains this
+    /// staging and calls [`Self::attribute_spent_input`] on every fund
+    /// account, emitting each corrected record. Transient working state,
+    /// never persisted.
     #[cfg_attr(feature = "serde", serde(skip))]
-    corrected_spender_records: Vec<TransactionRecord>,
+    born_spent_outputs: Vec<(OutPoint, u64, Address)>,
 }
 
 /// What [`ManagedCoreFundsAccount::apply_abandon`] removed from one account.
@@ -116,7 +118,7 @@ impl ManagedCoreFundsAccount {
             utxos: BTreeMap::new(),
             spent_outpoints: HashSet::new(),
             reservations: ReservationSet::default(),
-            corrected_spender_records: Vec::new(),
+            born_spent_outputs: Vec::new(),
         }
     }
 
@@ -144,7 +146,7 @@ impl ManagedCoreFundsAccount {
             utxos: BTreeMap::new(),
             spent_outpoints: HashSet::new(),
             reservations: ReservationSet::default(),
-            corrected_spender_records: Vec::new(),
+            born_spent_outputs: Vec::new(),
         }
     }
 
@@ -204,12 +206,18 @@ impl ManagedCoreFundsAccount {
     }
 
     /// The outpoints this account knows were spent by recorded transactions.
-    /// Read-only view for store reconciliation: a persistence-mirror row
-    /// still marked unspent whose outpoint appears here lost its spend
-    /// update (the dashpay/platform#4425 stale-TXO class) and can safely be
-    /// flipped; an unspent mirror row appearing in NEITHER this set nor
-    /// [`Self::utxos`] is residue of a swept/abandoned transaction
-    /// (pre-rust-dashcore#971 stores).
+    /// Read-only view for store reconciliation. POSITIVE membership is the
+    /// only safe signal: a mirror row still marked unspent whose outpoint
+    /// appears here lost its spend update (the dashpay/platform#4425
+    /// stale-TXO class) and can be flipped.
+    ///
+    /// ABSENCE proves nothing. Under the default feature configuration,
+    /// finalized (chain-locked) transactions drop their full records and
+    /// this set is rebuilt from the records that remain, so a genuinely
+    /// spent outpoint can be missing from BOTH this set and [`Self::utxos`]
+    /// after a reload. A reconciler must treat "in neither inventory" as
+    /// ambiguous — swept/abandoned residue (pre-rust-dashcore#971 stores)
+    /// OR a finalized spend whose record is gone — and never mutate on it.
     pub fn spent_outpoints(&self) -> &HashSet<OutPoint> {
         &self.spent_outpoints
     }
@@ -405,11 +413,11 @@ impl ManagedCoreFundsAccount {
                                 // attribution is provable; patch the
                                 // spender's record and stage it for
                                 // re-emission.
-                                self.attribute_born_spent_output(
-                                    &outpoint,
+                                self.born_spent_outputs.push((
+                                    outpoint,
                                     output.value,
                                     addr.clone(),
-                                );
+                                ));
                                 continue;
                             }
 
@@ -426,11 +434,11 @@ impl ManagedCoreFundsAccount {
                                 // observed-spends view: if this account also
                                 // holds the spender's record, its spent side
                                 // is missing this input too.
-                                self.attribute_born_spent_output(
-                                    &outpoint,
+                                self.born_spent_outputs.push((
+                                    outpoint,
                                     output.value,
                                     addr.clone(),
-                                );
+                                ));
                                 continue;
                             }
 
@@ -498,53 +506,65 @@ impl ManagedCoreFundsAccount {
         recognized
     }
 
-    /// Late input attribution for a spender processed before its funding
-    /// transaction (the born-spent hooks in [`Self::update_utxos`]). Finds
-    /// the recorded transaction spending `outpoint`, attributes the input
-    /// (index, value, address), recomputes the record's derived fields, and
-    /// stages the corrected copy in `corrected_spender_records` for the
-    /// caller to drain into an updated-records event. No-op when no record
-    /// spends the outpoint (spend observed from a transaction this account
-    /// never recorded, or a finalized record already dropped) or when the
-    /// input is already attributed.
-    fn attribute_born_spent_output(&mut self, outpoint: &OutPoint, value: u64, address: Address) {
-        let spender = self.keys.transactions().iter().find_map(|(txid, rec)| {
-            rec.transaction
-                .input
-                .iter()
-                .position(|i| &i.previous_output == outpoint)
-                .map(|pos| (*txid, pos as u32))
-        });
-        let Some((spender_txid, input_index)) = spender else {
-            return;
-        };
-        let Some(record) = self.keys.transactions_mut().get_mut(&spender_txid) else {
-            return;
-        };
-        if record.input_details.iter().any(|d| d.index == input_index) {
-            return;
+    /// Attribute a born-spent funding output onto EVERY recorded
+    /// transaction in THIS account that spends `outpoint` (a conflicting
+    /// double-spend can leave more than one). Called at wallet scope by
+    /// `wallet_checker` for each staged born-spent output, across all fund
+    /// accounts — the spender's record lives wherever its own outputs
+    /// matched, which need not be the account that owns the funding output.
+    /// Patches the input detail (index, value, address), recomputes the
+    /// record's derived fields, and returns the corrected copies for
+    /// re-emission. No-op for records already attributed and for accounts
+    /// holding no matching record (a finalized record already dropped
+    /// cannot be patched).
+    pub(crate) fn attribute_spent_input(
+        &mut self,
+        outpoint: &OutPoint,
+        value: u64,
+        address: &Address,
+    ) -> Vec<TransactionRecord> {
+        let spenders: Vec<(Txid, u32)> = self
+            .keys
+            .transactions()
+            .iter()
+            .filter_map(|(txid, rec)| {
+                rec.transaction
+                    .input
+                    .iter()
+                    .position(|i| &i.previous_output == outpoint)
+                    .map(|pos| (*txid, pos as u32))
+            })
+            .collect();
+        let mut corrected = Vec::new();
+        for (spender_txid, input_index) in spenders {
+            let Some(record) = self.keys.transactions_mut().get_mut(&spender_txid) else {
+                continue;
+            };
+            if record.input_details.iter().any(|d| d.index == input_index) {
+                continue;
+            }
+            record.input_details.push(InputDetail {
+                index: input_index,
+                value,
+                address: address.clone(),
+            });
+            record.input_details.sort_by_key(|d| d.index);
+            record.recompute_net_and_direction();
+            tracing::info!(
+                outpoint = %outpoint,
+                spender = %spender_txid,
+                corrected_net = record.net_amount,
+                "Attributed born-spent funding output onto its spender's record"
+            );
+            corrected.push(record.clone());
         }
-        record.input_details.push(InputDetail {
-            index: input_index,
-            value,
-            address,
-        });
-        record.input_details.sort_by_key(|d| d.index);
-        record.recompute_net_and_direction();
-        tracing::info!(
-            outpoint = %outpoint,
-            spender = %spender_txid,
-            corrected_net = record.net_amount,
-            "Attributed born-spent funding output onto its spender's record"
-        );
-        let corrected = record.clone();
-        self.corrected_spender_records.push(corrected);
+        corrected
     }
 
-    /// Drain the spender records corrected by [`Self::update_utxos`]'s
-    /// born-spent attribution since the last drain.
-    pub(crate) fn take_corrected_spender_records(&mut self) -> Vec<TransactionRecord> {
-        std::mem::take(&mut self.corrected_spender_records)
+    /// Drain the born-spent outputs staged by [`Self::update_utxos`] since
+    /// the last drain, for the wallet-scope attribution sweep.
+    pub(crate) fn take_born_spent_outputs(&mut self) -> Vec<(OutPoint, u64, Address)> {
+        std::mem::take(&mut self.born_spent_outputs)
     }
 
     /// Drop the spent-marks that `freed` contributed, keeping every mark a
@@ -1492,7 +1512,7 @@ impl<'de> Deserialize<'de> for ManagedCoreFundsAccount {
             utxos: helper.utxos,
             spent_outpoints,
             reservations: ReservationSet::default(),
-            corrected_spender_records: Vec::new(),
+            born_spent_outputs: Vec::new(),
         })
     }
 }

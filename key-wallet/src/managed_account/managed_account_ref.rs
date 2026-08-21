@@ -416,14 +416,28 @@ impl<'a> ManagedAccountRefMut<'a> {
         }
     }
 
-    /// Drain spender records corrected by born-spent input attribution
-    /// during the last `record_transaction` / `confirm_transaction` call
-    /// (out-of-order funding — see
-    /// `ManagedCoreFundsAccount::attribute_born_spent_output`). Always
-    /// empty for the [`Keys`](Self::Keys) variant.
-    pub(crate) fn take_corrected_spender_records(&mut self) -> Vec<TransactionRecord> {
+    /// Drain the born-spent funding outputs staged during the last
+    /// `record_transaction` / `confirm_transaction` call (out-of-order
+    /// funding — see `ManagedCoreFundsAccount::take_born_spent_outputs`).
+    /// Always empty for the [`Keys`](Self::Keys) variant.
+    pub(crate) fn take_born_spent_outputs(&mut self) -> Vec<(OutPoint, u64, Address)> {
         match self {
-            ManagedAccountRefMut::Funds(a) => a.take_corrected_spender_records(),
+            ManagedAccountRefMut::Funds(a) => a.take_born_spent_outputs(),
+            ManagedAccountRefMut::Keys(_) => Vec::new(),
+        }
+    }
+
+    /// Attribute a born-spent funding output onto every recorded spender in
+    /// this account — the wallet-scope half of the out-of-order correction.
+    /// Always empty for the [`Keys`](Self::Keys) variant.
+    pub(crate) fn attribute_spent_input(
+        &mut self,
+        outpoint: &OutPoint,
+        value: u64,
+        address: &Address,
+    ) -> Vec<TransactionRecord> {
+        match self {
+            ManagedAccountRefMut::Funds(a) => a.attribute_spent_input(outpoint, value, address),
             ManagedAccountRefMut::Keys(_) => Vec::new(),
         }
     }

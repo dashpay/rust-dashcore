@@ -461,6 +461,18 @@ impl AddressPool {
     /// derivation is pure arithmetic over the key source, holes are always
     /// repairable; restore paths call this after ingesting persisted rows.
     pub fn ensure_contiguous_to(&mut self, index: u32, key_source: &KeySource) -> Result<u32> {
+        // A restored watermark is untrusted input: a corrupt row could name
+        // an index in the billions and turn the repair into an unbounded
+        // derivation stall during wallet load. Real pools top out in the
+        // low thousands (heaviest observed field wallet: 8,281); anything
+        // past this bound is corruption, and refusing restores the pool
+        // exactly as persisted — the pre-repair behavior.
+        const MAX_REPAIR_INDEX: u32 = 1_000_000;
+        if index > MAX_REPAIR_INDEX {
+            return Err(Error::InvalidParameter(format!(
+                "refusing address-pool hole repair to index {index}: exceeds                  the {MAX_REPAIR_INDEX} repair bound (corrupt watermark?)"
+            )));
+        }
         let mut filled = 0u32;
         for idx in 0..=index {
             if !self.addresses.contains_key(&idx) {
@@ -1444,6 +1456,27 @@ mod tests {
             );
         }
         assert!(sparse.used_indices.contains(&5), "used flag survives the repair");
+        assert_eq!(
+            sparse.addresses[&5].state,
+            AddressState::Used,
+            "the surviving entry's state is untouched"
+        );
+        for idx in [3u32, 4, 7] {
+            let info = &sparse.addresses[&idx];
+            assert_eq!(
+                sparse.address_index.get(&info.address),
+                Some(&idx),
+                "repaired index {idx} maps back through the address index"
+            );
+            assert_eq!(
+                sparse.script_pubkey_index.get(&info.script_pubkey),
+                Some(&idx),
+                "repaired index {idx} maps back through the script index"
+            );
+            assert_eq!(info.state, AddressState::Available, "a repaired hole starts Available");
+        }
+        // The bound refuses implausible watermarks instead of stalling.
+        assert!(sparse.ensure_contiguous_to(u32::MAX, &key_source).is_err());
 
         // Idempotent: a second pass finds nothing to fill.
         assert_eq!(sparse.ensure_contiguous_to(9, &key_source).unwrap(), 0);
