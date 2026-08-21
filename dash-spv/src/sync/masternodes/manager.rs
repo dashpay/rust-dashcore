@@ -134,8 +134,9 @@ pub(super) struct MasternodeSyncState {
     /// bumped by unrelated block-header events and so would keep resetting the
     /// watchdog while masternode sync itself made no progress at all.
     ///
-    /// The watchdog re-stamps this when it fires, so a dispatch that fails (no
-    /// peers, empty header storage) cannot turn it into a per-tick retry loop.
+    /// The watchdog re-stamps this when it fires, so a dispatch that returns
+    /// without sending (no stored tip, tip at genesis) cannot turn it into a
+    /// per-tick retry loop.
     pub(super) last_qrinfo_dispatch: Option<Instant>,
 }
 

@@ -251,7 +251,7 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
     fn on_peer_disconnect(&mut self) {
         // The QRInfo request is tracked outside the pipeline with its own
         // escalating timeout and attempt budget, so it is left to that path.
-        self.sync_state.mnlistdiff_pipeline.requeue_in_flight();
+        self.sync_state.requeue_in_flight();
     }
 
     async fn handle_message(
@@ -687,13 +687,8 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
         // items as pending, and this send is the only path that reissues them.
         if !self.sync_state.mnlistdiff_pipeline.is_complete() {
             self.sync_state.mnlistdiff_pipeline.handle_timeouts();
-        }
 
-        // Flush the pending queue. Besides re-queued timeouts, this is the only
-        // path that reissues requests a disconnect moved back to pending: every
-        // other `send_pending` call site hangs off a response handler, which
-        // cannot run while nothing is in flight.
-        if !self.sync_state.mnlistdiff_pipeline.is_complete() {
+            // Send any re-queued requests
             self.sync_state.mnlistdiff_pipeline.send_pending(requests)?;
 
             // Check if complete after handling timeouts
@@ -706,10 +701,15 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
         // Stall watchdog. `Syncing` with no QRInfo in flight and an empty diff
         // pipeline is a dead state: nothing outstanding will ever call back, and
         // every branch above is gated on one of those two, so no code path can move
-        // this manager again. The known route in is a `send_qrinfo_for_tip` that
-        // failed after its caller had already cleared the slot; the watchdog also
-        // covers any future path that drops the slot without dispatching. It cannot
-        // race the retry ladder above, which only runs while the slot is occupied.
+        // this manager again. The known routes in are `send_qrinfo_for_tip`'s early
+        // returns - no stored tip, or a tip at genesis - which return `Ok` without
+        // dispatching after the caller has already cleared the slot. (A peerless
+        // send is not such a route: `request_qr_info` pushes onto an unbounded
+        // channel and only errors once the channel is closed, so it fails later in
+        // the network task with the slot still armed for the timeout ladder.) The
+        // watchdog also covers any future path that drops the slot without
+        // dispatching. It cannot race the retry ladder above, which only runs
+        // while the slot is occupied.
         if self.state() == SyncState::Syncing
             && self.sync_state.qrinfo_in_flight.is_none()
             && self.sync_state.mnlistdiff_pipeline.is_complete()
@@ -726,9 +726,9 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
                     .unwrap_or_default(),
                 "Masternode sync stalled in Syncing with nothing in flight, re-dispatching QRInfo"
             );
-            // Re-stamp before dispatching so a dispatch that fails (no peers, empty
-            // header storage) re-arms the watchdog for another full interval
-            // instead of retrying on every 100ms tick.
+            // Re-stamp before dispatching so a dispatch that returns without
+            // sending (no stored tip, tip at genesis) re-arms the watchdog for
+            // another full interval instead of retrying on every 100ms tick.
             self.sync_state.last_qrinfo_dispatch = Some(Instant::now());
             self.sync_state.qrinfo_retry_count = 0;
             self.sync_state.clear_pending();
@@ -1195,9 +1195,10 @@ mod tests {
 
     /// The stall watchdog is the backstop for every route into the stranded state
     /// that keeping the in-flight flag cannot cover - notably a
-    /// `send_qrinfo_for_tip` that fails *after* its caller already cleared the
-    /// slot, which is exactly what `tick`'s own retry path does. `Syncing` with
-    /// nothing in flight and an empty diff pipeline has no other exit.
+    /// `send_qrinfo_for_tip` that returns without dispatching *after* its caller
+    /// already cleared the slot, which is exactly what `tick`'s own retry path
+    /// does. `Syncing` with nothing in flight and an empty diff pipeline has no
+    /// other exit.
     #[tokio::test]
     async fn test_tick_watchdog_redispatches_after_stall() {
         let (mut manager, requests, mut rx, _) = syncing_manager_awaiting_qrinfo(200).await;
