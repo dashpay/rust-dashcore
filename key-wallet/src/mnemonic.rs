@@ -48,7 +48,39 @@ impl From<Language> for bip39_crate::Language {
     }
 }
 
+impl From<bip39_crate::Language> for Language {
+    fn from(lang: bip39_crate::Language) -> Self {
+        match lang {
+            bip39_crate::Language::English => Language::English,
+            bip39_crate::Language::SimplifiedChinese => Language::ChineseSimplified,
+            bip39_crate::Language::TraditionalChinese => Language::ChineseTraditional,
+            bip39_crate::Language::Czech => Language::Czech,
+            bip39_crate::Language::French => Language::French,
+            bip39_crate::Language::Italian => Language::Italian,
+            bip39_crate::Language::Japanese => Language::Japanese,
+            bip39_crate::Language::Korean => Language::Korean,
+            bip39_crate::Language::Portuguese => Language::Portuguese,
+            bip39_crate::Language::Spanish => Language::Spanish,
+        }
+    }
+}
+
 impl Language {
+    /// Every supported wordlist language, in the deterministic order
+    /// any-language parsing and validation try them (English first).
+    pub const ALL: [Language; 10] = [
+        Language::English,
+        Language::ChineseSimplified,
+        Language::ChineseTraditional,
+        Language::Czech,
+        Language::French,
+        Language::Italian,
+        Language::Japanese,
+        Language::Korean,
+        Language::Portuguese,
+        Language::Spanish,
+    ];
+
     /// Raw BIP-39 wordlist (2048 words) for this language.
     ///
     /// Low-level primitive for callers that need direct wordlist access —
@@ -66,35 +98,19 @@ impl Language {
 /// [`Mnemonic::cleanup_phrase`].
 const IDEO_SP: &str = "\u{3000}";
 
-/// All wordlist languages key-wallet supports; [`word_in_any_list`] and
-/// [`phrase_is_valid_any`] check their union.
-const ALL_LANGUAGES: [Language; 10] = [
-    Language::English,
-    Language::ChineseSimplified,
-    Language::ChineseTraditional,
-    Language::Czech,
-    Language::French,
-    Language::Italian,
-    Language::Japanese,
-    Language::Korean,
-    Language::Portuguese,
-    Language::Spanish,
-];
-
 /// `true` if `word` is a member of *any* supported language's wordlist.
 /// Exact membership; caller pre-normalizes.
 fn word_in_any_list(word: &str) -> bool {
-    ALL_LANGUAGES.iter().any(|l| l.word_list().contains(&word))
+    Language::ALL.iter().any(|l| l.word_list().contains(&word))
 }
 
 /// `true` if the (already-normalized) phrase decodes (all words present +
-/// valid checksum) in *some* supported language. Per-language loop, never
-/// autodetect. [`Mnemonic::validate`] re-runs NFKD internally (idempotent on
-/// an already-normalized phrase). Note this enforces the BIP-39 ≥12-word
-/// floor; inert here — its only caller is [`Mnemonic::cleanup_phrase`]'s
-/// early-return gate.
+/// valid checksum) in *some* supported language — the boolean face of
+/// [`Mnemonic::from_phrase_in_any_language`]. Note this enforces the BIP-39
+/// ≥12-word floor; inert here — its only caller is
+/// [`Mnemonic::cleanup_phrase`]'s early-return gate.
 fn phrase_is_valid_any(normalized: &str) -> bool {
-    ALL_LANGUAGES.iter().any(|&l| Mnemonic::validate(normalized, l))
+    Mnemonic::from_phrase_in_any_language(normalized).is_ok()
 }
 
 /// BIP39 Mnemonic phrase
@@ -122,13 +138,10 @@ impl<C> bincode::Decode<C> for Mnemonic {
         decoder: &mut D,
     ) -> core::result::Result<Self, bincode::error::DecodeError> {
         let phrase: String = bincode::Decode::decode(decoder)?;
-        // Parse back from phrase - default to English
-        let inner = bip39_crate::Mnemonic::parse(&phrase).map_err(|e| {
-            bincode::error::DecodeError::OtherString(format!("Invalid mnemonic: {}", e))
-        })?;
-        Ok(Self {
-            inner,
-        })
+        // Same deterministic per-language walk as `from_phrase_in_any_language`
+        // (bip39's autodetect can fail with AmbiguousLanguages on shared words).
+        Mnemonic::from_phrase_in_any_language(&phrase)
+            .map_err(|e| bincode::error::DecodeError::OtherString(e.to_string()))
     }
 }
 
@@ -138,12 +151,8 @@ impl<'de, C> bincode::BorrowDecode<'de, C> for Mnemonic {
         decoder: &mut D,
     ) -> core::result::Result<Self, bincode::error::DecodeError> {
         let phrase: String = bincode::BorrowDecode::borrow_decode(decoder)?;
-        let inner = bip39_crate::Mnemonic::parse(&phrase).map_err(|e| {
-            bincode::error::DecodeError::OtherString(format!("Invalid mnemonic: {}", e))
-        })?;
-        Ok(Self {
-            inner,
-        })
+        Mnemonic::from_phrase_in_any_language(&phrase)
+            .map_err(|e| bincode::error::DecodeError::OtherString(e.to_string()))
     }
 }
 
@@ -198,6 +207,33 @@ impl Mnemonic {
         Ok(Self {
             inner: mnemonic,
         })
+    }
+
+    /// Create a mnemonic from a phrase, trying every supported language.
+    ///
+    /// Languages are tried in [`Language::ALL`] order (English first); the
+    /// first language in which the phrase fully parses (all words present +
+    /// valid checksum) wins. This deliberately avoids bip39's autodetecting
+    /// `Mnemonic::parse`, whose `language_of` fails with `AmbiguousLanguages`
+    /// when every word is shared across wordlists. First-match is
+    /// deterministic, and because the BIP-39 seed is PBKDF2 over the phrase
+    /// text itself (not the resolved language), a hypothetical cross-language
+    /// full-phrase collision could only affect [`Self::language`] reporting,
+    /// never the derived seed.
+    pub fn from_phrase_in_any_language(phrase: &str) -> Result<Self> {
+        for language in Language::ALL {
+            if let Ok(inner) = bip39_crate::Mnemonic::parse_in(language.into(), phrase) {
+                return Ok(Self {
+                    inner,
+                });
+            }
+        }
+        Err(Error::InvalidMnemonic("does not match any supported language".into()))
+    }
+
+    /// The wordlist language this mnemonic was parsed or generated in.
+    pub fn language(&self) -> Language {
+        self.inner.language().into()
     }
 
     /// Get the mnemonic phrase as a string
@@ -380,8 +416,7 @@ impl FromStr for Mnemonic {
     type Err = Error;
 
     fn from_str(s: &str) -> Result<Self> {
-        // Try English by default
-        Self::from_phrase(s, Language::English)
+        Self::from_phrase_in_any_language(s)
     }
 }
 
@@ -897,7 +932,7 @@ mod tests {
     #[test]
     fn word_list_has_expected_shape() {
         // Every supported language exposes the full 2048-word BIP-39 list.
-        for lang in ALL_LANGUAGES {
+        for lang in Language::ALL {
             assert_eq!(lang.word_list().len(), 2048, "{lang:?} wordlist must be 2048 words");
         }
         // Known English endpoints (BIP-39 English is the canonical reference).
@@ -913,7 +948,7 @@ mod tests {
     fn every_language_word_validates_in_union() {
         // A representative word from each supported language is a member of the
         // all-language union; only English words are English-local.
-        for lang in ALL_LANGUAGES {
+        for lang in Language::ALL {
             let w = first_word(lang);
             assert!(word_in_any_list(&w), "{lang:?} word should be in the union");
         }
@@ -1084,5 +1119,98 @@ mod tests {
             .split(' ')
             .collect();
         assert!(Mnemonic::cleanup_phrase(&nospace).contains(IDEO_SP));
+    }
+
+    /// Entropy whose French encoding contains non-ASCII (accented) words —
+    /// the fixture the any-language and NFC tests below share.
+    const ANY_LANGUAGE_TEST_ENTROPY: [u8; 16] = [
+        0x0c, 0x1e, 0x24, 0xe5, 0x91, 0x77, 0x79, 0xd2, 0x97, 0xe1, 0x4d, 0x45, 0xf1, 0x4e, 0x1a,
+        0x1a,
+    ];
+
+    #[test]
+    fn test_from_phrase_in_any_language_round_trip_all_languages() {
+        for lang in Language::ALL {
+            let phrase = Mnemonic::from_entropy(&ANY_LANGUAGE_TEST_ENTROPY, lang).unwrap().phrase();
+            let parsed = Mnemonic::from_phrase_in_any_language(&phrase)
+                .unwrap_or_else(|e| panic!("{lang:?} phrase must parse: {e}"));
+            assert_eq!(parsed.language(), lang, "{lang:?} must be detected");
+            assert_eq!(parsed.phrase(), phrase);
+            let direct = Mnemonic::from_phrase(&phrase, lang).unwrap();
+            assert_eq!(parsed.to_seed(""), direct.to_seed(""), "{lang:?} seed must match");
+        }
+    }
+
+    #[test]
+    fn test_from_phrase_in_any_language_nfc_input_matches_nfkd() {
+        use unicode_normalization::UnicodeNormalization;
+        let mnemonic =
+            Mnemonic::from_entropy(&ANY_LANGUAGE_TEST_ENTROPY, Language::French).unwrap();
+        // `phrase()` renders wordlist entries, which BIP-39 stores in NFKD.
+        let nfkd_phrase = mnemonic.phrase();
+        let nfc_phrase: String = nfkd_phrase.nfc().collect();
+        assert_ne!(
+            nfc_phrase, nfkd_phrase,
+            "fixture must contain decomposable accents to cover NFC input"
+        );
+        let parsed = Mnemonic::from_phrase_in_any_language(&nfc_phrase).unwrap();
+        assert_eq!(parsed.language(), Language::French);
+        assert_eq!(parsed.to_seed(""), mnemonic.to_seed(""));
+    }
+
+    #[test]
+    fn test_from_phrase_in_any_language_rejects_invalid() {
+        let bad_checksum = "abandon abandon abandon abandon abandon abandon abandon abandon \
+                            abandon abandon abandon abandon";
+        let gibberish = "definitely not a valid mnemonic in any supported wordlist language";
+        for phrase in [bad_checksum, "", "   ", gibberish] {
+            let err = Mnemonic::from_phrase_in_any_language(phrase).unwrap_err();
+            assert!(
+                err.to_string().contains("does not match any supported language"),
+                "unexpected error for {phrase:?}: {err}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_from_phrase_in_any_language_english_first() {
+        // The ordering contract: English is tried first, so English phrases
+        // keep parsing byte-identically to the pre-any-language behavior.
+        assert_eq!(Language::ALL[0], Language::English);
+        assert_eq!(Language::ALL.len(), 10);
+        let phrase =
+            Mnemonic::from_entropy(&ANY_LANGUAGE_TEST_ENTROPY, Language::English).unwrap().phrase();
+        let parsed = Mnemonic::from_phrase_in_any_language(&phrase).unwrap();
+        assert_eq!(parsed.language(), Language::English);
+    }
+
+    #[test]
+    fn test_language_accessor_round_trips_all_languages() {
+        // Exercises every arm of the bip39->key-wallet Language conversion.
+        for lang in Language::ALL {
+            let m = Mnemonic::from_entropy(&ANY_LANGUAGE_TEST_ENTROPY, lang).unwrap();
+            assert_eq!(m.language(), lang);
+        }
+    }
+
+    #[test]
+    fn test_from_str_parses_any_language() {
+        let french =
+            Mnemonic::from_entropy(&ANY_LANGUAGE_TEST_ENTROPY, Language::French).unwrap().phrase();
+        let parsed: Mnemonic = french.parse().unwrap();
+        assert_eq!(parsed.language(), Language::French);
+        assert_eq!(parsed.phrase(), french);
+    }
+
+    #[test]
+    #[cfg(feature = "bincode")]
+    fn test_bincode_roundtrip_french_mnemonic() {
+        let original =
+            Mnemonic::from_entropy(&ANY_LANGUAGE_TEST_ENTROPY, Language::French).unwrap();
+        let bytes = bincode::encode_to_vec(&original, bincode::config::standard()).unwrap();
+        let (decoded, _): (Mnemonic, usize) =
+            bincode::decode_from_slice(&bytes, bincode::config::standard()).unwrap();
+        assert_eq!(decoded.phrase(), original.phrase());
+        assert_eq!(decoded.to_seed(""), original.to_seed(""));
     }
 }

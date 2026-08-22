@@ -113,7 +113,7 @@ Functions: 63
 | `wallet_build_and_sign_transaction` | Build and sign a transaction using the wallet's managed info  This is the... | transaction |
 | `wallet_check_transaction` | Check if a transaction belongs to the wallet using ManagedWalletInfo  #... | transaction |
 | `wallet_create_from_mnemonic` | Create a new wallet from mnemonic (backward compatibility - single network) ... | wallet |
-| `wallet_create_from_mnemonic_with_options` | Create a new wallet from mnemonic with options  # Safety  - `mnemonic` must... | wallet |
+| `wallet_create_from_mnemonic_with_options` | Create a new wallet from mnemonic with options  The mnemonic may be in any... | wallet |
 | `wallet_create_from_seed` | Create a new wallet from seed (backward compatibility)  # Safety  - `seed`... | wallet |
 | `wallet_create_from_seed_with_options` | Create a new wallet from seed with options  # Safety  - `seed` must be a... | wallet |
 | `wallet_create_random` | Create a new random wallet (backward compatibility)  # Safety  - `error`... | wallet |
@@ -324,8 +324,8 @@ Functions: 6
 | `mnemonic_free` | Free a mnemonic string  # Safety  - `mnemonic` must be a valid pointer... | mnemonic |
 | `mnemonic_generate` | Generate a new mnemonic with specified word count (12, 15, 18, 21, or 24)  #... | mnemonic |
 | `mnemonic_generate_with_language` | Generate a new mnemonic with specified language and word count  # Safety ... | mnemonic |
-| `mnemonic_to_seed` | Convert mnemonic to seed with optional passphrase  # Safety  - `mnemonic`... | mnemonic |
-| `mnemonic_validate` | Validate a mnemonic phrase  # Safety  - `mnemonic` must be a valid... | mnemonic |
+| `mnemonic_to_seed` | Convert mnemonic to seed with optional passphrase  The mnemonic may be in... | mnemonic |
+| `mnemonic_validate` | Validate a mnemonic phrase in any supported BIP-39 language | mnemonic |
 | `mnemonic_word_count` | Get word count from mnemonic  # Safety  - `mnemonic` must be a valid... | mnemonic |
 
 ### Utility Functions
@@ -1357,7 +1357,7 @@ wallet_create_from_mnemonic(mnemonic: *const c_char, network: FFINetwork, error:
 ```
 
 **Description:**
-Create a new wallet from mnemonic (backward compatibility - single network)  # Safety  - `mnemonic` must be a valid pointer to a null-terminated C string - `error` must be a valid pointer to an FFIError structure - The caller must ensure all pointers remain valid for the duration of this call - The returned pointer must be freed with `wallet_free` when no longer needed
+Create a new wallet from mnemonic (backward compatibility - single network)  The mnemonic may be in any supported BIP-39 language (detected automatically).  # Safety  - `mnemonic` must be a valid pointer to a null-terminated C string - `error` must be a valid pointer to an FFIError structure - The caller must ensure all pointers remain valid for the duration of this call - The returned pointer must be freed with `wallet_free` when no longer needed
 
 **Safety:**
 - `mnemonic` must be a valid pointer to a null-terminated C string - `error` must be a valid pointer to an FFIError structure - The caller must ensure all pointers remain valid for the duration of this call - The returned pointer must be freed with `wallet_free` when no longer needed
@@ -1373,7 +1373,7 @@ wallet_create_from_mnemonic_with_options(mnemonic: *const c_char, network: FFINe
 ```
 
 **Description:**
-Create a new wallet from mnemonic with options  # Safety  - `mnemonic` must be a valid pointer to a null-terminated C string - `account_options` must be a valid pointer to FFIWalletAccountCreationOptions or null - `error` must be a valid pointer to an FFIError structure - The caller must ensure all pointers remain valid for the duration of this call - The returned pointer must be freed with `wallet_free` when no longer needed
+Create a new wallet from mnemonic with options  The mnemonic may be in any supported BIP-39 language (detected automatically).  # Safety  - `mnemonic` must be a valid pointer to a null-terminated C string - `account_options` must be a valid pointer to FFIWalletAccountCreationOptions or null - `error` must be a valid pointer to an FFIError structure - The caller must ensure all pointers remain valid for the duration of this call - The returned pointer must be freed with `wallet_free` when no longer needed
 
 **Safety:**
 - `mnemonic` must be a valid pointer to a null-terminated C string - `account_options` must be a valid pointer to FFIWalletAccountCreationOptions or null - `error` must be a valid pointer to an FFIError structure - The caller must ensure all pointers remain valid for the duration of this call - The returned pointer must be freed with `wallet_free` when no longer needed
@@ -2207,7 +2207,7 @@ account_derive_extended_private_key_from_mnemonic(account: *const FFIAccount, mn
 ```
 
 **Description:**
-Derive an extended private key from a mnemonic + optional passphrase at the given index. Returns an opaque FFIExtendedPrivKey pointer that must be freed with `extended_private_key_free`.  # Safety - `account` must be a valid pointer to an FFIAccount - `mnemonic` must be a valid, null-terminated C string - `passphrase` may be null; if not null, must be a valid C string - `error` must be a valid pointer to an FFIError
+Derive an extended private key from a mnemonic + optional passphrase at the given index. Returns an opaque FFIExtendedPrivKey pointer that must be freed with `extended_private_key_free`.  Accepts a mnemonic in any supported BIP-39 language (detected automatically).  # Safety - `account` must be a valid pointer to an FFIAccount - `mnemonic` must be a valid, null-terminated C string - `passphrase` may be null; if not null, must be a valid C string - `error` must be a valid pointer to an FFIError
 
 **Safety:**
 - `account` must be a valid pointer to an FFIAccount - `mnemonic` must be a valid, null-terminated C string - `passphrase` may be null; if not null, must be a valid C string - `error` must be a valid pointer to an FFIError
@@ -2271,7 +2271,7 @@ account_derive_private_key_from_mnemonic(account: *const FFIAccount, mnemonic: *
 ```
 
 **Description:**
-Derive a private key from a mnemonic + optional passphrase at the given index. Returns an opaque FFIPrivateKey pointer that must be freed with `private_key_free`.  # Safety - `account` must be a valid pointer to an FFIAccount - `mnemonic` must be a valid, null-terminated C string - `passphrase` may be null; if not null, must be a valid C string - `error` must be a valid pointer to an FFIError
+Derive a private key from a mnemonic + optional passphrase at the given index. Returns an opaque FFIPrivateKey pointer that must be freed with `private_key_free`.  Accepts a mnemonic in any supported BIP-39 language (detected automatically).  # Safety - `account` must be a valid pointer to an FFIAccount - `mnemonic` must be a valid, null-terminated C string - `passphrase` may be null; if not null, must be a valid C string - `error` must be a valid pointer to an FFIError
 
 **Safety:**
 - `account` must be a valid pointer to an FFIAccount - `mnemonic` must be a valid, null-terminated C string - `passphrase` may be null; if not null, must be a valid C string - `error` must be a valid pointer to an FFIError
@@ -4112,7 +4112,7 @@ mnemonic_to_seed(mnemonic: *const c_char, passphrase: *const c_char, seed_out: *
 ```
 
 **Description:**
-Convert mnemonic to seed with optional passphrase  # Safety  - `mnemonic` must be a valid null-terminated C string - `passphrase` must be a valid null-terminated C string or null - `seed_out` must be a valid pointer to a buffer of at least 64 bytes - `seed_len` must be a valid pointer to store the seed length - `error` must be a valid pointer to an FFIError
+Convert mnemonic to seed with optional passphrase  The mnemonic may be in any supported BIP-39 language (detected automatically).  # Safety  - `mnemonic` must be a valid null-terminated C string - `passphrase` must be a valid null-terminated C string or null - `seed_out` must be a valid pointer to a buffer of at least 64 bytes - `seed_len` must be a valid pointer to store the seed length - `error` must be a valid pointer to an FFIError
 
 **Safety:**
 - `mnemonic` must be a valid null-terminated C string - `passphrase` must be a valid null-terminated C string or null - `seed_out` must be a valid pointer to a buffer of at least 64 bytes - `seed_len` must be a valid pointer to store the seed length - `error` must be a valid pointer to an FFIError
@@ -4128,7 +4128,7 @@ mnemonic_validate(mnemonic: *const c_char, error: *mut FFIError) -> bool
 ```
 
 **Description:**
-Validate a mnemonic phrase  # Safety  - `mnemonic` must be a valid null-terminated C string or null - `error` must be a valid pointer to an FFIError
+Validate a mnemonic phrase in any supported BIP-39 language.  Shares the parse path with `mnemonic_to_seed` and `wallet_create_from_mnemonic`, so a phrase this accepts is guaranteed to be accepted by those functions as well.  # Safety  - `mnemonic` must be a valid null-terminated C string or null - `error` must be a valid pointer to an FFIError
 
 **Safety:**
 - `mnemonic` must be a valid null-terminated C string or null - `error` must be a valid pointer to an FFIError

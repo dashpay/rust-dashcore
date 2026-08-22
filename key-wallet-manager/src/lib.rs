@@ -253,15 +253,16 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletManager<T> {
         self.structural_revision += 1;
     }
 
-    /// Create a new wallet from mnemonic and add it to the manager
-    /// Returns the computed wallet ID
+    /// Create a new wallet from mnemonic and add it to the manager.
+    /// The mnemonic may be in any supported BIP-39 language (detected
+    /// automatically). Returns the computed wallet ID.
     pub fn create_wallet_from_mnemonic(
         &mut self,
         mnemonic: &str,
         birth_height: CoreBlockHeight,
         account_creation_options: key_wallet::wallet::initialization::WalletAccountCreationOptions,
     ) -> Result<WalletId, WalletError> {
-        let mnemonic_obj = Mnemonic::from_phrase(mnemonic, key_wallet::mnemonic::Language::English)
+        let mnemonic_obj = Mnemonic::from_phrase_in_any_language(mnemonic)
             .map_err(|e| WalletError::InvalidMnemonic(e.to_string()))?;
 
         let wallet = Wallet::from_mnemonic(mnemonic_obj, self.network, account_creation_options)
@@ -298,7 +299,7 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletManager<T> {
     /// It supports downgrading to a public-key-only wallet for security purposes.
     ///
     /// # Arguments
-    /// * `mnemonic` - The mnemonic phrase
+    /// * `mnemonic` - The mnemonic phrase, in any supported BIP-39 language
     /// * `birth_height` - Birth height for wallet scanning (0 to sync from genesis)
     /// * `account_creation_options` - Which accounts to create initially
     /// * `downgrade_to_pubkey_wallet` - If true, creates a wallet without private keys
@@ -323,7 +324,7 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletManager<T> {
     ) -> Result<(Vec<u8>, WalletId), WalletError> {
         use zeroize::Zeroize;
 
-        let mnemonic_obj = Mnemonic::from_phrase(mnemonic, key_wallet::mnemonic::Language::English)
+        let mnemonic_obj = Mnemonic::from_phrase_in_any_language(mnemonic)
             .map_err(|e| WalletError::InvalidMnemonic(e.to_string()))?;
 
         let mut wallet =
