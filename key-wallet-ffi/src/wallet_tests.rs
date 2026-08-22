@@ -32,6 +32,34 @@ mod wallet_tests {
         }
     }
 
+    /// Non-English (validated) mnemonics must create wallets too — the parse
+    /// used to hardcode English and reject them.
+    #[test]
+    fn test_wallet_creation_from_non_english_mnemonic() {
+        use key_wallet::mnemonic::{Language, Mnemonic};
+
+        let entropy: [u8; 16] = [
+            0x0c, 0x1e, 0x24, 0xe5, 0x91, 0x77, 0x79, 0xd2, 0x97, 0xe1, 0x4d, 0x45, 0xf1, 0x4e,
+            0x1a, 0x1a,
+        ];
+        for lang in [Language::French, Language::Spanish] {
+            let phrase = Mnemonic::from_entropy(&entropy, lang).unwrap().phrase();
+            let c_phrase = CString::new(phrase).unwrap();
+
+            let mut error = FFIError::default();
+            let error = &mut error as *mut FFIError;
+
+            let wallet = unsafe {
+                wallet::wallet_create_from_mnemonic(c_phrase.as_ptr(), FFINetwork::Testnet, error)
+            };
+            assert!(!wallet.is_null(), "{lang:?}: wallet creation must succeed");
+            assert_eq!(unsafe { (*error).code }, FFIErrorCode::Success);
+            unsafe {
+                wallet::wallet_free(wallet);
+            }
+        }
+    }
+
     #[test]
     fn test_wallet_creation_from_seed() {
         let mut error = FFIError::default();

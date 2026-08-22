@@ -75,4 +75,32 @@ mod tests {
         assert_eq!(imported.synced_height(), 49_999);
         assert_eq!(imported.last_processed_height(), 49_999);
     }
+
+    /// A non-English mnemonic must survive the full serialize → import round
+    /// trip: creation parses the French phrase (auto-detected language) and
+    /// the import decodes the embedded mnemonic from the serialized bytes.
+    #[test]
+    fn test_create_wallet_from_non_english_mnemonic_serialized_bytes() {
+        use key_wallet::mnemonic::Language;
+        use key_wallet::Mnemonic;
+
+        let mut manager = WalletManager::<ManagedWalletInfo>::new(Network::Testnet);
+        let french = Mnemonic::generate(12, Language::French).unwrap().to_string();
+
+        let result = manager.create_wallet_from_mnemonic_return_serialized_bytes(
+            &french,
+            100_000,
+            WalletAccountCreationOptions::Default,
+            false, // Keep private keys so the serialized wallet embeds the mnemonic
+            false,
+        );
+        assert!(result.is_ok(), "French wallet creation failed: {:?}", result.err());
+        let (bytes, wallet_id) = result.unwrap();
+        assert!(!bytes.is_empty());
+
+        let mut manager2 = WalletManager::<ManagedWalletInfo>::new(Network::Testnet);
+        let import_result = manager2.import_wallet_from_bytes(&bytes, 50_000);
+        assert!(import_result.is_ok(), "French wallet import failed: {:?}", import_result.err());
+        assert_eq!(import_result.unwrap(), wallet_id);
+    }
 }
