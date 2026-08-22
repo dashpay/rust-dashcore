@@ -20,6 +20,9 @@ use key_wallet::Network;
 
 /// Create a new wallet from mnemonic with options
 ///
+/// The mnemonic may be in any supported BIP-39 language (detected
+/// automatically).
+///
 /// # Safety
 ///
 /// - `mnemonic` must be a valid pointer to a null-terminated C string
@@ -34,12 +37,10 @@ pub unsafe extern "C" fn wallet_create_from_mnemonic_with_options(
     account_options: *const FFIWalletAccountCreationOptions,
     error: *mut FFIError,
 ) -> *mut FFIWallet {
-    use key_wallet::mnemonic::Language;
-
     let mnemonic = deref_ptr!(mnemonic, error);
     let mnemonic_str = unwrap_or_return!(CStr::from_ptr(mnemonic).to_str(), error);
 
-    let mnemonic = unwrap_or_return!(Mnemonic::from_phrase(mnemonic_str, Language::English), error);
+    let mnemonic = unwrap_or_return!(Mnemonic::from_phrase_in_any_language(mnemonic_str), error);
 
     let network_rust: Network = network.into();
     let creation_options = if account_options.is_null() {
@@ -55,6 +56,9 @@ pub unsafe extern "C" fn wallet_create_from_mnemonic_with_options(
 }
 
 /// Create a new wallet from mnemonic (backward compatibility - single network)
+///
+/// The mnemonic may be in any supported BIP-39 language (detected
+/// automatically).
 ///
 /// # Safety
 ///

@@ -10,6 +10,7 @@ use crate::keys::{FFIExtendedPrivKey, FFIPrivateKey};
 use crate::{check_ptr, deref_ptr, unwrap_or_return};
 use key_wallet::account::derivation::AccountDerivation;
 use key_wallet::account::AccountTrait;
+use key_wallet::Mnemonic;
 use std::ffi::CString;
 use std::os::raw::{c_char, c_uint};
 use std::ptr;
@@ -97,7 +98,7 @@ pub unsafe extern "C" fn bls_account_derive_private_key_from_seed(
 /// it with `string_free`.
 ///
 /// Notes:
-/// - Uses the English wordlist for parsing the mnemonic.
+/// - Accepts a mnemonic in any supported BIP-39 language (detected automatically).
 /// - Chain-agnostic; may return an error for accounts with internal/external chains.
 ///
 /// # Safety
@@ -123,11 +124,13 @@ pub unsafe extern "C" fn bls_account_derive_private_key_from_mnemonic(
     } else {
         Some(unwrap_or_return!(std::ffi::CStr::from_ptr(passphrase).to_str(), error))
     };
+    let mnemonic_lang =
+        unwrap_or_return!(Mnemonic::from_phrase_in_any_language(mnemonic_str), error).language();
     let sk = unwrap_or_return!(
         account.inner().derive_from_mnemonic_private_key_at(
             mnemonic_str,
             passphrase_str,
-            key_wallet::mnemonic::Language::English,
+            mnemonic_lang,
             index,
         ),
         error
@@ -175,7 +178,7 @@ pub unsafe extern "C" fn eddsa_account_derive_private_key_from_seed(
 /// it with `string_free`.
 ///
 /// Notes:
-/// - Uses the English wordlist for parsing the mnemonic.
+/// - Accepts a mnemonic in any supported BIP-39 language (detected automatically).
 ///
 /// # Safety
 /// - `account` must be a valid, non-null pointer to an `FFIEdDSAAccount` (only when `eddsa` feature is enabled).
@@ -200,11 +203,13 @@ pub unsafe extern "C" fn eddsa_account_derive_private_key_from_mnemonic(
     } else {
         Some(unwrap_or_return!(std::ffi::CStr::from_ptr(passphrase).to_str(), error))
     };
+    let mnemonic_lang =
+        unwrap_or_return!(Mnemonic::from_phrase_in_any_language(mnemonic_str), error).language();
     let sk = unwrap_or_return!(
         account.inner().derive_from_mnemonic_private_key_at(
             mnemonic_str,
             passphrase_str,
-            key_wallet::mnemonic::Language::English,
+            mnemonic_lang,
             index,
         ),
         error
@@ -332,6 +337,8 @@ pub unsafe extern "C" fn account_derive_private_key_from_seed(
 /// Derive an extended private key from a mnemonic + optional passphrase at the given index.
 /// Returns an opaque FFIExtendedPrivKey pointer that must be freed with `extended_private_key_free`.
 ///
+/// Accepts a mnemonic in any supported BIP-39 language (detected automatically).
+///
 /// # Safety
 /// - `account` must be a valid pointer to an FFIAccount
 /// - `mnemonic` must be a valid, null-terminated C string
@@ -353,11 +360,13 @@ pub unsafe extern "C" fn account_derive_extended_private_key_from_mnemonic(
     } else {
         Some(unwrap_or_return!(std::ffi::CStr::from_ptr(passphrase).to_str(), error))
     };
+    let mnemonic_lang =
+        unwrap_or_return!(Mnemonic::from_phrase_in_any_language(mnemonic_str), error).language();
     let derived = unwrap_or_return!(
         account.inner().derive_from_mnemonic_extended_xpriv_at(
             mnemonic_str,
             passphrase_str,
-            key_wallet::mnemonic::Language::English,
+            mnemonic_lang,
             index,
         ),
         error
@@ -367,6 +376,8 @@ pub unsafe extern "C" fn account_derive_extended_private_key_from_mnemonic(
 
 /// Derive a private key from a mnemonic + optional passphrase at the given index.
 /// Returns an opaque FFIPrivateKey pointer that must be freed with `private_key_free`.
+///
+/// Accepts a mnemonic in any supported BIP-39 language (detected automatically).
 ///
 /// # Safety
 /// - `account` must be a valid pointer to an FFIAccount
@@ -389,11 +400,13 @@ pub unsafe extern "C" fn account_derive_private_key_from_mnemonic(
     } else {
         Some(unwrap_or_return!(std::ffi::CStr::from_ptr(passphrase).to_str(), error))
     };
+    let mnemonic_lang =
+        unwrap_or_return!(Mnemonic::from_phrase_in_any_language(mnemonic_str), error).language();
     let derived = unwrap_or_return!(
         account.inner().derive_from_mnemonic_extended_xpriv_at(
             mnemonic_str,
             passphrase_str,
-            key_wallet::mnemonic::Language::English,
+            mnemonic_lang,
             index,
         ),
         error
