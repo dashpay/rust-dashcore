@@ -20,9 +20,7 @@ const TEST_MNEMONIC: &str =
     "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
 
 fn setup_wallet_info() -> ManagedWalletInfo {
-    let mnemonic =
-        crate::mnemonic::Mnemonic::from_phrase(TEST_MNEMONIC, crate::mnemonic::Language::English)
-            .unwrap();
+    let mnemonic = crate::mnemonic::Mnemonic::from_phrase(TEST_MNEMONIC).unwrap();
     let wallet =
         Wallet::from_mnemonic(mnemonic, Network::Testnet, WalletAccountCreationOptions::Default)
             .unwrap();

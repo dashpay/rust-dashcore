@@ -40,7 +40,7 @@ pub unsafe extern "C" fn wallet_create_from_mnemonic_with_options(
     let mnemonic = deref_ptr!(mnemonic, error);
     let mnemonic_str = unwrap_or_return!(CStr::from_ptr(mnemonic).to_str(), error);
 
-    let mnemonic = unwrap_or_return!(Mnemonic::from_phrase_in_any_language(mnemonic_str), error);
+    let mnemonic = unwrap_or_return!(Mnemonic::from_phrase(mnemonic_str), error);
 
     let network_rust: Network = network.into();
     let creation_options = if account_options.is_null() {

@@ -429,10 +429,7 @@ mod tests {
     // ✓ Test special derivation paths (from DashSync special purpose paths)
     #[test]
     fn test_special_derivation_paths() {
-        let mnemonic = Mnemonic::from_phrase(
-            "upper renew that grow pelican pave subway relief describe enforce suit hedgehog blossom dose swallow",
-            crate::mnemonic::Language::English
-        ).unwrap();
+        let mnemonic = Mnemonic::from_phrase("upper renew that grow pelican pave subway relief describe enforce suit hedgehog blossom dose swallow").unwrap();
 
         let seed = mnemonic.to_seed("");
         let master_key = ExtendedPrivKey::new_master(crate::Network::Mainnet, &seed).unwrap();
@@ -537,10 +534,7 @@ mod tests {
     // ✓ Test derivation path builder pattern
     #[test]
     fn test_derivation_path_builder() {
-        let mnemonic = Mnemonic::from_phrase(
-            "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
-            crate::mnemonic::Language::English
-        ).unwrap();
+        let mnemonic = Mnemonic::from_phrase("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about").unwrap();
 
         let seed = mnemonic.to_seed("");
         let master_key = ExtendedPrivKey::new_master(crate::Network::Testnet, &seed).unwrap();
@@ -584,10 +578,7 @@ mod tests {
     // ✓ Test key signing and verification
     #[test]
     fn test_key_signing_deterministic() {
-        let mnemonic = Mnemonic::from_phrase(
-            "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
-            crate::mnemonic::Language::English
-        ).unwrap();
+        let mnemonic = Mnemonic::from_phrase("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about").unwrap();
 
         let seed = mnemonic.to_seed("");
         let master_key = ExtendedPrivKey::new_master(crate::Network::Testnet, &seed).unwrap();
@@ -629,10 +620,7 @@ mod tests {
     // ✓ Test key recovery from signature
     #[test]
     fn test_key_recovery_from_signature() {
-        let mnemonic = Mnemonic::from_phrase(
-            "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
-            crate::mnemonic::Language::English
-        ).unwrap();
+        let mnemonic = Mnemonic::from_phrase("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about").unwrap();
 
         let seed = mnemonic.to_seed("");
         let master_key = ExtendedPrivKey::new_master(crate::Network::Testnet, &seed).unwrap();
@@ -676,7 +664,6 @@ mod tests {
 
         let mnemonic = Mnemonic::from_phrase(
             "birth kingdom trash renew flavor utility donkey gasp regular alert pave layer",
-            crate::mnemonic::Language::English,
         )
         .unwrap();
 

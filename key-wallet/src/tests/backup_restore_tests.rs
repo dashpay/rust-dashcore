@@ -3,16 +3,13 @@
 //! Tests wallet export, import, and recovery scenarios.
 
 use crate::account::{AccountType, StandardAccountType};
-use crate::mnemonic::{Language, Mnemonic};
+use crate::mnemonic::Mnemonic;
 use crate::wallet::{Wallet, WalletType};
 use crate::Network;
 
 #[test]
 fn test_wallet_mnemonic_export() {
-    let mnemonic = Mnemonic::from_phrase(
-        "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
-        Language::English,
-    )
+    let mnemonic = Mnemonic::from_phrase("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about")
     .unwrap();
 
     let wallet = Wallet::from_mnemonic(
@@ -196,10 +193,7 @@ fn test_wallet_metadata_backup() {
 
 #[test]
 fn test_multi_network_backup_restore() {
-    let mnemonic = Mnemonic::from_phrase(
-        "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
-        Language::English,
-    )
+    let mnemonic = Mnemonic::from_phrase("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about")
     .unwrap();
 
     // Create separate wallets for each network

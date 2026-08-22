@@ -277,7 +277,7 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletManager<T> {
         birth_height: CoreBlockHeight,
         account_creation_options: key_wallet::wallet::initialization::WalletAccountCreationOptions,
     ) -> Result<WalletId, WalletError> {
-        let mnemonic_obj = Mnemonic::from_phrase_in_any_language(mnemonic)
+        let mnemonic_obj = Mnemonic::from_phrase(mnemonic)
             .map_err(|e| WalletError::InvalidMnemonic(e.to_string()))?;
 
         let wallet = Wallet::from_mnemonic(mnemonic_obj, self.network, account_creation_options)
@@ -339,7 +339,7 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletManager<T> {
     ) -> Result<(Vec<u8>, WalletId), WalletError> {
         use zeroize::Zeroize;
 
-        let mnemonic_obj = Mnemonic::from_phrase_in_any_language(mnemonic)
+        let mnemonic_obj = Mnemonic::from_phrase(mnemonic)
             .map_err(|e| WalletError::InvalidMnemonic(e.to_string()))?;
 
         let mut wallet =
