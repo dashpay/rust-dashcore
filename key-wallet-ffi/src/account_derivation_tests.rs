@@ -10,9 +10,10 @@ mod tests {
     use crate::types::FFIAccountKind;
     use crate::wallet;
     use dash_network::ffi::FFINetwork;
+    #[cfg(feature = "bls")]
+    use key_wallet::account::{AccountType, BLSAccount};
 
-    const MNEMONIC: &str =
-        "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
+    const MNEMONIC: &str = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
 
     #[test]
     fn test_account_derive_private_key_at_receive_index() {
@@ -325,5 +326,73 @@ mod tests {
             crate::account_collection::account_collection_free(collection);
             wallet::wallet_free(wallet);
         }
+    }
+
+    #[cfg(feature = "bls")]
+    #[test]
+    fn test_bls_seed_helper_rejects_invalid_seed_lengths() {
+        let mut error = FFIError::default();
+        let account = BLSAccount::from_seed(
+            None,
+            AccountType::ProviderOperatorKeys,
+            &[1u8; 32],
+            dashcore::Network::Testnet,
+        )
+        .unwrap();
+        let ffi_account = crate::account::FFIBLSAccount::new(&account);
+        let short_seed = [0u8; 15];
+        let long_seed = [0u8; 65];
+
+        let too_short = unsafe {
+            bls_account_derive_private_key_from_seed(
+                &ffi_account,
+                short_seed.as_ptr(),
+                short_seed.len(),
+                0,
+                &mut error,
+            )
+        };
+        assert!(too_short.is_null());
+        assert_eq!(error.code, FFIErrorCode::InvalidInput);
+
+        error = FFIError::default();
+        let too_long = unsafe {
+            bls_account_derive_private_key_from_seed(
+                &ffi_account,
+                long_seed.as_ptr(),
+                long_seed.len(),
+                0,
+                &mut error,
+            )
+        };
+        assert!(too_long.is_null());
+        assert_eq!(error.code, FFIErrorCode::InvalidInput);
+    }
+
+    #[cfg(feature = "eddsa")]
+    #[test]
+    fn test_eddsa_seed_helper_rejects_invalid_seed_lengths() {
+        let mut error = FFIError::default();
+        let account = key_wallet::account::EdDSAAccount::from_seed(
+            None,
+            FFIAccountKind::ProviderPlatformKeys.to_account_type(0),
+            &[1u8; 32],
+            FFINetwork::Testnet.into(),
+        )
+        .unwrap();
+        let ffi_account = crate::account::FFIEdDSAAccount::new(&account);
+        let short_seed = [0u8; 15];
+
+        let too_short = unsafe {
+            eddsa_account_derive_private_key_from_seed(
+                &ffi_account,
+                short_seed.as_ptr(),
+                short_seed.len(),
+                0,
+                &mut error,
+            )
+        };
+        assert!(too_short.is_null());
+        assert_eq!(error.code, FFIErrorCode::InvalidInput);
     }
 }

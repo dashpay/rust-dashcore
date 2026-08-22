@@ -16,6 +16,26 @@ use std::ptr;
 
 // No extra FFI enum for chain selection; account semantics decide path.
 
+fn validate_bls_seed_len(seed_len: usize, error: *mut FFIError) -> bool {
+    if !(16..=64).contains(&seed_len) {
+        unsafe {
+            (*error).set(FFIErrorCode::InvalidInput, "Seed length must be between 16 and 64 bytes");
+        }
+        return false;
+    }
+    true
+}
+
+fn validate_eddsa_seed_len(seed_len: usize, error: *mut FFIError) -> bool {
+    if seed_len < 16 {
+        unsafe {
+            (*error).set(FFIErrorCode::InvalidInput, "Seed length must be at least 16 bytes");
+        }
+        return false;
+    }
+    true
+}
+
 /// Derive an extended private key from an account at a given index, using the provided master xpriv.
 ///
 /// Returns an opaque FFIExtendedPrivKey pointer that must be freed with `extended_private_key_free`.
@@ -65,7 +85,7 @@ pub unsafe extern "C" fn account_derive_extended_private_key_at(
 ///
 /// # Safety
 /// - `account` must be a valid, non-null pointer to an `FFIBLSAccount` (only when `bls` feature is enabled).
-/// - `seed` must point to a readable buffer of length `seed_len` (1..=64 bytes expected).
+/// - `seed` must point to a readable buffer of length `seed_len` (16..=64 bytes expected).
 /// - `error` must be a valid pointer to an FFIError.
 /// - Returned string must be freed with `string_free`.
 #[cfg(feature = "bls")]
@@ -79,8 +99,7 @@ pub unsafe extern "C" fn bls_account_derive_private_key_from_seed(
 ) -> *mut c_char {
     let account = deref_ptr!(account, error);
     check_ptr!(seed, error);
-    if seed_len == 0 || seed_len > 64 {
-        (*error).set(FFIErrorCode::InvalidInput, "Seed length must be between 1 and 64 bytes");
+    if !validate_bls_seed_len(seed_len, error) {
         return ptr::null_mut();
     }
     let seed_slice = std::slice::from_raw_parts(seed, seed_len);
@@ -147,7 +166,7 @@ pub unsafe extern "C" fn bls_account_derive_private_key_from_mnemonic(
 ///
 /// # Safety
 /// - `account` must be a valid, non-null pointer to an `FFIEdDSAAccount` (only when `eddsa` feature is enabled).
-/// - `seed` must point to a readable buffer of length `seed_len` (1..=64 bytes expected).
+/// - `seed` must point to a readable buffer of length `seed_len` (at least 16 bytes expected).
 /// - `error` must be a valid pointer to an FFIError.
 /// - Returned string must be freed with `string_free`.
 #[cfg(feature = "eddsa")]
@@ -161,6 +180,9 @@ pub unsafe extern "C" fn eddsa_account_derive_private_key_from_seed(
 ) -> *mut c_char {
     let account = deref_ptr!(account, error);
     check_ptr!(seed, error);
+    if !validate_eddsa_seed_len(seed_len, error) {
+        return ptr::null_mut();
+    }
     let seed_slice = std::slice::from_raw_parts(seed, seed_len);
     let sk = unwrap_or_return!(
         account.inner().derive_from_seed_private_key_at(seed_slice, index),
