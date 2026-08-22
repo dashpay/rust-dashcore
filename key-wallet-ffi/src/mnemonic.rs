@@ -149,7 +149,11 @@ pub unsafe extern "C" fn mnemonic_generate_with_language(
     unwrap_or_return!(CString::new(mnemonic.to_string()), error).into_raw()
 }
 
-/// Validate a mnemonic phrase
+/// Validate a mnemonic phrase in any supported BIP-39 language.
+///
+/// Shares the parse path with `mnemonic_to_seed` and
+/// `wallet_create_from_mnemonic`, so a phrase this accepts is guaranteed
+/// to be accepted by those functions as well.
 ///
 /// # Safety
 ///
@@ -160,35 +164,20 @@ pub unsafe extern "C" fn mnemonic_validate(mnemonic: *const c_char, error: *mut 
     let mnemonic = deref_ptr!(mnemonic, error);
     let mnemonic_str = unwrap_or_return!(CStr::from_ptr(mnemonic).to_str(), error);
 
-    use key_wallet::mnemonic::Language;
-
-    // Try validation against all supported languages
-    let languages = [
-        Language::English,
-        Language::ChineseSimplified,
-        Language::ChineseTraditional,
-        Language::Czech,
-        Language::French,
-        Language::Italian,
-        Language::Japanese,
-        Language::Korean,
-        Language::Portuguese,
-        Language::Spanish,
-    ];
-
-    for language in languages.iter() {
-        if Mnemonic::validate(mnemonic_str, *language) {
-            return true;
-        }
+    if Mnemonic::from_phrase_in_any_language(mnemonic_str).is_err() {
+        (*error).set(
+            FFIErrorCode::InvalidMnemonic,
+            "Invalid mnemonic: does not match any supported language",
+        );
+        return false;
     }
-    (*error).set(
-        FFIErrorCode::InvalidMnemonic,
-        "Invalid mnemonic: does not match any supported language",
-    );
-    false
+    true
 }
 
 /// Convert mnemonic to seed with optional passphrase
+///
+/// The mnemonic may be in any supported BIP-39 language (detected
+/// automatically).
 ///
 /// # Safety
 ///
@@ -216,8 +205,7 @@ pub unsafe extern "C" fn mnemonic_to_seed(
         unwrap_or_return!(CStr::from_ptr(passphrase).to_str(), error)
     };
 
-    use key_wallet::mnemonic::Language;
-    let m = unwrap_or_return!(Mnemonic::from_phrase(mnemonic_str, Language::English), error);
+    let m = unwrap_or_return!(Mnemonic::from_phrase_in_any_language(mnemonic_str), error);
     let seed = m.to_seed(passphrase_str);
     let seed_bytes: &[u8] = seed.as_ref();
 
