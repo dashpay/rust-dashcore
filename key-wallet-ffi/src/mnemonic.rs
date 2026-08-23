@@ -164,7 +164,7 @@ pub unsafe extern "C" fn mnemonic_validate(mnemonic: *const c_char, error: *mut 
     let mnemonic = deref_ptr!(mnemonic, error);
     let mnemonic_str = unwrap_or_return!(CStr::from_ptr(mnemonic).to_str(), error);
 
-    if Mnemonic::from_phrase_in_any_language(mnemonic_str).is_err() {
+    if Mnemonic::from_phrase(mnemonic_str).is_err() {
         (*error).set(
             FFIErrorCode::InvalidMnemonic,
             "Invalid mnemonic: does not match any supported language",
@@ -205,7 +205,7 @@ pub unsafe extern "C" fn mnemonic_to_seed(
         unwrap_or_return!(CStr::from_ptr(passphrase).to_str(), error)
     };
 
-    let m = unwrap_or_return!(Mnemonic::from_phrase_in_any_language(mnemonic_str), error);
+    let m = unwrap_or_return!(Mnemonic::from_phrase(mnemonic_str), error);
     let seed = m.to_seed(passphrase_str);
     let seed_bytes: &[u8] = seed.as_ref();
 

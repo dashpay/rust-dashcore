@@ -6,7 +6,7 @@
 //! `key-wallet/src/dip9.rs`, and `key-wallet/src/tests/account_tests.rs`.
 
 use dashcore::hashes::Hash;
-use key_wallet::mnemonic::{Language, Mnemonic};
+use key_wallet::mnemonic::Mnemonic;
 use key_wallet::{DerivationPath, ExtendedPrivKey, ExtendedPubKey, Network};
 use secp256k1::Secp256k1;
 use std::str::FromStr;
@@ -31,10 +31,7 @@ use std::str::FromStr;
 fn test_dip17_platform_payment_vector1_mainnet() {
     use dashcore::crypto::key::PublicKey;
 
-    let mnemonic = Mnemonic::from_phrase(
-        "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
-        Language::English,
-    )
+    let mnemonic = Mnemonic::from_phrase("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about")
     .unwrap();
 
     let seed = mnemonic.to_seed("");
@@ -78,10 +75,7 @@ fn test_dip17_platform_payment_vector1_mainnet() {
 fn test_dip17_platform_payment_vector1_testnet() {
     use dashcore::crypto::key::PublicKey;
 
-    let mnemonic = Mnemonic::from_phrase(
-        "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
-        Language::English,
-    )
+    let mnemonic = Mnemonic::from_phrase("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about")
     .unwrap();
 
     let seed = mnemonic.to_seed("");
@@ -112,10 +106,7 @@ fn test_dip17_platform_payment_vector1_testnet() {
 fn test_dip17_platform_payment_vector2() {
     use dashcore::crypto::key::PublicKey;
 
-    let mnemonic = Mnemonic::from_phrase(
-        "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
-        Language::English,
-    )
+    let mnemonic = Mnemonic::from_phrase("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about")
     .unwrap();
 
     // Test mainnet
@@ -174,10 +165,7 @@ fn test_dip17_platform_payment_vector2() {
 fn test_dip17_platform_payment_vector3_non_default_key_class() {
     use dashcore::crypto::key::PublicKey;
 
-    let mnemonic = Mnemonic::from_phrase(
-        "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
-        Language::English,
-    )
+    let mnemonic = Mnemonic::from_phrase("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about")
     .unwrap();
 
     // Test mainnet with key_class' = 1'

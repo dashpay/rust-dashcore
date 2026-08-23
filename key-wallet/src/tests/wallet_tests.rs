@@ -4,7 +4,7 @@
 
 use crate::account::account_collection::AccountCollection;
 use crate::account::{AccountType, StandardAccountType};
-use crate::mnemonic::{Language, Mnemonic};
+use crate::mnemonic::Mnemonic;
 use crate::seed::Seed;
 use crate::wallet::root_extended_keys::RootExtendedPrivKey;
 use crate::wallet::{Wallet, WalletType};
@@ -36,7 +36,7 @@ fn test_wallet_creation_random() {
 
 #[test]
 fn test_wallet_creation_from_mnemonic() {
-    let mnemonic = Mnemonic::from_phrase(TEST_MNEMONIC, Language::English).unwrap();
+    let mnemonic = Mnemonic::from_phrase(TEST_MNEMONIC).unwrap();
 
     let wallet = Wallet::from_mnemonic(
         mnemonic.clone(),
@@ -93,7 +93,7 @@ fn test_wallet_creation_from_seed() {
 
 #[test]
 fn test_wallet_creation_from_extended_key() {
-    let mnemonic = Mnemonic::from_phrase(TEST_MNEMONIC, Language::English).unwrap();
+    let mnemonic = Mnemonic::from_phrase(TEST_MNEMONIC).unwrap();
     let seed = mnemonic.to_seed("");
     let root_key = RootExtendedPrivKey::new_master(&seed).unwrap();
     let master_key = root_key.to_extended_priv_key(Network::Testnet);
@@ -123,7 +123,7 @@ fn test_wallet_creation_from_extended_key() {
 #[test]
 fn test_wallet_creation_watch_only() {
     // First create a normal wallet to get the public key
-    let mnemonic = Mnemonic::from_phrase(TEST_MNEMONIC, Language::English).unwrap();
+    let mnemonic = Mnemonic::from_phrase(TEST_MNEMONIC).unwrap();
     let seed = mnemonic.to_seed("");
     let root_priv_key = RootExtendedPrivKey::new_master(&seed).unwrap();
     let root_pub_key = root_priv_key.to_root_extended_pub_key();
@@ -152,7 +152,7 @@ fn test_wallet_creation_watch_only() {
 
 #[test]
 fn test_wallet_id_computation() {
-    let mnemonic = Mnemonic::from_phrase(TEST_MNEMONIC, Language::English).unwrap();
+    let mnemonic = Mnemonic::from_phrase(TEST_MNEMONIC).unwrap();
     let seed = mnemonic.to_seed("");
     let root_priv_key = RootExtendedPrivKey::new_master(&seed).unwrap();
     let root_pub_key = root_priv_key.to_root_extended_pub_key();
@@ -178,7 +178,7 @@ fn test_wallet_id_computation() {
 
 #[test]
 fn test_wallet_recovery_same_mnemonic() {
-    let mnemonic = Mnemonic::from_phrase(TEST_MNEMONIC, Language::English).unwrap();
+    let mnemonic = Mnemonic::from_phrase(TEST_MNEMONIC).unwrap();
 
     // Create two wallets from the same mnemonic
     let wallet1 = Wallet::from_mnemonic(
@@ -314,7 +314,7 @@ fn test_wallet_special_accounts() {
 
 #[test]
 fn test_wallet_deterministic_key_derivation() {
-    let mnemonic = Mnemonic::from_phrase(TEST_MNEMONIC, Language::English).unwrap();
+    let mnemonic = Mnemonic::from_phrase(TEST_MNEMONIC).unwrap();
 
     let wallet = Wallet::from_mnemonic(
         mnemonic,
@@ -325,7 +325,7 @@ fn test_wallet_deterministic_key_derivation() {
 
     // Add same account multiple times to different wallets
     for _ in 0..3 {
-        let mnemonic = Mnemonic::from_phrase(TEST_MNEMONIC, Language::English).unwrap();
+        let mnemonic = Mnemonic::from_phrase(TEST_MNEMONIC).unwrap();
 
         let mut test_wallet = Wallet::from_mnemonic(
             mnemonic,
@@ -354,7 +354,7 @@ fn test_wallet_deterministic_key_derivation() {
 
 #[test]
 fn test_wallet_external_signable() {
-    let mnemonic = Mnemonic::from_phrase(TEST_MNEMONIC, Language::English).unwrap();
+    let mnemonic = Mnemonic::from_phrase(TEST_MNEMONIC).unwrap();
     let seed = mnemonic.to_seed("");
     let root_priv_key = RootExtendedPrivKey::new_master(&seed).unwrap();
     let root_pub_key = root_priv_key.to_root_extended_pub_key();

@@ -16,14 +16,14 @@ mod tests {
         assert_eq!(words.len(), 12);
 
         // Verify the mnemonic is valid
-        assert!(Mnemonic::validate(&mnemonic.phrase(), Language::English));
+        assert!(Mnemonic::validate(&mnemonic.phrase()));
     }
 
     #[test]
     fn test_mnemonic_from_phrase() {
         // Test with a known valid mnemonic
         let phrase = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
-        let mnemonic = Mnemonic::from_phrase(phrase, Language::English);
+        let mnemonic = Mnemonic::from_phrase(phrase);
         assert!(mnemonic.is_ok());
 
         let mnemonic = mnemonic.unwrap();
@@ -40,7 +40,7 @@ mod tests {
         ];
 
         for phrase in invalid_phrases {
-            let result = Mnemonic::from_phrase(phrase, Language::English);
+            let result = Mnemonic::from_phrase(phrase);
             assert!(result.is_err());
         }
     }
@@ -49,7 +49,7 @@ mod tests {
     fn test_mnemonic_to_seed() {
         // Test seed generation with known test vector
         let phrase = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
-        let mnemonic = Mnemonic::from_phrase(phrase, Language::English).unwrap();
+        let mnemonic = Mnemonic::from_phrase(phrase).unwrap();
 
         // Test without passphrase
         let seed = mnemonic.to_seed("");
@@ -71,7 +71,7 @@ mod tests {
         ];
 
         for (phrase, expected_words) in test_cases {
-            let mnemonic = Mnemonic::from_phrase(phrase, Language::English);
+            let mnemonic = Mnemonic::from_phrase(phrase);
             assert!(mnemonic.is_ok());
 
             let mnemonic = mnemonic.unwrap();
@@ -91,22 +91,14 @@ mod tests {
         ];
 
         for phrase in valid_phrases {
-            assert!(
-                Mnemonic::validate(phrase, Language::English),
-                "Failed to validate: {}",
-                phrase
-            );
+            assert!(Mnemonic::validate(phrase), "Failed to validate: {}", phrase);
         }
 
         // Invalid mnemonics
         let invalid_phrases = vec!["invalid words here", "", "   "];
 
         for phrase in invalid_phrases {
-            assert!(
-                !Mnemonic::validate(phrase, Language::English),
-                "Should not validate: {}",
-                phrase
-            );
+            assert!(!Mnemonic::validate(phrase), "Should not validate: {}", phrase);
         }
     }
 
@@ -117,7 +109,7 @@ mod tests {
         let phrase = original.phrase().to_string();
 
         // Recover from the phrase
-        let recovered = Mnemonic::from_phrase(&phrase, Language::English).unwrap();
+        let recovered = Mnemonic::from_phrase(&phrase).unwrap();
 
         // They should produce the same seed
         let original_seed = original.to_seed("");
@@ -130,10 +122,7 @@ mod tests {
 
     #[test]
     fn test_mnemonic_with_different_passphrases() {
-        let mnemonic = Mnemonic::from_phrase(
-            "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
-            Language::English
-        ).unwrap();
+        let mnemonic = Mnemonic::from_phrase("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about").unwrap();
 
         // Different passphrases should produce different seeds
         let seed1 = mnemonic.to_seed("");
@@ -154,8 +143,8 @@ mod tests {
         // Same phrase should always produce same seed
         let phrase = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
 
-        let mnemonic1 = Mnemonic::from_phrase(phrase, Language::English).unwrap();
-        let mnemonic2 = Mnemonic::from_phrase(phrase, Language::English).unwrap();
+        let mnemonic1 = Mnemonic::from_phrase(phrase).unwrap();
+        let mnemonic2 = Mnemonic::from_phrase(phrase).unwrap();
 
         let seed1 = mnemonic1.to_seed("test");
         let seed2 = mnemonic2.to_seed("test");

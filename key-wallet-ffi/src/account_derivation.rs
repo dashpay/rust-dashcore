@@ -10,7 +10,6 @@ use crate::keys::{FFIExtendedPrivKey, FFIPrivateKey};
 use crate::{check_ptr, deref_ptr, unwrap_or_return};
 use key_wallet::account::derivation::AccountDerivation;
 use key_wallet::account::AccountTrait;
-use key_wallet::Mnemonic;
 use std::ffi::CString;
 use std::os::raw::{c_char, c_uint};
 use std::ptr;
@@ -124,15 +123,8 @@ pub unsafe extern "C" fn bls_account_derive_private_key_from_mnemonic(
     } else {
         Some(unwrap_or_return!(std::ffi::CStr::from_ptr(passphrase).to_str(), error))
     };
-    let mnemonic_lang =
-        unwrap_or_return!(Mnemonic::from_phrase_in_any_language(mnemonic_str), error).language();
     let sk = unwrap_or_return!(
-        account.inner().derive_from_mnemonic_private_key_at(
-            mnemonic_str,
-            passphrase_str,
-            mnemonic_lang,
-            index,
-        ),
+        account.inner().derive_from_mnemonic_private_key_at(mnemonic_str, passphrase_str, index,),
         error
     );
     unwrap_or_return!(CString::new(hex::encode(sk.to_be_bytes())), error).into_raw()
@@ -203,15 +195,8 @@ pub unsafe extern "C" fn eddsa_account_derive_private_key_from_mnemonic(
     } else {
         Some(unwrap_or_return!(std::ffi::CStr::from_ptr(passphrase).to_str(), error))
     };
-    let mnemonic_lang =
-        unwrap_or_return!(Mnemonic::from_phrase_in_any_language(mnemonic_str), error).language();
     let sk = unwrap_or_return!(
-        account.inner().derive_from_mnemonic_private_key_at(
-            mnemonic_str,
-            passphrase_str,
-            mnemonic_lang,
-            index,
-        ),
+        account.inner().derive_from_mnemonic_private_key_at(mnemonic_str, passphrase_str, index,),
         error
     );
     unwrap_or_return!(CString::new(hex::encode(sk.to_bytes())), error).into_raw()
@@ -360,15 +345,10 @@ pub unsafe extern "C" fn account_derive_extended_private_key_from_mnemonic(
     } else {
         Some(unwrap_or_return!(std::ffi::CStr::from_ptr(passphrase).to_str(), error))
     };
-    let mnemonic_lang =
-        unwrap_or_return!(Mnemonic::from_phrase_in_any_language(mnemonic_str), error).language();
     let derived = unwrap_or_return!(
-        account.inner().derive_from_mnemonic_extended_xpriv_at(
-            mnemonic_str,
-            passphrase_str,
-            mnemonic_lang,
-            index,
-        ),
+        account
+            .inner()
+            .derive_from_mnemonic_extended_xpriv_at(mnemonic_str, passphrase_str, index,),
         error
     );
     Box::into_raw(Box::new(FFIExtendedPrivKey::from_inner(derived)))
@@ -400,15 +380,10 @@ pub unsafe extern "C" fn account_derive_private_key_from_mnemonic(
     } else {
         Some(unwrap_or_return!(std::ffi::CStr::from_ptr(passphrase).to_str(), error))
     };
-    let mnemonic_lang =
-        unwrap_or_return!(Mnemonic::from_phrase_in_any_language(mnemonic_str), error).language();
     let derived = unwrap_or_return!(
-        account.inner().derive_from_mnemonic_extended_xpriv_at(
-            mnemonic_str,
-            passphrase_str,
-            mnemonic_lang,
-            index,
-        ),
+        account
+            .inner()
+            .derive_from_mnemonic_extended_xpriv_at(mnemonic_str, passphrase_str, index,),
         error
     );
     Box::into_raw(Box::new(FFIPrivateKey::from_secret(derived.private_key)))

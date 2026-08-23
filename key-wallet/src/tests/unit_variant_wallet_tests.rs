@@ -8,7 +8,7 @@
 use crate::account::account_collection::AccountCollection;
 use crate::account::{AccountType, StandardAccountType};
 use crate::error::Error;
-use crate::mnemonic::{Language, Mnemonic};
+use crate::mnemonic::Mnemonic;
 use crate::wallet::initialization::WalletAccountCreationOptions;
 use crate::wallet::{Wallet, WalletType};
 use crate::Network;
@@ -17,7 +17,7 @@ const TEST_MNEMONIC: &str =
     "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
 
 fn built_full_wallet() -> Wallet {
-    let mnemonic = Mnemonic::from_phrase(TEST_MNEMONIC, Language::English).unwrap();
+    let mnemonic = Mnemonic::from_phrase(TEST_MNEMONIC).unwrap();
     Wallet::from_mnemonic(mnemonic, Network::Testnet, WalletAccountCreationOptions::Default)
         .unwrap()
 }
