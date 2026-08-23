@@ -797,6 +797,14 @@ impl FFIOutPoint {
 /// be wallet-relevant at all (it can spend our coin while paying only
 /// external addresses), so it may never appear in any other callback. Null
 /// with a zero count when the removal released nothing.
+///
+/// The Rust `WalletEvent::TransactionsSwept` additionally carries
+/// `winner_mined_height` (the winner's block height, `None` for an
+/// InstantSend-locked winner not yet mined). It is deliberately not
+/// forwarded here: this signature has no safely-degrading insertion point
+/// for hand-declared C consumers (see the released-outpoints addition),
+/// so growing it is a flagged breaking change deferred until a C consumer
+/// needs the field.
 /// All pointer parameters are borrowed and only valid for the duration of the
 /// callback. `balance` is the wallet's balance *after* the removal;
 /// `account_balances` follows the same contract as on
@@ -1091,6 +1099,16 @@ impl FFIWalletEventCallbacks {
                 wallet_id,
                 txids,
                 superseded_by,
+                // Deliberately not forwarded across the C ABI. #962
+                // established that `OnTransactionsSweptCallback` has no
+                // safely-degrading insertion point: a C consumer declaring
+                // the function pointer by hand keeps compiling against a
+                // grown parameter list and reads shifted arguments. Rust
+                // consumers of `WalletEvent` get the field directly; the C
+                // surface stays byte-for-byte identical until a consumer
+                // needs it there, at which point the addition must be a
+                // flagged breaking change like #962's.
+                winner_mined_height: _,
                 released_outpoints,
                 balance,
                 account_balances,
@@ -1398,6 +1416,7 @@ mod tests {
             wallet_id: [7u8; 32],
             txids: vec![Txid::from_byte_array([1u8; 32])],
             superseded_by: Txid::from_byte_array([2u8; 32]),
+            winner_mined_height: Some(1_000),
             released_outpoints: Vec::new(),
             balance: WalletCoreBalance::default(),
             account_balances: BTreeMap::new(),
@@ -1445,6 +1464,7 @@ mod tests {
             wallet_id: [7u8; 32],
             txids: vec![Txid::from_byte_array([1u8; 32])],
             superseded_by: Txid::from_byte_array([2u8; 32]),
+            winner_mined_height: None,
             released_outpoints: vec![
                 dashcore::OutPoint {
                     txid: parent,
