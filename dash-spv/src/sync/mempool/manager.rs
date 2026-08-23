@@ -372,14 +372,15 @@ impl<W: WalletInterface> MempoolManager<W> {
 
         // Send self-originated transactions to the network regardless of
         // wallet relevance — the caller explicitly asked to broadcast.
+        let mut events = Vec::new();
         if is_local {
-            self.start_broadcast(&tx, requests);
+            events.extend(self.start_broadcast(&tx, requests));
         }
 
         // Skip if already tracked (e.g., locally broadcast then received from a peer)
         if self.transactions.contains_key(&txid) {
             self.seen_txids.insert(txid, Instant::now());
-            return Ok(vec![]);
+            return Ok(events);
         }
 
         self.seen_txids.insert(txid, Instant::now());
@@ -395,7 +396,7 @@ impl<W: WalletInterface> MempoolManager<W> {
         };
 
         if !result.is_relevant {
-            return Ok(vec![]);
+            return Ok(events);
         }
 
         self.progress.add_relevant(1);
@@ -414,7 +415,33 @@ impl<W: WalletInterface> MempoolManager<W> {
         self.transactions.insert(txid, unconfirmed_tx);
         self.progress.set_tracked(self.transactions.len() as u32);
 
-        Ok(vec![])
+        Ok(events)
+    }
+
+    /// Acceptance evidence gathered before this node broadcast the transaction
+    /// itself, with the label to log it under.
+    ///
+    /// The echo heuristic can only observe signals that arrive *after* the
+    /// broadcast is registered: a holdout peer announcing the txid back. When
+    /// the very same signed transaction reached the network by another route
+    /// first — a BIP70 merchant broadcasting the bytes it was just paid with,
+    /// another copy of the wallet, a rebroadcast after a restart — its
+    /// InstantSend lock or peer relay lands before `start_broadcast` runs and
+    /// is then invisible to that heuristic. No peer re-announces a transaction
+    /// it is only now being sent, so the broadcast would sit `Pending` until
+    /// the timeout and be reported as `Uncertain` while the network had in
+    /// fact accepted it seconds earlier.
+    fn preexisting_acceptance(&self, txid: &Txid) -> Option<&'static str> {
+        if self.pending_is_locks.contains_key(txid) {
+            return Some("InstantSend lock arrived before the broadcast");
+        }
+        match self.transactions.get(txid) {
+            Some(tx) if tx.is_instant_send => Some("mempool entry is already InstantSend-locked"),
+            // Present in our mempool view without a local broadcast behind it means a peer
+            // relayed it to us — the same proof of propagation the echo threshold waits for.
+            Some(_) => Some("already relayed to us by a peer"),
+            None => None,
+        }
     }
 
     /// Begin tracking a self-originated transaction and send it to the
@@ -422,11 +449,21 @@ impl<W: WalletInterface> MempoolManager<W> {
     ///
     /// Idempotent per txid: repeated local dispatches of the same transaction
     /// do not resend (the rebroadcast timer handles resends).
-    pub(super) fn start_broadcast(&mut self, tx: &Transaction, requests: &RequestSender) {
+    ///
+    /// Returns the acceptance event when the network's verdict is already
+    /// known (see [`Self::preexisting_acceptance`]); the transaction is still
+    /// sent, since knowing one peer has it says nothing about the rest.
+    pub(super) fn start_broadcast(
+        &mut self,
+        tx: &Transaction,
+        requests: &RequestSender,
+    ) -> Vec<SyncEvent> {
         let txid = tx.txid();
         if self.broadcasts.contains_key(&txid) {
-            return;
+            return Vec::new();
         }
+
+        let known_acceptance = self.preexisting_acceptance(&txid);
 
         let mut state = TxBroadcastState::new(tx.clone(), Instant::now());
         let peers: Vec<SocketAddr> = self.peers.keys().copied().collect();
@@ -459,7 +496,20 @@ impl<W: WalletInterface> MempoolManager<W> {
                 state.holdout.len()
             );
         }
+        if let Some(reason) = known_acceptance {
+            tracing::info!("Broadcast {} accepted before dispatch ({})", txid, reason);
+            state.status = BroadcastStatus::Accepted;
+            self.broadcasts.insert(txid, state);
+            return vec![SyncEvent::TransactionBroadcastResult {
+                txid,
+                result: BroadcastResult::Accepted {
+                    relayed_by: 0,
+                },
+            }];
+        }
+
         self.broadcasts.insert(txid, state);
+        Vec::new()
     }
 
     /// Transition pending broadcasts that outlived the acceptance timeout to
@@ -1908,6 +1958,106 @@ mod tests {
         assert!(
             manager.pending_requests.contains_key(&txid),
             "expired seen txid should be accepted"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_broadcast_seeds_acceptance_from_earlier_instant_lock() {
+        let (mut manager, requests, _rx) = create_test_manager();
+        let tx = test_transaction(40);
+        let txid = tx.txid();
+
+        // The same signed transaction reached the network by another route first (a BIP70
+        // merchant broadcasting the bytes it was just paid with), so its InstantSend lock
+        // arrives before this node dispatches its own copy.
+        manager.process_instant_send(dummy_instant_lock(txid)).await;
+        assert!(manager.pending_is_locks.contains_key(&txid));
+
+        let events = manager.start_broadcast(&tx, &requests);
+
+        assert!(
+            matches!(
+                events.as_slice(),
+                [SyncEvent::TransactionBroadcastResult {
+                    txid: seen,
+                    result: BroadcastResult::Accepted { relayed_by: 0 },
+                }] if *seen == txid
+            ),
+            "a lock that preceded the broadcast still proves acceptance, got {:?}",
+            events
+        );
+        assert_eq!(
+            manager.broadcasts.get(&txid).map(|state| state.status),
+            Some(BroadcastStatus::Accepted)
+        );
+    }
+
+    #[tokio::test]
+    async fn test_broadcast_seeds_acceptance_from_peer_relay() {
+        let (mut manager, requests, _rx) = create_test_manager();
+        let tx = test_transaction(41);
+        let txid = tx.txid();
+
+        // A peer relayed the transaction to us before we broadcast it — the same proof of
+        // propagation the echo threshold waits for, and one no later echo can repeat.
+        manager.transactions.insert(
+            txid,
+            UnconfirmedTransaction::new(tx.clone(), Amount::ZERO, false, false, vec![], 0),
+        );
+
+        let events = manager.start_broadcast(&tx, &requests);
+
+        assert!(
+            matches!(
+                events.as_slice(),
+                [SyncEvent::TransactionBroadcastResult {
+                    result: BroadcastResult::Accepted {
+                        relayed_by: 0
+                    },
+                    ..
+                }]
+            ),
+            "a peer relay that preceded the broadcast still proves acceptance, got {:?}",
+            events
+        );
+    }
+
+    #[tokio::test]
+    async fn test_broadcast_without_prior_evidence_stays_pending() {
+        let (mut manager, requests, _rx) = create_test_manager();
+        let tx = test_transaction(42);
+        let txid = tx.txid();
+
+        let events = manager.start_broadcast(&tx, &requests);
+
+        assert!(events.is_empty(), "nothing is known yet, got {:?}", events);
+        assert_eq!(
+            manager.broadcasts.get(&txid).map(|state| state.status),
+            Some(BroadcastStatus::Pending)
+        );
+    }
+
+    #[tokio::test]
+    async fn test_handle_tx_reports_acceptance_proven_before_dispatch() {
+        let (mut manager, requests, _rx) = create_test_manager();
+        let tx = test_transaction(43);
+        let txid = tx.txid();
+
+        manager.process_instant_send(dummy_instant_lock(txid)).await;
+
+        let local_addr = SocketAddr::from(([0, 0, 0, 0], 0));
+        let events = manager.handle_tx(tx, local_addr, &requests).await.unwrap();
+
+        assert!(
+            events.iter().any(|event| matches!(
+                event,
+                SyncEvent::TransactionBroadcastResult {
+                    txid: seen,
+                    result: BroadcastResult::Accepted { .. },
+                } if *seen == txid
+            )),
+            "handle_tx must forward the verdict, otherwise the waiter never sees it: {:?}",
+            events
         );
     }
 
