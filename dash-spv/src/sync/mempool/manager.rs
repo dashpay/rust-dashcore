@@ -440,7 +440,16 @@ impl<W: WalletInterface> MempoolManager<W> {
             // Present in our mempool view without a local broadcast behind it means a peer
             // relayed it to us — the same proof of propagation the echo threshold waits for.
             Some(_) => Some("already relayed to us by a peer"),
-            None => None,
+            // `transactions` only keeps wallet-relevant entries, but relay is relay: a
+            // transaction the wallet ignored still reached us from the network. `seen_txids`
+            // records every download, and at this point it can only hold a txid some peer sent
+            // us — our own copy is inserted after `start_broadcast` runs, and a second local
+            // dispatch never reaches here (`broadcasts` short-circuits it).
+            None => self
+                .seen_txids
+                .get(txid)
+                .is_some_and(|seen| seen.elapsed() < SEEN_TXID_EXPIRY)
+                .then_some("already received from a peer"),
         }
     }
 
@@ -2018,6 +2027,35 @@ mod tests {
                 }]
             ),
             "a peer relay that preceded the broadcast still proves acceptance, got {:?}",
+            events
+        );
+    }
+
+    #[tokio::test]
+    async fn test_broadcast_seeds_acceptance_from_irrelevant_peer_relay() {
+        let (mut manager, requests, _rx) = create_test_manager();
+        let tx = test_transaction(44);
+        let txid = tx.txid();
+
+        // A peer relayed the transaction and the wallet found it irrelevant, so it never entered
+        // `transactions` — but the network demonstrably has it.
+        manager.handle_tx(tx.clone(), test_socket_address(1), &requests).await.unwrap();
+        assert!(!manager.transactions.contains_key(&txid));
+        assert!(manager.seen_txids.contains_key(&txid));
+
+        let events = manager.start_broadcast(&tx, &requests);
+
+        assert!(
+            matches!(
+                events.as_slice(),
+                [SyncEvent::TransactionBroadcastResult {
+                    result: BroadcastResult::Accepted {
+                        relayed_by: 0
+                    },
+                    ..
+                }]
+            ),
+            "relay is relay even when the wallet ignored the transaction, got {:?}",
             events
         );
     }
