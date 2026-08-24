@@ -30,7 +30,7 @@ use crate::wallet::balance::WalletCoreBalance;
 use crate::{ExtendedPubKey, Network};
 use dashcore::blockdata::transaction::OutPoint;
 use dashcore::prelude::CoreBlockHeight;
-use dashcore::{Address, ScriptBuf, Transaction, Txid};
+use dashcore::{Address, Transaction, Txid};
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -204,28 +204,6 @@ impl ManagedCoreFundsAccount {
                 into.insert(input.previous_output);
             }
         }
-    }
-
-    /// Cached scriptPubKeys for every address that could still receive or hold
-    /// funds under a single-use address discipline: addresses not yet used
-    /// (the gap-limit lookahead, including reserved ones) plus used addresses
-    /// that still hold at least one unspent output.
-    ///
-    /// A used address whose outputs are all spent is omitted. That is only
-    /// sound for account types whose addresses are single-use by protocol
-    /// (CoinJoin — reuse would link mixing rounds), where nothing ever pays a
-    /// spent-and-emptied address again; callers must not apply this to
-    /// account types where address reuse is merely discouraged.
-    pub fn unspent_or_unused_script_pubkeys(&self) -> Vec<ScriptBuf> {
-        let funded: HashSet<&ScriptBuf> =
-            self.utxos.values().map(|utxo| &utxo.txout.script_pubkey).collect();
-        self.managed_account_type()
-            .address_pools()
-            .iter()
-            .flat_map(|pool| pool.addresses.values())
-            .filter(|info| !info.is_used() || funded.contains(&info.script_pubkey))
-            .map(|info| info.script_pubkey.clone())
-            .collect()
     }
 
     /// Add new UTXOs for received outputs, remove spent ones.
@@ -1368,6 +1346,7 @@ mod conflict_sweep_walk_tests {
     use crate::transaction_checking::BlockInfo;
     use dashcore::ephemerealdata::instant_lock::InstantLock;
     use dashcore::hashes::Hash;
+    use dashcore::ScriptBuf;
     use dashcore::{BlockHash, TxIn, TxOut, Witness};
 
     fn outpoint(seed: u32, vout: u32) -> OutPoint {
