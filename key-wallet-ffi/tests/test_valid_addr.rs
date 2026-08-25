@@ -7,8 +7,7 @@ fn test_valid_testnet_address() {
     use key_wallet::{Mnemonic, Network, Wallet};
 
     let mnemonic_str = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
-    let mnemonic =
-        Mnemonic::from_phrase(mnemonic_str, key_wallet::mnemonic::Language::English).unwrap();
+    let mnemonic = Mnemonic::from_phrase(mnemonic_str).unwrap();
 
     let wallet =
         Wallet::from_mnemonic(mnemonic, Network::Testnet, WalletAccountCreationOptions::Default)

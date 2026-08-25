@@ -7,17 +7,17 @@ use key_wallet::Network;
 fn test_mnemonic_validation() {
     // Valid 12-word mnemonic
     let valid_phrase = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
-    assert!(Mnemonic::validate(valid_phrase, Language::English));
+    assert!(Mnemonic::validate(valid_phrase));
 
     // Invalid mnemonic (wrong checksum)
     let invalid_phrase = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon";
-    assert!(!Mnemonic::validate(invalid_phrase, Language::English));
+    assert!(!Mnemonic::validate(invalid_phrase));
 }
 
 #[test]
 fn test_mnemonic_from_phrase() {
     let phrase = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
-    let mnemonic = Mnemonic::from_phrase(phrase, Language::English).unwrap();
+    let mnemonic = Mnemonic::from_phrase(phrase).unwrap();
 
     assert_eq!(mnemonic.word_count(), 12);
     assert_eq!(mnemonic.phrase(), phrase);
@@ -26,7 +26,7 @@ fn test_mnemonic_from_phrase() {
 #[test]
 fn test_mnemonic_to_seed() {
     let phrase = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
-    let mnemonic = Mnemonic::from_phrase(phrase, Language::English).unwrap();
+    let mnemonic = Mnemonic::from_phrase(phrase).unwrap();
 
     // Test with empty passphrase
     let seed1 = mnemonic.to_seed("");
@@ -43,7 +43,7 @@ fn test_mnemonic_to_seed() {
 #[test]
 fn test_mnemonic_to_extended_key() {
     let phrase = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
-    let mnemonic = Mnemonic::from_phrase(phrase, Language::English).unwrap();
+    let mnemonic = Mnemonic::from_phrase(phrase).unwrap();
 
     let xprv = mnemonic.to_extended_key("", Network::Mainnet).unwrap();
     assert_eq!(xprv.network, Network::Mainnet);
@@ -97,7 +97,7 @@ fn test_mnemonic_generation() {
         assert_eq!(mnemonic.word_count(), word_count);
 
         // Generated mnemonic should be valid
-        assert!(Mnemonic::validate(&mnemonic.phrase(), Language::English));
+        assert!(Mnemonic::validate(&mnemonic.phrase()));
     }
 }
 
@@ -106,7 +106,7 @@ fn test_different_languages() {
     let phrase_en = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
 
     // Test English
-    let mnemonic_en = Mnemonic::from_phrase(phrase_en, Language::English).unwrap();
+    let mnemonic_en = Mnemonic::from_phrase(phrase_en).unwrap();
     assert!(mnemonic_en.word_count() == 12);
 
     // Same seed regardless of language (for same phrase)

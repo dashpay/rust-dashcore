@@ -17,7 +17,7 @@ use dashcore::PublicKey;
 use key_wallet::account::ManagedAccountTrait;
 use key_wallet::bip32::{ChildNumber, ExtendedPrivKey};
 use key_wallet::gap_limit::DEFAULT_EXTERNAL_GAP_LIMIT;
-use key_wallet::mnemonic::{Language, Mnemonic};
+use key_wallet::mnemonic::Mnemonic;
 use key_wallet::wallet::initialization::WalletAccountCreationOptions;
 use key_wallet::wallet::managed_wallet_info::coin_selection::SelectionStrategy;
 use key_wallet::wallet::managed_wallet_info::fee::FeeRate;
@@ -263,7 +263,7 @@ const MEMPOOL_TIMEOUT: Duration = Duration::from_secs(30);
 /// independently of any wallet state, so a test can pay addresses far beyond
 /// the pre-generated pool window.
 fn derive_external_addresses(mnemonic: &str, count: u32) -> Vec<Address> {
-    let mnemonic = Mnemonic::from_phrase(mnemonic, Language::English).expect("mnemonic");
+    let mnemonic = Mnemonic::from_phrase(mnemonic).expect("mnemonic");
     let seed = mnemonic.to_seed("");
     let secp = Secp256k1::new();
     let master = ExtendedPrivKey::new_master(Network::Regtest, &seed).expect("master key");

@@ -7,7 +7,7 @@ use crate::account::{Account, AccountType, ManagedCoreFundsAccount};
 use crate::managed_account::address_pool::KeySource;
 use crate::managed_account::managed_account_trait::ManagedAccountTrait;
 use crate::managed_account::managed_account_type::ManagedAccountType;
-use crate::mnemonic::{Language, Mnemonic};
+use crate::mnemonic::Mnemonic;
 use crate::test_utils::TestWalletContext;
 use crate::transaction_checking::TransactionContext;
 use crate::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
@@ -90,10 +90,7 @@ fn test_reserve_receive_without_key_source_errors() {
 #[test]
 fn test_reserve_receive_on_non_standard_account_errors() {
     let network = Network::Testnet;
-    let mnemonic = Mnemonic::from_phrase(
-        "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
-        Language::English,
-    )
+    let mnemonic = Mnemonic::from_phrase("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about")
     .unwrap();
     let seed = mnemonic.to_seed("");
     let master = ExtendedPrivKey::new_master(network, &seed).unwrap();

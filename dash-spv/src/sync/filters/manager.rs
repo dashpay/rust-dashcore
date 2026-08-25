@@ -91,23 +91,53 @@ pub struct FiltersManager<
     /// `BlockProcessed` and the per-wallet record of which wallets already
     /// have a given processed block applied.
     pub(super) tracker: BlockMatchTracker,
+    /// Scripts already forward-rescanned but still awaiting the combined
+    /// backward sweep over the committed range (#846). Held at the manager
+    /// level and carried across batch commits: intermediate commits only
+    /// accumulate here, and `try_commit_batches` runs the sweep when the
+    /// forward pipeline drains — the committing batch is the last one active
+    /// and no lookahead can extend past it — so script-carrying commits share
+    /// one walk of the stored history instead of walking it once per commit.
+    /// Deliberately survives `reset_for_rescan`: the restarted scan covers
+    /// heights above its entry point, while these scripts still owe a pass
+    /// over the committed prefix below it.
+    backward_scripts: HashMap<WalletId, HashSet<ScriptBuf>>,
+    /// Number of committed-range sweeps that reached the chunk walk in
+    /// `rescan_committed_range`. Diagnostic counter; the sweep-coalescing
+    /// regression test asserts on it.
+    pub(super) committed_range_sweeps: u64,
 
     // === Durable pending-sweep state (interrupted-sync recovery) ===
     /// Scripts derived during block processing whose rescan cascade has not
-    /// yet COMMITTED. The in-memory cascade (`collected_scripts` →
-    /// `backward_scripts` → sweep → commit) evaporates on process death, and
-    /// nothing ever re-tests already-scanned heights against scripts derived
-    /// after them — outputs paying those scripts stay invisible to the
-    /// engine forever (the interrupted-restore fund loss, 2026-08-19).
-    /// Mirrored to [`Self::metadata`] when present: added when scripts enter
-    /// the manager, cleared per batch commit via the batch's retired-scripts
-    /// receipt, and re-seeded into the lowest active batch after a restart.
+    /// yet COMMITTED. The in-memory cascade (`collected_scripts` → forward
+    /// rescan → [`Self::backward_scripts`] → coalesced sweep → commit)
+    /// evaporates on process death, and nothing ever re-tests
+    /// already-scanned heights against scripts derived after them — outputs
+    /// paying those scripts stay invisible to the engine forever (the
+    /// interrupted-restore fund loss, 2026-08-19). Mirrored to
+    /// [`Self::metadata`] when present: added when scripts enter the
+    /// manager, cleared at the commit that proves the coalesced sweep
+    /// covering them completed (see [`Self::swept_awaiting_commit`]), and
+    /// re-seeded from [`Self::recovered_pending`] after a restart.
     pending_sweep: HashMap<WalletId, HashSet<ScriptBuf>>,
-    /// The batch start the current `pending_sweep` content has been seeded
-    /// into, so seeding is idempotent per batch. A tick-triggered rescan
-    /// wipes `active_batches`, after which the new lowest batch gets its own
-    /// seeding pass.
-    pending_seeded_into: Option<u32>,
+    /// Scripts the coalesced committed-range sweep has taken from
+    /// [`Self::backward_scripts`], held until a batch COMMIT. The sweep only
+    /// runs when the committing batch is the last one active, so the next
+    /// commit is the proof that the whole fixpoint — forward, backward, and
+    /// every block those sweeps re-downloaded — completed for these scripts;
+    /// only then may they leave the durable pending-sweep set. An
+    /// intermediate commit that deferred its backward work into
+    /// [`Self::backward_scripts`] never clears them — that was the receipt
+    /// hole the per-batch model would have opened under coalescing.
+    swept_awaiting_commit: HashMap<WalletId, HashSet<ScriptBuf>>,
+    /// The RECOVERED slice of [`Self::pending_sweep`] still owed a seeding
+    /// pass: populated from metadata at [`Self::with_metadata`] load (and
+    /// re-owed by `reset_for_rescan`, which discards the batches any prior
+    /// seeding fed), drained into the lowest active batch by
+    /// `try_process_batch` phase 0. Seeding is resume-only: live entries
+    /// are already riding the in-memory cascade, and re-seeding them per
+    /// batch would rescan every pending script once per commit.
+    recovered_pending: HashMap<WalletId, HashSet<ScriptBuf>>,
     /// Durable store for `pending_sweep`. `None` (tests without storage,
     /// callers that never opt in) degrades to the previous in-memory-only
     /// behavior.
@@ -206,8 +236,11 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
             active_batches: BTreeMap::new(),
             processing_height: 0,
             tracker: BlockMatchTracker::new(),
+            backward_scripts: HashMap::new(),
+            committed_range_sweeps: 0,
             pending_sweep: HashMap::new(),
-            pending_seeded_into: None,
+            swept_awaiting_commit: HashMap::new(),
+            recovered_pending: HashMap::new(),
             metadata: None,
         }
     }
@@ -232,6 +265,10 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
                              already-scanned heights will be re-tested for these scripts"
                         );
                     }
+                    // The recovered slice is what seeding replays; live
+                    // entries added later this session are already riding
+                    // the in-memory cascade and are never re-seeded.
+                    self.recovered_pending = pending.clone();
                     self.pending_sweep = pending;
                 }
                 None => {
@@ -300,15 +337,24 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
     pub(super) fn reset_for_rescan(&mut self) {
         self.active_batches.clear();
         self.tracker.clear();
-        // The batches just discarded took the pending sweep's in-memory
-        // copy with them (`collected_scripts`), so the durable set must be
-        // re-seeded into whatever batch the rescan creates — which often
-        // starts at the SAME height as the one seeded before. Clearing the
-        // marker keeps the idempotence guard from mistaking the new batch
-        // for the old one and skipping the replay.
-        self.pending_seeded_into = None;
+        // The batches just discarded took any seeded pending-sweep copies
+        // with them (`collected_scripts`), so the whole durable set is owed
+        // a fresh seeding pass into whatever batch the rescan creates.
+        // Re-owing ALL of `pending_sweep` (not just the slice recovered at
+        // startup) is deliberate: live entries' in-memory cascade just
+        // evaporated with the batches, exactly like a process death.
+        self.recovered_pending = self.pending_sweep.clone();
         self.pending_batches.clear();
         self.filter_pipeline = FiltersPipeline::new();
+        // `backward_scripts` is kept: the restarted scan covers heights above
+        // its entry point with the wallet's current script set, while the
+        // accumulated scripts still owe a sweep of the committed prefix below
+        // it. They get that sweep when the restarted scan's forward pipeline
+        // drains. `swept_awaiting_commit` is NOT kept as a receipt candidate:
+        // the commit that would have proven those sweeps complete was just
+        // discarded, so its content stays owed via `pending_sweep` and the
+        // held copy would only clear entries a commit never certified.
+        self.swept_awaiting_commit.clear();
     }
 
     async fn load_filters(
@@ -657,30 +703,31 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
     pub(super) async fn try_process_batch(&mut self) -> SyncResult<Vec<SyncEvent>> {
         let mut events = Vec::new();
 
-        // Phase 0: Seed a recovered pending sweep into the lowest active
+        // Phase 0: Seed the RECOVERED pending sweep into the lowest active
         // batch. Feeding the scripts through `add_scripts_for_wallet` hands
         // them to the existing commit-time cascade — forward rescan of this
-        // and later batches, then the backward sweep over the committed
-        // range — so an interrupted session's obligation is honored by the
-        // same fixpoint that handles freshly derived scripts. Idempotent per
-        // batch via `pending_seeded_into`; the durable set is only cleared
-        // when the seeded batch COMMITS (see `try_commit_batches`).
-        if !self.pending_sweep.is_empty() {
-            if let Some((&lowest_start, _)) = self.active_batches.first_key_value() {
-                if self.pending_seeded_into != Some(lowest_start) {
-                    tracing::info!(
-                        wallets = self.pending_sweep.len(),
-                        scripts = self.pending_sweep.values().map(|s| s.len()).sum::<usize>(),
-                        batch_start = lowest_start,
-                        "Seeding recovered pending script sweep into the lowest active batch"
-                    );
-                    let pending = self.pending_sweep.clone();
-                    if let Some(batch) = self.active_batches.get_mut(&lowest_start) {
-                        for (wallet_id, scripts) in pending {
-                            batch.add_scripts_for_wallet(wallet_id, scripts);
-                        }
-                    }
-                    self.pending_seeded_into = Some(lowest_start);
+        // and later batches, backward accumulation at the manager, then the
+        // coalesced sweep when the pipeline drains — so an interrupted
+        // session's obligation is honored by the same fixpoint that handles
+        // freshly derived scripts. Seeding is resume-only (the drain empties
+        // `recovered_pending`): live `pending_sweep` entries are already
+        // riding the in-memory cascade, and re-seeding them per batch would
+        // rescan every pending script once per commit. The durable set is
+        // only cleared by a commit that certifies the coalesced sweep (see
+        // `try_commit_batches`); a crash between seeding and that commit
+        // recovers the scripts again at the next startup.
+        if !self.recovered_pending.is_empty() && !self.active_batches.is_empty() {
+            let pending = std::mem::take(&mut self.recovered_pending);
+            let lowest_start = *self.active_batches.first_key_value().expect("non-empty").0;
+            tracing::info!(
+                wallets = pending.len(),
+                scripts = pending.values().map(|s| s.len()).sum::<usize>(),
+                batch_start = lowest_start,
+                "Seeding recovered pending script sweep into the lowest active batch"
+            );
+            if let Some(batch) = self.active_batches.get_mut(&lowest_start) {
+                for (wallet_id, scripts) in pending {
+                    batch.add_scripts_for_wallet(wallet_id, scripts);
                 }
             }
         }
@@ -706,6 +753,18 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
             && self.progress.committed_height() >= self.progress.filter_header_tip_height()
             && self.progress.committed_height() >= self.progress.target_height()
         {
+            // Every commit goes through `try_commit_batches`, where the last
+            // batch — examined when it alone remains and its end has reached
+            // the filter-header tip — either sweeps the accumulated backward
+            // scripts or stays uncommitted on the blocks its sweep found. A
+            // batch whose end is still below the tip commits without the
+            // sweep, but then `committed_height` is below the tip too and
+            // this branch is not taken. So no newly derived script is still
+            // waiting on its committed-range test here.
+            debug_assert!(
+                self.backward_scripts.is_empty(),
+                "backward scripts pending with no active batches"
+            );
             if self.state() == SyncState::Syncing {
                 self.set_state(SyncState::Synced);
             }
@@ -767,12 +826,12 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
                     // watch set that predates these scripts, and nothing else
                     // ever looks below `committed_height` again (#846). That
                     // backward sweep walks stored history — the expensive
-                    // direction — so defer it: accumulate the scripts here
-                    // and sweep once when the forward fixpoint is quiescent,
-                    // instead of re-walking the committed range on every
-                    // derivation round.
-                    if let Some(batch) = self.active_batches.get_mut(&batch_start) {
-                        batch.accumulate_backward_scripts(scripts_by_wallet);
+                    // direction — so defer it: accumulate the scripts at the
+                    // manager level, across batch commits, and sweep below.
+                    for (wallet_id, scripts) in scripts_by_wallet {
+                        self.backward_scripts.entry(wallet_id).or_default().extend(scripts);
+                    }
+                    if let Some(batch) = self.active_batches.get(&batch_start) {
                         if batch.pending_blocks() > 0 {
                             // Forward rescan found blocks; converge the
                             // forward direction first.
@@ -781,17 +840,35 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
                     }
                 }
 
-                // Forward direction quiescent: one combined backward sweep
-                // over the committed range with everything accumulated. Hits
-                // attribute to this batch, so scripts their processing
-                // derives re-enter through `collected_scripts` above and
-                // only genuinely new scripts get a follow-up sweep.
-                let backward_scripts = self
-                    .active_batches
-                    .get_mut(&batch_start)
-                    .map(|b| b.take_backward_scripts())
-                    .unwrap_or_default();
-                if !backward_scripts.is_empty() {
+                // The backward sweep waits for the forward pipeline to drain:
+                // it runs only when this batch is the last one active and no
+                // lookahead batch can be created past it. Commits before that
+                // point leave the accumulated scripts in place, so a sync's
+                // script-carrying commits share one walk of the stored
+                // history — plus one walk per follow-up round whose block
+                // processing derives genuinely new scripts — instead of
+                // walking it once per commit. Hits attribute to this batch,
+                // so scripts their processing derives re-enter through
+                // `collected_scripts` above and only genuinely new scripts
+                // get a follow-up sweep.
+                let forward_drained = self.active_batches.len() == 1
+                    && self.active_batches.get(&batch_start).is_some_and(|b| {
+                        b.end_height() >= self.progress.filter_header_tip_height()
+                    });
+                if forward_drained && !self.backward_scripts.is_empty() {
+                    let backward_scripts = std::mem::take(&mut self.backward_scripts);
+                    // Hold the swept scripts until this batch's COMMIT — the
+                    // receipt the durable pending-sweep set is cleared
+                    // against. The sweep only runs on the sole remaining
+                    // batch, so the next commit is the proof its whole
+                    // fixpoint (including blocks the sweep re-downloads)
+                    // completed.
+                    for (wallet_id, scripts) in &backward_scripts {
+                        self.swept_awaiting_commit
+                            .entry(*wallet_id)
+                            .or_default()
+                            .extend(scripts.iter().cloned());
+                    }
                     events
                         .extend(self.rescan_committed_range(batch_start, &backward_scripts).await?);
 
@@ -814,17 +891,21 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
             // wallets are never touched.
             let batch = self.active_batches.remove(&batch_start).unwrap();
 
-            // A commit is the proof the batch's whole rescan cascade —
-            // forward, backward, and every block those sweeps re-downloaded —
-            // completed. Only now may its scripts leave the durable
-            // pending-sweep set; clearing any earlier would lose the
-            // obligation to a crash mid-cascade.
-            if !batch.retired_scripts().is_empty() && !self.pending_sweep.is_empty() {
+            // A commit is the proof that every script the coalesced
+            // committed-range sweep has taken (`swept_awaiting_commit`)
+            // finished its whole cascade — forward, backward, and every
+            // block those sweeps re-downloaded. Only now may those scripts
+            // leave the durable pending-sweep set; clearing any earlier
+            // would lose the obligation to a crash mid-cascade. An
+            // intermediate commit whose backward work is still deferred in
+            // `backward_scripts` clears nothing: its scripts were never
+            // taken by a sweep, so they are not in the held set.
+            if !self.swept_awaiting_commit.is_empty() && !self.pending_sweep.is_empty() {
                 let mut pending_changed = false;
-                for (wallet_id, retired) in batch.retired_scripts() {
+                for (wallet_id, swept) in &self.swept_awaiting_commit {
                     if let Some(pending) = self.pending_sweep.get_mut(wallet_id) {
                         let before = pending.len();
-                        pending.retain(|s| !retired.contains(s));
+                        pending.retain(|s| !swept.contains(s));
                         pending_changed |= pending.len() != before;
                         if pending.is_empty() {
                             self.pending_sweep.remove(wallet_id);
@@ -835,9 +916,7 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
                     self.persist_pending_sweep().await;
                 }
             }
-            if self.pending_seeded_into == Some(batch_start) {
-                self.pending_seeded_into = None;
-            }
+            self.swept_awaiting_commit.clear();
             let end = batch.end_height();
             if end > self.progress.committed_height() {
                 self.progress.update_committed_height(end);
@@ -1315,10 +1394,13 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
     /// matching blocks are re-downloaded, via the same
     /// `track_for_new_scripts` path `rescan_batch` uses.
     ///
-    /// Matched blocks attribute to the committing batch at `batch_start`:
-    /// its `pending_blocks` accounting defers the commit, and scripts their
-    /// processing derives collect into that batch, so the existing
-    /// commit-time fixpoint loop covers the backward direction too.
+    /// Called by `try_commit_batches` once the forward pipeline has drained,
+    /// with the scripts accumulated in `backward_scripts` across every
+    /// commit since the previous sweep. Matched blocks attribute to the
+    /// committing batch at `batch_start`: its `pending_blocks` accounting
+    /// defers the commit, and scripts their processing derives collect into
+    /// that batch, so the existing commit-time fixpoint loop covers the
+    /// backward direction too.
     ///
     /// Deliberately matches only `new_scripts` — not the wallets' bare
     /// filter elements — since those were already watched when the range
@@ -1353,11 +1435,13 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
             return Ok(vec![]);
         }
 
+        self.committed_range_sweeps += 1;
         tracing::info!(
-            "Rescan committed filters ({}-{}) for new scripts across {} wallets",
+            "Rescan committed filters ({}-{}) for new scripts across {} wallets (sweep #{})",
             range_start,
             range_end,
-            wallet_queries.len()
+            wallet_queries.len(),
+            self.committed_range_sweeps
         );
 
         let mut block_to_wallets: BTreeMap<FilterMatchKey, BTreeSet<WalletId>> = BTreeMap::new();

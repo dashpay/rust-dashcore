@@ -625,9 +625,10 @@ async fn test_block_winner_emits_swept_event_naming_the_released_outpoints() {
                 wallet_id: wid,
                 txids,
                 superseded_by,
+                winner_mined_height,
                 released_outpoints,
                 ..
-            } => Some((wid, txids, superseded_by, released_outpoints)),
+            } => Some((wid, txids, superseded_by, winner_mined_height, released_outpoints)),
             _ => None,
         })
         .unwrap_or_else(|| panic!("a sweep must be emitted, got {:?}", events));
@@ -635,7 +636,122 @@ async fn test_block_winner_emits_swept_event_naming_the_released_outpoints() {
     assert_eq!(swept.0, &wallet_id);
     assert_eq!(swept.1, &vec![loser.txid()], "the beaten transaction is named");
     assert_eq!(swept.2, &winner.txid(), "attributed to the transaction that beat it");
-    assert_eq!(swept.3, &vec![coin_b], "only the coin the winner did not take is released");
+    assert_eq!(
+        swept.3,
+        &Some(101),
+        "a block-context sweep must carry the winner's mined height — the height of \
+         the block whose processing triggered the sweep, not None and not any other \
+         height the manager has seen"
+    );
+    assert_eq!(swept.4, &vec![coin_b], "only the coin the winner did not take is released");
+}
+
+/// The mempool emission site's counterpart to the block test above, pinning
+/// the other half of `winner_mined_height`'s contract: a sweep triggered by
+/// an InstantSend-locked winner that has not been mined carries `None`. This
+/// is the distinction the field exists to make — a consumer retiring durable
+/// records of the swept spends can anchor a block-context sweep to the
+/// winner's height, while an IS-locked winner has no mining deadline, so
+/// conflating the two (a height where there is none, or vice versa) would
+/// let those records be retired while the conflict is still unmined.
+#[tokio::test]
+async fn test_is_locked_mempool_winner_sweeps_with_no_mined_height() {
+    let (mut manager, wallet_id, addr) = setup_manager_with_wallet();
+
+    // Same shape as the block test: one funding transaction pays us twice so
+    // the loser spends a coin the winner does not.
+    let funding = Transaction {
+        version: 2,
+        lock_time: 0,
+        input: vec![TxIn {
+            previous_output: OutPoint {
+                txid: Txid::from_byte_array([0x6a; 32]),
+                vout: 0,
+            },
+            script_sig: ScriptBuf::new(),
+            sequence: u32::MAX,
+            witness: Witness::default(),
+        }],
+        output: vec![
+            TxOut {
+                value: 500_000,
+                script_pubkey: addr.script_pubkey(),
+            },
+            TxOut {
+                value: 400_000,
+                script_pubkey: addr.script_pubkey(),
+            },
+        ],
+        special_transaction_payload: None,
+    };
+    let funding_block = make_block(vec![funding.clone()], 0x6a, 2000);
+    let wallets = BTreeSet::from([wallet_id]);
+    manager
+        .process_block_for_wallets(&funding_block, funding_block.block_hash(), 100, &wallets)
+        .await;
+
+    let coin_a = OutPoint {
+        txid: funding.txid(),
+        vout: 0,
+    };
+    let coin_b = OutPoint {
+        txid: funding.txid(),
+        vout: 1,
+    };
+    let spend = |inputs: Vec<OutPoint>, value: u64| Transaction {
+        version: 2,
+        lock_time: 0,
+        input: inputs
+            .into_iter()
+            .map(|previous_output| TxIn {
+                previous_output,
+                script_sig: ScriptBuf::new(),
+                sequence: u32::MAX,
+                witness: Witness::default(),
+            })
+            .collect(),
+        output: vec![TxOut {
+            value,
+            script_pubkey: addr.script_pubkey(),
+        }],
+        special_transaction_payload: None,
+    };
+
+    let loser = spend(vec![coin_a, coin_b], 800_000);
+    manager.process_mempool_transaction(&loser, None).await;
+
+    let mut rx = manager.subscribe_events();
+
+    // The winner arrives off-chain with an InstantSend lock — final enough
+    // to sweep the loser, but not mined anywhere.
+    let winner = spend(vec![coin_a], 400_000);
+    manager.process_mempool_transaction(&winner, Some(dummy_instant_lock(winner.txid()))).await;
+
+    let events = drain_events(&mut rx);
+    let swept = events
+        .iter()
+        .find_map(|event| match event {
+            WalletEvent::TransactionsSwept {
+                wallet_id: wid,
+                txids,
+                superseded_by,
+                winner_mined_height,
+                released_outpoints,
+                ..
+            } => Some((wid, txids, superseded_by, winner_mined_height, released_outpoints)),
+            _ => None,
+        })
+        .unwrap_or_else(|| panic!("a sweep must be emitted, got {:?}", events));
+
+    assert_eq!(swept.0, &wallet_id);
+    assert_eq!(swept.1, &vec![loser.txid()], "the beaten transaction is named");
+    assert_eq!(swept.2, &winner.txid(), "attributed to the transaction that beat it");
+    assert_eq!(
+        swept.3, &None,
+        "an IS-locked winner is not mined: fabricating a height here would give the \
+         consumer a finality horizon the winner does not have"
+    );
+    assert_eq!(swept.4, &vec![coin_b], "only the coin the winner did not take is released");
 }
 
 #[tokio::test]
