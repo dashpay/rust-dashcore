@@ -183,7 +183,8 @@ impl<
                 self.tracker.record_processed(*height, *block_hash, wallets);
 
                 // Check if this block is part of our tracked blocks
-                if let Some((_, batch_start)) = self.tracker.finish_in_flight(block_hash) {
+                let in_flight = self.tracker.finish_in_flight(block_hash);
+                if let Some((_, batch_start)) = in_flight {
                     if let Some(batch) = self.active_batches.get_mut(&batch_start) {
                         batch.decrement_pending_blocks();
                         tracing::debug!(
@@ -194,17 +195,15 @@ impl<
                             batch.pending_blocks()
                         );
                     }
+                }
 
-                    // Collect per-wallet new scripts for deferred rescan at commit time.
-                    for (wallet_id, scripts) in new_scripts {
-                        if scripts.is_empty() {
-                            continue;
-                        }
-                        if let Some(batch) = self.active_batches.get_mut(&batch_start) {
-                            batch.add_scripts_for_wallet(*wallet_id, scripts.iter().cloned());
-                        }
-                    }
+                // Deliberately outside the in-flight arm: that record is
+                // consumed by the first delivery of a block and a block is
+                // delivered more than once, so collecting scripts there
+                // discards everything the later deliveries derive.
+                let derived = self.collect_new_scripts(*height, new_scripts);
 
+                if in_flight.is_some() || derived > 0 {
                     return self.try_process_batch().await;
                 }
             }

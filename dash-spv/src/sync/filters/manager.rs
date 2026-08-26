@@ -566,18 +566,18 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
             && self.progress.committed_height() >= self.progress.filter_header_tip_height()
             && self.progress.committed_height() >= self.progress.target_height()
         {
-            // Every commit goes through `try_commit_batches`, where the last
-            // batch — examined when it alone remains and its end has reached
-            // the filter-header tip — either sweeps the accumulated backward
-            // scripts or stays uncommitted on the blocks its sweep found. A
-            // batch whose end is still below the tip commits without the
-            // sweep, but then `committed_height` is below the tip too and
-            // this branch is not taken. So no newly derived script is still
-            // waiting on its committed-range test here.
-            debug_assert!(
-                self.backward_scripts.is_empty(),
-                "backward scripts pending with no active batches"
-            );
+            // `try_commit_batches` drains the accumulator on the last batch,
+            // so it is normally empty here. It is not guaranteed to be: a
+            // block delivered after its batch committed still derives scripts,
+            // and `collect_new_scripts` has no active batch to give them to.
+            // Those wait for the next batch commit to sweep them — delayed
+            // rather than lost, which is what the old routing did with them.
+            if !self.backward_scripts.is_empty() {
+                tracing::debug!(
+                    "{} wallet(s) carry backward scripts awaiting the next commit's sweep",
+                    self.backward_scripts.len()
+                );
+            }
             if self.state() == SyncState::Syncing {
                 self.set_state(SyncState::Synced);
             }
@@ -650,6 +650,18 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
                             // forward direction first.
                             break;
                         }
+                    }
+                }
+
+                // Before committing, close the loop on wallet state rather
+                // than on notifications: anything the wallet watches that this
+                // batch never matched gets matched now.
+                events.extend(self.reconcile_untested_scripts(batch_start).await?);
+                if let Some(batch) = self.active_batches.get(&batch_start) {
+                    if batch.pending_blocks() > 0 {
+                        // Reconciliation found blocks; converge before
+                        // committing.
+                        break;
                     }
                 }
 
@@ -837,6 +849,114 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
         Ok(events)
     }
 
+    /// Route scripts derived while processing the block at `height` to
+    /// whatever will actually re-test them.
+    ///
+    /// The obvious target is the batch the block was downloaded for, and that
+    /// is what the `BlockProcessed` handler used to use. It loses scripts: the
+    /// in-flight record is keyed by block hash and removed on the first
+    /// delivery, but a block is delivered more than once — a rescan re-queues
+    /// blocks the forward scan already handed over, and on a mainnet restore
+    /// 2 904 of 3 039 relevant heights arrive twice or more. Every later
+    /// delivery found no record, so the scripts it derived reached no batch, no
+    /// later batch, and no backward sweep, and nothing matched them again.
+    ///
+    /// Routing by height is what those scripts actually need: the batch whose
+    /// range contains the block still holds that range's filters and has not
+    /// committed, so its rescan re-tests them there and in every later batch.
+    /// Only when no active batch covers the height do they fall back to the
+    /// backward accumulator.
+    ///
+    /// Returns how many scripts were routed.
+    pub(super) fn collect_new_scripts(
+        &mut self,
+        height: u32,
+        new_scripts: &BTreeMap<WalletId, Vec<ScriptBuf>>,
+    ) -> usize {
+        let target = self
+            .active_batches
+            .range(..=height)
+            .next_back()
+            .filter(|(_, batch)| batch.end_height() >= height)
+            .map(|(&start, _)| start);
+
+        let mut routed = 0;
+        for (wallet_id, scripts) in new_scripts {
+            if scripts.is_empty() {
+                continue;
+            }
+            routed += scripts.len();
+            match target.and_then(|start| self.active_batches.get_mut(&start)) {
+                Some(batch) => batch.add_scripts_for_wallet(*wallet_id, scripts.iter().cloned()),
+                // No active batch covers the height: its range has already
+                // committed, so only the committed-range sweep can still test
+                // these scripts against it.
+                None => self
+                    .backward_scripts
+                    .entry(*wallet_id)
+                    .or_default()
+                    .extend(scripts.iter().cloned()),
+            }
+        }
+        routed
+    }
+
+    /// Re-test anything the wallet watches that this batch has never been
+    /// matched against, before letting it commit.
+    ///
+    /// The batch is normally told what to re-test by the `new_scripts` a block
+    /// carries when it is applied. That is a one-shot notification, and one
+    /// that goes astray leaves no trace: the wallet keeps the derived address,
+    /// so no later block reports it as new and the batch commits without ever
+    /// matching it. A whole mixing session was lost that way — 27 scripts, one
+    /// unmatched block, 2 000 020 sat.
+    ///
+    /// Closing the loop on state instead of on events does not depend on an
+    /// event arriving. It is still bounded by the scan query: a script the
+    /// wallet has dropped from `scan_script_pubkeys_for` is not re-tested.
+    async fn reconcile_untested_scripts(&mut self, batch_start: u32) -> SyncResult<Vec<SyncEvent>> {
+        let Some(batch) = self.active_batches.get(&batch_start) else {
+            return Ok(vec![]);
+        };
+        let wallets: Vec<WalletId> = batch.scanned_wallets().keys().copied().collect();
+        if wallets.is_empty() {
+            return Ok(vec![]);
+        }
+
+        let mut untested: HashMap<WalletId, HashSet<ScriptBuf>> = HashMap::new();
+        {
+            let wallet = self.wallet.read().await;
+            let Some(batch) = self.active_batches.get(&batch_start) else {
+                return Ok(vec![]);
+            };
+            for wallet_id in &wallets {
+                let monitored = wallet.scan_script_pubkeys_for(wallet_id);
+                let missing: HashSet<ScriptBuf> =
+                    batch.untested(wallet_id, &monitored).cloned().collect();
+                if !missing.is_empty() {
+                    untested.insert(*wallet_id, missing);
+                }
+            }
+        }
+        if untested.is_empty() {
+            return Ok(vec![]);
+        }
+
+        tracing::debug!(
+            "Reconcile batch {}: {} script(s) the wallet watches had never been matched here",
+            batch_start,
+            untested.values().map(HashSet::len).sum::<usize>(),
+        );
+        // Same accounting as any other newly derived script: hits charge to
+        // this batch, and the scripts join the backward accumulator so the
+        // already-committed range gets them too.
+        let events = self.rescan_batch(batch_start, &untested).await?;
+        for (wallet_id, scripts) in untested {
+            self.backward_scripts.entry(wallet_id).or_default().extend(scripts);
+        }
+        Ok(events)
+    }
+
     /// Rescan a specific batch for newly discovered scriptPubKeys, attributed
     /// per wallet so each new script is matched only against the filters
     /// relevant to its owning wallet.
@@ -860,6 +980,18 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
             new_scripts.len()
         );
 
+        // Marked before the empty-filters return, as `scan_batch` does: a batch
+        // with no filters has vacuously tested them, and leaving them untested
+        // makes every later commit attempt rescan the same set.
+        if let Some(batch) = self.active_batches.get_mut(&batch_start) {
+            for (wallet_id, scripts) in new_scripts {
+                batch.mark_tested(*wallet_id, scripts.iter().cloned());
+            }
+        }
+
+        let Some(batch) = self.active_batches.get(&batch_start) else {
+            return Ok(vec![]);
+        };
         if batch.filters().is_empty() {
             return Ok(vec![]);
         }
@@ -1022,6 +1154,9 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
 
         if let Some(batch) = self.active_batches.get_mut(&batch_start) {
             batch.set_scanned_wallets(scanned_wallets);
+            for state in &wallet_states {
+                batch.mark_tested(state.id, state.scripts.iter().cloned());
+            }
         }
 
         if filters_empty {
@@ -2971,6 +3106,135 @@ mod tests {
 
         // After take, should be empty
         assert!(batch.take_collected_scripts().is_empty());
+    }
+
+    /// A block reaches the wallet more than once — a rescan re-queues what the
+    /// forward scan already delivered — and only the first delivery finds its
+    /// in-flight record. Scripts derived by every later delivery used to be
+    /// dropped, taking a whole mixing session with them. They must reach the
+    /// batch whose range holds the block, which still has the filters that
+    /// would match them, or the backward accumulator when that range has
+    /// already committed.
+    #[tokio::test]
+    async fn test_new_scripts_route_by_height_with_no_in_flight_record() {
+        use crate::sync::filters::batch::FiltersBatch;
+        use dashcore::Network;
+
+        let mut manager = create_test_manager().await;
+        manager.active_batches.insert(0, FiltersBatch::new(0, 4999, HashMap::new()));
+        manager.active_batches.insert(5000, FiltersBatch::new(5000, 9999, HashMap::new()));
+
+        let wallet_id: WalletId = [7; 32];
+        let covered = Address::dummy(Network::Testnet, 1).script_pubkey();
+        let below = Address::dummy(Network::Testnet, 2).script_pubkey();
+
+        let (tx, _rx) = unbounded_channel();
+        let requests = RequestSender::new(tx);
+        let block_processed = |height: u32, script: &ScriptBuf| SyncEvent::BlockProcessed {
+            block_hash: Header::dummy(height).block_hash(),
+            height,
+            wallets: BTreeSet::from([wallet_id]),
+            new_scripts: BTreeMap::from([(wallet_id, vec![script.clone()])]),
+            confirmed_txids: vec![],
+        };
+
+        // Nothing is in flight: every delivery after the first looks like this.
+        manager.handle_sync_event(&block_processed(6000, &covered), &requests).await.unwrap();
+
+        let lower = manager.active_batches.get_mut(&0).unwrap().take_collected_scripts();
+        assert!(lower.is_empty(), "scripts must not land in a batch that cannot match them");
+        let covering = manager.active_batches.get_mut(&5000).unwrap().take_collected_scripts();
+        assert!(covering.get(&wallet_id).is_some_and(|s| s.contains(&covered)));
+        assert!(manager.backward_scripts.is_empty());
+
+        // Below every active batch the range has committed, so only the
+        // backward sweep can still test these.
+        manager.active_batches.remove(&0);
+        manager.handle_sync_event(&block_processed(120, &below), &requests).await.unwrap();
+        assert!(manager.active_batches.get_mut(&5000).unwrap().take_collected_scripts().is_empty());
+        assert!(manager.backward_scripts.get(&wallet_id).is_some_and(|s| s.contains(&below)));
+    }
+
+    /// A batch with no filters has nothing to test against, so `rescan_batch`
+    /// returns early — but it must still record the scripts as tested.
+    /// Otherwise reconciliation hands it the same set on every commit attempt
+    /// and the batch never converges.
+    #[tokio::test]
+    async fn test_rescan_of_an_empty_batch_still_marks_scripts_tested() {
+        use crate::sync::filters::batch::FiltersBatch;
+
+        let mut manager = create_test_manager().await;
+        manager.active_batches.insert(0, FiltersBatch::new(0, 99, HashMap::new()));
+
+        let wallet_id: WalletId = [5; 32];
+        let script = Address::dummy(Network::Testnet, 21).script_pubkey();
+        let scripts = HashMap::from([(wallet_id, HashSet::from([script.clone()]))]);
+
+        let events = manager.rescan_batch(0, &scripts).await.unwrap();
+        assert!(events.is_empty(), "an empty batch cannot match anything");
+
+        let batch = manager.active_batches.get(&0).unwrap();
+        assert_eq!(
+            batch.untested(&wallet_id, std::slice::from_ref(&script)).count(),
+            0,
+            "the script must not come back as untested on the next commit attempt"
+        );
+    }
+
+    /// A batch must not commit while the wallet watches an address it has never
+    /// matched, however that came about. Here the batch is scanned with a query
+    /// missing one address and is never told about it afterwards — the shape of
+    /// a lost `new_scripts` notification. Reconciliation asks the wallet
+    /// directly and finds the block.
+    #[tokio::test]
+    async fn test_commit_reconciles_scripts_the_batch_was_never_told_about() {
+        use crate::sync::filters::batch::FiltersBatch;
+
+        let wallet_id: WalletId = [1; 32];
+        let watched = Address::dummy(Network::Testnet, 11);
+        let scanned = Address::dummy(Network::Testnet, 12);
+
+        let mut multi = MultiMockWallet::new();
+        multi.insert_wallet(
+            wallet_id,
+            MockWalletState {
+                addresses: vec![scanned.clone(), watched.clone()],
+                synced_height: 0,
+                last_processed_height: 0,
+                account_generation: 0,
+            },
+        );
+        // The scan query the batch is given omits `watched`.
+        multi.set_scan_addresses(wallet_id, vec![scanned.clone()]);
+        let mut manager = create_multi_test_manager(Arc::new(RwLock::new(multi))).await;
+        manager.set_state(SyncState::Syncing);
+
+        // One filter, matching only the address the scan does not carry.
+        let (key, filter) = filter_for_address(40, &watched);
+        let mut batch = FiltersBatch::new(0, 99, HashMap::from([(key.clone(), filter)]));
+        batch.mark_verified();
+        manager.active_batches.insert(0, batch);
+        manager.progress.update_stored_height(99);
+        manager.progress.update_filter_header_tip_height(99);
+
+        let events = manager.scan_batch(0).await.unwrap();
+        assert!(events.is_empty(), "the scan query cannot match what it does not carry");
+
+        // The wallet now watches both, and nothing ever told the batch.
+        manager.wallet.write().await.set_scan_addresses(wallet_id, vec![scanned, watched]);
+
+        let events = manager.try_commit_batches().await.unwrap();
+        let queued = events.iter().any(|e| match e {
+            SyncEvent::BlocksNeeded {
+                blocks,
+            } => blocks.contains_key(&key),
+            _ => false,
+        });
+        assert!(queued, "reconciliation must match the untested address before committing");
+        assert!(
+            manager.active_batches.contains_key(&0),
+            "the batch must wait for the block it just found"
+        );
     }
 
     #[tokio::test]
