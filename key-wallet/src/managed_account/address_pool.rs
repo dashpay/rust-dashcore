@@ -470,7 +470,8 @@ impl AddressPool {
         const MAX_REPAIR_INDEX: u32 = 1_000_000;
         if index > MAX_REPAIR_INDEX {
             return Err(Error::InvalidParameter(format!(
-                "refusing address-pool hole repair to index {index}: exceeds                  the {MAX_REPAIR_INDEX} repair bound (corrupt watermark?)"
+                "refusing address-pool hole repair to index {index}: exceeds the \
+                 {MAX_REPAIR_INDEX} repair bound (corrupt watermark?)"
             )));
         }
         let mut filled = 0u32;

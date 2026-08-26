@@ -749,12 +749,14 @@ async fn interrupted_sweep_is_replayed_after_restart() {
 /// projected as-is into every persistence mirror by the emitted events.
 /// Marking G-1 used extends the window past G+10, the commit-time rescan
 /// (#820) re-matches the block, and re-processing runs `update_utxos`
-/// unconditionally — the account's UTXO set self-heals. But
-/// `confirm_transaction` only re-emits (and only mutates) the record when
-/// its *context* changed, so neither the in-memory record nor any event
-/// carries the correction. On-device this is the CoinJoin-funded-send shape:
-/// the store keeps `netAmount` = full input value with the change TXO row
-/// missing, and an engine reload from that store makes the funds vanish.
+/// unconditionally — the account's UTXO set self-heals. Before the fix,
+/// `confirm_transaction` re-emitted (and mutated) the record only when its
+/// *context* changed, so neither the in-memory record nor any event carried
+/// the correction; on-device that was the CoinJoin-funded-send shape — the
+/// store kept `netAmount` = full input value with the change TXO row
+/// missing, and an engine reload from that store made the funds vanish.
+/// The test pins the fixed behavior: re-processing corrects the record's
+/// net amount and output details, and a corrective event re-emits it.
 #[tokio::test]
 async fn born_wrong_record_is_corrected_by_gap_rescan() {
     use dashcore::ScriptBuf;
