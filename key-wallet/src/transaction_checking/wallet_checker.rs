@@ -3936,7 +3936,7 @@ mod tests {
             );
         }
         {
-            let mut account =
+            let account =
                 ctx.managed_wallet.first_bip44_managed_account_mut().expect("bip44 account");
             assert!(
                 account.take_born_spent_outputs().is_empty(),
