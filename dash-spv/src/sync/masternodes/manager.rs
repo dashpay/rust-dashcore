@@ -15,7 +15,7 @@ use super::pipeline::MnListDiffPipeline;
 use crate::error::{SyncError, SyncResult};
 use crate::network::RequestSender;
 use crate::storage::{
-    BlockHeaderStorage, MasternodeState, MasternodeStateStorage, PersistentMasternodeStateStorage,
+    BlockHeaderStorage, MasternodeStateStorage, PersistentMasternodeStateStorage,
 };
 use crate::sync::{MasternodesProgress, SyncEvent, SyncManager, SyncState};
 use dashcore::network::message_qrinfo::QRInfo;
@@ -352,25 +352,8 @@ impl<H: BlockHeaderStorage> MasternodesManager<H> {
         let Some(storage) = &self.state_storage else {
             return;
         };
-        let engine_state = {
-            let engine = self.engine.read().await;
-            match serde_json::to_vec(&*engine) {
-                Ok(bytes) => bytes,
-                Err(e) => {
-                    tracing::warn!("Could not serialize masternode engine at {height}: {e}");
-                    return;
-                }
-            }
-        };
-        let state = MasternodeState {
-            last_height: height,
-            engine_state,
-            last_update: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_secs())
-                .unwrap_or(0),
-        };
-        if let Err(e) = storage.write().await.store_masternode_state(&state).await {
+        let engine = self.engine.read().await;
+        if let Err(e) = storage.write().await.store_engine(&engine, height).await {
             tracing::warn!("Could not persist masternode state at {height}: {e}");
         } else {
             tracing::debug!("Persisted masternode state at height {height}");
