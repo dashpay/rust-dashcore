@@ -347,87 +347,94 @@ impl TransactionBuilder {
         // Add special payload size if present
         // Based on dashsync payload size calculations
         if let Some(ref payload) = self.special_payload {
-            let payload_size = match payload {
-                TransactionPayload::CoinbasePayloadType(p) => {
-                    // version (2) + height (4) + merkleRootMasternodeList (32) + merkleRootQuorums (32)
-                    let mut size = 2 + 4 + 32 + 32;
-                    // Optional fields for newer versions
-                    if p.best_cl_height.is_some() {
-                        size += 4; // best_cl_height
-                        size += 96; // best_cl_signature (BLS)
-                    }
-                    if p.asset_locked_amount.is_some() {
-                        size += 8; // asset_locked_amount
-                    }
-                    size
-                }
-                TransactionPayload::ProviderRegistrationPayloadType(p) => {
-                    // Base payload + signature
-                    // version (2) + type (2) + mode (2) + collateralHash (32) + collateralIndex (4)
-                    // + ipAddress (16) + port (2) + KeyIDOwner (20) + KeyIDOperator (20) + KeyIDVoting (20)
-                    // + operatorReward (2) + scriptPayoutSize + scriptPayout + inputsHash (32)
-                    // + payloadSigSize (1-9) + payloadSig (up to 75)
-                    let script_size = p.script_payout.len();
-                    let base = 2
-                        + 2
-                        + 2
-                        + 32
-                        + 4
-                        + 16
-                        + 2
-                        + 20
-                        + 20
-                        + 20
-                        + 2
-                        + varint_size(script_size)
-                        + script_size
-                        + 32;
-                    base + varint_size(75) + 75 // MAX_ECDSA_SIGNATURE_SIZE = 75
-                }
-                TransactionPayload::ProviderUpdateServicePayloadType(p) => {
-                    // version (2) + optionally mn_type (2) + proTxHash (32) + ipAddress (16) + port (2)
-                    // + scriptPayoutSize + scriptPayout + inputsHash (32) + payloadSig (96 for BLS)
-                    let script_size = p.script_payout.len();
-                    let mut size =
-                        2 + 32 + 16 + 2 + varint_size(script_size) + script_size + 32 + 96;
-                    if p.mn_type.is_some() {
-                        size += 2; // mn_type for BasicBLS version
-                    }
-                    // Platform fields for Evo masternodes
-                    if p.platform_node_id.is_some() {
-                        size += 20; // platform_node_id
-                        size += 2; // platform_p2p_port
-                        size += 2; // platform_http_port
-                    }
-                    size
-                }
-                TransactionPayload::ProviderUpdateRegistrarPayloadType(p) => {
-                    // version (2) + proTxHash (32) + mode (2) + PubKeyOperator (48) + KeyIDVoting (20)
-                    // + scriptPayoutSize + scriptPayout + inputsHash (32) + payloadSig (up to 75)
-                    let script_size = p.script_payout.len();
-                    2 + 32 + 2 + 48 + 20 + varint_size(script_size) + script_size + 32 + 75
-                }
-                TransactionPayload::ProviderUpdateRevocationPayloadType(_) => {
-                    // version (2) + proTxHash (32) + reason (2) + inputsHash (32) + payloadSig (96 for BLS)
-                    2 + 32 + 2 + 32 + 96
-                }
-                TransactionPayload::AssetLockPayloadType(p) => {
-                    // version (1) + creditOutputsCount + creditOutputs
-                    1 + varint_size(p.credit_outputs.len())
-                        + p.credit_outputs.len() * TX_OUTPUT_SIZE
-                }
-                TransactionPayload::AssetUnlockPayloadType(_p) => {
-                    // version (1) + index (8) + fee (4) + requestHeight (4) + quorumHash (32) + quorumSig (96)
-                    1 + 8 + 4 + 4 + 32 + 96
-                }
-                _ => 100, // Default estimate for unknown types
-            };
+            let payload_size = Self::estimated_payload_size(payload);
 
             // Add varint for payload length
             size += varint_size(payload_size) + payload_size;
         }
 
         size
+    }
+
+    /// Estimated serialized size of a special payload, as priced into the fee by
+    /// [`Self::calculate_base_size`]. Also the yardstick
+    /// [`Self::build_signed_reserved_with_payload_finalizer`] holds a finalized
+    /// payload against: the fee is fixed at selection time from the placeholder's
+    /// estimate, so a finalized payload may not estimate larger.
+    fn estimated_payload_size(payload: &TransactionPayload) -> usize {
+        match payload {
+            TransactionPayload::CoinbasePayloadType(p) => {
+                // version (2) + height (4) + merkleRootMasternodeList (32) + merkleRootQuorums (32)
+                let mut size = 2 + 4 + 32 + 32;
+                // Optional fields for newer versions
+                if p.best_cl_height.is_some() {
+                    size += 4; // best_cl_height
+                    size += 96; // best_cl_signature (BLS)
+                }
+                if p.asset_locked_amount.is_some() {
+                    size += 8; // asset_locked_amount
+                }
+                size
+            }
+            TransactionPayload::ProviderRegistrationPayloadType(p) => {
+                // Base payload + signature
+                // version (2) + type (2) + mode (2) + collateralHash (32) + collateralIndex (4)
+                // + ipAddress (16) + port (2) + KeyIDOwner (20) + KeyIDOperator (20) + KeyIDVoting (20)
+                // + operatorReward (2) + scriptPayoutSize + scriptPayout + inputsHash (32)
+                // + payloadSigSize (1-9) + payloadSig (up to 75)
+                let script_size = p.script_payout.len();
+                let base = 2
+                    + 2
+                    + 2
+                    + 32
+                    + 4
+                    + 16
+                    + 2
+                    + 20
+                    + 20
+                    + 20
+                    + 2
+                    + varint_size(script_size)
+                    + script_size
+                    + 32;
+                base + varint_size(75) + 75 // MAX_ECDSA_SIGNATURE_SIZE = 75
+            }
+            TransactionPayload::ProviderUpdateServicePayloadType(p) => {
+                // version (2) + optionally mn_type (2) + proTxHash (32) + ipAddress (16) + port (2)
+                // + scriptPayoutSize + scriptPayout + inputsHash (32) + payloadSig (96 for BLS)
+                let script_size = p.script_payout.len();
+                let mut size = 2 + 32 + 16 + 2 + varint_size(script_size) + script_size + 32 + 96;
+                if p.mn_type.is_some() {
+                    size += 2; // mn_type for BasicBLS version
+                }
+                // Platform fields for Evo masternodes
+                if p.platform_node_id.is_some() {
+                    size += 20; // platform_node_id
+                    size += 2; // platform_p2p_port
+                    size += 2; // platform_http_port
+                }
+                size
+            }
+            TransactionPayload::ProviderUpdateRegistrarPayloadType(p) => {
+                // version (2) + proTxHash (32) + mode (2) + PubKeyOperator (48) + KeyIDVoting (20)
+                // + scriptPayoutSize + scriptPayout + inputsHash (32) + payloadSig (up to 75)
+                let script_size = p.script_payout.len();
+                2 + 32 + 2 + 48 + 20 + varint_size(script_size) + script_size + 32 + 75
+            }
+            TransactionPayload::ProviderUpdateRevocationPayloadType(_) => {
+                // version (2) + proTxHash (32) + reason (2) + inputsHash (32) + payloadSig (96 for BLS)
+                2 + 32 + 2 + 32 + 96
+            }
+            TransactionPayload::AssetLockPayloadType(p) => {
+                // version (1) + creditOutputsCount + creditOutputs
+                1 + varint_size(p.credit_outputs.len()) + p.credit_outputs.len() * TX_OUTPUT_SIZE
+            }
+            TransactionPayload::AssetUnlockPayloadType(_p) => {
+                // version (1) + index (8) + fee (4) + requestHeight (4) + quorumHash (32) + quorumSig (96)
+                1 + 8 + 4 + 4 + 32 + 96
+            }
+            _ => 100, // Default estimate for unknown types
+        }
     }
 
     /// Select inputs, build the unsigned transaction, and reserve the chosen
@@ -772,6 +779,122 @@ impl TransactionBuilder {
                         reservations.release_if_owner(&reserved, token);
                     }
                 }
+                return Err(err);
+            }
+        };
+
+        let total_output: u64 = tx.output.iter().map(|out| out.value).sum();
+
+        Ok((tx, total_input.saturating_sub(total_output), reservation))
+    }
+
+    /// Like [`Self::build_signed_reserved`], but with a payload-finalization
+    /// seam between input selection and input signing, for special
+    /// transactions whose payload commits to the chosen inputs and is itself
+    /// signed — a ProUpServTx's `inputs_hash` + operator-BLS `payload_sig`
+    /// being the motivating case.
+    ///
+    /// The builder must be given a placeholder payload via
+    /// [`Self::set_special_payload`]: the same variant with every
+    /// selection-dependent field (inputs hash, payload signature) zeroed, so
+    /// coin selection prices the payload bytes into the fee. After selection
+    /// reserves the chosen inputs, `finalize_payload` receives the unsigned
+    /// transaction — inputs chosen and BIP-69 sorted, placeholder payload
+    /// still attached — and returns the finalized payload; the builder
+    /// installs it and only then computes each input's sighash, which covers
+    /// the finalized payload. Because that payload signature commits to the
+    /// input set, the input set is frozen from the finalizer on: there is no
+    /// fee-bump or input-substitution path for such a transaction.
+    ///
+    /// Fails without running the finalizer when no placeholder payload was
+    /// set, and fails after it when the finalized payload is a different
+    /// variant or estimates larger than the placeholder (the fee was fixed at
+    /// selection time, so growth would underpay the configured fee rate). On
+    /// any failure — finalizer error, guard, or signing — the reservation is
+    /// released owner-guarded, exactly as in [`Self::build_signed_reserved`].
+    pub async fn build_signed_reserved_with_payload_finalizer<S, P, F>(
+        self,
+        signer: &S,
+        path_resolver: P,
+        finalize_payload: F,
+    ) -> Result<(Transaction, u64, Option<ReservationToken>), BuilderError>
+    where
+        S: TransactionSigner + ?Sized + Sync,
+        P: Fn(Address) -> Option<DerivationPath> + Send,
+        F: FnOnce(&Transaction) -> Result<TransactionPayload, BuilderError> + Send,
+    {
+        if self.special_payload.is_none() {
+            return Err(BuilderError::InvalidData(
+                "payload finalizer requires a placeholder payload: call set_special_payload with \
+                 the same variant (selection-dependent fields zeroed) so selection prices its \
+                 bytes into the fee"
+                    .into(),
+            ));
+        }
+
+        let funding = self.funding.clone();
+        let (mut tx, inputs, reservation) = self.assemble_unsigned()?;
+        let total_input: u64 = inputs.iter().map(|utxo| utxo.value()).sum();
+        // Same owner-guarded release discipline as `build_signed_reserved`:
+        // a failure past this point leaves the inputs spendable, so free them
+        // for the next build instead of stranding them until the TTL backstop.
+        let reserved: Vec<OutPoint> = inputs.iter().map(|utxo| utxo.outpoint).collect();
+        fn release(
+            funding: &[(ReservationSet, HashSet<OutPoint>)],
+            reserved: &[OutPoint],
+            reservation: Option<ReservationToken>,
+        ) {
+            if let Some(token) = reservation {
+                for (reservations, _) in funding {
+                    reservations.release_if_owner(reserved, token);
+                }
+            }
+        }
+
+        let finalized = match finalize_payload(&tx) {
+            Ok(payload) => payload,
+            Err(err) => {
+                release(&funding, &reserved, reservation);
+                return Err(err);
+            }
+        };
+
+        // `assemble_unsigned` carries the placeholder into the transaction
+        // unchanged for every payload type (only an asset-lock drain rewrites
+        // one, and that variant has no selection-dependent fields to
+        // finalize). Guard rather than unwrap: this is library code.
+        let Some(placeholder) = tx.special_transaction_payload.as_ref() else {
+            release(&funding, &reserved, reservation);
+            return Err(BuilderError::InvalidData(
+                "placeholder payload missing from the assembled transaction".into(),
+            ));
+        };
+        if core::mem::discriminant(&finalized) != core::mem::discriminant(placeholder) {
+            release(&funding, &reserved, reservation);
+            return Err(BuilderError::InvalidData(
+                "finalized payload is a different variant than the placeholder the fee was \
+                 selected for"
+                    .into(),
+            ));
+        }
+        let placeholder_size = Self::estimated_payload_size(placeholder);
+        let finalized_size = Self::estimated_payload_size(&finalized);
+        if finalized_size > placeholder_size {
+            release(&funding, &reserved, reservation);
+            return Err(BuilderError::InvalidData(format!(
+                "finalized payload estimates {finalized_size} bytes, larger than the \
+                 {placeholder_size}-byte placeholder the fee was selected for"
+            )));
+        }
+        tx.special_transaction_payload = Some(finalized);
+
+        // Input sighashes cover the finalized payload (the legacy sighash
+        // consensus-encodes the whole transaction, payload included), so
+        // signing must come after the payload is installed.
+        let tx = match signer.sign_tx(tx, inputs, path_resolver).await {
+            Ok(tx) => tx,
+            Err(err) => {
+                release(&funding, &reserved, reservation);
                 return Err(err);
             }
         };
@@ -2126,5 +2249,242 @@ mod tests {
             }
             other => panic!("expected the asset-lock payload, got {other:?}"),
         }
+    }
+
+    /// Placeholder ProUpServTx payload with every selection-dependent field
+    /// zeroed, as a finalizer-seam caller would construct it before selection.
+    fn pro_up_serv_placeholder(script_payout: ScriptBuf) -> TransactionPayload {
+        use dashcore::blockdata::transaction::special_transaction::provider_update_service::ProviderUpdateServicePayload;
+        use dashcore::bls_sig_utils::BLSSignature;
+        use dashcore::hash_types::InputsHash;
+
+        TransactionPayload::ProviderUpdateServicePayloadType(ProviderUpdateServicePayload::new(
+            Some(0),
+            Txid::all_zeros(),
+            0x00000000000000000000ffff7f000001, // 127.0.0.1 mapped
+            19999,
+            script_payout,
+            InputsHash::all_zeros(),
+            None,
+            None,
+            None,
+            BLSSignature::from([0; 96]),
+        ))
+    }
+
+    #[tokio::test]
+    async fn payload_finalizer_installs_payload_before_input_signing() {
+        use dashcore::bls_sig_utils::BLSSignature;
+
+        let ctx = TestWalletContext::new_random();
+        let account =
+            ctx.wallet.accounts.standard_bip44_accounts.get(&0).expect("BIP44 account").clone();
+
+        let mut funds = ManagedCoreFundsAccount::dummy_bip44();
+        let a = Utxo::dummy(0x01, 600_000, 100, false, true);
+        let b = Utxo::dummy(0x02, 600_000, 100, false, true);
+        funds.utxos.insert(a.outpoint, a.clone());
+        funds.utxos.insert(b.outpoint, b.clone());
+
+        let (tx, fee, token) = TransactionBuilder::new()
+            .set_current_height(200)
+            .set_fee_rate(FeeRate::normal())
+            .add_funding(&mut funds, &account)
+            .set_change_address(Address::dummy(Network::Testnet, 1))
+            .set_special_payload(pro_up_serv_placeholder(ScriptBuf::new()))
+            .build_signed_reserved_with_payload_finalizer(
+                &ctx.wallet,
+                |_addr| Some(DerivationPath::master()),
+                |unsigned| {
+                    // The finalizer sees the selected inputs (unsigned) and the
+                    // placeholder payload, exactly what inputs_hash + a payload
+                    // signature need.
+                    assert!(!unsigned.input.is_empty(), "inputs are selected before finalizing");
+                    assert!(
+                        unsigned.input.iter().all(|input| input.script_sig.is_empty()),
+                        "inputs must not be signed before the payload is finalized"
+                    );
+                    let Some(TransactionPayload::ProviderUpdateServicePayloadType(placeholder)) =
+                        &unsigned.special_transaction_payload
+                    else {
+                        panic!("placeholder payload must still be attached");
+                    };
+                    let mut finalized = placeholder.clone();
+                    finalized.inputs_hash = unsigned.hash_inputs();
+                    finalized.payload_sig = BLSSignature::from([0xAB; 96]);
+                    Ok(TransactionPayload::ProviderUpdateServicePayloadType(finalized))
+                },
+            )
+            .await
+            .expect("finalized build signs");
+
+        assert!(fee > 0);
+        assert!(token.is_some(), "a funded build stamps a reservation token");
+        let Some(TransactionPayload::ProviderUpdateServicePayloadType(payload)) =
+            &tx.special_transaction_payload
+        else {
+            panic!("finalized payload must ride the signed transaction");
+        };
+        assert_eq!(payload.inputs_hash, tx.hash_inputs(), "inputs_hash commits to the input set");
+        assert_eq!(payload.payload_sig, BLSSignature::from([0xAB; 96]));
+        assert!(
+            tx.input.iter().all(|input| !input.script_sig.is_empty()),
+            "every input is ECDSA-signed after the payload landed"
+        );
+        // The selected inputs stay reserved for the caller to broadcast.
+        let reserved = funds.reservations().reserved(200);
+        for input in &tx.input {
+            assert!(reserved.contains(&input.previous_output));
+        }
+    }
+
+    #[tokio::test]
+    async fn payload_finalizer_error_releases_reservation() {
+        let ctx = TestWalletContext::new_random();
+        let account =
+            ctx.wallet.accounts.standard_bip44_accounts.get(&0).expect("BIP44 account").clone();
+
+        let mut funds = ManagedCoreFundsAccount::dummy_bip44();
+        let utxo = Utxo::dummy(0x01, 1_000_000, 100, false, true);
+        funds.utxos.insert(utxo.outpoint, utxo.clone());
+
+        let result = TransactionBuilder::new()
+            .set_current_height(200)
+            .set_fee_rate(FeeRate::normal())
+            .add_funding(&mut funds, &account)
+            .set_change_address(Address::dummy(Network::Testnet, 1))
+            .set_special_payload(pro_up_serv_placeholder(ScriptBuf::new()))
+            .build_signed_reserved_with_payload_finalizer(
+                &ctx.wallet,
+                |_addr| Some(DerivationPath::master()),
+                |_unsigned| Err(BuilderError::SigningFailed("operator key rejected".into())),
+            )
+            .await;
+
+        assert!(matches!(result, Err(BuilderError::SigningFailed(_))));
+        assert!(
+            funds.reservations().reserved(200).is_empty(),
+            "a failed finalize must release the reserved inputs"
+        );
+    }
+
+    #[tokio::test]
+    async fn payload_finalizer_rejects_a_variant_change() {
+        use dashcore::blockdata::transaction::special_transaction::provider_update_revocation::ProviderUpdateRevocationPayload;
+        use dashcore::bls_sig_utils::BLSSignature;
+
+        let ctx = TestWalletContext::new_random();
+        let account =
+            ctx.wallet.accounts.standard_bip44_accounts.get(&0).expect("BIP44 account").clone();
+
+        let mut funds = ManagedCoreFundsAccount::dummy_bip44();
+        let utxo = Utxo::dummy(0x01, 1_000_000, 100, false, true);
+        funds.utxos.insert(utxo.outpoint, utxo.clone());
+
+        let result = TransactionBuilder::new()
+            .set_current_height(200)
+            .set_fee_rate(FeeRate::normal())
+            .add_funding(&mut funds, &account)
+            .set_change_address(Address::dummy(Network::Testnet, 1))
+            .set_special_payload(pro_up_serv_placeholder(ScriptBuf::new()))
+            .build_signed_reserved_with_payload_finalizer(
+                &ctx.wallet,
+                |_addr| Some(DerivationPath::master()),
+                |unsigned| {
+                    Ok(TransactionPayload::ProviderUpdateRevocationPayloadType(
+                        ProviderUpdateRevocationPayload {
+                            version: ProviderUpdateRevocationPayload::CURRENT_VERSION,
+                            pro_tx_hash: Txid::all_zeros(),
+                            reason: 0,
+                            inputs_hash: unsigned.hash_inputs(),
+                            payload_sig: BLSSignature::from([0; 96]),
+                        },
+                    ))
+                },
+            )
+            .await;
+
+        assert!(matches!(result, Err(BuilderError::InvalidData(_))));
+        assert!(funds.reservations().reserved(200).is_empty());
+    }
+
+    #[tokio::test]
+    async fn payload_finalizer_rejects_a_payload_that_outgrew_its_placeholder() {
+        let ctx = TestWalletContext::new_random();
+        let account =
+            ctx.wallet.accounts.standard_bip44_accounts.get(&0).expect("BIP44 account").clone();
+
+        let mut funds = ManagedCoreFundsAccount::dummy_bip44();
+        let utxo = Utxo::dummy(0x01, 1_000_000, 100, false, true);
+        funds.utxos.insert(utxo.outpoint, utxo.clone());
+
+        let result = TransactionBuilder::new()
+            .set_current_height(200)
+            .set_fee_rate(FeeRate::normal())
+            .add_funding(&mut funds, &account)
+            .set_change_address(Address::dummy(Network::Testnet, 1))
+            // Placeholder priced with an empty payout script...
+            .set_special_payload(pro_up_serv_placeholder(ScriptBuf::new()))
+            .build_signed_reserved_with_payload_finalizer(
+                &ctx.wallet,
+                |_addr| Some(DerivationPath::master()),
+                // ...but finalized with a 25-byte P2PKH script the fee never
+                // paid for.
+                |_unsigned| {
+                    Ok(pro_up_serv_placeholder(Address::dummy(Network::Testnet, 2).script_pubkey()))
+                },
+            )
+            .await;
+
+        assert!(matches!(result, Err(BuilderError::InvalidData(_))));
+        assert!(funds.reservations().reserved(200).is_empty());
+    }
+
+    #[tokio::test]
+    async fn payload_finalizer_requires_a_placeholder_payload() {
+        let ctx = TestWalletContext::new_random();
+        let account =
+            ctx.wallet.accounts.standard_bip44_accounts.get(&0).expect("BIP44 account").clone();
+
+        let mut funds = ManagedCoreFundsAccount::dummy_bip44();
+        let utxo = Utxo::dummy(0x01, 1_000_000, 100, false, true);
+        funds.utxos.insert(utxo.outpoint, utxo.clone());
+
+        let result = TransactionBuilder::new()
+            .set_current_height(200)
+            .set_fee_rate(FeeRate::normal())
+            .add_funding(&mut funds, &account)
+            .set_change_address(Address::dummy(Network::Testnet, 1))
+            .add_output(&Address::dummy(Network::Testnet, 0), 500_000)
+            .build_signed_reserved_with_payload_finalizer(
+                &ctx.wallet,
+                |_addr| Some(DerivationPath::master()),
+                |_unsigned| panic!("finalizer must not run without a placeholder"),
+            )
+            .await;
+
+        assert!(matches!(result, Err(BuilderError::InvalidData(_))));
+        assert!(
+            funds.reservations().reserved(200).is_empty(),
+            "the refusal happens before anything is reserved"
+        );
+    }
+
+    /// The fee a finalizer-seam build pays must equal what the ordinary path
+    /// charges for the same placeholder: the finalized payload swaps in at
+    /// identical estimated size, so nothing about selection or change moves.
+    #[test]
+    fn payload_finalizer_size_guard_uses_the_fee_sizing_estimate() {
+        let placeholder = pro_up_serv_placeholder(ScriptBuf::new());
+        let finalized = pro_up_serv_placeholder(ScriptBuf::new());
+        assert_eq!(
+            TransactionBuilder::estimated_payload_size(&placeholder),
+            TransactionBuilder::estimated_payload_size(&finalized),
+        );
+        let grown = pro_up_serv_placeholder(Address::dummy(Network::Testnet, 2).script_pubkey());
+        assert!(
+            TransactionBuilder::estimated_payload_size(&grown)
+                > TransactionBuilder::estimated_payload_size(&placeholder)
+        );
     }
 }
