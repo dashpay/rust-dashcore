@@ -70,26 +70,12 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
         // recovers its resume point from the engine's stored lists.
         let masternode_engine = {
             if config.enable_masternodes {
-                let mut engine = MasternodeListEngine::default_for_network(config.network);
-                match storage.masternodestate().read().await.load_masternode_state().await {
-                    Ok(Some(state)) => match serde_json::from_slice(&state.engine_state) {
-                        Ok(restored) => {
-                            engine = restored;
-                            tracing::info!(
-                                "Restored masternode state from height {}",
-                                state.last_height
-                            );
-                        }
-                        Err(e) => tracing::warn!(
-                            "Could not read persisted masternode state, rebuilding: {}",
-                            e
-                        ),
-                    },
-                    Ok(None) => tracing::debug!("No persisted masternode state"),
-                    Err(e) => {
-                        tracing::warn!("Could not load masternode state, rebuilding: {}", e)
-                    }
-                }
+                let loader = storage.masternodestate();
+                let engine = loader.read().await.load_engine(config.network).await;
+                let engine = engine.unwrap_or_else(|e| {
+                    tracing::warn!("Could not load masternode state, rebuilding: {}", e);
+                    MasternodeListEngine::default_for_network(config.network)
+                });
                 Some(Arc::new(RwLock::new(engine)))
             } else {
                 None
