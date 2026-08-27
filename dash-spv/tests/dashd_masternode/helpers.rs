@@ -1,3 +1,6 @@
+use std::collections::BTreeMap;
+use std::path::Path;
+
 use dash_spv::sync::{MasternodesProgress, SyncEvent, SyncProgress, SyncState};
 use dashcore::ephemerealdata::instant_lock::InstantLock;
 use dashcore::sml::llmq_entry_verification::LLMQEntryVerificationStatus;
@@ -14,6 +17,94 @@ use super::setup::{TestContext, SYNC_TIMEOUT};
 
 /// Mine a DKG cycle and wait for the SPV to surface a `MasternodeStateUpdated`
 /// event above `baseline_height`.
+/// Files held under each immediate subdirectory of the storage root, keyed by
+/// directory name.
+///
+/// A sync writes into these and never removes a whole class of state, so across
+/// a restart every directory must still be there and hold at least as much —
+/// see [`assert_storage_did_not_shrink`].
+pub(super) fn storage_snapshot(root: &Path) -> BTreeMap<String, usize> {
+    let mut counts = BTreeMap::new();
+    let Ok(entries) = std::fs::read_dir(root) else {
+        return counts;
+    };
+    for entry in entries.flatten() {
+        if !entry.path().is_dir() {
+            continue;
+        }
+        let files = walkdir_count(&entry.path());
+        counts.insert(entry.file_name().to_string_lossy().into_owned(), files);
+    }
+    counts
+}
+
+fn walkdir_count(dir: &Path) -> usize {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return 0;
+    };
+    entries
+        .flatten()
+        .map(|e| {
+            let path = e.path();
+            if path.is_dir() {
+                walkdir_count(&path)
+            } else {
+                1
+            }
+        })
+        .sum()
+}
+
+/// Directories that must hold state once this test's first session has run, and
+/// why. `filters` and `blocks` are deliberately absent: the client is stopped
+/// as soon as the masternode phase reports `Synced`, which is before the filter
+/// phase leaves `WaitForEvents`, so those stay legitimately empty here.
+pub(super) const EXPECTED_STORAGE: &[(&str, &str)] = &[
+    ("block_headers", "headers synced to the tip"),
+    ("filter_headers", "filter headers synced to the tip"),
+    ("metadata", "sync checkpoints"),
+    ("peers", "peer set and reputations"),
+    ("masternodestate", "the masternode list this session built"),
+];
+
+/// Assert every directory in [`EXPECTED_STORAGE`] exists and holds at least one
+/// file, reporting all of them at once rather than the first to fail.
+pub(super) fn assert_storage_persisted(snapshot: &BTreeMap<String, usize>, what: &str) {
+    let missing: Vec<String> = EXPECTED_STORAGE
+        .iter()
+        .filter(|(dir, _)| snapshot.get(*dir).is_none_or(|files| *files == 0))
+        .map(|(dir, why)| format!("  {dir}/ — {why}"))
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "{what}: {} storage director{} empty or absent after a clean shutdown:\n{}\n\nstorage holds {snapshot:?}",
+        missing.len(),
+        if missing.len() == 1 { "y is" } else { "ies are" },
+        missing.join("\n"),
+    );
+}
+
+/// Every directory present before a restart must still be present after, with
+/// at least as many files. A directory that vanishes or shrinks means a restart
+/// threw away state that the previous session had already earned.
+pub(super) fn assert_storage_did_not_shrink(
+    before: &BTreeMap<String, usize>,
+    after: &BTreeMap<String, usize>,
+    what: &str,
+) {
+    for (dir, before_count) in before {
+        match after.get(dir) {
+            None => panic!(
+                "{what}: storage directory {dir:?} disappeared across the restart\n  before: {before:?}\n  after:  {after:?}"
+            ),
+            Some(after_count) if after_count < before_count => panic!(
+                "{what}: storage directory {dir:?} shrank across the restart, {before_count} -> {after_count}\n  before: {before:?}\n  after:  {after:?}"
+            ),
+            Some(_) => {}
+        }
+    }
+}
+
 pub(super) async fn mine_dkg_cycle_and_wait(
     ctx: &mut TestContext,
     sync_event_receiver: &mut broadcast::Receiver<SyncEvent>,
