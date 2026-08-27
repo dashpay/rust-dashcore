@@ -78,6 +78,8 @@ pub trait StorageManager:
 
     /// Returns shared access to the metadata storage.
     fn metadata(&self) -> Arc<RwLock<PersistentMetadataStorage>>;
+
+    fn masternodestate(&self) -> Arc<RwLock<PersistentMasternodeStateStorage>>;
 }
 
 /// Disk-based storage manager with segmented files and async background saving.
@@ -281,6 +283,10 @@ impl StorageManager for DiskStorageManager {
 
     fn metadata(&self) -> Arc<RwLock<PersistentMetadataStorage>> {
         Arc::clone(&self.metadata)
+    }
+
+    fn masternodestate(&self) -> Arc<RwLock<PersistentMasternodeStateStorage>> {
+        Arc::clone(&self.masternodestate)
     }
 }
 

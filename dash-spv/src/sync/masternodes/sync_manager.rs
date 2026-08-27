@@ -1097,9 +1097,13 @@ mod tests {
             .await
             .unwrap();
         let engine = MasternodeListEngine::default_for_network(Network::Regtest);
-        let mut manager =
-            MasternodesManager::new(block_headers, Arc::new(RwLock::new(engine)), Network::Regtest)
-                .await;
+        let mut manager = MasternodesManager::new(
+            block_headers,
+            Arc::new(RwLock::new(engine)),
+            Network::Regtest,
+            None,
+        )
+        .await;
         manager.progress.update_block_header_tip_height(tip);
 
         let (tx, mut rx) = mpsc::unbounded_channel();

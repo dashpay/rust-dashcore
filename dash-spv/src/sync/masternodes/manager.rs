@@ -14,7 +14,9 @@ use tokio::sync::RwLock;
 use super::pipeline::MnListDiffPipeline;
 use crate::error::{SyncError, SyncResult};
 use crate::network::RequestSender;
-use crate::storage::BlockHeaderStorage;
+use crate::storage::{
+    BlockHeaderStorage, MasternodeState, MasternodeStateStorage, PersistentMasternodeStateStorage,
+};
 use crate::sync::{MasternodesProgress, SyncEvent, SyncManager, SyncState};
 use dashcore::network::message_qrinfo::QRInfo;
 use dashcore::BlockHash;
@@ -299,6 +301,8 @@ pub struct MasternodesManager<H: BlockHeaderStorage> {
     network: dashcore::Network,
     /// Sync state tracking.
     pub(super) sync_state: MasternodeSyncState,
+    /// `None` leaves the list in memory only.
+    pub(super) state_storage: Option<Arc<RwLock<PersistentMasternodeStateStorage>>>,
 }
 
 impl<H: BlockHeaderStorage> MasternodesManager<H> {
@@ -307,6 +311,7 @@ impl<H: BlockHeaderStorage> MasternodesManager<H> {
         header_storage: Arc<RwLock<H>>,
         engine: Arc<RwLock<MasternodeListEngine>>,
         network: dashcore::Network,
+        state_storage: Option<Arc<RwLock<PersistentMasternodeStateStorage>>>,
     ) -> Self {
         // Recover sync state from the engine's stored masternode lists so that a
         // restart can resume from where the previous run left off.
@@ -337,6 +342,38 @@ impl<H: BlockHeaderStorage> MasternodesManager<H> {
             engine,
             network,
             sync_state,
+            state_storage,
+        }
+    }
+
+    /// Best effort: an unwritten list costs a rebuild next start, a failed sync
+    /// costs the list now.
+    pub(super) async fn persist_engine(&self, height: u32) {
+        let Some(storage) = &self.state_storage else {
+            return;
+        };
+        let engine_state = {
+            let engine = self.engine.read().await;
+            match serde_json::to_vec(&*engine) {
+                Ok(bytes) => bytes,
+                Err(e) => {
+                    tracing::warn!("Could not serialize masternode engine at {height}: {e}");
+                    return;
+                }
+            }
+        };
+        let state = MasternodeState {
+            last_height: height,
+            engine_state,
+            last_update: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0),
+        };
+        if let Err(e) = storage.write().await.store_masternode_state(&state).await {
+            tracing::warn!("Could not persist masternode state at {height}: {e}");
+        } else {
+            tracing::debug!("Persisted masternode state at height {height}");
         }
     }
 
@@ -559,6 +596,7 @@ impl<H: BlockHeaderStorage> MasternodesManager<H> {
 
         self.sync_state.last_synced_block_hash = Some(latest_block_hash);
         self.progress.update_current_height(height);
+        self.persist_engine(height).await;
         tracing::debug!("Incremental MnListDiff complete at height {}", height);
         Ok(vec![SyncEvent::MasternodeStateUpdated {
             height,
@@ -662,6 +700,10 @@ impl<H: BlockHeaderStorage> MasternodesManager<H> {
 
         drop(engine);
 
+        if !events.is_empty() {
+            self.persist_engine(self.progress.current_height()).await;
+        }
+
         if is_initial_sync {
             self.set_state(SyncState::Synced);
             tracing::info!("Masternode sync complete at height {}", self.progress.current_height());
@@ -696,7 +738,7 @@ mod tests {
     async fn create_test_manager_for(network: dashcore::Network) -> TestMasternodesManager {
         let storage = DiskStorageManager::with_temp_dir().await.unwrap();
         let engine = Arc::new(RwLock::new(MasternodeListEngine::default_for_network(network)));
-        MasternodesManager::new(storage.block_headers(), engine, network).await
+        MasternodesManager::new(storage.block_headers(), engine, network, None).await
     }
 
     async fn create_test_manager() -> TestMasternodesManager {
@@ -733,6 +775,7 @@ mod tests {
             block_headers,
             Arc::new(RwLock::new(engine)),
             dashcore::Network::Regtest,
+            None,
         )
         .await;
         manager.set_state(SyncState::Synced);
@@ -964,6 +1007,7 @@ mod tests {
             storage.block_headers(),
             Arc::new(RwLock::new(engine)),
             dashcore::Network::Testnet,
+            None,
         )
         .await;
 
