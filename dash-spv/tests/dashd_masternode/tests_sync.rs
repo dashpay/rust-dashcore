@@ -10,8 +10,9 @@ use dashcore::sml::llmq_entry_verification::LLMQEntryVerificationStatus;
 use dashcore::sml::llmq_type::LLMQType;
 
 use super::helpers::{
-    assert_all_rotated_quorums_verified, wait_for_chainlock_height_at_least,
-    wait_for_masternode_sync, wait_for_mn_state_event, wait_for_mn_state_event_above,
+    assert_all_rotated_quorums_verified, assert_storage_did_not_shrink, assert_storage_persisted,
+    storage_snapshot, wait_for_chainlock_height_at_least, wait_for_masternode_sync,
+    wait_for_mn_state_event, wait_for_mn_state_event_above,
     wait_for_mn_state_with_stored_cycle_above,
 };
 use super::setup::{
@@ -103,8 +104,28 @@ async fn test_masternode_list_sync_with_restart() {
     let first_mn_progress =
         wait_for_masternode_sync(&mut client_handle.progress_receiver, SYNC_TIMEOUT).await;
     let first_height = first_mn_progress.current_height();
+
+    // Control: the first session really built a list, so the persistence
+    // assertion below cannot be satisfied by a client that synced nothing.
+    let first_masternodes = {
+        let engine = client_handle.engine.read().await;
+        engine.masternode_lists.values().map(|list| list.masternodes.len()).max().unwrap_or(0)
+    };
+    assert!(
+        first_masternodes > 0,
+        "the first session must have a masternode list before its persistence can be tested"
+    );
+
     client_handle.stop().await;
     drop(client_handle);
+
+    // What the first session earned and wrote down. A clean shutdown of a
+    // fully-synced client must leave every sync phase's state on disk.
+    let after_first = storage_snapshot(ctx.storage_path());
+    assert_storage_persisted(
+        &after_first,
+        &format!("after a first session that built {first_masternodes} masternode(s)"),
+    );
 
     // Restart with same storage
     tracing::info!("=== Restarting with same storage ===");
@@ -122,6 +143,11 @@ async fn test_masternode_list_sync_with_restart() {
         SyncState::Synced,
         "Should reach Synced state after restart"
     );
+
+    // A restart re-syncs on top of what it restored; it never discards a whole
+    // class of state it already had.
+    let after_second = storage_snapshot(ctx.storage_path());
+    assert_storage_did_not_shrink(&after_first, &after_second, "masternode restart");
 
     tracing::info!(
         "Restart verified: first_height={}, second_height={}",
