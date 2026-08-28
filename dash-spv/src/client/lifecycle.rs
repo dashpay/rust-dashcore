@@ -13,7 +13,7 @@ use crate::chain::checkpoints::CheckpointManager;
 use crate::error::{Result, SpvError};
 use crate::network::NetworkManager;
 use crate::storage::{
-    MasternodeStateStorage, PersistentBlockHeaderStorage, PersistentBlockStorage,
+    MasternodeStorage, PersistentBlockHeaderStorage, PersistentBlockStorage,
     PersistentFilterHeaderStorage, PersistentFilterStorage, PersistentMetadataStorage,
     StorageManager,
 };
@@ -70,10 +70,10 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
         // recovers its resume point from the engine's stored lists.
         let masternode_engine = {
             if config.enable_masternodes {
-                let loader = storage.masternodestate();
+                let loader = storage.masternodes();
                 let engine = loader.read().await.load_engine(config.network).await;
                 let engine = engine.unwrap_or_else(|e| {
-                    tracing::warn!("Could not load masternode state, rebuilding: {}", e);
+                    tracing::warn!("Could not replay masternode messages, rebuilding: {}", e);
                     MasternodeListEngine::default_for_network(config.network)
                 });
                 Some(Arc::new(RwLock::new(engine)))
@@ -130,7 +130,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
                     storage.block_headers(),
                     masternode_list_engine.clone(),
                     config.network,
-                    Some(storage.masternodestate()),
+                    Some(storage.masternodes()),
                 )
                 .await,
             );
@@ -139,6 +139,8 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
                     storage.block_headers(),
                     storage.metadata(),
                     masternode_list_engine.clone(),
+                    Some(storage.masternodes()),
+                    config.network,
                 )
                 .await,
             );

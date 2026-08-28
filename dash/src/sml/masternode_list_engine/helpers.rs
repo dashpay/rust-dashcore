@@ -2,6 +2,8 @@ use crate::QuorumHash;
 use crate::prelude::CoreBlockHeight;
 use crate::sml::llmq_entry_verification::LLMQEntryVerificationStatus;
 use crate::sml::llmq_type::LLMQType;
+#[cfg(feature = "quorum_validation")]
+use crate::sml::llmq_type::network::NetworkLLMQExt;
 use crate::sml::masternode_list::MasternodeList;
 use crate::sml::masternode_list_engine::MasternodeListEngine;
 use crate::sml::quorum_entry::qualified_quorum_entry::QualifiedQuorumEntry;
@@ -11,9 +13,28 @@ use crate::sml::quorum_entry::qualified_quorum_entry::QualifiedQuorumEntry;
 /// height that can exceed one active window (Platform selects roughly 4.5 DKG intervals back), so a
 /// single window is too tight. Four windows covers that lag with wide margin while still bounding a
 /// miss to a fixed span of lists rather than every list the engine has accumulated.
-const QUORUM_WALK_BACK_ACTIVE_WINDOWS: u32 = 4;
+pub const QUORUM_WALK_BACK_ACTIVE_WINDOWS: u32 = 4;
 
 impl MasternodeListEngine {
+    #[cfg(feature = "quorum_validation")]
+    pub fn retained_list_floor(&self, tip: CoreBlockHeight) -> CoreBlockHeight {
+        let params = self.network.chain_locks_type().params();
+        tip.saturating_sub(
+            params
+                .signing_active_quorum_count
+                .saturating_mul(params.dkg_params.interval)
+                .saturating_mul(QUORUM_WALK_BACK_ACTIVE_WINDOWS),
+        )
+    }
+
+    #[cfg(feature = "quorum_validation")]
+    pub fn prune_masternode_lists(&mut self, tip: CoreBlockHeight) -> usize {
+        let floor = self.retained_list_floor(tip);
+        let before = self.masternode_lists.len();
+        self.masternode_lists.retain(|height, _| *height >= floor);
+        before - self.masternode_lists.len()
+    }
+
     /// Retrieves the closest masternode lists before and after a given core block height.
     ///
     /// This function searches the `masternode_lists` map to find the nearest masternode lists

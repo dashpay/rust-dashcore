@@ -1,7 +1,5 @@
 //! Storage abstraction for the Dash SPV client.
 
-pub mod types;
-
 mod block_headers;
 mod blocks;
 mod filter_headers;
@@ -18,7 +16,10 @@ use crate::types::{HashedBlock, HashedBlockHeader};
 use crate::ClientConfig;
 use async_trait::async_trait;
 use dashcore::hash_types::FilterHeader;
+use dashcore::network::message_qrinfo::QRInfo;
+use dashcore::network::message_sml::MnListDiff;
 use dashcore::prelude::CoreBlockHeight;
+use dashcore::sml::masternode_list::MasternodeList;
 use dashcore::sml::masternode_list_engine::MasternodeListEngine;
 use dashcore::Network;
 use std::ops::Range;
@@ -33,11 +34,9 @@ pub use crate::storage::block_headers::{
 pub use crate::storage::blocks::{BlockStorage, PersistentBlockStorage};
 pub use crate::storage::filter_headers::{FilterHeaderStorage, PersistentFilterHeaderStorage};
 pub use crate::storage::filters::{FilterStorage, PersistentFilterStorage};
-pub use crate::storage::masternode::{MasternodeStateStorage, PersistentMasternodeStateStorage};
+pub use crate::storage::masternode::{MasternodeStorage, PersistentMasternodeStorage};
 pub use crate::storage::metadata::{MetadataStorage, PersistentMetadataStorage};
 pub use crate::storage::peers::{PeerStorage, PersistentPeerStorage};
-
-pub use types::*;
 
 #[async_trait]
 pub trait PersistentStorage: Sized {
@@ -55,7 +54,7 @@ pub trait StorageManager:
     + FilterStorage
     + BlockStorage
     + MetadataStorage
-    + MasternodeStateStorage
+    + MasternodeStorage
     + Send
     + Sync
     + 'static
@@ -81,7 +80,7 @@ pub trait StorageManager:
     /// Returns shared access to the metadata storage.
     fn metadata(&self) -> Arc<RwLock<PersistentMetadataStorage>>;
 
-    fn masternodestate(&self) -> Arc<RwLock<PersistentMasternodeStateStorage>>;
+    fn masternodes(&self) -> Arc<RwLock<PersistentMasternodeStorage>>;
 }
 
 /// Disk-based storage manager with segmented files and async background saving.
@@ -95,7 +94,7 @@ pub struct DiskStorageManager {
     filters: Arc<RwLock<PersistentFilterStorage>>,
     blocks: Arc<RwLock<PersistentBlockStorage>>,
     metadata: Arc<RwLock<PersistentMetadataStorage>>,
-    masternodestate: Arc<RwLock<PersistentMasternodeStateStorage>>,
+    masternodes: Arc<RwLock<PersistentMasternodeStorage>>,
 
     // Background worker
     worker_handle: Option<tokio::task::JoinHandle<()>>,
@@ -148,8 +147,8 @@ impl DiskStorageManager {
             filters: Arc::new(RwLock::new(PersistentFilterStorage::open(&storage_path).await?)),
             blocks: Arc::new(RwLock::new(PersistentBlockStorage::open(&storage_path).await?)),
             metadata: Arc::new(RwLock::new(PersistentMetadataStorage::open(&storage_path).await?)),
-            masternodestate: Arc::new(RwLock::new(
-                PersistentMasternodeStateStorage::open(&storage_path).await?,
+            masternodes: Arc::new(RwLock::new(
+                PersistentMasternodeStorage::open(&storage_path).await?,
             )),
 
             worker_handle: None,
@@ -177,7 +176,7 @@ impl DiskStorageManager {
         let filters = Arc::clone(&self.filters);
         let blocks = Arc::clone(&self.blocks);
         let metadata = Arc::clone(&self.metadata);
-        let masternodestate = Arc::clone(&self.masternodestate);
+        let masternodes = Arc::clone(&self.masternodes);
 
         let storage_path = self.storage_path.clone();
 
@@ -192,7 +191,7 @@ impl DiskStorageManager {
                 let _ = filters.write().await.persist(&storage_path).await;
                 let _ = blocks.write().await.persist(&storage_path).await;
                 let _ = metadata.write().await.persist(&storage_path).await;
-                let _ = masternodestate.write().await.persist(&storage_path).await;
+                let _ = masternodes.write().await.persist(&storage_path).await;
             }
         });
 
@@ -214,7 +213,7 @@ impl DiskStorageManager {
         let _ = self.filters.write().await.persist(storage_path).await;
         let _ = self.blocks.write().await.persist(storage_path).await;
         let _ = self.metadata.write().await.persist(storage_path).await;
-        let _ = self.masternodestate.write().await.persist(storage_path).await;
+        let _ = self.masternodes.write().await.persist(storage_path).await;
     }
 }
 
@@ -251,8 +250,8 @@ impl StorageManager for DiskStorageManager {
         self.filters = Arc::new(RwLock::new(PersistentFilterStorage::open(storage_path).await?));
         self.blocks = Arc::new(RwLock::new(PersistentBlockStorage::open(storage_path).await?));
         self.metadata = Arc::new(RwLock::new(PersistentMetadataStorage::open(storage_path).await?));
-        self.masternodestate =
-            Arc::new(RwLock::new(PersistentMasternodeStateStorage::open(storage_path).await?));
+        self.masternodes =
+            Arc::new(RwLock::new(PersistentMasternodeStorage::open(storage_path).await?));
 
         // Restart the background worker for future operations
         self.start_worker().await;
@@ -287,8 +286,8 @@ impl StorageManager for DiskStorageManager {
         Arc::clone(&self.metadata)
     }
 
-    fn masternodestate(&self) -> Arc<RwLock<PersistentMasternodeStateStorage>> {
-        Arc::clone(&self.masternodestate)
+    fn masternodes(&self) -> Arc<RwLock<PersistentMasternodeStorage>> {
+        Arc::clone(&self.masternodes)
     }
 }
 
@@ -439,17 +438,37 @@ impl metadata::MetadataStorage for DiskStorageManager {
 }
 
 #[async_trait]
-impl masternode::MasternodeStateStorage for DiskStorageManager {
-    async fn store_engine(
+impl masternode::MasternodeStorage for DiskStorageManager {
+    async fn store_diff(
         &mut self,
-        engine: &MasternodeListEngine,
-        height: u32,
+        height: CoreBlockHeight,
+        diff: &MnListDiff,
     ) -> StorageResult<()> {
-        self.masternodestate.write().await.store_engine(engine, height).await
+        self.masternodes.write().await.store_diff(height, diff).await
+    }
+
+    async fn store_qr_info(
+        &mut self,
+        height: CoreBlockHeight,
+        qr_info: &QRInfo,
+    ) -> StorageResult<()> {
+        self.masternodes.write().await.store_qr_info(height, qr_info).await
+    }
+
+    async fn store_context(&mut self, engine: &MasternodeListEngine) -> StorageResult<()> {
+        self.masternodes.write().await.store_context(engine).await
     }
 
     async fn load_engine(&self, network: Network) -> StorageResult<MasternodeListEngine> {
-        self.masternodestate.read().await.load_engine(network).await
+        self.masternodes.read().await.load_engine(network).await
+    }
+
+    async fn masternode_list_at_or_before(
+        &self,
+        network: Network,
+        height: CoreBlockHeight,
+    ) -> StorageResult<Option<MasternodeList>> {
+        self.masternodes.read().await.masternode_list_at_or_before(network, height).await
     }
 }
 

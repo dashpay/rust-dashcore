@@ -64,7 +64,7 @@ pub(super) const EXPECTED_STORAGE: &[(&str, &str)] = &[
     ("filter_headers", "filter headers synced to the tip"),
     ("metadata", "sync checkpoints"),
     ("peers", "peer set and reputations"),
-    ("masternodestate", "the masternode list this session built"),
+    ("masternodes", "the masternode messages this session stored"),
 ];
 
 /// Assert every directory in [`EXPECTED_STORAGE`] exists and holds at least one

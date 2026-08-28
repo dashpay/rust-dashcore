@@ -295,6 +295,9 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
                     }
                 };
 
+                let qr_info_height =
+                    engine.block_container.get_height(&qr_info.mn_list_diff_tip.block_hash);
+
                 // Populate known_mn_list_heights from engine after QRInfo processing
                 self.sync_state.known_mn_list_heights =
                     engine.masternode_lists.keys().copied().collect();
@@ -317,6 +320,14 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
                 // Drop locks before potentially long operations
                 drop(engine);
                 drop(storage);
+
+                match qr_info_height {
+                    Some(height) => self.store_qr_info(height, qr_info).await,
+                    None => tracing::warn!(
+                        "QRInfo tip {} has no known height, rotated quorums will not survive a restart",
+                        qr_info.mn_list_diff_tip.block_hash
+                    ),
+                }
 
                 if let Some(ref qr_info_result) = qr_info_result {
                     tracing::info!(
@@ -430,6 +441,10 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
                         }
                     };
                 drop(engine);
+
+                if apply_ok {
+                    self.store_diff(target_height, diff).await;
+                }
 
                 self.progress.add_diffs_processed(1);
                 self.sync_state.mnlistdiff_pipeline.receive(diff);

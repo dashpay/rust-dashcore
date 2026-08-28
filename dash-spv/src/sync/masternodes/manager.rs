@@ -14,11 +14,10 @@ use tokio::sync::RwLock;
 use super::pipeline::MnListDiffPipeline;
 use crate::error::{SyncError, SyncResult};
 use crate::network::RequestSender;
-use crate::storage::{
-    BlockHeaderStorage, MasternodeStateStorage, PersistentMasternodeStateStorage,
-};
+use crate::storage::{BlockHeaderStorage, MasternodeStorage, PersistentMasternodeStorage};
 use crate::sync::{MasternodesProgress, SyncEvent, SyncManager, SyncState};
 use dashcore::network::message_qrinfo::QRInfo;
+use dashcore::network::message_sml::MnListDiff;
 use dashcore::BlockHash;
 use std::collections::BTreeSet;
 
@@ -302,7 +301,7 @@ pub struct MasternodesManager<H: BlockHeaderStorage> {
     /// Sync state tracking.
     pub(super) sync_state: MasternodeSyncState,
     /// `None` leaves the list in memory only.
-    pub(super) state_storage: Option<Arc<RwLock<PersistentMasternodeStateStorage>>>,
+    pub(super) message_storage: Option<Arc<RwLock<PersistentMasternodeStorage>>>,
 }
 
 impl<H: BlockHeaderStorage> MasternodesManager<H> {
@@ -311,7 +310,7 @@ impl<H: BlockHeaderStorage> MasternodesManager<H> {
         header_storage: Arc<RwLock<H>>,
         engine: Arc<RwLock<MasternodeListEngine>>,
         network: dashcore::Network,
-        state_storage: Option<Arc<RwLock<PersistentMasternodeStateStorage>>>,
+        message_storage: Option<Arc<RwLock<PersistentMasternodeStorage>>>,
     ) -> Self {
         // Recover sync state from the engine's stored masternode lists so that a
         // restart can resume from where the previous run left off.
@@ -342,22 +341,42 @@ impl<H: BlockHeaderStorage> MasternodesManager<H> {
             engine,
             network,
             sync_state,
-            state_storage,
+            message_storage,
         }
     }
 
-    /// Best effort: an unwritten list costs a rebuild next start, a failed sync
-    /// costs the list now.
-    pub(super) async fn persist_engine(&self, height: u32) {
-        let Some(storage) = &self.state_storage else {
+    pub(super) async fn store_diff(&self, height: u32, diff: &MnListDiff) {
+        let Some(storage) = &self.message_storage else {
             return;
         };
-        let engine = self.engine.read().await;
-        if let Err(e) = storage.write().await.store_engine(&engine, height).await {
-            tracing::warn!("Could not persist masternode state at {height}: {e}");
-        } else {
-            tracing::debug!("Persisted masternode state at height {height}");
+        if let Err(e) = storage.write().await.store_diff(height, diff).await {
+            tracing::warn!("Could not store MnListDiff at {height}: {e}");
         }
+    }
+
+    pub(super) async fn store_qr_info(&self, height: u32, qr_info: &QRInfo) {
+        let Some(storage) = &self.message_storage else {
+            return;
+        };
+        if let Err(e) = storage.write().await.store_qr_info(height, qr_info).await {
+            tracing::warn!("Could not store QRInfo at {height}: {e}");
+        }
+    }
+
+    pub(super) async fn persist_context(&self, tip: u32) {
+        let Some(storage) = &self.message_storage else {
+            return;
+        };
+
+        let mut engine = self.engine.write().await;
+        let pruned = engine.prune_masternode_lists(tip);
+
+        if let Err(e) = storage.write().await.store_context(&engine).await {
+            tracing::warn!("Could not persist masternode context at {tip}: {e}");
+            return;
+        }
+
+        tracing::debug!("Persisted masternode context at {tip}, pruned {pruned} in-memory lists");
     }
 
     /// Decide which [`PipelineMode`] to use when a new header lands at `tip_height`
@@ -579,7 +598,7 @@ impl<H: BlockHeaderStorage> MasternodesManager<H> {
 
         self.sync_state.last_synced_block_hash = Some(latest_block_hash);
         self.progress.update_current_height(height);
-        self.persist_engine(height).await;
+        self.persist_context(height).await;
         tracing::debug!("Incremental MnListDiff complete at height {}", height);
         Ok(vec![SyncEvent::MasternodeStateUpdated {
             height,
@@ -684,7 +703,7 @@ impl<H: BlockHeaderStorage> MasternodesManager<H> {
         drop(engine);
 
         if !events.is_empty() {
-            self.persist_engine(self.progress.current_height()).await;
+            self.persist_context(self.progress.current_height()).await;
         }
 
         if is_initial_sync {
