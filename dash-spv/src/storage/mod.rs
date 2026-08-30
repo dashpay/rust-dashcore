@@ -34,6 +34,7 @@ pub use crate::storage::block_headers::{
 pub use crate::storage::blocks::{BlockStorage, PersistentBlockStorage};
 pub use crate::storage::filter_headers::{FilterHeaderStorage, PersistentFilterHeaderStorage};
 pub use crate::storage::filters::{FilterStorage, PersistentFilterStorage};
+pub(crate) use crate::storage::masternode::feed_qrinfo_heights_to_engine;
 pub use crate::storage::masternode::{MasternodeStorage, PersistentMasternodeStorage};
 pub use crate::storage::metadata::{MetadataStorage, PersistentMetadataStorage};
 pub use crate::storage::peers::{PeerStorage, PersistentPeerStorage};
@@ -80,7 +81,8 @@ pub trait StorageManager:
     /// Returns shared access to the metadata storage.
     fn metadata(&self) -> Arc<RwLock<PersistentMetadataStorage>>;
 
-    fn masternodes(&self) -> Arc<RwLock<PersistentMasternodeStorage>>;
+    fn masternodes(&self)
+        -> Arc<RwLock<PersistentMasternodeStorage<PersistentBlockHeaderStorage>>>;
 }
 
 /// Disk-based storage manager with segmented files and async background saving.
@@ -94,7 +96,7 @@ pub struct DiskStorageManager {
     filters: Arc<RwLock<PersistentFilterStorage>>,
     blocks: Arc<RwLock<PersistentBlockStorage>>,
     metadata: Arc<RwLock<PersistentMetadataStorage>>,
-    masternodes: Arc<RwLock<PersistentMasternodeStorage>>,
+    masternodes: Arc<RwLock<PersistentMasternodeStorage<PersistentBlockHeaderStorage>>>,
 
     // Background worker
     worker_handle: Option<tokio::task::JoinHandle<()>>,
@@ -135,12 +137,12 @@ impl DiskStorageManager {
 
         let lock_file = LockFile::new(lock_file)?;
 
+        let block_headers =
+            Arc::new(RwLock::new(PersistentBlockHeaderStorage::open(&storage_path).await?));
+
         let mut storage = Self {
             storage_path: storage_path.clone(),
 
-            block_headers: Arc::new(RwLock::new(
-                PersistentBlockHeaderStorage::open(&storage_path).await?,
-            )),
             filter_headers: Arc::new(RwLock::new(
                 PersistentFilterHeaderStorage::open(&storage_path).await?,
             )),
@@ -148,8 +150,10 @@ impl DiskStorageManager {
             blocks: Arc::new(RwLock::new(PersistentBlockStorage::open(&storage_path).await?)),
             metadata: Arc::new(RwLock::new(PersistentMetadataStorage::open(&storage_path).await?)),
             masternodes: Arc::new(RwLock::new(
-                PersistentMasternodeStorage::open(&storage_path).await?,
+                PersistentMasternodeStorage::open(&storage_path, Arc::clone(&block_headers))
+                    .await?,
             )),
+            block_headers,
 
             worker_handle: None,
 
@@ -176,7 +180,6 @@ impl DiskStorageManager {
         let filters = Arc::clone(&self.filters);
         let blocks = Arc::clone(&self.blocks);
         let metadata = Arc::clone(&self.metadata);
-        let masternodes = Arc::clone(&self.masternodes);
 
         let storage_path = self.storage_path.clone();
 
@@ -191,7 +194,6 @@ impl DiskStorageManager {
                 let _ = filters.write().await.persist(&storage_path).await;
                 let _ = blocks.write().await.persist(&storage_path).await;
                 let _ = metadata.write().await.persist(&storage_path).await;
-                let _ = masternodes.write().await.persist(&storage_path).await;
             }
         });
 
@@ -213,7 +215,6 @@ impl DiskStorageManager {
         let _ = self.filters.write().await.persist(storage_path).await;
         let _ = self.blocks.write().await.persist(storage_path).await;
         let _ = self.metadata.write().await.persist(storage_path).await;
-        let _ = self.masternodes.write().await.persist(storage_path).await;
     }
 }
 
@@ -250,8 +251,10 @@ impl StorageManager for DiskStorageManager {
         self.filters = Arc::new(RwLock::new(PersistentFilterStorage::open(storage_path).await?));
         self.blocks = Arc::new(RwLock::new(PersistentBlockStorage::open(storage_path).await?));
         self.metadata = Arc::new(RwLock::new(PersistentMetadataStorage::open(storage_path).await?));
-        self.masternodes =
-            Arc::new(RwLock::new(PersistentMasternodeStorage::open(storage_path).await?));
+        self.masternodes = Arc::new(RwLock::new(
+            PersistentMasternodeStorage::open(storage_path, Arc::clone(&self.block_headers))
+                .await?,
+        ));
 
         // Restart the background worker for future operations
         self.start_worker().await;
@@ -286,7 +289,9 @@ impl StorageManager for DiskStorageManager {
         Arc::clone(&self.metadata)
     }
 
-    fn masternodes(&self) -> Arc<RwLock<PersistentMasternodeStorage>> {
+    fn masternodes(
+        &self,
+    ) -> Arc<RwLock<PersistentMasternodeStorage<PersistentBlockHeaderStorage>>> {
         Arc::clone(&self.masternodes)
     }
 }
@@ -455,8 +460,8 @@ impl masternode::MasternodeStorage for DiskStorageManager {
         self.masternodes.write().await.store_qr_info(height, qr_info).await
     }
 
-    async fn store_context(&mut self, engine: &MasternodeListEngine) -> StorageResult<()> {
-        self.masternodes.write().await.store_context(engine).await
+    async fn store_quorum_statuses(&mut self, engine: &MasternodeListEngine) -> StorageResult<()> {
+        self.masternodes.write().await.store_quorum_statuses(engine).await
     }
 
     async fn load_engine(&self, network: Network) -> StorageResult<MasternodeListEngine> {

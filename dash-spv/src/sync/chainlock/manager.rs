@@ -40,7 +40,7 @@ pub struct ChainLockManager<H: BlockHeaderStorage, M: MetadataStorage> {
     /// Masternode engine for BLS signature validation.
     masternode_engine: Arc<RwLock<MasternodeListEngine>>,
     /// Rebuilds a masternode list the engine no longer retains.
-    masternode_storage: Option<Arc<RwLock<PersistentMasternodeStorage>>>,
+    masternode_storage: Option<Arc<RwLock<PersistentMasternodeStorage<H>>>>,
     network: Network,
     /// The best (highest height) validated ChainLock.
     best_chainlock: Option<ChainLock>,
@@ -62,7 +62,7 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> ChainLockManager<H, M> {
         header_storage: Arc<RwLock<H>>,
         metadata_storage: Arc<RwLock<M>>,
         masternode_engine: Arc<RwLock<MasternodeListEngine>>,
-        masternode_storage: Option<Arc<RwLock<PersistentMasternodeStorage>>>,
+        masternode_storage: Option<Arc<RwLock<PersistentMasternodeStorage<H>>>>,
         network: Network,
     ) -> Self {
         let mut manager = Self {

@@ -1,15 +1,13 @@
 use super::manager::PipelineMode;
 use crate::error::SyncResult;
 use crate::network::{Message, MessageType, RequestSender};
-use crate::storage::BlockHeaderStorage;
+use crate::storage::{feed_qrinfo_heights_to_engine, BlockHeaderStorage};
 use crate::sync::{
     ManagerIdentifier, MasternodesManager, SyncEvent, SyncManager, SyncManagerProgress, SyncState,
 };
 use crate::SyncError;
 use async_trait::async_trait;
 use dashcore::network::message::NetworkMessage;
-use dashcore::network::message_qrinfo::QRInfo;
-use dashcore::sml::masternode_list_engine::{MasternodeListEngine, WORK_DIFF_DEPTH};
 use dashcore::{BlockHash, QuorumHash};
 use dashcore_hashes::Hash;
 use std::collections::{BTreeSet, HashSet};
@@ -159,63 +157,6 @@ pub(super) async fn build_mnlistdiff_request_pairs<S: BlockHeaderStorage>(
     Ok(pairs_with_height.into_iter().map(|(_, base, target)| (base, target)).collect())
 }
 
-/// Feed QRInfo block heights to the engine from storage.
-///
-/// Resolves heights for every hash enumerated by
-/// [`MasternodeListEngine::qr_info_referenced_block_hashes`], plus the cycle boundary
-/// block for each work-block diff (`work_height + WORK_DIFF_DEPTH`), which is needed
-/// for rotated quorum storage key calculation.
-pub(super) async fn feed_qrinfo_heights_to_engine<S: BlockHeaderStorage>(
-    engine: &mut MasternodeListEngine,
-    qr_info: &QRInfo,
-    storage: &S,
-) -> SyncResult<usize> {
-    let mut fed_count = 0;
-    for block_hash in MasternodeListEngine::qr_info_referenced_block_hashes(qr_info) {
-        if let Ok(Some(height)) = storage.get_header_height_by_hash(&block_hash).await {
-            engine.feed_block_height(height, block_hash);
-            fed_count += 1;
-            tracing::trace!("Fed height {} for block {}", height, block_hash);
-        }
-    }
-
-    // Feed cycle boundary heights for all diffs (current and historical cycles).
-    // Each diff's block_hash is at the "work block" height; the cycle boundary is
-    // WORK_DIFF_DEPTH higher.
-    let mut work_block_hashes = vec![
-        qr_info.mn_list_diff_h.block_hash,
-        qr_info.mn_list_diff_at_h_minus_c.block_hash,
-        qr_info.mn_list_diff_at_h_minus_2c.block_hash,
-        qr_info.mn_list_diff_at_h_minus_3c.block_hash,
-    ];
-
-    if let Some((_, diff)) = &qr_info.quorum_snapshot_and_mn_list_diff_at_h_minus_4c {
-        work_block_hashes.push(diff.block_hash);
-    }
-
-    for work_block_hash in work_block_hashes {
-        if let Ok(Some(work_block_height)) =
-            storage.get_header_height_by_hash(&work_block_hash).await
-        {
-            let cycle_boundary_height = work_block_height + WORK_DIFF_DEPTH;
-            if let Ok(Some(cycle_boundary_header)) = storage.get_header(cycle_boundary_height).await
-            {
-                let cycle_boundary_hash = *cycle_boundary_header.hash();
-                engine.feed_block_height(cycle_boundary_height, cycle_boundary_hash);
-                fed_count += 1;
-                tracing::debug!(
-                    "Fed cycle boundary height {} for block {}",
-                    cycle_boundary_height,
-                    cycle_boundary_hash
-                );
-            }
-        }
-    }
-
-    tracing::info!("Fed {} block heights to engine", fed_count);
-    Ok(fed_count)
-}
-
 #[async_trait]
 impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
     fn identifier(&self) -> ManagerIdentifier {
@@ -269,7 +210,7 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
                 // Feed block heights to engine using internal storage
                 let storage = self.header_storage.read().await;
                 let mut engine = self.engine.write().await;
-                let fed = feed_qrinfo_heights_to_engine(&mut engine, qr_info, &*storage).await?;
+                let fed = feed_qrinfo_heights_to_engine(&mut engine, qr_info, &*storage).await;
                 drop(storage);
                 tracing::info!("Fed {} block heights to engine", fed);
 
@@ -762,14 +703,13 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
 mod tests {
     use super::super::manager::{MasternodeSyncState, QRInfoInFlight};
     use super::{
-        feed_qrinfo_heights_to_engine, qrinfo_timeout_for, MAX_RETRY_ATTEMPTS,
-        QRINFO_STALL_WATCHDOG, QRINFO_TIMEOUT_SCHEDULE_SECS,
+        qrinfo_timeout_for, MAX_RETRY_ATTEMPTS, QRINFO_STALL_WATCHDOG, QRINFO_TIMEOUT_SCHEDULE_SECS,
     };
     use crate::error::StorageResult;
     use crate::network::{Message, NetworkRequest, RequestSender};
     use crate::storage::{
-        BlockHeaderStorage, BlockHeaderTip, DiskStorageManager, PersistentBlockHeaderStorage,
-        StorageManager,
+        feed_qrinfo_heights_to_engine, BlockHeaderStorage, BlockHeaderTip, DiskStorageManager,
+        PersistentBlockHeaderStorage, StorageManager,
     };
     use crate::sync::{MasternodesManager, SyncManager, SyncState};
     use crate::types::HashedBlockHeader;
@@ -935,9 +875,7 @@ mod tests {
             network: Network::Testnet,
             ..Default::default()
         };
-        feed_qrinfo_heights_to_engine(&mut engine, &qr_info, &MockHeaderStorage(height_map))
-            .await
-            .unwrap();
+        feed_qrinfo_heights_to_engine(&mut engine, &qr_info, &MockHeaderStorage(height_map)).await;
 
         for &b in expected_hashes {
             let hash = BlockHash::from_slice(&[b; 32]).unwrap();

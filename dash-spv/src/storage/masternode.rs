@@ -1,7 +1,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use async_trait::async_trait;
+use tokio::sync::RwLock;
 
 use dashcore::bls_sig_utils::BLSPublicKey;
 use dashcore::consensus::{deserialize, serialize, Decodable, Encodable};
@@ -11,20 +13,16 @@ use dashcore::prelude::CoreBlockHeight;
 use dashcore::sml::llmq_entry_verification::LLMQEntryVerificationStatus;
 use dashcore::sml::llmq_type::LLMQType;
 use dashcore::sml::masternode_list::MasternodeList;
-use dashcore::sml::masternode_list_engine::{
-    MasternodeListEngine, MasternodeListEngineBlockContainer,
-};
+use dashcore::sml::masternode_list_engine::{MasternodeListEngine, WORK_DIFF_DEPTH};
 use dashcore::{Network, QuorumHash};
 
 use crate::error::{StorageError, StorageResult};
-use crate::storage::{io::atomic_write, PersistentStorage};
+use crate::storage::{io::atomic_write, BlockHeaderStorage};
 
 type QuorumStatuses = BTreeMap<
     LLMQType,
     BTreeMap<QuorumHash, (BTreeSet<CoreBlockHeight>, BLSPublicKey, LLMQEntryVerificationStatus)>,
 >;
-
-type EngineContext = (MasternodeListEngineBlockContainer, QuorumStatuses);
 
 #[async_trait]
 pub trait MasternodeStorage: Send + Sync + 'static {
@@ -37,7 +35,7 @@ pub trait MasternodeStorage: Send + Sync + 'static {
         qr_info: &QRInfo,
     ) -> StorageResult<()>;
 
-    async fn store_context(&mut self, engine: &MasternodeListEngine) -> StorageResult<()>;
+    async fn store_quorum_statuses(&mut self, engine: &MasternodeListEngine) -> StorageResult<()>;
 
     async fn load_engine(&self, network: Network) -> StorageResult<MasternodeListEngine>;
 
@@ -48,18 +46,40 @@ pub trait MasternodeStorage: Send + Sync + 'static {
     ) -> StorageResult<Option<MasternodeList>>;
 }
 
-pub struct PersistentMasternodeStorage {
+/// Stores the raw messages a masternode list is rebuilt from. The heights the
+/// replay needs come from the header storage rather than from a persisted copy
+/// of the engine's block container: the headers already hold every hash/height
+/// pair, and a second copy can only go stale against them.
+pub struct PersistentMasternodeStorage<H: BlockHeaderStorage> {
     storage_path: PathBuf,
+    /// Shared with whoever writes the headers, so a replay reads them as they
+    /// stand rather than as they were when this storage was opened.
+    headers: Arc<RwLock<H>>,
     diffs: BTreeMap<CoreBlockHeight, PathBuf>,
     qr_infos: BTreeMap<CoreBlockHeight, PathBuf>,
 }
 
-impl PersistentMasternodeStorage {
+impl<H: BlockHeaderStorage> PersistentMasternodeStorage<H> {
     const FOLDER_NAME: &str = "masternodes";
     const DIFF_PREFIX: &str = "diff_";
     const QRINFO_PREFIX: &str = "qrinfo_";
     const EXTENSION: &str = "dat";
-    const CONTEXT_FILE_NAME: &str = "context.dat";
+    const QUORUM_STATUSES_FILE_NAME: &str = "quorum_statuses.dat";
+
+    pub async fn open(
+        storage_path: impl Into<PathBuf> + Send,
+        headers: Arc<RwLock<H>>,
+    ) -> StorageResult<Self> {
+        let storage_path = storage_path.into();
+        let (diffs, qr_infos) = Self::index_folder(&storage_path.join(Self::FOLDER_NAME)).await?;
+
+        Ok(PersistentMasternodeStorage {
+            storage_path,
+            headers,
+            diffs,
+            qr_infos,
+        })
+    }
 
     fn folder(&self) -> PathBuf {
         self.storage_path.join(Self::FOLDER_NAME)
@@ -117,24 +137,27 @@ impl PersistentMasternodeStorage {
         })
     }
 
-    async fn load_context(&self) -> StorageResult<Option<EngineContext>> {
-        let path = self.folder().join(Self::CONTEXT_FILE_NAME);
+    async fn load_quorum_statuses(&self) -> StorageResult<Option<QuorumStatuses>> {
+        let path = self.folder().join(Self::QUORUM_STATUSES_FILE_NAME);
         if !path.exists() {
             return Ok(None);
         }
         let bytes = tokio::fs::read(&path).await?;
-        let (context, _) = bincode::decode_from_slice(&bytes, bincode::config::standard())
-            .map_err(|e| {
-                StorageError::Corruption(format!("Failed to decode masternode context: {e}"))
-            })?;
-        Ok(Some(context))
+        match bincode::decode_from_slice(&bytes, bincode::config::standard()) {
+            Ok((statuses, _)) => Ok(Some(statuses)),
+            // The statuses are a cache of what the replay re-derives, so a file
+            // written by an older format costs verification work, not the sync.
+            Err(e) => {
+                tracing::warn!("Ignoring undecodable masternode quorum statuses: {e}");
+                Ok(None)
+            }
+        }
     }
 
     async fn replay(&self, network: Network) -> StorageResult<MasternodeListEngine> {
         let mut engine = MasternodeListEngine::default_for_network(network);
 
-        if let Some((block_container, quorum_statuses)) = self.load_context().await? {
-            engine.block_container = block_container;
+        if let Some(quorum_statuses) = self.load_quorum_statuses().await? {
             engine.quorum_statuses = quorum_statuses;
         }
 
@@ -154,6 +177,23 @@ impl PersistentMasternodeStorage {
             }
         }
 
+        {
+            let headers = self.headers.read().await;
+            for (_, qr_info) in &pending_qr_infos {
+                feed_qrinfo_heights_to_engine(&mut engine, qr_info, &*headers).await;
+            }
+            // A diff is keyed by its own height, but applying it also needs the
+            // height of the list it extends.
+            for (height, diff) in &pending_diffs {
+                engine.feed_block_height(*height, diff.block_hash);
+                if let Ok(Some(base_height)) =
+                    headers.get_header_height_by_hash(&diff.base_block_hash).await
+                {
+                    engine.feed_block_height(base_height, diff.base_block_hash);
+                }
+            }
+        }
+
         let qr_info_count = pending_qr_infos.len();
         let diff_count = pending_diffs.len();
 
@@ -164,7 +204,6 @@ impl PersistentMasternodeStorage {
                 .retain(|(_, qr_info)| engine.feed_qr_info(qr_info.clone(), true, true).is_err());
 
             pending_diffs.retain(|(height, diff)| {
-                engine.feed_block_height(*height, diff.block_hash);
                 engine.apply_diff(diff.clone(), Some(*height), false, None).is_err()
             });
 
@@ -199,25 +238,7 @@ impl PersistentMasternodeStorage {
 type IndexMap = BTreeMap<CoreBlockHeight, PathBuf>;
 
 #[async_trait]
-impl PersistentStorage for PersistentMasternodeStorage {
-    async fn open(storage_path: impl Into<PathBuf> + Send) -> StorageResult<Self> {
-        let storage_path = storage_path.into();
-        let (diffs, qr_infos) = Self::index_folder(&storage_path.join(Self::FOLDER_NAME)).await?;
-
-        Ok(PersistentMasternodeStorage {
-            storage_path,
-            diffs,
-            qr_infos,
-        })
-    }
-
-    async fn persist(&mut self, _storage_path: impl Into<PathBuf> + Send) -> StorageResult<()> {
-        Ok(())
-    }
-}
-
-#[async_trait]
-impl MasternodeStorage for PersistentMasternodeStorage {
+impl<H: BlockHeaderStorage> MasternodeStorage for PersistentMasternodeStorage<H> {
     async fn store_diff(
         &mut self,
         height: CoreBlockHeight,
@@ -244,19 +265,16 @@ impl MasternodeStorage for PersistentMasternodeStorage {
         Ok(())
     }
 
-    async fn store_context(&mut self, engine: &MasternodeListEngine) -> StorageResult<()> {
+    async fn store_quorum_statuses(&mut self, engine: &MasternodeListEngine) -> StorageResult<()> {
         let folder = self.folder();
         tokio::fs::create_dir_all(&folder).await?;
 
-        let bytes = bincode::encode_to_vec(
-            (&engine.block_container, &engine.quorum_statuses),
-            bincode::config::standard(),
-        )
-        .map_err(|e| {
-            StorageError::Serialization(format!("Failed to encode masternode context: {e}"))
-        })?;
+        let bytes = bincode::encode_to_vec(&engine.quorum_statuses, bincode::config::standard())
+            .map_err(|e| {
+                StorageError::Serialization(format!("Failed to encode quorum statuses: {e}"))
+            })?;
 
-        atomic_write(&folder.join(Self::CONTEXT_FILE_NAME), &bytes).await
+        atomic_write(&folder.join(Self::QUORUM_STATUSES_FILE_NAME), &bytes).await
     }
 
     async fn load_engine(&self, network: Network) -> StorageResult<MasternodeListEngine> {
@@ -271,4 +289,61 @@ impl MasternodeStorage for PersistentMasternodeStorage {
         let engine = self.replay(network).await?;
         Ok(engine.masternode_lists_around_height(height).0.cloned())
     }
+}
+
+/// Feed QRInfo block heights to the engine from the header storage.
+///
+/// Resolves heights for every hash enumerated by
+/// [`MasternodeListEngine::qr_info_referenced_block_hashes`], plus the cycle boundary
+/// block for each work-block diff (`work_height + WORK_DIFF_DEPTH`), which is needed
+/// for rotated quorum storage key calculation.
+pub(crate) async fn feed_qrinfo_heights_to_engine<S: BlockHeaderStorage>(
+    engine: &mut MasternodeListEngine,
+    qr_info: &QRInfo,
+    storage: &S,
+) -> usize {
+    let mut fed_count = 0;
+    for block_hash in MasternodeListEngine::qr_info_referenced_block_hashes(qr_info) {
+        if let Ok(Some(height)) = storage.get_header_height_by_hash(&block_hash).await {
+            engine.feed_block_height(height, block_hash);
+            fed_count += 1;
+            tracing::trace!("Fed height {} for block {}", height, block_hash);
+        }
+    }
+
+    // Feed cycle boundary heights for all diffs (current and historical cycles).
+    // Each diff's block_hash is at the "work block" height; the cycle boundary is
+    // WORK_DIFF_DEPTH higher.
+    let mut work_block_hashes = vec![
+        qr_info.mn_list_diff_h.block_hash,
+        qr_info.mn_list_diff_at_h_minus_c.block_hash,
+        qr_info.mn_list_diff_at_h_minus_2c.block_hash,
+        qr_info.mn_list_diff_at_h_minus_3c.block_hash,
+    ];
+
+    if let Some((_, diff)) = &qr_info.quorum_snapshot_and_mn_list_diff_at_h_minus_4c {
+        work_block_hashes.push(diff.block_hash);
+    }
+
+    for work_block_hash in work_block_hashes {
+        if let Ok(Some(work_block_height)) =
+            storage.get_header_height_by_hash(&work_block_hash).await
+        {
+            let cycle_boundary_height = work_block_height + WORK_DIFF_DEPTH;
+            if let Ok(Some(cycle_boundary_header)) = storage.get_header(cycle_boundary_height).await
+            {
+                let cycle_boundary_hash = *cycle_boundary_header.hash();
+                engine.feed_block_height(cycle_boundary_height, cycle_boundary_hash);
+                fed_count += 1;
+                tracing::debug!(
+                    "Fed cycle boundary height {} for block {}",
+                    cycle_boundary_height,
+                    cycle_boundary_hash
+                );
+            }
+        }
+    }
+
+    tracing::info!("Fed {} block heights to engine", fed_count);
+    fed_count
 }
