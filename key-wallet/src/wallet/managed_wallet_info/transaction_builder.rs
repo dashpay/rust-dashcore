@@ -244,8 +244,9 @@ impl TransactionBuilder {
     /// picks are reserved by the account that holds them.
     ///
     /// Independent of call order: enabling it also discards candidates an
-    /// earlier `add_funding` contributed, so `add_funding(..).use_only_added_inputs()`
-    /// and `use_only_added_inputs().add_funding(..)` build the same transaction.
+    /// earlier `add_funding` contributed, and collapses an outpoint that both
+    /// supplied to a single candidate, so every ordering builds the same
+    /// transaction.
     pub fn use_only_added_inputs(mut self) -> Self {
         self.only_added_inputs = true;
         // Order-independent: an `add_funding` that already ran left the
@@ -256,7 +257,12 @@ impl TransactionBuilder {
             seeded_inputs,
             ..
         } = &mut self;
-        inputs.retain(|utxo| seeded_inputs.contains(&utxo.outpoint));
+        // Deduplicated as well as restricted: seeding an outpoint an earlier
+        // `add_funding` already offered leaves two candidates for it, and coin
+        // selection does not deduplicate, so `SelectionStrategy::All` would
+        // spend it twice and Core rejects the duplicate prevouts.
+        let mut kept: HashSet<OutPoint> = HashSet::new();
+        inputs.retain(|utxo| seeded_inputs.contains(&utxo.outpoint) && kept.insert(utxo.outpoint));
         self
     }
 
@@ -2073,6 +2079,42 @@ mod tests {
         // Reservation bookkeeping is unchanged: the account that owns the
         // seeded input still reserves it.
         assert!(funds.reservations().reserved(200).contains(&seeded.outpoint));
+    }
+
+    #[test]
+    fn add_inputs_after_add_funding_does_not_duplicate_a_candidate() {
+        let ctx = TestWalletContext::new_random();
+        let account =
+            ctx.wallet.accounts.standard_bip44_accounts.get(&0).expect("BIP44 account").clone();
+
+        let mut funds = ManagedCoreFundsAccount::dummy_bip44();
+        let shared = Utxo::dummy(0x01, 500_000, 100, false, true);
+        let other = Utxo::dummy(0x02, 500_000, 100, false, true);
+        funds.utxos.insert(shared.outpoint, shared.clone());
+        funds.utxos.insert(other.outpoint, other.clone());
+
+        // Funding first, then seeding the SAME outpoint: without dedup the pool
+        // holds it twice, and the opt-in keeps both copies.
+        let builder = TransactionBuilder::new()
+            .set_current_height(200)
+            .set_selection_strategy(SelectionStrategy::All)
+            .add_funding(&mut funds, &account)
+            .add_inputs(vec![shared.clone()])
+            .use_only_added_inputs()
+            .add_output(&ctx.receive_address, 100_000);
+
+        let candidates: Vec<OutPoint> = builder.inputs.iter().map(|utxo| utxo.outpoint).collect();
+        assert_eq!(
+            candidates,
+            vec![shared.outpoint],
+            "the shared outpoint must be offered exactly once, got {candidates:?}"
+        );
+
+        let (tx, _fee, _token) = builder.build_unsigned_reserved().expect("build");
+        let prevouts: Vec<OutPoint> = tx.input.iter().map(|i| i.previous_output).collect();
+        let mut deduped = prevouts.clone();
+        deduped.dedup();
+        assert_eq!(prevouts, deduped, "transaction must not contain duplicate prevouts");
     }
 
     #[test]
