@@ -95,6 +95,9 @@ pub struct TransactionBuilder {
     /// account that holds the UTXO, so each account reserves its own share of
     /// the chosen inputs — all under the one token this build is stamped with.
     funding: Vec<(ReservationSet, HashSet<OutPoint>)>,
+    /// When set, `add_funding` contributes no candidates of its own — see
+    /// [`Self::use_only_added_inputs`].
+    only_added_inputs: bool,
 }
 
 impl Default for TransactionBuilder {
@@ -119,6 +122,7 @@ impl TransactionBuilder {
             special_payload: None,
             payload_finalizer: None,
             funding: Vec::new(),
+            only_added_inputs: false,
         }
     }
 
@@ -183,7 +187,19 @@ impl TransactionBuilder {
             if present.contains(&utxo.outpoint) {
                 continue;
             }
+            if self.only_added_inputs {
+                continue;
+            }
             candidates.push(utxo.clone());
+        }
+        // `add_inputs` does not consult the reservation set, so a seeded
+        // outpoint this account has since reserved for another in-flight build
+        // would be selectable here — a double-spend the normal funding path
+        // cannot produce, because every candidate it offers is unreserved.
+        if self.only_added_inputs {
+            self.inputs.retain(|utxo| {
+                !(reserved.contains(&utxo.outpoint) && funds_acc.utxos.contains_key(&utxo.outpoint))
+            });
         }
         self.funding.push((funds_acc.reservations().clone(), owned));
         self.inputs.extend(candidates);
@@ -200,6 +216,27 @@ impl TransactionBuilder {
 
     pub fn add_inputs(mut self, inputs: impl IntoIterator<Item = Utxo>) -> Self {
         self.inputs.extend(inputs);
+        self
+    }
+
+    /// Restrict coin selection to the inputs [`Self::add_inputs`] supplied:
+    /// `add_funding` keeps doing its reservation bookkeeping and still supplies
+    /// the change address, but contributes no candidates of its own.
+    ///
+    /// Without this, `add_funding` unions the funding account's entire
+    /// unreserved UTXO set into the candidate pool, and
+    /// [`SelectionStrategy::All`] then takes all of it. A caller that splits a
+    /// large account into batches of at most `MAX_STANDARD_TX_INPUTS` and
+    /// seeds one batch per build therefore has no effect at all: every build
+    /// sees the whole account and fails with [`BuilderError::TooManyInputs`],
+    /// so an account above the cap can never be drained. That is exactly what a
+    /// chunked CoinJoin sweep does.
+    ///
+    /// Reservation bookkeeping is unchanged: `owned` still covers every
+    /// unreserved UTXO of the account, so whichever seeded outpoints selection
+    /// picks are reserved by the account that holds them.
+    pub fn use_only_added_inputs(mut self) -> Self {
+        self.only_added_inputs = true;
         self
     }
 
@@ -1980,6 +2017,126 @@ mod tests {
         let candidates: Vec<OutPoint> = builder.inputs.iter().map(|utxo| utxo.outpoint).collect();
         assert!(!candidates.contains(&reserved.outpoint));
         assert!(candidates.contains(&free.outpoint));
+    }
+
+    #[test]
+    fn use_only_added_inputs_keeps_selection_to_the_seeded_batch() {
+        let ctx = TestWalletContext::new_random();
+        let account =
+            ctx.wallet.accounts.standard_bip44_accounts.get(&0).expect("BIP44 account").clone();
+
+        let mut funds = ManagedCoreFundsAccount::dummy_bip44();
+        let seeded = Utxo::dummy(0x01, 500_000, 100, false, true);
+        let other = Utxo::dummy(0x02, 500_000, 100, false, true);
+        funds.utxos.insert(seeded.outpoint, seeded.clone());
+        funds.utxos.insert(other.outpoint, other.clone());
+
+        let builder = TransactionBuilder::new()
+            .set_current_height(200)
+            .set_selection_strategy(SelectionStrategy::All)
+            .use_only_added_inputs()
+            .add_inputs(vec![seeded.clone()])
+            .add_funding(&mut funds, &account)
+            .add_output(&ctx.receive_address, 100_000);
+
+        let candidates: Vec<OutPoint> = builder.inputs.iter().map(|utxo| utxo.outpoint).collect();
+        assert_eq!(
+            candidates,
+            vec![seeded.outpoint],
+            "add_funding must contribute no candidates of its own, got {candidates:?}"
+        );
+
+        let (tx, _fee, _token) = builder.build_unsigned_reserved().expect("build");
+        let prevouts: Vec<OutPoint> = tx.input.iter().map(|i| i.previous_output).collect();
+        assert_eq!(prevouts, vec![seeded.outpoint], "only the seeded input may be spent");
+
+        // Reservation bookkeeping is unchanged: the account that owns the
+        // seeded input still reserves it.
+        assert!(funds.reservations().reserved(200).contains(&seeded.outpoint));
+    }
+
+    #[test]
+    fn only_added_inputs_drops_a_seeded_input_the_account_already_reserved() {
+        let ctx = TestWalletContext::new_random();
+        let account =
+            ctx.wallet.accounts.standard_bip44_accounts.get(&0).expect("BIP44 account").clone();
+
+        let mut funds = ManagedCoreFundsAccount::dummy_bip44();
+        let free = Utxo::dummy(0x01, 500_000, 100, false, true);
+        let taken = Utxo::dummy(0x02, 500_000, 100, false, true);
+        funds.utxos.insert(free.outpoint, free.clone());
+        funds.utxos.insert(taken.outpoint, taken.clone());
+
+        // Another in-flight build already holds one of the outpoints the caller
+        // seeds. `add_inputs` does not consult the reservation set, so without
+        // the filter this build would select it too and double-spend it.
+        funds.reservations().reserve(&[taken.outpoint], 200, ReservationToken::next());
+
+        let builder = TransactionBuilder::new()
+            .set_current_height(200)
+            .set_selection_strategy(SelectionStrategy::All)
+            .use_only_added_inputs()
+            .add_inputs(vec![free.clone(), taken.clone()])
+            .add_funding(&mut funds, &account)
+            .add_output(&ctx.receive_address, 100_000);
+
+        let candidates: Vec<OutPoint> = builder.inputs.iter().map(|utxo| utxo.outpoint).collect();
+        assert_eq!(
+            candidates,
+            vec![free.outpoint],
+            "a seeded input reserved by another build must be dropped, got {candidates:?}"
+        );
+    }
+
+    #[test]
+    fn only_added_inputs_lets_a_chunked_drain_clear_the_input_cap() {
+        let ctx = TestWalletContext::new_random();
+        let account =
+            ctx.wallet.accounts.standard_bip44_accounts.get(&0).expect("BIP44 account").clone();
+
+        // An account above MAX_STANDARD_TX_INPUTS, like a heavily mixed
+        // CoinJoin account: 589 UTXOs was the figure from ticket 32081.
+        // `Utxo::dummy` only varies the txid, which caps it at 256 distinct
+        // outpoints — vary the vout to get past the input limit.
+        let mut funds = ManagedCoreFundsAccount::dummy_bip44();
+        let unique: Vec<Utxo> = (0..589u32)
+            .map(|i| {
+                let mut utxo = Utxo::dummy((i / 256) as u8, 500_000, 100, false, true);
+                utxo.outpoint.vout = i;
+                utxo
+            })
+            .collect();
+        for utxo in &unique {
+            funds.utxos.insert(utxo.outpoint, utxo.clone());
+        }
+        assert_eq!(funds.utxos.len(), 589, "the fixture must exceed the cap");
+        let chunk: Vec<Utxo> = unique.iter().take(MAX_STANDARD_TX_INPUTS).cloned().collect();
+
+        // Without the opt-in the whole account is pulled in and the build dies
+        // on the cap, however small the seeded chunk is.
+        let unbounded = TransactionBuilder::new()
+            .set_current_height(200)
+            .set_selection_strategy(SelectionStrategy::All)
+            .add_inputs(chunk.clone())
+            .add_funding(&mut funds.clone(), &account)
+            .add_output(&ctx.receive_address, 100_000)
+            .build_unsigned_reserved();
+        assert!(
+            matches!(unbounded, Err(BuilderError::TooManyInputs { .. })),
+            "expected the unbounded build to hit the cap, got {unbounded:?}"
+        );
+
+        // With it, the seeded chunk is exactly what gets spent.
+        let (tx, _fee, _token) = TransactionBuilder::new()
+            .set_current_height(200)
+            .set_selection_strategy(SelectionStrategy::All)
+            .use_only_added_inputs()
+            .add_inputs(chunk.clone())
+            .add_funding(&mut funds, &account)
+            .add_output(&ctx.receive_address, 100_000)
+            .build_unsigned_reserved()
+            .expect("chunked drain builds");
+        assert_eq!(tx.input.len(), chunk.len(), "the chunk is spent whole and alone");
     }
 
     /// A UTXO seeded with `add_inputs` and then offered again by `add_funding`
