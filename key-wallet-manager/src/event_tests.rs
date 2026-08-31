@@ -826,6 +826,84 @@ async fn test_block_processed_carries_matured_coinbase_record() {
     }
 }
 
+#[tokio::test]
+async fn test_maturity_clock_advance_carries_matured_coinbase_record() {
+    // The clock can advance with no block of its own: dash-spv calls this at
+    // every committed filter batch, including ranges that match nothing
+    // (dashpay/rust-dashcore#995).
+    let (mut manager, wallet_id, addr) = setup_manager_with_wallet();
+    let coinbase_tx = make_coinbase_paying_to(&addr, 5_000_000_000);
+    let coinbase_block = make_block(vec![coinbase_tx.clone()], 0xc2, 4000);
+    let wallets = BTreeSet::from([wallet_id]);
+    manager
+        .process_block_for_wallets(&coinbase_block, coinbase_block.block_hash(), 100, &wallets)
+        .await;
+
+    let mut rx = manager.subscribe_events();
+    manager.update_wallet_last_processed_height(&wallet_id, 200);
+
+    let events = drain_events(&mut rx);
+    let block_event = events
+        .iter()
+        .find(|e| matches!(e, WalletEvent::BlockProcessed { .. }))
+        .unwrap_or_else(|| panic!("expected a BlockProcessed, got {:?}", events));
+
+    match block_event {
+        WalletEvent::BlockProcessed {
+            height,
+            matured,
+            balance,
+            ..
+        } => {
+            assert_eq!(*height, 200);
+            assert_eq!(matured.len(), 1);
+            assert_eq!(matured[0].txid, coinbase_tx.txid());
+            assert_eq!(balance.immature(), 0);
+            assert_eq!(balance.confirmed(), 5_000_000_000);
+        }
+        _ => unreachable!(),
+    }
+}
+
+#[tokio::test]
+async fn test_coinbase_found_below_the_maturity_clock_is_spendable_but_unannounced() {
+    // A rescan can surface a matched block the clock already passed. The
+    // coinbase in it is mature on arrival, so it counts as confirmed, but its
+    // maturity window is behind us and no `matured` record can name it.
+    let (mut manager, wallet_id, addr) = setup_manager_with_wallet();
+    manager.update_wallet_last_processed_height(&wallet_id, 300);
+
+    let mut rx = manager.subscribe_events();
+    let coinbase_tx = make_coinbase_paying_to(&addr, 5_000_000_000);
+    let late_block = make_block(vec![coinbase_tx.clone()], 0xc3, 4000);
+    let wallets = BTreeSet::from([wallet_id]);
+    manager.process_block_for_wallets(&late_block, late_block.block_hash(), 150, &wallets).await;
+
+    let events = drain_events(&mut rx);
+    let block_event = events
+        .iter()
+        .find(|e| matches!(e, WalletEvent::BlockProcessed { .. }))
+        .unwrap_or_else(|| panic!("expected a BlockProcessed, got {:?}", events));
+
+    match block_event {
+        WalletEvent::BlockProcessed {
+            height,
+            inserted,
+            matured,
+            balance,
+            ..
+        } => {
+            assert_eq!(*height, 150);
+            assert_eq!(inserted.len(), 1);
+            assert_eq!(inserted[0].txid, coinbase_tx.txid());
+            assert!(matured.is_empty());
+            assert_eq!(balance.immature(), 0);
+            assert_eq!(balance.confirmed(), 5_000_000_000);
+        }
+        _ => unreachable!(),
+    }
+}
+
 // ---------------------------------------------------------------------------
 // SyncHeightAdvanced
 // ---------------------------------------------------------------------------

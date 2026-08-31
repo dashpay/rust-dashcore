@@ -716,6 +716,12 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
                             .max(scan_floor.saturating_sub(1));
                         if effective_synced.saturating_add(1) >= batch_start {
                             wallet.update_wallet_synced_height(wallet_id, end);
+                            // A committed batch certifies the whole range for
+                            // this wallet, so it is also the wallet's maturity
+                            // clock: filters have no false negatives and every
+                            // matched block below `end` is already applied
+                            // (dashpay/rust-dashcore#995).
+                            wallet.update_wallet_last_processed_height(wallet_id, end);
                         }
                     }
                 }
