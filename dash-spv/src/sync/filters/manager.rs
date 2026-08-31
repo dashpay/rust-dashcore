@@ -970,11 +970,7 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
         let mut wallet_states: Vec<WalletScanState> = Vec::new();
         for wallet_id in &behind {
             let synced = wallet.wallet_synced_height(wallet_id);
-            // The scan query, not the full monitored set: spent single-use
-            // (CoinJoin) addresses are pruned so the per-filter match cost
-            // stays bounded by active UTXOs + gap lookahead instead of
-            // growing with every historical mixing round
-            // (dashpay/rust-dashcore#948).
+            // The scan query, which equals the monitored set today.
             let scripts = wallet.scan_script_pubkeys_for(wallet_id);
             // Bare owner/voting key hashes a compact filter carries beyond the
             // wallet's scriptPubKeys.
@@ -2188,8 +2184,7 @@ mod tests {
 
     /// `scan_batch` matches filters against the wallet's scan query
     /// (`scan_script_pubkeys_for`), not the full monitored set: a monitored
-    /// script pruned from the scan query — a spent single-use CoinJoin
-    /// address (dashpay/rust-dashcore#948) — must not pull its block in.
+    /// script the scan query does not carry must not pull its block in.
     #[tokio::test]
     async fn test_scan_batch_uses_pruned_scan_query() {
         let wallet_id: WalletId = [0x03; 32];
