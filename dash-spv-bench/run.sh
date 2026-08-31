@@ -48,7 +48,6 @@ RUST_CHANNEL="$(sed -n 's/^channel *= *"\(.*\)"/\1/p' "${REPO_ROOT}/rust-toolcha
 RUST_IMAGE="rust:${RUST_CHANNEL:-1.89}-bookworm"
 # Separate from the host's `target/`: a different triple, and sharing one
 # directory across both would make every switch a full rebuild.
-LINUX_TARGET_DIR="target-linux"
 PROJECT="spv-bench"
 STATE="${SCRIPT_DIR}/.clonedir"
 FLAME_SVG="${SCRIPT_DIR}/profiles/flamegraph.svg"
@@ -321,7 +320,7 @@ emit_client_service() {
       BENCH_STORAGE_DIR: "/out"
       BENCH_WALLET_FILE: "/wallets.txt"
     volumes:
-      - "${SCRIPT_DIR}/${LINUX_TARGET_DIR}/release/dash-spv-bench:/usr/local/bin/dash-spv-bench:ro"
+      - "${BIN}:/usr/local/bin/dash-spv-bench:ro"
       - "${BENCH_STORAGE_DIR}:/out"
       - "${BENCH_WALLET_FILE}:/wallets.txt:ro"
     command:
@@ -428,6 +427,19 @@ if [ -n "${BENCH_CPUS}" ]; then
   else
     echo "==> note: 'taskset' not found (e.g. macOS); running the measured binary UNPINNED${BENCH_PEER_CPUS:+ (docker peers still pinned to ${BENCH_PEER_CPUS})}" >&2
   fi
+fi
+
+# Where the measured binary will be, decided before the compose that mounts
+# it is written. Everything lands in the workspace `target/`: a cross build
+# gets cargo's own per-triple subdirectory, so it cannot collide with a host
+# build, and neither duplicates the dependency graph.
+if [ -n "${CLIENT_NETEM}" ] && [ "$(uname -s)" != Linux ]; then
+  CROSS_TRIPLE="$(docker run --rm "${RUST_IMAGE}" rustc -vV | sed -n 's/^host: //p')"
+  [ -n "${CROSS_TRIPLE}" ] || { echo "could not read the build image's target triple" >&2; exit 1; }
+  BIN="${REPO_ROOT}/target/${CROSS_TRIPLE}/release/dash-spv-bench"
+else
+  CROSS_TRIPLE=""
+  BIN="${REPO_ROOT}/target/release/dash-spv-bench"
 fi
 
 # A compose file is needed for the peers (local mode) and for the client
@@ -537,32 +549,34 @@ bring_up() {
 }
 
 build_bin() {
-  if [ -n "${CLIENT_NETEM}" ]; then
+  if [ -n "${CROSS_TRIPLE}" ]; then
     # The client runs in a Linux container, so the binary has to be a Linux
-    # one; a host build is the wrong platform on macOS and cannot be mounted
-    # in. Built by a throwaway container that bind-mounts the workspace and a
-    # persistent Linux target dir, so this stays incremental — an image layer
-    # build would replay the whole workspace on every source change, which
-    # makes A/B runs unusable.
-    echo "==> building bench binary for linux (${RUST_IMAGE}, target dir ${LINUX_TARGET_DIR}/)"
-    mkdir -p "${SCRIPT_DIR}/${LINUX_TARGET_DIR}"
+    # one. On a Linux host the ordinary build already is — same triple, and
+    # glibc is forward compatible — so only a non-Linux host comes here.
+    # Bind-mounts the workspace and builds into its `target/`, which cargo
+    # keeps under the triple, so this stays incremental — an image layer build
+    # would replay the whole workspace on every source change, which makes A/B
+    # runs unusable.
+    echo "==> cross-building bench binary (${RUST_IMAGE}, ${CROSS_TRIPLE})"
+    # As the invoking user, with CARGO_HOME inside the workspace: writing
+    # into the shared `target/` as root leaves artifacts the host build then
+    # cannot overwrite.
     docker run --rm \
       -v "${REPO_ROOT}:/src" \
-      -v "${SCRIPT_DIR}/${LINUX_TARGET_DIR}:/target" \
-      -v "spv-bench-cargo-registry:/usr/local/cargo/registry" \
-      -v "spv-bench-rustup:/usr/local/rustup" \
       -w /src \
-      -e CARGO_TARGET_DIR=/target \
+      --user "$(id -u):$(id -g)" \
+      -e CARGO_HOME=/src/target/.cross-cargo-home \
+      -e CARGO_TARGET_DIR=/src/target \
+      -e CARGO_NET_GIT_FETCH_WITH_CLI=true \
       -e CARGO_PROFILE_RELEASE_DEBUG=line-tables-only \
       "${RUST_IMAGE}" \
-      cargo build --release -p dash-spv-bench
-    BIN="${SCRIPT_DIR}/${LINUX_TARGET_DIR}/release/dash-spv-bench"
-    return 0
+      cargo build --release --target "${CROSS_TRIPLE}" -p dash-spv-bench
+  else
+    echo "==> building bench binary (release + line-table symbols)"
+    ( cd "${REPO_ROOT}" && CARGO_PROFILE_RELEASE_DEBUG=line-tables-only \
+        cargo build --release -p dash-spv-bench )
   fi
-  echo "==> building bench binary (release + line-table symbols)"
-  ( cd "${REPO_ROOT}" && CARGO_PROFILE_RELEASE_DEBUG=line-tables-only \
-      cargo build --release -p dash-spv-bench )
-  BIN="${REPO_ROOT}/target/release/dash-spv-bench"
+  [ -x "${BIN}" ] || { echo "build produced no binary at ${BIN}" >&2; exit 1; }
 }
 
 FLAME_TOOL=""
@@ -581,13 +595,16 @@ if [ "${MODE}" = local ]; then
   bash "${SCRIPT_DIR}/snapshot-chain.sh"   # builds ./chain-data to BENCH_HEIGHT via docker
   bring_up
 else
-  echo "==> testnet mode, peers: ${BENCH_PEERS:-<DNS discovery>}"
+  echo "==> ${MODE} mode, peers: ${BENCH_PEERS:-<DNS discovery>}"
 fi
 
 # Run the sync with its live output straight on the terminal instead of through
 # the batch wrapper's pipe
 run_live() {
-  if [ -w /dev/tty ]; then
+  # Not `[ -w /dev/tty ]`: the device node is writable even with no
+  # controlling terminal, and the redirect then fails with ENXIO. Only
+  # actually opening it answers the question.
+  if { : >/dev/tty; } 2>/dev/null; then
     "$@" >/dev/tty 2>&1
   else
     "$@"
