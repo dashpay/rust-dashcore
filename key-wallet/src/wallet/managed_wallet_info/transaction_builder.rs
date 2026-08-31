@@ -191,19 +191,7 @@ impl TransactionBuilder {
             if present.contains(&utxo.outpoint) {
                 continue;
             }
-            if self.only_added_inputs {
-                continue;
-            }
             candidates.push(utxo.clone());
-        }
-        // `add_inputs` does not consult the reservation set, so a seeded
-        // outpoint this account has since reserved for another in-flight build
-        // would be selectable here — a double-spend the normal funding path
-        // cannot produce, because every candidate it offers is unreserved.
-        if self.only_added_inputs {
-            self.inputs.retain(|utxo| {
-                !(reserved.contains(&utxo.outpoint) && funds_acc.utxos.contains_key(&utxo.outpoint))
-            });
         }
         self.funding.push((funds_acc.reservations().clone(), owned));
         self.inputs.extend(candidates);
@@ -243,26 +231,13 @@ impl TransactionBuilder {
     /// unreserved UTXO of the account, so whichever seeded outpoints selection
     /// picks are reserved by the account that holds them.
     ///
-    /// Independent of call order: enabling it also discards candidates an
-    /// earlier `add_funding` contributed, and collapses an outpoint that both
-    /// supplied to a single candidate, so every ordering builds the same
-    /// transaction.
+    /// Independent of call order: the restriction is applied immediately before
+    /// coin selection, so it does not matter when this is called relative to
+    /// `add_inputs` and `add_funding` — every ordering builds the same
+    /// transaction. Seeded outpoints another in-flight build has reserved are
+    /// dropped there too.
     pub fn use_only_added_inputs(mut self) -> Self {
         self.only_added_inputs = true;
-        // Order-independent: an `add_funding` that already ran left the
-        // account's candidates in `inputs`, and they have to go too, or the
-        // build still selects the whole account and still trips the cap.
-        let Self {
-            inputs,
-            seeded_inputs,
-            ..
-        } = &mut self;
-        // Deduplicated as well as restricted: seeding an outpoint an earlier
-        // `add_funding` already offered leaves two candidates for it, and coin
-        // selection does not deduplicate, so `SelectionStrategy::All` would
-        // spend it twice and Core rejects the duplicate prevouts.
-        let mut kept: HashSet<OutPoint> = HashSet::new();
-        inputs.retain(|utxo| seeded_inputs.contains(&utxo.outpoint) && kept.insert(utxo.outpoint));
         self
     }
 
@@ -584,6 +559,32 @@ impl TransactionBuilder {
 
         if self.require_final_inputs {
             self.inputs.retain(|utxo| utxo.is_confirmed || utxo.is_instantlocked);
+        }
+
+        if self.only_added_inputs {
+            // Applied here rather than where the option is set, so no call
+            // order can slip a candidate past it: `add_inputs` may run after
+            // `use_only_added_inputs`, and `add_funding` either side of it.
+            //
+            // Three things at once: drop what `add_funding` contributed, drop a
+            // seeded outpoint another in-flight build has reserved (`add_inputs`
+            // does not consult the reservation set, while every candidate
+            // `add_funding` offers is unreserved), and collapse an outpoint both
+            // supplied to one candidate — coin selection does not deduplicate,
+            // so a second copy is spent twice and Core rejects the transaction.
+            let reserved: HashSet<OutPoint> = self
+                .funding
+                .iter()
+                .flat_map(|(reservations, _)| reservations.reserved(self.current_height))
+                .collect();
+            let seeded = core::mem::take(&mut self.seeded_inputs);
+            let mut kept: HashSet<OutPoint> = HashSet::new();
+            self.inputs.retain(|utxo| {
+                seeded.contains(&utxo.outpoint)
+                    && !reserved.contains(&utxo.outpoint)
+                    && kept.insert(utxo.outpoint)
+            });
+            self.seeded_inputs = seeded;
         }
 
         // Must match `calculate_base_size`, including the conservative VIN0 routing-script size.
@@ -2065,16 +2066,13 @@ mod tests {
             .add_funding(&mut funds, &account)
             .add_output(&ctx.receive_address, 100_000);
 
-        let candidates: Vec<OutPoint> = builder.inputs.iter().map(|utxo| utxo.outpoint).collect();
-        assert_eq!(
-            candidates,
-            vec![seeded.outpoint],
-            "add_funding must contribute no candidates of its own, got {candidates:?}"
-        );
-
         let (tx, _fee, _token) = builder.build_unsigned_reserved().expect("build");
         let prevouts: Vec<OutPoint> = tx.input.iter().map(|i| i.previous_output).collect();
-        assert_eq!(prevouts, vec![seeded.outpoint], "only the seeded input may be spent");
+        assert_eq!(
+            prevouts,
+            vec![seeded.outpoint],
+            "add_funding must contribute nothing of its own, got {prevouts:?}"
+        );
 
         // Reservation bookkeeping is unchanged: the account that owns the
         // seeded input still reserves it.
@@ -2103,18 +2101,13 @@ mod tests {
             .use_only_added_inputs()
             .add_output(&ctx.receive_address, 100_000);
 
-        let candidates: Vec<OutPoint> = builder.inputs.iter().map(|utxo| utxo.outpoint).collect();
-        assert_eq!(
-            candidates,
-            vec![shared.outpoint],
-            "the shared outpoint must be offered exactly once, got {candidates:?}"
-        );
-
         let (tx, _fee, _token) = builder.build_unsigned_reserved().expect("build");
         let prevouts: Vec<OutPoint> = tx.input.iter().map(|i| i.previous_output).collect();
-        let mut deduped = prevouts.clone();
-        deduped.dedup();
-        assert_eq!(prevouts, deduped, "transaction must not contain duplicate prevouts");
+        assert_eq!(
+            prevouts,
+            vec![shared.outpoint],
+            "the shared outpoint must be spent exactly once, got {prevouts:?}"
+        );
     }
 
     #[test]
@@ -2139,16 +2132,13 @@ mod tests {
             .use_only_added_inputs()
             .add_output(&ctx.receive_address, 100_000);
 
-        let candidates: Vec<OutPoint> = builder.inputs.iter().map(|utxo| utxo.outpoint).collect();
-        assert_eq!(
-            candidates,
-            vec![seeded.outpoint],
-            "enabling the option must discard candidates an earlier add_funding added, got {candidates:?}"
-        );
-
         let (tx, _fee, _token) = builder.build_unsigned_reserved().expect("build");
         let prevouts: Vec<OutPoint> = tx.input.iter().map(|i| i.previous_output).collect();
-        assert_eq!(prevouts, vec![seeded.outpoint]);
+        assert_eq!(
+            prevouts,
+            vec![seeded.outpoint],
+            "candidates an earlier add_funding added must be discarded, got {prevouts:?}"
+        );
     }
 
     #[test]
@@ -2157,31 +2147,50 @@ mod tests {
         let account =
             ctx.wallet.accounts.standard_bip44_accounts.get(&0).expect("BIP44 account").clone();
 
-        let mut funds = ManagedCoreFundsAccount::dummy_bip44();
-        let free = Utxo::dummy(0x01, 500_000, 100, false, true);
-        let taken = Utxo::dummy(0x02, 500_000, 100, false, true);
-        funds.utxos.insert(free.outpoint, free.clone());
-        funds.utxos.insert(taken.outpoint, taken.clone());
+        // Both orders: seeding before the opt-in, and seeding after it — the
+        // second is what a call-order-sensitive filter would miss.
+        //
+        // A fresh account per case: `ReservationSet` has interior mutability, so
+        // cloning it would share the reservations one build stamps with the next.
+        for seeded_last in [false, true] {
+            let mut funds = ManagedCoreFundsAccount::dummy_bip44();
+            let free = Utxo::dummy(0x01, 500_000, 100, false, true);
+            let taken = Utxo::dummy(0x02, 500_000, 100, false, true);
+            funds.utxos.insert(free.outpoint, free.clone());
+            funds.utxos.insert(taken.outpoint, taken.clone());
 
-        // Another in-flight build already holds one of the outpoints the caller
-        // seeds. `add_inputs` does not consult the reservation set, so without
-        // the filter this build would select it too and double-spend it.
-        funds.reservations().reserve(&[taken.outpoint], 200, ReservationToken::next());
+            // Another in-flight build already holds one of the outpoints the
+            // caller seeds. `add_inputs` does not consult the reservation set,
+            // so without the check this build would select it too.
+            funds.reservations().reserve(&[taken.outpoint], 200, ReservationToken::next());
 
-        let builder = TransactionBuilder::new()
-            .set_current_height(200)
-            .set_selection_strategy(SelectionStrategy::All)
-            .use_only_added_inputs()
-            .add_inputs(vec![free.clone(), taken.clone()])
-            .add_funding(&mut funds, &account)
-            .add_output(&ctx.receive_address, 100_000);
+            let builder = TransactionBuilder::new()
+                .set_current_height(200)
+                .set_selection_strategy(SelectionStrategy::All);
+            let builder = if seeded_last {
+                builder
+                    .add_funding(&mut funds, &account)
+                    .use_only_added_inputs()
+                    .add_inputs(vec![free.clone(), taken.clone()])
+            } else {
+                builder
+                    .use_only_added_inputs()
+                    .add_inputs(vec![free.clone(), taken.clone()])
+                    .add_funding(&mut funds, &account)
+            };
 
-        let candidates: Vec<OutPoint> = builder.inputs.iter().map(|utxo| utxo.outpoint).collect();
-        assert_eq!(
-            candidates,
-            vec![free.outpoint],
-            "a seeded input reserved by another build must be dropped, got {candidates:?}"
-        );
+            let (tx, _fee, _token) = builder
+                .add_output(&ctx.receive_address, 100_000)
+                .build_unsigned_reserved()
+                .expect("build");
+            let prevouts: Vec<OutPoint> = tx.input.iter().map(|i| i.previous_output).collect();
+            assert_eq!(
+                prevouts,
+                vec![free.outpoint],
+                "a seeded input reserved by another build must be dropped \
+                 (seeded_last = {seeded_last}), got {prevouts:?}"
+            );
+        }
     }
 
     #[test]
