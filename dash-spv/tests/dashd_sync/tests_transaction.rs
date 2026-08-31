@@ -9,7 +9,7 @@ use super::helpers::{
     count_wallet_transactions, get_spendable_balance, wait_for_mempool_tx, wait_for_sync,
     wait_for_wallet_synced, EMPTY_MNEMONIC, SECONDARY_MNEMONIC,
 };
-use super::setup::{create_and_start_client, TestContext};
+use super::setup::{create_and_start_client, ClientHandle, TestContext};
 use dash_spv::test_utils::{create_test_wallet, TestChain};
 use dashcore::address::NetworkUnchecked;
 use dashcore::secp256k1::Secp256k1;
@@ -18,6 +18,7 @@ use key_wallet::account::ManagedAccountTrait;
 use key_wallet::bip32::{ChildNumber, ExtendedPrivKey};
 use key_wallet::gap_limit::DEFAULT_EXTERNAL_GAP_LIMIT;
 use key_wallet::mnemonic::Mnemonic;
+use key_wallet::wallet::balance::WalletCoreBalance;
 use key_wallet::wallet::initialization::WalletAccountCreationOptions;
 use key_wallet::wallet::managed_wallet_info::coin_selection::SelectionStrategy;
 use key_wallet::wallet::managed_wallet_info::fee::FeeRate;
@@ -637,4 +638,97 @@ async fn test_drain_account_into_another() {
     assert_eq!(utxos(AccountTypePreference::BIP44), 1);
 
     client_handle.stop().await;
+}
+
+const COINBASE_MATURITY: u64 = 100;
+
+async fn mining_context() -> Option<TestContext> {
+    let ctx = TestContext::new(TestChain::Minimal).await?;
+    if !ctx.dashd.supports_mining {
+        eprintln!("Skipping test (dashd RPC miner not available)");
+        return None;
+    }
+    Some(ctx)
+}
+
+async fn wallet_balance(ctx: &TestContext) -> WalletCoreBalance {
+    ctx.wallet.read().await.get_wallet_balance(&ctx.wallet_id).expect("wallet balance")
+}
+
+/// Mine a coinbase to the wallet and bury it under `COINBASE_MATURITY` blocks
+/// paid to the separate mining wallet. Returns the balance before the coinbase
+/// and the immature balance carrying it.
+async fn bury_wallet_coinbase(ctx: &TestContext, handle: &mut ClientHandle) -> (u64, u64) {
+    let baseline = wallet_balance(ctx).await;
+
+    let reward_address = ctx.receive_address().await;
+    ctx.dashd.node.generate_blocks(1, &reward_address);
+    let reward_height = ctx.dashd.initial_height + 1;
+    wait_for_sync(&mut handle.progress_receiver, reward_height).await;
+
+    let immature = wallet_balance(ctx).await.immature();
+    assert!(
+        immature > baseline.immature(),
+        "coinbase should be immature at its own height: {} -> {}",
+        baseline.immature(),
+        immature
+    );
+
+    let miner_address = ctx.dashd.node.get_new_address_from_wallet("default");
+    ctx.dashd.node.generate_blocks(COINBASE_MATURITY, &miner_address);
+    let mature_height = reward_height + COINBASE_MATURITY as u32;
+    wait_for_sync(&mut handle.progress_receiver, mature_height).await;
+    wait_for_wallet_synced(&ctx.wallet, &ctx.wallet_id, mature_height).await;
+
+    (baseline.spendable(), immature)
+}
+
+/// A coinbase must mature once it is `COINBASE_MATURITY` blocks deep, even when
+/// none of those blocks touches the wallet (dashpay/rust-dashcore#995).
+#[tokio::test]
+async fn test_coinbase_matures_without_later_wallet_activity() {
+    let Some(ctx) = mining_context().await else {
+        return;
+    };
+    let mut handle = ctx.spawn_new_client().await;
+    wait_for_sync(&mut handle.progress_receiver, ctx.dashd.initial_height).await;
+
+    let (spendable_before, immature) = bury_wallet_coinbase(&ctx, &mut handle).await;
+
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+    while wallet_balance(&ctx).await.immature() != 0 && tokio::time::Instant::now() < deadline {
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+
+    let balance = wallet_balance(&ctx).await;
+    handle.stop().await;
+
+    assert_eq!(balance.immature(), 0, "buried coinbase is still immature");
+    assert_eq!(balance.spendable(), spendable_before + immature, "matured coinbase is unspendable");
+}
+
+/// The control: the same chain, plus a later block paying the wallet. It is the
+/// workaround reported in dashpay/rust-dashcore#995, and the only difference
+/// from the test above.
+#[tokio::test]
+async fn test_coinbase_matures_when_a_later_block_touches_the_wallet() {
+    let Some(ctx) = mining_context().await else {
+        return;
+    };
+    let mut handle = ctx.spawn_new_client().await;
+    wait_for_sync(&mut handle.progress_receiver, ctx.dashd.initial_height).await;
+
+    let (spendable_before, immature) = bury_wallet_coinbase(&ctx, &mut handle).await;
+
+    let address = ctx.receive_address().await;
+    ctx.dashd.node.generate_blocks(1, &address);
+    let height = ctx.dashd.initial_height + COINBASE_MATURITY as u32 + 2;
+    wait_for_sync(&mut handle.progress_receiver, height).await;
+    wait_for_wallet_synced(&ctx.wallet, &ctx.wallet_id, height).await;
+
+    let balance = wallet_balance(&ctx).await;
+    handle.stop().await;
+
+    assert!(balance.immature() > 0, "the newest coinbase is immature");
+    assert_eq!(balance.spendable(), spendable_before + immature, "matured coinbase is unspendable");
 }
