@@ -391,8 +391,8 @@ pub struct MultiMockWallet {
     wallets: std::collections::BTreeMap<WalletId, MockWalletState>,
     /// Per-wallet override for `scan_script_pubkeys_for`. Wallets absent here
     /// fall back to the monitored set, mirroring the trait default. Lets tests
-    /// hand the filter scan a pruned query while the monitored set stays full
-    /// (dashpay/rust-dashcore#948).
+    /// hand the filter scan a query that does not cover everything the wallet
+    /// watches.
     scan_addresses: std::collections::BTreeMap<WalletId, Vec<Address>>,
     event_sender: broadcast::Sender<WalletEvent>,
     /// Track every block processed for assertions.

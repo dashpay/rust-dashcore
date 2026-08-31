@@ -7,7 +7,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use super::managed_account_operations::ManagedAccountOperations;
 use crate::account::{AccountType, ManagedAccountTrait};
 use crate::managed_account::managed_account_collection::ManagedAccountCollection;
-use crate::managed_account::managed_account_ref::{ManagedAccountRef, ManagedAccountRefMut};
+use crate::managed_account::managed_account_ref::ManagedAccountRefMut;
 use crate::managed_account::managed_account_type::ManagedAccountType;
 use crate::managed_account::ManagedCoreFundsAccount;
 use crate::transaction_checking::TransactionContext;
@@ -92,14 +92,12 @@ pub trait WalletInfoInterface: Sized + WalletTransactionChecker + ManagedAccount
 
     /// Get the scriptPubKeys worth matching in a forward compact-filter scan.
     ///
-    /// Defaults to [`Self::monitored_script_pubkeys`]. Implementations may
-    /// return a subset when some monitored scripts can no longer be paid in
-    /// practice — [`ManagedWalletInfo`] drops CoinJoin addresses that are used
-    /// and hold no unspent output, since CoinJoin addresses are single-use by
-    /// protocol (reuse would link mixing rounds) and the query-set growth they
-    /// cause dominates late-scan filter matching for mixing-heavy wallets
-    /// (dashpay/rust-dashcore#948). Block processing and gap-limit maintenance
-    /// keep using the full monitored set; only the filter-scan query shrinks.
+    /// Returns the full monitored set, CoinJoin addresses included, however
+    /// long ago they were emptied. They are single-use by protocol, but
+    /// mainnet pays them again — 287 of one mixing-heavy wallet's were, some
+    /// nearly 100 000 blocks later — so dropping them loses transactions and
+    /// overstates the balance. Narrow this only with proof the dropped
+    /// scripts cannot be paid.
     fn scan_script_pubkeys(&self) -> Vec<ScriptBuf> {
         self.monitored_script_pubkeys()
     }
@@ -403,26 +401,6 @@ impl WalletInfoInterface for ManagedWalletInfo {
     fn monitored_script_pubkeys(&self) -> Vec<ScriptBuf> {
         let mut scripts = Vec::new();
         for account in self.accounts.all_accounts() {
-            scripts.extend(account.all_script_pubkeys());
-        }
-        scripts
-    }
-
-    fn scan_script_pubkeys(&self) -> Vec<ScriptBuf> {
-        let mut scripts = Vec::new();
-        for account in self.accounts.all_accounts() {
-            // Only CoinJoin accounts are pruned: their addresses are
-            // single-use by protocol, so one that is used and holds no
-            // unspent output will never be paid again and contributes
-            // nothing to a forward scan. Every other account type keeps its
-            // full monitored set — address reuse there is possible even if
-            // discouraged.
-            if let ManagedAccountRef::Funds(funds) = account {
-                if matches!(funds.managed_account_type(), ManagedAccountType::CoinJoin { .. }) {
-                    scripts.extend(funds.unspent_or_unused_script_pubkeys());
-                    continue;
-                }
-            }
             scripts.extend(account.all_script_pubkeys());
         }
         scripts
