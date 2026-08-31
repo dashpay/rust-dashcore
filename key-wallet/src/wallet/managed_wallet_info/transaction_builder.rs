@@ -98,6 +98,9 @@ pub struct TransactionBuilder {
     /// When set, `add_funding` contributes no candidates of its own — see
     /// [`Self::use_only_added_inputs`].
     only_added_inputs: bool,
+    /// Outpoints supplied through [`Self::add_inputs`]. Kept so the restriction
+    /// can be applied whatever order the caller builds in.
+    seeded_inputs: HashSet<OutPoint>,
 }
 
 impl Default for TransactionBuilder {
@@ -123,6 +126,7 @@ impl TransactionBuilder {
             payload_finalizer: None,
             funding: Vec::new(),
             only_added_inputs: false,
+            seeded_inputs: HashSet::new(),
         }
     }
 
@@ -215,7 +219,10 @@ impl TransactionBuilder {
     }
 
     pub fn add_inputs(mut self, inputs: impl IntoIterator<Item = Utxo>) -> Self {
-        self.inputs.extend(inputs);
+        for utxo in inputs {
+            self.seeded_inputs.insert(utxo.outpoint);
+            self.inputs.push(utxo);
+        }
         self
     }
 
@@ -235,8 +242,21 @@ impl TransactionBuilder {
     /// Reservation bookkeeping is unchanged: `owned` still covers every
     /// unreserved UTXO of the account, so whichever seeded outpoints selection
     /// picks are reserved by the account that holds them.
+    ///
+    /// Independent of call order: enabling it also discards candidates an
+    /// earlier `add_funding` contributed, so `add_funding(..).use_only_added_inputs()`
+    /// and `use_only_added_inputs().add_funding(..)` build the same transaction.
     pub fn use_only_added_inputs(mut self) -> Self {
         self.only_added_inputs = true;
+        // Order-independent: an `add_funding` that already ran left the
+        // account's candidates in `inputs`, and they have to go too, or the
+        // build still selects the whole account and still trips the cap.
+        let Self {
+            inputs,
+            seeded_inputs,
+            ..
+        } = &mut self;
+        inputs.retain(|utxo| seeded_inputs.contains(&utxo.outpoint));
         self
     }
 
@@ -2053,6 +2073,40 @@ mod tests {
         // Reservation bookkeeping is unchanged: the account that owns the
         // seeded input still reserves it.
         assert!(funds.reservations().reserved(200).contains(&seeded.outpoint));
+    }
+
+    #[test]
+    fn only_added_inputs_is_independent_of_builder_call_order() {
+        let ctx = TestWalletContext::new_random();
+        let account =
+            ctx.wallet.accounts.standard_bip44_accounts.get(&0).expect("BIP44 account").clone();
+
+        let mut funds = ManagedCoreFundsAccount::dummy_bip44();
+        let seeded = Utxo::dummy(0x01, 500_000, 100, false, true);
+        let other = Utxo::dummy(0x02, 500_000, 100, false, true);
+        funds.utxos.insert(seeded.outpoint, seeded.clone());
+        funds.utxos.insert(other.outpoint, other.clone());
+
+        // The opt-in comes AFTER funding, so `add_funding` has already put the
+        // account's whole unreserved set into the candidate pool.
+        let builder = TransactionBuilder::new()
+            .set_current_height(200)
+            .set_selection_strategy(SelectionStrategy::All)
+            .add_inputs(vec![seeded.clone()])
+            .add_funding(&mut funds, &account)
+            .use_only_added_inputs()
+            .add_output(&ctx.receive_address, 100_000);
+
+        let candidates: Vec<OutPoint> = builder.inputs.iter().map(|utxo| utxo.outpoint).collect();
+        assert_eq!(
+            candidates,
+            vec![seeded.outpoint],
+            "enabling the option must discard candidates an earlier add_funding added, got {candidates:?}"
+        );
+
+        let (tx, _fee, _token) = builder.build_unsigned_reserved().expect("build");
+        let prevouts: Vec<OutPoint> = tx.input.iter().map(|i| i.previous_output).collect();
+        assert_eq!(prevouts, vec![seeded.outpoint]);
     }
 
     #[test]
