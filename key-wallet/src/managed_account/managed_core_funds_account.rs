@@ -1270,6 +1270,10 @@ impl ManagedAccountTrait for ManagedCoreFundsAccount {
         self.keys.has_transaction(txid)
     }
 
+    fn tx_count(&self) -> usize {
+        self.keys.tx_count()
+    }
+
     fn transaction_is_finalized(&self, txid: &Txid) -> bool {
         self.keys.transaction_is_finalized(txid)
     }
