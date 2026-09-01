@@ -2064,66 +2064,6 @@ mod tests {
     }
 
     #[test]
-    fn reservation_only_funding_cannot_duplicate_a_seeded_candidate() {
-        let ctx = TestWalletContext::new_random();
-        let account =
-            ctx.wallet.accounts.standard_bip44_accounts.get(&0).expect("BIP44 account").clone();
-
-        let mut funds = ManagedCoreFundsAccount::dummy_bip44();
-        let shared = Utxo::dummy(0x01, 500_000, 100, false, true);
-        let other = Utxo::dummy(0x02, 500_000, 100, false, true);
-        funds.utxos.insert(shared.outpoint, shared.clone());
-        funds.utxos.insert(other.outpoint, other.clone());
-
-        // Funding first, then seeding the SAME outpoint: without dedup the pool
-        // holds it twice, and the opt-in keeps both copies.
-        let builder = TransactionBuilder::new()
-            .set_current_height(200)
-            .set_selection_strategy(SelectionStrategy::All)
-            .add_funding_reservation_only(&mut funds, &account)
-            .add_inputs(vec![shared.clone()])
-            .add_output(&ctx.receive_address, 100_000);
-
-        let (tx, _fee, _token) = builder.build_unsigned_reserved().expect("build");
-        let prevouts: Vec<OutPoint> = tx.input.iter().map(|i| i.previous_output).collect();
-        assert_eq!(
-            prevouts,
-            vec![shared.outpoint],
-            "the shared outpoint must be spent exactly once, got {prevouts:?}"
-        );
-    }
-
-    #[test]
-    fn reservation_only_funding_is_independent_of_builder_call_order() {
-        let ctx = TestWalletContext::new_random();
-        let account =
-            ctx.wallet.accounts.standard_bip44_accounts.get(&0).expect("BIP44 account").clone();
-
-        let mut funds = ManagedCoreFundsAccount::dummy_bip44();
-        let seeded = Utxo::dummy(0x01, 500_000, 100, false, true);
-        let other = Utxo::dummy(0x02, 500_000, 100, false, true);
-        funds.utxos.insert(seeded.outpoint, seeded.clone());
-        funds.utxos.insert(other.outpoint, other.clone());
-
-        // The opt-in comes AFTER funding, so `add_funding` has already put the
-        // account's whole unreserved set into the candidate pool.
-        let builder = TransactionBuilder::new()
-            .set_current_height(200)
-            .set_selection_strategy(SelectionStrategy::All)
-            .add_inputs(vec![seeded.clone()])
-            .add_funding_reservation_only(&mut funds, &account)
-            .add_output(&ctx.receive_address, 100_000);
-
-        let (tx, _fee, _token) = builder.build_unsigned_reserved().expect("build");
-        let prevouts: Vec<OutPoint> = tx.input.iter().map(|i| i.previous_output).collect();
-        assert_eq!(
-            prevouts,
-            vec![seeded.outpoint],
-            "candidates an earlier add_funding added must be discarded, got {prevouts:?}"
-        );
-    }
-
-    #[test]
     fn plain_funding_also_drops_a_seeded_input_the_account_has_reserved() {
         let ctx = TestWalletContext::new_random();
         let account =
@@ -2161,8 +2101,9 @@ mod tests {
         let account =
             ctx.wallet.accounts.standard_bip44_accounts.get(&0).expect("BIP44 account").clone();
 
-        // Both orders: seeding before the opt-in, and seeding after it — the
-        // second is what a call-order-sensitive filter would miss.
+        // Both orders: seeding before the funding call and after it — the
+        // second is what a call-order-sensitive check would miss, since
+        // `add_inputs` never consults a reservation set.
         //
         // A fresh account per case: `ReservationSet` has interior mutability, so
         // cloning it would share the reservations one build stamps with the next.
@@ -2229,8 +2170,8 @@ mod tests {
         assert_eq!(funds.utxos.len(), 589, "the fixture must exceed the cap");
         let chunk: Vec<Utxo> = unique.iter().take(MAX_STANDARD_TX_INPUTS).cloned().collect();
 
-        // Without the opt-in the whole account is pulled in and the build dies
-        // on the cap, however small the seeded chunk is.
+        // Funded the ordinary way the whole account is pulled in and the build
+        // dies on the cap, however small the seeded chunk is.
         let unbounded = TransactionBuilder::new()
             .set_current_height(200)
             .set_selection_strategy(SelectionStrategy::All)
