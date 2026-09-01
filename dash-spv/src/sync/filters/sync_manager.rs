@@ -200,6 +200,12 @@ impl<
                         if scripts.is_empty() {
                             continue;
                         }
+                        // Durable first: persist the sweep obligation before
+                        // the in-memory cascade takes it, so a crash anywhere
+                        // between here and the batch's COMMIT replays these
+                        // scripts next session instead of orphaning heights
+                        // scanned before the scripts existed.
+                        self.note_pending_sweep(*wallet_id, scripts.iter().cloned()).await;
                         if let Some(batch) = self.active_batches.get_mut(&batch_start) {
                             batch.add_scripts_for_wallet(*wallet_id, scripts.iter().cloned());
                         }

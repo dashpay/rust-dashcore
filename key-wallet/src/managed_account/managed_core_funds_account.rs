@@ -68,6 +68,20 @@ pub struct ManagedCoreFundsAccount {
     /// re-establish which coins are spent.
     #[cfg_attr(feature = "serde", serde(skip))]
     reservations: ReservationSet,
+    /// Born-spent funding outputs staged by [`Self::update_utxos`]: this
+    /// account recognized an output of a FUNDING transaction that an
+    /// earlier-processed transaction already spent (out-of-order block
+    /// processing during rescan/discovery). The spender was recorded with
+    /// that input unattributed (`net_amount` = income only — the
+    /// inflated-history shape, 2026-08-20 field wallet: 49 one-sided rows,
+    /// +4.63 DASH of phantom net) — and the spender's record may live in a
+    /// SIBLING account (it matched wherever its own outputs landed), so the
+    /// correction must run at wallet scope: `wallet_checker` drains this
+    /// staging and calls [`Self::attribute_spent_input`] on every fund
+    /// account, emitting each corrected record. Transient working state,
+    /// never persisted.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    born_spent_outputs: Vec<(OutPoint, u64, Address)>,
 }
 
 /// What [`ManagedCoreFundsAccount::apply_abandon`] removed from one account.
@@ -104,6 +118,7 @@ impl ManagedCoreFundsAccount {
             utxos: BTreeMap::new(),
             spent_outpoints: HashSet::new(),
             reservations: ReservationSet::default(),
+            born_spent_outputs: Vec::new(),
         }
     }
 
@@ -131,6 +146,7 @@ impl ManagedCoreFundsAccount {
             utxos: BTreeMap::new(),
             spent_outpoints: HashSet::new(),
             reservations: ReservationSet::default(),
+            born_spent_outputs: Vec::new(),
         }
     }
 
@@ -189,6 +205,23 @@ impl ManagedCoreFundsAccount {
         self.spent_outpoints.contains(outpoint)
     }
 
+    /// The outpoints this account knows were spent by recorded transactions.
+    /// Read-only view for store reconciliation. POSITIVE membership is the
+    /// only safe signal: a mirror row still marked unspent whose outpoint
+    /// appears here lost its spend update (the dashpay/platform#4425
+    /// stale-TXO class) and can be flipped.
+    ///
+    /// ABSENCE proves nothing. Under the default feature configuration,
+    /// finalized (chain-locked) transactions drop their full records and
+    /// this set is rebuilt from the records that remain, so a genuinely
+    /// spent outpoint can be missing from BOTH this set and [`Self::utxos`]
+    /// after a reload. A reconciler must treat "in neither inventory" as
+    /// ambiguous — swept/abandoned residue (pre-rust-dashcore#971 stores)
+    /// OR a finalized spend whose record is gone — and never mutate on it.
+    pub fn spent_outpoints(&self) -> &HashSet<OutPoint> {
+        &self.spent_outpoints
+    }
+
     /// Collect the outpoints among `tx`'s inputs that this account holds as a
     /// final UTXO — confirmed, InstantSend-locked, or trusted.
     ///
@@ -215,6 +248,14 @@ impl ManagedCoreFundsAccount {
     /// outpoints that a *sibling* account of the same wallet holds as final.
     /// See [`Self::record_transaction`] for why a per-account view is not
     /// enough. An empty set degrades this to the account-local check.
+    /// Returns an [`OutputDetail`] for every output of `tx` this call
+    /// recognized as paying this account — including outputs whose UTXO
+    /// insertion was skipped because an earlier-processed block already
+    /// spent them (they are still ours and still belong on the record).
+    /// `record_transaction` ignores the return value (its details come from
+    /// the same match); `confirm_transaction` uses it to detect ownership
+    /// learned only on re-processing — the gap-limit rescan shape — and fold
+    /// the correction back into the already-stored record.
     fn update_utxos(
         &mut self,
         tx: &Transaction,
@@ -222,7 +263,8 @@ impl ManagedCoreFundsAccount {
         context: TransactionContext,
         observed_spent: &BTreeMap<OutPoint, CoreBlockHeight>,
         external_final_parents: &BTreeSet<OutPoint>,
-    ) {
+    ) -> Vec<OutputDetail> {
+        let mut recognized: Vec<OutputDetail> = Vec::new();
         // Update UTXOs only for spendable account types
         match self.keys.managed_account_type() {
             ManagedAccountType::Standard {
@@ -298,7 +340,9 @@ impl ManagedCoreFundsAccount {
                         %txid,
                         "Not crediting a transaction whose input a block already spent"
                     );
-                    return;
+                    // Nothing recognized either: a doomed transaction's
+                    // outputs must not be folded into any record.
+                    return recognized;
                 }
 
                 let network = self.keys.network();
@@ -312,6 +356,21 @@ impl ManagedCoreFundsAccount {
                                 vout: vout as u32,
                             };
 
+                            // Report recognition before the spent-skips below:
+                            // an output of ours that is already spent on-chain
+                            // still belongs on the transaction's record and in
+                            // its net_amount.
+                            recognized.push(OutputDetail {
+                                index: vout as u32,
+                                role: if change_addrs.contains(&addr) {
+                                    OutputRole::Change
+                                } else {
+                                    OutputRole::Received
+                                },
+                                address: Some(addr.clone()),
+                                value: output.value,
+                            });
+
                             // Check if this outpoint was already spent by a transaction we've seen.
                             // This handles out-of-order block processing during rescan where a
                             // spending transaction at a higher height may be processed before
@@ -324,6 +383,19 @@ impl ManagedCoreFundsAccount {
                                     outpoint = %outpoint,
                                     "Skipping UTXO already spent by previously processed transaction"
                                 );
+                                // Born-spent: the spender ran BEFORE this
+                                // funding transaction, so its record was
+                                // built with this input unattributed
+                                // (income-only net — the inflated-history
+                                // shape). This is the one moment the missing
+                                // attribution is provable; patch the
+                                // spender's record and stage it for
+                                // re-emission.
+                                self.born_spent_outputs.push((
+                                    outpoint,
+                                    output.value,
+                                    addr.clone(),
+                                ));
                                 continue;
                             }
 
@@ -336,6 +408,15 @@ impl ManagedCoreFundsAccount {
                                     outpoint = %outpoint,
                                     "Skipping UTXO already observed spent in an earlier-processed block (#649)"
                                 );
+                                // Same born-spent shape via the wallet-level
+                                // observed-spends view: if this account also
+                                // holds the spender's record, its spent side
+                                // is missing this input too.
+                                self.born_spent_outputs.push((
+                                    outpoint,
+                                    output.value,
+                                    addr.clone(),
+                                ));
                                 continue;
                             }
 
@@ -400,6 +481,68 @@ impl ManagedCoreFundsAccount {
             }
             _ => {}
         }
+        recognized
+    }
+
+    /// Attribute a born-spent funding output onto EVERY recorded
+    /// transaction in THIS account that spends `outpoint` (a conflicting
+    /// double-spend can leave more than one). Called at wallet scope by
+    /// `wallet_checker` for each staged born-spent output, across all fund
+    /// accounts — the spender's record lives wherever its own outputs
+    /// matched, which need not be the account that owns the funding output.
+    /// Patches the input detail (index, value, address), recomputes the
+    /// record's derived fields, and returns the corrected copies for
+    /// re-emission. No-op for records already attributed and for accounts
+    /// holding no matching record (a finalized record already dropped
+    /// cannot be patched).
+    pub(crate) fn attribute_spent_input(
+        &mut self,
+        outpoint: &OutPoint,
+        value: u64,
+        address: &Address,
+    ) -> Vec<TransactionRecord> {
+        let spenders: Vec<(Txid, u32)> = self
+            .keys
+            .transactions()
+            .iter()
+            .filter_map(|(txid, rec)| {
+                rec.transaction
+                    .input
+                    .iter()
+                    .position(|i| &i.previous_output == outpoint)
+                    .map(|pos| (*txid, pos as u32))
+            })
+            .collect();
+        let mut corrected = Vec::new();
+        for (spender_txid, input_index) in spenders {
+            let Some(record) = self.keys.transactions_mut().get_mut(&spender_txid) else {
+                continue;
+            };
+            if record.input_details.iter().any(|d| d.index == input_index) {
+                continue;
+            }
+            record.input_details.push(InputDetail {
+                index: input_index,
+                value,
+                address: address.clone(),
+            });
+            record.input_details.sort_by_key(|d| d.index);
+            record.recompute_net_and_direction();
+            tracing::info!(
+                outpoint = %outpoint,
+                spender = %spender_txid,
+                corrected_net = record.net_amount,
+                "Attributed born-spent funding output onto its spender's record"
+            );
+            corrected.push(record.clone());
+        }
+        corrected
+    }
+
+    /// Drain the born-spent outputs staged by [`Self::update_utxos`] since
+    /// the last drain, for the wallet-scope attribution sweep.
+    pub(crate) fn take_born_spent_outputs(&mut self) -> Vec<(OutPoint, u64, Address)> {
+        std::mem::take(&mut self.born_spent_outputs)
     }
 
     /// Drop the spent-marks that `freed` contributed, keeping every mark a
@@ -745,14 +888,6 @@ impl ManagedCoreFundsAccount {
             }
         }
 
-        // Capture the (possibly updated) record before any pruning so the
-        // caller can still emit it in an event.
-        let record_after = if changed {
-            self.keys.transactions().get(&txid).cloned()
-        } else {
-            None
-        };
-
         // The chainlock is the trigger for dropping the full record under
         // the default feature configuration; an IS-lock alone is *not*
         // enough — we keep the record so the surrounding block
@@ -760,7 +895,58 @@ impl ManagedCoreFundsAccount {
         // chainlock catches up.
         #[cfg(not(feature = "keep-finalized-transactions"))]
         let drop_now = context.is_chain_locked();
-        self.update_utxos(tx, account_match, context, observed_spent, external_final_parents);
+        let recognized =
+            self.update_utxos(tx, account_match, context, observed_spent, external_final_parents);
+
+        // Gap-limit rescan correction: a re-processed block can recognize
+        // outputs the FIRST processing could not see (their addresses were
+        // beyond the watch window then, derived since). `update_utxos` above
+        // already healed the account's UTXO set; without the block below the
+        // stored record — and every persistence mirror built from emitted
+        // records — keeps the born-wrong shape forever: `net_amount` equal to
+        // the full input value and no `output_details` entry for the output.
+        // A reload from such a mirror is exactly the field fund-loss this
+        // corrects (kotlin-sdk TXO-store bug, 2026-08-19). Merge the newly
+        // recognized outputs into the record, recompute the derived fields,
+        // and signal the caller so a corrective event is emitted.
+        if let Some(tx_record) = self.keys.transactions_mut().get_mut(&txid) {
+            // An output the first processing could not attribute is not
+            // absent from the record — `record_transaction` classified it as
+            // `Sent` (counterparty). Recognition therefore corrects roles in
+            // place as well as filling genuine gaps.
+            let mut corrected = false;
+            for ours in recognized {
+                match tx_record.output_details.iter_mut().find(|o| o.index == ours.index) {
+                    Some(existing) => {
+                        if existing.role != ours.role {
+                            *existing = ours;
+                            corrected = true;
+                        }
+                    }
+                    None => {
+                        tx_record.output_details.push(ours);
+                        corrected = true;
+                    }
+                }
+            }
+            if corrected {
+                tx_record.output_details.sort_by_key(|o| o.index);
+                // Shared derivation over the now-complete details.
+                // `input_details` was built at first processing while the
+                // spent parents were still live, so the spend side needs no
+                // recomputation here.
+                tx_record.recompute_net_and_direction();
+                changed = true;
+            }
+        }
+
+        // Capture the (possibly updated) record before any pruning so the
+        // caller can still emit it in an event.
+        let record_after = if changed {
+            self.keys.transactions().get(&txid).cloned()
+        } else {
+            None
+        };
         #[cfg(not(feature = "keep-finalized-transactions"))]
         if drop_now {
             self.keys.drop_finalized_transaction(&txid);
@@ -1308,6 +1494,7 @@ impl<'de> Deserialize<'de> for ManagedCoreFundsAccount {
             utxos: helper.utxos,
             spent_outpoints,
             reservations: ReservationSet::default(),
+            born_spent_outputs: Vec::new(),
         })
     }
 }

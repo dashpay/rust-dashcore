@@ -41,6 +41,41 @@ pub trait WalletTransactionChecker {
     ) -> TransactionCheckResult;
 }
 
+impl ManagedWalletInfo {
+    /// Wallet-scope born-spent attribution (out-of-order funding): each
+    /// staged output's spender may be recorded in ANY fund account, and a
+    /// conflicting double-spend can leave several records. Runs only when
+    /// something was staged — the common path never touches the full
+    /// account list. The corrections surface as updated records so an
+    /// event re-emits them to the persistence mirrors; without this the
+    /// engine's records are right but every store keeps the income-only
+    /// net (the inflated-history shape).
+    ///
+    /// Every recording path in `check_core_transaction` MUST drain its
+    /// accounts' staging (`take_born_spent_outputs`) into a call to this
+    /// sweep before returning: the staging is deliberately not persisted,
+    /// so an entry left staged across a process death loses the
+    /// correction permanently.
+    fn attribute_born_spent(
+        &mut self,
+        born_spent: &[(dashcore::OutPoint, u64, dashcore::Address)],
+        result: &mut TransactionCheckResult,
+    ) {
+        if born_spent.is_empty() {
+            return;
+        }
+        for (outpoint, value, address) in born_spent {
+            for mut account in self.accounts.all_accounts_mut() {
+                let corrected = account.attribute_spent_input(outpoint, *value, address);
+                if !corrected.is_empty() {
+                    result.state_modified = true;
+                    result.updated_records.extend(corrected);
+                }
+            }
+        }
+    }
+}
+
 #[async_trait]
 impl WalletTransactionChecker for ManagedWalletInfo {
     async fn check_core_transaction(
@@ -156,6 +191,8 @@ impl WalletTransactionChecker for ManagedWalletInfo {
                 // already holding a record — backfill via `record_transaction`
                 // before marking UTXOs so the freshly registered UTXOs get the
                 // IS-lock flag too.
+                let mut born_spent_instant: Vec<(dashcore::OutPoint, u64, dashcore::Address)> =
+                    Vec::new();
                 for account_match in result.affected_accounts.clone() {
                     let Some(mut account) = self
                         .accounts
@@ -180,8 +217,18 @@ impl WalletTransactionChecker for ManagedWalletInfo {
                         );
                         account.mark_utxos_instant_send(&txid);
                         result.new_records.push(record);
+                        // The record call above runs `update_utxos`, which can
+                        // stage born-spent outputs (out-of-order funding). This
+                        // branch returns without reaching the main drain below,
+                        // and the staging is deliberately not persisted — an
+                        // undrained entry would be lost to a restart and the
+                        // spender's record would keep its income-only net.
+                        // Drain and attribute before returning, same as the
+                        // ordinary path.
+                        born_spent_instant.extend(account.take_born_spent_outputs());
                     }
                 }
+                self.attribute_born_spent(&born_spent_instant, &mut result);
                 if update_balance {
                     self.update_balance();
                 }
@@ -195,6 +242,7 @@ impl WalletTransactionChecker for ManagedWalletInfo {
         }
 
         // Process each affected account
+        let mut born_spent: Vec<(dashcore::OutPoint, u64, dashcore::Address)> = Vec::new();
         for account_match in result.affected_accounts.clone() {
             let Some(mut account) =
                 self.accounts.get_by_account_type_match_mut(&account_match.account_type_match)
@@ -231,6 +279,14 @@ impl WalletTransactionChecker for ManagedWalletInfo {
                     }
                 }
             }
+
+            // Born-spent staging: processing THIS transaction may have
+            // revealed outputs an earlier-processed transaction already
+            // spent (out-of-order funding during rescan/discovery). Collect
+            // them here; the attribution sweep runs at wallet scope after
+            // this loop, because the spender's record lives wherever ITS
+            // outputs matched — not necessarily in this account.
+            born_spent.extend(account.take_born_spent_outputs());
 
             for address_info in account_match.account_type_match.all_involved_addresses() {
                 account.mark_address_used(&address_info.address);
@@ -269,6 +325,8 @@ impl WalletTransactionChecker for ManagedWalletInfo {
                 account.bump_monitor_revision();
             }
         }
+
+        self.attribute_born_spent(&born_spent, &mut result);
 
         if is_new {
             // Populate dedup sets when a tx arrives with an initial IS status
@@ -3591,5 +3649,305 @@ mod tests {
         assert!(!utxo.is_trusted, "external payment is not a self-send change");
         assert_eq!(ctx.managed_wallet.balance.confirmed(), 0);
         assert_eq!(ctx.managed_wallet.balance.unconfirmed(), payment_value);
+    }
+
+    /// Cross-account variant of the born-spent correction: the funding
+    /// output belongs to the BIP44 account, but the spender's record lives
+    /// in the COINJOIN account (it matched there via its own outputs when
+    /// processed first, its input unknown). The attribution must run at
+    /// wallet scope — an account-local lookup finds no spender and the
+    /// CoinJoin record keeps its income-only net forever.
+    #[tokio::test]
+    async fn born_spent_attribution_reaches_sibling_account_spenders() {
+        let network = Network::Testnet;
+        let mut wallet =
+            Wallet::new_random(network, WalletAccountCreationOptions::Default).expect("wallet");
+        let mut managed_wallet =
+            ManagedWalletInfo::from_wallet_with_name(&wallet, "Test".to_string(), 0);
+
+        // Funding pays the BIP44 receive address (account A).
+        let bip44_xpub =
+            wallet.accounts.standard_bip44_accounts.get(&0).expect("bip44").account_xpub;
+        let bip44_address = managed_wallet
+            .first_bip44_managed_account_mut()
+            .expect("bip44 managed")
+            .next_receive_address(Some(&bip44_xpub), true)
+            .expect("bip44 address");
+        // The spender pays the CoinJoin account (account B) — so processed
+        // first, it is recorded in B only. The pool is pre-generated to the
+        // gap limit at construction; index 0 is already watched.
+        let cj_address = managed_wallet
+            .coinjoin_managed_account_at_index(0)
+            .expect("coinjoin managed")
+            .managed_account_type()
+            .address_pools()
+            .into_iter()
+            .find(|pool| {
+                pool.pool_type == crate::managed_account::address_pool::AddressPoolType::External
+            })
+            .expect("coinjoin external pool")
+            .address_at_index(0)
+            .expect("pre-generated coinjoin address")
+            .clone();
+
+        const FUND: u64 = 1_000_000;
+        const BACK: u64 = 900_000;
+        let funding_tx = Transaction::dummy(&bip44_address, 0..1, &[FUND]);
+        let funded_outpoint = OutPoint {
+            txid: funding_tx.txid(),
+            vout: 0,
+        };
+        let spender_tx = Transaction {
+            version: 1,
+            lock_time: 0,
+            input: vec![TxIn {
+                previous_output: funded_outpoint,
+                script_sig: ScriptBuf::new(),
+                sequence: 0xffffffff,
+                witness: dashcore::Witness::new(),
+            }],
+            output: vec![TxOut {
+                value: BACK,
+                script_pubkey: cj_address.script_pubkey(),
+            }],
+            special_transaction_payload: None,
+        };
+        let spender_txid = spender_tx.txid();
+
+        // Spender first (height 2), landing in the CoinJoin account.
+        let result = managed_wallet
+            .check_core_transaction(
+                &spender_tx,
+                TransactionContext::InBlock(BlockInfo::new(
+                    2,
+                    BlockHash::from_slice(&[3u8; 32]).expect("hash"),
+                    1_650_000_100,
+                )),
+                &mut wallet,
+                true,
+                true,
+            )
+            .await;
+        assert!(result.is_relevant && result.is_new_transaction);
+        {
+            let cj = managed_wallet.coinjoin_managed_account_at_index(0).expect("cj");
+            let record = cj.transactions().get(&spender_txid).expect("spender in CoinJoin acct");
+            assert_eq!(record.net_amount, BACK as i64, "born income-only in the sibling account");
+        }
+
+        // Funding second (height 1) — recognized by BIP44, whose account-
+        // local records contain no spender. The wallet-scope sweep must
+        // reach the CoinJoin record.
+        let result = managed_wallet
+            .check_core_transaction(
+                &funding_tx,
+                TransactionContext::InBlock(BlockInfo::new(
+                    1,
+                    BlockHash::from_slice(&[2u8; 32]).expect("hash"),
+                    1_650_000_000,
+                )),
+                &mut wallet,
+                true,
+                true,
+            )
+            .await;
+        assert!(result.is_relevant);
+
+        let cj = managed_wallet.coinjoin_managed_account_at_index(0).expect("cj");
+        let record = cj.transactions().get(&spender_txid).expect("spender record");
+        assert_eq!(
+            record.net_amount,
+            BACK as i64 - FUND as i64,
+            "the sibling account's record gains the spent side"
+        );
+        assert_eq!(record.input_details.len(), 1);
+        let corrected = result
+            .updated_records
+            .iter()
+            .find(|r| r.txid == spender_txid)
+            .expect("cross-account correction surfaces in updated_records");
+        assert_eq!(corrected.net_amount, BACK as i64 - FUND as i64);
+    }
+
+    /// Out-of-order funding (rescan block-download order): the SPENDER is
+    /// processed before the transaction that funded it. At spender-process
+    /// time its input is unknown, so the record is born income-only
+    /// (`net_amount = +received` — the inflated-history shape: 2026-08-20
+    /// field wallet showed 49 such rows summing +4.63 DASH of phantom net).
+    /// When the funding transaction is finally processed, its born-spent
+    /// output must be attributed onto the spender's record — corrected net,
+    /// input_details filled — and the corrected record must surface in
+    /// `updated_records` so an event re-emits it to persistence mirrors.
+    #[tokio::test]
+    async fn born_spent_attribution_corrects_out_of_order_spender() {
+        let mut ctx = TestWalletContext::new_random();
+        const FUND: u64 = 1_000_000;
+        const BACK: u64 = 900_000;
+
+        let funding_tx = Transaction::dummy(&ctx.receive_address, 0..1, &[FUND]);
+        let funded_outpoint = OutPoint {
+            txid: funding_tx.txid(),
+            vout: 0,
+        };
+        let spender_tx = Transaction {
+            version: 1,
+            lock_time: 0,
+            input: vec![TxIn {
+                previous_output: funded_outpoint,
+                script_sig: ScriptBuf::new(),
+                sequence: 0xffffffff,
+                witness: dashcore::Witness::new(),
+            }],
+            output: vec![TxOut {
+                value: BACK,
+                script_pubkey: ctx.receive_address.script_pubkey(),
+            }],
+            special_transaction_payload: None,
+        };
+        let spender_txid = spender_tx.txid();
+
+        // Spender first (height 2 processed before height 1).
+        let spender_context = TransactionContext::InBlock(BlockInfo::new(
+            2,
+            BlockHash::from_slice(&[3u8; 32]).expect("block hash"),
+            1_650_000_100,
+        ));
+        let result = ctx.check_transaction(&spender_tx, spender_context).await;
+        assert!(result.is_relevant && result.is_new_transaction);
+        {
+            let account = ctx.managed_wallet.first_bip44_managed_account().expect("bip44 account");
+            let record = account.transactions().get(&spender_txid).expect("spender recorded");
+            assert_eq!(
+                record.net_amount, BACK as i64,
+                "pin the born-wrong shape: income-only net before the funding tx arrives"
+            );
+            assert!(record.input_details.is_empty());
+        }
+
+        // Funding second — out of order.
+        let funding_context = TransactionContext::InBlock(BlockInfo::new(
+            1,
+            BlockHash::from_slice(&[2u8; 32]).expect("block hash"),
+            1_650_000_000,
+        ));
+        let result = ctx.check_transaction(&funding_tx, funding_context).await;
+        assert!(result.is_relevant);
+
+        // The engine record is corrected...
+        {
+            let account = ctx.managed_wallet.first_bip44_managed_account().expect("bip44 account");
+            let record = account.transactions().get(&spender_txid).expect("spender record");
+            assert_eq!(
+                record.net_amount,
+                BACK as i64 - FUND as i64,
+                "spent side attributed: net = received - spent"
+            );
+            assert_eq!(record.input_details.len(), 1);
+            assert_eq!(record.input_details[0].value, FUND);
+            // The born-spent funding output must NOT enter the UTXO set.
+            assert!(
+                !account.utxos.contains_key(&funded_outpoint),
+                "a born-spent output never becomes spendable"
+            );
+        }
+
+        // ...AND the correction surfaces as an updated record for the event
+        // pipeline — without this every persistence mirror keeps the
+        // income-only net forever.
+        let corrected = result
+            .updated_records
+            .iter()
+            .find(|r| r.txid == spender_txid)
+            .expect("corrected spender record must surface in updated_records");
+        assert_eq!(corrected.net_amount, BACK as i64 - FUND as i64);
+        assert_eq!(corrected.input_details.len(), 1);
+    }
+
+    /// Same out-of-order shape as
+    /// [`born_spent_attribution_corrects_out_of_order_spender`], but the
+    /// funding transaction arrives through the InstantSend-lock branch,
+    /// which returns early. That branch's recording also stages born-spent
+    /// outputs, and the staging is deliberately not persisted — before the
+    /// fix the branch returned without draining it, so the correction was
+    /// deferred to whatever transaction happened to be checked next, and a
+    /// process death first lost it permanently (the spender kept its
+    /// income-only net in every mirror).
+    #[tokio::test]
+    async fn born_spent_attribution_runs_on_the_instant_send_path() {
+        let mut ctx = TestWalletContext::new_random();
+        const FUND: u64 = 1_000_000;
+        const BACK: u64 = 900_000;
+
+        let funding_tx = Transaction::dummy(&ctx.receive_address, 0..1, &[FUND]);
+        let funded_outpoint = OutPoint {
+            txid: funding_tx.txid(),
+            vout: 0,
+        };
+        let spender_tx = Transaction {
+            version: 1,
+            lock_time: 0,
+            input: vec![TxIn {
+                previous_output: funded_outpoint,
+                script_sig: ScriptBuf::new(),
+                sequence: 0xffffffff,
+                witness: dashcore::Witness::new(),
+            }],
+            output: vec![TxOut {
+                value: BACK,
+                script_pubkey: ctx.receive_address.script_pubkey(),
+            }],
+            special_transaction_payload: None,
+        };
+        let spender_txid = spender_tx.txid();
+
+        // Spender first: records with the income-only net.
+        let spender_context = TransactionContext::InBlock(BlockInfo::new(
+            2,
+            BlockHash::from_slice(&[3u8; 32]).expect("block hash"),
+            1_650_000_100,
+        ));
+        let result = ctx.check_transaction(&spender_tx, spender_context).await;
+        assert!(result.is_relevant && result.is_new_transaction);
+
+        // Funding second, via the IS-lock branch (early return path).
+        let is_lock = InstantLock {
+            txid: funding_tx.txid(),
+            ..InstantLock::default()
+        };
+        let result =
+            ctx.check_transaction(&funding_tx, TransactionContext::InstantSend(is_lock)).await;
+        assert!(result.is_relevant);
+
+        // The correction must happen NOW, not on some later check: the IS
+        // branch drains its staging into the wallet-scope sweep before
+        // returning.
+        {
+            let account = ctx.managed_wallet.first_bip44_managed_account().expect("bip44 account");
+            let record = account.transactions().get(&spender_txid).expect("spender record");
+            assert_eq!(
+                record.net_amount,
+                BACK as i64 - FUND as i64,
+                "IS-path recording must attribute the born-spent funding output immediately"
+            );
+            assert_eq!(record.input_details.len(), 1);
+            assert!(
+                !account.utxos.contains_key(&funded_outpoint),
+                "a born-spent output never becomes spendable"
+            );
+        }
+        {
+            let account =
+                ctx.managed_wallet.first_bip44_managed_account_mut().expect("bip44 account");
+            assert!(
+                account.take_born_spent_outputs().is_empty(),
+                "no staging may survive the IS-path return"
+            );
+        }
+        let corrected = result
+            .updated_records
+            .iter()
+            .find(|r| r.txid == spender_txid)
+            .expect("corrected spender record must surface in updated_records on the IS path");
+        assert_eq!(corrected.net_amount, BACK as i64 - FUND as i64);
     }
 }
