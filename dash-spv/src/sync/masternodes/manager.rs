@@ -362,22 +362,13 @@ impl<H: BlockHeaderStorage> MasternodesManager<H> {
         }
     }
 
-    pub(super) async fn prune_and_persist_statuses(&self, tip: u32) {
-        let Some(storage) = &self.message_storage else {
-            return;
-        };
-
-        let mut engine = self.engine.write().await;
-        let pruned = engine.prune_masternode_lists(tip);
-
-        if let Err(e) = storage.write().await.store_quorum_statuses(&engine).await {
-            tracing::warn!("Could not persist masternode quorum statuses at {tip}: {e}");
+    pub(super) async fn prune_retained_lists(&self, tip: u32) {
+        if self.message_storage.is_none() {
             return;
         }
 
-        tracing::debug!(
-            "Persisted masternode quorum statuses at {tip}, pruned {pruned} in-memory lists"
-        );
+        let pruned = self.engine.write().await.prune_masternode_lists(tip);
+        tracing::debug!("Pruned {pruned} in-memory masternode lists at {tip}");
     }
 
     /// Decide which [`PipelineMode`] to use when a new header lands at `tip_height`
@@ -599,7 +590,7 @@ impl<H: BlockHeaderStorage> MasternodesManager<H> {
 
         self.sync_state.last_synced_block_hash = Some(latest_block_hash);
         self.progress.update_current_height(height);
-        self.prune_and_persist_statuses(height).await;
+        self.prune_retained_lists(height).await;
         tracing::debug!("Incremental MnListDiff complete at height {}", height);
         Ok(vec![SyncEvent::MasternodeStateUpdated {
             height,
@@ -704,7 +695,7 @@ impl<H: BlockHeaderStorage> MasternodesManager<H> {
         drop(engine);
 
         if !events.is_empty() {
-            self.prune_and_persist_statuses(self.progress.current_height()).await;
+            self.prune_retained_lists(self.progress.current_height()).await;
         }
 
         if is_initial_sync {

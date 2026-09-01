@@ -460,10 +460,6 @@ impl masternode::MasternodeStorage for DiskStorageManager {
         self.masternodes.write().await.store_qr_info(height, qr_info).await
     }
 
-    async fn store_quorum_statuses(&mut self, engine: &MasternodeListEngine) -> StorageResult<()> {
-        self.masternodes.write().await.store_quorum_statuses(engine).await
-    }
-
     async fn load_engine(&self, network: Network) -> StorageResult<MasternodeListEngine> {
         self.masternodes.read().await.load_engine(network).await
     }

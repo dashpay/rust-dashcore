@@ -1,20 +1,17 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use async_trait::async_trait;
 use tokio::sync::{Mutex, RwLock};
 
-use dashcore::bls_sig_utils::BLSPublicKey;
 use dashcore::consensus::{deserialize, serialize, Decodable, Encodable};
 use dashcore::network::message_qrinfo::QRInfo;
 use dashcore::network::message_sml::MnListDiff;
 use dashcore::prelude::CoreBlockHeight;
-use dashcore::sml::llmq_entry_verification::LLMQEntryVerificationStatus;
-use dashcore::sml::llmq_type::LLMQType;
 use dashcore::sml::masternode_list::MasternodeList;
 use dashcore::sml::masternode_list_engine::{MasternodeListEngine, WORK_DIFF_DEPTH};
-use dashcore::{Network, QuorumHash};
+use dashcore::Network;
 
 use crate::error::{StorageError, StorageResult};
 use crate::storage::{io::atomic_write, BlockHeaderStorage};
@@ -27,11 +24,6 @@ struct CachedList {
     list: Option<MasternodeList>,
 }
 
-type QuorumStatuses = BTreeMap<
-    LLMQType,
-    BTreeMap<QuorumHash, (BTreeSet<CoreBlockHeight>, BLSPublicKey, LLMQEntryVerificationStatus)>,
->;
-
 #[async_trait]
 pub trait MasternodeStorage: Send + Sync + 'static {
     async fn store_diff(&mut self, height: CoreBlockHeight, diff: &MnListDiff)
@@ -42,8 +34,6 @@ pub trait MasternodeStorage: Send + Sync + 'static {
         height: CoreBlockHeight,
         qr_info: &QRInfo,
     ) -> StorageResult<()>;
-
-    async fn store_quorum_statuses(&mut self, engine: &MasternodeListEngine) -> StorageResult<()>;
 
     async fn load_engine(&self, network: Network) -> StorageResult<MasternodeListEngine>;
 
@@ -67,7 +57,6 @@ impl<H: BlockHeaderStorage> PersistentMasternodeStorage<H> {
     const DIFF_PREFIX: &str = "diff_";
     const QRINFO_PREFIX: &str = "qrinfo_";
     const EXTENSION: &str = "dat";
-    const QUORUM_STATUSES_FILE_NAME: &str = "quorum_statuses.dat";
 
     pub async fn open(
         storage_path: impl Into<PathBuf> + Send,
@@ -159,21 +148,6 @@ impl<H: BlockHeaderStorage> PersistentMasternodeStorage<H> {
         pending
     }
 
-    async fn load_quorum_statuses(&self) -> StorageResult<Option<QuorumStatuses>> {
-        let path = self.folder().join(Self::QUORUM_STATUSES_FILE_NAME);
-        if !path.exists() {
-            return Ok(None);
-        }
-        let bytes = tokio::fs::read(&path).await?;
-        match bincode::decode_from_slice(&bytes, bincode::config::standard()) {
-            Ok((statuses, _)) => Ok(Some(statuses)),
-            Err(e) => {
-                tracing::warn!("Ignoring undecodable masternode quorum statuses: {e}");
-                Ok(None)
-            }
-        }
-    }
-
     async fn cached_list_at(&self, height: CoreBlockHeight) -> Option<Option<MasternodeList>> {
         let cached = self.cached_list.lock().await;
         let cached = cached.as_ref()?;
@@ -187,10 +161,6 @@ impl<H: BlockHeaderStorage> PersistentMasternodeStorage<H> {
 
     async fn replay(&self, network: Network) -> StorageResult<MasternodeListEngine> {
         let mut engine = MasternodeListEngine::default_for_network(network);
-
-        if let Some(quorum_statuses) = self.load_quorum_statuses().await? {
-            engine.quorum_statuses = quorum_statuses;
-        }
 
         let mut pending_qr_infos: Vec<(CoreBlockHeight, QRInfo)> =
             Self::load_pending(&self.qr_infos, "QRInfo").await;
@@ -273,18 +243,6 @@ impl<H: BlockHeaderStorage> MasternodeStorage for PersistentMasternodeStorage<H>
         let folder = self.folder();
         self.invalidate_cached_list();
         Self::store_message(&folder, &mut self.qr_infos, Self::QRINFO_PREFIX, height, qr_info).await
-    }
-
-    async fn store_quorum_statuses(&mut self, engine: &MasternodeListEngine) -> StorageResult<()> {
-        let folder = self.folder();
-        tokio::fs::create_dir_all(&folder).await?;
-
-        let bytes = bincode::encode_to_vec(&engine.quorum_statuses, bincode::config::standard())
-            .map_err(|e| {
-                StorageError::Serialization(format!("Failed to encode quorum statuses: {e}"))
-            })?;
-
-        atomic_write(&folder.join(Self::QUORUM_STATUSES_FILE_NAME), &bytes).await
     }
 
     async fn load_engine(&self, network: Network) -> StorageResult<MasternodeListEngine> {
