@@ -41,6 +41,9 @@ jobs:
           prefix-key: "v1-rust"
           cache-bin: false
 
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@nextest
+
       - name: Install cargo-llvm-cov
         if: inputs.coverage
         uses: taiki-e/install-action@cargo-llvm-cov
@@ -83,6 +86,14 @@ jobs:
           flags: ${{ steps.tests.outputs.crate_flags }}
           token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: true
+
+      - name: Upload test results to Codecov
+        if: ${{ !cancelled() && steps.tests.outputs.junit_files }}
+        uses: codecov/test-results-action@v1
+        with:
+          files: ${{ steps.tests.outputs.junit_files }}
+          flags: ${{ matrix.group }}
+          token: ${{ secrets.CODECOV_TOKEN }}
 
       - name: Upload failed dashd test logs
         if: failure() && (matrix.group == 'spv' || matrix.group == 'ffi')

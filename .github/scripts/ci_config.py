@@ -12,6 +12,7 @@ import argparse
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -143,21 +144,46 @@ def run_group_tests(args):
     if coverage:
         github_output("crate_flags", args.group)
 
+    junit_dir = Path("target/test-results")
+    junit_dir.mkdir(parents=True, exist_ok=True)
+
     for crate in crates:
         github_group_start(f"Testing {crate}")
 
         try:
             if coverage:
-                cmd = ["cargo", "llvm-cov", "--no-report", "-p", crate, "--all-features"]
+                cmd = [
+                    "cargo", "llvm-cov", "nextest",
+                    "--no-report", "-p", crate, "--all-features",
+                    "--profile", "ci",
+                    "--no-tests=pass",
+                ]
             else:
-                cmd = ["cargo", "test", "-p", crate, "--all-features"]
+                cmd = [
+                    "cargo", "nextest", "run",
+                    "-p", crate, "--all-features",
+                    "--profile", "ci",
+                    "--no-tests=pass",
+                ]
             result = subprocess.run(cmd)
+
+            # Collect JUnit XML per crate for Codecov test analytics
+            src = Path("target/nextest/ci/junit.xml")
+            if src.exists():
+                shutil.copy(src, junit_dir / f"junit-{crate}.xml")
 
             if result.returncode != 0:
                 failed.append(crate)
                 github_error(f"Test failed for {crate} on {args.os}")
         finally:
             github_group_end()
+
+    junit_files = sorted(junit_dir.glob("junit-*.xml"))
+    if junit_files:
+        github_output(
+            "junit_files",
+            ",".join(str(f).replace("\\", "/") for f in junit_files),
+        )
 
     if failed:
         print("\n" + "=" * 40)
