@@ -5,7 +5,7 @@
 
 pub(crate) use super::account_checker::TransactionCheckResult;
 use super::transaction_context::TransactionContext;
-use super::transaction_router::TransactionRouter;
+use super::transaction_router::{AccountTypeToCheck, TransactionRouter};
 use crate::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
 use crate::wallet::managed_wallet_info::ManagedWalletInfo;
 use crate::{KeySource, Wallet};
@@ -39,6 +39,68 @@ pub trait WalletTransactionChecker {
         update_state: bool,
         update_balance: bool,
     ) -> TransactionCheckResult;
+}
+
+impl ManagedWalletInfo {
+    /// Promote records whose first sighting already consumed the live UTXO
+    /// evidence used by transaction relevance checks.
+    ///
+    /// A spend-only mempool transaction can remove its inputs from `utxos`
+    /// while paying no wallet-owned output. When the mined transaction is seen
+    /// again, its txid is the remaining wallet attribution. Only accounts the
+    /// transaction router selected are searched, and only an unconfirmed
+    /// record's context is changed.
+    fn promote_stored_transaction_context(
+        &mut self,
+        txid: &dashcore::Txid,
+        context: &TransactionContext,
+        relevant_types: &[AccountTypeToCheck],
+        result: &mut TransactionCheckResult,
+    ) {
+        debug_assert!(context.confirmed());
+
+        for mut account in self.accounts.all_accounts_mut() {
+            let Ok(account_type) = AccountTypeToCheck::try_from(account.managed_account_type())
+            else {
+                continue;
+            };
+            if !relevant_types.contains(&account_type) || account.transaction_is_finalized(txid) {
+                continue;
+            }
+
+            let Some(record) = account.transactions_mut().get_mut(txid) else {
+                continue;
+            };
+            if record.is_confirmed() {
+                continue;
+            }
+
+            record.update_context(context.clone());
+            let updated = record.clone();
+
+            // Match the existing finalized-record retention policy after the
+            // event payload has captured the promoted context.
+            #[cfg(not(feature = "keep-finalized-transactions"))]
+            if context.is_chain_locked() {
+                match &mut account {
+                    crate::managed_account::ManagedAccountRefMut::Funds(funds) => {
+                        funds.keys_mut().drop_finalized_transaction(txid)
+                    }
+                    crate::managed_account::ManagedAccountRefMut::Keys(keys) => {
+                        keys.drop_finalized_transaction(txid)
+                    }
+                }
+            }
+
+            result.updated_records.push(updated);
+        }
+
+        if !result.updated_records.is_empty() {
+            result.is_relevant = true;
+            result.is_new_transaction = false;
+            result.state_modified = true;
+        }
+    }
 }
 
 #[async_trait]
@@ -98,7 +160,18 @@ impl WalletTransactionChecker for ManagedWalletInfo {
             result.released_outpoints = sweep.released_outpoints;
         }
 
-        if !update_state || !result.is_relevant {
+        if !update_state {
+            return result;
+        }
+        if !result.is_relevant {
+            if context.confirmed() {
+                self.promote_stored_transaction_context(
+                    &tx.txid(),
+                    &context,
+                    &relevant_types,
+                    &mut result,
+                );
+            }
             return result;
         }
 
