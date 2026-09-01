@@ -214,6 +214,21 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
     ) -> SyncResult<Vec<SyncEvent>> {
         debug_assert!(self.is_idle(), "manager should have no in-flight state on start");
 
+        // Coverage certified before this process is certified maturity too, so
+        // lift each wallet's clock to its own checkpoint. A boot that is already
+        // at the tip commits no batch, and nothing else would move it
+        // (dashpay/rust-dashcore#995).
+        {
+            let mut wallet = self.wallet.write().await;
+            // Every wallet the manager holds: none can sit at `u32::MAX`.
+            for wallet_id in wallet.wallets_behind(u32::MAX) {
+                let synced = wallet.wallet_synced_height(&wallet_id);
+                if synced > 0 {
+                    wallet.update_wallet_last_processed_height(&wallet_id, synced);
+                }
+            }
+        }
+
         // Use synced_height for restart recovery instead of
         // last_processed_height, which advances per-block and may exceed committed scan progress.
         let (wallet_birth_height, wallet_committed_height) = {
@@ -716,6 +731,12 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
                             .max(scan_floor.saturating_sub(1));
                         if effective_synced.saturating_add(1) >= batch_start {
                             wallet.update_wallet_synced_height(wallet_id, end);
+                            // A committed batch certifies the whole range for
+                            // this wallet, so it is also the wallet's maturity
+                            // clock: filters have no false negatives and every
+                            // matched block below `end` is already applied
+                            // (dashpay/rust-dashcore#995).
+                            wallet.update_wallet_last_processed_height(wallet_id, end);
                         }
                     }
                 }
@@ -1706,6 +1727,10 @@ mod tests {
         assert_eq!(manager.wallet.read().await.wallet_synced_height(&MOCK_WALLET_ID), 0);
     }
 
+    async fn last_processed(multi: &Arc<RwLock<MultiMockWallet>>, id: &WalletId) -> u32 {
+        multi.write().await.wallet_mut(id).last_processed_height
+    }
+
     #[tokio::test]
     async fn test_batch_commit_advances_only_scanned_wallets() {
         let mut manager = create_test_manager().await;
@@ -1723,6 +1748,7 @@ mod tests {
         manager.try_commit_batches().await.unwrap();
         assert_eq!(manager.progress.committed_height(), 4999);
         assert_eq!(manager.wallet.read().await.wallet_synced_height(&MOCK_WALLET_ID), 4999);
+        assert_eq!(manager.wallet.read().await.last_processed_height(), 4999);
 
         // Second batch leaves scanned_wallets empty (nothing to scan in this
         // range), so the per-wallet synced_height stays put even though the
@@ -1736,6 +1762,7 @@ mod tests {
         manager.try_commit_batches().await.unwrap();
         assert_eq!(manager.progress.committed_height(), 9999);
         assert_eq!(manager.wallet.read().await.wallet_synced_height(&MOCK_WALLET_ID), 4999);
+        assert_eq!(manager.wallet.read().await.last_processed_height(), 4999);
     }
 
     /// Two wallets in the same batch: only the wallet recorded in
@@ -1766,6 +1793,8 @@ mod tests {
         assert_eq!(manager.progress.committed_height(), 4999);
         assert_eq!(multi.read().await.wallet_synced_height(&wallet_a), 4999);
         assert_eq!(multi.read().await.wallet_synced_height(&wallet_b), 0);
+        assert_eq!(last_processed(&multi, &wallet_a).await, 4999);
+        assert_eq!(last_processed(&multi, &wallet_b).await, 0);
     }
 
     /// Contiguity guard (dashpay/rust-dashcore#649): a batch scanned before an
@@ -1812,6 +1841,11 @@ mod tests {
             49,
             "the rewound checkpoint must survive commit — the batch is non-contiguous with it"
         );
+        assert_eq!(
+            last_processed(&multi, &wallet_a).await,
+            0,
+            "a batch that cannot certify coverage cannot certify maturity either"
+        );
         // The wallet is still behind, so the next tick rescans it.
         assert!(
             multi.read().await.wallets_behind(9999).contains(&wallet_a),
@@ -1841,6 +1875,7 @@ mod tests {
             0,
             "heights 200000..204999 are reachable and were never scanned, so the batch cannot certify"
         );
+        assert_eq!(last_processed(&multi, &wallet_b).await, 0);
     }
 
     /// The contiguity guard is transparent in normal operation: contiguous
@@ -1987,6 +2022,11 @@ mod tests {
             7499,
             "a rewind INSIDE the batch range must survive commit: 7500..=9999 were \
              scanned without the new account's scripts"
+        );
+        assert_eq!(
+            last_processed(&multi, &wallet_a).await,
+            0,
+            "scripts the scan never tested cannot certify maturity"
         );
         assert!(
             multi.read().await.wallets_behind(9999).contains(&wallet_a),
@@ -3431,6 +3471,25 @@ mod tests {
         assert_eq!(manager.state(), SyncState::Synced);
         assert!(manager.active_batches.is_empty());
         assert!(manager.next_batch_to_store > 100);
+    }
+
+    /// A wallet whose stored maturity clock lags its own certified checkpoint —
+    /// state written by a build that never advanced it — must be lifted at
+    /// startup. An already-synced boot commits no batch, so nothing else would
+    /// (dashpay/rust-dashcore#995).
+    #[tokio::test]
+    async fn test_synced_boot_lifts_the_maturity_clock_to_certified_coverage() {
+        let (mut manager, _headers, _filter) = setup_synced_manager_at_tip().await;
+        assert_eq!(manager.wallet.read().await.wallet_synced_height(&MOCK_WALLET_ID), 100);
+        assert_eq!(manager.wallet.read().await.last_processed_height(), 0);
+
+        manager.set_state(SyncState::WaitingForConnections);
+        let (tx, _rx) = unbounded_channel();
+        let requests = RequestSender::new(tx);
+        manager.start_sync(&requests).await.unwrap();
+
+        assert_eq!(manager.state(), SyncState::Synced);
+        assert_eq!(manager.wallet.read().await.last_processed_height(), 100);
     }
 
     /// A node that boots already synced (default `WaitForEvents` state, which
