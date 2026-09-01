@@ -66,8 +66,6 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
         // so they can read the tip from storage during construction.
         Self::initialize_genesis_block(&config, start_from_height, &mut storage).await?;
 
-        // Seeded before the managers are built: `MasternodesManager::new`
-        // recovers its resume point from the engine's stored lists.
         let masternode_engine = {
             if config.enable_masternodes {
                 let loader = storage.masternodes();

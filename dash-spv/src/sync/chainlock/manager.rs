@@ -39,7 +39,6 @@ pub struct ChainLockManager<H: BlockHeaderStorage, M: MetadataStorage> {
     metadata_storage: Arc<RwLock<M>>,
     /// Masternode engine for BLS signature validation.
     masternode_engine: Arc<RwLock<MasternodeListEngine>>,
-    /// Rebuilds a masternode list the engine no longer retains.
     masternode_storage: Option<Arc<RwLock<PersistentMasternodeStorage<H>>>>,
     network: Network,
     /// The best (highest height) validated ChainLock.
@@ -283,10 +282,12 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> ChainLockManager<H, M> {
         };
 
         let signing_height = chainlock.block_height.saturating_sub(8);
-        let list =
-            storage.read().await.masternode_list_at_or_before(self.network, signing_height).await;
-
-        let list = match list {
+        let list = match storage
+            .read()
+            .await
+            .masternode_list_at_or_before(self.network, signing_height)
+            .await
+        {
             Ok(Some(list)) => list,
             Ok(None) => return false,
             Err(e) => {

@@ -300,7 +300,6 @@ pub struct MasternodesManager<H: BlockHeaderStorage> {
     network: dashcore::Network,
     /// Sync state tracking.
     pub(super) sync_state: MasternodeSyncState,
-    /// `None` leaves the list in memory only.
     pub(super) message_storage: Option<Arc<RwLock<PersistentMasternodeStorage<H>>>>,
 }
 

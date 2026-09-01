@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use tokio::sync::RwLock;
+use tokio::sync::{Mutex, RwLock};
 
 use dashcore::bls_sig_utils::BLSPublicKey;
 use dashcore::consensus::{deserialize, serialize, Decodable, Encodable};
@@ -18,6 +18,14 @@ use dashcore::{Network, QuorumHash};
 
 use crate::error::{StorageError, StorageResult};
 use crate::storage::{io::atomic_write, BlockHeaderStorage};
+
+type IndexMap = BTreeMap<CoreBlockHeight, PathBuf>;
+
+struct CachedList {
+    from: CoreBlockHeight,
+    until: Option<CoreBlockHeight>,
+    list: Option<MasternodeList>,
+}
 
 type QuorumStatuses = BTreeMap<
     LLMQType,
@@ -46,17 +54,12 @@ pub trait MasternodeStorage: Send + Sync + 'static {
     ) -> StorageResult<Option<MasternodeList>>;
 }
 
-/// Stores the raw messages a masternode list is rebuilt from. The heights the
-/// replay needs come from the header storage rather than from a persisted copy
-/// of the engine's block container: the headers already hold every hash/height
-/// pair, and a second copy can only go stale against them.
 pub struct PersistentMasternodeStorage<H: BlockHeaderStorage> {
     storage_path: PathBuf,
-    /// Shared with whoever writes the headers, so a replay reads them as they
-    /// stand rather than as they were when this storage was opened.
     headers: Arc<RwLock<H>>,
-    diffs: BTreeMap<CoreBlockHeight, PathBuf>,
-    qr_infos: BTreeMap<CoreBlockHeight, PathBuf>,
+    diffs: IndexMap,
+    qr_infos: IndexMap,
+    cached_list: Mutex<Option<CachedList>>,
 }
 
 impl<H: BlockHeaderStorage> PersistentMasternodeStorage<H> {
@@ -78,6 +81,7 @@ impl<H: BlockHeaderStorage> PersistentMasternodeStorage<H> {
             headers,
             diffs,
             qr_infos,
+            cached_list: Mutex::new(None),
         })
     }
 
@@ -117,17 +121,21 @@ impl<H: BlockHeaderStorage> PersistentMasternodeStorage<H> {
         Ok((diffs, qr_infos))
     }
 
-    async fn write_message<T: Encodable>(
-        &mut self,
+    async fn store_message<T: Encodable + Sync>(
+        folder: &Path,
+        index: &mut IndexMap,
         prefix: &str,
         height: CoreBlockHeight,
         message: &T,
-    ) -> StorageResult<PathBuf> {
-        let folder = self.folder();
-        tokio::fs::create_dir_all(&folder).await?;
+    ) -> StorageResult<()> {
+        if index.contains_key(&height) {
+            return Ok(());
+        }
+        tokio::fs::create_dir_all(folder).await?;
         let path = folder.join(Self::file_name(prefix, height));
         atomic_write(&path, &serialize(message)).await?;
-        Ok(path)
+        index.insert(height, path);
+        Ok(())
     }
 
     async fn read_message<T: Decodable>(path: &Path) -> StorageResult<T> {
@@ -135,6 +143,20 @@ impl<H: BlockHeaderStorage> PersistentMasternodeStorage<H> {
         deserialize(&bytes).map_err(|e| {
             StorageError::Corruption(format!("Failed to decode {}: {e}", path.display()))
         })
+    }
+
+    async fn load_pending<T: Decodable>(
+        index: &IndexMap,
+        label: &str,
+    ) -> Vec<(CoreBlockHeight, T)> {
+        let mut pending = Vec::new();
+        for (height, path) in index {
+            match Self::read_message::<T>(path).await {
+                Ok(message) => pending.push((*height, message)),
+                Err(e) => tracing::warn!("Skipping unreadable {label} at {height}: {e}"),
+            }
+        }
+        pending
     }
 
     async fn load_quorum_statuses(&self) -> StorageResult<Option<QuorumStatuses>> {
@@ -145,13 +167,22 @@ impl<H: BlockHeaderStorage> PersistentMasternodeStorage<H> {
         let bytes = tokio::fs::read(&path).await?;
         match bincode::decode_from_slice(&bytes, bincode::config::standard()) {
             Ok((statuses, _)) => Ok(Some(statuses)),
-            // The statuses are a cache of what the replay re-derives, so a file
-            // written by an older format costs verification work, not the sync.
             Err(e) => {
                 tracing::warn!("Ignoring undecodable masternode quorum statuses: {e}");
                 Ok(None)
             }
         }
+    }
+
+    async fn cached_list_at(&self, height: CoreBlockHeight) -> Option<Option<MasternodeList>> {
+        let cached = self.cached_list.lock().await;
+        let cached = cached.as_ref()?;
+        (height >= cached.from && cached.until.is_none_or(|until| height < until))
+            .then(|| cached.list.clone())
+    }
+
+    fn invalidate_cached_list(&mut self) {
+        *self.cached_list.get_mut() = None;
     }
 
     async fn replay(&self, network: Network) -> StorageResult<MasternodeListEngine> {
@@ -161,29 +192,16 @@ impl<H: BlockHeaderStorage> PersistentMasternodeStorage<H> {
             engine.quorum_statuses = quorum_statuses;
         }
 
-        let mut pending_qr_infos = Vec::new();
-        for (height, path) in &self.qr_infos {
-            match Self::read_message::<QRInfo>(path).await {
-                Ok(qr_info) => pending_qr_infos.push((*height, qr_info)),
-                Err(e) => tracing::warn!("Skipping unreadable QRInfo at {height}: {e}"),
-            }
-        }
-
-        let mut pending_diffs = Vec::new();
-        for (height, path) in &self.diffs {
-            match Self::read_message::<MnListDiff>(path).await {
-                Ok(diff) => pending_diffs.push((*height, diff)),
-                Err(e) => tracing::warn!("Skipping unreadable MnListDiff at {height}: {e}"),
-            }
-        }
+        let mut pending_qr_infos: Vec<(CoreBlockHeight, QRInfo)> =
+            Self::load_pending(&self.qr_infos, "QRInfo").await;
+        let mut pending_diffs: Vec<(CoreBlockHeight, MnListDiff)> =
+            Self::load_pending(&self.diffs, "MnListDiff").await;
 
         {
             let headers = self.headers.read().await;
             for (_, qr_info) in &pending_qr_infos {
                 feed_qrinfo_heights_to_engine(&mut engine, qr_info, &*headers).await;
             }
-            // A diff is keyed by its own height, but applying it also needs the
-            // height of the list it extends.
             for (height, diff) in &pending_diffs {
                 engine.feed_block_height(*height, diff.block_hash);
                 if let Ok(Some(base_height)) =
@@ -235,8 +253,6 @@ impl<H: BlockHeaderStorage> PersistentMasternodeStorage<H> {
     }
 }
 
-type IndexMap = BTreeMap<CoreBlockHeight, PathBuf>;
-
 #[async_trait]
 impl<H: BlockHeaderStorage> MasternodeStorage for PersistentMasternodeStorage<H> {
     async fn store_diff(
@@ -244,12 +260,9 @@ impl<H: BlockHeaderStorage> MasternodeStorage for PersistentMasternodeStorage<H>
         height: CoreBlockHeight,
         diff: &MnListDiff,
     ) -> StorageResult<()> {
-        if self.diffs.contains_key(&height) {
-            return Ok(());
-        }
-        let path = self.write_message(Self::DIFF_PREFIX, height, diff).await?;
-        self.diffs.insert(height, path);
-        Ok(())
+        let folder = self.folder();
+        self.invalidate_cached_list();
+        Self::store_message(&folder, &mut self.diffs, Self::DIFF_PREFIX, height, diff).await
     }
 
     async fn store_qr_info(
@@ -257,12 +270,9 @@ impl<H: BlockHeaderStorage> MasternodeStorage for PersistentMasternodeStorage<H>
         height: CoreBlockHeight,
         qr_info: &QRInfo,
     ) -> StorageResult<()> {
-        if self.qr_infos.contains_key(&height) {
-            return Ok(());
-        }
-        let path = self.write_message(Self::QRINFO_PREFIX, height, qr_info).await?;
-        self.qr_infos.insert(height, path);
-        Ok(())
+        let folder = self.folder();
+        self.invalidate_cached_list();
+        Self::store_message(&folder, &mut self.qr_infos, Self::QRINFO_PREFIX, height, qr_info).await
     }
 
     async fn store_quorum_statuses(&mut self, engine: &MasternodeListEngine) -> StorageResult<()> {
@@ -286,8 +296,21 @@ impl<H: BlockHeaderStorage> MasternodeStorage for PersistentMasternodeStorage<H>
         network: Network,
         height: CoreBlockHeight,
     ) -> StorageResult<Option<MasternodeList>> {
+        if let Some(hit) = self.cached_list_at(height).await {
+            return Ok(hit);
+        }
+
         let engine = self.replay(network).await?;
-        Ok(engine.masternode_lists_around_height(height).0.cloned())
+        let (before, after) = engine.masternode_lists_around_height(height);
+        let list = before.cloned();
+
+        *self.cached_list.lock().await = Some(CachedList {
+            from: before.map_or(0, |list| list.known_height),
+            until: after.map(|next| next.known_height),
+            list: list.clone(),
+        });
+
+        Ok(list)
     }
 }
 
@@ -301,7 +324,7 @@ pub(crate) async fn feed_qrinfo_heights_to_engine<S: BlockHeaderStorage>(
     engine: &mut MasternodeListEngine,
     qr_info: &QRInfo,
     storage: &S,
-) -> usize {
+) {
     let mut fed_count = 0;
     for block_hash in MasternodeListEngine::qr_info_referenced_block_hashes(qr_info) {
         if let Ok(Some(height)) = storage.get_header_height_by_hash(&block_hash).await {
@@ -345,5 +368,4 @@ pub(crate) async fn feed_qrinfo_heights_to_engine<S: BlockHeaderStorage>(
     }
 
     tracing::info!("Fed {} block heights to engine", fed_count);
-    fed_count
 }

@@ -210,9 +210,8 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
                 // Feed block heights to engine using internal storage
                 let storage = self.header_storage.read().await;
                 let mut engine = self.engine.write().await;
-                let fed = feed_qrinfo_heights_to_engine(&mut engine, qr_info, &*storage).await;
+                feed_qrinfo_heights_to_engine(&mut engine, qr_info, &*storage).await;
                 drop(storage);
-                tracing::info!("Fed {} block heights to engine", fed);
 
                 // Feed QRInfo to engine first to populate masternode lists
                 let qr_info_result = match engine.feed_qr_info(qr_info.clone(), true, true) {

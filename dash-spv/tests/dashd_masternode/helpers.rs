@@ -17,12 +17,6 @@ use super::setup::{TestContext, SYNC_TIMEOUT};
 
 /// Mine a DKG cycle and wait for the SPV to surface a `MasternodeStateUpdated`
 /// event above `baseline_height`.
-/// Files held under each immediate subdirectory of the storage root, keyed by
-/// directory name.
-///
-/// A sync writes into these and never removes a whole class of state, so across
-/// a restart every directory must still be there and hold at least as much —
-/// see [`assert_storage_did_not_shrink`].
 pub(super) fn storage_snapshot(root: &Path) -> BTreeMap<String, usize> {
     let mut counts = BTreeMap::new();
     let Ok(entries) = std::fs::read_dir(root) else {
@@ -55,10 +49,6 @@ fn walkdir_count(dir: &Path) -> usize {
         .sum()
 }
 
-/// Directories that must hold state once this test's first session has run, and
-/// why. `filters` and `blocks` are deliberately absent: the client is stopped
-/// as soon as the masternode phase reports `Synced`, which is before the filter
-/// phase leaves `WaitForEvents`, so those stay legitimately empty here.
 pub(super) const EXPECTED_STORAGE: &[(&str, &str)] = &[
     ("block_headers", "headers synced to the tip"),
     ("filter_headers", "filter headers synced to the tip"),
@@ -67,8 +57,6 @@ pub(super) const EXPECTED_STORAGE: &[(&str, &str)] = &[
     ("masternodes", "the masternode messages this session stored"),
 ];
 
-/// Assert every directory in [`EXPECTED_STORAGE`] exists and holds at least one
-/// file, reporting all of them at once rather than the first to fail.
 pub(super) fn assert_storage_persisted(snapshot: &BTreeMap<String, usize>, what: &str) {
     let missing: Vec<String> = EXPECTED_STORAGE
         .iter()
@@ -84,9 +72,6 @@ pub(super) fn assert_storage_persisted(snapshot: &BTreeMap<String, usize>, what:
     );
 }
 
-/// Every directory present before a restart must still be present after, with
-/// at least as many files. A directory that vanishes or shrinks means a restart
-/// threw away state that the previous session had already earned.
 pub(super) fn assert_storage_did_not_shrink(
     before: &BTreeMap<String, usize>,
     after: &BTreeMap<String, usize>,
