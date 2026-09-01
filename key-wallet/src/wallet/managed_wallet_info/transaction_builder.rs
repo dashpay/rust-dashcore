@@ -95,12 +95,6 @@ pub struct TransactionBuilder {
     /// account that holds the UTXO, so each account reserves its own share of
     /// the chosen inputs — all under the one token this build is stamped with.
     funding: Vec<(ReservationSet, HashSet<OutPoint>)>,
-    /// Reservation sets of the accounts added through
-    /// [`Self::add_funding_reservation_only`]. Those calls contribute no
-    /// candidates, so the only inputs they can cover are seeded ones — and
-    /// `add_inputs` does not consult a reservation set, so seeded outpoints are
-    /// revalidated against these before selection.
-    reservation_only_funding: Vec<ReservationSet>,
 }
 
 impl Default for TransactionBuilder {
@@ -125,7 +119,6 @@ impl TransactionBuilder {
             special_payload: None,
             payload_finalizer: None,
             funding: Vec::new(),
-            reservation_only_funding: Vec::new(),
         }
     }
 
@@ -227,9 +220,6 @@ impl TransactionBuilder {
             }
         }
         self.funding.push((funds_acc.reservations().clone(), owned));
-        if !contribute_candidates {
-            self.reservation_only_funding.push(funds_acc.reservations().clone());
-        }
         self.inputs.extend(candidates);
         if self.change_addr.is_none() {
             self.change_addr = funds_acc.next_change_address(Some(&acc.account_xpub), true).ok();
@@ -567,17 +557,17 @@ impl TransactionBuilder {
             self.inputs.retain(|utxo| utxo.is_confirmed || utxo.is_instantlocked);
         }
 
-        if !self.reservation_only_funding.is_empty() {
-            // The one check that cannot move to the funding call: `add_inputs`
-            // may run after it, and it does not consult a reservation set, so a
-            // seeded outpoint another in-flight build holds would be selectable
-            // here — a double-spend the candidate path cannot produce, since
-            // every UTXO it offers is unreserved.
+        if !self.funding.is_empty() {
+            // Every UTXO a funding account offers is unreserved, but a seeded
+            // one need not be: `add_inputs` does not consult a reservation set,
+            // and may run after the funding call. Drop those here so no path
+            // into the builder can spend an outpoint another in-flight build
+            // holds.
             let height = self.current_height;
             let reserved: HashSet<OutPoint> = self
-                .reservation_only_funding
+                .funding
                 .iter()
-                .flat_map(|reservations| reservations.reserved(height))
+                .flat_map(|(reservations, _)| reservations.reserved(height))
                 .collect();
             self.inputs.retain(|utxo| !reserved.contains(&utxo.outpoint));
         }
@@ -2130,6 +2120,38 @@ mod tests {
             prevouts,
             vec![seeded.outpoint],
             "candidates an earlier add_funding added must be discarded, got {prevouts:?}"
+        );
+    }
+
+    #[test]
+    fn plain_funding_also_drops_a_seeded_input_the_account_has_reserved() {
+        let ctx = TestWalletContext::new_random();
+        let account =
+            ctx.wallet.accounts.standard_bip44_accounts.get(&0).expect("BIP44 account").clone();
+
+        let mut funds = ManagedCoreFundsAccount::dummy_bip44();
+        let free = Utxo::dummy(0x01, 500_000, 100, false, true);
+        let taken = Utxo::dummy(0x02, 500_000, 100, false, true);
+        funds.utxos.insert(free.outpoint, free.clone());
+        funds.utxos.insert(taken.outpoint, taken.clone());
+        funds.reservations().reserve(&[taken.outpoint], 200, ReservationToken::next());
+
+        // Not the reservation-only path: `add_funding` never offers a reserved
+        // UTXO, but `add_inputs` can still seed one, and that must not become
+        // spendable either.
+        let (tx, _fee, _token) = TransactionBuilder::new()
+            .set_current_height(200)
+            .set_selection_strategy(SelectionStrategy::All)
+            .add_inputs(vec![taken.clone()])
+            .add_funding(&mut funds, &account)
+            .add_output(&ctx.receive_address, 100_000)
+            .build_unsigned_reserved()
+            .expect("build");
+
+        let prevouts: Vec<OutPoint> = tx.input.iter().map(|i| i.previous_output).collect();
+        assert!(
+            !prevouts.contains(&taken.outpoint),
+            "an outpoint another build reserved must not be spent, got {prevouts:?}"
         );
     }
 
