@@ -24,6 +24,25 @@ struct ConnectionState {
     framing_buffer: Vec<u8>,
 }
 
+/// Point-in-time connection statistics for a single peer.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PeerStatsSnapshot {
+    /// Remote peer socket address.
+    pub address: SocketAddr,
+    /// Whether the connection is currently active.
+    pub connected: bool,
+    /// Total bytes written to this peer's socket.
+    pub bytes_sent: u64,
+    /// Total bytes read from this peer's socket.
+    pub bytes_received: u64,
+    /// Round-trip time of the most recent ping/pong exchange.
+    pub last_ping_rtt: Option<Duration>,
+    /// Average round-trip time over all ping/pong exchanges this session.
+    pub avg_ping_rtt: Option<Duration>,
+    /// Best block height the peer advertised in its version message.
+    pub best_height: Option<u32>,
+}
+
 /// Dash P2P peer
 pub struct Peer {
     address: SocketAddr,
@@ -33,11 +52,16 @@ pub struct Peer {
     timeout: Duration,
     connected_at: Option<SystemTime>,
     bytes_sent: u64,
+    bytes_received: u64,
     network: Network,
     // Ping/pong state
     last_ping_sent: Option<SystemTime>,
     last_pong_received: Option<SystemTime>,
     pending_pings: HashMap<u64, SystemTime>, // nonce -> sent_time
+    // Measured ping round-trips (running sum/count for the average)
+    last_ping_rtt: Option<Duration>,
+    ping_rtt_sum: Duration,
+    ping_rtt_samples: u32,
     // Peer information from Version message
     version: Option<u32>,
     services: Option<u64>,
@@ -61,10 +85,14 @@ impl Peer {
             timeout,
             connected_at: None,
             bytes_sent: 0,
+            bytes_received: 0,
             network,
             last_ping_sent: None,
             last_pong_received: None,
             pending_pings: HashMap::new(),
+            last_ping_rtt: None,
+            ping_rtt_sum: Duration::ZERO,
+            ping_rtt_samples: 0,
             version: None,
             services: None,
             user_agent: None,
@@ -107,10 +135,14 @@ impl Peer {
             timeout,
             connected_at: Some(SystemTime::now()),
             bytes_sent: 0,
+            bytes_received: 0,
             network,
             last_ping_sent: None,
             last_pong_received: None,
             pending_pings: HashMap::new(),
+            last_ping_rtt: None,
+            ping_rtt_sum: Duration::ZERO,
+            ping_rtt_samples: 0,
             version: None,
             services: None,
             user_agent: None,
@@ -380,6 +412,7 @@ impl Peer {
         const HEADER_LEN: usize = 24; // magic[4] + cmd[12] + length[4] + checksum[4]
         const MAX_RESYNC_STEPS_PER_CALL: usize = 64;
 
+        let mut bytes_read: u64 = 0;
         let result = async {
             let magic_bytes = self.network.magic().to_le_bytes();
             let mut resync_steps = 0usize;
@@ -392,7 +425,7 @@ impl Peer {
                             tracing::info!("Peer {} closed connection (EOF)", self.address);
                             return Err(NetworkError::PeerDisconnected);
                         }
-                        Ok(_) => {}
+                        Ok(n) => bytes_read += n as u64,
                         Err(ref e)
                             if e.kind() == std::io::ErrorKind::ConnectionAborted
                                 || e.kind() == std::io::ErrorKind::ConnectionReset =>
@@ -448,7 +481,7 @@ impl Peer {
                                 tracing::info!("Peer {} closed connection (EOF)", self.address);
                                 return Err(NetworkError::PeerDisconnected);
                             }
-                            Ok(_) => {}
+                            Ok(n) => bytes_read += n as u64,
                             Err(e) => {
                                 return Err(NetworkError::ConnectionFailed(format!(
                                     "Read failed: {}",
@@ -467,7 +500,7 @@ impl Peer {
                             tracing::info!("Peer {} closed connection (EOF)", self.address);
                             return Err(NetworkError::PeerDisconnected);
                         }
-                        Ok(_) => {}
+                        Ok(n) => bytes_read += n as u64,
                         Err(e) => {
                             return Err(NetworkError::ConnectionFailed(format!(
                                 "Read failed: {}",
@@ -515,7 +548,7 @@ impl Peer {
                             tracing::info!("Peer {} closed connection (EOF)", self.address);
                             return Err(NetworkError::PeerDisconnected);
                         }
-                        Ok(_) => {}
+                        Ok(n) => bytes_read += n as u64,
                         Err(e) => {
                             return Err(NetworkError::ConnectionFailed(format!(
                                 "Read failed: {}",
@@ -606,6 +639,10 @@ impl Peer {
         // Drop the lock before disconnecting
         drop(state);
 
+        // Count everything read off the wire, even if the frame later failed
+        // to parse — the bytes were still served by this peer.
+        self.bytes_received += bytes_read;
+
         // Handle disconnection if needed
         if let Err(NetworkError::PeerDisconnected) = &result {
             self.state = None;
@@ -657,7 +694,21 @@ impl Peer {
 
     /// Get connection statistics.
     pub fn stats(&self) -> (u64, u64) {
-        (self.bytes_sent, 0) // TODO: Track bytes received
+        (self.bytes_sent, self.bytes_received)
+    }
+
+    /// Snapshot the peer's connection statistics.
+    pub fn stats_snapshot(&self) -> PeerStatsSnapshot {
+        PeerStatsSnapshot {
+            address: self.address,
+            connected: self.is_connected(),
+            bytes_sent: self.bytes_sent,
+            bytes_received: self.bytes_received,
+            last_ping_rtt: self.last_ping_rtt,
+            avg_ping_rtt: (self.ping_rtt_samples > 0)
+                .then(|| self.ping_rtt_sum / self.ping_rtt_samples),
+            best_height: self.best_height,
+        }
     }
 
     /// Send a ping message with a random nonce.
@@ -693,6 +744,9 @@ impl Peer {
             let rtt = now.duration_since(sent_time).unwrap_or(Duration::from_secs(0));
 
             self.last_pong_received = Some(now);
+            self.last_ping_rtt = Some(rtt);
+            self.ping_rtt_sum += rtt;
+            self.ping_rtt_samples += 1;
 
             tracing::debug!(
                 "Received valid pong from {} with nonce {} (RTT: {:?})",
@@ -846,5 +900,36 @@ mod tests {
         peer.pending_pings.insert(20, expired);
         assert!(peer.remove_expired_pings());
         assert!(peer.pending_pings.is_empty());
+    }
+
+    #[test]
+    fn pong_records_rtt_and_snapshot_averages() {
+        let addr: SocketAddr = "127.0.0.1:9999".parse().unwrap();
+        let mut peer = Peer::dummy(addr);
+
+        let snapshot = peer.stats_snapshot();
+        assert_eq!(snapshot.address, addr);
+        assert_eq!(snapshot.last_ping_rtt, None);
+        assert_eq!(snapshot.avg_ping_rtt, None);
+        assert_eq!(snapshot.bytes_received, 0);
+        assert!(!snapshot.connected);
+
+        // Simulate two ping/pong exchanges with known send times.
+        peer.pending_pings.insert(1, SystemTime::now() - Duration::from_millis(100));
+        peer.handle_pong(1).expect("known nonce");
+        peer.pending_pings.insert(2, SystemTime::now() - Duration::from_millis(300));
+        peer.handle_pong(2).expect("known nonce");
+
+        let snapshot = peer.stats_snapshot();
+        let last = snapshot.last_ping_rtt.expect("last RTT recorded");
+        let avg = snapshot.avg_ping_rtt.expect("avg RTT recorded");
+        // Scheduling can only add latency on top of the simulated send times.
+        assert!(last >= Duration::from_millis(300), "last was {last:?}");
+        assert!(avg >= Duration::from_millis(200), "avg was {avg:?}");
+        assert!(avg <= last, "avg {avg:?} should not exceed last {last:?}");
+
+        // An unknown nonce is rejected and leaves the stats untouched.
+        assert!(peer.handle_pong(999).is_err());
+        assert_eq!(peer.stats_snapshot().last_ping_rtt, Some(last));
     }
 }
