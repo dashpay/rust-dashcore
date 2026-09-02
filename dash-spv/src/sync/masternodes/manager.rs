@@ -14,9 +14,10 @@ use tokio::sync::RwLock;
 use super::pipeline::MnListDiffPipeline;
 use crate::error::{SyncError, SyncResult};
 use crate::network::RequestSender;
-use crate::storage::BlockHeaderStorage;
+use crate::storage::{BlockHeaderStorage, MasternodeStorage, PersistentMasternodeStorage};
 use crate::sync::{MasternodesProgress, SyncEvent, SyncManager, SyncState};
 use dashcore::network::message_qrinfo::QRInfo;
+use dashcore::network::message_sml::MnListDiff;
 use dashcore::BlockHash;
 use std::collections::BTreeSet;
 
@@ -299,6 +300,7 @@ pub struct MasternodesManager<H: BlockHeaderStorage> {
     network: dashcore::Network,
     /// Sync state tracking.
     pub(super) sync_state: MasternodeSyncState,
+    pub(super) message_storage: Option<Arc<RwLock<PersistentMasternodeStorage<H>>>>,
 }
 
 impl<H: BlockHeaderStorage> MasternodesManager<H> {
@@ -307,6 +309,7 @@ impl<H: BlockHeaderStorage> MasternodesManager<H> {
         header_storage: Arc<RwLock<H>>,
         engine: Arc<RwLock<MasternodeListEngine>>,
         network: dashcore::Network,
+        message_storage: Option<Arc<RwLock<PersistentMasternodeStorage<H>>>>,
     ) -> Self {
         // Recover sync state from the engine's stored masternode lists so that a
         // restart can resume from where the previous run left off.
@@ -337,7 +340,35 @@ impl<H: BlockHeaderStorage> MasternodesManager<H> {
             engine,
             network,
             sync_state,
+            message_storage,
         }
+    }
+
+    pub(super) async fn store_diff(&self, height: u32, diff: &MnListDiff) {
+        let Some(storage) = &self.message_storage else {
+            return;
+        };
+        if let Err(e) = storage.write().await.store_diff(height, diff).await {
+            tracing::warn!("Could not store MnListDiff at {height}: {e}");
+        }
+    }
+
+    pub(super) async fn store_qr_info(&self, height: u32, qr_info: &QRInfo) {
+        let Some(storage) = &self.message_storage else {
+            return;
+        };
+        if let Err(e) = storage.write().await.store_qr_info(height, qr_info).await {
+            tracing::warn!("Could not store QRInfo at {height}: {e}");
+        }
+    }
+
+    pub(super) async fn prune_retained_lists(&self, tip: u32) {
+        if self.message_storage.is_none() {
+            return;
+        }
+
+        let pruned = self.engine.write().await.prune_masternode_lists(tip);
+        tracing::debug!("Pruned {pruned} in-memory masternode lists at {tip}");
     }
 
     /// Decide which [`PipelineMode`] to use when a new header lands at `tip_height`
@@ -559,6 +590,7 @@ impl<H: BlockHeaderStorage> MasternodesManager<H> {
 
         self.sync_state.last_synced_block_hash = Some(latest_block_hash);
         self.progress.update_current_height(height);
+        self.prune_retained_lists(height).await;
         tracing::debug!("Incremental MnListDiff complete at height {}", height);
         Ok(vec![SyncEvent::MasternodeStateUpdated {
             height,
@@ -662,6 +694,10 @@ impl<H: BlockHeaderStorage> MasternodesManager<H> {
 
         drop(engine);
 
+        if !events.is_empty() {
+            self.prune_retained_lists(self.progress.current_height()).await;
+        }
+
         if is_initial_sync {
             self.set_state(SyncState::Synced);
             tracing::info!("Masternode sync complete at height {}", self.progress.current_height());
@@ -696,7 +732,7 @@ mod tests {
     async fn create_test_manager_for(network: dashcore::Network) -> TestMasternodesManager {
         let storage = DiskStorageManager::with_temp_dir().await.unwrap();
         let engine = Arc::new(RwLock::new(MasternodeListEngine::default_for_network(network)));
-        MasternodesManager::new(storage.block_headers(), engine, network).await
+        MasternodesManager::new(storage.block_headers(), engine, network, None).await
     }
 
     async fn create_test_manager() -> TestMasternodesManager {
@@ -733,6 +769,7 @@ mod tests {
             block_headers,
             Arc::new(RwLock::new(engine)),
             dashcore::Network::Regtest,
+            None,
         )
         .await;
         manager.set_state(SyncState::Synced);
@@ -964,6 +1001,7 @@ mod tests {
             storage.block_headers(),
             Arc::new(RwLock::new(engine)),
             dashcore::Network::Testnet,
+            None,
         )
         .await;
 

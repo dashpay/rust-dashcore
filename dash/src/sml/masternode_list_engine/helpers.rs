@@ -2,6 +2,8 @@ use crate::QuorumHash;
 use crate::prelude::CoreBlockHeight;
 use crate::sml::llmq_entry_verification::LLMQEntryVerificationStatus;
 use crate::sml::llmq_type::LLMQType;
+#[cfg(feature = "quorum_validation")]
+use crate::sml::llmq_type::network::NetworkLLMQExt;
 use crate::sml::masternode_list::MasternodeList;
 use crate::sml::masternode_list_engine::MasternodeListEngine;
 use crate::sml::quorum_entry::qualified_quorum_entry::QualifiedQuorumEntry;
@@ -14,6 +16,20 @@ use crate::sml::quorum_entry::qualified_quorum_entry::QualifiedQuorumEntry;
 const QUORUM_WALK_BACK_ACTIVE_WINDOWS: u32 = 4;
 
 impl MasternodeListEngine {
+    #[cfg(feature = "quorum_validation")]
+    pub fn prune_masternode_lists(&mut self, tip: CoreBlockHeight) -> usize {
+        let params = self.network.chain_locks_type().params();
+        let floor = tip.saturating_sub(
+            params
+                .signing_active_quorum_count
+                .saturating_mul(params.dkg_params.interval)
+                .saturating_mul(QUORUM_WALK_BACK_ACTIVE_WINDOWS),
+        );
+        let before = self.masternode_lists.len();
+        self.masternode_lists.retain(|height, _| *height >= floor);
+        before - self.masternode_lists.len()
+    }
+
     /// Retrieves the closest masternode lists before and after a given core block height.
     ///
     /// This function searches the `masternode_lists` map to find the nearest masternode lists

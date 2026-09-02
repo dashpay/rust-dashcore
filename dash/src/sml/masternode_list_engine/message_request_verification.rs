@@ -383,7 +383,7 @@ impl MasternodeListEngine {
     }
 
     /// Helper function to verify a ChainLock using a specific masternode list.
-    fn verify_chain_lock_with_masternode_list(
+    pub fn verify_chain_lock_with_masternode_list(
         &self,
         chain_lock: &ChainLock,
         masternode_list: &MasternodeList,
