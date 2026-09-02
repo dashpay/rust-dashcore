@@ -308,7 +308,10 @@ impl Encodable for AddrV2Message {
     fn consensus_encode<W: io::Write + ?Sized>(&self, w: &mut W) -> Result<usize, io::Error> {
         let mut len = 0;
         len += self.time.consensus_encode(w)?;
-        len += VarInt(self.services.as_u64()).consensus_encode(w)?;
+        // This msg encodes ServiceFlags as a VarInt, so we need to
+        // use the specialized method for it. Don't use consensus_encode
+        // since it encodes as a u64, not a VarInt.
+        len += self.services.consensus_encode_as_var_int(w)?;
         len += self.addr.consensus_encode(w)?;
 
         w.write_all(&self.port.to_be_bytes())?;
@@ -322,7 +325,10 @@ impl Decodable for AddrV2Message {
     fn consensus_decode<R: io::Read + ?Sized>(r: &mut R) -> Result<Self, encode::Error> {
         Ok(AddrV2Message {
             time: Decodable::consensus_decode(r)?,
-            services: ServiceFlags::from(VarInt::consensus_decode(r)?.0),
+            // This msg encodes ServiceFlags as a VarInt, so we need to
+            // use the specialized method for it. Don't use consensus_decode
+            // since it decodes as a u64, not a VarInt.
+            services: ServiceFlags::consensus_decode_from_var_int(r)?,
             addr: Decodable::consensus_decode(r)?,
             port: u16::swap_bytes(Decodable::consensus_decode(r)?),
         })
@@ -365,12 +371,13 @@ mod test {
 
     #[test]
     fn debug_format_test() {
-        let mut flags = ServiceFlags::NETWORK;
+        let mut services = ServiceFlags::NETWORK;
+        services.add(ServiceFlags::WITNESS);
         assert_eq!(
             format!(
                 "The address is: {:?}",
                 Address {
-                    services: flags.add(ServiceFlags::WITNESS),
+                    services,
                     address: [0, 0, 0, 0, 0, 0xffff, 0x0a00, 0x0001],
                     port: 8333
                 }
@@ -412,16 +419,20 @@ mod test {
 
     #[test]
     fn test_socket_addr() {
+        let mut services = ServiceFlags::NETWORK;
+        services.add(ServiceFlags::WITNESS);
+
         let s4 = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(111, 222, 123, 4)), 5555);
-        let a4 = Address::new(&s4, ServiceFlags::NETWORK | ServiceFlags::WITNESS);
+        let a4 = Address::new(&s4, services);
         assert_eq!(a4.socket_addr().unwrap(), s4);
+
         let s6 = SocketAddr::new(
             IpAddr::V6(Ipv6Addr::new(
                 0x1111, 0x2222, 0x3333, 0x4444, 0x5555, 0x6666, 0x7777, 0x8888,
             )),
             9999,
         );
-        let a6 = Address::new(&s6, ServiceFlags::NETWORK | ServiceFlags::WITNESS);
+        let a6 = Address::new(&s6, services);
         assert_eq!(a6.socket_addr().unwrap(), s6);
     }
 
@@ -577,19 +588,23 @@ mod test {
         let raw = hex!("0261bc6649019902abab208d79627683fd4804010409090909208d");
         let addresses: Vec<AddrV2Message> = deserialize(&raw).unwrap();
 
+        let services1 = ServiceFlags::NETWORK;
+
+        let mut services2 = ServiceFlags::NETWORK_LIMITED;
+        services2.add(ServiceFlags::WITNESS);
+        services2.add(ServiceFlags::COMPACT_FILTERS);
+
         assert_eq!(
             addresses,
             vec![
                 AddrV2Message {
-                    services: ServiceFlags::NETWORK,
+                    services: services1,
                     time: 0x4966bc61,
                     port: 8333,
                     addr: AddrV2::Unknown(153, hex!("abab"))
                 },
                 AddrV2Message {
-                    services: ServiceFlags::NETWORK_LIMITED
-                        | ServiceFlags::WITNESS
-                        | ServiceFlags::COMPACT_FILTERS,
+                    services: services2,
                     time: 0x83766279,
                     port: 8333,
                     addr: AddrV2::Ipv4(Ipv4Addr::new(9, 9, 9, 9))
