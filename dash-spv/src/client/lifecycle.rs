@@ -13,8 +13,9 @@ use crate::chain::checkpoints::CheckpointManager;
 use crate::error::{Result, SpvError};
 use crate::network::NetworkManager;
 use crate::storage::{
-    PersistentBlockHeaderStorage, PersistentBlockStorage, PersistentFilterHeaderStorage,
-    PersistentFilterStorage, PersistentMetadataStorage, StorageManager,
+    MasternodeStateStorage, PersistentBlockHeaderStorage, PersistentBlockStorage,
+    PersistentFilterHeaderStorage, PersistentFilterStorage, PersistentMetadataStorage,
+    StorageManager,
 };
 use crate::sync::{
     BlockHeadersManager, BlocksManager, ChainLockManager, FilterHeadersManager, FiltersManager,
@@ -65,11 +66,17 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
         // so they can read the tip from storage during construction.
         Self::initialize_genesis_block(&config, start_from_height, &mut storage).await?;
 
+        // Seeded before the managers are built: `MasternodesManager::new`
+        // recovers its resume point from the engine's stored lists.
         let masternode_engine = {
             if config.enable_masternodes {
-                Some(Arc::new(RwLock::new(MasternodeListEngine::default_for_network(
-                    config.network,
-                ))))
+                let loader = storage.masternodestate();
+                let engine = loader.read().await.load_engine(config.network).await;
+                let engine = engine.unwrap_or_else(|e| {
+                    tracing::warn!("Could not load masternode state, rebuilding: {}", e);
+                    MasternodeListEngine::default_for_network(config.network)
+                });
+                Some(Arc::new(RwLock::new(engine)))
             } else {
                 None
             }
@@ -123,6 +130,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
                     storage.block_headers(),
                     masternode_list_engine.clone(),
                     config.network,
+                    Some(storage.masternodestate()),
                 )
                 .await,
             );

@@ -19,6 +19,8 @@ use crate::ClientConfig;
 use async_trait::async_trait;
 use dashcore::hash_types::FilterHeader;
 use dashcore::prelude::CoreBlockHeight;
+use dashcore::sml::masternode_list_engine::MasternodeListEngine;
+use dashcore::Network;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -78,6 +80,8 @@ pub trait StorageManager:
 
     /// Returns shared access to the metadata storage.
     fn metadata(&self) -> Arc<RwLock<PersistentMetadataStorage>>;
+
+    fn masternodestate(&self) -> Arc<RwLock<PersistentMasternodeStateStorage>>;
 }
 
 /// Disk-based storage manager with segmented files and async background saving.
@@ -282,6 +286,10 @@ impl StorageManager for DiskStorageManager {
     fn metadata(&self) -> Arc<RwLock<PersistentMetadataStorage>> {
         Arc::clone(&self.metadata)
     }
+
+    fn masternodestate(&self) -> Arc<RwLock<PersistentMasternodeStateStorage>> {
+        Arc::clone(&self.masternodestate)
+    }
 }
 
 #[async_trait]
@@ -432,12 +440,16 @@ impl metadata::MetadataStorage for DiskStorageManager {
 
 #[async_trait]
 impl masternode::MasternodeStateStorage for DiskStorageManager {
-    async fn store_masternode_state(&mut self, state: &MasternodeState) -> StorageResult<()> {
-        self.masternodestate.write().await.store_masternode_state(state).await
+    async fn store_engine(
+        &mut self,
+        engine: &MasternodeListEngine,
+        height: u32,
+    ) -> StorageResult<()> {
+        self.masternodestate.write().await.store_engine(engine, height).await
     }
 
-    async fn load_masternode_state(&self) -> StorageResult<Option<MasternodeState>> {
-        self.masternodestate.read().await.load_masternode_state().await
+    async fn load_engine(&self, network: Network) -> StorageResult<MasternodeListEngine> {
+        self.masternodestate.read().await.load_engine(network).await
     }
 }
 
