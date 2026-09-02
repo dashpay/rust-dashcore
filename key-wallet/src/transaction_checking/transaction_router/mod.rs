@@ -88,7 +88,9 @@ impl TransactionRouter {
     /// label, never a precondition for discovery, so both shapes must consult the full set of
     /// fund-bearing accounts. An account only matches when a scriptPubKey or spent UTXO actually
     /// belongs to it, so checking extra accounts never produces false positives.
-    fn fund_bearing_account_types() -> Vec<AccountTypeToCheck> {
+    /// Visible to unit tests so routing assertions can compare against the
+    /// production list rather than re-listing the five types by hand.
+    pub(crate) fn fund_bearing_account_types() -> Vec<AccountTypeToCheck> {
         vec![
             AccountTypeToCheck::StandardBIP44,
             AccountTypeToCheck::StandardBIP32,
@@ -156,14 +158,17 @@ impl TransactionRouter {
                 ]);
                 accounts
             }
-            TransactionType::AssetUnlock => {
-                vec![AccountTypeToCheck::StandardBIP44, AccountTypeToCheck::StandardBIP32]
+            // Credit-side mirror of the AssetLock debit fix (#867 / #900): a coinbase
+            // (mining reward / masternode payout) or asset unlock (Platform credit
+            // withdrawal) can pay any user-chosen address, including CoinJoin and
+            // DashPay. Only the account types returned here are consulted for
+            // ownership, so omitting those accounts dropped the coin after the
+            // block was already downloaded. Discovery is membership-based like
+            // Dash Core's `IsMine`, so consulting the full fund-bearing set never
+            // yields false positives.
+            TransactionType::AssetUnlock | TransactionType::Coinbase => {
+                Self::fund_bearing_account_types()
             }
-            TransactionType::Coinbase => vec![
-                // Check all account types for unknown special transactions
-                AccountTypeToCheck::StandardBIP44,
-                AccountTypeToCheck::StandardBIP32,
-            ],
             TransactionType::Ignored => vec![],
         }
     }
