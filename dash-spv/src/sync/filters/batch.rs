@@ -37,6 +37,9 @@ pub(super) struct FiltersBatch {
     /// need rescan, attributed per wallet so we can rerun matching only
     /// against the wallet that produced each new script.
     collected_scripts: HashMap<WalletId, HashSet<ScriptBuf>>,
+    /// Every script already matched against this batch's filters, per wallet.
+    /// Drives [`Self::untested`].
+    tested_scripts: HashMap<WalletId, HashSet<ScriptBuf>>,
 }
 
 impl FiltersBatch {
@@ -56,6 +59,7 @@ impl FiltersBatch {
             rescan_complete: false,
             scanned_wallets: BTreeMap::new(),
             collected_scripts: HashMap::new(),
+            tested_scripts: HashMap::new(),
         }
     }
     /// Start height of this batch (inclusive).
@@ -119,6 +123,32 @@ impl FiltersBatch {
     ) {
         self.collected_scripts.entry(wallet_id).or_default().extend(scripts);
     }
+    /// Record that `scripts` have now been matched against this batch's
+    /// filters, so a later reconciliation can tell what has not.
+    pub(super) fn mark_tested<I: IntoIterator<Item = ScriptBuf>>(
+        &mut self,
+        wallet_id: WalletId,
+        scripts: I,
+    ) {
+        self.tested_scripts.entry(wallet_id).or_default().extend(scripts);
+    }
+
+    /// The wallet's scripts that this batch has never been matched against.
+    ///
+    /// The batch is otherwise told what to re-test through one-shot
+    /// notifications of freshly derived scripts, and a notification that goes
+    /// astray is invisible: the wallet keeps the address, so nothing derives it
+    /// again and nothing ever matches it here. Subtracting what has been tested
+    /// from `monitored` does not depend on that notification arriving.
+    pub(super) fn untested<'a>(
+        &'a self,
+        wallet_id: &WalletId,
+        monitored: &'a [ScriptBuf],
+    ) -> impl Iterator<Item = &'a ScriptBuf> {
+        let tested = self.tested_scripts.get(wallet_id);
+        monitored.iter().filter(move |script| tested.is_none_or(|t| !t.contains(*script)))
+    }
+
     /// Take collected per-wallet scripts for rescan, leaving the map empty.
     pub(super) fn take_collected_scripts(&mut self) -> HashMap<WalletId, HashSet<ScriptBuf>> {
         std::mem::take(&mut self.collected_scripts)
