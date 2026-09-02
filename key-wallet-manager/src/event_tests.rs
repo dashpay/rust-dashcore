@@ -19,6 +19,7 @@ use key_wallet::account::StandardAccountType;
 use key_wallet::managed_account::address_pool::{AddressPoolType, PublicKeyType};
 use key_wallet::managed_account::managed_account_trait::ManagedAccountTrait;
 use key_wallet::managed_account::managed_account_type::ManagedAccountType;
+use key_wallet::transaction_checking::{TransactionRouter, TransactionType};
 use key_wallet::wallet::managed_wallet_info::transaction_building::AccountTypePreference;
 use key_wallet::AccountType;
 use std::collections::BTreeSet;
@@ -438,6 +439,320 @@ async fn test_block_confirming_known_mempool_tx_emits_updated_record() {
         }
         other => panic!("expected BlockProcessed with updated record, got {:?}", other),
     }
+}
+
+async fn setup_known_mempool_spend_only_asset_lock(
+) -> (WalletManager<ManagedWalletInfo>, WalletId, Transaction, OutPoint, BTreeSet<WalletId>) {
+    let (mut manager, wallet_id, _default_addr) = setup_manager_with_wallet();
+
+    let funding_address = {
+        let info = manager.get_wallet_info(&wallet_id).expect("wallet info");
+        let account = info.accounts.standard_bip44_accounts.get(&0).expect("BIP44 account 0");
+        match account.managed_account_type() {
+            ManagedAccountType::Standard {
+                external_addresses,
+                ..
+            } => external_addresses.address_at_index(0).expect("BIP44 receive address 0"),
+            other => panic!("expected Standard BIP44 account, got {other:?}"),
+        }
+    };
+
+    let funding_tx = create_tx_paying_to(&funding_address, 0x43);
+    let funding_outpoint = OutPoint::new(funding_tx.txid(), 0);
+    let funding_block = make_block(vec![funding_tx], 0x44, 4_000);
+    let wallets = BTreeSet::from([wallet_id]);
+    manager
+        .process_block_for_wallets(&funding_block, funding_block.block_hash(), 400, &wallets)
+        .await;
+
+    let funding_script = funding_address.script_pubkey();
+    let funded_account = manager
+        .get_wallet_info(&wallet_id)
+        .expect("wallet info")
+        .accounts
+        .standard_bip44_accounts
+        .get(&0)
+        .expect("BIP44 account 0");
+    assert!(
+        funded_account.utxos.contains_key(&funding_outpoint),
+        "funding block must create the confirmed wallet UTXO"
+    );
+    assert!(
+        funded_account.utxos[&funding_outpoint].is_confirmed,
+        "funding UTXO must be confirmed before the spend"
+    );
+
+    let external_address = Address::p2pkh(
+        &PublicKey::from_slice(&[2u8; 33]).expect("valid external public key"),
+        key_wallet::Network::Testnet,
+    );
+    let regular_external_script =
+        Builder::new().push_opcode(opcodes::all::OP_RETURN).push_slice([0x52u8; 20]).into_script();
+    let asset_lock_tx = Transaction {
+        version: 3,
+        lock_time: 0,
+        input: vec![TxIn {
+            previous_output: funding_outpoint,
+            script_sig: ScriptBuf::new(),
+            sequence: u32::MAX,
+            witness: Witness::default(),
+        }],
+        output: vec![TxOut {
+            value: TX_AMOUNT - 1_000,
+            script_pubkey: regular_external_script.clone(),
+        }],
+        special_transaction_payload: Some(TransactionPayload::AssetLockPayloadType(
+            AssetLockPayload::new(vec![TxOut {
+                value: TX_AMOUNT - 1_000,
+                script_pubkey: external_address.script_pubkey(),
+            }]),
+        )),
+    };
+    assert_eq!(
+        TransactionRouter::classify_transaction(&asset_lock_tx),
+        TransactionType::AssetLock,
+        "fixture must take the production AssetLock routing path"
+    );
+    let monitored_scripts = manager.monitored_script_pubkeys_for(&wallet_id);
+    assert!(
+        !monitored_scripts.contains(&regular_external_script),
+        "regular AssetLock output must not pay the wallet"
+    );
+    assert!(
+        !monitored_scripts.contains(&external_address.script_pubkey()),
+        "AssetLock credit output must not pay the wallet"
+    );
+
+    let mempool_result = manager.process_mempool_transaction(&asset_lock_tx, None).await;
+    assert!(mempool_result.is_relevant, "mempool sighting must spend the wallet UTXO");
+    assert_eq!(mempool_result.net_amount, -(TX_AMOUNT as i64));
+
+    let account_after_mempool = manager
+        .get_wallet_info(&wallet_id)
+        .expect("wallet info")
+        .accounts
+        .standard_bip44_accounts
+        .get(&0)
+        .expect("BIP44 account 0");
+    assert_eq!(
+        account_after_mempool
+            .transactions()
+            .get(&asset_lock_tx.txid())
+            .expect("mempool sighting must create a transaction record")
+            .context,
+        TransactionContext::Mempool
+    );
+    assert!(
+        !account_after_mempool.utxos.contains_key(&funding_outpoint),
+        "mempool processing must remove the spent live UTXO"
+    );
+    assert!(
+        !manager
+            .get_wallet_info(&wallet_id)
+            .expect("wallet info")
+            .observed_spent_outpoints()
+            .contains_key(&funding_outpoint),
+        "mempool sightings must not populate block-only observed spends"
+    );
+    assert!(
+        manager.scan_script_pubkeys_for(&wallet_id).contains(&funding_script),
+        "the Standard BIP44 funding script must still match a compact filter"
+    );
+
+    (manager, wallet_id, asset_lock_tx, funding_outpoint, wallets)
+}
+
+#[tokio::test]
+async fn test_block_promotes_known_mempool_asset_lock_spending_wallet_utxo() {
+    let (mut manager, wallet_id, asset_lock_tx, funding_outpoint, wallets) =
+        setup_known_mempool_spend_only_asset_lock().await;
+    let mut rx = manager.subscribe_events();
+    let block = make_block(vec![asset_lock_tx.clone()], 0x45, 4_100);
+
+    let block_result =
+        manager.process_block_for_wallets(&block, block.block_hash(), 401, &wallets).await;
+    let block_events = drain_events(&mut rx);
+    let account_after_block = manager
+        .get_wallet_info(&wallet_id)
+        .expect("wallet info")
+        .accounts
+        .standard_bip44_accounts
+        .get(&0)
+        .expect("BIP44 account 0");
+    let stored_context = &account_after_block
+        .transactions()
+        .get(&asset_lock_tx.txid())
+        .expect("mempool record must remain stored")
+        .context;
+    let updated = block_events.iter().find_map(|event| match event {
+        WalletEvent::BlockProcessed {
+            updated,
+            ..
+        } => Some(updated),
+        _ => None,
+    });
+
+    assert_eq!(
+        manager
+            .get_wallet_info(&wallet_id)
+            .expect("wallet info")
+            .observed_spent_outpoints()
+            .get(&funding_outpoint),
+        Some(&401),
+        "the block transaction must reach the checker before relevance gating"
+    );
+    assert!(block_result.new_txids.is_empty());
+    assert_eq!(block_result.existing_txids, vec![asset_lock_tx.txid()]);
+    assert!(
+        matches!(stored_context, TransactionContext::InBlock(info) if info.height() == 401),
+        "known spend-only transaction must be promoted to its block context, got {stored_context:?}"
+    );
+    let updated =
+        updated.unwrap_or_else(|| panic!("BlockProcessed update expected: {block_events:?}"));
+    assert_eq!(updated.len(), 1);
+    assert_eq!(updated[0].txid, asset_lock_tx.txid());
+}
+
+#[tokio::test]
+async fn test_chainlocked_block_promotes_known_mempool_spend_only_transaction() {
+    let (mut manager, wallet_id, asset_lock_tx, _funding_outpoint, wallets) =
+        setup_known_mempool_spend_only_asset_lock().await;
+    manager.apply_chain_lock(ChainLock::dummy(500));
+    let mut rx = manager.subscribe_events();
+    let block = make_block(vec![asset_lock_tx.clone()], 0x46, 4_200);
+
+    let block_result =
+        manager.process_block_for_wallets(&block, block.block_hash(), 401, &wallets).await;
+    let events = drain_events(&mut rx);
+    let updated = events
+        .iter()
+        .find_map(|event| match event {
+            WalletEvent::BlockProcessed {
+                updated,
+                ..
+            } => Some(updated),
+            _ => None,
+        })
+        .unwrap_or_else(|| panic!("chainlocked BlockProcessed update expected: {events:?}"));
+
+    assert_eq!(block_result.existing_txids, vec![asset_lock_tx.txid()]);
+    assert_eq!(updated.len(), 1);
+    assert!(matches!(
+        updated[0].context,
+        TransactionContext::InChainLockedBlock(info) if info.height() == 401
+    ));
+
+    let account = manager
+        .get_wallet_info(&wallet_id)
+        .expect("wallet info")
+        .accounts
+        .standard_bip44_accounts
+        .get(&0)
+        .expect("BIP44 account 0");
+    assert!(account.transaction_is_finalized(&asset_lock_tx.txid()));
+    #[cfg(feature = "keep-finalized-transactions")]
+    assert!(matches!(
+        account
+            .transactions()
+            .get(&asset_lock_tx.txid())
+            .expect("retained finalized record")
+            .context,
+        TransactionContext::InChainLockedBlock(_)
+    ));
+    #[cfg(not(feature = "keep-finalized-transactions"))]
+    assert!(!account.transactions().contains_key(&asset_lock_tx.txid()));
+}
+
+#[tokio::test]
+async fn test_spend_only_promotion_never_demotes_chainlocked_context() {
+    let (mut manager, wallet_id, asset_lock_tx, _funding_outpoint, wallets) =
+        setup_known_mempool_spend_only_asset_lock().await;
+    manager.apply_chain_lock(ChainLock::dummy(500));
+    let chainlocked_block = make_block(vec![asset_lock_tx.clone()], 0x47, 4_300);
+    manager
+        .process_block_for_wallets(
+            &chainlocked_block,
+            chainlocked_block.block_hash(),
+            401,
+            &wallets,
+        )
+        .await;
+
+    let mut rx = manager.subscribe_events();
+    let weaker_block = make_block(vec![asset_lock_tx.clone()], 0x48, 4_400);
+    let replay = manager
+        .process_block_for_wallets(&weaker_block, weaker_block.block_hash(), 600, &wallets)
+        .await;
+
+    assert!(replay.new_txids.is_empty());
+    assert!(replay.existing_txids.is_empty());
+    assert_no_events(&mut rx);
+    let account = manager
+        .get_wallet_info(&wallet_id)
+        .expect("wallet info")
+        .accounts
+        .standard_bip44_accounts
+        .get(&0)
+        .expect("BIP44 account 0");
+    assert!(account.transaction_is_finalized(&asset_lock_tx.txid()));
+    #[cfg(feature = "keep-finalized-transactions")]
+    assert!(matches!(
+        account
+            .transactions()
+            .get(&asset_lock_tx.txid())
+            .expect("retained finalized record")
+            .context,
+        TransactionContext::InChainLockedBlock(_)
+    ));
+}
+
+#[tokio::test]
+async fn test_block_does_not_promote_unknown_irrelevant_transaction() {
+    let (mut manager, wallet_id, _addr) = setup_manager_with_wallet();
+    let external_address = Address::p2pkh(
+        &PublicKey::from_slice(&[2u8; 33]).expect("valid external public key"),
+        key_wallet::Network::Testnet,
+    );
+    let tx = make_coinbase_paying_to(&external_address, TX_AMOUNT);
+    let block = make_block(vec![tx.clone()], 0x49, 4_500);
+    let wallets = BTreeSet::from([wallet_id]);
+    let mut rx = manager.subscribe_events();
+
+    let result = manager.process_block_for_wallets(&block, block.block_hash(), 450, &wallets).await;
+
+    assert!(result.new_txids.is_empty());
+    assert!(result.existing_txids.is_empty());
+    assert_no_events(&mut rx);
+    let info = manager.get_wallet_info(&wallet_id).expect("wallet info");
+    assert!(
+        info.accounts
+            .all_accounts()
+            .into_iter()
+            .all(|account| !account.has_transaction(&tx.txid())),
+        "an unknown transaction with no wallet evidence must remain irrelevant"
+    );
+}
+
+#[tokio::test]
+async fn test_spend_only_block_promotion_is_idempotent() {
+    let (mut manager, _wallet_id, asset_lock_tx, _funding_outpoint, wallets) =
+        setup_known_mempool_spend_only_asset_lock().await;
+    let block = make_block(vec![asset_lock_tx.clone()], 0x4a, 4_600);
+    let mut rx = manager.subscribe_events();
+
+    let first = manager.process_block_for_wallets(&block, block.block_hash(), 401, &wallets).await;
+    let first_events = drain_events(&mut rx);
+    assert_eq!(first.existing_txids, vec![asset_lock_tx.txid()]);
+    assert!(first_events.iter().any(|event| matches!(
+        event,
+        WalletEvent::BlockProcessed { updated, .. }
+            if updated.iter().any(|record| record.txid == asset_lock_tx.txid())
+    )));
+
+    let second = manager.process_block_for_wallets(&block, block.block_hash(), 401, &wallets).await;
+    assert!(second.new_txids.is_empty());
+    assert!(second.existing_txids.is_empty());
+    assert_no_events(&mut rx);
 }
 
 #[tokio::test]

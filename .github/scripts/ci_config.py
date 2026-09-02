@@ -153,6 +153,13 @@ def run_group_tests(args):
                 cmd = ["cargo", "test", "-p", crate, "--all-features"]
             result = subprocess.run(cmd)
 
+            if (
+                result.returncode == 0
+                and not coverage
+                and crate == "key-wallet-manager"
+            ):
+                result = subprocess.run(["cargo", "test", "-p", crate])
+
             if result.returncode != 0:
                 failed.append(crate)
                 github_error(f"Test failed for {crate} on {args.os}")
