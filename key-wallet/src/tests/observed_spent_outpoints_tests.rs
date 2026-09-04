@@ -26,6 +26,7 @@ use dashcore::hashes::Hash;
 use dashcore::{BlockHash, TxIn, Txid};
 
 use crate::managed_account::managed_account_trait::ManagedAccountTrait;
+use crate::managed_account::transaction_record::TransactionDirection;
 use crate::test_utils::TestWalletContext;
 use crate::transaction_checking::{BlockInfo, TransactionContext};
 use crate::wallet::managed_wallet_info::managed_account_operations::ManagedAccountOperations;
@@ -306,6 +307,174 @@ async fn born_fully_spent_funding_tx_is_recorded_in_history() {
                 | crate::managed_account::transaction_record::OutputRole::Change
         )),
         "the received output detail is preserved in the born-fully-spent record's history"
+    );
+}
+
+/// Value of the coin the spend-first fixture funds and then spends.
+const SPEND_FIRST_FUNDING_VALUE: u64 = 1_000_000;
+
+fn in_block(height: u32, tag: u8) -> TransactionContext {
+    TransactionContext::InBlock(BlockInfo::new(
+        height,
+        BlockHash::from_slice(&[tag; 32]).expect("hash"),
+        1_650_000_000 + height,
+    ))
+}
+
+/// Drives the spend-first ordering: the spend of a coin arrives before the
+/// transaction that funds it, leaving the funding output in
+/// `spent_before_funded` rather than in `utxos`.
+async fn spend_first_context(
+    fund_ctx: TransactionContext,
+) -> (TestWalletContext, Transaction, Transaction) {
+    use dashcore::blockdata::script::ScriptBuf;
+    use dashcore::TxOut;
+
+    let mut ctx = TestWalletContext::new_random();
+
+    let funding_value = SPEND_FIRST_FUNDING_VALUE;
+    let funding = Transaction::dummy(&ctx.receive_address, 0..1, &[funding_value]);
+
+    let external = dashcore::Address::p2pkh(
+        &dashcore::PublicKey::from_slice(&[0x02; 33]).expect("pubkey"),
+        dashcore::Network::Testnet,
+    );
+    let spend = Transaction {
+        version: 2,
+        lock_time: 0,
+        input: vec![TxIn {
+            previous_output: OutPoint::new(funding.txid(), 0),
+            script_sig: ScriptBuf::new(),
+            sequence: 0xffffffff,
+            witness: dashcore::Witness::new(),
+        }],
+        output: vec![TxOut {
+            value: funding_value - 1_000,
+            script_pubkey: external.script_pubkey(),
+        }],
+        special_transaction_payload: None,
+    };
+
+    let spend_ctx = TransactionContext::InBlock(BlockInfo::new(
+        200,
+        BlockHash::from_slice(&[2u8; 32]).expect("hash"),
+        1_650_000_200,
+    ));
+    assert!(!ctx.check_transaction(&spend, spend_ctx).await.is_relevant);
+    assert!(ctx.check_transaction(&funding, fund_ctx).await.is_relevant);
+    assert_eq!(
+        ctx.managed_wallet
+            .first_bip44_managed_account()
+            .expect("BIP44 account")
+            .spent_before_funded
+            .len(),
+        1,
+        "the funding output is held as ours without entering the UTXO set"
+    );
+
+    (ctx, funding, spend)
+}
+
+/// The spending half of a spend-first pair: once the funding has arrived, a
+/// redelivered spend must be recognised and recorded.
+#[tokio::test]
+async fn spend_seen_before_its_funding_is_recorded_on_redelivery() {
+    let (mut ctx, _funding, spend) = spend_first_context(in_block(100, 1)).await;
+    let s_txid = spend.txid();
+
+    let spend_ctx = TransactionContext::InBlock(BlockInfo::new(
+        200,
+        BlockHash::from_slice(&[2u8; 32]).expect("hash"),
+        1_650_000_200,
+    ));
+    let redelivered = ctx.check_transaction(&spend, spend_ctx).await;
+    assert!(
+        redelivered.is_relevant,
+        "a spend of our coin must be recognised once the funding has arrived"
+    );
+
+    let account = ctx.managed_wallet.first_bip44_managed_account().expect("BIP44 account");
+    let record =
+        account.transactions().get(&s_txid).expect("the spending transaction must land in history");
+
+    // The record must be complete, not merely present: the held output is the
+    // only remaining source of the spent coin's value and address, so a
+    // `record_transaction` consulting `utxos` alone would file this spend with
+    // the right net amount and an empty input list (#897).
+    assert_eq!(
+        record.net_amount,
+        -(SPEND_FIRST_FUNDING_VALUE as i64),
+        "the whole coin leaves the wallet"
+    );
+    assert_eq!(
+        record.direction,
+        TransactionDirection::Outgoing,
+        "a spend paying a third party is outgoing"
+    );
+    assert_eq!(record.input_details.len(), 1, "the spent coin must be attributed to its input");
+    let input_detail = &record.input_details[0];
+    assert_eq!(input_detail.index, 0);
+    assert_eq!(input_detail.value, SPEND_FIRST_FUNDING_VALUE);
+    assert_eq!(
+        input_detail.address, ctx.receive_address,
+        "the input must carry the address the funding paid"
+    );
+
+    assert!(account.utxos.is_empty(), "the already-spent output must not become a UTXO");
+    assert_eq!(
+        ctx.managed_wallet.balance.total(),
+        0,
+        "recovering history must not move the balance"
+    );
+}
+
+/// Abandoning the funding transaction takes its held output with it: the coin
+/// was never ours, so a spend of it must stop being recognisable.
+#[tokio::test]
+async fn abandoning_the_funding_drops_the_held_output() {
+    let (mut ctx, funding, _spend) = spend_first_context(in_block(100, 1)).await;
+
+    let account = ctx.managed_wallet.first_bip44_managed_account_mut().expect("BIP44 account");
+    account.apply_abandon(&std::collections::BTreeSet::from([funding.txid()]));
+
+    assert!(
+        account.spent_before_funded.is_empty(),
+        "an abandoned funding transaction must not leave its output behind"
+    );
+}
+
+/// Same for a funding transaction that loses a conflict: the winner spends its
+/// input, so the loser and everything it contributed goes.
+#[tokio::test]
+async fn losing_a_conflict_drops_the_held_output() {
+    use dashcore::blockdata::script::ScriptBuf;
+
+    let (mut ctx, funding, _spend) = spend_first_context(TransactionContext::Mempool).await;
+
+    let winner = Transaction {
+        version: 2,
+        lock_time: 0,
+        input: vec![TxIn {
+            previous_output: funding.input[0].previous_output,
+            script_sig: ScriptBuf::new(),
+            sequence: 0xffffffff,
+            witness: dashcore::Witness::new(),
+        }],
+        output: Vec::new(),
+        special_transaction_payload: None,
+    };
+    let winner_ctx = TransactionContext::InBlock(BlockInfo::new(
+        300,
+        BlockHash::from_slice(&[3u8; 32]).expect("hash"),
+        1_650_000_300,
+    ));
+
+    let account = ctx.managed_wallet.first_bip44_managed_account_mut().expect("BIP44 account");
+    let sweep = account.drop_conflicted_transactions(&winner, &winner_ctx);
+    assert!(sweep.txids.contains(&funding.txid()), "the funding transaction is the loser here");
+    assert!(
+        account.spent_before_funded.is_empty(),
+        "a funding transaction dropped as a conflict loser must not leave its output behind"
     );
 }
 
