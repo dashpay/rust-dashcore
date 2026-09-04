@@ -146,16 +146,33 @@ fn test_all_callbacks_during_sync() {
         // so observing block-processed records does not guarantee it has fired yet.
         tracker.wait_for_callback(&tracker.synced_height_updated_count, 0, "synced_height_updated");
         let synced_height_fired = tracker.synced_height_updated_count.load(Ordering::SeqCst);
-        let last_synced_height = tracker.last_synced_height.load(Ordering::SeqCst);
         assert!(
             synced_height_fired > 0,
             "on_synced_height_updated should fire at least once during sync"
         );
-        assert!(
-            last_synced_height >= dashd.initial_height,
-            "last_synced_height ({}) should be at least initial_height ({}) after sync",
-            last_synced_height,
-            dashd.initial_height
+        // The callback is not monotonic: scripts derived during the scan are
+        // covered by rewinding the wallet's checkpoint and re-walking
+        // committed history (backward coverage), and the rewind is reported
+        // through this same callback. Wait for the re-walk to bring the
+        // reported height back to the tip instead of sampling it once.
+        let synced_deadline = std::time::Instant::now() + Duration::from_secs(60);
+        let last_synced_height = loop {
+            let h = tracker.last_synced_height.load(Ordering::SeqCst);
+            if h >= dashd.initial_height {
+                break h;
+            }
+            assert!(
+                std::time::Instant::now() < synced_deadline,
+                "last_synced_height ({}) did not reach initial_height ({}) within 60s",
+                h,
+                dashd.initial_height
+            );
+            std::thread::sleep(Duration::from_millis(100));
+        };
+        tracing::info!(
+            "SyncedHeightUpdated: fired {} time(s), last {}",
+            synced_height_fired,
+            last_synced_height
         );
 
         // Validate sync cycle (initial sync is cycle 0)
