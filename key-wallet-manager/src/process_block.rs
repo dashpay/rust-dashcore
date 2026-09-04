@@ -294,6 +294,25 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
         }
     }
 
+    fn rewind_wallet_synced_height(&mut self, wallet_id: &WalletId, height: CoreBlockHeight) {
+        if let Some(info) = self.wallet_infos.get_mut(wallet_id) {
+            if height < info.synced_height() {
+                info.update_synced_height(height);
+                // Deliberately the same event an advance emits: the
+                // persisters apply `synced_height` verbatim (no monotonic
+                // clamp at the row), so this is what makes the rewind
+                // durable across a restart. Only the in-batch changeset
+                // merge is monotonic-max; the caller keeps the rewind out
+                // of a batch that also carries a higher advance by not
+                // advancing a rewound wallet at the same commit.
+                self.emit_event(WalletEvent::SyncHeightAdvanced {
+                    wallet_id: *wallet_id,
+                    height,
+                });
+            }
+        }
+    }
+
     fn update_wallet_last_processed_height(
         &mut self,
         wallet_id: &WalletId,

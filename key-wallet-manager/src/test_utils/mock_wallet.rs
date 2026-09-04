@@ -223,6 +223,12 @@ impl WalletInterface for MockWallet {
         }
     }
 
+    fn rewind_wallet_synced_height(&mut self, wallet_id: &WalletId, height: CoreBlockHeight) {
+        if wallet_id == &self.wallet_id && height < self.synced_height {
+            self.synced_height = height;
+        }
+    }
+
     fn update_wallet_last_processed_height(
         &mut self,
         wallet_id: &WalletId,
@@ -347,6 +353,12 @@ impl WalletInterface for NonMatchingMockWallet {
 
     fn update_wallet_synced_height(&mut self, wallet_id: &WalletId, height: CoreBlockHeight) {
         if wallet_id == &self.wallet_id && height > self.synced_height {
+            self.synced_height = height;
+        }
+    }
+
+    fn rewind_wallet_synced_height(&mut self, wallet_id: &WalletId, height: CoreBlockHeight) {
+        if wallet_id == &self.wallet_id && height < self.synced_height {
             self.synced_height = height;
         }
     }
