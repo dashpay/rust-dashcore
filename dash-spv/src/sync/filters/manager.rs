@@ -594,6 +594,14 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
     async fn try_commit_batches(&mut self) -> SyncResult<Vec<SyncEvent>> {
         let mut events = Vec::new();
 
+        // Wallets whose synced_height was rewound this pass for backward
+        // coverage (see the forward-drained branch). Their commit-time
+        // advance below is skipped: advancing them to the batch end would
+        // both undo the in-memory rewind and race the persisted checkpoint
+        // back up to tip, losing the re-walk across a restart.
+        let mut rewound_wallets: std::collections::HashSet<WalletId> =
+            std::collections::HashSet::new();
+
         // Lowest height any scan can ever reach. Read once, before the wallet
         // write lock below, so header storage is never locked underneath it.
         let scan_floor = self.header_storage.read().await.get_start_height().await.unwrap_or(0);
@@ -670,15 +678,55 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
                     });
                 if forward_drained && !self.backward_scripts.is_empty() {
                     let backward_scripts = std::mem::take(&mut self.backward_scripts);
-                    events
-                        .extend(self.rescan_committed_range(batch_start, &backward_scripts).await?);
 
-                    // Check if the backward sweep found more blocks
-                    if let Some(batch) = self.active_batches.get(&batch_start) {
-                        if batch.pending_blocks() > 0 {
-                            // Found more blocks, can't commit yet
-                            break;
+                    // LOCAL BUILD: durable backward coverage via a persisted
+                    // checkpoint rewind, replacing the in-memory monolithic
+                    // sweep (`rescan_committed_range`).
+                    //
+                    // The sweep held three losing properties on a large
+                    // restored wallet: it ran minutes of silent compute
+                    // inside this task, it charged tens of thousands of
+                    // BIP-158 false-positive downloads to this batch's
+                    // commit gate, and every bit of it lived in memory — an
+                    // iOS suspension eight seconds after "synced" was
+                    // observed to drop 28,616 queued blocks irrecoverably.
+                    //
+                    // The scripts are already in the wallet's watch set
+                    // (deriving them is what put them in `backward_scripts`),
+                    // so backward coverage is exactly "re-walk committed
+                    // history with the enlarged set". The existing
+                    // wallet-behind restart does that durably: rewinding the
+                    // wallet's synced_height makes the next tick restart the
+                    // batch scan, which re-commits (and re-persists) progress
+                    // every BATCH_PROCESSING_SIZE filters. The persisted
+                    // checkpoint applies verbatim on the app side, so a
+                    // suspension mid-walk resumes from the last committed
+                    // batch instead of losing the debt. Already-stored blocks
+                    // are served from storage on the re-walk, so completed
+                    // work is not re-downloaded.
+                    let script_count: usize =
+                        backward_scripts.values().map(|scripts| scripts.len()).sum();
+                    // One floor for every wallet: the earliest height any of
+                    // them requires. The restart tick clamps its actual
+                    // resume point to the birth/storage floor anyway, so a
+                    // conservative target here only ever means "re-walk from
+                    // the beginning of what is locally scannable".
+                    let wallet_base = self.wallet.read().await.earliest_required_height().await;
+                    let target = wallet_base.saturating_sub(1);
+                    let mut wallet = self.wallet.write().await;
+                    for wallet_id in backward_scripts.keys() {
+                        if target < wallet.wallet_synced_height(wallet_id) {
+                            wallet.rewind_wallet_synced_height(wallet_id, target);
+                            rewound_wallets.insert(*wallet_id);
                         }
+                    }
+                    drop(wallet);
+                    if !rewound_wallets.is_empty() {
+                        tracing::info!(
+                            "Backward coverage: {} new script(s) across {} wallet(s) — rewound their synced_height for a durable re-walk of committed history",
+                            script_count,
+                            rewound_wallets.len()
+                        );
                     }
                 }
                 // Mark rescan as complete
@@ -729,6 +777,15 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
                         let effective_synced = wallet
                             .wallet_synced_height(wallet_id)
                             .max(scan_floor.saturating_sub(1));
+                        // A wallet rewound this pass for backward coverage
+                        // must not be re-advanced by the very commit that
+                        // triggered the rewind. The contiguity guard below
+                        // already refuses (its synced_height now sits far
+                        // under `batch_start`), but the intent deserves to
+                        // be explicit rather than a side effect.
+                        if rewound_wallets.contains(wallet_id) {
+                            continue;
+                        }
                         if effective_synced.saturating_add(1) >= batch_start {
                             wallet.update_wallet_synced_height(wallet_id, end);
                             // A committed batch certifies the whole range for
@@ -1182,6 +1239,11 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
     /// filter elements — since those were already watched when the range
     /// was originally scanned; including them would re-download previously
     /// processed blocks across the whole history.
+    // LOCAL BUILD: unused — the forward-drained branch now rewinds the
+    // wallets' synced_height instead (durable re-walk through the existing
+    // batch pipeline). Kept, with its chunk-progress logging, as the
+    // reference implementation for the upstream discussion.
+    #[allow(dead_code)]
     pub(super) async fn rescan_committed_range(
         &mut self,
         batch_start: u32,
@@ -1211,11 +1273,19 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
             return Ok(vec![]);
         }
 
+        // The script count is what makes a sweep's block count readable: these
+        // scripts are the raw accumulated set, so a large count here is the
+        // expected cause of a BIP-158 false-positive block count far above the
+        // wallet's real history. Without it the two are indistinguishable in a
+        // log.
+        let script_count: usize = wallet_queries.iter().map(|(_, scripts)| scripts.len()).sum();
+
         self.committed_range_sweeps += 1;
         tracing::info!(
-            "Rescan committed filters ({}-{}) for new scripts across {} wallets (sweep #{})",
+            "Rescan committed filters ({}-{}) for {} new scripts across {} wallets (sweep #{})",
             range_start,
             range_end,
+            script_count,
             wallet_queries.len(),
             self.committed_range_sweeps
         );
@@ -1248,6 +1318,21 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
                 }
             }
             chunk_start = chunk_end + 1;
+
+            // The sweep over a large committed range runs for minutes; without
+            // a heartbeat it is indistinguishable from a hang (and gets the
+            // app killed, losing the whole pass). Log roughly every 250k
+            // filters, and yield so this long-running turn does not pin its
+            // runtime worker.
+            if (chunk_start - range_start) % 250_000 < BATCH_PROCESSING_SIZE {
+                tracing::info!(
+                    "Committed-range rescan progress: {}/{} filters checked, {} matched so far",
+                    chunk_start - range_start,
+                    range_end - range_start + 1,
+                    block_to_wallets.len()
+                );
+            }
+            tokio::task::yield_now().await;
         }
 
         Ok(self.queue_new_script_matches(batch_start, block_to_wallets, "Committed-range rescan"))
