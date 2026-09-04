@@ -50,6 +50,7 @@ use key_wallet::account::ManagedAccountTrait;
 use key_wallet::gap_limit::DEFAULT_COINJOIN_GAP_LIMIT;
 use key_wallet::managed_account::address_pool::{AddressPool, AddressPoolType, KeySource};
 use key_wallet::wallet::initialization::WalletAccountCreationOptions;
+use key_wallet::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
 use key_wallet_manager::WalletManager;
 use tokio::sync::mpsc::unbounded_channel;
@@ -325,32 +326,25 @@ async fn coinjoin_gap_limit_inversion_within_batch_recovers() {
     );
 }
 
-/// Gap-window outputs in an already-COMMITTED batch (#846).
+/// Backward coverage across a committed batch is a durable rewind, not an
+/// in-memory sweep.
 ///
-/// Same funding shape as the within-batch inversion test, but the early
-/// block (indices G+10..=G+21, height 10) sits in batch 0..=99 while the
-/// in-window block (indices 0..=29) sits at height 110 in batch 100..=199.
-/// Batch 0 scans clean (nothing watched matches) and commits. Processing the
-/// height-110 block extends the window past G+21, and those scripts DO match
-/// block 10's filter — but `rescan_batch` only reaches `active_batches`, and
-/// committed batches are gone (`try_commit_batches` removes them; the
-/// tracker prunes at-or-below the committed height). Indices G+10..=G+21 —
-/// squarely inside the BIP-44/CoinJoin gap-limit recovery contract
-/// (G+21 < 29 + 1 + G) — used to stay invisible forever, along with their
-/// funds; a fresh re-sync from genesis hit the same wall deterministically.
+/// Block A (height 10, batch 0) funds CoinJoin External indices G+10..=G+21,
+/// beyond the initial gap window; block B (height 110, batch 1) funds
+/// 0..=29 and its processing derives the scripts that would have matched
+/// block A — after batch 0 has already committed. At the forward drain the
+/// manager must not sweep the committed range in memory (an iOS suspension
+/// drops such a sweep whole) but rewind the wallet's `synced_height` so the
+/// sync-manager tick re-walks committed history in persisted batches, and
+/// it must NOT declare the filters complete while that re-walk is pending:
+/// one "synced" cycle with the walk still to run is exactly what the host
+/// would mistake for a caught-up wallet. Once the wallet is back at the
+/// committed frontier, completion is emitted.
 ///
-/// GREEN since `rescan_committed_range`: newly derived scripts are re-tested
-/// against the persisted filters below the committing batch (BIP-158 filters
-/// are address-independent, so re-matching needs no re-download), and hits
-/// flow through the `track_for_new_scripts` re-download path to the same
-/// commit-time fixpoint. `highest_used` reaches G+21.
+/// The tick itself does not run in this harness, so the re-walk is
+/// represented by advancing the wallet's checkpoint by hand.
 #[tokio::test]
-#[ignore = "LOCAL DIAGNOSTIC BUILD: backward coverage now happens through a \
-synced_height rewind picked up by the sync-manager tick (durable re-walk), \
-not the in-manager sweep this harness can observe — the tick never runs \
-here, so recovery cannot complete inside this test. Field-verified instead; \
-un-ignore when reverting to the sweep."]
-async fn coinjoin_gap_limit_stall_across_committed_batch() {
+async fn backward_coverage_rewinds_and_holds_completion_until_rewalked() {
     let (mut manager, wallet, wallet_id) = setup().await;
     let addresses = coinjoin_external_addresses(&wallet, &wallet_id, (G + 22) as u32).await;
 
@@ -397,29 +391,42 @@ async fn coinjoin_gap_limit_stall_across_committed_batch() {
     let initial_events = manager.try_process_batch().await.unwrap();
     drive_to_quiescence(&mut manager, &wallet, &blocks, initial_events).await;
 
-    let (highest_used, highest_generated, used_count) =
-        coinjoin_pool_state(&wallet, &wallet_id).await;
-    // Sanity: the in-window block was found and the gap window extended past
-    // index G+21, so the missed indices ARE inside the watched range by now.
+    let (_, highest_generated, _) = coinjoin_pool_state(&wallet, &wallet_id).await;
     assert!(
         highest_generated >= Some((G + 21) as u32),
         "gap maintenance must have extended the watch window past index G+21 \
          (got {highest_generated:?})"
     );
+
+    // The drain rewound the wallet to its own floor instead of sweeping.
+    let (synced_height, birth_height) = {
+        let reader = wallet.read().await;
+        let info = reader.get_wallet_info(&wallet_id).expect("wallet info");
+        (info.synced_height(), info.birth_height())
+    };
     assert_eq!(
-        highest_used,
-        Some((G + 21) as u32),
-        "CoinJoin External indices G+10..=G+21 were funded at height 10 in a batch that \
-         committed before their scripts were derived, and the new-script rescan never \
-         looks below the committed boundary (rescan_batch only reaches active_batches; \
-         BlockMatchTracker/commit pruning drops the range). The addresses are within \
-         the gap-limit recovery contract and are watched now (highest_generated = \
-         {highest_generated:?}), yet their outputs stay invisible: highest_used stalls \
-         at {highest_used:?}, used_count={used_count}. Fix direction: key re-scan \
-         suppression by (wallet, address/script) instead of block/commit progress, or \
-         trigger a below-committed-height rescan for a wallet whose gap maintenance \
-         derives scripts mid-sync."
+        synced_height,
+        birth_height.saturating_sub(1),
+        "wallet synced_height must be rewound to birth_height - 1 for the durable re-walk"
     );
+    assert!(manager.rewalk_pending().await, "a re-walk must be pending after the rewind");
+    assert_eq!(
+        manager.state(),
+        SyncState::Syncing,
+        "filters must not be declared complete while a rewound wallet is below the frontier"
+    );
+
+    // Stand in for the tick's re-walk: the wallet catches up to the
+    // committed frontier. Only now may the filters complete.
+    let committed = manager.progress.committed_height();
+    wallet.write().await.update_wallet_synced_height(&wallet_id, committed);
+    assert!(!manager.rewalk_pending().await);
+    let events = manager.try_process_batch().await.unwrap();
+    assert!(
+        events.iter().any(|e| matches!(e, SyncEvent::FiltersSyncComplete { .. })),
+        "FiltersSyncComplete must be emitted once the rewound wallet has caught up"
+    );
+    assert_eq!(manager.state(), SyncState::Synced);
 }
 
 /// Committed-range sweeps coalesce across batch commits.
@@ -441,10 +448,11 @@ async fn coinjoin_gap_limit_stall_across_committed_batch() {
 /// applied. `committed_range_sweeps` counts sweeps that reach the chunk walk
 /// in `rescan_committed_range`.
 #[tokio::test]
-#[ignore = "LOCAL DIAGNOSTIC BUILD: the tail batch now commits before the \
-sweep's blocks drain (see try_commit_batches), so the 'sweep completes before \
-FiltersSyncComplete' invariant this test asserts is deliberately relaxed on \
-this branch. Upstream keeps the invariant; un-ignore when reverting."]
+#[ignore = "backward coverage no longer sweeps the committed range in the \
+manager; it rewinds the wallet and the sync-manager tick re-walks, which this \
+harness cannot drive. The coalescing this test measured has no counterpart \
+now — see backward_coverage_rewinds_and_holds_completion_until_rewalked for \
+the contract that replaced it. Remove together with rescan_committed_range."]
 async fn committed_range_sweep_coalesces_across_batch_commits() {
     let (mut manager, wallet, wallet_id) = setup().await;
     let addresses = coinjoin_external_addresses(&wallet, &wallet_id, (G + 22) as u32).await;

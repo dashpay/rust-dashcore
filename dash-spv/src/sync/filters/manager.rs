@@ -546,7 +546,18 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
         // If no active batches and all filters downloaded, emit FiltersSyncComplete.
         // This handles both initial sync (Syncing → Synced transition) and incremental
         // updates (already Synced, signal BlocksManager that no more blocks are coming).
+        //
+        // Not while a wallet sits below the committed frontier: a wallet
+        // rewound for backward coverage at the last commit (or one added
+        // behind the scan) still has committed history to re-walk, and the
+        // tick restarts the scan for it. Declaring the filters complete here
+        // would report one "synced" cycle with that walk still pending — the
+        // host would treat the wallet as caught up, and a transaction in the
+        // tip block would land only once the walk reaches it. Holding the
+        // state at Syncing means a single completion, after the re-walk.
+        let wallet_behind_frontier = self.rewalk_pending().await;
         if self.active_batches.is_empty()
+            && !wallet_behind_frontier
             && matches!(self.state(), SyncState::Syncing | SyncState::Synced)
             && self.progress.committed_height() >= self.progress.filter_header_tip_height()
             && self.progress.committed_height() >= self.progress.target_height()
@@ -573,6 +584,28 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
         }
 
         Ok(events)
+    }
+
+    /// Whether the sync-manager tick will restart the scan for a wallet that
+    /// sits below the committed frontier. Mirrors that tick's test exactly
+    /// (`FilterSyncManager::tick`: the lowest stale `synced_height` + 1,
+    /// floored at the wallets' birth height and the stored headers' start,
+    /// must reach the committed frontier) so that a wallet which reports a
+    /// low checkpoint yet needs nothing below the floor neither restarts
+    /// the scan there nor holds completion here.
+    pub(super) async fn rewalk_pending(&self) -> bool {
+        let committed = self.progress.committed_height();
+        let wallet_read = self.wallet.read().await;
+        let behind = wallet_read.wallets_behind(committed);
+        let stale_min_synced = behind.iter().map(|id| wallet_read.wallet_synced_height(id)).min();
+        let birth_height = wallet_read.earliest_required_height().await;
+        drop(wallet_read);
+        let Some(stale_min_synced) = stale_min_synced else {
+            return false;
+        };
+        let scan_floor = birth_height
+            .max(self.header_storage.read().await.get_start_height().await.unwrap_or(0));
+        stale_min_synced.saturating_add(1).max(scan_floor) <= committed
     }
 
     /// Commit completed batches in order (lowest batch_start first).
