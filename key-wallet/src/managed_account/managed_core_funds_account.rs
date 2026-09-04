@@ -62,6 +62,9 @@ pub struct ManagedCoreFundsAccount {
     /// Rebuilt from `transactions` during deserialization.
     #[cfg_attr(feature = "serde", serde(skip_serializing))]
     spent_outpoints: HashSet<OutPoint>,
+    /// Ours, but spent before the funding arrived, so never in `utxos` (#649).
+    /// Input matching falls back to these.
+    pub(crate) spent_before_funded: BTreeMap<OutPoint, Utxo>,
     /// Outpoints reserved by in-flight transaction builds so concurrent builds
     /// do not select the same UTXO before the first build's transaction is
     /// processed. Empty after a restart, where chain and mempool sync
@@ -103,6 +106,7 @@ impl ManagedCoreFundsAccount {
             balance: WalletCoreBalance::default(),
             utxos: BTreeMap::new(),
             spent_outpoints: HashSet::new(),
+            spent_before_funded: BTreeMap::new(),
             reservations: ReservationSet::default(),
         }
     }
@@ -130,6 +134,7 @@ impl ManagedCoreFundsAccount {
             balance: WalletCoreBalance::default(),
             utxos: BTreeMap::new(),
             spent_outpoints: HashSet::new(),
+            spent_before_funded: BTreeMap::new(),
             reservations: ReservationSet::default(),
         }
     }
@@ -336,6 +341,16 @@ impl ManagedCoreFundsAccount {
                                     outpoint = %outpoint,
                                     "Skipping UTXO already observed spent in an earlier-processed block (#649)"
                                 );
+                                self.spent_before_funded.insert(
+                                    outpoint,
+                                    Utxo::new(
+                                        outpoint,
+                                        output.clone(),
+                                        addr.clone(),
+                                        context.block_info().map_or(0, |i| i.height),
+                                        tx.is_coin_base(),
+                                    ),
+                                );
                                 continue;
                             }
 
@@ -383,6 +398,7 @@ impl ManagedCoreFundsAccount {
                 self.reservations.release(tx.input.iter().map(|input| &input.previous_output));
                 for input in &tx.input {
                     self.spent_outpoints.insert(input.previous_output);
+                    self.spent_before_funded.remove(&input.previous_output);
 
                     if self.utxos.remove(&input.previous_output).is_some() {
                         tracing::debug!(
@@ -468,6 +484,7 @@ impl ManagedCoreFundsAccount {
         for outpoint in doomed {
             self.utxos.remove(&outpoint);
         }
+        self.spent_before_funded.retain(|outpoint, _| !abandoned.contains(&outpoint.txid));
 
         let mut records = 0;
         let mut freed: HashSet<OutPoint> = HashSet::new();
@@ -635,6 +652,7 @@ impl ManagedCoreFundsAccount {
                 self.utxos.remove(&outpoint);
                 changed = true;
             }
+            self.spent_before_funded.retain(|outpoint, _| outpoint.txid != *loser);
             if let Some(record) = self.keys.transactions_mut().remove(loser) {
                 freed.extend(record.transaction.input.iter().map(|input| input.previous_output));
             }
@@ -1296,6 +1314,8 @@ impl<'de> Deserialize<'de> for ManagedCoreFundsAccount {
             keys: ManagedCoreKeysAccount,
             balance: WalletCoreBalance,
             utxos: BTreeMap<OutPoint, Utxo>,
+            #[serde(default)]
+            spent_before_funded: BTreeMap<OutPoint, Utxo>,
         }
 
         let helper = Helper::deserialize(deserializer)?;
@@ -1307,6 +1327,7 @@ impl<'de> Deserialize<'de> for ManagedCoreFundsAccount {
             balance: helper.balance,
             utxos: helper.utxos,
             spent_outpoints,
+            spent_before_funded: helper.spent_before_funded,
             reservations: ReservationSet::default(),
         })
     }
