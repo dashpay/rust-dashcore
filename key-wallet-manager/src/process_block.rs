@@ -296,6 +296,14 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
 
     fn rewind_wallet_synced_height(&mut self, wallet_id: &WalletId, height: CoreBlockHeight) {
         if let Some(info) = self.wallet_infos.get_mut(wallet_id) {
+            // Never below this wallet's own start: the caller passes one
+            // floor for every wallet it rewinds (the earliest height any of
+            // them requires), and a wallet added at runtime with a lower
+            // birth height must not drag an older wallet's checkpoint under
+            // its own birth — that re-walks history the wallet cannot have
+            // touched, and on a persisted store it looks like the wallet
+            // was reset.
+            let height = height.max(info.birth_height().saturating_sub(1));
             if height < info.synced_height() {
                 info.update_synced_height(height);
                 // Deliberately the same event an advance emits: the
