@@ -110,6 +110,11 @@ pub(super) struct CallbackTracker {
 
     // Completion tracking
     pub(super) last_sync_cycle: AtomicU32,
+    /// Cycle number of the FIRST `on_sync_complete`. A wallet that derives
+    /// scripts while scanning is followed by a backward-coverage re-walk,
+    /// which completes as a further cycle, so `last_sync_cycle` is not the
+    /// initial one for such wallets.
+    pub(super) first_sync_cycle: AtomicU32,
 
     // Baseline for `wait_for_sync`: captured before the client starts so that
     // a SyncComplete firing between client start and `wait_for_sync` entry is
@@ -346,7 +351,9 @@ extern "C" fn on_sync_complete(header_tip: u32, cycle: u32, user_data: *mut c_vo
     tracker.last_sync_cycle.store(cycle, Ordering::SeqCst);
     let seq = tracker.sequence_counter.fetch_add(1, Ordering::SeqCst);
     tracker.sync_complete_seq.store(seq, Ordering::SeqCst);
-    tracker.sync_complete_count.fetch_add(1, Ordering::SeqCst);
+    if tracker.sync_complete_count.fetch_add(1, Ordering::SeqCst) == 0 {
+        tracker.first_sync_cycle.store(cycle, Ordering::SeqCst);
+    }
     tracing::info!("on_sync_complete: header_tip={}, cycle={}, seq={}", header_tip, cycle, seq);
 }
 

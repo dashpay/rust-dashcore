@@ -175,9 +175,21 @@ fn test_all_callbacks_during_sync() {
             last_synced_height
         );
 
-        // Validate sync cycle (initial sync is cycle 0)
-        let last_sync_cycle = tracker.last_sync_cycle.load(Ordering::SeqCst);
-        assert_eq!(last_sync_cycle, 0, "Initial sync should be cycle 0");
+        // Validate sync cycle (initial sync is cycle 0). This wallet has
+        // transactions, so the scan derives scripts and a backward-coverage
+        // re-walk follows, completing as a later cycle — check the first
+        // completion, not the last.
+        assert!(
+            tracker.sync_complete_count.load(Ordering::SeqCst) > 0,
+            "on_sync_complete should have fired"
+        );
+        let first_sync_cycle = tracker.first_sync_cycle.load(Ordering::SeqCst);
+        assert_eq!(first_sync_cycle, 0, "Initial sync should be cycle 0");
+        tracing::info!(
+            "Sync cycles: first={}, last={}",
+            first_sync_cycle,
+            tracker.last_sync_cycle.load(Ordering::SeqCst)
+        );
 
         // Validate callback lifecycle ordering
         let sync_start_seq = tracker.sync_start_seq.load(Ordering::SeqCst);
