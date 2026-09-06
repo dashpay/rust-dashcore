@@ -3,7 +3,7 @@
 use std::ffi::CStr;
 use std::os::raw::{c_char, c_void};
 use std::slice;
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -42,8 +42,13 @@ pub(super) struct CallbackTracker {
     pub(super) block_processed_wallet_count: AtomicU32,
     pub(super) block_processed_wallet_record_count: AtomicU32,
     pub(super) synced_height_updated_count: AtomicU32,
-    /// Highest synced-height value observed from any `SyncedHeightUpdated`.
+    /// The most recent synced-height value from `SyncedHeightUpdated`. Not
+    /// monotonic: backward coverage rewinds a wallet's checkpoint and reports
+    /// the lower value through this same callback.
     pub(super) last_synced_height: AtomicU32,
+    /// Set the first time a `SyncedHeightUpdated` reports a height BELOW one
+    /// already reported — the observable signature of that rewind.
+    pub(super) synced_height_rewound: AtomicBool,
 
     // Data from callbacks
     pub(super) last_header_tip: AtomicU32,
@@ -574,7 +579,10 @@ extern "C" fn on_sync_height_advanced(
     // Store the height before bumping the counter so a test that waits on the
     // counter and then reads `last_synced_height` is guaranteed to observe the
     // height for the same callback invocation.
-    tracker.last_synced_height.store(height, Ordering::SeqCst);
+    let previous = tracker.last_synced_height.swap(height, Ordering::SeqCst);
+    if height < previous {
+        tracker.synced_height_rewound.store(true, Ordering::SeqCst);
+    }
     tracker.synced_height_updated_count.fetch_add(1, Ordering::SeqCst);
     let wallet_str = unsafe { cstr_or_unknown(wallet_id) };
     tracing::info!("on_sync_height_advanced: wallet={}, height={}", wallet_str, height);

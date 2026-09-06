@@ -202,11 +202,14 @@ async fn drive_to_quiescence(
     wallet: &Arc<RwLock<WalletManager<ManagedWalletInfo>>>,
     blocks: &HashMap<BlockHash, Block>,
     initial_events: Vec<SyncEvent>,
-) {
+) -> Vec<SyncEvent> {
     let (tx, _rx) = unbounded_channel();
     let requests = RequestSender::new(tx);
 
     let mut events = initial_events;
+    // Everything the run emitted that was not a block request — the caller's
+    // window into completion, which is otherwise consumed here.
+    let mut observed = Vec::new();
     for _round in 0..64 {
         let mut pending: BTreeMap<(u32, BlockHash), BTreeSet<WalletId>> = BTreeMap::new();
         for event in events.drain(..) {
@@ -217,10 +220,12 @@ async fn drive_to_quiescence(
                 for (key, wallets) in needed {
                     pending.entry((key.height(), *key.hash())).or_default().extend(wallets);
                 }
+            } else {
+                observed.push(event);
             }
         }
         if pending.is_empty() {
-            return;
+            return observed;
         }
 
         let mut next_events = Vec::new();
@@ -361,9 +366,11 @@ async fn backward_coverage_rewinds_and_holds_completion_until_rewalked() {
     {
         let mut header_storage = manager.header_storage.write().await;
         let mut filter_storage = manager.filter_storage.write().await;
-        for height in 0..=99u32 {
+        for height in 0..=199u32 {
             let (header, filter_bytes) = if height == 10 {
                 (block_a.header, filter_a.content.clone())
+            } else if height == 110 {
+                (block_b.header, filter_b.content.clone())
             } else {
                 let filler = Block::dummy(height, vec![]);
                 let filter = BlockFilter::dummy(&filler);
@@ -387,6 +394,12 @@ async fn backward_coverage_rewinds_and_holds_completion_until_rewalked() {
     batch_1.mark_verified();
     manager.active_batches.insert(100, batch_1);
     manager.progress.update_stored_height(199);
+    // The re-walk below re-enters `start_download`, which scans against the
+    // filter-header frontier rather than the injected batches. Without a tip
+    // it takes the "nothing to download" early return and the rescan is a
+    // silent no-op — which is precisely the failure this test must not miss.
+    manager.progress.update_filter_header_tip_height(199);
+    manager.progress.update_target_height(199);
 
     let initial_events = manager.try_process_batch().await.unwrap();
     drive_to_quiescence(&mut manager, &wallet, &blocks, initial_events).await;
@@ -416,15 +429,60 @@ async fn backward_coverage_rewinds_and_holds_completion_until_rewalked() {
         "filters must not be declared complete while a rewound wallet is below the frontier"
     );
 
-    // Stand in for the tick's re-walk: the wallet catches up to the
-    // committed frontier. Only now may the filters complete.
-    let committed = manager.progress.committed_height();
-    wallet.write().await.update_wallet_synced_height(&wallet_id, committed);
-    assert!(!manager.rewalk_pending().await);
-    let events = manager.try_process_batch().await.unwrap();
+    // Block A's outputs are still missing at this point — the rewind exists
+    // to recover them, so the re-walk below has real work to do.
+    let (highest_used_before, _, _) = coinjoin_pool_state(&wallet, &wallet_id).await;
     assert!(
-        events.iter().any(|e| matches!(e, SyncEvent::FiltersSyncComplete { .. })),
-        "FiltersSyncComplete must be emitted once the rewound wallet has caught up"
+        highest_used_before < Some((G + 10) as u32),
+        "block A's beyond-window outputs must still be unapplied before the re-walk \
+         (highest_used={highest_used_before:?})"
+    );
+
+    // Drive the real re-walk, not a stand-in: the tick is what notices a
+    // wallet below the committed frontier, restarts the scan at its rewound
+    // checkpoint, and re-requests the blocks whose filters match the scripts
+    // derived since. Feeding those blocks back through the wallet is the
+    // blocks-manager's job, which `drive_to_quiescence` performs.
+    let (tx, _rx) = unbounded_channel();
+    let requests = RequestSender::new(tx);
+    let mut sync_complete_seen = false;
+    for _round in 0..64 {
+        let events = manager.tick(&requests).await.expect("tick");
+        let quiesced = events.is_empty();
+        let observed = drive_to_quiescence(&mut manager, &wallet, &blocks, events).await;
+        for event in observed {
+            if let SyncEvent::FiltersSyncComplete {
+                ..
+            } = event
+            {
+                // Completion is only honest once the re-walk has applied what
+                // it was rewound to find.
+                let (highest_used, _, _) = coinjoin_pool_state(&wallet, &wallet_id).await;
+                assert_eq!(
+                    highest_used,
+                    Some((G + 21) as u32),
+                    "FiltersSyncComplete was emitted before the re-walk recovered block A"
+                );
+                sync_complete_seen = true;
+            }
+        }
+        if !manager.rewalk_pending().await && quiesced {
+            break;
+        }
+    }
+
+    let (highest_used, _, used_count) = coinjoin_pool_state(&wallet, &wallet_id).await;
+    assert_eq!(
+        highest_used,
+        Some((G + 21) as u32),
+        "the re-walk must recover block A's beyond-window outputs (used_count={used_count})"
+    );
+    assert_eq!(used_count, 30 + 12, "indices 0..=29 and G+10..=G+21 must all be marked used");
+
+    assert!(!manager.rewalk_pending().await, "the re-walk must have completed");
+    assert!(
+        sync_complete_seen,
+        "FiltersSyncComplete must be emitted once the rewound wallet has been re-walked"
     );
     assert_eq!(manager.state(), SyncState::Synced);
 }
@@ -449,10 +507,11 @@ async fn backward_coverage_rewinds_and_holds_completion_until_rewalked() {
 /// in `rescan_committed_range`.
 #[tokio::test]
 #[ignore = "backward coverage no longer sweeps the committed range in the \
-manager; it rewinds the wallet and the sync-manager tick re-walks, which this \
-harness cannot drive. The coalescing this test measured has no counterpart \
-now — see backward_coverage_rewinds_and_holds_completion_until_rewalked for \
-the contract that replaced it. Remove together with rescan_committed_range."]
+manager; it rewinds the wallet and the sync-manager tick re-walks it. The \
+per-commit coalescing this test measured has no counterpart now — see \
+backward_coverage_rewinds_and_holds_completion_until_rewalked, which drives \
+that re-walk through the tick and asserts the same recovery. Remove together \
+with rescan_committed_range."]
 async fn committed_range_sweep_coalesces_across_batch_commits() {
     let (mut manager, wallet, wallet_id) = setup().await;
     let addresses = coinjoin_external_addresses(&wallet, &wallet_id, (G + 22) as u32).await;

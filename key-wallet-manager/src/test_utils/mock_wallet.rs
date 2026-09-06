@@ -538,6 +538,14 @@ impl WalletInterface for MultiMockWallet {
         }
     }
 
+    fn rewind_wallet_synced_height(&mut self, wallet_id: &WalletId, height: CoreBlockHeight) {
+        if let Some(state) = self.wallets.get_mut(wallet_id) {
+            if height < state.synced_height {
+                state.synced_height = height;
+            }
+        }
+    }
+
     fn update_wallet_last_processed_height(
         &mut self,
         wallet_id: &WalletId,

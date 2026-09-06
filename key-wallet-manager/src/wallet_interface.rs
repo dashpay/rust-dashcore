@@ -173,8 +173,14 @@ pub trait WalletInterface: Send + Sync + 'static {
     /// required height so a floor computed across several wallets never
     /// drags one below its birth, and must emit the same persistence signal
     /// an advance emits, so the rewound checkpoint survives a restart and the
-    /// re-walk resumes from its own committed progress. The default is a
-    /// no-op for implementations that predate backward coverage.
+    /// re-walk resumes from its own committed progress.
+    ///
+    /// The default is a no-op, for implementations that predate backward
+    /// coverage. Opting out that way costs backward coverage itself, not
+    /// correctness of the forward scan: the caller reads the checkpoint back
+    /// and, seeing it unmoved, commits the range forward as it always did
+    /// (and warns), rather than skipping the advance for a re-walk that will
+    /// never happen.
     fn rewind_wallet_synced_height(&mut self, _wallet_id: &WalletId, _height: CoreBlockHeight) {}
 
     /// Advance one wallet's last-processed height after a block has been applied

@@ -748,9 +748,31 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
                     let target = wallet_base.saturating_sub(1);
                     let mut wallet = self.wallet.write().await;
                     for wallet_id in backward_scripts.keys() {
-                        if target < wallet.wallet_synced_height(wallet_id) {
-                            wallet.rewind_wallet_synced_height(wallet_id, target);
+                        let before = wallet.wallet_synced_height(wallet_id);
+                        if target >= before {
+                            continue;
+                        }
+                        wallet.rewind_wallet_synced_height(wallet_id, target);
+                        // Read the checkpoint back instead of assuming the
+                        // rewind landed. `rewind_wallet_synced_height` returns
+                        // nothing and defaults to a no-op, so an implementation
+                        // that predates backward coverage would otherwise have
+                        // its commit-time advance skipped below on the strength
+                        // of a call that did nothing — stranding this batch's
+                        // certified coverage with no re-walk to replace it. A
+                        // rewind clamped up to the wallet's own floor still
+                        // sits under `before`, so it counts as what it is.
+                        if wallet.wallet_synced_height(wallet_id) < before {
                             rewound_wallets.insert(*wallet_id);
+                        } else {
+                            tracing::warn!(
+                                "Backward coverage: wallet {} did not honor the rewind to {} (still at {}); \
+                                 committing its coverage forward instead — scripts derived after this range \
+                                 committed stay untested against it",
+                                hex::encode(wallet_id),
+                                target,
+                                before
+                            );
                         }
                     }
                     drop(wallet);

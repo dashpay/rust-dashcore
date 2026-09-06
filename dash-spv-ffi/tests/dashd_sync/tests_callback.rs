@@ -155,15 +155,24 @@ fn test_all_callbacks_during_sync() {
         // committed history (backward coverage), and the rewind is reported
         // through this same callback. Wait for the re-walk to bring the
         // reported height back to the tip instead of sampling it once.
+        // Two conditions, not one: the checkpoint must be seen going DOWN
+        // (the rewind itself) and then coming back to the tip (the re-walk
+        // that follows it). Waiting only for the tip would be satisfied by
+        // the value already stored before the rewind ever happened, so the
+        // whole backward-coverage path could be dead and this test would
+        // still pass.
         let synced_deadline = std::time::Instant::now() + Duration::from_secs(60);
         let last_synced_height = loop {
             let h = tracker.last_synced_height.load(Ordering::SeqCst);
-            if h >= dashd.initial_height {
+            let rewound = tracker.synced_height_rewound.load(Ordering::SeqCst);
+            if rewound && h >= dashd.initial_height {
                 break h;
             }
             assert!(
                 std::time::Instant::now() < synced_deadline,
-                "last_synced_height ({}) did not reach initial_height ({}) within 60s",
+                "backward coverage did not complete within 60s: rewind observed={}, \
+                 last_synced_height={} (initial_height={})",
+                rewound,
                 h,
                 dashd.initial_height
             );
