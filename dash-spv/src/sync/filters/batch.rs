@@ -37,6 +37,8 @@ pub(super) struct FiltersBatch {
     /// need rescan, attributed per wallet so we can rerun matching only
     /// against the wallet that produced each new script.
     collected_scripts: HashMap<WalletId, HashSet<ScriptBuf>>,
+    /// Every script already matched against this batch's filters, per wallet.
+    tested_scripts: HashMap<WalletId, HashSet<ScriptBuf>>,
 }
 
 impl FiltersBatch {
@@ -56,6 +58,7 @@ impl FiltersBatch {
             rescan_complete: false,
             scanned_wallets: BTreeMap::new(),
             collected_scripts: HashMap::new(),
+            tested_scripts: HashMap::new(),
         }
     }
     /// Start height of this batch (inclusive).
@@ -119,6 +122,25 @@ impl FiltersBatch {
     ) {
         self.collected_scripts.entry(wallet_id).or_default().extend(scripts);
     }
+    /// Record that `scripts` have been matched against this batch's filters.
+    pub(super) fn mark_tested<I: IntoIterator<Item = ScriptBuf>>(
+        &mut self,
+        wallet_id: WalletId,
+        scripts: I,
+    ) {
+        self.tested_scripts.entry(wallet_id).or_default().extend(scripts);
+    }
+
+    /// The wallet's scripts that this batch has never been matched against.
+    pub(super) fn untested<'a>(
+        &'a self,
+        wallet_id: &WalletId,
+        monitored: &'a [ScriptBuf],
+    ) -> impl Iterator<Item = &'a ScriptBuf> {
+        let tested = self.tested_scripts.get(wallet_id);
+        monitored.iter().filter(move |script| tested.is_none_or(|t| !t.contains(*script)))
+    }
+
     /// Take collected per-wallet scripts for rescan, leaving the map empty.
     pub(super) fn take_collected_scripts(&mut self) -> HashMap<WalletId, HashSet<ScriptBuf>> {
         std::mem::take(&mut self.collected_scripts)
