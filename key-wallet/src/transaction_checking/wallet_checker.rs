@@ -184,19 +184,8 @@ impl WalletTransactionChecker for ManagedWalletInfo {
         // `unconfirmed` bucket.
         let external_final_parents = self.accounts.final_parents_of(tx);
 
-        // Check if this transaction already exists in any affected account
         let txid = tx.txid();
-        let mut is_new = true;
-        for account_match in &result.affected_accounts {
-            if let Some(account) =
-                self.accounts.get_by_account_type_match(&account_match.account_type_match)
-            {
-                if account.has_transaction(&txid) {
-                    is_new = false;
-                    break;
-                }
-            }
-        }
+        let is_new = !self.accounts.all_accounts().into_iter().any(|a| a.has_transaction(&txid));
         result.is_new_transaction = is_new;
 
         if !is_new {
@@ -1317,6 +1306,117 @@ mod tests {
             .await;
         assert!(!result2.is_new_transaction);
         assert_eq!(ctx.managed_wallet.balance.spendable(), 150_000);
+    }
+
+    /// A transaction the wallet already holds must not be reported new again
+    /// when the account holding it stops matching.
+    #[tokio::test]
+    async fn known_transaction_is_not_new_again_when_its_holder_stops_matching() {
+        let mut wallet =
+            Wallet::new_random(Network::Testnet, WalletAccountCreationOptions::Default)
+                .expect("Should create wallet");
+        wallet
+            .add_account(
+                AccountType::Standard {
+                    index: 1,
+                    standard_account_type: StandardAccountType::BIP44Account,
+                },
+                None,
+            )
+            .expect("Should add second BIP44 account");
+
+        let mut managed_wallet =
+            ManagedWalletInfo::from_wallet_with_name(&wallet, "Test".to_string(), 0);
+
+        let xpub0 =
+            wallet.accounts.standard_bip44_accounts.get(&0).expect("account 0").account_xpub;
+        let address0 = managed_wallet
+            .bip44_managed_account_at_index_mut(0)
+            .expect("managed account 0")
+            .next_receive_address(Some(&xpub0), true)
+            .expect("address for account 0");
+        let xpub1 =
+            wallet.accounts.standard_bip44_accounts.get(&1).expect("account 1").account_xpub;
+        let address1 = managed_wallet
+            .bip44_managed_account_at_index_mut(1)
+            .expect("managed account 1")
+            .next_receive_address(Some(&xpub1), true)
+            .expect("address for account 1");
+
+        let mut wallet_mut = wallet;
+        let in_block = |h: u32, tag: u8| {
+            TransactionContext::InBlock(BlockInfo::new(
+                h,
+                BlockHash::from_slice(&[tag; 32]).expect("hash"),
+                1_650_000_000 + h,
+            ))
+        };
+
+        let funding = Transaction::dummy(&address0, 0..1, &[100_000]);
+        let funded = managed_wallet
+            .check_core_transaction(&funding, in_block(100, 1), &mut wallet_mut, true, true)
+            .await;
+        assert!(funded.is_relevant);
+
+        let spend = Transaction {
+            version: 2,
+            lock_time: 0,
+            input: vec![TxIn {
+                previous_output: OutPoint::new(funding.txid(), 0),
+                script_sig: ScriptBuf::new(),
+                sequence: 0xffffffff,
+                witness: dashcore::Witness::new(),
+            }],
+            output: vec![TxOut {
+                value: 90_000,
+                script_pubkey: address1.script_pubkey(),
+            }],
+            special_transaction_payload: None,
+        };
+        let txid = spend.txid();
+
+        let first = managed_wallet
+            .check_core_transaction(&spend, in_block(200, 2), &mut wallet_mut, true, true)
+            .await;
+        assert!(first.is_new_transaction, "first sight of the spend is new");
+        assert_eq!(first.affected_accounts.len(), 2, "account 0 by input, account 1 by output");
+
+        managed_wallet
+            .bip44_managed_account_at_index_mut(1)
+            .expect("managed account 1")
+            .transactions_mut()
+            .remove(&txid);
+
+        assert!(
+            managed_wallet
+                .bip44_managed_account_at_index(0)
+                .expect("managed account 0")
+                .utxos
+                .is_empty(),
+            "account 0 matched only through the coin this spend consumed"
+        );
+        assert!(
+            managed_wallet
+                .bip44_managed_account_at_index(0)
+                .expect("managed account 0")
+                .has_transaction(&txid),
+            "account 0 still holds the record"
+        );
+        assert!(
+            !managed_wallet
+                .bip44_managed_account_at_index(1)
+                .expect("managed account 1")
+                .has_transaction(&txid),
+            "account 1 does not"
+        );
+
+        let again = managed_wallet
+            .check_core_transaction(&spend, in_block(200, 2), &mut wallet_mut, true, true)
+            .await;
+        assert!(
+            !again.is_new_transaction,
+            "the wallet already holds this transaction in account 0"
+        );
     }
 
     /// Test that the InstantSend branch backfills a `TransactionRecord` on accounts
