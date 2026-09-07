@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## Unreleased
+
+### Fixed
+
+- Discover AssetUnlock withdrawal receipts in DashPay and CoinJoin accounts.
+
 ## 0.44.0 - 2026-07-01
 
 ### Added
