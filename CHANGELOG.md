@@ -9,9 +9,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Changed
 
 - **Breaking:** the `bincode` feature and binary serialization dependencies now use
-  `grovedb-bincode` 2.0.2 and its derive macros, sharing the same pinned GroveDB
-  revision as Platform. Existing bincode encodings and C interfaces are unchanged,
-  but Rust consumers must use the fork for compatible `Encode`/`Decode` traits.
+  `grovedb-bincode` 2.1.0 and its derive macros from crates.io, sharing the same
+  serialization traits as Platform. Existing bincode encodings and C interfaces
+  are unchanged, but Rust consumers must use the fork for compatible `Encode`/`Decode` traits.
   The dependency switch does not automatically opt types into `DecodeUntrusted`.
 
 ## 0.44.0 - 2026-07-01
