@@ -6,6 +6,7 @@ use crate::sml::llmq_type::network::NetworkLLMQExt;
 use crate::sml::masternode_list::MasternodeList;
 use crate::sml::masternode_list_engine::MasternodeListEngine;
 use crate::sml::quorum_entry::qualified_quorum_entry::QualifiedQuorumEntry;
+use std::collections::BTreeSet;
 
 /// How many active windows below the lookup height [`MasternodeListEngine::quorum_entry_for_hash_at_or_before_height`]
 /// searches before giving up. A signing quorum referenced by a proof was selected at a lagged
@@ -15,7 +16,13 @@ use crate::sml::quorum_entry::qualified_quorum_entry::QualifiedQuorumEntry;
 const QUORUM_WALK_BACK_ACTIVE_WINDOWS: u32 = 4;
 
 impl MasternodeListEngine {
-    pub fn prune_obsolete_lists(&mut self, tip: CoreBlockHeight) -> usize {
+    /// `keep` names heights the caller cannot recover, so they are retained
+    /// however old they are: dropping one loses the list outright.
+    pub fn prune_obsolete_lists(
+        &mut self,
+        tip: CoreBlockHeight,
+        keep: &BTreeSet<CoreBlockHeight>,
+    ) -> usize {
         let params = self.network.chain_locks_type().params();
 
         let floor = tip.saturating_sub(
@@ -27,7 +34,7 @@ impl MasternodeListEngine {
 
         let before = self.masternode_lists.len();
 
-        self.masternode_lists.retain(|height, _| *height >= floor);
+        self.masternode_lists.retain(|height, _| *height >= floor || keep.contains(height));
 
         before - self.masternode_lists.len()
     }
@@ -263,5 +270,46 @@ mod tests {
                 .is_none(),
             "quorum below the floor must not be walked to"
         );
+    }
+}
+
+#[cfg(test)]
+mod prune_tests {
+    use super::*;
+    use crate::sml::masternode_list::MasternodeList;
+    use crate::sml::masternode_list_engine::MasternodeListEngine;
+    use crate::{BlockHash, Network};
+    use hashes::Hash;
+
+    fn engine_with_lists(heights: &[CoreBlockHeight]) -> MasternodeListEngine {
+        let mut engine = MasternodeListEngine::default_for_network(Network::Mainnet);
+        for height in heights {
+            let hash = BlockHash::from_slice(&[*height as u8; 32]).unwrap();
+            engine.masternode_lists.insert(*height, MasternodeList::empty(hash, *height));
+        }
+        engine
+    }
+
+    #[test]
+    fn prune_drops_lists_below_the_walk_back_floor() {
+        let mut engine = engine_with_lists(&[1_000, 500_000, 1_000_000]);
+        let pruned = engine.prune_obsolete_lists(1_000_000, &BTreeSet::new());
+
+        assert_eq!(pruned, 2);
+        assert_eq!(engine.masternode_lists.keys().copied().collect::<Vec<_>>(), vec![1_000_000]);
+    }
+
+    #[test]
+    fn prune_keeps_a_list_the_caller_could_not_persist() {
+        let mut engine = engine_with_lists(&[1_000, 500_000, 1_000_000]);
+        let keep = BTreeSet::from([1_000]);
+        let pruned = engine.prune_obsolete_lists(1_000_000, &keep);
+
+        assert_eq!(pruned, 1, "only the persisted old list goes");
+        assert!(
+            engine.masternode_lists.contains_key(&1_000),
+            "dropping an unpersisted list would lose it outright"
+        );
+        assert!(!engine.masternode_lists.contains_key(&500_000));
     }
 }

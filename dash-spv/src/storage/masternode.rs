@@ -243,6 +243,15 @@ impl<H: BlockHeaderStorage> PersistentMasternodeStorage<H> {
     }
 }
 
+#[cfg(any(test, feature = "test-utils"))]
+impl<H: BlockHeaderStorage> PersistentMasternodeStorage<H> {
+    /// The validity window the last lookup cached, so a caller's test can tell
+    /// whether this storage was consulted and for which height.
+    pub async fn cached_window(&self) -> Option<(CoreBlockHeight, Option<CoreBlockHeight>)> {
+        self.cached_list.lock().await.as_ref().map(|cached| (cached.from, cached.until))
+    }
+}
+
 #[async_trait]
 impl<H: BlockHeaderStorage> MasternodeStorage for PersistentMasternodeStorage<H> {
     async fn store_diff(

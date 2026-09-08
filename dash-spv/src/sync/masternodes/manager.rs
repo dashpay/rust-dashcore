@@ -12,6 +12,7 @@ use dashcore::sml::masternode_list_engine::{MasternodeListEngine, QRInfoFeedResu
 use tokio::sync::RwLock;
 
 use super::pipeline::MnListDiffPipeline;
+use crate::error::StorageResult;
 use crate::error::{SyncError, SyncResult};
 use crate::network::RequestSender;
 use crate::storage::{BlockHeaderStorage, MasternodeStorage, PersistentMasternodeStorage};
@@ -89,6 +90,10 @@ pub(super) struct QRInfoInFlight {
 pub(super) struct MasternodeSyncState {
     /// Heights where the engine has masternode lists (for chaining diffs).
     pub(super) known_mn_list_heights: BTreeSet<u32>,
+    /// Heights whose message could not be written, so their list is only in
+    /// memory and pruning it would lose it. Pruning is the one place that trades
+    /// memory for a copy on disk, so it has to skip these.
+    pub(super) unpersisted_heights: BTreeSet<u32>,
     /// Pipeline for MnListDiff requests.
     pub(super) mnlistdiff_pipeline: MnListDiffPipeline,
     /// What the pipeline is currently being used for. See [`PipelineMode`].
@@ -344,22 +349,18 @@ impl<H: BlockHeaderStorage> MasternodesManager<H> {
         }
     }
 
-    pub(super) async fn store_diff(&self, height: u32, diff: &MnListDiff) {
+    pub(super) async fn store_diff(&self, height: u32, diff: &MnListDiff) -> StorageResult<()> {
         let Some(storage) = &self.message_storage else {
-            return;
+            return Ok(());
         };
-        if let Err(e) = storage.write().await.store_diff(height, diff).await {
-            tracing::warn!("Could not store MnListDiff at {height}: {e}");
-        }
+        storage.write().await.store_diff(height, diff).await
     }
 
-    pub(super) async fn store_qr_info(&self, height: u32, qr_info: &QRInfo) {
+    pub(super) async fn store_qr_info(&self, height: u32, qr_info: &QRInfo) -> StorageResult<()> {
         let Some(storage) = &self.message_storage else {
-            return;
+            return Ok(());
         };
-        if let Err(e) = storage.write().await.store_qr_info(height, qr_info).await {
-            tracing::warn!("Could not store QRInfo at {height}: {e}");
-        }
+        storage.write().await.store_qr_info(height, qr_info).await
     }
 
     pub(super) async fn prune_obsolete_lists(&self, tip: u32) {
@@ -367,7 +368,11 @@ impl<H: BlockHeaderStorage> MasternodesManager<H> {
             return;
         }
 
-        let pruned = self.engine.write().await.prune_obsolete_lists(tip);
+        let pruned = self
+            .engine
+            .write()
+            .await
+            .prune_obsolete_lists(tip, &self.sync_state.unpersisted_heights);
         tracing::debug!("Pruned {pruned} in-memory masternode lists at {tip}");
     }
 

@@ -263,7 +263,18 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
                 drop(storage);
 
                 match tip_height {
-                    Ok(Some(height)) => self.store_qr_info(height, qr_info).await,
+                    Ok(Some(height)) => match self.store_qr_info(height, qr_info).await {
+                        Ok(()) => {
+                            self.sync_state.unpersisted_heights.remove(&height);
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                "Could not store QRInfo at {height}: {e}. Its list stays in memory \
+                                 and is excluded from pruning, so a restart resyncs from further back"
+                            );
+                            self.sync_state.unpersisted_heights.insert(height);
+                        }
+                    },
                     Ok(None) => tracing::warn!(
                         "QRInfo tip {tip_hash} has no known height, rotated quorums will not survive a restart"
                     ),
@@ -386,7 +397,19 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
                 drop(engine);
 
                 if apply_ok {
-                    self.store_diff(target_height, diff).await;
+                    match self.store_diff(target_height, diff).await {
+                        Ok(()) => {
+                            self.sync_state.unpersisted_heights.remove(&target_height);
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                "Could not store MnListDiff at {target_height}: {e}. Its list stays \
+                                 in memory and is excluded from pruning, so a restart resyncs from \
+                                 further back"
+                            );
+                            self.sync_state.unpersisted_heights.insert(target_height);
+                        }
+                    }
                 }
 
                 self.progress.add_diffs_processed(1);
