@@ -1,16 +1,12 @@
-//! Compact-filter matching cost: full monitored set vs the pruned
-//! forward-scan set for a mixing-heavy CoinJoin wallet
-//! (dashpay/rust-dashcore#948).
+//! How compact-filter matching cost grows with the size of a mixing-heavy
+//! CoinJoin wallet's query.
 //!
 //! Mimics a wallet mid-recovery after many mixing rounds. Every CoinJoin
 //! round pays a fresh single-use address, so the account accumulates `used`
 //! spent addresses, keeps a small set of still-funded denominations
 //! ([`LIVE_UTXOS`]), and watches the usual gap-limit lookahead on top. One
 //! scan batch of BIP158 filters is then matched with
-//! `monitored_script_pubkeys_for` (the pre-#948 query, which drags every
-//! historical address through SipHash + sort per filter) and with
-//! `scan_script_pubkeys_for` (the pruned query, bounded by live UTXOs + gap
-//! lookahead).
+//! `monitored_script_pubkeys_for`, the query the scan runs.
 //!
 //! BIP158 keys each filter's SipHashes off the block hash, so the whole
 //! query set is re-hashed and re-sorted per filter — which is exactly why
@@ -142,29 +138,13 @@ fn bench_filter_scan(c: &mut Criterion) {
     for used in USED_ADDRESSES {
         let (manager, wallet_id) = wallet_with_mixing_history(used);
         let monitored = manager.monitored_script_pubkeys_for(&wallet_id);
-        let pruned = manager.scan_script_pubkeys_for(&wallet_id);
-        assert!(
-            pruned.len() < monitored.len(),
-            "the scan query must shrink once CoinJoin addresses are spent"
-        );
-        println!(
-            "used={used}: monitored query = {} scripts, pruned scan query = {} scripts",
-            monitored.len(),
-            pruned.len()
-        );
+        println!("used={used}: query = {} scripts", monitored.len());
 
-        for (name, scripts) in [("monitored", &monitored), ("pruned", &pruned)] {
-            group.bench_with_input(BenchmarkId::new(name, used), scripts, |b, scripts| {
-                b.iter(|| {
-                    check_compact_filters_for_elements(
-                        black_box(&filters),
-                        black_box(scripts),
-                        &[],
-                        0,
-                    )
-                })
-            });
-        }
+        group.bench_with_input(BenchmarkId::new("monitored", used), &monitored, |b, scripts| {
+            b.iter(|| {
+                check_compact_filters_for_elements(black_box(&filters), black_box(scripts), &[], 0)
+            })
+        });
     }
 
     group.finish();

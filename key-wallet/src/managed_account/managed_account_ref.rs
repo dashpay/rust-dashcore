@@ -109,6 +109,14 @@ impl<'a> ManagedAccountRef<'a> {
         }
     }
 
+    /// See [`ManagedAccountTrait::tx_count`].
+    pub fn tx_count(self) -> usize {
+        match self {
+            ManagedAccountRef::Funds(a) => a.tx_count(),
+            ManagedAccountRef::Keys(a) => a.tx_count(),
+        }
+    }
+
     /// Whether `txid` has been finalized (chainlocked).
     pub fn transaction_is_finalized(self, txid: &Txid) -> bool {
         match self {

@@ -592,19 +592,59 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletManager<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::matching::{check_compact_filters_for_elements, FilterMatchKey};
     use crate::test_helpers::*;
+    use dashcore::bip158::BlockFilter;
     use dashcore::block::{Header, Version};
     use dashcore::hashes::Hash;
     use dashcore::pow::CompactTarget;
     use dashcore::{
         BlockHash, Network, OutPoint, ScriptBuf, TxIn, TxMerkleNode, TxOut, Txid, Witness,
     };
+    use key_wallet::account::ManagedAccountTrait as _;
     use key_wallet::account::StandardAccountType;
     use key_wallet::mnemonic::Language;
     use key_wallet::wallet::initialization::WalletAccountCreationOptions;
     use key_wallet::wallet::managed_wallet_info::transaction_building::AccountTypePreference;
     use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
     use key_wallet::{AccountType, Mnemonic};
+    use std::collections::HashMap;
+
+    fn coinjoin_account<'a>(
+        manager: &'a WalletManager<ManagedWalletInfo>,
+        wallet_id: &WalletId,
+    ) -> &'a key_wallet::managed_account::ManagedCoreFundsAccount {
+        manager
+            .get_wallet_info(wallet_id)
+            .expect("wallet info")
+            .accounts
+            .coinjoin_accounts
+            .get(&0)
+            .expect("CoinJoin account 0")
+    }
+
+    fn spend_first_output_of(tx: &Transaction) -> Transaction {
+        Transaction {
+            version: 2,
+            lock_time: 0,
+            input: vec![TxIn {
+                previous_output: OutPoint {
+                    txid: tx.txid(),
+                    vout: 0,
+                },
+                script_sig: ScriptBuf::new(),
+                sequence: u32::MAX,
+                witness: Witness::default(),
+            }],
+            output: vec![TxOut {
+                value: tx.output[0].value,
+                script_pubkey: ScriptBuf::new_p2pkh(&dashcore::PubkeyHash::from_byte_array(
+                    [0x77; 20],
+                )),
+            }],
+            special_transaction_payload: None,
+        }
+    }
 
     fn make_block(txdata: Vec<Transaction>) -> Block {
         Block {
@@ -820,32 +860,57 @@ mod tests {
         );
     }
 
+    /// A CoinJoin address used and left with no unspent output was once
+    /// dropped from the filter scan as unpayable. Mainnet pays such addresses
+    /// again, and the scan then never matched the block carrying the payment.
     #[tokio::test]
-    async fn test_scan_script_pubkeys_for_prunes_spent_coinjoin_addresses() {
-        use key_wallet::account::ManagedAccountTrait;
-
+    async fn test_filter_scan_matches_a_second_payment_to_an_emptied_coinjoin_address() {
         let (mut manager, wallet_id, _addr) = setup_manager_with_wallet();
+        let wallets = BTreeSet::from([wallet_id]);
 
-        // Untouched wallet: the scan set equals the monitored set.
-        let monitored = manager.monitored_script_pubkeys_for(&wallet_id);
-        assert_eq!(manager.scan_script_pubkeys_for(&wallet_id), monitored);
+        let coinjoin_addr = coinjoin_account(&manager, &wallet_id)
+            .all_addresses()
+            .first()
+            .cloned()
+            .expect("CoinJoin address");
 
-        // Mark a CoinJoin address used with no unspent output — a spent
-        // single-use address. The scan query drops it; the monitored set
-        // keeps it.
-        let info = manager.get_wallet_info_mut(&wallet_id).expect("wallet info");
-        let coinjoin = info.accounts.coinjoin_accounts.get_mut(&0).expect("CoinJoin account 0");
-        let spent_addr = coinjoin.all_addresses().first().cloned().expect("CoinJoin address");
-        assert!(coinjoin.mark_address_used(&spent_addr));
+        let received = create_tx_paying_to(&coinjoin_addr, 0x11);
+        let block = Block::dummy(100, vec![received.clone()]);
+        manager.process_block_for_wallets(&block, block.block_hash(), 100, &wallets).await;
 
-        let monitored = manager.monitored_script_pubkeys_for(&wallet_id);
-        let scan = manager.scan_script_pubkeys_for(&wallet_id);
-        assert!(monitored.contains(&spent_addr.script_pubkey()));
-        assert!(!scan.contains(&spent_addr.script_pubkey()));
-        assert_eq!(scan.len(), monitored.len() - 1);
+        let spend = spend_first_output_of(&received);
+        let block = Block::dummy(101, vec![spend]);
+        manager.process_block_for_wallets(&block, block.block_hash(), 101, &wallets).await;
 
-        // Unknown wallet id yields an empty scan set.
+        // Used, and holding nothing: the state that used to drop it.
+        assert!(coinjoin_account(&manager, &wallet_id).all_addresses().contains(&coinjoin_addr));
+        assert_eq!(manager.get_wallet_balance(&wallet_id).expect("balance").total(), 0);
+        assert_eq!(
+            manager.scan_script_pubkeys_for(&wallet_id),
+            manager.monitored_script_pubkeys_for(&wallet_id)
+        );
         assert!(manager.scan_script_pubkeys_for(&[0xff; 32]).is_empty());
+
+        // The block carrying the second payment must match the scan query.
+        let later = Block::dummy(102, vec![create_tx_paying_to(&coinjoin_addr, 0x33)]);
+        let filters = HashMap::from([(
+            FilterMatchKey::new(102, later.block_hash()),
+            BlockFilter::dummy(&later),
+        )]);
+        let matched = check_compact_filters_for_elements(
+            &filters,
+            &manager.scan_script_pubkeys_for(&wallet_id),
+            &[],
+            0,
+        );
+        assert_eq!(matched.len(), 1, "the scan query must still watch the emptied address");
+
+        manager.process_block_for_wallets(&later, later.block_hash(), 102, &wallets).await;
+        assert_eq!(
+            manager.get_wallet_balance(&wallet_id).expect("balance").confirmed(),
+            TX_AMOUNT,
+            "the second payment must be credited"
+        );
     }
 
     #[tokio::test]

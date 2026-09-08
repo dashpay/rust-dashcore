@@ -196,16 +196,9 @@ async fn main() -> Result<()> {
         let _ = writeln!(report, "wallet_addresses:     {}", w.monitored_addresses().len());
 
         for (i, id) in wallet_ids.iter().enumerate() {
-            let txs = w
+            let txs: usize = w
                 .get_wallet_info(id)
-                .map(|info| {
-                    info.accounts()
-                        .all_accounts()
-                        .iter()
-                        .flat_map(|a| a.transactions().keys())
-                        .collect::<std::collections::BTreeSet<_>>()
-                        .len()
-                })
+                .map(|info| info.accounts().all_accounts().iter().map(|a| a.tx_count()).sum())
                 .unwrap_or(0);
 
             let (confirmed, total) =
@@ -213,7 +206,7 @@ async fn main() -> Result<()> {
 
             let _ = writeln!(
                 report,
-                "wallet[{i}] retained_records={txs} confirmed_sat={confirmed} total_sat={total}"
+                "wallet[{i}] transactions={txs} confirmed_sat={confirmed} total_sat={total}"
             );
         }
 

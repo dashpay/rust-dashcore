@@ -28,8 +28,6 @@ mod performance_tests;
 
 mod provider_key_derivation_tests;
 
-mod scan_script_pubkeys_tests;
-
 mod special_transaction_matching_tests;
 
 mod special_transaction_tests;
