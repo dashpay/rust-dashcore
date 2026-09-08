@@ -327,3 +327,210 @@ pub(crate) async fn feed_qrinfo_heights_to_engine<S: BlockHeaderStorage>(
 
     tracing::info!("Fed {} block heights to engine", fed_count);
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_utils::MockHeaderStorage;
+    use dashcore::BlockHash;
+    use dashcore_hashes::Hash;
+
+    use tempfile::TempDir;
+
+    fn hash(byte: u8) -> BlockHash {
+        BlockHash::from_slice(&[byte; 32]).unwrap()
+    }
+
+    async fn open_storage(
+        dir: &TempDir,
+        heights: &[(u8, u32)],
+    ) -> PersistentMasternodeStorage<MockHeaderStorage> {
+        let map = heights.iter().map(|(b, h)| (hash(*b), *h)).collect();
+        PersistentMasternodeStorage::open(
+            dir.path(),
+            Arc::new(RwLock::new(MockHeaderStorage(map))),
+            Network::Regtest,
+        )
+        .await
+        .expect("open")
+    }
+
+    #[tokio::test]
+    async fn cached_list_is_served_only_inside_its_validity_window() {
+        let dir = TempDir::new().unwrap();
+        let storage = open_storage(&dir, &[]).await;
+
+        *storage.cached_list.lock().await = Some(CachedList {
+            from: 100,
+            until: Some(200),
+            list: None,
+        });
+
+        assert!(storage.cached_list_at(99).await.is_none(), "below `from` is a miss");
+        assert!(storage.cached_list_at(100).await.is_some(), "`from` itself is a hit");
+        assert!(storage.cached_list_at(199).await.is_some(), "last height below `until` hits");
+        assert!(storage.cached_list_at(200).await.is_none(), "`until` is exclusive");
+        assert!(storage.cached_list_at(10_000).await.is_none(), "above the window is a miss");
+
+        *storage.cached_list.lock().await = Some(CachedList {
+            from: 100,
+            until: None,
+            list: None,
+        });
+
+        assert!(storage.cached_list_at(99).await.is_none(), "`from` still bounds an open window");
+        assert!(
+            storage.cached_list_at(u32::MAX).await.is_some(),
+            "no upper bound covers every later height"
+        );
+    }
+
+    async fn prime_cache(storage: &PersistentMasternodeStorage<MockHeaderStorage>) {
+        *storage.cached_list.lock().await = Some(CachedList {
+            from: 0,
+            until: None,
+            list: None,
+        });
+    }
+
+    #[tokio::test]
+    async fn storing_a_message_invalidates_the_cached_list() {
+        let dir = TempDir::new().unwrap();
+        let mut storage = open_storage(&dir, &[]).await;
+
+        prime_cache(&storage).await;
+        storage.store_diff(100, &MnListDiff::dummy(0x00, 0xAA)).await.expect("store diff");
+        assert!(storage.cached_list.lock().await.is_none(), "store_diff must drop the cache");
+
+        prime_cache(&storage).await;
+        storage.store_qr_info(200, &QRInfo::dummy(0xBB)).await.expect("store qr_info");
+        assert!(storage.cached_list.lock().await.is_none(), "store_qr_info must drop the cache");
+    }
+
+    #[tokio::test]
+    async fn replay_retries_until_no_more_messages_apply() {
+        let dir = TempDir::new().unwrap();
+        let mut storage =
+            open_storage(&dir, &[(0x00, 0), (0xAA, 100), (0xBB, 60), (0xCC, 50), (0xDD, 40)]).await;
+
+        // Heights descend while dependencies ascend, so each pass resolves one link.
+        storage.store_diff(100, &MnListDiff::dummy(0x00, 0xAA)).await.unwrap();
+        storage.store_diff(60, &MnListDiff::dummy(0xAA, 0xBB)).await.unwrap();
+        storage.store_diff(50, &MnListDiff::dummy(0xBB, 0xCC)).await.unwrap();
+        storage.store_diff(40, &MnListDiff::dummy(0xEE, 0xDD)).await.unwrap();
+
+        let engine = storage.replay().await.expect("replay must not fail on an orphan");
+
+        assert!(
+            engine.masternode_lists.contains_key(&100),
+            "the genesis-based diff applies on the first pass"
+        );
+        assert!(
+            engine.masternode_lists.contains_key(&60),
+            "the first link resolves on the second pass"
+        );
+        assert!(
+            engine.masternode_lists.contains_key(&50),
+            "the loop keeps going while it is still making progress"
+        );
+        assert!(
+            !engine.masternode_lists.contains_key(&40),
+            "the orphan has no reachable base and is left to the network"
+        );
+    }
+
+    async fn storage_with_lists_at_100_200_300(
+        dir: &TempDir,
+    ) -> PersistentMasternodeStorage<MockHeaderStorage> {
+        let mut storage =
+            open_storage(dir, &[(0x00, 0), (0xAA, 100), (0xBB, 200), (0xCC, 300)]).await;
+        storage.store_diff(100, &MnListDiff::dummy(0x00, 0xAA)).await.unwrap();
+        storage.store_diff(200, &MnListDiff::dummy(0xAA, 0xBB)).await.unwrap();
+        storage.store_diff(300, &MnListDiff::dummy(0xBB, 0xCC)).await.unwrap();
+        storage
+    }
+
+    #[tokio::test]
+    async fn lookup_caches_the_window_between_the_lists_around_the_height() {
+        let dir = TempDir::new().unwrap();
+        let storage = storage_with_lists_at_100_200_300(&dir).await;
+
+        let list = storage.masternode_list_at_or_before(250).await.unwrap();
+        assert_eq!(list.map(|l| l.known_height), Some(200), "the list at or below 250");
+
+        let cached = storage.cached_list.lock().await.take().expect("lookup must cache");
+        assert_eq!(cached.from, 200, "valid from the list it returned");
+        assert_eq!(cached.until, Some(300), "and only up to the next one");
+    }
+
+    #[tokio::test]
+    async fn lookup_below_every_list_caches_the_absence_up_to_the_first_one() {
+        let dir = TempDir::new().unwrap();
+        let storage = storage_with_lists_at_100_200_300(&dir).await;
+
+        assert!(storage.masternode_list_at_or_before(50).await.unwrap().is_none());
+
+        let cached = storage.cached_list.lock().await.take().expect("an absence is cacheable too");
+        assert_eq!(cached.from, 0, "nothing below the first list, all the way down");
+        assert_eq!(cached.until, Some(100), "up to the first list there is");
+        assert!(cached.list.is_none());
+    }
+
+    #[tokio::test]
+    async fn lookup_at_or_above_the_newest_list_caches_an_open_window() {
+        let dir = TempDir::new().unwrap();
+        let storage = storage_with_lists_at_100_200_300(&dir).await;
+
+        let list = storage.masternode_list_at_or_before(10_000).await.unwrap();
+        assert_eq!(list.map(|l| l.known_height), Some(300));
+
+        let cached = storage.cached_list.lock().await.take().expect("lookup must cache");
+        assert_eq!(cached.from, 300);
+        assert_eq!(cached.until, None, "no later list, so nothing bounds it");
+    }
+
+    #[tokio::test]
+    async fn storing_the_same_height_twice_keeps_the_newer_message() {
+        let dir = TempDir::new().unwrap();
+        let mut storage = open_storage(&dir, &[]).await;
+
+        storage.store_diff(100, &MnListDiff::dummy(0x00, 0xAA)).await.unwrap();
+        storage.store_diff(100, &MnListDiff::dummy(0x00, 0xBB)).await.unwrap();
+
+        assert_eq!(storage.diffs.len(), 1, "one file per height");
+        let stored: MnListDiff =
+            PersistentMasternodeStorage::<MockHeaderStorage>::read_message(&storage.diffs[&100])
+                .await
+                .expect("read back");
+        assert_eq!(stored.block_hash, hash(0xBB), "the second write wins");
+    }
+
+    #[tokio::test]
+    async fn replay_survives_unreadable_files_and_ignores_foreign_names() {
+        let dir = TempDir::new().unwrap();
+        let folder = dir.path().join(PersistentMasternodeStorage::<MockHeaderStorage>::FOLDER_NAME);
+        tokio::fs::create_dir_all(&folder).await.unwrap();
+
+        {
+            let mut storage = open_storage(&dir, &[(0x00, 0), (0xAA, 100)]).await;
+            storage.store_diff(100, &MnListDiff::dummy(0x00, 0xAA)).await.unwrap();
+        }
+
+        tokio::fs::write(folder.join("diff_50.dat"), b"not a diff").await.unwrap();
+        tokio::fs::write(folder.join("diff_abc.dat"), b"x").await.unwrap();
+
+        let storage = open_storage(&dir, &[(0x00, 0), (0xAA, 100)]).await;
+        assert_eq!(
+            storage.diffs.keys().copied().collect::<Vec<_>>(),
+            vec![50, 100],
+            "only well-formed names are indexed"
+        );
+        assert!(storage.qr_infos.is_empty());
+
+        let engine = storage.replay().await.expect("a corrupt file must not fail the load");
+        assert!(
+            engine.masternode_lists.contains_key(&100),
+            "the readable message still rebuilds its list"
+        );
+    }
+}

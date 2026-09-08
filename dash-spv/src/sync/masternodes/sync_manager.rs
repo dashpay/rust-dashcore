@@ -707,94 +707,34 @@ mod tests {
     use super::{
         qrinfo_timeout_for, MAX_RETRY_ATTEMPTS, QRINFO_STALL_WATCHDOG, QRINFO_TIMEOUT_SCHEDULE_SECS,
     };
-    use crate::error::StorageResult;
+
     use crate::network::{Message, NetworkRequest, RequestSender};
     use crate::storage::{
-        feed_qrinfo_heights_to_engine, BlockHeaderStorage, BlockHeaderTip, DiskStorageManager,
+        feed_qrinfo_heights_to_engine, BlockHeaderStorage, DiskStorageManager,
         PersistentBlockHeaderStorage, StorageManager,
     };
     use crate::sync::{MasternodesManager, SyncManager, SyncState};
+    use crate::test_utils::MockHeaderStorage;
     use crate::types::HashedBlockHeader;
     use crate::SyncError;
-    use async_trait::async_trait;
+
     use dashcore::block::Header;
     use dashcore::bls_sig_utils::{BLSPublicKey, BLSSignature};
     use dashcore::hash_types::QuorumVVecHash;
     use dashcore::network::message::NetworkMessage;
-    use dashcore::network::message_qrinfo::{MNSkipListMode, QRInfo, QuorumSnapshot};
+    use dashcore::network::message_qrinfo::{QRInfo, QuorumSnapshot};
     use dashcore::network::message_sml::MnListDiff;
     use dashcore::sml::llmq_type::LLMQType;
     use dashcore::sml::masternode_list_engine::MasternodeListEngine;
     use dashcore::transaction::special_transaction::quorum_commitment::QuorumEntry;
-    use dashcore::{BlockHash, Network, Transaction};
+    use dashcore::{BlockHash, Network};
     use dashcore_hashes::Hash;
     use std::collections::HashMap;
-    use std::ops::Range;
+
     use std::sync::Arc;
     use std::time::Duration;
     use std::time::Instant;
     use tokio::sync::{mpsc, RwLock};
-
-    struct MockHeaderStorage(HashMap<BlockHash, u32>);
-
-    #[async_trait]
-    impl BlockHeaderStorage for MockHeaderStorage {
-        async fn store_headers(&mut self, _: &[HashedBlockHeader]) -> StorageResult<()> {
-            Ok(())
-        }
-        async fn store_headers_at_height(
-            &mut self,
-            _: &[HashedBlockHeader],
-            _: u32,
-        ) -> StorageResult<()> {
-            Ok(())
-        }
-        async fn load_headers(&self, _: Range<u32>) -> StorageResult<Vec<HashedBlockHeader>> {
-            Ok(vec![])
-        }
-        async fn get_tip_height(&self) -> Option<u32> {
-            None
-        }
-        async fn get_tip(&self) -> Option<BlockHeaderTip> {
-            None
-        }
-        async fn get_start_height(&self) -> Option<u32> {
-            None
-        }
-        async fn get_stored_headers_len(&self) -> u32 {
-            0
-        }
-        async fn get_header_height_by_hash(&self, hash: &BlockHash) -> StorageResult<Option<u32>> {
-            Ok(self.0.get(hash).copied())
-        }
-        async fn truncate_above(&mut self, target_height: u32) -> StorageResult<()> {
-            self.0.retain(|_, h| *h <= target_height);
-            Ok(())
-        }
-    }
-
-    fn make_diff(base_byte: u8, tip_byte: u8) -> MnListDiff {
-        MnListDiff {
-            version: 1,
-            base_block_hash: BlockHash::from_slice(&[base_byte; 32]).unwrap(),
-            block_hash: BlockHash::from_slice(&[tip_byte; 32]).unwrap(),
-            total_transactions: 0,
-            merkle_hashes: vec![],
-            merkle_flags: vec![],
-            coinbase_tx: Transaction {
-                version: 1,
-                lock_time: 0,
-                input: vec![],
-                output: vec![],
-                special_transaction_payload: None,
-            },
-            deleted_masternodes: vec![],
-            new_masternodes: vec![],
-            deleted_quorums: vec![],
-            new_quorums: vec![],
-            quorums_chainlock_signatures: vec![],
-        }
-    }
 
     fn make_quorum_entry(hash_byte: u8, index: i16) -> QuorumEntry {
         QuorumEntry {
@@ -808,14 +748,6 @@ mod tests {
             quorum_vvec_hash: QuorumVVecHash::from_slice(&[0u8; 32]).unwrap(),
             threshold_sig: BLSSignature::from([0u8; 96]),
             all_commitment_aggregated_signature: BLSSignature::from([0u8; 96]),
-        }
-    }
-
-    fn make_snapshot() -> QuorumSnapshot {
-        QuorumSnapshot {
-            skip_list_mode: MNSkipListMode::NoSkipping,
-            active_quorum_members: vec![],
-            skip_list: vec![],
         }
     }
 
@@ -852,25 +784,25 @@ mod tests {
         }
 
         let qr_info = QRInfo {
-            quorum_snapshot_at_h_minus_c: make_snapshot(),
-            quorum_snapshot_at_h_minus_2c: make_snapshot(),
-            quorum_snapshot_at_h_minus_3c: make_snapshot(),
-            mn_list_diff_tip: make_diff(0x01, 0x02),
-            mn_list_diff_h: make_diff(0x03, 0x04),
-            mn_list_diff_at_h_minus_c: make_diff(0x05, 0x06),
-            mn_list_diff_at_h_minus_2c: make_diff(0x07, 0x08),
-            mn_list_diff_at_h_minus_3c: make_diff(0x09, 0x0A),
+            quorum_snapshot_at_h_minus_c: QuorumSnapshot::dummy(),
+            quorum_snapshot_at_h_minus_2c: QuorumSnapshot::dummy(),
+            quorum_snapshot_at_h_minus_3c: QuorumSnapshot::dummy(),
+            mn_list_diff_tip: MnListDiff::dummy_empty(0x01, 0x02),
+            mn_list_diff_h: MnListDiff::dummy_empty(0x03, 0x04),
+            mn_list_diff_at_h_minus_c: MnListDiff::dummy_empty(0x05, 0x06),
+            mn_list_diff_at_h_minus_2c: MnListDiff::dummy_empty(0x07, 0x08),
+            mn_list_diff_at_h_minus_3c: MnListDiff::dummy_empty(0x09, 0x0A),
             quorum_snapshot_and_mn_list_diff_at_h_minus_4c: Some((
-                make_snapshot(),
-                make_diff(0x0B, 0x0C),
+                QuorumSnapshot::dummy(),
+                MnListDiff::dummy_empty(0x0B, 0x0C),
             )),
-            mn_list_diff_list: vec![make_diff(0x0D, 0x0E)],
+            mn_list_diff_list: vec![MnListDiff::dummy_empty(0x0D, 0x0E)],
             last_commitment_per_index: [0x80u8, 0x81, 0x82, 0x83]
                 .iter()
                 .enumerate()
                 .map(|(i, &b)| make_quorum_entry(b, i as i16))
                 .collect(),
-            quorum_snapshot_list: vec![make_snapshot()],
+            quorum_snapshot_list: vec![QuorumSnapshot::dummy()],
         };
 
         let mut engine = MasternodeListEngine {
@@ -917,25 +849,6 @@ mod tests {
         assert_eq!(qrinfo_timeout_for(u8::MAX).as_secs(), last);
     }
 
-    /// Build a minimal `QRInfo` whose `mn_list_diff_tip.block_hash` is `[tip_byte; 32]`.
-    /// Only the tip hash is read by `should_process_qrinfo`; every other field is filler.
-    fn qrinfo_with_tip(tip_byte: u8) -> QRInfo {
-        QRInfo {
-            quorum_snapshot_at_h_minus_c: make_snapshot(),
-            quorum_snapshot_at_h_minus_2c: make_snapshot(),
-            quorum_snapshot_at_h_minus_3c: make_snapshot(),
-            mn_list_diff_tip: make_diff(0x00, tip_byte),
-            mn_list_diff_h: make_diff(0x00, 0x00),
-            mn_list_diff_at_h_minus_c: make_diff(0x00, 0x00),
-            mn_list_diff_at_h_minus_2c: make_diff(0x00, 0x00),
-            mn_list_diff_at_h_minus_3c: make_diff(0x00, 0x00),
-            quorum_snapshot_and_mn_list_diff_at_h_minus_4c: None,
-            mn_list_diff_list: vec![],
-            last_commitment_per_index: vec![],
-            quorum_snapshot_list: vec![],
-        }
-    }
-
     /// `should_process_qrinfo` is the dedup gate at the QRInfo handler entry. It
     /// must:
     /// 1. Drop a response carrying the same `mn_list_diff_tip.block_hash` as the
@@ -964,7 +877,7 @@ mod tests {
             ..Default::default()
         };
         assert!(
-            !state.should_process_qrinfo(&qrinfo_with_tip(0xAA)),
+            !state.should_process_qrinfo(&QRInfo::dummy(0xAA)),
             "duplicate of last processed tip must be dropped"
         );
 
@@ -973,7 +886,7 @@ mod tests {
         let state = MasternodeSyncState::default();
         assert!(state.qrinfo_in_flight.is_none());
         assert!(
-            !state.should_process_qrinfo(&qrinfo_with_tip(0xBB)),
+            !state.should_process_qrinfo(&QRInfo::dummy(0xBB)),
             "unsolicited response must be dropped"
         );
 
@@ -984,7 +897,7 @@ mod tests {
             ..Default::default()
         };
         assert!(
-            state.should_process_qrinfo(&qrinfo_with_tip(0xBB)),
+            state.should_process_qrinfo(&QRInfo::dummy(0xBB)),
             "response matching the active request tip must be accepted"
         );
 
@@ -997,7 +910,7 @@ mod tests {
             ..Default::default()
         };
         assert!(
-            !state.should_process_qrinfo(&qrinfo_with_tip(0xAA)),
+            !state.should_process_qrinfo(&QRInfo::dummy(0xAA)),
             "duplicate must be dropped even when no request is in flight"
         );
 
@@ -1010,15 +923,14 @@ mod tests {
             ..Default::default()
         };
         assert!(
-            !state.should_process_qrinfo(&qrinfo_with_tip(0xCC)),
+            !state.should_process_qrinfo(&QRInfo::dummy(0xCC)),
             "response for non-active request tip must be dropped"
         );
     }
 
-    /// Same filler `QRInfo` as [`qrinfo_with_tip`], but carrying an explicit tip
-    /// hash so it can be aimed at whatever tip a live manager actually requested.
+    /// [`QRInfo::dummy`] aimed at whatever tip a live manager actually requested.
     fn qrinfo_with_tip_hash(tip: BlockHash) -> QRInfo {
-        let mut qr_info = qrinfo_with_tip(0x00);
+        let mut qr_info = QRInfo::dummy(0x00);
         qr_info.mn_list_diff_tip.block_hash = tip;
         qr_info
     }
