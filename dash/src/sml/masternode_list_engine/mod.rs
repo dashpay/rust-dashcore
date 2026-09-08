@@ -764,6 +764,35 @@ impl MasternodeListEngine {
         hashes
     }
 
+    /// The work block of every rotation cycle the QRInfo carries: `h`, `h-c`,
+    /// `h-2c`, `h-3c` and, when shared, `h-4c`. `mn_list_diff_tip` is not a
+    /// cycle boundary and `mn_list_diff_list` carries no snapshot to key, so
+    /// neither is included.
+    ///
+    /// A caller holding its own header chain resolves these to heights and
+    /// feeds back the block at [`Self::cycle_boundary_height`], which is the
+    /// cycle base that keys the cycle's rotated quorums in storage.
+    pub fn qr_info_work_block_hashes(qr_info: &QRInfo) -> Vec<BlockHash> {
+        let mut hashes = vec![
+            qr_info.mn_list_diff_h.block_hash,
+            qr_info.mn_list_diff_at_h_minus_c.block_hash,
+            qr_info.mn_list_diff_at_h_minus_2c.block_hash,
+            qr_info.mn_list_diff_at_h_minus_3c.block_hash,
+        ];
+
+        if let Some((_, diff)) = &qr_info.quorum_snapshot_and_mn_list_diff_at_h_minus_4c {
+            hashes.push(diff.block_hash);
+        }
+
+        hashes
+    }
+
+    /// Cycle base height for a rotation cycle whose work block sits at
+    /// `work_block_height`.
+    pub fn cycle_boundary_height(work_block_height: CoreBlockHeight) -> CoreBlockHeight {
+        work_block_height.saturating_add(WORK_DIFF_DEPTH)
+    }
+
     /// `true` iff `rotated_quorums_per_cycle` already holds a complete cycle
     /// for `cycle_hash`: one `Verified` entry for every active rotation slot.
     /// Used by the storage gate to refuse downgrading a cycle and by the
@@ -2117,7 +2146,7 @@ mod tests {
             for (quorum_hash, quorum) in quorum_entries.iter() {
                 if !quorum_type.is_rotating_quorum_type() {
                     let (_, known_block_height) = mn_list_engine
-                        .masternode_list_and_height_for_block_hash_8_blocks_ago(
+                        .masternode_list_and_height_for_quorum_members(
                             &quorum.quorum_entry.quorum_hash,
                         )
                         .expect("expected to find validating masternode");

@@ -14,7 +14,9 @@ use std::collections::HashSet;
 use tokio::sync::RwLock;
 
 use crate::error::SyncResult;
-use crate::storage::{BlockHeaderStorage, MetadataStorage};
+use crate::storage::{
+    BlockHeaderStorage, MasternodeStorage, MetadataStorage, PersistentMasternodeStorage,
+};
 use crate::sync::{ChainLockProgress, SyncEvent};
 
 /// Metadata key for persisting the best validated ChainLock.
@@ -36,6 +38,7 @@ pub struct ChainLockManager<H: BlockHeaderStorage, M: MetadataStorage> {
     metadata_storage: Arc<RwLock<M>>,
     /// Masternode engine for BLS signature validation.
     masternode_engine: Arc<RwLock<MasternodeListEngine>>,
+    masternode_storage: Option<Arc<RwLock<PersistentMasternodeStorage<H>>>>,
     /// The best (highest height) validated ChainLock.
     best_chainlock: Option<ChainLock>,
     /// ChainLock hashes that have been requested (to avoid duplicate requests).
@@ -56,12 +59,14 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> ChainLockManager<H, M> {
         header_storage: Arc<RwLock<H>>,
         metadata_storage: Arc<RwLock<M>>,
         masternode_engine: Arc<RwLock<MasternodeListEngine>>,
+        masternode_storage: Option<Arc<RwLock<PersistentMasternodeStorage<H>>>>,
     ) -> Self {
         let mut manager = Self {
             progress: ChainLockProgress::default(),
             header_storage,
             metadata_storage,
             masternode_engine,
+            masternode_storage,
             best_chainlock: None,
             requested_chainlocks: HashSet::new(),
             masternode_ready: false,
@@ -254,6 +259,47 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> ChainLockManager<H, M> {
                     "ChainLock signature verified for height {}",
                     chainlock.block_height
                 );
+                return true;
+            }
+            Err(e) => tracing::debug!(
+                "ChainLock at height {} not verifiable against the retained lists: {}",
+                chainlock.block_height,
+                e
+            ),
+        }
+        drop(engine);
+
+        self.validate_signature_from_storage(chainlock).await
+    }
+
+    async fn validate_signature_from_storage(&self, chainlock: &ChainLock) -> bool {
+        let Some(storage) = &self.masternode_storage else {
+            return false;
+        };
+
+        let signing_height = chainlock.signing_height();
+        let list = match storage.read().await.masternode_list_at_or_before(signing_height).await {
+            Ok(Some(list)) => list,
+            Ok(None) => return false,
+            Err(e) => {
+                tracing::warn!(
+                    "Could not rebuild the masternode list for height {}: {}",
+                    signing_height,
+                    e
+                );
+                return false;
+            }
+        };
+
+        let engine = self.masternode_engine.read().await;
+
+        match engine.verify_chain_lock_with_masternode_list(chainlock, &list) {
+            Ok(()) => {
+                tracing::info!(
+                    "ChainLock signature verified for height {} from a rebuilt list at {}",
+                    chainlock.block_height,
+                    list.known_height
+                );
                 true
             }
             Err(e) => {
@@ -309,7 +355,7 @@ mod tests {
         let storage = DiskStorageManager::with_temp_dir().await.unwrap();
         let engine =
             Arc::new(RwLock::new(MasternodeListEngine::default_for_network(Network::Testnet)));
-        ChainLockManager::new(storage.block_headers(), storage.metadata(), engine).await
+        ChainLockManager::new(storage.block_headers(), storage.metadata(), engine, None).await
     }
 
     async fn create_test_manager_with_storage(
@@ -317,7 +363,7 @@ mod tests {
     ) -> TestChainLockManager {
         let engine =
             Arc::new(RwLock::new(MasternodeListEngine::default_for_network(Network::Testnet)));
-        ChainLockManager::new(storage.block_headers(), storage.metadata(), engine).await
+        ChainLockManager::new(storage.block_headers(), storage.metadata(), engine, None).await
     }
 
     fn create_test_chainlock(height: u32) -> ChainLock {
