@@ -16,7 +16,8 @@ use super::helpers::{
     wait_for_mn_state_with_stored_cycle_above,
 };
 use super::setup::{
-    create_and_start_client, create_dummy_wallet, create_mn_test_config, TestContext, SYNC_TIMEOUT,
+    create_and_start_client, create_client, create_dummy_wallet, create_mn_test_config,
+    TestContext, SYNC_TIMEOUT,
 };
 
 /// Sync masternode list against a pre-generated regtest controller node.
@@ -105,10 +106,16 @@ async fn test_masternode_list_sync_with_restart() {
         wait_for_masternode_sync(&mut client_handle.progress_receiver, SYNC_TIMEOUT).await;
     let first_height = first_mn_progress.current_height();
 
-    let first_masternodes = {
+    let first_tip = {
         let engine = client_handle.engine.read().await;
-        engine.masternode_lists.values().map(|list| list.masternodes.len()).max().unwrap_or(0)
+        engine
+            .masternode_lists
+            .iter()
+            .next_back()
+            .map(|(height, list)| (*height, list.block_hash, list.masternodes.len()))
     };
+    let (_, _, first_masternodes) =
+        first_tip.expect("the first session must build a masternode list before testing restart");
     assert!(
         first_masternodes > 0,
         "the first session must have a masternode list before its persistence can be tested"
@@ -125,7 +132,25 @@ async fn test_masternode_list_sync_with_restart() {
 
     // Restart with same storage
     tracing::info!("=== Restarting with same storage ===");
-    let mut client_handle = create_and_start_client(&config, Arc::clone(&wallet)).await;
+    let mut client_handle = create_client(&config, Arc::clone(&wallet)).await;
+
+    // Read before the run loop is spawned, so nothing has come off the network yet:
+    // this is what replaying the stored messages produced on its own.
+    let replayed_tip = {
+        let engine = client_handle.engine.read().await;
+        engine
+            .masternode_lists
+            .iter()
+            .next_back()
+            .map(|(height, list)| (*height, list.block_hash, list.masternodes.len()))
+    };
+    assert_eq!(
+        replayed_tip, first_tip,
+        "startup must rebuild the first session's masternode list from storage, \
+         not default and let a fresh dashd sync cover for it"
+    );
+
+    client_handle.start();
     let second_mn_progress =
         wait_for_masternode_sync(&mut client_handle.progress_receiver, SYNC_TIMEOUT).await;
     let second_height = second_mn_progress.current_height();
