@@ -2,6 +2,10 @@
 members = ["dash", "dash-network", "hashes", "internals", "fuzz", "rpc-client", "rpc-json", "rpc-integration-test", "key-wallet", "key-wallet-manager", "key-wallet-ffi", "dash-spv", "dash-spv-ffi", "git-state", "dash-network-seeds", "masternode-seeds-fetcher", "dash-spv-bench"]
 resolver = "2"
 
+[workspace.dependencies]
+bincode = { package = "grovedb-bincode", git = "https://github.com/dashpay/grovedb", rev = "2b9c7ba9a794bfab1a03fa1d0b3f5496b63175ae" }
+bincode_derive = { package = "grovedb-bincode-derive", git = "https://github.com/dashpay/grovedb", rev = "2b9c7ba9a794bfab1a03fa1d0b3f5496b63175ae" }
+
 [workspace.package]
 version = "0.45.0"
 
