@@ -584,3 +584,90 @@ async fn committed_range_sweep_coalesces_across_batch_commits() {
         manager.committed_range_sweeps
     );
 }
+
+/// A block is applied more than once during a scan — re-applied by a
+/// rescan for scripts derived after its first application, or delivered
+/// again for an in-flight re-request — and each application can recognise
+/// outputs the previous one could not, deriving further scripts. Only the
+/// first delivery carries the tracker's in-flight entry; the scripts derived
+/// by the later ones used to be dropped on the floor (never collected into
+/// the batch), so blocks that match only on those scripts — typically the
+/// blocks that spend the coins paid to them — were never found. On a
+/// CoinJoin-heavy mainnet wallet this left 297 of 3 645 gap-widened scripts
+/// unswept and 11 spent coins credited (dashpay/rust-dashcore#1006).
+#[tokio::test]
+async fn scripts_derived_by_a_redelivered_block_enter_the_cascade() {
+    let (mut manager, wallet, wallet_id) = setup().await;
+    let addresses = coinjoin_external_addresses(&wallet, &wallet_id, 40).await;
+    let (block, filter, key) = block_paying(10, &addresses[0..=5]);
+    {
+        let mut header_storage = manager.header_storage.write().await;
+        let mut filter_storage = manager.filter_storage.write().await;
+        for height in 0..=99u32 {
+            let (header, filter_bytes) = if height == 10 {
+                (block.header, filter.content.clone())
+            } else {
+                let filler = Block::dummy(height, vec![]);
+                let filter = BlockFilter::dummy(&filler);
+                (filler.header, filter.content)
+            };
+            header_storage
+                .store_headers_at_height(&[header.into()], height)
+                .await
+                .expect("seed header");
+            filter_storage.store_filter(height, &filter_bytes).await.expect("seed filter");
+        }
+    }
+    let block_hash = block.block_hash();
+    let mut batch_0 = FiltersBatch::new(0, 99, HashMap::from([(key, filter)]));
+    batch_0.mark_verified();
+    manager.active_batches.insert(0, batch_0);
+    manager.progress.update_stored_height(99);
+
+    // Forward pass: the block matches on the initial window and is requested.
+    let events = manager.try_process_batch().await.unwrap();
+    let needed: Vec<_> =
+        events.iter().filter(|e| matches!(e, SyncEvent::BlocksNeeded { .. })).collect();
+    assert_eq!(needed.len(), 1, "the forward pass must request the paying block");
+    // The batch is still waiting on another block when the re-delivery
+    // arrives — the shape observed on mainnet, where the re-applied blocks
+    // landed while their batch had other blocks outstanding.
+    manager.active_batches.get_mut(&0).expect("batch 0 active").set_pending_blocks(2);
+
+    let (tx, _rx) = unbounded_channel();
+    let requests = RequestSender::new(tx);
+    let wallets = BTreeSet::from([wallet_id]);
+
+    // First (tracked) delivery: applied for real, settles the in-flight entry.
+    let result =
+        wallet.write().await.process_block_for_wallets(&block, block_hash, 10, &wallets).await;
+    let confirmed_txids: Vec<_> = result.relevant_txids().cloned().collect();
+    let first = SyncEvent::BlockProcessed {
+        block_hash,
+        height: 10,
+        wallets: wallets.clone(),
+        new_scripts: result.new_scripts,
+        confirmed_txids,
+    };
+    manager.handle_sync_event(&first, &requests).await.expect("first delivery");
+
+    // Second delivery of the same block (a rescan re-application): it derives
+    // a script the first one did not. Nothing tracks this delivery.
+    let late_script = addresses[35].script_pubkey();
+    let second = SyncEvent::BlockProcessed {
+        block_hash,
+        height: 10,
+        wallets: wallets.clone(),
+        new_scripts: BTreeMap::from([(wallet_id, vec![late_script.clone()])]),
+        confirmed_txids: vec![],
+    };
+    manager.handle_sync_event(&second, &requests).await.expect("second delivery");
+
+    let collected =
+        manager.active_batches.get_mut(&0).map(|b| b.take_collected_scripts()).unwrap_or_default();
+    assert!(
+        collected.get(&wallet_id).is_some_and(|s| s.contains(&late_script)),
+        "a script derived by a re-applied block must be collected for the batch's rescan and the \
+         committed-range sweep, not dropped because the tracker had already settled the block"
+    );
+}

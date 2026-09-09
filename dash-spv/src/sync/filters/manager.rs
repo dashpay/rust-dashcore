@@ -854,9 +854,10 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
         };
 
         tracing::info!(
-            "Rescan filters ({}-{}) for new scripts across {} wallets",
+            "Rescan filters ({}-{}) for {} new scripts across {} wallets",
             batch.start_height(),
             batch.end_height(),
+            new_scripts.values().map(|s| s.len()).sum::<usize>(),
             new_scripts.len()
         );
 
@@ -1213,9 +1214,10 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
 
         self.committed_range_sweeps += 1;
         tracing::info!(
-            "Rescan committed filters ({}-{}) for new scripts across {} wallets (sweep #{})",
+            "Rescan committed filters ({}-{}) for {} new scripts across {} wallets (sweep #{})",
             range_start,
             range_end,
+            wallet_queries.iter().map(|(_, s)| s.len()).sum::<usize>(),
             wallet_queries.len(),
             self.committed_range_sweeps
         );
