@@ -1329,13 +1329,10 @@ impl Default for AddressPoolBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::mnemonic::{Language, Mnemonic};
+    use crate::mnemonic::Mnemonic;
 
     fn test_key_source() -> KeySource {
-        let mnemonic = Mnemonic::from_phrase(
-            "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
-            Language::English,
-        ).unwrap();
+        let mnemonic = Mnemonic::from_phrase("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about").unwrap();
         let seed = mnemonic.to_seed("");
         let master = ExtendedPrivKey::new_master(Network::Testnet, &seed).unwrap();
 

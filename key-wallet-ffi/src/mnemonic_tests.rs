@@ -690,4 +690,90 @@ mod tests {
             mnemonic::mnemonic_free(mnemonic);
         }
     }
+
+    /// Entropy whose French encoding contains non-ASCII (accented) words;
+    /// shared by the multi-language tests below.
+    const ANY_LANGUAGE_TEST_ENTROPY: [u8; 16] = [
+        0x0c, 0x1e, 0x24, 0xe5, 0x91, 0x77, 0x79, 0xd2, 0x97, 0xe1, 0x4d, 0x45, 0xf1, 0x4e, 0x1a,
+        0x1a,
+    ];
+
+    /// French phrase for `ANY_LANGUAGE_TEST_ENTROPY`, with its BIP-39 seed
+    /// computed independently of this codebase (python
+    /// `hashlib.pbkdf2_hmac('sha512', NFKD(phrase), b"mnemonic", 2048)`).
+    const FRENCH_REFERENCE_PHRASE: &str = "amour troupeau couteau brèche gustatif tenaille exécuter capuche dicter lagune jaune cogner";
+    const FRENCH_REFERENCE_SEED_HEX: &str = "895debca7a86928a0c4cb5712aefd6d4cf4c7cfd23448ccd5418932e4f00c940089a3501f4f33eaf115f1a689d6c1e54b6bb6d5f40e4791234cb2ac87d62df68";
+
+    /// The invariant that regressed in Dash Wallet iOS 9.0.0: whatever
+    /// `mnemonic_validate` accepts, `mnemonic_to_seed` and
+    /// `wallet_create_from_mnemonic` must accept too — in every supported
+    /// language, not just English.
+    #[test]
+    fn test_validate_parse_symmetry_all_languages() {
+        use dash_network::ffi::FFINetwork;
+        use key_wallet::mnemonic::{Language, Mnemonic};
+
+        for lang in Language::ALL {
+            let phrase = Mnemonic::from_entropy(&ANY_LANGUAGE_TEST_ENTROPY, lang).unwrap().phrase();
+            let c_phrase = CString::new(phrase).unwrap();
+
+            let mut error = FFIError::default();
+            let error = &mut error as *mut FFIError;
+
+            let is_valid = unsafe { mnemonic::mnemonic_validate(c_phrase.as_ptr(), error) };
+            assert!(is_valid, "{lang:?}: validate must accept");
+            assert_eq!(unsafe { (*error).code }, FFIErrorCode::Success);
+
+            let mut seed = [0u8; 64];
+            let mut seed_len: usize = 64;
+            let ok = unsafe {
+                mnemonic::mnemonic_to_seed(
+                    c_phrase.as_ptr(),
+                    ptr::null(),
+                    seed.as_mut_ptr(),
+                    &mut seed_len,
+                    error,
+                )
+            };
+            assert!(ok, "{lang:?}: to_seed must accept a validated phrase");
+            assert_eq!(seed_len, 64);
+            assert_eq!(unsafe { (*error).code }, FFIErrorCode::Success);
+
+            let wallet = unsafe {
+                crate::wallet::wallet_create_from_mnemonic(
+                    c_phrase.as_ptr(),
+                    FFINetwork::Testnet,
+                    error,
+                )
+            };
+            assert!(!wallet.is_null(), "{lang:?}: wallet creation must accept a validated phrase");
+            assert_eq!(unsafe { (*error).code }, FFIErrorCode::Success);
+            unsafe { crate::wallet::wallet_free(wallet) };
+        }
+    }
+
+    /// Seed derivation for a non-English phrase must match the BIP-39 spec
+    /// (PBKDF2-HMAC-SHA512 over the NFKD phrase), not merely succeed —
+    /// pinned against an independently computed reference vector.
+    #[test]
+    fn test_mnemonic_to_seed_french_reference_vector() {
+        let c_phrase = CString::new(FRENCH_REFERENCE_PHRASE).unwrap();
+        let mut error = FFIError::default();
+        let error = &mut error as *mut FFIError;
+
+        let mut seed = [0u8; 64];
+        let mut seed_len: usize = 64;
+        let ok = unsafe {
+            mnemonic::mnemonic_to_seed(
+                c_phrase.as_ptr(),
+                ptr::null(),
+                seed.as_mut_ptr(),
+                &mut seed_len,
+                error,
+            )
+        };
+        assert!(ok, "French phrase must derive a seed");
+        assert_eq!(seed_len, 64);
+        assert_eq!(hex::encode(seed), FRENCH_REFERENCE_SEED_HEX);
+    }
 }

@@ -272,12 +272,12 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletManager<T> {
 mod tests {
     use super::*;
     use crate::test_helpers::TEST_MNEMONIC;
-    use key_wallet::mnemonic::{Language, Mnemonic};
+    use key_wallet::mnemonic::Mnemonic;
     use key_wallet::wallet::initialization::WalletAccountCreationOptions;
     use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
 
     fn build_wallet() -> Wallet {
-        let mnemonic = Mnemonic::from_phrase(TEST_MNEMONIC, Language::English).unwrap();
+        let mnemonic = Mnemonic::from_phrase(TEST_MNEMONIC).unwrap();
         Wallet::from_mnemonic(mnemonic, Network::Testnet, WalletAccountCreationOptions::Default)
             .expect("wallet from mnemonic")
     }

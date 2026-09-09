@@ -9,6 +9,20 @@ max_peers: 3           # optional. Max simultaneous peers. Omit => the ClientCon
 
 
 # ---------------------------------------------------------------------------------------------
+# CLIENT link shaping (any mode) — shapes the MEASURED client's own connection.
+# ---------------------------------------------------------------------------------------------
+# Its presence moves the client into a container so `tc netem` can be applied to it; omit the
+# whole section and the client runs on the host.
+# client:
+#   latency_ms: 200      # added on the way out, so ~+200ms RTT against a real peer
+#   jitter_ms: 20
+#   loss_pct: 0
+#   rate_kbit: 8000      # the client's total bandwidth, shared across all peers
+#   corrupt_pct: 0
+#   reorder_pct: 0
+
+
+# ---------------------------------------------------------------------------------------------
 # LOCAL mode (mode: local) — docker dashd peers serving the frozen ./chain-data snapshot
 # ---------------------------------------------------------------------------------------------
 blocks: 1000000            # optional (default 1000000). The target HEIGHT: snapshot-chain.sh builds
@@ -19,7 +33,7 @@ blocks: 1000000            # optional (default 1000000). The target HEIGHT: snap
 # quality (via `tc netem`). List several groups to mix good and bad peers in one network.
 peers:
   - count: 3               # required: how many peers in this group
-    latency_ms: 50         # optional: added one-way delay (netem delay)
+    latency_ms: 50         # optional: delay added on this peer's egress (netem delay)
     jitter_ms: 0           # optional: delay jitter (netem delay <lat> <jitter>)
     loss_pct: 0            # optional: packet loss %  (netem loss)
     rate_kbit: 0           # optional: bandwidth cap in kbit (netem rate)

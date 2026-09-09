@@ -10,7 +10,7 @@ use std::fmt;
 use dashcore::ephemerealdata::chain_lock::ChainLock;
 use dashcore::ephemerealdata::instant_lock::InstantLock;
 use dashcore::prelude::CoreBlockHeight;
-use dashcore::{PublicKey, Txid};
+use dashcore::{OutPoint, PublicKey, Txid};
 use key_wallet::account::AccountType;
 use key_wallet::managed_account::address_pool::{AddressPoolType, PublicKeyType};
 use key_wallet::managed_account::transaction_record::TransactionRecord;
@@ -222,6 +222,82 @@ pub enum WalletEvent {
         /// full balance after the change — not a delta.
         account_balances: BTreeMap<AccountType, WalletCoreBalance>,
     },
+    /// Transactions were removed from the wallet: each was a recorded spend
+    /// that a later, final transaction provably beat to one of its inputs, so
+    /// it can never confirm. Their outputs are gone from the UTXO set and
+    /// their records deleted.
+    ///
+    /// The only removal-shaped event on this bus. A consumer mirroring wallet
+    /// state to disk must act on it — every other variant is additive, so
+    /// without this the mirror keeps the dead rows and replays them on the
+    /// next load, re-creating a balance the wallet has already corrected.
+    TransactionsSwept {
+        /// ID of the affected wallet.
+        wallet_id: WalletId,
+        /// Transactions removed. Delete these rows and any UTXO they created.
+        txids: Vec<Txid>,
+        /// The transaction whose arrival settled the inputs, for provenance.
+        superseded_by: Txid,
+        /// Mined height of `superseded_by` when this sweep was triggered by
+        /// its arrival in a block; `None` when it was triggered by an
+        /// InstantSend-locked transaction still waiting to be mined (those
+        /// are the only two triggers — an unlocked mempool arrival never
+        /// sweeps, see `WalletTransactionChecker::check_core_transaction`).
+        ///
+        /// This is the winner's finality context, and only the emission site
+        /// has it: `superseded_by` need not be wallet-relevant (see
+        /// `released_outpoints` below), so a consumer cannot look the height
+        /// up in its own records — the winner may never appear anywhere else
+        /// in this wallet's event stream. A consumer durably mirroring the
+        /// removed spends (e.g. observed-spent rows kept so a restored
+        /// wallet does not re-credit the swept coins) needs it to retire
+        /// those rows soundly: a block-context sweep anchors the winner at a
+        /// height that chainlocks, giving the rows a finality horizon, while
+        /// an IS-locked winner has no mining deadline — aging its rows out
+        /// by wall clock would delete a genuine hold while the conflict is
+        /// still unmined.
+        winner_mined_height: Option<CoreBlockHeight>,
+        /// Outpoints the sweep released: inputs the removed transactions
+        /// claimed to spend that no surviving record spends too (a loser
+        /// spending A+B against a winner spending only A leaves A marked and
+        /// frees B). Mark these coins spendable again.
+        ///
+        /// Upstream computes this distinction — see
+        /// `ManagedCoreFundsAccount::release_spent_marks` in key-wallet — and
+        /// then has nowhere else to put it: `superseded_by` need not be
+        /// wallet-relevant at all, so it can spend our coin while paying only
+        /// external addresses and never appear anywhere else in this
+        /// wallet's event stream. A consumer mirroring wallet state to disk
+        /// cannot recompute this set from the deleted `txids` alone — it
+        /// would have to know which of their inputs a *different*,
+        /// possibly-invisible transaction also claims — so guessing either
+        /// re-credits a coin the chain has already spent or leaves a
+        /// genuinely free one stranded as spent forever. Wallet-scoped
+        /// rather than attributed per removed transaction: a consumer holds
+        /// every input of every transaction it deletes here, so it only
+        /// needs to know which of them came free, not which removal freed
+        /// which.
+        ///
+        /// One pre-existing limitation, inherited from `release_spent_marks`
+        /// rather than introduced with this field: it decides what stays
+        /// spent from the wallet's *live* records, and under the default
+        /// `keep-finalized-transactions = off` a chainlocked record is pruned
+        /// to just its txid. So if this wallet ever recorded a second spend
+        /// of a coin an already-pruned chainlocked transaction took — which
+        /// needs that second spend to arrive after the pruning, since
+        /// otherwise the chainlocked arrival would have swept it — and that
+        /// second spend is later swept on a different input, the coin is
+        /// reported released though it is spent on chain. The inputs of a
+        /// pruned record survive nowhere else, so this cannot be resolved at
+        /// this layer.
+        released_outpoints: Vec<OutPoint>,
+        /// Wallet balance after the removal.
+        balance: WalletCoreBalance,
+        /// Post-event balance **snapshots** for accounts whose balance
+        /// changed as a result of this event. Each value is the account's
+        /// full balance after the change — not a delta.
+        account_balances: BTreeMap<AccountType, WalletCoreBalance>,
+    },
     /// A block was processed for a wallet. Carries records bucketed by what
     /// happened to them in this block, plus the post-block balance.
     /// `inserted` is records first stored in this block, `updated` is
@@ -332,6 +408,10 @@ impl WalletEvent {
                 wallet_id,
                 ..
             }
+            | WalletEvent::TransactionsSwept {
+                wallet_id,
+                ..
+            }
             | WalletEvent::TransactionInstantLocked {
                 wallet_id,
                 ..
@@ -382,6 +462,24 @@ impl fmt::Display for WalletEvent {
                 balance,
                 format_account_balances(account_balances),
             ),
+            WalletEvent::TransactionsSwept {
+                txids,
+                superseded_by,
+                winner_mined_height,
+                released_outpoints,
+                balance,
+                account_balances,
+                ..
+            } => write!(
+                f,
+                "TransactionsSwept(count={}, superseded_by={}, winner_mined_height={:?}, released={}, balance={}, account_balances={})",
+                txids.len(),
+                superseded_by,
+                winner_mined_height,
+                released_outpoints.len(),
+                balance,
+                format_account_balances(account_balances),
+            ),
             WalletEvent::BlockProcessed {
                 height,
                 chain_lock,
@@ -426,6 +524,44 @@ impl fmt::Display for WalletEvent {
                 )
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod display_tests {
+    use super::*;
+    use std::collections::BTreeMap;
+
+    fn swept(winner_mined_height: Option<CoreBlockHeight>) -> WalletEvent {
+        WalletEvent::TransactionsSwept {
+            wallet_id: WalletId::from([7u8; 32]),
+            txids: vec![Txid::from_raw_hash(dashcore::hashes::Hash::from_byte_array([1u8; 32]))],
+            superseded_by: Txid::from_raw_hash(dashcore::hashes::Hash::from_byte_array([2u8; 32])),
+            winner_mined_height,
+            released_outpoints: Vec::new(),
+            balance: WalletCoreBalance::default(),
+            account_balances: BTreeMap::new(),
+        }
+    }
+
+    /// The winner's finality context is the first thing a reader of these
+    /// logs needs when a swept coin misbehaves, so `Display` must
+    /// distinguish the two triggers rather than printing one shape for
+    /// both. Both legs are asserted together: a formatter that dropped the
+    /// field would satisfy neither.
+    #[test]
+    fn transactions_swept_display_reports_the_winners_finality_context() {
+        let mined = format!("{}", swept(Some(1_000)));
+        assert!(
+            mined.contains("winner_mined_height=Some(1000)"),
+            "a block-triggered sweep must report the winner's height: {mined}"
+        );
+
+        let unmined = format!("{}", swept(None));
+        assert!(
+            unmined.contains("winner_mined_height=None"),
+            "an InstantSend-triggered sweep must report that no height exists yet: {unmined}"
+        );
     }
 }
 

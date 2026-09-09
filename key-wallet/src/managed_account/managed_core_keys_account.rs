@@ -405,6 +405,20 @@ impl ManagedAccountTrait for ManagedCoreKeysAccount {
         self.transactions.contains_key(txid) || self.finalized_txids.contains(txid)
     }
 
+    #[cfg(feature = "keep-finalized-transactions")]
+    fn tx_count(&self) -> usize {
+        self.transactions.len()
+    }
+
+    /// The two sets overlap: `drop_finalized_transaction` records the txid in
+    /// `finalized_txids` but keeps the record when it holds a provider
+    /// payload, so live entries are counted against it, not added to it.
+    #[cfg(not(feature = "keep-finalized-transactions"))]
+    fn tx_count(&self) -> usize {
+        self.finalized_txids.len()
+            + self.transactions.keys().filter(|t| !self.finalized_txids.contains(*t)).count()
+    }
+
     /// With the feature ON, finalized records live in `transactions`,
     /// so we resolve the answer purely off the live record's context.
     #[cfg(feature = "keep-finalized-transactions")]

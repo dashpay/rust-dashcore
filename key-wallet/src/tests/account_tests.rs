@@ -6,16 +6,13 @@ use crate::account::{Account, AccountType, StandardAccountType};
 use crate::bip32::{ExtendedPrivKey, ExtendedPubKey};
 use crate::managed_account::address_pool::KeySource;
 use crate::managed_account::managed_account_type::ManagedAccountType;
-use crate::mnemonic::{Language, Mnemonic};
+use crate::mnemonic::Mnemonic;
 use crate::Network;
 use secp256k1::Secp256k1;
 
 /// Helper function to create a test wallet with deterministic mnemonic
 fn create_test_mnemonic() -> Mnemonic {
-    Mnemonic::from_phrase(
-        "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
-        Language::English,
-    ).unwrap()
+    Mnemonic::from_phrase("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about").unwrap()
 }
 
 /// Helper function to create a test extended private key

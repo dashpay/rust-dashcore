@@ -1,5 +1,4 @@
 use crate::managed_account::address_pool::AddressPoolType;
-use crate::mnemonic::Language;
 use crate::{ChildNumber, DerivationPath, Error, Mnemonic};
 use dashcore::Address;
 
@@ -199,27 +198,27 @@ pub trait AccountDerivation<EPrivKeyType, EPubKeyType, PubKeyType, PrivKeyType> 
     ) -> Result<PrivKeyType, Error>;
 
     /// Derive an extended private key from a BIP39 mnemonic and optional passphrase at the given index.
+    /// The mnemonic's wordlist is auto-detected ([`Mnemonic::from_phrase`]).
     fn derive_from_mnemonic_extended_xpriv_at(
         &self,
         mnemonic: &str,
         passphrase: Option<&str>,
-        language: Language,
         index: u32,
     ) -> Result<EPrivKeyType, Error> {
-        let m = Mnemonic::from_phrase(mnemonic, language)?;
+        let m = Mnemonic::from_phrase(mnemonic)?;
         let seed = m.to_seed(passphrase.unwrap_or(""));
         self.derive_from_seed_extended_xpriv_at(&seed, index)
     }
 
     /// Derive a private key from a BIP39 mnemonic and optional passphrase at the given index.
+    /// The mnemonic's wordlist is auto-detected ([`Mnemonic::from_phrase`]).
     fn derive_from_mnemonic_private_key_at(
         &self,
         mnemonic: &str,
         passphrase: Option<&str>,
-        language: Language,
         index: u32,
     ) -> Result<PrivKeyType, Error> {
-        let m = Mnemonic::from_phrase(mnemonic, language)?;
+        let m = Mnemonic::from_phrase(mnemonic)?;
         let seed = m.to_seed(passphrase.unwrap_or(""));
         self.derive_from_seed_private_key_at(&seed, index)
     }

@@ -1,0 +1,10 @@
+# Runtime image for the measured client.
+#
+# Only exists so the client's own link can be shaped
+FROM debian:bookworm-slim
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates iproute2 \
+    && rm -rf /var/lib/apt/lists/*
+
+ENTRYPOINT ["/bin/sh", "-ec"]

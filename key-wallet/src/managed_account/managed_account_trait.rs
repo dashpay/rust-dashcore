@@ -52,6 +52,10 @@ pub trait ManagedAccountTrait {
     /// (mempool → block, IS-lock arrival, chainlock, …).
     fn has_transaction(&self, txid: &Txid) -> bool;
 
+    /// Distinct transactions this account knows, including those whose records
+    /// were pruned at finalization — which [`Self::transactions`] does not.
+    fn tx_count(&self) -> usize;
+
     /// Returns `true` if `txid` has been mined in a block that is itself
     /// chainlocked — the only finality signal we treat as terminal
     /// (mirrors [`crate::transaction_checking::TransactionContext::is_chain_locked`]).

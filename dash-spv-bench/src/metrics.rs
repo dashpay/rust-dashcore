@@ -21,6 +21,7 @@ pub struct RunMetrics {
     block_headers_ms: Option<u64>,
     filter_headers_ms: Option<u64>,
     filters_ms: Option<u64>,
+    transactions: u32,
     error: Option<String>,
 }
 
@@ -42,7 +43,8 @@ impl fmt::Display for RunMetrics {
         writeln!(f, "total_ms:          {}", self.total_ms)?;
         writeln!(f, "block_headers_ms:  {}", ms(self.block_headers_ms))?;
         writeln!(f, "filter_headers_ms: {}", ms(self.filter_headers_ms))?;
-        write!(f, "filters_ms:        {}", ms(self.filters_ms))?;
+        writeln!(f, "filters_ms:        {}", ms(self.filters_ms))?;
+        write!(f, "transactions:      {}", self.transactions)?;
         if let Some(e) = &self.error {
             write!(f, "\nerror:             {e}")?;
         }
@@ -62,6 +64,7 @@ struct Inner {
     milestones: BTreeMap<&'static str, u64>,
     error: Option<String>,
     completed: bool,
+    transactions: u32,
 }
 
 impl BenchEventHandler {
@@ -72,6 +75,7 @@ impl BenchEventHandler {
                 milestones: BTreeMap::new(),
                 error: None,
                 completed: false,
+                transactions: 0,
             }),
             done: Notify::new(),
             dashboard,
@@ -109,6 +113,7 @@ impl BenchEventHandler {
             block_headers_ms: bh,
             filter_headers_ms: fh,
             filters_ms: fl,
+            transactions: inner.transactions,
             error: inner.error.clone(),
         }
     }
@@ -142,6 +147,14 @@ impl EventHandler for BenchEventHandler {
 
     /// Every progress change repaints the bars (throttled inside).
     fn on_progress(&self, progress: &SyncProgress) {
+        if let Ok(blocks) = progress.blocks() {
+            let seen = blocks.transactions();
+            let mut inner = self.inner.lock().unwrap();
+            // Highest seen rather than last: the final repaint is whichever
+            // progress change happened to land last, not necessarily the one
+            // carrying the highest count.
+            inner.transactions = inner.transactions.max(seen);
+        }
         self.dashboard.render(progress);
     }
 

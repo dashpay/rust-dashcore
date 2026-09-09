@@ -4,7 +4,7 @@
 
 use crate::account::{AccountType, StandardAccountType};
 use crate::bip32::{ChildNumber, DerivationPath};
-use crate::mnemonic::{Language, Mnemonic};
+use crate::mnemonic::Mnemonic;
 use crate::wallet::Wallet;
 use crate::Network;
 use dashcore::hashes::Hash;
@@ -47,10 +47,7 @@ fn test_invalid_derivation_paths() {
 #[test]
 fn test_corrupted_wallet_data_recovery() {
     // Test recovery from corrupted wallet data
-    let mnemonic = Mnemonic::from_phrase(
-        "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
-        Language::English,
-    )
+    let mnemonic = Mnemonic::from_phrase("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about")
     .unwrap();
 
     let wallet = Wallet::from_mnemonic(
@@ -75,10 +72,7 @@ fn test_corrupted_wallet_data_recovery() {
 
 #[test]
 fn test_network_mismatch_handling() {
-    let mnemonic = Mnemonic::from_phrase(
-        "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
-        Language::English,
-    )
+    let mnemonic = Mnemonic::from_phrase("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about")
     .unwrap();
 
     // Create wallet for testnet
@@ -197,7 +191,7 @@ fn test_invalid_mnemonic_words() {
     ];
 
     for phrase in invalid_mnemonics {
-        let result = Mnemonic::from_phrase(phrase, Language::English);
+        let result = Mnemonic::from_phrase(phrase);
         assert!(result.is_err());
     }
 }
@@ -292,10 +286,7 @@ fn test_derivation_path_depth_limits() {
 
 #[test]
 fn test_wallet_recovery_with_missing_accounts() {
-    let mnemonic = Mnemonic::from_phrase(
-        "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
-        Language::English,
-    )
+    let mnemonic = Mnemonic::from_phrase("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about")
     .unwrap();
 
     let mut wallet = Wallet::from_mnemonic(

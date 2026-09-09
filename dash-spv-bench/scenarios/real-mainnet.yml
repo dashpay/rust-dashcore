@@ -1,3 +1,0 @@
-description: "Mainnet sync from genesis via DNS peer discovery."
-max_peers: 3
-mode: mainnet

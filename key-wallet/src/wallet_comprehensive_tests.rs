@@ -8,7 +8,7 @@
 mod tests {
     use crate::account::account_collection::AccountCollection;
     use crate::account::{AccountType, StandardAccountType};
-    use crate::mnemonic::{Language, Mnemonic};
+    use crate::mnemonic::Mnemonic;
     use crate::wallet::Wallet;
     use crate::Network;
 
@@ -36,7 +36,7 @@ mod tests {
 
     #[test]
     fn test_wallet_recovery_from_mnemonic() {
-        let mnemonic = Mnemonic::from_phrase(TEST_MNEMONIC, Language::English).unwrap();
+        let mnemonic = Mnemonic::from_phrase(TEST_MNEMONIC).unwrap();
 
         let wallet1 = Wallet::from_mnemonic(
             mnemonic.clone(),

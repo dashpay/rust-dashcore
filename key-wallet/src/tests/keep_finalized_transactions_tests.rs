@@ -114,6 +114,11 @@ async fn test_chainlocked_record_dropped_when_feature_off() {
     );
     assert!(ctx.bip44_account().has_transaction(&txid));
     assert!(ctx.bip44_account().transaction_is_finalized(&txid));
+    assert_eq!(
+        ctx.bip44_account().tx_count(),
+        1,
+        "a record pruned at finalization must still be counted"
+    );
 }
 
 /// IS-lock is **not** finalization. The record must NOT be dropped when

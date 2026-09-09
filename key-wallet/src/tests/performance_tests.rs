@@ -4,7 +4,7 @@
 
 use crate::account::{AccountType, StandardAccountType};
 use crate::bip32::{ChildNumber, DerivationPath, ExtendedPrivKey};
-use crate::mnemonic::{Language, Mnemonic};
+use crate::mnemonic::Mnemonic;
 use crate::wallet::Wallet;
 use crate::Network;
 use secp256k1::Secp256k1;
@@ -54,10 +54,7 @@ impl PerformanceMetrics {
 
 #[test]
 fn test_key_derivation_performance() {
-    let mnemonic = Mnemonic::from_phrase(
-        "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
-        Language::English,
-    ).unwrap();
+    let mnemonic = Mnemonic::from_phrase("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about").unwrap();
     let seed = mnemonic.to_seed("");
     let master = ExtendedPrivKey::new_master(Network::Testnet, &seed).unwrap();
     let secp = Secp256k1::new();
@@ -121,10 +118,7 @@ fn test_account_creation_performance() {
 
 #[test]
 fn test_wallet_recovery_performance() {
-    let mnemonic = Mnemonic::from_phrase(
-        "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
-        Language::English,
-    )
+    let mnemonic = Mnemonic::from_phrase("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about")
     .unwrap();
 
     let iterations = 10;
@@ -167,10 +161,7 @@ fn test_wallet_recovery_performance() {
 fn test_address_generation_batch_performance() {
     use crate::managed_account::address_pool::{AddressPool, AddressPoolType, KeySource};
 
-    let mnemonic = Mnemonic::from_phrase(
-        "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
-        Language::English,
-    ).unwrap();
+    let mnemonic = Mnemonic::from_phrase("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about").unwrap();
     let seed = mnemonic.to_seed("");
     let master = ExtendedPrivKey::new_master(Network::Testnet, &seed).unwrap();
 
@@ -236,10 +227,7 @@ fn test_concurrent_derivation_performance() {
     use std::sync::Arc;
     use std::thread;
 
-    let mnemonic = Mnemonic::from_phrase(
-        "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
-        Language::English,
-    ).unwrap();
+    let mnemonic = Mnemonic::from_phrase("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about").unwrap();
     let seed = mnemonic.to_seed("");
     let master = Arc::new(ExtendedPrivKey::new_master(Network::Testnet, &seed).unwrap());
 
@@ -317,10 +305,7 @@ fn test_wallet_serialization_performance() {
 fn test_gap_limit_scan_performance() {
     use crate::managed_account::address_pool::{AddressPool, AddressPoolType, KeySource};
 
-    let mnemonic = Mnemonic::from_phrase(
-        "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
-        Language::English,
-    ).unwrap();
+    let mnemonic = Mnemonic::from_phrase("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about").unwrap();
     let seed = mnemonic.to_seed("");
     let master = ExtendedPrivKey::new_master(Network::Testnet, &seed).unwrap();
 
@@ -359,10 +344,7 @@ fn test_gap_limit_scan_performance() {
 #[test]
 fn test_worst_case_derivation_path() {
     // Test performance with maximum depth derivation path
-    let mnemonic = Mnemonic::from_phrase(
-        "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
-        Language::English,
-    ).unwrap();
+    let mnemonic = Mnemonic::from_phrase("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about").unwrap();
     let seed = mnemonic.to_seed("");
     let master = ExtendedPrivKey::new_master(Network::Testnet, &seed).unwrap();
     let secp = Secp256k1::new();

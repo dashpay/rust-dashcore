@@ -3,16 +3,13 @@
 //! Tests full wallet lifecycle, account discovery, and complex scenarios.
 
 use crate::account::{AccountType, StandardAccountType};
-use crate::mnemonic::{Language, Mnemonic};
+use crate::mnemonic::Mnemonic;
 use crate::wallet::Wallet;
 use crate::Network;
 
 #[test]
 fn test_wallet_multiple_accounts() {
-    let mnemonic = Mnemonic::from_phrase(
-        "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
-        Language::English,
-    )
+    let mnemonic = Mnemonic::from_phrase("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about")
     .unwrap();
 
     // Create wallet and add accounts
@@ -43,10 +40,7 @@ fn test_wallet_multiple_accounts() {
 
 #[test]
 fn test_separate_wallets_per_network() {
-    let mnemonic = Mnemonic::from_phrase(
-        "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
-        Language::English,
-    )
+    let mnemonic = Mnemonic::from_phrase("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about")
     .unwrap();
 
     // Create separate wallets for each network

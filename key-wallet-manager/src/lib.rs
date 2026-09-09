@@ -24,14 +24,16 @@ pub use events::{DerivedAddress, WalletEvent};
 pub use matching::{check_compact_filters_for_elements, FilterMatchKey};
 pub use wallet_interface::{BlockProcessingResult, MempoolTransactionResult, WalletInterface};
 
-use dashcore::blockdata::transaction::Transaction;
+use dashcore::blockdata::transaction::{OutPoint, Transaction};
 use dashcore::prelude::CoreBlockHeight;
+use dashcore::Txid;
 use key_wallet::account::AccountCollection;
 use key_wallet::managed_account::transaction_record::TransactionRecord;
 use key_wallet::transaction_checking::{DerivedAddressInfo, TransactionContext};
 use key_wallet::wallet::managed_wallet_info::coin_selection::SelectionStrategy;
 use key_wallet::wallet::managed_wallet_info::transaction_building::AccountTypePreference;
 use key_wallet::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
+use key_wallet::wallet::managed_wallet_info::AbandonOutcome;
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
 use key_wallet::{AccountType, Address, ExtendedPrivKey, Mnemonic, Network, Wallet};
 use key_wallet::{ExtendedPubKey, WalletCoreBalance};
@@ -94,6 +96,19 @@ pub struct CheckTransactionsResult {
     /// Records whose state was updated by this check (confirmation or
     /// InstantSend lock on a previously stored record), grouped by wallet.
     pub per_wallet_updated_records: BTreeMap<WalletId, Vec<TransactionRecord>>,
+    /// Transactions this check *removed*, grouped by wallet: recorded spends
+    /// the arriving transaction provably beat to one of its inputs. See
+    /// [`crate::events::WalletEvent::TransactionsSwept`]
+    /// — a consumer mirroring wallet state must delete these rows, since no
+    /// other signal on the bus reports a removal.
+    pub per_wallet_swept: BTreeMap<WalletId, Vec<Txid>>,
+    /// Outpoints released as a side effect of `per_wallet_swept`, grouped by
+    /// wallet: inputs the removed transactions claimed to spend that no
+    /// surviving record spends too. Parallels `per_wallet_swept` rather than
+    /// folding into it because the two have different owners downstream —
+    /// see [`crate::events::WalletEvent::TransactionsSwept`] for why a
+    /// consumer needs this set named explicitly instead of re-deriving it.
+    pub per_wallet_released_outpoints: BTreeMap<WalletId, Vec<OutPoint>>,
 }
 
 impl CheckTransactionsResult {
@@ -253,15 +268,16 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletManager<T> {
         self.structural_revision += 1;
     }
 
-    /// Create a new wallet from mnemonic and add it to the manager
-    /// Returns the computed wallet ID
+    /// Create a new wallet from mnemonic and add it to the manager.
+    /// The mnemonic may be in any supported BIP-39 language (detected
+    /// automatically). Returns the computed wallet ID.
     pub fn create_wallet_from_mnemonic(
         &mut self,
         mnemonic: &str,
         birth_height: CoreBlockHeight,
         account_creation_options: key_wallet::wallet::initialization::WalletAccountCreationOptions,
     ) -> Result<WalletId, WalletError> {
-        let mnemonic_obj = Mnemonic::from_phrase(mnemonic, key_wallet::mnemonic::Language::English)
+        let mnemonic_obj = Mnemonic::from_phrase(mnemonic)
             .map_err(|e| WalletError::InvalidMnemonic(e.to_string()))?;
 
         let wallet = Wallet::from_mnemonic(mnemonic_obj, self.network, account_creation_options)
@@ -298,7 +314,7 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletManager<T> {
     /// It supports downgrading to a public-key-only wallet for security purposes.
     ///
     /// # Arguments
-    /// * `mnemonic` - The mnemonic phrase
+    /// * `mnemonic` - The mnemonic phrase, in any supported BIP-39 language
     /// * `birth_height` - Birth height for wallet scanning (0 to sync from genesis)
     /// * `account_creation_options` - Which accounts to create initially
     /// * `downgrade_to_pubkey_wallet` - If true, creates a wallet without private keys
@@ -323,7 +339,7 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletManager<T> {
     ) -> Result<(Vec<u8>, WalletId), WalletError> {
         use zeroize::Zeroize;
 
-        let mnemonic_obj = Mnemonic::from_phrase(mnemonic, key_wallet::mnemonic::Language::English)
+        let mnemonic_obj = Mnemonic::from_phrase(mnemonic)
             .map_err(|e| WalletError::InvalidMnemonic(e.to_string()))?;
 
         let mut wallet =
@@ -628,6 +644,24 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletManager<T> {
                     }
                 }
 
+                // Gathered outside the relevance branch above: a sweep can
+                // fire for a transaction this wallet finds irrelevant — the
+                // shared input is gone from `utxos` and the winner may pay
+                // only external addresses — and the removal still has to
+                // reach the consumer.
+                if !check_result.swept_transactions.is_empty() {
+                    result
+                        .per_wallet_swept
+                        .entry(*wallet_id)
+                        .or_default()
+                        .extend(check_result.swept_transactions);
+                    result
+                        .per_wallet_released_outpoints
+                        .entry(*wallet_id)
+                        .or_default()
+                        .extend(check_result.released_outpoints);
+                }
+
                 if !check_result.new_addresses.is_empty() {
                     result
                         .new_addresses
@@ -662,6 +696,51 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletManager<T> {
 }
 
 impl WalletManager<ManagedWalletInfo> {
+    /// Abandon `root` in `wallet_id`, and every recorded transaction
+    /// descending from it, then recompute the balance.
+    ///
+    /// The manager-level entry point for
+    /// [`ManagedWalletInfo::abandon_transaction_with_spends`] — the only
+    /// production path that clears a transaction the network never accepted.
+    /// The conflict sweep cannot reach that case: it needs a competing final
+    /// spend to prove the loser dead, and a transaction nobody ever saw has
+    /// no competitor. Its outputs would otherwise be credited forever, and as
+    /// trusted self-send change they are counted confirmed and are spendable.
+    ///
+    /// `external_spends` maps an outpoint to the transaction a caller's
+    /// persistence mirror recorded as spending it, for descendants whose own
+    /// records the load path never restored. Pass an empty map to walk only
+    /// the recorded transactions.
+    ///
+    /// **This asserts the root is dead; it does not establish it.** There is
+    /// no negative signal on the p2p network — Dash Core removed BIP61
+    /// `reject` — so silence is not proof, and abandoning a transaction that
+    /// is merely quiet re-exposes its inputs to coin selection. Settled roots
+    /// are refused, but the judgement otherwise belongs to the caller that
+    /// owns broadcast policy.
+    ///
+    /// Returns `None` when the wallet is unknown.
+    pub fn abandon_transaction(
+        &mut self,
+        wallet_id: &WalletId,
+        root: Txid,
+        external_spends: &BTreeMap<OutPoint, Txid>,
+    ) -> Option<AbandonOutcome> {
+        let info = self.get_wallet_info_mut(wallet_id)?;
+        let outcome = info.abandon_transaction_with_spends(root, external_spends);
+        if !outcome.is_empty() {
+            info.update_balance();
+            tracing::info!(
+                %root,
+                abandoned = outcome.abandoned.len(),
+                records_removed = outcome.records_removed,
+                utxos_removed = outcome.utxos_removed,
+                "Abandoned a dead transaction and everything built on it"
+            );
+        }
+        Some(outcome)
+    }
+
     /// Get receive address from a specific wallet and account
     pub fn next_receive_address(
         &mut self,

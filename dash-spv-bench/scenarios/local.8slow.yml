@@ -9,3 +9,7 @@ peers:
     latency_ms: 300
     jitter_ms: 30
     rate_kbit: 8000
+
+client:
+  latency_ms: 5
+  rate_kbit: 150000
