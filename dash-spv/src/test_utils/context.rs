@@ -9,7 +9,7 @@ use std::net::SocketAddr;
 use tempfile::TempDir;
 use tracing::info;
 
-use super::fs_helpers::{copy_dir, retain_test_dir};
+use super::fs_helpers::{copy_dir, retain_test_dir, RetainOnPanic};
 use super::node::TestChain;
 use super::{DashCoreConfig, DashCoreNode, WalletFile};
 
@@ -53,6 +53,8 @@ impl DashdTestContext {
     async fn create(mut config: DashCoreConfig) -> Self {
         let datadir = TempDir::new().expect("failed to create temp dir");
         copy_dir(&config.datadir, datadir.path()).expect("failed to copy datadir");
+        // Stale fixture locks are cleared in DashCoreNode::start (covers all
+        // callers, including masternode harnesses).
         config.datadir = datadir.path().to_path_buf();
         config.wallet = "wallet".to_string();
 
@@ -62,14 +64,22 @@ impl DashdTestContext {
             wallet.wallet_name, wallet.transaction_count, wallet.utxo_count, wallet.balance
         );
 
+        // retain_guard is declared before node so reverse-declaration drop order
+        // shuts dashd down (DashCoreNode::drop / stop_and_wait) before
+        // RetainOnPanic copies the datadir on post-start panics.
+        // start() failures retain via fail_startup instead, so the guard is
+        // installed only after start returns.
+        let retain_guard;
         let mut node = DashCoreNode::with_config(config);
         let addr = node.start().await;
         info!("DashCoreNode started at {}", addr);
+        retain_guard = RetainOnPanic::new(datadir.path(), "dashd-startup");
 
         // Load a separate wallet for mining so coinbase rewards don't pollute
         // the test wallet's address space (the "wallet" wallet and SPV wallet
-        // share the same mnemonic).
-        node.ensure_wallet("default");
+        // share the same mnemonic). The fixture already ships this wallet on
+        // disk — load only; never create.
+        node.load_wallet("default");
         info!("Mining wallet 'default' ready");
 
         let initial_height = node.get_block_count();
@@ -80,6 +90,7 @@ impl DashdTestContext {
             info!("RPC miner not available (tests requiring block generation will be skipped)");
         }
 
+        retain_guard.defuse();
         DashdTestContext {
             node,
             addr,
@@ -94,6 +105,7 @@ impl DashdTestContext {
 impl Drop for DashdTestContext {
     fn drop(&mut self) {
         let label = format!("dashd-{}", self.addr.port());
+        self.node.stop_and_wait();
         retain_test_dir(self.datadir.path(), &label);
     }
 }

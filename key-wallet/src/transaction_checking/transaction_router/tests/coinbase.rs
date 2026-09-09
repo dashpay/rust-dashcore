@@ -273,13 +273,15 @@ fn test_coinbase_routing() {
     let tx_type = TransactionType::Coinbase;
     let accounts = TransactionRouter::get_relevant_account_types(&tx_type);
 
-    // Coinbase should route to standard accounts
-    assert_eq!(accounts.len(), 2, "Coinbase should route to exactly 2 account types");
-    assert!(accounts.contains(&AccountTypeToCheck::StandardBIP44));
-    assert!(accounts.contains(&AccountTypeToCheck::StandardBIP32));
+    // Coinbase can pay any fund-bearing address (mining reward / masternode
+    // payout is user-chosen), so routing must cover the full fund-bearing set.
+    assert_eq!(
+        accounts,
+        TransactionRouter::fund_bearing_account_types(),
+        "Coinbase should route to all fund-bearing account types"
+    );
 
-    // Should NOT route to special account types
-    assert!(!accounts.contains(&AccountTypeToCheck::CoinJoin));
+    // Should NOT route to non-fund-bearing special account types
     assert!(!accounts.contains(&AccountTypeToCheck::IdentityRegistration));
     assert!(!accounts.contains(&AccountTypeToCheck::ProviderOwnerKeys));
 }
