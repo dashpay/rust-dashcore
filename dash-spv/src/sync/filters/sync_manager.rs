@@ -182,8 +182,10 @@ impl<
                 // `tracker.track` residual.
                 self.tracker.record_processed(*height, *block_hash, wallets);
 
-                // Check if this block is part of our tracked blocks
-                if let Some((_, batch_start)) = self.tracker.finish_in_flight(block_hash) {
+                // Settle the in-flight entry, if this delivery is the tracked
+                // one, and its batch's pending count.
+                let tracked_batch = self.tracker.finish_in_flight(block_hash).map(|(_, b)| b);
+                if let Some(batch_start) = tracked_batch {
                     if let Some(batch) = self.active_batches.get_mut(&batch_start) {
                         batch.decrement_pending_blocks();
                         tracing::debug!(
@@ -194,8 +196,40 @@ impl<
                             batch.pending_blocks()
                         );
                     }
+                }
 
-                    // Collect per-wallet new scripts for deferred rescan at commit time.
+                // Every application of a block can extend the pools: a block
+                // re-applied by a rescan, or delivered again for an in-flight
+                // re-request, recognises outputs its first application could
+                // not, and the scripts it derives must enter the cascade
+                // whether or not this delivery was the tracked one. Only the
+                // tracked delivery settles the pending count above; scripts
+                // are collected from all of them. They are charged to the
+                // tracked batch while it is active, else to the batch covering
+                // the block, else to the lowest active batch, whose commit
+                // rescans it, every later batch, and the committed prefix.
+                let has_new_scripts = new_scripts.values().any(|s| !s.is_empty());
+                if has_new_scripts {
+                    let target = tracked_batch
+                        .filter(|b| self.active_batches.contains_key(b))
+                        .or_else(|| {
+                            self.active_batches
+                                .iter()
+                                .find(|(_, b)| {
+                                    b.start_height() <= *height && *height <= b.end_height()
+                                })
+                                .map(|(start, _)| *start)
+                        })
+                        .or_else(|| self.active_batches.keys().next().copied());
+                    if tracked_batch.is_none() {
+                        tracing::debug!(
+                            "Block {} at height {} re-applied outside its tracked delivery; {} new scripts collected into batch {:?}",
+                            block_hash,
+                            height,
+                            new_scripts.values().map(|s| s.len()).sum::<usize>(),
+                            target
+                        );
+                    }
                     for (wallet_id, scripts) in new_scripts {
                         if scripts.is_empty() {
                             continue;
@@ -206,11 +240,22 @@ impl<
                         // scripts next session instead of orphaning heights
                         // scanned before the scripts existed.
                         self.note_pending_sweep(*wallet_id, scripts.iter().cloned()).await;
-                        if let Some(batch) = self.active_batches.get_mut(&batch_start) {
-                            batch.add_scripts_for_wallet(*wallet_id, scripts.iter().cloned());
+                        match target.and_then(|b| self.active_batches.get_mut(&b)) {
+                            Some(batch) => {
+                                batch.add_scripts_for_wallet(*wallet_id, scripts.iter().cloned())
+                            }
+                            None => tracing::warn!(
+                                "No active batch to carry {} new scripts derived from block {} at height {}; \
+                                 they stay in the durable pending-sweep set until the next scan",
+                                scripts.len(),
+                                block_hash,
+                                height
+                            ),
                         }
                     }
+                }
 
+                if tracked_batch.is_some() || has_new_scripts {
                     return self.try_process_batch().await;
                 }
             }
