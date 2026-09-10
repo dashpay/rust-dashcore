@@ -2028,12 +2028,29 @@ mod tests {
 
         funds.reservations().reserve(&[reserved.outpoint], 200, ReservationToken::next());
 
-        let builder =
-            TransactionBuilder::new().set_current_height(200).add_funding(&mut funds, &account);
+        // Set change address to test the branch that avoids it being replaced
+        // by add_funding()
+        let explicit = Address::dummy(Network::Testnet, 1);
+        let builder = TransactionBuilder::new()
+            .set_current_height(200)
+            .set_change_address(explicit.clone())
+            .add_funding(&mut funds, &account);
 
         let candidates: Vec<OutPoint> = builder.inputs.iter().map(|utxo| utxo.outpoint).collect();
         assert!(!candidates.contains(&reserved.outpoint));
         assert!(candidates.contains(&free.outpoint));
+
+        assert_eq!(
+            builder.change_addr.as_ref(),
+            Some(&explicit),
+            "funding must not override a change address the caller chose"
+        );
+        // Nor may it burn a pool address to derive one it then discards.
+        let mut control = ManagedCoreFundsAccount::dummy_bip44();
+        assert_eq!(
+            funds.next_change_address(Some(&account.account_xpub), true).expect("change address"),
+            control.next_change_address(Some(&account.account_xpub), true).expect("change address"),
+        );
     }
 
     #[test]
@@ -2206,37 +2223,6 @@ mod tests {
     /// for the same outpoint, and since coin selection does not deduplicate,
     /// `SelectionStrategy::All` spends it twice — a transaction Core rejects
     /// for duplicate prevouts.
-    /// The guard in `fund_from` that keeps an explicit change address is
-    /// untested, so nothing stops it being dropped as a redundant `is_none`
-    /// check. Losing it would silently override the caller's address and, worse,
-    /// advance the change pool for an address that is then thrown away.
-    #[test]
-    fn add_funding_keeps_an_explicit_change_address() {
-        let ctx = TestWalletContext::new_random();
-        let account =
-            ctx.wallet.accounts.standard_bip44_accounts.get(&0).expect("BIP44 account").clone();
-
-        let mut funds = ManagedCoreFundsAccount::dummy_bip44();
-        let utxo = Utxo::dummy(0x01, 1_000_000, 100, false, true);
-        funds.utxos.insert(utxo.outpoint, utxo);
-
-        let explicit = Address::dummy(Network::Testnet, 1);
-        let builder = TransactionBuilder::new()
-            .set_current_height(200)
-            .set_change_address(explicit.clone())
-            .add_funding(&mut funds, &account);
-
-        assert_eq!(builder.change_addr.as_ref(), Some(&explicit));
-
-        // Nor was a pool address burned to produce one that would be thrown away:
-        // `funds` still hands out the same address a pristine account would.
-        let mut control = ManagedCoreFundsAccount::dummy_bip44();
-        assert_eq!(
-            funds.next_change_address(Some(&account.account_xpub), true).expect("change address"),
-            control.next_change_address(Some(&account.account_xpub), true).expect("change address"),
-        );
-    }
-
     #[test]
     fn add_funding_does_not_duplicate_a_pre_seeded_input() {
         let ctx = TestWalletContext::new_random();
