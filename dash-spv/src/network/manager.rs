@@ -764,7 +764,7 @@ async fn route_tick(
     let mut unsent: Vec<NetworkMessage> = Vec::new();
     // Messages that made it onto the wire this round, recorded in the broker in one
     // lock acquisition after the send loop.
-    let mut on_wire: Vec<(NetworkMessage, PeerId)> = Vec::new();
+    let mut on_wire: Vec<(NetworkMessage, PeerHandle)> = Vec::new();
     let mut msgs = msgs.into_iter();
     for msg in msgs.by_ref() {
         // Send to the least-loaded peer RELATIVE TO ITS OWN capacity.
@@ -791,7 +791,7 @@ async fn route_tick(
         if peer.send(&msg).await.is_ok() {
             sent += 1;
             // Record which peer got it, so the monitor can attribute a stall to it.
-            on_wire.push((msg, peer.id()));
+            on_wire.push((msg, peer.clone()));
         } else {
             tracing::warn!(target: "dash_spv::network", "router: send to {} failed", peer.addr());
             unsent.push(msg);
@@ -801,20 +801,32 @@ async fn route_tick(
     queue.push_front_all(unsent).await;
 
     if !on_wire.is_empty() {
-        let mut reqs = requests.lock().await;
-        for (msg, peer) in on_wire {
-            for key in request_keys(&msg) {
-                // Transition Queued -> OnWire, keeping the message for retry. Skip
-                // keys no longer present (cancelled while queued): the request went
-                // out but we don't track it, so its response is simply ignored.
-                if let Some(slot) = reqs.get_mut(&key) {
-                    *slot = ReqState::OnWire(Box::new(OnWire {
-                        peer,
-                        msg: msg.clone(),
-                        last_progress: Instant::now(),
-                    }));
+        // Peers owed back a unit `send` charged for a request nobody tracks.
+        let mut refund: Vec<PeerHandle> = Vec::new();
+        {
+            let mut reqs = requests.lock().await;
+            for (msg, peer) in on_wire {
+                let mut tracked = false;
+                for key in request_keys(&msg) {
+                    // Transition Queued -> OnWire, keeping the message for retry. A key
+                    // settled while its message waited is gone, and then nothing is
+                    // left to release the in-flight unit the send was charged.
+                    if let Some(slot) = reqs.get_mut(&key) {
+                        *slot = ReqState::OnWire(Box::new(OnWire {
+                            peer: peer.id(),
+                            msg: msg.clone(),
+                            last_progress: Instant::now(),
+                        }));
+                        tracked = true;
+                    }
+                }
+                if !tracked && is_pipeline_request(&msg) {
+                    refund.push(peer);
                 }
             }
+        }
+        for peer in refund {
+            peer.response_completed(1).await;
         }
     }
 

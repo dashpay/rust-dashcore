@@ -219,6 +219,16 @@ impl PeerHandle {
         self.cap.load(Ordering::Relaxed)
     }
 
+    /// Give `n` charged in-flight units back to this peer.
+    pub(crate) async fn response_completed(&self, n: usize) {
+        let _ = self
+            .in_flight
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| Some(v.saturating_sub(n)));
+        for _ in 0..n {
+            self.latency.complete_one().await;
+        }
+    }
+
     pub(crate) async fn send(&self, msg: &NetworkMessage) -> NetworkResult<()> {
         // Upgrade a header request to its compressed form for peers that support
         // it. The sync layer always declares a plain `getheaders` because it has
@@ -338,13 +348,7 @@ impl ConnectedPeer {
     /// Note that `n` earlier pipeline requests have fully completed, freeing that
     /// much in-flight work.
     pub(crate) async fn response_completed(&self, n: usize) {
-        let _ = self
-            .handle
-            .in_flight
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| Some(v.saturating_sub(n)));
-        for _ in 0..n {
-            self.handle.latency.complete_one().await;
-        }
+        self.handle.response_completed(n).await
     }
 
     /// Per-peer response latency: (completed requests, average ms, worst ms).
