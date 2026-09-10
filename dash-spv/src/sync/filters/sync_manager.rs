@@ -183,7 +183,8 @@ impl<
                 self.tracker.record_processed(*height, *block_hash, wallets);
 
                 // Check if this block is part of our tracked blocks
-                if let Some((_, batch_start)) = self.tracker.finish_in_flight(block_hash) {
+                let in_flight = self.tracker.finish_in_flight(block_hash);
+                if let Some((_, batch_start)) = in_flight {
                     if let Some(batch) = self.active_batches.get_mut(&batch_start) {
                         batch.decrement_pending_blocks();
                         tracing::debug!(
@@ -194,23 +195,27 @@ impl<
                             batch.pending_blocks()
                         );
                     }
+                }
 
-                    // Collect per-wallet new scripts for deferred rescan at commit time.
-                    for (wallet_id, scripts) in new_scripts {
-                        if scripts.is_empty() {
-                            continue;
-                        }
-                        // Durable first: persist the sweep obligation before
-                        // the in-memory cascade takes it, so a crash anywhere
-                        // between here and the batch's COMMIT replays these
-                        // scripts next session instead of orphaning heights
-                        // scanned before the scripts existed.
-                        self.note_pending_sweep(*wallet_id, scripts.iter().cloned()).await;
-                        if let Some(batch) = self.active_batches.get_mut(&batch_start) {
-                            batch.add_scripts_for_wallet(*wallet_id, scripts.iter().cloned());
-                        }
+                // Durable first: persist the sweep obligation before the
+                // in-memory cascade takes it, so a crash anywhere between here
+                // and the batch's COMMIT replays these scripts next session
+                // instead of orphaning heights scanned before the scripts
+                // existed. Taken for every delivery, tracked or not: the
+                // in-memory accumulator below does not survive a restart, and
+                // a block is delivered more than once (#1006).
+                for (wallet_id, scripts) in new_scripts {
+                    if scripts.is_empty() {
+                        continue;
                     }
+                    self.note_pending_sweep(*wallet_id, scripts.iter().cloned()).await;
+                }
 
+                // Outside the in-flight arm on purpose: that record is consumed
+                // by the first delivery, and a block is delivered more than once.
+                let derived = self.collect_new_scripts(*height, new_scripts);
+
+                if in_flight.is_some() || derived > 0 {
                     return self.try_process_batch().await;
                 }
             }

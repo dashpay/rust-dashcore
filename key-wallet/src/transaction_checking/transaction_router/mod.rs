@@ -157,7 +157,9 @@ impl TransactionRouter {
                 accounts
             }
             TransactionType::AssetUnlock => {
-                vec![AccountTypeToCheck::StandardBIP44, AccountTypeToCheck::StandardBIP32]
+                // Withdrawal outputs may pay any owned script, including DIP-15 contact
+                // addresses. Restricting discovery to standard accounts loses those receipts.
+                Self::fund_bearing_account_types()
             }
             TransactionType::Coinbase => vec![
                 // Check all account types for unknown special transactions
