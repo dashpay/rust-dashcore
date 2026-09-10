@@ -98,43 +98,59 @@ impl TransactionRouter {
         ]
     }
 
+    /// The fund-bearing set plus `extra`, for a transaction type that also involves
+    /// keys held outside it.
+    fn fund_bearing_with(
+        extra: impl IntoIterator<Item = AccountTypeToCheck>,
+    ) -> Vec<AccountTypeToCheck> {
+        let mut accounts = Self::fund_bearing_account_types();
+        accounts.extend(extra);
+        accounts
+    }
+
     /// Determine which account types should be checked for a given transaction type
     pub fn get_relevant_account_types(tx_type: &TransactionType) -> Vec<AccountTypeToCheck> {
         match tx_type {
-            // Standard and CoinJoin transactions are distinguished only by their stored label;
-            // discovery is membership-based, so both check every fund-bearing account.
+            // Classical transactions (DIP-2 type 0); CoinJoin is one of them, told apart
+            // only by its stored label. Discovery is membership-based, so both check
+            // every fund-bearing account.
             TransactionType::Standard | TransactionType::CoinJoin => {
                 Self::fund_bearing_account_types()
             }
-            TransactionType::ProviderRegistration => vec![
+            // ProRegTx (DIP-2 type 1, defined by DIP-3). Carries the collateral, which
+            // DIP-3 allows to be an output of the ProRegTx itself — so its inputs pay for
+            // it, from wherever the wallet holds coins.
+            //
+            // The account list also governs debiting: `check_core_transaction` marks a
+            // UTXO spent only for the types returned here, the same coupling the
+            // `AssetLock` arm below documents. Omitting the DashPay accounts left a
+            // registration funded from one of them with its inputs never debited and the
+            // spent coins still counted toward the balance.
+            TransactionType::ProviderRegistration => Self::fund_bearing_with([
                 AccountTypeToCheck::ProviderOwnerKeys,
                 AccountTypeToCheck::ProviderOperatorKeys,
                 AccountTypeToCheck::ProviderVotingKeys,
                 AccountTypeToCheck::ProviderPlatformKeys,
-                AccountTypeToCheck::StandardBIP44,
-                AccountTypeToCheck::StandardBIP32,
-                AccountTypeToCheck::CoinJoin,
-            ],
-            TransactionType::ProviderUpdateRegistrar => vec![
+            ]),
+            // ProUpRegTx / ProUpServTx / ProUpRevTx (DIP-2 types 3, 2 and 4, defined by
+            // DIP-3). No collateral of their own — they pay a fee, and DIP-3 says nothing
+            // about where its inputs come from. What settles it is DIP-2: "the inputs and
+            // outputs of special transactions usually have the same meaning as with
+            // classical transactions", so the fee can be funded from any account the
+            // wallet holds coins in, DIP-15 contact addresses included, and each of those
+            // inputs has to be debited.
+            TransactionType::ProviderUpdateRegistrar => Self::fund_bearing_with([
                 AccountTypeToCheck::ProviderVotingKeys,
                 AccountTypeToCheck::ProviderOperatorKeys,
-                AccountTypeToCheck::StandardBIP44,
-                AccountTypeToCheck::StandardBIP32,
-                AccountTypeToCheck::CoinJoin,
-            ],
-            TransactionType::ProviderUpdateService => vec![
+            ]),
+            TransactionType::ProviderUpdateService => Self::fund_bearing_with([
                 AccountTypeToCheck::ProviderOperatorKeys,
                 AccountTypeToCheck::ProviderPlatformKeys,
-                AccountTypeToCheck::StandardBIP44,
-                AccountTypeToCheck::StandardBIP32,
-                AccountTypeToCheck::CoinJoin,
-            ],
-            TransactionType::ProviderUpdateRevocation => vec![
-                AccountTypeToCheck::StandardBIP44,
-                AccountTypeToCheck::StandardBIP32,
-                AccountTypeToCheck::CoinJoin,
-            ],
+            ]),
+            TransactionType::ProviderUpdateRevocation => Self::fund_bearing_account_types(),
             TransactionType::AssetLock => {
+                // DIP-2 type 8, defined by DIP-27.
+                //
                 // An asset lock can be funded from any fund-bearing account, and only
                 // `check_core_transaction` debits a spent UTXO — scoped to the accounts
                 // returned here. Omitting CoinJoin / DashPay meant asset locks funded from
@@ -145,27 +161,35 @@ impl TransactionRouter {
                 // (dashpay/platform#4073, dashpay/platform#4074, dashpay/dash-wallet#1507).
                 // Discovery is membership-based like Dash Core's `IsMine`, so consulting the
                 // full fund-bearing set never yields false positives.
-                let mut accounts = Self::fund_bearing_account_types();
-                accounts.extend([
+                Self::fund_bearing_with([
                     AccountTypeToCheck::IdentityRegistration,
                     AccountTypeToCheck::IdentityTopUp,
                     AccountTypeToCheck::IdentityTopUpNotBound,
                     AccountTypeToCheck::IdentityInvitation,
                     AccountTypeToCheck::AssetLockAddressTopUp,
                     AccountTypeToCheck::AssetLockShieldedAddressTopUp,
-                ]);
-                accounts
+                ])
             }
             TransactionType::AssetUnlock => {
+                // DIP-2 type 9, defined by DIP-27.
+                //
                 // Withdrawal outputs may pay any owned script, including DIP-15 contact
                 // addresses. Restricting discovery to standard accounts loses those receipts.
                 Self::fund_bearing_account_types()
             }
-            TransactionType::Coinbase => vec![
-                // Check all account types for unknown special transactions
-                AccountTypeToCheck::StandardBIP44,
-                AccountTypeToCheck::StandardBIP32,
-            ],
+            // CbTx (DIP-2 type 5, defined by DIP-4), carrying the masternode reward.
+            //
+            // DIP-3 only requires the masternode `scriptPayout` to be P2PKH or P2SH, so
+            // nothing rules out a payout to an address a CoinJoin or DashPay account
+            // derived. This arm stays narrow anyway: a coinbase has no wallet inputs to
+            // debit, so a missed account costs an uncredited reward rather than a stale
+            // UTXO, and there is one coinbase in every block of a scan, making this the
+            // one arm where widening is paid for on the whole chain.
+            TransactionType::Coinbase => {
+                vec![AccountTypeToCheck::StandardBIP44, AccountTypeToCheck::StandardBIP32]
+            }
+            // Types the wallet has no funds view of: quorum commitments (DIP-6) and
+            // masternode hard-fork signals (DIP-23).
             TransactionType::Ignored => vec![],
         }
     }
