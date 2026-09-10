@@ -104,7 +104,7 @@ impl MockNetworkManager {
     /// Deliberately does NOT release the requests still in play: forgetting what
     /// was recorded is not the same as the peers having answered, and a request
     /// the broker is still tracking stays de-duplicated. Use
-    /// [`Self::forget_requests_in_play`] for a test that means to start over.
+    /// [`Self::release_requests_in_play`] for a test that means to start over.
     pub fn clear_sent(&self) {
         self.sent.lock().expect("mock mutex poisoned").clear();
         self.sent_to.lock().expect("mock mutex poisoned").clear();
