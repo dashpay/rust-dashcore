@@ -21,8 +21,11 @@ fn test_asset_unlock_routing() {
     let tx_type = TransactionType::AssetUnlock;
     let accounts = TransactionRouter::get_relevant_account_types(&tx_type);
 
-    // Asset unlock only goes to standard accounts
-    assert_eq!(accounts.len(), 2);
+    // Withdrawals can pay any fund-bearing account.
+    assert_eq!(accounts.len(), 5);
+    assert!(accounts.contains(&AccountTypeToCheck::CoinJoin));
+    assert!(accounts.contains(&AccountTypeToCheck::DashpayReceivingFunds));
+    assert!(accounts.contains(&AccountTypeToCheck::DashpayExternalAccount));
     assert!(accounts.contains(&AccountTypeToCheck::StandardBIP44));
     assert!(accounts.contains(&AccountTypeToCheck::StandardBIP32));
 
@@ -62,7 +65,7 @@ fn test_asset_unlock_classification() {
 
     // Verify routing for AssetUnlock
     let accounts = TransactionRouter::get_relevant_account_types(&tx_type);
-    assert_eq!(accounts.len(), 2, "AssetUnlock should route to exactly 2 account types");
+    assert_eq!(accounts.len(), 5, "AssetUnlock must check every fund-bearing account");
     assert!(accounts.contains(&AccountTypeToCheck::StandardBIP44));
     assert!(accounts.contains(&AccountTypeToCheck::StandardBIP32));
 }
@@ -194,4 +197,65 @@ async fn test_asset_unlock_routing_to_bip32_account() {
         )),
         "Asset unlock should have affected the BIP44 account"
     );
+}
+
+/// A Platform withdrawal has no Core inputs and can pay a DIP-15 contact address.
+#[tokio::test]
+async fn test_asset_unlock_credits_dashpay_contact() {
+    use crate::account::AccountType;
+    use crate::managed_account::managed_account_trait::ManagedAccountTrait;
+    use crate::wallet::managed_wallet_info::managed_account_operations::ManagedAccountOperations;
+    use crate::{KeySource, ManagedAccountType};
+
+    let mut ctx = TestWalletContext::new_random();
+    let account_type = AccountType::DashpayReceivingFunds {
+        index: 0,
+        user_identity_id: [0xaa; 32],
+        friend_identity_id: [0xbb; 32],
+    };
+    ctx.wallet.add_account(account_type, None).unwrap();
+    ctx.managed_wallet.add_managed_account(&ctx.wallet, account_type).unwrap();
+    let xpub = ctx.wallet.accounts.account_of_type(account_type).unwrap().account_xpub;
+    let account = ctx.managed_wallet.accounts.funds_account_mut(&account_type).unwrap();
+    let ManagedAccountType::DashpayReceivingFunds {
+        addresses,
+        ..
+    } = account.managed_account_type_mut()
+    else {
+        panic!("expected contact account");
+    };
+    let address = addresses.next_unused(&KeySource::Public(xpub), true).unwrap();
+    let mut tx = Transaction::dummy(&address, 0..0, &[2_000_000]);
+    tx.version = 3;
+    tx.special_transaction_payload =
+        Some(TransactionPayload::AssetUnlockPayloadType(AssetUnlockPayload {
+            base: AssetUnlockBasePayload {
+                version: 1,
+                index: 42,
+                fee: 1000,
+            },
+            request_info: AssetUnlockRequestInfo {
+                request_height: 500000,
+                quorum_hash: [5u8; 32].into(),
+            },
+            quorum_sig: BLSSignature::from([6u8; 96]),
+        }));
+    let context = TransactionContext::InBlock(BlockInfo::new(
+        500100,
+        BlockHash::from_byte_array([7; 32]),
+        1234567890,
+    ));
+    let result = ctx.check_transaction(&tx, context.clone()).await;
+    assert!(result.is_relevant, "withdrawal to a contact must be discovered");
+    assert_eq!(result.total_received, 2_000_000);
+    let outpoint = OutPoint {
+        txid: tx.txid(),
+        vout: 0,
+    };
+    let account = ctx.managed_wallet.accounts.funds_account_mut(&account_type).unwrap();
+    assert_eq!(account.utxos.get(&outpoint).unwrap().txout.value, 2_000_000);
+    assert!(account.transactions().contains_key(&tx.txid()));
+    ctx.check_transaction(&tx, context).await;
+    let account = ctx.managed_wallet.accounts.funds_account_mut(&account_type).unwrap();
+    assert_eq!(account.utxos.len(), 1, "block replay must not duplicate funds");
 }
