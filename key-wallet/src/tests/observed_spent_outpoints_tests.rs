@@ -193,9 +193,9 @@ fn adding_account_from_xpub_rewinds_sync_checkpoint() {
 /// dropped. The balance and UTXO set are unaffected (the output is genuinely
 /// spent on-chain), so this is purely about not losing the history record.
 ///
-/// This is the spend-first / out-of-order ordering produced by the committed-
-/// range rescan (`track_for_new_scripts`): the forward scan already processed
-/// the spend, then the old funding block is re-applied. #649's fix keeps the
+/// This is the spend-first / out-of-order ordering produced by a rescan
+/// (`track_for_new_scripts`): the scan already processed the spend, then the
+/// older funding block is re-applied. #649's fix keeps the
 /// record: `check_transaction_for_match` classifies relevance by address
 /// membership (never gated on spent-status, so the fully-spent funding is still
 /// relevant), and `ManagedCoreFundsAccount::record_transaction` unconditionally
@@ -241,8 +241,8 @@ async fn born_fully_spent_funding_tx_is_recorded_in_history() {
     };
 
     // Spend-first: the spend's block (height 200) is applied before the
-    // funding's block (height 100), exactly as the committed-range rescan
-    // re-applies old funding blocks after their spends.
+    // funding's block (height 100), exactly as a rescan re-applies older
+    // funding blocks after their spends.
     let spend_ctx = TransactionContext::InBlock(BlockInfo::new(
         200,
         BlockHash::from_slice(&[2u8; 32]).expect("hash"),
@@ -426,6 +426,18 @@ async fn spend_seen_before_its_funding_is_recorded_on_redelivery() {
         0,
         "recovering history must not move the balance"
     );
+}
+
+#[tokio::test]
+async fn funding_after_its_spend_reports_the_spend_height() {
+    use crate::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
+    use std::collections::BTreeSet;
+
+    let (mut ctx, funding, spend) = spend_first_context(in_block(100, 1)).await;
+    assert_eq!(ctx.managed_wallet.unrecorded_spend_heights(&funding), BTreeSet::from([200]));
+
+    ctx.check_transaction(&spend, in_block(200, 2)).await;
+    assert!(ctx.managed_wallet.unrecorded_spend_heights(&funding).is_empty());
 }
 
 /// Abandoning the funding transaction takes its held output with it: the coin
