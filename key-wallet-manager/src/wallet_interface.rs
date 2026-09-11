@@ -218,6 +218,8 @@ pub trait WalletInterface: Send + Sync + 'static {
     /// in-flight block processing.
     fn apply_chain_lock(&mut self, chain_lock: ChainLock);
 
+    fn note_chain_lock_height(&mut self, _height: CoreBlockHeight) {}
+
     /// Provide a human-readable description of the wallet implementation.
     ///
     /// Implementations are encouraged to include high-level state such as the
