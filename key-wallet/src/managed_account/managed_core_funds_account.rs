@@ -336,7 +336,9 @@ impl ManagedCoreFundsAccount {
                             // earlier-processed block, so this output is genuinely spent
                             // on-chain even though this account has never seen it before —
                             // never insert it, so the record built below is born correct.
-                            if observed_spent.contains_key(&outpoint) {
+                            if observed_spent.contains_key(&outpoint)
+                                || self.spent_before_funded.contains_key(&outpoint)
+                            {
                                 tracing::debug!(
                                     outpoint = %outpoint,
                                     "Skipping UTXO already observed spent in an earlier-processed block (#649)"

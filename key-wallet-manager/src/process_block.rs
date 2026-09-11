@@ -414,6 +414,12 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
         }
     }
 
+    fn note_chain_lock_height(&mut self, height: CoreBlockHeight) {
+        for info in self.wallet_infos.values_mut() {
+            info.note_chain_lock_height(height);
+        }
+    }
+
     fn process_instant_send_lock(&mut self, instant_lock: InstantLock) {
         let txid = instant_lock.txid;
 

@@ -151,7 +151,8 @@ pub(crate) fn spawn_progress_monitor(
 /// [`SyncEvent::SyncComplete`], serializing all `apply_chain_lock`
 /// calls on a single task. During the initial sync cycle (cycle 0)
 /// chainlock arrivals are buffered as the latest-seen height rather
-/// than applied. At `SyncComplete { cycle: 0 }` the buffered height
+/// than applied; only that height is passed on
+/// (`note_chain_lock_height`). At `SyncComplete { cycle: 0 }` the buffered height
 /// is applied once, then every subsequent validated chainlock is
 /// applied directly. Only validated chainlocks advance the wallet.
 ///
@@ -185,6 +186,7 @@ where
                                 .as_ref()
                                 .is_none_or(|buffered| chain_lock.block_height > buffered.block_height)
                             {
+                                wallet.write().await.note_chain_lock_height(chain_lock.block_height);
                                 deferred_chain_lock = Some(chain_lock);
                             }
                         }
