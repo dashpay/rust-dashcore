@@ -131,6 +131,24 @@ fn prune_finalized_observed_spends_respects_finality_boundary() {
     assert_eq!(remaining.len(), 1);
 }
 
+#[test]
+fn a_noted_chain_lock_lets_the_prune_run_before_any_is_applied() {
+    use crate::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
+
+    let mut info = ManagedWalletInfo::dummy(9);
+    let op_low = OutPoint::new(Txid::from([0x01; 32]), 0);
+    let op_high = OutPoint::new(Txid::from([0x03; 32]), 0);
+    info.record_observed_spends(&spending_tx(&[op_low]), 50);
+    info.record_observed_spends(&spending_tx(&[op_high]), 150);
+    info.metadata.synced_height = 100;
+
+    info.note_chain_lock_height(200);
+
+    assert!(info.metadata.last_applied_chain_lock.is_none());
+    assert!(!info.observed_spent_outpoints().contains_key(&op_low));
+    assert!(info.observed_spent_outpoints().contains_key(&op_high));
+}
+
 /// Adding a standalone (from-xpub) account rewinds the sync checkpoint below
 /// wallet birth, so the new account's coins get filter coverage before pruning
 /// can consume the certificate (dashpay/rust-dashcore#649). A wallet still in
@@ -426,6 +444,18 @@ async fn spend_seen_before_its_funding_is_recorded_on_redelivery() {
         0,
         "recovering history must not move the balance"
     );
+}
+
+#[tokio::test]
+async fn a_held_output_stays_out_of_utxos_once_its_observed_spend_is_pruned() {
+    let (mut ctx, funding, _spend) = spend_first_context(in_block(100, 1)).await;
+    ctx.managed_wallet.observed_spent_outpoints.clear();
+
+    ctx.check_transaction(&funding, in_block(100, 1)).await;
+
+    let account = ctx.managed_wallet.first_bip44_managed_account().expect("BIP44 account");
+    assert!(account.utxos.is_empty());
+    assert_eq!(ctx.managed_wallet.balance.total(), 0);
 }
 
 /// Abandoning the funding transaction takes its held output with it: the coin
