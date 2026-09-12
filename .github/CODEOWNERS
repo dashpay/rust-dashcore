@@ -1,0 +1,9 @@
+# Generated from dashpay/stale_prs_are_bad policies/rust-dashcore.json; do not edit by hand.
+# Owners and reviewers are combined here for native review routing.
+* @QuantumExplorer
+# Unresolved ownership or reviewer identities; see responsibility documentation.
+/dash-spv/ @ZocoLini @xdustinface
+# Unresolved ownership or reviewer identities; see responsibility documentation.
+/key-wallet/ @QuantumExplorer @ZocoLini @xdustinface
+# Unresolved ownership or reviewer identities; see responsibility documentation.
+/key-wallet-manager/ @QuantumExplorer @ZocoLini @xdustinface
