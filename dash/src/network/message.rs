@@ -666,6 +666,138 @@ impl Decodable for RawNetworkMessage {
     }
 }
 
+/// A Tokio [`Decoder`](tokio_util::codec::Decoder)/[`Encoder`](tokio_util::codec::Encoder)
+/// that frames one [`RawNetworkMessage`] per message, so a peer connection's read half can
+/// be wrapped in `tokio_util::codec::FramedRead` (and the write half in `FramedWrite`)
+/// instead of hand-rolling the length-prefixed framing. Enabled by the `tokio` feature.
+/// The [`RawNetworkMessage`] decoder validates the payload checksum, so a corrupt
+/// frame surfaces as an error rather than a bad message.
+#[cfg(feature = "tokio")]
+#[derive(Debug, Default, Clone, Copy)]
+pub struct RawNetworkMessageCodec;
+
+#[cfg(feature = "tokio")]
+impl tokio_util::codec::Decoder for RawNetworkMessageCodec {
+    type Item = RawNetworkMessage;
+    type Error = encode::Error;
+
+    fn decode(&mut self, src: &mut bytes::BytesMut) -> Result<Option<Self::Item>, Self::Error> {
+        use bytes::Buf as _;
+
+        /// Message header: `magic(4) + command(12) + payload_length(4) + checksum(4)`.
+        const HEADER_LEN: usize = 24;
+        /// Byte offset of the little-endian payload length within the header.
+        const LENGTH_OFFSET: usize = 16;
+
+        // Need the whole header before we can read the declared payload length.
+        if src.len() < HEADER_LEN {
+            return Ok(None);
+        }
+
+        let payload_len = u32::from_le_bytes([
+            src[LENGTH_OFFSET],
+            src[LENGTH_OFFSET + 1],
+            src[LENGTH_OFFSET + 2],
+            src[LENGTH_OFFSET + 3],
+        ]) as usize;
+
+        // Reject an absurd declared length *before* reserving buffer for it.
+        if payload_len > MAX_MSG_SIZE {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "declared payload length exceeds MAX_MSG_SIZE",
+            )
+            .into());
+        }
+
+        let frame_len = HEADER_LEN + payload_len;
+        if src.len() < frame_len {
+            src.reserve(frame_len - src.len());
+            return Ok(None);
+        }
+
+        // Decode from the exact frame bytes (a finite, in-memory reader).
+        let mut cursor = io::Cursor::new(&src[..frame_len]);
+        let msg = RawNetworkMessage::consensus_decode_from_finite_reader(&mut cursor)?;
+        src.advance(frame_len);
+
+        Ok(Some(msg))
+    }
+}
+
+#[cfg(feature = "tokio")]
+impl tokio_util::codec::Encoder<&RawNetworkMessage> for RawNetworkMessageCodec {
+    type Error = encode::Error;
+
+    fn encode(
+        &mut self,
+        item: &RawNetworkMessage,
+        dst: &mut bytes::BytesMut,
+    ) -> Result<(), Self::Error> {
+        dst.extend_from_slice(&serialize(item));
+        Ok(())
+    }
+}
+
+#[cfg(feature = "tokio")]
+impl tokio_util::codec::Encoder<RawNetworkMessage> for RawNetworkMessageCodec {
+    type Error = encode::Error;
+
+    fn encode(
+        &mut self,
+        item: RawNetworkMessage,
+        dst: &mut bytes::BytesMut,
+    ) -> Result<(), Self::Error> {
+        <Self as tokio_util::codec::Encoder<&RawNetworkMessage>>::encode(self, &item, dst)
+    }
+}
+
+#[cfg(all(test, feature = "tokio"))]
+mod codec_tests {
+    use super::{NetworkMessage, RawNetworkMessage, RawNetworkMessageCodec};
+    use bytes::BytesMut;
+    use tokio_util::codec::{Decoder, Encoder};
+
+    #[test]
+    fn roundtrip_frame() {
+        let msg = RawNetworkMessage {
+            magic: 0xBD6B_0CBF,
+            payload: NetworkMessage::Ping(0x0102_0304_0506_0708),
+        };
+        let mut codec = RawNetworkMessageCodec;
+        let mut buf = BytesMut::new();
+        codec.encode(&msg, &mut buf).unwrap();
+
+        let decoded = codec.decode(&mut buf).unwrap().expect("full frame decodes");
+        assert_eq!(decoded.magic, msg.magic);
+        assert!(matches!(decoded.payload, NetworkMessage::Ping(0x0102_0304_0506_0708)));
+        assert!(buf.is_empty());
+    }
+
+    #[test]
+    fn partial_frame_yields_none_until_complete() {
+        let msg = RawNetworkMessage {
+            magic: 0xBD6B_0CBF,
+            payload: NetworkMessage::Ping(42),
+        };
+        let mut codec = RawNetworkMessageCodec;
+        let mut full = BytesMut::new();
+        codec.encode(&msg, &mut full).unwrap();
+
+        let mut partial = BytesMut::new();
+        for (i, byte) in full.iter().enumerate() {
+            partial.extend_from_slice(&[*byte]);
+            let out = codec.decode(&mut partial).unwrap();
+            if i + 1 < full.len() {
+                assert!(out.is_none());
+            } else {
+                assert!(out.is_some());
+                assert!(partial.is_empty());
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod test {
     use std::net::Ipv4Addr;

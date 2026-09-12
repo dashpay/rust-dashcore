@@ -24,12 +24,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
 
     /// Get the number of connected peers.
     pub async fn peer_count(&self) -> usize {
-        self.network.lock().await.peer_count()
-    }
-
-    /// Disconnect a specific peer.
-    pub async fn disconnect_peer(&self, addr: &std::net::SocketAddr, reason: &str) -> Result<()> {
-        Ok(self.network.lock().await.disconnect_peer(addr, reason).await?)
+        self.network.connected_count().await as usize
     }
 
     // ============ Masternode Queries ============

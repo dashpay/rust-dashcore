@@ -9,7 +9,7 @@ use tokio::sync::RwLock;
 
 use super::pipeline::BlocksPipeline;
 use crate::error::SyncResult;
-use crate::network::RequestSender;
+use crate::network::NetworkManager;
 use crate::storage::{BlockHeaderStorage, BlockStorage};
 use crate::sync::{BlocksProgress, SyncEvent, SyncManager, SyncState};
 use key_wallet_manager::WalletInterface;
@@ -63,11 +63,11 @@ impl<H: BlockHeaderStorage, B: BlockStorage, W: WalletInterface> BlocksManager<H
         }
     }
 
-    pub(super) async fn send_pending(&mut self, requests: &RequestSender) -> SyncResult<()> {
-        let sent = self.pipeline.send_pending(requests).await?;
-        if sent > 0 {
-            self.progress.add_requested(sent as u32);
-        }
+    pub(super) async fn send_pending(
+        &mut self,
+        network: &Arc<dyn NetworkManager>,
+    ) -> SyncResult<()> {
+        self.pipeline.send_pending(network).await?;
         Ok(())
     }
 
@@ -185,20 +185,15 @@ impl<H: BlockHeaderStorage, B: BlockStorage, W: WalletInterface> std::fmt::Debug
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::network::{MessageType, NetworkEvent, NetworkManager, NetworkRequest};
+    use crate::network::MessageType;
     use crate::storage::{
         DiskStorageManager, PersistentBlockHeaderStorage, PersistentBlockStorage, StorageManager,
     };
     use crate::sync::{ManagerIdentifier, SyncEvent, SyncManagerProgress};
-    use crate::test_utils::{test_socket_address, MockNetworkManager};
     use crate::types::HashedBlock;
-    use dashcore::network::message::NetworkMessage;
-    use dashcore::network::message_blockdata::Inventory;
-    use dashcore::BlockHash;
+
     use key_wallet_manager::test_utils::{MockWallet, MOCK_WALLET_ID};
-    use key_wallet_manager::{FilterMatchKey, WalletId};
-    use std::collections::{BTreeMap, BTreeSet};
-    use tokio::sync::mpsc;
+    use std::collections::BTreeSet;
 
     type TestBlocksManager =
         BlocksManager<PersistentBlockHeaderStorage, PersistentBlockStorage, MockWallet>;
@@ -215,7 +210,7 @@ mod tests {
         let manager = create_test_manager().await;
         assert_eq!(manager.identifier(), ManagerIdentifier::Block);
         assert_eq!(manager.state(), SyncState::WaitForEvents);
-        assert_eq!(manager.wanted_message_types(), vec![MessageType::Block]);
+        assert_eq!(manager.wanted_message_types(), [MessageType::Block]);
     }
 
     #[tokio::test]
@@ -236,79 +231,37 @@ mod tests {
 
     #[tokio::test]
     async fn test_blocks_manager_handle_blocks_needed_event() {
+        use crate::network::NetworkManager;
+        use crate::test_utils::MockNetworkManager;
+        use key_wallet_manager::FilterMatchKey;
+        use std::collections::BTreeMap;
+
         let mut manager = create_test_manager().await;
         manager.progress.set_state(SyncState::Synced);
 
-        let network = MockNetworkManager::new();
-        let requests = network.request_sender();
+        let mock = Arc::new(MockNetworkManager::new());
+        let network: Arc<dyn NetworkManager> = mock.clone();
 
-        let block_hash = dashcore::BlockHash::dummy(0);
+        // Block is not in storage, so the manager queues it for download and
+        // declares a getdata to the broker.
+        let block_hash = dashcore::block::Header::dummy(0).block_hash();
         let mut blocks = BTreeMap::new();
         blocks.insert(FilterMatchKey::new(100, block_hash), BTreeSet::from([MOCK_WALLET_ID]));
         let event = SyncEvent::BlocksNeeded {
             blocks,
         };
 
-        let events = manager.handle_sync_event(&event, &requests).await.unwrap();
+        let events = manager.handle_sync_event(&event, &network).await.unwrap();
 
-        // Should queue the block
+        // Should queue the block and transition to Syncing.
         assert_eq!(manager.state(), SyncState::Syncing);
         assert!(events.is_empty());
-    }
 
-    /// Losing one peer of several must put that peer's `getdata` back on the
-    /// queue right away instead of waiting out the block download timeout.
-    #[tokio::test]
-    async fn test_peer_disconnect_reissues_in_flight_block_requests() {
-        let mut manager = create_test_manager().await;
-        let (tx, mut rx) = mpsc::unbounded_channel();
-        let requests = RequestSender::new(tx);
-
-        let blocks: BTreeMap<FilterMatchKey, BTreeSet<WalletId>> = (100..103)
-            .map(|height| {
-                (
-                    FilterMatchKey::new(height, BlockHash::dummy(height)),
-                    BTreeSet::from([MOCK_WALLET_ID]),
-                )
-            })
-            .collect();
-        let event = SyncEvent::BlocksNeeded {
-            blocks,
-        };
-        manager.handle_sync_event(&event, &requests).await.unwrap();
-
-        let requested = drain_requested_blocks(&mut rx);
-        assert_eq!(requested.len(), 3);
-
-        let disconnect = NetworkEvent::PeerDisconnected {
-            address: test_socket_address(1),
-        };
-        manager.handle_network_event(&disconnect, &requests).await.unwrap();
-
-        manager.tick(&requests).await.unwrap();
-        assert_eq!(drain_requested_blocks(&mut rx), requested);
-    }
-
-    fn drain_requested_blocks(
-        rx: &mut mpsc::UnboundedReceiver<NetworkRequest>,
-    ) -> BTreeSet<BlockHash> {
-        let mut hashes = BTreeSet::new();
-        while let Ok(request) = rx.try_recv() {
-            match request {
-                NetworkRequest::SendMessage(NetworkMessage::GetData(inventory)) => {
-                    for item in inventory {
-                        match item {
-                            Inventory::Block(hash) => {
-                                hashes.insert(hash);
-                            }
-                            other => panic!("Expected a block inventory item, got {:?}", other),
-                        }
-                    }
-                }
-                other => panic!("Expected GetData, got {:?}", other),
-            }
-        }
-        hashes
+        // The queued block was declared to the network as a getdata request.
+        assert!(
+            !mock.sent_messages().is_empty(),
+            "expected a getdata to be declared for the needed block"
+        );
     }
 
     /// `process_buffered_blocks` must call `process_block_for_wallets` with

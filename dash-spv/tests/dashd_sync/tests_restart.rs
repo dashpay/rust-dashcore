@@ -113,19 +113,31 @@ async fn test_sync_restart_with_fresh_wallet() {
 /// Verify sync completes successfully despite repeated interruptions.
 ///
 /// Listens for key sync events (BlockHeadersStored, FilterHeadersStored, FiltersStored,
-/// BlocksNeeded, BlockProcessed) and restarts the client on every 2nd occurrence until
-/// sync completes. This exercises restart/resume from unpredictable points across the
-/// full sync lifecycle.
+/// BlocksNeeded, BlockProcessed) and restarts the client on every 2nd occurrence to
+/// exercise restart/resume from unpredictable points across the full sync lifecycle.
+/// After a bounded number of restarts it lets the final client run through to
+/// completion, so the assertion confirms sync actually finishes rather than merely
+/// surviving each interruption.
 #[tokio::test]
 async fn test_sync_with_multiple_restarts() {
     let Some(ctx) = TestContext::new(TestChain::Full).await else {
         return;
     };
 
+    // Number of event-driven restarts to exercise before letting the client finish.
+    // Bounded so the test stays deterministic and fast: restarting on every 2nd
+    // progress event until natural completion would take hundreds of restart cycles
+    // on the full chain.
+    const MAX_RESTARTS: usize = 8;
+
     let mut restart_count = 0;
     let final_progress = loop {
         tracing::info!("Starting sync (restart count: {})", restart_count);
         let mut client_handle = ctx.spawn_new_client().await;
+
+        // Once we've exercised enough restart points, let this client sync to
+        // completion instead of interrupting it again.
+        let final_run = restart_count >= MAX_RESTARTS;
 
         // Wait for either sync completion or the 2nd matching event
         let mut events_seen = 0;
@@ -146,7 +158,7 @@ async fn test_sync_with_multiple_restarts() {
                     match result {
                         Ok(ref event) if is_progress_event(event) => {
                             events_seen += 1;
-                            if events_seen % 2 == 0 {
+                            if !final_run && events_seen % 2 == 0 {
                                 tracing::info!("Restarting on: {}", event);
                                 should_restart = true;
                                 break;

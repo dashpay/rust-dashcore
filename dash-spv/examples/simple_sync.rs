@@ -21,7 +21,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .without_masternodes(); // Skip masternode sync for this example
 
     // Create network manager
-    let network_manager = PeerNetworkManager::new(&config).await?;
+    let network_manager = PeerNetworkManager::new(&config).await;
 
     // Create storage manager
     let storage_manager = DiskStorageManager::new(&config).await?;

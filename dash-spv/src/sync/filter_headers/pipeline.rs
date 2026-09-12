@@ -1,38 +1,34 @@
 //! CFHeaders pipeline implementation.
 //!
-//! Handles pipelined download of compact block filter headers (BIP 157/158).
-//! Uses DownloadCoordinator for batch tracking with out-of-order buffering.
+//! Declares wanted compact block filter header batches (BIP 157/158) to the
+//! network manager (the broker) and buffers out-of-order responses for
+//! sequential processing. The broker owns pacing, timeouts and retries — this
+//! pipeline keeps no in-flight queue of its own.
+
+use std::collections::HashMap;
+use std::sync::Arc;
 
 use dashcore::network::message::NetworkMessage;
-use dashcore::network::message_filter::CFHeaders;
+use dashcore::network::message_filter::{CFHeaders, GetCFHeaders};
 use dashcore::BlockHash;
-use std::collections::HashMap;
-use std::time::Duration;
 
 use crate::error::{SyncError, SyncResult};
-use crate::network::RequestSender;
+use crate::network::NetworkManager;
 use crate::storage::BlockHeaderStorage;
-use crate::sync::download_coordinator::{DownloadConfig, DownloadCoordinator};
 
 /// Batch size for filter header requests.
 const FILTER_HEADERS_BATCH_SIZE: u32 = 2000;
 
-/// Maximum concurrent CFHeaders requests.
-const MAX_CONCURRENT_CFHEADERS_REQUESTS: usize = 10;
-
-/// Timeout for CFHeaders requests (shorter for faster retry on multi-peer).
-/// Timeout for CFHeaders requests. Single response but allow time for network latency.
-const FILTER_HEADERS_TIMEOUT: Duration = Duration::from_secs(20);
-
 /// Pipeline for downloading compact block filter headers.
 ///
-/// Uses DownloadCoordinator<BlockHash> for batch-level tracking (keyed by stop_hash),
-/// with a HashMap buffer for out-of-order responses that need sequential processing.
+/// Holds no request queue of its own: the batches it wants are exactly the
+/// entries of `batch_starts` (keyed by stop_hash). It declares those to the
+/// network manager (which de-duplicates, paces, times out and retries) and
+/// buffers out-of-order responses for sequential processing.
 #[derive(Debug)]
 pub(super) struct FilterHeadersPipeline {
-    /// Core coordinator tracks batches by stop_hash.
-    coordinator: DownloadCoordinator<BlockHash>,
-    /// Maps stop_hash -> start_height for each batch.
+    /// Wanted batches: stop_hash -> start_height. A batch leaves this map once
+    /// received. Doubles as the "is this batch wanted?" set for arrivals.
     batch_starts: HashMap<BlockHash, u32>,
     /// Out-of-order response buffer (start_height -> data).
     buffered: HashMap<u32, CFHeaders>,
@@ -52,11 +48,6 @@ impl FilterHeadersPipeline {
     /// Create a new CFHeaders pipeline.
     pub(super) fn new() -> Self {
         Self {
-            coordinator: DownloadCoordinator::new(
-                DownloadConfig::default()
-                    .with_max_concurrent(MAX_CONCURRENT_CFHEADERS_REQUESTS)
-                    .with_timeout(FILTER_HEADERS_TIMEOUT),
-            ),
             batch_starts: HashMap::new(),
             buffered: HashMap::new(),
             next_expected: 0,
@@ -92,7 +83,6 @@ impl FilterHeadersPipeline {
                     SyncError::Storage(format!("Missing header at height {}", batch_end))
                 })?;
 
-            self.coordinator.enqueue([stop_hash]);
             self.batch_starts.insert(stop_hash, current);
             added += 1;
 
@@ -118,7 +108,7 @@ impl FilterHeadersPipeline {
 
     /// Check if the pipeline is complete.
     pub(super) fn is_complete(&self) -> bool {
-        self.coordinator.is_empty()
+        self.batch_starts.is_empty()
             && self.buffered.is_empty()
             && (self.target_height == 0 || self.next_expected > self.target_height)
     }
@@ -130,7 +120,6 @@ impl FilterHeadersPipeline {
         start_height: u32,
         target_height: u32,
     ) -> SyncResult<()> {
-        self.coordinator.clear();
         self.batch_starts.clear();
         self.buffered.clear();
         self.next_expected = start_height;
@@ -147,7 +136,6 @@ impl FilterHeadersPipeline {
                     SyncError::Storage(format!("Missing header at height {}", batch_end))
                 })?;
 
-            self.coordinator.enqueue([stop_hash]);
             self.batch_starts.insert(stop_hash, current);
 
             current = batch_end + 1;
@@ -155,7 +143,7 @@ impl FilterHeadersPipeline {
 
         tracing::info!(
             "Built CFHeaders request queue: {} batches for heights {} to {}",
-            self.coordinator.pending_count(),
+            self.batch_starts.len(),
             start_height,
             target_height
         );
@@ -163,40 +151,38 @@ impl FilterHeadersPipeline {
         Ok(())
     }
 
-    /// Send pending requests using a RequestSender (synchronous).
-    pub(super) fn send_pending(&mut self, requests: &RequestSender) -> SyncResult<usize> {
-        let count = self.coordinator.available_to_send();
-        if count == 0 {
+    /// Declare every wanted CFHeaders batch to the network manager.
+    ///
+    /// Fired freely (on init, on extend, on arrival, on tick): the broker
+    /// de-duplicates, so re-declaring a batch already queued or on the wire is a
+    /// no-op, and it owns pacing and retry. Re-declaring each tick is the safety
+    /// net if a peer drops before the broker retries.
+    ///
+    /// Returns the number of batches declared (offered, not necessarily newly sent).
+    pub(super) async fn send_pending(
+        &mut self,
+        network: &Arc<dyn NetworkManager>,
+    ) -> SyncResult<usize> {
+        if self.batch_starts.is_empty() {
             return Ok(0);
         }
 
-        let stop_hashes = self.coordinator.take_pending(count);
-        let mut sent = 0;
+        let batches: Vec<(BlockHash, u32)> =
+            self.batch_starts.iter().map(|(stop_hash, start)| (*stop_hash, *start)).collect();
 
-        for stop_hash in stop_hashes {
-            let Some(&start_height) = self.batch_starts.get(&stop_hash) else {
-                return Err(SyncError::InvalidState(format!(
-                    "No batch_starts entry for pending stop_hash {}",
-                    stop_hash
-                )));
-            };
-
-            requests.request_filter_headers(start_height, stop_hash)?;
-
-            self.coordinator.mark_sent(&[stop_hash]);
-
-            tracing::debug!(
-                "Sent GetCFHeaders: start={}, stop={} ({} active, {} pending)",
-                start_height,
-                stop_hash,
-                self.coordinator.active_count(),
-                self.coordinator.pending_count()
-            );
-
-            sent += 1;
+        for (stop_hash, start_height) in &batches {
+            network
+                .send(NetworkMessage::GetCFHeaders(GetCFHeaders {
+                    filter_type: 0u8,
+                    start_height: *start_height,
+                    stop_hash: *stop_hash,
+                }))
+                .await;
         }
 
-        Ok(sent)
+        tracing::debug!("Declared {} wanted CFHeaders batch(es) to the broker", batches.len());
+
+        Ok(batches.len())
     }
 
     /// Try to match an incoming message to a pipeline response.
@@ -211,11 +197,8 @@ impl FilterHeadersPipeline {
             return None;
         }
 
-        // Match by stop_hash - the response includes it
-        if !self.coordinator.is_in_flight(&cfheaders.stop_hash) {
-            return None;
-        }
-
+        // Match by stop_hash - the response includes it. A batch is "wanted"
+        // exactly while it sits in `batch_starts`.
         let start_height = *self.batch_starts.get(&cfheaders.stop_hash)?;
         Some((start_height, cfheaders.clone()))
     }
@@ -225,7 +208,8 @@ impl FilterHeadersPipeline {
     /// Returns `Some(data)` if this response is the next expected and should
     /// be processed immediately. Returns `None` if buffered for later.
     pub(super) fn receive(&mut self, start_height: u32, data: CFHeaders) -> Option<CFHeaders> {
-        self.coordinator.receive(&data.stop_hash);
+        // Drop the batch from the wanted set; the broker is told the request was
+        // answered by the manager via `request_answered(RequestKey::CfHeaders)`.
         self.batch_starts.remove(&data.stop_hash);
 
         if start_height == self.next_expected {
@@ -253,23 +237,6 @@ impl FilterHeadersPipeline {
         }
         ready
     }
-
-    /// Move in-flight `getcfheaders` requests back to pending after a peer
-    /// disconnect so the next `send_pending` reissues them.
-    ///
-    /// `batch_starts` must survive, since `send_pending` errors out on a pending
-    /// stop hash with no start height. `next_expected` and the out-of-order
-    /// buffer survive too, so already-received batches are not re-downloaded.
-    pub(super) fn requeue_in_flight(&mut self) {
-        self.coordinator.requeue_in_flight();
-    }
-
-    /// Re-enqueue timed out requests for retry.
-    pub(super) fn handle_timeouts(&mut self) {
-        for stop_hash in self.coordinator.check_timeouts() {
-            self.coordinator.enqueue_retry(stop_hash);
-        }
-    }
 }
 
 #[cfg(test)]
@@ -277,10 +244,6 @@ mod tests {
     use dashcore_hashes::Hash;
 
     use super::*;
-    use crate::network::NetworkRequest;
-    use dashcore::hash_types::{FilterHash, FilterHeader};
-    use dashcore::network::message_filter::GetCFHeaders;
-    use tokio::sync::mpsc::unbounded_channel;
 
     #[test]
     fn test_cfheaders_pipeline_new() {
@@ -321,8 +284,7 @@ mod tests {
 
         let stop_hash = BlockHash::all_zeros();
 
-        // Mark batch as in-flight (by stop_hash)
-        pipeline.coordinator.mark_sent(&[stop_hash]);
+        // Mark batch as wanted (by stop_hash)
         pipeline.batch_starts.insert(stop_hash, 1);
 
         let cfheaders = CFHeaders {
@@ -347,8 +309,7 @@ mod tests {
 
         let stop_hash = BlockHash::all_zeros();
 
-        // Mark batch as in-flight (by stop_hash)
-        pipeline.coordinator.mark_sent(&[stop_hash]);
+        // Mark batch as wanted (by stop_hash)
         pipeline.batch_starts.insert(stop_hash, 2000);
 
         let cfheaders = CFHeaders {
@@ -386,131 +347,5 @@ mod tests {
         assert_eq!(ready.len(), 1);
         assert_eq!(ready[0].0, 2000);
         assert_eq!(pipeline.buffered.len(), 0);
-    }
-
-    #[test]
-    fn test_handle_timeouts_basic_retry() {
-        use std::time::Duration;
-
-        let mut pipeline = FilterHeadersPipeline {
-            coordinator: DownloadCoordinator::new(
-                DownloadConfig::default().with_timeout(Duration::from_millis(1)),
-            ),
-            batch_starts: HashMap::new(),
-            buffered: HashMap::new(),
-            next_expected: 1,
-            target_height: 2000,
-        };
-
-        let stop_hash = BlockHash::all_zeros();
-        pipeline.coordinator.mark_sent(&[stop_hash]);
-        pipeline.batch_starts.insert(stop_hash, 1);
-
-        std::thread::sleep(Duration::from_millis(5));
-
-        pipeline.handle_timeouts();
-        assert_eq!(pipeline.coordinator.pending_count(), 1);
-    }
-
-    #[test]
-    fn test_send_pending_errors_on_missing_batch_starts() {
-        let mut pipeline = FilterHeadersPipeline::new();
-        pipeline.next_expected = 1;
-        pipeline.target_height = 2000;
-
-        let hash_without_entry = BlockHash::from_byte_array([0x02; 32]);
-
-        // Enqueue a stop_hash without a corresponding batch_starts entry
-        pipeline.coordinator.enqueue([hash_without_entry]);
-
-        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
-        let requests = RequestSender::new(tx);
-
-        let err = pipeline.send_pending(&requests).unwrap_err();
-        assert!(matches!(err, SyncError::InvalidState(_)));
-    }
-
-    /// A peer disconnect requeues in-flight batches without discarding what the
-    /// pipeline has already made of the ones that came back, so the reissued
-    /// requests carry their original start heights and nothing is re-downloaded.
-    #[test]
-    fn test_requeue_in_flight_reissues_batches_and_keeps_progress() {
-        let mut pipeline = FilterHeadersPipeline::new();
-        pipeline.next_expected = 1;
-        pipeline.target_height = 6000;
-
-        let hash1 = BlockHash::from_byte_array([0x01; 32]);
-        let hash2 = BlockHash::from_byte_array([0x02; 32]);
-        pipeline.coordinator.mark_sent(&[hash1, hash2]);
-        pipeline.batch_starts.insert(hash1, 1);
-        pipeline.batch_starts.insert(hash2, 2001);
-
-        // A third batch already came back out of order and is waiting for the
-        // two above to be processed first.
-        pipeline.buffered.insert(
-            4001,
-            CFHeaders {
-                filter_type: 0,
-                stop_hash: BlockHash::from_byte_array([0x03; 32]),
-                previous_filter_header: FilterHeader::all_zeros(),
-                filter_hashes: vec![FilterHash::all_zeros()],
-            },
-        );
-
-        pipeline.requeue_in_flight();
-        assert_eq!(pipeline.coordinator.active_count(), 0);
-        assert_eq!(pipeline.coordinator.pending_count(), 2);
-
-        let (tx, mut rx) = unbounded_channel();
-        let requests = RequestSender::new(tx);
-        assert_eq!(pipeline.send_pending(&requests).unwrap(), 2);
-
-        let mut reissued = Vec::new();
-        while let Ok(request) = rx.try_recv() {
-            match request {
-                NetworkRequest::SendMessage(NetworkMessage::GetCFHeaders(GetCFHeaders {
-                    start_height,
-                    stop_hash,
-                    ..
-                })) => reissued.push((start_height, stop_hash)),
-                other => panic!("Expected GetCFHeaders, got {:?}", other),
-            }
-        }
-        reissued.sort();
-        assert_eq!(reissued, vec![(1, hash1), (2001, hash2)]);
-
-        assert_eq!(pipeline.next_expected(), 1);
-        assert_eq!(pipeline.buffered.len(), 1);
-        assert_eq!(pipeline.target_height, 6000);
-    }
-
-    #[test]
-    fn test_handle_timeouts_multiple_batches() {
-        use std::time::Duration;
-
-        let mut pipeline = FilterHeadersPipeline {
-            coordinator: DownloadCoordinator::new(
-                DownloadConfig::default().with_timeout(Duration::from_millis(1)),
-            ),
-            batch_starts: HashMap::new(),
-            buffered: HashMap::new(),
-            next_expected: 1,
-            target_height: 4000,
-        };
-
-        let hash1 = BlockHash::from_byte_array([0x01; 32]);
-        let hash2 = BlockHash::from_byte_array([0x02; 32]);
-
-        pipeline.coordinator.mark_sent(&[hash1, hash2]);
-        pipeline.batch_starts.insert(hash1, 1);
-        pipeline.batch_starts.insert(hash2, 2001);
-
-        std::thread::sleep(Duration::from_millis(5));
-
-        pipeline.handle_timeouts();
-        // Both batches re-queued
-        assert_eq!(pipeline.coordinator.pending_count(), 2);
-        assert!(pipeline.batch_starts.contains_key(&hash1));
-        assert!(pipeline.batch_starts.contains_key(&hash2));
     }
 }

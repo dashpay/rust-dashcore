@@ -13,11 +13,12 @@ name = "masternode-seeds-fetcher"
 path = "src/main.rs"
 
 [dependencies]
-dashcore = { path = "../dash", features = ["core-block-hash-use-x11"] }
+dashcore = { path = "../dash", features = ["core-block-hash-use-x11", "tokio"] }
 dash-spv = { path = "../dash-spv" }
 dash-network-seeds = { path = "../dash-network-seeds" }
 
 tokio = { version = "1.0", features = ["full"] }
+tokio-util = "0.7"
 
 clap = { version = "4.0", features = ["derive", "env"] }
 anyhow = "1.0"

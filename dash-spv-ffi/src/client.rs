@@ -82,15 +82,15 @@ pub unsafe extern "C" fn dash_spv_ffi_client_new(
 
     let client_result = runtime.block_on(async move {
         // Construct concrete implementations for generics
-        let network = dash_spv::network::PeerNetworkManager::new(&client_config).await;
         let storage = DiskStorageManager::new(&client_config).await;
         let wallet = key_wallet_manager::WalletManager::<
             key_wallet::wallet::managed_wallet_info::ManagedWalletInfo,
         >::new(client_config.network);
         let wallet = std::sync::Arc::new(tokio::sync::RwLock::new(wallet));
 
-        match (network, storage) {
-            (Ok(network), Ok(storage)) => {
+        match storage {
+            Ok(storage) => {
+                let network = dash_spv::network::PeerNetworkManager::new(&client_config).await;
                 DashSpvClient::new(
                     client_config,
                     network,
@@ -100,8 +100,7 @@ pub unsafe extern "C" fn dash_spv_ffi_client_new(
                 )
                 .await
             }
-            (Err(e), _) => Err(e),
-            (_, Err(e)) => Err(dash_spv::SpvError::Storage(e)),
+            Err(e) => Err(dash_spv::SpvError::Storage(e)),
         }
     });
 

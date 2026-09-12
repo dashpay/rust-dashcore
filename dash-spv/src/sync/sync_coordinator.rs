@@ -12,6 +12,8 @@ use tokio::task::JoinSet;
 use tokio_stream::wrappers::WatchStream;
 use tokio_util::sync::CancellationToken;
 
+use std::sync::Arc;
+
 use crate::error::SyncResult;
 use crate::network::NetworkManager;
 use crate::storage::{
@@ -35,9 +37,8 @@ macro_rules! spawn_manager {
         if let Some(manager) = $manager {
             let identifier = manager.identifier();
             let wanted_message_types = manager.wanted_message_types();
-            let requests = $network.request_sender();
-            let message_receiver = $network.message_receiver(wanted_message_types).await;
-            let network_event_rx = $network.subscribe_network_events();
+            let message_receiver = $network.subscribe(wanted_message_types).await;
+            let network_event_rx = $network.events();
             let (progress_sender, progress_receiver) = watch::channel(manager.progress());
 
             tracing::info!(
@@ -50,7 +51,7 @@ macro_rules! spawn_manager {
                 message_receiver,
                 sync_event_sender: $self.sync_event_sender.clone(),
                 network_event_receiver: network_event_rx,
-                requests,
+                network: $network.clone(),
                 shutdown: $self.shutdown.clone(),
                 progress_sender,
             };
@@ -192,12 +193,9 @@ where
     /// Each manager receives:
     /// - A message stream filtered by its subscribed types
     /// - An event bus subscription for inter-manager events
-    /// - A request sender for outgoing network messages
+    /// - A handle to the network manager, to declare requests on
     /// - A shutdown token for graceful termination
-    pub async fn start<N>(&mut self, network: &mut N) -> SyncResult<()>
-    where
-        N: NetworkManager,
-    {
+    pub async fn start(&mut self, network: &Arc<dyn NetworkManager>) -> SyncResult<()> {
         if !self.tasks.is_empty() {
             return Err(SyncError::InvalidState("SyncCoordinator already started".to_string()));
         }
