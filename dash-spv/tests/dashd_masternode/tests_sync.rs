@@ -10,12 +10,14 @@ use dashcore::sml::llmq_entry_verification::LLMQEntryVerificationStatus;
 use dashcore::sml::llmq_type::LLMQType;
 
 use super::helpers::{
-    assert_all_rotated_quorums_verified, wait_for_chainlock_height_at_least,
-    wait_for_masternode_sync, wait_for_mn_state_event, wait_for_mn_state_event_above,
+    assert_all_rotated_quorums_verified, assert_storage_did_not_shrink, assert_storage_persisted,
+    storage_snapshot, wait_for_chainlock_height_at_least, wait_for_masternode_sync,
+    wait_for_mn_state_event, wait_for_mn_state_event_above,
     wait_for_mn_state_with_stored_cycle_above,
 };
 use super::setup::{
-    create_and_start_client, create_dummy_wallet, create_mn_test_config, TestContext, SYNC_TIMEOUT,
+    create_and_start_client, create_client, create_dummy_wallet, create_mn_test_config,
+    TestContext, SYNC_TIMEOUT,
 };
 
 /// Sync masternode list against a pre-generated regtest controller node.
@@ -103,12 +105,52 @@ async fn test_masternode_list_sync_with_restart() {
     let first_mn_progress =
         wait_for_masternode_sync(&mut client_handle.progress_receiver, SYNC_TIMEOUT).await;
     let first_height = first_mn_progress.current_height();
+
+    let first_tip = {
+        let engine = client_handle.engine.read().await;
+        engine
+            .masternode_lists
+            .iter()
+            .next_back()
+            .map(|(height, list)| (*height, list.block_hash, list.masternodes.len()))
+    };
+    let (_, _, first_masternodes) =
+        first_tip.expect("the first session must build a masternode list before testing restart");
+    assert!(
+        first_masternodes > 0,
+        "the first session must have a masternode list before its persistence can be tested"
+    );
+
     client_handle.stop().await;
     drop(client_handle);
 
+    let after_first = storage_snapshot(ctx.storage_path());
+    assert_storage_persisted(
+        &after_first,
+        &format!("after a first session that built {first_masternodes} masternode(s)"),
+    );
+
     // Restart with same storage
     tracing::info!("=== Restarting with same storage ===");
-    let mut client_handle = create_and_start_client(&config, Arc::clone(&wallet)).await;
+    let mut client_handle = create_client(&config, Arc::clone(&wallet)).await;
+
+    // Read before the run loop is spawned, so nothing has come off the network yet:
+    // this is what replaying the stored messages produced on its own.
+    let replayed_tip = {
+        let engine = client_handle.engine.read().await;
+        engine
+            .masternode_lists
+            .iter()
+            .next_back()
+            .map(|(height, list)| (*height, list.block_hash, list.masternodes.len()))
+    };
+    assert_eq!(
+        replayed_tip, first_tip,
+        "startup must rebuild the first session's masternode list from storage, \
+         not default and let a fresh dashd sync cover for it"
+    );
+
+    client_handle.start();
     let second_mn_progress =
         wait_for_masternode_sync(&mut client_handle.progress_receiver, SYNC_TIMEOUT).await;
     let second_height = second_mn_progress.current_height();
@@ -122,6 +164,9 @@ async fn test_masternode_list_sync_with_restart() {
         SyncState::Synced,
         "Should reach Synced state after restart"
     );
+
+    let after_second = storage_snapshot(ctx.storage_path());
+    assert_storage_did_not_shrink(&after_first, &after_second, "masternode restart");
 
     tracing::info!(
         "Restart verified: first_height={}, second_height={}",

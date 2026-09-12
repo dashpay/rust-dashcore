@@ -230,7 +230,7 @@ impl MasternodeListEngine {
     }
 
     /// Retrieves the potential quorum for verifying a ChainLock from the masternode list **before or at**
-    /// block height **(chain_lock.block_height - 8)**.
+    /// the ChainLock's [signing height](ChainLock::signing_height).
     ///
     /// This function attempts to find the quorum responsible for signing the ChainLock by looking at
     /// the masternode list at or before the signing height, following DIP 24 logic.
@@ -251,9 +251,7 @@ impl MasternodeListEngine {
         &self,
         chain_lock: &ChainLock,
     ) -> Result<Option<&QualifiedQuorumEntry>, MessageVerificationError> {
-        // Retrieve the masternode list at or before (block_height - 8)
-        let (before, _) =
-            self.masternode_lists_around_height(chain_lock.block_height.saturating_sub(8));
+        let (before, _) = self.masternode_lists_around_height(chain_lock.signing_height());
 
         // Compute the signing request ID
         let request_id = chain_lock.request_id().map_err(|e| e.to_string())?;
@@ -271,7 +269,7 @@ impl MasternodeListEngine {
     }
 
     /// Retrieves the potential quorum for verifying a ChainLock from the masternode list **after**
-    /// block height **(chain_lock.block_height - 8)**.
+    /// the ChainLock's [signing height](ChainLock::signing_height).
     ///
     /// This function looks at the next available masternode list to determine if a quorum exists
     /// for signing the ChainLock, following DIP 24.
@@ -292,9 +290,7 @@ impl MasternodeListEngine {
         &self,
         chain_lock: &ChainLock,
     ) -> Result<Option<&QualifiedQuorumEntry>, MessageVerificationError> {
-        // Retrieve the masternode list after (block_height - 8)
-        let (_, after) =
-            self.masternode_lists_around_height(chain_lock.block_height.saturating_sub(8));
+        let (_, after) = self.masternode_lists_around_height(chain_lock.signing_height());
 
         // Compute the signing request ID
         let request_id = chain_lock.request_id().map_err(|e| e.to_string())?;
@@ -331,7 +327,7 @@ impl MasternodeListEngine {
     /// - `Other`: If computing the request ID or signing ID fails.
     ///
     /// # Implementation Details
-    /// - Retrieves masternode lists **before and after** `chain_lock.block_height - 8`.
+    /// - Retrieves masternode lists **before and after** the ChainLock's signing height.
     /// - Finds the **quorum with the lowest ordering hash** for the signing request.
     /// - Computes the **signing ID** and verifies the ChainLock signature.
     /// - If verification fails with the "before" list, it attempts verification with the "after" list.
@@ -339,21 +335,14 @@ impl MasternodeListEngine {
         &self,
         chain_lock: &ChainLock,
     ) -> Result<(), MessageVerificationError> {
-        // Retrieve masternode lists surrounding the signing height (block_height - 8)
-        let (before, after) =
-            self.masternode_lists_around_height(chain_lock.block_height.saturating_sub(8));
+        let (before, after) = self.masternode_lists_around_height(chain_lock.signing_height());
 
         if before.is_none() && after.is_none() {
             return Err(MessageVerificationError::NoMasternodeLists);
         }
-        // Compute the signing request ID
-        let request_id = chain_lock.request_id().map_err(|e| e.to_string())?;
-
         // Attempt verification using the "before" masternode list
         let initial_error = if let Some(before) = before {
-            let Err(e) =
-                self.verify_chain_lock_with_masternode_list(chain_lock, before, &request_id)
-            else {
+            let Err(e) = self.verify_chain_lock_with_masternode_list(chain_lock, before) else {
                 return Ok(());
             };
             Some(e)
@@ -373,7 +362,7 @@ impl MasternodeListEngine {
                 true
             };
             if do_check {
-                return self.verify_chain_lock_with_masternode_list(chain_lock, after, &request_id);
+                return self.verify_chain_lock_with_masternode_list(chain_lock, after);
             } else if let Some(initial_error) = initial_error {
                 return Err(initial_error);
             }
@@ -382,13 +371,13 @@ impl MasternodeListEngine {
         Ok(())
     }
 
-    /// Helper function to verify a ChainLock using a specific masternode list.
-    fn verify_chain_lock_with_masternode_list(
+    pub fn verify_chain_lock_with_masternode_list(
         &self,
         chain_lock: &ChainLock,
         masternode_list: &MasternodeList,
-        request_id: &QuorumSigningRequestId,
     ) -> Result<(), MessageVerificationError> {
+        let request_id = chain_lock.request_id().map_err(|e| e.to_string())?;
+
         // Get the quorum type for ChainLocks in the current network
         let chain_lock_quorum_type = self.network.chain_locks_type();
 
@@ -398,7 +387,7 @@ impl MasternodeListEngine {
 
         let quorum = quorums_of_type
             .values()
-            .min_by_key(|quorum| QuorumOrderingHash::create(&quorum.quorum_entry, request_id))
+            .min_by_key(|quorum| QuorumOrderingHash::create(&quorum.quorum_entry, &request_id))
             .ok_or(MessageVerificationError::MasternodeListHasNoQuorums(
                 masternode_list.known_height,
             ))?;
@@ -407,7 +396,7 @@ impl MasternodeListEngine {
             .sign_id(
                 quorum.quorum_entry.llmq_type,
                 quorum.quorum_entry.quorum_hash,
-                Some(*request_id),
+                Some(request_id),
             )
             .map_err(|e| e.to_string())?;
 

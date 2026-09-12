@@ -1,15 +1,14 @@
 use super::manager::PipelineMode;
 use crate::error::SyncResult;
 use crate::network::{Message, MessageType, RequestSender};
-use crate::storage::BlockHeaderStorage;
+use crate::storage::{feed_qrinfo_heights_to_engine, BlockHeaderStorage};
 use crate::sync::{
     ManagerIdentifier, MasternodesManager, SyncEvent, SyncManager, SyncManagerProgress, SyncState,
 };
 use crate::SyncError;
 use async_trait::async_trait;
 use dashcore::network::message::NetworkMessage;
-use dashcore::network::message_qrinfo::QRInfo;
-use dashcore::sml::masternode_list_engine::{MasternodeListEngine, WORK_DIFF_DEPTH};
+use dashcore::sml::llmq_type::QUORUM_MEMBER_LIST_OFFSET;
 use dashcore::{BlockHash, QuorumHash};
 use dashcore_hashes::Hash;
 use std::collections::{BTreeSet, HashSet};
@@ -84,7 +83,7 @@ pub(super) async fn build_mnlistdiff_request_pairs<S: BlockHeaderStorage>(
             }
         };
 
-        let validation_height = quorum_height.saturating_sub(8);
+        let validation_height = quorum_height.saturating_sub(QUORUM_MEMBER_LIST_OFFSET);
 
         // Skip if we already have this height
         if known_heights.contains(&validation_height) {
@@ -159,63 +158,6 @@ pub(super) async fn build_mnlistdiff_request_pairs<S: BlockHeaderStorage>(
     Ok(pairs_with_height.into_iter().map(|(_, base, target)| (base, target)).collect())
 }
 
-/// Feed QRInfo block heights to the engine from storage.
-///
-/// Resolves heights for every hash enumerated by
-/// [`MasternodeListEngine::qr_info_referenced_block_hashes`], plus the cycle boundary
-/// block for each work-block diff (`work_height + WORK_DIFF_DEPTH`), which is needed
-/// for rotated quorum storage key calculation.
-pub(super) async fn feed_qrinfo_heights_to_engine<S: BlockHeaderStorage>(
-    engine: &mut MasternodeListEngine,
-    qr_info: &QRInfo,
-    storage: &S,
-) -> SyncResult<usize> {
-    let mut fed_count = 0;
-    for block_hash in MasternodeListEngine::qr_info_referenced_block_hashes(qr_info) {
-        if let Ok(Some(height)) = storage.get_header_height_by_hash(&block_hash).await {
-            engine.feed_block_height(height, block_hash);
-            fed_count += 1;
-            tracing::trace!("Fed height {} for block {}", height, block_hash);
-        }
-    }
-
-    // Feed cycle boundary heights for all diffs (current and historical cycles).
-    // Each diff's block_hash is at the "work block" height; the cycle boundary is
-    // WORK_DIFF_DEPTH higher.
-    let mut work_block_hashes = vec![
-        qr_info.mn_list_diff_h.block_hash,
-        qr_info.mn_list_diff_at_h_minus_c.block_hash,
-        qr_info.mn_list_diff_at_h_minus_2c.block_hash,
-        qr_info.mn_list_diff_at_h_minus_3c.block_hash,
-    ];
-
-    if let Some((_, diff)) = &qr_info.quorum_snapshot_and_mn_list_diff_at_h_minus_4c {
-        work_block_hashes.push(diff.block_hash);
-    }
-
-    for work_block_hash in work_block_hashes {
-        if let Ok(Some(work_block_height)) =
-            storage.get_header_height_by_hash(&work_block_hash).await
-        {
-            let cycle_boundary_height = work_block_height + WORK_DIFF_DEPTH;
-            if let Ok(Some(cycle_boundary_header)) = storage.get_header(cycle_boundary_height).await
-            {
-                let cycle_boundary_hash = *cycle_boundary_header.hash();
-                engine.feed_block_height(cycle_boundary_height, cycle_boundary_hash);
-                fed_count += 1;
-                tracing::debug!(
-                    "Fed cycle boundary height {} for block {}",
-                    cycle_boundary_height,
-                    cycle_boundary_hash
-                );
-            }
-        }
-    }
-
-    tracing::info!("Fed {} block heights to engine", fed_count);
-    Ok(fed_count)
-}
-
 #[async_trait]
 impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
     fn identifier(&self) -> ManagerIdentifier {
@@ -269,9 +211,8 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
                 // Feed block heights to engine using internal storage
                 let storage = self.header_storage.read().await;
                 let mut engine = self.engine.write().await;
-                let fed = feed_qrinfo_heights_to_engine(&mut engine, qr_info, &*storage).await?;
+                feed_qrinfo_heights_to_engine(&mut engine, qr_info, &*storage).await;
                 drop(storage);
-                tracing::info!("Fed {} block heights to engine", fed);
 
                 // Feed QRInfo to engine first to populate masternode lists
                 let qr_info_result = match engine.feed_qr_info(qr_info.clone(), true, true) {
@@ -314,9 +255,33 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
                 )
                 .await?;
 
+                let tip_hash = qr_info.mn_list_diff_tip.block_hash;
+                let tip_height = storage.get_header_height_by_hash(&tip_hash).await;
+
                 // Drop locks before potentially long operations
                 drop(engine);
                 drop(storage);
+
+                match tip_height {
+                    Ok(Some(height)) => match self.store_qr_info(height, qr_info).await {
+                        Ok(()) => {
+                            self.sync_state.unpersisted_heights.remove(&height);
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                "Could not store QRInfo at {height}: {e}. Its list stays in memory \
+                                 and is excluded from pruning, so a restart resyncs from further back"
+                            );
+                            self.sync_state.unpersisted_heights.insert(height);
+                        }
+                    },
+                    Ok(None) => tracing::warn!(
+                        "QRInfo tip {tip_hash} has no known height, rotated quorums will not survive a restart"
+                    ),
+                    Err(e) => {
+                        tracing::warn!("Could not resolve QRInfo tip {tip_hash} height: {e}")
+                    }
+                }
 
                 if let Some(ref qr_info_result) = qr_info_result {
                     tracing::info!(
@@ -430,6 +395,22 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
                         }
                     };
                 drop(engine);
+
+                if apply_ok {
+                    match self.store_diff(target_height, diff).await {
+                        Ok(()) => {
+                            self.sync_state.unpersisted_heights.remove(&target_height);
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                "Could not store MnListDiff at {target_height}: {e}. Its list stays \
+                                 in memory and is excluded from pruning, so a restart resyncs from \
+                                 further back"
+                            );
+                            self.sync_state.unpersisted_heights.insert(target_height);
+                        }
+                    }
+                }
 
                 self.progress.add_diffs_processed(1);
                 self.sync_state.mnlistdiff_pipeline.receive(diff);
@@ -747,97 +728,36 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
 mod tests {
     use super::super::manager::{MasternodeSyncState, QRInfoInFlight};
     use super::{
-        feed_qrinfo_heights_to_engine, qrinfo_timeout_for, MAX_RETRY_ATTEMPTS,
-        QRINFO_STALL_WATCHDOG, QRINFO_TIMEOUT_SCHEDULE_SECS,
+        qrinfo_timeout_for, MAX_RETRY_ATTEMPTS, QRINFO_STALL_WATCHDOG, QRINFO_TIMEOUT_SCHEDULE_SECS,
     };
-    use crate::error::StorageResult;
+
     use crate::network::{Message, NetworkRequest, RequestSender};
     use crate::storage::{
-        BlockHeaderStorage, BlockHeaderTip, DiskStorageManager, PersistentBlockHeaderStorage,
-        StorageManager,
+        feed_qrinfo_heights_to_engine, BlockHeaderStorage, DiskStorageManager,
+        PersistentBlockHeaderStorage, StorageManager,
     };
     use crate::sync::{MasternodesManager, SyncManager, SyncState};
+    use crate::test_utils::MockHeaderStorage;
     use crate::types::HashedBlockHeader;
     use crate::SyncError;
-    use async_trait::async_trait;
+
     use dashcore::block::Header;
     use dashcore::bls_sig_utils::{BLSPublicKey, BLSSignature};
     use dashcore::hash_types::QuorumVVecHash;
     use dashcore::network::message::NetworkMessage;
-    use dashcore::network::message_qrinfo::{MNSkipListMode, QRInfo, QuorumSnapshot};
+    use dashcore::network::message_qrinfo::{QRInfo, QuorumSnapshot};
     use dashcore::network::message_sml::MnListDiff;
     use dashcore::sml::llmq_type::LLMQType;
     use dashcore::sml::masternode_list_engine::MasternodeListEngine;
     use dashcore::transaction::special_transaction::quorum_commitment::QuorumEntry;
-    use dashcore::{BlockHash, Network, Transaction};
+    use dashcore::{BlockHash, Network};
     use dashcore_hashes::Hash;
     use std::collections::HashMap;
-    use std::ops::Range;
+
     use std::sync::Arc;
     use std::time::Duration;
     use std::time::Instant;
     use tokio::sync::{mpsc, RwLock};
-
-    struct MockHeaderStorage(HashMap<BlockHash, u32>);
-
-    #[async_trait]
-    impl BlockHeaderStorage for MockHeaderStorage {
-        async fn store_headers(&mut self, _: &[HashedBlockHeader]) -> StorageResult<()> {
-            Ok(())
-        }
-        async fn store_headers_at_height(
-            &mut self,
-            _: &[HashedBlockHeader],
-            _: u32,
-        ) -> StorageResult<()> {
-            Ok(())
-        }
-        async fn load_headers(&self, _: Range<u32>) -> StorageResult<Vec<HashedBlockHeader>> {
-            Ok(vec![])
-        }
-        async fn get_tip_height(&self) -> Option<u32> {
-            None
-        }
-        async fn get_tip(&self) -> Option<BlockHeaderTip> {
-            None
-        }
-        async fn get_start_height(&self) -> Option<u32> {
-            None
-        }
-        async fn get_stored_headers_len(&self) -> u32 {
-            0
-        }
-        async fn get_header_height_by_hash(&self, hash: &BlockHash) -> StorageResult<Option<u32>> {
-            Ok(self.0.get(hash).copied())
-        }
-        async fn truncate_above(&mut self, target_height: u32) -> StorageResult<()> {
-            self.0.retain(|_, h| *h <= target_height);
-            Ok(())
-        }
-    }
-
-    fn make_diff(base_byte: u8, tip_byte: u8) -> MnListDiff {
-        MnListDiff {
-            version: 1,
-            base_block_hash: BlockHash::from_slice(&[base_byte; 32]).unwrap(),
-            block_hash: BlockHash::from_slice(&[tip_byte; 32]).unwrap(),
-            total_transactions: 0,
-            merkle_hashes: vec![],
-            merkle_flags: vec![],
-            coinbase_tx: Transaction {
-                version: 1,
-                lock_time: 0,
-                input: vec![],
-                output: vec![],
-                special_transaction_payload: None,
-            },
-            deleted_masternodes: vec![],
-            new_masternodes: vec![],
-            deleted_quorums: vec![],
-            new_quorums: vec![],
-            quorums_chainlock_signatures: vec![],
-        }
-    }
 
     fn make_quorum_entry(hash_byte: u8, index: i16) -> QuorumEntry {
         QuorumEntry {
@@ -851,14 +771,6 @@ mod tests {
             quorum_vvec_hash: QuorumVVecHash::from_slice(&[0u8; 32]).unwrap(),
             threshold_sig: BLSSignature::from([0u8; 96]),
             all_commitment_aggregated_signature: BLSSignature::from([0u8; 96]),
-        }
-    }
-
-    fn make_snapshot() -> QuorumSnapshot {
-        QuorumSnapshot {
-            skip_list_mode: MNSkipListMode::NoSkipping,
-            active_quorum_members: vec![],
-            skip_list: vec![],
         }
     }
 
@@ -895,34 +807,32 @@ mod tests {
         }
 
         let qr_info = QRInfo {
-            quorum_snapshot_at_h_minus_c: make_snapshot(),
-            quorum_snapshot_at_h_minus_2c: make_snapshot(),
-            quorum_snapshot_at_h_minus_3c: make_snapshot(),
-            mn_list_diff_tip: make_diff(0x01, 0x02),
-            mn_list_diff_h: make_diff(0x03, 0x04),
-            mn_list_diff_at_h_minus_c: make_diff(0x05, 0x06),
-            mn_list_diff_at_h_minus_2c: make_diff(0x07, 0x08),
-            mn_list_diff_at_h_minus_3c: make_diff(0x09, 0x0A),
+            quorum_snapshot_at_h_minus_c: QuorumSnapshot::dummy(),
+            quorum_snapshot_at_h_minus_2c: QuorumSnapshot::dummy(),
+            quorum_snapshot_at_h_minus_3c: QuorumSnapshot::dummy(),
+            mn_list_diff_tip: MnListDiff::dummy_empty(0x01, 0x02),
+            mn_list_diff_h: MnListDiff::dummy_empty(0x03, 0x04),
+            mn_list_diff_at_h_minus_c: MnListDiff::dummy_empty(0x05, 0x06),
+            mn_list_diff_at_h_minus_2c: MnListDiff::dummy_empty(0x07, 0x08),
+            mn_list_diff_at_h_minus_3c: MnListDiff::dummy_empty(0x09, 0x0A),
             quorum_snapshot_and_mn_list_diff_at_h_minus_4c: Some((
-                make_snapshot(),
-                make_diff(0x0B, 0x0C),
+                QuorumSnapshot::dummy(),
+                MnListDiff::dummy_empty(0x0B, 0x0C),
             )),
-            mn_list_diff_list: vec![make_diff(0x0D, 0x0E)],
+            mn_list_diff_list: vec![MnListDiff::dummy_empty(0x0D, 0x0E)],
             last_commitment_per_index: [0x80u8, 0x81, 0x82, 0x83]
                 .iter()
                 .enumerate()
                 .map(|(i, &b)| make_quorum_entry(b, i as i16))
                 .collect(),
-            quorum_snapshot_list: vec![make_snapshot()],
+            quorum_snapshot_list: vec![QuorumSnapshot::dummy()],
         };
 
         let mut engine = MasternodeListEngine {
             network: Network::Testnet,
             ..Default::default()
         };
-        feed_qrinfo_heights_to_engine(&mut engine, &qr_info, &MockHeaderStorage(height_map))
-            .await
-            .unwrap();
+        feed_qrinfo_heights_to_engine(&mut engine, &qr_info, &MockHeaderStorage(height_map)).await;
 
         for &b in expected_hashes {
             let hash = BlockHash::from_slice(&[b; 32]).unwrap();
@@ -962,25 +872,6 @@ mod tests {
         assert_eq!(qrinfo_timeout_for(u8::MAX).as_secs(), last);
     }
 
-    /// Build a minimal `QRInfo` whose `mn_list_diff_tip.block_hash` is `[tip_byte; 32]`.
-    /// Only the tip hash is read by `should_process_qrinfo`; every other field is filler.
-    fn qrinfo_with_tip(tip_byte: u8) -> QRInfo {
-        QRInfo {
-            quorum_snapshot_at_h_minus_c: make_snapshot(),
-            quorum_snapshot_at_h_minus_2c: make_snapshot(),
-            quorum_snapshot_at_h_minus_3c: make_snapshot(),
-            mn_list_diff_tip: make_diff(0x00, tip_byte),
-            mn_list_diff_h: make_diff(0x00, 0x00),
-            mn_list_diff_at_h_minus_c: make_diff(0x00, 0x00),
-            mn_list_diff_at_h_minus_2c: make_diff(0x00, 0x00),
-            mn_list_diff_at_h_minus_3c: make_diff(0x00, 0x00),
-            quorum_snapshot_and_mn_list_diff_at_h_minus_4c: None,
-            mn_list_diff_list: vec![],
-            last_commitment_per_index: vec![],
-            quorum_snapshot_list: vec![],
-        }
-    }
-
     /// `should_process_qrinfo` is the dedup gate at the QRInfo handler entry. It
     /// must:
     /// 1. Drop a response carrying the same `mn_list_diff_tip.block_hash` as the
@@ -1009,7 +900,7 @@ mod tests {
             ..Default::default()
         };
         assert!(
-            !state.should_process_qrinfo(&qrinfo_with_tip(0xAA)),
+            !state.should_process_qrinfo(&QRInfo::dummy(0xAA)),
             "duplicate of last processed tip must be dropped"
         );
 
@@ -1018,7 +909,7 @@ mod tests {
         let state = MasternodeSyncState::default();
         assert!(state.qrinfo_in_flight.is_none());
         assert!(
-            !state.should_process_qrinfo(&qrinfo_with_tip(0xBB)),
+            !state.should_process_qrinfo(&QRInfo::dummy(0xBB)),
             "unsolicited response must be dropped"
         );
 
@@ -1029,7 +920,7 @@ mod tests {
             ..Default::default()
         };
         assert!(
-            state.should_process_qrinfo(&qrinfo_with_tip(0xBB)),
+            state.should_process_qrinfo(&QRInfo::dummy(0xBB)),
             "response matching the active request tip must be accepted"
         );
 
@@ -1042,7 +933,7 @@ mod tests {
             ..Default::default()
         };
         assert!(
-            !state.should_process_qrinfo(&qrinfo_with_tip(0xAA)),
+            !state.should_process_qrinfo(&QRInfo::dummy(0xAA)),
             "duplicate must be dropped even when no request is in flight"
         );
 
@@ -1055,15 +946,14 @@ mod tests {
             ..Default::default()
         };
         assert!(
-            !state.should_process_qrinfo(&qrinfo_with_tip(0xCC)),
+            !state.should_process_qrinfo(&QRInfo::dummy(0xCC)),
             "response for non-active request tip must be dropped"
         );
     }
 
-    /// Same filler `QRInfo` as [`qrinfo_with_tip`], but carrying an explicit tip
-    /// hash so it can be aimed at whatever tip a live manager actually requested.
+    /// [`QRInfo::dummy`] aimed at whatever tip a live manager actually requested.
     fn qrinfo_with_tip_hash(tip: BlockHash) -> QRInfo {
-        let mut qr_info = qrinfo_with_tip(0x00);
+        let mut qr_info = QRInfo::dummy(0x00);
         qr_info.mn_list_diff_tip.block_hash = tip;
         qr_info
     }
@@ -1097,9 +987,13 @@ mod tests {
             .await
             .unwrap();
         let engine = MasternodeListEngine::default_for_network(Network::Regtest);
-        let mut manager =
-            MasternodesManager::new(block_headers, Arc::new(RwLock::new(engine)), Network::Regtest)
-                .await;
+        let mut manager = MasternodesManager::new(
+            block_headers,
+            Arc::new(RwLock::new(engine)),
+            Network::Regtest,
+            None,
+        )
+        .await;
         manager.progress.update_block_header_tip_height(tip);
 
         let (tx, mut rx) = mpsc::unbounded_channel();
