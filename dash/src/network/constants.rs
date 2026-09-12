@@ -20,18 +20,14 @@
 //! This module provides various constants relating to the Dash network
 //! protocol.
 
-use core::convert::From;
-use core::{fmt, ops};
+use core::fmt;
 
 use hashes::Hash;
 
 pub use dash_network::{Network, ParseNetworkError};
 
 use crate::consensus::encode::{self, Decodable, Encodable};
-use crate::{BlockHash, io};
-
-// Re-export NODE_HEADERS_COMPRESSED for convenience
-pub const NODE_HEADERS_COMPRESSED: ServiceFlags = ServiceFlags::NODE_HEADERS_COMPRESSED;
+use crate::{BlockHash, VarInt, io};
 
 /// Version of the protocol as appearing in network message headers
 /// This constant is used to signal to other peers which features you support.
@@ -153,29 +149,43 @@ impl ServiceFlags {
     // NOTE: When adding new flags, remember to update the Display impl accordingly.
 
     /// Add [ServiceFlags] together.
-    ///
-    /// Returns itself.
-    pub fn add(&mut self, other: ServiceFlags) -> ServiceFlags {
+    pub fn add(&mut self, other: ServiceFlags) {
         self.0 |= other.0;
-        *self
     }
 
     /// Remove [ServiceFlags] from this.
-    ///
-    /// Returns itself.
-    pub fn remove(&mut self, other: ServiceFlags) -> ServiceFlags {
+    pub fn remove(&mut self, other: ServiceFlags) {
         self.0 ^= other.0;
-        *self
     }
 
     /// Check whether [ServiceFlags] are included in this one.
-    pub fn has(self, flags: ServiceFlags) -> bool {
+    pub fn has(&self, flags: ServiceFlags) -> bool {
         (self.0 | flags.0) == self.0
     }
 
     /// Get the integer representation of this [ServiceFlags].
-    pub fn as_u64(self) -> u64 {
+    pub fn as_u64(&self) -> u64 {
         self.0
+    }
+
+    // This struct is weird in the dash protocol, sometime services are encoded as u64
+    // and sometimes as a VarInt. While the Encodable/Decodable encodes and decodes the u64
+    // as usual, this methods use VarInt to satisfy the protocol
+
+    #[inline]
+    pub fn consensus_encode_as_var_int<W: io::Write + ?Sized>(
+        &self,
+        w: &mut W,
+    ) -> Result<usize, io::Error> {
+        self.0.consensus_encode(w)
+    }
+
+    #[inline]
+    pub fn consensus_decode_from_var_int<R: io::Read + ?Sized>(
+        r: &mut R,
+    ) -> Result<Self, encode::Error> {
+        let services = VarInt::consensus_decode(r)?;
+        Ok(ServiceFlags(services.0))
     }
 }
 
@@ -229,47 +239,10 @@ impl fmt::Display for ServiceFlags {
     }
 }
 
-impl From<u64> for ServiceFlags {
-    fn from(f: u64) -> Self {
-        ServiceFlags(f)
-    }
-}
-
-impl From<ServiceFlags> for u64 {
-    fn from(val: ServiceFlags) -> Self {
-        val.0
-    }
-}
-
-impl ops::BitOr for ServiceFlags {
-    type Output = Self;
-
-    fn bitor(mut self, rhs: Self) -> Self {
-        self.add(rhs)
-    }
-}
-
-impl ops::BitOrAssign for ServiceFlags {
-    fn bitor_assign(&mut self, rhs: Self) {
-        self.add(rhs);
-    }
-}
-
-impl ops::BitXor for ServiceFlags {
-    type Output = Self;
-
-    fn bitxor(mut self, rhs: Self) -> Self {
-        self.remove(rhs)
-    }
-}
-
-impl ops::BitXorAssign for ServiceFlags {
-    fn bitxor_assign(&mut self, rhs: Self) {
-        self.remove(rhs);
-    }
-}
-
 impl Encodable for ServiceFlags {
+    /// Encodes the service flags as a u64, not a VarInt. Services are usually encoded as a u64
+    /// but there are some messages that encode them as a VarInt instead. For those use the
+    /// specialized method `consensus_encode_as_var_int`.
     #[inline]
     fn consensus_encode<W: io::Write + ?Sized>(&self, w: &mut W) -> Result<usize, io::Error> {
         self.0.consensus_encode(w)
@@ -277,6 +250,9 @@ impl Encodable for ServiceFlags {
 }
 
 impl Decodable for ServiceFlags {
+    /// Decodes the service flags as a u64, not a VarInt. Services are usually decoded as a u64
+    /// but there are some messages that decode them as a VarInt instead. For those use the
+    /// specialized method `consensus_decode_as_var_int`.
     #[inline]
     fn consensus_decode<R: io::Read + ?Sized>(r: &mut R) -> Result<Self, encode::Error> {
         Ok(ServiceFlags(Decodable::consensus_decode(r)?))
@@ -364,27 +340,28 @@ mod tests {
             assert!(!flags.has(*f));
         }
 
-        flags |= ServiceFlags::WITNESS;
+        flags.add(ServiceFlags::WITNESS);
         assert_eq!(flags, ServiceFlags::WITNESS);
 
-        let mut flags2 = flags | ServiceFlags::GETUTXO;
+        flags.add(ServiceFlags::GETUTXO);
         for f in all.iter() {
-            assert_eq!(flags2.has(*f), *f == ServiceFlags::WITNESS || *f == ServiceFlags::GETUTXO);
+            assert_eq!(flags.has(*f), *f == ServiceFlags::WITNESS || *f == ServiceFlags::GETUTXO);
         }
 
-        flags2 ^= ServiceFlags::WITNESS;
-        assert_eq!(flags2, ServiceFlags::GETUTXO);
+        flags.remove(ServiceFlags::WITNESS);
+        assert_eq!(flags, ServiceFlags::GETUTXO);
 
-        flags2 |= ServiceFlags::COMPACT_FILTERS;
-        flags2 ^= ServiceFlags::GETUTXO;
-        assert_eq!(flags2, ServiceFlags::COMPACT_FILTERS);
+        flags.add(ServiceFlags::COMPACT_FILTERS);
+        flags.remove(ServiceFlags::GETUTXO);
+        assert_eq!(flags, ServiceFlags::COMPACT_FILTERS);
 
         // Test formatting.
         assert_eq!("ServiceFlags(NONE)", ServiceFlags::NONE.to_string());
         assert_eq!("ServiceFlags(WITNESS)", ServiceFlags::WITNESS.to_string());
-        let flag = ServiceFlags::WITNESS | ServiceFlags::BLOOM | ServiceFlags::NETWORK;
-        assert_eq!("ServiceFlags(NETWORK|BLOOM|WITNESS)", flag.to_string());
-        let flag = ServiceFlags::WITNESS | 0xf0.into();
-        assert_eq!("ServiceFlags(WITNESS|COMPACT_FILTERS|0xb0)", flag.to_string());
+
+        let mut flags = ServiceFlags::WITNESS;
+        flags.add(ServiceFlags::BLOOM);
+        flags.add(ServiceFlags::NETWORK);
+        assert_eq!("ServiceFlags(NETWORK|BLOOM|WITNESS)", flags.to_string());
     }
 }
