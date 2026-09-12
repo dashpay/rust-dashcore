@@ -40,6 +40,17 @@ fn load_mnemonics() -> Vec<String> {
         .unwrap_or_default()
 }
 
+fn peak_rss_kb() -> Option<u64> {
+    std::fs::read_to_string("/proc/self/status")
+        .ok()?
+        .lines()
+        .find_map(|line| line.strip_prefix("VmHWM:"))?
+        .split_whitespace()
+        .next()?
+        .parse()
+        .ok()
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let dashboard = Arc::new(Dashboard::new());
@@ -188,6 +199,9 @@ async fn main() -> Result<()> {
 
     use std::fmt::Write as _;
     let mut report = format!("{m}\n");
+    if let Some(kb) = peak_rss_kb() {
+        let _ = writeln!(report, "peak_rss_mib:         {}", kb / 1024);
+    }
 
     if !wallet_ids.is_empty() {
         use key_wallet_manager::WalletInterface;
