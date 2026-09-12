@@ -6,7 +6,7 @@ use dashcore::ephemerealdata::instant_lock::InstantLock;
 use dashcore::prelude::CoreBlockHeight;
 use dashcore::{Address, Block, OutPoint, ScriptBuf, Transaction, Txid};
 use key_wallet::transaction_checking::TransactionContext;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 use tokio::sync::{broadcast, Mutex};
 
@@ -43,6 +43,7 @@ pub struct MockWallet {
     pub processed_instant_locks: InstantLockCaptures,
     /// Monitor revision counter for staleness detection.
     monitor_revision: u64,
+    reapply_heights: BTreeMap<u32, BTreeSet<u32>>,
 }
 
 impl Default for MockWallet {
@@ -70,7 +71,12 @@ impl MockWallet {
             status_changes: Arc::new(Mutex::new(Vec::new())),
             processed_instant_locks: Arc::new(Mutex::new(Vec::new())),
             monitor_revision: 0,
+            reapply_heights: BTreeMap::new(),
         }
+    }
+
+    pub fn set_reapply_heights(&mut self, height: u32, heights: BTreeSet<u32>) {
+        self.reapply_heights.insert(height, heights);
     }
 
     /// Override the wallet id used for per-wallet API surfaces.
@@ -145,6 +151,11 @@ impl WalletInterface for MockWallet {
             new_txids: block.txdata.iter().map(|tx| tx.txid()).collect(),
             existing_txids: Vec::new(),
             new_scripts: Default::default(),
+            reapply_heights: self
+                .reapply_heights
+                .get(&height)
+                .map(|heights| BTreeMap::from([(self.wallet_id, heights.clone())]))
+                .unwrap_or_default(),
         }
     }
 
