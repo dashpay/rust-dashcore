@@ -425,6 +425,8 @@ async fn test_runtime_add_during_initial_sync() {
     }
 
     let (w1_synced_at_add, w1_processed_at_add) = wallet_heights(&wallet, &w1_id).await;
+    let w1_birth_height =
+        wallet.read().await.get_wallet_info(&w1_id).expect("wallet info").birth_height();
     assert!(
         w1_synced_at_add < initial_height,
         "W1 must be in mid-flight at the moment W2 is added (synced_height={}, tip={})",
@@ -443,11 +445,17 @@ async fn test_runtime_add_during_initial_sync() {
     loop {
         let (w1_synced_now, w1_processed_now) = wallet_heights(&wallet, &w1_id).await;
         let (w2_synced_now, _) = wallet_heights(&wallet, &w2_id).await;
+        // W1's synced_height may legitimately drop below its add-time value:
+        // scripts W1 derives while scanning are covered by rewinding its
+        // checkpoint and re-walking committed history (backward coverage),
+        // and that rewind is persisted. What must hold is that it never goes
+        // under W1's own start — W2's lower birth height must not drag it
+        // there — and that it converges to the tip below.
         assert!(
-            w1_synced_now >= w1_synced_at_add,
-            "W1 synced_height regressed during mid-flight rescan: {} -> {}",
-            w1_synced_at_add,
+            w1_synced_now + 1 >= w1_birth_height,
+            "W1 synced_height rewound below its own birth height: {} (birth {})",
             w1_synced_now,
+            w1_birth_height,
         );
         assert!(
             w1_processed_now >= w1_processed_at_add,

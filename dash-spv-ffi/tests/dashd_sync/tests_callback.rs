@@ -146,21 +146,59 @@ fn test_all_callbacks_during_sync() {
         // so observing block-processed records does not guarantee it has fired yet.
         tracker.wait_for_callback(&tracker.synced_height_updated_count, 0, "synced_height_updated");
         let synced_height_fired = tracker.synced_height_updated_count.load(Ordering::SeqCst);
-        let last_synced_height = tracker.last_synced_height.load(Ordering::SeqCst);
         assert!(
             synced_height_fired > 0,
             "on_synced_height_updated should fire at least once during sync"
         );
-        assert!(
-            last_synced_height >= dashd.initial_height,
-            "last_synced_height ({}) should be at least initial_height ({}) after sync",
-            last_synced_height,
-            dashd.initial_height
+        // The callback is not monotonic: scripts derived during the scan are
+        // covered by rewinding the wallet's checkpoint and re-walking
+        // committed history (backward coverage), and the rewind is reported
+        // through this same callback. Wait for the re-walk to bring the
+        // reported height back to the tip instead of sampling it once.
+        // Two conditions, not one: the checkpoint must be seen going DOWN
+        // (the rewind itself) and then coming back to the tip (the re-walk
+        // that follows it). Waiting only for the tip would be satisfied by
+        // the value already stored before the rewind ever happened, so the
+        // whole backward-coverage path could be dead and this test would
+        // still pass.
+        let synced_deadline = std::time::Instant::now() + Duration::from_secs(60);
+        let last_synced_height = loop {
+            let h = tracker.last_synced_height.load(Ordering::SeqCst);
+            let rewound = tracker.synced_height_rewound.load(Ordering::SeqCst);
+            if rewound && h >= dashd.initial_height {
+                break h;
+            }
+            assert!(
+                std::time::Instant::now() < synced_deadline,
+                "backward coverage did not complete within 60s: rewind observed={}, \
+                 last_synced_height={} (initial_height={})",
+                rewound,
+                h,
+                dashd.initial_height
+            );
+            std::thread::sleep(Duration::from_millis(100));
+        };
+        tracing::info!(
+            "SyncedHeightUpdated: fired {} time(s), last {}",
+            synced_height_fired,
+            last_synced_height
         );
 
-        // Validate sync cycle (initial sync is cycle 0)
-        let last_sync_cycle = tracker.last_sync_cycle.load(Ordering::SeqCst);
-        assert_eq!(last_sync_cycle, 0, "Initial sync should be cycle 0");
+        // Validate sync cycle (initial sync is cycle 0). This wallet has
+        // transactions, so the scan derives scripts and a backward-coverage
+        // re-walk follows, completing as a later cycle — check the first
+        // completion, not the last.
+        assert!(
+            tracker.sync_complete_count.load(Ordering::SeqCst) > 0,
+            "on_sync_complete should have fired"
+        );
+        let first_sync_cycle = tracker.first_sync_cycle.load(Ordering::SeqCst);
+        assert_eq!(first_sync_cycle, 0, "Initial sync should be cycle 0");
+        tracing::info!(
+            "Sync cycles: first={}, last={}",
+            first_sync_cycle,
+            tracker.last_sync_cycle.load(Ordering::SeqCst)
+        );
 
         // Validate callback lifecycle ordering
         let sync_start_seq = tracker.sync_start_seq.load(Ordering::SeqCst);
