@@ -5,6 +5,7 @@ use std::process;
 use std::sync::Arc;
 
 use clap::{Parser, ValueEnum};
+use dash_spv::chain::CheckpointManager;
 use dash_spv::{
     ClientConfig, DashSpvClient, DevnetConfig, LevelFilter, LlmqDevnetParams, MempoolStrategy,
     Network, ValidationMode,
@@ -118,6 +119,13 @@ struct Args {
     /// Use 'now' for the latest checkpoint.
     #[arg(short, long, value_name = "HEIGHT")]
     start_height: Option<String>,
+
+    /// Wallet birth height. Header, filter-header and filter sync anchor at the
+    /// nearest checkpoint at or before this height instead of genesis. Use 'now'
+    /// for the latest checkpoint (a brand-new wallet with no prior history).
+    /// Defaults to genesis (0) so an unspecified wallet still does a full scan.
+    #[arg(long, value_name = "HEIGHT")]
+    birth_height: Option<String>,
 
     /// Disable log file output (enables console logging as fallback)
     #[arg(long)]
@@ -249,11 +257,14 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         config = config.with_user_agent(user_agent);
     }
 
+    // Resolve the wallet birth height, mapping 'now' to the latest checkpoint.
+    let birth_height = resolve_birth_height(&args.birth_height, config.network)?;
+
     // Create the wallet manager
     let mut wallet_manager = WalletManager::<ManagedWalletInfo>::new(config.network);
     wallet_manager.create_wallet_from_mnemonic(
         mnemonic_phrase.as_str(),
-        0,
+        birth_height,
         key_wallet::wallet::initialization::WalletAccountCreationOptions::default(),
     )?;
     let wallet = Arc::new(tokio::sync::RwLock::new(wallet_manager));
@@ -277,6 +288,27 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     run_client(config, network_manager, storage_manager, wallet).await?;
 
     Ok(())
+}
+
+/// Resolve the `--birth-height` argument into a concrete block height.
+///
+/// `None` means genesis (0). `now`/`latest` resolves to the highest bundled
+/// checkpoint for the network, which is the right anchor for a brand-new wallet
+/// with no prior on-chain history. A numeric value is taken verbatim and gets
+/// snapped to the nearest checkpoint at or before it during sync anchoring.
+fn resolve_birth_height(arg: &Option<String>, network: Network) -> Result<u32, String> {
+    let Some(value) = arg else {
+        return Ok(0);
+    };
+
+    if value == "now" || value == "latest" {
+        return Ok(CheckpointManager::for_network(network)
+            .last_checkpoint()
+            .map(|checkpoint| checkpoint.height)
+            .unwrap_or(0));
+    }
+
+    value.parse::<u32>().map_err(|e| format!("Invalid birth height '{}': {}", value, e))
 }
 
 fn build_client_config(args: &Args, data_dir: PathBuf) -> Result<ClientConfig, String> {
@@ -435,6 +467,36 @@ mod tests {
         let mut argv = vec!["--mnemonic-file", "/dev/null"];
         argv.extend_from_slice(extra);
         parse(&argv).expect("parse")
+    }
+
+    #[test]
+    fn birth_height_resolves_none_now_and_numeric() {
+        // Unspecified means genesis, preserving the full-scan default.
+        assert_eq!(resolve_birth_height(&None, Network::Mainnet).unwrap(), 0);
+
+        // A numeric value is taken verbatim (nearest-checkpoint snapping happens later).
+        assert_eq!(
+            resolve_birth_height(&Some("123456".to_string()), Network::Mainnet).unwrap(),
+            123456
+        );
+
+        // 'now'/'latest' resolve to the highest bundled checkpoint for the network.
+        let latest = CheckpointManager::for_network(Network::Mainnet)
+            .last_checkpoint()
+            .expect("mainnet has checkpoints")
+            .height;
+        assert!(latest > 0);
+        assert_eq!(
+            resolve_birth_height(&Some("now".to_string()), Network::Mainnet).unwrap(),
+            latest
+        );
+        assert_eq!(
+            resolve_birth_height(&Some("latest".to_string()), Network::Mainnet).unwrap(),
+            latest
+        );
+
+        // Non-numeric junk is rejected.
+        assert!(resolve_birth_height(&Some("abc".to_string()), Network::Mainnet).is_err());
     }
 
     #[test]
