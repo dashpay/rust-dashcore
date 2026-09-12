@@ -27,6 +27,12 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
         self.network.lock().await.peer_count()
     }
 
+    /// Snapshot per-peer connection statistics (bytes transferred, ping RTT,
+    /// advertised height).
+    pub async fn peer_stats(&self) -> Vec<crate::network::PeerStatsSnapshot> {
+        self.network.lock().await.peer_stats().await
+    }
+
     /// Disconnect a specific peer.
     pub async fn disconnect_peer(&self, addr: &std::net::SocketAddr, reason: &str) -> Result<()> {
         Ok(self.network.lock().await.disconnect_peer(addr, reason).await?)
