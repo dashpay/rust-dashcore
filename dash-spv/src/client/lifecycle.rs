@@ -52,14 +52,35 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
         // The wallet-derived height is floored at the network minimum: no HD/BIP39 wallet
         // can predate mainnet's activation height, so a low or zero birth height must never
         // drag mainnet sync below it.
-        let start_from_height = match config.start_from_height {
-            Some(height) => Some(height),
+        let required_start_height = match config.start_from_height {
+            Some(height) => height,
             None => {
                 let birth_height = wallet.read().await.earliest_required_height().await;
-                let start = birth_height.max(config.network.hd_wallet_sync_floor());
-                (start > 0).then_some(start)
+                birth_height.max(config.network.hd_wallet_sync_floor())
             }
         };
+        let start_from_height = (required_start_height > 0).then_some(required_start_height);
+
+        // SPV storage is network-scoped rather than wallet-scoped. A wallet created near
+        // the tip can therefore leave a checkpoint-anchored store behind after it is
+        // removed. If an older wallet is imported later, that store cannot serve the
+        // wallet's required history because headers cannot be scanned below its start.
+        //
+        // Clear the whole store before constructing any managers so headers, filter
+        // headers, filters, blocks, metadata, and masternode state are re-anchored
+        // coherently. Stores that already begin at or before the required height remain
+        // valid and are preserved.
+        if let Some(stored_start_height) = storage.get_start_height().await {
+            if stored_start_height > required_start_height {
+                tracing::warn!(
+                    network = ?config.network,
+                    stored_start_height,
+                    required_start_height,
+                    "Persisted SPV store starts after wallet-required height; clearing and re-anchoring"
+                );
+                storage.clear().await.map_err(SpvError::Storage)?;
+            }
+        }
 
         // Initialize genesis block or checkpoint before creating managers,
         // so they can read the tip from storage during construction.
