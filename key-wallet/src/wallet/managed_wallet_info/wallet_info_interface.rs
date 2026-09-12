@@ -20,7 +20,7 @@ use dashcore::address::Payload;
 use dashcore::ephemerealdata::chain_lock::ChainLock;
 use dashcore::ephemerealdata::instant_lock::InstantLock;
 use dashcore::prelude::CoreBlockHeight;
-use dashcore::{Address as DashAddress, ScriptBuf, Transaction, Txid};
+use dashcore::{Address as DashAddress, OutPoint, ScriptBuf, Transaction, Txid};
 
 /// Outcome of [`WalletInfoInterface::apply_chain_lock`].
 ///
@@ -277,6 +277,8 @@ pub trait WalletInfoInterface: Sized + WalletTransactionChecker + ManagedAccount
     /// of ours and still change state by rewriting its context or by the
     /// sweep removing a loser, so this is broader than "a UTXO was marked".
     fn mark_instant_send_utxos(&mut self, txid: &Txid, lock: &InstantLock) -> bool;
+
+    fn unrecorded_spend_heights(&self, tx: &Transaction) -> BTreeSet<CoreBlockHeight>;
 
     /// Return the aggregated monitor revision across all accounts.
     /// Increments whenever the monitored address set changes.
@@ -600,6 +602,21 @@ impl WalletInfoInterface for ManagedWalletInfo {
 
     fn monitor_revision(&self) -> u64 {
         self.accounts.all_accounts().iter().map(|a| a.monitor_revision()).sum()
+    }
+
+    fn unrecorded_spend_heights(&self, tx: &Transaction) -> BTreeSet<CoreBlockHeight> {
+        let txid = tx.txid();
+        (0..tx.output.len() as u32)
+            .map(|vout| OutPoint::new(txid, vout))
+            .filter(|outpoint| {
+                self.accounts
+                    .all_accounts()
+                    .into_iter()
+                    .filter_map(|account| account.as_funds())
+                    .any(|account| account.spent_before_funded.contains_key(outpoint))
+            })
+            .filter_map(|outpoint| self.observed_spent_outpoints.get(&outpoint).copied())
+            .collect()
     }
 }
 
