@@ -1515,15 +1515,6 @@ fn test_get_protx_info(cl: &Client) {
     let protx_info = cl.get_protx_info(&pro_tx_hash, None).unwrap();
 
     let ProTxInfo {
-        pro_tx_hash: _,
-        collateral_hash: _,
-        collateral_index: _,
-        collateral_address: _,
-        operator_reward: _,
-        state: _,
-        confirmations: _,
-        wallet: _,
-        meta_info: _,
         ..
     } = protx_info;
 }

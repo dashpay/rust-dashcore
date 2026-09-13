@@ -1184,10 +1184,12 @@ impl TaprootMerkleBranch {
             Err(TaprootError::InvalidMerkleTreeDepth(sl.len() / TAPROOT_CONTROL_NODE_SIZE))
         } else {
             let inner = sl
-                .chunks_exact(TAPROOT_CONTROL_NODE_SIZE)
+                .as_chunks::<TAPROOT_CONTROL_NODE_SIZE>()
+                .0
+                .iter()
                 .map(|chunk| {
                     TapNodeHash::from_slice(chunk)
-                        .expect("chunks_exact always returns the correct size")
+                        .expect("as_chunks always returns the correct size")
                 })
                 .collect();
 
@@ -1491,7 +1493,7 @@ impl fmt::Display for LeafVersion {
         match (self, f.alternate()) {
             (LeafVersion::TapScript, true) => f.write_str("tapscript"),
             (LeafVersion::TapScript, false) => fmt::Display::fmt(&TAPROOT_LEAF_TAPSCRIPT, f),
-            (LeafVersion::Future(version), true) => write!(f, "future_script_{:#02x}", version.0),
+            (LeafVersion::Future(version), true) => write!(f, "future_script_{:#x}", version.0),
             (LeafVersion::Future(version), false) => fmt::Display::fmt(version, f),
         }
     }
