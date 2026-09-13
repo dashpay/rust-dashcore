@@ -143,13 +143,13 @@ impl<'a> DisplayByteSlice<'a> {
         let mut buf = [0u8; 1024];
         let mut encoder = super::BufEncoder::new(&mut buf);
 
-        let mut chunks = self.bytes.chunks_exact(512);
-        for chunk in &mut chunks {
+        let (chunks, remainder) = self.bytes.as_chunks::<512>();
+        for chunk in chunks {
             encoder.put_bytes(chunk, case);
             f.write_str(encoder.as_str())?;
             encoder.clear();
         }
-        encoder.put_bytes(chunks.remainder(), case);
+        encoder.put_bytes(remainder, case);
         f.write_str(encoder.as_str())
     }
 }
