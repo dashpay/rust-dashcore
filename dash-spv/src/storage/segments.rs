@@ -177,6 +177,10 @@ impl<I: Persistable> SegmentCache<I> {
         let segments_len = self.segments.len();
 
         if self.segments.contains_key(segment_id) {
+            tracing::trace!(
+                "SegmentCache<{}>: segment {segment_id} cache hit",
+                std::any::type_name::<I>()
+            );
             let segment =
                 self.segments.get_mut(segment_id).expect("We already checked that it exists");
             return Ok(segment);
@@ -199,13 +203,23 @@ impl<I: Persistable> SegmentCache<I> {
         // If the segment is queued for deletion, return a fresh empty segment.
         // The next `persist` will atomically overwrite the stale file.
         // Otherwise, load it from disk.
-        let segment = if let Some(segment) = self.evicted.remove(segment_id) {
-            segment
+        let (segment, source) = if let Some(segment) = self.evicted.remove(segment_id) {
+            (segment, "evicted")
         } else if self.to_delete.remove(segment_id) {
-            Segment::new(*segment_id, vec![], SegmentState::Dirty)
+            (Segment::new(*segment_id, vec![], SegmentState::Dirty), "new")
         } else {
-            Segment::load(&self.segments_dir, *segment_id).await?
+            let segment = Segment::load(&self.segments_dir, *segment_id).await?;
+            let source = if segment.state == SegmentState::Clean {
+                "disk"
+            } else {
+                "new"
+            };
+            (segment, source)
         };
+        tracing::trace!(
+            "SegmentCache<{}>: segment {segment_id} cache miss ({source})",
+            std::any::type_name::<I>()
+        );
 
         let segment = self.segments.entry(*segment_id).or_insert(segment);
         Ok(segment)
