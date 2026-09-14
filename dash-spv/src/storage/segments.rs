@@ -76,7 +76,6 @@ impl Persistable for HashedBlock {
 #[derive(Debug)]
 pub struct SegmentCache<I: Persistable> {
     segments: HashMap<u32, Segment<I>>,
-    evicted: HashMap<u32, Segment<I>>,
     tip_height: Option<u32>,
     start_height: Option<u32>,
     segments_dir: PathBuf,
@@ -93,7 +92,6 @@ impl<I: Persistable> SegmentCache<I> {
 
         let mut cache = Self {
             segments: HashMap::with_capacity(Self::MAX_ACTIVE_SEGMENTS),
-            evicted: HashMap::new(),
             tip_height: None,
             start_height: None,
             segments_dir: segments_dir.clone(),
@@ -188,24 +186,20 @@ impl<I: Persistable> SegmentCache<I> {
 
         if segments_len >= Self::MAX_ACTIVE_SEGMENTS {
             let key_to_evict =
-                self.segments.iter_mut().min_by_key(|(_, s)| s.last_accessed).map(|(k, v)| (*k, v));
+                self.segments.iter().min_by_key(|(_, s)| s.last_accessed).map(|(k, _)| *k);
 
-            if let Some((key, _)) = key_to_evict {
-                if let Some(segment) = self.segments.remove(&key) {
-                    if segment.state == SegmentState::Dirty {
-                        self.evicted.insert(key, segment);
-                    }
+            if let Some(key) = key_to_evict {
+                if let Some(segment) = self.segments.get_mut(&key) {
+                    segment.persist(&self.segments_dir).await?;
                 }
+                self.segments.remove(&key);
             }
         }
 
-        // If the segment is already in the to_persist map, load it from there.
         // If the segment is queued for deletion, return a fresh empty segment.
         // The next `persist` will atomically overwrite the stale file.
         // Otherwise, load it from disk.
-        let (segment, source) = if let Some(segment) = self.evicted.remove(segment_id) {
-            (segment, "evicted")
-        } else if self.to_delete.remove(segment_id) {
+        let (segment, source) = if self.to_delete.remove(segment_id) {
             (Segment::new(*segment_id, vec![], SegmentState::Dirty), "new")
         } else {
             let segment = Segment::load(&self.segments_dir, *segment_id).await?;
@@ -453,7 +447,6 @@ impl<I: Persistable> SegmentCache<I> {
 
         for segment_id in (boundary_segment_id + 1)..=max_segment_id {
             self.segments.remove(&segment_id);
-            self.evicted.remove(&segment_id);
             self.to_delete.insert(segment_id);
         }
 
@@ -495,16 +488,14 @@ impl<I: Persistable> SegmentCache<I> {
             Err(e) => return Err(StorageError::Io(e)),
         }
 
-        // Scan succeeded — now it is safe to mutate cache state. Resident and
-        // evicted segments may be dirty and not persisted yet, so the scan
-        // above cannot see them. Queue their ids too; `persist` ignores
-        // missing files.
+        // Scan succeeded — now it is safe to mutate cache state. Resident
+        // segments may be dirty and not persisted yet, so the scan above
+        // cannot see them. Queue their ids too; `persist` ignores missing
+        // files.
         to_delete.extend(self.segments.keys().copied());
-        to_delete.extend(self.evicted.keys().copied());
 
         self.to_delete.extend(to_delete);
         self.segments.clear();
-        self.evicted.clear();
         self.tip_height = None;
         self.start_height = None;
 
@@ -527,14 +518,6 @@ impl<I: Persistable> SegmentCache<I> {
             }
         }
         self.to_delete.extend(failed);
-
-        for (id, segments) in self.evicted.iter_mut() {
-            if let Err(e) = segments.persist(&segments_dir).await {
-                tracing::error!("Failed to persist segment with id {id}: {e}");
-            }
-        }
-
-        self.evicted.clear();
 
         for (id, segments) in self.segments.iter_mut() {
             if let Err(e) = segments.persist(&segments_dir).await {
@@ -781,11 +764,14 @@ mod tests {
             segment.insert(FilterHeader::dummy(i), 0);
         }
 
+        assert!(tmp_dir.path().join(FilterHeader::segment_file_name(0)).exists());
+
         for i in 0..=MAX_SEGMENTS {
             assert_eq!(cache.segments.len(), MAX_SEGMENTS as usize);
 
             let segment = cache.get_segment_mut(&i).await.expect("Failed to load segment");
 
+            assert!(segment.state == SegmentState::Clean);
             assert_eq!(segment.get(0..1), [FilterHeader::dummy(i)]);
         }
     }
