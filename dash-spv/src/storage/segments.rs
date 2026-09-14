@@ -86,7 +86,7 @@ pub struct SegmentCache<I: Persistable> {
 }
 
 impl<I: Persistable> SegmentCache<I> {
-    const MAX_ACTIVE_SEGMENTS: usize = 10;
+    const MAX_ACTIVE_SEGMENTS: usize = 2;
 
     pub async fn load_or_new(segments_dir: impl Into<PathBuf>) -> StorageResult<Self> {
         let segments_dir = segments_dir.into();
