@@ -19,7 +19,7 @@ use dashcore_hashes::Hash;
 
 use crate::{
     error::StorageResult,
-    storage::io::atomic_write,
+    storage::io::atomic_write_items,
     types::{HashedBlock, HashedBlockHeader},
     StorageError,
 };
@@ -648,15 +648,7 @@ impl<I: Persistable> Segment<I> {
             return Err(StorageError::WriteFailed(format!("Failed to persist segment: {}", e)));
         }
 
-        let mut buffer = Vec::new();
-
-        for item in self.items.iter() {
-            item.consensus_encode(&mut buffer).map_err(|e| {
-                StorageError::WriteFailed(format!("Failed to encode segment item: {}", e))
-            })?;
-        }
-
-        atomic_write(&path, &buffer).await?;
+        atomic_write_items(&path, &self.items).await?;
 
         self.state = SegmentState::Clean;
         Ok(())
