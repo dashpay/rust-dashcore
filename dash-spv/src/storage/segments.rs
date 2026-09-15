@@ -27,6 +27,7 @@ use crate::{
 pub trait Persistable: Sized + Encodable + Decodable + PartialEq + Clone {
     const SEGMENT_PREFIX: &'static str = "segment";
     const DATA_FILE_EXTENSION: &'static str = "dat";
+    const ITEMS_PER_SEGMENT: u32;
 
     fn segment_file_name(segment_id: u32) -> String {
         format!("{}_{:04}.{}", Self::SEGMENT_PREFIX, segment_id, Self::DATA_FILE_EXTENSION)
@@ -36,12 +37,16 @@ pub trait Persistable: Sized + Encodable + Decodable + PartialEq + Clone {
 }
 
 impl Persistable for Vec<u8> {
+    const ITEMS_PER_SEGMENT: u32 = 2_000;
+
     fn sentinel() -> Self {
         vec![]
     }
 }
 
 impl Persistable for HashedBlockHeader {
+    const ITEMS_PER_SEGMENT: u32 = 10_000;
+
     fn sentinel() -> Self {
         let header = BlockHeader {
             version: Version::from_consensus(i32::MAX), // Invalid version
@@ -57,12 +62,16 @@ impl Persistable for HashedBlockHeader {
 }
 
 impl Persistable for FilterHeader {
+    const ITEMS_PER_SEGMENT: u32 = 50_000;
+
     fn sentinel() -> Self {
         FilterHeader::from_byte_array([0u8; 32])
     }
 }
 
 impl Persistable for HashedBlock {
+    const ITEMS_PER_SEGMENT: u32 = 1_000;
+
     fn sentinel() -> Self {
         let block = Block {
             header: *HashedBlockHeader::sentinel().header(),
@@ -562,7 +571,7 @@ pub struct Segment<I: Persistable> {
 }
 
 impl<I: Persistable> Segment<I> {
-    const ITEMS_PER_SEGMENT: u32 = 50_000;
+    const ITEMS_PER_SEGMENT: u32 = I::ITEMS_PER_SEGMENT;
 
     fn new(segment_id: u32, mut items: Vec<I>, state: SegmentState) -> Self {
         debug_assert!(items.len() <= Self::ITEMS_PER_SEGMENT as usize);
