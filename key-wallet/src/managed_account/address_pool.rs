@@ -922,7 +922,7 @@ impl AddressPool {
     {
         let mut found = Vec::new();
 
-        for (_, info) in self.addresses.iter_mut() {
+        for info in self.addresses.values_mut() {
             if !info.is_used() && check_fn(&info.address) {
                 info.mark_used();
                 self.used_indices.insert(info.index);

@@ -116,7 +116,7 @@ if [ -z "${BENCH_BATCH:-}" ]; then
   mkdir -p "${OUT_DIR}"
   TSV="${OUT_DIR}/results.tsv"
   REPORT="${OUT_DIR}/report.md"
-  printf 'scenario\tcompleted\ttotal_ms\tblock_headers_ms\tfilter_headers_ms\tfilters_ms\ttransactions\tconfirmed_sat\n' >"${TSV}"
+  printf 'scenario\tcompleted\ttotal_ms\tblock_headers_ms\tfilter_headers_ms\tfilters_ms\ttransactions\tconfirmed_sat\tpeak_rss_mib\n' >"${TSV}"
 
   child_flags=()
   [ "${FLAME}" -eq 1 ] && child_flags+=(--flame)
@@ -139,7 +139,7 @@ if [ -z "${BENCH_BATCH:-}" ]; then
     src="${log}"
     if [ -s "${OUT_DIR}/${name}.summary.txt" ]; then src="${OUT_DIR}/${name}.summary.txt"; fi
     wallet_line="$(grep -m1 -o 'confirmed_sat=[0-9]*' "${src}" || true)"
-    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
       "${name}" \
       "$(metric "${src}" completed)" \
       "$(metric "${src}" total_ms)" \
@@ -148,15 +148,16 @@ if [ -z "${BENCH_BATCH:-}" ]; then
       "$(metric "${src}" filters_ms)" \
       "$(metric "${src}" transactions)" \
       "$(sed -n 's/.*confirmed_sat=\([0-9]*\).*/\1/p' <<<"${wallet_line}")" \
+      "$(metric "${src}" peak_rss_mib)" \
       >>"${TSV}"
   done
 
   {
     echo "# dash-spv bench — ${RUN_TS}"
     echo
-    echo "| scenario | completed | total_ms | headers_ms | filter_headers_ms | filters_ms | transactions | confirmed_sat |"
-    echo "|---|---|---|---|---|---|---|---|"
-    tail -n +2 "${TSV}" | awk -F'\t' '{printf "| %s | %s | %s | %s | %s | %s | %s | %s |\n", $1,$2,$3,$4,$5,$6,$7,$8}'
+    echo "| scenario | completed | total_ms | headers_ms | filter_headers_ms | filters_ms | transactions | confirmed_sat | peak_rss_mib |"
+    echo "|---|---|---|---|---|---|---|---|---|"
+    tail -n +2 "${TSV}" | awk -F'\t' '{printf "| %s | %s | %s | %s | %s | %s | %s | %s | %s |\n", $1,$2,$3,$4,$5,$6,$7,$8,$9}'
   } >"${REPORT}"
 
   echo
