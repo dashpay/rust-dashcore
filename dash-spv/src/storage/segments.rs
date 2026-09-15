@@ -24,7 +24,7 @@ use crate::{
     StorageError,
 };
 
-pub trait Persistable: Sized + Encodable + Decodable + PartialEq + Clone {
+pub(super) trait Persistable: Sized + Encodable + Decodable + PartialEq + Clone {
     const SEGMENT_PREFIX: &'static str = "segment";
     const DATA_FILE_EXTENSION: &'static str = "dat";
     const ITEMS_PER_SEGMENT: u32;
