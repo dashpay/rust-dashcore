@@ -86,7 +86,7 @@ impl Key {
         let key_byte_size: u64 = byte_size - 1;
 
         if key_byte_size > MAX_VEC_SIZE as u64 {
-            return Err(encode::Error::OversizedVectorAllocation {
+            Err(encode::Error::OversizedVectorAllocation {
                 requested: key_byte_size as usize,
                 max: MAX_VEC_SIZE,
             })?;
