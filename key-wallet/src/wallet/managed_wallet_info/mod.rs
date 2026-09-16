@@ -345,23 +345,33 @@ impl ManagedWalletInfo {
     ) -> Vec<TransactionRecord> {
         let mut unmatched = Vec::new();
         for record in records {
-            if let Some(block) = record.context.block_info() {
-                self.record_observed_spends(&record.transaction, block.height());
-            }
-
             let account_type = record.account_type;
+            let observed_spend = record
+                .context
+                .block_info()
+                .map(|block| (record.transaction.clone(), block.height()));
             let account =
                 self.accounts.all_accounts_mut().into_iter().find(|account| {
                     account.managed_account_type().to_account_type() == account_type
                 });
-            match account {
+            let restored = match account {
                 Some(ManagedAccountRefMut::Funds(account)) => {
-                    account.keys_mut().restore_transaction_record(record)
+                    account.keys_mut().restore_transaction_record(record);
+                    true
                 }
                 Some(ManagedAccountRefMut::Keys(account)) => {
-                    account.restore_transaction_record(record)
+                    account.restore_transaction_record(record);
+                    true
                 }
-                None => unmatched.push(record),
+                None => {
+                    unmatched.push(record);
+                    false
+                }
+            };
+            if restored {
+                if let Some((transaction, height)) = observed_spend {
+                    self.record_observed_spends(&transaction, height);
+                }
             }
         }
         self.prune_finalized_observed_spends();

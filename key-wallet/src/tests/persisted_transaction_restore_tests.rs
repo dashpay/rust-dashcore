@@ -143,6 +143,37 @@ fn restored_chainlocked_record_uses_finalized_compaction() {
 }
 
 #[test]
+fn unmatched_record_does_not_restore_wallet_level_spend_state() {
+    let template = TestWalletContext::new_random();
+    let parent = OutPoint {
+        txid: Transaction::dummy(&template.receive_address, 0..1, &[1_000_000]).txid(),
+        vout: 0,
+    };
+    let mut record = spending_record(
+        spend(parent),
+        template.receive_address,
+        TransactionContext::InBlock(BlockInfo::new(
+            50,
+            BlockHash::from_byte_array([0x50; 32]),
+            1_700_000_000,
+        )),
+    );
+    record.account_type = AccountType::Standard {
+        index: 7,
+        standard_account_type: StandardAccountType::BIP44Account,
+    };
+
+    let mut restored = template.managed_wallet;
+    let unmatched = restored.restore_persisted_transactions([record]);
+
+    assert_eq!(unmatched.len(), 1);
+    assert!(
+        !restored.observed_spent_outpoints().contains_key(&parent),
+        "a record rejected for missing account ownership must not mutate wallet spend state"
+    );
+}
+
+#[test]
 fn restored_unconfirmed_records_participate_in_conflict_descendant_sweeps() {
     let template = TestWalletContext::new_random();
     let parent = OutPoint {
