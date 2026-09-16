@@ -348,14 +348,12 @@ impl ManagedCoreFundsAccount {
                                 continue;
                             }
 
-                            // #649 spend-first ordering: the spend was observed in an
-                            // earlier-processed block, so this output is genuinely spent
-                            // on-chain even though this account has never seen it before —
-                            // never insert it, so the record built below is born correct.
+                            // Wallet evidence also covers claims held by other accounts.
+                            // Keep the output details available for later input matching.
                             if observed_spent.blocks_output(&outpoint) {
                                 tracing::debug!(
                                     outpoint = %outpoint,
-                                    "Skipping UTXO already observed spent in an earlier-processed block (#649)"
+                                    "Skipping output blocked by wallet spend evidence"
                                 );
                                 self.spent_before_funded.insert(
                                     outpoint,

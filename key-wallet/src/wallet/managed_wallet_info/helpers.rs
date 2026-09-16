@@ -174,6 +174,17 @@ impl ManagedWalletInfo {
         let losers = conflicted_transactions(&records, tx, context);
         let winner_inputs: HashSet<_> =
             tx.input.iter().map(|input| input.previous_output).collect();
+        let shared_inputs: HashSet<_> = if context.is_instant_send() && !losers.is_empty() {
+            records
+                .iter()
+                .filter(|record| losers.contains(&record.txid))
+                .flat_map(|record| &record.transaction.input)
+                .map(|input| input.previous_output)
+                .filter(|outpoint| winner_inputs.contains(outpoint))
+                .collect()
+        } else {
+            HashSet::new()
+        };
         let mut result = WalletConflictSweep {
             txids: losers.iter().copied().collect(),
             released_outpoints: Vec::new(),
@@ -204,6 +215,18 @@ impl ManagedWalletInfo {
             }
         }
         if !result.txids.is_empty() {
+            if context.is_instant_send() {
+                let accounts = self.accounts.all_accounts();
+                self.unattributed_spent_outpoints.extend(shared_inputs.into_iter().filter(
+                    |outpoint| {
+                        !accounts.iter().any(|account| {
+                            account
+                                .as_funds()
+                                .is_some_and(|funds| funds.is_outpoint_spent(outpoint))
+                        })
+                    },
+                ));
+            }
             self.update_balance();
             // One transaction can be recorded in several accounts, so the
             // per-account results overlap.

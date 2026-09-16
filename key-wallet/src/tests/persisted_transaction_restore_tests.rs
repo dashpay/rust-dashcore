@@ -15,7 +15,7 @@ use crate::wallet::managed_wallet_info::{PersistedWalletState, RestoreError};
 use crate::wallet::ManagedWalletInfo;
 use crate::AccountType;
 use dashcore::hashes::Hash;
-use dashcore::{BlockHash, OutPoint, ScriptBuf, Transaction, TxIn, TxOut, Witness};
+use dashcore::{BlockHash, InstantLock, OutPoint, ScriptBuf, Transaction, TxIn, TxOut, Witness};
 use std::collections::BTreeMap;
 
 fn bip44() -> AccountType {
@@ -695,8 +695,12 @@ async fn should_block_cross_account_funding_with_one_persisted_spend_record_and_
     );
 }
 
+#[test_case::test_case(false; "block_winner")]
+#[test_case::test_case(true; "instant_send_winner")]
 #[tokio::test]
-async fn should_sweep_restored_keys_loser_and_funds_descendant_and_release_extra_input() {
+async fn should_sweep_restored_keys_loser_and_funds_descendant_and_release_extra_input(
+    instant_send: bool,
+) {
     let mut template = TestWalletContext::new_random();
     let funding = Transaction::dummy(&template.receive_address, 0..1, &[1_000_000, 2_000_000]);
     let parent = OutPoint {
@@ -744,12 +748,17 @@ async fn should_sweep_restored_keys_loser_and_funds_descendant_and_release_extra
         .managed_wallet
         .check_core_transaction(
             &competing_spend(parent),
-            context.clone(),
+            if instant_send {
+                TransactionContext::InstantSend(InstantLock::default())
+            } else {
+                context.clone()
+            },
             &mut template.wallet,
             true,
             true,
         )
         .await;
+    assert!(result.new_records.is_empty(), "the external winner has no retained wallet record");
     assert!(result.swept_transactions.contains(&root_txid));
     assert!(result.swept_transactions.contains(&child_txid));
     assert_eq!(result.released_outpoints, vec![extra]);
