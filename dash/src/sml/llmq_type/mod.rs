@@ -49,6 +49,16 @@ pub struct LLMQParams {
     pub recovery_members: u32,
 }
 
+/// Blocks below the tip whose active LLMQ set a signing session picks its quorum
+/// from, per DIP-0007. Type-independent: it applies to every signing session,
+/// ChainLocks among them.
+pub const LLMQ_SIGN_HEIGHT_OFFSET: u32 = 8;
+
+/// Blocks below a quorum's own height whose masternode list its members are
+/// selected from, per DIP-0024. The lag keeps the selection off a block that is
+/// still being mined, which Dash Core needs for evoDB consistency.
+pub const QUORUM_MEMBER_LIST_OFFSET: u32 = 8;
+
 pub const DKG_TEST: DKGParams = DKGParams {
     interval: 24,
     phase_blocks: 2,

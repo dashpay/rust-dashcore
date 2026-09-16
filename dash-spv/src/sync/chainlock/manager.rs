@@ -14,7 +14,9 @@ use std::collections::HashSet;
 use tokio::sync::RwLock;
 
 use crate::error::SyncResult;
-use crate::storage::{BlockHeaderStorage, MetadataStorage};
+use crate::storage::{
+    BlockHeaderStorage, MasternodeStorage, MetadataStorage, PersistentMasternodeStorage,
+};
 use crate::sync::{ChainLockProgress, SyncEvent};
 
 /// Metadata key for persisting the best validated ChainLock.
@@ -36,6 +38,7 @@ pub struct ChainLockManager<H: BlockHeaderStorage, M: MetadataStorage> {
     metadata_storage: Arc<RwLock<M>>,
     /// Masternode engine for BLS signature validation.
     masternode_engine: Arc<RwLock<MasternodeListEngine>>,
+    masternode_storage: Option<Arc<RwLock<PersistentMasternodeStorage<H>>>>,
     /// The best (highest height) validated ChainLock.
     best_chainlock: Option<ChainLock>,
     /// ChainLock hashes that have been requested (to avoid duplicate requests).
@@ -56,12 +59,14 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> ChainLockManager<H, M> {
         header_storage: Arc<RwLock<H>>,
         metadata_storage: Arc<RwLock<M>>,
         masternode_engine: Arc<RwLock<MasternodeListEngine>>,
+        masternode_storage: Option<Arc<RwLock<PersistentMasternodeStorage<H>>>>,
     ) -> Self {
         let mut manager = Self {
             progress: ChainLockProgress::default(),
             header_storage,
             metadata_storage,
             masternode_engine,
+            masternode_storage,
             best_chainlock: None,
             requested_chainlocks: HashSet::new(),
             masternode_ready: false,
@@ -254,6 +259,47 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> ChainLockManager<H, M> {
                     "ChainLock signature verified for height {}",
                     chainlock.block_height
                 );
+                return true;
+            }
+            Err(e) => tracing::debug!(
+                "ChainLock at height {} not verifiable against the retained lists: {}",
+                chainlock.block_height,
+                e
+            ),
+        }
+        drop(engine);
+
+        self.validate_signature_from_storage(chainlock).await
+    }
+
+    async fn validate_signature_from_storage(&self, chainlock: &ChainLock) -> bool {
+        let Some(storage) = &self.masternode_storage else {
+            return false;
+        };
+
+        let signing_height = chainlock.signing_height();
+        let list = match storage.read().await.masternode_list_at_or_before(signing_height).await {
+            Ok(Some(list)) => list,
+            Ok(None) => return false,
+            Err(e) => {
+                tracing::warn!(
+                    "Could not rebuild the masternode list for height {}: {}",
+                    signing_height,
+                    e
+                );
+                return false;
+            }
+        };
+
+        let engine = self.masternode_engine.read().await;
+
+        match engine.verify_chain_lock_with_masternode_list(chainlock, &list) {
+            Ok(()) => {
+                tracing::info!(
+                    "ChainLock signature verified for height {} from a rebuilt list at {}",
+                    chainlock.block_height,
+                    list.known_height
+                );
                 true
             }
             Err(e) => {
@@ -296,10 +342,13 @@ mod tests {
     use crate::storage::{
         DiskStorageManager, PersistentBlockHeaderStorage, PersistentMetadataStorage, StorageManager,
     };
+    use crate::storage::{MasternodeStorage, PersistentMasternodeStorage};
     use crate::sync::{ManagerIdentifier, SyncManager, SyncManagerProgress, SyncState};
+    use crate::test_utils::MockHeaderStorage;
     use crate::Network;
     use dashcore::bls_sig_utils::BLSSignature;
     use dashcore::hashes::Hash;
+    use dashcore::network::message_sml::MnListDiff;
     use dashcore::BlockHash;
 
     type TestChainLockManager =
@@ -309,7 +358,7 @@ mod tests {
         let storage = DiskStorageManager::with_temp_dir().await.unwrap();
         let engine =
             Arc::new(RwLock::new(MasternodeListEngine::default_for_network(Network::Testnet)));
-        ChainLockManager::new(storage.block_headers(), storage.metadata(), engine).await
+        ChainLockManager::new(storage.block_headers(), storage.metadata(), engine, None).await
     }
 
     async fn create_test_manager_with_storage(
@@ -317,7 +366,55 @@ mod tests {
     ) -> TestChainLockManager {
         let engine =
             Arc::new(RwLock::new(MasternodeListEngine::default_for_network(Network::Testnet)));
-        ChainLockManager::new(storage.block_headers(), storage.metadata(), engine).await
+        ChainLockManager::new(storage.block_headers(), storage.metadata(), engine, None).await
+    }
+
+    async fn manager_with_replayable_storage(
+        dir: &tempfile::TempDir,
+        metadata: Arc<RwLock<PersistentMetadataStorage>>,
+    ) -> ChainLockManager<MockHeaderStorage, PersistentMetadataStorage> {
+        let heights = [(0x00u8, 0u32), (0xAA, 100), (0xBB, 200), (0xCC, 300)]
+            .into_iter()
+            .map(|(b, h)| (BlockHash::from_slice(&[b; 32]).unwrap(), h))
+            .collect();
+        let headers = Arc::new(RwLock::new(MockHeaderStorage(heights)));
+        let mut storage =
+            PersistentMasternodeStorage::open(dir.path(), Arc::clone(&headers), Network::Regtest)
+                .await
+                .unwrap();
+        storage.store_diff(100, &MnListDiff::dummy(0x00, 0xAA)).await.unwrap();
+        storage.store_diff(200, &MnListDiff::dummy(0xAA, 0xBB)).await.unwrap();
+        storage.store_diff(300, &MnListDiff::dummy(0xBB, 0xCC)).await.unwrap();
+
+        ChainLockManager::new(
+            headers,
+            metadata,
+            Arc::new(RwLock::new(MasternodeListEngine::default_for_network(Network::Regtest))),
+            Some(Arc::new(RwLock::new(storage))),
+        )
+        .await
+    }
+
+    /// The engine holds no lists, so validation can only get anywhere by falling
+    /// back to a list replayed from storage. That fallback has to ask for the
+    /// height that signed the ChainLock, not the height it locks.
+    #[tokio::test]
+    async fn validation_falls_back_to_storage_at_the_signing_height() {
+        let disk = DiskStorageManager::with_temp_dir().await.unwrap();
+        let dir = tempfile::TempDir::new().unwrap();
+        let manager = manager_with_replayable_storage(&dir, disk.metadata()).await;
+
+        // 205 - 8 = 197, which sits between the lists at 100 and 200. Using the
+        // locked height instead would land in the window above.
+        let chainlock = create_test_chainlock(205);
+        assert!(!manager.validate_signature(&chainlock).await, "a dummy signature cannot verify");
+
+        let storage = manager.masternode_storage.as_ref().expect("storage was wired");
+        assert_eq!(
+            storage.read().await.cached_window().await,
+            Some((100, Some(200))),
+            "the fallback looked up the signing height, not the locked height"
+        );
     }
 
     fn create_test_chainlock(height: u32) -> ChainLock {
