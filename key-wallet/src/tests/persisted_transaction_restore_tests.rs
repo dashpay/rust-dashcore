@@ -40,6 +40,12 @@ fn spend(parent: OutPoint) -> Transaction {
     }
 }
 
+fn competing_spend(parent: OutPoint) -> Transaction {
+    let mut transaction = spend(parent);
+    transaction.output[0].value -= 1_000;
+    transaction
+}
+
 fn spending_record(
     tx: Transaction,
     address: dashcore::Address,
@@ -134,4 +140,44 @@ fn restored_chainlocked_record_uses_finalized_compaction() {
         !account.transactions().contains_key(&claimant_txid),
         "default retention keeps only the finalized txid"
     );
+}
+
+#[test]
+fn restored_unconfirmed_records_participate_in_conflict_descendant_sweeps() {
+    let template = TestWalletContext::new_random();
+    let parent = OutPoint {
+        txid: Transaction::dummy(&template.receive_address, 0..1, &[1_000_000]).txid(),
+        vout: 0,
+    };
+    let root = spend(parent);
+    let root_txid = root.txid();
+    let root_output = OutPoint {
+        txid: root_txid,
+        vout: 0,
+    };
+    let child = spend(root_output);
+    let child_txid = child.txid();
+    let winner = competing_spend(parent);
+
+    let root_record =
+        spending_record(root, template.receive_address.clone(), TransactionContext::Mempool);
+    let child_record =
+        spending_record(child, template.receive_address, TransactionContext::Mempool);
+    let mut restored = template.managed_wallet;
+    assert!(restored.restore_persisted_transactions([root_record, child_record]).is_empty());
+    restored
+        .first_bip44_managed_account_mut()
+        .expect("BIP44 account")
+        .restore_spent_outpoints([parent, root_output]);
+
+    let swept = restored.sweep_conflicts(
+        &winner,
+        &TransactionContext::InBlock(BlockInfo::new(
+            60,
+            BlockHash::from_byte_array([0x60; 32]),
+            1_700_001_000,
+        )),
+    );
+    assert!(swept.txids.contains(&root_txid));
+    assert!(swept.txids.contains(&child_txid));
 }
