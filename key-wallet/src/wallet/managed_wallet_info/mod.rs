@@ -83,16 +83,15 @@ pub struct ManagedWalletInfo {
     ///
     /// # Bounded permanence
     ///
-    /// An entry `(outpoint, height)` is removed only when
-    /// `height <= min(last_applied_chain_lock.block_height, synced_height)` —
-    /// the finality boundary. At that boundary the spend is chain-locked (it can
-    /// never be reorged out) and any funding transaction for the outpoint has
-    /// been delivered (BIP158 filters have no false negatives below
-    /// `synced_height`) and finalized (promoted into `finalized_txids`, or kept
-    /// as a chainlocked record), so every redelivery path short-circuits before
-    /// a coin could be re-inserted — in both `keep-finalized-transactions`
-    /// configurations and across a reload. No other removal path may be added
-    /// without a deliberate decision.
+    /// An entry `(outpoint, height)` is removed only when `height` is at or
+    /// below both `synced_height` and the highest chainlock applied or noted
+    /// (`note_chain_lock_height`) — the finality boundary. At that boundary the
+    /// spend is chain-locked (it can never be reorged out) and any funding
+    /// transaction for the outpoint has been delivered (BIP158 filters have no
+    /// false negatives below `synced_height`), so a redelivery finds the coin
+    /// already spent, or held in `spent_before_funded`, before it could be
+    /// re-inserted. No other removal path may be added without a deliberate
+    /// decision.
     ///
     /// Eviction is event-driven (chainlock application, sync-checkpoint commit),
     /// never age- or recency-based: during an out-of-order rescan `synced_height`
@@ -140,6 +139,8 @@ pub struct ManagedWalletInfo {
     /// fresh process restarts both sides at 0.
     #[cfg_attr(feature = "serde", serde(skip))]
     pub(crate) account_generation: u64,
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub(crate) noted_chain_lock_height: Option<CoreBlockHeight>,
 }
 
 /// Serde adapter for [`ManagedWalletInfo::observed_spent_outpoints`] that
@@ -245,6 +246,7 @@ impl ManagedWalletInfo {
             instant_send_locks: HashSet::new(),
             observed_spent_outpoints: BTreeMap::new(),
             account_generation: 0,
+            noted_chain_lock_height: None,
         }
     }
 
@@ -261,6 +263,7 @@ impl ManagedWalletInfo {
             instant_send_locks: HashSet::new(),
             observed_spent_outpoints: BTreeMap::new(),
             account_generation: 0,
+            noted_chain_lock_height: None,
         }
     }
 
@@ -287,6 +290,7 @@ impl ManagedWalletInfo {
             instant_send_locks: HashSet::new(),
             observed_spent_outpoints: BTreeMap::new(),
             account_generation: 0,
+            noted_chain_lock_height: None,
         }
     }
 
@@ -358,22 +362,23 @@ impl ManagedWalletInfo {
     }
 
     /// Evict [`Self::observed_spent_outpoints`] entries at or below the finality
-    /// boundary `min(last_applied_chain_lock.block_height, synced_height)`.
+    /// boundary: `synced_height`, capped by the highest chainlock applied or noted.
     ///
     /// An entry `(outpoint, height)` with `height <= boundary` is safe to
     /// forget: the spend at that height is chain-locked (never reorged out) and
-    /// any funding transaction for the outpoint has been delivered and finalized,
-    /// so no redelivery path can re-insert the coin (dashpay/rust-dashcore#649).
-    /// No-op until a chainlock has been applied (`last_applied_chain_lock` is
-    /// `None`) — without a finality boundary nothing can be proven final.
+    /// any funding transaction for the outpoint has been delivered, so no
+    /// redelivery path can re-insert the coin (dashpay/rust-dashcore#649).
+    /// No-op until a chainlock has been applied or noted — without a finality
+    /// boundary nothing can be proven final.
     ///
-    /// Called on chainlock application and sync-checkpoint commit; not age- or
-    /// recency-based.
+    /// Called on chainlock application or noting and on sync-checkpoint commit;
+    /// not age- or recency-based.
     pub(crate) fn prune_finalized_observed_spends(&mut self) {
-        let Some(chain_lock) = self.metadata.last_applied_chain_lock.as_ref() else {
+        let applied = self.metadata.last_applied_chain_lock.as_ref().map(|cl| cl.block_height);
+        let Some(final_height) = applied.max(self.noted_chain_lock_height) else {
             return;
         };
-        let boundary = chain_lock.block_height.min(self.metadata.synced_height);
+        let boundary = final_height.min(self.metadata.synced_height);
         self.observed_spent_outpoints.retain(|_, height| *height > boundary);
     }
 
