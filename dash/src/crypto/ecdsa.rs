@@ -14,7 +14,6 @@ use internals::write_err;
 use secp256k1;
 
 use crate::prelude::*;
-use crate::script::PushBytes;
 use crate::sighash::{EcdsaSighashType, NonStandardSighashType};
 
 const MAX_SIG_LEN: usize = 73;
@@ -142,13 +141,6 @@ impl AsMut<[u8]> for SerializedSignature {
     #[inline]
     fn as_mut(&mut self) -> &mut [u8] {
         self
-    }
-}
-
-impl AsRef<PushBytes> for SerializedSignature {
-    #[inline]
-    fn as_ref(&self) -> &PushBytes {
-        &<&PushBytes>::from(&self.data)[..self.len()]
     }
 }
 
