@@ -46,7 +46,7 @@ pub enum RestoreError {
     DuplicateRecord(Txid, AccountType),
     /// More than one unspent coin names the same outpoint.
     DuplicateUtxo(OutPoint),
-    /// A coin's address, script or corresponding transaction output is inconsistent.
+    /// A coin's ownership, script or funding transaction metadata is inconsistent.
     InvalidUtxo(OutPoint),
     /// A coin is simultaneously unspent and claimed spent.
     SpentUtxo(OutPoint),
@@ -143,7 +143,8 @@ impl ManagedWalletInfo {
                                 vout: detail.index,
                             };
                             if matches!(detail.role, OutputRole::Received | OutputRole::Change)
-                                && (self.observed_spent_outpoints.contains_key(&outpoint)
+                                && (record_inputs.contains(&outpoint)
+                                    || self.observed_spent_outpoints.contains_key(&outpoint)
                                     || self.unattributed_spent_outpoints.contains(&outpoint))
                                 && !account_claims.contains(&(record.account_type, outpoint))
                             {
@@ -264,10 +265,12 @@ impl ManagedWalletInfo {
                 return Err(RestoreError::SpentUtxo(utxo.outpoint));
             }
             if (utxo.is_coinbase && utxo.height.checked_add(100).is_none())
+                || !account.contains_address(&utxo.address)
                 || utxo.address.script_pubkey() != utxo.txout.script_pubkey
                 || !utxo.address.as_unchecked().is_valid_for_network(self.network)
                 || transactions.get(&utxo.outpoint.txid).is_some_and(|transaction| {
                     transaction.output.get(utxo.outpoint.vout as usize) != Some(&utxo.txout)
+                        || transaction.is_coin_base() != utxo.is_coinbase
                 })
             {
                 return Err(RestoreError::InvalidUtxo(utxo.outpoint));

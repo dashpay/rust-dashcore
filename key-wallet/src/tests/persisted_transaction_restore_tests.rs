@@ -11,6 +11,7 @@ use crate::transaction_checking::{
     BlockInfo, TransactionContext, TransactionType, WalletTransactionChecker,
 };
 use crate::utxo::Utxo;
+use crate::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
 use crate::wallet::managed_wallet_info::{PersistedWalletState, RestoreError};
 use crate::wallet::ManagedWalletInfo;
 use crate::AccountType;
@@ -788,4 +789,147 @@ fn should_reject_balance_overflow_before_installing_coins() {
         })
         .is_err());
     assert!(wallet.first_bip44_managed_account().unwrap().utxos.is_empty());
+}
+
+#[tokio::test]
+async fn should_preserve_cross_account_input_recognition_after_restore() {
+    let mut template = TestWalletContext::new_random();
+    let other_xpub = template.wallet.accounts.standard_bip32_accounts.get(&0).unwrap().account_xpub;
+    let other_address = template
+        .managed_wallet
+        .first_bip32_managed_account_mut()
+        .unwrap()
+        .next_receive_address(Some(&other_xpub), true)
+        .unwrap();
+    let mut restored = template.managed_wallet.clone();
+    let funding = Transaction::dummy(&template.receive_address, 0..1, &[1_000_000]);
+    let parent = OutPoint {
+        txid: funding.txid(),
+        vout: 0,
+    };
+    let mut spending = spend(parent);
+    spending.output[0].script_pubkey = other_address.script_pubkey();
+    template
+        .managed_wallet
+        .check_core_transaction(
+            &spending,
+            TransactionContext::Mempool,
+            &mut template.wallet,
+            true,
+            true,
+        )
+        .await;
+    let context = TransactionContext::InBlock(BlockInfo::new(
+        40,
+        BlockHash::from_byte_array([40; 32]),
+        1_700_000_000,
+    ));
+    template
+        .managed_wallet
+        .check_core_transaction(&funding, context.clone(), &mut template.wallet, true, true)
+        .await;
+    let records = template
+        .managed_wallet
+        .accounts
+        .all_accounts()
+        .into_iter()
+        .flat_map(|account| account.transactions().values().cloned())
+        .collect();
+    restored
+        .restore_persisted_state(PersistedWalletState {
+            transactions: records,
+            utxos: template
+                .managed_wallet
+                .accounts
+                .all_accounts()
+                .into_iter()
+                .filter_map(|account| account.as_funds())
+                .flat_map(|account| {
+                    account
+                        .utxos
+                        .values()
+                        .cloned()
+                        .map(|utxo| (account.managed_account_type().to_account_type(), utxo))
+                })
+                .collect(),
+            additional_spent_outpoints: template
+                .managed_wallet
+                .observed_spent_outpoints()
+                .iter()
+                .map(|(outpoint, height)| (*outpoint, Some(*height)))
+                .chain([(parent, None)])
+                .collect(),
+        })
+        .unwrap();
+    let live_result = template
+        .managed_wallet
+        .check_core_transaction(&spending, context.clone(), &mut template.wallet, true, true)
+        .await;
+    let restored_result =
+        restored.check_core_transaction(&spending, context, &mut template.wallet, true, true).await;
+    assert_eq!(live_result.new_records.len(), 1);
+    assert_eq!(live_result.new_records[0].account_type, bip44());
+    assert_eq!(live_result.new_records[0].net_amount, -1_000_000);
+    assert_eq!(live_result.new_records[0].input_details.len(), 1);
+    assert_eq!(restored_result.new_records.len(), live_result.new_records.len());
+    let debit = &restored_result.new_records[0];
+    assert_eq!(debit.account_type, bip44());
+    assert_eq!(debit.net_amount, -1_000_000);
+    assert_eq!(debit.input_details.len(), 1);
+    assert_eq!(debit.input_details[0].value, 1_000_000);
+}
+
+#[test]
+fn should_reject_coin_owned_by_another_wallet() {
+    let owner = TestWalletContext::new_random();
+    let mut receiver = TestWalletContext::new_random();
+    assert!(!receiver.bip44_account().contains_address(&owner.receive_address));
+    let tx = Transaction::dummy(&owner.receive_address, 0..1, &[1_000_000]);
+    let outpoint = OutPoint {
+        txid: tx.txid(),
+        vout: 0,
+    };
+    let mut coin = Utxo::new(outpoint, tx.output[0].clone(), owner.receive_address, 100, false);
+    coin.is_confirmed = true;
+    let result = receiver.managed_wallet.restore_persisted_state(PersistedWalletState {
+        utxos: vec![(bip44(), coin)],
+        ..Default::default()
+    });
+    assert_eq!(result, Err(RestoreError::InvalidUtxo(outpoint)));
+    assert!(receiver.bip44_account().utxos.is_empty());
+}
+
+#[test]
+fn should_reject_coinbase_flag_disagreeing_with_record() {
+    let mut receiver = TestWalletContext::new_random();
+    receiver.managed_wallet.update_last_processed_height(100);
+    let mut tx = Transaction::dummy(&receiver.receive_address, 0..1, &[1_000_000]);
+    tx.input[0].previous_output = OutPoint::null();
+    assert!(tx.is_coin_base());
+    let outpoint = OutPoint {
+        txid: tx.txid(),
+        vout: 0,
+    };
+    let mut coin =
+        Utxo::new(outpoint, tx.output[0].clone(), receiver.receive_address.clone(), 100, false);
+    coin.is_confirmed = true;
+    let record = TransactionRecord::new(
+        tx,
+        bip44(),
+        TransactionContext::InBlock(BlockInfo::new(100, BlockHash::all_zeros(), 0)),
+        TransactionType::Standard,
+        TransactionDirection::Incoming,
+        vec![],
+        vec![],
+        1_000_000,
+    );
+    let result = receiver.managed_wallet.restore_persisted_state(PersistedWalletState {
+        transactions: vec![record],
+        utxos: vec![(bip44(), coin)],
+        ..Default::default()
+    });
+    assert_eq!(result, Err(RestoreError::InvalidUtxo(outpoint)));
+    assert!(receiver.bip44_account().utxos.is_empty());
+    assert!(receiver.bip44_account().transactions().is_empty());
+    assert!(receiver.managed_wallet.observed_spent_outpoints().is_empty());
 }
