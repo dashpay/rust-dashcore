@@ -43,6 +43,7 @@ use crate::storage::{
     DiskStorageManager, PersistentBlockHeaderStorage, PersistentFilterHeaderStorage,
     PersistentFilterStorage, StorageManager,
 };
+use crate::test_utils::MockNetworkManager;
 use dashcore::{
     Address, Block, BlockHash, Network, OutPoint, Transaction, TxIn, TxOut, Txid, Witness,
 };
@@ -52,7 +53,6 @@ use key_wallet::managed_account::address_pool::{AddressPool, AddressPoolType, Ke
 use key_wallet::wallet::initialization::WalletAccountCreationOptions;
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
 use key_wallet_manager::WalletManager;
-use tokio::sync::mpsc::unbounded_channel;
 
 /// Deterministic test wallet seed (standard BIP-39 test vector mnemonic).
 const TEST_MNEMONIC: &str =
@@ -202,8 +202,7 @@ async fn drive_to_quiescence(
     blocks: &HashMap<BlockHash, Block>,
     initial_events: Vec<SyncEvent>,
 ) {
-    let (tx, _rx) = unbounded_channel();
-    let requests = RequestSender::new(tx);
+    let network: Arc<dyn NetworkManager> = Arc::new(MockNetworkManager::new());
 
     let mut events = initial_events;
     for _round in 0..64 {
@@ -238,9 +237,8 @@ async fn drive_to_quiescence(
                 new_scripts: result.new_scripts,
                 confirmed_txids,
             };
-            next_events.extend(
-                manager.handle_sync_event(&event, &requests).await.expect("BlockProcessed"),
-            );
+            next_events
+                .extend(manager.handle_sync_event(&event, &network).await.expect("BlockProcessed"));
         }
         events = next_events;
     }
@@ -505,8 +503,7 @@ async fn committed_range_sweep_coalesces_across_batch_commits() {
     // Drive the production event loop to quiescence like `drive_to_quiescence`
     // does, additionally watching for `FiltersSyncComplete` so the completion
     // contract can be asserted at the moment it is emitted.
-    let (tx, _rx) = unbounded_channel();
-    let requests = RequestSender::new(tx);
+    let network: Arc<dyn NetworkManager> = Arc::new(MockNetworkManager::new());
     let mut events = manager.try_process_batch().await.unwrap();
     let mut sync_complete_seen = false;
     'rounds: for _round in 0..64 {
@@ -554,9 +551,8 @@ async fn committed_range_sweep_coalesces_across_batch_commits() {
                 new_scripts: result.new_scripts,
                 confirmed_txids,
             };
-            events.extend(
-                manager.handle_sync_event(&event, &requests).await.expect("BlockProcessed"),
-            );
+            events
+                .extend(manager.handle_sync_event(&event, &network).await.expect("BlockProcessed"));
         }
     }
 

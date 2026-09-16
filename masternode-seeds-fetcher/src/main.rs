@@ -33,12 +33,12 @@ use std::net::{IpAddr, SocketAddr};
 use std::path::PathBuf;
 use std::time::Duration;
 
+use crate::peer::Peer;
 use anyhow::{Context, Result, anyhow};
 use clap::Parser;
 use dash_network_seeds::{
     CoreStatus, MasternodeSeed, MasternodeType, PlatformStatus, Reachability,
 };
-use dash_spv::network::Peer;
 use dashcore::hashes::Hash;
 use dashcore::network::Address;
 use dashcore::network::constants::ServiceFlags;
@@ -53,6 +53,7 @@ use std::sync::Arc;
 use tokio::sync::Semaphore;
 use tokio::time::Instant;
 
+mod peer;
 mod probe;
 
 // ---------- CLI ----------
@@ -256,7 +257,7 @@ async fn fetch_from_peer(peer_addr: SocketAddr, network: Network) -> Result<MnLi
     .with_context(|| format!("sending getmnlistd to {}", peer_addr))?;
 
     let diff = wait_for_message(&mut peer, Duration::from_secs(120), |m| match m {
-        NetworkMessage::MnListDiff(d) => Some(d.clone()),
+        NetworkMessage::MnListDiff(d) => Some((*d).clone()),
         _ => None,
     })
     .await

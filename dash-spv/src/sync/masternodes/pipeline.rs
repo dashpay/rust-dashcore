@@ -1,57 +1,34 @@
 //! MnListDiff pipeline implementation.
 //!
-//! Handles pipelined download of MnListDiff messages for quorum validation.
-//! Uses DownloadCoordinator for request tracking with timeout and retry logic.
+//! Declares wanted MnListDiff requests (keyed by target block hash) to the
+//! network manager (the broker). The broker owns pacing, de-duplication,
+//! timeouts and retries — this pipeline keeps no in-flight queue of its own and
+//! simply tracks which `(base, target)` diffs are still wanted.
 
 use std::collections::HashMap;
-use std::time::Duration;
+use std::sync::Arc;
 
 use crate::error::SyncResult;
-use crate::network::RequestSender;
-use crate::sync::download_coordinator::{DownloadConfig, DownloadCoordinator};
-use dashcore::network::message_sml::MnListDiff;
+use crate::network::NetworkManager;
+use dashcore::network::message::NetworkMessage;
+use dashcore::network::message_sml::{GetMnListDiff, MnListDiff};
 use dashcore::BlockHash;
-
-/// Maximum concurrent MnListDiff requests.
-const MAX_CONCURRENT_MNLISTDIFF: usize = 20;
-
-/// Timeout for MnListDiff requests.
-const MNLISTDIFF_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// Pipeline for downloading MnListDiff messages for quorum validation.
 ///
-/// Uses `DownloadCoordinator<BlockHash>` for request tracking (keyed by target block_hash),
-/// with a HashMap to store the base hash for each request.
-#[derive(Debug)]
+/// Holds no request queue of its own: the `base_hashes` map (target -> base) is
+/// the "wanted" set. A diff is wanted for exactly as long as it sits in this map;
+/// `receive` removes it. The broker de-duplicates, paces, times out and retries.
+#[derive(Debug, Default)]
 pub(super) struct MnListDiffPipeline {
-    /// Core coordinator tracks requests by target block_hash.
-    coordinator: DownloadCoordinator<BlockHash>,
-    /// Maps target_hash -> base_hash for each request.
+    /// Wanted requests: target_hash -> base_hash. Doubles as the "is this diff
+    /// wanted?" set for validating arrivals.
     base_hashes: HashMap<BlockHash, BlockHash>,
 }
 
-impl Default for MnListDiffPipeline {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl MnListDiffPipeline {
-    /// Create a new MnListDiff pipeline.
-    pub(super) fn new() -> Self {
-        Self {
-            coordinator: DownloadCoordinator::new(
-                DownloadConfig::default()
-                    .with_max_concurrent(MAX_CONCURRENT_MNLISTDIFF)
-                    .with_timeout(MNLISTDIFF_TIMEOUT),
-            ),
-            base_hashes: HashMap::new(),
-        }
-    }
-
     /// Clear all state.
     pub(super) fn clear(&mut self) {
-        self.coordinator.clear();
         self.base_hashes.clear();
     }
 
@@ -60,7 +37,6 @@ impl MnListDiffPipeline {
     /// Each request is a (base_hash, target_hash) pair.
     pub(super) fn queue_requests(&mut self, requests: Vec<(BlockHash, BlockHash)>) {
         for (base_hash, target_hash) in requests {
-            self.coordinator.enqueue([target_hash]);
             self.base_hashes.insert(target_hash, base_hash);
         }
 
@@ -69,104 +45,67 @@ impl MnListDiffPipeline {
         }
     }
 
-    /// Send pending requests.
+    /// Declare every wanted MnListDiff to the network manager.
     ///
-    /// Returns the number of requests sent.
-    pub(super) fn send_pending(&mut self, requests: &RequestSender) -> SyncResult<()> {
-        let count = self.coordinator.available_to_send();
-        if count == 0 {
+    /// Fired freely (on queue, on tick): the broker de-duplicates, so re-declaring
+    /// a diff already queued or on the wire is a no-op, and it owns pacing and
+    /// retry. Re-declaring each tick is the safety net if a peer drops.
+    pub(super) async fn send_pending(
+        &mut self,
+        network: &Arc<dyn NetworkManager>,
+    ) -> SyncResult<()> {
+        if self.base_hashes.is_empty() {
             return Ok(());
         }
 
-        let target_hashes = self.coordinator.take_pending(count);
+        // Collect first so no borrow of `self` is held across the awaits.
+        let requests: Vec<(BlockHash, BlockHash)> =
+            self.base_hashes.iter().map(|(target, base)| (*base, *target)).collect();
 
-        for target_hash in target_hashes {
-            let Some(&base_hash) = self.base_hashes.get(&target_hash) else {
-                tracing::warn!("Missing base hash for target {}, skipping", target_hash);
-                continue;
-            };
-
-            requests.request_mnlist_diff(base_hash, target_hash)?;
-            self.coordinator.mark_sent(&[target_hash]);
-
+        for (base_block_hash, block_hash) in requests {
+            network
+                .send(NetworkMessage::GetMnListD(GetMnListDiff {
+                    base_block_hash,
+                    block_hash,
+                }))
+                .await;
             tracing::trace!(
-                "Sent GetMnListDiff: base={}, target={} ({} active, {} pending)",
-                base_hash,
-                target_hash,
-                self.coordinator.active_count(),
-                self.coordinator.pending_count()
+                "Declared GetMnListDiff: base={}, target={}",
+                base_block_hash,
+                block_hash
             );
         }
 
         Ok(())
     }
 
-    /// Check if response matches an in-flight request.
+    /// Check if response matches a still-wanted request.
     pub(super) fn match_response(&self, diff: &MnListDiff) -> bool {
-        self.coordinator.is_in_flight(&diff.block_hash)
+        self.base_hashes.contains_key(&diff.block_hash)
     }
 
-    /// Receive a MnListDiff response.
+    /// Receive a MnListDiff response, removing it from the wanted set.
     ///
     /// Returns true if the diff was expected, false if unexpected.
     pub(super) fn receive(&mut self, diff: &MnListDiff) -> bool {
         let target_hash = diff.block_hash;
 
-        if !self.coordinator.receive(&target_hash) {
+        if self.base_hashes.remove(&target_hash).is_none() {
             return false;
         }
-
-        self.base_hashes.remove(&target_hash);
 
         tracing::debug!(
             "Received MnListDiff for {} ({} remaining)",
             target_hash,
-            self.coordinator.remaining()
+            self.base_hashes.len()
         );
 
         true
     }
 
-    /// Requeue a received MnListDiff for retry.
-    ///
-    /// Removes from in-flight tracking and pushes back to the front of the
-    /// pending queue.
-    pub(super) fn requeue(&mut self, diff: &MnListDiff) {
-        let target_hash = diff.block_hash;
-
-        // Remove from in-flight
-        self.coordinator.receive(&target_hash);
-
-        // Re-enqueue for retry
-        self.coordinator.enqueue_retry(target_hash);
-        tracing::debug!("Requeued MnListDiff for {} for retry", diff.block_hash);
-    }
-
-    /// Move in-flight `getmnlistd` requests back to pending after a peer
-    /// disconnect so the next `send_pending` reissues them.
-    ///
-    /// `base_hashes` must survive, since `send_pending` drops a pending target
-    /// hash that has no base hash to pair it with.
-    pub(super) fn requeue_in_flight(&mut self) {
-        self.coordinator.requeue_in_flight();
-    }
-
-    /// Handle timeouts, re-queuing timed out requests.
-    pub(super) fn handle_timeouts(&mut self) {
-        for target_hash in self.coordinator.check_timeouts() {
-            self.coordinator.enqueue_retry(target_hash);
-        }
-    }
-
     /// Check if pipeline has no pending work.
     pub(super) fn is_complete(&self) -> bool {
-        self.coordinator.is_empty()
-    }
-
-    /// Get the number of in-flight requests.
-    #[cfg(test)]
-    pub(super) fn active_count(&self) -> usize {
-        self.coordinator.active_count()
+        self.base_hashes.is_empty()
     }
 }
 
@@ -177,10 +116,6 @@ mod tests {
     use dashcore_hashes::Hash;
 
     use super::*;
-    use crate::network::NetworkRequest;
-    use dashcore::network::message::NetworkMessage;
-    use dashcore::network::message_sml::GetMnListDiff;
-    use tokio::sync::mpsc::unbounded_channel;
 
     /// Create a minimal MnListDiff for testing.
     fn create_test_diff(base_hash: BlockHash, target_hash: BlockHash) -> MnListDiff {
@@ -219,14 +154,13 @@ mod tests {
 
     #[test]
     fn test_pipeline_new() {
-        let pipeline = MnListDiffPipeline::new();
+        let pipeline = MnListDiffPipeline::default();
         assert!(pipeline.is_complete());
-        assert_eq!(pipeline.active_count(), 0);
     }
 
     #[test]
     fn test_queue_requests() {
-        let mut pipeline = MnListDiffPipeline::new();
+        let mut pipeline = MnListDiffPipeline::default();
 
         let base1 = BlockHash::from_byte_array([0x01; 32]);
         let target1 = BlockHash::from_byte_array([0x02; 32]);
@@ -236,7 +170,6 @@ mod tests {
         pipeline.queue_requests(vec![(base1, target1), (base2, target2)]);
 
         assert!(!pipeline.is_complete());
-        assert_eq!(pipeline.coordinator.pending_count(), 2);
         assert_eq!(pipeline.base_hashes.len(), 2);
         assert_eq!(pipeline.base_hashes.get(&target1), Some(&base1));
         assert_eq!(pipeline.base_hashes.get(&target2), Some(&base2));
@@ -244,18 +177,14 @@ mod tests {
 
     #[test]
     fn test_match_response() {
-        let mut pipeline = MnListDiffPipeline::new();
+        let mut pipeline = MnListDiffPipeline::default();
 
         let base = BlockHash::from_byte_array([0x01; 32]);
         let target = BlockHash::from_byte_array([0x02; 32]);
 
         pipeline.queue_requests(vec![(base, target)]);
 
-        // Take and mark as sent
-        let items = pipeline.coordinator.take_pending(1);
-        pipeline.coordinator.mark_sent(&items);
-
-        // Create a test diff
+        // A queued (wanted) diff matches.
         let diff = create_test_diff(base, target);
         assert!(pipeline.match_response(&diff));
 
@@ -266,16 +195,12 @@ mod tests {
 
     #[test]
     fn test_receive() {
-        let mut pipeline = MnListDiffPipeline::new();
+        let mut pipeline = MnListDiffPipeline::default();
 
         let base = BlockHash::from_byte_array([0x01; 32]);
         let target = BlockHash::from_byte_array([0x02; 32]);
 
         pipeline.queue_requests(vec![(base, target)]);
-
-        // Take and mark as sent
-        let items = pipeline.coordinator.take_pending(1);
-        pipeline.coordinator.mark_sent(&items);
 
         let diff = create_test_diff(base, target);
         assert!(pipeline.receive(&diff));
@@ -285,7 +210,7 @@ mod tests {
 
     #[test]
     fn test_receive_unexpected() {
-        let mut pipeline = MnListDiffPipeline::new();
+        let mut pipeline = MnListDiffPipeline::default();
 
         let diff = create_test_diff(
             BlockHash::from_byte_array([0x01; 32]),
@@ -297,8 +222,25 @@ mod tests {
     }
 
     #[test]
+    fn test_receive_duplicate() {
+        let mut pipeline = MnListDiffPipeline::default();
+
+        let base = BlockHash::from_byte_array([0x01; 32]);
+        let target = BlockHash::from_byte_array([0x02; 32]);
+
+        pipeline.queue_requests(vec![(base, target)]);
+        let diff = create_test_diff(base, target);
+
+        // First receive removes it from the wanted set.
+        assert!(pipeline.receive(&diff));
+        // Duplicate receive: no longer wanted.
+        assert!(!pipeline.receive(&diff));
+        assert!(pipeline.is_complete());
+    }
+
+    #[test]
     fn test_clear() {
-        let mut pipeline = MnListDiffPipeline::new();
+        let mut pipeline = MnListDiffPipeline::default();
 
         let base = BlockHash::from_byte_array([0x01; 32]);
         let target = BlockHash::from_byte_array([0x02; 32]);
@@ -308,117 +250,5 @@ mod tests {
 
         assert!(pipeline.is_complete());
         assert!(pipeline.base_hashes.is_empty());
-    }
-
-    #[test]
-    fn test_handle_timeouts() {
-        use std::time::Duration;
-
-        let mut pipeline = MnListDiffPipeline {
-            coordinator: DownloadCoordinator::new(
-                DownloadConfig::default().with_timeout(Duration::from_millis(1)),
-            ),
-            base_hashes: HashMap::new(),
-        };
-
-        let base = BlockHash::from_byte_array([0x01; 32]);
-        let target = BlockHash::from_byte_array([0x02; 32]);
-
-        pipeline.base_hashes.insert(target, base);
-        pipeline.coordinator.mark_sent(&[target]);
-
-        std::thread::sleep(Duration::from_millis(5));
-
-        // Timeout re-queues the request, base_hashes preserved
-        pipeline.handle_timeouts();
-        assert_eq!(pipeline.coordinator.pending_count(), 1);
-        assert!(pipeline.base_hashes.contains_key(&target));
-    }
-
-    #[test]
-    fn test_requeue_puts_back_in_pending() {
-        let mut pipeline = MnListDiffPipeline::new();
-
-        let base = BlockHash::from_byte_array([0x01; 32]);
-        let target = BlockHash::from_byte_array([0x02; 32]);
-
-        pipeline.queue_requests(vec![(base, target)]);
-
-        // Take and mark as sent (simulates sending the request)
-        let items = pipeline.coordinator.take_pending(1);
-        pipeline.coordinator.mark_sent(&items);
-        assert_eq!(pipeline.active_count(), 1);
-        assert_eq!(pipeline.coordinator.pending_count(), 0);
-
-        let diff = create_test_diff(base, target);
-
-        // Requeue should move from in-flight back to pending
-        pipeline.requeue(&diff);
-        assert_eq!(pipeline.active_count(), 0);
-        assert_eq!(pipeline.coordinator.pending_count(), 1);
-        // base_hash mapping should be preserved for the retry
-        assert!(pipeline.base_hashes.contains_key(&target));
-        // Pipeline should not be considered complete
-        assert!(!pipeline.is_complete());
-    }
-
-    /// A peer disconnect requeues every in-flight request, and each one must be
-    /// reissued with the base hash it was originally paired with.
-    #[test]
-    fn test_requeue_in_flight_reissues_with_base_hashes() {
-        let mut pipeline = MnListDiffPipeline::new();
-
-        let base1 = BlockHash::from_byte_array([0x01; 32]);
-        let target1 = BlockHash::from_byte_array([0x02; 32]);
-        let base2 = BlockHash::from_byte_array([0x03; 32]);
-        let target2 = BlockHash::from_byte_array([0x04; 32]);
-
-        pipeline.queue_requests(vec![(base1, target1), (base2, target2)]);
-
-        let (tx, mut rx) = unbounded_channel();
-        let requests = RequestSender::new(tx);
-        pipeline.send_pending(&requests).unwrap();
-        assert_eq!(pipeline.active_count(), 2);
-        while rx.try_recv().is_ok() {}
-
-        pipeline.requeue_in_flight();
-        assert_eq!(pipeline.active_count(), 0);
-        assert_eq!(pipeline.coordinator.pending_count(), 2);
-
-        pipeline.send_pending(&requests).unwrap();
-        assert_eq!(pipeline.active_count(), 2);
-
-        let mut reissued = Vec::new();
-        while let Ok(request) = rx.try_recv() {
-            match request {
-                NetworkRequest::SendMessage(NetworkMessage::GetMnListD(GetMnListDiff {
-                    base_block_hash,
-                    block_hash,
-                })) => reissued.push((base_block_hash, block_hash)),
-                other => panic!("Expected GetMnListD, got {:?}", other),
-            }
-        }
-        reissued.sort();
-        let mut expected = vec![(base1, target1), (base2, target2)];
-        expected.sort();
-        assert_eq!(reissued, expected);
-    }
-
-    #[test]
-    fn test_requeue_always_succeeds() {
-        let mut pipeline = MnListDiffPipeline::new();
-
-        let base = BlockHash::from_byte_array([0x01; 32]);
-        let target = BlockHash::from_byte_array([0x02; 32]);
-
-        pipeline.base_hashes.insert(target, base);
-        pipeline.coordinator.mark_sent(&[target]);
-
-        let diff = create_test_diff(base, target);
-
-        // Requeue always succeeds
-        pipeline.requeue(&diff);
-        assert!(pipeline.base_hashes.contains_key(&target));
-        assert_eq!(pipeline.coordinator.pending_count(), 1);
     }
 }
