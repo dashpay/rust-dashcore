@@ -335,7 +335,7 @@ fn parse_and_verify_keys(
             inner: ext_derived.private_key,
         };
         assert_eq!(wif_priv, derived_priv);
-        let derived_pub = derived_priv.public_key(&secp);
+        let derived_pub = derived_priv.public_key();
         key_map.insert(derived_pub, derived_priv);
     }
     key_map

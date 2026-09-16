@@ -347,8 +347,6 @@ mod tests {
     /// Expected serialized bytes: "038fc16b080000000000000001"
     #[test]
     fn test_bloom_create_insert_key() {
-        let secp = secp256k1::Secp256k1::new();
-
         // Private key from Dash Core test WIF: 7sQb6QHALg4XyHsJHsSNXnEHGhZfzTTUPJXJqaqK7CavQkiL9Ms
         let privkey_bytes: [u8; 32] =
             hex::decode("f49addfd726a59abde172c86452f5f73038a02f4415878dc14934175e8418aff")
@@ -358,7 +356,7 @@ mod tests {
         let secret_key = secp256k1::SecretKey::from_secret_bytes(privkey_bytes).unwrap();
         let privkey =
             PrivateKey::new_uncompressed(secret_key, crate::network::constants::Network::Mainnet);
-        let pubkey = privkey.public_key(&secp256k1::Secp256k1::new());
+        let pubkey = privkey.public_key();
 
         let mut filter = BloomFilter::new(2, 0.001, 0, BloomFlags::All).unwrap();
 

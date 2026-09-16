@@ -2840,7 +2840,7 @@ mod tests {
         assert_eq!(pub_key.inner, ext_pub.public_key);
 
         // Verify the keys match
-        let pub_from_priv = dashcore::PublicKey::from_private_key(&secp, &priv_key);
+        let pub_from_priv = dashcore::PublicKey::from_private_key(&priv_key);
         assert_eq!(pub_key.inner, pub_from_priv.inner);
     }
 }

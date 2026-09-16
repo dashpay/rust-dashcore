@@ -308,7 +308,7 @@ impl PartiallySignedTransaction {
                 hash_ty: sighash_ty,
             };
 
-            let pk = sk.public_key(secp);
+            let pk = sk.public_key();
 
             input.partial_sigs.insert(pk, sig);
             used.push(pk);
@@ -1701,7 +1701,7 @@ mod tests {
         let sk =
             SecretKey::from_secret_bytes(secret_key_bytes).expect("32 bytes, within curve order");
         let priv_key = PrivateKey::new(sk, crate::Network::Regtest);
-        let pk = PublicKey::from_private_key(&secp, &priv_key);
+        let pk = PublicKey::from_private_key(&priv_key);
 
         (priv_key, pk, secp)
     }

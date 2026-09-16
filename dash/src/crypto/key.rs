@@ -299,11 +299,8 @@ impl PublicKey {
     }
 
     /// Computes the public key as supposed to be used with this secret
-    pub fn from_private_key<C: secp256k1::Signing>(
-        secp: &Secp256k1<C>,
-        sk: &PrivateKey,
-    ) -> PublicKey {
-        sk.public_key(secp)
+    pub fn from_private_key(sk: &PrivateKey) -> PublicKey {
+        sk.public_key()
     }
 }
 
@@ -373,10 +370,10 @@ impl PrivateKey {
     }
 
     /// Creates a public key from this private key
-    pub fn public_key<C: secp256k1::Signing>(&self, secp: &Secp256k1<C>) -> PublicKey {
+    pub fn public_key(&self) -> PublicKey {
         PublicKey {
             compressed: self.compressed,
-            inner: secp256k1::PublicKey::from_secret_key(&self.inner),
+            inner: self.inner.public_key(),
         }
     }
 
@@ -613,8 +610,7 @@ pub type UntweakedKeyPair = Keypair;
 /// ```
 /// # #[cfg(feature = "rand-std")] {
 /// # use dashcore::key::{Keypair, TweakedKeyPair, TweakedPublicKey};
-/// # use dashcore::secp256k1::{rand, Secp256k1};
-/// # let secp = Secp256k1::new();
+/// # use dashcore::secp256k1::rand;
 /// # let keypair = TweakedKeyPair::dangerous_assume_tweaked(Keypair::new(&mut rand::rng()));
 /// // There are various conversion methods available to get a tweaked pubkey from a tweaked keypair.
 /// let (_pk, _parity) = keypair.public_parts();
@@ -646,11 +642,7 @@ pub trait TapTweak {
     ///
     /// # Returns
     /// The tweaked key and its parity.
-    fn tap_tweak<C: Verification>(
-        self,
-        secp: &Secp256k1<C>,
-        merkle_root: Option<TapNodeHash>,
-    ) -> Self::TweakedAux;
+    fn tap_tweak(self, merkle_root: Option<TapNodeHash>) -> Self::TweakedAux;
 
     /// Directly converts an [`UntweakedPublicKey`] to a [`TweakedPublicKey`]
     ///
@@ -675,11 +667,7 @@ impl TapTweak for UntweakedPublicKey {
     ///
     /// # Returns
     /// The tweaked key and its parity.
-    fn tap_tweak<C: Verification>(
-        self,
-        secp: &Secp256k1<C>,
-        merkle_root: Option<TapNodeHash>,
-    ) -> (TweakedPublicKey, Parity) {
+    fn tap_tweak(self, merkle_root: Option<TapNodeHash>) -> (TweakedPublicKey, Parity) {
         let tweak = TapTweakHash::from_key_and_tweak(self, merkle_root).to_scalar();
         let (output_key, parity) = self.add_tweak(&tweak).expect("Tap tweak failed");
 
@@ -708,11 +696,7 @@ impl TapTweak for UntweakedKeyPair {
     ///
     /// # Returns
     /// The tweaked key and its parity.
-    fn tap_tweak<C: Verification>(
-        self,
-        secp: &Secp256k1<C>,
-        merkle_root: Option<TapNodeHash>,
-    ) -> TweakedKeyPair {
+    fn tap_tweak(self, merkle_root: Option<TapNodeHash>) -> TweakedKeyPair {
         let (pubkey, _parity) = XOnlyPublicKey::from_keypair(&self);
         let tweak = TapTweakHash::from_key_and_tweak(pubkey, merkle_root).to_scalar();
         let tweaked = self.add_xonly_tweak(&tweak).expect("Tap tweak failed");
@@ -807,7 +791,6 @@ mod tests {
     use std::str::FromStr;
 
     use hashes::hex::FromHex;
-    use secp256k1::Secp256k1;
 
     use super::*;
     use crate::Network::{Mainnet, Testnet};
@@ -823,8 +806,7 @@ mod tests {
         assert!(sk.compressed);
         assert_eq!(&sk.to_wif(), "cVt4o7BGAig1UXywgGSmARhxMdzP5qvQsxKkSsc1XEkw3tDTQFpy");
 
-        let secp = Secp256k1::new();
-        let pk = Address::p2pkh(&sk.public_key(&secp), sk.network);
+        let pk = Address::p2pkh(&sk.public_key(), sk.network);
         assert_eq!(&pk.to_string(), "yWkKX7a2WGr14hRyr4rC6NUC8n5F4dX3zr");
 
         // test string conversion
@@ -840,8 +822,7 @@ mod tests {
         assert!(!sk.compressed);
         assert_eq!(&sk.to_wif(), "7sU7MdjMtaLYxC4ec2z1zkhzZVBwRzZUcU6gJRzJ94s6UzAwA8c");
 
-        let secp = Secp256k1::new();
-        let mut pk = sk.public_key(&secp);
+        let mut pk = sk.public_key();
         assert!(!pk.compressed);
         assert_eq!(
             &pk.to_string(),
@@ -922,9 +903,8 @@ mod tests {
             0xe9, 0x71, 0xd8, 0x6b, 0x5e, 0x61, 0x87, 0x5d,
         ];
 
-        let s = Secp256k1::new();
         let sk = PrivateKey::from_str(KEY_WIF).unwrap();
-        let pk = PublicKey::from_private_key(&s, &sk);
+        let pk = PublicKey::from_private_key(&sk);
         let pk_u = PublicKey {
             inner: pk.inner,
             compressed: false,
@@ -1133,7 +1113,6 @@ mod tests {
     fn public_key_constructors() {
         use secp256k1::rand;
 
-        let secp = Secp256k1::new();
         let kp = Keypair::new(&mut rand::rng());
 
         let _ = PublicKey::new(kp);

@@ -24,11 +24,10 @@
 //! ```rust
 //! # #[cfg(feature = "rand-std")] {
 //! use dashcore::{Address, PublicKey, Network};
-//! use dashcore::secp256k1::{rand, Secp256k1};
+//! use dashcore::secp256k1::{self, rand};
 //!
 //! // Generate random key pair.
-//! let s = Secp256k1::new();
-//! let public_key = PublicKey::new(s.generate_keypair(&mut rand::rng()).1);
+//! let public_key = PublicKey::new(secp256k1::generate_keypair(&mut rand::rng()).1);
 //!
 //! // Generate pay-to-pubkey-hash address.
 //! let address = Address::p2pkh(&public_key, Network::Mainnet);
@@ -65,7 +64,7 @@ use crate::taproot::TapNodeHash;
 use bech32;
 use hashes::{Hash, HashEngine, sha256};
 use internals::write_err;
-use secp256k1::{Secp256k1, Verification, XOnlyPublicKey};
+use secp256k1::XOnlyPublicKey;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
@@ -585,12 +584,8 @@ impl Payload {
     }
 
     /// Create a pay to taproot payload from untweaked key
-    pub fn p2tr<C: Verification>(
-        secp: &Secp256k1<C>,
-        internal_key: UntweakedPublicKey,
-        merkle_root: Option<TapNodeHash>,
-    ) -> Payload {
-        let (output_key, _parity) = internal_key.tap_tweak(secp, merkle_root);
+    pub fn p2tr(internal_key: UntweakedPublicKey, merkle_root: Option<TapNodeHash>) -> Payload {
+        let (output_key, _parity) = internal_key.tap_tweak(merkle_root);
         let prog = WitnessProgram::new(WitnessVersion::V1, output_key.to_inner().to_byte_array())
             .expect("taproot output key has len 32 <= 40");
         Payload::WitnessProgram(prog)
@@ -1111,13 +1106,12 @@ impl Address {
     }
 
     /// Creates a pay to taproot address from an untweaked key.
-    pub fn p2tr<C: Verification>(
-        secp: &Secp256k1<C>,
+    pub fn p2tr(
         internal_key: UntweakedPublicKey,
         merkle_root: Option<TapNodeHash>,
         network: Network,
     ) -> Address {
-        Address::new(network, Payload::p2tr(secp, internal_key, merkle_root))
+        Address::new(network, Payload::p2tr(internal_key, merkle_root))
     }
 
     /// Creates a pay to taproot address from a pre-tweaked output key.
@@ -1942,8 +1936,7 @@ mod tests {
             "cc8a4bc64d897bddc5fbc2f670f7a8ba0b386779106cf1223c6fc5d7cd6fc115",
         )
         .unwrap();
-        let secp = Secp256k1::verification_only();
-        let address = Address::p2tr(&secp, internal_key, None, Network::Mainnet);
+        let address = Address::p2tr(internal_key, None, Network::Mainnet);
         assert_eq!(
             address.to_string(),
             "ds1p5cyxnuxmeuwuvkwfem96lqzszd02n6xdcjrs20cac6yqjjwudpxqq9xzlq"

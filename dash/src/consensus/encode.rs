@@ -1495,12 +1495,12 @@ mod tests {
     #[test]
     #[cfg(feature = "rand-std")]
     fn serialization_round_trips() {
-        use secp256k1::rand::{self, Rng};
+        use secp256k1::rand::{Rng, rng};
 
         macro_rules! round_trip {
             ($($val_type:ty),*) => {
                 $(
-                    let r: $val_type = rand::rng().random();
+                    let r: $val_type = rng().random();
                     assert_eq!(deserialize::<$val_type>(&serialize(&r)).unwrap(), r);
                 )*
             };
@@ -1508,7 +1508,7 @@ mod tests {
         macro_rules! round_trip_bytes {
             ($(($val_type:ty, $data:expr)),*) => {
                 $(
-                    rand::rng().fill(&mut $data[..]);
+                    rng().fill(&mut $data[..]);
                     assert_eq!(deserialize::<$val_type>(&serialize(&$data)).unwrap()[..], $data[..]);
                 )*
             };
@@ -1523,7 +1523,7 @@ mod tests {
 
             data.clear();
             data64.clear();
-            let len = rand::rng().random_range(1..256);
+            let len = rng().random_range(1..256);
             data.resize(len, 0u8);
             data64.resize(len, 0u64);
             let mut arr33 = [0u8; 33];

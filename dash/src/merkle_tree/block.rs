@@ -538,7 +538,7 @@ mod tests {
     #[cfg(feature = "rand-std")]
     use hashes::Hash;
     #[cfg(feature = "rand-std")]
-    use secp256k1::rand::{self, prelude::*};
+    use secp256k1::rand::prelude::*;
 
     use super::*;
     use crate::consensus::encode::{deserialize, serialize};
@@ -587,7 +587,7 @@ mod tests {
 
         use crate::merkle_tree;
 
-        let mut rng = rand::rng();
+        let mut rng = secp256k1::rand::rng();
         // Create some fake tx ids
         let tx_ids = (1..=tx_count)
             .map(|i| format!("{:064x}", i).parse::<Txid>().unwrap())

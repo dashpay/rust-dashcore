@@ -417,11 +417,10 @@ impl BenefactorWallet {
 
         let taproot_spend_info = TaprootBuilder::new()
             .add_leaf(0, script.clone())?
-            .finalize(&self.secp, internal_keypair.x_only_public_key().0)
+            .finalize(internal_keypair.x_only_public_key().0)
             .expect("Should be finalizable");
         self.current_spend_info = Some(taproot_spend_info.clone());
         let script_pubkey = ScriptBuf::new_v1_p2tr(
-            &self.secp,
             taproot_spend_info.internal_key(),
             taproot_spend_info.merkle_root(),
         );
@@ -525,12 +524,11 @@ impl BenefactorWallet {
 
             let taproot_spend_info = TaprootBuilder::new()
                 .add_leaf(0, script.clone())?
-                .finalize(&self.secp, new_internal_keypair.x_only_public_key().0)
+                .finalize(new_internal_keypair.x_only_public_key().0)
                 .expect("Should be finalizable");
             self.current_spend_info = Some(taproot_spend_info.clone());
             let prevout_script_pubkey = input.witness_utxo.as_ref().unwrap().script_pubkey.clone();
             let output_script_pubkey = ScriptBuf::new_v1_p2tr(
-                &self.secp,
                 taproot_spend_info.internal_key(),
                 taproot_spend_info.merkle_root(),
             );
@@ -783,7 +781,7 @@ fn sign_psbt_taproot(
 ) {
     let keypair = secp256k1::Keypair::from_secret_bytes(secret_key.to_secret_bytes()).unwrap();
     let keypair = match leaf_hash {
-        None => keypair.tap_tweak(secp, psbt_input.tap_merkle_root).to_inner(),
+        None => keypair.tap_tweak(psbt_input.tap_merkle_root).to_inner(),
         Some(_) => keypair, // no tweak for script spend
     };
 

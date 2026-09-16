@@ -45,7 +45,6 @@ const DEFAULT_WALLET_NODE_RPC_URL: &str = "http://127.0.0.1:20002";
 const DEFAULT_EVO_NODE_RPC_URL: &str = "http://127.0.0.1:20302";
 
 lazy_static! {
-    static ref SECP: secp256k1::Secp256k1<secp256k1::All> = secp256k1::Secp256k1::new();
     static ref NET: Network = Network::Regtest;
     /// A random address not owned by the node.
     static ref RANDOM_ADDRESS: Address = Address::from_str("yd89z5ad98AsM6kRNJ15jveAQHTUz9AJa3")
@@ -403,7 +402,7 @@ fn test_get_new_address(cl: &Client) {
 fn test_dump_private_key(cl: &Client) {
     let addr = cl.get_new_address(None).unwrap().require_network(*NET).unwrap();
     let sk = cl.dump_private_key(&addr).unwrap();
-    assert_eq!(addr.to_string(), Address::p2pkh(&sk.public_key(&SECP), *NET).to_string());
+    assert_eq!(addr.to_string(), Address::p2pkh(&sk.public_key(), *NET).to_string());
 }
 
 #[allow(dead_code)]
@@ -717,7 +716,7 @@ fn test_sign_raw_transaction_with_send_raw_transaction(cl: &Client) {
         inner: secp256k1::SecretKey::new(&mut secp256k1::rand::rng()),
         compressed: true,
     };
-    let addr = Address::p2pkh(&sk.public_key(&SECP), Network::Regtest);
+    let addr = Address::p2pkh(&sk.public_key(), Network::Regtest);
 
     let options = json::ListUnspentQueryOptions {
         minimum_amount: Some(btc(2)),
@@ -1035,9 +1034,9 @@ fn test_import_public_key(cl: &Client) {
         inner: secp256k1::SecretKey::new(&mut secp256k1::rand::rng()),
         compressed: true,
     };
-    cl.import_public_key(&sk.public_key(&SECP), None, None).unwrap();
-    cl.import_public_key(&sk.public_key(&SECP), Some("l"), None).unwrap();
-    cl.import_public_key(&sk.public_key(&SECP), None, Some(false)).unwrap();
+    cl.import_public_key(&sk.public_key(), None, None).unwrap();
+    cl.import_public_key(&sk.public_key(), Some("l"), None).unwrap();
+    cl.import_public_key(&sk.public_key(), None, Some(false)).unwrap();
 }
 
 fn test_import_priv_key(cl: &Client) {
@@ -1057,7 +1056,7 @@ fn test_import_address(cl: &Client) {
         inner: secp256k1::SecretKey::new(&mut secp256k1::rand::rng()),
         compressed: true,
     };
-    let addr = Address::p2pkh(&sk.public_key(&SECP), Network::Regtest);
+    let addr = Address::p2pkh(&sk.public_key(), Network::Regtest);
     cl.import_address(&addr, None, None).unwrap();
     cl.import_address(&addr, Some("l"), None).unwrap();
     cl.import_address(&addr, None, Some(false)).unwrap();
@@ -1069,7 +1068,7 @@ fn test_import_address_script(cl: &Client) {
         inner: secp256k1::SecretKey::new(&mut secp256k1::rand::rng()),
         compressed: true,
     };
-    let addr = Address::p2pkh(&sk.public_key(&SECP), Network::Regtest);
+    let addr = Address::p2pkh(&sk.public_key(), Network::Regtest);
     cl.import_address_script(&addr.script_pubkey(), None, None, None).unwrap();
     cl.import_address_script(&addr.script_pubkey(), Some("l"), None, None).unwrap();
     cl.import_address_script(&addr.script_pubkey(), None, Some(false), None).unwrap();
