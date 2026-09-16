@@ -484,13 +484,13 @@ pub unsafe extern "C" fn key_wallet_derive_address_from_key(
 
     // Create a secp256k1 private key
     let secp = Secp256k1::new();
-    let secret_key = match secp256k1::SecretKey::from_byte_array(key_bytes) {
+    let secret_key = match secp256k1::SecretKey::from_secret_bytes(key_bytes) {
         Ok(sk) => sk,
         Err(_) => return ptr::null_mut(),
     };
 
     // Get public key
-    let public_key = secp256k1::PublicKey::from_secret_key(&secp, &secret_key);
+    let public_key = secp256k1::PublicKey::from_secret_key(&secret_key);
 
     // Convert to dashcore PublicKey
     let dash_pubkey = dashcore::PublicKey::new(public_key);
@@ -616,7 +616,7 @@ pub unsafe extern "C" fn key_wallet_derive_private_key_from_seed(
     };
 
     // Copy private key bytes
-    let key_bytes = derived_key.private_key.secret_bytes();
+    let key_bytes = derived_key.private_key.to_secret_bytes();
     ptr::copy_nonoverlapping(key_bytes.as_ptr(), key_out, 32);
 
     0

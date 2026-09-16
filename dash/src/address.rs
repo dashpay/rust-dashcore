@@ -591,7 +591,7 @@ impl Payload {
         merkle_root: Option<TapNodeHash>,
     ) -> Payload {
         let (output_key, _parity) = internal_key.tap_tweak(secp, merkle_root);
-        let prog = WitnessProgram::new(WitnessVersion::V1, output_key.to_inner().serialize())
+        let prog = WitnessProgram::new(WitnessVersion::V1, output_key.to_inner().to_byte_array())
             .expect("taproot output key has len 32 <= 40");
         Payload::WitnessProgram(prog)
     }
@@ -600,7 +600,7 @@ impl Payload {
     ///
     /// This method is not recommended for use and [Payload::p2tr()] should be used where possible.
     pub fn p2tr_tweaked(output_key: TweakedPublicKey) -> Payload {
-        let prog = WitnessProgram::new(WitnessVersion::V1, output_key.to_inner().serialize())
+        let prog = WitnessProgram::new(WitnessVersion::V1, output_key.to_inner().to_byte_array())
             .expect("taproot output key has len 32 <= 40");
         Payload::WitnessProgram(prog)
     }
@@ -1220,7 +1220,7 @@ impl Address {
         let xonly_pubkey = XOnlyPublicKey::from(pubkey.inner);
 
         (*pubkey_hash.as_byte_array() == *payload)
-            || (xonly_pubkey.serialize() == *payload)
+            || (xonly_pubkey.to_byte_array() == *payload)
             || (*segwit_redeem_hash(&pubkey_hash).as_byte_array() == *payload)
     }
 
@@ -1230,7 +1230,7 @@ impl Address {
     /// assumed to have already been tweaked.
     pub fn is_related_to_xonly_pubkey(&self, xonly_pubkey: &XOnlyPublicKey) -> bool {
         let payload = self.payload().inner_prog_as_bytes();
-        payload == xonly_pubkey.serialize()
+        payload == xonly_pubkey.to_byte_array()
     }
 
     /// Returns true if the address creates a particular script

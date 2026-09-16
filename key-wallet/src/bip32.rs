@@ -402,7 +402,7 @@ impl bincode::Encode for ExtendedPrivKey {
         self.parent_fingerprint.encode(encoder)?;
         self.child_number.encode(encoder)?;
         // Encode the private key as bytes
-        self.private_key.secret_bytes().encode(encoder)?;
+        self.private_key.to_secret_bytes().encode(encoder)?;
         self.chain_code.encode(encoder)?;
         Ok(())
     }
@@ -420,7 +420,7 @@ impl<C> bincode::Decode<C> for ExtendedPrivKey {
         // Decode the private key from bytes
         let private_key_bytes: [u8; 32] = <[u8; 32]>::decode(decoder)?;
         let private_key =
-            secp256k1::SecretKey::from_byte_array(private_key_bytes).map_err(|e| {
+            secp256k1::SecretKey::from_secret_bytes(private_key_bytes).map_err(|e| {
                 bincode::error::DecodeError::OtherString(format!("Invalid private key: {}", e))
             })?;
         let chain_code = ChainCode::decode(decoder)?;
@@ -448,7 +448,7 @@ impl<'de, C> bincode::BorrowDecode<'de, C> for ExtendedPrivKey {
         // Decode the private key from bytes
         let private_key_bytes: [u8; 32] = <[u8; 32]>::borrow_decode(decoder)?;
         let private_key =
-            secp256k1::SecretKey::from_byte_array(private_key_bytes).map_err(|e| {
+            secp256k1::SecretKey::from_secret_bytes(private_key_bytes).map_err(|e| {
                 bincode::error::DecodeError::OtherString(format!("Invalid private key: {}", e))
             })?;
         let chain_code = ChainCode::borrow_decode(decoder)?;
@@ -1550,7 +1550,7 @@ impl ExtendedPrivKey {
             depth: 0,
             parent_fingerprint: Default::default(),
             child_number: ChildNumber::from_normal_idx(0)?,
-            private_key: secp256k1::SecretKey::from_byte_array(hmac_secret_half(&hmac_result))?,
+            private_key: secp256k1::SecretKey::from_secret_bytes(hmac_secret_half(&hmac_result))?,
             chain_code: ChainCode::from_hmac(hmac_result),
         })
     }
@@ -1558,7 +1558,7 @@ impl ExtendedPrivKey {
     /// Constructs BIP340 keypair for Schnorr signatures and Taproot use matching the internal
     /// secret key representation.
     pub fn to_keypair<C: secp256k1::Signing>(&self, secp: &Secp256k1<C>) -> Keypair {
-        Keypair::from_secret_key(secp, &self.private_key)
+        Keypair::from_secret_key(&self.private_key)
     }
 
     /// Attempts to derive an extended private key from a path.
@@ -1589,7 +1589,7 @@ impl ExtendedPrivKey {
             } => {
                 // Non-hardened key: compute public data and use that
                 hmac_engine.input(
-                    &secp256k1::PublicKey::from_secret_key(secp, &self.private_key).serialize()[..],
+                    &secp256k1::PublicKey::from_secret_key(&self.private_key).serialize()[..],
                 );
                 hmac_engine.input(&index.to_be_bytes());
             }
@@ -1606,7 +1606,7 @@ impl ExtendedPrivKey {
             } => {
                 // Non-hardened key with 256-bit index
                 hmac_engine.input(
-                    &secp256k1::PublicKey::from_secret_key(secp, &self.private_key).serialize()[..],
+                    &secp256k1::PublicKey::from_secret_key(&self.private_key).serialize()[..],
                 );
                 hmac_engine.input(&index);
             }
@@ -1620,7 +1620,7 @@ impl ExtendedPrivKey {
             }
         }
         let hmac_result: Hmac<sha512::Hash> = Hmac::from_engine(hmac_engine);
-        let sk = secp256k1::SecretKey::from_byte_array(hmac_secret_half(&hmac_result))
+        let sk = secp256k1::SecretKey::from_secret_bytes(hmac_secret_half(&hmac_result))
             .expect("statistically impossible to hit");
         let tweaked =
             sk.add_tweak(&self.private_key.into()).expect("statistically impossible to hit");
@@ -1676,7 +1676,7 @@ impl ExtendedPrivKey {
             chain_code: data[13..45]
                 .try_into()
                 .expect("45 - 13 == 32, which is the ChainCode length"),
-            private_key: secp256k1::SecretKey::from_byte_array(
+            private_key: secp256k1::SecretKey::from_secret_bytes(
                 <[u8; 32]>::try_from(&data[46..78]).expect("78 - 46 == 32, the key length"),
             )?,
         })
@@ -1732,7 +1732,7 @@ impl ExtendedPrivKey {
         };
 
         let chain_code = data[42..74].try_into().expect("32 bytes for chain code");
-        let private_key = secp256k1::SecretKey::from_byte_array(
+        let private_key = secp256k1::SecretKey::from_secret_bytes(
             <[u8; 32]>::try_from(&data[75..107]).expect("107 - 75 == 32, the key length"),
         )?;
 
@@ -1837,7 +1837,7 @@ impl ExtendedPubKey {
             depth: sk.depth,
             parent_fingerprint: sk.parent_fingerprint,
             child_number: sk.child_number,
-            public_key: secp256k1::PublicKey::from_secret_key(secp, &sk.private_key),
+            public_key: secp256k1::PublicKey::from_secret_key(&sk.private_key),
             chain_code: sk.chain_code,
         }
     }
@@ -1887,7 +1887,7 @@ impl ExtendedPubKey {
                 let hmac_result: Hmac<sha512::Hash> = Hmac::from_engine(hmac_engine);
 
                 let private_key =
-                    secp256k1::SecretKey::from_byte_array(hmac_secret_half(&hmac_result))?;
+                    secp256k1::SecretKey::from_secret_bytes(hmac_secret_half(&hmac_result))?;
                 let chain_code = ChainCode::from_hmac(hmac_result);
                 Ok((private_key, chain_code))
             }
@@ -1906,7 +1906,7 @@ impl ExtendedPubKey {
 
                 // IL must be less than n (order of the curve)
                 let private_key =
-                    secp256k1::SecretKey::from_byte_array(hmac_secret_half(&hmac_result))?;
+                    secp256k1::SecretKey::from_secret_bytes(hmac_secret_half(&hmac_result))?;
                 let chain_code = ChainCode::from_hmac(hmac_result);
 
                 Ok((private_key, chain_code))
@@ -1921,7 +1921,7 @@ impl ExtendedPubKey {
         i: ChildNumber,
     ) -> Result<ExtendedPubKey, Error> {
         let (sk, chain_code) = self.ckd_pub_tweak(i)?;
-        let tweaked = self.public_key.add_exp_tweak(secp, &sk.into())?;
+        let tweaked = self.public_key.add_exp_tweak(&sk.into())?;
 
         Ok(ExtendedPubKey {
             network: self.network,

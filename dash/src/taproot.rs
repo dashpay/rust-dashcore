@@ -57,7 +57,7 @@ impl TapTweakHash {
     ) -> TapTweakHash {
         let mut eng = TapTweakHash::engine();
         // always hash the key
-        eng.input(&internal_key.serialize());
+        eng.input(&internal_key.to_byte_array());
         if let Some(h) = merkle_root {
             eng.input(h.as_ref());
         } else {
@@ -1368,7 +1368,7 @@ impl ControlBlock {
         let first_byte: u8 =
             i32::from(self.output_key_parity) as u8 | self.leaf_version.to_consensus();
         writer.write_all(&[first_byte])?;
-        writer.write_all(&self.internal_key.serialize())?;
+        writer.write_all(&self.internal_key.to_byte_array())?;
         self.merkle_branch.encode(&mut writer)?;
         Ok(self.size())
     }
@@ -1405,7 +1405,7 @@ impl ControlBlock {
         // compute the taptweak
         let tweak =
             TapTweakHash::from_key_and_tweak(self.internal_key, Some(curr_hash)).to_scalar();
-        self.internal_key.tweak_add_check(secp, &output_key, self.output_key_parity, tweak)
+        self.internal_key.tweak_add_check(&output_key, self.output_key_parity, tweak)
     }
 }
 

@@ -355,10 +355,10 @@ mod tests {
                 .unwrap()
                 .try_into()
                 .unwrap();
-        let secret_key = secp256k1::SecretKey::from_byte_array(privkey_bytes).unwrap();
+        let secret_key = secp256k1::SecretKey::from_secret_bytes(privkey_bytes).unwrap();
         let privkey =
             PrivateKey::new_uncompressed(secret_key, crate::network::constants::Network::Mainnet);
-        let pubkey = privkey.public_key(&secp);
+        let pubkey = privkey.public_key(&secp256k1::Secp256k1::new());
 
         let mut filter = BloomFilter::new(2, 0.001, 0, BloomFlags::All).unwrap();
 

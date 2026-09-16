@@ -1014,7 +1014,7 @@ mod tests {
                 .map_err(|e| e.to_string())?;
             let msg = secp256k1::Message::from_digest(sighash);
             let sig = secp.sign_ecdsa(msg, &xpriv.private_key);
-            let pk = secp256k1::PublicKey::from_secret_key(&secp, &xpriv.private_key);
+            let pk = secp256k1::PublicKey::from_secret_key(&xpriv.private_key);
             Ok((sig, pk))
         }
 
@@ -1025,7 +1025,7 @@ mod tests {
                 .to_extended_priv_key(self.network)
                 .derive_priv(&secp, path)
                 .map_err(|e| e.to_string())?;
-            Ok(secp256k1::PublicKey::from_secret_key(&secp, &xpriv.private_key))
+            Ok(secp256k1::PublicKey::from_secret_key(&xpriv.private_key))
         }
     }
 

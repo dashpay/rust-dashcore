@@ -588,7 +588,7 @@ pub unsafe extern "C" fn transaction_sign_input(
     let Ok(privkey_bytes) = <[u8; 32]>::try_from(slice::from_raw_parts(private_key, 32)) else {
         return -1;
     };
-    let privkey = match SecretKey::from_byte_array(privkey_bytes) {
+    let privkey = match SecretKey::from_secret_bytes(privkey_bytes) {
         Ok(k) => k,
         Err(_) => {
             return -1;
@@ -604,7 +604,7 @@ pub unsafe extern "C" fn transaction_sign_input(
     let mut sig_bytes = sig.serialize_der().to_vec();
     sig_bytes.push(sighash_type as u8);
 
-    let pubkey = secp256k1::PublicKey::from_secret_key(&secp, &privkey);
+    let pubkey = secp256k1::PublicKey::from_secret_key(&privkey);
     let pubkey_bytes = pubkey.serialize();
 
     let mut script_sig = vec![];

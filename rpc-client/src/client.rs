@@ -20,7 +20,7 @@ use serde_json::{self, Value};
 
 use crate::Error::UnexpectedStructure;
 use crate::dashcore::address::NetworkUnchecked;
-use crate::dashcore::secp256k1::hashes::hex::DisplayHex;
+use crate::dashcore::prelude::DisplayHex;
 use crate::dashcore::{ScriptBuf, block, consensus};
 use crate::error::*;
 use crate::json;

@@ -118,7 +118,7 @@ mod message_signing {
             let (recid, raw) = self.signature.serialize_compact();
             let mut serialized = [0u8; 65];
             serialized[0] = 27;
-            serialized[0] += <RecoveryId as Into<i32>>::into(recid) as u8;
+            serialized[0] += recid.to_u8();
             if self.compressed {
                 serialized[0] += 4;
             }
@@ -265,7 +265,7 @@ mod tests {
         let signature2 = MessageSignature::from_str(&signature.to_string()).unwrap();
         let pubkey = signature2.recover_pubkey(&secp, msg_hash).unwrap();
         assert!(pubkey.compressed);
-        assert_eq!(pubkey.inner, secp256k1::PublicKey::from_secret_key(&secp, &privkey));
+        assert_eq!(pubkey.inner, secp256k1::PublicKey::from_secret_key(&privkey));
 
         let p2pkh = Address::p2pkh(&pubkey, Network::Mainnet);
         assert_eq!(signature2.is_signed_by_address(&secp, &p2pkh, msg_hash), Ok(true));

@@ -335,7 +335,7 @@ mod tests {
             Vec::from_hex("cccbce0d719ecf7431d88e6a89fa1483e02e35092af60c042b1df2ff59fa424dca")
                 .unwrap();
         // Skip the first byte (network prefix) and compare the actual 32-byte key
-        assert_eq!(&derived_key.private_key.secret_bytes(), &expected_with_prefix[1..]);
+        assert_eq!(&derived_key.private_key.to_secret_bytes(), &expected_with_prefix[1..]);
 
         // Test m/0'/0/97 path for zero padding test (from DashSync)
         let path_zero_padding = DerivationPath::from(vec![
@@ -356,7 +356,7 @@ mod tests {
         let expected_zero_padded =
             Vec::from_hex("00136c1ad038f9a00871895322a487ed14f1cdc4d22ad351cfa1a0d235975dd7")
                 .unwrap();
-        assert_eq!(&derived_key_zero.private_key.secret_bytes(), &expected_zero_padded[..]);
+        assert_eq!(&derived_key_zero.private_key.to_secret_bytes(), &expected_zero_padded[..]);
     }
 
     // ✓ Test extended key serialization (from DashSync DSBIP32Tests.m)

@@ -86,7 +86,7 @@ impl Wallet {
 
         // Create a new account with this key
         // Note: This is a simplified implementation - in production you'd want more options
-        let private_bytes = secret_key.secret_bytes();
+        let private_bytes = secret_key.to_secret_bytes();
         let mut extended_key_bytes = Vec::new();
         extended_key_bytes.extend_from_slice(&[0; 32]); // chain code (zeros for imported keys)
         extended_key_bytes.extend_from_slice(&private_bytes);

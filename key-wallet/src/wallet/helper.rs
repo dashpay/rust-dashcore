@@ -524,7 +524,7 @@ impl Wallet {
             let private_key = self.derive_private_key(path)?;
             use secp256k1::Secp256k1;
             let secp = Secp256k1::new();
-            Ok(secp256k1::PublicKey::from_secret_key(&secp, &private_key))
+            Ok(secp256k1::PublicKey::from_secret_key(&private_key))
         } else {
             // For non-hardened paths, derive directly from public key
             let extended = self.derive_extended_public_key(path)?;

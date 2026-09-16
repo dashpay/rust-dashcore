@@ -15,7 +15,7 @@ mod tests {
     #[ignore = "BIP38 tests are slow - run with test_bip38.sh script"]
     fn test_bip38_encryption_no_compression() {
         // Test vector: No compression, no EC multiply
-        let private_key = SecretKey::from_byte_array([
+        let private_key = SecretKey::from_secret_bytes([
             0xCB, 0xF4, 0xB9, 0xF7, 0x04, 0x70, 0x85, 0x6B, 0xB4, 0xF4, 0x0F, 0x80, 0xB8, 0x7E,
             0xDB, 0x90, 0x86, 0x59, 0x97, 0xFF, 0xEE, 0x6D, 0xF3, 0x15, 0xAB, 0x16, 0x6D, 0x71,
             0x3A, 0xF4, 0x33, 0xA5,
@@ -49,7 +49,7 @@ mod tests {
     #[ignore = "BIP38 tests are slow - run with test_bip38.sh script"]
     fn test_bip38_encryption_with_compression() {
         // Test vector: With compression
-        let private_key = SecretKey::from_byte_array([
+        let private_key = SecretKey::from_secret_bytes([
             0x09, 0xC2, 0x68, 0x68, 0x80, 0x09, 0x5B, 0x1A, 0x4C, 0x24, 0x9E, 0xE3, 0xAC, 0x4E,
             0xEA, 0x8A, 0x01, 0x4F, 0x11, 0xE6, 0xF4, 0x77, 0x4A, 0x92, 0x4C, 0x9F, 0x3C, 0x4E,
             0x9C, 0x5D, 0x67, 0x66,
@@ -87,14 +87,14 @@ mod tests {
 
         // DashSync expects this to produce: 7sEJGJRPeGoNBsW8tKAk4JH52xbxrktPfJcNxEx3uf622ZrGR5k
         // We can at least verify it decrypts successfully
-        assert_eq!(decrypted.secret_bytes().len(), 32);
+        assert_eq!(decrypted.to_secret_bytes().len(), 32);
     }
 
     #[test]
     #[ignore = "BIP38 tests are slow - run with test_bip38.sh script"]
     fn test_bip38_wrong_password() {
         // Create an encrypted key
-        let private_key = SecretKey::from_byte_array([
+        let private_key = SecretKey::from_secret_bytes([
             0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11,
             0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11,
             0x11, 0x11, 0x11, 0x11,
@@ -143,7 +143,7 @@ mod tests {
         ];
 
         for (key_bytes, password) in test_cases {
-            let private_key = SecretKey::from_byte_array(key_bytes).unwrap();
+            let private_key = SecretKey::from_secret_bytes(key_bytes).unwrap();
 
             // Test both compressed and uncompressed
             for compressed in [true, false] {
@@ -168,7 +168,7 @@ mod tests {
     #[ignore = "BIP38 tests are slow - run with test_bip38.sh script"]
     fn test_bip38_unicode_password() {
         // Test with Unicode passwords
-        let private_key = SecretKey::from_byte_array([0x42u8; 32]).unwrap();
+        let private_key = SecretKey::from_secret_bytes([0x42u8; 32]).unwrap();
 
         let unicode_passwords = vec![
             "Hello世界", // Chinese characters
@@ -195,7 +195,7 @@ mod tests {
     fn test_bip38_network_differences() {
         // Test that different networks produce different encrypted keys
         // (due to different address prefixes affecting the salt)
-        let private_key = SecretKey::from_byte_array([0x77u8; 32]).unwrap();
+        let private_key = SecretKey::from_secret_bytes([0x77u8; 32]).unwrap();
         let password = "NetworkTest";
         let compressed = false;
 
@@ -229,7 +229,7 @@ mod tests {
         // Test edge cases
 
         // Empty password (should work but not recommended)
-        let private_key = SecretKey::from_byte_array([0x99u8; 32]).unwrap();
+        let private_key = SecretKey::from_secret_bytes([0x99u8; 32]).unwrap();
         let encrypted = encrypt_private_key(&private_key, "", false, Network::Mainnet)
             .expect("Empty password should work");
         let decrypted = encrypted.decrypt("").unwrap();
@@ -265,7 +265,7 @@ mod tests {
             let mut key_bytes = [0u8; 32];
             loop {
                 rng.fill(&mut key_bytes);
-                if let Ok(key) = SecretKey::from_byte_array(key_bytes) {
+                if let Ok(key) = SecretKey::from_secret_bytes(key_bytes) {
                     // Generate random password
                     let password_len = rng.random_range(8..50);
                     let password: String = (0..password_len)
@@ -323,7 +323,7 @@ mod tests {
         // BIP38 is intentionally slow (scrypt), but should complete within a few seconds
         use std::time::Instant;
 
-        let private_key = SecretKey::from_byte_array([0xEEu8; 32]).unwrap();
+        let private_key = SecretKey::from_secret_bytes([0xEEu8; 32]).unwrap();
         let password = "PerformanceTest";
 
         let start = Instant::now();
