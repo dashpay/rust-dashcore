@@ -31,8 +31,7 @@ use crate::prelude::String;
 use crate::sml::quorum_validation_error::QuorumValidationError;
 
 /// A BLS Public key is 48 bytes in the scheme used for Dash Core
-#[rustversion::attr(since(1.48), derive(PartialEq, Eq, Ord, PartialOrd, Hash))]
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Ord, PartialOrd, Hash)]
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 pub struct BLSPublicKey([u8; 48]);
 
@@ -93,8 +92,7 @@ impl fmt::Display for BLSPublicKey {
 }
 
 /// A BLS Signature is 96 bytes in the scheme used for Dash Core
-#[rustversion::attr(since(1.48), derive(PartialEq, Eq, Ord, PartialOrd, Hash))]
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq, Ord, PartialOrd, Hash)]
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 pub struct BLSSignature([u8; 96]);
 
@@ -231,52 +229,6 @@ macro_rules! impl_elementencode {
         }
     };
 }
-
-#[rustversion::before(1.48)]
-macro_rules! impl_eq_ord_hash {
-    ($element:ident, $len:expr) => {
-        #[rustversion::before(1.48)]
-        impl core::hash::Hash for $element {
-            fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
-                self.0.to_vec().hash(state)
-            }
-        }
-
-        #[rustversion::before(1.48)]
-        impl core::cmp::PartialEq<$element> for $element {
-            fn eq(&self, other: &$element) -> bool {
-                for i in 0..$len {
-                    if self[i] != other[i] {
-                        return false;
-                    }
-                }
-                true
-            }
-        }
-
-        #[rustversion::before(1.48)]
-        impl core::cmp::Eq for $element {}
-
-        #[rustversion::before(1.48)]
-        impl core::cmp::PartialOrd for $element {
-            fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
-                self.0.to_vec().partial_cmp(&other.0.to_vec())
-            }
-        }
-
-        #[rustversion::before(1.48)]
-        impl core::cmp::Ord for $element {
-            fn cmp(&self, other: &Self) -> core::cmp::Ordering {
-                self.0.to_vec().cmp(&other.0.to_vec())
-            }
-        }
-    };
-}
-
-#[rustversion::before(1.48)]
-impl_eq_ord_hash!(BLSPublicKey, 48);
-#[rustversion::before(1.48)]
-impl_eq_ord_hash!(BLSSignature, 96);
 
 impl_elementencode!(BLSPublicKey, 48);
 impl_elementencode!(BLSSignature, 96);
