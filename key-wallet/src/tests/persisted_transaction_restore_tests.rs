@@ -899,8 +899,9 @@ fn should_reject_coin_owned_by_another_wallet() {
     assert!(receiver.bip44_account().utxos.is_empty());
 }
 
-#[test]
-fn should_reject_coinbase_flag_disagreeing_with_record() {
+#[test_case::test_case(false; "coinbase_flag")]
+#[test_case::test_case(true; "block_height")]
+fn should_reject_coinbase_metadata_disagreeing_with_record(invalid_height: bool) {
     let mut receiver = TestWalletContext::new_random();
     receiver.managed_wallet.update_last_processed_height(100);
     let mut tx = Transaction::dummy(&receiver.receive_address, 0..1, &[1_000_000]);
@@ -911,7 +912,7 @@ fn should_reject_coinbase_flag_disagreeing_with_record() {
         vout: 0,
     };
     let mut coin =
-        Utxo::new(outpoint, tx.output[0].clone(), receiver.receive_address.clone(), 100, false);
+        Utxo::new(outpoint, tx.output[0].clone(), receiver.receive_address.clone(), 100, true);
     coin.is_confirmed = true;
     let record = TransactionRecord::new(
         tx,
@@ -923,6 +924,21 @@ fn should_reject_coinbase_flag_disagreeing_with_record() {
         vec![],
         1_000_000,
     );
+    let mut control = receiver.managed_wallet.clone();
+    control
+        .restore_persisted_state(PersistedWalletState {
+            transactions: vec![record.clone()],
+            utxos: vec![(bip44(), coin.clone())],
+            ..Default::default()
+        })
+        .unwrap();
+    assert_eq!(control.balance().immature(), 1_000_000);
+    assert!(!control.first_bip44_managed_account().unwrap().utxos[&outpoint].is_spendable(100));
+    if invalid_height {
+        coin.height = 0;
+    } else {
+        coin.is_coinbase = false;
+    }
     let result = receiver.managed_wallet.restore_persisted_state(PersistedWalletState {
         transactions: vec![record],
         utxos: vec![(bip44(), coin)],
@@ -932,4 +948,71 @@ fn should_reject_coinbase_flag_disagreeing_with_record() {
     assert!(receiver.bip44_account().utxos.is_empty());
     assert!(receiver.bip44_account().transactions().is_empty());
     assert!(receiver.managed_wallet.observed_spent_outpoints().is_empty());
+}
+
+#[test_case::test_case(false; "unspent")]
+#[test_case::test_case(true; "fully_spent")]
+#[tokio::test]
+async fn should_preserve_restored_block_context_on_duplicate_instant_lock(fully_spent: bool) {
+    let mut live = TestWalletContext::new_random();
+    let mut restored = live.managed_wallet.clone();
+    let funding = Transaction::dummy(&live.receive_address, 0..1, &[1_000_000]);
+    let txid = funding.txid();
+    let lock = InstantLock {
+        txid,
+        ..InstantLock::default()
+    };
+    live.check_transaction(&funding, TransactionContext::Mempool).await;
+    assert!(live.managed_wallet.mark_instant_send_utxos(&txid, &lock));
+    let block_info = BlockInfo::new(40, BlockHash::from_byte_array([40; 32]), 1_700_000_000);
+    let block = TransactionContext::InBlock(block_info);
+    live.check_transaction(&funding, block.clone()).await;
+    assert_eq!(live.transaction(&txid).context, block);
+    if fully_spent {
+        live.check_transaction(
+            &spend(OutPoint {
+                txid,
+                vout: 0,
+            }),
+            block.clone(),
+        )
+        .await;
+        assert!(live.bip44_account().utxos.is_empty());
+    }
+    let account = live.bip44_account();
+    restored
+        .restore_persisted_state(PersistedWalletState {
+            transactions: account.transactions().values().cloned().collect(),
+            utxos: account.utxos.values().cloned().map(|coin| (bip44(), coin)).collect(),
+            additional_spent_outpoints: live
+                .managed_wallet
+                .observed_spent_outpoints()
+                .iter()
+                .map(|(outpoint, height)| (*outpoint, Some(*height)))
+                .collect(),
+        })
+        .unwrap();
+    assert!(!live.managed_wallet.mark_instant_send_utxos(&txid, &lock));
+    restored.mark_instant_send_utxos(&txid, &lock);
+    assert_eq!(
+        restored.first_bip44_managed_account().unwrap().transactions()[&txid].context,
+        block
+    );
+    assert!(!restored.mark_instant_send_utxos(&txid, &lock));
+    restored.apply_chain_lock(dashcore::ChainLock {
+        block_height: 40,
+        block_hash: BlockHash::from_byte_array([40; 32]),
+        signature: [0u8; 96].into(),
+    });
+    let account = restored.first_bip44_managed_account().unwrap();
+    assert!(account.transaction_is_finalized(&txid));
+    #[cfg(feature = "keep-finalized-transactions")]
+    assert_eq!(
+        account.transactions()[&txid].context,
+        TransactionContext::InChainLockedBlock(block_info)
+    );
+    // A further delivery must also leave finalized history intact.
+    restored.instant_send_locks.remove(&txid);
+    restored.mark_instant_send_utxos(&txid, &lock);
+    assert!(restored.first_bip44_managed_account().unwrap().transaction_is_finalized(&txid));
 }

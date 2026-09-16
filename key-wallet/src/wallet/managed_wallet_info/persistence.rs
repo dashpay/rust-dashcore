@@ -40,7 +40,7 @@ pub enum RestoreError {
     MissingAccount(AccountType),
     /// A coin names a keys-only account.
     NonFundingAccount(AccountType),
-    /// A record's txid or input/output metadata does not match its transaction.
+    /// A record's txid, input/output metadata or block height is inconsistent.
     InvalidRecord(Txid),
     /// More than one record names the same transaction and account.
     DuplicateRecord(Txid, AccountType),
@@ -212,6 +212,7 @@ impl ManagedWalletInfo {
         let mut records = HashSet::new();
         let mut spent: HashSet<_> = state.additional_spent_outpoints.keys().copied().collect();
         let mut transactions = BTreeMap::new();
+        let mut funding_heights = BTreeMap::new();
         for record in &state.transactions {
             if !accounts.contains_key(&record.account_type) {
                 return Err(RestoreError::MissingAccount(record.account_type));
@@ -245,6 +246,14 @@ impl ManagedWalletInfo {
                 return Err(RestoreError::DuplicateRecord(record.txid, record.account_type));
             }
             transactions.insert(record.txid, &record.transaction);
+            if let Some(block) = record.context.block_info() {
+                if funding_heights
+                    .insert(record.txid, block.height())
+                    .is_some_and(|height| height != block.height())
+                {
+                    return Err(RestoreError::InvalidRecord(record.txid));
+                }
+            }
             if !record.transaction.is_coin_base() {
                 spent.extend(record.transaction.input.iter().map(|input| input.previous_output));
             }
@@ -265,6 +274,9 @@ impl ManagedWalletInfo {
                 return Err(RestoreError::SpentUtxo(utxo.outpoint));
             }
             if (utxo.is_coinbase && utxo.height.checked_add(100).is_none())
+                || funding_heights
+                    .get(&utxo.outpoint.txid)
+                    .is_some_and(|height| *height != utxo.height)
                 || !account.contains_address(&utxo.address)
                 || utxo.address.script_pubkey() != utxo.txout.script_pubkey
                 || !utxo.address.as_unchecked().is_valid_for_network(self.network)
