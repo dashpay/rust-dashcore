@@ -21,8 +21,7 @@ fn test_valid_testnet_address() {
         let child_external = ChildNumber::from_normal_idx(0).unwrap();
         let child_index = ChildNumber::from_normal_idx(0).unwrap();
 
-        let derived_key =
-            account.account_xpub.derive_pub(&secp, &[child_external, child_index]).unwrap();
+        let derived_key = account.account_xpub.derive_pub(&[child_external, child_index]).unwrap();
         let public_key = derived_key.public_key;
         let dash_pubkey = dashcore::PublicKey::new(public_key);
         let address = key_wallet::Address::p2pkh(&dash_pubkey, dashcore::Network::Testnet);

@@ -9,7 +9,6 @@ mod tests {
     use crate::bip32::{ExtendedPrivKey, ExtendedPubKey};
     use crate::mnemonic::Mnemonic;
     use crate::Network;
-    use secp256k1::Secp256k1;
 
     #[test]
     fn test_account_collection_with_all_types() {
@@ -19,8 +18,7 @@ mod tests {
         let mnemonic = Mnemonic::from_phrase("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about").unwrap();
         let seed = mnemonic.to_seed("");
         let master = ExtendedPrivKey::new_master(Network::Testnet, &seed).unwrap();
-        let secp = Secp256k1::new();
-        let xpub = ExtendedPubKey::from_priv(&secp, &master);
+        let xpub = ExtendedPubKey::from_priv(&master);
 
         // 1. Insert regular ECDSA account
         let ecdsa_account = Account::new(

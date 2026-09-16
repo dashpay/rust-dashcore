@@ -10,7 +10,6 @@ use bincode::{BorrowDecode, Decode, Encode};
 #[cfg(feature = "bls")]
 use dashcore::blsful::Bls12381G2Impl;
 use dashcore_hashes::{sha512, Hash, HashEngine, Hmac, HmacEngine};
-use secp256k1::Secp256k1;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroize;
@@ -151,7 +150,6 @@ impl RootExtendedPrivKey {
 
     /// Get the corresponding public key
     pub fn to_root_extended_pub_key(&self) -> RootExtendedPubKey {
-        let secp = Secp256k1::new();
         let public_key = secp256k1::PublicKey::from_secret_key(&self.root_private_key);
         RootExtendedPubKey {
             root_public_key: public_key,

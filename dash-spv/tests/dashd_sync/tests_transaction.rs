@@ -278,7 +278,7 @@ fn derive_external_addresses(mnemonic: &str, count: u32) -> Vec<Address> {
         .map(|index| {
             let mut path = chain.to_vec();
             path.push(ChildNumber::from_normal_idx(index).expect("index"));
-            let xprv = master.derive_priv(&secp, &path).expect("derive");
+            let xprv = master.derive_priv(&path).expect("derive");
             let pk = PublicKey::new(xprv.private_key.public_key());
             Address::p2pkh(&pk, Network::Regtest)
         })

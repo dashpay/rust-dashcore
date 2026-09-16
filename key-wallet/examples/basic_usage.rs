@@ -23,8 +23,7 @@ fn main() -> core::result::Result<(), Box<dyn std::error::Error>> {
     // 3. Create master key
     println!("\n3. Creating master key...");
     let master = ExtendedPrivKey::new_master(Network::Mainnet, &seed)?;
-    let secp = secp256k1::Secp256k1::new();
-    let master_pub = ExtendedPubKey::from_priv(&secp, &master);
+    let master_pub = ExtendedPubKey::from_priv(&master);
     println!("   Master public key: {}", master_pub);
 
     // 4. Derive BIP44 account
@@ -34,7 +33,7 @@ fn main() -> core::result::Result<(), Box<dyn std::error::Error>> {
         ChildNumber::from_hardened_idx(5)?,  // Dash coin type
         ChildNumber::from_hardened_idx(0)?,  // Account 0
     ]);
-    let account = master.derive_priv(&secp, &path)?;
+    let account = master.derive_priv(&path)?;
     println!("   Account xprv: {}", account);
 
     // 5. Derive addresses
@@ -47,8 +46,8 @@ fn main() -> core::result::Result<(), Box<dyn std::error::Error>> {
             ChildNumber::from_normal_idx(0)?, // External chain
             ChildNumber::from_normal_idx(i)?,
         ]);
-        let addr_key = account.derive_priv(&secp, &receive_path)?;
-        let addr_xpub = ExtendedPubKey::from_priv(&secp, &addr_key);
+        let addr_key = account.derive_priv(&receive_path)?;
+        let addr_xpub = ExtendedPubKey::from_priv(&addr_key);
         let addr =
             Address::p2pkh(&dashcore::PublicKey::new(addr_xpub.public_key), DashNetwork::Mainnet);
         println!("     {}: {}", i, addr);
@@ -61,8 +60,8 @@ fn main() -> core::result::Result<(), Box<dyn std::error::Error>> {
             ChildNumber::from_normal_idx(1)?, // Internal chain
             ChildNumber::from_normal_idx(i)?,
         ]);
-        let addr_key = account.derive_priv(&secp, &change_path)?;
-        let addr_xpub = ExtendedPubKey::from_priv(&secp, &addr_key);
+        let addr_key = account.derive_priv(&change_path)?;
+        let addr_xpub = ExtendedPubKey::from_priv(&addr_key);
         let addr =
             Address::p2pkh(&dashcore::PublicKey::new(addr_xpub.public_key), DashNetwork::Mainnet);
         println!("     {}: {}", i, addr);
@@ -75,7 +74,7 @@ fn main() -> core::result::Result<(), Box<dyn std::error::Error>> {
         ChildNumber::from_hardened_idx(5)?, // Dash coin type
         ChildNumber::from_hardened_idx(0)?, // Account 0
     ]);
-    let coinjoin_account = master.derive_priv(&secp, &coinjoin_path)?;
+    let coinjoin_account = master.derive_priv(&coinjoin_path)?;
     println!("   CoinJoin account depth: {}", coinjoin_account.depth);
 
     // 7. Demonstrate identity key derivation
@@ -87,7 +86,7 @@ fn main() -> core::result::Result<(), Box<dyn std::error::Error>> {
         ChildNumber::from_hardened_idx(0)?,  // Identity index
         ChildNumber::from_hardened_idx(0)?,  // Key index
     ]);
-    let identity_key = master.derive_priv(&secp, &identity_path)?;
+    let identity_key = master.derive_priv(&identity_path)?;
     println!("   Identity key depth: {}", identity_key.depth);
 
     // 8. Address parsing example

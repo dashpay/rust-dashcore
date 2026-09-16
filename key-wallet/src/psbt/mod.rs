@@ -25,7 +25,7 @@ use dashcore::sighash::{self, EcdsaSighashType, SighashCache};
 use dashcore::Amount;
 use dashcore_hashes::Hash;
 use internals::write_err;
-use secp256k1::{Message, Secp256k1, Signing};
+use secp256k1::Message;
 use std::collections::{btree_map, BTreeSet};
 
 #[macro_use]
@@ -229,13 +229,8 @@ impl PartiallySignedTransaction {
     ///
     /// If an error is returned some signatures may already have been added to the PSBT. Since
     /// `partial_sigs` is a [`BTreeMap`] it is safe to retry, previous sigs will be overwritten.
-    pub fn sign<C, K>(
-        &mut self,
-        k: &K,
-        secp: &Secp256k1<C>,
-    ) -> Result<SigningKeys, (SigningKeys, SigningErrors)>
+    pub fn sign<K>(&mut self, k: &K) -> Result<SigningKeys, (SigningKeys, SigningErrors)>
     where
-        C: Signing,
         K: GetKey,
     {
         let tx = self.unsigned_tx.clone(); // clone because we need to mutably borrow when signing.
@@ -246,7 +241,7 @@ impl PartiallySignedTransaction {
 
         for i in 0..self.inputs.len() {
             if let Ok(SigningAlgorithm::Ecdsa) = self.signing_algorithm(i) {
-                match self.bip32_sign_ecdsa(k, i, &mut cache, secp) {
+                match self.bip32_sign_ecdsa(k, i, &mut cache) {
                     Ok(v) => {
                         used.insert(i, v);
                     }
@@ -270,15 +265,13 @@ impl PartiallySignedTransaction {
     ///
     /// - Ok: A list of the public keys used in signing.
     /// - Err: Error encountered trying to calculate the sighash AND we had the signing key.
-    fn bip32_sign_ecdsa<C, K, T>(
+    fn bip32_sign_ecdsa<K, T>(
         &mut self,
         k: &K,
         input_index: usize,
         cache: &mut SighashCache<T>,
-        secp: &Secp256k1<C>,
     ) -> Result<Vec<PublicKey>, SignError>
     where
-        C: Signing,
         T: Borrow<Transaction>,
         K: GetKey,
     {
@@ -289,9 +282,9 @@ impl PartiallySignedTransaction {
         let mut used = Vec::new(); // List of pubkeys used to sign the input.
 
         for (pk, key_source) in input.bip32_derivation.iter() {
-            let sk = if let Ok(Some(sk)) = k.get_key(KeyRequest::Bip32(key_source.clone()), secp) {
+            let sk = if let Ok(Some(sk)) = k.get_key(KeyRequest::Bip32(key_source.clone())) {
                 sk
-            } else if let Ok(Some(sk)) = k.get_key(KeyRequest::Pubkey(PublicKey::new(*pk)), secp) {
+            } else if let Ok(Some(sk)) = k.get_key(KeyRequest::Pubkey(PublicKey::new(*pk))) {
                 sk
             } else {
                 continue;
@@ -304,7 +297,7 @@ impl PartiallySignedTransaction {
             };
 
             let sig = ecdsa::Signature {
-                sig: secp.sign_ecdsa(msg, &sk.inner),
+                sig: sk.inner.sign_ecdsa(msg),
                 hash_ty: sighash_ty,
             };
 
@@ -502,26 +495,18 @@ pub trait GetKey {
     /// - `Some(key)` if the key is found.
     /// - `None` if the key was not found but no error was encountered.
     /// - `Err` if an error was encountered while looking for the key.
-    fn get_key<C: Signing>(
-        &self,
-        key_request: KeyRequest,
-        secp: &Secp256k1<C>,
-    ) -> Result<Option<PrivateKey>, Self::Error>;
+    fn get_key(&self, key_request: KeyRequest) -> Result<Option<PrivateKey>, Self::Error>;
 }
 
 impl GetKey for ExtendedPrivKey {
     type Error = GetKeyError;
 
-    fn get_key<C: Signing>(
-        &self,
-        key_request: KeyRequest,
-        secp: &Secp256k1<C>,
-    ) -> Result<Option<PrivateKey>, Self::Error> {
+    fn get_key(&self, key_request: KeyRequest) -> Result<Option<PrivateKey>, Self::Error> {
         match key_request {
             KeyRequest::Pubkey(_) => Err(GetKeyError::NotSupported),
             KeyRequest::Bip32((fingerprint, path)) => {
-                let key = if self.fingerprint(secp) == fingerprint {
-                    let k = self.derive_priv(secp, &path)?;
+                let key = if self.fingerprint() == fingerprint {
+                    let k = self.derive_priv(&path)?;
                     Some(PrivateKey {
                         compressed: true,
                         network: k.network,
@@ -549,17 +534,16 @@ macro_rules! impl_get_key_for_set {
 impl GetKey for $set<ExtendedPrivKey> {
     type Error = GetKeyError;
 
-    fn get_key<C: Signing>(
+    fn get_key(
         &self,
         key_request: KeyRequest,
-        secp: &Secp256k1<C>
     ) -> Result<Option<PrivateKey>, Self::Error> {
         match key_request {
             KeyRequest::Pubkey(_) => Err(GetKeyError::NotSupported),
             KeyRequest::Bip32((fingerprint, path)) => {
                 for xpriv in self.iter() {
                     if xpriv.parent_fingerprint == fingerprint {
-                        let k = xpriv.derive_priv(secp, &path)?;
+                        let k = xpriv.derive_priv(&path)?;
                         return Ok(Some(PrivateKey {
                             compressed: true,
                             network: k.network.into(),
@@ -582,11 +566,7 @@ macro_rules! impl_get_key_for_map {
 impl GetKey for $map<PublicKey, PrivateKey> {
     type Error = GetKeyError;
 
-    fn get_key<C: Signing>(
-        &self,
-        key_request: KeyRequest,
-        _: &Secp256k1<C>,
-    ) -> Result<Option<PrivateKey>, Self::Error> {
+    fn get_key(&self, key_request: KeyRequest) -> Result<Option<PrivateKey>, Self::Error> {
         match key_request {
             KeyRequest::Pubkey(pk) => Ok(self.get(&pk).cloned()),
             KeyRequest::Bip32(_) => Err(GetKeyError::NotSupported),
@@ -838,9 +818,9 @@ mod tests {
     use std::collections::BTreeMap;
 
     use dashcore_hashes::{hash160, ripemd160, sha256, Hash};
-    use secp256k1::{self, Secp256k1};
+    use secp256k1;
     #[cfg(feature = "rand")]
-    use secp256k1::{All, SecretKey};
+    use secp256k1::SecretKey;
 
     use super::*;
     use crate::bip32::{ChildNumber, ExtendedPrivKey, ExtendedPubKey, KeySource};
@@ -886,7 +866,6 @@ mod tests {
 
     #[test]
     fn serialize_then_deserialize_output() {
-        let secp = &Secp256k1::new();
         let seed = hex!("000102030405060708090a0b0c0d0e0f");
 
         let mut hd_keypaths: BTreeMap<secp256k1::PublicKey, KeySource> = Default::default();
@@ -894,7 +873,7 @@ mod tests {
         let mut sk: ExtendedPrivKey =
             ExtendedPrivKey::new_master(key_wallet::Network::Mainnet, &seed).unwrap();
 
-        let fprint = sk.fingerprint(secp);
+        let fprint = sk.fingerprint();
 
         let dpath: Vec<ChildNumber> = vec![
             ChildNumber::from_normal_idx(0).unwrap(),
@@ -907,9 +886,9 @@ mod tests {
             ChildNumber::from_normal_idx(31337).unwrap(),
         ];
 
-        sk = sk.derive_priv(secp, &dpath).unwrap();
+        sk = sk.derive_priv(&dpath).unwrap();
 
-        let pk = ExtendedPubKey::from_priv(secp, &sk);
+        let pk = ExtendedPubKey::from_priv(&sk);
 
         hd_keypaths.insert(pk.public_key, (fprint, dpath.into()));
 
@@ -1690,10 +1669,8 @@ mod tests {
     }
 
     #[cfg(feature = "rand")]
-    fn gen_keys() -> (PrivateKey, PublicKey, Secp256k1<All>) {
+    fn gen_keys() -> (PrivateKey, PublicKey) {
         use rand::{rng, RngCore};
-
-        let secp = Secp256k1::new();
 
         let mut rng = rng();
         let mut secret_key_bytes = [0u8; 32];
@@ -1703,18 +1680,18 @@ mod tests {
         let priv_key = PrivateKey::new(sk, crate::Network::Regtest);
         let pk = PublicKey::from_private_key(&priv_key);
 
-        (priv_key, pk, secp)
+        (priv_key, pk)
     }
 
     #[test]
     #[cfg(feature = "rand")]
     fn get_key_btree_map() {
-        let (priv_key, pk, secp) = gen_keys();
+        let (priv_key, pk) = gen_keys();
 
         let mut key_map = BTreeMap::new();
         key_map.insert(pk, priv_key);
 
-        let got = key_map.get_key(KeyRequest::Pubkey(pk), &secp).expect("failed to get key");
+        let got = key_map.get_key(KeyRequest::Pubkey(pk)).expect("failed to get key");
         assert_eq!(got.unwrap(), priv_key)
     }
 
@@ -1845,7 +1822,7 @@ mod tests {
         };
         let mut psbt = PartiallySignedTransaction::from_unsigned_tx(unsigned_tx).unwrap();
 
-        let (priv_key, pk, secp) = gen_keys();
+        let (priv_key, pk) = gen_keys();
 
         // key_map implements `GetKey` using KeyRequest::Pubkey. A pubkey key request does not use
         // keysource so we use default `KeySource` (fingreprint and derivation path) below.
@@ -1871,7 +1848,7 @@ mod tests {
         };
         psbt.inputs[1].witness_utxo = Some(txout_unknown_future);
 
-        let sigs = psbt.sign(&key_map, &secp).unwrap();
+        let sigs = psbt.sign(&key_map).unwrap();
 
         assert!(sigs.len() == 1);
         assert!(sigs[&0] == vec![pk]);

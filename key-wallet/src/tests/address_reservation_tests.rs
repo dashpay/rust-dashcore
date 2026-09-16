@@ -13,7 +13,6 @@ use crate::transaction_checking::TransactionContext;
 use crate::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
 use crate::{ExtendedPrivKey, Network};
 use dashcore::{Address, Transaction};
-use secp256k1::Secp256k1;
 use std::str::FromStr;
 
 #[tokio::test]
@@ -94,13 +93,12 @@ fn test_reserve_receive_on_non_standard_account_errors() {
     .unwrap();
     let seed = mnemonic.to_seed("");
     let master = ExtendedPrivKey::new_master(network, &seed).unwrap();
-    let secp = Secp256k1::new();
 
     let account_type = AccountType::CoinJoin {
         index: 0,
     };
     let derivation_path = account_type.derivation_path(network).unwrap();
-    let account_key = master.derive_priv(&secp, &derivation_path).unwrap();
+    let account_key = master.derive_priv(&derivation_path).unwrap();
     let account = Account::from_xpriv(Some([0u8; 32]), account_type, account_key, network).unwrap();
 
     let key_source = KeySource::Public(account.account_xpub);

@@ -8,7 +8,6 @@
 use dashcore::hashes::Hash;
 use key_wallet::mnemonic::Mnemonic;
 use key_wallet::{DerivationPath, ExtendedPrivKey, ExtendedPubKey, Network};
-use secp256k1::Secp256k1;
 use std::str::FromStr;
 
 // =============================================================================
@@ -35,12 +34,11 @@ fn test_dip17_platform_payment_vector1_mainnet() {
     .unwrap();
 
     let seed = mnemonic.to_seed("");
-    let secp = Secp256k1::new();
     let master_key = ExtendedPrivKey::new_master(Network::Mainnet, &seed).unwrap();
 
     // Derive Platform Payment key: m/9'/5'/17'/0'/0'/0
     let path = DerivationPath::from_str("m/9'/5'/17'/0'/0'/0").unwrap();
-    let xprv = master_key.derive_priv(&secp, &path).unwrap();
+    let xprv = master_key.derive_priv(&path).unwrap();
 
     // Verify private key matches DIP-17 test vector
     let privkey_hex = hex::encode(xprv.private_key.to_secret_bytes());
@@ -50,7 +48,7 @@ fn test_dip17_platform_payment_vector1_mainnet() {
     );
 
     // Get compressed public key
-    let xpub = ExtendedPubKey::from_priv(&secp, &xprv);
+    let xpub = ExtendedPubKey::from_priv(&xprv);
     let pubkey = PublicKey::new(xpub.public_key);
     let pubkey_hex = hex::encode(pubkey.to_bytes());
     assert_eq!(
@@ -79,15 +77,14 @@ fn test_dip17_platform_payment_vector1_testnet() {
     .unwrap();
 
     let seed = mnemonic.to_seed("");
-    let secp = Secp256k1::new();
     let master_key = ExtendedPrivKey::new_master(Network::Testnet, &seed).unwrap();
 
     // Derive Platform Payment key: m/9'/1'/17'/0'/0'/0 (testnet uses coin_type 1')
     let path = DerivationPath::from_str("m/9'/1'/17'/0'/0'/0").unwrap();
-    let xprv = master_key.derive_priv(&secp, &path).unwrap();
+    let xprv = master_key.derive_priv(&path).unwrap();
 
     // Get compressed public key and HASH160
-    let xpub = ExtendedPubKey::from_priv(&secp, &xprv);
+    let xpub = ExtendedPubKey::from_priv(&xprv);
     let pubkey = PublicKey::new(xpub.public_key);
     let pubkey_hash = pubkey.pubkey_hash();
 
@@ -111,10 +108,9 @@ fn test_dip17_platform_payment_vector2() {
 
     // Test mainnet
     let seed = mnemonic.to_seed("");
-    let secp = Secp256k1::new();
     let master_mainnet = ExtendedPrivKey::new_master(Network::Mainnet, &seed).unwrap();
     let path_mainnet = DerivationPath::from_str("m/9'/5'/17'/0'/0'/1").unwrap();
-    let xprv_mainnet = master_mainnet.derive_priv(&secp, &path_mainnet).unwrap();
+    let xprv_mainnet = master_mainnet.derive_priv(&path_mainnet).unwrap();
 
     // Verify private key
     let privkey_hex = hex::encode(xprv_mainnet.private_key.to_secret_bytes());
@@ -123,7 +119,7 @@ fn test_dip17_platform_payment_vector2() {
         "Private key mismatch for DIP-17 vector 2"
     );
 
-    let xpub_mainnet = ExtendedPubKey::from_priv(&secp, &xprv_mainnet);
+    let xpub_mainnet = ExtendedPubKey::from_priv(&xprv_mainnet);
     let pubkey_mainnet = PublicKey::new(xpub_mainnet.public_key);
 
     // Verify public key
@@ -144,8 +140,8 @@ fn test_dip17_platform_payment_vector2() {
     // Test testnet derivation
     let master_testnet = ExtendedPrivKey::new_master(Network::Testnet, &seed).unwrap();
     let path_testnet = DerivationPath::from_str("m/9'/1'/17'/0'/0'/1").unwrap();
-    let xprv_testnet = master_testnet.derive_priv(&secp, &path_testnet).unwrap();
-    let xpub_testnet = ExtendedPubKey::from_priv(&secp, &xprv_testnet);
+    let xprv_testnet = master_testnet.derive_priv(&path_testnet).unwrap();
+    let xpub_testnet = ExtendedPubKey::from_priv(&xprv_testnet);
     let pubkey_testnet = PublicKey::new(xpub_testnet.public_key);
     let pubkey_hash_testnet = pubkey_testnet.pubkey_hash();
 
@@ -170,10 +166,9 @@ fn test_dip17_platform_payment_vector3_non_default_key_class() {
 
     // Test mainnet with key_class' = 1'
     let seed = mnemonic.to_seed("");
-    let secp = Secp256k1::new();
     let master_mainnet = ExtendedPrivKey::new_master(Network::Mainnet, &seed).unwrap();
     let path_mainnet = DerivationPath::from_str("m/9'/5'/17'/0'/1'/0").unwrap();
-    let xprv_mainnet = master_mainnet.derive_priv(&secp, &path_mainnet).unwrap();
+    let xprv_mainnet = master_mainnet.derive_priv(&path_mainnet).unwrap();
 
     // Verify private key
     let privkey_hex = hex::encode(xprv_mainnet.private_key.to_secret_bytes());
@@ -182,7 +177,7 @@ fn test_dip17_platform_payment_vector3_non_default_key_class() {
         "Private key mismatch for DIP-17 vector 3"
     );
 
-    let xpub_mainnet = ExtendedPubKey::from_priv(&secp, &xprv_mainnet);
+    let xpub_mainnet = ExtendedPubKey::from_priv(&xprv_mainnet);
     let pubkey_mainnet = PublicKey::new(xpub_mainnet.public_key);
 
     // Verify public key
@@ -203,8 +198,8 @@ fn test_dip17_platform_payment_vector3_non_default_key_class() {
     // Test testnet with key_class' = 1'
     let master_testnet = ExtendedPrivKey::new_master(Network::Testnet, &seed).unwrap();
     let path_testnet = DerivationPath::from_str("m/9'/1'/17'/0'/1'/0").unwrap();
-    let xprv_testnet = master_testnet.derive_priv(&secp, &path_testnet).unwrap();
-    let xpub_testnet = ExtendedPubKey::from_priv(&secp, &xprv_testnet);
+    let xprv_testnet = master_testnet.derive_priv(&path_testnet).unwrap();
+    let xpub_testnet = ExtendedPubKey::from_priv(&xprv_testnet);
     let pubkey_testnet = PublicKey::new(xpub_testnet.public_key);
     let pubkey_hash_testnet = pubkey_testnet.pubkey_hash();
 

@@ -68,8 +68,7 @@ impl Wallet {
         }
 
         let derivation_path = account.account_type.derivation_path(self.network)?;
-        let secp = secp256k1::Secp256k1::new();
-        let account_key = master_key.derive_priv(&secp, &derivation_path).map_err(Error::Bip32)?;
+        let account_key = master_key.derive_priv(&derivation_path).map_err(Error::Bip32)?;
 
         let secret_key = account_key.private_key;
         encrypt_private_key(&secret_key, password, true, self.network)

@@ -17,7 +17,7 @@ use crate::error::{Error, Result};
 use crate::Network;
 use dashcore::Address;
 
-use secp256k1::{PublicKey, Secp256k1, SecretKey};
+use secp256k1::{PublicKey, SecretKey};
 use sha2::{Digest, Sha256};
 
 // BIP38 constants
@@ -206,7 +206,6 @@ impl Bip38EncryptedKey {
         };
 
         // Derive pass_point from pass_factor
-        let secp = Secp256k1::new();
         let pass_factor_key = SecretKey::from_secret_bytes(
             pass_factor
                 .as_slice()
@@ -258,7 +257,6 @@ impl Bip38EncryptedKey {
 
     /// Derive address from secret key
     fn derive_address(&self, secret: &SecretKey) -> Result<Address> {
-        let secp = Secp256k1::new();
         let public_key = PublicKey::from_secret_key(secret);
         let dash_pubkey = dashcore::PublicKey::new(public_key);
         Ok(Address::p2pkh(&dash_pubkey, self.network))
@@ -272,7 +270,6 @@ pub fn encrypt_private_key(
     compressed: bool,
     network: Network,
 ) -> Result<Bip38EncryptedKey> {
-    let secp = Secp256k1::new();
     let public_key = PublicKey::from_secret_key(private_key);
     let dash_pubkey = dashcore::PublicKey::new(public_key);
     let address = Address::p2pkh(&dash_pubkey, network);
@@ -378,7 +375,6 @@ pub fn generate_intermediate_code(
     };
 
     // Compute passpoint
-    let secp = Secp256k1::new();
     let pass_factor_key = SecretKey::from_secret_bytes(
         pass_factor
             .as_slice()
@@ -695,7 +691,6 @@ mod tests {
     #[ignore = "BIP38 tests are slow - run with test_bip38.sh script"]
     fn test_address_hash() {
         // Test address hash computation
-        let secp = Secp256k1::new();
         let private_key = SecretKey::from_secret_bytes([
             0x0C, 0x28, 0xFC, 0xA3, 0x86, 0xC7, 0xA2, 0x27, 0x60, 0x0B, 0x2F, 0xE5, 0x0B, 0x7C,
             0xAE, 0x11, 0xEC, 0x86, 0xD3, 0xBF, 0x1F, 0xBE, 0x47, 0x1B, 0xE8, 0x98, 0x27, 0xE1,

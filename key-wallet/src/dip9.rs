@@ -3,7 +3,6 @@ use crate::bip32::{ChildNumber, DerivationPath, Error, ExtendedPrivKey, Extended
 use bincode_derive::{Decode, Encode};
 use bitflags::bitflags;
 use dashcore::Network;
-use secp256k1::Secp256k1;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
@@ -93,10 +92,9 @@ impl<const N: usize> IndexConstPath<N> {
         add_derivation_path: DerivationPath,
         network: Network,
     ) -> Result<ExtendedPrivKey, Error> {
-        let secp = Secp256k1::new();
         let sk = ExtendedPrivKey::new_master(network, seed)?;
         let path = self.append_path(add_derivation_path);
-        sk.derive_priv(&secp, &path)
+        sk.derive_priv(&path)
     }
 
     pub fn derive_pub_ecdsa_for_master_seed(
@@ -105,9 +103,8 @@ impl<const N: usize> IndexConstPath<N> {
         add_derivation_path: DerivationPath,
         network: Network,
     ) -> Result<ExtendedPubKey, Error> {
-        let secp = Secp256k1::new();
         let sk = self.derive_priv_ecdsa_for_master_seed(seed, add_derivation_path, network)?;
-        Ok(ExtendedPubKey::from_priv(&secp, &sk))
+        Ok(ExtendedPubKey::from_priv(&sk))
     }
 
     pub fn derive_pub_for_master_extended_public_key(
@@ -115,9 +112,8 @@ impl<const N: usize> IndexConstPath<N> {
         master_extended_public_key: ExtendedPubKey,
         add_derivation_path: DerivationPath,
     ) -> Result<ExtendedPubKey, Error> {
-        let secp = Secp256k1::new();
         let path = self.append_path(add_derivation_path);
-        master_extended_public_key.derive_pub(&secp, &path)
+        master_extended_public_key.derive_pub(&path)
     }
 }
 

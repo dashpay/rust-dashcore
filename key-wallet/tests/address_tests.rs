@@ -2,12 +2,10 @@
 
 use core::str::FromStr;
 use dashcore::{Address, AddressType, Network as DashNetwork, ScriptBuf};
-use secp256k1::{PublicKey, Secp256k1};
+use secp256k1::PublicKey;
 
 #[test]
 fn test_p2pkh_address_creation() {
-    let secp = Secp256k1::new();
-
     // Create a public key
     let secret_key = secp256k1::SecretKey::from_secret_bytes([1u8; 32]).unwrap();
     let public_key = PublicKey::from_secret_key(&secret_key);
@@ -43,8 +41,6 @@ fn test_p2sh_address_creation() {
 
 #[test]
 fn test_testnet_address() {
-    let secp = Secp256k1::new();
-
     // Create a public key
     let secret_key = secp256k1::SecretKey::from_secret_bytes([2u8; 32]).unwrap();
     let public_key = PublicKey::from_secret_key(&secret_key);
@@ -65,9 +61,6 @@ fn test_testnet_address() {
 fn test_address_parsing() {
     // Instead of parsing potentially invalid addresses, let's create valid ones and test round-trip
     use dashcore::key::PrivateKey;
-    use dashcore::secp256k1::Secp256k1;
-
-    let secp = Secp256k1::new();
 
     // Create a mainnet address
     let privkey_mainnet = PrivateKey {
@@ -110,8 +103,6 @@ fn test_address_parsing() {
 
 #[test]
 fn test_address_roundtrip() {
-    let secp = Secp256k1::new();
-
     // Create a public key
     let secret_key = secp256k1::SecretKey::from_secret_bytes([3u8; 32]).unwrap();
     let public_key = PublicKey::from_secret_key(&secret_key);
