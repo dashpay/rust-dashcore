@@ -534,7 +534,13 @@ impl TapSighashType {
     }
 
     /// Constructs a [`TapSighashType`] from a raw `u8`.
-    pub fn from_consensus_u8(hash_ty: u8) -> Result<Self, Error> {
+    ///
+    /// # Errors
+    ///
+    /// Returns [`InvalidSighashTypeError`] when `hash_ty` names no sighash
+    /// type. The error is dedicated rather than the module's [`Error`] so
+    /// that naming a sighash type stays independent of computing one.
+    pub fn from_consensus_u8(hash_ty: u8) -> Result<Self, InvalidSighashTypeError> {
         use TapSighashType::*;
 
         Ok(match hash_ty {
@@ -545,8 +551,26 @@ impl TapSighashType {
             0x81 => AllPlusAnyoneCanPay,
             0x82 => NonePlusAnyoneCanPay,
             0x83 => SinglePlusAnyoneCanPay,
-            x => return Err(Error::InvalidSighashType(x as u32)),
+            x => return Err(InvalidSighashTypeError(x as u32)),
         })
+    }
+}
+
+/// Integer is not a consensus valid sighash type.
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct InvalidSighashTypeError(pub u32);
+
+impl fmt::Display for InvalidSighashTypeError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "invalid sighash type {}", self.0)
+    }
+}
+
+impl_std_error!(InvalidSighashTypeError);
+
+impl From<InvalidSighashTypeError> for Error {
+    fn from(e: InvalidSighashTypeError) -> Self {
+        Error::InvalidSighashType(e.0)
     }
 }
 
