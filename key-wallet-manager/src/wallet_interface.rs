@@ -21,6 +21,7 @@ pub struct BlockProcessingResult {
     /// Cached scriptPubKeys of addresses freshly generated per wallet during
     /// gap-limit maintenance.
     pub new_scripts: BTreeMap<WalletId, Vec<ScriptBuf>>,
+    pub reapply_heights: BTreeMap<WalletId, BTreeSet<CoreBlockHeight>>,
 }
 
 /// Result of processing a mempool transaction through the wallet
