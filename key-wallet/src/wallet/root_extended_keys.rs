@@ -62,7 +62,7 @@ impl RootExtendedPrivKey {
         let mut private_key_bytes = [0u8; 32];
         private_key_bytes.copy_from_slice(&hmac_result[..32]);
         let private_key =
-            secp256k1::SecretKey::from_byte_array(&private_key_bytes).map_err(|e| {
+            secp256k1::SecretKey::from_byte_array(private_key_bytes).map_err(|e| {
                 crate::error::Error::InvalidParameter(format!("Invalid private key: {}", e))
             })?;
 
@@ -185,7 +185,7 @@ impl<C> Decode<C> for RootExtendedPrivKey {
         // Decode the private key bytes
         let private_key_bytes: [u8; 32] = bincode::Decode::decode(decoder)?;
         let root_private_key =
-            secp256k1::SecretKey::from_byte_array(&private_key_bytes).map_err(|e| {
+            secp256k1::SecretKey::from_byte_array(private_key_bytes).map_err(|e| {
                 bincode::error::DecodeError::OtherString(format!("Invalid private key: {}", e))
             })?;
 
@@ -254,7 +254,7 @@ impl zeroize::Zeroize for RootExtendedPubKey {
     fn zeroize(&mut self) {
         // Replace the public key with a dummy value (generator point G)
         // This is a best-effort zeroization since PublicKey doesn't implement Zeroize
-        self.root_public_key = secp256k1::PublicKey::from_byte_array_compressed(&[
+        self.root_public_key = secp256k1::PublicKey::from_byte_array_compressed([
             0x02, 0x79, 0xbe, 0x66, 0x7e, 0xf9, 0xdc, 0xbb, 0xac, 0x55, 0xa0, 0x62, 0x95, 0xce,
             0x87, 0x0b, 0x07, 0x02, 0x9b, 0xfc, 0xdb, 0x2d, 0xce, 0x28, 0xd9, 0x59, 0xf2, 0x81,
             0x5b, 0x16, 0xf8, 0x17, 0x98,
@@ -320,10 +320,10 @@ impl<C> Decode<C> for RootExtendedPubKey {
     ) -> Result<Self, bincode::error::DecodeError> {
         // Decode the public key bytes
         let public_key_bytes: [u8; 33] = bincode::Decode::decode(decoder)?;
-        let root_public_key = secp256k1::PublicKey::from_byte_array_compressed(&public_key_bytes)
+        let root_public_key = secp256k1::PublicKey::from_byte_array_compressed(public_key_bytes)
             .map_err(|e| {
-            bincode::error::DecodeError::OtherString(format!("Invalid public key: {}", e))
-        })?;
+                bincode::error::DecodeError::OtherString(format!("Invalid public key: {}", e))
+            })?;
 
         // Decode the chain code
         let root_chain_code: ChainCode = bincode::Decode::decode(decoder)?;

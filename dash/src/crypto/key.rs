@@ -275,7 +275,7 @@ impl PublicKey {
     pub fn from_slice(data: &[u8]) -> Result<PublicKey, Error> {
         let (compressed, inner) = match data.len() {
             constants::PUBLIC_KEY_SIZE => {
-                let data = <&[u8; constants::PUBLIC_KEY_SIZE]>::try_from(data)
+                let data = <[u8; constants::PUBLIC_KEY_SIZE]>::try_from(data)
                     .map_err(|_| Error::Secp256k1(secp256k1::Error::InvalidPublicKey))?;
                 (true, secp256k1::PublicKey::from_byte_array_compressed(data)?)
             }
@@ -283,7 +283,7 @@ impl PublicKey {
                 if data[0] != 0x04 {
                     return Err(Error::InvalidKeyPrefix(data[0]));
                 }
-                let data = <&[u8; constants::UNCOMPRESSED_PUBLIC_KEY_SIZE]>::try_from(data)
+                let data = <[u8; constants::UNCOMPRESSED_PUBLIC_KEY_SIZE]>::try_from(data)
                     .map_err(|_| Error::Secp256k1(secp256k1::Error::InvalidPublicKey))?;
                 (false, secp256k1::PublicKey::from_byte_array_uncompressed(data)?)
             }
@@ -388,13 +388,13 @@ impl PrivateKey {
     /// Deserialize a private key from a slice
     #[deprecated(since = "0.40.0", note = "Use `from_byte_array` instead.")]
     pub fn from_slice(data: &[u8], network: Network) -> Result<PrivateKey, Error> {
-        let data = <&[u8; constants::SECRET_KEY_SIZE]>::try_from(data)
+        let data = <[u8; constants::SECRET_KEY_SIZE]>::try_from(data)
             .map_err(|_| Error::Secp256k1(secp256k1::Error::InvalidSecretKey))?;
-        PrivateKey::from_byte_array(data, network)
+        PrivateKey::from_byte_array(&data, network)
     }
 
     pub fn from_byte_array(data: &[u8; 32], network: Network) -> Result<PrivateKey, Error> {
-        Ok(PrivateKey::new(secp256k1::SecretKey::from_byte_array(data)?, network))
+        Ok(PrivateKey::new(secp256k1::SecretKey::from_byte_array(*data)?, network))
     }
 
     /// Format the private key to WIF format.
@@ -449,7 +449,7 @@ impl PrivateKey {
         Ok(PrivateKey {
             compressed,
             network,
-            inner: secp256k1::SecretKey::from_byte_array(secret)?,
+            inner: secp256k1::SecretKey::from_byte_array(*secret)?,
         })
     }
 }
@@ -615,7 +615,7 @@ pub type UntweakedKeyPair = Keypair;
 /// # use dashcore::key::{Keypair, TweakedKeyPair, TweakedPublicKey};
 /// # use dashcore::secp256k1::{rand, Secp256k1};
 /// # let secp = Secp256k1::new();
-/// # let keypair = TweakedKeyPair::dangerous_assume_tweaked(Keypair::new(&secp, &mut rand::thread_rng()));
+/// # let keypair = TweakedKeyPair::dangerous_assume_tweaked(Keypair::new(&secp, &mut rand::rng()));
 /// // There are various conversion methods available to get a tweaked pubkey from a tweaked keypair.
 /// let (_pk, _parity) = keypair.public_parts();
 /// let _pk  = TweakedPublicKey::from_keypair(keypair);
@@ -1134,7 +1134,7 @@ mod tests {
         use secp256k1::rand;
 
         let secp = Secp256k1::new();
-        let kp = Keypair::new(&secp, &mut rand::thread_rng());
+        let kp = Keypair::new(&secp, &mut rand::rng());
 
         let _ = PublicKey::new(kp);
         let _ = PublicKey::new_uncompressed(kp);

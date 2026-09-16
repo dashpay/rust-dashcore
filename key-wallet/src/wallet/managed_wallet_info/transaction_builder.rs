@@ -1067,7 +1067,7 @@ impl TransactionSigner for Wallet {
         let key = derived_xpriv.private_key;
 
         let message = Message::from_digest(*sighash.as_byte_array());
-        let signature = secp.sign_ecdsa(&message, &key);
+        let signature = secp.sign_ecdsa(message, &key);
         let pubkey = PublicKey::from_secret_key(&secp, &key);
 
         Ok((signature, pubkey))

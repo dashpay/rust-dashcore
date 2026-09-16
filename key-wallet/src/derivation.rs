@@ -596,11 +596,11 @@ mod tests {
 
         // Sign the message (deterministic signing)
         let signature1 = secp.sign_ecdsa(
-            &secp256k1::Message::from_digest(message_hash.to_byte_array()),
+            secp256k1::Message::from_digest(message_hash.to_byte_array()),
             &signing_key.private_key,
         );
         let signature2 = secp.sign_ecdsa(
-            &secp256k1::Message::from_digest(message_hash.to_byte_array()),
+            secp256k1::Message::from_digest(message_hash.to_byte_array()),
             &signing_key.private_key,
         );
 
@@ -610,7 +610,7 @@ mod tests {
         // Verify the signature
         let pubkey = ExtendedPubKey::from_priv(&secp, &signing_key);
         let verified = secp.verify_ecdsa(
-            &secp256k1::Message::from_digest(message_hash.to_byte_array()),
+            secp256k1::Message::from_digest(message_hash.to_byte_array()),
             &signature1,
             &pubkey.public_key,
         );
@@ -639,14 +639,14 @@ mod tests {
 
         // Create recoverable signature
         let signature = secp.sign_ecdsa_recoverable(
-            &secp256k1::Message::from_digest(message_hash.to_byte_array()),
+            secp256k1::Message::from_digest(message_hash.to_byte_array()),
             &signing_key.private_key,
         );
 
         // Recover the public key from signature
         let recovered_pubkey = secp
             .recover_ecdsa(
-                &secp256k1::Message::from_digest(message_hash.to_byte_array()),
+                secp256k1::Message::from_digest(message_hash.to_byte_array()),
                 &signature,
             )
             .unwrap();
@@ -768,12 +768,12 @@ mod tests {
         let message = b"DashPay contact message";
         let message_hash = dashcore_hashes::sha256::Hash::hash(message);
         let signature = secp.sign_ecdsa(
-            &secp256k1::Message::from_digest(message_hash.to_byte_array()),
+            secp256k1::Message::from_digest(message_hash.to_byte_array()),
             &dashpay_key.private_key,
         );
 
         let verified = secp.verify_ecdsa(
-            &secp256k1::Message::from_digest(message_hash.to_byte_array()),
+            secp256k1::Message::from_digest(message_hash.to_byte_array()),
             &signature,
             &dashpay_pubkey.public_key,
         );

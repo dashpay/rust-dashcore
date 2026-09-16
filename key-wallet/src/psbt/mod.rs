@@ -304,7 +304,7 @@ impl PartiallySignedTransaction {
             };
 
             let sig = ecdsa::Signature {
-                sig: secp.sign_ecdsa(&msg, &sk.inner),
+                sig: secp.sign_ecdsa(msg, &sk.inner),
                 hash_ty: sighash_ty,
             };
 
@@ -1699,7 +1699,7 @@ mod tests {
         let mut secret_key_bytes = [0u8; 32];
         rng.fill_bytes(&mut secret_key_bytes);
         let sk =
-            SecretKey::from_byte_array(&secret_key_bytes).expect("32 bytes, within curve order");
+            SecretKey::from_byte_array(secret_key_bytes).expect("32 bytes, within curve order");
         let priv_key = PrivateKey::new(sk, crate::Network::Regtest);
         let pk = PublicKey::from_private_key(&secp, &priv_key);
 

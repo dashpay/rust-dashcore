@@ -714,7 +714,7 @@ fn test_get_block_filter(cl: &Client) {
 fn test_sign_raw_transaction_with_send_raw_transaction(cl: &Client) {
     let sk = PrivateKey {
         network: Network::Regtest,
-        inner: secp256k1::SecretKey::new(&mut secp256k1::rand::thread_rng()),
+        inner: secp256k1::SecretKey::new(&mut secp256k1::rand::rng()),
         compressed: true,
     };
     let addr = Address::p2pkh(&sk.public_key(&SECP), Network::Regtest);
@@ -1032,7 +1032,7 @@ fn test_list_received_by_address(cl: &Client) {
 fn test_import_public_key(cl: &Client) {
     let sk = PrivateKey {
         network: Network::Regtest,
-        inner: secp256k1::SecretKey::new(&mut secp256k1::rand::thread_rng()),
+        inner: secp256k1::SecretKey::new(&mut secp256k1::rand::rng()),
         compressed: true,
     };
     cl.import_public_key(&sk.public_key(&SECP), None, None).unwrap();
@@ -1043,7 +1043,7 @@ fn test_import_public_key(cl: &Client) {
 fn test_import_priv_key(cl: &Client) {
     let sk = PrivateKey {
         network: Network::Regtest,
-        inner: secp256k1::SecretKey::new(&mut secp256k1::rand::thread_rng()),
+        inner: secp256k1::SecretKey::new(&mut secp256k1::rand::rng()),
         compressed: true,
     };
     cl.import_private_key(&sk, None, None).unwrap();
@@ -1054,7 +1054,7 @@ fn test_import_priv_key(cl: &Client) {
 fn test_import_address(cl: &Client) {
     let sk = PrivateKey {
         network: Network::Regtest,
-        inner: secp256k1::SecretKey::new(&mut secp256k1::rand::thread_rng()),
+        inner: secp256k1::SecretKey::new(&mut secp256k1::rand::rng()),
         compressed: true,
     };
     let addr = Address::p2pkh(&sk.public_key(&SECP), Network::Regtest);
@@ -1066,7 +1066,7 @@ fn test_import_address(cl: &Client) {
 fn test_import_address_script(cl: &Client) {
     let sk = PrivateKey {
         network: Network::Regtest,
-        inner: secp256k1::SecretKey::new(&mut secp256k1::rand::thread_rng()),
+        inner: secp256k1::SecretKey::new(&mut secp256k1::rand::rng()),
         compressed: true,
     };
     let addr = Address::p2pkh(&sk.public_key(&SECP), Network::Regtest);

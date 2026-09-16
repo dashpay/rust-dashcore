@@ -1342,7 +1342,7 @@ impl ControlBlock {
         else {
             return Err(TaprootError::InvalidControlBlockSize(sl.len()));
         };
-        let internal_key = UntweakedPublicKey::from_byte_array(internal_key)
+        let internal_key = UntweakedPublicKey::from_byte_array(*internal_key)
             .map_err(TaprootError::InvalidInternalKey)?;
         let merkle_branch = TaprootMerkleBranch::decode(merkle_branch)?;
         Ok(ControlBlock {

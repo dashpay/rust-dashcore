@@ -355,7 +355,7 @@ mod tests {
                 .unwrap()
                 .try_into()
                 .unwrap();
-        let secret_key = secp256k1::SecretKey::from_byte_array(&privkey_bytes).unwrap();
+        let secret_key = secp256k1::SecretKey::from_byte_array(privkey_bytes).unwrap();
         let privkey =
             PrivateKey::new_uncompressed(secret_key, crate::network::constants::Network::Mainnet);
         let pubkey = privkey.public_key(&secp);

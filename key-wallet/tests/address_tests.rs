@@ -9,7 +9,7 @@ fn test_p2pkh_address_creation() {
     let secp = Secp256k1::new();
 
     // Create a public key
-    let secret_key = secp256k1::SecretKey::from_byte_array(&[1u8; 32]).unwrap();
+    let secret_key = secp256k1::SecretKey::from_byte_array([1u8; 32]).unwrap();
     let public_key = PublicKey::from_secret_key(&secp, &secret_key);
     let dash_pubkey = dashcore::PublicKey::new(public_key);
 
@@ -46,7 +46,7 @@ fn test_testnet_address() {
     let secp = Secp256k1::new();
 
     // Create a public key
-    let secret_key = secp256k1::SecretKey::from_byte_array(&[2u8; 32]).unwrap();
+    let secret_key = secp256k1::SecretKey::from_byte_array([2u8; 32]).unwrap();
     let public_key = PublicKey::from_secret_key(&secp, &secret_key);
     let dash_pubkey = dashcore::PublicKey::new(public_key);
 
@@ -73,7 +73,7 @@ fn test_address_parsing() {
     let privkey_mainnet = PrivateKey {
         compressed: true,
         network: DashNetwork::Mainnet,
-        inner: dashcore::secp256k1::SecretKey::from_byte_array(&[0x01; 32]).unwrap(),
+        inner: dashcore::secp256k1::SecretKey::from_byte_array([0x01; 32]).unwrap(),
     };
     let pubkey_mainnet = privkey_mainnet.public_key(&secp);
     let mainnet_address = Address::p2pkh(&pubkey_mainnet, DashNetwork::Mainnet);
@@ -92,7 +92,7 @@ fn test_address_parsing() {
     let privkey_testnet = PrivateKey {
         compressed: true,
         network: DashNetwork::Testnet,
-        inner: dashcore::secp256k1::SecretKey::from_byte_array(&[0x02; 32]).unwrap(),
+        inner: dashcore::secp256k1::SecretKey::from_byte_array([0x02; 32]).unwrap(),
     };
     let pubkey_testnet = privkey_testnet.public_key(&secp);
     let testnet_address = Address::p2pkh(&pubkey_testnet, DashNetwork::Testnet);
@@ -113,7 +113,7 @@ fn test_address_roundtrip() {
     let secp = Secp256k1::new();
 
     // Create a public key
-    let secret_key = secp256k1::SecretKey::from_byte_array(&[3u8; 32]).unwrap();
+    let secret_key = secp256k1::SecretKey::from_byte_array([3u8; 32]).unwrap();
     let public_key = PublicKey::from_secret_key(&secp, &secret_key);
     let dash_pubkey = dashcore::PublicKey::new(public_key);
 

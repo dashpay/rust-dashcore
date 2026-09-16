@@ -478,7 +478,7 @@ pub unsafe extern "C" fn key_wallet_derive_address_from_key(
         return ptr::null_mut();
     }
 
-    let Ok(key_bytes) = <&[u8; 32]>::try_from(slice::from_raw_parts(private_key, 32)) else {
+    let Ok(key_bytes) = <[u8; 32]>::try_from(slice::from_raw_parts(private_key, 32)) else {
         return ptr::null_mut();
     };
 

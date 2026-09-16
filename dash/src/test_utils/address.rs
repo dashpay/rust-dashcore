@@ -9,7 +9,7 @@ impl crate::Address {
         data.extend_from_slice(&id.to_le_bytes());
 
         let secret_bytes = sha256::Hash::hash(&data).to_byte_array();
-        let secret_key = secp256k1::SecretKey::from_byte_array(&secret_bytes)
+        let secret_key = secp256k1::SecretKey::from_byte_array(secret_bytes)
             .unwrap_or_else(|e| panic!("Dummy address generation failed for id {id}: {e}"));
 
         let private_key = PrivateKey::new(secret_key, network);

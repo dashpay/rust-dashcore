@@ -585,7 +585,7 @@ pub unsafe extern "C" fn transaction_sign_input(
     }
 
     // Parse private key
-    let Ok(privkey_bytes) = <&[u8; 32]>::try_from(slice::from_raw_parts(private_key, 32)) else {
+    let Ok(privkey_bytes) = <[u8; 32]>::try_from(slice::from_raw_parts(private_key, 32)) else {
         return -1;
     };
     let privkey = match SecretKey::from_byte_array(privkey_bytes) {
@@ -598,7 +598,7 @@ pub unsafe extern "C" fn transaction_sign_input(
     // Sign
     let secp = Secp256k1::new();
     let message = Message::from_digest(sighash);
-    let sig = secp.sign_ecdsa(&message, &privkey);
+    let sig = secp.sign_ecdsa(message, &privkey);
 
     // Build signature script (simplified P2PKH)
     let mut sig_bytes = sig.serialize_der().to_vec();
