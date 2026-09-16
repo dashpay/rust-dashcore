@@ -10,6 +10,8 @@ pub mod helpers;
 pub use helpers::AbandonOutcome;
 pub mod managed_account_operations;
 pub mod managed_accounts;
+pub mod persistence;
+pub use persistence::{PersistedWalletState, RestoreError};
 pub mod transaction_builder;
 pub mod transaction_building;
 pub mod wallet_info_interface;
@@ -20,7 +22,6 @@ use super::balance::WalletCoreBalance;
 use super::metadata::WalletMetadata;
 use crate::account::ManagedAccountCollection;
 use crate::managed_account::managed_account_trait::ManagedAccountTrait;
-use crate::managed_account::ManagedAccountRefMut;
 use crate::wallet::managed_wallet_info::transaction_building::AccountTypePreference;
 use crate::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
 use crate::{Network, Wallet};
@@ -123,6 +124,9 @@ pub struct ManagedWalletInfo {
     /// migration to load pre-field snapshots.
     #[cfg_attr(feature = "serde", serde(default, with = "observed_spent_outpoints_serde"))]
     pub(crate) observed_spent_outpoints: BTreeMap<OutPoint, CoreBlockHeight>,
+    /// Durable blocked outputs whose spending transaction and height are unavailable.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub(crate) unattributed_spent_outpoints: HashSet<OutPoint>,
     /// Generation counter for the wallet's account set, bumped every time an
     /// account is added to a live wallet (see
     /// [`Self::rewind_sync_checkpoint_for_new_account`]).
@@ -245,6 +249,7 @@ impl ManagedWalletInfo {
             balance: WalletCoreBalance::default(),
             instant_send_locks: HashSet::new(),
             observed_spent_outpoints: BTreeMap::new(),
+            unattributed_spent_outpoints: HashSet::new(),
             account_generation: 0,
         }
     }
@@ -261,6 +266,7 @@ impl ManagedWalletInfo {
             balance: WalletCoreBalance::default(),
             instant_send_locks: HashSet::new(),
             observed_spent_outpoints: BTreeMap::new(),
+            unattributed_spent_outpoints: HashSet::new(),
             account_generation: 0,
         }
     }
@@ -287,6 +293,7 @@ impl ManagedWalletInfo {
             balance: WalletCoreBalance::default(),
             instant_send_locks: HashSet::new(),
             observed_spent_outpoints: BTreeMap::new(),
+            unattributed_spent_outpoints: HashSet::new(),
             account_generation: 0,
         }
     }
@@ -325,57 +332,6 @@ impl ManagedWalletInfo {
     /// invariants; exposed for diagnostics and tests.
     pub fn observed_spent_outpoints(&self) -> &BTreeMap<OutPoint, CoreBlockHeight> {
         &self.observed_spent_outpoints
-    }
-
-    /// Restore persisted transaction lifecycle state without replaying UTXO
-    /// mutations.
-    ///
-    /// Records are installed directly into their exact account. Chainlocked
-    /// records follow the configured finalized-record retention policy, and
-    /// block-confirmed inputs rebuild the wallet-level observed-spend guard.
-    /// This makes restoration independent of record iteration order; the
-    /// persistence layer restores the authoritative UTXO set separately.
-    ///
-    /// Returns records whose account is absent from this wallet. Callers must
-    /// treat those as degraded state rather than silently attributing them to
-    /// another account.
-    pub fn restore_persisted_transactions(
-        &mut self,
-        records: impl IntoIterator<Item = TransactionRecord>,
-    ) -> Vec<TransactionRecord> {
-        let mut unmatched = Vec::new();
-        for record in records {
-            let account_type = record.account_type;
-            let observed_spend = record
-                .context
-                .block_info()
-                .map(|block| (record.transaction.clone(), block.height()));
-            let account =
-                self.accounts.all_accounts_mut().into_iter().find(|account| {
-                    account.managed_account_type().to_account_type() == account_type
-                });
-            let restored = match account {
-                Some(ManagedAccountRefMut::Funds(account)) => {
-                    account.keys_mut().restore_transaction_record(record);
-                    true
-                }
-                Some(ManagedAccountRefMut::Keys(account)) => {
-                    account.restore_transaction_record(record);
-                    true
-                }
-                None => {
-                    unmatched.push(record);
-                    false
-                }
-            };
-            if restored {
-                if let Some((transaction, height)) = observed_spend {
-                    self.record_observed_spends(&transaction, height);
-                }
-            }
-        }
-        self.prune_finalized_observed_spends();
-        unmatched
     }
 
     /// Record every outpoint `tx` spends into [`Self::observed_spent_outpoints`]

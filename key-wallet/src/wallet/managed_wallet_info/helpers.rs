@@ -6,6 +6,7 @@ use crate::account::ManagedCoreFundsAccount;
 use crate::account::TransactionRecord;
 use crate::managed_account::managed_account_ref::ManagedAccountRefMut;
 use crate::managed_account::managed_account_trait::ManagedAccountTrait;
+use crate::managed_account::managed_core_funds_account::conflicted_transactions;
 use crate::managed_account::managed_platform_account::ManagedPlatformAccount;
 use crate::managed_account::ManagedCoreKeysAccount;
 use crate::transaction_checking::TransactionContext;
@@ -164,12 +165,42 @@ impl ManagedWalletInfo {
         tx: &Transaction,
         context: &TransactionContext,
     ) -> WalletConflictSweep {
-        let mut result = WalletConflictSweep::default();
+        let records: Vec<_> = self
+            .accounts
+            .all_accounts()
+            .into_iter()
+            .flat_map(|account| account.transactions().values())
+            .collect();
+        let losers = conflicted_transactions(&records, tx, context);
+        let winner_inputs: HashSet<_> =
+            tx.input.iter().map(|input| input.previous_output).collect();
+        let mut result = WalletConflictSweep {
+            txids: losers.iter().copied().collect(),
+            released_outpoints: Vec::new(),
+        };
         for account in self.accounts.all_accounts_mut() {
-            if let ManagedAccountRefMut::Funds(funds) = account {
-                let swept = funds.drop_conflicted_transactions(tx, context);
-                result.txids.extend(swept.txids);
-                result.released_outpoints.extend(swept.released_outpoints);
+            match account {
+                ManagedAccountRefMut::Funds(funds) => {
+                    let swept = funds.apply_conflict_set(tx, &losers);
+                    result.released_outpoints.extend(swept.released_outpoints);
+                }
+                ManagedAccountRefMut::Keys(keys) => {
+                    for loser in &losers {
+                        if let Some(record) = keys.transactions_mut().remove(loser) {
+                            result.released_outpoints.extend(
+                                record
+                                    .transaction
+                                    .input
+                                    .iter()
+                                    .map(|input| input.previous_output)
+                                    .filter(|outpoint| {
+                                        !winner_inputs.contains(outpoint)
+                                            && !losers.contains(&outpoint.txid)
+                                    }),
+                            );
+                        }
+                    }
+                }
             }
         }
         if !result.txids.is_empty() {
