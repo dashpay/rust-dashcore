@@ -322,7 +322,7 @@ pub fn generate_intermediate_code(
     sequence: Option<u32>,
 ) -> Result<String> {
     use rand::Rng;
-    let mut rng = rand::thread_rng();
+    let mut rng = rand::rng();
 
     let (owner_salt, pass_factor) = if let (Some(lot), Some(sequence)) = (lot, sequence) {
         // With lot and sequence

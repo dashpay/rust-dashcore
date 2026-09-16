@@ -1691,11 +1691,11 @@ mod tests {
 
     #[cfg(feature = "rand")]
     fn gen_keys() -> (PrivateKey, PublicKey, Secp256k1<All>) {
-        use rand::{thread_rng, RngCore};
+        use rand::{rng, RngCore};
 
         let secp = Secp256k1::new();
 
-        let mut rng = thread_rng();
+        let mut rng = rng();
         let mut secret_key_bytes = [0u8; 32];
         rng.fill_bytes(&mut secret_key_bytes);
         let sk =

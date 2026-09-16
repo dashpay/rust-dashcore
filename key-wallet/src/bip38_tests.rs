@@ -258,7 +258,7 @@ mod tests {
         // Test multiple round-trip encrypt/decrypt cycles
         use rand::Rng;
 
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
 
         for _ in 0..10 {
             // Generate random private key
@@ -267,10 +267,10 @@ mod tests {
                 rng.fill(&mut key_bytes);
                 if let Ok(key) = SecretKey::from_slice(&key_bytes) {
                     // Generate random password
-                    let password_len = rng.gen_range(8..50);
+                    let password_len = rng.random_range(8..50);
                     let password: String = (0..password_len)
                         .map(|_| {
-                            let idx = rng.gen_range(0..62);
+                            let idx = rng.random_range(0..62);
                             match idx {
                                 0..10 => (b'0' + idx) as char,
                                 10..36 => (b'a' + idx - 10) as char,
@@ -280,7 +280,7 @@ mod tests {
                         })
                         .collect();
 
-                    let compressed = rng.gen_bool(0.5);
+                    let compressed = rng.random_bool(0.5);
 
                     // Encrypt
                     let encrypted =

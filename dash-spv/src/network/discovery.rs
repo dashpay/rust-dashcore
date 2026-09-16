@@ -64,7 +64,7 @@ impl DnsDiscovery {
         // Dedup needs the sort above, but a sorted list makes every client pick
         // the same lowest-address peers via `take`/`truncate`, herding testers
         // onto a handful of nodes. Shuffle so clients fan out across the set.
-        addresses.shuffle(&mut rand::thread_rng());
+        addresses.shuffle(&mut rand::rng());
 
         tracing::info!(
             "Discovered {} unique peer addresses for {:?} ({} from embedded seeds + DNS)",

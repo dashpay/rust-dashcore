@@ -480,7 +480,7 @@ impl<W: WalletInterface> MempoolManager<W> {
         state.holdout = peers
             .iter()
             .copied()
-            .choose_multiple(&mut rand::thread_rng(), holdout_count)
+            .choose_multiple(&mut rand::rng(), holdout_count)
             .into_iter()
             .collect();
 
@@ -706,9 +706,9 @@ impl<W: WalletInterface> MempoolManager<W> {
                         .filter(|p| !state.sent_to.contains(*p))
                         .copied()
                         .collect();
-                    state.holdout.extend(
-                        candidates.into_iter().choose_multiple(&mut rand::thread_rng(), needed),
-                    );
+                    state
+                        .holdout
+                        .extend(candidates.into_iter().choose_multiple(&mut rand::rng(), needed));
                 }
                 let targets: Vec<SocketAddr> =
                     current_peers.iter().filter(|p| !state.holdout.contains(*p)).copied().collect();
@@ -758,7 +758,7 @@ impl<W: WalletInterface> MempoolManager<W> {
                     .iter_mut()
                     .filter(|(_, v)| v.is_some())
                     .map(|(_, v)| v)
-                    .choose(&mut rand::thread_rng());
+                    .choose(&mut rand::rng());
                 if let Some(Some(queue)) = target {
                     queue.extend(orphaned);
                 } else {
@@ -795,8 +795,7 @@ impl<W: WalletInterface> MempoolManager<W> {
             return;
         }
         tracing::debug!("Pruned {} timed-out pending requests, re-queuing", timed_out.len());
-        let target =
-            self.peers.values_mut().filter_map(|v| v.as_mut()).choose(&mut rand::thread_rng());
+        let target = self.peers.values_mut().filter_map(|v| v.as_mut()).choose(&mut rand::rng());
         if let Some(queue) = target {
             queue.extend(timed_out);
         } else {

@@ -479,7 +479,7 @@ impl ReputationAware for PeerReputationManager {
         // Shuffle before the stable sort so equal-scored candidates (e.g. every
         // peer at score 0 on a fresh install) are returned in random order
         // rather than a fixed address order that herds clients onto the same nodes.
-        peer_scores.shuffle(&mut rand::thread_rng());
+        peer_scores.shuffle(&mut rand::rng());
         // Sort by score (lower is better)
         peer_scores.sort_by_key(|(_, score)| *score);
 

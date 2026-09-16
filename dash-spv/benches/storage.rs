@@ -66,7 +66,7 @@ fn bench_disk_storage(c: &mut Criterion) {
 
     c.bench_function("storage/disk/get", |b| {
         b.to_async(&rt).iter_batched(
-            || rng.gen::<u32>() % NUM_ELEMENTS,
+            || rng.random::<u32>() % NUM_ELEMENTS,
             async |height| {
                 let _ = storage.get_header(height).await.unwrap();
             },

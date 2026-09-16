@@ -24,7 +24,7 @@ anyhow = "1.0"
 chrono = { version = "0.4.20", default-features = false, features = ["clock"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3.20", features = ["env-filter"] }
-rand = "0.8"
+rand = "0.9"
 futures = "0.3"
 
 # TLS probing for the Dash Platform HTTP port (Evo nodes).

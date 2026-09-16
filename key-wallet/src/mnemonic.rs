@@ -172,7 +172,7 @@ impl Mnemonic {
 
         // Generate random entropy
         let mut entropy = vec![0u8; entropy_bytes];
-        getrandom::getrandom(&mut entropy)
+        getrandom::fill(&mut entropy)
             .map_err(|e| Error::InvalidMnemonic(format!("Failed to generate entropy: {}", e)))?;
 
         // Create mnemonic from entropy with specified language
