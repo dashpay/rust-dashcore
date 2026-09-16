@@ -3,6 +3,7 @@
 //! Downloads blocks that matched wallet filters and processes them in height order.
 //! Subscribes to BlockNeeded events and emits BlockProcessed events.
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use tokio::sync::RwLock;
@@ -12,7 +13,8 @@ use crate::error::SyncResult;
 use crate::network::RequestSender;
 use crate::storage::{BlockHeaderStorage, BlockStorage};
 use crate::sync::{BlocksProgress, SyncEvent, SyncManager, SyncState};
-use key_wallet_manager::WalletInterface;
+use crate::types::HashedBlock;
+use key_wallet_manager::{BlockProcessingResult, WalletId, WalletInterface};
 
 /// Blocks manager for downloading and processing matching blocks.
 ///
@@ -87,45 +89,10 @@ impl<H: BlockHeaderStorage, B: BlockStorage, W: WalletInterface> BlocksManager<H
 
             // Process the block only for the wallets whose filter matched it.
             // Already-synced wallets that did not match are not touched.
-            let mut wallet = self.wallet.write().await;
-            let result =
-                wallet.process_block_for_wallets(block.block(), hash, height, &interested).await;
-            drop(wallet);
-
-            let total_relevant = result.relevant_tx_count();
-            let new_scripts_total: usize = result.new_scripts.values().map(|v| v.len()).sum();
-            if total_relevant > 0 {
-                tracing::info!(
-                    "Found {} relevant transactions ({} new, {} existing) {} at height {}, new scripts: {}",
-                    total_relevant,
-                    result.new_txids.len(),
-                    result.existing_txids.len(),
-                    hash,
-                    height,
-                    new_scripts_total
-                );
-            }
+            let result = self.apply_block(&block, height, &interested).await;
 
             // Collect confirmed txids before moving new_scripts out of result
             let confirmed_txids: Vec<_> = result.relevant_txids().cloned().collect();
-
-            // Collect new scripts for gap limit rescanning
-            let new_scripts = result.new_scripts;
-            if new_scripts_total > 0 {
-                tracing::debug!(
-                    "Block {} generated {} new scripts for gap limit maintenance across {} wallets",
-                    height,
-                    new_scripts_total,
-                    new_scripts.len()
-                );
-            }
-
-            self.progress.add_processed(1);
-            if total_relevant > 0 {
-                self.progress.add_relevant(1);
-            }
-            // Only count new transactions to avoid double-counting during rescans
-            self.progress.add_transactions(result.new_txids.len() as u32);
             self.progress.update_last_processed(height);
             last_applied = Some(height);
 
@@ -133,9 +100,11 @@ impl<H: BlockHeaderStorage, B: BlockStorage, W: WalletInterface> BlocksManager<H
                 block_hash: hash,
                 height,
                 wallets: interested,
-                new_scripts,
+                new_scripts: result.new_scripts,
                 confirmed_txids,
             });
+
+            self.reapply_blocks(result.reapply_heights).await?;
         }
 
         // Blocks are drained in strict height order, so `last_applied` is the
@@ -168,6 +137,71 @@ impl<H: BlockHeaderStorage, B: BlockStorage, W: WalletInterface> BlocksManager<H
         }
 
         Ok(events)
+    }
+
+    async fn apply_block(
+        &mut self,
+        block: &HashedBlock,
+        height: u32,
+        wallets: &BTreeSet<WalletId>,
+    ) -> BlockProcessingResult {
+        let hash = *block.hash();
+        let mut wallet = self.wallet.write().await;
+        let result = wallet.process_block_for_wallets(block.block(), hash, height, wallets).await;
+        drop(wallet);
+
+        let total_relevant = result.relevant_tx_count();
+        let new_scripts_total: usize = result.new_scripts.values().map(|v| v.len()).sum();
+        if total_relevant > 0 {
+            tracing::info!(
+                "Found {} relevant transactions ({} new, {} existing) {} at height {}, new scripts: {}",
+                total_relevant,
+                result.new_txids.len(),
+                result.existing_txids.len(),
+                hash,
+                height,
+                new_scripts_total
+            );
+        }
+        if new_scripts_total > 0 {
+            tracing::debug!(
+                "Block {} generated {} new scripts for gap limit maintenance across {} wallets",
+                height,
+                new_scripts_total,
+                result.new_scripts.len()
+            );
+        }
+
+        self.progress.add_processed(1);
+        if total_relevant > 0 {
+            self.progress.add_relevant(1);
+        }
+        // Only count new transactions to avoid double-counting during rescans
+        self.progress.add_transactions(result.new_txids.len() as u32);
+        result
+    }
+
+    async fn reapply_blocks(
+        &mut self,
+        reapply: BTreeMap<WalletId, BTreeSet<u32>>,
+    ) -> SyncResult<()> {
+        let mut queue: BTreeSet<(u32, WalletId)> = reapply
+            .into_iter()
+            .flat_map(|(wallet_id, heights)| heights.into_iter().map(move |h| (h, wallet_id)))
+            .collect();
+        while let Some((height, wallet_id)) = queue.pop_first() {
+            let Some(block) = self.block_storage.read().await.load_block(height).await? else {
+                tracing::warn!("Cannot re-apply block at height {}: not in storage", height);
+                continue;
+            };
+            let result = self.apply_block(&block, height, &BTreeSet::from([wallet_id])).await;
+            queue.extend(
+                result.reapply_heights.into_iter().flat_map(|(wallet_id, heights)| {
+                    heights.into_iter().map(move |h| (h, wallet_id))
+                }),
+            );
+        }
+        Ok(())
     }
 }
 
@@ -351,6 +385,40 @@ mod tests {
         let processed = processed.lock().await;
         assert_eq!(processed.len(), 1);
         assert_eq!(processed[0].1, 100);
+    }
+
+    #[tokio::test]
+    async fn test_process_buffered_blocks_reapplies_requested_stored_block() {
+        let storage = DiskStorageManager::with_temp_dir().await.unwrap();
+        let mut wallet = MockWallet::new();
+        wallet.set_reapply_heights(100, BTreeSet::from([200]));
+        let wallet = Arc::new(RwLock::new(wallet));
+        let mut manager: TestBlocksManager =
+            BlocksManager::new(wallet.clone(), storage.block_headers(), storage.blocks()).await;
+        manager.progress.set_state(SyncState::Syncing);
+
+        manager
+            .block_storage
+            .write()
+            .await
+            .store_block(200, HashedBlock::dummy(200, vec![]))
+            .await
+            .unwrap();
+        manager.pipeline.add_from_storage(
+            HashedBlock::dummy(100, vec![]),
+            100,
+            BTreeSet::from([MOCK_WALLET_ID]),
+        );
+
+        let events = manager.process_buffered_blocks().await.unwrap();
+        assert_eq!(
+            events.iter().filter(|e| matches!(e, SyncEvent::BlockProcessed { .. })).count(),
+            1
+        );
+
+        let processed = wallet.read().await.processed_blocks();
+        let heights: Vec<u32> = processed.lock().await.iter().map(|(_, h)| *h).collect();
+        assert_eq!(heights, vec![100, 200]);
     }
 
     /// A wallet that is NOT in the pipeline's interested set must not be
