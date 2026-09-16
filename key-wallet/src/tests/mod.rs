@@ -26,6 +26,8 @@ mod observed_spent_outpoints_tests;
 
 mod performance_tests;
 
+mod persisted_transaction_restore_tests;
+
 mod provider_key_derivation_tests;
 
 mod special_transaction_matching_tests;

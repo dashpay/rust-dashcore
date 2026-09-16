@@ -20,6 +20,7 @@ use super::balance::WalletCoreBalance;
 use super::metadata::WalletMetadata;
 use crate::account::ManagedAccountCollection;
 use crate::managed_account::managed_account_trait::ManagedAccountTrait;
+use crate::managed_account::ManagedAccountRefMut;
 use crate::wallet::managed_wallet_info::transaction_building::AccountTypePreference;
 use crate::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
 use crate::{Network, Wallet};
@@ -324,6 +325,47 @@ impl ManagedWalletInfo {
     /// invariants; exposed for diagnostics and tests.
     pub fn observed_spent_outpoints(&self) -> &BTreeMap<OutPoint, CoreBlockHeight> {
         &self.observed_spent_outpoints
+    }
+
+    /// Restore persisted transaction lifecycle state without replaying UTXO
+    /// mutations.
+    ///
+    /// Records are installed directly into their exact account. Chainlocked
+    /// records follow the configured finalized-record retention policy, and
+    /// block-confirmed inputs rebuild the wallet-level observed-spend guard.
+    /// This makes restoration independent of record iteration order; the
+    /// persistence layer restores the authoritative UTXO set separately.
+    ///
+    /// Returns records whose account is absent from this wallet. Callers must
+    /// treat those as degraded state rather than silently attributing them to
+    /// another account.
+    pub fn restore_persisted_transactions(
+        &mut self,
+        records: impl IntoIterator<Item = TransactionRecord>,
+    ) -> Vec<TransactionRecord> {
+        let mut unmatched = Vec::new();
+        for record in records {
+            if let Some(block) = record.context.block_info() {
+                self.record_observed_spends(&record.transaction, block.height());
+            }
+
+            let account_type = record.account_type;
+            let account =
+                self.accounts.all_accounts_mut().into_iter().find(|account| {
+                    account.managed_account_type().to_account_type() == account_type
+                });
+            match account {
+                Some(ManagedAccountRefMut::Funds(account)) => {
+                    account.keys_mut().restore_transaction_record(record)
+                }
+                Some(ManagedAccountRefMut::Keys(account)) => {
+                    account.restore_transaction_record(record)
+                }
+                None => unmatched.push(record),
+            }
+        }
+        self.prune_finalized_observed_spends();
+        unmatched
     }
 
     /// Record every outpoint `tx` spends into [`Self::observed_spent_outpoints`]

@@ -111,6 +111,18 @@ impl ManagedCoreFundsAccount {
         }
     }
 
+    /// Restore durable spent-output claims for this account.
+    ///
+    /// The caller must provide only claims that survived persistence conflict
+    /// resolution. This seeds the same set maintained by transaction
+    /// processing, so a later funding redelivery cannot recreate an output
+    /// that a live or settled transaction already consumed. Removing a
+    /// restored transaction through the normal abandon or conflict paths
+    /// releases its claims with the same rules as an in-session transaction.
+    pub fn restore_spent_outpoints(&mut self, outpoints: impl IntoIterator<Item = OutPoint>) {
+        self.spent_outpoints.extend(outpoints);
+    }
+
     /// Create a `ManagedCoreFundsAccount` from an [`Account`](super::super::Account).
     pub fn from_account(account: &super::super::Account) -> Self {
         Self::wrap(ManagedCoreKeysAccount::from_account(account))
