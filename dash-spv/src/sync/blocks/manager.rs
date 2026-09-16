@@ -91,6 +91,10 @@ impl<H: BlockHeaderStorage, B: BlockStorage, W: WalletInterface> BlocksManager<H
             // Already-synced wallets that did not match are not touched.
             let result = self.apply_block(&block, height, &interested).await;
 
+            self.progress.add_processed(1);
+            if result.relevant_tx_count() > 0 {
+                self.progress.add_relevant(1);
+            }
             // Collect confirmed txids before moving new_scripts out of result
             let confirmed_txids: Vec<_> = result.relevant_txids().cloned().collect();
             self.progress.update_last_processed(height);
@@ -172,10 +176,6 @@ impl<H: BlockHeaderStorage, B: BlockStorage, W: WalletInterface> BlocksManager<H
             );
         }
 
-        self.progress.add_processed(1);
-        if total_relevant > 0 {
-            self.progress.add_relevant(1);
-        }
         // Only count new transactions to avoid double-counting during rescans
         self.progress.add_transactions(result.new_txids.len() as u32);
         result
@@ -422,6 +422,7 @@ mod tests {
         let processed = wallet.read().await.processed_blocks();
         let heights: Vec<u32> = processed.lock().await.iter().map(|(_, h)| *h).collect();
         assert_eq!(heights, vec![100, 200]);
+        assert_eq!(manager.progress.processed(), 1);
     }
 
     /// A wallet that is NOT in the pipeline's interested set must not be
