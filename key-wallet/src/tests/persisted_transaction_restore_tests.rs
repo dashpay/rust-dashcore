@@ -73,7 +73,7 @@ fn spending_record(
 
 #[tokio::test]
 async fn restored_spend_mark_blocks_funding_until_the_claim_is_released() {
-    let template = TestWalletContext::new_random();
+    let template = TestWalletContext::from_seed([1; 64]);
     let funding = Transaction::dummy(&template.receive_address, 0..1, &[1_000_000]);
     let parent = OutPoint {
         txid: funding.txid(),
@@ -118,7 +118,7 @@ async fn restored_spend_mark_blocks_funding_until_the_claim_is_released() {
 
 #[test]
 fn restored_chainlocked_record_uses_finalized_compaction() {
-    let template = TestWalletContext::new_random();
+    let template = TestWalletContext::from_seed([2; 64]);
     let parent = OutPoint {
         txid: Transaction::dummy(&template.receive_address, 0..1, &[1_000_000]).txid(),
         vout: 0,
@@ -154,7 +154,7 @@ fn restored_chainlocked_record_uses_finalized_compaction() {
 
 #[test]
 fn unmatched_record_does_not_restore_wallet_level_spend_state() {
-    let template = TestWalletContext::new_random();
+    let template = TestWalletContext::from_seed([3; 64]);
     let parent = OutPoint {
         txid: Transaction::dummy(&template.receive_address, 0..1, &[1_000_000]).txid(),
         vout: 0,
@@ -188,7 +188,7 @@ fn unmatched_record_does_not_restore_wallet_level_spend_state() {
 
 #[test]
 fn restored_unconfirmed_records_participate_in_conflict_descendant_sweeps() {
-    let template = TestWalletContext::new_random();
+    let template = TestWalletContext::from_seed([4; 64]);
     let parent = OutPoint {
         txid: Transaction::dummy(&template.receive_address, 0..1, &[1_000_000]).txid(),
         vout: 0,
@@ -241,8 +241,154 @@ fn coin(tx: &Transaction, address: &dashcore::Address) -> Utxo {
 }
 
 #[test]
+fn should_invalidate_monitor_after_restoring_coins() {
+    let mut ctx = TestWalletContext::from_seed([21; 64]);
+    let funding = Transaction::dummy(&ctx.receive_address, 0..1, &[1_000_000]);
+    let revision = ctx.managed_wallet.monitor_revision();
+    let elements = ctx.managed_wallet.monitored_filter_elements();
+    ctx.managed_wallet
+        .restore_persisted_state(PersistedWalletState {
+            utxos: vec![(bip44(), coin(&funding, &ctx.receive_address))],
+            ..Default::default()
+        })
+        .unwrap();
+    assert_ne!(elements, ctx.managed_wallet.monitored_filter_elements());
+    assert!(ctx.managed_wallet.monitor_revision() > revision);
+}
+
+#[test_case::test_case(0, true; "mempool_confirmed")]
+#[test_case::test_case(0, false; "mempool_instantlocked")]
+#[test_case::test_case(1, true; "instant_send_confirmed")]
+#[test_case::test_case(1, false; "instant_send_without_lock_flag")]
+#[test_case::test_case(2, true; "block_unconfirmed")]
+#[test_case::test_case(3, true; "chainlock_unconfirmed")]
+#[tokio::test]
+async fn should_reject_inconsistent_coin_finality(context_kind: u8, flip_confirmed: bool) {
+    let mut live = TestWalletContext::from_seed([22; 64]);
+    let mut restored = live.managed_wallet.clone();
+    let funding = Transaction::dummy(&live.receive_address, 0..1, &[1_000_000]);
+    let block = BlockInfo::new(40, BlockHash::from_byte_array([40; 32]), 1_700_000_000);
+    let context = match context_kind {
+        0 => TransactionContext::Mempool,
+        1 => TransactionContext::InstantSend(InstantLock {
+            txid: funding.txid(),
+            ..Default::default()
+        }),
+        2 => TransactionContext::InBlock(block),
+        _ => TransactionContext::InChainLockedBlock(block),
+    };
+    let result = live.check_transaction(&funding, context).await;
+    let mut utxo = live.first_utxo().clone();
+    let snapshot = PersistedWalletState {
+        transactions: result.new_records,
+        utxos: vec![(bip44(), utxo.clone())],
+        ..Default::default()
+    };
+    let mut control = restored.clone();
+    control.restore_persisted_state(snapshot.clone()).unwrap();
+    assert_eq!(control.balance(), live.managed_wallet.balance());
+    if flip_confirmed {
+        utxo.is_confirmed = !utxo.is_confirmed;
+    } else {
+        utxo.is_instantlocked = !utxo.is_instantlocked;
+    }
+    let revision = restored.monitor_revision();
+    let elements = restored.monitored_filter_elements();
+    assert_eq!(
+        restored.restore_persisted_state(PersistedWalletState {
+            utxos: vec![(bip44(), utxo.clone())],
+            ..snapshot
+        }),
+        Err(RestoreError::InvalidUtxo(utxo.outpoint))
+    );
+    assert_eq!(restored.monitor_revision(), revision);
+    assert_eq!(restored.monitored_filter_elements(), elements);
+    assert!(restored.transaction_history().is_empty());
+    assert!(restored.observed_spent_outpoints().is_empty());
+    assert!(restored.instant_send_locks.is_empty());
+    assert_eq!(restored.balance().total(), 0);
+}
+
+#[test_case::test_case(0, false; "mempool_block")]
+#[test_case::test_case(0, true; "block_mempool")]
+#[test_case::test_case(1, false; "mempool_instant_send")]
+#[test_case::test_case(1, true; "instant_send_mempool")]
+#[test_case::test_case(2, false; "different_height")]
+#[test_case::test_case(2, true; "different_height_reversed")]
+#[test_case::test_case(3, false; "different_hash")]
+#[test_case::test_case(4, false; "block_chainlock")]
+#[test_case::test_case(5, false; "same_block")]
+#[test_case::test_case(6, false; "optional_block_position")]
+fn should_validate_lifecycle_across_accounts(context_kind: u8, reverse: bool) {
+    use crate::wallet::managed_wallet_info::ManagedAccountOperations;
+    let mut ctx = TestWalletContext::from_seed([23; 64]);
+    let other = TestWalletContext::from_seed([24; 64]);
+    let other_type = AccountType::Standard {
+        index: 1,
+        standard_account_type: StandardAccountType::BIP44Account,
+    };
+    ctx.managed_wallet.add_managed_account_from_xpub(other_type, other.xpub).unwrap();
+    let funding = Transaction::dummy(&ctx.receive_address, 0..1, &[1_000_000]);
+    let tx = spend(OutPoint {
+        txid: funding.txid(),
+        vout: 0,
+    });
+    let block = BlockInfo::new(40, BlockHash::from_byte_array([40; 32]), 1_700_000_000);
+    let (first, second) = match context_kind {
+        0 => (TransactionContext::Mempool, TransactionContext::InBlock(block)),
+        1 => (
+            TransactionContext::Mempool,
+            TransactionContext::InstantSend(InstantLock {
+                txid: tx.txid(),
+                ..Default::default()
+            }),
+        ),
+        2 => (
+            TransactionContext::InBlock(block),
+            TransactionContext::InBlock(BlockInfo::new(41, block.block_hash(), block.timestamp())),
+        ),
+        3 => (
+            TransactionContext::InBlock(block),
+            TransactionContext::InBlock(BlockInfo::new(
+                40,
+                BlockHash::from_byte_array([41; 32]),
+                block.timestamp(),
+            )),
+        ),
+        4 => (TransactionContext::InBlock(block), TransactionContext::InChainLockedBlock(block)),
+        5 => (TransactionContext::InBlock(block), TransactionContext::InBlock(block)),
+        _ => (
+            TransactionContext::InBlock(block),
+            TransactionContext::InBlock(block.with_position(2)),
+        ),
+    };
+    let first_record = spending_record(tx.clone(), ctx.receive_address.clone(), first);
+    let mut second_record = spending_record(tx.clone(), ctx.receive_address.clone(), second);
+    second_record.account_type = other_type;
+    let mut records = vec![first_record, second_record];
+    if reverse {
+        records.reverse();
+    }
+    let revision = ctx.managed_wallet.monitor_revision();
+    let result = ctx.managed_wallet.restore_persisted_state(PersistedWalletState {
+        transactions: records,
+        ..Default::default()
+    });
+    if context_kind >= 5 {
+        assert_eq!(result, Ok(()));
+        assert_eq!(ctx.managed_wallet.transaction_history().len(), 2);
+    } else {
+        assert_eq!(result, Err(RestoreError::InvalidRecord(tx.txid())));
+        assert!(ctx.managed_wallet.transaction_history().is_empty());
+        assert!(ctx.managed_wallet.observed_spent_outpoints().is_empty());
+        assert!(ctx.managed_wallet.instant_send_locks.is_empty());
+    }
+    assert_eq!(ctx.managed_wallet.monitor_revision(), revision);
+}
+
+#[test]
 fn should_reject_entire_snapshot_before_mutating_any_account() {
-    let template = TestWalletContext::new_random();
+    let template = TestWalletContext::from_seed([5; 64]);
     let funding = Transaction::dummy(&template.receive_address, 0..1, &[1_000_000]);
     let parent = OutPoint {
         txid: funding.txid(),
@@ -293,7 +439,7 @@ fn should_reject_entire_snapshot_before_mutating_any_account() {
 
 #[test]
 fn should_reject_spent_unspent_contradiction_and_bad_coin_without_mutation() {
-    let template = TestWalletContext::new_random();
+    let template = TestWalletContext::from_seed([6; 64]);
     let funding = Transaction::dummy(&template.receive_address, 0..1, &[1_000_000]);
     let utxo = coin(&funding, &template.receive_address);
     let record = spending_record(
@@ -325,7 +471,7 @@ fn should_reject_spent_unspent_contradiction_and_bad_coin_without_mutation() {
 
 #[tokio::test]
 async fn should_preserve_unattributed_spend_without_inventing_block_height() {
-    let mut template = TestWalletContext::new_random();
+    let mut template = TestWalletContext::from_seed([7; 64]);
     let funding = Transaction::dummy(&template.receive_address, 0..1, &[1_000_000]);
     let parent = OutPoint {
         txid: funding.txid(),
@@ -359,7 +505,7 @@ async fn should_preserve_unattributed_spend_without_inventing_block_height() {
 
 #[tokio::test]
 async fn should_keep_external_block_evidence_when_abandoning_record_claim() {
-    let mut template = TestWalletContext::new_random();
+    let mut template = TestWalletContext::from_seed([8; 64]);
     let funding = Transaction::dummy(&template.receive_address, 0..1, &[1_000_000]);
     let parent = OutPoint {
         txid: funding.txid(),
@@ -401,7 +547,7 @@ async fn should_keep_external_block_evidence_when_abandoning_record_claim() {
 
 #[tokio::test]
 async fn should_match_uninterrupted_wallet_across_restore_abandon_and_conflict() {
-    let mut uninterrupted = TestWalletContext::new_random();
+    let mut uninterrupted = TestWalletContext::from_seed([9; 64]);
     let mut restored = uninterrupted.managed_wallet.clone();
     let funding = Transaction::dummy(&uninterrupted.receive_address, 0..1, &[1_000_000]);
     let parent = OutPoint {
@@ -534,7 +680,7 @@ fn assert_funds_equal(left: &ManagedWalletInfo, right: &ManagedWalletInfo) {
 
 #[tokio::test]
 async fn should_match_finalized_wallet_after_compaction_and_funding_redelivery() {
-    let mut live = TestWalletContext::new_random();
+    let mut live = TestWalletContext::from_seed([10; 64]);
     let mut restored = live.managed_wallet.clone();
     let funding = Transaction::dummy(&live.receive_address, 0..1, &[1_000_000]);
     let parent = OutPoint {
@@ -578,7 +724,7 @@ async fn should_match_finalized_wallet_after_compaction_and_funding_redelivery()
 
 #[tokio::test]
 async fn should_restore_spend_before_funding_input_recognition() {
-    let mut live = TestWalletContext::new_random();
+    let mut live = TestWalletContext::from_seed([11; 64]);
     let mut restored = live.managed_wallet.clone();
     let funding = Transaction::dummy(&live.receive_address, 0..1, &[1_000_000]);
     let parent = OutPoint {
@@ -633,8 +779,8 @@ async fn should_block_cross_account_funding_with_one_persisted_spend_record_and_
     keys_only: bool,
 ) {
     use crate::wallet::managed_wallet_info::ManagedAccountOperations;
-    let mut template = TestWalletContext::new_random();
-    let other = TestWalletContext::new_random();
+    let mut template = TestWalletContext::from_seed([12; 64]);
+    let other = TestWalletContext::from_seed([13; 64]);
     let other_type = if keys_only {
         AccountType::IdentityRegistration
     } else {
@@ -702,7 +848,7 @@ async fn should_block_cross_account_funding_with_one_persisted_spend_record_and_
 async fn should_sweep_restored_keys_loser_and_funds_descendant_and_release_extra_input(
     instant_send: bool,
 ) {
-    let mut template = TestWalletContext::new_random();
+    let mut template = TestWalletContext::from_seed([14; 64]);
     let funding = Transaction::dummy(&template.receive_address, 0..1, &[1_000_000, 2_000_000]);
     let parent = OutPoint {
         txid: funding.txid(),
@@ -775,7 +921,7 @@ async fn should_sweep_restored_keys_loser_and_funds_descendant_and_release_extra
 
 #[test]
 fn should_reject_balance_overflow_before_installing_coins() {
-    let template = TestWalletContext::new_random();
+    let template = TestWalletContext::from_seed([15; 64]);
     let funding = Transaction::dummy(&template.receive_address, 0..1, &[u64::MAX, 1]);
     let first = coin(&funding, &template.receive_address);
     let mut second = first.clone();
@@ -793,7 +939,7 @@ fn should_reject_balance_overflow_before_installing_coins() {
 
 #[tokio::test]
 async fn should_preserve_cross_account_input_recognition_after_restore() {
-    let mut template = TestWalletContext::new_random();
+    let mut template = TestWalletContext::from_seed([16; 64]);
     let other_xpub = template.wallet.accounts.standard_bip32_accounts.get(&0).unwrap().account_xpub;
     let other_address = template
         .managed_wallet
@@ -881,8 +1027,8 @@ async fn should_preserve_cross_account_input_recognition_after_restore() {
 
 #[test]
 fn should_reject_coin_owned_by_another_wallet() {
-    let owner = TestWalletContext::new_random();
-    let mut receiver = TestWalletContext::new_random();
+    let owner = TestWalletContext::from_seed([17; 64]);
+    let mut receiver = TestWalletContext::from_seed([18; 64]);
     assert!(!receiver.bip44_account().contains_address(&owner.receive_address));
     let tx = Transaction::dummy(&owner.receive_address, 0..1, &[1_000_000]);
     let outpoint = OutPoint {
@@ -902,7 +1048,7 @@ fn should_reject_coin_owned_by_another_wallet() {
 #[test_case::test_case(false; "coinbase_flag")]
 #[test_case::test_case(true; "block_height")]
 fn should_reject_coinbase_metadata_disagreeing_with_record(invalid_height: bool) {
-    let mut receiver = TestWalletContext::new_random();
+    let mut receiver = TestWalletContext::from_seed([19; 64]);
     receiver.managed_wallet.update_last_processed_height(100);
     let mut tx = Transaction::dummy(&receiver.receive_address, 0..1, &[1_000_000]);
     tx.input[0].previous_output = OutPoint::null();
@@ -954,7 +1100,7 @@ fn should_reject_coinbase_metadata_disagreeing_with_record(invalid_height: bool)
 #[test_case::test_case(true; "fully_spent")]
 #[tokio::test]
 async fn should_preserve_restored_block_context_on_duplicate_instant_lock(fully_spent: bool) {
-    let mut live = TestWalletContext::new_random();
+    let mut live = TestWalletContext::from_seed([20; 64]);
     let mut restored = live.managed_wallet.clone();
     let funding = Transaction::dummy(&live.receive_address, 0..1, &[1_000_000]);
     let txid = funding.txid();

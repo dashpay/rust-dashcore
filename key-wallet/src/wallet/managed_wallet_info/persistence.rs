@@ -16,6 +16,8 @@ use std::fmt;
 ///
 /// Store full records before key-wallet compacts finalized history. Records and UTXOs
 /// must describe the same committed snapshot, with abandoned/conflicted records removed.
+/// Records for one txid must agree on block identity and finality. Coin confirmation
+/// and unmined InstantSend flags must agree with any surviving funding record.
 /// Account definitions, address pools and sync metadata belong to the receiving skeleton.
 #[derive(Debug, Clone, Default)]
 pub struct PersistedWalletState {
@@ -40,13 +42,13 @@ pub enum RestoreError {
     MissingAccount(AccountType),
     /// A coin names a keys-only account.
     NonFundingAccount(AccountType),
-    /// A record's txid, input/output metadata or block height is inconsistent.
+    /// A record's txid, input/output metadata or lifecycle context is inconsistent.
     InvalidRecord(Txid),
     /// More than one record names the same transaction and account.
     DuplicateRecord(Txid, AccountType),
     /// More than one unspent coin names the same outpoint.
     DuplicateUtxo(OutPoint),
-    /// A coin's ownership, script or funding transaction metadata is inconsistent.
+    /// A coin's ownership, script or funding transaction metadata/finality is inconsistent.
     InvalidUtxo(OutPoint),
     /// A coin is simultaneously unspent and claimed spent.
     SpentUtxo(OutPoint),
@@ -179,6 +181,9 @@ impl ManagedWalletInfo {
             for account in self.accounts.all_accounts_mut() {
                 if let ManagedAccountRefMut::Funds(account) = account {
                     if account.managed_account_type().to_account_type() == account_type {
+                        if account.utxos.is_empty() {
+                            account.bump_monitor_revision();
+                        }
                         account.utxos.insert(utxo.outpoint, utxo);
                         break;
                     }
@@ -212,7 +217,7 @@ impl ManagedWalletInfo {
         let mut records = HashSet::new();
         let mut spent: HashSet<_> = state.additional_spent_outpoints.keys().copied().collect();
         let mut transactions = BTreeMap::new();
-        let mut funding_heights = BTreeMap::new();
+        let mut lifecycles = BTreeMap::new();
         for record in &state.transactions {
             if !accounts.contains_key(&record.account_type) {
                 return Err(RestoreError::MissingAccount(record.account_type));
@@ -245,14 +250,15 @@ impl ManagedWalletInfo {
             if !records.insert((record.account_type, record.txid)) {
                 return Err(RestoreError::DuplicateRecord(record.txid, record.account_type));
             }
-            transactions.insert(record.txid, &record.transaction);
-            if let Some(block) = record.context.block_info() {
-                if funding_heights
-                    .insert(record.txid, block.height())
-                    .is_some_and(|height| height != block.height())
-                {
-                    return Err(RestoreError::InvalidRecord(record.txid));
-                }
+            transactions.insert(record.txid, record);
+            // Position is optional metadata; block identity and finality must agree.
+            let lifecycle = (
+                record.context.block_info().map(|block| (block.height(), block.block_hash())),
+                record.context.is_instant_send(),
+                record.context.is_chain_locked(),
+            );
+            if lifecycles.insert(record.txid, lifecycle).is_some_and(|prior| prior != lifecycle) {
+                return Err(RestoreError::InvalidRecord(record.txid));
             }
             if !record.transaction.is_coin_base() {
                 spent.extend(record.transaction.input.iter().map(|input| input.previous_output));
@@ -274,15 +280,18 @@ impl ManagedWalletInfo {
                 return Err(RestoreError::SpentUtxo(utxo.outpoint));
             }
             if (utxo.is_coinbase && utxo.height.checked_add(100).is_none())
-                || funding_heights
-                    .get(&utxo.outpoint.txid)
-                    .is_some_and(|height| *height != utxo.height)
                 || !account.contains_address(&utxo.address)
                 || utxo.address.script_pubkey() != utxo.txout.script_pubkey
                 || !utxo.address.as_unchecked().is_valid_for_network(self.network)
-                || transactions.get(&utxo.outpoint.txid).is_some_and(|transaction| {
+                || transactions.get(&utxo.outpoint.txid).is_some_and(|record| {
+                    let transaction = &record.transaction;
                     transaction.output.get(utxo.outpoint.vout as usize) != Some(&utxo.txout)
                         || transaction.is_coin_base() != utxo.is_coinbase
+                        || record.context.block_info().is_some_and(|block| block.height() != utxo.height)
+                        || record.is_confirmed() != utxo.is_confirmed
+                        // A mined context does not retain earlier InstantSend evidence.
+                        || (!record.is_confirmed()
+                            && record.context.is_instant_send() != utxo.is_instantlocked)
                 })
             {
                 return Err(RestoreError::InvalidUtxo(utxo.outpoint));
