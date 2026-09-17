@@ -28,7 +28,7 @@ secp-lowmemory = ["secp256k1/lowmemory"]
 secp-recovery = ["secp256k1/recovery"]
 signer = ["secp-recovery", "rand", "base64"]
 core-block-hash-use-x11 = ["dashcore_hashes/x11"]
-bls = ["blsful", "dashcore-crypto/bls"]
+bls = ["dashcore-crypto/bls"]
 eddsa = ["ed25519-dalek"]
 quorum_validation = ["bls"]
 message_verification = ["bls"]
@@ -56,7 +56,6 @@ anyhow = { version= "1.0" }
 hex = { version= "0.4" }
 bincode = { workspace = true, optional = true }
 bincode_derive = { workspace = true, optional = true }
-blsful = { git = "https://github.com/dashpay/agora-blsful", rev = "0c34a7a488a0bd1c9a9a2196e793b303ad35c900", optional = true }
 ed25519-dalek = { version = "2.1", features = ["rand_core"], optional = true }
 blake3 = "1.8.1"
 thiserror = "2"
@@ -64,6 +63,9 @@ bitvec = "1.0"
 tracing = "0.1"
 
 [dev-dependencies]
+# Only the pre-existing BLS compatibility tests in `sml::quorum_entry::validation`
+# still speak to the curve library directly.
+blsful = { git = "https://github.com/dashpay/agora-blsful", rev = "0c34a7a488a0bd1c9a9a2196e793b303ad35c900" }
 serde_json = "1.0.140"
 serde_test = "1.0.177"
 serde_derive = "1.0.219"

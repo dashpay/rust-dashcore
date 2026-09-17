@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 
 use crate::QuorumHash;
+use crate::bls_sig_utils::BlsScheme;
 use crate::sml::llmq_entry_verification::LLMQEntryVerificationStatus;
 use crate::sml::masternode_list_engine::MasternodeListEngine;
 use crate::sml::masternode_list_entry::qualified_masternode_list_entry::QualifiedMasternodeListEntry;
@@ -30,15 +31,16 @@ impl MasternodeListEngine {
         quorum.quorum_entry.validate_structure()?;
         let masternodes = self.find_valid_masternodes_for_quorum(quorum)?;
 
-        quorum.validate(masternodes.iter().enumerate().filter_map(
-            |(i, qualified_masternode_list_entry)| {
+        quorum.validate(
+            masternodes.iter().enumerate().filter_map(|(i, qualified_masternode_list_entry)| {
                 if *quorum.quorum_entry.signers.get(i)? {
                     Some(&qualified_masternode_list_entry.masternode_list_entry)
                 } else {
                     None
                 }
-            },
-        ))
+            }),
+            BlsScheme::Modern,
+        )
     }
 
     pub fn validate_rotation_cycle_quorums(
@@ -66,15 +68,18 @@ impl MasternodeListEngine {
                 ))?
                 .as_ref()
                 .map_err(Clone::clone)?;
-            quorum.validate(masternodes.iter().enumerate().filter_map(
-                |(i, qualified_masternode_list_entry)| {
-                    if *quorum.quorum_entry.signers.get(i)? {
-                        Some(&qualified_masternode_list_entry.masternode_list_entry)
-                    } else {
-                        None
-                    }
-                },
-            ))?;
+            quorum.validate(
+                masternodes.iter().enumerate().filter_map(
+                    |(i, qualified_masternode_list_entry)| {
+                        if *quorum.quorum_entry.signers.get(i)? {
+                            Some(&qualified_masternode_list_entry.masternode_list_entry)
+                        } else {
+                            None
+                        }
+                    },
+                ),
+                BlsScheme::Modern,
+            )?;
         }
         Ok(())
     }
@@ -132,15 +137,18 @@ impl MasternodeListEngine {
                     continue;
                 }
             };
-            match quorum.validate(masternodes.iter().enumerate().filter_map(
-                |(i, qualified_masternode_list_entry)| {
-                    if *quorum.quorum_entry.signers.get(i)? {
-                        Some(&qualified_masternode_list_entry.masternode_list_entry)
-                    } else {
-                        None
-                    }
-                },
-            )) {
+            match quorum.validate(
+                masternodes.iter().enumerate().filter_map(
+                    |(i, qualified_masternode_list_entry)| {
+                        if *quorum.quorum_entry.signers.get(i)? {
+                            Some(&qualified_masternode_list_entry.masternode_list_entry)
+                        } else {
+                            None
+                        }
+                    },
+                ),
+                BlsScheme::Modern,
+            ) {
                 Ok(_) => {
                     return_statuses.insert(
                         quorum.quorum_entry.quorum_hash,
