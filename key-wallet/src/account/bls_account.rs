@@ -18,11 +18,9 @@ use serde::{Deserialize, Serialize};
 use crate::bip32::{ChainCode, Fingerprint};
 #[cfg(feature = "bincode")]
 use bincode_derive::{Decode, Encode};
-use dashcore::blsful::Bls12381G2Impl;
 
 use crate::account::derivation::AccountDerivation;
-pub use dashcore::bls_sig_utils::{BLSPublicKey, BlsScheme};
-pub use dashcore::blsful::SecretKey;
+pub use dashcore::bls_sig_utils::{BLSPublicKey, BlsScheme, BlsSkBytes};
 
 /// BLS account structure for Platform and masternode operations
 #[derive(Debug, Clone)]
@@ -175,7 +173,7 @@ impl BLSAccount {
         seed: &[u8],
         network: Network,
         index: u32,
-    ) -> Result<SecretKey<Bls12381G2Impl>> {
+    ) -> Result<BlsSkBytes> {
         let master = ExtendedBLSPrivKey::new_master(network, seed)?;
         let path = AccountType::ProviderOperatorKeys.derivation_path(network)?;
         let account_xpriv = master.derive_path_legacy(&path)?;
@@ -279,13 +277,8 @@ impl fmt::Display for BLSAccount {
     }
 }
 
-impl
-    AccountDerivation<
-        ExtendedBLSPrivKey,
-        ExtendedBLSPubKey,
-        BLSPublicKey,
-        SecretKey<Bls12381G2Impl>,
-    > for BLSAccount
+impl AccountDerivation<ExtendedBLSPrivKey, ExtendedBLSPubKey, BLSPublicKey, BlsSkBytes>
+    for BLSAccount
 {
     fn defaults_to_hardened_derivation(&self) -> bool {
         false
@@ -451,7 +444,7 @@ impl
         &self,
         master_xpriv: &ExtendedBLSPrivKey,
         index: u32,
-    ) -> Result<SecretKey<Bls12381G2Impl>> {
+    ) -> Result<BlsSkBytes> {
         let xpriv = self.derive_from_master_xpriv_extended_xpriv_at(master_xpriv, index)?;
         Ok(xpriv.private_key.clone())
     }
@@ -466,11 +459,7 @@ impl
         self.derive_from_master_xpriv_extended_xpriv_at(&master, index)
     }
 
-    fn derive_from_seed_private_key_at(
-        &self,
-        seed: &[u8],
-        index: u32,
-    ) -> Result<SecretKey<Bls12381G2Impl>> {
+    fn derive_from_seed_private_key_at(&self, seed: &[u8], index: u32) -> Result<BlsSkBytes> {
         let xpriv = self.derive_from_seed_extended_xpriv_at(seed, index)?;
         Ok(xpriv.private_key.clone())
     }
