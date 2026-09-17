@@ -18,10 +18,10 @@ use serde::{Deserialize, Serialize};
 use crate::bip32::{ChainCode, Fingerprint};
 #[cfg(feature = "bincode")]
 use bincode_derive::{Decode, Encode};
-use dashcore::blsful::{Bls12381G2Impl, SerializationFormat};
+use dashcore::blsful::Bls12381G2Impl;
 
 use crate::account::derivation::AccountDerivation;
-pub use dashcore::blsful::PublicKey as BLSPublicKey;
+pub use dashcore::bls_sig_utils::{BLSPublicKey, BlsScheme};
 pub use dashcore::blsful::SecretKey;
 
 /// BLS account structure for Platform and masternode operations
@@ -65,12 +65,10 @@ impl BLSAccount {
         bls_public_key: [u8; 48],
         network: Network,
     ) -> Result<Self> {
-        // Create a BlsPublicKey from bytes
-        let public_key = BLSPublicKey::<Bls12381G2Impl>::from_bytes_with_mode(
-            &bls_public_key,
-            SerializationFormat::Modern,
-        )
-        .map_err(|e| Error::InvalidParameter(format!("Invalid BLS public key: {}", e)))?;
+        let public_key = BLSPublicKey::from_bytes(bls_public_key)
+            .as_scheme(BlsScheme::Modern)
+            .canonicalize()
+            .map_err(|_| Error::InvalidParameter("Invalid BLS public key".to_string()))?;
 
         // Create an extended public key with default metadata
         let extended_key = ExtendedBLSPubKey {
@@ -285,7 +283,7 @@ impl
     AccountDerivation<
         ExtendedBLSPrivKey,
         ExtendedBLSPubKey,
-        BLSPublicKey<Bls12381G2Impl>,
+        BLSPublicKey,
         SecretKey<Bls12381G2Impl>,
     > for BLSAccount
 {
@@ -407,7 +405,7 @@ impl
         address_pool_type: AddressPoolType,
         index: u32,
         use_hardened_with_priv_key: Option<ExtendedBLSPrivKey>,
-    ) -> Result<BLSPublicKey<Bls12381G2Impl>> {
+    ) -> Result<BLSPublicKey> {
         let extended_pubkey = self.derive_extended_public_key_at(
             address_pool_type,
             index,

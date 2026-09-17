@@ -9,7 +9,7 @@
 use core::str::FromStr;
 
 #[cfg(feature = "bls")]
-use blsful::{Bls12381G2Impl, Pairing};
+use blsful::{Bls12381G2Impl, Pairing, PublicKey, SerializationFormat};
 use dash_types::{make_bytes, type_cvrt};
 use hex::FromHexError;
 #[cfg(feature = "bls")]
@@ -32,14 +32,58 @@ pub enum BlsError {
     /// Signature bytes are not a valid G2 point.
     #[error("Invalid BLS signature: {0}")]
     InvalidSignature(String),
+
+    /// Tweak is not a valid scalar.
+    #[error("Invalid BLS tweak")]
+    InvalidTweak,
+}
+
+/// Which BLS scheme a 48- or 96-byte blob was written under.
+#[cfg(feature = "bls")]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
+pub enum BlsScheme {
+    /// The pre-V19 scheme, as Dash Core's `LegacySchemeMPL` implements it.
+    Legacy,
+    /// The post-V19 IETF basic scheme.
+    Modern,
+}
+
+#[cfg(feature = "bls")]
+impl BlsScheme {
+    /// The backing library's serialisation mode for this scheme.
+    pub fn serialization_format(self) -> SerializationFormat {
+        match self {
+            Self::Legacy => SerializationFormat::Legacy,
+            Self::Modern => SerializationFormat::Modern,
+        }
+    }
+}
+
+#[cfg(feature = "bls")]
+fn encode_point(point: PublicKey<Bls12381G2Impl>, scheme: BlsScheme) -> BlsPkBytes {
+    BlsPkBytes::from_bytes(
+        point
+            .to_bytes_with_mode(scheme.serialization_format())
+            .try_into()
+            .expect("a G1 point is 48 bytes"),
+    )
 }
 
 make_bytes! {
     /// BLS public key (48 bytes, unvalidated).
-    BLSPublicKey, BLS_PK_LEN
+    BlsPkBytes, BLS_PK_LEN
 }
 
-impl BLSPublicKey {
+impl BlsPkBytes {
+    /// Pairs these bytes with `scheme`.
+    #[cfg(feature = "bls")]
+    pub fn as_scheme(self, scheme: BlsScheme) -> BlsPublicKey {
+        BlsPublicKey {
+            bytes: self,
+            scheme,
+        }
+    }
+
     /// Reads these bytes from a hex string.
     pub fn from_hex(s: &str) -> Result<Self, FromHexError> {
         let mut bytes = [0u8; BLS_PK_LEN];
@@ -53,7 +97,7 @@ impl BLSPublicKey {
     }
 }
 
-impl FromStr for BLSPublicKey {
+impl FromStr for BlsPkBytes {
     type Err = FromHexError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
@@ -62,7 +106,7 @@ impl FromStr for BLSPublicKey {
 }
 
 #[cfg(feature = "bincode")]
-impl bincode::Encode for BLSPublicKey {
+impl bincode::Encode for BlsPkBytes {
     fn encode<E: bincode::enc::Encoder>(
         &self,
         encoder: &mut E,
@@ -72,7 +116,7 @@ impl bincode::Encode for BLSPublicKey {
 }
 
 #[cfg(feature = "bincode")]
-impl<C> bincode::Decode<C> for BLSPublicKey {
+impl<C> bincode::Decode<C> for BlsPkBytes {
     fn decode<D: bincode::de::Decoder<Context = C>>(
         decoder: &mut D,
     ) -> Result<Self, bincode::error::DecodeError> {
@@ -81,7 +125,7 @@ impl<C> bincode::Decode<C> for BLSPublicKey {
 }
 
 #[cfg(feature = "bincode")]
-impl<'de, C> bincode::BorrowDecode<'de, C> for BLSPublicKey {
+impl<'de, C> bincode::BorrowDecode<'de, C> for BlsPkBytes {
     fn borrow_decode<D: bincode::de::BorrowDecoder<'de, Context = C>>(
         decoder: &mut D,
     ) -> Result<Self, bincode::error::DecodeError> {
@@ -90,20 +134,73 @@ impl<'de, C> bincode::BorrowDecode<'de, C> for BLSPublicKey {
 }
 
 type_cvrt!(
-    for[] TryFrom<&[u8]> for BLSPublicKey,
+    for[] TryFrom<&[u8]> for BlsPkBytes,
     core::array::TryFromSliceError,
     |v| Ok(Self::from_bytes(<[u8; BLS_PK_LEN]>::try_from(*v)?))
 );
 
 #[cfg(feature = "bls")]
 type_cvrt!(
-    for[] TryFrom<BLSPublicKey> for blsful::PublicKey<Bls12381G2Impl>,
+    for[] TryFrom<BlsPkBytes> for blsful::PublicKey<Bls12381G2Impl>,
     BlsError,
     |value| {
         Self::try_from(value.as_bytes().as_slice())
             .map_err(|e| BlsError::InvalidPublicKey(e.to_string()))
     }
 );
+
+/// A [`BlsPkBytes`] paired with the scheme to read it under.
+#[cfg(feature = "bls")]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct BlsPublicKey {
+    bytes: BlsPkBytes,
+    scheme: BlsScheme,
+}
+
+#[cfg(feature = "bls")]
+impl BlsPublicKey {
+    /// Adds `tweak * G` to the point, written back under the same scheme.
+    ///
+    /// # Errors
+    ///
+    /// Returns `InvalidPublicKey` when the bytes are not a G1 point, or
+    /// `InvalidTweak` when the tweak is not a valid scalar.
+    pub fn add_tweak(self, tweak: &[u8; 32]) -> Result<BlsPkBytes, BlsError> {
+        let tweak_key = blsful::SecretKey::<Bls12381G2Impl>::from_be_bytes(tweak)
+            .into_option()
+            .ok_or(BlsError::InvalidTweak)?;
+        let sum = self.point()?.0 + PublicKey::from(&tweak_key).0;
+
+        Ok(encode_point(PublicKey(sum), self.scheme))
+    }
+
+    /// Checks the bytes are a point and writes it back under the same scheme.
+    ///
+    /// # Errors
+    ///
+    /// Returns `InvalidPublicKey` when the bytes are not a G1 point.
+    pub fn canonicalize(self) -> Result<BlsPkBytes, BlsError> {
+        self.reencode(self.scheme)
+    }
+
+    /// Re-encodes the same point under `to`.
+    ///
+    /// # Errors
+    ///
+    /// Returns `InvalidPublicKey` when the bytes are not a G1 point under the
+    /// scheme they were read with.
+    pub fn reencode(self, to: BlsScheme) -> Result<BlsPkBytes, BlsError> {
+        Ok(encode_point(self.point()?, to))
+    }
+
+    fn point(self) -> Result<PublicKey<Bls12381G2Impl>, BlsError> {
+        PublicKey::<Bls12381G2Impl>::from_bytes_with_mode(
+            self.bytes.as_bytes(),
+            self.scheme.serialization_format(),
+        )
+        .map_err(|e| BlsError::InvalidPublicKey(e.to_string()))
+    }
+}
 
 make_bytes! {
     /// BLS signature (96 bytes, unvalidated).
