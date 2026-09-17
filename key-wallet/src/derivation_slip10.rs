@@ -9,8 +9,7 @@
 //! - Different serialization format (no xpub/xprv, custom encoding)
 
 use core::fmt;
-pub use dashcore::ed25519_dalek::SigningKey;
-use dashcore::eddsa::EddsaPkBytes;
+use dashcore::eddsa::{EddsaPkBytes, EddsaSkBytes};
 use dashcore::Network;
 use dashcore_hashes::{sha512, Hash, HashEngine, Hmac, HmacEngine};
 #[cfg(feature = "serde")]
@@ -18,9 +17,6 @@ use serde;
 use std::error;
 // Re-export ChainCode, Fingerprint and ChildNumber from bip32
 use crate::bip32::{ChainCode, ChildNumber, Fingerprint};
-
-// Re-export ed25519-dalek types as our public API
-pub use dashcore::ed25519_dalek::SigningKey as Ed25519PrivateKey;
 
 // Use DerivationPath from bip32
 pub use crate::bip32::DerivationPath;
@@ -51,24 +47,18 @@ pub struct ExtendedEd25519PrivKey {
     pub parent_fingerprint: Fingerprint,
     /// Child number used to derive this key
     pub child_number: ChildNumber,
-    /// The Ed25519 private key (seed bytes, not the SigningKey itself)
-    pub private_key: [u8; 32],
+    /// The Ed25519 private key (the seed the key expands from)
+    pub private_key: EddsaSkBytes,
     /// Chain code for derivation
     pub chain_code: ChainCode,
 }
 
-// Hand-written instead of derived so the raw secret bytes are compared in
-// constant time (a derived `==` on `[u8; 32]` short-circuits on the first
-// differing byte, leaking how much of the secret matches).
+// Hand-written so the secret is compared in constant time, which
+// `EddsaSkBytes` does; a derived `==` would short-circuit on the first
+// differing byte and leak how much of it matches.
 impl PartialEq for ExtendedEd25519PrivKey {
     fn eq(&self, other: &Self) -> bool {
-        let mut diff = 0u8;
-        for (a, b) in self.private_key.iter().zip(other.private_key.iter()) {
-            diff |= a ^ b;
-        }
-        // black_box keeps the compiler from turning the fold back into an
-        // early-exit comparison.
-        core::hint::black_box(diff) == 0
+        self.private_key == other.private_key
             && self.network == other.network
             && self.depth == other.depth
             && self.parent_fingerprint == other.parent_fingerprint
@@ -116,7 +106,8 @@ impl ExtendedEd25519PrivKey {
         let hmac_bytes = hmac_result.as_byte_array();
 
         // First 32 bytes are the private key seed
-        let private_key: [u8; 32] = hmac_bytes[..32].try_into().expect("HMAC output is 64 bytes");
+        let private_key =
+            EddsaSkBytes::from_bytes(hmac_bytes[..32].try_into().expect("HMAC output is 64 bytes"));
 
         // Last 32 bytes are the chain code
         let chain_code =
@@ -160,14 +151,15 @@ impl ExtendedEd25519PrivKey {
 
         // For Ed25519: data = 0x00 || private_key || index
         hmac_engine.input(&[0x00]);
-        hmac_engine.input(self.private_key.as_ref());
+        hmac_engine.input(self.private_key.as_bytes());
         hmac_engine.input(&u32::from(child).to_be_bytes());
 
         let hmac_result: Hmac<sha512::Hash> = Hmac::from_engine(hmac_engine);
         let hmac_bytes = hmac_result.as_byte_array();
 
         // First 32 bytes become the new private key seed
-        let private_key: [u8; 32] = hmac_bytes[..32].try_into().expect("HMAC output is 64 bytes");
+        let private_key =
+            EddsaSkBytes::from_bytes(hmac_bytes[..32].try_into().expect("HMAC output is 64 bytes"));
 
         // Last 32 bytes become the new chain code
         let chain_code =
@@ -188,8 +180,7 @@ impl ExtendedEd25519PrivKey {
 
     /// Get the public key for this private key
     pub fn public_key(&self) -> Result<EddsaPkBytes, Error> {
-        let signing_key = SigningKey::from_bytes(&self.private_key);
-        Ok(EddsaPkBytes::from_bytes(signing_key.verifying_key().to_bytes()))
+        Ok(self.private_key.public_key())
     }
 
     /// Get the fingerprint of this key
@@ -234,7 +225,7 @@ impl ExtendedEd25519PrivKey {
 
         // Private key with 0x00 prefix (33 bytes)
         result.push(0x00);
-        result.extend_from_slice(self.private_key.as_ref());
+        result.extend_from_slice(self.private_key.as_bytes());
 
         result
     }
@@ -286,8 +277,9 @@ impl ExtendedEd25519PrivKey {
             return Err(Error::InvalidPrivateKeyPrefix);
         }
 
-        let private_key: [u8; 32] =
-            data[46..78].try_into().map_err(|_| Error::WrongExtendedKeyLength(data.len()))?;
+        let private_key = EddsaSkBytes::from_bytes(
+            data[46..78].try_into().map_err(|_| Error::WrongExtendedKeyLength(data.len()))?,
+        );
 
         Ok(ExtendedEd25519PrivKey {
             network,
@@ -578,7 +570,7 @@ impl bincode::Encode for ExtendedEd25519PrivKey {
         self.depth.encode(encoder)?;
         self.parent_fingerprint.encode(encoder)?;
         self.child_number.encode(encoder)?;
-        self.private_key.encode(encoder)?;
+        self.private_key.as_bytes().encode(encoder)?;
         self.chain_code.encode(encoder)?;
         Ok(())
     }
@@ -594,7 +586,7 @@ impl<C> bincode::Decode<C> for ExtendedEd25519PrivKey {
             depth: u8::decode(decoder)?,
             parent_fingerprint: Fingerprint::decode(decoder)?,
             child_number: ChildNumber::decode(decoder)?,
-            private_key: <[u8; 32]>::decode(decoder)?,
+            private_key: EddsaSkBytes::from_bytes(<[u8; 32]>::decode(decoder)?),
             chain_code: ChainCode::decode(decoder)?,
         })
     }
@@ -799,7 +791,7 @@ mod test {
             current = current.ckd_priv(child_number).unwrap();
         }
 
-        current.private_key
+        *current.private_key.to_bytes()
     }
 
     fn derive_ed25519_private_key_hex(seed_hex: &str, indexes: &[u32]) -> String {
@@ -816,12 +808,12 @@ mod test {
 
         let seed = hex::decode(CASE_1_SEED).unwrap();
         let mut key = ExtendedEd25519PrivKey::new_master(Network::Mainnet, &seed).unwrap();
-        assert_ne!(key.private_key, [0u8; 32]);
+        assert_ne!(*key.private_key.to_bytes(), [0u8; 32]);
         assert_ne!(key.chain_code.as_ref(), &[0u8; 32]);
 
         key.zeroize();
 
-        assert_eq!(key.private_key, [0u8; 32]);
+        assert_eq!(*key.private_key.to_bytes(), [0u8; 32]);
         assert_eq!(key.chain_code.as_ref(), &[0u8; 32]);
         assert_eq!(key.depth, 0);
         assert_eq!(key.parent_fingerprint, Fingerprint::default());

@@ -70,7 +70,7 @@ pub extern crate dashcore_hashes as hashes;
 pub extern crate secp256k1;
 
 #[cfg(feature = "eddsa")]
-pub use dashcore_crypto::{ed25519_dalek, eddsa};
+pub use dashcore_crypto::eddsa;
 
 #[cfg(feature = "serde")]
 #[macro_use]
