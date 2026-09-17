@@ -14,6 +14,7 @@ default = []
 
 bincode = ["dep:bincode", "dep:bincode_derive", "dashcore_hashes/bincode", "dash-network/bincode"]
 bls = ["dep:dash-pkc", "dep:tracing"]
+eddsa = ["dep:ed25519-dalek"]
 serde = ["dep:serde", "dash-types/serde", "dashcore_hashes/serde", "dash-network/serde", "secp256k1/serde"]
 
 [dependencies]
@@ -24,6 +25,7 @@ dash-network = { path = "../dash-network" }
 dash-pkc = { version = "=0.1.0-beta", default-features = false, features = ["bls", "std"], optional = true }
 dash-types = { version = "=0.1.0-beta", default-features = false, features = ["codec"] }
 dashcore_hashes = { path = "../hashes" }
+ed25519-dalek = { version = "2.1", default-features = false, features = ["std"], optional = true }
 hex = { version = "0.4" }
 internals = { path = "../internals", package = "dashcore-private" }
 secp256k1 = { version = "0.33.1" }

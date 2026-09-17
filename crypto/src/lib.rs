@@ -15,6 +15,8 @@ pub extern crate base58ck as base58;
 #[cfg(feature = "bls")]
 pub extern crate dash_pkc;
 pub extern crate dashcore_hashes as hashes;
+#[cfg(feature = "eddsa")]
+pub extern crate ed25519_dalek;
 pub extern crate secp256k1;
 #[cfg(feature = "serde")]
 pub extern crate serde;
@@ -25,6 +27,7 @@ pub(crate) mod serde_utils;
 
 pub mod bls;
 pub mod ecdsa;
+pub mod eddsa;
 pub mod key;
 pub mod sighash;
 pub mod taproot;
