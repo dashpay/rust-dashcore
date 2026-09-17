@@ -9,7 +9,8 @@
 //! - Different serialization format (no xpub/xprv, custom encoding)
 
 use core::fmt;
-pub use dashcore::ed25519_dalek::{SigningKey, VerifyingKey};
+pub use dashcore::ed25519_dalek::SigningKey;
+use dashcore::eddsa::EddsaPkBytes;
 use dashcore::Network;
 use dashcore_hashes::{sha512, Hash, HashEngine, Hmac, HmacEngine};
 #[cfg(feature = "serde")]
@@ -20,7 +21,6 @@ use crate::bip32::{ChainCode, ChildNumber, Fingerprint};
 
 // Re-export ed25519-dalek types as our public API
 pub use dashcore::ed25519_dalek::SigningKey as Ed25519PrivateKey;
-pub use dashcore::ed25519_dalek::VerifyingKey as Ed25519PublicKey;
 
 // Use DerivationPath from bip32
 pub use crate::bip32::DerivationPath;
@@ -187,9 +187,9 @@ impl ExtendedEd25519PrivKey {
     }
 
     /// Get the public key for this private key
-    pub fn public_key(&self) -> Result<VerifyingKey, Error> {
+    pub fn public_key(&self) -> Result<EddsaPkBytes, Error> {
         let signing_key = SigningKey::from_bytes(&self.private_key);
-        Ok(signing_key.verifying_key())
+        Ok(EddsaPkBytes::from_bytes(signing_key.verifying_key().to_bytes()))
     }
 
     /// Get the fingerprint of this key
@@ -324,7 +324,7 @@ pub struct ExtendedEd25519PubKey {
     /// Child number used to derive this key
     pub child_number: ChildNumber,
     /// The Ed25519 public key
-    pub public_key: VerifyingKey,
+    pub public_key: EddsaPkBytes,
     /// Chain code for derivation
     pub chain_code: ChainCode,
 }
@@ -346,7 +346,7 @@ impl ExtendedEd25519PubKey {
     pub fn fingerprint(&self) -> Fingerprint {
         use dashcore_hashes::{hash160, Hash};
 
-        let hash = hash160::Hash::hash(self.public_key.as_ref());
+        let hash = hash160::Hash::hash(self.public_key.as_bytes());
         Fingerprint::from_bytes(hash[..4].try_into().expect("hash160 has enough bytes"))
     }
 
@@ -354,7 +354,7 @@ impl ExtendedEd25519PubKey {
     pub fn identifier(&self) -> [u8; 20] {
         use dashcore_hashes::{hash160, Hash};
 
-        let hash = hash160::Hash::hash(self.public_key.as_ref());
+        let hash = hash160::Hash::hash(self.public_key.as_bytes());
         hash.to_byte_array()
     }
 
@@ -382,7 +382,7 @@ impl ExtendedEd25519PubKey {
 
         // Public key with 0x00 prefix for consistency (33 bytes)
         result.push(0x00);
-        result.extend_from_slice(self.public_key.as_ref());
+        result.extend_from_slice(self.public_key.as_bytes());
 
         result
     }
@@ -431,8 +431,8 @@ impl ExtendedEd25519PubKey {
 
         let public_key_bytes: [u8; 32] =
             data[46..78].try_into().map_err(|_| Error::WrongExtendedKeyLength(data.len()))?;
-        let public_key = VerifyingKey::from_bytes(&public_key_bytes)
-            .map_err(|e| Error::Ed25519Error(e.to_string()))?;
+        let public_key = EddsaPkBytes::from_bytes(public_key_bytes);
+        public_key.validate().map_err(|e| Error::Ed25519Error(e.to_string()))?;
 
         Ok(ExtendedEd25519PubKey {
             network,
@@ -626,7 +626,9 @@ impl<C> bincode::Decode<C> for ExtendedEd25519PubKey {
         let parent_fingerprint = Fingerprint::decode(decoder)?;
         let child_number = ChildNumber::decode(decoder)?;
         let public_key_bytes = <[u8; 32]>::decode(decoder)?;
-        let public_key = VerifyingKey::from_bytes(&public_key_bytes)
+        let public_key = EddsaPkBytes::from_bytes(public_key_bytes);
+        public_key
+            .validate()
             .map_err(|e| bincode::error::DecodeError::OtherString(e.to_string()))?;
         let chain_code = ChainCode::decode(decoder)?;
 

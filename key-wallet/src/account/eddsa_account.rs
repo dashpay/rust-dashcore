@@ -5,10 +5,11 @@
 
 use super::account_trait::AccountTrait;
 use crate::account::AccountType;
-use crate::derivation_slip10::{ExtendedEd25519PrivKey, ExtendedEd25519PubKey, VerifyingKey};
+use crate::derivation_slip10::{ExtendedEd25519PrivKey, ExtendedEd25519PubKey};
 use crate::error::{Error, Result};
 use crate::{ChildNumber, DerivationPath, Network};
 use core::fmt;
+use dashcore::eddsa::EddsaPkBytes;
 use dashcore::Address;
 
 #[cfg(feature = "serde")]
@@ -62,8 +63,9 @@ impl EdDSAAccount {
         network: Network,
     ) -> Result<Self> {
         // Create an extended public key with default metadata
-        use dashcore::ed25519_dalek::VerifyingKey;
-        let verifying_key = VerifyingKey::from_bytes(&ed25519_public_key)
+        let verifying_key = EddsaPkBytes::from_bytes(ed25519_public_key);
+        verifying_key
+            .validate()
             .map_err(|e| Error::InvalidParameter(format!("Invalid Ed25519 public key: {}", e)))?;
 
         let extended_key = ExtendedEd25519PubKey {
@@ -256,7 +258,7 @@ impl
     AccountDerivation<
         ExtendedEd25519PrivKey,
         ExtendedEd25519PubKey,
-        VerifyingKey,
+        EddsaPkBytes,
         dashcore::ed25519_dalek::SigningKey,
     > for EdDSAAccount
 {
@@ -362,7 +364,7 @@ impl
         address_pool_type: AddressPoolType,
         index: u32,
         use_hardened_with_priv_key: Option<ExtendedEd25519PrivKey>,
-    ) -> Result<VerifyingKey> {
+    ) -> Result<EddsaPkBytes> {
         let extended_pubkey = self.derive_extended_public_key_at(
             address_pool_type,
             index,

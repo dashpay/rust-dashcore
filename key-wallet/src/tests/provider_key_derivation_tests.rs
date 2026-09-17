@@ -110,10 +110,13 @@ fn ed25519_platform_node_keys_match_slip10_reference() {
     // The stored account key must be the account-level key at m/9'/5'/3'/4'.
     let expected_account_sk =
         hex::decode("80035d9c2f89971a9c9fad826bba8be9328f1686ae555e912949c2c32800c379").unwrap();
-    let expected_account_pk = dashcore::ed25519_dalek::SigningKey::from_bytes(
-        expected_account_sk.as_slice().try_into().unwrap(),
-    )
-    .verifying_key();
+    let expected_account_pk = dashcore::eddsa::EddsaPkBytes::from_bytes(
+        dashcore::ed25519_dalek::SigningKey::from_bytes(
+            expected_account_sk.as_slice().try_into().unwrap(),
+        )
+        .verifying_key()
+        .to_bytes(),
+    );
     assert_eq!(account.ed25519_public_key.public_key, expected_account_pk);
 
     // Platform node key 0 (hardened child 0') via the seed-based signing path.
