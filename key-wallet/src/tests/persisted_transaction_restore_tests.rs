@@ -16,7 +16,9 @@ use crate::wallet::managed_wallet_info::{PersistedWalletState, RestoreError};
 use crate::wallet::ManagedWalletInfo;
 use crate::AccountType;
 use dashcore::hashes::Hash;
-use dashcore::{BlockHash, InstantLock, OutPoint, ScriptBuf, Transaction, TxIn, TxOut, Witness};
+use dashcore::{
+    BlockHash, ChainLock, InstantLock, OutPoint, ScriptBuf, Transaction, TxIn, TxOut, Witness,
+};
 use std::collections::BTreeMap;
 
 fn bip44() -> AccountType {
@@ -50,6 +52,104 @@ fn competing_spend(parent: OutPoint) -> Transaction {
     transaction
 }
 
+#[test_case::test_case(false, false; "sync_checkpoint")]
+#[test_case::test_case(true, false; "chain_lock")]
+#[test_case::test_case(false, true; "sync_checkpoint_after_abandon")]
+#[test_case::test_case(true, true; "chain_lock_after_abandon")]
+#[tokio::test]
+async fn should_preserve_supplemental_block_spends_after_pruning(
+    chain_lock_trigger: bool,
+    with_record_claim: bool,
+) {
+    let mut ctx = TestWalletContext::from_seed([21; 64]);
+    let funding = Transaction::dummy(&ctx.receive_address, 0..1, &[1_000_000]);
+    let parent = OutPoint {
+        txid: funding.txid(),
+        vout: 0,
+    };
+    let claimant = spend(parent);
+    let claimant_txid = claimant.txid();
+    ctx.managed_wallet.apply_chain_lock(ChainLock {
+        block_height: 100,
+        block_hash: BlockHash::from_byte_array([100; 32]),
+        signature: [0; 96].into(),
+    });
+    ctx.managed_wallet.update_synced_height(100);
+    ctx.managed_wallet
+        .restore_persisted_state(PersistedWalletState {
+            transactions: if with_record_claim {
+                vec![spending_record(
+                    claimant,
+                    ctx.receive_address.clone(),
+                    TransactionContext::Mempool,
+                )]
+            } else {
+                Vec::new()
+            },
+            additional_spent_outpoints: BTreeMap::from([(parent, Some(80))]),
+            ..Default::default()
+        })
+        .unwrap();
+
+    for round in 0..2 {
+        if chain_lock_trigger {
+            ctx.managed_wallet.apply_chain_lock(ChainLock {
+                block_height: 101 + round,
+                block_hash: BlockHash::from_byte_array([101; 32]),
+                signature: [0; 96].into(),
+            });
+        } else {
+            ctx.managed_wallet.update_synced_height(100);
+        }
+        if with_record_claim {
+            ctx.managed_wallet.abandon_transaction(claimant_txid);
+        }
+
+        ctx.managed_wallet
+            .check_core_transaction(
+                &funding,
+                TransactionContext::Mempool,
+                &mut ctx.wallet,
+                true,
+                true,
+            )
+            .await;
+        assert!(
+            !ctx.managed_wallet.first_bip44_managed_account().unwrap().utxos.contains_key(&parent),
+            "pruning must not resurrect a coin protected only by restored block evidence"
+        );
+
+        let mut conflicting = competing_spend(parent);
+        conflicting.output[0].script_pubkey = ctx.receive_address.script_pubkey();
+        ctx.managed_wallet
+            .check_core_transaction(
+                &conflicting,
+                TransactionContext::Mempool,
+                &mut ctx.wallet,
+                true,
+                true,
+            )
+            .await;
+        assert!(
+            ctx.managed_wallet.first_bip44_managed_account().unwrap().utxos.is_empty(),
+            "restored block evidence must still reject outputs of a conflicting mempool spend"
+        );
+        assert_eq!(ctx.managed_wallet.observed_spent_outpoints().get(&parent), Some(&80));
+
+        // Redelivery after serialization must exercise insertion, not known-record deduplication.
+        ctx.managed_wallet.abandon_transaction(funding.txid());
+        ctx.managed_wallet.abandon_transaction(conflicting.txid());
+        #[cfg(feature = "serde")]
+        if round == 0 {
+            // Address pools have non-string JSON map keys; round-trip the wallet evidence alone.
+            let accounts = std::mem::take(&mut ctx.managed_wallet.accounts);
+            let json = serde_json::to_string(&ctx.managed_wallet).unwrap();
+            ctx.managed_wallet = serde_json::from_str(&json).unwrap();
+            ctx.managed_wallet.accounts = accounts;
+        }
+    }
+}
+
 fn spending_record(
     tx: Transaction,
     address: dashcore::Address,
@@ -69,6 +169,42 @@ fn spending_record(
         Vec::new(),
         -1_000_000,
     )
+}
+
+#[tokio::test]
+async fn should_preserve_restored_keys_record_spends_after_pruning() {
+    let mut ctx = TestWalletContext::from_seed([22; 64]);
+    let funding = Transaction::dummy(&ctx.receive_address, 0..1, &[1_000_000]);
+    let parent = OutPoint {
+        txid: funding.txid(),
+        vout: 0,
+    };
+    let mut record = spending_record(
+        spend(parent),
+        ctx.receive_address.clone(),
+        TransactionContext::InChainLockedBlock(BlockInfo::new(
+            80,
+            BlockHash::from_byte_array([80; 32]),
+            1_700_000_000,
+        )),
+    );
+    record.account_type = AccountType::IdentityRegistration;
+    ctx.managed_wallet
+        .restore_persisted_state(PersistedWalletState {
+            transactions: vec![record],
+            ..Default::default()
+        })
+        .unwrap();
+    ctx.managed_wallet.update_synced_height(100);
+    ctx.managed_wallet.apply_chain_lock(ChainLock {
+        block_height: 100,
+        block_hash: BlockHash::from_byte_array([100; 32]),
+        signature: [0; 96].into(),
+    });
+    ctx.managed_wallet
+        .check_core_transaction(&funding, TransactionContext::Mempool, &mut ctx.wallet, true, true)
+        .await;
+    assert!(ctx.managed_wallet.first_bip44_managed_account().unwrap().utxos.is_empty());
 }
 
 #[tokio::test]

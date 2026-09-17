@@ -26,8 +26,9 @@ pub struct PersistedWalletState {
     /// The materialized unspent coins with their exact owning accounts.
     pub utxos: Vec<(AccountType, Utxo)>,
     /// Durable spend evidence, including outpoints whose spending record is unavailable.
-    /// `Some(height)` proves a block-observed spend. `None` only blocks the output;
-    /// claims covered by a record are derived from that record and remain releasable.
+    /// `Some(height)` proves a block-observed spend and survives finality pruning.
+    /// `None` only blocks the output; claims covered by a record are derived from
+    /// that record and remain releasable.
     pub additional_spent_outpoints: BTreeMap<OutPoint, Option<CoreBlockHeight>>,
 }
 
@@ -83,9 +84,9 @@ impl ManagedWalletInfo {
     ///
     /// Validates the entire snapshot before changing any state. The receiver must be a
     /// fresh account skeleton; account definitions, pools and sync metadata are preserved.
-    /// Spend claims are derived before finalized records are compacted. Supplemental
-    /// evidence without a record or block height conservatively blocks funding redelivery
-    /// until a complete replacement snapshot can be built; it cannot be abandoned by txid.
+    /// Spend claims are derived before finalized records are compacted. All restored
+    /// block evidence and heightless claims without a record conservatively block funding
+    /// redelivery until a complete replacement snapshot; neither is abandoned by txid.
     /// Returns [`RestoreError`] for an inconsistent snapshot or nonempty receiver.
     pub fn restore_persisted_state(
         &mut self,
@@ -101,6 +102,7 @@ impl ManagedWalletInfo {
         for (outpoint, height) in state.additional_spent_outpoints {
             if let Some(height) = height {
                 self.observed_spent_outpoints.insert(outpoint, height);
+                self.unattributed_spent_outpoints.insert(outpoint);
             } else if !record_inputs.contains(&outpoint) {
                 self.unattributed_spent_outpoints.insert(outpoint);
             }
@@ -121,6 +123,7 @@ impl ManagedWalletInfo {
             if let Some(block) = record.context.block_info() {
                 for input in &record.transaction.input {
                     if !input.previous_output.is_null() {
+                        self.unattributed_spent_outpoints.insert(input.previous_output);
                         self.observed_spent_outpoints
                             .entry(input.previous_output)
                             .and_modify(|height| *height = (*height).max(block.height()))

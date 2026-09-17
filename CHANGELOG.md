@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+### Fixed
+
+- Preserve restored wallet block-spend evidence through ChainLock and sync
+  checkpoint pruning so missing transaction history cannot resurrect spent coins.
+
 ### Changed
 
 - **Breaking:** the `bincode` feature and binary serialization dependencies now use
