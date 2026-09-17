@@ -6,13 +6,16 @@
 
 //! Ed25519 keys for Platform node identity.
 
-use dash_types::make_bytes;
+use dash_types::{make_bytes, make_sbytes};
 #[cfg(feature = "eddsa")]
-use ed25519_dalek::VerifyingKey;
+use ed25519_dalek::{SigningKey, VerifyingKey};
 use thiserror::Error as ThisError;
 
 /// Raw Ed25519 public key length.
 pub const EDDSA_PK_LEN: usize = 32;
+
+/// Raw Ed25519 secret key (seed) length.
+pub const EDDSA_SK_LEN: usize = 32;
 
 /// Errors produced by Ed25519 operations.
 #[cfg(feature = "eddsa")]
@@ -39,5 +42,18 @@ impl EddsaPkBytes {
         VerifyingKey::from_bytes(self.as_bytes())
             .map(|_| ())
             .map_err(|e| EddsaError::InvalidPublicKey(e.to_string()))
+    }
+}
+
+make_sbytes! {
+    /// Ed25519 secret key seed (32 bytes).
+    EddsaSkBytes, EDDSA_SK_LEN
+}
+
+#[cfg(feature = "eddsa")]
+impl EddsaSkBytes {
+    /// Derives the corresponding public key.
+    pub fn public_key(&self) -> EddsaPkBytes {
+        EddsaPkBytes::from_bytes(SigningKey::from_bytes(self.as_bytes()).verifying_key().to_bytes())
     }
 }

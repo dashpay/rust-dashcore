@@ -9,7 +9,7 @@ use crate::derivation_slip10::{ExtendedEd25519PrivKey, ExtendedEd25519PubKey};
 use crate::error::{Error, Result};
 use crate::{ChildNumber, DerivationPath, Network};
 use core::fmt;
-use dashcore::eddsa::EddsaPkBytes;
+use dashcore::eddsa::{EddsaPkBytes, EddsaSkBytes};
 use dashcore::Address;
 
 #[cfg(feature = "serde")]
@@ -138,16 +138,12 @@ impl EdDSAAccount {
     /// (`m/9'/5'/3'/4'` on mainnet, `m/9'/1'/3'/4'` otherwise), matching
     /// DashSync. Because derivation starts from the raw seed, no account
     /// state is involved and in particular no `is_watch_only` gate applies.
-    pub fn platform_node_key_at(
-        seed: &[u8],
-        network: Network,
-        index: u32,
-    ) -> Result<dashcore::ed25519_dalek::SigningKey> {
+    pub fn platform_node_key_at(seed: &[u8], network: Network, index: u32) -> Result<EddsaSkBytes> {
         let master = ExtendedEd25519PrivKey::new_master(network, seed)?;
         let path = AccountType::ProviderPlatformKeys.derivation_path(network)?;
         let account_xpriv = master.derive_priv(&path)?;
         let child = account_xpriv.derive_priv(&[ChildNumber::from_hardened_idx(index)?])?;
-        Ok(dashcore::ed25519_dalek::SigningKey::from_bytes(&child.private_key))
+        Ok(child.private_key.clone())
     }
 
     /// Derive an Ed25519 key at a specific path
@@ -254,13 +250,8 @@ impl fmt::Display for EdDSAAccount {
     }
 }
 
-impl
-    AccountDerivation<
-        ExtendedEd25519PrivKey,
-        ExtendedEd25519PubKey,
-        EddsaPkBytes,
-        dashcore::ed25519_dalek::SigningKey,
-    > for EdDSAAccount
+impl AccountDerivation<ExtendedEd25519PrivKey, ExtendedEd25519PubKey, EddsaPkBytes, EddsaSkBytes>
+    for EdDSAAccount
 {
     fn defaults_to_hardened_derivation(&self) -> bool {
         true
@@ -415,9 +406,9 @@ impl
         &self,
         master_xpriv: &ExtendedEd25519PrivKey,
         index: u32,
-    ) -> Result<dashcore::ed25519_dalek::SigningKey> {
+    ) -> Result<EddsaSkBytes> {
         let xpriv = self.derive_from_master_xpriv_extended_xpriv_at(master_xpriv, index)?;
-        Ok(dashcore::ed25519_dalek::SigningKey::from_bytes(&xpriv.private_key))
+        Ok(xpriv.private_key.clone())
     }
 
     fn derive_from_seed_extended_xpriv_at(
@@ -429,13 +420,9 @@ impl
         self.derive_from_master_xpriv_extended_xpriv_at(&master, index)
     }
 
-    fn derive_from_seed_private_key_at(
-        &self,
-        seed: &[u8],
-        index: u32,
-    ) -> Result<dashcore::ed25519_dalek::SigningKey> {
+    fn derive_from_seed_private_key_at(&self, seed: &[u8], index: u32) -> Result<EddsaSkBytes> {
         let xpriv = self.derive_from_seed_extended_xpriv_at(seed, index)?;
-        Ok(dashcore::ed25519_dalek::SigningKey::from_bytes(&xpriv.private_key))
+        Ok(xpriv.private_key.clone())
     }
 }
 
