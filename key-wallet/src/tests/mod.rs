@@ -14,6 +14,8 @@ mod advanced_transaction_tests;
 
 mod backup_restore_tests;
 
+mod dashpay_contact_gap_limit_tests;
+
 mod edge_case_tests;
 
 mod integration_tests;
