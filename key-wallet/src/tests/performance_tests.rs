@@ -278,27 +278,34 @@ fn test_concurrent_derivation_performance() {
 }
 
 #[test]
+#[cfg(feature = "bincode")]
 fn test_wallet_serialization_performance() {
-    // Serialization test would require bincode feature
-    // For now, just test wallet creation/destruction cycle
-
+    let wallet = Wallet::from_seed_bytes(
+        [42; 64],
+        Network::Testnet,
+        crate::wallet::initialization::WalletAccountCreationOptions::Default,
+    )
+    .unwrap();
     let iterations = 100;
-    let mut creation_times = Vec::new();
+    let mut serialization_times = Vec::new();
 
     for _ in 0..iterations {
         let start = Instant::now();
-        let _wallet = Wallet::new_random(
-            Network::Testnet,
-            crate::wallet::initialization::WalletAccountCreationOptions::None,
-        )
-        .unwrap();
-        creation_times.push(start.elapsed());
+        let backup = wallet.backup().unwrap();
+        serialization_times.push(start.elapsed());
+
+        let restored = Wallet::restore(&backup).unwrap();
+        assert_eq!(restored.wallet_id, wallet.wallet_id);
+        assert_eq!(restored.accounts.count(), wallet.accounts.count());
     }
 
-    let metrics = PerformanceMetrics::from_times("Wallet Creation", creation_times);
-
-    // Assert creation performance (relaxed for test environment)
-    assert!(metrics.avg_time < Duration::from_millis(50));
+    let metrics = PerformanceMetrics::from_times("Wallet Serialization", serialization_times);
+    metrics._print_summary();
+    assert!(
+        metrics.avg_time < Duration::from_millis(50),
+        "Wallet serialization too slow: avg {:?}, expected < 50ms",
+        metrics.avg_time
+    );
 }
 
 #[test]
