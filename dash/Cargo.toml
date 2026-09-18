@@ -23,16 +23,16 @@ default = ["secp-recovery", "bincode" ]
 base64 = [ "base64-compat" ]
 rand-std = ["secp256k1/rand"]
 rand = ["secp256k1/rand"]
-serde = ["dep:serde", "dash-types/serde", "dashcore_hashes/serde", "secp256k1/serde", "dash-network/serde"]
+serde = ["dep:serde", "dashcore-crypto/serde", "dashcore_hashes/serde", "secp256k1/serde", "dash-network/serde"]
 secp-lowmemory = ["secp256k1/lowmemory"]
 secp-recovery = ["secp256k1/recovery"]
 signer = ["secp-recovery", "rand", "base64"]
 core-block-hash-use-x11 = ["dashcore_hashes/x11"]
-bls = ["blsful"]
+bls = ["blsful", "dashcore-crypto/bls"]
 eddsa = ["ed25519-dalek"]
 quorum_validation = ["bls"]
 message_verification = ["bls"]
-bincode = [ "dep:bincode", "dep:bincode_derive", "dashcore_hashes/bincode", "dash-network/bincode" ]
+bincode = [ "dep:bincode", "dep:bincode_derive", "dashcore-crypto/bincode", "dashcore_hashes/bincode", "dash-network/bincode" ]
 qrinfo-capture = ["bincode"]
 test-utils = []
 
@@ -44,6 +44,7 @@ rustdoc-args = ["--cfg", "docsrs"]
 internals = { path = "../internals", package = "dashcore-private" }
 bech32 = { version = "0.9.1" }
 dashcore_hashes = { path = "../hashes" }
+dashcore-crypto = { path = "../crypto" }
 dash-network = { path = "../dash-network" }
 dash-types = { version = "=0.1.0-beta", default-features = false, features = ["codec"] }
 secp256k1 = { version = "0.33.1" }
