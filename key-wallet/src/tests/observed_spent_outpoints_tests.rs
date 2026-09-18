@@ -611,3 +611,121 @@ async fn recording_observed_spend_reports_state_modified() {
     let result = ctx.check_transaction(&mempool_spend, TransactionContext::Mempool).await;
     assert!(!result.state_modified, "a mempool spend records nothing");
 }
+
+/// A spend merged in through [`ManagedWalletInfo::merge_observed_spent_outpoints`]
+/// blocks the coin's resurrection on its own, with no transaction history for
+/// the spend anywhere in the wallet.
+///
+/// This is the narrow injection path a consumer that reconstructs its spent set
+/// from its own delta history needs: the equivalent of
+/// [`born_fully_spent_funding_tx_is_recorded_in_history`] without ever checking
+/// the spending transaction.
+#[tokio::test]
+async fn merged_spent_outpoint_blocks_resurrection_without_history() {
+    let funding_value = 1_000_000u64;
+    let mut ctx = TestWalletContext::new_random();
+    let funding = Transaction::dummy(&ctx.receive_address, 0..1, &[funding_value]);
+    let f_txid = funding.txid();
+    let f_outpoint = OutPoint::new(f_txid, 0);
+
+    // Everything the wallet will ever know about this spend.
+    assert_eq!(
+        ctx.managed_wallet.merge_observed_spent_outpoints([(f_outpoint, 200)]),
+        1,
+        "the injected outpoint is new to the wallet"
+    );
+
+    let result = ctx.check_transaction(&funding, in_block(100, 1)).await;
+    assert!(result.is_relevant, "a funding tx paying our address is still relevant");
+
+    let account = ctx.managed_wallet.first_bip44_managed_account().expect("BIP44 account");
+    assert!(
+        account.transactions().contains_key(&f_txid),
+        "the funding tx must still be recorded in history"
+    );
+    assert!(
+        account.utxos.is_empty(),
+        "the merged spend must keep the already-spent output out of the UTXO set"
+    );
+    assert!(
+        account.spent_before_funded.contains_key(&f_outpoint),
+        "the coin is held as ours-but-spent so a later redelivered spend still matches it"
+    );
+    assert_eq!(ctx.managed_wallet.balance.total(), 0, "a spent coin must not be credited");
+}
+
+/// Merging is a union: it adds outpoints the wallet has not seen and never
+/// removes or overwrites an entry, so a caller-side reconstruction cannot
+/// weaken what the wallet observed on-chain itself.
+#[test]
+fn merge_observed_spent_outpoints_only_ever_adds() {
+    let mut info = ManagedWalletInfo::dummy(11);
+    let observed = OutPoint::new(Txid::from([0xa1; 32]), 0);
+    let injected = OutPoint::new(Txid::from([0xa2; 32]), 1);
+    info.record_observed_spends(&spending_tx(&[observed]), 100);
+
+    // A batch overlapping a live observation: the unseen outpoint is added and
+    // the observed entry keeps the height the block gave it, not the merged one.
+    assert_eq!(info.merge_observed_spent_outpoints([(observed, 999), (injected, 250)]), 1);
+    assert_eq!(info.observed_spent_outpoints().get(&observed), Some(&100));
+    assert_eq!(info.observed_spent_outpoints().get(&injected), Some(&250));
+    assert_eq!(info.observed_spent_outpoints().len(), 2);
+
+    // Replaying the batch is a no-op, and reports as one.
+    assert_eq!(info.merge_observed_spent_outpoints([(observed, 999), (injected, 250)]), 0);
+    assert_eq!(info.merge_observed_spent_outpoints([]), 0);
+    assert_eq!(info.observed_spent_outpoints().len(), 2);
+    assert_eq!(info.observed_spent_outpoints().get(&observed), Some(&100));
+}
+
+/// A merged outpoint suppresses exactly that coin. A sibling account funded by
+/// a different transaction keeps its UTXO and its balance — the wallet-level
+/// set is keyed by outpoint, so it cannot spill onto another account's coins.
+#[tokio::test]
+async fn merged_spent_outpoint_leaves_sibling_account_untouched() {
+    let spent_value = 1_000_000u64;
+    let live_value = 700_000u64;
+    let mut ctx = TestWalletContext::new_random();
+
+    let bip32_xpub = ctx
+        .wallet
+        .accounts
+        .standard_bip32_accounts
+        .get(&0)
+        .expect("default options create BIP32 account 0")
+        .account_xpub;
+    let bip32_address = ctx
+        .managed_wallet
+        .first_bip32_managed_account_mut()
+        .expect("BIP32 managed account")
+        .next_receive_address(Some(&bip32_xpub), true)
+        .expect("BIP32 receive address");
+
+    let spent_funding = Transaction::dummy(&ctx.receive_address, 0..1, &[spent_value]);
+    let live_funding = Transaction::dummy(&bip32_address, 1..2, &[live_value]);
+    let spent_outpoint = OutPoint::new(spent_funding.txid(), 0);
+    let live_outpoint = OutPoint::new(live_funding.txid(), 0);
+
+    assert_eq!(ctx.managed_wallet.merge_observed_spent_outpoints([(spent_outpoint, 200)]), 1);
+
+    ctx.check_transaction(&spent_funding, in_block(100, 1)).await;
+    ctx.check_transaction(&live_funding, in_block(101, 2)).await;
+
+    let bip44 = ctx.managed_wallet.first_bip44_managed_account().expect("BIP44 account");
+    assert!(bip44.utxos.is_empty(), "the merged outpoint's own account gets no UTXO");
+
+    let bip32 = ctx.managed_wallet.first_bip32_managed_account().expect("BIP32 account");
+    assert!(
+        bip32.utxos.contains_key(&live_outpoint),
+        "a sibling account's unrelated coin must still be tracked"
+    );
+    assert!(
+        bip32.spent_before_funded.is_empty(),
+        "no sibling coin may be filed as spent-before-funded"
+    );
+    assert_eq!(
+        ctx.managed_wallet.balance.total(),
+        live_value,
+        "only the merged coin is suppressed; the sibling coin keeps its value"
+    );
+}

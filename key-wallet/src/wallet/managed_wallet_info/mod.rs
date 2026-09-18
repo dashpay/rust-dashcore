@@ -326,6 +326,49 @@ impl ManagedWalletInfo {
         &self.observed_spent_outpoints
     }
 
+    /// Merge externally reconstructed spends into [`Self::observed_spent_outpoints`],
+    /// each as `(outpoint, height of the block that spent it)`.
+    ///
+    /// For a consumer that persists its own spend history and restores the
+    /// wallet from it: without this, a funding transaction redelivered after the
+    /// restore re-credits a coin the wallet already spent, because nothing in
+    /// the restored state records the spend (dashpay/rust-dashcore#649). Merging
+    /// the reconstructed set makes the guards in `update_utxos` see those coins
+    /// as spent without replaying the spending transactions.
+    ///
+    /// Additive union: an outpoint already present keeps its recorded height —
+    /// that one came from an observed block, while a merged height is a
+    /// caller-side reconstruction — and nothing is ever removed. Returns the
+    /// number of outpoints actually added, so a caller persisting only on real
+    /// change can skip a no-op merge.
+    ///
+    /// Merged entries are subject to [`Self::prune_finalized_observed_spends`]
+    /// like any other: one at or below the finality boundary is evicted on the
+    /// next chainlock or sync commit. This protects the current restore/replay
+    /// cycle, not forever — merge at restore, before replaying, on every restore.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use key_wallet::wallet::ManagedWalletInfo;
+    /// # use key_wallet::Network;
+    /// # use dashcore::{OutPoint, Txid};
+    /// let mut info = ManagedWalletInfo::new(Network::Testnet, [0u8; 32]);
+    /// let spent = OutPoint::new(Txid::from([1u8; 32]), 0);
+    /// assert_eq!(info.merge_observed_spent_outpoints([(spent, 1_900_000)]), 1);
+    /// assert_eq!(info.merge_observed_spent_outpoints([(spent, 1_900_000)]), 0);
+    /// ```
+    pub fn merge_observed_spent_outpoints(
+        &mut self,
+        spends: impl IntoIterator<Item = (OutPoint, CoreBlockHeight)>,
+    ) -> usize {
+        let before = self.observed_spent_outpoints.len();
+        for (outpoint, height) in spends {
+            self.observed_spent_outpoints.entry(outpoint).or_insert(height);
+        }
+        self.observed_spent_outpoints.len() - before
+    }
+
     /// Record every outpoint `tx` spends into [`Self::observed_spent_outpoints`]
     /// at `height`. Insert-only bookkeeping — it never touches account UTXO sets,
     /// so it is safe to call before `record_transaction` builds a spend's
