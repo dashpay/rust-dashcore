@@ -37,18 +37,6 @@ impl TestWalletContext {
     /// accounts.
     pub fn new_random_with_options(options: WalletAccountCreationOptions) -> Self {
         let wallet = Wallet::new_random(Network::Testnet, options).expect("Should create wallet");
-        Self::from_wallet(wallet)
-    }
-
-    /// Creates a reproducible testnet wallet from a fixed seed.
-    pub fn from_seed(seed: [u8; 64]) -> Self {
-        let wallet =
-            Wallet::from_seed_bytes(seed, Network::Testnet, WalletAccountCreationOptions::Default)
-                .expect("Should create wallet");
-        Self::from_wallet(wallet)
-    }
-
-    fn from_wallet(wallet: Wallet) -> Self {
         let mut managed_wallet =
             ManagedWalletInfo::from_wallet_with_name(&wallet, "Test".to_string(), 0);
 

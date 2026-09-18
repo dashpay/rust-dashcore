@@ -27,7 +27,6 @@ use crate::transaction_checking::transaction_router::TransactionType;
 use crate::transaction_checking::{AccountMatch, TransactionContext};
 use crate::utxo::Utxo;
 use crate::wallet::balance::WalletCoreBalance;
-use crate::wallet::managed_wallet_info::persistence::SpendEvidence;
 use crate::{ExtendedPubKey, Network};
 use dashcore::blockdata::transaction::OutPoint;
 use dashcore::prelude::CoreBlockHeight;
@@ -84,7 +83,7 @@ pub(crate) struct AbandonRemoval {
     pub records: usize,
 }
 
-/// What [`ManagedCoreFundsAccount::apply_conflict_set`] removed
+/// What [`ManagedCoreFundsAccount::drop_conflicted_transactions`] removed
 /// from one account.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct ConflictSweep {
@@ -110,21 +109,6 @@ impl ManagedCoreFundsAccount {
             spent_before_funded: BTreeMap::new(),
             reservations: ReservationSet::default(),
         }
-    }
-
-    /// Restore the record and its input claims before finalized compaction.
-    pub(crate) fn restore_transaction_record(&mut self, record: TransactionRecord) {
-        if !record.transaction.is_coin_base() {
-            self.spent_outpoints
-                .extend(record.transaction.input.iter().map(|input| input.previous_output));
-        }
-        self.keys.restore_transaction_record(record);
-    }
-
-    pub(crate) fn has_persisted_funds_state(&self) -> bool {
-        !self.utxos.is_empty()
-            || !self.spent_outpoints.is_empty()
-            || !self.spent_before_funded.is_empty()
     }
 
     /// Create a `ManagedCoreFundsAccount` from an [`Account`](super::super::Account).
@@ -206,7 +190,7 @@ impl ManagedCoreFundsAccount {
     }
 
     /// Check if an outpoint was spent by a previously recorded transaction.
-    pub(crate) fn is_outpoint_spent(&self, outpoint: &OutPoint) -> bool {
+    fn is_outpoint_spent(&self, outpoint: &OutPoint) -> bool {
         self.spent_outpoints.contains(outpoint)
     }
 
@@ -241,7 +225,7 @@ impl ManagedCoreFundsAccount {
         tx: &Transaction,
         account_match: &AccountMatch,
         context: TransactionContext,
-        observed_spent: &impl SpendEvidence,
+        observed_spent: &BTreeMap<OutPoint, CoreBlockHeight>,
         external_final_parents: &BTreeSet<OutPoint>,
     ) {
         // Update UTXOs only for spendable account types
@@ -310,7 +294,7 @@ impl ManagedCoreFundsAccount {
                     && tx
                         .input
                         .iter()
-                        .any(|input| observed_spent.is_settled(&input.previous_output));
+                        .any(|input| observed_spent.contains_key(&input.previous_output));
                 if doomed_by_a_settled_spend {
                     // Deliberately before any mutation: the record built by
                     // the caller stands, so history still shows the attempt,
@@ -348,12 +332,14 @@ impl ManagedCoreFundsAccount {
                                 continue;
                             }
 
-                            // Wallet evidence also covers claims held by other accounts.
-                            // Keep the output details available for later input matching.
-                            if observed_spent.blocks_output(&outpoint) {
+                            // #649 spend-first ordering: the spend was observed in an
+                            // earlier-processed block, so this output is genuinely spent
+                            // on-chain even though this account has never seen it before —
+                            // never insert it, so the record built below is born correct.
+                            if observed_spent.contains_key(&outpoint) {
                                 tracing::debug!(
                                     outpoint = %outpoint,
-                                    "Skipping output blocked by wallet spend evidence"
+                                    "Skipping UTXO already observed spent in an earlier-processed block (#649)"
                                 );
                                 self.spent_before_funded.insert(
                                     outpoint,
@@ -576,31 +562,90 @@ impl ManagedCoreFundsAccount {
     /// not have to be wallet-relevant, so it may hold none of the loser's
     /// inputs anywhere the caller can see, and the loser's own record is
     /// already gone by the time this returns.
-    #[cfg(test)]
     pub(crate) fn drop_conflicted_transactions(
         &mut self,
         tx: &Transaction,
         context: &TransactionContext,
     ) -> ConflictSweep {
-        let records: Vec<_> = self.keys.transactions().values().collect();
-        let losers = conflicted_transactions(&records, tx, context);
-        self.apply_conflict_set(tx, &losers)
-    }
+        if !(context.confirmed() || matches!(context, TransactionContext::InstantSend(_))) {
+            return ConflictSweep::default();
+        }
 
-    /// Remove the wallet-wide conflict closure while retaining the winner's claims.
-    pub(crate) fn apply_conflict_set(
-        &mut self,
-        tx: &Transaction,
-        losers: &BTreeSet<Txid>,
-    ) -> ConflictSweep {
+        let winner = tx.txid();
+        let spent: BTreeSet<OutPoint> =
+            tx.input.iter().map(|input| input.previous_output).collect();
+
+        // A finalized transaction keeps only its txid, so a chainlocked record
+        // can never be a loser here — and must not be, since it is settled.
+        let mut losers: BTreeSet<Txid> = self
+            .keys
+            .transactions()
+            .iter()
+            .filter(|(txid, record)| {
+                // Precedence, per DIP-10: a chainlock is final over
+                // everything, an InstantSend lock is final against a double
+                // spend, and a plain block is provisional until its own
+                // chainlock lands. So an IS-locked record may only be evicted
+                // by a chainlocked arrival — a plain `InBlock` winner cannot
+                // overrule a lock the network already signed, and the block
+                // it arrived in can still reorg away.
+                let loser_is_locked = record.context.is_instant_send();
+                **txid != winner
+                    && !record.is_confirmed()
+                    && (!loser_is_locked || context.is_chain_locked())
+                    && record
+                        .transaction
+                        .input
+                        .iter()
+                        .any(|input| spent.contains(&input.previous_output))
+            })
+            .map(|(txid, _)| *txid)
+            .collect();
+
         if losers.is_empty() {
             return ConflictSweep::default();
         }
-        let winner = tx.txid();
-        let spent: BTreeSet<_> = tx.input.iter().map(|input| input.previous_output).collect();
+
+        // A loser's change may already have funded further unconfirmed
+        // transactions. Those can never exist either — their parent cannot —
+        // so leaving their outputs credited would preserve the very
+        // phantom-balance class this sweep exists to remove. Walk the
+        // unconfirmed descendant closure; confirmed records are never
+        // followed, since a transaction in a block spent something real,
+        // and neither are InstantSend-locked ones, whose lock the network
+        // already signed.
+        //
+        // The walk builds a parent→children index in one pass and then
+        // follows a queue, so each record is looked at once. Rescanning the
+        // whole history per generation instead is O(depth × history): a peer
+        // that feeds the wallet a deep chain of unconfirmed wallet-relevant
+        // transactions and then finalizes a replacement for the root's input
+        // would make the sweep quadratic in everything the wallet retained,
+        // while the account is held mutably and before the sweep can reach
+        // persistence.
+        let mut children: HashMap<Txid, Vec<Txid>> = HashMap::new();
+        for (txid, record) in self.keys.transactions() {
+            note_descendant_walk_visit();
+            if record.is_confirmed() || record.context.is_instant_send() || *txid == winner {
+                continue;
+            }
+            for input in &record.transaction.input {
+                children.entry(input.previous_output.txid).or_default().push(*txid);
+            }
+        }
+        let mut queue: VecDeque<Txid> = losers.iter().copied().collect();
+        while let Some(parent) = queue.pop_front() {
+            for child in children.get(&parent).map(Vec::as_slice).unwrap_or_default() {
+                note_descendant_walk_visit();
+                if losers.insert(*child) {
+                    queue.push_back(*child);
+                }
+            }
+        }
+
         let mut freed: HashSet<OutPoint> = HashSet::new();
         let mut changed = false;
-        for loser in losers {
+        for loser in &losers {
             let removed: Vec<OutPoint> =
                 self.utxos.keys().filter(|outpoint| outpoint.txid == *loser).copied().collect();
             for outpoint in removed {
@@ -646,7 +691,7 @@ impl ManagedCoreFundsAccount {
             released.into_iter().filter(|outpoint| !losers.contains(&outpoint.txid)).collect();
         released_outpoints.sort_unstable();
         ConflictSweep {
-            txids: losers.iter().copied().collect(),
+            txids: losers.into_iter().collect(),
             released_outpoints,
         }
     }
@@ -673,7 +718,7 @@ impl ManagedCoreFundsAccount {
         account_match: &AccountMatch,
         context: TransactionContext,
         transaction_type: TransactionType,
-        observed_spent: &impl SpendEvidence,
+        observed_spent: &BTreeMap<OutPoint, CoreBlockHeight>,
         external_final_parents: &BTreeSet<OutPoint>,
     ) -> Option<TransactionRecord> {
         let txid = tx.txid();
@@ -763,7 +808,7 @@ impl ManagedCoreFundsAccount {
         account_match: &AccountMatch,
         context: TransactionContext,
         transaction_type: TransactionType,
-        observed_spent: &impl SpendEvidence,
+        observed_spent: &BTreeMap<OutPoint, CoreBlockHeight>,
         external_final_parents: &BTreeSet<OutPoint>,
     ) -> TransactionRecord {
         let net_amount = account_match.received as i64 - account_match.sent as i64;
@@ -1244,63 +1289,6 @@ impl ManagedAccountTrait for ManagedCoreFundsAccount {
     }
 }
 
-/// Find direct losers and their unconfirmed descendants across the supplied records.
-pub(crate) fn conflicted_transactions(
-    records: &[&TransactionRecord],
-    tx: &Transaction,
-    context: &TransactionContext,
-) -> BTreeSet<Txid> {
-    if !(context.confirmed() || context.is_instant_send()) {
-        return BTreeSet::new();
-    }
-    let winner = tx.txid();
-    let spent: HashSet<_> = tx.input.iter().map(|input| input.previous_output).collect();
-    let protected: HashSet<_> = records
-        .iter()
-        .filter(|record| {
-            record.is_confirmed()
-                || (record.context.is_instant_send() && !context.is_chain_locked())
-        })
-        .map(|record| record.txid)
-        .collect();
-    let mut losers: BTreeSet<_> = records
-        .iter()
-        .filter(|record| {
-            record.txid != winner
-                && !protected.contains(&record.txid)
-                && record
-                    .transaction
-                    .input
-                    .iter()
-                    .any(|input| spent.contains(&input.previous_output))
-        })
-        .map(|record| record.txid)
-        .collect();
-    if losers.is_empty() {
-        return losers;
-    }
-    let mut children: HashMap<Txid, Vec<Txid>> = HashMap::new();
-    for record in records {
-        note_descendant_walk_visit();
-        if record.is_confirmed() || record.context.is_instant_send() || record.txid == winner {
-            continue;
-        }
-        for input in &record.transaction.input {
-            children.entry(input.previous_output.txid).or_default().push(record.txid);
-        }
-    }
-    let mut queue: VecDeque<_> = losers.iter().copied().collect();
-    while let Some(parent) = queue.pop_front() {
-        for child in children.get(&parent).map(Vec::as_slice).unwrap_or_default() {
-            note_descendant_walk_visit();
-            if !protected.contains(child) && losers.insert(*child) {
-                queue.push_back(*child);
-            }
-        }
-    }
-    losers
-}
-
 /// Rebuild the account-local `spent_outpoints` set from recorded transactions.
 ///
 /// Every input of every recorded transaction is a spend this account has seen,
@@ -1352,7 +1340,7 @@ impl<'de> Deserialize<'de> for ManagedCoreFundsAccount {
 }
 
 /// Test-only visit counter for the descendant walk in
-/// [`ManagedCoreFundsAccount::apply_conflict_set`].
+/// [`ManagedCoreFundsAccount::drop_conflicted_transactions`].
 ///
 /// Exists so a regression test can pin the walk to a linear number of record
 /// visits deterministically, instead of betting on wall-clock time. Compiled

@@ -10,8 +10,6 @@ pub mod helpers;
 pub use helpers::AbandonOutcome;
 pub mod managed_account_operations;
 pub mod managed_accounts;
-pub mod persistence;
-pub use persistence::{PersistedWalletState, RestoreError};
 pub mod transaction_builder;
 pub mod transaction_building;
 pub mod wallet_info_interface;
@@ -74,7 +72,7 @@ pub struct ManagedWalletInfo {
     /// spending transaction's classification, lets the funding-side insert be
     /// reconciled away whichever order the two blocks arrive in.
     ///
-    /// Live observations are bounded-permanent: an entry is retained until its spend
+    /// Membership is bounded-permanent: an entry is retained until its spend
     /// height is provably final, then evicted by
     /// [`Self::prune_finalized_observed_spends`]. Until then it is only ever
     /// added, never removed, and reorg rollback does NOT retract it — treating a
@@ -85,7 +83,7 @@ pub struct ManagedWalletInfo {
     ///
     /// # Bounded permanence
     ///
-    /// An unpinned entry `(outpoint, height)` is removed only when
+    /// An entry `(outpoint, height)` is removed only when
     /// `height <= min(last_applied_chain_lock.block_height, synced_height)` —
     /// the finality boundary. At that boundary the spend is chain-locked (it can
     /// never be reorged out) and any funding transaction for the outpoint has
@@ -95,19 +93,17 @@ pub struct ManagedWalletInfo {
     /// a coin could be re-inserted — in both `keep-finalized-transactions`
     /// configurations and across a reload. No other removal path may be added
     /// without a deliberate decision.
-    /// Restored block spends are pinned by `unattributed_spent_outpoints`:
-    /// their funding records may be absent even below the restored sync checkpoint.
     ///
     /// Eviction is event-driven (chainlock application, sync-checkpoint commit),
     /// never age- or recency-based: during an out-of-order rescan `synced_height`
     /// is low, so nothing is pruned in exactly the window where #649 ordering
-    /// hazards live, and live observations self-repopulate on any replay since
+    /// hazards live, and the set self-repopulates on any replay since
     /// `record_observed_spends` runs unconditionally per checked tx. A naive
     /// age/LRU eviction would instead evict the cold entries whose funding tx may
     /// still arrive out of order, reopening #649 for that coin. Steady-state size
-    /// is the restored pins plus the above-boundary window — roughly one block's
-    /// inputs on a healthy chain. A defensive cap on the deserialized entry count
-    /// (see the serde adapter) guards against a corrupted or hostile wallet file forcing
+    /// is the above-boundary window only — roughly one block's inputs on a
+    /// healthy chain. A defensive cap on the deserialized entry count (see the
+    /// serde adapter) guards against a corrupted or hostile wallet file forcing
     /// an unbounded allocation on load.
     ///
     /// # Persistence
@@ -126,10 +122,6 @@ pub struct ManagedWalletInfo {
     /// migration to load pre-field snapshots.
     #[cfg_attr(feature = "serde", serde(default, with = "observed_spent_outpoints_serde"))]
     pub(crate) observed_spent_outpoints: BTreeMap<OutPoint, CoreBlockHeight>,
-    /// Durable output guards independent of releasable record claims.
-    /// Entries with observed heights also pin that block evidence against finality pruning.
-    #[cfg_attr(feature = "serde", serde(default))]
-    pub(crate) unattributed_spent_outpoints: HashSet<OutPoint>,
     /// Generation counter for the wallet's account set, bumped every time an
     /// account is added to a live wallet (see
     /// [`Self::rewind_sync_checkpoint_for_new_account`]).
@@ -252,7 +244,6 @@ impl ManagedWalletInfo {
             balance: WalletCoreBalance::default(),
             instant_send_locks: HashSet::new(),
             observed_spent_outpoints: BTreeMap::new(),
-            unattributed_spent_outpoints: HashSet::new(),
             account_generation: 0,
         }
     }
@@ -269,7 +260,6 @@ impl ManagedWalletInfo {
             balance: WalletCoreBalance::default(),
             instant_send_locks: HashSet::new(),
             observed_spent_outpoints: BTreeMap::new(),
-            unattributed_spent_outpoints: HashSet::new(),
             account_generation: 0,
         }
     }
@@ -296,7 +286,6 @@ impl ManagedWalletInfo {
             balance: WalletCoreBalance::default(),
             instant_send_locks: HashSet::new(),
             observed_spent_outpoints: BTreeMap::new(),
-            unattributed_spent_outpoints: HashSet::new(),
             account_generation: 0,
         }
     }
@@ -368,10 +357,10 @@ impl ManagedWalletInfo {
         changed
     }
 
-    /// Evict unpinned [`Self::observed_spent_outpoints`] entries at or below the finality
+    /// Evict [`Self::observed_spent_outpoints`] entries at or below the finality
     /// boundary `min(last_applied_chain_lock.block_height, synced_height)`.
     ///
-    /// An unpinned entry `(outpoint, height)` with `height <= boundary` is safe to
+    /// An entry `(outpoint, height)` with `height <= boundary` is safe to
     /// forget: the spend at that height is chain-locked (never reorged out) and
     /// any funding transaction for the outpoint has been delivered and finalized,
     /// so no redelivery path can re-insert the coin (dashpay/rust-dashcore#649).
@@ -385,9 +374,7 @@ impl ManagedWalletInfo {
             return;
         };
         let boundary = chain_lock.block_height.min(self.metadata.synced_height);
-        self.observed_spent_outpoints.retain(|outpoint, height| {
-            *height > boundary || self.unattributed_spent_outpoints.contains(outpoint)
-        });
+        self.observed_spent_outpoints.retain(|_, height| *height > boundary);
     }
 
     /// Invalidate the wallet's sync certificate when an account is added.

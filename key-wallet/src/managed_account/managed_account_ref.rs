@@ -19,9 +19,9 @@ use crate::managed_account::{ManagedCoreFundsAccount, ManagedCoreKeysAccount};
 use crate::transaction_checking::account_checker::AccountMatch;
 use crate::transaction_checking::transaction_router::TransactionType;
 use crate::transaction_checking::TransactionContext;
-use crate::wallet::managed_wallet_info::persistence::SpendEvidence;
 use crate::Network;
 use dashcore::blockdata::transaction::OutPoint;
+use dashcore::prelude::CoreBlockHeight;
 use dashcore::{Address, ScriptBuf, Transaction, Txid};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -339,7 +339,7 @@ impl<'a> ManagedAccountRefMut<'a> {
         account_match: &AccountMatch,
         context: TransactionContext,
         transaction_type: TransactionType,
-        observed_spent: &impl SpendEvidence,
+        observed_spent: &BTreeMap<OutPoint, CoreBlockHeight>,
         external_final_parents: &BTreeSet<OutPoint>,
     ) -> TransactionRecord {
         match self {
@@ -395,7 +395,7 @@ impl<'a> ManagedAccountRefMut<'a> {
         account_match: &AccountMatch,
         context: TransactionContext,
         transaction_type: TransactionType,
-        observed_spent: &impl SpendEvidence,
+        observed_spent: &BTreeMap<OutPoint, CoreBlockHeight>,
         external_final_parents: &BTreeSet<OutPoint>,
     ) -> Option<TransactionRecord> {
         match self {

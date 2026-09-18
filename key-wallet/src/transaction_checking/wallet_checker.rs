@@ -6,14 +6,12 @@
 pub(crate) use super::account_checker::TransactionCheckResult;
 use super::transaction_context::TransactionContext;
 use super::transaction_router::{AccountTypeToCheck, TransactionRouter};
-use crate::wallet::managed_wallet_info::persistence::WalletSpendEvidence;
 use crate::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
 use crate::wallet::managed_wallet_info::ManagedWalletInfo;
 use crate::{KeySource, Wallet};
 use async_trait::async_trait;
 use dashcore::blockdata::transaction::Transaction;
-use dashcore::{Amount, OutPoint, SignedAmount};
-use std::collections::HashSet;
+use dashcore::{Amount, SignedAmount};
 
 /// Extension trait for ManagedWalletInfo to add transaction checking capabilities
 #[async_trait]
@@ -187,33 +185,7 @@ impl WalletTransactionChecker for ManagedWalletInfo {
         let external_final_parents = self.accounts.final_parents_of(tx);
 
         let txid = tx.txid();
-        let accounts = self.accounts.all_accounts();
-        let mut claimed_outputs: HashSet<_> = (0..tx.output.len())
-            .map(|vout| OutPoint {
-                txid,
-                vout: vout as u32,
-            })
-            .filter(|outpoint| {
-                accounts.iter().any(|account| {
-                    account.as_funds().is_some_and(|funds| funds.is_outpoint_spent(outpoint))
-                })
-            })
-            .collect();
-        for account in &accounts {
-            if account.as_keys().is_some() {
-                claimed_outputs.extend(
-                    account
-                        .transactions()
-                        .values()
-                        .flat_map(|record| &record.transaction.input)
-                        .map(|input| input.previous_output)
-                        .filter(|outpoint| {
-                            outpoint.txid == txid && (outpoint.vout as usize) < tx.output.len()
-                        }),
-                );
-            }
-        }
-        let is_new = !accounts.into_iter().any(|a| a.has_transaction(&txid));
+        let is_new = !self.accounts.all_accounts().into_iter().any(|a| a.has_transaction(&txid));
         result.is_new_transaction = is_new;
 
         if !is_new {
@@ -265,11 +237,7 @@ impl WalletTransactionChecker for ManagedWalletInfo {
                             &account_match,
                             context.clone(),
                             tx_type,
-                            &WalletSpendEvidence {
-                                observed: &self.observed_spent_outpoints,
-                                unattributed: &self.unattributed_spent_outpoints,
-                                claimed: &claimed_outputs,
-                            },
+                            &self.observed_spent_outpoints,
                             &external_final_parents,
                         );
                         account.mark_utxos_instant_send(&txid);
@@ -302,11 +270,7 @@ impl WalletTransactionChecker for ManagedWalletInfo {
                     &account_match,
                     context.clone(),
                     tx_type,
-                    &WalletSpendEvidence {
-                        observed: &self.observed_spent_outpoints,
-                        unattributed: &self.unattributed_spent_outpoints,
-                        claimed: &claimed_outputs,
-                    },
+                    &self.observed_spent_outpoints,
                     &external_final_parents,
                 );
                 result.new_records.push(record);
@@ -318,11 +282,7 @@ impl WalletTransactionChecker for ManagedWalletInfo {
                     &account_match,
                     context.clone(),
                     tx_type,
-                    &WalletSpendEvidence {
-                        observed: &self.observed_spent_outpoints,
-                        unattributed: &self.unattributed_spent_outpoints,
-                        claimed: &claimed_outputs,
-                    },
+                    &self.observed_spent_outpoints,
                     &external_final_parents,
                 ) {
                     result.state_modified = true;

@@ -574,11 +574,8 @@ impl WalletInfoInterface for ManagedWalletInfo {
                 any_changed = true;
             }
             if let Some(record) = account.transactions_mut().get_mut(txid) {
-                // Lock delivery must not discard mined context, including after restore.
-                if !record.is_confirmed() {
-                    record.update_context(TransactionContext::InstantSend(lock.clone()));
-                    any_changed = true;
-                }
+                record.update_context(TransactionContext::InstantSend(lock.clone()));
+                any_changed = true;
                 if locked_transaction.is_none() {
                     locked_transaction = Some(record.transaction.clone());
                 }

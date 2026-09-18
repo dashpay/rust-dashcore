@@ -14,6 +14,9 @@ mod advanced_transaction_tests;
 
 mod backup_restore_tests;
 
+#[cfg(feature = "bincode")]
+mod full_wallet_snapshot_tests;
+
 mod edge_case_tests;
 
 mod integration_tests;
@@ -25,8 +28,6 @@ mod managed_account_collection_tests;
 mod observed_spent_outpoints_tests;
 
 mod performance_tests;
-
-mod persisted_transaction_restore_tests;
 
 mod provider_key_derivation_tests;
 

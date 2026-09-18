@@ -89,21 +89,6 @@ impl ManagedCoreKeysAccount {
         }
     }
 
-    /// Restore one transaction record without replaying its UTXO mutations.
-    pub(crate) fn restore_transaction_record(&mut self, record: TransactionRecord) {
-        let txid = record.txid;
-        let finalized = record.context.is_chain_locked();
-        self.transactions.insert(txid, record);
-
-        #[cfg(not(feature = "keep-finalized-transactions"))]
-        if finalized {
-            self.drop_finalized_transaction(&txid);
-        }
-
-        #[cfg(feature = "keep-finalized-transactions")]
-        let _ = finalized;
-    }
-
     /// Drop the full record for `txid` and remember only its txid.
     ///
     /// Only defined when the `keep-finalized-transactions` Cargo feature

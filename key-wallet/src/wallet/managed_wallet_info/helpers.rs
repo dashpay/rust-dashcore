@@ -6,7 +6,6 @@ use crate::account::ManagedCoreFundsAccount;
 use crate::account::TransactionRecord;
 use crate::managed_account::managed_account_ref::ManagedAccountRefMut;
 use crate::managed_account::managed_account_trait::ManagedAccountTrait;
-use crate::managed_account::managed_core_funds_account::conflicted_transactions;
 use crate::managed_account::managed_platform_account::ManagedPlatformAccount;
 use crate::managed_account::ManagedCoreKeysAccount;
 use crate::transaction_checking::TransactionContext;
@@ -165,68 +164,15 @@ impl ManagedWalletInfo {
         tx: &Transaction,
         context: &TransactionContext,
     ) -> WalletConflictSweep {
-        let records: Vec<_> = self
-            .accounts
-            .all_accounts()
-            .into_iter()
-            .flat_map(|account| account.transactions().values())
-            .collect();
-        let losers = conflicted_transactions(&records, tx, context);
-        let winner_inputs: HashSet<_> =
-            tx.input.iter().map(|input| input.previous_output).collect();
-        let shared_inputs: HashSet<_> = if context.is_instant_send() && !losers.is_empty() {
-            records
-                .iter()
-                .filter(|record| losers.contains(&record.txid))
-                .flat_map(|record| &record.transaction.input)
-                .map(|input| input.previous_output)
-                .filter(|outpoint| winner_inputs.contains(outpoint))
-                .collect()
-        } else {
-            HashSet::new()
-        };
-        let mut result = WalletConflictSweep {
-            txids: losers.iter().copied().collect(),
-            released_outpoints: Vec::new(),
-        };
+        let mut result = WalletConflictSweep::default();
         for account in self.accounts.all_accounts_mut() {
-            match account {
-                ManagedAccountRefMut::Funds(funds) => {
-                    let swept = funds.apply_conflict_set(tx, &losers);
-                    result.released_outpoints.extend(swept.released_outpoints);
-                }
-                ManagedAccountRefMut::Keys(keys) => {
-                    for loser in &losers {
-                        if let Some(record) = keys.transactions_mut().remove(loser) {
-                            result.released_outpoints.extend(
-                                record
-                                    .transaction
-                                    .input
-                                    .iter()
-                                    .map(|input| input.previous_output)
-                                    .filter(|outpoint| {
-                                        !winner_inputs.contains(outpoint)
-                                            && !losers.contains(&outpoint.txid)
-                                    }),
-                            );
-                        }
-                    }
-                }
+            if let ManagedAccountRefMut::Funds(funds) = account {
+                let swept = funds.drop_conflicted_transactions(tx, context);
+                result.txids.extend(swept.txids);
+                result.released_outpoints.extend(swept.released_outpoints);
             }
         }
         if !result.txids.is_empty() {
-            if context.is_instant_send() {
-                let accounts = self.accounts.all_accounts();
-                self.unattributed_spent_outpoints.extend(shared_inputs.into_iter().filter(
-                    |outpoint| {
-                        !accounts.iter().any(|account| {
-                            account
-                                .as_funds()
-                                .is_some_and(|funds| funds.is_outpoint_spent(outpoint))
-                        })
-                    },
-                ));
-            }
             self.update_balance();
             // One transaction can be recorded in several accounts, so the
             // per-account results overlap.
