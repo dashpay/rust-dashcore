@@ -13,13 +13,13 @@ edition = "2021"
 default = []
 
 bincode = ["dep:bincode", "dep:bincode_derive", "dashcore_hashes/bincode"]
-bls = ["dep:blsful", "dep:tracing"]
+bls = ["dep:dash-pkc", "dep:tracing"]
 serde = ["dep:serde", "dash-types/serde", "dashcore_hashes/serde"]
 
 [dependencies]
 bincode = { workspace = true, optional = true }
 bincode_derive = { workspace = true, optional = true }
-blsful = { git = "https://github.com/dashpay/agora-blsful", rev = "0c34a7a488a0bd1c9a9a2196e793b303ad35c900", optional = true }
+dash-pkc = { version = "=0.1.0-beta", default-features = false, features = ["bls", "std"], optional = true }
 dash-types = { version = "=0.1.0-beta", default-features = false, features = ["codec"] }
 dashcore_hashes = { path = "../hashes" }
 hex = { version = "0.4" }

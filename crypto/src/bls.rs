@@ -9,7 +9,12 @@
 use core::str::FromStr;
 
 #[cfg(feature = "bls")]
-use blsful::{Bls12381G2Impl, Pairing, PublicKey, SerializationFormat};
+use dash_pkc::__deps::ff::PrimeField;
+#[cfg(feature = "bls")]
+use dash_pkc::bls::{
+    BlsPublicKey as PkcPublicKey, BlsScChia, BlsScIetf, BlsScheme as PkcScheme,
+    BlsSecretKey as PkcSecretKey, BlsSignature as PkcSignature, Fr,
+};
 use dash_types::{make_bytes, make_sbytes, type_cvrt};
 use hex::FromHexError;
 #[cfg(feature = "bls")]
@@ -61,25 +66,17 @@ pub enum BlsScheme {
     Modern,
 }
 
+/// Reduces 32 big-endian bytes to the scalar they denote.
 #[cfg(feature = "bls")]
-impl BlsScheme {
-    /// The backing library's serialisation mode for this scheme.
-    pub fn serialization_format(self) -> SerializationFormat {
-        match self {
-            Self::Legacy => SerializationFormat::Legacy,
-            Self::Modern => SerializationFormat::Modern,
-        }
-    }
-}
+fn reduce(bytes: &[u8; BLS_SK_LEN]) -> Result<[u8; BLS_SK_LEN], BlsError> {
+    let reduced = Fr::from_bendian_reduce(bytes).map_err(|_| BlsError::InvalidTweak)?;
 
-#[cfg(feature = "bls")]
-fn encode_point(point: PublicKey<Bls12381G2Impl>, scheme: BlsScheme) -> BlsPkBytes {
-    BlsPkBytes::from_bytes(
-        point
-            .to_bytes_with_mode(scheme.serialization_format())
-            .try_into()
-            .expect("a G1 point is 48 bytes"),
-    )
+    // `to_repr` is little-endian; these bytes are big-endian.
+    let mut out = [0u8; BLS_SK_LEN];
+    out.copy_from_slice(reduced.to_repr().as_ref());
+    out.reverse();
+
+    Ok(out)
 }
 
 make_bytes! {
@@ -152,16 +149,6 @@ type_cvrt!(
     |v| Ok(Self::from_bytes(<[u8; BLS_PK_LEN]>::try_from(*v)?))
 );
 
-#[cfg(feature = "bls")]
-type_cvrt!(
-    for[] TryFrom<BlsPkBytes> for blsful::PublicKey<Bls12381G2Impl>,
-    BlsError,
-    |value| {
-        Self::try_from(value.as_bytes().as_slice())
-            .map_err(|e| BlsError::InvalidPublicKey(e.to_string()))
-    }
-);
-
 /// A [`BlsPkBytes`] paired with the scheme to read it under.
 #[cfg(feature = "bls")]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -179,12 +166,20 @@ impl BlsPublicKey {
     /// Returns `InvalidPublicKey` when the bytes are not a G1 point, or
     /// `InvalidTweak` when the tweak is not a valid scalar.
     pub fn add_tweak(self, tweak: &[u8; 32]) -> Result<BlsPkBytes, BlsError> {
-        let tweak_key = blsful::SecretKey::<Bls12381G2Impl>::from_be_bytes(tweak)
-            .into_option()
-            .ok_or(BlsError::InvalidTweak)?;
-        let sum = self.point()?.0 + PublicKey::from(&tweak_key).0;
+        let sum = match self.scheme {
+            BlsScheme::Legacy => self
+                .point::<BlsScChia>()?
+                .add_tweak(&reduce(tweak)?)
+                .map_err(|_| BlsError::InvalidTweak)?
+                .to_bytes(),
+            BlsScheme::Modern => self
+                .point::<BlsScIetf>()?
+                .add_tweak(&reduce(tweak)?)
+                .map_err(|_| BlsError::InvalidTweak)?
+                .to_bytes(),
+        };
 
-        Ok(encode_point(PublicKey(sum), self.scheme))
+        Ok(BlsPkBytes::from_bytes(sum))
     }
 
     /// Checks the bytes are a point and writes it back under the same scheme.
@@ -203,7 +198,22 @@ impl BlsPublicKey {
     /// Returns `InvalidPublicKey` when the bytes are not a G1 point under the
     /// scheme they were read with.
     pub fn reencode(self, to: BlsScheme) -> Result<BlsPkBytes, BlsError> {
-        Ok(encode_point(self.point()?, to))
+        let bytes = match (self.scheme, to) {
+            (BlsScheme::Legacy, BlsScheme::Legacy) => self.point::<BlsScChia>()?.to_bytes(),
+            (BlsScheme::Legacy, BlsScheme::Modern) => self
+                .point::<BlsScChia>()?
+                .to_scheme::<BlsScIetf>()
+                .map_err(|e| BlsError::InvalidPublicKey(e.to_string()))?
+                .to_bytes(),
+            (BlsScheme::Modern, BlsScheme::Legacy) => self
+                .point::<BlsScIetf>()?
+                .to_scheme::<BlsScChia>()
+                .map_err(|e| BlsError::InvalidPublicKey(e.to_string()))?
+                .to_bytes(),
+            (BlsScheme::Modern, BlsScheme::Modern) => self.point::<BlsScIetf>()?.to_bytes(),
+        };
+
+        Ok(BlsPkBytes::from_bytes(bytes))
     }
 
     /// Verifies `signature` over a 32-byte message digest.
@@ -215,19 +225,29 @@ impl BlsPublicKey {
     /// Returns `InvalidPublicKey` or `InvalidSignature` when either side is
     /// not a curve point, or `VerificationFailed` when it does not verify.
     pub fn verify(self, digest: &[u8; 32], signature: &BlsSigBytes) -> Result<(), BlsError> {
-        signature
-            .as_scheme(self.scheme)
-            .g2()?
-            .verify(&self.point()?, digest)
-            .map_err(|e| BlsError::VerificationFailed(e.to_string()))
+        match self.scheme {
+            BlsScheme::Legacy => self
+                .point::<BlsScChia>()?
+                .verify(digest, &signature.as_scheme(self.scheme).point::<BlsScChia>()?),
+            BlsScheme::Modern => self
+                .point::<BlsScIetf>()?
+                .verify(&digest[..], &signature.as_scheme(self.scheme).point::<BlsScIetf>()?),
+        }
+        .map_err(|_| BlsError::VerificationFailed("signature did not verify".to_string()))
     }
 
-    fn point(self) -> Result<PublicKey<Bls12381G2Impl>, BlsError> {
-        PublicKey::<Bls12381G2Impl>::from_bytes_with_mode(
-            self.bytes.as_bytes(),
-            self.scheme.serialization_format(),
-        )
+    /// Reads the key in its own encoding and carries it to `S`.
+    fn carry_to<S: PkcScheme>(self) -> Result<PkcPublicKey<S>, BlsError> {
+        match self.scheme {
+            BlsScheme::Legacy => self.point::<BlsScChia>()?.to_scheme::<S>(),
+            BlsScheme::Modern => self.point::<BlsScIetf>()?.to_scheme::<S>(),
+        }
         .map_err(|e| BlsError::InvalidPublicKey(e.to_string()))
+    }
+
+    fn point<S: PkcScheme>(self) -> Result<PkcPublicKey<S>, BlsError> {
+        PkcPublicKey::<S>::from_bytes(self.bytes.as_bytes())
+            .map_err(|e| BlsError::InvalidPublicKey(e.to_string()))
     }
 }
 
@@ -264,21 +284,31 @@ impl BlsSecretKey<'_> {
     /// Returns `InvalidSecretKey` when the bytes are not a valid scalar, or
     /// `InvalidTweak` when the tweak or the sum is not one.
     pub fn add_tweak(self, tweak: &[u8; 32]) -> Result<BlsSkBytes, BlsError> {
-        let tweak = blsful::SecretKey::<Bls12381G2Impl>::from_be_bytes(tweak)
-            .into_option()
-            .ok_or(BlsError::InvalidTweak)?;
-        let sum = blsful::SecretKey::<Bls12381G2Impl>(self.scalar()?.0 + tweak.0);
+        let sum = match self.scheme {
+            BlsScheme::Legacy => *self
+                .scalar::<BlsScChia>()?
+                .add_tweak(&reduce(tweak)?)
+                .map_err(|_| BlsError::InvalidTweak)?
+                .to_bytes(),
+            BlsScheme::Modern => *self
+                .scalar::<BlsScIetf>()?
+                .add_tweak(&reduce(tweak)?)
+                .map_err(|_| BlsError::InvalidTweak)?
+                .to_bytes(),
+        };
 
-        Ok(BlsSkBytes::from_bytes(sum.to_be_bytes()))
+        Ok(BlsSkBytes::from_bytes(sum))
     }
 
-    /// The scalar these bytes denote, written back canonically.
+    /// Reduces the scalar modulo the group order and writes it back.
     ///
-    /// Reading reduces modulo the group order, as Dash Core does, so bytes
-    /// that came from a hash are not necessarily the scalar's own encoding.
-    /// Storing the result keeps the two the same.
+    /// # Errors
+    ///
+    /// Returns `InvalidSecretKey` when the bytes cannot be reduced.
     pub fn canonicalize(self) -> Result<BlsSkBytes, BlsError> {
-        Ok(BlsSkBytes::from_bytes(self.scalar()?.to_be_bytes()))
+        reduce(self.bytes.as_bytes())
+            .map(BlsSkBytes::from_bytes)
+            .map_err(|_| BlsError::InvalidSecretKey)
     }
 
     /// Derives the public key, written under the scheme.
@@ -287,13 +317,18 @@ impl BlsSecretKey<'_> {
     ///
     /// Returns `InvalidSecretKey` when the bytes are not a valid scalar.
     pub fn public_key(self) -> Result<BlsPkBytes, BlsError> {
-        Ok(encode_point(PublicKey::from(&self.scalar()?), self.scheme))
+        match self.scheme {
+            BlsScheme::Legacy => {
+                Ok(BlsPkBytes::from_bytes(self.scalar::<BlsScChia>()?.public_key().to_bytes()))
+            }
+            BlsScheme::Modern => {
+                Ok(BlsPkBytes::from_bytes(self.scalar::<BlsScIetf>()?.public_key().to_bytes()))
+            }
+        }
     }
 
-    fn scalar(self) -> Result<blsful::SecretKey<Bls12381G2Impl>, BlsError> {
-        blsful::SecretKey::<Bls12381G2Impl>::from_be_bytes(self.bytes.as_bytes())
-            .into_option()
-            .ok_or(BlsError::InvalidSecretKey)
+    fn scalar<S: PkcScheme>(self) -> Result<PkcSecretKey<S>, BlsError> {
+        PkcSecretKey::<S>::from_bytes(self.bytes.as_bytes()).map_err(|_| BlsError::InvalidSecretKey)
     }
 }
 
@@ -367,23 +402,6 @@ type_cvrt!(
     |v| Ok(Self::from_bytes(<[u8; BLS_SIG_LEN]>::try_from(*v)?))
 );
 
-#[cfg(feature = "bls")]
-type_cvrt!(
-    for[] TryFrom<BlsSigBytes> for blsful::Signature<Bls12381G2Impl>,
-    BlsError,
-    |value| {
-        let Some(g2_element) =
-            <Bls12381G2Impl as Pairing>::Signature::from_compressed(&value.to_bytes())
-                .into_option()
-        else {
-            // not an error the source can be trusted not to produce
-            return Err(BlsError::InvalidSignature(hex::encode(value.to_bytes())));
-        };
-
-        Ok(blsful::Signature::Basic(g2_element))
-    }
-);
-
 /// A [`BlsSigBytes`] paired with the scheme to read it under.
 #[cfg(feature = "bls")]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -411,30 +429,41 @@ impl BlsSignature {
     where
         I: IntoIterator<Item = (BlsScheme, &'a BlsPkBytes)>,
     {
-        let points: Vec<PublicKey<Bls12381G2Impl>> = keys
+        match self.scheme {
+            BlsScheme::Legacy => self.verify_secure_in::<BlsScChia, I>(digest, keys, digest),
+            BlsScheme::Modern => self.verify_secure_in::<BlsScIetf, I>(digest, keys, &digest[..]),
+        }
+    }
+
+    fn point<S: PkcScheme>(self) -> Result<PkcSignature<S>, BlsError> {
+        PkcSignature::<S>::from_bytes(self.bytes.as_bytes())
+            .map_err(|_| BlsError::InvalidSignature(hex::encode(self.bytes.as_bytes())))
+    }
+    fn verify_secure_in<'a, S, I>(
+        self,
+        digest: &[u8; 32],
+        keys: I,
+        msg: &S::Msg,
+    ) -> Result<(), BlsError>
+    where
+        S: PkcScheme,
+        I: IntoIterator<Item = (BlsScheme, &'a BlsPkBytes)>,
+    {
+        let _ = digest;
+        let carried: Vec<PkcPublicKey<S>> = keys
             .into_iter()
             .filter_map(|(encoding, key)| {
                 key.as_scheme(encoding)
-                    .point()
+                    .carry_to::<S>()
                     .inspect_err(|e| error!("Failed to deserialize operator key: {}", e))
                     .ok()
             })
             .collect();
+        let refs: Vec<&PkcPublicKey<S>> = carried.iter().collect();
 
-        self.g2()?
-            .verify_secure(&points, digest.as_slice())
-            .map_err(|e| BlsError::VerificationFailed(e.to_string()))
-    }
-
-    fn g2(self) -> Result<blsful::Signature<Bls12381G2Impl>, BlsError> {
-        let Some(point) =
-            <Bls12381G2Impl as Pairing>::Signature::from_compressed(self.bytes.as_bytes())
-                .into_option()
-        else {
-            return Err(BlsError::InvalidSignature(hex::encode(self.bytes.as_bytes())));
-        };
-
-        Ok(blsful::Signature::Basic(point))
+        self.point::<S>()?
+            .secure_verify_aggregates(msg, &refs)
+            .map_err(|_| BlsError::VerificationFailed("aggregate did not verify".to_string()))
     }
 }
 
@@ -442,30 +471,22 @@ impl BlsSignature {
 mod tests {
     #[cfg(test)]
     mod compatibility_tests {
-        use blsful::{Bls12381G2Impl, PublicKey, SerializationFormat, Signature, SignatureSchemes};
+        use super::super::*;
         use hex_lit::hex;
 
         #[test]
         fn test_real_operator_key_compatibility() {
             // Real operator public keys from mainnet quorum at height 2300832
             let real_keys = [
-                hex!(
-                    "86e7ea34cc084da3ed0e90649ad444df0ca25d638164a596b4fbec9567bbcf3e635a8d8457107e7fe76326f3816e34d9"
-                ),
-                hex!(
-                    "8b02bec7d70bb6c386ef4e201f3c01d062902079920cb037d7257110f9b6112ecad30cf20daf373813a816b0df845cfa"
-                ),
-                hex!(
-                    "8455cd00d19792377ac915614b06cc46f161662aaab1d5f1e73f3c3cac48a1f2991d75ba14decb308294ceaf7185ef21"
-                ),
+                hex!("86e7ea34cc084da3ed0e90649ad444df0ca25d638164a596b4fbec9567bbcf3e635a8d8457107e7fe76326f3816e34d9"),
+                hex!("8b02bec7d70bb6c386ef4e201f3c01d062902079920cb037d7257110f9b6112ecad30cf20daf373813a816b0df845cfa"),
+                hex!("8455cd00d19792377ac915614b06cc46f161662aaab1d5f1e73f3c3cac48a1f2991d75ba14decb308294ceaf7185ef21"),
             ];
 
             // Test modern format deserialization
             for (i, key_bytes) in real_keys.iter().enumerate() {
-                let pk = PublicKey::<Bls12381G2Impl>::from_bytes_with_mode(
-                    key_bytes,
-                    SerializationFormat::Modern,
-                );
+                let pk =
+                    BlsPkBytes::from_bytes(*key_bytes).as_scheme(BlsScheme::Modern).canonicalize();
                 assert!(pk.is_ok(), "Modern format deserialization failed for key {}", i);
             }
         }
@@ -477,11 +498,9 @@ mod tests {
                 "ad47488b86dc296b4cc582afe99e7e32489e0f7840e40ebfb4ea959481caf757575f7a7e9c388c21b16d7c9979d4906d000fe14851dbc42e89802bab0932ac40b8cbad2076da9365e1587d53d1dec3f25a776c2fe0de2fca87e9c03408809181"
             );
 
-            let sig = Signature::<Bls12381G2Impl>::from_bytes_with_mode(
-                &chainlock_sig,
-                SignatureSchemes::Basic,
-                SerializationFormat::Modern, // Assume modern format for chainlock
-            );
+            let sig = BlsSigBytes::from_bytes(chainlock_sig)
+                .as_scheme(BlsScheme::Modern)
+                .point::<BlsScIetf>();
             assert!(sig.is_ok(), "ChainLock signature deserialization failed");
         }
 
@@ -498,17 +517,14 @@ mod tests {
                 hex!("00000000000000029eabbaa19ca5f694b863b3f64a682c376fa50b4119ae0029");
 
             // Parse keys
-            let _pk = PublicKey::<Bls12381G2Impl>::from_bytes_with_mode(
-                &quorum_pubkey,
-                SerializationFormat::Modern,
-            )
-            .unwrap();
-            let _sig = Signature::<Bls12381G2Impl>::from_bytes_with_mode(
-                &chainlock_sig,
-                SignatureSchemes::Basic,
-                SerializationFormat::Modern, // Assume modern format
-            )
-            .unwrap();
+            let _pk = BlsPkBytes::from_bytes(quorum_pubkey)
+                .as_scheme(BlsScheme::Modern)
+                .canonicalize()
+                .unwrap();
+            let _sig = BlsSigBytes::from_bytes(chainlock_sig)
+                .as_scheme(BlsScheme::Modern)
+                .point::<BlsScIetf>()
+                .unwrap();
 
             // According to DIP-8, ChainLocks sign:
             // SHA256(llmqType, quorumHash, SHA256(height), blockHash)
@@ -534,21 +550,16 @@ mod tests {
 
         #[test]
         fn test_verify_secure_with_real_operators() {
-            // Real operator keys for testing verify_secure API
+            // Real operator keys for testing the secure aggregate API
             let operator_keys = [
-                PublicKey::<Bls12381G2Impl>::from_bytes_with_mode(
-                    &hex!("86e7ea34cc084da3ed0e90649ad444df0ca25d638164a596b4fbec9567bbcf3e635a8d8457107e7fe76326f3816e34d9"),
-                    SerializationFormat::Modern
-                ).unwrap(),
-                PublicKey::<Bls12381G2Impl>::from_bytes_with_mode(
-                    &hex!("8b02bec7d70bb6c386ef4e201f3c01d062902079920cb037d7257110f9b6112ecad30cf20daf373813a816b0df845cfa"),
-                    SerializationFormat::Modern
-                ).unwrap(),
-                PublicKey::<Bls12381G2Impl>::from_bytes_with_mode(
-                    &hex!("8455cd00d19792377ac915614b06cc46f161662aaab1d5f1e73f3c3cac48a1f2991d75ba14decb308294ceaf7185ef21"),
-                    SerializationFormat::Modern
-                ).unwrap(),
+                BlsPkBytes::from_bytes(hex!("86e7ea34cc084da3ed0e90649ad444df0ca25d638164a596b4fbec9567bbcf3e635a8d8457107e7fe76326f3816e34d9")),
+                BlsPkBytes::from_bytes(hex!("8b02bec7d70bb6c386ef4e201f3c01d062902079920cb037d7257110f9b6112ecad30cf20daf373813a816b0df845cfa")),
+                BlsPkBytes::from_bytes(hex!("8455cd00d19792377ac915614b06cc46f161662aaab1d5f1e73f3c3cac48a1f2991d75ba14decb308294ceaf7185ef21")),
             ];
+
+            for key in &operator_keys {
+                assert!(key.as_scheme(BlsScheme::Modern).canonicalize().is_ok());
+            }
 
             // Note: For a complete test, we would need the actual commitment hash and aggregated signature
             // from the quorum formation process. This test verifies the API works with real keys.
@@ -569,69 +580,22 @@ mod tests {
             let block_hash =
                 hex!("00000000000000029eabbaa19ca5f694b863b3f64a682c376fa50b4119ae0029");
 
-            // Try both legacy and modern formats for the quorum key
-            println!("Trying modern format for quorum key...");
-            let pk_modern = PublicKey::<Bls12381G2Impl>::from_bytes_with_mode(
-                &quorum_pubkey,
-                SerializationFormat::Modern,
-            );
-            println!("Modern format result: {:?}", pk_modern.is_ok());
+            // Try both schemes for the quorum key
+            let key = BlsPkBytes::from_bytes(quorum_pubkey);
+            println!("Trying modern scheme for quorum key...");
+            let pk_modern = key.as_scheme(BlsScheme::Modern).canonicalize();
+            println!("Modern scheme result: {:?}", pk_modern.is_ok());
 
-            println!("\nTrying legacy format for quorum key...");
-            let pk_legacy = PublicKey::<Bls12381G2Impl>::from_bytes_with_mode(
-                &quorum_pubkey,
-                SerializationFormat::Legacy,
-            );
-            println!("Legacy format result: {:?}", pk_legacy.is_ok());
+            println!("\nTrying legacy scheme for quorum key...");
+            let pk_legacy = key.as_scheme(BlsScheme::Legacy).canonicalize();
+            println!("Legacy scheme result: {:?}", pk_legacy.is_ok());
 
-            // Use whichever succeeded (prefer modern, then legacy)
-            let pk = pk_modern.or(pk_legacy);
-
-            // If we get a valid key, try signature with different formats
-            if let Ok(pk) = pk {
-                println!("\nGot valid public key, trying signature formats...");
-
-                // Try modern format signature
-                println!("\nTrying modern format signature...");
-                let sig_modern = Signature::<Bls12381G2Impl>::from_bytes_with_mode(
-                    &chainlock_sig,
-                    SignatureSchemes::Basic,
-                    SerializationFormat::Modern,
-                );
-                match &sig_modern {
-                    Ok(_) => println!("Modern signature deserialization: OK"),
-                    Err(e) => println!("Modern signature deserialization failed: {:?}", e),
-                }
-
-                if let Ok(sig) = sig_modern {
-                    let result = sig.verify(&pk, &block_hash);
-                    println!("Verification with modern sig format: {:?}", result);
-
-                    // Try with reversed block hash (endianness)
-                    let mut reversed_hash = block_hash;
-                    reversed_hash.reverse();
-                    let result_reversed = sig.verify(&pk, &reversed_hash);
-                    println!("Verification with reversed block hash: {:?}", result_reversed);
-                }
-
-                // Try legacy format signature
-                println!("\nTrying legacy format signature...");
-                let sig_legacy = Signature::<Bls12381G2Impl>::from_bytes_with_mode(
-                    &chainlock_sig,
-                    SignatureSchemes::Basic,
-                    SerializationFormat::Legacy,
-                );
-                match &sig_legacy {
-                    Ok(_) => println!("Legacy signature deserialization: OK"),
-                    Err(e) => println!("Legacy signature deserialization failed: {:?}", e),
-                }
-
-                if let Ok(sig) = sig_legacy {
-                    let result = sig.verify(&pk, &block_hash);
-                    println!("Verification with legacy sig format: {:?}", result);
-                }
-            } else {
-                println!("Failed to deserialize public key in any format!");
+            // Whichever reads, the signature is checked under the same scheme
+            for scheme in [BlsScheme::Modern, BlsScheme::Legacy] {
+                let verified = key
+                    .as_scheme(scheme)
+                    .verify(&block_hash, &BlsSigBytes::from_bytes(chainlock_sig));
+                println!("{:?} verification: {:?}", scheme, verified.is_ok());
             }
         }
 
@@ -641,22 +605,16 @@ mod tests {
             // Note: To properly test this, we need actual legacy format keys from older blocks
             // The detection logic should try legacy format when modern format fails
 
-            let test_key = hex!(
+            let test_key = BlsPkBytes::from_bytes(hex!(
                 "86e7ea34cc084da3ed0e90649ad444df0ca25d638164a596b4fbec9567bbcf3e635a8d8457107e7fe76326f3816e34d9"
-            );
+            ));
 
             // Try modern format first
-            let modern_result = PublicKey::<Bls12381G2Impl>::from_bytes_with_mode(
-                &test_key,
-                SerializationFormat::Modern,
-            );
+            let modern_result = test_key.as_scheme(BlsScheme::Modern).canonicalize();
 
             // If modern fails, try legacy
             if modern_result.is_err() {
-                let legacy_result = PublicKey::<Bls12381G2Impl>::from_bytes_with_mode(
-                    &test_key,
-                    SerializationFormat::Legacy,
-                );
+                let legacy_result = test_key.as_scheme(BlsScheme::Legacy).canonicalize();
                 println!("Key requires legacy format: {}", legacy_result.is_ok());
             } else {
                 println!("Key uses modern format");
@@ -666,57 +624,37 @@ mod tests {
 
     #[cfg(test)]
     mod benchmarks {
-        use blsful::{
-            verify_secure_basic_with_mode, Bls12381G2Impl, PublicKey, SerializationFormat,
-            Signature, SignatureSchemes,
-        };
+        use super::super::*;
         use hex_lit::hex;
         use std::time::Instant;
 
         #[test]
         fn bench_verify_secure() {
             // Setup test data - real operator keys
-            let operator_keys = vec![
-                PublicKey::<Bls12381G2Impl>::from_bytes_with_mode(
-                    &hex!("86e7ea34cc084da3ed0e90649ad444df0ca25d638164a596b4fbec9567bbcf3e635a8d8457107e7fe76326f3816e34d9"),
-                    SerializationFormat::Modern
-                ).unwrap(),
-                PublicKey::<Bls12381G2Impl>::from_bytes_with_mode(
-                    &hex!("8b02bec7d70bb6c386ef4e201f3c01d062902079920cb037d7257110f9b6112ecad30cf20daf373813a816b0df845cfa"),
-                    SerializationFormat::Modern
-                ).unwrap(),
-                PublicKey::<Bls12381G2Impl>::from_bytes_with_mode(
-                    &hex!("8455cd00d19792377ac915614b06cc46f161662aaab1d5f1e73f3c3cac48a1f2991d75ba14decb308294ceaf7185ef21"),
-                    SerializationFormat::Modern
-                ).unwrap(),
+            let operator_keys = [
+                BlsPkBytes::from_bytes(hex!("86e7ea34cc084da3ed0e90649ad444df0ca25d638164a596b4fbec9567bbcf3e635a8d8457107e7fe76326f3816e34d9")),
+                BlsPkBytes::from_bytes(hex!("8b02bec7d70bb6c386ef4e201f3c01d062902079920cb037d7257110f9b6112ecad30cf20daf373813a816b0df845cfa")),
+                BlsPkBytes::from_bytes(hex!("8455cd00d19792377ac915614b06cc46f161662aaab1d5f1e73f3c3cac48a1f2991d75ba14decb308294ceaf7185ef21")),
             ];
 
             // Create a dummy signature for benchmarking
-            let sig_bytes = hex!(
+            let sig = BlsSigBytes::from_bytes(hex!(
                 "ad47488b86dc296b4cc582afe99e7e32489e0f7840e40ebfb4ea959481caf757575f7a7e9c388c21b16d7c9979d4906d000fe14851dbc42e89802bab0932ac40b8cbad2076da9365e1587d53d1dec3f25a776c2fe0de2fca87e9c03408809181"
-            );
-            let sig = Signature::<Bls12381G2Impl>::from_bytes_with_mode(
-                &sig_bytes,
-                SignatureSchemes::Basic,
-                SerializationFormat::Modern,
-            )
-            .unwrap();
+            ));
 
-            let inner_sig = match sig {
-                Signature::Basic(s) => s,
-                _ => panic!("Expected Basic signature"),
+            // A 32-byte digest, since verification takes the message pre-hashed
+            let msg = hex!("74657374206d65737361676520666f722062656e63686d61726b696e67000000");
+
+            let run = || {
+                let _ = sig.as_scheme(BlsScheme::Modern).verify_secure_aggregate(
+                    &msg,
+                    operator_keys.iter().map(|k| (BlsScheme::Modern, k)),
+                );
             };
-
-            let msg = b"test message for benchmarking";
 
             // Warm up
             for _ in 0..10 {
-                let _ = verify_secure_basic_with_mode::<Bls12381G2Impl, _>(
-                    &operator_keys,
-                    inner_sig,
-                    msg,
-                    SerializationFormat::Modern,
-                );
+                run();
             }
 
             // Measure verification time
@@ -724,12 +662,7 @@ mod tests {
             let start = Instant::now();
 
             for _ in 0..iterations {
-                let _ = verify_secure_basic_with_mode::<Bls12381G2Impl, _>(
-                    &operator_keys,
-                    inner_sig,
-                    msg,
-                    SerializationFormat::Modern,
-                );
+                run();
             }
 
             let duration = start.elapsed();
