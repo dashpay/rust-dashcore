@@ -11,6 +11,8 @@
 
 extern crate alloc;
 
+#[cfg(feature = "bls")]
+pub extern crate dash_pkc;
 pub extern crate dashcore_hashes as hashes;
 #[cfg(feature = "serde")]
 pub extern crate serde;
