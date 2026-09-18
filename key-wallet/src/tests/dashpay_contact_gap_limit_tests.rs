@@ -102,5 +102,10 @@ async fn contact_payments_extend_the_contact_pool() {
             pay(&mut ctx, &past_the_window, height + 1).await,
             "{direction}: the payment past the construction window must be seen too"
         );
+        assert_eq!(
+            contact_pool(&ctx, contact).highest_generated,
+            Some(gap * 2),
+            "{direction}: the window must keep moving, not widen once"
+        );
     }
 }
