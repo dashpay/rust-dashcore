@@ -70,3 +70,15 @@ impl From<QuorumValidationError> for MessageVerificationError {
         }
     }
 }
+
+#[cfg(feature = "bls")]
+impl From<crate::bls_sig_utils::BlsError> for MessageVerificationError {
+    fn from(e: crate::bls_sig_utils::BlsError) -> Self {
+        use crate::bls_sig_utils::BlsError;
+
+        match e {
+            BlsError::InvalidPublicKey(s) => Self::InvalidBLSPublicKey(s),
+            BlsError::InvalidSignature(s) => Self::InvalidBLSSignature(s),
+        }
+    }
+}
