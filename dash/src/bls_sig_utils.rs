@@ -23,9 +23,20 @@ use core::str::FromStr;
 use blsful::{Bls12381G2Impl, Pairing};
 use dash_types::{make_bytes, type_cvrt};
 use hex::FromHexError;
+use thiserror::Error as ThisError;
 
+/// Errors produced by BLS operations.
 #[cfg(feature = "bls")]
-use crate::sml::quorum_validation_error::QuorumValidationError;
+#[derive(Debug, Clone, Ord, PartialOrd, PartialEq, Hash, Eq, ThisError)]
+pub enum BlsError {
+    /// The 48 bytes were not a valid public key.
+    #[error("Invalid BLS public key: {0}")]
+    InvalidPublicKey(String),
+
+    /// The 96 bytes were not a valid signature.
+    #[error("Invalid BLS signature: {0}")]
+    InvalidSignature(String),
+}
 
 /// Raw BLS public key length (G1 compressed).
 pub const BLS_PK_LEN: usize = 48;
@@ -97,10 +108,10 @@ type_cvrt!(
 #[cfg(feature = "bls")]
 type_cvrt!(
     for[] TryFrom<BLSPublicKey> for blsful::PublicKey<Bls12381G2Impl>,
-    QuorumValidationError,
+    BlsError,
     |value| {
         Self::try_from(value.as_bytes().as_slice())
-            .map_err(|e| QuorumValidationError::InvalidBLSPublicKey(e.to_string()))
+            .map_err(|e| BlsError::InvalidPublicKey(e.to_string()))
     }
 );
 
@@ -168,16 +179,14 @@ type_cvrt!(
 #[cfg(feature = "bls")]
 type_cvrt!(
     for[] TryFrom<BLSSignature> for blsful::Signature<Bls12381G2Impl>,
-    QuorumValidationError,
+    BlsError,
     |value| {
         let Some(g2_element) =
             <Bls12381G2Impl as Pairing>::Signature::from_compressed(&value.to_bytes())
                 .into_option()
         else {
             // not an error the source can be trusted not to produce
-            return Err(QuorumValidationError::InvalidBLSSignature(hex::encode(
-                value.to_bytes(),
-            )));
+            return Err(BlsError::InvalidSignature(hex::encode(value.to_bytes())));
         };
 
         Ok(blsful::Signature::Basic(g2_element))
