@@ -18,11 +18,9 @@ use serde::{Deserialize, Serialize};
 use crate::bip32::{ChainCode, Fingerprint};
 #[cfg(feature = "bincode")]
 use bincode_derive::{Decode, Encode};
-use dashcore::blsful::{Bls12381G2Impl, SerializationFormat};
 
 use crate::account::derivation::AccountDerivation;
-pub use dashcore::blsful::PublicKey as BLSPublicKey;
-pub use dashcore::blsful::SecretKey;
+pub use dashcore::bls_sig_utils::{BLSPublicKey, BlsScheme, BlsSkBytes};
 
 /// BLS account structure for Platform and masternode operations
 #[derive(Debug, Clone)]
@@ -65,12 +63,10 @@ impl BLSAccount {
         bls_public_key: [u8; 48],
         network: Network,
     ) -> Result<Self> {
-        // Create a BlsPublicKey from bytes
-        let public_key = BLSPublicKey::<Bls12381G2Impl>::from_bytes_with_mode(
-            &bls_public_key,
-            SerializationFormat::Modern,
-        )
-        .map_err(|e| Error::InvalidParameter(format!("Invalid BLS public key: {}", e)))?;
+        let public_key = BLSPublicKey::from_bytes(bls_public_key)
+            .as_scheme(BlsScheme::Modern)
+            .canonicalize()
+            .map_err(|_| Error::InvalidParameter("Invalid BLS public key".to_string()))?;
 
         // Create an extended public key with default metadata
         let extended_key = ExtendedBLSPubKey {
@@ -98,7 +94,7 @@ impl BLSAccount {
         bls_private_key: ExtendedBLSPrivKey,
         network: Network,
     ) -> Result<Self> {
-        let bls_public_key = ExtendedBLSPubKey::from_private_key(&bls_private_key);
+        let bls_public_key = ExtendedBLSPubKey::from_private_key(&bls_private_key)?;
 
         Ok(Self {
             parent_wallet_id,
@@ -125,7 +121,7 @@ impl BLSAccount {
         let master = ExtendedBLSPrivKey::new_master(network, seed)?;
         let path = account_type.derivation_path(network)?;
         let account_xpriv = master.derive_path_legacy(&path)?;
-        let bls_public_key = ExtendedBLSPubKey::from_private_key(&account_xpriv);
+        let bls_public_key = ExtendedBLSPubKey::from_private_key(&account_xpriv)?;
 
         Ok(Self {
             parent_wallet_id,
@@ -177,12 +173,12 @@ impl BLSAccount {
         seed: &[u8],
         network: Network,
         index: u32,
-    ) -> Result<SecretKey<Bls12381G2Impl>> {
+    ) -> Result<BlsSkBytes> {
         let master = ExtendedBLSPrivKey::new_master(network, seed)?;
         let path = AccountType::ProviderOperatorKeys.derivation_path(network)?;
         let account_xpriv = master.derive_path_legacy(&path)?;
         let child = account_xpriv.derive_priv_legacy(ChildNumber::from_normal_idx(index)?)?;
-        Ok(child.private_key.clone())
+        Ok(child.private_key().clone())
     }
 
     /// Derive a BLS key at a specific path (watch-only, non-hardened paths only)
@@ -281,13 +277,8 @@ impl fmt::Display for BLSAccount {
     }
 }
 
-impl
-    AccountDerivation<
-        ExtendedBLSPrivKey,
-        ExtendedBLSPubKey,
-        BLSPublicKey<Bls12381G2Impl>,
-        SecretKey<Bls12381G2Impl>,
-    > for BLSAccount
+impl AccountDerivation<ExtendedBLSPrivKey, ExtendedBLSPubKey, BLSPublicKey, BlsSkBytes>
+    for BLSAccount
 {
     fn defaults_to_hardened_derivation(&self) -> bool {
         false
@@ -407,7 +398,7 @@ impl
         address_pool_type: AddressPoolType,
         index: u32,
         use_hardened_with_priv_key: Option<ExtendedBLSPrivKey>,
-    ) -> Result<BLSPublicKey<Bls12381G2Impl>> {
+    ) -> Result<BLSPublicKey> {
         let extended_pubkey = self.derive_extended_public_key_at(
             address_pool_type,
             index,
@@ -442,7 +433,7 @@ impl
                 // This is already the account key, derive the child
                 self.derive_child_xpriv_from_account_xpriv(&priv_key, &derivation_path)?
             };
-            Ok(ExtendedBLSPubKey::from_private_key(&derived_priv))
+            Ok(ExtendedBLSPubKey::from_private_key(&derived_priv)?)
         } else {
             // Derive using public key (only non-hardened)
             self.derive_child_xpub(&derivation_path)
@@ -453,9 +444,9 @@ impl
         &self,
         master_xpriv: &ExtendedBLSPrivKey,
         index: u32,
-    ) -> Result<SecretKey<Bls12381G2Impl>> {
+    ) -> Result<BlsSkBytes> {
         let xpriv = self.derive_from_master_xpriv_extended_xpriv_at(master_xpriv, index)?;
-        Ok(xpriv.private_key.clone())
+        Ok(xpriv.private_key().clone())
     }
 
     fn derive_from_seed_extended_xpriv_at(
@@ -468,13 +459,9 @@ impl
         self.derive_from_master_xpriv_extended_xpriv_at(&master, index)
     }
 
-    fn derive_from_seed_private_key_at(
-        &self,
-        seed: &[u8],
-        index: u32,
-    ) -> Result<SecretKey<Bls12381G2Impl>> {
+    fn derive_from_seed_private_key_at(&self, seed: &[u8], index: u32) -> Result<BlsSkBytes> {
         let xpriv = self.derive_from_seed_extended_xpriv_at(seed, index)?;
-        Ok(xpriv.private_key.clone())
+        Ok(xpriv.private_key().clone())
     }
 }
 
@@ -489,7 +476,8 @@ mod tests {
         let seed = [42u8; 32];
         let bls_private = ExtendedBLSPrivKey::new_master(Network::Testnet, &seed)
             .expect("Failed to create BLS private key from seed");
-        let bls_public = ExtendedBLSPubKey::from_private_key(&bls_private);
+        let bls_public = ExtendedBLSPubKey::from_private_key(&bls_private)
+            .expect("Failed to derive BLS public key");
         let public_key_bytes = bls_public.to_bytes();
 
         // Now create account from the valid public key bytes

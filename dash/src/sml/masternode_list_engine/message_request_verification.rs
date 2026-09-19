@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 
 use hashes::Hash;
 
+use crate::bls_sig_utils::BlsScheme;
 use crate::hash_types::QuorumOrderingHash;
 use crate::sml::llmq_type::network::NetworkLLMQExt;
 use crate::sml::masternode_list::MasternodeList;
@@ -205,7 +206,11 @@ impl MasternodeListEngine {
             instant_lock.signature
         );
 
-        match quorum.verify_message_digest(sign_id.to_byte_array(), instant_lock.signature) {
+        match quorum.verify_message_digest(
+            sign_id.to_byte_array(),
+            instant_lock.signature,
+            BlsScheme::Modern,
+        ) {
             Ok(()) => {
                 tracing::info!(
                     "IS lock verified: txid={}, quorum_index={}, quorum_hash={}",
@@ -411,7 +416,11 @@ impl MasternodeListEngine {
             )
             .map_err(|e| e.to_string())?;
 
-        quorum.verify_message_digest(sign_id.to_byte_array(), chain_lock.signature)
+        quorum.verify_message_digest(
+            sign_id.to_byte_array(),
+            chain_lock.signature,
+            BlsScheme::Modern,
+        )
     }
 }
 
@@ -420,7 +429,6 @@ mod tests {
     use crate::bls_sig_utils::BLSSignature;
     use crate::consensus::deserialize;
     use crate::hashes::Hash;
-    use crate::hashes::hex::FromHex;
     use crate::sml::llmq_type::LLMQType;
     use crate::sml::masternode_list_engine::MasternodeListEngine;
     use crate::{BlockHash, ChainLock, InstantLock, QuorumHash};
