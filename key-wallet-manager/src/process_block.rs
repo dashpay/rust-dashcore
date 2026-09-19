@@ -50,6 +50,7 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
         let mut per_wallet_inserted: BTreeMap<WalletId, Vec<TransactionRecord>> = BTreeMap::new();
         let mut per_wallet_updated: BTreeMap<WalletId, Vec<TransactionRecord>> = BTreeMap::new();
         let mut per_wallet_derived: BTreeMap<WalletId, Vec<DerivedAddressInfo>> = BTreeMap::new();
+        let mut relevant_positions: BTreeMap<WalletId, Vec<usize>> = BTreeMap::new();
 
         for (position, tx) in block.txdata.iter().enumerate() {
             // Stamp each record with its `block.vtx` index so consumers
@@ -70,6 +71,9 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
                 } else {
                     result.existing_txids.push(tx.txid());
                 }
+            }
+            for wallet_id in &check_result.affected_wallets {
+                relevant_positions.entry(*wallet_id).or_default().push(position);
             }
 
             for (wallet_id, derived) in check_result.new_addresses {
@@ -116,6 +120,20 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
                  dropped here, stranding those coins marked spent forever: {:?}",
                 per_wallet_released
             );
+        }
+
+        for (wallet_id, positions) in relevant_positions {
+            let Some(info) = self.wallet_infos.get(&wallet_id) else {
+                continue;
+            };
+            let heights: BTreeSet<CoreBlockHeight> = positions
+                .into_iter()
+                .flat_map(|position| info.unrecorded_spend_heights(&block.txdata[position]))
+                .filter(|spend_height| *spend_height > height)
+                .collect();
+            if !heights.is_empty() {
+                result.reapply_heights.insert(wallet_id, heights);
+            }
         }
 
         self.finalize_block_advance(
@@ -667,6 +685,34 @@ mod tests {
         let unknown: WalletId = [0xff; 32];
         manager.update_wallet_last_processed_height(&unknown, 1000);
         assert_eq!(manager.last_processed_height(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_funding_after_its_spend_asks_to_reapply_the_spend_block() {
+        let (mut manager, wallet_id, addr) = setup_manager_with_wallet();
+        let funding = create_tx_paying_to(&addr, 0xaa);
+        let spend = spend_first_output_of(&funding);
+        let wallets = BTreeSet::from([wallet_id]);
+
+        let mut spend_block = make_block(vec![spend]);
+        spend_block.header.nonce = 1;
+        let funding_block = make_block(vec![funding]);
+
+        manager
+            .process_block_for_wallets(&spend_block, spend_block.block_hash(), 200, &wallets)
+            .await;
+        let result = manager
+            .process_block_for_wallets(&funding_block, funding_block.block_hash(), 100, &wallets)
+            .await;
+        assert_eq!(result.reapply_heights, BTreeMap::from([(wallet_id, BTreeSet::from([200]))]));
+
+        manager
+            .process_block_for_wallets(&spend_block, spend_block.block_hash(), 200, &wallets)
+            .await;
+        let again = manager
+            .process_block_for_wallets(&funding_block, funding_block.block_hash(), 100, &wallets)
+            .await;
+        assert!(again.reapply_heights.is_empty());
     }
 
     #[tokio::test]
