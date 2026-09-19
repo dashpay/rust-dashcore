@@ -106,6 +106,12 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
                     storage.filter_headers(),
                     storage.filters(),
                 )
+                .await
+                // Durable pending-sweep set: scripts derived mid-sync whose
+                // rescan cascade a crash interrupted are replayed next start
+                // instead of leaving their funded heights permanently
+                // untested (interrupted-restore fund loss, 2026-08-19).
+                .with_metadata(storage.metadata())
                 .await,
             );
             managers.blocks = Some(
