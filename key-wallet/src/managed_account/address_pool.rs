@@ -152,7 +152,10 @@ impl KeySource {
                         Error::InvalidParameter(format!("BLS derivation error: {:?}", e))
                     })?;
                 }
-                Ok(DerivedKey::BLS(derived.public_key_bytes().to_vec()))
+                let public_key_bytes = derived.public_key_bytes().map_err(|e| {
+                    Error::InvalidParameter(format!("BLS derivation error: {:?}", e))
+                })?;
+                Ok(DerivedKey::BLS(public_key_bytes.to_vec()))
             }
             #[cfg(feature = "bls")]
             KeySource::BLSPublic(xpub) => {
