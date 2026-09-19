@@ -17,38 +17,91 @@
 //! and signature.
 //!
 
-#[cfg(feature = "bincode")]
-use bincode::{Decode, Encode};
+use core::str::FromStr;
+
 #[cfg(feature = "bls")]
 use blsful::{Bls12381G2Impl, Pairing};
-use hex::{FromHexError, ToHex};
-use internals::impl_array_newtype;
+use dash_types::make_bytes;
+use hex::FromHexError;
 
-use crate::core::fmt;
-use crate::internal_macros::impl_bytes_newtype;
-use crate::prelude::String;
 #[cfg(feature = "bls")]
 use crate::sml::quorum_validation_error::QuorumValidationError;
 
-/// A BLS Public key is 48 bytes in the scheme used for Dash Core
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Ord, PartialOrd, Hash)]
-#[cfg_attr(feature = "bincode", derive(Encode, Decode))]
-pub struct BLSPublicKey([u8; 48]);
+/// Raw BLS public key length (G1 compressed).
+pub const BLS_PK_LEN: usize = 48;
+
+/// Raw BLS signature length (G2 compressed).
+pub const BLS_SIG_LEN: usize = 96;
+
+make_bytes! {
+    /// BLS public key (48 bytes, unvalidated).
+    BLSPublicKey, BLS_PK_LEN
+}
 
 impl BLSPublicKey {
+    /// Reads these bytes from a hex string.
+    pub fn from_hex(s: &str) -> Result<Self, FromHexError> {
+        let mut bytes = [0u8; BLS_PK_LEN];
+        hex::decode_to_slice(s, &mut bytes)?;
+        Ok(Self::from_bytes(bytes))
+    }
+
+    /// Returns `true` when every byte is zero.
     pub fn is_zeroed(&self) -> bool {
-        self.0 == [0; 48]
+        self.is_null()
     }
 }
 
-impl_array_newtype!(BLSPublicKey, u8, 48);
+impl FromStr for BLSPublicKey {
+    type Err = FromHexError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Self::from_hex(s)
+    }
+}
+
+#[cfg(feature = "bincode")]
+impl bincode::Encode for BLSPublicKey {
+    fn encode<E: bincode::enc::Encoder>(
+        &self,
+        encoder: &mut E,
+    ) -> Result<(), bincode::error::EncodeError> {
+        bincode::Encode::encode(self.as_bytes(), encoder)
+    }
+}
+
+#[cfg(feature = "bincode")]
+impl<C> bincode::Decode<C> for BLSPublicKey {
+    fn decode<D: bincode::de::Decoder<Context = C>>(
+        decoder: &mut D,
+    ) -> Result<Self, bincode::error::DecodeError> {
+        <[u8; BLS_PK_LEN] as bincode::Decode<C>>::decode(decoder).map(Self::from_bytes)
+    }
+}
+
+#[cfg(feature = "bincode")]
+impl<'de, C> bincode::BorrowDecode<'de, C> for BLSPublicKey {
+    fn borrow_decode<D: bincode::de::BorrowDecoder<'de, Context = C>>(
+        decoder: &mut D,
+    ) -> Result<Self, bincode::error::DecodeError> {
+        <Self as bincode::Decode<C>>::decode(decoder)
+    }
+}
+
+impl TryFrom<&[u8]> for BLSPublicKey {
+    type Error = core::array::TryFromSliceError;
+
+    fn try_from(v: &[u8]) -> Result<Self, Self::Error> {
+        Ok(Self::from_bytes(<[u8; BLS_PK_LEN]>::try_from(v)?))
+    }
+}
 
 #[cfg(feature = "bls")]
 impl TryFrom<BLSPublicKey> for blsful::PublicKey<Bls12381G2Impl> {
     type Error = QuorumValidationError;
 
     fn try_from(value: BLSPublicKey) -> Result<Self, Self::Error> {
-        Self::try_from(value.0.as_slice())
+        Self::try_from(value.as_bytes().as_slice())
             .map_err(|e| QuorumValidationError::InvalidBLSPublicKey(e.to_string()))
     }
 }
@@ -58,47 +111,71 @@ impl TryFrom<&BLSPublicKey> for blsful::PublicKey<Bls12381G2Impl> {
     type Error = QuorumValidationError;
 
     fn try_from(value: &BLSPublicKey) -> Result<Self, Self::Error> {
-        Self::try_from(value.0.as_slice())
+        Self::try_from(value.as_bytes().as_slice())
             .map_err(|e| QuorumValidationError::InvalidBLSPublicKey(e.to_string()))
     }
 }
 
-impl BLSPublicKey {
-    /// Create a new BLS Public Key from a hex string
-    pub fn from_hex(s: &str) -> Result<BLSPublicKey, FromHexError> {
-        hex::decode(s).map(|v| {
-            let mut payload: [u8; 48] = [0; 48];
-            payload.copy_from_slice(v.as_slice());
-            Self(payload)
-        })
+make_bytes! {
+    /// BLS signature (96 bytes, unvalidated).
+    BLSSignature, BLS_SIG_LEN
+}
+
+impl BLSSignature {
+    /// Reads these bytes from a hex string.
+    pub fn from_hex(s: &str) -> Result<Self, FromHexError> {
+        let mut bytes = [0u8; BLS_SIG_LEN];
+        hex::decode_to_slice(s, &mut bytes)?;
+        Ok(Self::from_bytes(bytes))
+    }
+
+    /// Returns `true` when every byte is zero.
+    pub fn is_zeroed(&self) -> bool {
+        self.is_null()
     }
 }
 
-#[cfg(feature = "serde")]
-crate::serde_utils::serde_string_impl!(BLSPublicKey, "a BLS Public Key");
-
-impl core::str::FromStr for BLSPublicKey {
+impl FromStr for BLSSignature {
     type Err = FromHexError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        BLSPublicKey::from_hex(s)
+        Self::from_hex(s)
     }
 }
 
-impl fmt::Display for BLSPublicKey {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", self.encode_hex::<String>())
+#[cfg(feature = "bincode")]
+impl bincode::Encode for BLSSignature {
+    fn encode<E: bincode::enc::Encoder>(
+        &self,
+        encoder: &mut E,
+    ) -> Result<(), bincode::error::EncodeError> {
+        bincode::Encode::encode(self.as_bytes(), encoder)
     }
 }
 
-/// A BLS Signature is 96 bytes in the scheme used for Dash Core
-#[derive(Clone, Copy, PartialEq, Eq, Ord, PartialOrd, Hash)]
-#[cfg_attr(feature = "bincode", derive(Encode, Decode))]
-pub struct BLSSignature([u8; 96]);
+#[cfg(feature = "bincode")]
+impl<C> bincode::Decode<C> for BLSSignature {
+    fn decode<D: bincode::de::Decoder<Context = C>>(
+        decoder: &mut D,
+    ) -> Result<Self, bincode::error::DecodeError> {
+        <[u8; BLS_SIG_LEN] as bincode::Decode<C>>::decode(decoder).map(Self::from_bytes)
+    }
+}
 
-impl BLSSignature {
-    pub fn is_zeroed(&self) -> bool {
-        self.0 == [0; 96]
+#[cfg(feature = "bincode")]
+impl<'de, C> bincode::BorrowDecode<'de, C> for BLSSignature {
+    fn borrow_decode<D: bincode::de::BorrowDecoder<'de, Context = C>>(
+        decoder: &mut D,
+    ) -> Result<Self, bincode::error::DecodeError> {
+        <Self as bincode::Decode<C>>::decode(decoder)
+    }
+}
+
+impl TryFrom<&[u8]> for BLSSignature {
+    type Error = core::array::TryFromSliceError;
+
+    fn try_from(v: &[u8]) -> Result<Self, Self::Error> {
+        Ok(Self::from_bytes(<[u8; BLS_SIG_LEN]>::try_from(v)?))
     }
 }
 
@@ -204,9 +281,6 @@ impl TryFrom<&BLSSignature> for blsful::AggregateSignature<Bls12381G2Impl> {
     }
 }
 
-impl_array_newtype!(BLSSignature, u8, 96);
-impl_bytes_newtype!(BLSSignature, 96);
-
 macro_rules! impl_elementencode {
     ($element:ident, $len:expr) => {
         impl $crate::consensus::Encodable for $element {
@@ -214,7 +288,7 @@ macro_rules! impl_elementencode {
                 &self,
                 w: &mut W,
             ) -> Result<usize, $crate::io::Error> {
-                self.0.consensus_encode(w)
+                self.as_bytes().consensus_encode(w)
             }
         }
 
@@ -224,7 +298,7 @@ macro_rules! impl_elementencode {
             ) -> Result<Self, $crate::consensus::encode::Error> {
                 let mut data: [u8; $len] = [0u8; $len];
                 r.read_exact(&mut data)?;
-                Ok($element(data))
+                Ok($element::from_bytes(data))
             }
         }
     };
