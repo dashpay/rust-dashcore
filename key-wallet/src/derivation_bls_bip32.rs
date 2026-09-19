@@ -1580,6 +1580,46 @@ mod tests {
         }
     }
 
+    /// API policy for handling scalars above group order
+    mod policy {
+        use super::*;
+
+        /// The BLS12-381 group order.
+        const R: &str = "73eda753299d7d483339d80809a1d80553bda402fffe5bfeffffffff00000001";
+
+        fn parse_bytes_32(hex_str: &str) -> [u8; 32] {
+            hex::decode(hex_str).unwrap().try_into().unwrap()
+        }
+
+        /// Constructs a secret key from the supplied scalar and extracts it to find the settled value.
+        fn resolve_scalar(scalar: &[u8; 32]) -> [u8; 32] {
+            BlsSecretKey::<Bls12381G2Impl>::from_be_bytes(scalar)
+                .into_option()
+                .unwrap()
+                .to_be_bytes()
+        }
+
+        #[test]
+        fn scalar_above_the_order_is_reduced_modulo_r() {
+            let mut over = parse_bytes_32(R);
+            over[31] += 5;
+            let mut five = [0u8; 32];
+            five[31] = 5;
+
+            // r + 5 lands on 5, so the read subtracts r rather than clamping to
+            // the top of the field or dropping the high bits.
+            assert_eq!(resolve_scalar(&over), five);
+        }
+
+        #[test]
+        fn scalar_below_the_order_is_unchanged() {
+            let mut under = parse_bytes_32(R);
+            under[31] -= 1;
+
+            assert_eq!(resolve_scalar(&under), under);
+        }
+    }
+
     #[test]
     fn test_zeroize_clears_key_material() {
         use zeroize::Zeroize;
