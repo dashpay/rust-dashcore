@@ -10,7 +10,7 @@ use tokio::sync::RwLock;
 
 use super::pipeline::FilterHeadersPipeline;
 use crate::error::SyncResult;
-use crate::network::RequestSender;
+use crate::network::NetworkManager;
 use crate::storage::{BlockHeaderStorage, FilterHeaderStorage};
 use crate::sync::filter_headers::util::compute_filter_headers;
 use crate::sync::progress::ProgressPercentage;
@@ -144,7 +144,10 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage> FilterHeadersManager<H, FH>
     }
 
     /// Start or resume filter header download.
-    async fn start_download(&mut self, requests: &RequestSender) -> SyncResult<Vec<SyncEvent>> {
+    async fn start_download(
+        &mut self,
+        network: &Arc<dyn NetworkManager>,
+    ) -> SyncResult<Vec<SyncEvent>> {
         // Get current filter tip
         let filter_headers_tip =
             self.filter_header_storage.read().await.get_filter_tip_height().await?.unwrap_or(0);
@@ -189,8 +192,8 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage> FilterHeadersManager<H, FH>
             .await?;
         drop(header_storage);
 
-        // Send initial requests
-        self.pipeline.send_pending(requests)?;
+        // Declare initial batches to the broker
+        self.pipeline.send_pending(network).await?;
 
         self.set_state(SyncState::Syncing);
 
@@ -204,7 +207,7 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage> FilterHeadersManager<H, FH>
     pub(super) async fn handle_new_headers(
         &mut self,
         tip_height: u32,
-        requests: &RequestSender,
+        network: &Arc<dyn NetworkManager>,
     ) -> SyncResult<Vec<SyncEvent>> {
         self.progress.update_block_header_tip_height(tip_height);
         self.update_target_height(tip_height);
@@ -238,12 +241,12 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage> FilterHeadersManager<H, FH>
                         .await?;
                 }
                 drop(header_storage);
-                self.pipeline.send_pending(requests)?;
+                self.pipeline.send_pending(network).await?;
                 Ok(vec![])
             }
             SyncState::WaitingForConnections | SyncState::WaitForEvents => {
                 // Need full startup (calculates start from storage, handles checkpoints)
-                self.start_download(requests).await
+                self.start_download(network).await
             }
             _ => Ok(vec![]),
         }
@@ -260,12 +263,13 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage> std::fmt::Debug
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::network::{MessageType, NetworkRequest};
+    use crate::network::MessageType;
     use crate::storage::{
         DiskStorageManager, PersistentBlockHeaderStorage, PersistentFilterHeaderStorage,
         StorageManager,
     };
     use crate::sync::{ManagerIdentifier, SyncManagerProgress};
+    use crate::test_utils::MockNetworkManager;
     use crate::types::HashedBlockHeader;
     use dashcore::network::message::NetworkMessage;
     use dashcore::{block::Version, BlockHash, CompactTarget, Header as BlockHeader};
@@ -282,18 +286,12 @@ mod tests {
             .expect("Failed to create FilterHeadersManager")
     }
 
-    fn create_test_request_sender(
-    ) -> (RequestSender, tokio::sync::mpsc::UnboundedReceiver<crate::network::NetworkRequest>) {
-        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
-        (RequestSender::new(tx), rx)
-    }
-
     #[tokio::test]
     async fn test_filter_headers_manager_new() {
         let manager = create_test_manager().await;
         assert_eq!(manager.identifier(), ManagerIdentifier::FilterHeader);
         assert_eq!(manager.state(), SyncState::WaitForEvents);
-        assert_eq!(manager.wanted_message_types(), vec![MessageType::CFHeaders]);
+        assert_eq!(manager.wanted_message_types(), [MessageType::CfHeaders]);
         assert!(!manager.block_headers_synced);
     }
 
@@ -346,8 +344,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_block_headers_synced_event_gating() {
+        use crate::network::NetworkManager;
+        use crate::test_utils::MockNetworkManager;
+
         let mut manager = create_test_manager().await;
-        let (sender, _rx) = create_test_request_sender();
+        let network: Arc<dyn NetworkManager> = Arc::new(MockNetworkManager::new());
 
         // Filter headers caught up to block header tip and target
         manager.progress.update_current_height(1000);
@@ -359,7 +360,7 @@ mod tests {
         let event = SyncEvent::BlockHeadersStored {
             tip_height: 1000,
         };
-        let events = manager.handle_sync_event(&event, &sender).await.unwrap();
+        let events = manager.handle_sync_event(&event, &network).await.unwrap();
         assert!(!manager.block_headers_synced);
         assert!(!events.iter().any(|e| matches!(e, SyncEvent::FilterHeadersSyncComplete { .. })));
 
@@ -367,7 +368,7 @@ mod tests {
         let event = SyncEvent::BlockHeaderSyncComplete {
             tip_height: 1000,
         };
-        let events = manager.handle_sync_event(&event, &sender).await.unwrap();
+        let events = manager.handle_sync_event(&event, &network).await.unwrap();
         assert!(manager.block_headers_synced);
         assert!(events.iter().any(|e| matches!(e, SyncEvent::FilterHeadersSyncComplete { .. })));
         assert_eq!(manager.state(), SyncState::Synced);
@@ -375,8 +376,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_block_header_sync_complete_during_active_download() {
+        use crate::network::NetworkManager;
+        use crate::test_utils::MockNetworkManager;
+
         let mut manager = create_test_manager().await;
-        let (sender, _rx) = create_test_request_sender();
+        let network: Arc<dyn NetworkManager> = Arc::new(MockNetworkManager::new());
 
         // Filter headers caught up to block tip, but target is higher (more headers coming)
         manager.progress.update_current_height(1000);
@@ -388,7 +392,7 @@ mod tests {
         let event = SyncEvent::BlockHeaderSyncComplete {
             tip_height: 1000,
         };
-        let events = manager.handle_sync_event(&event, &sender).await.unwrap();
+        let events = manager.handle_sync_event(&event, &network).await.unwrap();
 
         assert!(manager.block_headers_synced);
         assert!(!events.iter().any(|e| matches!(e, SyncEvent::FilterHeadersSyncComplete { .. })));
@@ -410,7 +414,8 @@ mod tests {
             FilterHeadersManager::new(header_storage.clone(), storage.filter_headers())
                 .await
                 .expect("Failed to create FilterHeadersManager");
-        let (sender, mut rx) = create_test_request_sender();
+        let mock = Arc::new(MockNetworkManager::new());
+        let network: Arc<dyn NetworkManager> = mock.clone();
 
         // Mid-sync: this manager was last told the tip was 1000.
         manager.progress.update_current_height(1000);
@@ -438,7 +443,7 @@ mod tests {
         assert!(stored_tip > 1000, "test setup: storage tip must exceed the known tip");
 
         let manager_ref: &mut TestSyncManager = &mut manager;
-        manager_ref.tick(&sender).await.unwrap();
+        manager_ref.tick(&network).await.unwrap();
 
         assert_eq!(
             manager.progress.block_header_tip_height(),
@@ -451,18 +456,14 @@ mod tests {
         // advance and then failed to queue anything would still satisfy the
         // assertion above — and would leave sync exactly as stuck as before.
         // What has to be true is that a request for the new range went out.
-        let mut requested_stops = Vec::new();
-        while let Ok(request) = rx.try_recv() {
-            match request {
-                NetworkRequest::SendMessage(NetworkMessage::GetCFHeaders(get)) => {
-                    requested_stops.push(get.stop_hash);
-                }
-                NetworkRequest::SendMessageToPeer(NetworkMessage::GetCFHeaders(get), _) => {
-                    requested_stops.push(get.stop_hash);
-                }
-                _ => {}
-            }
-        }
+        let requested_stops: Vec<_> = mock
+            .sent_messages()
+            .into_iter()
+            .filter_map(|msg| match msg {
+                NetworkMessage::GetCFHeaders(get) => Some(get.stop_hash),
+                _ => None,
+            })
+            .collect();
         assert!(
             !requested_stops.is_empty(),
             "tick must queue and send CFHeaders requests for the newly available range"

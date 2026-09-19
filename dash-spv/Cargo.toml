@@ -10,7 +10,7 @@ rust-version = "1.89"
 
 [dependencies]
 # Core Dash libraries
-dashcore = { path = "../dash", features = ["serde", "core-block-hash-use-x11", "message_verification", "bls", "quorum_validation"] }
+dashcore = { path = "../dash", features = ["serde", "core-block-hash-use-x11", "message_verification", "bls", "quorum_validation", "tokio"] }
 dashcore_hashes = { path = "../hashes" }
 dash-network-seeds = { path = "../dash-network-seeds" }
 key-wallet = { path = "../key-wallet" }

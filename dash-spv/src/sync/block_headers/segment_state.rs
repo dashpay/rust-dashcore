@@ -1,14 +1,18 @@
 use crate::error::{SyncError, SyncResult};
-use crate::network::RequestSender;
-use crate::sync::download_coordinator::{DownloadConfig, DownloadCoordinator};
+use crate::network::NetworkManager;
 use crate::types::HashedBlockHeader;
+use dashcore::network::message::NetworkMessage;
+use dashcore::network::message_blockdata::GetHeadersMessage;
 use dashcore::BlockHash;
-use std::time::Duration;
-
-/// Timeout for header requests.
-const HEADERS_TIMEOUT: Duration = Duration::from_secs(30);
+use dashcore_hashes::Hash;
+use std::sync::Arc;
 
 /// State for a single download segment between two checkpoints.
+///
+/// The segment declares the single `getheaders` it wants (a locator from its
+/// `current_tip_hash`) to the network manager, which de-duplicates, paces, times
+/// out and retries it. The segment keeps no in-flight bookkeeping of its own: it
+/// simply wants `current_tip_hash` for as long as it is not `complete`.
 #[derive(Debug)]
 pub(super) struct SegmentState {
     /// Unique segment identifier (index in segments array).
@@ -23,8 +27,6 @@ pub(super) struct SegmentState {
     pub(super) current_tip_hash: BlockHash,
     /// Current height reached in this segment.
     pub(super) current_height: u32,
-    /// Download coordinator for tracking in-flight requests.
-    pub(super) coordinator: DownloadCoordinator<BlockHash>,
     /// Buffered headers waiting to be stored.
     pub(super) buffered_headers: Vec<HashedBlockHeader>,
     /// Whether this segment has completed downloading.
@@ -47,33 +49,38 @@ impl SegmentState {
             target_hash,
             current_tip_hash: start_hash,
             current_height: start_height,
-            coordinator: DownloadCoordinator::new(
-                DownloadConfig::default()
-                    .with_max_concurrent(1) // Only 1 request at a time (sequential getheaders)
-                    .with_timeout(HEADERS_TIMEOUT),
-            ),
             buffered_headers: Vec::new(),
             complete: false,
         }
     }
 
-    /// Check if the segment can send more requests.
-    /// Only one getheaders request can be in-flight at a time (sequential protocol).
+    /// Check if the segment still wants a `getheaders`.
+    ///
+    /// A segment wants its `current_tip_hash` locator declared for as long as it
+    /// is not complete. The network manager de-duplicates re-declarations, so the
+    /// pipeline can (re-)declare each tick without tracking what is on the wire.
     pub(super) fn can_send(&self) -> bool {
-        !self.complete && !self.coordinator.is_in_flight(&self.current_tip_hash)
+        !self.complete
     }
 
-    /// Send a GetHeaders request for this segment.
-    pub(super) fn send_request(&mut self, requests: &RequestSender) -> SyncResult<()> {
-        requests.request_block_headers(self.current_tip_hash)?;
-        self.coordinator.mark_sent(&[self.current_tip_hash]);
+    /// Declare this segment's `getheaders` to the network manager.
+    ///
+    /// The broker de-duplicates by `RequestKey::Headers(current_tip_hash)`, paces
+    /// the request across peers and retries it on timeout, so this may be a no-op
+    /// if the request is already in play.
+    pub(super) async fn send_request(&mut self, network: &Arc<dyn NetworkManager>) {
+        network
+            .send(NetworkMessage::GetHeaders(GetHeadersMessage::new(
+                vec![self.current_tip_hash],
+                BlockHash::all_zeros(),
+            )))
+            .await;
         tracing::debug!(
-            "Segment {}: sent GetHeaders from height {} hash {}",
+            "Segment {}: declared GetHeaders from height {} hash {}",
             self.segment_id,
             self.current_height,
             self.current_tip_hash
         );
-        Ok(())
     }
 
     /// Try to match incoming headers to this segment.
@@ -89,8 +96,6 @@ impl SegmentState {
         if headers.is_empty() {
             // Empty response means we've reached the peer's tip for this segment
             self.complete = true;
-            // Clear in-flight tracking for the current tip hash
-            self.coordinator.receive(&self.current_tip_hash);
             tracing::info!(
                 "Segment {}: complete (empty response at height {})",
                 self.segment_id,
@@ -106,15 +111,6 @@ impl SegmentState {
                 self.segment_id,
                 headers.len(),
                 self.current_height
-            )));
-        }
-
-        // Mark the request as received, reject if we never requested this hash
-        let prev_hash = headers[0].header().prev_blockhash;
-        if !self.coordinator.receive(&prev_hash) {
-            return Err(SyncError::InvalidState(format!(
-                "Segment {}: received unrequested headers (prev_hash {})",
-                self.segment_id, prev_hash
             )));
         }
 
@@ -179,29 +175,6 @@ impl SegmentState {
     pub(super) fn take_buffered(&mut self) -> Vec<HashedBlockHeader> {
         std::mem::take(&mut self.buffered_headers)
     }
-
-    /// Check for timed out requests and handle retries.
-    pub(super) fn handle_timeouts(&mut self) {
-        let timed_out = self.coordinator.check_timeouts();
-        for hash in timed_out {
-            tracing::warn!(
-                "Segment {}: request timed out for hash {}, will retry",
-                self.segment_id,
-                hash
-            );
-            // Re-enqueue for retry
-            self.coordinator.enqueue_retry(hash);
-        }
-    }
-
-    /// Drop only per-peer in-flight bookkeeping.
-    ///
-    /// Buffered headers and the validated `current_tip_hash` / `current_height`
-    /// are preserved so a reconnect can resume from where the last peer left off
-    /// without re-fetching headers we already have.
-    pub(super) fn clear_in_flight(&mut self) {
-        self.coordinator.clear();
-    }
 }
 
 #[cfg(test)]
@@ -228,6 +201,7 @@ mod tests {
         let hash = BlockHash::dummy(0);
         let segment = SegmentState::new(0, 0, hash, Some(1000), None);
 
+        // A fresh, incomplete segment wants its locator declared.
         assert!(segment.can_send());
     }
 
@@ -249,20 +223,16 @@ mod tests {
 
         assert_eq!(processed, 0);
         assert!(segment.complete);
+        // An empty response no longer allows sending — the segment is done.
+        assert!(!segment.can_send());
     }
 
     #[test]
     fn test_segment_receive_headers() {
         let hash = BlockHash::dummy(1);
         let mut segment = SegmentState::new(0, 0, hash, None, None);
-        segment.coordinator.mark_sent(&[hash]);
 
-        // Create dummy headers that chain from all-zeros
-        let headers: Vec<Header> = (1..=10).map(Header::dummy).collect();
-
-        // Manually fix the prev_blockhash of first header
-        let mut first = headers[0];
-        first.prev_blockhash = hash;
+        let first = Header::dummy_chain(1, hash).remove(0);
 
         let processed = segment.receive_headers(&[first.into()]).unwrap();
 
@@ -270,6 +240,8 @@ mod tests {
         assert_eq!(segment.buffered_headers.len(), 1);
         assert_eq!(segment.current_height, 1);
         assert!(!segment.complete);
+        // The tip advanced to the received header's hash for the next locator.
+        assert_eq!(segment.current_tip_hash, first.block_hash());
     }
 
     #[test]
@@ -279,11 +251,9 @@ mod tests {
         let expected_checkpoint_hash = BlockHash::dummy(99);
         let mut segment =
             SegmentState::new(0, 0, start_hash, Some(1), Some(expected_checkpoint_hash));
-        segment.coordinator.mark_sent(&[start_hash]);
 
-        // Create a header that will be at height 1 but with a different hash
-        let mut header = Header::dummy(1);
-        header.prev_blockhash = start_hash;
+        // A valid header at height 1 whose hash is not the expected checkpoint.
+        let header = Header::dummy_chain(1, start_hash).remove(0);
 
         // The header's hash won't match the expected checkpoint hash
         let hashed = HashedBlockHeader::from(header);
@@ -312,14 +282,12 @@ mod tests {
     fn test_segment_checkpoint_match_completes_segment() {
         let start_hash = BlockHash::dummy(0);
         // Create a header first to get its hash for the checkpoint
-        let mut header = Header::dummy(1);
-        header.prev_blockhash = start_hash;
+        let header = Header::dummy_chain(1, start_hash).remove(0);
         let hashed = HashedBlockHeader::from(header);
         let header_hash = *hashed.hash();
 
         // Create segment with checkpoint matching the header's hash
         let mut segment = SegmentState::new(0, 0, start_hash, Some(1), Some(header_hash));
-        segment.coordinator.mark_sent(&[start_hash]);
 
         // Receiving this header should succeed and complete the segment
         let result = segment.receive_headers(&[header.into()]);
@@ -329,25 +297,6 @@ mod tests {
         // Segment should be complete with the header buffered
         assert!(segment.complete);
         assert_eq!(segment.buffered_headers.len(), 1);
-    }
-
-    #[test]
-    fn test_unrequested_headers_returns_error() {
-        let start_hash = BlockHash::dummy(0);
-        let mut segment = SegmentState::new(0, 0, start_hash, None, None);
-
-        let mut header = Header::dummy(1);
-        header.prev_blockhash = start_hash;
-
-        let result = segment.receive_headers(&[header.into()]);
-        assert!(result.is_err());
-        match result.unwrap_err() {
-            SyncError::InvalidState(msg) => {
-                assert!(msg.contains("unrequested headers"));
-            }
-            other => panic!("Expected SyncError::InvalidState, got {:?}", other),
-        }
-        assert!(segment.buffered_headers.is_empty());
     }
 
     #[test]
@@ -373,42 +322,5 @@ mod tests {
             other => panic!("Expected SyncError::InvalidState, got {:?}", other),
         }
         assert!(segment.buffered_headers.is_empty());
-    }
-
-    #[test]
-    fn test_clear_in_flight_preserves_chain_state() {
-        let start_hash = BlockHash::dummy(0);
-        let mut segment = SegmentState::new(0, 0, start_hash, None, None);
-        segment.coordinator.mark_sent(&[start_hash]);
-
-        let mut header = Header::dummy(1);
-        header.prev_blockhash = start_hash;
-        segment.receive_headers(&[header.into()]).unwrap();
-
-        let preserved_tip_hash = segment.current_tip_hash;
-        let preserved_height = segment.current_height;
-        let preserved_buffered = segment.buffered_headers.len();
-        assert_ne!(preserved_tip_hash, start_hash);
-        assert_eq!(preserved_height, 1);
-        assert_eq!(preserved_buffered, 1);
-
-        // Simulate a fresh in-flight request, then clear it.
-        segment.coordinator.mark_sent(&[preserved_tip_hash]);
-        assert!(segment.coordinator.is_in_flight(&preserved_tip_hash));
-
-        segment.clear_in_flight();
-
-        assert!(!segment.coordinator.is_in_flight(&preserved_tip_hash));
-        assert_eq!(segment.coordinator.active_count(), 0);
-        assert_eq!(segment.coordinator.pending_count(), 0);
-
-        assert_eq!(segment.current_tip_hash, preserved_tip_hash);
-        assert_eq!(segment.current_height, preserved_height);
-        assert_eq!(segment.buffered_headers.len(), preserved_buffered);
-        assert!(!segment.complete);
-
-        // After clearing, can_send should be true again so a fresh GetHeaders
-        // can resume from the preserved tip hash without re-fetching what we have.
-        assert!(segment.can_send());
     }
 }
