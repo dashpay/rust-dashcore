@@ -1613,6 +1613,14 @@ mod tests {
             hex::decode(hex_str).unwrap().try_into().unwrap()
         }
 
+        /// Constructs a secret key from the supplied scalar and extracts it to find the settled value.
+        fn resolve_scalar(scalar: &[u8; 32]) -> [u8; 32] {
+            BlsSecretKey::<Bls12381G2Impl>::from_be_bytes(scalar)
+                .into_option()
+                .unwrap()
+                .to_be_bytes()
+        }
+
         #[test]
         fn scalar_above_the_order_is_accepted() {
             let mut over = parse_bytes_32(R);
@@ -1620,6 +1628,26 @@ mod tests {
 
             let read = BlsSecretKey::<Bls12381G2Impl>::from_be_bytes(&over);
             assert!(bool::from(read.is_some()));
+        }
+
+        #[test]
+        fn scalar_above_the_order_is_reduced_modulo_r() {
+            let mut over = parse_bytes_32(R);
+            over[31] += 5;
+            let mut five = [0u8; 32];
+            five[31] = 5;
+
+            // r + 5 lands on 5, so the read subtracts r rather than clamping to
+            // the top of the field or dropping the high bits.
+            assert_eq!(resolve_scalar(&over), five);
+        }
+
+        #[test]
+        fn scalar_below_the_order_is_unchanged() {
+            let mut under = parse_bytes_32(R);
+            under[31] -= 1;
+
+            assert_eq!(resolve_scalar(&under), under);
         }
     }
 
