@@ -1270,6 +1270,81 @@ async fn test_update_wallet_synced_height_does_not_re_emit_when_unchanged() {
     );
 }
 
+#[tokio::test]
+async fn test_rewind_wallet_synced_height_lowers_and_emits() {
+    let (mut manager, wallet_id, _addr) = setup_manager_with_wallet();
+    let mut rx = manager.subscribe_events();
+    manager.update_wallet_synced_height(&wallet_id, 2000);
+    drain_events(&mut rx);
+
+    // A rewind lowers the checkpoint and is reported through the same event
+    // an advance emits, so persisters store it verbatim and the rewind
+    // survives a restart.
+    manager.rewind_wallet_synced_height(&wallet_id, 1200);
+    assert_eq!(manager.wallet_synced_height(&wallet_id), 1200);
+    let synced_events: Vec<_> = drain_events(&mut rx)
+        .into_iter()
+        .filter_map(|e| match e {
+            WalletEvent::SyncHeightAdvanced {
+                wallet_id,
+                height,
+            } => Some((wallet_id, height)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(synced_events, vec![(wallet_id, 1200)]);
+
+    // At or above the current checkpoint is ignored — no change, no event.
+    manager.rewind_wallet_synced_height(&wallet_id, 1200);
+    manager.rewind_wallet_synced_height(&wallet_id, 5000);
+    assert_eq!(manager.wallet_synced_height(&wallet_id), 1200);
+    let events = drain_events(&mut rx);
+    assert!(
+        !events.iter().any(|e| matches!(e, WalletEvent::SyncHeightAdvanced { .. })),
+        "no SyncHeightAdvanced for a non-lowering rewind, got {:?}",
+        events
+    );
+
+    // An unknown wallet is a no-op.
+    manager.rewind_wallet_synced_height(&[9u8; 32], 0);
+    assert!(drain_events(&mut rx).is_empty());
+}
+
+#[tokio::test]
+async fn test_rewind_wallet_synced_height_clamps_to_own_birth_height() {
+    // The caller passes one floor for every wallet it rewinds; a wallet must
+    // never be dragged below its own start by another wallet's lower birth.
+    let mut manager = WalletManager::<ManagedWalletInfo>::new(Network::Testnet);
+    let wallet_id = manager
+        .create_wallet_from_mnemonic(
+            TEST_MNEMONIC,
+            500,
+            key_wallet::wallet::initialization::WalletAccountCreationOptions::Default,
+        )
+        .unwrap();
+    manager.update_wallet_synced_height(&wallet_id, 3000);
+    let mut rx = manager.subscribe_events();
+
+    manager.rewind_wallet_synced_height(&wallet_id, 0);
+    assert_eq!(manager.wallet_synced_height(&wallet_id), 499);
+    let synced_events: Vec<_> = drain_events(&mut rx)
+        .into_iter()
+        .filter_map(|e| match e {
+            WalletEvent::SyncHeightAdvanced {
+                height,
+                ..
+            } => Some(height),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(synced_events, vec![499]);
+
+    // Already at the floor: a second rewind changes nothing.
+    manager.rewind_wallet_synced_height(&wallet_id, 0);
+    assert_eq!(manager.wallet_synced_height(&wallet_id), 499);
+    assert!(drain_events(&mut rx).is_empty());
+}
+
 // ---------------------------------------------------------------------------
 // Dry run and irrelevant paths
 // ---------------------------------------------------------------------------
