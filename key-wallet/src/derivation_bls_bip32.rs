@@ -1602,6 +1602,27 @@ mod tests {
         }
     }
 
+    /// API policy for handling scalars above group order
+    mod policy {
+        use super::*;
+
+        /// The BLS12-381 group order.
+        const R: &str = "73eda753299d7d483339d80809a1d80553bda402fffe5bfeffffffff00000001";
+
+        fn parse_bytes_32(hex_str: &str) -> [u8; 32] {
+            hex::decode(hex_str).unwrap().try_into().unwrap()
+        }
+
+        #[test]
+        fn scalar_above_the_order_is_accepted() {
+            let mut over = parse_bytes_32(R);
+            over[31] += 1;
+
+            let read = BlsSecretKey::<Bls12381G2Impl>::from_be_bytes(&over);
+            assert!(bool::from(read.is_some()));
+        }
+    }
+
     #[test]
     fn test_zeroize_clears_key_material() {
         use zeroize::Zeroize;
