@@ -1723,6 +1723,24 @@ mod tests {
             let converted = root.to_bls_extended_priv_key(Network::Testnet).unwrap();
             assert_eq!(converted.private_key.to_be_bytes(), resolve_scalar(&reversed));
         }
+
+        #[test]
+        fn zero_scalar_is_refused() {
+            let read = BlsSecretKey::<Bls12381G2Impl>::from_be_bytes(&[0u8; 32]);
+            assert!(bool::from(read.is_none()));
+        }
+
+        #[test]
+        fn public_key_off_the_curve_is_refused() {
+            // A point is checked where a scalar is reduced; 48 bytes off the curve
+            // have nowhere to land.
+            let off = [0xAAu8; 48];
+            let read = BlsPublicKey::<Bls12381G2Impl>::from_bytes_with_mode(
+                &off,
+                SerializationFormat::Modern,
+            );
+            assert!(read.is_err());
+        }
     }
 
     #[test]
