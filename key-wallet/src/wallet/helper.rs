@@ -618,35 +618,36 @@ impl Wallet {
     }
 
     /// Get a [`crate::KeySource`] capable of public (watch-side) derivation
-    /// for a specific account type.
+    /// for a specific account.
     ///
-    /// This is the key-source counterpart of
-    /// [`Self::extended_public_key_for_account_type`]: ECDSA accounts yield
-    /// [`crate::KeySource::Public`], while the BLS provider operator account
-    /// yields [`crate::KeySource::BLSPublic`] (legacy-scheme non-hardened
-    /// derivation) so gap-limit maintenance can extend the operator key pool
-    /// just like the owner/voting pools.
+    /// Takes the fully-keyed [`crate::account::AccountType`] rather than an
+    /// [`crate::transaction_checking::transaction_router::AccountTypeToCheck`],
+    /// so accounts identified by more than an index — the Dashpay contact
+    /// chains, keyed by the friendship's two identity ids — resolve as well.
+    /// ECDSA accounts yield [`crate::KeySource::Public`], while the BLS
+    /// provider operator account yields [`crate::KeySource::BLSPublic`]
+    /// (legacy-scheme non-hardened derivation) so gap-limit maintenance can
+    /// extend the operator key pool just like the owner/voting pools.
     ///
-    /// Returns [`crate::KeySource::NoKeySource`] for account types that
-    /// cannot derive publicly: the Ed25519 platform node account (SLIP-0010
-    /// supports hardened derivation only) and Dashpay accounts (not
-    /// retrieved via this helper).
-    pub fn key_source_for_account_type(
+    /// Returns [`crate::KeySource::NoKeySource`] for the Ed25519 platform node
+    /// account, which cannot derive publicly (SLIP-0010 supports hardened
+    /// derivation only), and for accounts the wallet does not hold.
+    pub fn key_source_for_account(
         &self,
-        account_type: &crate::transaction_checking::transaction_router::AccountTypeToCheck,
-        account_index: Option<u32>,
+        account_type: crate::account::AccountType,
     ) -> crate::KeySource {
         match account_type {
             #[cfg(feature = "bls")]
-            crate::transaction_checking::transaction_router::AccountTypeToCheck::ProviderOperatorKeys => self
+            crate::account::AccountType::ProviderOperatorKeys => self
                 .accounts
                 .provider_operator_keys
                 .as_ref()
                 .map(|a| crate::KeySource::BLSPublic(a.bls_public_key.clone()))
                 .unwrap_or(crate::KeySource::NoKeySource),
             _ => self
-                .extended_public_key_for_account_type(account_type, account_index)
-                .map(crate::KeySource::Public)
+                .accounts
+                .account_of_type(account_type)
+                .map(|a| crate::KeySource::Public(a.account_xpub))
                 .unwrap_or(crate::KeySource::NoKeySource),
         }
     }
