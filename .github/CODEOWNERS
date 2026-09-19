@@ -1,9 +1,8 @@
 # Generated from dashpay/stale_prs_are_bad policies/rust-dashcore.json; do not edit by hand.
-# Owners and reviewers are combined here for native review routing.
-* @QuantumExplorer
-# Unresolved ownership or reviewer identities; see responsibility documentation.
-/dash-spv/ @ZocoLini @xdustinface
-# Unresolved ownership or reviewer identities; see responsibility documentation.
-/key-wallet/ @QuantumExplorer @ZocoLini @xdustinface
-# Unresolved ownership or reviewer identities; see responsibility documentation.
-/key-wallet-manager/ @QuantumExplorer @ZocoLini @xdustinface
+#
+# Review routing for this repository is controlled by PR Hygiene:
+#   https://github.com/dashpay/stale_prs_are_bad/blob/master/policies/rust-dashcore.json
+#
+# This file has no rules on purpose. Reviewers are requested by the policy
+# once the bots have reported and the author has self-reviewed, not by
+# GitHub the moment a pull request is opened.
