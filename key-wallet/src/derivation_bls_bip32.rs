@@ -757,6 +757,14 @@ impl<'de, C> bincode::BorrowDecode<'de, C> for ExtendedBLSPubKey {
 mod tests {
     use super::*;
 
+    /// BIP39 seed for "abandon abandon ... about" (empty passphrase).
+    const SEED64: &str = "5eb00bbddcf069084889a8ab9155568165f5c453ccb85e70811aaed6f6da5fc19a5ac40b389cd370d086206dec8aa6c43daea6690f20ad3d8d48b2d2ce9e38e4";
+
+    fn master_from_seed64() -> ExtendedBLSPrivKey {
+        let seed = hex::decode(SEED64).unwrap();
+        ExtendedBLSPrivKey::new_master(Network::Mainnet, &seed).unwrap()
+    }
+
     #[test]
     fn test_master_key_generation() {
         let seed = b"this is a test seed for BLS HD key derivation";
@@ -1358,14 +1366,6 @@ mod tests {
     mod dashbls_vectors {
         use super::*;
 
-        /// BIP39 seed for "abandon abandon ... about" (empty passphrase).
-        const SEED64: &str = "5eb00bbddcf069084889a8ab9155568165f5c453ccb85e70811aaed6f6da5fc19a5ac40b389cd370d086206dec8aa6c43daea6690f20ad3d8d48b2d2ce9e38e4";
-
-        fn master_from_seed64() -> ExtendedBLSPrivKey {
-            let seed = hex::decode(SEED64).unwrap();
-            ExtendedBLSPrivKey::new_master(Network::Mainnet, &seed).unwrap()
-        }
-
         fn hardened(idx: u32) -> ChildNumber {
             ChildNumber::from_hardened_idx(idx).unwrap()
         }
@@ -1587,6 +1587,10 @@ mod tests {
         /// The BLS12-381 group order.
         const R: &str = "73eda753299d7d483339d80809a1d80553bda402fffe5bfeffffffff00000001";
 
+        /// HMAC-SHA256("BLS HD seed", SEED64 || 0).
+        const SEED64_HMAC: &str =
+            "9bbf8d5427fa6176cd52d60e544299be4224f82b9012046db1e8af975ddc55c6";
+
         fn parse_bytes_32(hex_str: &str) -> [u8; 32] {
             hex::decode(hex_str).unwrap().try_into().unwrap()
         }
@@ -1617,6 +1621,56 @@ mod tests {
             under[31] -= 1;
 
             assert_eq!(resolve_scalar(&under), under);
+        }
+
+        #[test]
+        fn derivation_reduces_its_tweak() {
+            // Each tweak is an HMAC, so about half land above r; refusing them would've failed
+            // half of all possible values.
+            let master = master_from_seed64();
+
+            // The master seed itself produces an HMAC above r, reduced.
+            assert!(parse_bytes_32(SEED64_HMAC) >= parse_bytes_32(R));
+            assert_eq!(
+                master.private_key.to_be_bytes(),
+                resolve_scalar(&parse_bytes_32(SEED64_HMAC))
+            );
+
+            // Hardened child index 1 lands above r, would be reduced.
+            let mut input = master.private_key.to_be_bytes().to_vec();
+            input.extend_from_slice(
+                &u32::from(ChildNumber::from_hardened_idx(1).unwrap()).to_be_bytes(),
+            );
+            assert!(derivation_hmac(&master.chain_code[..], &input, 0) >= parse_bytes_32(R));
+
+            // Iterate through the first 64, hardened and normal; 128 chances to land above r.
+            for i in 0..64u32 {
+                assert!(master.derive_priv(ChildNumber::from_normal_idx(i).unwrap()).is_ok());
+                assert!(master.derive_priv(ChildNumber::from_hardened_idx(i).unwrap()).is_ok());
+            }
+        }
+
+        #[test]
+        fn secp_secret_above_the_order_is_reduced() {
+            use crate::wallet::root_extended_keys::RootExtendedPrivKey;
+
+            // secp256k1 draws from a larger field, so about half its secrets land
+            // outside BLS's field, construct such a secret.
+            let mut secret = [0u8; 32];
+            secret[0] = 0x02;
+            secret[31] = 0xff;
+            let root = RootExtendedPrivKey {
+                root_private_key: secp256k1::SecretKey::from_slice(&secret).unwrap(),
+                root_chain_code: ChainCode::from([3u8; 32]),
+            };
+
+            // the scalar is read little-endian, then reduced
+            let mut reversed = secret;
+            reversed.reverse();
+            assert!(reversed >= parse_bytes_32(R));
+
+            let converted = root.to_bls_extended_priv_key(Network::Testnet).unwrap();
+            assert_eq!(converted.private_key.to_be_bytes(), resolve_scalar(&reversed));
         }
     }
 
