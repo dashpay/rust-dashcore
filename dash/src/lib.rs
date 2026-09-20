@@ -32,7 +32,7 @@
 //!
 //! * `secp-recovery` - enables calculating public key from a signature and message.
 //! * `signer` - enables singing and validation ECDSA helpers.
-//! * `base64` - (dependency), enables encoding of PSBTs and message signatures.
+//! * `base64` - (dependency), enables encoding of message signatures.
 //! * `unstable` - enables unstable features for testing.
 //! * `rand` - (dependency), makes it more convenient to generate random values.
 //! * `bincode` - (dependency), implements bincode serialization and deserialization.

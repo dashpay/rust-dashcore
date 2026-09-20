@@ -68,7 +68,6 @@ The library is organized into several key modules:
 - **Address Pool Management**: Pre-generated address pools for performance
 - **Transaction Checking**: Efficient transaction ownership detection
 - **UTXO Management**: Track unspent outputs and calculate balances
-- **PSBT Support**: Partially Signed Bitcoin Transaction format
 - **Multi-Network**: Support for mainnet, testnet, and other networks
 
 ## Usage Examples

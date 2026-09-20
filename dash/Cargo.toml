@@ -72,18 +72,9 @@ bincode = { workspace = true, features = ["serde"] }
 assert_matches = "1.5.0"
 dashcore = { path = ".", features = ["core-block-hash-use-x11", "message_verification", "quorum_validation", "signer"] }
 criterion = "0.5"
-key-wallet = { path = "../key-wallet" }
 
 [[example]]
 name = "handshake"
-
-[[example]]
-name = "ecdsa-psbt"
-required-features = ["bitcoinconsensus"]
-
-[[example]]
-name = "taproot-psbt"
-required-features = ["rand-std", "bitcoinconsensus"]
 
 [[bench]]
 name = "transaction"
