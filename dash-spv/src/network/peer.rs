@@ -210,9 +210,7 @@ impl Peer {
 
         let handshake_manager = V2HandshakeManager::new_initiator(network, address);
         match handshake_manager.perform_handshake(stream).await? {
-            V2HandshakeResult::Success(session) => {
-                Ok(V2Transport::new(session.stream, session.cipher, session.session_id, address))
-            }
+            V2HandshakeResult::Success(session) => Ok(V2Transport::new(*session, address)),
             V2HandshakeResult::FallbackToV1 => Err(NetworkError::V2NotSupported),
         }
     }
@@ -242,8 +240,7 @@ impl Peer {
         match handshake_manager.perform_handshake(stream).await {
             Ok(V2HandshakeResult::Success(session)) => {
                 tracing::info!("V2 handshake succeeded with {}", address);
-                let transport =
-                    V2Transport::new(session.stream, session.cipher, session.session_id, address);
+                let transport = V2Transport::new(*session, address);
                 Ok((Box::new(transport), 2))
             }
             Ok(V2HandshakeResult::FallbackToV1) => {
@@ -255,13 +252,34 @@ impl Peer {
                 let transport = Self::establish_v1_transport(address, timeout, network).await?;
                 Ok((Box::new(transport), 1))
             }
-            Err(e) => {
+            Err(e) if Self::should_fall_back_to_v1(&e) => {
                 tracing::warn!("V2 handshake failed with {}: {}, falling back to V1", address, e);
-                // Try V1 as fallback
+                // The peer has already consumed our V2 key bytes, so the original stream
+                // cannot be reused; reconnect with a fresh V1 transport.
                 let transport = Self::establish_v1_transport(address, timeout, network).await?;
                 Ok((Box::new(transport), 1))
             }
+            Err(e) => {
+                tracing::warn!(
+                    "V2 handshake failed with {}: {}, not falling back to V1",
+                    address,
+                    e
+                );
+                Err(e)
+            }
         }
+    }
+
+    /// Whether a failed V2 handshake should be retried over V1.
+    ///
+    /// Only protocol-level failures indicate a peer that does not speak V2: a V1-only
+    /// peer closes the connection (or replies with V1 magic) once it sees our 64-byte
+    /// key. Timeouts and TCP-level errors are propagated instead, so genuine
+    /// connectivity problems are not masked by a second connection attempt. This
+    /// mirrors Dash Core, which only reconnects with V1 when the peer hung up before
+    /// sending anything.
+    fn should_fall_back_to_v1(error: &NetworkError) -> bool {
+        matches!(error, NetworkError::V2HandshakeFailed(_) | NetworkError::V2NotSupported)
     }
 
     /// Connect to the peer (instance method for compatibility).
@@ -649,6 +667,20 @@ mod tests {
     use std::time::{Duration, SystemTime};
 
     use super::Peer;
+    use crate::error::NetworkError;
+
+    #[test]
+    fn v1_fallback_only_on_v2_protocol_failures() {
+        // A V1-only peer hangs up or answers with V1 magic: retry over V1.
+        assert!(Peer::should_fall_back_to_v1(&NetworkError::V2HandshakeFailed("eof".into())));
+        assert!(Peer::should_fall_back_to_v1(&NetworkError::V2NotSupported));
+
+        // Connectivity problems are surfaced rather than masked by a V1 retry.
+        assert!(!Peer::should_fall_back_to_v1(&NetworkError::Timeout));
+        assert!(!Peer::should_fall_back_to_v1(&NetworkError::ConnectionFailed("refused".into())));
+        assert!(!Peer::should_fall_back_to_v1(&NetworkError::PeerDisconnected));
+        assert!(!Peer::should_fall_back_to_v1(&NetworkError::V2DecryptionFailed("tag".into())));
+    }
 
     #[test]
     fn remove_expired_pings() {
