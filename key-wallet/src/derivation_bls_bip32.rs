@@ -48,6 +48,9 @@ use serde::Deserialize;
 
 use crate::bip32::{ChainCode, ChildNumber, DerivationPath, Fingerprint};
 
+/// The HMAC key used for generating the master key.
+const MASTER_HMAC_KEY: &[u8] = b"BLS HD seed";
+
 /// Errors that can occur in BLS HD key derivation
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Error {
@@ -129,6 +132,15 @@ impl Drop for ExtendedBLSPrivKey {
     }
 }
 
+/// HMAC-SHA256 over `input || suffix` used for extended key derivation.
+fn derivation_hmac(key: &[u8], input: &[u8], suffix: u8) -> [u8; 32] {
+    let mut engine: HmacEngine<sha256::Hash> = HmacEngine::new(key);
+    engine.input(input);
+    engine.input(&[suffix]);
+
+    *Hmac::<sha256::Hash>::from_engine(engine).as_byte_array()
+}
+
 impl ExtendedBLSPrivKey {
     /// Create a new master key from a seed
     pub fn new_master(network: Network, seed: &[u8]) -> Result<Self, Error> {
@@ -147,14 +159,7 @@ impl ExtendedBLSPrivKey {
         // They do two separate HMAC-SHA256 operations with different suffixes
 
         // First HMAC with seed||0 for the private key
-        let mut seed_with_suffix = Vec::with_capacity(seed.len() + 1);
-        seed_with_suffix.extend_from_slice(seed);
-        seed_with_suffix.push(0);
-
-        let mut hmac_engine: HmacEngine<sha256::Hash> = HmacEngine::new(b"BLS HD seed");
-        hmac_engine.input(&seed_with_suffix);
-        let hmac_result: Hmac<sha256::Hash> = Hmac::from_engine(hmac_engine);
-        let private_key_bytes = hmac_result.as_byte_array();
+        let private_key_bytes = derivation_hmac(MASTER_HMAC_KEY, seed, 0);
 
         // #[cfg(test)]
         // {
@@ -165,7 +170,7 @@ impl ExtendedBLSPrivKey {
 
         // The C++ implementation does modulo reduction by curve order
         // We need to do the same before converting to BLS private key
-        let private_key = BlsSecretKey::<Bls12381G2Impl>::from_be_bytes(private_key_bytes)
+        let private_key = BlsSecretKey::<Bls12381G2Impl>::from_be_bytes(&private_key_bytes)
             .into_option()
             .ok_or(Error::InvalidPrivateKey)?;
 
@@ -175,12 +180,7 @@ impl ExtendedBLSPrivKey {
         // }
 
         // Second HMAC with seed||1 for the chain code
-        seed_with_suffix[seed.len()] = 1;
-
-        let mut hmac_engine2: HmacEngine<sha256::Hash> = HmacEngine::new(b"BLS HD seed");
-        hmac_engine2.input(&seed_with_suffix);
-        let hmac_result2: Hmac<sha256::Hash> = Hmac::from_engine(hmac_engine2);
-        let chain_code_bytes = hmac_result2.as_byte_array();
+        let chain_code_bytes = derivation_hmac(MASTER_HMAC_KEY, seed, 1);
 
         Ok(ExtendedBLSPrivKey {
             network,
@@ -188,7 +188,7 @@ impl ExtendedBLSPrivKey {
             parent_fingerprint: Default::default(),
             child_number: ChildNumber::from_normal_idx(0).unwrap(),
             private_key,
-            chain_code: ChainCode::from(*chain_code_bytes),
+            chain_code: ChainCode::from(chain_code_bytes),
         })
     }
 
@@ -238,26 +238,15 @@ impl ExtendedBLSPrivKey {
         input_data.extend_from_slice(&child_bytes);
 
         // First HMAC-SHA256 with suffix 0 for the private key
-        let mut input_with_suffix = input_data.clone();
-        input_with_suffix.push(0);
-
-        let mut hmac_engine: HmacEngine<sha256::Hash> = HmacEngine::new(&self.chain_code[..]);
-        hmac_engine.input(&input_with_suffix);
-        let hmac_result: Hmac<sha256::Hash> = Hmac::from_engine(hmac_engine);
-        let key_bytes = hmac_result.as_byte_array();
+        let key_bytes = derivation_hmac(&self.chain_code[..], &input_data, 0);
 
         // Second HMAC-SHA256 with suffix 1 for the chain code
-        input_with_suffix[input_data.len()] = 1;
-
-        let mut hmac_engine2: HmacEngine<sha256::Hash> = HmacEngine::new(&self.chain_code[..]);
-        hmac_engine2.input(&input_with_suffix);
-        let hmac_result2: Hmac<sha256::Hash> = Hmac::from_engine(hmac_engine2);
-        let chain_code_bytes = hmac_result2.as_byte_array();
+        let chain_code_bytes = derivation_hmac(&self.chain_code[..], &input_data, 1);
 
         // Derive the new private key using proper scalar field arithmetic
         let derived_private_key = {
             // Convert tweak to secret key
-            let tweak_key = BlsSecretKey::<Bls12381G2Impl>::from_be_bytes(key_bytes)
+            let tweak_key = BlsSecretKey::<Bls12381G2Impl>::from_be_bytes(&key_bytes)
                 .into_option()
                 .ok_or(Error::InvalidPrivateKey)?;
 
@@ -277,7 +266,7 @@ impl ExtendedBLSPrivKey {
             parent_fingerprint: self.fingerprint(),
             child_number: child,
             private_key: derived_private_key,
-            chain_code: ChainCode::from(*chain_code_bytes),
+            chain_code: ChainCode::from(chain_code_bytes),
         })
     }
 
@@ -427,25 +416,14 @@ impl ExtendedBLSPubKey {
         input_data.extend_from_slice(&child_bytes);
 
         // First HMAC-SHA256 with suffix 0 for the tweak
-        let mut input_with_suffix = input_data.clone();
-        input_with_suffix.push(0);
-
-        let mut hmac_engine: HmacEngine<sha256::Hash> = HmacEngine::new(&self.chain_code[..]);
-        hmac_engine.input(&input_with_suffix);
-        let hmac_result: Hmac<sha256::Hash> = Hmac::from_engine(hmac_engine);
-        let tweak_bytes = hmac_result.as_byte_array();
+        let tweak_bytes = derivation_hmac(&self.chain_code[..], &input_data, 0);
 
         // Second HMAC-SHA256 with suffix 1 for the chain code
-        input_with_suffix[input_data.len()] = 1;
-
-        let mut hmac_engine2: HmacEngine<sha256::Hash> = HmacEngine::new(&self.chain_code[..]);
-        hmac_engine2.input(&input_with_suffix);
-        let hmac_result2: Hmac<sha256::Hash> = Hmac::from_engine(hmac_engine2);
-        let chain_code_bytes = hmac_result2.as_byte_array();
+        let chain_code_bytes = derivation_hmac(&self.chain_code[..], &input_data, 1);
 
         // For BLS public key derivation, we need to do elliptic curve point addition
         // First, convert the tweak bytes to a scalar (private key)
-        let tweak_privkey = BlsSecretKey::<Bls12381G2Impl>::from_be_bytes(tweak_bytes)
+        let tweak_privkey = BlsSecretKey::<Bls12381G2Impl>::from_be_bytes(&tweak_bytes)
             .into_option()
             .ok_or(Error::InvalidPrivateKey)?;
 
@@ -472,7 +450,7 @@ impl ExtendedBLSPubKey {
             parent_fingerprint: self.fingerprint(),
             child_number: child,
             public_key: derived_pubkey,
-            chain_code: ChainCode::from(*chain_code_bytes),
+            chain_code: ChainCode::from(chain_code_bytes),
         })
     }
 
