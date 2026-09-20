@@ -14,8 +14,11 @@
 //!
 //! 1. **V1 Detection Strategy**: bip324 detects V1-only peers *after* reading the
 //!    64-byte remote key (consuming the bytes). dash-spv uses `stream.peek()` to
-//!    detect V1 magic *without* consuming bytes, allowing the same TCP connection
-//!    to be reused for V1 fallback.
+//!    detect V1 magic before committing to the V2 key exchange, so a V1-only peer
+//!    is reported as [`V2HandshakeResult::FallbackToV1`] instead of a decryption
+//!    failure. The caller still reconnects for V1, because the peer has already
+//!    consumed our V2 key bytes and (like Dash Core) will typically have closed
+//!    the connection on seeing a non-magic header.
 //!
 //! 2. **Return Type Mismatch**: bip324 returns split ciphers and a wrapped
 //!    `ProtocolSessionReader<R>`. dash-spv needs the original `TcpStream` back
@@ -65,6 +68,12 @@ pub struct V2Session {
     pub cipher: CipherSession,
     /// Session ID for optional out-of-band MitM verification.
     pub session_id: [u8; 32],
+    /// Ciphertext already read from the socket that follows the version packet.
+    ///
+    /// The peer may send its first application packet in the same TCP segment as the
+    /// handshake's version packet. These bytes must be fed to the transport's receive
+    /// buffer, not discarded, or that first message is lost.
+    pub pending: Vec<u8>,
 }
 
 /// V2 Handshake manager for BIP324 encrypted connections.
@@ -374,6 +383,7 @@ impl V2HandshakeManager {
                                     stream,
                                     cipher,
                                     session_id,
+                                    pending: leftover_data,
                                 })));
                             }
                             Ok(VersionResult::Decoy(next_handshake)) => {
