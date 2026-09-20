@@ -45,6 +45,9 @@ pub const DEFAULT_COINJOIN_GAP_LIMIT: u32 = 100;
 /// Standard gap limit for special purpose keys (identity, provider keys)
 pub const DEFAULT_SPECIAL_GAP_LIMIT: u32 = 5;
 
+/// Gap limit for DashPay contact chains, as recommended by DIP-15.
+pub const DEFAULT_DASHPAY_GAP_LIMIT: u32 = 10;
+
 /// Gap limit for DIP-17 platform payment addresses
 pub const DIP17_GAP_LIMIT: u32 = 20;
 

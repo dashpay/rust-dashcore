@@ -298,15 +298,12 @@ impl WalletTransactionChecker for ManagedWalletInfo {
                 account.mark_address_used(&address_info.address);
             }
 
-            let key_source = wallet.key_source_for_account_type(
-                &account_match.account_type_match.to_account_type_to_check(),
-                account_match.account_type_match.account_index(),
-            );
+            let owning_account_type = account.managed_account_type().to_account_type();
+            let key_source = wallet.key_source_for_account(owning_account_type);
             if matches!(key_source, KeySource::NoKeySource) {
                 continue;
             }
             let rev_before = result.new_addresses.len();
-            let owning_account_type = account.managed_account_type().to_account_type();
             for pool in account.managed_account_type_mut().address_pools_mut() {
                 let pool_type = pool.pool_type;
                 match pool.maintain_gap_limit(&key_source) {

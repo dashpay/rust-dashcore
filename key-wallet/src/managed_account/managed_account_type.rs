@@ -1,8 +1,8 @@
 use crate::account::account_collection::{DashpayContactIdentityId, DashpayOurUserIdentityId};
 use crate::account::StandardAccountType;
 use crate::gap_limit::{
-    DEFAULT_COINJOIN_GAP_LIMIT, DEFAULT_EXTERNAL_GAP_LIMIT, DEFAULT_INTERNAL_GAP_LIMIT,
-    DEFAULT_SPECIAL_GAP_LIMIT, DIP17_GAP_LIMIT,
+    DEFAULT_COINJOIN_GAP_LIMIT, DEFAULT_DASHPAY_GAP_LIMIT, DEFAULT_EXTERNAL_GAP_LIMIT,
+    DEFAULT_INTERNAL_GAP_LIMIT, DEFAULT_SPECIAL_GAP_LIMIT, DIP17_GAP_LIMIT,
 };
 
 use crate::managed_account::address_pool::AddressPoolType;
@@ -731,7 +731,7 @@ impl ManagedAccountType {
                 let pool = Self::single_pool(
                     account_type,
                     AddressPoolType::Absent,
-                    20,
+                    DEFAULT_DASHPAY_GAP_LIMIT,
                     network,
                     key_source,
                 )?;
@@ -750,7 +750,7 @@ impl ManagedAccountType {
                 let pool = Self::single_pool(
                     account_type,
                     AddressPoolType::Absent,
-                    20,
+                    DEFAULT_DASHPAY_GAP_LIMIT,
                     network,
                     key_source,
                 )?;
