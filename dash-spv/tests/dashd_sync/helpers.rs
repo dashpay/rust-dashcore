@@ -220,6 +220,36 @@ pub(super) async fn wait_for_mempool_tx(
     }
 }
 
+/// Wait for a wallet `TransactionDetected` event for a *specific* txid
+pub(super) async fn wait_for_mempool_txid(
+    receiver: &mut broadcast::Receiver<WalletEvent>,
+    expected: Txid,
+) -> bool {
+    let timeout = tokio::time::sleep(Duration::from_secs(30));
+    tokio::pin!(timeout);
+
+    loop {
+        tokio::select! {
+            _ = &mut timeout => return false,
+            result = receiver.recv() => {
+                match result {
+                    Ok(WalletEvent::TransactionDetected { ref record, .. })
+                        if record.txid == expected
+                            && matches!(
+                                record.context,
+                                TransactionContext::Mempool | TransactionContext::InstantSend(_)
+                            ) =>
+                    {
+                        return true;
+                    }
+                    Ok(_) => continue,
+                    Err(_) => return false,
+                }
+            }
+        }
+    }
+}
+
 /// Wait for the mempool manager to reach `Synced` state via the progress watch channel.
 /// Returns `true` if the state is reached within the timeout, `false` otherwise.
 pub(super) async fn wait_for_mempool_synced(
@@ -307,6 +337,23 @@ pub(super) async fn run_disconnect_loop(
                             ).await;
                             assert!(saw_disconnect, "SPV should observe PeerDisconnected");
                             tracing::info!("SPV observed PeerDisconnected");
+
+                            // Losing every peer must be visible as a COUNT, not just
+                            // as a per-peer event: `connected_count: 0` is what sends
+                            // the sync managers back to `WaitingForConnections` so the
+                            // next arrival restarts them, and what an FFI consumer
+                            // bound to `on_peers_updated` sees. It used to be
+                            // unreachable, since only accepting a peer announced.
+                            let saw_empty = wait_for_network_event(
+                                &mut client_handle.network_event_receiver,
+                                |e| matches!(
+                                    e,
+                                    NetworkEvent::PeersUpdated { connected_count: 0, .. }
+                                ),
+                                Duration::from_secs(10),
+                            ).await;
+                            assert!(saw_empty, "SPV should report an empty peer set");
+                            tracing::info!("SPV observed PeersUpdated(0)");
 
                             let saw_reconnect = wait_for_network_event(
                                 &mut client_handle.network_event_receiver,

@@ -349,6 +349,7 @@ impl FFISyncEventCallbacks {
                 start_height,
                 end_height,
                 tip_height,
+                ..
             } => {
                 if let Some(cb) = self.on_filter_headers_stored {
                     cb(*start_height, *end_height, *tip_height, self.user_data);
@@ -550,17 +551,13 @@ impl FFINetworkEventCallbacks {
         use dash_spv::network::NetworkEvent;
 
         match event {
-            NetworkEvent::PeerConnected {
-                address,
-            } => {
+            NetworkEvent::PeerConnected(address) => {
                 if let Some(cb) = self.on_peer_connected {
                     let c_addr = CString::new(address.to_string()).unwrap_or_default();
                     cb(c_addr.as_ptr(), self.user_data);
                 }
             }
-            NetworkEvent::PeerDisconnected {
-                address,
-            } => {
+            NetworkEvent::PeerDisconnected(address) => {
                 if let Some(cb) = self.on_peer_disconnected {
                     let c_addr = CString::new(address.to_string()).unwrap_or_default();
                     cb(c_addr.as_ptr(), self.user_data);
@@ -569,10 +566,9 @@ impl FFINetworkEventCallbacks {
             NetworkEvent::PeersUpdated {
                 connected_count,
                 best_height,
-                ..
             } => {
                 if let Some(cb) = self.on_peers_updated {
-                    cb(*connected_count as u32, best_height.unwrap_or(0), self.user_data);
+                    cb(*connected_count, *best_height, self.user_data);
                 }
             }
         }
