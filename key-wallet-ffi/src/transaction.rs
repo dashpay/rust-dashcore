@@ -17,7 +17,7 @@ use key_wallet::wallet::managed_wallet_info::asset_lock_builder::{
 use key_wallet::wallet::managed_wallet_info::coin_selection::SelectionStrategy::BranchAndBound;
 use key_wallet::wallet::managed_wallet_info::fee::FeeRate;
 use key_wallet::wallet::managed_wallet_info::transaction_building::AccountTypePreference;
-use secp256k1::{Message, Secp256k1, SecretKey};
+use secp256k1::{Message, SecretKey};
 use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
 use std::ptr;
@@ -596,9 +596,8 @@ pub unsafe extern "C" fn transaction_sign_input(
     };
 
     // Sign
-    let secp = Secp256k1::new();
     let message = Message::from_digest(sighash);
-    let sig = secp.sign_ecdsa(message, &privkey);
+    let sig = privkey.sign_ecdsa(message);
 
     // Build signature script (simplified P2PKH)
     let mut sig_bytes = sig.serialize_der().to_vec();

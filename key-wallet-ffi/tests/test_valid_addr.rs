@@ -15,8 +15,6 @@ fn test_valid_testnet_address() {
 
     if let Some(account) = wallet.get_bip44_account(0) {
         use key_wallet::ChildNumber;
-        use secp256k1::Secp256k1;
-        let secp = Secp256k1::new();
 
         let child_external = ChildNumber::from_normal_idx(0).unwrap();
         let child_index = ChildNumber::from_normal_idx(0).unwrap();

@@ -252,7 +252,7 @@ mod tests {
     //! (signature + pubkey pushes), so that fixture stays hand-built.
     use super::*;
     use dashcore::consensus::serialize;
-    use dashcore::secp256k1::{Secp256k1, SecretKey};
+    use dashcore::secp256k1::SecretKey;
     use dashcore::{OutPoint, TxIn, TxOut, Txid, Witness};
     use std::ffi::CStr;
 
@@ -321,7 +321,6 @@ mod tests {
     }
 
     fn test_pubkey() -> PublicKey {
-        let secp = Secp256k1::new();
         let sk = SecretKey::from_secret_bytes([0x42u8; 32]).expect("valid secret key");
         PublicKey::new(sk.public_key())
     }
