@@ -322,7 +322,7 @@ mod tests {
 
     fn test_pubkey() -> PublicKey {
         let secp = Secp256k1::new();
-        let sk = SecretKey::from_slice(&[0x42u8; 32]).expect("valid secret key");
+        let sk = SecretKey::from_byte_array(&[0x42u8; 32]).expect("valid secret key");
         PublicKey::new(sk.public_key(&secp))
     }
 

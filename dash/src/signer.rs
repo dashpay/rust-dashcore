@@ -64,7 +64,10 @@ pub fn sign(data: &[u8], private_key: &[u8]) -> Result<[u8; 65], anyhow::Error> 
 
 /// signs the hash of data and get the ECDSA signature
 pub fn sign_hash(data_hash: &[u8], private_key: &[u8]) -> Result<[u8; 65], anyhow::Error> {
-    let pk = SecretKey::from_slice(private_key)
+    let private_key: &[u8; 32] = private_key
+        .try_into()
+        .map_err(|_| anyhow!("Invalid ECDSA private key: must be 32 bytes"))?;
+    let pk = SecretKey::from_byte_array(private_key)
         .map_err(|e| anyhow!("Invalid ECDSA private key: {}", e))?;
 
     // TODO enable support for features in rust-dpp and allow to use global objects (SECP256K1)
@@ -272,7 +275,8 @@ mod test {
         let secp = Secp256k1::new();
         let data = hex!("fafafa");
         let data_hash = double_sha(&data);
-        let secret_key = SecretKey::from_slice(&k.private_key).unwrap();
+        let secret_key =
+            SecretKey::from_byte_array(k.private_key.as_slice().try_into().unwrap()).unwrap();
 
         let unrecoverable_signature =
             secp.sign_ecdsa(&Message::from_digest(data_hash.try_into().unwrap()), &secret_key);

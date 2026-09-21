@@ -1336,9 +1336,15 @@ impl ControlBlock {
         let output_key_parity =
             secp256k1::Parity::from_i32((sl[0] & 1) as i32).map_err(TaprootError::InvalidParity)?;
         let leaf_version = LeafVersion::from_consensus(sl[0] & TAPROOT_LEAF_MASK)?;
-        let internal_key = UntweakedPublicKey::from_slice(&sl[1..TAPROOT_CONTROL_BASE_SIZE])
+        // Chunking the key off the parity byte yields the array
+        let Some((internal_key, merkle_branch)) =
+            sl[1..].split_first_chunk::<{ secp256k1::constants::SCHNORR_PUBLIC_KEY_SIZE }>()
+        else {
+            return Err(TaprootError::InvalidControlBlockSize(sl.len()));
+        };
+        let internal_key = UntweakedPublicKey::from_byte_array(internal_key)
             .map_err(TaprootError::InvalidInternalKey)?;
-        let merkle_branch = TaprootMerkleBranch::decode(&sl[TAPROOT_CONTROL_BASE_SIZE..])?;
+        let merkle_branch = TaprootMerkleBranch::decode(merkle_branch)?;
         Ok(ControlBlock {
             leaf_version,
             output_key_parity,

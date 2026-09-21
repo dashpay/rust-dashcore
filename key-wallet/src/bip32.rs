@@ -419,9 +419,10 @@ impl<C> bincode::Decode<C> for ExtendedPrivKey {
         let child_number = ChildNumber::decode(decoder)?;
         // Decode the private key from bytes
         let private_key_bytes: [u8; 32] = <[u8; 32]>::decode(decoder)?;
-        let private_key = secp256k1::SecretKey::from_slice(&private_key_bytes).map_err(|e| {
-            bincode::error::DecodeError::OtherString(format!("Invalid private key: {}", e))
-        })?;
+        let private_key =
+            secp256k1::SecretKey::from_byte_array(&private_key_bytes).map_err(|e| {
+                bincode::error::DecodeError::OtherString(format!("Invalid private key: {}", e))
+            })?;
         let chain_code = ChainCode::decode(decoder)?;
 
         Ok(ExtendedPrivKey {
@@ -446,9 +447,10 @@ impl<'de, C> bincode::BorrowDecode<'de, C> for ExtendedPrivKey {
         let child_number = ChildNumber::borrow_decode(decoder)?;
         // Decode the private key from bytes
         let private_key_bytes: [u8; 32] = <[u8; 32]>::borrow_decode(decoder)?;
-        let private_key = secp256k1::SecretKey::from_slice(&private_key_bytes).map_err(|e| {
-            bincode::error::DecodeError::OtherString(format!("Invalid private key: {}", e))
-        })?;
+        let private_key =
+            secp256k1::SecretKey::from_byte_array(&private_key_bytes).map_err(|e| {
+                bincode::error::DecodeError::OtherString(format!("Invalid private key: {}", e))
+            })?;
         let chain_code = ChainCode::borrow_decode(decoder)?;
 
         Ok(ExtendedPrivKey {
@@ -540,9 +542,10 @@ impl<C> bincode::Decode<C> for ExtendedPubKey {
         let child_number = ChildNumber::decode(decoder)?;
         // Decode the public key from bytes (33 bytes for compressed)
         let public_key_bytes: [u8; 33] = <[u8; 33]>::decode(decoder)?;
-        let public_key = secp256k1::PublicKey::from_slice(&public_key_bytes).map_err(|e| {
-            bincode::error::DecodeError::OtherString(format!("Invalid public key: {}", e))
-        })?;
+        let public_key = secp256k1::PublicKey::from_byte_array_compressed(&public_key_bytes)
+            .map_err(|e| {
+                bincode::error::DecodeError::OtherString(format!("Invalid public key: {}", e))
+            })?;
         let chain_code = ChainCode::decode(decoder)?;
 
         Ok(ExtendedPubKey {
@@ -567,9 +570,10 @@ impl<'de, C> bincode::BorrowDecode<'de, C> for ExtendedPubKey {
         let child_number = ChildNumber::borrow_decode(decoder)?;
         // Decode the public key from bytes (33 bytes for compressed)
         let public_key_bytes: [u8; 33] = <[u8; 33]>::borrow_decode(decoder)?;
-        let public_key = secp256k1::PublicKey::from_slice(&public_key_bytes).map_err(|e| {
-            bincode::error::DecodeError::OtherString(format!("Invalid public key: {}", e))
-        })?;
+        let public_key = secp256k1::PublicKey::from_byte_array_compressed(&public_key_bytes)
+            .map_err(|e| {
+                bincode::error::DecodeError::OtherString(format!("Invalid public key: {}", e))
+            })?;
         let chain_code = ChainCode::borrow_decode(decoder)?;
 
         Ok(ExtendedPubKey {
@@ -1526,6 +1530,14 @@ impl From<base58ck::Error> for Error {
     }
 }
 
+/// The secret-key half of a BIP32 HMAC-SHA512 output.
+fn hmac_secret_half(hmac: &Hmac<sha512::Hash>) -> [u8; secp256k1::constants::SECRET_KEY_SIZE] {
+    *hmac
+        .as_byte_array()
+        .first_chunk::<{ secp256k1::constants::SECRET_KEY_SIZE }>()
+        .expect("sha512 HMAC output is 64 bytes")
+}
+
 impl ExtendedPrivKey {
     /// Construct a new master key from a seed value
     pub fn new_master(network: Network, seed: &[u8]) -> Result<ExtendedPrivKey, Error> {
@@ -1538,7 +1550,7 @@ impl ExtendedPrivKey {
             depth: 0,
             parent_fingerprint: Default::default(),
             child_number: ChildNumber::from_normal_idx(0)?,
-            private_key: secp256k1::SecretKey::from_slice(&hmac_result[..32])?,
+            private_key: secp256k1::SecretKey::from_byte_array(&hmac_secret_half(&hmac_result))?,
             chain_code: ChainCode::from_hmac(hmac_result),
         })
     }
@@ -1608,7 +1620,7 @@ impl ExtendedPrivKey {
             }
         }
         let hmac_result: Hmac<sha512::Hash> = Hmac::from_engine(hmac_engine);
-        let sk = secp256k1::SecretKey::from_slice(&hmac_result[..32])
+        let sk = secp256k1::SecretKey::from_byte_array(&hmac_secret_half(&hmac_result))
             .expect("statistically impossible to hit");
         let tweaked =
             sk.add_tweak(&self.private_key.into()).expect("statistically impossible to hit");
@@ -1664,7 +1676,9 @@ impl ExtendedPrivKey {
             chain_code: data[13..45]
                 .try_into()
                 .expect("45 - 13 == 32, which is the ChainCode length"),
-            private_key: secp256k1::SecretKey::from_slice(&data[46..78])?,
+            private_key: secp256k1::SecretKey::from_byte_array(
+                <&[u8; 32]>::try_from(&data[46..78]).expect("78 - 46 == 32, the key length"),
+            )?,
         })
     }
 
@@ -1718,7 +1732,9 @@ impl ExtendedPrivKey {
         };
 
         let chain_code = data[42..74].try_into().expect("32 bytes for chain code");
-        let private_key = secp256k1::SecretKey::from_slice(&data[75..107])?;
+        let private_key = secp256k1::SecretKey::from_byte_array(
+            <&[u8; 32]>::try_from(&data[75..107]).expect("107 - 75 == 32, the key length"),
+        )?;
 
         Ok(ExtendedPrivKey {
             network,
@@ -1870,7 +1886,8 @@ impl ExtendedPubKey {
 
                 let hmac_result: Hmac<sha512::Hash> = Hmac::from_engine(hmac_engine);
 
-                let private_key = secp256k1::SecretKey::from_slice(&hmac_result[..32])?;
+                let private_key =
+                    secp256k1::SecretKey::from_byte_array(&hmac_secret_half(&hmac_result))?;
                 let chain_code = ChainCode::from_hmac(hmac_result);
                 Ok((private_key, chain_code))
             }
@@ -1888,7 +1905,8 @@ impl ExtendedPubKey {
                 let hmac_result: Hmac<sha512::Hash> = Hmac::from_engine(hmac_engine);
 
                 // IL must be less than n (order of the curve)
-                let private_key = secp256k1::SecretKey::from_slice(&hmac_result[..32])?;
+                let private_key =
+                    secp256k1::SecretKey::from_byte_array(&hmac_secret_half(&hmac_result))?;
                 let chain_code = ChainCode::from_hmac(hmac_result);
 
                 Ok((private_key, chain_code))
@@ -1956,7 +1974,9 @@ impl ExtendedPubKey {
             chain_code: data[13..45]
                 .try_into()
                 .expect("45 - 13 == 32, which is the ChainCode length"),
-            public_key: secp256k1::PublicKey::from_slice(&data[45..78])?,
+            public_key: secp256k1::PublicKey::from_byte_array_compressed(
+                <&[u8; 33]>::try_from(&data[45..78]).expect("78 - 45 == 33, the key length"),
+            )?,
         })
     }
 
@@ -2061,7 +2081,9 @@ impl ExtendedPubKey {
         let chain_code = data[42..74].try_into().expect("32 bytes for chain code");
 
         // Key data (33 bytes)
-        let public_key = secp256k1::PublicKey::from_slice(&data[74..107])?;
+        let public_key = secp256k1::PublicKey::from_byte_array_compressed(
+            <&[u8; 33]>::try_from(&data[74..107]).expect("107 - 74 == 33, the key length"),
+        )?;
 
         Ok(ExtendedPubKey {
             network,

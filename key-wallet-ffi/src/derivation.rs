@@ -478,11 +478,13 @@ pub unsafe extern "C" fn key_wallet_derive_address_from_key(
         return ptr::null_mut();
     }
 
-    let key_slice = slice::from_raw_parts(private_key, 32);
+    let Ok(key_bytes) = <&[u8; 32]>::try_from(slice::from_raw_parts(private_key, 32)) else {
+        return ptr::null_mut();
+    };
 
     // Create a secp256k1 private key
     let secp = Secp256k1::new();
-    let secret_key = match secp256k1::SecretKey::from_slice(key_slice) {
+    let secret_key = match secp256k1::SecretKey::from_byte_array(key_bytes) {
         Ok(sk) => sk,
         Err(_) => return ptr::null_mut(),
     };

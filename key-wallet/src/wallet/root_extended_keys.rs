@@ -254,7 +254,7 @@ impl zeroize::Zeroize for RootExtendedPubKey {
     fn zeroize(&mut self) {
         // Replace the public key with a dummy value (generator point G)
         // This is a best-effort zeroization since PublicKey doesn't implement Zeroize
-        self.root_public_key = secp256k1::PublicKey::from_slice(&[
+        self.root_public_key = secp256k1::PublicKey::from_byte_array_compressed(&[
             0x02, 0x79, 0xbe, 0x66, 0x7e, 0xf9, 0xdc, 0xbb, 0xac, 0x55, 0xa0, 0x62, 0x95, 0xce,
             0x87, 0x0b, 0x07, 0x02, 0x9b, 0xfc, 0xdb, 0x2d, 0xce, 0x28, 0xd9, 0x59, 0xf2, 0x81,
             0x5b, 0x16, 0xf8, 0x17, 0x98,
@@ -320,7 +320,8 @@ impl<C> Decode<C> for RootExtendedPubKey {
     ) -> Result<Self, bincode::error::DecodeError> {
         // Decode the public key bytes
         let public_key_bytes: [u8; 33] = bincode::Decode::decode(decoder)?;
-        let root_public_key = secp256k1::PublicKey::from_slice(&public_key_bytes).map_err(|e| {
+        let root_public_key = secp256k1::PublicKey::from_byte_array_compressed(&public_key_bytes)
+            .map_err(|e| {
             bincode::error::DecodeError::OtherString(format!("Invalid public key: {}", e))
         })?;
 

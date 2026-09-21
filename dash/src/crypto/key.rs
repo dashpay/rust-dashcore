@@ -273,21 +273,28 @@ impl PublicKey {
 
     /// Deserialize a public key from a slice
     pub fn from_slice(data: &[u8]) -> Result<PublicKey, Error> {
-        let compressed = match data.len() {
-            33 => true,
-            65 => false,
+        let (compressed, inner) = match data.len() {
+            constants::PUBLIC_KEY_SIZE => {
+                let data = <&[u8; constants::PUBLIC_KEY_SIZE]>::try_from(data)
+                    .map_err(|_| Error::Secp256k1(secp256k1::Error::InvalidPublicKey))?;
+                (true, secp256k1::PublicKey::from_byte_array_compressed(data)?)
+            }
+            constants::UNCOMPRESSED_PUBLIC_KEY_SIZE => {
+                if data[0] != 0x04 {
+                    return Err(Error::InvalidKeyPrefix(data[0]));
+                }
+                let data = <&[u8; constants::UNCOMPRESSED_PUBLIC_KEY_SIZE]>::try_from(data)
+                    .map_err(|_| Error::Secp256k1(secp256k1::Error::InvalidPublicKey))?;
+                (false, secp256k1::PublicKey::from_byte_array_uncompressed(data)?)
+            }
             len => {
                 return Err(base58::Error::InvalidLength(len).into());
             }
         };
 
-        if !compressed && data[0] != 0x04 {
-            return Err(Error::InvalidKeyPrefix(data[0]));
-        }
-
         Ok(PublicKey {
             compressed,
-            inner: secp256k1::PublicKey::from_slice(data)?,
+            inner,
         })
     }
 
@@ -381,8 +388,9 @@ impl PrivateKey {
     /// Deserialize a private key from a slice
     #[deprecated(since = "0.40.0", note = "Use `from_byte_array` instead.")]
     pub fn from_slice(data: &[u8], network: Network) -> Result<PrivateKey, Error> {
-        #[allow(deprecated)]
-        Ok(PrivateKey::new(secp256k1::SecretKey::from_slice(data)?, network))
+        let data = <&[u8; constants::SECRET_KEY_SIZE]>::try_from(data)
+            .map_err(|_| Error::Secp256k1(secp256k1::Error::InvalidSecretKey))?;
+        PrivateKey::from_byte_array(data, network)
     }
 
     pub fn from_byte_array(data: &[u8; 32], network: Network) -> Result<PrivateKey, Error> {
@@ -434,12 +442,14 @@ impl PrivateKey {
             }
         };
 
+        let secret = data[1..]
+            .first_chunk::<{ constants::SECRET_KEY_SIZE }>()
+            .ok_or(Error::Base58(base58::Error::InvalidLength(data.len())))?;
+
         Ok(PrivateKey {
             compressed,
             network,
-            inner: secp256k1::SecretKey::from_byte_array(
-                <&[u8; 32]>::try_from(&data[1..33]).expect("expected 32 bytes"),
-            )?,
+            inner: secp256k1::SecretKey::from_byte_array(secret)?,
         })
     }
 }

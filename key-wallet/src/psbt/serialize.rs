@@ -162,7 +162,21 @@ impl Serialize for secp256k1::PublicKey {
 
 impl Deserialize for secp256k1::PublicKey {
     fn deserialize(bytes: &[u8]) -> Result<Self, Error> {
-        secp256k1::PublicKey::from_slice(bytes).map_err(Error::InvalidSecp256k1PublicKey)
+        let invalid = || Error::InvalidSecp256k1PublicKey(secp256k1::Error::InvalidPublicKey);
+        match bytes.len() {
+            secp256k1::constants::PUBLIC_KEY_SIZE => {
+                secp256k1::PublicKey::from_byte_array_compressed(
+                    bytes.try_into().map_err(|_| invalid())?,
+                )
+            }
+            secp256k1::constants::UNCOMPRESSED_PUBLIC_KEY_SIZE => {
+                secp256k1::PublicKey::from_byte_array_uncompressed(
+                    bytes.try_into().map_err(|_| invalid())?,
+                )
+            }
+            _ => return Err(invalid()),
+        }
+        .map_err(Error::InvalidSecp256k1PublicKey)
     }
 }
 
@@ -271,7 +285,8 @@ impl Serialize for XOnlyPublicKey {
 
 impl Deserialize for XOnlyPublicKey {
     fn deserialize(bytes: &[u8]) -> Result<Self, Error> {
-        XOnlyPublicKey::from_slice(bytes).map_err(|_| Error::InvalidXOnlyPublicKey)
+        let bytes = <&[u8; 32]>::try_from(bytes).map_err(|_| Error::InvalidXOnlyPublicKey)?;
+        XOnlyPublicKey::from_byte_array(bytes).map_err(|_| Error::InvalidXOnlyPublicKey)
     }
 }
 

@@ -585,8 +585,10 @@ pub unsafe extern "C" fn transaction_sign_input(
     }
 
     // Parse private key
-    let privkey_slice = slice::from_raw_parts(private_key, 32);
-    let privkey = match SecretKey::from_slice(privkey_slice) {
+    let Ok(privkey_bytes) = <&[u8; 32]>::try_from(slice::from_raw_parts(private_key, 32)) else {
+        return -1;
+    };
+    let privkey = match SecretKey::from_byte_array(privkey_bytes) {
         Ok(k) => k,
         Err(_) => {
             return -1;
