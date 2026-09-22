@@ -79,6 +79,9 @@ impl From<crate::bls_sig_utils::BlsError> for MessageVerificationError {
         match e {
             BlsError::InvalidPublicKey(s) => Self::InvalidBLSPublicKey(s),
             BlsError::InvalidSignature(s) => Self::InvalidBLSSignature(s),
+            BlsError::InvalidSecretKey => {
+                Self::InvalidBLSPublicKey("invalid secret key".to_string())
+            }
             BlsError::InvalidTweak => Self::InvalidBLSPublicKey("invalid tweak".to_string()),
         }
     }

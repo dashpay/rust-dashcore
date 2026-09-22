@@ -39,13 +39,12 @@ use dashcore_hashes::{sha256, Hash, HashEngine, Hmac, HmacEngine};
 use std::error;
 
 // NOTE: We use Bls12381G2Impl for BLS keys (48-byte public keys)
-use dashcore::bls_sig_utils::{BLSPublicKey, BlsScheme};
+use dashcore::bls_sig_utils::{BLSPublicKey, BlsScheme, BlsSkBytes};
 
 /// The scheme an [`ExtendedBLSPubKey`] stores its key bytes under.
 ///
 /// Storage is fixed; the derivation mode only decides what gets hashed.
 const CANONICAL: BlsScheme = BlsScheme::Modern;
-use dashcore::blsful::{Bls12381G2Impl, PublicKey as BlsfulPublicKey, SecretKey as BlsSecretKey};
 
 use dashcore::Network;
 #[cfg(feature = "serde")]
@@ -105,20 +104,19 @@ pub struct ExtendedBLSPrivKey {
     /// Child number
     pub child_number: ChildNumber,
     /// Private key (BLS secret key)
-    pub private_key: BlsSecretKey<Bls12381G2Impl>,
+    pub private_key: BlsSkBytes,
     /// Chain code for derivation
     pub chain_code: ChainCode,
 }
 
-// Hand-written (not `#[derive(Zeroize)]`): `BlsSecretKey` has no `Zeroize`
-// impl of its own, but its inner scalar (public field `0`) does, so we wipe
-// the value field by field. `Drop` (below) calls this, so the key is wiped
-// automatically on scope exit with no caller action required.
+// Hand-written (not `#[derive(Zeroize)]`) so every field is named and the
+// derivation metadata gets cleared alongside the key. `Drop` (below) calls
+// this, so the key is wiped on scope exit with no caller action required.
 // Cf. `ExtendedPrivKey` in `bip32`.
 impl zeroize::Zeroize for ExtendedBLSPrivKey {
     fn zeroize(&mut self) {
         // Secret key material.
-        self.private_key.0.zeroize();
+        self.private_key.zeroize();
         self.chain_code.zeroize();
         // Derivation metadata — cleared too so the whole value is wiped.
         self.depth.zeroize();
@@ -173,15 +171,15 @@ impl ExtendedBLSPrivKey {
         //     eprintln!("HMAC output (hex): {}", hex::encode(private_key_bytes));
         // }
 
-        // The C++ implementation does modulo reduction by curve order
-        // We need to do the same before converting to BLS private key
-        let private_key = BlsSecretKey::<Bls12381G2Impl>::from_be_bytes(&private_key_bytes)
-            .into_option()
-            .ok_or(Error::InvalidPrivateKey)?;
+        // The C++ implementation reduces modulo the curve order
+        let private_key = BlsSkBytes::from_bytes(private_key_bytes)
+            .as_scheme(CANONICAL)
+            .canonicalize()
+            .map_err(|_| Error::InvalidPrivateKey)?;
 
         // #[cfg(test)]
         // {
-        //     eprintln!("After from_be_bytes (hex): {}", hex::encode(private_key.to_be_bytes()));
+        //     eprintln!("After from_be_bytes (hex): {}", hex::encode(*private_key.to_bytes()));
         // }
 
         // Second HMAC with seed||1 for the chain code
@@ -234,7 +232,7 @@ impl ExtendedBLSPrivKey {
             // Hardened derivation: private_key || index
             // (no leading 0x00 — that prefix belongs to secp256k1 BIP32,
             // where it pads the 33-byte pubkey slot; dashbls doesn't use it)
-            input_data.extend_from_slice(&self.private_key.to_be_bytes());
+            input_data.extend_from_slice(self.private_key.as_bytes());
         } else {
             // Non-hardened derivation: public_key || index
             let hashed = self
@@ -254,21 +252,11 @@ impl ExtendedBLSPrivKey {
         let chain_code_bytes = derivation_hmac(&self.chain_code[..], &input_data, 1);
 
         // Derive the new private key using proper scalar field arithmetic
-        let derived_private_key = {
-            // Convert tweak to secret key
-            let tweak_key = BlsSecretKey::<Bls12381G2Impl>::from_be_bytes(&key_bytes)
-                .into_option()
-                .ok_or(Error::InvalidPrivateKey)?;
-
-            // Perform scalar addition in the BLS12-381 field
-            // The SecretKey struct has a public field (0) containing the scalar
-            // We add the scalars and create a new SecretKey from the result
-            let parent_scalar = self.private_key.0;
-            let tweak_scalar = tweak_key.0;
-            let derived_scalar = parent_scalar + tweak_scalar;
-
-            BlsSecretKey::<Bls12381G2Impl>(derived_scalar)
-        };
+        let derived_private_key = self
+            .private_key
+            .as_scheme(CANONICAL)
+            .add_tweak(&key_bytes)
+            .map_err(|_| Error::InvalidPrivateKey)?;
 
         Ok(ExtendedBLSPrivKey {
             network: self.network,
@@ -282,12 +270,10 @@ impl ExtendedBLSPrivKey {
 
     /// Get the public key for this private key
     pub fn public_key(&self) -> BLSPublicKey {
-        BLSPublicKey::from_bytes(
-            BlsfulPublicKey::from(&self.private_key)
-                .to_bytes_with_mode(CANONICAL.serialization_format())
-                .try_into()
-                .expect("a G1 point is 48 bytes"),
-        )
+        self.private_key
+            .as_scheme(CANONICAL)
+            .public_key()
+            .expect("a validated secret key has a public key")
     }
 
     /// Get the public key bytes (modern/IETF serialization)
@@ -550,7 +536,7 @@ impl serde::Serialize for ExtendedBLSPrivKey {
         state.serialize_field("depth", &self.depth)?;
         state.serialize_field("parent_fingerprint", &self.parent_fingerprint)?;
         state.serialize_field("child_number", &self.child_number)?;
-        state.serialize_field("private_key", &self.private_key.to_be_bytes())?;
+        state.serialize_field("private_key", self.private_key.as_bytes().as_slice())?;
         state.serialize_field("chain_code", &self.chain_code)?;
         state.end()
     }
@@ -573,9 +559,10 @@ impl<'de> serde::Deserialize<'de> for ExtendedBLSPrivKey {
         }
 
         let helper = Helper::deserialize(deserializer)?;
-        let private_key = BlsSecretKey::<Bls12381G2Impl>::from_be_bytes(&helper.private_key)
-            .into_option()
-            .ok_or_else(|| serde::de::Error::custom("Invalid BLS private key"))?;
+        let private_key = BlsSkBytes::from_bytes(helper.private_key)
+            .as_scheme(CANONICAL)
+            .canonicalize()
+            .map_err(|_| serde::de::Error::custom("Invalid BLS private key"))?;
 
         Ok(ExtendedBLSPrivKey {
             network: helper.network,
@@ -653,8 +640,7 @@ impl bincode::Encode for ExtendedBLSPrivKey {
         self.parent_fingerprint.encode(encoder)?;
         self.child_number.encode(encoder)?;
         // Encode private key as bytes
-        let private_key_bytes = self.private_key.to_be_bytes();
-        private_key_bytes.encode(encoder)?;
+        (*self.private_key.to_bytes()).encode(encoder)?;
         self.chain_code.encode(encoder)?;
         Ok(())
     }
@@ -670,11 +656,10 @@ impl<C> bincode::Decode<C> for ExtendedBLSPrivKey {
         let parent_fingerprint = Fingerprint::decode(decoder)?;
         let child_number = ChildNumber::decode(decoder)?;
         let private_key_bytes: [u8; 32] = <[u8; 32]>::decode(decoder)?;
-        let private_key = BlsSecretKey::<Bls12381G2Impl>::from_be_bytes(&private_key_bytes)
-            .into_option()
-            .ok_or_else(|| {
-                bincode::error::DecodeError::OtherString("Invalid BLS private key".to_string())
-            })?;
+        let private_key =
+            BlsSkBytes::from_bytes(private_key_bytes).as_scheme(CANONICAL).canonicalize().map_err(
+                |_| bincode::error::DecodeError::OtherString("Invalid BLS private key".to_string()),
+            )?;
         let chain_code = ChainCode::decode(decoder)?;
 
         Ok(ExtendedBLSPrivKey {
@@ -1074,10 +1059,7 @@ mod tests {
             assert_eq!(master_priv.parent_fingerprint, deserialized.parent_fingerprint);
             assert_eq!(master_priv.child_number, deserialized.child_number);
             assert_eq!(master_priv.chain_code, deserialized.chain_code);
-            assert_eq!(
-                master_priv.private_key.to_be_bytes(),
-                deserialized.private_key.to_be_bytes()
-            );
+            assert_eq!(master_priv.private_key.to_bytes(), deserialized.private_key.to_bytes());
 
             // Test public key serialization
             let pub_serialized = serde_json::to_string(&master_pub).unwrap();
@@ -1104,7 +1086,7 @@ mod tests {
             assert_eq!(master_priv.parent_fingerprint, decoded.parent_fingerprint);
             assert_eq!(master_priv.child_number, decoded.child_number);
             assert_eq!(master_priv.chain_code, decoded.chain_code);
-            assert_eq!(master_priv.private_key.to_be_bytes(), decoded.private_key.to_be_bytes());
+            assert_eq!(master_priv.private_key.to_bytes(), decoded.private_key.to_bytes());
 
             // Test public key
             let pub_encoded =
@@ -1179,8 +1161,8 @@ mod tests {
 
         // Keys derived with same index should be equal
         assert_eq!(
-            esk77_hardened.private_key.to_be_bytes(),
-            esk77_hardened_copy.private_key.to_be_bytes()
+            esk77_hardened.private_key.to_bytes(),
+            esk77_hardened_copy.private_key.to_bytes()
         );
         assert_eq!(esk77_hardened.chain_code, esk77_hardened_copy.chain_code);
 
@@ -1188,10 +1170,7 @@ mod tests {
         let esk77_normal = esk1.derive_priv(ChildNumber::from_normal_idx(77).unwrap()).unwrap();
 
         // Hardened and non-hardened should be different
-        assert_ne!(
-            esk77_hardened.private_key.to_be_bytes(),
-            esk77_normal.private_key.to_be_bytes()
-        );
+        assert_ne!(esk77_hardened.private_key.to_bytes(), esk77_normal.private_key.to_bytes());
 
         // Test vector 2: {1, 50, 6, 244, 24, 199, 1, 0, 0, 0}
         let seed2 = vec![1u8, 50, 6, 244, 24, 199, 1, 0, 0, 0];
@@ -1326,8 +1305,8 @@ mod tests {
 
         // Verify hardened != unhardened
         assert_ne!(
-            child_sk_hardened.private_key.to_be_bytes(),
-            child_sk_unhardened.private_key.to_be_bytes()
+            child_sk_hardened.private_key.to_bytes(),
+            child_sk_unhardened.private_key.to_bytes()
         );
         assert_ne!(
             child_sk_hardened.to_extended_pub_key().public_key.to_bytes(),
@@ -1356,8 +1335,8 @@ mod tests {
 
         // Hardened derivation should be deterministic
         assert_eq!(
-            child_hardened.private_key.to_be_bytes(),
-            child_hardened_copy.private_key.to_be_bytes(),
+            child_hardened.private_key.to_bytes(),
+            child_hardened_copy.private_key.to_bytes(),
             "Hardened derivation should be deterministic"
         );
         assert_eq!(child_hardened.chain_code, child_hardened_copy.chain_code);
@@ -1365,8 +1344,8 @@ mod tests {
 
         // Hardened and unhardened should produce different keys
         assert_ne!(
-            child_hardened.private_key.to_be_bytes(),
-            child_unhardened.private_key.to_be_bytes(),
+            child_hardened.private_key.to_bytes(),
+            child_unhardened.private_key.to_bytes(),
             "Hardened and unhardened derivation should produce different keys"
         );
         assert_ne!(
@@ -1398,7 +1377,7 @@ mod tests {
         fn master_from_seed() {
             let master = master_from_seed64();
             assert_eq!(
-                hex::encode(master.private_key.to_be_bytes()),
+                hex::encode(master.private_key.to_bytes()),
                 "27d1e600fe5ce42e9a18fe064aa0c1b8ee6754289013a86eb1e8af985ddc55c5"
             );
             assert_eq!(
@@ -1430,7 +1409,7 @@ mod tests {
                 .unwrap();
 
             assert_eq!(
-                hex::encode(account.private_key.to_be_bytes()),
+                hex::encode(account.private_key.to_bytes()),
                 "5f36c0e346c6e6275d6550a09857325e3f54f2a962eb09a48f61756f7b4bbfb0"
             );
             assert_eq!(
@@ -1461,7 +1440,7 @@ mod tests {
                 let child = account
                     .derive_priv_legacy(ChildNumber::from_normal_idx(i as u32).unwrap())
                     .unwrap();
-                assert_eq!(hex::encode(child.private_key.to_be_bytes()), *sk, "sk {}", i);
+                assert_eq!(hex::encode(child.private_key.to_bytes()), *sk, "sk {}", i);
                 assert_eq!(
                     hex::encode(child.public_key_bytes_legacy()),
                     *pk_legacy,
@@ -1492,13 +1471,13 @@ mod tests {
                 .derive_priv(hardened(3))
                 .unwrap();
             assert_eq!(
-                hex::encode(account.private_key.to_be_bytes()),
+                hex::encode(account.private_key.to_bytes()),
                 "05e18aebbe5c73f4dde3dd6a4a204da46c6efa38a38ff4fa5548b1c171154bda"
             );
             let child0 =
                 account.derive_priv_legacy(ChildNumber::from_normal_idx(0).unwrap()).unwrap();
             assert_eq!(
-                hex::encode(child0.private_key.to_be_bytes()),
+                hex::encode(child0.private_key.to_bytes()),
                 "3346dfd71627f9f31cad3ee66fe7b673c32cb077b2eb38c621d7e61c30e46dbd"
             );
             assert_eq!(
@@ -1513,7 +1492,7 @@ mod tests {
             let seed = [1u8, 50, 6, 244, 24, 199, 1, 25];
             let master = ExtendedBLSPrivKey::new_master(Network::Testnet, &seed).unwrap();
             assert_eq!(
-                hex::encode(master.private_key.to_be_bytes()),
+                hex::encode(master.private_key.to_bytes()),
                 "3e9f7b3846c1803703f94c764b51f5ace513b2f02c4d6b2c452d8ce66e5975bd"
             );
             assert_eq!(
@@ -1524,7 +1503,7 @@ mod tests {
             // Hardened child 77'
             let c77h = master.derive_priv(hardened(77)).unwrap();
             assert_eq!(
-                hex::encode(c77h.private_key.to_be_bytes()),
+                hex::encode(c77h.private_key.to_bytes()),
                 "51b31efbd83aeead1e324c5c8248f5a13bb17ba7afe29aeb5ceef7eaff49ed6f"
             );
             assert_eq!(
@@ -1535,7 +1514,7 @@ mod tests {
             // Non-hardened child 77 (legacy serialization in HMAC input)
             let c77 = master.derive_priv_legacy(ChildNumber::from_normal_idx(77).unwrap()).unwrap();
             assert_eq!(
-                hex::encode(c77.private_key.to_be_bytes()),
+                hex::encode(c77.private_key.to_bytes()),
                 "3ef4f8b4d262fb8981665532b531c7889798044f7cbe4d5fae5e30435f746044"
             );
             assert_eq!(
@@ -1552,7 +1531,7 @@ mod tests {
             let master = ExtendedBLSPrivKey::new_master(Network::Testnet, &seed).unwrap();
             let c77 = master.derive_priv(ChildNumber::from_normal_idx(77).unwrap()).unwrap();
             assert_eq!(
-                hex::encode(c77.private_key.to_be_bytes()),
+                hex::encode(c77.private_key.to_bytes()),
                 "0f9b101b475e449c9995032e138b432a330738b6401f675f0632385fe8d349bf"
             );
             assert_eq!(
@@ -1579,7 +1558,7 @@ mod tests {
             let child0_modern =
                 account.derive_priv(ChildNumber::from_normal_idx(0).unwrap()).unwrap();
             assert_eq!(
-                hex::encode(child0_modern.private_key.to_be_bytes()),
+                hex::encode(child0_modern.private_key.to_bytes()),
                 "1669d6cc8ac08fa377d63dafcf83f1fa6aee09e2df58c490b1b1a0b0999417ec"
             );
             assert_eq!(
@@ -1590,10 +1569,7 @@ mod tests {
             // Same leaf via legacy mode is a different key entirely.
             let child0_legacy =
                 account.derive_priv_legacy(ChildNumber::from_normal_idx(0).unwrap()).unwrap();
-            assert_ne!(
-                child0_modern.private_key.to_be_bytes(),
-                child0_legacy.private_key.to_be_bytes()
-            );
+            assert_ne!(child0_modern.private_key.to_bytes(), child0_legacy.private_key.to_bytes());
 
             // Private/public derivation stays consistent in modern mode too.
             let child0_pub = account
@@ -1621,10 +1597,7 @@ mod tests {
 
         /// Constructs a secret key from the supplied scalar and extracts it to find the settled value.
         fn resolve_scalar(scalar: &[u8; 32]) -> [u8; 32] {
-            BlsSecretKey::<Bls12381G2Impl>::from_be_bytes(scalar)
-                .into_option()
-                .unwrap()
-                .to_be_bytes()
+            *BlsSkBytes::from_bytes(*scalar).as_scheme(CANONICAL).canonicalize().unwrap().to_bytes()
         }
 
         #[test]
@@ -1656,12 +1629,12 @@ mod tests {
             // The master seed itself produces an HMAC above r, reduced.
             assert!(parse_bytes_32(SEED64_HMAC) >= parse_bytes_32(R));
             assert_eq!(
-                master.private_key.to_be_bytes(),
+                *master.private_key.to_bytes(),
                 resolve_scalar(&parse_bytes_32(SEED64_HMAC))
             );
 
             // Hardened child index 1 lands above r, would be reduced.
-            let mut input = master.private_key.to_be_bytes().to_vec();
+            let mut input = master.private_key.to_bytes().to_vec();
             input.extend_from_slice(
                 &u32::from(ChildNumber::from_hardened_idx(1).unwrap()).to_be_bytes(),
             );
@@ -1694,13 +1667,13 @@ mod tests {
             assert!(reversed >= parse_bytes_32(R));
 
             let converted = root.to_bls_extended_priv_key(Network::Testnet).unwrap();
-            assert_eq!(converted.private_key.to_be_bytes(), resolve_scalar(&reversed));
+            assert_eq!(*converted.private_key.to_bytes(), resolve_scalar(&reversed));
         }
 
         #[test]
         fn zero_scalar_is_refused() {
-            let read = BlsSecretKey::<Bls12381G2Impl>::from_be_bytes(&[0u8; 32]);
-            assert!(bool::from(read.is_none()));
+            let read = BlsSkBytes::from_bytes([0u8; 32]).as_scheme(CANONICAL).canonicalize();
+            assert!(read.is_err());
         }
 
         #[test]
@@ -1719,12 +1692,12 @@ mod tests {
 
         let seed = [42u8; 32];
         let mut key = ExtendedBLSPrivKey::new_master(Network::Testnet, &seed).unwrap();
-        assert_ne!(key.private_key.to_be_bytes(), [0u8; 32]);
+        assert_ne!(*key.private_key.to_bytes(), [0u8; 32]);
         assert_ne!(key.chain_code.as_ref(), &[0u8; 32]);
 
         key.zeroize();
 
-        assert_eq!(key.private_key.to_be_bytes(), [0u8; 32]);
+        assert_eq!(*key.private_key.to_bytes(), [0u8; 32]);
         assert_eq!(key.chain_code.as_ref(), &[0u8; 32]);
         assert_eq!(key.depth, 0);
         assert_eq!(key.parent_fingerprint, Fingerprint::default());

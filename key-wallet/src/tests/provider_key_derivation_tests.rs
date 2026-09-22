@@ -61,12 +61,12 @@ fn bls_operator_keys_match_dashbls_reference() {
     let seed = hex::decode(TEST_SEED_HEX).unwrap();
     let sk0 = account.derive_from_seed_private_key_at(&seed, 0).unwrap();
     assert_eq!(
-        hex::encode(sk0.to_be_bytes()),
+        hex::encode(*sk0.to_bytes()),
         "11122e1ad656d0610ce0f80d40da874d67ea656a3e66ed371c915ec3a488a43a"
     );
     let sk1 = account.derive_from_seed_private_key_at(&seed, 1).unwrap();
     assert_eq!(
-        hex::encode(sk1.to_be_bytes()),
+        hex::encode(*sk1.to_bytes()),
         "1a4e3318640cd4e50222184d0ea111abf8a0c18a0e5dc3ed45dad85009db4e31"
     );
 }
@@ -91,7 +91,7 @@ fn bls_operator_keys_testnet_match_dashbls_reference() {
     let seed = hex::decode(TEST_SEED_HEX).unwrap();
     let sk0 = account.derive_from_seed_private_key_at(&seed, 0).unwrap();
     assert_eq!(
-        hex::encode(sk0.to_be_bytes()),
+        hex::encode(*sk0.to_bytes()),
         "3346dfd71627f9f31cad3ee66fe7b673c32cb077b2eb38c621d7e61c30e46dbd"
     );
 }
@@ -230,19 +230,19 @@ fn operator_key_at_is_wallet_state_agnostic() {
     let seed = hex::decode(TEST_SEED_HEX).unwrap();
     let sk0 = BLSAccount::operator_private_key_at(&seed, Network::Mainnet, 0).unwrap();
     assert_eq!(
-        hex::encode(sk0.to_be_bytes()),
+        hex::encode(*sk0.to_bytes()),
         "11122e1ad656d0610ce0f80d40da874d67ea656a3e66ed371c915ec3a488a43a"
     );
     let sk1 = BLSAccount::operator_private_key_at(&seed, Network::Mainnet, 1).unwrap();
     assert_eq!(
-        hex::encode(sk1.to_be_bytes()),
+        hex::encode(*sk1.to_bytes()),
         "1a4e3318640cd4e50222184d0ea111abf8a0c18a0e5dc3ed45dad85009db4e31"
     );
 
     // Testnet vectors (coin type 1: m/9'/1'/3'/3').
     let sk0_testnet = BLSAccount::operator_private_key_at(&seed, Network::Testnet, 0).unwrap();
     assert_eq!(
-        hex::encode(sk0_testnet.to_be_bytes()),
+        hex::encode(*sk0_testnet.to_bytes()),
         "3346dfd71627f9f31cad3ee66fe7b673c32cb077b2eb38c621d7e61c30e46dbd"
     );
 }

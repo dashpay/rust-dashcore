@@ -10,13 +10,16 @@ use core::str::FromStr;
 
 #[cfg(feature = "bls")]
 use blsful::{Bls12381G2Impl, Pairing, PublicKey, SerializationFormat};
-use dash_types::{make_bytes, type_cvrt};
+use dash_types::{make_bytes, make_sbytes, type_cvrt};
 use hex::FromHexError;
 #[cfg(feature = "bls")]
 use thiserror::Error as ThisError;
 
 /// Raw BLS public key length (G1 compressed).
 pub const BLS_PK_LEN: usize = 48;
+
+/// Raw BLS secret key length (big-endian scalar).
+pub const BLS_SK_LEN: usize = 32;
 
 /// Raw BLS signature length (G2 compressed).
 pub const BLS_SIG_LEN: usize = 96;
@@ -32,6 +35,10 @@ pub enum BlsError {
     /// Signature bytes are not a valid G2 point.
     #[error("Invalid BLS signature: {0}")]
     InvalidSignature(String),
+
+    /// Secret key bytes are not a valid scalar.
+    #[error("Invalid BLS secret key")]
+    InvalidSecretKey,
 
     /// Tweak is not a valid scalar.
     #[error("Invalid BLS tweak")]
@@ -199,6 +206,68 @@ impl BlsPublicKey {
             self.scheme.serialization_format(),
         )
         .map_err(|e| BlsError::InvalidPublicKey(e.to_string()))
+    }
+}
+
+make_sbytes! {
+    /// BLS secret key bytes (32 big-endian bytes, unvalidated).
+    BlsSkBytes, BLS_SK_LEN
+}
+
+#[cfg(feature = "bls")]
+impl BlsSkBytes {
+    /// Pairs these bytes with `scheme`.
+    pub fn as_scheme(&self, scheme: BlsScheme) -> BlsSecretKey<'_> {
+        BlsSecretKey {
+            bytes: self,
+            scheme,
+        }
+    }
+}
+
+/// A [`BlsSkBytes`] paired with the scheme to operate under.
+#[cfg(feature = "bls")]
+#[derive(Clone, Copy, Debug)]
+pub struct BlsSecretKey<'a> {
+    bytes: &'a BlsSkBytes,
+    scheme: BlsScheme,
+}
+
+#[cfg(feature = "bls")]
+impl BlsSecretKey<'_> {
+    /// Adds `tweak` to the scalar, for hardened derivation.
+    ///
+    /// # Errors
+    ///
+    /// Returns `InvalidSecretKey` when the bytes are not a valid scalar, or
+    /// `InvalidTweak` when the tweak or the sum is not one.
+    pub fn add_tweak(self, tweak: &[u8; 32]) -> Result<BlsSkBytes, BlsError> {
+        let tweak = blsful::SecretKey::<Bls12381G2Impl>::from_be_bytes(tweak)
+            .into_option()
+            .ok_or(BlsError::InvalidTweak)?;
+        let sum = blsful::SecretKey::<Bls12381G2Impl>(self.scalar()?.0 + tweak.0);
+
+        Ok(BlsSkBytes::from_bytes(sum.to_be_bytes()))
+    }
+
+    /// Reduces the scalar modulo the group order and writes it back.
+    pub fn canonicalize(self) -> Result<BlsSkBytes, BlsError> {
+        Ok(BlsSkBytes::from_bytes(self.scalar()?.to_be_bytes()))
+    }
+
+    /// Derives the public key, written under the scheme.
+    ///
+    /// # Errors
+    ///
+    /// Returns `InvalidSecretKey` when the bytes are not a valid scalar.
+    pub fn public_key(self) -> Result<BlsPkBytes, BlsError> {
+        Ok(encode_point(PublicKey::from(&self.scalar()?), self.scheme))
+    }
+
+    fn scalar(self) -> Result<blsful::SecretKey<Bls12381G2Impl>, BlsError> {
+        blsful::SecretKey::<Bls12381G2Impl>::from_be_bytes(self.bytes.as_bytes())
+            .into_option()
+            .ok_or(BlsError::InvalidSecretKey)
     }
 }
 
