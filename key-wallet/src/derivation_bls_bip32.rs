@@ -1660,7 +1660,7 @@ mod tests {
             secret[0] = 0x02;
             secret[31] = 0xff;
             let root = RootExtendedPrivKey {
-                root_private_key: secp256k1::SecretKey::from_slice(&secret).unwrap(),
+                root_private_key: secp256k1::SecretKey::from_secret_bytes(secret).unwrap(),
                 root_chain_code: ChainCode::from([3u8; 32]),
             };
 
