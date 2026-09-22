@@ -8,7 +8,7 @@ use crate::{Error, Network, Wallet};
 #[cfg(feature = "bincode")]
 use bincode::{BorrowDecode, Decode, Encode};
 #[cfg(feature = "bls")]
-use dashcore::bls_sig_utils::{BlsScheme, BlsSkBytes};
+use dashcore::bls_sig_utils::BlsSkBytes;
 use dashcore_hashes::{sha512, Hash, HashEngine, Hmac, HmacEngine};
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
@@ -106,22 +106,16 @@ impl RootExtendedPrivKey {
         let mut scalar_bytes = self.root_private_key.to_secret_bytes();
         scalar_bytes.reverse();
 
-        let bls_private_key = BlsSkBytes::from_bytes(scalar_bytes)
-            .as_scheme(BlsScheme::Modern)
-            .canonicalize()
-            .map_err(|_| {
-                Error::InvalidParameter(
-                    "Failed to convert to BLS key: invalid key bytes".to_string(),
-                )
-            })?;
-
-        Ok(ExtendedBLSPrivKey {
+        ExtendedBLSPrivKey::from_parts(
             network,
-            depth: 0,
-            parent_fingerprint: Default::default(),
-            child_number: ChildNumber::from(0),
-            private_key: bls_private_key,
-            chain_code: self.root_chain_code,
+            0,
+            Default::default(),
+            ChildNumber::from(0),
+            BlsSkBytes::from_bytes(scalar_bytes),
+            self.root_chain_code,
+        )
+        .map_err(|_| {
+            Error::InvalidParameter("Failed to convert to BLS key: invalid key bytes".to_string())
         })
     }
 

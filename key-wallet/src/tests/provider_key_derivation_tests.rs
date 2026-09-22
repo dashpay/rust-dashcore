@@ -39,7 +39,7 @@ fn bls_operator_keys_match_dashbls_reference() {
 
     // The stored account xpub must be the account-level key at m/9'/5'/3'/3'.
     assert_eq!(
-        hex::encode(account.bls_public_key.to_bytes_legacy()),
+        hex::encode(account.bls_public_key.to_bytes_legacy().unwrap()),
         "8d794d053504db3727c1f51aea2112e440fadbade687a9c0243b61523c8ab8eb64061f0a5ec5d8df4b7ec8bdfe722c19"
     );
 
@@ -47,7 +47,7 @@ fn bls_operator_keys_match_dashbls_reference() {
     let key0_pub =
         account.bls_public_key.derive_pub_legacy(ChildNumber::from_normal_idx(0).unwrap()).unwrap();
     assert_eq!(
-        hex::encode(key0_pub.to_bytes_legacy()),
+        hex::encode(key0_pub.to_bytes_legacy().unwrap()),
         "078cad04aae29eb76171937eb7101452b401b026efbc27db840f130374e6a9ec8443d917277f8921e0ba6678a7709875"
     );
     // Same point in modern/IETF (basic-scheme) serialization, as it appears in
@@ -84,7 +84,7 @@ fn bls_operator_keys_testnet_match_dashbls_reference() {
     let key0_pub =
         account.bls_public_key.derive_pub_legacy(ChildNumber::from_normal_idx(0).unwrap()).unwrap();
     assert_eq!(
-        hex::encode(key0_pub.to_bytes_legacy()),
+        hex::encode(key0_pub.to_bytes_legacy().unwrap()),
         "09d8beabae708de1638487f1aff44b38e8c07d9b09f22d76329d6c8ec01e2ad4d030b660bca40ddbd222373a72c5bcef"
     );
 
@@ -217,7 +217,7 @@ fn operator_key_at_is_wallet_state_agnostic() {
     for account in [resident, &watch_only] {
         let key0 = account.operator_public_key_at(0).expect("gate-free derivation must succeed");
         assert_eq!(
-            hex::encode(key0.to_bytes_legacy()),
+            hex::encode(key0.to_bytes_legacy().unwrap()),
             "078cad04aae29eb76171937eb7101452b401b026efbc27db840f130374e6a9ec8443d917277f8921e0ba6678a7709875"
         );
         assert_eq!(
