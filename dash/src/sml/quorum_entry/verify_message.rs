@@ -1,7 +1,6 @@
-use blsful::Bls12381G2Impl;
 use hashes::{Hash, sha256d};
 
-use crate::bls_sig_utils::BLSSignature;
+use crate::bls_sig_utils::{BLSSignature, BlsScheme};
 use crate::sml::message_verification_error::MessageVerificationError;
 use crate::sml::quorum_entry::qualified_quorum_entry::QualifiedQuorumEntry;
 
@@ -25,14 +24,14 @@ impl QualifiedQuorumEntry {
     /// # Errors
     ///
     /// Returns `MessageVerificationError::ThresholdSignatureNotValid` if:
-    /// - The quorum's public key cannot be converted to the required `blsful::PublicKey<Bls12381G2Impl>`.
-    /// - The provided signature cannot be converted to `blsful::Signature<Bls12381G2Impl>`.
+    /// - The quorum's public key cannot be read under `scheme`.
+    /// - The provided signature cannot be read under `scheme`.
     /// - The BLS verification process determines that the signature is invalid.
     ///
     /// # Implementation Details
     ///
-    /// - The function retrieves the quorum's public key and attempts to convert it into the expected `blsful::PublicKey` type.
-    /// - It converts the provided `BLSSignature` into a `blsful::Signature`.
+    /// - The function reads the quorum's public key in the scheme the caller names.
+    /// - It reads the provided `BLSSignature` in that same scheme.
     /// - It then calls the `verify` method, which checks if the signature is valid for the given message digest.
     /// - If verification fails, it returns a `MessageVerificationError::ThresholdSignatureNotValid` with relevant details.
     ///
@@ -40,19 +39,21 @@ impl QualifiedQuorumEntry {
         &self,
         message_digest: [u8; 32],
         signature: BLSSignature,
+        scheme: BlsScheme,
     ) -> Result<(), MessageVerificationError> {
-        let public_key: blsful::PublicKey<Bls12381G2Impl> =
-            self.quorum_entry.quorum_public_key.try_into()?;
-        let bls_signature: blsful::Signature<Bls12381G2Impl> = signature.try_into()?;
-        bls_signature.verify(&public_key, message_digest).map_err(|e| {
-            MessageVerificationError::ThresholdSignatureNotValid(
-                Box::new(signature),
-                Box::new(sha256d::Hash::from_byte_array(message_digest)),
-                Box::new(self.quorum_entry.quorum_public_key),
-                self.quorum_entry.quorum_hash,
-                self.quorum_entry.llmq_type,
-                e.to_string(),
-            )
-        })
+        self.quorum_entry
+            .quorum_public_key
+            .as_scheme(scheme)
+            .verify(&message_digest, &signature)
+            .map_err(|e| {
+                MessageVerificationError::ThresholdSignatureNotValid(
+                    Box::new(signature),
+                    Box::new(sha256d::Hash::from_byte_array(message_digest)),
+                    Box::new(self.quorum_entry.quorum_public_key),
+                    self.quorum_entry.quorum_hash,
+                    self.quorum_entry.llmq_type,
+                    e.to_string(),
+                )
+            })
     }
 }

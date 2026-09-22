@@ -124,6 +124,7 @@ impl From<crate::bls_sig_utils::BlsError> for QuorumValidationError {
                 Self::InvalidBLSPublicKey("invalid secret key".to_string())
             }
             BlsError::InvalidTweak => Self::InvalidBLSPublicKey("invalid tweak".to_string()),
+            BlsError::VerificationFailed(s) => Self::ThresholdSignatureNotValid(s),
         }
     }
 }

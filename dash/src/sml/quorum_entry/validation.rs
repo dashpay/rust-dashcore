@@ -1,9 +1,8 @@
+use crate::bls_sig_utils::BlsScheme;
 use crate::sml::masternode_list_entry::MasternodeListEntry;
 use crate::sml::quorum_entry::qualified_quorum_entry::QualifiedQuorumEntry;
 use crate::sml::quorum_validation_error::QuorumValidationError;
-use blsful::{Bls12381G2Impl, PublicKey, SerializationFormat, Signature};
 use hashes::Hash;
-use tracing::error;
 
 impl QualifiedQuorumEntry {
     /// Verifies the aggregated commitment signature for the quorum.
@@ -27,44 +26,31 @@ impl QualifiedQuorumEntry {
     pub fn verify_aggregated_commitment_signature<'a, I>(
         &self,
         operator_keys: I,
+        scheme: BlsScheme,
     ) -> Result<(), QuorumValidationError>
     where
         I: IntoIterator<Item = &'a MasternodeListEntry>,
     {
         let message = self.commitment_hash.to_byte_array();
-        let message = message.as_slice();
 
-        // Collect public keys with proper legacy/modern deserialization
-        let public_keys: Vec<PublicKey<Bls12381G2Impl>> = operator_keys
-            .into_iter()
-            .filter_map(|masternode_list_entry| {
-                let bytes = masternode_list_entry.operator_public_key.as_ref();
-                let is_legacy = masternode_list_entry.use_legacy_bls_keys();
+        // A key's encoding follows its own entry's version; the scheme the
+        // aggregate is verified in is one value for the whole quorum.
+        let keys = operator_keys.into_iter().map(|entry| {
+            let encoding = if entry.use_legacy_bls_keys() {
+                BlsScheme::Legacy
+            } else {
+                BlsScheme::Modern
+            };
+            (encoding, &entry.operator_public_key)
+        });
 
-                let format = if is_legacy {
-                    SerializationFormat::Legacy
-                } else {
-                    SerializationFormat::Modern
-                };
-                let result = PublicKey::<Bls12381G2Impl>::from_bytes_with_mode(bytes, format);
-
-                match result {
-                    Ok(public_key) => Some(public_key),
-                    Err(e) => {
-                        error!("Failed to deserialize operator key: {}", e);
-                        None
-                    }
-                }
+        self.quorum_entry
+            .all_commitment_aggregated_signature
+            .as_scheme(scheme)
+            .verify_secure_aggregate(&message, keys)
+            .map_err(|e| {
+                QuorumValidationError::AllCommitmentAggregatedSignatureNotValid(e.to_string())
             })
-            .collect();
-
-        // Deserialize the aggregated signature
-        let signature: Signature<Bls12381G2Impl> =
-            self.quorum_entry.all_commitment_aggregated_signature.try_into()?;
-
-        signature.verify_secure(&public_keys, message).map_err(|e| {
-            QuorumValidationError::AllCommitmentAggregatedSignatureNotValid(e.to_string())
-        })
     }
 
     /// Verifies the quorum's threshold signature.
@@ -79,16 +65,12 @@ impl QualifiedQuorumEntry {
     ///
     /// # Notes
     ///
-    /// * Uses `blsful::Signature` and `blsful::PublicKey` for verification.
-    /// * Converts the quorum's public key and signature into `blsful` types before verification.
-    pub fn verify_quorum_signature(&self) -> Result<(), QuorumValidationError> {
-        let message = &self.commitment_hash;
-        let public_key: blsful::PublicKey<Bls12381G2Impl> =
-            self.quorum_entry.quorum_public_key.try_into()?;
-        let signature: blsful::Signature<Bls12381G2Impl> =
-            self.quorum_entry.threshold_sig.try_into()?;
-        signature
-            .verify(&public_key, message)
+    /// * Reads the quorum's public key and signature under `scheme`.
+    pub fn verify_quorum_signature(&self, scheme: BlsScheme) -> Result<(), QuorumValidationError> {
+        self.quorum_entry
+            .quorum_public_key
+            .as_scheme(scheme)
+            .verify(&self.commitment_hash.to_byte_array(), &self.quorum_entry.threshold_sig)
             .map_err(|e| QuorumValidationError::ThresholdSignatureNotValid(e.to_string()))
     }
 
@@ -111,12 +93,16 @@ impl QualifiedQuorumEntry {
     ///
     /// * Calls `verify_aggregated_commitment_signature` first.
     /// * Calls `verify_quorum_signature` second.
-    pub fn validate<'a, I>(&self, valid_masternodes: I) -> Result<(), QuorumValidationError>
+    pub fn validate<'a, I>(
+        &self,
+        valid_masternodes: I,
+        scheme: BlsScheme,
+    ) -> Result<(), QuorumValidationError>
     where
         I: IntoIterator<Item = &'a MasternodeListEntry>,
     {
-        self.verify_aggregated_commitment_signature(valid_masternodes)?;
-        self.verify_quorum_signature()?;
+        self.verify_aggregated_commitment_signature(valid_masternodes, scheme)?;
+        self.verify_quorum_signature(scheme)?;
 
         Ok(())
     }
@@ -126,8 +112,7 @@ impl QualifiedQuorumEntry {
 mod tests {
     #[cfg(test)]
     mod compatibility_tests {
-        use super::super::*;
-        use blsful::{Bls12381G2Impl, PublicKey, Signature, SignatureSchemes};
+        use blsful::{Bls12381G2Impl, PublicKey, SerializationFormat, Signature, SignatureSchemes};
         use hex_lit::hex;
 
         #[test]
@@ -351,9 +336,9 @@ mod tests {
 
     #[cfg(test)]
     mod benchmarks {
-        use super::super::*;
         use blsful::{
-            Bls12381G2Impl, PublicKey, Signature, SignatureSchemes, verify_secure_basic_with_mode,
+            Bls12381G2Impl, PublicKey, SerializationFormat, Signature, SignatureSchemes,
+            verify_secure_basic_with_mode,
         };
         use hex_lit::hex;
         use std::time::Instant;

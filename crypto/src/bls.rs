@@ -14,6 +14,8 @@ use dash_types::{make_bytes, make_sbytes, type_cvrt};
 use hex::FromHexError;
 #[cfg(feature = "bls")]
 use thiserror::Error as ThisError;
+#[cfg(feature = "bls")]
+use tracing::error;
 
 /// Raw BLS public key length (G1 compressed).
 pub const BLS_PK_LEN: usize = 48;
@@ -35,6 +37,10 @@ pub enum BlsError {
     /// Signature bytes are not a valid G2 point.
     #[error("Invalid BLS signature: {0}")]
     InvalidSignature(String),
+
+    /// Signature verification failed.
+    #[error("BLS verification failed: {0}")]
+    VerificationFailed(String),
 
     /// Secret key bytes are not a valid scalar.
     #[error("Invalid BLS secret key")]
@@ -200,6 +206,22 @@ impl BlsPublicKey {
         Ok(encode_point(self.point()?, to))
     }
 
+    /// Verifies `signature` over a 32-byte message digest.
+    ///
+    /// The signature is read under this same scheme.
+    ///
+    /// # Errors
+    ///
+    /// Returns `InvalidPublicKey` or `InvalidSignature` when either side is
+    /// not a curve point, or `VerificationFailed` when it does not verify.
+    pub fn verify(self, digest: &[u8; 32], signature: &BlsSigBytes) -> Result<(), BlsError> {
+        signature
+            .as_scheme(self.scheme)
+            .g2()?
+            .verify(&self.point()?, digest)
+            .map_err(|e| BlsError::VerificationFailed(e.to_string()))
+    }
+
     fn point(self) -> Result<PublicKey<Bls12381G2Impl>, BlsError> {
         PublicKey::<Bls12381G2Impl>::from_bytes_with_mode(
             self.bytes.as_bytes(),
@@ -273,10 +295,19 @@ impl BlsSecretKey<'_> {
 
 make_bytes! {
     /// BLS signature (96 bytes, unvalidated).
-    BLSSignature, BLS_SIG_LEN
+    BlsSigBytes, BLS_SIG_LEN
 }
 
-impl BLSSignature {
+impl BlsSigBytes {
+    /// Pairs these bytes with `scheme`.
+    #[cfg(feature = "bls")]
+    pub fn as_scheme(self, scheme: BlsScheme) -> BlsSignature {
+        BlsSignature {
+            bytes: self,
+            scheme,
+        }
+    }
+
     /// Reads these bytes from a hex string.
     pub fn from_hex(s: &str) -> Result<Self, FromHexError> {
         let mut bytes = [0u8; BLS_SIG_LEN];
@@ -290,7 +321,7 @@ impl BLSSignature {
     }
 }
 
-impl FromStr for BLSSignature {
+impl FromStr for BlsSigBytes {
     type Err = FromHexError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
@@ -299,7 +330,7 @@ impl FromStr for BLSSignature {
 }
 
 #[cfg(feature = "bincode")]
-impl bincode::Encode for BLSSignature {
+impl bincode::Encode for BlsSigBytes {
     fn encode<E: bincode::enc::Encoder>(
         &self,
         encoder: &mut E,
@@ -309,7 +340,7 @@ impl bincode::Encode for BLSSignature {
 }
 
 #[cfg(feature = "bincode")]
-impl<C> bincode::Decode<C> for BLSSignature {
+impl<C> bincode::Decode<C> for BlsSigBytes {
     fn decode<D: bincode::de::Decoder<Context = C>>(
         decoder: &mut D,
     ) -> Result<Self, bincode::error::DecodeError> {
@@ -318,7 +349,7 @@ impl<C> bincode::Decode<C> for BLSSignature {
 }
 
 #[cfg(feature = "bincode")]
-impl<'de, C> bincode::BorrowDecode<'de, C> for BLSSignature {
+impl<'de, C> bincode::BorrowDecode<'de, C> for BlsSigBytes {
     fn borrow_decode<D: bincode::de::BorrowDecoder<'de, Context = C>>(
         decoder: &mut D,
     ) -> Result<Self, bincode::error::DecodeError> {
@@ -327,14 +358,14 @@ impl<'de, C> bincode::BorrowDecode<'de, C> for BLSSignature {
 }
 
 type_cvrt!(
-    for[] TryFrom<&[u8]> for BLSSignature,
+    for[] TryFrom<&[u8]> for BlsSigBytes,
     core::array::TryFromSliceError,
     |v| Ok(Self::from_bytes(<[u8; BLS_SIG_LEN]>::try_from(*v)?))
 );
 
 #[cfg(feature = "bls")]
 type_cvrt!(
-    for[] TryFrom<BLSSignature> for blsful::Signature<Bls12381G2Impl>,
+    for[] TryFrom<BlsSigBytes> for blsful::Signature<Bls12381G2Impl>,
     BlsError,
     |value| {
         let Some(g2_element) =
@@ -348,3 +379,57 @@ type_cvrt!(
         Ok(blsful::Signature::Basic(g2_element))
     }
 );
+
+/// A [`BlsSigBytes`] paired with the scheme to read it under.
+#[cfg(feature = "bls")]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct BlsSignature {
+    bytes: BlsSigBytes,
+    scheme: BlsScheme,
+}
+
+#[cfg(feature = "bls")]
+impl BlsSignature {
+    /// Verifies this aggregate against `keys` with rogue-key binding.
+    ///
+    /// Each key carries the scheme its own encoding was written with, which
+    /// for a masternode list entry follows that entry's version. The scheme
+    /// the aggregate verifies in is one value for the quorum.
+    ///
+    /// # Errors
+    ///
+    /// Returns `InvalidSignature` when the signature bytes are not a G2
+    /// point, or `VerificationFailed` when the aggregate does not verify.
+    ///
+    /// A key that will not decode is dropped rather than reported, though the
+    /// failure is logged.
+    pub fn verify_secure_aggregate<'a, I>(self, digest: &[u8; 32], keys: I) -> Result<(), BlsError>
+    where
+        I: IntoIterator<Item = (BlsScheme, &'a BlsPkBytes)>,
+    {
+        let points: Vec<PublicKey<Bls12381G2Impl>> = keys
+            .into_iter()
+            .filter_map(|(encoding, key)| {
+                key.as_scheme(encoding)
+                    .point()
+                    .inspect_err(|e| error!("Failed to deserialize operator key: {}", e))
+                    .ok()
+            })
+            .collect();
+
+        self.g2()?
+            .verify_secure(&points, digest.as_slice())
+            .map_err(|e| BlsError::VerificationFailed(e.to_string()))
+    }
+
+    fn g2(self) -> Result<blsful::Signature<Bls12381G2Impl>, BlsError> {
+        let Some(point) =
+            <Bls12381G2Impl as Pairing>::Signature::from_compressed(self.bytes.as_bytes())
+                .into_option()
+        else {
+            return Err(BlsError::InvalidSignature(hex::encode(self.bytes.as_bytes())));
+        };
+
+        Ok(blsful::Signature::Basic(point))
+    }
+}

@@ -69,8 +69,6 @@ pub extern crate bitcoinconsensus;
 pub extern crate dashcore_hashes as hashes;
 pub extern crate secp256k1;
 
-#[cfg(feature = "blsful")]
-pub use blsful;
 #[cfg(feature = "ed25519-dalek")]
 pub use ed25519_dalek;
 
