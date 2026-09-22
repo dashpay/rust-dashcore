@@ -10,7 +10,6 @@ use crate::account::EdDSAAccount;
 use crate::account::{Account, AccountType};
 use crate::bip32::ExtendedPubKey;
 use crate::error::{Error, Result};
-use secp256k1::Secp256k1;
 
 impl Wallet {
     /// Add a new account to the wallet
@@ -50,9 +49,7 @@ impl Wallet {
                 }
             })?;
             let master_key = root_key.to_extended_priv_key(self.network);
-            let secp = Secp256k1::new();
-            let account_xpriv =
-                master_key.derive_priv(&secp, &derivation_path).map_err(Error::Bip32)?;
+            let account_xpriv = master_key.derive_priv(&derivation_path).map_err(Error::Bip32)?;
 
             Account::from_xpriv(Some(wallet_id), account_type, account_xpriv, self.network)?
         };

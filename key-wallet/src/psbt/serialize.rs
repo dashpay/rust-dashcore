@@ -162,7 +162,21 @@ impl Serialize for secp256k1::PublicKey {
 
 impl Deserialize for secp256k1::PublicKey {
     fn deserialize(bytes: &[u8]) -> Result<Self, Error> {
-        secp256k1::PublicKey::from_slice(bytes).map_err(Error::InvalidSecp256k1PublicKey)
+        let invalid = || Error::InvalidSecp256k1PublicKey(secp256k1::Error::InvalidPublicKey);
+        match bytes.len() {
+            secp256k1::constants::PUBLIC_KEY_SIZE => {
+                secp256k1::PublicKey::from_byte_array_compressed(
+                    bytes.try_into().map_err(|_| invalid())?,
+                )
+            }
+            secp256k1::constants::UNCOMPRESSED_PUBLIC_KEY_SIZE => {
+                secp256k1::PublicKey::from_byte_array_uncompressed(
+                    bytes.try_into().map_err(|_| invalid())?,
+                )
+            }
+            _ => return Err(invalid()),
+        }
+        .map_err(Error::InvalidSecp256k1PublicKey)
     }
 }
 
@@ -265,13 +279,14 @@ impl Deserialize for PsbtSighashType {
 // Taproot related ser/deser
 impl Serialize for XOnlyPublicKey {
     fn serialize(&self) -> Vec<u8> {
-        XOnlyPublicKey::serialize(self).to_vec()
+        XOnlyPublicKey::to_byte_array(self).to_vec()
     }
 }
 
 impl Deserialize for XOnlyPublicKey {
     fn deserialize(bytes: &[u8]) -> Result<Self, Error> {
-        XOnlyPublicKey::from_slice(bytes).map_err(|_| Error::InvalidXOnlyPublicKey)
+        let bytes = <[u8; 32]>::try_from(bytes).map_err(|_| Error::InvalidXOnlyPublicKey)?;
+        XOnlyPublicKey::from_byte_array(bytes).map_err(|_| Error::InvalidXOnlyPublicKey)
     }
 }
 
@@ -294,7 +309,7 @@ impl Deserialize for taproot::Signature {
 
 impl Serialize for (XOnlyPublicKey, TapLeafHash) {
     fn serialize(&self) -> Vec<u8> {
-        let ser_pk = self.0.serialize();
+        let ser_pk = self.0.to_byte_array();
         let mut buf = Vec::with_capacity(ser_pk.len() + self.1.as_byte_array().len());
         buf.extend(&ser_pk);
         buf.extend(self.1.as_byte_array());

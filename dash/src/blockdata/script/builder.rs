@@ -82,7 +82,7 @@ impl Builder {
 
     /// Adds instructions to push an XOnly public key onto the stack.
     pub fn push_x_only_key(self, x_only_key: &XOnlyPublicKey) -> Builder {
-        self.push_slice(x_only_key.serialize())
+        self.push_slice(x_only_key.to_byte_array())
     }
 
     /// Adds a single opcode to the script.

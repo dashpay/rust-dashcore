@@ -77,7 +77,7 @@ impl Seed {
     #[cfg(feature = "getrandom")]
     pub fn random() -> Result<Self> {
         let mut bytes = [0u8; 64];
-        getrandom::getrandom(&mut bytes).map_err(|e| {
+        getrandom::fill(&mut bytes).map_err(|e| {
             Error::InvalidParameter(format!("Failed to generate random seed: {}", e))
         })?;
         Ok(Self(bytes))

@@ -7,7 +7,6 @@ use crate::{check_ptr, deref_ptr, unwrap_or_return};
 use dash_network::ffi::FFINetwork;
 use dashcore::Network;
 use key_wallet::{ExtendedPrivKey, ExtendedPubKey};
-use secp256k1::Secp256k1;
 use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_uint};
 use std::ptr;
@@ -338,9 +337,8 @@ pub unsafe extern "C" fn derivation_derive_private_key_from_seed(
     let path_str = unwrap_or_return!(CStr::from_ptr(path).to_str(), error);
     let derivation_path = unwrap_or_return!(DerivationPath::from_str(path_str), error);
 
-    let secp = Secp256k1::new();
     let master = unwrap_or_return!(ExtendedPrivKey::new_master(network_rust, seed_slice), error);
-    let xpriv = unwrap_or_return!(master.derive_priv(&secp, &derivation_path), error);
+    let xpriv = unwrap_or_return!(master.derive_priv(&derivation_path), error);
     Box::into_raw(Box::new(FFIExtendedPrivKey::from_inner(xpriv)))
 }
 
@@ -358,8 +356,7 @@ pub unsafe extern "C" fn derivation_xpriv_to_xpub(
 ) -> *mut FFIExtendedPubKey {
     use key_wallet::bip32::ExtendedPubKey;
     let xpriv = deref_ptr!(xpriv, error);
-    let secp = Secp256k1::new();
-    let xpub = ExtendedPubKey::from_priv(&secp, xpriv.inner());
+    let xpub = ExtendedPubKey::from_priv(xpriv.inner());
     Box::into_raw(Box::new(FFIExtendedPubKey::from_inner(xpub)))
 }
 
@@ -478,17 +475,18 @@ pub unsafe extern "C" fn key_wallet_derive_address_from_key(
         return ptr::null_mut();
     }
 
-    let key_slice = slice::from_raw_parts(private_key, 32);
+    let Ok(key_bytes) = <[u8; 32]>::try_from(slice::from_raw_parts(private_key, 32)) else {
+        return ptr::null_mut();
+    };
 
     // Create a secp256k1 private key
-    let secp = Secp256k1::new();
-    let secret_key = match secp256k1::SecretKey::from_slice(key_slice) {
+    let secret_key = match secp256k1::SecretKey::from_secret_bytes(key_bytes) {
         Ok(sk) => sk,
         Err(_) => return ptr::null_mut(),
     };
 
     // Get public key
-    let public_key = secp256k1::PublicKey::from_secret_key(&secp, &secret_key);
+    let public_key = secp256k1::PublicKey::from_secret_key(&secret_key);
 
     // Convert to dashcore PublicKey
     let dash_pubkey = dashcore::PublicKey::new(public_key);
@@ -545,14 +543,13 @@ pub unsafe extern "C" fn key_wallet_derive_address_from_seed(
     };
 
     // Derive at path
-    let secp = Secp256k1::new();
-    let derived_key = match master_key.derive_priv(&secp, &derivation_path) {
+    let derived_key = match master_key.derive_priv(&derivation_path) {
         Ok(xprv) => xprv,
         Err(_) => return ptr::null_mut(),
     };
 
     // Get public key
-    let extended_pubkey = ExtendedPubKey::from_priv(&secp, &derived_key);
+    let extended_pubkey = ExtendedPubKey::from_priv(&derived_key);
 
     // Convert secp256k1::PublicKey to dashcore::PublicKey
     let dash_pubkey = dashcore::PublicKey::new(extended_pubkey.public_key);
@@ -607,14 +604,13 @@ pub unsafe extern "C" fn key_wallet_derive_private_key_from_seed(
     };
 
     // Derive at path
-    let secp = Secp256k1::new();
-    let derived_key = match master_key.derive_priv(&secp, &derivation_path) {
+    let derived_key = match master_key.derive_priv(&derivation_path) {
         Ok(xprv) => xprv,
         Err(_) => return -1,
     };
 
     // Copy private key bytes
-    let key_bytes = derived_key.private_key.secret_bytes();
+    let key_bytes = derived_key.private_key.to_secret_bytes();
     ptr::copy_nonoverlapping(key_bytes.as_ptr(), key_out, 32);
 
     0

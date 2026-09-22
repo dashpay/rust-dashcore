@@ -10,7 +10,7 @@ use dashcore::blockdata::script;
 use dashcore::consensus::encode::{deserialize, serialize_hex};
 use dashcore::hashes::hex::FromHex;
 use dashcore::script::PushBytes;
-use dashcore::secp256k1::{self, Secp256k1};
+use dashcore::secp256k1;
 use dashcore::{
     Amount, Denomination, OutPoint, PrivateKey, PublicKey, ScriptBuf, Transaction, TxIn, TxOut,
     Witness,
@@ -35,14 +35,12 @@ macro_rules! hex_psbt {
 #[ignore]
 #[test]
 fn bip174_psbt_workflow() {
-    let secp = Secp256k1::new();
-
     //
     // Step 0: Create the extended private key from the test vector data.
     //
 
     let ext_priv = build_extended_private_key();
-    let ext_pub = ExtendedPubKey::from_priv(&secp, &ext_priv);
+    let ext_pub = ExtendedPubKey::from_priv(&ext_priv);
     let parent_fingerprint = ext_pub.fingerprint();
 
     //
@@ -130,7 +128,7 @@ fn build_extended_private_key() -> ExtendedPrivKey {
 
     let sk = PrivateKey::from_wif(seed).unwrap();
     let seeded =
-        ExtendedPrivKey::new_master(key_wallet::Network::Testnet, &sk.inner.secret_bytes())
+        ExtendedPrivKey::new_master(key_wallet::Network::Testnet, &sk.inner.to_secret_bytes())
             .unwrap();
     assert_eq!(xpriv, seeded);
 
@@ -319,8 +317,6 @@ fn parse_and_verify_keys(
     ext_priv: &ExtendedPrivKey,
     sk_path: &[(&str, &str)],
 ) -> BTreeMap<PublicKey, PrivateKey> {
-    let secp = &Secp256k1::new();
-
     let mut key_map = BTreeMap::new();
     for (secret_key, derivation_path) in sk_path.iter() {
         let wif_priv = PrivateKey::from_wif(secret_key).expect("failed to parse key");
@@ -328,14 +324,14 @@ fn parse_and_verify_keys(
         use key_wallet::bip32::IntoDerivationPath;
         let path =
             derivation_path.into_derivation_path().expect("failed to convert derivation path");
-        let ext_derived = ext_priv.derive_priv(secp, &path).expect("failed to derive ext priv key");
+        let ext_derived = ext_priv.derive_priv(&path).expect("failed to derive ext priv key");
         let derived_priv = PrivateKey {
             compressed: true,
             network: ext_derived.network,
             inner: ext_derived.private_key,
         };
         assert_eq!(wif_priv, derived_priv);
-        let derived_pub = derived_priv.public_key(secp);
+        let derived_pub = derived_priv.public_key();
         key_map.insert(derived_pub, derived_priv);
     }
     key_map
@@ -420,8 +416,7 @@ fn combine_lexicographically() {
 
 /// Signs `psbt` with `keys` if required.
 fn sign(mut psbt: Psbt, keys: BTreeMap<PublicKey, PrivateKey>) -> Psbt {
-    let secp = Secp256k1::new();
-    psbt.sign(&keys, &secp).unwrap();
+    psbt.sign(&keys).unwrap();
     psbt
 }
 

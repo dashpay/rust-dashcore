@@ -1635,7 +1635,6 @@ mod tests {
             serde_json::from_str::<TestData>(json_str).expect("JSON was not well-formatted");
 
         assert_eq!(data.version, 1u64);
-        let secp = &secp256k1::Secp256k1::new();
         let key_path = data.key_path_spending.remove(0);
 
         let raw_unsigned_tx = key_path.given.raw_unsigned_tx;
@@ -1680,10 +1679,10 @@ mod tests {
             };
 
             // tests
-            let keypair = secp256k1::Keypair::from_secret_key(secp, &internal_priv_key);
+            let keypair = secp256k1::Keypair::from_secret_key(&internal_priv_key);
             let (internal_key, _parity) = XOnlyPublicKey::from_keypair(&keypair);
             let tweak = TapTweakHash::from_key_and_tweak(internal_key, merkle_root);
-            let tweaked_keypair = keypair.add_xonly_tweak(secp, &tweak.to_scalar()).unwrap();
+            let tweaked_keypair = keypair.add_xonly_tweak(&tweak.to_scalar()).unwrap();
             let mut sig_msg = Vec::new();
             cache
                 .taproot_encode_signing_data_to(
@@ -1701,7 +1700,7 @@ mod tests {
 
             let msg = secp256k1::Message::from_digest(sighash.to_byte_array());
             let key_spend_sig =
-                secp.sign_schnorr_with_aux_rand(msg.as_ref(), &tweaked_keypair, &[0u8; 32]);
+                secp256k1::schnorr::sign_with_aux_rand(msg.as_ref(), &tweaked_keypair, &[0u8; 32]);
 
             assert_eq!(expected.internal_pubkey, internal_key);
             assert_eq!(expected.tweak, tweak);

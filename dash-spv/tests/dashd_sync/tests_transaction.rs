@@ -12,7 +12,6 @@ use super::helpers::{
 use super::setup::{create_and_start_client, ClientHandle, TestContext};
 use dash_spv::test_utils::{create_test_wallet, TestChain};
 use dashcore::address::NetworkUnchecked;
-use dashcore::secp256k1::Secp256k1;
 use dashcore::PublicKey;
 use key_wallet::account::ManagedAccountTrait;
 use key_wallet::bip32::{ChildNumber, ExtendedPrivKey};
@@ -266,7 +265,6 @@ const MEMPOOL_TIMEOUT: Duration = Duration::from_secs(30);
 fn derive_external_addresses(mnemonic: &str, count: u32) -> Vec<Address> {
     let mnemonic = Mnemonic::from_phrase(mnemonic).expect("mnemonic");
     let seed = mnemonic.to_seed("");
-    let secp = Secp256k1::new();
     let master = ExtendedPrivKey::new_master(Network::Regtest, &seed).expect("master key");
     let chain = [
         ChildNumber::from_hardened_idx(44).expect("purpose"),
@@ -278,8 +276,8 @@ fn derive_external_addresses(mnemonic: &str, count: u32) -> Vec<Address> {
         .map(|index| {
             let mut path = chain.to_vec();
             path.push(ChildNumber::from_normal_idx(index).expect("index"));
-            let xprv = master.derive_priv(&secp, &path).expect("derive");
-            let pk = PublicKey::new(xprv.private_key.public_key(&secp));
+            let xprv = master.derive_priv(&path).expect("derive");
+            let pk = PublicKey::new(xprv.private_key.public_key());
             Address::p2pkh(&pk, Network::Regtest)
         })
         .collect()

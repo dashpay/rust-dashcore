@@ -28,7 +28,7 @@ use core::str::FromStr;
 use std::error;
 
 use dashcore_hashes::{hash160, sha512, Hash, HashEngine, Hmac, HmacEngine};
-use secp256k1::{self, Secp256k1, XOnlyPublicKey};
+use secp256k1::{self, XOnlyPublicKey};
 #[cfg(feature = "serde")]
 use serde;
 
@@ -402,7 +402,7 @@ impl bincode::Encode for ExtendedPrivKey {
         self.parent_fingerprint.encode(encoder)?;
         self.child_number.encode(encoder)?;
         // Encode the private key as bytes
-        self.private_key.secret_bytes().encode(encoder)?;
+        self.private_key.to_secret_bytes().encode(encoder)?;
         self.chain_code.encode(encoder)?;
         Ok(())
     }
@@ -419,9 +419,10 @@ impl<C> bincode::Decode<C> for ExtendedPrivKey {
         let child_number = ChildNumber::decode(decoder)?;
         // Decode the private key from bytes
         let private_key_bytes: [u8; 32] = <[u8; 32]>::decode(decoder)?;
-        let private_key = secp256k1::SecretKey::from_slice(&private_key_bytes).map_err(|e| {
-            bincode::error::DecodeError::OtherString(format!("Invalid private key: {}", e))
-        })?;
+        let private_key =
+            secp256k1::SecretKey::from_secret_bytes(private_key_bytes).map_err(|e| {
+                bincode::error::DecodeError::OtherString(format!("Invalid private key: {}", e))
+            })?;
         let chain_code = ChainCode::decode(decoder)?;
 
         Ok(ExtendedPrivKey {
@@ -446,9 +447,10 @@ impl<'de, C> bincode::BorrowDecode<'de, C> for ExtendedPrivKey {
         let child_number = ChildNumber::borrow_decode(decoder)?;
         // Decode the private key from bytes
         let private_key_bytes: [u8; 32] = <[u8; 32]>::borrow_decode(decoder)?;
-        let private_key = secp256k1::SecretKey::from_slice(&private_key_bytes).map_err(|e| {
-            bincode::error::DecodeError::OtherString(format!("Invalid private key: {}", e))
-        })?;
+        let private_key =
+            secp256k1::SecretKey::from_secret_bytes(private_key_bytes).map_err(|e| {
+                bincode::error::DecodeError::OtherString(format!("Invalid private key: {}", e))
+            })?;
         let chain_code = ChainCode::borrow_decode(decoder)?;
 
         Ok(ExtendedPrivKey {
@@ -540,9 +542,10 @@ impl<C> bincode::Decode<C> for ExtendedPubKey {
         let child_number = ChildNumber::decode(decoder)?;
         // Decode the public key from bytes (33 bytes for compressed)
         let public_key_bytes: [u8; 33] = <[u8; 33]>::decode(decoder)?;
-        let public_key = secp256k1::PublicKey::from_slice(&public_key_bytes).map_err(|e| {
-            bincode::error::DecodeError::OtherString(format!("Invalid public key: {}", e))
-        })?;
+        let public_key = secp256k1::PublicKey::from_byte_array_compressed(public_key_bytes)
+            .map_err(|e| {
+                bincode::error::DecodeError::OtherString(format!("Invalid public key: {}", e))
+            })?;
         let chain_code = ChainCode::decode(decoder)?;
 
         Ok(ExtendedPubKey {
@@ -567,9 +570,10 @@ impl<'de, C> bincode::BorrowDecode<'de, C> for ExtendedPubKey {
         let child_number = ChildNumber::borrow_decode(decoder)?;
         // Decode the public key from bytes (33 bytes for compressed)
         let public_key_bytes: [u8; 33] = <[u8; 33]>::borrow_decode(decoder)?;
-        let public_key = secp256k1::PublicKey::from_slice(&public_key_bytes).map_err(|e| {
-            bincode::error::DecodeError::OtherString(format!("Invalid public key: {}", e))
-        })?;
+        let public_key = secp256k1::PublicKey::from_byte_array_compressed(public_key_bytes)
+            .map_err(|e| {
+                bincode::error::DecodeError::OtherString(format!("Invalid public key: {}", e))
+            })?;
         let chain_code = ChainCode::borrow_decode(decoder)?;
 
         Ok(ExtendedPubKey {
@@ -1177,9 +1181,8 @@ impl DerivationPath {
         seed: &[u8],
         network: Network,
     ) -> Result<ExtendedPrivKey, Error> {
-        let secp = Secp256k1::new();
         let sk = ExtendedPrivKey::new_master(network, seed)?;
-        sk.derive_priv(&secp, &self)
+        sk.derive_priv(&self)
     }
 
     pub fn derive_pub_ecdsa_for_master_seed(
@@ -1187,9 +1190,8 @@ impl DerivationPath {
         seed: &[u8],
         network: Network,
     ) -> Result<ExtendedPubKey, Error> {
-        let secp = Secp256k1::new();
         let sk = self.derive_priv_ecdsa_for_master_seed(seed, network)?;
-        Ok(ExtendedPubKey::from_priv(&secp, &sk))
+        Ok(ExtendedPubKey::from_priv(&sk))
     }
 }
 
@@ -1526,6 +1528,14 @@ impl From<base58ck::Error> for Error {
     }
 }
 
+/// The secret-key half of a BIP32 HMAC-SHA512 output.
+fn hmac_secret_half(hmac: &Hmac<sha512::Hash>) -> [u8; secp256k1::constants::SECRET_KEY_SIZE] {
+    *hmac
+        .as_byte_array()
+        .first_chunk::<{ secp256k1::constants::SECRET_KEY_SIZE }>()
+        .expect("sha512 HMAC output is 64 bytes")
+}
+
 impl ExtendedPrivKey {
     /// Construct a new master key from a seed value
     pub fn new_master(network: Network, seed: &[u8]) -> Result<ExtendedPrivKey, Error> {
@@ -1538,47 +1548,37 @@ impl ExtendedPrivKey {
             depth: 0,
             parent_fingerprint: Default::default(),
             child_number: ChildNumber::from_normal_idx(0)?,
-            private_key: secp256k1::SecretKey::from_slice(&hmac_result[..32])?,
+            private_key: secp256k1::SecretKey::from_secret_bytes(hmac_secret_half(&hmac_result))?,
             chain_code: ChainCode::from_hmac(hmac_result),
         })
     }
 
     /// Constructs BIP340 keypair for Schnorr signatures and Taproot use matching the internal
     /// secret key representation.
-    pub fn to_keypair<C: secp256k1::Signing>(&self, secp: &Secp256k1<C>) -> Keypair {
-        Keypair::from_secret_key(secp, &self.private_key)
+    pub fn to_keypair(&self) -> Keypair {
+        Keypair::from_secret_key(&self.private_key)
     }
 
     /// Attempts to derive an extended private key from a path.
     ///
     /// The `path` argument can be both of type `DerivationPath` or `Vec<ChildNumber>`.
-    pub fn derive_priv<C: secp256k1::Signing, P: AsRef<[ChildNumber]>>(
-        &self,
-        secp: &Secp256k1<C>,
-        path: &P,
-    ) -> Result<ExtendedPrivKey, Error> {
+    pub fn derive_priv<P: AsRef<[ChildNumber]>>(&self, path: &P) -> Result<ExtendedPrivKey, Error> {
         let mut sk: ExtendedPrivKey = self.clone();
         for cnum in path.as_ref() {
-            sk = sk.ckd_priv(secp, *cnum)?;
+            sk = sk.ckd_priv(*cnum)?;
         }
         Ok(sk)
     }
 
     /// Private->Private child key derivation
-    pub fn ckd_priv<C: secp256k1::Signing>(
-        &self,
-        secp: &Secp256k1<C>,
-        i: ChildNumber,
-    ) -> Result<ExtendedPrivKey, Error> {
+    pub fn ckd_priv(&self, i: ChildNumber) -> Result<ExtendedPrivKey, Error> {
         let mut hmac_engine: HmacEngine<sha512::Hash> = HmacEngine::new(&self.chain_code[..]);
         match i {
             ChildNumber::Normal {
                 index,
             } => {
                 // Non-hardened key: compute public data and use that
-                hmac_engine.input(
-                    &secp256k1::PublicKey::from_secret_key(secp, &self.private_key).serialize()[..],
-                );
+                hmac_engine.input(&self.private_key.public_key().serialize()[..]);
                 hmac_engine.input(&index.to_be_bytes());
             }
             ChildNumber::Hardened {
@@ -1593,9 +1593,7 @@ impl ExtendedPrivKey {
                 index,
             } => {
                 // Non-hardened key with 256-bit index
-                hmac_engine.input(
-                    &secp256k1::PublicKey::from_secret_key(secp, &self.private_key).serialize()[..],
-                );
+                hmac_engine.input(&self.private_key.public_key().serialize()[..]);
                 hmac_engine.input(&index);
             }
             ChildNumber::Hardened256 {
@@ -1608,7 +1606,7 @@ impl ExtendedPrivKey {
             }
         }
         let hmac_result: Hmac<sha512::Hash> = Hmac::from_engine(hmac_engine);
-        let sk = secp256k1::SecretKey::from_slice(&hmac_result[..32])
+        let sk = secp256k1::SecretKey::from_secret_bytes(hmac_secret_half(&hmac_result))
             .expect("statistically impossible to hit");
         let tweaked =
             sk.add_tweak(&self.private_key.into()).expect("statistically impossible to hit");
@@ -1616,7 +1614,7 @@ impl ExtendedPrivKey {
         Ok(ExtendedPrivKey {
             network: self.network,
             depth: self.depth + 1,
-            parent_fingerprint: self.fingerprint(secp),
+            parent_fingerprint: self.fingerprint(),
             child_number: i,
             private_key: tweaked,
             chain_code: ChainCode::from_hmac(hmac_result),
@@ -1664,7 +1662,9 @@ impl ExtendedPrivKey {
             chain_code: data[13..45]
                 .try_into()
                 .expect("45 - 13 == 32, which is the ChainCode length"),
-            private_key: secp256k1::SecretKey::from_slice(&data[46..78])?,
+            private_key: secp256k1::SecretKey::from_secret_bytes(
+                <[u8; 32]>::try_from(&data[46..78]).expect("78 - 46 == 32, the key length"),
+            )?,
         })
     }
 
@@ -1718,7 +1718,9 @@ impl ExtendedPrivKey {
         };
 
         let chain_code = data[42..74].try_into().expect("32 bytes for chain code");
-        let private_key = secp256k1::SecretKey::from_slice(&data[75..107])?;
+        let private_key = secp256k1::SecretKey::from_secret_bytes(
+            <[u8; 32]>::try_from(&data[75..107]).expect("107 - 75 == 32, the key length"),
+        )?;
 
         Ok(ExtendedPrivKey {
             network,
@@ -1782,13 +1784,13 @@ impl ExtendedPrivKey {
     }
 
     /// Returns the HASH160 of the public key belonging to the xpriv
-    pub fn identifier<C: secp256k1::Signing>(&self, secp: &Secp256k1<C>) -> XpubIdentifier {
-        ExtendedPubKey::from_priv(secp, self).identifier()
+    pub fn identifier(&self) -> XpubIdentifier {
+        ExtendedPubKey::from_priv(self).identifier()
     }
 
     /// Returns the first four bytes of the identifier
-    pub fn fingerprint<C: secp256k1::Signing>(&self, secp: &Secp256k1<C>) -> Fingerprint {
-        self.identifier(secp)[0..4].try_into().expect("4 is the fingerprint length")
+    pub fn fingerprint(&self) -> Fingerprint {
+        self.identifier()[0..4].try_into().expect("4 is the fingerprint length")
     }
 
     /// Convert to a PrivateKey for signing operations
@@ -1804,24 +1806,18 @@ impl ExtendedPrivKey {
 impl ExtendedPubKey {
     /// Derives a public key from a private key
     #[deprecated(since = "0.28.0", note = "use ExtendedPubKey::from_priv")]
-    pub fn from_private<C: secp256k1::Signing>(
-        secp: &Secp256k1<C>,
-        sk: &ExtendedPrivKey,
-    ) -> ExtendedPubKey {
-        ExtendedPubKey::from_priv(secp, sk)
+    pub fn from_private(sk: &ExtendedPrivKey) -> ExtendedPubKey {
+        ExtendedPubKey::from_priv(sk)
     }
 
     /// Derives a public key from a private key
-    pub fn from_priv<C: secp256k1::Signing>(
-        secp: &Secp256k1<C>,
-        sk: &ExtendedPrivKey,
-    ) -> ExtendedPubKey {
+    pub fn from_priv(sk: &ExtendedPrivKey) -> ExtendedPubKey {
         ExtendedPubKey {
             network: sk.network,
             depth: sk.depth,
             parent_fingerprint: sk.parent_fingerprint,
             child_number: sk.child_number,
-            public_key: secp256k1::PublicKey::from_secret_key(secp, &sk.private_key),
+            public_key: sk.private_key.public_key(),
             chain_code: sk.chain_code,
         }
     }
@@ -1835,14 +1831,10 @@ impl ExtendedPubKey {
     /// Attempts to derive an extended public key from a path.
     ///
     /// The `path` argument can be both of type `DerivationPath` or `Vec<ChildNumber>`.
-    pub fn derive_pub<C: secp256k1::Verification, P: AsRef<[ChildNumber]>>(
-        &self,
-        secp: &Secp256k1<C>,
-        path: &P,
-    ) -> Result<ExtendedPubKey, Error> {
+    pub fn derive_pub<P: AsRef<[ChildNumber]>>(&self, path: &P) -> Result<ExtendedPubKey, Error> {
         let mut pk: ExtendedPubKey = *self;
         for cnum in path.as_ref() {
-            pk = pk.ckd_pub(secp, *cnum)?
+            pk = pk.ckd_pub(*cnum)?
         }
         Ok(pk)
     }
@@ -1870,7 +1862,8 @@ impl ExtendedPubKey {
 
                 let hmac_result: Hmac<sha512::Hash> = Hmac::from_engine(hmac_engine);
 
-                let private_key = secp256k1::SecretKey::from_slice(&hmac_result[..32])?;
+                let private_key =
+                    secp256k1::SecretKey::from_secret_bytes(hmac_secret_half(&hmac_result))?;
                 let chain_code = ChainCode::from_hmac(hmac_result);
                 Ok((private_key, chain_code))
             }
@@ -1888,7 +1881,8 @@ impl ExtendedPubKey {
                 let hmac_result: Hmac<sha512::Hash> = Hmac::from_engine(hmac_engine);
 
                 // IL must be less than n (order of the curve)
-                let private_key = secp256k1::SecretKey::from_slice(&hmac_result[..32])?;
+                let private_key =
+                    secp256k1::SecretKey::from_secret_bytes(hmac_secret_half(&hmac_result))?;
                 let chain_code = ChainCode::from_hmac(hmac_result);
 
                 Ok((private_key, chain_code))
@@ -1897,13 +1891,9 @@ impl ExtendedPubKey {
     }
 
     /// Public->Public child key derivation
-    pub fn ckd_pub<C: secp256k1::Verification>(
-        &self,
-        secp: &Secp256k1<C>,
-        i: ChildNumber,
-    ) -> Result<ExtendedPubKey, Error> {
+    pub fn ckd_pub(&self, i: ChildNumber) -> Result<ExtendedPubKey, Error> {
         let (sk, chain_code) = self.ckd_pub_tweak(i)?;
-        let tweaked = self.public_key.add_exp_tweak(secp, &sk.into())?;
+        let tweaked = self.public_key.add_exp_tweak(&sk.into())?;
 
         Ok(ExtendedPubKey {
             network: self.network,
@@ -1956,7 +1946,9 @@ impl ExtendedPubKey {
             chain_code: data[13..45]
                 .try_into()
                 .expect("45 - 13 == 32, which is the ChainCode length"),
-            public_key: secp256k1::PublicKey::from_slice(&data[45..78])?,
+            public_key: secp256k1::PublicKey::from_byte_array_compressed(
+                <[u8; 33]>::try_from(&data[45..78]).expect("78 - 45 == 33, the key length"),
+            )?,
         })
     }
 
@@ -2061,7 +2053,9 @@ impl ExtendedPubKey {
         let chain_code = data[42..74].try_into().expect("32 bytes for chain code");
 
         // Key data (33 bytes)
-        let public_key = secp256k1::PublicKey::from_slice(&data[74..107])?;
+        let public_key = secp256k1::PublicKey::from_byte_array_compressed(
+            <[u8; 33]>::try_from(&data[74..107]).expect("107 - 74 == 33, the key length"),
+        )?;
 
         Ok(ExtendedPubKey {
             network,
@@ -2129,7 +2123,6 @@ mod tests {
     use core::str::FromStr;
 
     use dashcore_hashes::hex::FromHex;
-    use secp256k1::{self, Secp256k1};
 
     use super::ChildNumber::{Hardened, Normal};
     use super::*;
@@ -2212,8 +2205,7 @@ mod tests {
         assert_eq!(indexed.child(ChildNumber::from_hardened_idx(2).unwrap()), path);
     }
 
-    fn test_path<C: secp256k1::Signing + secp256k1::Verification>(
-        secp: &Secp256k1<C>,
+    fn test_path(
         network: Network,
         seed: &[u8],
         path: DerivationPath,
@@ -2221,22 +2213,22 @@ mod tests {
         expected_pk: &str,
     ) {
         let mut sk = ExtendedPrivKey::new_master(network, seed).unwrap();
-        let mut pk = ExtendedPubKey::from_priv(secp, &sk);
+        let mut pk = ExtendedPubKey::from_priv(&sk);
 
         // Check derivation convenience method for ExtendedPrivKey
-        assert_eq!(&sk.derive_priv(secp, &path).unwrap().to_string()[..], expected_sk);
+        assert_eq!(&sk.derive_priv(&path).unwrap().to_string()[..], expected_sk);
 
         // Check derivation convenience method for ExtendedPubKey, should error
         // appropriately if any ChildNumber is hardened
         if path.0.iter().any(|cnum| cnum.is_hardened()) {
-            assert_eq!(pk.derive_pub(secp, &path), Err(Error::CannotDeriveFromHardenedKey));
+            assert_eq!(pk.derive_pub(&path), Err(Error::CannotDeriveFromHardenedKey));
         } else {
-            assert_eq!(&pk.derive_pub(secp, &path).unwrap().to_string()[..], expected_pk);
+            assert_eq!(&pk.derive_pub(&path).unwrap().to_string()[..], expected_pk);
         }
 
         // Derive keys, checking hardened and non-hardened derivation one-by-one
         for &num in path.0.iter() {
-            sk = sk.ckd_priv(secp, num).unwrap();
+            sk = sk.ckd_priv(num).unwrap();
             match num {
                 Normal {
                     ..
@@ -2244,8 +2236,8 @@ mod tests {
                 | ChildNumber::Normal256 {
                     ..
                 } => {
-                    let pk2 = pk.ckd_pub(secp, num).unwrap();
-                    pk = ExtendedPubKey::from_priv(secp, &sk);
+                    let pk2 = pk.ckd_pub(num).unwrap();
+                    pk = ExtendedPubKey::from_priv(&sk);
                     assert_eq!(pk, pk2);
                 }
                 Hardened {
@@ -2254,8 +2246,8 @@ mod tests {
                 | ChildNumber::Hardened256 {
                     ..
                 } => {
-                    assert_eq!(pk.ckd_pub(secp, num), Err(Error::CannotDeriveFromHardenedKey));
-                    pk = ExtendedPubKey::from_priv(secp, &sk);
+                    assert_eq!(pk.ckd_pub(num), Err(Error::CannotDeriveFromHardenedKey));
+                    pk = ExtendedPubKey::from_priv(&sk);
                 }
             }
         }
@@ -2315,12 +2307,10 @@ mod tests {
 
     #[test]
     fn test_vector_1() {
-        let secp = Secp256k1::new();
         let seed = Vec::from_hex("000102030405060708090a0b0c0d0e0f").unwrap();
 
         // m
         test_path(
-            &secp,
             Mainnet,
             &seed,
             "m".parse().unwrap(),
@@ -2330,7 +2320,6 @@ mod tests {
 
         // m/0h
         test_path(
-            &secp,
             Mainnet,
             &seed,
             "m/0h".parse().unwrap(),
@@ -2340,7 +2329,6 @@ mod tests {
 
         // m/0h/1
         test_path(
-            &secp,
             Mainnet,
             &seed,
             "m/0h/1".parse().unwrap(),
@@ -2350,7 +2338,6 @@ mod tests {
 
         // m/0h/1/2h
         test_path(
-            &secp,
             Mainnet,
             &seed,
             "m/0h/1/2h".parse().unwrap(),
@@ -2360,7 +2347,6 @@ mod tests {
 
         // m/0h/1/2h/2
         test_path(
-            &secp,
             Mainnet,
             &seed,
             "m/0h/1/2h/2".parse().unwrap(),
@@ -2370,7 +2356,6 @@ mod tests {
 
         // m/0h/1/2h/2/1000000000
         test_path(
-            &secp,
             Mainnet,
             &seed,
             "m/0h/1/2h/2/1000000000".parse().unwrap(),
@@ -2381,12 +2366,10 @@ mod tests {
 
     #[test]
     fn test_vector_2() {
-        let secp = Secp256k1::new();
         let seed = Vec::from_hex("fffcf9f6f3f0edeae7e4e1dedbd8d5d2cfccc9c6c3c0bdbab7b4b1aeaba8a5a29f9c999693908d8a8784817e7b7875726f6c696663605d5a5754514e4b484542").unwrap();
 
         // m
         test_path(
-            &secp,
             Mainnet,
             &seed,
             "m".parse().unwrap(),
@@ -2396,7 +2379,6 @@ mod tests {
 
         // m/0
         test_path(
-            &secp,
             Mainnet,
             &seed,
             "m/0".parse().unwrap(),
@@ -2406,7 +2388,6 @@ mod tests {
 
         // m/0/2147483647h
         test_path(
-            &secp,
             Mainnet,
             &seed,
             "m/0/2147483647h".parse().unwrap(),
@@ -2416,7 +2397,6 @@ mod tests {
 
         // m/0/2147483647h/1
         test_path(
-            &secp,
             Mainnet,
             &seed,
             "m/0/2147483647h/1".parse().unwrap(),
@@ -2426,7 +2406,6 @@ mod tests {
 
         // m/0/2147483647h/1/2147483646h
         test_path(
-            &secp,
             Mainnet,
             &seed,
             "m/0/2147483647h/1/2147483646h".parse().unwrap(),
@@ -2436,7 +2415,6 @@ mod tests {
 
         // m/0/2147483647h/1/2147483646h/2
         test_path(
-            &secp,
             Mainnet,
             &seed,
             "m/0/2147483647h/1/2147483646h/2".parse().unwrap(),
@@ -2447,12 +2425,10 @@ mod tests {
 
     #[test]
     fn test_vector_3() {
-        let secp = Secp256k1::new();
         let seed = Vec::from_hex("4b381541583be4423346c643850da4b320e46a87ae3d2a4e6da11eba819cd4acba45d239319ac14f863b8d5ab5a0d0c64d2e8a1e7d1457df2e5a3c51c73235be").unwrap();
 
         // m
         test_path(
-            &secp,
             Mainnet,
             &seed,
             "m".parse().unwrap(),
@@ -2462,7 +2438,6 @@ mod tests {
 
         // m/0h
         test_path(
-            &secp,
             Mainnet,
             &seed,
             "m/0h".parse().unwrap(),
@@ -2555,12 +2530,10 @@ mod tests {
 
     #[test]
     fn test_dashpay_vector_1() {
-        let secp = Secp256k1::new();
         let seed = Vec::from_hex("b16d3782e714da7c55a397d5f19104cfed7ffa8036ac514509bbb50807f8ac598eeb26f0797bd8cc221a6cbff2168d90a5e9ee025a5bd977977b9eccd97894bb").unwrap();
 
         // Test Vector 1: Non-hardened / Hardened path example
         test_path(
-            &secp,
             Network::Testnet,
             &seed,
             "m/0x775d3854c910b7dee436869c4724bed2fe0784e198b8a39f02bbb49d8ebcfc3b/\
@@ -2575,12 +2548,10 @@ mod tests {
 
     #[test]
     fn test_dashpay_vector_2() {
-        let secp = Secp256k1::new();
         let seed = Vec::from_hex("b16d3782e714da7c55a397d5f19104cfed7ffa8036ac514509bbb50807f8ac598eeb26f0797bd8cc221a6cbff2168d90a5e9ee025a5bd977977b9eccd97894bb").unwrap();
 
         // Test Vector 2: Multiple hardened derivations with final non-hardened index
         test_path(
-            &secp,
             Network::Testnet,
             &seed,
             "m/9'/5'/15'/0'/\
@@ -2595,12 +2566,10 @@ mod tests {
 
     #[test]
     fn test_dashpay_vector_3() {
-        let secp = Secp256k1::new();
         let seed = Vec::from_hex("b16d3782e714da7c55a397d5f19104cfed7ffa8036ac514509bbb50807f8ac598eeb26f0797bd8cc221a6cbff2168d90a5e9ee025a5bd977977b9eccd97894bb").unwrap();
 
         // Test Vector 3: Non-hardened derivation
         test_path(
-            &secp,
             Network::Testnet,
             &seed,
             "m/0x775d3854c910b7dee436869c4724bed2fe0784e198b8a39f02bbb49d8ebcfc3b".parse().unwrap(),
@@ -2611,12 +2580,10 @@ mod tests {
 
     #[test]
     fn test_dashpay_vector_4() {
-        let secp = Secp256k1::new();
         let seed = Vec::from_hex("b16d3782e714da7c55a397d5f19104cfed7ffa8036ac514509bbb50807f8ac598eeb26f0797bd8cc221a6cbff2168d90a5e9ee025a5bd977977b9eccd97894bb").unwrap();
 
         // Test Vector 4: Hardened path with complex indices
         test_path(
-            &secp,
             Network::Testnet,
             &seed,
             "m/0x775d3854c910b7dee436869c4724bed2fe0784e198b8a39f02bbb49d8ebcfc3b/\
@@ -2803,7 +2770,6 @@ mod tests {
         let network = Network::Testnet;
 
         let ext_priv = ExtendedPrivKey::new_master(network, &seed).unwrap();
-        let secp = Secp256k1::new();
 
         // Test to_priv() method
         let priv_key = ext_priv.to_priv();
@@ -2812,13 +2778,13 @@ mod tests {
         assert_eq!(priv_key.inner, ext_priv.private_key);
 
         // Test to_pub() method
-        let ext_pub = ExtendedPubKey::from_priv(&secp, &ext_priv);
+        let ext_pub = ExtendedPubKey::from_priv(&ext_priv);
         let pub_key = ext_pub.to_pub();
         assert!(pub_key.compressed);
         assert_eq!(pub_key.inner, ext_pub.public_key);
 
         // Verify the keys match
-        let pub_from_priv = dashcore::PublicKey::from_private_key(&secp, &priv_key);
+        let pub_from_priv = dashcore::PublicKey::from_private_key(&priv_key);
         assert_eq!(pub_key.inner, pub_from_priv.inner);
     }
 }

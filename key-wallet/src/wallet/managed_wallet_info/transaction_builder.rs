@@ -20,7 +20,7 @@ use dashcore::Address;
 use dashcore::{Network, TxIn, TxOut};
 use dashcore_hashes::Hash;
 use secp256k1::ecdsa::Signature;
-use secp256k1::{Message, PublicKey, Secp256k1};
+use secp256k1::{Message, PublicKey};
 use std::cmp::Ordering;
 use std::collections::HashSet;
 
@@ -1055,20 +1055,18 @@ impl TransactionSigner for Wallet {
         sighash: LegacySighash,
         path: DerivationPath,
     ) -> Result<(Signature, PublicKey), BuilderError> {
-        let secp = Secp256k1::new();
-
         let root_xpriv =
             self.root_extended_priv_key().map_err(|_| BuilderError::WatchOnlyWallet)?;
 
         let root_ext_priv = root_xpriv.to_extended_priv_key(self.network);
-        let derived_xpriv = root_ext_priv.derive_priv(&secp, &path).map_err(|e| {
+        let derived_xpriv = root_ext_priv.derive_priv(&path).map_err(|e| {
             BuilderError::SigningFailed(format!("couldn't derive extended priv key: {}", e))
         })?;
         let key = derived_xpriv.private_key;
 
         let message = Message::from_digest(*sighash.as_byte_array());
-        let signature = secp.sign_ecdsa(&message, &key);
-        let pubkey = PublicKey::from_secret_key(&secp, &key);
+        let signature = key.sign_ecdsa(message);
+        let pubkey = PublicKey::from_secret_key(&key);
 
         Ok((signature, pubkey))
     }

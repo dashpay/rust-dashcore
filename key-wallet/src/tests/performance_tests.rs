@@ -7,7 +7,6 @@ use crate::bip32::{ChildNumber, DerivationPath, ExtendedPrivKey};
 use crate::mnemonic::Mnemonic;
 use crate::wallet::Wallet;
 use crate::Network;
-use secp256k1::Secp256k1;
 use std::time::{Duration, Instant};
 
 /// Performance metrics structure
@@ -57,7 +56,6 @@ fn test_key_derivation_performance() {
     let mnemonic = Mnemonic::from_phrase("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about").unwrap();
     let seed = mnemonic.to_seed("");
     let master = ExtendedPrivKey::new_master(Network::Testnet, &seed).unwrap();
-    let secp = Secp256k1::new();
 
     let iterations = 1000;
     let mut times = Vec::new();
@@ -72,7 +70,7 @@ fn test_key_derivation_performance() {
         ]);
 
         let start = Instant::now();
-        let _key = master.derive_priv(&secp, &path).unwrap();
+        let _key = master.derive_priv(&path).unwrap();
         times.push(start.elapsed());
     }
 
@@ -165,13 +163,12 @@ fn test_address_generation_batch_performance() {
     let seed = mnemonic.to_seed("");
     let master = ExtendedPrivKey::new_master(Network::Testnet, &seed).unwrap();
 
-    let secp = Secp256k1::new();
     let account_path = DerivationPath::from(vec![
         ChildNumber::from_hardened_idx(44).unwrap(),
         ChildNumber::from_hardened_idx(5).unwrap(),
         ChildNumber::from_hardened_idx(0).unwrap(),
     ]);
-    let account_key = master.derive_priv(&secp, &account_path).unwrap();
+    let account_key = master.derive_priv(&account_path).unwrap();
     let key_source = KeySource::Private(account_key);
 
     let base_path = DerivationPath::from(vec![ChildNumber::from_normal_idx(0).unwrap()]);
@@ -241,7 +238,6 @@ fn test_concurrent_derivation_performance() {
         let master_clone = Arc::clone(&master);
 
         let handle = thread::spawn(move || {
-            let secp = Secp256k1::new();
             let mut times = Vec::new();
 
             for i in 0..iterations_per_thread {
@@ -253,7 +249,7 @@ fn test_concurrent_derivation_performance() {
                 ]);
 
                 let thread_start = Instant::now();
-                let _key = master_clone.derive_priv(&secp, &path).unwrap();
+                let _key = master_clone.derive_priv(&path).unwrap();
                 times.push(thread_start.elapsed());
             }
 
@@ -309,13 +305,12 @@ fn test_gap_limit_scan_performance() {
     let seed = mnemonic.to_seed("");
     let master = ExtendedPrivKey::new_master(Network::Testnet, &seed).unwrap();
 
-    let secp = Secp256k1::new();
     let account_path = DerivationPath::from(vec![
         ChildNumber::from_hardened_idx(44).unwrap(),
         ChildNumber::from_hardened_idx(5).unwrap(),
         ChildNumber::from_hardened_idx(0).unwrap(),
     ]);
-    let account_key = master.derive_priv(&secp, &account_path).unwrap();
+    let account_key = master.derive_priv(&account_path).unwrap();
     let key_source = KeySource::Private(account_key);
 
     let base_path = DerivationPath::from(vec![ChildNumber::from_normal_idx(0).unwrap()]);
@@ -347,7 +342,6 @@ fn test_worst_case_derivation_path() {
     let mnemonic = Mnemonic::from_phrase("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about").unwrap();
     let seed = mnemonic.to_seed("");
     let master = ExtendedPrivKey::new_master(Network::Testnet, &seed).unwrap();
-    let secp = Secp256k1::new();
 
     // Build a very deep path
     let mut path = DerivationPath::master();
@@ -360,7 +354,7 @@ fn test_worst_case_derivation_path() {
 
     for _ in 0..iterations {
         let start = Instant::now();
-        let _key = master.derive_priv(&secp, &path).unwrap();
+        let _key = master.derive_priv(&path).unwrap();
         times.push(start.elapsed());
     }
 

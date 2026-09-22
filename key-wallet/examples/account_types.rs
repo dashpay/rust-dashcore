@@ -9,7 +9,6 @@ use key_wallet::bip32::{ChildNumber, DerivationPath, ExtendedPrivKey, ExtendedPu
 use key_wallet::managed_account::address_pool::AddressPoolType;
 use key_wallet::mnemonic::Mnemonic;
 use key_wallet::Network;
-use secp256k1::Secp256k1;
 
 #[cfg(feature = "bls")]
 use key_wallet::derivation_bls_bip32::ExtendedBLSPrivKey;
@@ -23,7 +22,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Create master key
     let master = ExtendedPrivKey::new_master(Network::Testnet, &seed)?;
-    let secp = Secp256k1::new();
 
     // 1. Standard ECDSA Account (traditional HD wallet)
     println!("=== ECDSA Account (Standard HD Wallet) ===");
@@ -32,8 +30,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ChildNumber::from_hardened_idx(1)?,
         ChildNumber::from_hardened_idx(0)?,
     ]);
-    let account_xpriv = master.derive_priv(&secp, &path)?;
-    let account_xpub = ExtendedPubKey::from_priv(&secp, &account_xpriv);
+    let account_xpriv = master.derive_priv(&path)?;
+    let account_xpub = ExtendedPubKey::from_priv(&account_xpriv);
 
     let ecdsa_account = Account::new(
         None,

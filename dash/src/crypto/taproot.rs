@@ -27,29 +27,22 @@ pub struct Signature {
 impl Signature {
     /// Deserialize from slice
     pub fn from_slice(sl: &[u8]) -> Result<Self, Error> {
-        match sl.len() {
-            64 => {
-                // default type
-                let sig =
-                    secp256k1::schnorr::Signature::from_slice(sl).map_err(Error::Secp256k1)?;
-                Ok(Signature {
-                    sig,
-                    hash_ty: TapSighashType::Default,
-                })
-            }
-            65 => {
-                let (hash_ty, sig) = sl.split_last().expect("Slice len checked == 65");
-                let hash_ty = TapSighashType::from_consensus_u8(*hash_ty)
-                    .map_err(|_| Error::InvalidSighashType(*hash_ty))?;
-                let sig =
-                    secp256k1::schnorr::Signature::from_slice(sig).map_err(Error::Secp256k1)?;
-                Ok(Signature {
-                    sig,
-                    hash_ty,
-                })
-            }
-            len => Err(Error::InvalidSignatureSize(len)),
-        }
+        let Some((sig, hash_ty)) =
+            sl.split_first_chunk::<{ secp256k1::constants::SCHNORR_SIGNATURE_SIZE }>()
+        else {
+            return Err(Error::InvalidSignatureSize(sl.len()));
+        };
+        let hash_ty = match hash_ty {
+            // Default sighash type is implied by the absence of a trailing byte.
+            [] => TapSighashType::Default,
+            [hash_ty] => TapSighashType::from_consensus_u8(*hash_ty)
+                .map_err(|_| Error::InvalidSighashType(*hash_ty))?,
+            _ => return Err(Error::InvalidSignatureSize(sl.len())),
+        };
+        Ok(Signature {
+            sig: secp256k1::schnorr::Signature::from_byte_array(*sig),
+            hash_ty,
+        })
     }
 
     /// Serialize Signature

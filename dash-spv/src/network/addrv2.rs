@@ -105,7 +105,7 @@ impl AddrV2Handler {
         }
 
         // Select random subset
-        let mut rng = thread_rng();
+        let mut rng = rand::rng();
         let count = count.min(MAX_ADDR_TO_SEND).min(known_peers.len());
 
         let addresses: Vec<AddrV2Message> =

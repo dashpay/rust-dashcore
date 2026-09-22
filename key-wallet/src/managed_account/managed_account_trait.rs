@@ -488,10 +488,9 @@ pub trait ManagedAccountTrait {
 
         pool.mark_index_used(info.index);
 
-        let secp = secp256k1::Secp256k1::new();
         let root_ext_priv = root_xpriv.to_extended_priv_key(network);
         let derived_xpriv =
-            root_ext_priv.derive_priv(&secp, &info.path).map_err(|_| "Key derivation failed")?;
+            root_ext_priv.derive_priv(&info.path).map_err(|_| "Key derivation failed")?;
 
         let mut private_key = [0u8; 32];
         private_key.copy_from_slice(&derived_xpriv.private_key[..]);

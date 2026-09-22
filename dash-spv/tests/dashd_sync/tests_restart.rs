@@ -192,7 +192,7 @@ async fn test_sync_with_random_restarts() {
     let mut rng = StdRng::seed_from_u64(seed);
 
     for i in 0..num_restarts {
-        let delay_ms = rng.gen_range(50..500);
+        let delay_ms = rng.random_range(50..500);
         tracing::info!("Restart {}: sleeping {}ms before stopping", i + 1, delay_ms);
         let mut client_handle = ctx.spawn_new_client().await;
 

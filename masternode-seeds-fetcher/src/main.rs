@@ -231,7 +231,7 @@ async fn gather_candidate_peers(
     let mut list: Vec<SocketAddr> = out.into_iter().collect();
     // Shuffle so we do not always hit the same peer first across runs.
     use rand::seq::SliceRandom;
-    list.shuffle(&mut rand::thread_rng());
+    list.shuffle(&mut rand::rng());
     list.truncate(max.saturating_mul(4).max(max));
     list
 }

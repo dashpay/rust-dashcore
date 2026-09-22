@@ -1157,8 +1157,7 @@ mod dashpay_funding_scope_tests {
         let xpriv =
             crate::bip32::ExtendedPrivKey::new_master(Network::Testnet, &seed).expect("master key");
         {
-            let secp = secp256k1::Secp256k1::new();
-            crate::bip32::ExtendedPubKey::from_priv(&secp, &xpriv)
+            crate::bip32::ExtendedPubKey::from_priv(&xpriv)
         }
     }
 

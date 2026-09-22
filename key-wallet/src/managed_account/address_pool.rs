@@ -6,7 +6,6 @@
 #[cfg(feature = "bincode")]
 use bincode_derive::{Decode, Encode};
 use core::fmt;
-use secp256k1::Secp256k1;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -132,13 +131,11 @@ impl KeySource {
     pub fn derive_at_path(&self, path: &DerivationPath) -> Result<DerivedKey> {
         match self {
             KeySource::Private(xprv) => {
-                let secp = Secp256k1::new();
-                let child = xprv.derive_priv(&secp, path).map_err(Error::Bip32)?;
-                Ok(DerivedKey::ECDSA(ExtendedPubKey::from_priv(&secp, &child)))
+                let child = xprv.derive_priv(path).map_err(Error::Bip32)?;
+                Ok(DerivedKey::ECDSA(ExtendedPubKey::from_priv(&child)))
             }
             KeySource::Public(xpub) => {
-                let secp = Secp256k1::new();
-                let derived = xpub.derive_pub(&secp, path).map_err(Error::Bip32)?;
+                let derived = xpub.derive_pub(path).map_err(Error::Bip32)?;
                 Ok(DerivedKey::ECDSA(derived))
             }
             #[cfg(feature = "bls")]
@@ -1336,13 +1333,12 @@ mod tests {
         let seed = mnemonic.to_seed("");
         let master = ExtendedPrivKey::new_master(Network::Testnet, &seed).unwrap();
 
-        let secp = Secp256k1::new();
         let path = DerivationPath::from(vec![
             ChildNumber::from_hardened_idx(44).unwrap(),
             ChildNumber::from_hardened_idx(1).unwrap(),
             ChildNumber::from_hardened_idx(0).unwrap(),
         ]);
-        let account_key = master.derive_priv(&secp, &path).unwrap();
+        let account_key = master.derive_priv(&path).unwrap();
 
         KeySource::Private(account_key)
     }

@@ -670,26 +670,24 @@ mod tests {
             path: &DerivationPath,
             sighash: [u8; 32],
         ) -> Result<(secp256k1::ecdsa::Signature, PublicKey), Self::Error> {
-            let secp = secp256k1::Secp256k1::new();
             let xpriv = self
                 .root
                 .to_extended_priv_key(self.network)
-                .derive_priv(&secp, path)
+                .derive_priv(path)
                 .map_err(|e| e.to_string())?;
             let msg = secp256k1::Message::from_digest(sighash);
-            let sig = secp.sign_ecdsa(&msg, &xpriv.private_key);
-            let pk = secp256k1::PublicKey::from_secret_key(&secp, &xpriv.private_key);
+            let sig = xpriv.private_key.sign_ecdsa(msg);
+            let pk = secp256k1::PublicKey::from_secret_key(&xpriv.private_key);
             Ok((sig, pk))
         }
 
         async fn public_key(&self, path: &DerivationPath) -> Result<PublicKey, Self::Error> {
-            let secp = secp256k1::Secp256k1::new();
             let xpriv = self
                 .root
                 .to_extended_priv_key(self.network)
-                .derive_priv(&secp, path)
+                .derive_priv(path)
                 .map_err(|e| e.to_string())?;
-            Ok(secp256k1::PublicKey::from_secret_key(&secp, &xpriv.private_key))
+            Ok(secp256k1::PublicKey::from_secret_key(&xpriv.private_key))
         }
     }
 
@@ -699,13 +697,12 @@ mod tests {
             &self,
             path: &DerivationPath,
         ) -> Result<crate::bip32::ExtendedPubKey, Self::Error> {
-            let secp = secp256k1::Secp256k1::new();
             let xpriv = self
                 .root
                 .to_extended_priv_key(self.network)
-                .derive_priv(&secp, path)
+                .derive_priv(path)
                 .map_err(|e| e.to_string())?;
-            Ok(crate::bip32::ExtendedPubKey::from_priv(&secp, &xpriv))
+            Ok(crate::bip32::ExtendedPubKey::from_priv(&xpriv))
         }
     }
 

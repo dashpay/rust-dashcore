@@ -6,7 +6,6 @@ use core::fmt;
 use core::ops::{Index, Range, RangeFrom, RangeFull, RangeInclusive, RangeTo, RangeToInclusive};
 
 use hashes::Hash;
-use secp256k1::{Secp256k1, Verification};
 
 use crate::address::WitnessVersion;
 use crate::blockdata::opcodes::all::*;
@@ -178,14 +177,10 @@ impl Script {
     /// Computes P2TR output with a given internal key and a single script spending path equal to
     /// the current script, assuming that the script is a Tapscript.
     #[inline]
-    pub fn to_v1_p2tr<C: Verification>(
-        &self,
-        secp: &Secp256k1<C>,
-        internal_key: UntweakedPublicKey,
-    ) -> ScriptBuf {
+    pub fn to_v1_p2tr(&self, internal_key: UntweakedPublicKey) -> ScriptBuf {
         let leaf_hash = self.tapscript_leaf_hash();
         let merkle_root = TapNodeHash::from(leaf_hash);
-        ScriptBuf::new_v1_p2tr(secp, internal_key, Some(merkle_root))
+        ScriptBuf::new_v1_p2tr(internal_key, Some(merkle_root))
     }
 
     /// Returns witness version of the script, if any, assuming the script is a `scriptPubkey`.

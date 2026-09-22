@@ -17,7 +17,7 @@ use crate::error::{Error, Result};
 use crate::Network;
 use dashcore::Address;
 
-use secp256k1::{PublicKey, Secp256k1, SecretKey};
+use secp256k1::{PublicKey, SecretKey};
 use sha2::{Digest, Sha256};
 
 // BIP38 constants
@@ -141,7 +141,7 @@ impl Bip38EncryptedKey {
         }
 
         // Create secret key
-        let secret = SecretKey::from_slice(&private_key)
+        let secret = SecretKey::from_secret_bytes(private_key)
             .map_err(|_| Error::InvalidParameter("Invalid private key".into()))?;
 
         // Verify by checking address hash
@@ -206,10 +206,14 @@ impl Bip38EncryptedKey {
         };
 
         // Derive pass_point from pass_factor
-        let secp = Secp256k1::new();
-        let pass_factor_key = SecretKey::from_slice(&pass_factor)
-            .map_err(|_| Error::KeyError("Invalid pass factor".into()))?;
-        let pass_point = PublicKey::from_secret_key(&secp, &pass_factor_key);
+        let pass_factor_key = SecretKey::from_secret_bytes(
+            pass_factor
+                .as_slice()
+                .try_into()
+                .map_err(|_| Error::KeyError("Invalid pass factor".into()))?,
+        )
+        .map_err(|_| Error::KeyError("Invalid pass factor".into()))?;
+        let pass_point = PublicKey::from_secret_key(&pass_factor_key);
 
         // Derive encryption key from pass_point and address_hash
         let mut derived_key = vec![0u8; SCRYPT_KEY_LEN];
@@ -240,7 +244,7 @@ impl Bip38EncryptedKey {
         let factor_b = double_sha256(seed_b);
 
         // Multiply to get private key
-        let factor_b_key = SecretKey::from_slice(&factor_b)
+        let factor_b_key = SecretKey::from_secret_bytes(factor_b)
             .map_err(|_| Error::KeyError("Invalid factor b".into()))?;
 
         let mut private_key = pass_factor_key;
@@ -253,8 +257,7 @@ impl Bip38EncryptedKey {
 
     /// Derive address from secret key
     fn derive_address(&self, secret: &SecretKey) -> Result<Address> {
-        let secp = Secp256k1::new();
-        let public_key = PublicKey::from_secret_key(&secp, secret);
+        let public_key = PublicKey::from_secret_key(secret);
         let dash_pubkey = dashcore::PublicKey::new(public_key);
         Ok(Address::p2pkh(&dash_pubkey, self.network))
     }
@@ -267,8 +270,7 @@ pub fn encrypt_private_key(
     compressed: bool,
     network: Network,
 ) -> Result<Bip38EncryptedKey> {
-    let secp = Secp256k1::new();
-    let public_key = PublicKey::from_secret_key(&secp, private_key);
+    let public_key = PublicKey::from_secret_key(private_key);
     let dash_pubkey = dashcore::PublicKey::new(public_key);
     let address = Address::p2pkh(&dash_pubkey, network);
     let address_hash = address_hash_from_address(&address);
@@ -287,7 +289,7 @@ pub fn encrypt_private_key(
     let derive_half2 = &derived_key[32..64];
 
     // XOR private key with derive_half1
-    let private_bytes = private_key.secret_bytes();
+    let private_bytes = private_key.to_secret_bytes();
     let mut to_encrypt = [0u8; 32];
     for i in 0..32 {
         to_encrypt[i] = private_bytes[i] ^ derive_half1[i];
@@ -322,7 +324,7 @@ pub fn generate_intermediate_code(
     sequence: Option<u32>,
 ) -> Result<String> {
     use rand::Rng;
-    let mut rng = rand::thread_rng();
+    let mut rng = rand::rng();
 
     let (owner_salt, pass_factor) = if let (Some(lot), Some(sequence)) = (lot, sequence) {
         // With lot and sequence
@@ -373,10 +375,14 @@ pub fn generate_intermediate_code(
     };
 
     // Compute passpoint
-    let secp = Secp256k1::new();
-    let pass_factor_key = SecretKey::from_slice(&pass_factor)
-        .map_err(|_| Error::KeyError("Invalid pass factor".into()))?;
-    let pass_point = PublicKey::from_secret_key(&secp, &pass_factor_key);
+    let pass_factor_key = SecretKey::from_secret_bytes(
+        pass_factor
+            .as_slice()
+            .try_into()
+            .map_err(|_| Error::KeyError("Invalid pass factor".into()))?,
+    )
+    .map_err(|_| Error::KeyError("Invalid pass factor".into()))?;
+    let pass_point = PublicKey::from_secret_key(&pass_factor_key);
 
     // Build intermediate code
     let mut data = Vec::new();
@@ -553,7 +559,7 @@ mod tests {
     #[ignore = "BIP38 tests are slow - run with test_bip38.sh script"]
     fn test_bip38_encryption() {
         // Create a test private key
-        let private_key = SecretKey::from_slice(&[
+        let private_key = SecretKey::from_secret_bytes([
             0x0C, 0x28, 0xFC, 0xA3, 0x86, 0xC7, 0xA2, 0x27, 0x60, 0x0B, 0x2F, 0xE5, 0x0B, 0x7C,
             0xAE, 0x11, 0xEC, 0x86, 0xD3, 0xBF, 0x1F, 0xBE, 0x47, 0x1B, 0xE8, 0x98, 0x27, 0xE1,
             0x9D, 0x72, 0xAA, 0x1D,
@@ -566,7 +572,7 @@ mod tests {
 
         // Decrypt and verify
         let decrypted = encrypted.decrypt("TestingOneTwoThree").unwrap();
-        assert_eq!(private_key.secret_bytes(), decrypted.secret_bytes());
+        assert_eq!(private_key.to_secret_bytes(), decrypted.to_secret_bytes());
     }
 
     #[test]
@@ -576,7 +582,7 @@ mod tests {
         // This is a placeholder - in production we'd use actual BIP38 test vectors
 
         // Create and encrypt a key
-        let private_key = SecretKey::from_slice(&[
+        let private_key = SecretKey::from_secret_bytes([
             0x0C, 0x28, 0xFC, 0xA3, 0x86, 0xC7, 0xA2, 0x27, 0x60, 0x0B, 0x2F, 0xE5, 0x0B, 0x7C,
             0xAE, 0x11, 0xEC, 0x86, 0xD3, 0xBF, 0x1F, 0xBE, 0x47, 0x1B, 0xE8, 0x98, 0x27, 0xE1,
             0x9D, 0x72, 0xAA, 0x1D,
@@ -602,7 +608,7 @@ mod tests {
 
         // Decrypt with correct password
         let decrypted = restored.decrypt(password).unwrap();
-        assert_eq!(private_key.secret_bytes(), decrypted.secret_bytes());
+        assert_eq!(private_key.to_secret_bytes(), decrypted.to_secret_bytes());
 
         // Try with wrong password (should fail)
         let wrong = restored.decrypt("WrongPassword");
@@ -612,7 +618,7 @@ mod tests {
     #[test]
     #[ignore = "BIP38 tests are slow - run with test_bip38.sh script"]
     fn test_bip38_compressed_uncompressed() {
-        let private_key = SecretKey::from_slice(&[
+        let private_key = SecretKey::from_secret_bytes([
             0x64, 0x4D, 0xC7, 0x6B, 0x88, 0xDF, 0x64, 0xC3, 0xE4, 0x8A, 0xB6, 0x59, 0x5C, 0xBB,
             0x5C, 0x46, 0x8D, 0x63, 0xF2, 0x0B, 0x5C, 0x8D, 0x17, 0x39, 0xB1, 0x5A, 0x8C, 0x3D,
             0x7F, 0xC9, 0x77, 0x0C,
@@ -627,7 +633,7 @@ mod tests {
 
         assert!(!uncompressed.compressed);
         let decrypted_uncomp = uncompressed.decrypt(password).unwrap();
-        assert_eq!(private_key.secret_bytes(), decrypted_uncomp.secret_bytes());
+        assert_eq!(private_key.to_secret_bytes(), decrypted_uncomp.to_secret_bytes());
 
         // Test compressed
         let compressed =
@@ -635,7 +641,7 @@ mod tests {
 
         assert!(compressed.compressed);
         let decrypted_comp = compressed.decrypt(password).unwrap();
-        assert_eq!(private_key.secret_bytes(), decrypted_comp.secret_bytes());
+        assert_eq!(private_key.to_secret_bytes(), decrypted_comp.to_secret_bytes());
 
         // Encrypted keys should be different
         assert_ne!(uncompressed.to_base58(), compressed.to_base58());
@@ -644,7 +650,7 @@ mod tests {
     #[test]
     #[ignore = "BIP38 tests are slow - run with test_bip38.sh script"]
     fn test_bip38_builder() {
-        let private_key = SecretKey::from_slice(&[
+        let private_key = SecretKey::from_secret_bytes([
             0x0C, 0x28, 0xFC, 0xA3, 0x86, 0xC7, 0xA2, 0x27, 0x60, 0x0B, 0x2F, 0xE5, 0x0B, 0x7C,
             0xAE, 0x11, 0xEC, 0x86, 0xD3, 0xBF, 0x1F, 0xBE, 0x47, 0x1B, 0xE8, 0x98, 0x27, 0xE1,
             0x9D, 0x72, 0xAA, 0x1D,
@@ -662,7 +668,7 @@ mod tests {
         assert_eq!(encrypted.network, Network::Testnet);
 
         let decrypted = encrypted.decrypt("TestPassword123").unwrap();
-        assert_eq!(private_key.secret_bytes(), decrypted.secret_bytes());
+        assert_eq!(private_key.to_secret_bytes(), decrypted.to_secret_bytes());
     }
 
     #[test]
@@ -685,15 +691,14 @@ mod tests {
     #[ignore = "BIP38 tests are slow - run with test_bip38.sh script"]
     fn test_address_hash() {
         // Test address hash computation
-        let secp = Secp256k1::new();
-        let private_key = SecretKey::from_slice(&[
+        let private_key = SecretKey::from_secret_bytes([
             0x0C, 0x28, 0xFC, 0xA3, 0x86, 0xC7, 0xA2, 0x27, 0x60, 0x0B, 0x2F, 0xE5, 0x0B, 0x7C,
             0xAE, 0x11, 0xEC, 0x86, 0xD3, 0xBF, 0x1F, 0xBE, 0x47, 0x1B, 0xE8, 0x98, 0x27, 0xE1,
             0x9D, 0x72, 0xAA, 0x1D,
         ])
         .unwrap();
 
-        let public_key = PublicKey::from_secret_key(&secp, &private_key);
+        let public_key = PublicKey::from_secret_key(&private_key);
         let dash_pubkey = dashcore::PublicKey::new(public_key);
         let dash_network = Network::Mainnet;
         let address = Address::p2pkh(&dash_pubkey, dash_network);

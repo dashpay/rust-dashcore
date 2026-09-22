@@ -17,7 +17,7 @@ use key_wallet::wallet::managed_wallet_info::asset_lock_builder::{
 use key_wallet::wallet::managed_wallet_info::coin_selection::SelectionStrategy::BranchAndBound;
 use key_wallet::wallet::managed_wallet_info::fee::FeeRate;
 use key_wallet::wallet::managed_wallet_info::transaction_building::AccountTypePreference;
-use secp256k1::{Message, Secp256k1, SecretKey};
+use secp256k1::{Message, SecretKey};
 use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
 use std::ptr;
@@ -585,8 +585,10 @@ pub unsafe extern "C" fn transaction_sign_input(
     }
 
     // Parse private key
-    let privkey_slice = slice::from_raw_parts(private_key, 32);
-    let privkey = match SecretKey::from_slice(privkey_slice) {
+    let Ok(privkey_bytes) = <[u8; 32]>::try_from(slice::from_raw_parts(private_key, 32)) else {
+        return -1;
+    };
+    let privkey = match SecretKey::from_secret_bytes(privkey_bytes) {
         Ok(k) => k,
         Err(_) => {
             return -1;
@@ -594,15 +596,14 @@ pub unsafe extern "C" fn transaction_sign_input(
     };
 
     // Sign
-    let secp = Secp256k1::new();
     let message = Message::from_digest(sighash);
-    let sig = secp.sign_ecdsa(&message, &privkey);
+    let sig = privkey.sign_ecdsa(message);
 
     // Build signature script (simplified P2PKH)
     let mut sig_bytes = sig.serialize_der().to_vec();
     sig_bytes.push(sighash_type as u8);
 
-    let pubkey = secp256k1::PublicKey::from_secret_key(&secp, &privkey);
+    let pubkey = secp256k1::PublicKey::from_secret_key(&privkey);
     let pubkey_bytes = pubkey.serialize();
 
     let mut script_sig = vec![];

@@ -7,7 +7,6 @@ use core::ops::Deref;
 #[cfg(feature = "bincode")]
 use bincode::{Decode, Encode};
 use hashes::hex;
-use secp256k1::{Secp256k1, Verification};
 
 use crate::address::{WitnessProgram, WitnessVersion};
 use crate::blockdata::opcodes::all::*;
@@ -127,12 +126,8 @@ impl ScriptBuf {
 
     /// Generates P2TR for script spending path using an internal public key and some optional
     /// script tree merkle root.
-    pub fn new_v1_p2tr<C: Verification>(
-        secp: &Secp256k1<C>,
-        internal_key: UntweakedPublicKey,
-        merkle_root: Option<TapNodeHash>,
-    ) -> Self {
-        let (output_key, _) = internal_key.tap_tweak(secp, merkle_root);
+    pub fn new_v1_p2tr(internal_key: UntweakedPublicKey, merkle_root: Option<TapNodeHash>) -> Self {
+        let (output_key, _) = internal_key.tap_tweak(merkle_root);
         // output key is 32 bytes long, so it's safe to use `new_witness_program_unchecked` (Segwitv1)
         ScriptBuf::new_witness_program_unchecked(WitnessVersion::V1, output_key.serialize())
     }
