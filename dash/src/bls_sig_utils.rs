@@ -6,6 +6,7 @@
 
 //! BLS12-381 public key and signatures.
 
+pub use dashcore_crypto::bls::BlsPkBytes as BLSPublicKey;
 pub use dashcore_crypto::bls::*;
 
 macro_rules! impl_elementencode {
