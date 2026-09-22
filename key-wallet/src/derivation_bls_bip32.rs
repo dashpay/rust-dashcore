@@ -48,6 +48,9 @@ use serde::Deserialize;
 
 use crate::bip32::{ChainCode, ChildNumber, DerivationPath, Fingerprint};
 
+/// The HMAC key used for generating the master key.
+const MASTER_HMAC_KEY: &[u8] = b"BLS HD seed";
+
 /// Errors that can occur in BLS HD key derivation
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Error {
@@ -129,6 +132,15 @@ impl Drop for ExtendedBLSPrivKey {
     }
 }
 
+/// HMAC-SHA256 over `input || suffix` used for extended key derivation.
+fn derivation_hmac(key: &[u8], input: &[u8], suffix: u8) -> [u8; 32] {
+    let mut engine: HmacEngine<sha256::Hash> = HmacEngine::new(key);
+    engine.input(input);
+    engine.input(&[suffix]);
+
+    *Hmac::<sha256::Hash>::from_engine(engine).as_byte_array()
+}
+
 impl ExtendedBLSPrivKey {
     /// Create a new master key from a seed
     pub fn new_master(network: Network, seed: &[u8]) -> Result<Self, Error> {
@@ -147,14 +159,7 @@ impl ExtendedBLSPrivKey {
         // They do two separate HMAC-SHA256 operations with different suffixes
 
         // First HMAC with seed||0 for the private key
-        let mut seed_with_suffix = Vec::with_capacity(seed.len() + 1);
-        seed_with_suffix.extend_from_slice(seed);
-        seed_with_suffix.push(0);
-
-        let mut hmac_engine: HmacEngine<sha256::Hash> = HmacEngine::new(b"BLS HD seed");
-        hmac_engine.input(&seed_with_suffix);
-        let hmac_result: Hmac<sha256::Hash> = Hmac::from_engine(hmac_engine);
-        let private_key_bytes = hmac_result.as_byte_array();
+        let private_key_bytes = derivation_hmac(MASTER_HMAC_KEY, seed, 0);
 
         // #[cfg(test)]
         // {
@@ -165,7 +170,7 @@ impl ExtendedBLSPrivKey {
 
         // The C++ implementation does modulo reduction by curve order
         // We need to do the same before converting to BLS private key
-        let private_key = BlsSecretKey::<Bls12381G2Impl>::from_be_bytes(private_key_bytes)
+        let private_key = BlsSecretKey::<Bls12381G2Impl>::from_be_bytes(&private_key_bytes)
             .into_option()
             .ok_or(Error::InvalidPrivateKey)?;
 
@@ -175,12 +180,7 @@ impl ExtendedBLSPrivKey {
         // }
 
         // Second HMAC with seed||1 for the chain code
-        seed_with_suffix[seed.len()] = 1;
-
-        let mut hmac_engine2: HmacEngine<sha256::Hash> = HmacEngine::new(b"BLS HD seed");
-        hmac_engine2.input(&seed_with_suffix);
-        let hmac_result2: Hmac<sha256::Hash> = Hmac::from_engine(hmac_engine2);
-        let chain_code_bytes = hmac_result2.as_byte_array();
+        let chain_code_bytes = derivation_hmac(MASTER_HMAC_KEY, seed, 1);
 
         Ok(ExtendedBLSPrivKey {
             network,
@@ -188,7 +188,7 @@ impl ExtendedBLSPrivKey {
             parent_fingerprint: Default::default(),
             child_number: ChildNumber::from_normal_idx(0).unwrap(),
             private_key,
-            chain_code: ChainCode::from(*chain_code_bytes),
+            chain_code: ChainCode::from(chain_code_bytes),
         })
     }
 
@@ -238,26 +238,15 @@ impl ExtendedBLSPrivKey {
         input_data.extend_from_slice(&child_bytes);
 
         // First HMAC-SHA256 with suffix 0 for the private key
-        let mut input_with_suffix = input_data.clone();
-        input_with_suffix.push(0);
-
-        let mut hmac_engine: HmacEngine<sha256::Hash> = HmacEngine::new(&self.chain_code[..]);
-        hmac_engine.input(&input_with_suffix);
-        let hmac_result: Hmac<sha256::Hash> = Hmac::from_engine(hmac_engine);
-        let key_bytes = hmac_result.as_byte_array();
+        let key_bytes = derivation_hmac(&self.chain_code[..], &input_data, 0);
 
         // Second HMAC-SHA256 with suffix 1 for the chain code
-        input_with_suffix[input_data.len()] = 1;
-
-        let mut hmac_engine2: HmacEngine<sha256::Hash> = HmacEngine::new(&self.chain_code[..]);
-        hmac_engine2.input(&input_with_suffix);
-        let hmac_result2: Hmac<sha256::Hash> = Hmac::from_engine(hmac_engine2);
-        let chain_code_bytes = hmac_result2.as_byte_array();
+        let chain_code_bytes = derivation_hmac(&self.chain_code[..], &input_data, 1);
 
         // Derive the new private key using proper scalar field arithmetic
         let derived_private_key = {
             // Convert tweak to secret key
-            let tweak_key = BlsSecretKey::<Bls12381G2Impl>::from_be_bytes(key_bytes)
+            let tweak_key = BlsSecretKey::<Bls12381G2Impl>::from_be_bytes(&key_bytes)
                 .into_option()
                 .ok_or(Error::InvalidPrivateKey)?;
 
@@ -277,7 +266,7 @@ impl ExtendedBLSPrivKey {
             parent_fingerprint: self.fingerprint(),
             child_number: child,
             private_key: derived_private_key,
-            chain_code: ChainCode::from(*chain_code_bytes),
+            chain_code: ChainCode::from(chain_code_bytes),
         })
     }
 
@@ -427,25 +416,14 @@ impl ExtendedBLSPubKey {
         input_data.extend_from_slice(&child_bytes);
 
         // First HMAC-SHA256 with suffix 0 for the tweak
-        let mut input_with_suffix = input_data.clone();
-        input_with_suffix.push(0);
-
-        let mut hmac_engine: HmacEngine<sha256::Hash> = HmacEngine::new(&self.chain_code[..]);
-        hmac_engine.input(&input_with_suffix);
-        let hmac_result: Hmac<sha256::Hash> = Hmac::from_engine(hmac_engine);
-        let tweak_bytes = hmac_result.as_byte_array();
+        let tweak_bytes = derivation_hmac(&self.chain_code[..], &input_data, 0);
 
         // Second HMAC-SHA256 with suffix 1 for the chain code
-        input_with_suffix[input_data.len()] = 1;
-
-        let mut hmac_engine2: HmacEngine<sha256::Hash> = HmacEngine::new(&self.chain_code[..]);
-        hmac_engine2.input(&input_with_suffix);
-        let hmac_result2: Hmac<sha256::Hash> = Hmac::from_engine(hmac_engine2);
-        let chain_code_bytes = hmac_result2.as_byte_array();
+        let chain_code_bytes = derivation_hmac(&self.chain_code[..], &input_data, 1);
 
         // For BLS public key derivation, we need to do elliptic curve point addition
         // First, convert the tweak bytes to a scalar (private key)
-        let tweak_privkey = BlsSecretKey::<Bls12381G2Impl>::from_be_bytes(tweak_bytes)
+        let tweak_privkey = BlsSecretKey::<Bls12381G2Impl>::from_be_bytes(&tweak_bytes)
             .into_option()
             .ok_or(Error::InvalidPrivateKey)?;
 
@@ -472,7 +450,7 @@ impl ExtendedBLSPubKey {
             parent_fingerprint: self.fingerprint(),
             child_number: child,
             public_key: derived_pubkey,
-            chain_code: ChainCode::from(*chain_code_bytes),
+            chain_code: ChainCode::from(chain_code_bytes),
         })
     }
 
@@ -778,6 +756,14 @@ impl<'de, C> bincode::BorrowDecode<'de, C> for ExtendedBLSPubKey {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// BIP39 seed for "abandon abandon ... about" (empty passphrase).
+    const SEED64: &str = "5eb00bbddcf069084889a8ab9155568165f5c453ccb85e70811aaed6f6da5fc19a5ac40b389cd370d086206dec8aa6c43daea6690f20ad3d8d48b2d2ce9e38e4";
+
+    fn master_from_seed64() -> ExtendedBLSPrivKey {
+        let seed = hex::decode(SEED64).unwrap();
+        ExtendedBLSPrivKey::new_master(Network::Mainnet, &seed).unwrap()
+    }
 
     #[test]
     fn test_master_key_generation() {
@@ -1380,14 +1366,6 @@ mod tests {
     mod dashbls_vectors {
         use super::*;
 
-        /// BIP39 seed for "abandon abandon ... about" (empty passphrase).
-        const SEED64: &str = "5eb00bbddcf069084889a8ab9155568165f5c453ccb85e70811aaed6f6da5fc19a5ac40b389cd370d086206dec8aa6c43daea6690f20ad3d8d48b2d2ce9e38e4";
-
-        fn master_from_seed64() -> ExtendedBLSPrivKey {
-            let seed = hex::decode(SEED64).unwrap();
-            ExtendedBLSPrivKey::new_master(Network::Mainnet, &seed).unwrap()
-        }
-
         fn hardened(idx: u32) -> ChildNumber {
             ChildNumber::from_hardened_idx(idx).unwrap()
         }
@@ -1599,6 +1577,118 @@ mod tests {
                 .derive_pub(ChildNumber::from_normal_idx(0).unwrap())
                 .unwrap();
             assert_eq!(child0_pub.to_bytes(), child0_modern.public_key_bytes());
+        }
+    }
+
+    /// API policy for handling scalars above group order
+    mod policy {
+        use super::*;
+
+        /// The BLS12-381 group order.
+        const R: &str = "73eda753299d7d483339d80809a1d80553bda402fffe5bfeffffffff00000001";
+
+        /// HMAC-SHA256("BLS HD seed", SEED64 || 0).
+        const SEED64_HMAC: &str =
+            "9bbf8d5427fa6176cd52d60e544299be4224f82b9012046db1e8af975ddc55c6";
+
+        fn parse_bytes_32(hex_str: &str) -> [u8; 32] {
+            hex::decode(hex_str).unwrap().try_into().unwrap()
+        }
+
+        /// Constructs a secret key from the supplied scalar and extracts it to find the settled value.
+        fn resolve_scalar(scalar: &[u8; 32]) -> [u8; 32] {
+            BlsSecretKey::<Bls12381G2Impl>::from_be_bytes(scalar)
+                .into_option()
+                .unwrap()
+                .to_be_bytes()
+        }
+
+        #[test]
+        fn scalar_above_the_order_is_reduced_modulo_r() {
+            let mut over = parse_bytes_32(R);
+            over[31] += 5;
+            let mut five = [0u8; 32];
+            five[31] = 5;
+
+            // r + 5 lands on 5, so the read subtracts r rather than clamping to
+            // the top of the field or dropping the high bits.
+            assert_eq!(resolve_scalar(&over), five);
+        }
+
+        #[test]
+        fn scalar_below_the_order_is_unchanged() {
+            let mut under = parse_bytes_32(R);
+            under[31] -= 1;
+
+            assert_eq!(resolve_scalar(&under), under);
+        }
+
+        #[test]
+        fn derivation_reduces_its_tweak() {
+            // Each tweak is an HMAC, so about half land above r; refusing them would've failed
+            // half of all possible values.
+            let master = master_from_seed64();
+
+            // The master seed itself produces an HMAC above r, reduced.
+            assert!(parse_bytes_32(SEED64_HMAC) >= parse_bytes_32(R));
+            assert_eq!(
+                master.private_key.to_be_bytes(),
+                resolve_scalar(&parse_bytes_32(SEED64_HMAC))
+            );
+
+            // Hardened child index 1 lands above r, would be reduced.
+            let mut input = master.private_key.to_be_bytes().to_vec();
+            input.extend_from_slice(
+                &u32::from(ChildNumber::from_hardened_idx(1).unwrap()).to_be_bytes(),
+            );
+            assert!(derivation_hmac(&master.chain_code[..], &input, 0) >= parse_bytes_32(R));
+
+            // Iterate through the first 64, hardened and normal; 128 chances to land above r.
+            for i in 0..64u32 {
+                assert!(master.derive_priv(ChildNumber::from_normal_idx(i).unwrap()).is_ok());
+                assert!(master.derive_priv(ChildNumber::from_hardened_idx(i).unwrap()).is_ok());
+            }
+        }
+
+        #[test]
+        fn secp_secret_above_the_order_is_reduced() {
+            use crate::wallet::root_extended_keys::RootExtendedPrivKey;
+
+            // secp256k1 draws from a larger field, so about half its secrets land
+            // outside BLS's field, construct such a secret.
+            let mut secret = [0u8; 32];
+            secret[0] = 0x02;
+            secret[31] = 0xff;
+            let root = RootExtendedPrivKey {
+                root_private_key: secp256k1::SecretKey::from_slice(&secret).unwrap(),
+                root_chain_code: ChainCode::from([3u8; 32]),
+            };
+
+            // the scalar is read little-endian, then reduced
+            let mut reversed = secret;
+            reversed.reverse();
+            assert!(reversed >= parse_bytes_32(R));
+
+            let converted = root.to_bls_extended_priv_key(Network::Testnet).unwrap();
+            assert_eq!(converted.private_key.to_be_bytes(), resolve_scalar(&reversed));
+        }
+
+        #[test]
+        fn zero_scalar_is_refused() {
+            let read = BlsSecretKey::<Bls12381G2Impl>::from_be_bytes(&[0u8; 32]);
+            assert!(bool::from(read.is_none()));
+        }
+
+        #[test]
+        fn public_key_off_the_curve_is_refused() {
+            // A point is checked where a scalar is reduced; 48 bytes off the curve
+            // has nowhere to land.
+            let off = [0xAAu8; 48];
+            let read = BlsPublicKey::<Bls12381G2Impl>::from_bytes_with_mode(
+                &off,
+                SerializationFormat::Modern,
+            );
+            assert!(read.is_err());
         }
     }
 
