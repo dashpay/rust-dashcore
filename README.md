@@ -42,7 +42,6 @@ Supports (or should support)
 * De/serialization of blocks and transactions
 * Script de/serialization
 * Private keys and address creation, de/serialization and validation (including full BIP32 support)
-* PSBT creation, manipulation, merging and finalization
 * Pay-to-contract support as in Appendix A of the [Blockstream sidechains whitepaper](https://www.blockstream.com/sidechains.pdf)
 * JSONRPC interaction with Dash Core
 * FFI bindings for C/Swift integration (dash-spv-ffi, key-wallet-ffi)
