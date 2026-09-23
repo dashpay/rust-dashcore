@@ -150,6 +150,11 @@ impl ExtendedEd25519PrivKey {
         if !child.is_hardened() {
             return Err(Error::NonHardenedNotSupported);
         }
+        // SLIP-10 indices are 32-bit; `u32::from` would collapse every DIP-14
+        // 256-bit child to the same key.
+        if child.is_256_bits() {
+            return Err(Error::InvalidChildNumberFormat);
+        }
 
         let mut hmac_engine: HmacEngine<sha512::Hash> = HmacEngine::new(self.chain_code.as_ref());
 
@@ -834,5 +839,22 @@ mod test {
         let mut other_network = master.clone();
         other_network.network = Network::Testnet;
         assert_ne!(master, other_network);
+    }
+
+    /// SLIP-10 indices are 32-bit, so a DIP-14 256-bit child is refused instead of deriving every
+    /// such child to the same key.
+    #[test]
+    fn test_256_bit_children_are_refused() {
+        let master = ExtendedEd25519PrivKey::new_master(
+            Network::Mainnet,
+            &hex::decode(CASE_1_SEED).unwrap(),
+        )
+        .unwrap();
+        let child = ChildNumber::from_hardened_idx_256([0x35; 32]);
+        assert!(matches!(master.ckd_priv(child), Err(Error::InvalidChildNumberFormat)));
+        assert!(matches!(
+            master.derive_priv(&[ChildNumber::from_hardened_idx(9).unwrap(), child]),
+            Err(Error::InvalidChildNumberFormat)
+        ));
     }
 }

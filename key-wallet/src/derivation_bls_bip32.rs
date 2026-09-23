@@ -224,6 +224,12 @@ impl ExtendedBLSPrivKey {
         child: ChildNumber,
         format: BlsScheme,
     ) -> Result<Self, Error> {
+        // DIP-14 256-bit children are defined for secp256k1 only; dashbls has
+        // no 256-bit index, and `u32::from` would collapse every one to the same key.
+        if child.is_256_bits() {
+            return Err(Error::InvalidDerivationPath);
+        }
+
         // Build the input data for HMAC, following dashbls
         // `ExtendedPrivateKey::PrivateChild` (extendedprivatekey.cpp)
         let mut input_data = Vec::new();
@@ -428,6 +434,10 @@ impl ExtendedBLSPubKey {
     ) -> Result<Self, Error> {
         if child.is_hardened() {
             return Err(Error::CannotDeriveFromHardenedPublic);
+        }
+        // See `derive_priv_with_mode`.
+        if child.is_256_bits() {
+            return Err(Error::InvalidDerivationPath);
         }
 
         // Build the input data for HMAC: public_key || index — matches
@@ -1742,5 +1752,23 @@ mod tests {
         assert_eq!(key.chain_code.as_ref(), &[0u8; 32]);
         assert_eq!(key.depth, 0);
         assert_eq!(key.parent_fingerprint, Fingerprint::default());
+    }
+
+    /// A 32-bit index cannot hold a DIP-14 256-bit child, so derivation refuses one instead of
+    /// deriving every such child to the same key.
+    #[test]
+    fn test_256_bit_children_are_refused() {
+        let master = master_from_seed64();
+        let hardened = ChildNumber::from_hardened_idx_256([0x35; 32]);
+        let normal = ChildNumber::from_normal_idx_256([0x35; 32]);
+
+        assert!(matches!(master.derive_priv(hardened), Err(Error::InvalidDerivationPath)));
+        assert!(matches!(master.derive_priv(normal), Err(Error::InvalidDerivationPath)));
+        assert!(matches!(
+            master.to_extended_pub_key().unwrap().derive_pub(normal),
+            Err(Error::InvalidDerivationPath)
+        ));
+        let path = DerivationPath::from(vec![ChildNumber::from_hardened_idx(9).unwrap(), hardened]);
+        assert!(matches!(master.derive_path(&path), Err(Error::InvalidDerivationPath)));
     }
 }
