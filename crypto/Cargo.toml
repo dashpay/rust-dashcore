@@ -32,4 +32,4 @@ tracing = { version = "0.1", optional = true }
 unexpected_cfgs = { level = "deny", check-cfg = ['cfg(bench)', 'cfg(fuzzing)', 'cfg(kani)'] }
 
 [dev-dependencies]
-hex_lit = "0.1.1"
+hex_lit = { version = "0.1.1", features = ["rust_v_1_46"] }
