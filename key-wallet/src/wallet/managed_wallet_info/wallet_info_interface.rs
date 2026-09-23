@@ -246,6 +246,8 @@ pub trait WalletInfoInterface: Sized + WalletTransactionChecker + ManagedAccount
         ApplyChainLockOutcome::default()
     }
 
+    fn note_chain_lock_height(&mut self, _height: CoreBlockHeight) {}
+
     /// Update chain state and process any matured transactions
     /// This should be called when the chain tip advances to a new height
     fn update_last_processed_height(&mut self, current_height: u32);
@@ -383,6 +385,13 @@ impl WalletInfoInterface for ManagedWalletInfo {
         ApplyChainLockOutcome {
             locked_transactions,
             metadata_advanced: advance,
+        }
+    }
+
+    fn note_chain_lock_height(&mut self, height: CoreBlockHeight) {
+        if self.noted_chain_lock_height.is_none_or(|noted| height > noted) {
+            self.noted_chain_lock_height = Some(height);
+            self.prune_finalized_observed_spends();
         }
     }
 
