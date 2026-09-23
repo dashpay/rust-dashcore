@@ -30,6 +30,9 @@ pub enum DerivationPathReference {
     BlockchainAssetLockAddressTopupFunding = 17,
     BlockchainAssetLockShieldedAddressTopupFunding = 18,
     Root = 255,
+    // Declared after `Root` so the bincode variant index of every earlier variant is unchanged.
+    ApplicationSessionAuthentication = 19,
+    ApplicationEncryption = 20,
 }
 
 bitflags! {
@@ -131,6 +134,12 @@ pub const FEATURE_PURPOSE_IDENTITIES_SUBFEATURE_TOPUP: u32 = 2;
 pub const FEATURE_PURPOSE_IDENTITIES_SUBFEATURE_INVITATIONS: u32 = 3;
 pub const FEATURE_PURPOSE_ASSET_LOCK_SUBFEATURE_ADDRESS_TOPUP: u32 = 4;
 pub const FEATURE_PURPOSE_ASSET_LOCK_SUBFEATURE_SHIELDED_ADDRESS_TOPUP: u32 = 5;
+/// DIP-13 application session authentication sub-feature:
+/// `m/9'/coin_type'/5'/6'/key_type'/identity_id'/request_id'`.
+pub const FEATURE_PURPOSE_IDENTITIES_SUBFEATURE_APPLICATION_SESSION_AUTHENTICATION: u32 = 6;
+/// DIP-13 application encryption sub-feature:
+/// `m/9'/coin_type'/5'/7'/key_type'/identity_id'/contract_id'/key_purpose'`.
+pub const FEATURE_PURPOSE_IDENTITIES_SUBFEATURE_APPLICATION_ENCRYPTION: u32 = 7;
 pub const FEATURE_PURPOSE_DASHPAY: u32 = 15;
 /// DIP-15 auto-accept feature index: the derivation family
 /// `m/9'/coin_type'/16'/expiry'` holding the shareable, expiry-bounded
@@ -470,6 +479,84 @@ pub const IDENTITY_AUTHENTICATION_PATH_TESTNET: IndexConstPath<4> = IndexConstPa
         },
     ],
     reference: DerivationPathReference::BlockchainIdentities,
+    path_type: DerivationPathType::SINGLE_USER_AUTHENTICATION,
+};
+
+// Application Session Authentication Keys Paths
+pub const APPLICATION_SESSION_AUTHENTICATION_PATH_MAINNET: IndexConstPath<4> = IndexConstPath {
+    indexes: [
+        ChildNumber::Hardened {
+            index: FEATURE_PURPOSE,
+        },
+        ChildNumber::Hardened {
+            index: DASH_COIN_TYPE,
+        },
+        ChildNumber::Hardened {
+            index: FEATURE_PURPOSE_IDENTITIES,
+        },
+        ChildNumber::Hardened {
+            index: FEATURE_PURPOSE_IDENTITIES_SUBFEATURE_APPLICATION_SESSION_AUTHENTICATION,
+        },
+    ],
+    reference: DerivationPathReference::ApplicationSessionAuthentication,
+    path_type: DerivationPathType::SINGLE_USER_AUTHENTICATION,
+};
+
+pub const APPLICATION_SESSION_AUTHENTICATION_PATH_TESTNET: IndexConstPath<4> = IndexConstPath {
+    indexes: [
+        ChildNumber::Hardened {
+            index: FEATURE_PURPOSE,
+        },
+        ChildNumber::Hardened {
+            index: DASH_TESTNET_COIN_TYPE,
+        },
+        ChildNumber::Hardened {
+            index: FEATURE_PURPOSE_IDENTITIES,
+        },
+        ChildNumber::Hardened {
+            index: FEATURE_PURPOSE_IDENTITIES_SUBFEATURE_APPLICATION_SESSION_AUTHENTICATION,
+        },
+    ],
+    reference: DerivationPathReference::ApplicationSessionAuthentication,
+    path_type: DerivationPathType::SINGLE_USER_AUTHENTICATION,
+};
+
+// Application Encryption Keys Paths
+pub const APPLICATION_ENCRYPTION_PATH_MAINNET: IndexConstPath<4> = IndexConstPath {
+    indexes: [
+        ChildNumber::Hardened {
+            index: FEATURE_PURPOSE,
+        },
+        ChildNumber::Hardened {
+            index: DASH_COIN_TYPE,
+        },
+        ChildNumber::Hardened {
+            index: FEATURE_PURPOSE_IDENTITIES,
+        },
+        ChildNumber::Hardened {
+            index: FEATURE_PURPOSE_IDENTITIES_SUBFEATURE_APPLICATION_ENCRYPTION,
+        },
+    ],
+    reference: DerivationPathReference::ApplicationEncryption,
+    path_type: DerivationPathType::SINGLE_USER_AUTHENTICATION,
+};
+
+pub const APPLICATION_ENCRYPTION_PATH_TESTNET: IndexConstPath<4> = IndexConstPath {
+    indexes: [
+        ChildNumber::Hardened {
+            index: FEATURE_PURPOSE,
+        },
+        ChildNumber::Hardened {
+            index: DASH_TESTNET_COIN_TYPE,
+        },
+        ChildNumber::Hardened {
+            index: FEATURE_PURPOSE_IDENTITIES,
+        },
+        ChildNumber::Hardened {
+            index: FEATURE_PURPOSE_IDENTITIES_SUBFEATURE_APPLICATION_ENCRYPTION,
+        },
+    ],
+    reference: DerivationPathReference::ApplicationEncryption,
     path_type: DerivationPathType::SINGLE_USER_AUTHENTICATION,
 };
 
