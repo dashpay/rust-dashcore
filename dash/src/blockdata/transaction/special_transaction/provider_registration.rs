@@ -411,7 +411,7 @@ mod tests {
         let owner_key_hash_hex = "3dd03f9ec192b5f275a433bfc90f468ee1a3eb4c";
         assert_eq!(
             owner_key_hash_hex,
-            expected_provider_registration_payload.owner_key_hash.to_hex()
+            expected_provider_registration_payload.owner_key_hash.to_string()
         );
 
         let operator_key_hex = "157b10706659e25eb362b5d902d809f9160b1688e201ee6e94b40f9b5062d7074683ef05a2d5efb7793c47059c878dfa";
@@ -423,7 +423,7 @@ mod tests {
         let voting_key_hash_hex = "d38a30fafe61575db40f05ab0a08d55119b0aad3";
         assert_eq!(
             voting_key_hash_hex,
-            expected_provider_registration_payload.voting_key_hash.to_hex()
+            expected_provider_registration_payload.voting_key_hash.to_string()
         );
 
         let inputs_hash_hex = "7ba273b835b1017da314a3363760835ff5ac20278c160604cb8773750b997734";
@@ -487,9 +487,9 @@ mod tests {
                     masternode_mode: provider_mode,
                     collateral_outpoint,
                     service_address: SocketAddr::V4(SocketAddrV4::new(address, port)),
-                    owner_key_hash: PubkeyHash::from_hex(owner_key_hash_hex).unwrap(),
+                    owner_key_hash: PubkeyHash::from_str(owner_key_hash_hex).unwrap(),
                     operator_public_key: BLSPublicKey::from_hex(operator_key_hex).unwrap(),
-                    voting_key_hash: PubkeyHash::from_hex(voting_key_hash_hex).unwrap(),
+                    voting_key_hash: PubkeyHash::from_str(voting_key_hash_hex).unwrap(),
                     operator_reward,
                     script_payout,
                     inputs_hash: InputsHash::from_hex(inputs_hash_hex).unwrap(),
@@ -591,7 +591,7 @@ mod tests {
         let owner_key_hash_hex = "3dd03f9ec192b5f275a433bfc90f468ee1a3eb4c";
         assert_eq!(
             owner_key_hash_hex,
-            expected_provider_registration_payload.owner_key_hash.to_hex()
+            expected_provider_registration_payload.owner_key_hash.to_string()
         );
 
         let operator_key_hex = "157b10706659e25eb362b5d902d809f9160b1688e201ee6e94b40f9b5062d7074683ef05a2d5efb7793c47059c878dfa";
@@ -603,7 +603,7 @@ mod tests {
         let voting_key_hash_hex = "d38a30fafe61575db40f05ab0a08d55119b0aad3";
         assert_eq!(
             voting_key_hash_hex,
-            expected_provider_registration_payload.voting_key_hash.to_hex()
+            expected_provider_registration_payload.voting_key_hash.to_string()
         );
 
         let inputs_hash_hex = "7ba273b835b1017da314a3363760835ff5ac20278c160604cb8773750b997734";
@@ -667,9 +667,9 @@ mod tests {
                     masternode_mode: provider_mode,
                     collateral_outpoint,
                     service_address,
-                    owner_key_hash: PubkeyHash::from_hex(owner_key_hash_hex).unwrap(),
+                    owner_key_hash: PubkeyHash::from_str(owner_key_hash_hex).unwrap(),
                     operator_public_key: BLSPublicKey::from_hex(operator_key_hex).unwrap(),
-                    voting_key_hash: PubkeyHash::from_hex(voting_key_hash_hex).unwrap(),
+                    voting_key_hash: PubkeyHash::from_str(voting_key_hash_hex).unwrap(),
                     operator_reward,
                     script_payout,
                     inputs_hash: InputsHash::from_hex(inputs_hash_hex).unwrap(),

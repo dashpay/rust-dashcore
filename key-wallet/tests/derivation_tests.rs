@@ -5,10 +5,11 @@
 //! is covered by the per-module tests in `key-wallet/src/derivation.rs`,
 //! `key-wallet/src/dip9.rs`, and `key-wallet/src/tests/account_tests.rs`.
 
+use std::str::FromStr;
+
 use dashcore::hashes::Hash;
 use key_wallet::mnemonic::Mnemonic;
 use key_wallet::{DerivationPath, ExtendedPrivKey, ExtendedPubKey, Network};
-use std::str::FromStr;
 
 // =============================================================================
 // DIP-17 Platform Payment Key Derivation Test Vectors

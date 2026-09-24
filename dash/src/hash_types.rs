@@ -376,22 +376,12 @@ mod newtypes {
             self.0.to_string()
         }
     }
-
-    impl PubkeyHash {
-        /// Create a PubkeyHash from a string
-        pub fn from_hex(s: &str) -> Result<PubkeyHash, Error> {
-            Ok(Self(hash160::Hash::from_str(s)?))
-        }
-
-        /// Convert a PubkeyHash to a string
-        pub fn to_hex(&self) -> String {
-            self.0.to_string()
-        }
-    }
 }
 
 #[cfg(all(test, feature = "serde"))]
 mod tests {
+    use core::str::FromStr;
+
     use super::*;
     use serde_derive::{Deserialize, Serialize};
 
@@ -495,7 +485,7 @@ mod tests {
         }
 
         let original = Tagged::A(WithPubkeyHash {
-            pkh: PubkeyHash::from_hex("e8b43025641eea4fd21190f01bd870ef90f1a8b1").unwrap(),
+            pkh: PubkeyHash::from_str("e8b43025641eea4fd21190f01bd870ef90f1a8b1").unwrap(),
         });
 
         let value = serde_json::to_value(&original).unwrap();
