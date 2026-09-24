@@ -19,9 +19,11 @@ use dashcore::hash_types::FilterHeader;
 use dashcore::network::message_qrinfo::QRInfo;
 use dashcore::network::message_sml::MnListDiff;
 use dashcore::prelude::CoreBlockHeight;
+use dashcore::sml::llmq_type::LLMQType;
 use dashcore::sml::masternode_list::MasternodeList;
 use dashcore::sml::masternode_list_engine::MasternodeListEngine;
-use dashcore::Network;
+use dashcore::sml::quorum_entry::qualified_quorum_entry::QualifiedQuorumEntry;
+use dashcore::{Network, QuorumHash};
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -479,6 +481,19 @@ impl masternode::MasternodeStorage for DiskStorageManager {
         height: CoreBlockHeight,
     ) -> StorageResult<Option<MasternodeList>> {
         self.masternodes.read().await.masternode_list_at_or_before(height).await
+    }
+
+    async fn quorum_entry_at_or_before(
+        &self,
+        llmq_type: LLMQType,
+        quorum_hash: QuorumHash,
+        height: CoreBlockHeight,
+    ) -> StorageResult<Option<QualifiedQuorumEntry>> {
+        self.masternodes
+            .read()
+            .await
+            .quorum_entry_at_or_before(llmq_type, quorum_hash, height)
+            .await
     }
 }
 

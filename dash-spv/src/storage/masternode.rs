@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -9,18 +9,47 @@ use dashcore::consensus::{deserialize, serialize, Decodable, Encodable};
 use dashcore::network::message_qrinfo::QRInfo;
 use dashcore::network::message_sml::MnListDiff;
 use dashcore::prelude::CoreBlockHeight;
+use dashcore::sml::llmq_type::network::NetworkLLMQExt;
+use dashcore::sml::llmq_type::LLMQType;
 use dashcore::sml::masternode_list::MasternodeList;
-use dashcore::sml::masternode_list_engine::MasternodeListEngine;
-use dashcore::Network;
+use dashcore::sml::masternode_list_engine::{qr_info_diffs, MasternodeListEngine, WORK_DIFF_DEPTH};
+use dashcore::sml::quorum_entry::qualified_quorum_entry::QualifiedQuorumEntry;
+use dashcore::{BlockHash, Network, QuorumHash};
 
 use crate::error::{StorageError, StorageResult};
 use crate::storage::{io::atomic_write, BlockHeaderStorage};
 
 type IndexMap = BTreeMap<CoreBlockHeight, PathBuf>;
 
-enum Pending {
+enum Message {
     Diff(Box<MnListDiff>),
     QrInfo(Box<QRInfo>),
+}
+
+/// At one height a diff replays before a QRInfo.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum Kind {
+    Diff,
+    QrInfo,
+}
+
+/// Which lists a replay keeps once it has moved past them.
+#[derive(Clone, Copy)]
+enum Retain {
+    /// What a live engine at the same height would keep.
+    Obsolete,
+    /// Lists in `floor..=height`, the nearest list on either side of `height`.
+    Around {
+        floor: CoreBlockHeight,
+        height: CoreBlockHeight,
+    },
+}
+
+#[derive(Debug, Default)]
+struct ReplayStats {
+    total: usize,
+    applied: usize,
+    peak_lists: usize,
 }
 
 struct CachedList {
@@ -46,6 +75,15 @@ pub trait MasternodeStorage: Send + Sync + 'static {
         &self,
         height: CoreBlockHeight,
     ) -> StorageResult<Option<MasternodeList>>;
+
+    /// The quorum as [`MasternodeListEngine::quorum_entry_for_hash_at_or_before_height`]
+    /// would resolve it from the lists stored up to `height`.
+    async fn quorum_entry_at_or_before(
+        &self,
+        llmq_type: LLMQType,
+        quorum_hash: QuorumHash,
+        height: CoreBlockHeight,
+    ) -> StorageResult<Option<QualifiedQuorumEntry>>;
 }
 
 pub struct PersistentMasternodeStorage<H: BlockHeaderStorage> {
@@ -149,97 +187,193 @@ impl<H: BlockHeaderStorage> PersistentMasternodeStorage<H> {
         *self.cached_list.get_mut() = None;
     }
 
-    async fn replay(&self) -> StorageResult<MasternodeListEngine> {
+    /// Rebuilds the lists in `floor..=height`. A QRInfo builds lists back to its
+    /// `h-4c` work block, so messages stored up to six cycles above `height` can
+    /// still produce one of them.
+    async fn replay_around(
+        &self,
+        floor: CoreBlockHeight,
+        height: CoreBlockHeight,
+    ) -> StorageResult<(MasternodeListEngine, ReplayStats)> {
+        let cycle = self.network.isd_llmq_type().params().dkg_params.interval;
+        let until = height.saturating_add(cycle.saturating_mul(6)).saturating_add(WORK_DIFF_DEPTH);
+        let retain = Retain::Around {
+            floor,
+            height,
+        };
+        self.replay(Some(until), retain).await
+    }
+
+    async fn read_entry(path: &Path, kind: Kind) -> StorageResult<Message> {
+        Ok(match kind {
+            Kind::Diff => Message::Diff(Box::new(Self::read_message(path).await?)),
+            Kind::QrInfo => Message::QrInfo(Box::new(Self::read_message(path).await?)),
+        })
+    }
+
+    /// Rebuilds the engine from the messages stored up to `until`, pruning as it
+    /// goes so memory stays bounded by `retain` rather than by history. Messages
+    /// apply in the order of their newest base, so each comes after the one that
+    /// built it, and a list outside `retain` survives only while a message still
+    /// to be applied builds on it.
+    async fn replay(
+        &self,
+        until: Option<CoreBlockHeight>,
+        retain: Retain,
+    ) -> StorageResult<(MasternodeListEngine, ReplayStats)> {
         let mut engine = MasternodeListEngine::default_for_network(self.network);
+        let until = until.unwrap_or(CoreBlockHeight::MAX);
 
-        let mut ordered: Vec<(CoreBlockHeight, &PathBuf, bool)> = self
-            .qr_infos
-            .iter()
-            .map(|(height, path)| (*height, path, true))
-            .chain(self.diffs.iter().map(|(height, path)| (*height, path, false)))
-            .collect();
-        ordered.sort_by_key(|(height, _, is_qr_info)| (*height, *is_qr_info));
+        let entries =
+            self.diffs.range(..=until).map(|(height, path)| (*height, Kind::Diff, path)).chain(
+                self.qr_infos.range(..=until).map(|(height, path)| (*height, Kind::QrInfo, path)),
+            );
 
-        let mut queue: Vec<(CoreBlockHeight, Pending)> = Vec::with_capacity(ordered.len());
+        let mut plan = Vec::new();
+        let mut needed: HashMap<BlockHash, usize> = HashMap::new();
         {
             let headers = self.headers.read().await;
-            for (height, path, is_qr_info) in ordered {
-                if is_qr_info {
-                    match Self::read_message::<QRInfo>(path).await {
-                        Ok(qr_info) => {
-                            feed_qrinfo_heights_to_engine(&mut engine, &qr_info, &*headers).await;
-                            queue.push((height, Pending::QrInfo(Box::new(qr_info))));
-                        }
-                        Err(e) => tracing::warn!("Skipping unreadable QRInfo at {height}: {e}"),
+            for (height, kind, path) in entries {
+                let message = match Self::read_entry(path, kind).await {
+                    Ok(message) => message,
+                    Err(e) => {
+                        tracing::warn!("Skipping unreadable masternode message at {height}: {e}");
+                        continue;
                     }
-                } else {
-                    match Self::read_message::<MnListDiff>(path).await {
-                        Ok(diff) => {
-                            engine.feed_block_height(height, diff.block_hash);
-                            if let Ok(Some(base_height)) =
-                                headers.get_header_height_by_hash(&diff.base_block_hash).await
-                            {
-                                engine.feed_block_height(base_height, diff.base_block_hash);
-                            }
-                            queue.push((height, Pending::Diff(Box::new(diff))));
+                };
+                match &message {
+                    Message::QrInfo(qr_info) => {
+                        feed_qrinfo_heights_to_engine(&mut engine, qr_info, &*headers).await;
+                    }
+                    Message::Diff(diff) => {
+                        engine.feed_block_height(height, diff.block_hash);
+                        if let Ok(Some(base_height)) =
+                            headers.get_header_height_by_hash(&diff.base_block_hash).await
+                        {
+                            engine.feed_block_height(base_height, diff.base_block_hash);
                         }
-                        Err(e) => tracing::warn!("Skipping unreadable MnListDiff at {height}: {e}"),
+                    }
+                }
+                let bases = message.base_hashes();
+                for base in &bases {
+                    *needed.entry(*base).or_default() += 1;
+                }
+                plan.push((height, kind, path, bases));
+            }
+        }
+
+        let newest_base = |bases: &[BlockHash]| {
+            bases.iter().filter_map(|base| engine.block_container.get_height(base)).max()
+        };
+        plan.sort_by_cached_key(|(height, kind, _, bases)| {
+            (newest_base(bases).unwrap_or(*height), *height, *kind)
+        });
+
+        let mut stats = ReplayStats {
+            total: plan.len(),
+            ..ReplayStats::default()
+        };
+        let replayed_to = plan.iter().map(|(height, ..)| *height).max();
+        for (height, kind, path, bases) in plan {
+            match Self::read_entry(path, kind).await {
+                Ok(message) => match Self::apply(&mut engine, height, message) {
+                    true => stats.applied += 1,
+                    false => tracing::warn!("Masternode message at {height} does not apply"),
+                },
+                Err(e) => tracing::warn!("Masternode message at {height} became unreadable: {e}"),
+            }
+            for base in &bases {
+                if let Some(count) = needed.get_mut(base) {
+                    *count -= 1;
+                    if *count == 0 {
+                        needed.remove(base);
                     }
                 }
             }
+
+            stats.peak_lists = stats.peak_lists.max(engine.masternode_lists.len());
+            prune_unneeded(&mut engine, retain, height, &needed);
         }
 
-        let total = queue.len();
-        let mut pending = Vec::new();
-        for (height, message) in queue {
-            if let Some(unapplied) = Self::apply(&mut engine, height, message) {
-                pending.push((height, unapplied));
-            }
-        }
-
-        while !pending.is_empty() {
-            let remaining = pending.len();
-            let mut still_pending = Vec::with_capacity(remaining);
-            for (height, message) in pending {
-                if let Some(unapplied) = Self::apply(&mut engine, height, message) {
-                    still_pending.push((height, unapplied));
-                }
-            }
-            pending = still_pending;
-            if pending.len() == remaining {
-                break;
-            }
-        }
-
-        for (height, _) in &pending {
-            tracing::warn!("Message at {height} has no reachable base, leaving it to the network");
+        if let (Retain::Obsolete, Some(tip)) = (retain, replayed_to) {
+            engine.prune_obsolete_lists(tip, &BTreeSet::new());
         }
 
         tracing::debug!(
-            "Replayed {}/{} masternode messages into {} masternode lists",
-            total - pending.len(),
-            total,
-            engine.masternode_lists.len()
+            "Replayed {}/{} masternode messages into {} masternode lists, peak {}",
+            stats.applied,
+            stats.total,
+            engine.masternode_lists.len(),
+            stats.peak_lists
         );
 
-        Ok(engine)
+        Ok((engine, stats))
     }
 
-    fn apply(
-        engine: &mut MasternodeListEngine,
-        height: CoreBlockHeight,
-        message: Pending,
-    ) -> Option<Pending> {
+    fn apply(engine: &mut MasternodeListEngine, height: CoreBlockHeight, message: Message) -> bool {
         match message {
-            Pending::QrInfo(qr_info) => engine
-                .feed_qr_info((*qr_info).clone(), true, true)
-                .is_err()
-                .then_some(Pending::QrInfo(qr_info)),
-            Pending::Diff(diff) => engine
-                .apply_diff((*diff).clone(), Some(height), false, None)
-                .is_err()
-                .then_some(Pending::Diff(diff)),
+            Message::QrInfo(qr_info) => engine.feed_qr_info(*qr_info, true, true).is_ok(),
+            Message::Diff(diff) => engine.apply_diff(*diff, Some(height), false, None).is_ok(),
         }
+    }
+}
+
+impl Message {
+    /// Block hashes of the lists this message is applied on top of. A QRInfo's
+    /// diffs chain from its oldest one, which Core sends as an empty diff from
+    /// the base to itself, so only bases no other diff of it produces count.
+    fn base_hashes(&self) -> Vec<BlockHash> {
+        match self {
+            Message::Diff(diff) => vec![diff.base_block_hash],
+            Message::QrInfo(qr_info) => {
+                let diffs = qr_info_diffs(qr_info);
+                let produced: HashSet<BlockHash> = diffs
+                    .iter()
+                    .filter(|d| d.block_hash != d.base_block_hash)
+                    .map(|d| d.block_hash)
+                    .collect();
+                let bases: HashSet<BlockHash> = diffs
+                    .iter()
+                    .map(|d| d.base_block_hash)
+                    .filter(|base| !produced.contains(base))
+                    .collect();
+                bases.into_iter().collect()
+            }
+        }
+    }
+}
+
+fn prune_unneeded(
+    engine: &mut MasternodeListEngine,
+    retain: Retain,
+    replayed_to: CoreBlockHeight,
+    needed: &HashMap<BlockHash, usize>,
+) {
+    let lists = &engine.masternode_lists;
+    let keep: Box<dyn Fn(CoreBlockHeight) -> bool> = match retain {
+        Retain::Obsolete => {
+            let newest = lists.keys().next_back().copied();
+            let needed_lists = engine.needed_lists(replayed_to);
+            Box::new(move |height| needed_lists.contains(height) || Some(height) == newest)
+        }
+        Retain::Around {
+            floor,
+            height,
+        } => {
+            let below = lists.range(..=height).next_back().map(|(h, _)| *h);
+            let above =
+                height.checked_add(1).and_then(|h| lists.range(h..).next()).map(|(h, _)| *h);
+            Box::new(move |h| (floor..=height).contains(&h) || [below, above].contains(&Some(h)))
+        }
+    };
+
+    let doomed: Vec<CoreBlockHeight> = lists
+        .iter()
+        .filter(|(height, list)| !keep(**height) && !needed.contains_key(&list.block_hash))
+        .map(|(height, _)| *height)
+        .collect();
+    for height in doomed {
+        engine.masternode_lists.remove(&height);
     }
 }
 
@@ -275,7 +409,7 @@ impl<H: BlockHeaderStorage> MasternodeStorage for PersistentMasternodeStorage<H>
     }
 
     async fn load_engine(&self) -> StorageResult<MasternodeListEngine> {
-        self.replay().await
+        Ok(self.replay(None, Retain::Obsolete).await?.0)
     }
 
     async fn masternode_list_at_or_before(
@@ -286,17 +420,33 @@ impl<H: BlockHeaderStorage> MasternodeStorage for PersistentMasternodeStorage<H>
             return Ok(hit);
         }
 
-        let engine = self.replay().await?;
+        let (engine, _) = self.replay_around(height, height).await?;
         let (before, after) = engine.masternode_lists_around_height(height);
         let list = before.cloned();
 
+        // A list further above could come from a message past the replayed reach.
+        let cycle = self.network.isd_llmq_type().params().dkg_params.interval;
+        let reach = height.saturating_add(cycle).saturating_add(1);
         *self.cached_list.lock().await = Some(CachedList {
             from: before.map_or(0, |list| list.known_height),
-            until: after.map(|next| next.known_height),
+            until: Some(after.map_or(reach, |next| next.known_height.min(reach))),
             list: list.clone(),
         });
 
         Ok(list)
+    }
+
+    async fn quorum_entry_at_or_before(
+        &self,
+        llmq_type: LLMQType,
+        quorum_hash: QuorumHash,
+        height: CoreBlockHeight,
+    ) -> StorageResult<Option<QualifiedQuorumEntry>> {
+        let floor = MasternodeListEngine::quorum_walk_back_floor(llmq_type, height);
+        let (engine, _) = self.replay_around(floor, height).await?;
+        Ok(engine
+            .quorum_entry_for_hash_at_or_before_height(llmq_type, quorum_hash, height)
+            .map(|(_, quorum)| quorum.clone()))
     }
 }
 
@@ -417,35 +567,22 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn replay_retries_until_no_more_messages_apply() {
+    async fn replay_skips_an_orphan_and_keeps_going() {
         let dir = TempDir::new().unwrap();
         let mut storage =
-            open_storage(&dir, &[(0x00, 0), (0xAA, 100), (0xBB, 60), (0xCC, 50), (0xDD, 40)]).await;
+            open_storage(&dir, &[(0x00, 0), (0xAA, 100), (0xBB, 150), (0xDD, 120)]).await;
 
-        // Heights descend while dependencies ascend, so each pass resolves one link.
         storage.store_diff(100, &MnListDiff::dummy(0x00, 0xAA)).await.unwrap();
-        storage.store_diff(60, &MnListDiff::dummy(0xAA, 0xBB)).await.unwrap();
-        storage.store_diff(50, &MnListDiff::dummy(0xBB, 0xCC)).await.unwrap();
-        storage.store_diff(40, &MnListDiff::dummy(0xEE, 0xDD)).await.unwrap();
+        storage.store_diff(120, &MnListDiff::dummy(0xEE, 0xDD)).await.unwrap();
+        storage.store_diff(150, &MnListDiff::dummy(0xAA, 0xBB)).await.unwrap();
 
-        let engine = storage.replay().await.expect("replay must not fail on an orphan");
+        let engine = storage.load_engine().await.expect("replay must not fail on an orphan");
 
         assert!(
-            engine.masternode_lists.contains_key(&100),
-            "the genesis-based diff applies on the first pass"
+            !engine.masternode_lists.contains_key(&120),
+            "the orphan has no base to apply on and is left to the network"
         );
-        assert!(
-            engine.masternode_lists.contains_key(&60),
-            "the first link resolves on the second pass"
-        );
-        assert!(
-            engine.masternode_lists.contains_key(&50),
-            "the loop keeps going while it is still making progress"
-        );
-        assert!(
-            !engine.masternode_lists.contains_key(&40),
-            "the orphan has no reachable base and is left to the network"
-        );
+        assert!(engine.masternode_lists.contains_key(&150), "the diff after it still applies");
     }
 
     async fn storage_with_lists_at_100_200_300(
@@ -469,7 +606,7 @@ mod tests {
 
         let cached = storage.cached_list.lock().await.take().expect("lookup must cache");
         assert_eq!(cached.from, 200, "valid from the list it returned");
-        assert_eq!(cached.until, Some(300), "and only up to the next one");
+        assert_eq!(cached.until, Some(275), "up to the next one, but never past one cycle");
     }
 
     #[tokio::test]
@@ -481,12 +618,12 @@ mod tests {
 
         let cached = storage.cached_list.lock().await.take().expect("an absence is cacheable too");
         assert_eq!(cached.from, 0, "nothing below the first list, all the way down");
-        assert_eq!(cached.until, Some(100), "up to the first list there is");
+        assert_eq!(cached.until, Some(75), "towards the first list, capped at one cycle");
         assert!(cached.list.is_none());
     }
 
     #[tokio::test]
-    async fn lookup_at_or_above_the_newest_list_caches_an_open_window() {
+    async fn lookup_above_the_newest_list_caches_up_to_the_reach() {
         let dir = TempDir::new().unwrap();
         let storage = storage_with_lists_at_100_200_300(&dir).await;
 
@@ -495,7 +632,7 @@ mod tests {
 
         let cached = storage.cached_list.lock().await.take().expect("lookup must cache");
         assert_eq!(cached.from, 300);
-        assert_eq!(cached.until, None, "no later list, so nothing bounds it");
+        assert_eq!(cached.until, Some(10_025), "no later list, so only the reach bounds it");
     }
 
     #[tokio::test]
@@ -536,10 +673,308 @@ mod tests {
         );
         assert!(storage.qr_infos.is_empty());
 
-        let engine = storage.replay().await.expect("a corrupt file must not fail the load");
+        let engine = storage.load_engine().await.expect("a corrupt file must not fail the load");
         assert!(
             engine.masternode_lists.contains_key(&100),
             "the readable message still rebuilds its list"
+        );
+    }
+
+    fn height_hash(height: u32) -> BlockHash {
+        if height == 0 {
+            return BlockHash::all_zeros();
+        }
+        let mut bytes = [0xF0; 32];
+        bytes[..4].copy_from_slice(&height.to_le_bytes());
+        BlockHash::from_byte_array(bytes)
+    }
+
+    fn diff_between(base: u32, tip: u32) -> MnListDiff {
+        MnListDiff {
+            base_block_hash: height_hash(base),
+            block_hash: height_hash(tip),
+            ..MnListDiff::dummy(0x00, 0x01)
+        }
+    }
+
+    /// One diff per height from 1 to `tip`, each on top of the one before.
+    async fn chained_storage(
+        dir: &TempDir,
+        tip: u32,
+    ) -> PersistentMasternodeStorage<MockHeaderStorage> {
+        let map = (0..=tip + 1).map(|h| (height_hash(h), h)).collect();
+        let mut storage = PersistentMasternodeStorage::open(
+            dir.path(),
+            Arc::new(RwLock::new(MockHeaderStorage(map))),
+            Network::Regtest,
+        )
+        .await
+        .unwrap();
+        for height in 1..=tip {
+            storage.store_diff(height, &diff_between(height - 1, height)).await.unwrap();
+        }
+        storage
+    }
+
+    #[tokio::test]
+    async fn startup_replay_prunes_as_it_goes() {
+        let dir = TempDir::new().unwrap();
+        let tip = 300;
+        let storage = chained_storage(&dir, tip).await;
+
+        let (engine, stats) = storage.replay(None, Retain::Obsolete).await.unwrap();
+        let needed_lists = engine.needed_lists(tip);
+        let interval = Network::Regtest.isd_llmq_type().params().dkg_params.interval as usize;
+
+        assert_eq!(stats.applied, tip as usize, "every diff applies");
+        assert!(
+            engine.masternode_lists.keys().all(|height| needed_lists.contains(*height)),
+            "nothing a live engine at the tip would drop: {:?} kept for {needed_lists:?}",
+            engine.masternode_lists.keys().collect::<Vec<_>>()
+        );
+        assert!(
+            stats.peak_lists <= interval + 3,
+            "memory is bounded by the last cycle during the replay, not only after it: \
+             peak {} lists for a cycle of {interval}",
+            stats.peak_lists
+        );
+    }
+
+    #[tokio::test]
+    async fn startup_replay_keeps_an_old_list_a_later_message_builds_on() {
+        let dir = TempDir::new().unwrap();
+        let tip = 300;
+        let mut storage = chained_storage(&dir, tip).await;
+        storage.store_diff(tip + 1, &diff_between(10, tip + 1)).await.unwrap();
+
+        let (engine, stats) = storage.replay(None, Retain::Obsolete).await.unwrap();
+
+        assert_eq!(
+            stats.applied,
+            tip as usize + 1,
+            "the diff anchored far below the floor applies"
+        );
+        assert!(engine.masternode_lists.contains_key(&(tip + 1)));
+        assert!(
+            !engine.masternode_lists.contains_key(&10),
+            "once its last dependant has applied the anchor is released"
+        );
+    }
+
+    #[tokio::test]
+    async fn bounded_replay_stops_within_reach_and_keeps_only_what_it_needs() {
+        let dir = TempDir::new().unwrap();
+        let storage = chained_storage(&dir, 1_000).await;
+        let until = 150 + 6 * 24 + 8;
+
+        let (engine, stats) = storage.replay_around(150, 150).await.unwrap();
+
+        assert_eq!(stats.total, until as usize, "messages past the reach are not read");
+        assert_eq!(
+            engine.masternode_lists.keys().copied().collect::<Vec<_>>(),
+            vec![150, 151],
+            "the list at the height and the nearest one above it"
+        );
+        assert!(
+            stats.peak_lists <= 4,
+            "a chained replay only ever holds those two plus the base and the list built on it, \
+             peak {}",
+            stats.peak_lists
+        );
+    }
+
+    #[tokio::test]
+    async fn quorum_lookup_rebuilds_a_list_the_live_engine_pruned() {
+        use dashcore::bls_sig_utils::{BLSPublicKey, BLSSignature};
+        use dashcore::hash_types::QuorumVVecHash;
+        use dashcore::sml::llmq_type::network::NetworkLLMQExt;
+        use dashcore::transaction::special_transaction::quorum_commitment::QuorumEntry;
+
+        let dir = TempDir::new().unwrap();
+        let tip = 300;
+        let mut storage = chained_storage(&dir, tip).await;
+
+        let llmq_type = Network::Regtest.platform_type();
+        let quorum_hash = QuorumHash::from_byte_array([0xAB; 32]);
+        let mut with_quorum = diff_between(0, 1);
+        with_quorum.new_quorums.push(QuorumEntry {
+            version: 1,
+            llmq_type,
+            quorum_hash,
+            quorum_index: None,
+            signers: vec![true; 3],
+            valid_members: vec![true; 3],
+            quorum_public_key: BLSPublicKey::from([7; 48]),
+            quorum_vvec_hash: QuorumVVecHash::all_zeros(),
+            threshold_sig: BLSSignature::from([1; 96]),
+            all_commitment_aggregated_signature: BLSSignature::from([1; 96]),
+        });
+        with_quorum.quorums_chainlock_signatures.push(
+            dashcore::network::message_sml::QuorumCLSigObject {
+                signature: BLSSignature::from([1; 96]),
+                index_set: vec![0],
+            },
+        );
+        storage.store_diff(1, &with_quorum).await.unwrap();
+        let mut retiring = diff_between(1, 2);
+        retiring.deleted_quorums.push(dashcore::network::message_sml::DeletedQuorum {
+            llmq_type,
+            quorum_hash,
+        });
+        storage.store_diff(2, &retiring).await.unwrap();
+
+        let engine = storage.load_engine().await.unwrap();
+        assert!(
+            engine.quorum_entry_for_hash_at_or_before_height(llmq_type, quorum_hash, tip).is_none(),
+            "the engine a restart loads has pruned the only list holding the quorum"
+        );
+
+        let quorum = storage
+            .quorum_entry_at_or_before(llmq_type, quorum_hash, tip)
+            .await
+            .unwrap()
+            .expect("storage rebuilds the list the walk-back reaches");
+        assert_eq!(quorum.quorum_entry.quorum_hash, quorum_hash);
+    }
+
+    /// Mainnet-shaped history: the real full list at 2_227_096 (≈3300 masternodes)
+    /// followed by `blocks` incremental diffs, one per block, as the live
+    /// Incremental pipeline stores them. Files are written without fsync to keep
+    /// setup fast; the replay path reads them exactly as it would in production.
+    async fn mainnet_history(
+        dir: &TempDir,
+        blocks: u32,
+    ) -> (PersistentMasternodeStorage<MockHeaderStorage>, CoreBlockHeight) {
+        type S = PersistentMasternodeStorage<MockHeaderStorage>;
+        let full: MnListDiff = deserialize(include_bytes!(
+            "../../../dash/tests/data/test_DML_diffs/mn_list_diff_0_2227096.bin"
+        ))
+        .unwrap();
+        let base = 2_227_096;
+        let folder = dir.path().join(S::FOLDER_NAME);
+        std::fs::create_dir_all(&folder).unwrap();
+        let mut map: HashMap<BlockHash, u32> = HashMap::new();
+        map.insert(full.block_hash, base);
+        std::fs::write(folder.join(S::file_name(S::DIFF_PREFIX, base)), serialize(&full)).unwrap();
+        let mut prev = full.block_hash;
+        for height in base + 1..=base + blocks {
+            let hash = height_hash(height);
+            map.insert(hash, height);
+            let diff = MnListDiff {
+                base_block_hash: prev,
+                block_hash: hash,
+                new_masternodes: vec![],
+                ..MnListDiff::dummy(0x00, 0x01)
+            };
+            std::fs::write(folder.join(S::file_name(S::DIFF_PREFIX, height)), serialize(&diff))
+                .unwrap();
+            prev = hash;
+        }
+        let storage = PersistentMasternodeStorage::open(
+            dir.path(),
+            Arc::new(RwLock::new(MockHeaderStorage(map))),
+            Network::Mainnet,
+        )
+        .await
+        .unwrap();
+        (storage, base + blocks)
+    }
+
+    /// REVIEW: a lookup that misses memory replays every message from the first
+    /// one ever stored, so its cost grows with uptime, not with the window it asks
+    /// for. One day of mainnet is 576 incremental diffs.
+    #[tokio::test]
+    async fn review_storage_lookup_cost_is_bounded_by_the_window_not_by_history() {
+        let dir = TempDir::new().unwrap();
+        let days = 10;
+        let (storage, tip) = mainnet_history(&dir, 576 * days).await;
+
+        let start = std::time::Instant::now();
+        let (_, stats) = storage.replay_around(tip - 10, tip - 10).await.unwrap();
+        let lookup = start.elapsed();
+
+        let start = std::time::Instant::now();
+        let missing = storage
+            .quorum_entry_at_or_before(
+                LLMQType::Llmqtype100_67,
+                QuorumHash::from_byte_array([0x42; 32]),
+                tip,
+            )
+            .await
+            .unwrap();
+        let unknown_quorum = start.elapsed();
+        assert!(missing.is_none());
+
+        let start = std::time::Instant::now();
+        storage.load_engine().await.unwrap();
+        let startup = start.elapsed();
+
+        eprintln!(
+            "{days} days of mainnet diffs: lookup 10 blocks below tip read {} messages in \
+             {lookup:?}; unknown-quorum lookup {unknown_quorum:?}; startup replay {startup:?}",
+            stats.total
+        );
+        let window = 6 * 288 + 8 + 10;
+        assert!(
+            stats.total <= window,
+            "a lookup 10 blocks below the tip read {} messages, the whole history, where its \
+             reach is {window}",
+            stats.total
+        );
+    }
+
+    /// REVIEW: a storage lookup holds the storage read lock for its whole
+    /// replay, and the masternode manager needs the write lock to store the next
+    /// diff, so masternode sync stalls for as long as any Platform miss replays.
+    #[tokio::test]
+    async fn review_storage_lookup_does_not_stall_masternode_sync() {
+        let dir = TempDir::new().unwrap();
+        let (storage, tip) = mainnet_history(&dir, 576 * 3).await;
+        let storage = Arc::new(RwLock::new(storage));
+
+        let reader = Arc::clone(&storage);
+        let lookup = tokio::spawn(async move {
+            reader
+                .read()
+                .await
+                .quorum_entry_at_or_before(
+                    LLMQType::Llmqtype100_67,
+                    QuorumHash::from_byte_array([0x42; 32]),
+                    tip,
+                )
+                .await
+        });
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+        let start = std::time::Instant::now();
+        let next = MnListDiff {
+            base_block_hash: height_hash(tip),
+            block_hash: height_hash(tip + 1),
+            ..MnListDiff::dummy(0x00, 0x01)
+        };
+        storage.write().await.store_diff(tip + 1, &next).await.unwrap();
+        let waited = start.elapsed();
+        lookup.await.unwrap().unwrap();
+
+        assert!(
+            waited < std::time::Duration::from_millis(500),
+            "storing the next diff waited {waited:?} behind one quorum lookup"
+        );
+    }
+
+    #[test]
+    fn qr_info_bases_are_what_its_chain_starts_from() {
+        let mut qr_info = QRInfo::dummy(0x00);
+        qr_info.mn_list_diff_at_h_minus_3c = MnListDiff::dummy_empty(0xA0, 0xA0);
+        qr_info.mn_list_diff_at_h_minus_2c = MnListDiff::dummy_empty(0xA0, 0xB0);
+        qr_info.mn_list_diff_at_h_minus_c = MnListDiff::dummy_empty(0xB0, 0xC0);
+        qr_info.mn_list_diff_h = MnListDiff::dummy_empty(0xC0, 0xD0);
+        qr_info.mn_list_diff_tip = MnListDiff::dummy_empty(0xD0, 0xE0);
+
+        assert_eq!(
+            Message::QrInfo(Box::new(qr_info)).base_hashes(),
+            vec![hash(0xA0)],
+            "the empty diff at the start of the chain needs its list to exist already"
         );
     }
 }

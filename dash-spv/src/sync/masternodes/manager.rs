@@ -22,13 +22,6 @@ use dashcore::network::message_sml::MnListDiff;
 use dashcore::BlockHash;
 use std::collections::BTreeSet;
 
-/// Anchor `baseBlockHashes` at or before `H - 4 * dkg_interval`. `send_qrinfo_for_tip`
-/// requests QRInfo with `extra_share: true`, which covers `H` down to `H-4C`, so the
-/// base must sit at or before `H-4C` for every historical diff's `(base, target]`
-/// range to include its commit block. Drop to `3` if `extra_share` ever becomes
-/// `false` at the call site.
-const QRINFO_ANCHOR_CYCLES_BEHIND: u32 = 4;
-
 /// Single enum that serves two roles in the masternode-sync flow:
 ///
 /// - **Decision** — returned from [`MasternodesManager::next_pipeline_mode`] to pick
@@ -144,33 +137,6 @@ pub(super) struct MasternodeSyncState {
     /// without sending (no stored tip, tip at genesis) cannot turn it into a
     /// per-tick retry loop.
     pub(super) last_qrinfo_dispatch: Option<Instant>,
-}
-
-/// Pick the QRInfo base anchor for a request at `tip_height`: the highest stored
-/// masternode list at height `<= tip_cycle_start - QRINFO_ANCHOR_CYCLES_BEHIND *
-/// dkg_interval`.
-///
-/// The anchor has to be a block the engine already has a list for. The server's
-/// historical cycle diffs need a base to apply against, and `apply_diff` with no
-/// matching base list fails with `MissingStartMasternodeList`.
-///
-/// Returns `None` on fresh restart (engine empty, or no list old enough to satisfy
-/// the cycles-behind rule). The caller then sends an empty `baseBlockHashes` and the
-/// server falls back to genesis.
-fn compute_qrinfo_anchor_hash(
-    engine: &MasternodeListEngine,
-    network: dashcore::Network,
-    tip_height: u32,
-) -> Option<BlockHash> {
-    let dkg_interval = network.isd_llmq_type().params().dkg_params.interval;
-    if dkg_interval == 0 {
-        return None;
-    }
-    let tip_cycle_start = tip_height - (tip_height % dkg_interval);
-    let max_anchor_height =
-        tip_cycle_start.checked_sub(QRINFO_ANCHOR_CYCLES_BEHIND * dkg_interval)?;
-    let (_, list) = engine.masternode_lists.range(..=max_anchor_height).next_back()?;
-    Some(list.block_hash)
 }
 
 impl MasternodeSyncState {
@@ -629,7 +595,7 @@ impl<H: BlockHeaderStorage> MasternodesManager<H> {
 
         let base_hashes = {
             let engine = self.engine.read().await;
-            match compute_qrinfo_anchor_hash(&engine, self.network, tip_height) {
+            match engine.qr_info_base_list(tip_height).map(|list| list.block_hash) {
                 Some(anchor) => vec![anchor],
                 None => Vec::new(),
             }
@@ -883,7 +849,7 @@ mod tests {
         ];
         for case in &cases {
             let engine = engine_with_lists(case.lists);
-            let got = compute_qrinfo_anchor_hash(&engine, dashcore::Network::Regtest, case.tip);
+            let got = engine.qr_info_base_list(case.tip).map(|list| list.block_hash);
             assert_eq!(got, case.expect.map(anchor_hash), "case: {}", case.name);
         }
     }

@@ -45,6 +45,7 @@ impl MasternodeList {
         let unused_at_h_masternodes = self
             .masternodes
             .values()
+            .map(|mn| &**mn)
             .filter(|mn| {
                 mn.masternode_list_entry.is_valid
                     && !used_masternodes.iter().any(|node| {

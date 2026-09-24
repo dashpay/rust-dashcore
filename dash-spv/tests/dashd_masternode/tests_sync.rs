@@ -11,8 +11,8 @@ use dashcore::sml::llmq_type::LLMQType;
 
 use super::helpers::{
     assert_all_rotated_quorums_verified, assert_storage_did_not_shrink, assert_storage_persisted,
-    storage_snapshot, wait_for_chainlock_height_at_least, wait_for_masternode_sync,
-    wait_for_mn_state_event, wait_for_mn_state_event_above,
+    mine_past_the_pruning_floor, storage_snapshot, wait_for_chainlock_height_at_least,
+    wait_for_masternode_sync, wait_for_mn_state_event, wait_for_mn_state_event_above,
     wait_for_mn_state_with_stored_cycle_above,
 };
 use super::setup::{
@@ -603,6 +603,119 @@ async fn test_masternode_list_sync_end_to_end() {
         cl_sync_height
     );
     tracing::info!("SPV synced to ChainLocked height {}", cl_sync_height);
+
+    client_handle.stop().await;
+}
+
+/// A restart must come back with the engine the previous session was running,
+/// not with every list that session ever stored. The live session prunes lists
+/// below the walk-back floor; replay must not resurrect them.
+#[tokio::test]
+async fn test_masternode_restart_does_not_resurrect_pruned_lists() {
+    let Some(ctx) = TestContext::new(true).await else {
+        return;
+    };
+
+    let wallet = create_dummy_wallet();
+    let config =
+        create_mn_test_config(ctx.storage_path().to_path_buf(), ctx.mn_ctx.controller_addr);
+
+    let mut client_handle = create_and_start_client(&config, Arc::clone(&wallet)).await;
+    let progress =
+        wait_for_masternode_sync(&mut client_handle.progress_receiver, SYNC_TIMEOUT).await;
+    mine_past_the_pruning_floor(&ctx, &mut client_handle, progress.current_height()).await;
+
+    let live_heights: Vec<u32> =
+        client_handle.engine.read().await.masternode_lists.keys().copied().collect();
+    client_handle.stop().await;
+    drop(client_handle);
+
+    let stored = storage_snapshot(ctx.storage_path()).get("masternodes").copied().unwrap_or(0);
+
+    let client_handle = create_client(&config, Arc::clone(&wallet)).await;
+    let replayed_heights: Vec<u32> =
+        client_handle.engine.read().await.masternode_lists.keys().copied().collect();
+
+    let live_floor = *live_heights.first().expect("live engine has lists");
+    let resurrected: Vec<u32> =
+        replayed_heights.iter().copied().filter(|h| *h < live_floor).collect();
+
+    assert!(
+        resurrected.is_empty(),
+        "replay rebuilt {} lists below the live engine's lowest list {live_floor}, which the \
+         previous session had pruned: live held {} lists, replay built {} from {stored} stored \
+         messages; resurrected heights {resurrected:?}",
+        resurrected.len(),
+        live_heights.len(),
+        replayed_heights.len(),
+    );
+    let tip = *live_heights.last().expect("live engine has lists");
+    let needed = client_handle.engine.read().await.needed_lists(tip);
+    let lost: Vec<u32> = live_heights
+        .iter()
+        .copied()
+        .filter(|h| needed.contains(*h) && !replayed_heights.contains(h))
+        .collect();
+    assert!(
+        lost.is_empty(),
+        "replay must rebuild every list the previous session needed ({needed:?}), \
+         missing {lost:?}"
+    );
+}
+
+/// A quorum looked up at a height whose lists the engine has pruned is rebuilt
+/// from the stored messages instead of reported missing.
+#[tokio::test]
+async fn test_quorum_lookup_below_the_pruned_lists_rebuilds_from_storage() {
+    let Some(ctx) = TestContext::new(true).await else {
+        return;
+    };
+
+    let wallet = create_dummy_wallet();
+    let config =
+        create_mn_test_config(ctx.storage_path().to_path_buf(), ctx.mn_ctx.controller_addr);
+
+    let mut client_handle = create_and_start_client(&config, Arc::clone(&wallet)).await;
+    let progress =
+        wait_for_masternode_sync(&mut client_handle.progress_receiver, SYNC_TIMEOUT).await;
+
+    let (old_height, llmq_type, quorum_hash, public_key) = {
+        let engine = client_handle.engine.read().await;
+        let (height, list) = engine.masternode_lists.iter().next_back().expect("synced list");
+        let quorum = list
+            .quorums
+            .iter()
+            .filter(|(llmq_type, _)| !llmq_type.is_rotating_quorum_type())
+            .flat_map(|(_, quorums)| quorums.values())
+            .next()
+            .expect("the synced list holds a non-rotating quorum");
+        (
+            *height,
+            quorum.quorum_entry.llmq_type,
+            quorum.quorum_entry.quorum_hash,
+            quorum.quorum_entry.quorum_public_key,
+        )
+    };
+
+    mine_past_the_pruning_floor(&ctx, &mut client_handle, progress.current_height()).await;
+
+    assert!(
+        client_handle
+            .engine
+            .read()
+            .await
+            .quorum_entry_for_hash_at_or_before_height(llmq_type, quorum_hash, old_height)
+            .is_none(),
+        "the live engine must have pruned every list at or below {old_height} for this to test \
+         the rebuild"
+    );
+
+    let quorum = client_handle
+        .client
+        .get_quorum_at_height(old_height, llmq_type, quorum_hash)
+        .await
+        .expect("the quorum is rebuilt from the stored messages");
+    assert_eq!(quorum.quorum_entry.quorum_public_key, public_key);
 
     client_handle.stop().await;
 }

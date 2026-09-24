@@ -13,7 +13,7 @@ use std::time::Duration;
 use tokio::sync::{broadcast, watch};
 use tokio::time;
 
-use super::setup::{TestContext, SYNC_TIMEOUT};
+use super::setup::{ClientHandle, TestContext, SYNC_TIMEOUT};
 
 /// Mine a DKG cycle and wait for the SPV to surface a `MasternodeStateUpdated`
 /// event above `baseline_height`.
@@ -88,6 +88,27 @@ pub(super) fn assert_storage_did_not_shrink(
             Some(_) => {}
         }
     }
+}
+
+/// Mines far enough past the synced tip that the live engine prunes the lists it
+/// started with, one masternode list every five blocks. Returns the new height.
+pub(super) async fn mine_past_the_pruning_floor(
+    ctx: &TestContext,
+    client_handle: &mut ClientHandle,
+    from: u32,
+) -> u32 {
+    let addr = ctx.mn_ctx.controller.get_new_address();
+    let mut height = from;
+    for _ in 0..50 {
+        ctx.mn_ctx.controller.generate_blocks(5, &addr);
+        height = wait_for_mn_state_event_above(
+            &mut client_handle.sync_event_receiver,
+            height + 4,
+            SYNC_TIMEOUT,
+        )
+        .await;
+    }
+    height
 }
 
 pub(super) async fn mine_dkg_cycle_and_wait(

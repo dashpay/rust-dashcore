@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use crate::Network;
 use crate::bls_sig_utils::BLSSignature;
 use crate::network::message_sml::MnListDiff;
@@ -51,21 +53,31 @@ impl MasternodeList {
             });
         }
 
-        // Create a new masternodes map by cloning the existing one
-        let mut updated_masternodes = self.masternodes.clone();
-
-        // Remove deleted masternodes
-        for pro_tx_hash in diff.deleted_masternodes {
-            updated_masternodes.remove(&pro_tx_hash.reverse());
+        let mut updated_masternodes = Arc::clone(&self.masternodes);
+        if !diff.deleted_masternodes.is_empty() || !diff.new_masternodes.is_empty() {
+            let masternodes = Arc::make_mut(&mut updated_masternodes);
+            for pro_tx_hash in diff.deleted_masternodes {
+                masternodes.remove(&pro_tx_hash.reverse());
+            }
+            for new_mn in diff.new_masternodes {
+                masternodes.insert(new_mn.pro_reg_tx_hash.reverse(), Arc::new(new_mn.into()));
+            }
         }
 
-        // Add or update new masternodes
-        for new_mn in diff.new_masternodes {
-            updated_masternodes.insert(new_mn.pro_reg_tx_hash.reverse(), new_mn.into());
+        let mut shared_quorums = Arc::clone(&self.quorums);
+        if diff.deleted_quorums.is_empty()
+            && diff.new_quorums.is_empty()
+            && diff.quorums_chainlock_signatures.is_empty()
+        {
+            let builder = MasternodeList::build(
+                updated_masternodes,
+                shared_quorums,
+                diff.block_hash,
+                diff_end_height,
+            );
+            return Ok((builder.build(), None));
         }
-
-        // Create a new quorums map by cloning the existing one
-        let mut updated_quorums = self.quorums.clone();
+        let updated_quorums = Arc::make_mut(&mut shared_quorums);
 
         // Remove deleted quorums
         for deleted_quorum in diff.deleted_quorums {
@@ -140,7 +152,7 @@ impl MasternodeList {
                                 .copied()
                                 .map(VerifyingChainLockSignaturesType::NonRotating)
                         };
-                    QualifiedQuorumEntry {
+                    Arc::new(QualifiedQuorumEntry {
                         quorum_entry: new_quorum,
                         verified: LLMQEntryVerificationStatus::Skipped(
                             LLMQEntryVerificationSkipStatus::NotMarkedForVerification,
@@ -148,7 +160,7 @@ impl MasternodeList {
                         commitment_hash,
                         entry_hash,
                         verifying_chain_lock_signature,
-                    }
+                    })
                 },
             );
         }
@@ -156,7 +168,7 @@ impl MasternodeList {
         // Create and return the new MasternodeList
         let builder = MasternodeList::build(
             updated_masternodes,
-            updated_quorums,
+            shared_quorums,
             diff.block_hash,
             diff_end_height,
         );

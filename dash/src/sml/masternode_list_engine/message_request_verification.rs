@@ -411,8 +411,42 @@ mod tests {
     use crate::hashes::Hash;
     use crate::hashes::hex::FromHex;
     use crate::sml::llmq_type::LLMQType;
+    use crate::sml::llmq_type::network::NetworkLLMQExt;
     use crate::sml::masternode_list_engine::MasternodeListEngine;
     use crate::{BlockHash, ChainLock, InstantLock, QuorumHash};
+
+    /// REVIEW: a ChainLock signed above the newest list, with a garbage signature,
+    /// must not verify. `before` fails, there is no `after`, and the function
+    /// falls through to `Ok(())`, dropping the error it just computed.
+    #[test]
+    fn review_forged_chain_lock_above_the_newest_list_is_rejected() {
+        let data = hex::decode(include_str!(
+            "../../../tests/data/test_DML_diffs/masternode_list_engine.hex"
+        ))
+        .expect("decode hex");
+        let engine: MasternodeListEngine =
+            bincode::decode_from_slice(&data, bincode::config::standard()).unwrap().0;
+        let newest = *engine.masternode_lists.keys().next_back().unwrap();
+        assert!(
+            engine.masternode_lists[&newest]
+                .quorums
+                .contains_key(&engine.network.chain_locks_type())
+        );
+
+        let forged = ChainLock {
+            block_height: newest + 1_000,
+            block_hash: BlockHash::from_byte_array([0x42; 32]),
+            signature: BLSSignature::from([0x11; 96]),
+        };
+        let against_newest = engine
+            .verify_chain_lock_with_masternode_list(&forged, &engine.masternode_lists[&newest]);
+        assert!(against_newest.is_err(), "the only list that can sign it rejects it");
+        assert!(
+            engine.verify_chain_lock(&forged).is_err(),
+            "forged ChainLock at {} accepted: the error from the list at {newest} was dropped",
+            forged.block_height
+        );
+    }
 
     #[test]
     pub fn is_lock_verification() {

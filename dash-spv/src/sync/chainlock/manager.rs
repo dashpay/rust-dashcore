@@ -417,6 +417,105 @@ mod tests {
         );
     }
 
+    fn review_height_hash(height: u32) -> BlockHash {
+        if height == 0 {
+            return BlockHash::all_zeros();
+        }
+        let mut bytes = [0xF0; 32];
+        bytes[..4].copy_from_slice(&height.to_le_bytes());
+        BlockHash::from_byte_array(bytes)
+    }
+
+    /// A list at every block up to `tip`, as the live Incremental pipeline builds
+    /// them, and an engine loaded from that storage the way a restart loads it.
+    async fn review_manager_synced_to(
+        dir: &tempfile::TempDir,
+        metadata: Arc<RwLock<PersistentMetadataStorage>>,
+        tip: u32,
+    ) -> ChainLockManager<MockHeaderStorage, PersistentMetadataStorage> {
+        let heights = (0..=tip).map(|h| (review_height_hash(h), h)).collect();
+        let headers = Arc::new(RwLock::new(MockHeaderStorage(heights)));
+        let mut storage =
+            PersistentMasternodeStorage::open(dir.path(), Arc::clone(&headers), Network::Regtest)
+                .await
+                .unwrap();
+        for height in 1..=tip {
+            let diff = MnListDiff {
+                base_block_hash: review_height_hash(height - 1),
+                block_hash: review_height_hash(height),
+                ..MnListDiff::dummy(0x00, 0x01)
+            };
+            storage.store_diff(height, &diff).await.unwrap();
+        }
+        let engine = storage.load_engine().await.unwrap();
+        let mut manager = ChainLockManager::new(
+            headers,
+            metadata,
+            Arc::new(RwLock::new(engine)),
+            Some(Arc::new(RwLock::new(storage))),
+        )
+        .await;
+        manager.masternode_ready = true;
+        manager
+    }
+
+    /// REVIEW: one forged `clsig` from any peer, signed above the newest list,
+    /// is accepted, persisted as the best ChainLock, and makes every real
+    /// ChainLock below it be ignored.
+    #[tokio::test]
+    async fn review_forged_chainlock_above_the_newest_list_is_rejected() {
+        let disk = DiskStorageManager::with_temp_dir().await.unwrap();
+        let dir = tempfile::TempDir::new().unwrap();
+        let mut manager = review_manager_synced_to(&dir, disk.metadata(), 300).await;
+
+        let forged = ChainLock {
+            block_height: 100_000,
+            block_hash: BlockHash::from_byte_array([0x42; 32]),
+            signature: BLSSignature::from([0x11; 96]),
+        };
+        let events = manager.process_chainlock(&forged).await.unwrap();
+
+        assert!(
+            matches!(
+                events.as_slice(),
+                [SyncEvent::ChainLockReceived {
+                    validated: false,
+                    ..
+                }]
+            ),
+            "forged ChainLock validated: {events:?}, best is now {:?}",
+            manager.best_chainlock().map(|cl| cl.block_height)
+        );
+    }
+
+    /// REVIEW: the live engine holds a list for every block of the last cycle,
+    /// and a ChainLock is only processed above the best one, so its signing height
+    /// is already covered in memory. Storage can only rebuild that same list, yet
+    /// every signature that fails in memory still costs a replay of the whole
+    /// message history.
+    #[tokio::test]
+    async fn review_failed_chainlock_covered_in_memory_does_not_replay_storage() {
+        let disk = DiskStorageManager::with_temp_dir().await.unwrap();
+        let dir = tempfile::TempDir::new().unwrap();
+        let manager = review_manager_synced_to(&dir, disk.metadata(), 300).await;
+        let engine = manager.masternode_engine.read().await;
+        assert!(
+            engine.masternode_lists.contains_key(&297)
+                && engine.masternode_lists.contains_key(&298)
+        );
+        drop(engine);
+
+        let chainlock = create_test_chainlock(305);
+        assert!(!manager.validate_signature(&chainlock).await);
+
+        let storage = manager.masternode_storage.as_ref().unwrap();
+        assert_eq!(
+            storage.read().await.cached_window().await,
+            None,
+            "signing height 297 is held in memory, yet storage was replayed for it"
+        );
+    }
+
     fn create_test_chainlock(height: u32) -> ChainLock {
         ChainLock {
             block_height: height,
