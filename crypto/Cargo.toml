@@ -12,14 +12,15 @@ edition = "2021"
 [features]
 default = []
 
-bincode = ["dep:bincode", "dep:bincode_derive", "dashcore_hashes/bincode"]
+bincode = ["dep:bincode", "dep:bincode_derive", "dashcore_hashes/bincode", "dash-network/bincode"]
 bls = ["dep:dash-pkc", "dep:tracing"]
-serde = ["dep:serde", "dash-types/serde", "dashcore_hashes/serde", "secp256k1/serde"]
+serde = ["dep:serde", "dash-types/serde", "dashcore_hashes/serde", "dash-network/serde", "secp256k1/serde"]
 
 [dependencies]
 base58ck = { version = "0.1.0" }
 bincode = { workspace = true, optional = true }
 bincode_derive = { workspace = true, optional = true }
+dash-network = { path = "../dash-network" }
 dash-pkc = { version = "=0.1.0-beta", default-features = false, features = ["bls", "std"], optional = true }
 dash-types = { version = "=0.1.0-beta", default-features = false, features = ["codec"] }
 dashcore_hashes = { path = "../hashes" }
