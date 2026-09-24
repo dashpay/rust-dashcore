@@ -6,11 +6,13 @@
 
 //! Ed25519 keys for Platform node identity.
 
+#[cfg(feature = "eddsa")]
+use dash_pkc::eddsa::{
+    EddsaPkBytes as PkcPkBytes, EddsaPublicKey as PkcPublicKey, EddsaSecretKey as PkcSecretKey,
+};
+#[cfg(feature = "eddsa")]
+use dash_types::Hashable;
 use dash_types::{make_bytes, make_sbytes};
-#[cfg(feature = "eddsa")]
-use dashcore_hashes::{sha256, Hash as _};
-#[cfg(feature = "eddsa")]
-use ed25519_dalek::{SigningKey, VerifyingKey};
 #[cfg(feature = "eddsa")]
 use thiserror::Error as ThisError;
 
@@ -93,19 +95,16 @@ impl EddsaPkBytes {
     ///
     /// Returns `InvalidPublicKey` when the bytes are not on the curve.
     pub fn validate(&self) -> Result<(), EddsaError> {
-        VerifyingKey::from_bytes(self.as_bytes())
+        PkcPublicKey::from_bytes(self.as_bytes())
             .map(|_| ())
             .map_err(|e| EddsaError::InvalidPublicKey(e.to_string()))
     }
 
     /// The CometBFT hash of the public key.
     pub fn hash(&self) -> EddsaPkHash {
-        let digest = sha256::Hash::hash(self.as_bytes()).to_byte_array();
-        let mut id = [0u8; 20];
-        for (out, byte) in id.iter_mut().zip(digest[..20].iter().rev()) {
-            *out = *byte;
-        }
-        EddsaPkHash::from_bytes(id)
+        EddsaPkHash::from_bytes(
+            *Hashable::hash(&PkcPkBytes::from_bytes(*self.as_bytes())).as_bytes(),
+        )
     }
 }
 
@@ -118,7 +117,7 @@ make_sbytes! {
 impl EddsaSkBytes {
     /// Derives the corresponding public key.
     pub fn public_key(&self) -> EddsaPkBytes {
-        EddsaPkBytes::from_bytes(SigningKey::from_bytes(self.as_bytes()).verifying_key().to_bytes())
+        EddsaPkBytes::from_bytes(PkcSecretKey::from_bytes(self.as_bytes()).public_key().to_bytes())
     }
 }
 
@@ -132,6 +131,8 @@ mod tests {
     #[cfg(feature = "bincode")]
     #[test]
     fn bincode_layout_matches_pubkey_hash() {
+        use dashcore_hashes::Hash as _;
+
         let bytes = [
             0x8b, 0xaa, 0xdf, 0xf0, 0x0d, 0x8b, 0xaa, 0xdf, 0xf0, 0x0d, 0x8b, 0xaa, 0xdf, 0xf0,
             0x0d, 0x8b, 0xaa, 0xdf, 0xf0, 0x0d,
@@ -173,6 +174,8 @@ mod tests {
     #[cfg(feature = "eddsa")]
     #[test]
     fn hash_is_truncated_sha256() {
+        use dashcore_hashes::{sha256, Hash};
+
         let public_key = [7u8; 32];
         let digest = sha256::Hash::hash(&public_key);
         // `EddsaPkHash` holds the wire order, which is the byte-reversal of
