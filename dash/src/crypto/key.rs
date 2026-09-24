@@ -36,7 +36,7 @@ use crate::taproot::{TapNodeHash, TapTweakHash};
 use crate::{base58, io};
 
 /// A key-related error.
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
+#[derive(Clone, PartialEq, Eq, Debug)]
 #[non_exhaustive]
 pub enum Error {
     /// Base58 encoding error
@@ -45,6 +45,10 @@ pub enum Error {
     Secp256k1(secp256k1::Error),
     /// Invalid key prefix error
     InvalidKeyPrefix(u8),
+    /// The WIF or extended key version byte was not one we recognise.
+    InvalidAddressVersion(u8),
+    /// The base58 decoded correctly but the payload was the wrong length.
+    InvalidBase58PayloadLength(usize),
     /// Hex decoding error
     Hex(hex::Error),
     /// `PublicKey` hex should be 66 or 130 digits long.
@@ -58,6 +62,12 @@ impl fmt::Display for Error {
         match self {
             Error::Base58(e) => write_err!(f, "key base58 error"; e),
             Error::Secp256k1(e) => write_err!(f, "key secp256k1 error"; e),
+            Error::InvalidAddressVersion(v) => {
+                write!(f, "address version {} is invalid for this base58 type", v)
+            }
+            Error::InvalidBase58PayloadLength(l) => {
+                write!(f, "length {} invalid for this base58 type", l)
+            }
             Error::InvalidKeyPrefix(b) => write!(f, "key prefix invalid: {}", b),
             Error::Hex(e) => write_err!(f, "key hex decoding error"; e),
             Error::InvalidHexLength(got) => {
@@ -78,7 +88,10 @@ impl std::error::Error for Error {
             Base58(e) => Some(e),
             Secp256k1(e) => Some(e),
             Hex(e) => Some(e),
-            InvalidKeyPrefix(_) | InvalidHexLength(_) => None,
+            InvalidAddressVersion(_)
+            | InvalidBase58PayloadLength(_)
+            | InvalidKeyPrefix(_)
+            | InvalidHexLength(_) => None,
             NotSupported(_) => None,
         }
     }
@@ -274,7 +287,7 @@ impl PublicKey {
                 (false, secp256k1::PublicKey::from_byte_array_uncompressed(data)?)
             }
             len => {
-                return Err(base58::Error::InvalidLength(len).into());
+                return Err(Error::InvalidBase58PayloadLength(len));
             }
         };
 
@@ -413,7 +426,7 @@ impl PrivateKey {
             33 => false,
             34 => true,
             _ => {
-                return Err(Error::Base58(base58::Error::InvalidLength(data.len())));
+                return Err(Error::InvalidBase58PayloadLength(data.len()));
             }
         };
 
@@ -421,13 +434,13 @@ impl PrivateKey {
             204 => Network::Mainnet,
             239 => Network::Testnet,
             x => {
-                return Err(Error::Base58(base58::Error::InvalidAddressVersion(x)));
+                return Err(Error::InvalidAddressVersion(x));
             }
         };
 
         let secret = data[1..]
             .first_chunk::<{ constants::SECRET_KEY_SIZE }>()
-            .ok_or(Error::Base58(base58::Error::InvalidLength(data.len())))?;
+            .ok_or(Error::InvalidBase58PayloadLength(data.len()))?;
 
         Ok(PrivateKey {
             compressed,

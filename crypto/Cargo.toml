@@ -17,6 +17,7 @@ bls = ["dep:dash-pkc", "dep:tracing"]
 serde = ["dep:serde", "dash-types/serde", "dashcore_hashes/serde"]
 
 [dependencies]
+base58ck = { version = "0.1.0" }
 bincode = { workspace = true, optional = true }
 bincode_derive = { workspace = true, optional = true }
 dash-pkc = { version = "=0.1.0-beta", default-features = false, features = ["bls", "std"], optional = true }

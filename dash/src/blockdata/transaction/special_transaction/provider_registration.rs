@@ -299,8 +299,10 @@ impl Decodable for ProviderRegistrationPayload {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
+    use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4};
 
+    use base64::Engine as _;
+    use base64::engine::general_purpose::STANDARD as BASE64;
     use hashes::Hash;
 
     use crate::bls_sig_utils::BLSPublicKey;
@@ -312,8 +314,6 @@ mod tests {
         ProviderMasternodeType, ProviderRegistrationPayload,
     };
     use crate::{OutPoint, PubkeyHash, ScriptBuf, Txid};
-
-    use std::net::IpAddr;
 
     use crate::Network;
     use crate::PrivateKey;
@@ -459,7 +459,7 @@ mod tests {
             collateral_private_key.to_bytes().as_slice(),
         )
         .expect("expected to sign message digest");
-        let base64_signature = base64::encode(signature.as_slice());
+        let base64_signature = BASE64.encode(signature.as_slice());
 
         assert_eq!(
             expected_base64_signature, base64_signature,
@@ -635,11 +635,11 @@ mod tests {
 
         let expected_base64_signature = "H7N+ScH/K4BXcTk5pVE+bnEacc/y5RfmIk33JO11Cu8bf5rZ7GErSnJQIy4eQA2nGKlQHh2aVWVSbksf9owCh2M=";
         let signature = sign_hash(
-            base64::decode(&expected_base64_signature).expect("expected valid base64").as_slice(),
+            BASE64.decode(expected_base64_signature).expect("expected valid base64").as_slice(),
             collateral_private_key.to_bytes().as_slice(),
         )
         .expect("expected to sign message digest");
-        let base64_signature = base64::encode(signature.as_slice());
+        let base64_signature = BASE64.encode(signature.as_slice());
 
         assert_eq!(
             expected_base64_signature, base64_signature,

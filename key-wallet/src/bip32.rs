@@ -43,7 +43,6 @@ use crate::dip9::{
     IDENTITY_INVITATION_PATH_TESTNET, IDENTITY_REGISTRATION_PATH_MAINNET,
     IDENTITY_REGISTRATION_PATH_TESTNET, IDENTITY_TOPUP_PATH_MAINNET, IDENTITY_TOPUP_PATH_TESTNET,
 };
-use base58ck;
 #[cfg(feature = "bincode")]
 use bincode_derive::{Decode, Encode};
 use dashcore::Network;
@@ -1549,7 +1548,7 @@ pub enum Error {
     /// Encoded extended key data has wrong length
     WrongExtendedKeyLength(usize),
     /// Base58 encoding error
-    Base58(base58ck::Error),
+    Base58(base58::Error),
     /// Hexadecimal decoding error
     Hex(dashcore_hashes::hex::Error),
     /// `PublicKey` hex should be 66 or 130 digits long.
@@ -1602,8 +1601,8 @@ impl From<secp256k1::Error> for Error {
     }
 }
 
-impl From<base58ck::Error> for Error {
-    fn from(err: base58ck::Error) -> Self {
+impl From<base58::Error> for Error {
+    fn from(err: base58::Error) -> Self {
         Error::Base58(err)
     }
 }
@@ -2170,7 +2169,7 @@ impl ExtendedPubKey {
 
 impl fmt::Display for ExtendedPrivKey {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-        fmt.write_str(&base58ck::encode_check(&self.encode()[..]))
+        fmt.write_str(&base58::encode_check(&self.encode()[..]))
     }
 }
 
@@ -2178,14 +2177,14 @@ impl FromStr for ExtendedPrivKey {
     type Err = Error;
 
     fn from_str(inp: &str) -> Result<ExtendedPrivKey, Error> {
-        let data = base58ck::decode_check(inp)?;
+        let data = base58::decode_check(inp)?;
         ExtendedPrivKey::decode(&data)
     }
 }
 
 impl fmt::Display for ExtendedPubKey {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-        fmt.write_str(&base58ck::encode_check(&self.encode()[..]))
+        fmt.write_str(&base58::encode_check(&self.encode()[..]))
     }
 }
 
@@ -2193,7 +2192,7 @@ impl FromStr for ExtendedPubKey {
     type Err = Error;
 
     fn from_str(inp: &str) -> Result<ExtendedPubKey, Error> {
-        let data = base58ck::decode_check(inp)?;
+        let data = base58::decode_check(inp)?;
         ExtendedPubKey::decode(&data)
     }
 }

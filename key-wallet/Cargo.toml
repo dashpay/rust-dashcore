@@ -38,7 +38,7 @@ secp256k1 = { version = "0.33.1", default-features = false, features = ["recover
 bip39 = { version = "2.2.0", default-features = false, features = ["std", "chinese-simplified", "chinese-traditional", "czech", "french", "italian", "japanese", "korean", "portuguese", "spanish", "zeroize"] }
 unicode-normalization = "0.1"
 serde = { version = "1.0", default-features = false, features = ["derive"], optional = true }
-base58ck = { version = "0.1.0", default-features = false }
+base58 = { package = "base58ck", version = "0.1.0", default-features = false }
 bitflags = { version = "2.6", default-features = false }
 getrandom = { version = "0.4", optional = true }
 # BIP38 dependencies (optional)
