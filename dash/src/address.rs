@@ -45,6 +45,13 @@ use core::fmt;
 use core::marker::PhantomData;
 use core::str::FromStr;
 
+use bech32;
+use hashes::{Hash, HashEngine, sha256};
+use internals::write_err;
+use secp256k1::XOnlyPublicKey;
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
+
 use crate::base58;
 use crate::blockdata::constants::{
     MAX_SCRIPT_ELEMENT_SIZE, PUBKEY_ADDRESS_PREFIX_MAIN, PUBKEY_ADDRESS_PREFIX_TEST,
@@ -55,18 +62,12 @@ use crate::blockdata::opcodes::all::*;
 use crate::blockdata::script::{
     self, Instruction, PushBytes, PushBytesBuf, PushBytesErrorReport, Script, ScriptBuf,
 };
-use crate::crypto::key::{PublicKey, TapTweak, TweakedPublicKey, UntweakedPublicKey};
+use crate::crypto::key::{PublicKey, TweakedPublicKey, UntweakedPublicKey};
 use crate::error::ParseIntError;
 use crate::hash_types::{PubkeyHash, ScriptHash};
 use crate::network::constants::Network;
 use crate::prelude::*;
-use crate::taproot::TapNodeHash;
-use bech32;
-use hashes::{Hash, HashEngine, sha256};
-use internals::write_err;
-use secp256k1::XOnlyPublicKey;
-#[cfg(feature = "serde")]
-use serde::{Deserialize, Serialize};
+use crate::taproot::{TapNodeHash, TapTweak};
 
 /// Address error.
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -74,6 +75,10 @@ use serde::{Deserialize, Serialize};
 pub enum Error {
     /// Base58 encoding error.
     Base58(base58::Error),
+    /// The address version byte was not one we recognise.
+    InvalidAddressVersion(u8),
+    /// The base58 decoded correctly but the payload was the wrong length.
+    InvalidBase58PayloadLength(usize),
     /// Bech32 encoding error.
     Bech32(bech32::Error),
     /// The bech32 payload was empty.
@@ -116,6 +121,12 @@ impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
             Error::Base58(ref e) => write_err!(f, "base58 address encoding error"; e),
+            Error::InvalidAddressVersion(ref v) => {
+                write!(f, "address version {} is invalid for this base58 type", v)
+            }
+            Error::InvalidBase58PayloadLength(ref l) => {
+                write!(f, "length {} invalid for this base58 type", l)
+            }
             Error::Bech32(ref e) => write_err!(f, "bech32 address encoding error"; e),
             Error::EmptyBech32Payload => write!(f, "the bech32 payload was empty"),
             Error::InvalidBech32Variant { expected, found } => write!(f, "invalid bech32 checksum variant found {:?} when {:?} was expected", found, expected),
@@ -145,7 +156,9 @@ impl std::error::Error for Error {
             Base58(e) => Some(e),
             Bech32(e) => Some(e),
             UnparsableWitnessVersion(e) => Some(e),
-            EmptyBech32Payload
+            InvalidAddressVersion(_)
+            | InvalidBase58PayloadLength(_)
+            | EmptyBech32Payload
             | InvalidBech32Variant {
                 ..
             }
@@ -1380,11 +1393,11 @@ impl FromStr for Address<NetworkUnchecked> {
 
         // Base58
         if s.len() > 50 {
-            return Err(Error::Base58(base58::Error::InvalidLength(s.len() * 11 / 15)));
+            return Err(Error::InvalidBase58PayloadLength(s.len() * 11 / 15));
         }
         let data = base58::decode_check(s)?;
         if data.len() != 21 {
-            return Err(Error::Base58(base58::Error::InvalidLength(data.len())));
+            return Err(Error::InvalidBase58PayloadLength(data.len()));
         }
 
         let (network, payload) = match data[0] {
@@ -1400,7 +1413,7 @@ impl FromStr for Address<NetworkUnchecked> {
             SCRIPT_ADDRESS_PREFIX_TEST => {
                 (Network::Testnet, Payload::ScriptHash(ScriptHash::from_slice(&data[1..]).unwrap()))
             }
-            x => return Err(Error::Base58(base58::Error::InvalidAddressVersion(x))),
+            x => return Err(Error::InvalidAddressVersion(x)),
         };
 
         Ok(Address::new(network, payload))

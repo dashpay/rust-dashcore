@@ -1,5 +1,9 @@
-// Written in 2014 by Andrew Poelstra <apoelstra@wpsoftware.net>
+//
+// This file is a part of rust-dashcore.
+// Portions written by Andrew Poelstra <apoelstra@wpsoftware.net> for rust-bitcoin.
 // SPDX-License-Identifier: CC0-1.0
+// See the accompanying file LICENSE or https://creativecommons.org/publicdomain/zero/1.0
+//
 
 //! ECDSA Bitcoin signatures.
 //!
@@ -12,9 +16,9 @@ use hashes::hex::{self, FromHex};
 use internals::hex::display::DisplayHex;
 use internals::write_err;
 use secp256k1;
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
 
-use crate::prelude::*;
-use crate::script::PushBytes;
 use crate::sighash::{EcdsaSighashType, NonStandardSighashType};
 
 const MAX_SIG_LEN: usize = 73;
@@ -100,7 +104,7 @@ impl FromStr for Signature {
 /// The type can be used largely as a byte slice. It implements all standard traits one would
 /// expect and has familiar methods.
 /// However, the usual use case is to push it into a script. This can be done directly passing it
-/// into [`push_slice`](crate::script::ScriptBuf::push_slice).
+/// into `ScriptBuf::push_slice`.
 #[derive(Copy, Clone)]
 pub struct SerializedSignature {
     data: [u8; MAX_SIG_LEN],
@@ -142,13 +146,6 @@ impl AsMut<[u8]> for SerializedSignature {
     #[inline]
     fn as_mut(&mut self) -> &mut [u8] {
         self
-    }
-}
-
-impl AsRef<PushBytes> for SerializedSignature {
-    #[inline]
-    fn as_ref(&self) -> &PushBytes {
-        &<&PushBytes>::from(&self.data)[..self.len()]
     }
 }
 

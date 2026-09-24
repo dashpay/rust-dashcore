@@ -92,7 +92,7 @@ pub mod serde_utils;
 pub mod network;
 pub mod address;
 pub mod amount;
-pub mod base58;
+pub use dashcore_crypto::base58;
 pub mod bip152;
 pub mod bip158;
 pub mod blockdata;

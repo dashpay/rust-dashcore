@@ -597,3 +597,237 @@ pub const PLATFORM_PAYMENT_ROOT_PATH_TESTNET: IndexConstPath<3> = IndexConstPath
     reference: DerivationPathReference::PlatformPayment,
     path_type: DerivationPathType::CLEAR_FUNDS,
 };
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
+#[repr(u32)]
+pub enum KeyDerivationType {
+    ECDSA = 0,
+    BLS = 1,
+}
+
+impl From<KeyDerivationType> for u32 {
+    fn from(val: KeyDerivationType) -> Self {
+        match val {
+            KeyDerivationType::ECDSA => 0,
+            KeyDerivationType::BLS => 1,
+        }
+    }
+}
+
+/// The `key_purpose'` level of a DIP-13 application encryption path: the Platform identity key
+/// purpose the derived key is registered with.
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
+#[repr(u32)]
+pub enum ApplicationKeyPurpose {
+    Encryption = 1,
+    Decryption = 2,
+}
+
+impl From<ApplicationKeyPurpose> for u32 {
+    fn from(val: ApplicationKeyPurpose) -> Self {
+        match val {
+            ApplicationKeyPurpose::Encryption => 1,
+            ApplicationKeyPurpose::Decryption => 2,
+        }
+    }
+}
+
+impl DerivationPath {
+    pub fn bip_44_account(network: Network, account: u32) -> Self {
+        let root_derivation_path: DerivationPath = match network {
+            Network::Mainnet => DASH_BIP44_PATH_MAINNET,
+            _ => DASH_BIP44_PATH_TESTNET,
+        }
+        .into();
+        root_derivation_path.extend([ChildNumber::Hardened {
+            index: account,
+        }])
+    }
+    pub fn bip_44_payment_path(
+        network: Network,
+        account: u32,
+        change: bool,
+        address_index: u32,
+    ) -> Self {
+        let root_derivation_path: DerivationPath = match network {
+            Network::Mainnet => DASH_BIP44_PATH_MAINNET,
+            _ => DASH_BIP44_PATH_TESTNET,
+        }
+        .into();
+        root_derivation_path.extend([
+            ChildNumber::Hardened {
+                index: account,
+            },
+            ChildNumber::Normal {
+                index: change.into(),
+            },
+            ChildNumber::Normal {
+                index: address_index,
+            },
+        ])
+    }
+    pub fn coinjoin_path(network: Network, account: u32) -> Self {
+        let root_derivation_path: DerivationPath = match network {
+            Network::Mainnet => COINJOIN_PATH_MAINNET,
+            _ => COINJOIN_PATH_TESTNET,
+        }
+        .into();
+        root_derivation_path.extend([ChildNumber::Hardened {
+            index: account,
+        }])
+    }
+
+    /// This might have been used in the past
+    pub fn identity_registration_path_child_non_hardened(network: Network, index: u32) -> Self {
+        let root_derivation_path: DerivationPath = match network {
+            Network::Mainnet => IDENTITY_REGISTRATION_PATH_MAINNET,
+            _ => IDENTITY_REGISTRATION_PATH_TESTNET,
+        }
+        .into();
+        root_derivation_path.extend([ChildNumber::Normal {
+            index,
+        }])
+    }
+
+    pub fn identity_registration_path(network: Network, index: u32) -> Self {
+        let root_derivation_path: DerivationPath = match network {
+            Network::Mainnet => IDENTITY_REGISTRATION_PATH_MAINNET,
+            _ => IDENTITY_REGISTRATION_PATH_TESTNET,
+        }
+        .into();
+        root_derivation_path.extend([ChildNumber::Hardened {
+            index,
+        }])
+    }
+
+    pub fn identity_top_up_path(network: Network, identity_index: u32, top_up_index: u32) -> Self {
+        let root_derivation_path: DerivationPath = match network {
+            Network::Mainnet => IDENTITY_TOPUP_PATH_MAINNET,
+            _ => IDENTITY_TOPUP_PATH_TESTNET,
+        }
+        .into();
+        root_derivation_path.extend([
+            ChildNumber::Hardened {
+                index: identity_index,
+            },
+            ChildNumber::Normal {
+                index: top_up_index,
+            },
+        ])
+    }
+
+    pub fn identity_invitation_path(network: Network, index: u32) -> Self {
+        let root_derivation_path: DerivationPath = match network {
+            Network::Mainnet => IDENTITY_INVITATION_PATH_MAINNET,
+            _ => IDENTITY_INVITATION_PATH_TESTNET,
+        }
+        .into();
+        root_derivation_path.extend([ChildNumber::Hardened {
+            index,
+        }])
+    }
+
+    pub fn asset_lock_address_top_up_path(network: Network, index: u32) -> Self {
+        let root_derivation_path: DerivationPath = match network {
+            Network::Mainnet => ASSET_LOCK_ADDRESS_TOPUP_PATH_MAINNET,
+            _ => ASSET_LOCK_ADDRESS_TOPUP_PATH_TESTNET,
+        }
+        .into();
+        root_derivation_path.extend([ChildNumber::Hardened {
+            index,
+        }])
+    }
+
+    pub fn asset_lock_shielded_address_top_up_path(network: Network, index: u32) -> Self {
+        let root_derivation_path: DerivationPath = match network {
+            Network::Mainnet => ASSET_LOCK_SHIELDED_ADDRESS_TOPUP_PATH_MAINNET,
+            _ => ASSET_LOCK_SHIELDED_ADDRESS_TOPUP_PATH_TESTNET,
+        }
+        .into();
+        root_derivation_path.extend([ChildNumber::Hardened {
+            index,
+        }])
+    }
+
+    pub fn identity_authentication_path(
+        network: Network,
+        key_type: KeyDerivationType,
+        identity_index: u32,
+        key_index: u32,
+    ) -> Self {
+        let root_derivation_path: DerivationPath = match network {
+            Network::Mainnet => IDENTITY_AUTHENTICATION_PATH_MAINNET,
+            _ => IDENTITY_AUTHENTICATION_PATH_TESTNET,
+        }
+        .into();
+        root_derivation_path.extend([
+            ChildNumber::Hardened {
+                index: key_type.into(),
+            },
+            ChildNumber::Hardened {
+                index: identity_index,
+            },
+            ChildNumber::Hardened {
+                index: key_index,
+            },
+        ])
+    }
+
+    /// DIP-13 application session authentication key path,
+    /// `m/9'/coin_type'/5'/6'/0'/identity_id'/request_id'`. The identity id and request id are
+    /// DIP-14 256-bit hardened children, which only secp256k1 derivation defines, so the key type
+    /// level is always ECDSA (`0'`).
+    pub fn application_session_authentication_path(
+        network: Network,
+        identity_id: [u8; 32],
+        request_id: [u8; 32],
+    ) -> Self {
+        let root_derivation_path: DerivationPath = match network {
+            Network::Mainnet => APPLICATION_SESSION_AUTHENTICATION_PATH_MAINNET,
+            _ => APPLICATION_SESSION_AUTHENTICATION_PATH_TESTNET,
+        }
+        .into();
+        root_derivation_path.extend([
+            ChildNumber::Hardened {
+                index: KeyDerivationType::ECDSA.into(),
+            },
+            ChildNumber::Hardened256 {
+                index: identity_id,
+            },
+            ChildNumber::Hardened256 {
+                index: request_id,
+            },
+        ])
+    }
+
+    /// DIP-13 application encryption key path,
+    /// `m/9'/coin_type'/5'/7'/0'/identity_id'/contract_id'/key_purpose'`. The identity id and
+    /// contract id are DIP-14 256-bit hardened children, which only secp256k1 derivation defines,
+    /// so the key type level is always ECDSA (`0'`).
+    pub fn application_encryption_path(
+        network: Network,
+        identity_id: [u8; 32],
+        contract_id: [u8; 32],
+        key_purpose: ApplicationKeyPurpose,
+    ) -> Self {
+        let root_derivation_path: DerivationPath = match network {
+            Network::Mainnet => APPLICATION_ENCRYPTION_PATH_MAINNET,
+            _ => APPLICATION_ENCRYPTION_PATH_TESTNET,
+        }
+        .into();
+        root_derivation_path.extend([
+            ChildNumber::Hardened {
+                index: KeyDerivationType::ECDSA.into(),
+            },
+            ChildNumber::Hardened256 {
+                index: identity_id,
+            },
+            ChildNumber::Hardened256 {
+                index: contract_id,
+            },
+            ChildNumber::Hardened {
+                index: key_purpose.into(),
+            },
+        ])
+    }
+}

@@ -474,3 +474,11 @@ mod error {
 }
 
 crate::error::impl_std_error!(PushBytesError);
+
+impl AsRef<PushBytes> for crate::crypto::ecdsa::SerializedSignature {
+    #[inline]
+    fn as_ref(&self) -> &PushBytes {
+        let bytes: &[u8] = self;
+        bytes.try_into().expect("a DER signature is at most 73 bytes")
+    }
+}

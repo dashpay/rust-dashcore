@@ -28,7 +28,8 @@ macro_rules! impl_hashencode {
     ($hashtype:ident) => {
         impl $crate::consensus::Encodable for $hashtype {
             fn consensus_encode<W: $crate::io::Write + ?Sized>(&self, w: &mut W) -> Result<usize, $crate::io::Error> {
-                self.0.consensus_encode(w)
+                use $crate::hashes::Hash;
+                self.to_byte_array().consensus_encode(w)
             }
         }
 
@@ -66,6 +67,7 @@ macro_rules! impl_asref_push_bytes {
 pub use newtypes::*;
 
 mod newtypes {
+    pub use dashcore_crypto::key::{PubkeyHash, WPubkeyHash};
 
     use core::str::FromStr;
     use std::cmp::Ordering;
@@ -97,12 +99,8 @@ mod newtypes {
         /// A dash witness transaction ID.
         pub struct Wtxid(sha256d::Hash);
 
-        /// A hash of a public key.
-        pub struct PubkeyHash(hash160::Hash);
         /// A hash of Dash Script bytecode.
         pub struct ScriptHash(hash160::Hash);
-        /// SegWit version of a public key hash.
-        pub struct WPubkeyHash(hash160::Hash);
         /// SegWit version of a Dash Script bytecode hash.
         pub struct WScriptHash(sha256::Hash);
 
@@ -376,22 +374,12 @@ mod newtypes {
             self.0.to_string()
         }
     }
-
-    impl PubkeyHash {
-        /// Create a PubkeyHash from a string
-        pub fn from_hex(s: &str) -> Result<PubkeyHash, Error> {
-            Ok(Self(hash160::Hash::from_str(s)?))
-        }
-
-        /// Convert a PubkeyHash to a string
-        pub fn to_hex(&self) -> String {
-            self.0.to_string()
-        }
-    }
 }
 
 #[cfg(all(test, feature = "serde"))]
 mod tests {
+    use core::str::FromStr;
+
     use super::*;
     use serde_derive::{Deserialize, Serialize};
 
@@ -495,7 +483,7 @@ mod tests {
         }
 
         let original = Tagged::A(WithPubkeyHash {
-            pkh: PubkeyHash::from_hex("e8b43025641eea4fd21190f01bd870ef90f1a8b1").unwrap(),
+            pkh: PubkeyHash::from_str("e8b43025641eea4fd21190f01bd870ef90f1a8b1").unwrap(),
         });
 
         let value = serde_json::to_value(&original).unwrap();
