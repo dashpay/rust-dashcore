@@ -6,8 +6,11 @@
 //! Cryptography related functionality: keys and signatures.
 //!
 
-pub mod ecdsa;
+pub mod ecdsa {
+    pub use dashcore_crypto::ecdsa::{Error, SerializedSignature, Signature};
+}
 pub mod key;
 pub mod sighash;
-// Contents re-exported in `dash::taproot`.
-pub mod taproot;
+pub mod taproot {
+    pub use dashcore_crypto::taproot::{Error, Signature};
+}

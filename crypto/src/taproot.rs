@@ -1,5 +1,9 @@
-// Written in 2014 by Andrew Poelstra <apoelstra@wpsoftware.net>
+//
+// This file is a part of rust-dashcore.
+// Portions written by Andrew Poelstra <apoelstra@wpsoftware.net> for rust-bitcoin.
 // SPDX-License-Identifier: CC0-1.0
+// See the accompanying file LICENSE or https://creativecommons.org/publicdomain/zero/1.0
+//
 
 //! Bitcoin taproot keys.
 //!
@@ -9,9 +13,11 @@
 use core::fmt;
 
 use internals::write_err;
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
+
 pub use secp256k1::{self};
 
-use crate::prelude::*;
 use crate::sighash::TapSighashType;
 
 /// A BIP340-341 serialized taproot signature with the corresponding hash type.

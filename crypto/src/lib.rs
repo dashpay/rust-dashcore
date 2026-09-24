@@ -24,7 +24,9 @@ pub extern crate serde;
 pub(crate) mod serde_utils;
 
 pub mod bls;
+pub mod ecdsa;
 pub mod sighash;
+pub mod taproot;
 
 /// Implements `std::error::Error` for a type whose `Display` carries the message.
 macro_rules! impl_std_error {
