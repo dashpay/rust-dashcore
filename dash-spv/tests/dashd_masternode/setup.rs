@@ -41,6 +41,11 @@ pub(super) struct ClientHandle {
 }
 
 impl ClientHandle {
+    pub(super) fn start(&mut self) {
+        let run_client = self.client.clone();
+        self.run_handle = Some(tokio::task::spawn(async move { run_client.run().await }));
+    }
+
     pub(super) async fn stop(&mut self) {
         tracing::info!("Stopping client run loop...");
         self.client.stop().await.expect("client stop failed");
@@ -161,7 +166,7 @@ pub(super) async fn receive_address(
     next_unused_receive_address(wallet, wallet_id).await
 }
 
-pub(super) async fn create_and_start_client(
+pub(super) async fn create_client(
     config: &ClientConfig,
     wallet: Arc<RwLock<WalletManager<ManagedWalletInfo>>>,
 ) -> ClientHandle {
@@ -183,17 +188,25 @@ pub(super) async fn create_and_start_client(
 
     let engine =
         client.masternode_list_engine().expect("Engine should be initialized after creation");
-    let run_client = client.clone();
-
-    let run_handle = tokio::task::spawn(async move { run_client.run().await });
 
     ClientHandle {
         client,
-        run_handle: Some(run_handle),
+        run_handle: None,
         progress_receiver,
         sync_event_receiver,
         wallet_event_receiver,
         _network_event_receiver,
         engine,
     }
+}
+
+/// Built and started. Use [`create_client`] plus [`ClientHandle::start`] instead when
+/// the test needs to look at the client before it touches the network.
+pub(super) async fn create_and_start_client(
+    config: &ClientConfig,
+    wallet: Arc<RwLock<WalletManager<ManagedWalletInfo>>>,
+) -> ClientHandle {
+    let mut handle = create_client(config, wallet).await;
+    handle.start();
+    handle
 }
