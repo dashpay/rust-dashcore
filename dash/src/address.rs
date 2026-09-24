@@ -45,6 +45,13 @@ use core::fmt;
 use core::marker::PhantomData;
 use core::str::FromStr;
 
+use bech32;
+use hashes::{Hash, HashEngine, sha256};
+use internals::write_err;
+use secp256k1::XOnlyPublicKey;
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
+
 use crate::base58;
 use crate::blockdata::constants::{
     MAX_SCRIPT_ELEMENT_SIZE, PUBKEY_ADDRESS_PREFIX_MAIN, PUBKEY_ADDRESS_PREFIX_TEST,
@@ -55,18 +62,12 @@ use crate::blockdata::opcodes::all::*;
 use crate::blockdata::script::{
     self, Instruction, PushBytes, PushBytesBuf, PushBytesErrorReport, Script, ScriptBuf,
 };
-use crate::crypto::key::{PublicKey, TapTweak, TweakedPublicKey, UntweakedPublicKey};
+use crate::crypto::key::{PublicKey, TweakedPublicKey, UntweakedPublicKey};
 use crate::error::ParseIntError;
 use crate::hash_types::{PubkeyHash, ScriptHash};
 use crate::network::constants::Network;
 use crate::prelude::*;
-use crate::taproot::TapNodeHash;
-use bech32;
-use hashes::{Hash, HashEngine, sha256};
-use internals::write_err;
-use secp256k1::XOnlyPublicKey;
-#[cfg(feature = "serde")]
-use serde::{Deserialize, Serialize};
+use crate::taproot::{TapNodeHash, TapTweak};
 
 /// Address error.
 #[derive(Debug, PartialEq, Eq, Clone)]
