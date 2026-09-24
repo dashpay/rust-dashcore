@@ -339,7 +339,7 @@ impl AccountDerivation<ExtendedEd25519PrivKey, ExtendedEd25519PubKey, EddsaPkByt
         let ed25519_pubkey =
             self.derive_public_key_at(address_pool_type, index, use_hardened_with_priv_key)?;
 
-        let node_id = crate::derivation_slip10::tenderdash_node_id(&ed25519_pubkey.to_bytes());
+        let node_id = ed25519_pubkey.hash().to_canonical_bytes();
 
         use dashcore::address::Payload;
         use dashcore::hashes::Hash;

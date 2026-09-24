@@ -133,7 +133,6 @@ fn ed25519_platform_node_keys_match_slip10_reference() {
 #[test]
 fn ed25519_platform_node_id_matches_tenderdash_convention() {
     use crate::account::eddsa_account::EdDSAAccount;
-    use crate::derivation_slip10::tenderdash_node_id;
 
     // Platform node key 0 (m/9'/5'/3'/4'/0') for TEST_SEED — the same key the
     // SLIP-0010 vector above pins. Public key and node id cross-checked with
@@ -146,7 +145,7 @@ fn ed25519_platform_node_id_matches_tenderdash_convention() {
         "3130c14339391cf26a68d86879e180ee9a16b660f5aa91f560f67c0abe8cf789"
     );
     assert_eq!(
-        hex::encode(tenderdash_node_id(&pubkey.to_bytes())),
+        hex::encode(pubkey.hash().to_canonical_bytes()),
         "302f2615e6955cce8ed3cff81e8011bfd3a2991f"
     );
 }
