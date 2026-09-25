@@ -9,6 +9,7 @@ use crate::SyncError;
 use async_trait::async_trait;
 use dashcore::network::message::NetworkMessage;
 use dashcore::network::message_qrinfo::QRInfo;
+use dashcore::sml::llmq_type::QUORUM_MEMBER_LIST_OFFSET;
 use dashcore::sml::masternode_list_engine::{MasternodeListEngine, WORK_DIFF_DEPTH};
 use dashcore::{BlockHash, QuorumHash};
 use dashcore_hashes::Hash;
@@ -84,7 +85,7 @@ pub(super) async fn build_mnlistdiff_request_pairs<S: BlockHeaderStorage>(
             }
         };
 
-        let validation_height = quorum_height.saturating_sub(8);
+        let validation_height = quorum_height.saturating_sub(QUORUM_MEMBER_LIST_OFFSET);
 
         // Skip if we already have this height
         if known_heights.contains(&validation_height) {

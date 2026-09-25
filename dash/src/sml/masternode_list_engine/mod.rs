@@ -2117,7 +2117,7 @@ mod tests {
             for (quorum_hash, quorum) in quorum_entries.iter() {
                 if !quorum_type.is_rotating_quorum_type() {
                     let (_, known_block_height) = mn_list_engine
-                        .masternode_list_and_height_for_block_hash_8_blocks_ago(
+                        .masternode_list_and_height_for_quorum_members(
                             &quorum.quorum_entry.quorum_hash,
                         )
                         .expect("expected to find validating masternode");
