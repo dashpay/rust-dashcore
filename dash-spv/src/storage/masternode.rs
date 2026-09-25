@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -9,8 +9,11 @@ use dashcore::consensus::{deserialize, serialize, Decodable, Encodable};
 use dashcore::network::message_qrinfo::QRInfo;
 use dashcore::network::message_sml::MnListDiff;
 use dashcore::prelude::CoreBlockHeight;
-use dashcore::sml::masternode_list_engine::{qr_info_diffs, MasternodeListEngine};
-use dashcore::{BlockHash, Network};
+use dashcore::sml::llmq_type::network::NetworkLLMQExt;
+use dashcore::sml::llmq_type::LLMQType;
+use dashcore::sml::masternode_list_engine::{qr_info_diffs, MasternodeListEngine, WORK_DIFF_DEPTH};
+use dashcore::sml::quorum_entry::qualified_quorum_entry::QualifiedQuorumEntry;
+use dashcore::{BlockHash, Network, QuorumHash};
 
 use crate::error::{StorageError, StorageResult};
 use crate::storage::{io::atomic_write, BlockHeaderStorage};
@@ -29,6 +32,25 @@ enum Kind {
     QrInfo,
 }
 
+/// Which lists a replay keeps once it has moved past them.
+#[derive(Clone, Copy)]
+enum Retain {
+    /// What a live engine at the same height would keep.
+    Obsolete,
+    /// Lists in `floor..=height`, the nearest list on either side of `height`.
+    Around {
+        floor: CoreBlockHeight,
+        height: CoreBlockHeight,
+    },
+}
+
+#[derive(Debug, Default)]
+struct ReplayStats {
+    total: usize,
+    applied: usize,
+    peak_lists: usize,
+}
+
 #[async_trait]
 pub trait MasternodeStorage: Send + Sync + 'static {
     async fn store_diff(&mut self, height: CoreBlockHeight, diff: &MnListDiff)
@@ -41,6 +63,15 @@ pub trait MasternodeStorage: Send + Sync + 'static {
     ) -> StorageResult<()>;
 
     async fn load_engine(&self) -> StorageResult<MasternodeListEngine>;
+
+    /// The quorum as [`MasternodeListEngine::quorum_entry_for_hash_at_or_before_height`]
+    /// would resolve it from the lists stored up to `height`.
+    async fn quorum_entry_at_or_before(
+        &self,
+        llmq_type: LLMQType,
+        quorum_hash: QuorumHash,
+        height: CoreBlockHeight,
+    ) -> StorageResult<Option<QualifiedQuorumEntry>>;
 }
 
 pub struct PersistentMasternodeStorage<H: BlockHeaderStorage> {
@@ -138,20 +169,44 @@ impl<H: BlockHeaderStorage> PersistentMasternodeStorage<H> {
         })
     }
 
-    /// Rebuilds the engine from every stored message. Messages apply in the
-    /// order of their newest base, so each comes after the one that built the
-    /// list it extends. They are read once to plan that order and again to
-    /// apply, so only one is held in memory at a time.
-    async fn replay(&self) -> StorageResult<MasternodeListEngine> {
-        let mut engine = MasternodeListEngine::default_for_network(self.network);
+    /// Rebuilds the lists in `floor..=height`. A QRInfo builds lists back to its
+    /// `h-4c` work block, so messages stored up to six cycles above `height` can
+    /// still produce one of them.
+    async fn replay_around(
+        &self,
+        floor: CoreBlockHeight,
+        height: CoreBlockHeight,
+    ) -> StorageResult<(MasternodeListEngine, ReplayStats)> {
+        let cycle = self.network.isd_llmq_type().params().dkg_params.interval;
+        let until = height.saturating_add(cycle.saturating_mul(6)).saturating_add(WORK_DIFF_DEPTH);
+        let retain = Retain::Around {
+            floor,
+            height,
+        };
+        self.replay(Some(until), retain).await
+    }
 
-        let entries = self
-            .diffs
-            .iter()
-            .map(|(height, path)| (*height, Kind::Diff, path))
-            .chain(self.qr_infos.iter().map(|(height, path)| (*height, Kind::QrInfo, path)));
+    /// Rebuilds the engine from the messages stored up to `until`, pruning as it
+    /// goes so memory stays bounded by `retain` rather than by history. Messages
+    /// apply in the order of their newest base, so each comes after the one that
+    /// built the list it extends, and a list outside `retain` survives only while
+    /// a message still to be applied builds on it. They are read once to plan
+    /// that order and again to apply, so only one is held in memory at a time.
+    async fn replay(
+        &self,
+        until: Option<CoreBlockHeight>,
+        retain: Retain,
+    ) -> StorageResult<(MasternodeListEngine, ReplayStats)> {
+        let mut engine = MasternodeListEngine::default_for_network(self.network);
+        let until = until.unwrap_or(CoreBlockHeight::MAX);
+
+        let entries =
+            self.diffs.range(..=until).map(|(height, path)| (*height, Kind::Diff, path)).chain(
+                self.qr_infos.range(..=until).map(|(height, path)| (*height, Kind::QrInfo, path)),
+            );
 
         let mut plan = Vec::new();
+        let mut needed: HashMap<BlockHash, usize> = HashMap::new();
         {
             let headers = self.headers.read().await;
             for (height, kind, path) in entries {
@@ -175,7 +230,11 @@ impl<H: BlockHeaderStorage> PersistentMasternodeStorage<H> {
                         }
                     }
                 }
-                plan.push((height, kind, path, message.base_hashes()));
+                let bases = message.base_hashes();
+                for base in &bases {
+                    *needed.entry(*base).or_default() += 1;
+                }
+                plan.push((height, kind, path, bases));
             }
         }
 
@@ -186,24 +245,45 @@ impl<H: BlockHeaderStorage> PersistentMasternodeStorage<H> {
             (newest_base(bases).unwrap_or(*height), *height, *kind)
         });
 
-        let total = plan.len();
-        let mut applied = 0;
-        for (height, kind, path, _) in plan {
+        let mut stats = ReplayStats {
+            total: plan.len(),
+            ..ReplayStats::default()
+        };
+        let replayed_to = plan.iter().map(|(height, ..)| *height).max();
+        for (height, kind, path, bases) in plan {
             match Self::read_entry(path, kind).await {
                 Ok(message) => match Self::apply(&mut engine, height, message) {
-                    true => applied += 1,
+                    true => stats.applied += 1,
                     false => tracing::warn!("Masternode message at {height} does not apply"),
                 },
                 Err(e) => tracing::warn!("Masternode message at {height} became unreadable: {e}"),
             }
+            for base in &bases {
+                if let Some(count) = needed.get_mut(base) {
+                    *count -= 1;
+                    if *count == 0 {
+                        needed.remove(base);
+                    }
+                }
+            }
+
+            stats.peak_lists = stats.peak_lists.max(engine.masternode_lists.len());
+            prune_unneeded(&mut engine, retain, height, &needed);
+        }
+
+        if let (Retain::Obsolete, Some(tip)) = (retain, replayed_to) {
+            engine.prune_obsolete_lists(tip, &BTreeSet::new());
         }
 
         tracing::debug!(
-            "Replayed {applied}/{total} masternode messages into {} masternode lists",
-            engine.masternode_lists.len()
+            "Replayed {}/{} masternode messages into {} masternode lists, peak {}",
+            stats.applied,
+            stats.total,
+            engine.masternode_lists.len(),
+            stats.peak_lists
         );
 
-        Ok(engine)
+        Ok((engine, stats))
     }
 
     fn apply(engine: &mut MasternodeListEngine, height: CoreBlockHeight, message: Message) -> bool {
@@ -211,6 +291,40 @@ impl<H: BlockHeaderStorage> PersistentMasternodeStorage<H> {
             Message::QrInfo(qr_info) => engine.feed_qr_info(*qr_info, true, true).is_ok(),
             Message::Diff(diff) => engine.apply_diff(*diff, Some(height), false, None).is_ok(),
         }
+    }
+}
+
+fn prune_unneeded(
+    engine: &mut MasternodeListEngine,
+    retain: Retain,
+    replayed_to: CoreBlockHeight,
+    needed: &HashMap<BlockHash, usize>,
+) {
+    let lists = &engine.masternode_lists;
+    let keep: Box<dyn Fn(CoreBlockHeight) -> bool> = match retain {
+        Retain::Obsolete => {
+            let newest = lists.keys().next_back().copied();
+            let needed_lists = engine.needed_lists(replayed_to);
+            Box::new(move |height| needed_lists.contains(height) || Some(height) == newest)
+        }
+        Retain::Around {
+            floor,
+            height,
+        } => {
+            let below = lists.range(..=height).next_back().map(|(h, _)| *h);
+            let above =
+                height.checked_add(1).and_then(|h| lists.range(h..).next()).map(|(h, _)| *h);
+            Box::new(move |h| (floor..=height).contains(&h) || [below, above].contains(&Some(h)))
+        }
+    };
+
+    let doomed: Vec<CoreBlockHeight> = lists
+        .iter()
+        .filter(|(height, list)| !keep(**height) && !needed.contains_key(&list.block_hash))
+        .map(|(height, _)| *height)
+        .collect();
+    for height in doomed {
+        engine.masternode_lists.remove(&height);
     }
 }
 
@@ -260,7 +374,20 @@ impl<H: BlockHeaderStorage> MasternodeStorage for PersistentMasternodeStorage<H>
     }
 
     async fn load_engine(&self) -> StorageResult<MasternodeListEngine> {
-        self.replay().await
+        Ok(self.replay(None, Retain::Obsolete).await?.0)
+    }
+
+    async fn quorum_entry_at_or_before(
+        &self,
+        llmq_type: LLMQType,
+        quorum_hash: QuorumHash,
+        height: CoreBlockHeight,
+    ) -> StorageResult<Option<QualifiedQuorumEntry>> {
+        let floor = MasternodeListEngine::quorum_walk_back_floor(llmq_type, height);
+        let (engine, _) = self.replay_around(floor, height).await?;
+        Ok(engine
+            .quorum_entry_for_hash_at_or_before_height(llmq_type, quorum_hash, height)
+            .map(|(_, quorum)| quorum.clone()))
     }
 }
 
@@ -345,7 +472,11 @@ mod tests {
 
         let engine = open_storage(&dir, &heights).await.load_engine().await.unwrap();
 
-        assert_eq!(engine.masternode_lists.keys().copied().collect::<Vec<_>>(), vec![100, 200]);
+        assert_eq!(
+            engine.masternode_lists.keys().copied().collect::<Vec<_>>(),
+            vec![200],
+            "the list at 100 is one a live engine at 200 would have pruned"
+        );
         assert_eq!(engine.masternode_lists[&200].block_hash, hash(0xBB));
         assert_eq!(engine.masternode_lists[&200].masternodes.len(), 2);
     }
@@ -412,6 +543,163 @@ mod tests {
             engine.masternode_lists.contains_key(&100),
             "the readable message still rebuilds its list"
         );
+    }
+
+    fn height_hash(height: u32) -> BlockHash {
+        if height == 0 {
+            return BlockHash::all_zeros();
+        }
+        let mut bytes = [0xF0; 32];
+        bytes[..4].copy_from_slice(&height.to_le_bytes());
+        BlockHash::from_byte_array(bytes)
+    }
+
+    fn diff_between(base: u32, tip: u32) -> MnListDiff {
+        MnListDiff {
+            base_block_hash: height_hash(base),
+            block_hash: height_hash(tip),
+            ..MnListDiff::dummy(0x00, 0x01)
+        }
+    }
+
+    /// One diff per height from 1 to `tip`, each on top of the one before.
+    async fn chained_storage(
+        dir: &TempDir,
+        tip: u32,
+    ) -> PersistentMasternodeStorage<MockHeaderStorage> {
+        let map = (0..=tip + 1).map(|h| (height_hash(h), h)).collect();
+        let mut storage = PersistentMasternodeStorage::open(
+            dir.path(),
+            Arc::new(RwLock::new(MockHeaderStorage(map))),
+            Network::Regtest,
+        )
+        .await
+        .unwrap();
+        for height in 1..=tip {
+            storage.store_diff(height, &diff_between(height - 1, height)).await.unwrap();
+        }
+        storage
+    }
+
+    #[tokio::test]
+    async fn startup_replay_prunes_as_it_goes() {
+        let dir = TempDir::new().unwrap();
+        let tip = 300;
+        let storage = chained_storage(&dir, tip).await;
+
+        let (engine, stats) = storage.replay(None, Retain::Obsolete).await.unwrap();
+        let needed_lists = engine.needed_lists(tip);
+        let interval = Network::Regtest.isd_llmq_type().params().dkg_params.interval as usize;
+
+        assert_eq!(stats.applied, tip as usize, "every diff applies");
+        assert!(
+            engine.masternode_lists.keys().all(|height| needed_lists.contains(*height)),
+            "nothing a live engine at the tip would drop: {:?} kept for {needed_lists:?}",
+            engine.masternode_lists.keys().collect::<Vec<_>>()
+        );
+        assert!(
+            stats.peak_lists <= interval + 3,
+            "memory is bounded by the last cycle during the replay, not only after it: \
+             peak {} lists for a cycle of {interval}",
+            stats.peak_lists
+        );
+    }
+
+    #[tokio::test]
+    async fn startup_replay_keeps_an_old_list_a_later_message_builds_on() {
+        let dir = TempDir::new().unwrap();
+        let tip = 300;
+        let mut storage = chained_storage(&dir, tip).await;
+        storage.store_diff(tip + 1, &diff_between(10, tip + 1)).await.unwrap();
+
+        let (engine, stats) = storage.replay(None, Retain::Obsolete).await.unwrap();
+
+        assert_eq!(
+            stats.applied,
+            tip as usize + 1,
+            "the diff anchored far below the floor applies"
+        );
+        assert!(engine.masternode_lists.contains_key(&(tip + 1)));
+        assert!(
+            !engine.masternode_lists.contains_key(&10),
+            "once its last dependant has applied the anchor is released"
+        );
+    }
+
+    #[tokio::test]
+    async fn bounded_replay_stops_within_reach_and_keeps_only_what_it_needs() {
+        let dir = TempDir::new().unwrap();
+        let storage = chained_storage(&dir, 400).await;
+        let until = 150 + 6 * 24 + 8;
+
+        let (engine, stats) = storage.replay_around(150, 150).await.unwrap();
+
+        assert_eq!(stats.total, until as usize, "messages past the reach are not read");
+        assert_eq!(
+            engine.masternode_lists.keys().copied().collect::<Vec<_>>(),
+            vec![150, 151],
+            "the list at the height and the nearest one above it"
+        );
+        assert!(
+            stats.peak_lists <= 4,
+            "a chained replay only ever holds those two plus the base and the list built on it, \
+             peak {}",
+            stats.peak_lists
+        );
+    }
+
+    #[tokio::test]
+    async fn quorum_lookup_rebuilds_a_list_the_live_engine_pruned() {
+        use dashcore::bls_sig_utils::{BLSPublicKey, BLSSignature};
+        use dashcore::hash_types::QuorumVVecHash;
+        use dashcore::sml::llmq_type::network::NetworkLLMQExt;
+        use dashcore::transaction::special_transaction::quorum_commitment::QuorumEntry;
+
+        let dir = TempDir::new().unwrap();
+        let tip = 300;
+        let mut storage = chained_storage(&dir, tip).await;
+
+        let llmq_type = Network::Regtest.platform_type();
+        let quorum_hash = QuorumHash::from_byte_array([0xAB; 32]);
+        let mut with_quorum = diff_between(0, 1);
+        with_quorum.new_quorums.push(QuorumEntry {
+            version: 1,
+            llmq_type,
+            quorum_hash,
+            quorum_index: None,
+            signers: vec![true; 3],
+            valid_members: vec![true; 3],
+            quorum_public_key: BLSPublicKey::from([7; 48]),
+            quorum_vvec_hash: QuorumVVecHash::all_zeros(),
+            threshold_sig: BLSSignature::from([1; 96]),
+            all_commitment_aggregated_signature: BLSSignature::from([1; 96]),
+        });
+        with_quorum.quorums_chainlock_signatures.push(
+            dashcore::network::message_sml::QuorumCLSigObject {
+                signature: BLSSignature::from([1; 96]),
+                index_set: vec![0],
+            },
+        );
+        storage.store_diff(1, &with_quorum).await.unwrap();
+        let mut retiring = diff_between(1, 2);
+        retiring.deleted_quorums.push(dashcore::network::message_sml::DeletedQuorum {
+            llmq_type,
+            quorum_hash,
+        });
+        storage.store_diff(2, &retiring).await.unwrap();
+
+        let engine = storage.load_engine().await.unwrap();
+        assert!(
+            engine.quorum_entry_for_hash_at_or_before_height(llmq_type, quorum_hash, tip).is_none(),
+            "the engine a restart loads has pruned the only list holding the quorum"
+        );
+
+        let quorum = storage
+            .quorum_entry_at_or_before(llmq_type, quorum_hash, tip)
+            .await
+            .unwrap()
+            .expect("storage rebuilds the list the walk-back reaches");
+        assert_eq!(quorum.quorum_entry.quorum_hash, quorum_hash);
     }
 
     #[test]

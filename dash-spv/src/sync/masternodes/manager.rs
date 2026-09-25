@@ -82,6 +82,10 @@ pub(super) struct QRInfoInFlight {
 pub(super) struct MasternodeSyncState {
     /// Heights where the engine has masternode lists (for chaining diffs).
     pub(super) known_mn_list_heights: BTreeSet<u32>,
+    /// Heights whose message could not be written, so their list is only in
+    /// memory and pruning it would lose it. Pruning is the one place that trades
+    /// memory for a copy on disk, so it has to skip these.
+    pub(super) unpersisted_heights: BTreeSet<u32>,
     /// Pipeline for MnListDiff requests.
     pub(super) mnlistdiff_pipeline: MnListDiffPipeline,
     /// What the pipeline is currently being used for. See [`PipelineMode`].
@@ -325,6 +329,21 @@ impl<H: BlockHeaderStorage> MasternodesManager<H> {
         storage.write().await.store_qr_info(height, qr_info).await
     }
 
+    /// Drops the lists the engine no longer needs at `tip`. Only with message
+    /// storage, which is what rebuilds a dropped list when one is asked for.
+    pub(super) async fn prune_obsolete_lists(&self, tip: u32) {
+        if self.message_storage.is_none() {
+            return;
+        }
+
+        let pruned = self
+            .engine
+            .write()
+            .await
+            .prune_obsolete_lists(tip, &self.sync_state.unpersisted_heights);
+        tracing::debug!("Pruned {pruned} in-memory masternode lists at {tip}");
+    }
+
     /// Decide which [`PipelineMode`] to use when a new header lands at `tip_height`
     /// and masternode sync needs to catch up. The rule is:
     ///
@@ -544,6 +563,7 @@ impl<H: BlockHeaderStorage> MasternodesManager<H> {
 
         self.sync_state.last_synced_block_hash = Some(latest_block_hash);
         self.progress.update_current_height(height);
+        self.prune_obsolete_lists(height).await;
         tracing::debug!("Incremental MnListDiff complete at height {}", height);
         Ok(vec![SyncEvent::MasternodeStateUpdated {
             height,
@@ -646,6 +666,10 @@ impl<H: BlockHeaderStorage> MasternodesManager<H> {
         }
 
         drop(engine);
+
+        if !events.is_empty() {
+            self.prune_obsolete_lists(self.progress.current_height()).await;
+        }
 
         if is_initial_sync {
             self.set_state(SyncState::Synced);
