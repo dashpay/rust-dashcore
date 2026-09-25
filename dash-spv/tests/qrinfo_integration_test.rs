@@ -6,6 +6,7 @@ use dashcore::{
     network::message_qrinfo::{GetQRInfo, MNSkipListMode, QRInfo, QuorumSnapshot},
     network::message_sml::MnListDiff,
     sml::llmq_type::LLMQType,
+    sml::masternode_list_engine::WORK_DIFF_DEPTH,
     transaction::special_transaction::quorum_commitment::QuorumEntry,
     BlockHash, QuorumHash, Transaction,
 };
@@ -70,23 +71,26 @@ fn create_test_qr_info(_base_height: u32, tip_height: u32) -> QRInfo {
         quorum_snapshot_at_h_minus_3c: create_snapshot(tip_height - 3 * cycle_length),
 
         mn_list_diff_tip: create_diff(tip_height - 1, tip_height),
-        mn_list_diff_h: create_diff(tip_height - 8, tip_height),
+        mn_list_diff_h: create_diff(tip_height - WORK_DIFF_DEPTH, tip_height),
         mn_list_diff_at_h_minus_c: create_diff(
-            tip_height - cycle_length - 8,
+            tip_height - cycle_length - WORK_DIFF_DEPTH,
             tip_height - cycle_length,
         ),
         mn_list_diff_at_h_minus_2c: create_diff(
-            tip_height - 2 * cycle_length - 8,
+            tip_height - 2 * cycle_length - WORK_DIFF_DEPTH,
             tip_height - 2 * cycle_length,
         ),
         mn_list_diff_at_h_minus_3c: create_diff(
-            tip_height - 3 * cycle_length - 8,
+            tip_height - 3 * cycle_length - WORK_DIFF_DEPTH,
             tip_height - 3 * cycle_length,
         ),
 
         quorum_snapshot_and_mn_list_diff_at_h_minus_4c: Some((
             create_snapshot(tip_height - 4 * cycle_length),
-            create_diff(tip_height - 4 * cycle_length - 8, tip_height - 4 * cycle_length),
+            create_diff(
+                tip_height - 4 * cycle_length - WORK_DIFF_DEPTH,
+                tip_height - 4 * cycle_length,
+            ),
         )),
 
         last_commitment_per_index: vec![

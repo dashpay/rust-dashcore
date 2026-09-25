@@ -587,7 +587,7 @@ impl MasternodeTestContext {
     ///
     /// The ChainLock wait guarantees the block's CbTx `bestCLSignature` is
     /// populated, which is required whenever the block is later referenced as
-    /// a QRInfo rotating-quorum lookup target (`cycleBlock - quorumIndex - 8`).
+    /// a QRInfo rotating-quorum lookup target (`cycleBlock - quorumIndex - WORK_DIFF_DEPTH`).
     ///
     /// A missed ChainLock within `cl_timeout_secs` is logged as a warning and
     /// the method returns normally.
