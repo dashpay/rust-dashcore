@@ -123,6 +123,36 @@ fn voting_key_id(address: &str) -> PubkeyHash {
         .expect("P2PKH voting address")
 }
 
+/// The quorums dashd has active at `height`, of every type.
+fn dashd_active_quorums(ctx: &TestContext, height: u32) -> BTreeSet<(LLMQType, QuorumHash)> {
+    let active = rpc(ctx, "quorum", &[json!("listextended"), json!(height)]);
+    let mut quorums = BTreeSet::new();
+    for (name, list) in active.as_object().expect("quorums by type") {
+        let llmq_type = (1..=u8::MAX)
+            .map(LLMQType::from)
+            .find(|t| *t != LLMQType::LlmqtypeUnknown && t.params().name == name)
+            .unwrap_or_else(|| panic!("unknown quorum type {name}"));
+        for quorum in list.as_array().expect("quorums") {
+            for hash in quorum.as_object().expect("quorum").keys() {
+                quorums.insert((llmq_type, hash.parse().expect("quorum hash")));
+            }
+        }
+    }
+    quorums
+}
+
+/// The height of the block dashd mined the quorum in, and its public key.
+fn dashd_quorum(ctx: &TestContext, llmq_type: LLMQType, hash: QuorumHash) -> (u32, [u8; 48]) {
+    let info =
+        rpc(ctx, "quorum", &[json!("info"), json!(llmq_type as u8), json!(hash.to_string())]);
+    let mined = rpc(ctx, "getblockheader", &[info["minedBlock"].clone()])["height"]
+        .as_u64()
+        .expect("mined height");
+    let key = hex::decode(info["quorumPublicKey"].as_str().expect("quorumPublicKey"))
+        .expect("public key hex");
+    (mined as u32, key.try_into().expect("48-byte public key"))
+}
+
 async fn sync(ctx: &TestContext, client_handle: &mut ClientHandle) {
     client_handle.start();
     wait_for_masternode_sync(&mut client_handle.progress_receiver, SYNC_TIMEOUT).await;
@@ -151,42 +181,23 @@ async fn assert_lookups_at_every_height(
         (engine.latest_masternode_list().expect("a tip list").known_height, reach)
     };
 
-    let mut llmq_types: BTreeSet<LLMQType> =
-        Network::Regtest.enabled_llmq_types().into_iter().collect();
-    llmq_types.insert(Network::Regtest.platform_type());
+    let at_tip: BTreeSet<_> =
+        reach.iter().filter(|(_, &(_, last))| last == tip).map(|(quorum, _)| *quorum).collect();
+    assert_eq!(at_tip, dashd_active_quorums(ctx, tip), "quorums active at the tip {tip}");
 
-    let active = rpc(ctx, "quorum", &[json!("listextended"), json!(tip)]);
-    for llmq_type in &llmq_types {
-        let dashd: BTreeSet<QuorumHash> = active[llmq_type.params().name]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .flat_map(|quorum| quorum.as_object().expect("quorum").keys())
-            .map(|hash| hash.parse().expect("quorum hash"))
-            .collect();
-        let spv: BTreeSet<QuorumHash> = reach
-            .iter()
-            .filter(|((t, _), (_, last))| t == llmq_type && *last == tip)
-            .map(|((_, hash), _)| *hash)
-            .collect();
-        assert_eq!(spv, dashd, "{llmq_type} quorums active at the tip {tip}");
-    }
-
-    let mut keys = BTreeMap::new();
+    let dashd: BTreeMap<_, _> =
+        reach.keys().map(|&(t, hash)| ((t, hash), dashd_quorum(ctx, t, hash))).collect();
     for (&(llmq_type, hash), &(first, _)) in &reach {
-        let info =
-            rpc(ctx, "quorum", &[json!("info"), json!(llmq_type as u8), json!(hash.to_string())]);
-        let mined = rpc(ctx, "getblockheader", &[info["minedBlock"].clone()])["height"]
-            .as_u64()
-            .expect("mined height") as u32;
+        let mined = dashd[&(llmq_type, hash)].0;
         assert!(first >= mined, "{llmq_type} {hash} is in a list at {first}, mined at {mined}");
-        let key = hex::decode(info["quorumPublicKey"].as_str().expect("quorumPublicKey"))
-            .expect("public key hex");
-        keys.insert((llmq_type, hash), <[u8; 48]>::try_from(key).expect("48-byte public key"));
     }
 
     let mut hashes: BTreeSet<QuorumHash> = reach.keys().map(|(_, hash)| *hash).collect();
     hashes.insert(QuorumHash::from_byte_array([0x42; 32]));
+
+    let mut llmq_types: BTreeSet<LLMQType> = reach.keys().map(|(t, _)| *t).collect();
+    llmq_types.extend(Network::Regtest.enabled_llmq_types());
+    llmq_types.insert(Network::Regtest.platform_type());
 
     for llmq_type in llmq_types {
         let params = llmq_type.params();
@@ -194,9 +205,10 @@ async fn assert_lookups_at_every_height(
             * params.signing_active_quorum_count
             * params.dkg_params.interval;
         for hash in &hashes {
-            let expected = reach
-                .get(&(llmq_type, *hash))
-                .map(|&(first, last)| (first..=last + walk_back, keys[&(llmq_type, *hash)]));
+            let expected = reach.get(&(llmq_type, *hash)).map(|&(first, last)| {
+                let (mined, key) = dashd[&(llmq_type, *hash)];
+                (mined, first..=last + walk_back, key)
+            });
             for height in 0..=tip + walk_back + 1 {
                 let result = platform_quorum_public_key(
                     &client_handle.client,
@@ -206,11 +218,13 @@ async fn assert_lookups_at_every_height(
                 )
                 .await;
                 match &expected {
-                    Some((found, key)) if found.contains(&height) => assert_eq!(
+                    Some((_, found, key)) if found.contains(&height) => assert_eq!(
                         result.as_ref(),
                         Ok(key),
                         "{llmq_type} {hash} at {height}, found from lists at {found:?}"
                     ),
+                    // Mined but in no list yet: left to the test of dashd's active quorums.
+                    Some((mined, found, _)) if (*mined..*found.start()).contains(&height) => {}
                     _ => assert!(
                         result.as_ref().is_err_and(|e| e.contains("Quorum not found")),
                         "{llmq_type} {hash} at {height} must miss, got {result:?}"
@@ -383,6 +397,52 @@ async fn test_platform_quorum_lookups_across_rotations() {
         reach.keys().any(|quorum| !at_sync.contains_key(quorum) && retired(quorum)),
         "a quorum mined after the sync retired"
     );
+
+    client_handle.stop().await;
+}
+
+/// A proof can carry any height its quorum is active at. From the first list the
+/// SPV holds to its tip, after the sync and after three DKG cycles, every quorum
+/// dashd has active resolves to dashd's key.
+#[tokio::test]
+async fn test_platform_quorum_lookups_wherever_dashd_has_the_quorum_active() {
+    let Some(mut ctx) = TestContext::new(false).await else {
+        return;
+    };
+    let config =
+        create_mn_test_config(ctx.storage_path().to_path_buf(), ctx.mn_ctx.controller_addr);
+    let mut client_handle = create_client(&config, create_dummy_wallet()).await;
+    sync(&ctx, &mut client_handle).await;
+    for _ in 0..3 {
+        ctx.mn_ctx.mine_dkg_cycle().expect("DKG cycle should succeed");
+        follow_tip(&ctx, &mut client_handle).await;
+    }
+
+    let heights = {
+        let engine = client_handle.engine.read().await;
+        let first = *engine.masternode_lists.keys().next().expect("a list");
+        first..=engine.latest_masternode_list().expect("a tip list").known_height
+    };
+    let mut keys = BTreeMap::new();
+    let mut misses: BTreeMap<_, Vec<u32>> = BTreeMap::new();
+    for height in heights {
+        for (llmq_type, hash) in dashd_active_quorums(&ctx, height) {
+            let (_, key) = *keys
+                .entry((llmq_type, hash))
+                .or_insert_with(|| dashd_quorum(&ctx, llmq_type, hash));
+            let result = platform_quorum_public_key(
+                &client_handle.client,
+                llmq_type as u8 as u32,
+                hash.reverse().to_byte_array(),
+                height,
+            )
+            .await;
+            if result != Ok(key) {
+                misses.entry((llmq_type, hash)).or_default().push(height);
+            }
+        }
+    }
+    assert!(misses.is_empty(), "quorums dashd has active, missed at these heights: {misses:?}");
 
     client_handle.stop().await;
 }
