@@ -4,8 +4,12 @@ use crate::sml::llmq_entry_verification::LLMQEntryVerificationStatus;
 use crate::sml::llmq_type::LLMQType;
 use crate::sml::llmq_type::network::NetworkLLMQExt;
 use crate::sml::masternode_list::MasternodeList;
+#[cfg(feature = "quorum_validation")]
+use crate::sml::masternode_list::QuorumMap;
 use crate::sml::masternode_list_engine::MasternodeListEngine;
 use crate::sml::quorum_entry::qualified_quorum_entry::QualifiedQuorumEntry;
+#[cfg(feature = "quorum_validation")]
+use std::sync::Arc;
 
 /// How many active windows below the lookup height [`MasternodeListEngine::quorum_entry_for_hash_at_or_before_height`]
 /// searches before giving up. A signing quorum referenced by a proof was selected at a lagged
@@ -30,6 +34,44 @@ impl MasternodeListEngine {
         }
         let reach = (tip - tip % interval).checked_sub(QRINFO_BASE_CYCLES_BEHIND * interval)?;
         self.masternode_lists.range(..=reach).next_back().map(|(_, list)| list)
+    }
+
+    /// Sets the verification status of a quorum in the lists at `heights`.
+    /// Lists that shared a quorum map keep sharing the updated one.
+    #[cfg(feature = "quorum_validation")]
+    pub(crate) fn set_quorum_status_in_lists(
+        &mut self,
+        heights: impl IntoIterator<Item = CoreBlockHeight>,
+        llmq_type: LLMQType,
+        quorum_hash: QuorumHash,
+        status: &LLMQEntryVerificationStatus,
+    ) {
+        let mut replaced: Vec<(Arc<QuorumMap>, Arc<QuorumMap>)> = Vec::new();
+        for height in heights {
+            let Some(list) = self.masternode_lists.get_mut(&height) else {
+                continue;
+            };
+            let current =
+                list.quorums.get(&llmq_type).and_then(|quorums| quorums.get(&quorum_hash));
+            if current.is_none_or(|quorum| &quorum.verified == status) {
+                continue;
+            }
+            if let Some((_, updated)) =
+                replaced.iter().find(|(old, _)| Arc::ptr_eq(old, &list.quorums))
+            {
+                list.quorums = Arc::clone(updated);
+                continue;
+            }
+            let old = Arc::clone(&list.quorums);
+            if let Some(quorum) = Arc::make_mut(&mut list.quorums)
+                .get_mut(&llmq_type)
+                .and_then(|quorums| quorums.get_mut(&quorum_hash))
+                .map(Arc::make_mut)
+            {
+                quorum.verified = status.clone();
+            }
+            replaced.push((old, Arc::clone(&list.quorums)));
+        }
     }
 
     /// Retrieves the closest masternode lists before and after a given core block height.
@@ -118,9 +160,9 @@ mod tests {
     use crate::sml::quorum_validation_error::QuorumValidationError;
     use crate::transaction::special_transaction::quorum_commitment::QuorumEntry;
 
-    const PLATFORM_TYPE: LLMQType = LLMQType::LlmqtypeDevnetPlatform;
+    pub(super) const PLATFORM_TYPE: LLMQType = LLMQType::LlmqtypeDevnetPlatform;
 
-    fn quorum_entry(quorum_hash: QuorumHash, pubkey: u8) -> QualifiedQuorumEntry {
+    pub(super) fn quorum_entry(quorum_hash: QuorumHash, pubkey: u8) -> QualifiedQuorumEntry {
         let mut entry: QualifiedQuorumEntry = QuorumEntry {
             version: 2,
             llmq_type: PLATFORM_TYPE,
@@ -141,9 +183,9 @@ mod tests {
     fn list_with_quorums(height: u32, quorums: &[QualifiedQuorumEntry]) -> MasternodeList {
         let mut list =
             MasternodeList::empty(BlockHash::from_byte_array([height as u8; 32]), height);
-        let by_hash = list.quorums.entry(PLATFORM_TYPE).or_default();
+        let by_hash = std::sync::Arc::make_mut(&mut list.quorums).entry(PLATFORM_TYPE).or_default();
         for quorum in quorums {
-            by_hash.insert(quorum.quorum_entry.quorum_hash, quorum.clone());
+            by_hash.insert(quorum.quorum_entry.quorum_hash, std::sync::Arc::new(quorum.clone()));
         }
         list
     }
@@ -262,6 +304,99 @@ mod tests {
                 .quorum_entry_for_hash_at_or_before_height(PLATFORM_TYPE, below_hash, height)
                 .is_none(),
             "quorum below the floor must not be walked to"
+        );
+    }
+}
+
+#[cfg(test)]
+mod shared_map_tests {
+    use super::tests::{PLATFORM_TYPE, quorum_entry};
+    use crate::network::message_sml::MnListDiff;
+    use crate::prelude::CoreBlockHeight;
+    use crate::sml::llmq_entry_verification::LLMQEntryVerificationStatus;
+    use crate::sml::masternode_list::MasternodeList;
+    use crate::sml::masternode_list_engine::MasternodeListEngine;
+    use crate::transaction::Transaction;
+    use crate::{BlockHash, Network, QuorumHash};
+    use hashes::Hash;
+    use std::sync::Arc;
+
+    const TIP: CoreBlockHeight = 1_000_000;
+
+    fn block_hash(height: CoreBlockHeight) -> BlockHash {
+        let mut bytes = [0xab; 32];
+        bytes[..4].copy_from_slice(&height.to_le_bytes());
+        BlockHash::from_byte_array(bytes)
+    }
+
+    fn engine_with_list(height: CoreBlockHeight) -> MasternodeListEngine {
+        let mut engine = MasternodeListEngine::default_for_network(Network::Mainnet);
+        engine.feed_block_height(height, block_hash(height));
+        engine.masternode_lists.insert(height, MasternodeList::empty(block_hash(height), height));
+        engine
+    }
+
+    fn empty_diff(base: CoreBlockHeight, tip: CoreBlockHeight) -> MnListDiff {
+        MnListDiff {
+            version: 1,
+            base_block_hash: block_hash(base),
+            block_hash: block_hash(tip),
+            total_transactions: 1,
+            merkle_hashes: vec![],
+            merkle_flags: vec![],
+            coinbase_tx: Transaction {
+                version: 3,
+                lock_time: 0,
+                input: vec![],
+                output: vec![],
+                special_transaction_payload: None,
+            },
+            deleted_masternodes: vec![],
+            new_masternodes: vec![],
+            deleted_quorums: vec![],
+            new_quorums: vec![],
+            quorums_chainlock_signatures: vec![],
+        }
+    }
+
+    #[test]
+    fn a_diff_that_changes_nothing_shares_the_lists_maps() {
+        let mut engine = engine_with_list(TIP - 1);
+        engine.apply_diff(empty_diff(TIP - 1, TIP), Some(TIP), false, None).unwrap();
+
+        let base = &engine.masternode_lists[&(TIP - 1)];
+        let next = &engine.masternode_lists[&TIP];
+        assert!(Arc::ptr_eq(&base.masternodes, &next.masternodes));
+        assert!(Arc::ptr_eq(&base.quorums, &next.quorums));
+    }
+
+    #[test]
+    #[cfg(feature = "quorum_validation")]
+    fn a_status_change_keeps_the_lists_that_shared_a_quorum_map_sharing() {
+        let quorum_hash = QuorumHash::from_byte_array([0x42; 32]);
+        let mut engine = engine_with_list(TIP - 2);
+        let mut quorum = quorum_entry(quorum_hash, 1);
+        quorum.verified = LLMQEntryVerificationStatus::Unknown;
+        Arc::make_mut(&mut engine.masternode_lists.get_mut(&(TIP - 2)).unwrap().quorums)
+            .entry(PLATFORM_TYPE)
+            .or_default()
+            .insert(quorum_hash, Arc::new(quorum));
+        engine.apply_diff(empty_diff(TIP - 2, TIP - 1), Some(TIP - 1), false, None).unwrap();
+        engine.apply_diff(empty_diff(TIP - 1, TIP), Some(TIP), false, None).unwrap();
+
+        engine.set_quorum_status_in_lists(
+            [TIP - 2, TIP - 1, TIP],
+            PLATFORM_TYPE,
+            quorum_hash,
+            &LLMQEntryVerificationStatus::Verified,
+        );
+
+        let lists: Vec<_> = engine.masternode_lists.values().collect();
+        assert!(Arc::ptr_eq(&lists[0].quorums, &lists[1].quorums));
+        assert!(Arc::ptr_eq(&lists[1].quorums, &lists[2].quorums));
+        assert_eq!(
+            lists[2].quorums[&PLATFORM_TYPE][&quorum_hash].verified,
+            LLMQEntryVerificationStatus::Verified
         );
     }
 }

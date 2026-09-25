@@ -21,6 +21,7 @@ impl MasternodeList {
         quorums_of_type
             .values()
             .min_by_key(|quorum| QuorumOrderingHash::create(&quorum.quorum_entry, request_id))
+            .map(|quorum| &**quorum)
             .ok_or(MessageVerificationError::MasternodeListHasNoQuorums(self.known_height))
     }
     /// Returns a set of quorum hashes, optionally excluding specified quorum types.
@@ -95,7 +96,7 @@ impl MasternodeList {
         llmq_type: LLMQType,
         quorum_hash: QuorumHash,
     ) -> Option<&QualifiedQuorumEntry> {
-        self.quorums.get(&llmq_type)?.get(&quorum_hash)
+        self.quorums.get(&llmq_type)?.get(&quorum_hash).map(|quorum| &**quorum)
     }
 
     /// Retrieves a mutable reference to a quorum entry of a specific type for a given quorum hash.
@@ -111,7 +112,10 @@ impl MasternodeList {
         llmq_type: LLMQType,
         quorum_hash: QuorumHash,
     ) -> Option<&mut QualifiedQuorumEntry> {
-        self.quorums.get_mut(&llmq_type)?.get_mut(&quorum_hash)
+        std::sync::Arc::make_mut(&mut self.quorums)
+            .get_mut(&llmq_type)?
+            .get_mut(&quorum_hash)
+            .map(std::sync::Arc::make_mut)
     }
 
     /// Returns the total number of quorums stored.
