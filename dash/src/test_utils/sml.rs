@@ -1,14 +1,49 @@
+use std::net::SocketAddr;
+
 use hashes::Hash;
 
+use crate::bls_sig_utils::BLSPublicKey;
+use crate::hash_types::{MerkleRootMasternodeList, ProTxHash};
 use crate::network::message_qrinfo::{MNSkipListMode, QRInfo, QuorumSnapshot};
 use crate::network::message_sml::MnListDiff;
-use crate::{BlockHash, Transaction};
+use crate::sml::masternode_list_entry::{
+    EntryMasternodeType, MasternodeListEntry, MasternodeNetInfo,
+};
+use crate::{BlockHash, PubkeyHash, Transaction};
 
 fn dummy_hash(byte: u8) -> BlockHash {
     BlockHash::from_slice(&[byte; 32]).unwrap()
 }
 
+impl MasternodeListEntry {
+    pub fn dummy(byte: u8) -> Self {
+        MasternodeListEntry {
+            version: 1,
+            pro_reg_tx_hash: ProTxHash::from_slice(&[byte; 32]).unwrap(),
+            confirmed_hash: None,
+            service_address: MasternodeNetInfo::Legacy(SocketAddr::from(([127, 0, 0, 1], 19999))),
+            operator_public_key: BLSPublicKey::from([0u8; 48]),
+            key_id_voting: PubkeyHash::from_slice(&[byte; 20]).unwrap(),
+            is_valid: true,
+            mn_type: EntryMasternodeType::Regular,
+        }
+    }
+}
+
 impl MnListDiff {
+    /// Carries one masternode and one merkle hash, the minimum
+    /// [`MasternodeList`](crate::sml::masternode_list::MasternodeList) conversion
+    /// accepts. Use this when the diff has to apply to an engine.
+    pub fn dummy(base_byte: u8, tip_byte: u8) -> Self {
+        MnListDiff {
+            total_transactions: 1,
+            merkle_hashes: vec![MerkleRootMasternodeList::from([tip_byte; 32])],
+            merkle_flags: vec![1],
+            new_masternodes: vec![MasternodeListEntry::dummy(tip_byte)],
+            ..MnListDiff::dummy_empty(base_byte, tip_byte)
+        }
+    }
+
     /// Hashes only. An engine rejects this as an incomplete diff, which is what
     /// makes it useful for exercising the rejection paths.
     pub fn dummy_empty(base_byte: u8, tip_byte: u8) -> Self {
