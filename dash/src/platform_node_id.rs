@@ -146,7 +146,7 @@ mod tests {
     fn bincode_layout_matches_pubkey_hash() {
         use hashes::Hash;
 
-        let bytes = [0xCD; 20];
+        let bytes = hex_lit::hex!("8badf00d8badf00d8badf00d8badf00d8badf00d");
         let config = bincode::config::standard();
         let node_id_bytes = bincode::encode_to_vec(PlatformNodeId::from_byte_array(bytes), config)
             .expect("encode node id");
