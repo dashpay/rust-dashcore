@@ -42,11 +42,10 @@ pub struct ChainLockManager<H: BlockHeaderStorage, M: MetadataStorage> {
     pub(super) requested_chainlocks: HashSet<ChainLockHash>,
     /// Whether masternode sync is complete and we can validate signatures.
     pub(super) masternode_ready: bool,
-    /// Highest chainlock that arrived before `masternode_ready` and
-    /// therefore could not be validated yet. Re-validated on the
-    /// not-ready → ready transition (see [`Self::on_masternode_ready`])
-    /// so we don't lose a chainlock that landed during the gap between
-    /// the chainlock manager starting and masternode sync completing.
+    /// Chainlock that could not be validated yet: one that arrived before
+    /// `masternode_ready`, or one that failed while the engine's newest
+    /// masternode list was still below its height. Re-validated on every
+    /// masternode state update (see [`Self::revalidate_pending`]).
     pending_validation: Option<ChainLock>,
 }
 
@@ -94,19 +93,53 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> ChainLockManager<H, M> {
     /// the local chain doesn't match.
     pub(super) async fn on_masternode_ready(&mut self) -> Option<ChainLock> {
         self.masternode_ready = true;
+        self.revalidate_pending().await;
+        self.best_chainlock.clone()
+    }
 
-        if let Some(pending) = self.pending_validation.take() {
-            if self.verify_block_hash(&pending).await && self.validate_signature(&pending).await {
-                self.progress.add_valid(1);
-                self.progress.update_best_validated_height(pending.block_height);
-                self.best_chainlock = Some(pending);
-                self.save_best_chainlock().await;
-            } else {
-                self.progress.add_invalid(1);
-            }
+    /// Re-validates the chainlock cached in `pending_validation` against the
+    /// current masternode state. Returns it if it validated and became the
+    /// best chainlock. It stays cached while the engine still lags it.
+    pub(super) async fn revalidate_pending(&mut self) -> Option<ChainLock> {
+        let pending = self.pending_validation.take()?;
+        if self
+            .best_chainlock
+            .as_ref()
+            .is_some_and(|best| best.block_height >= pending.block_height)
+        {
+            return None;
         }
 
-        self.best_chainlock.clone()
+        if !self.verify_block_hash(&pending).await {
+            self.progress.add_invalid(1);
+            return None;
+        }
+
+        if self.validate_signature(&pending).await {
+            self.progress.add_valid(1);
+            self.progress.update_best_validated_height(pending.block_height);
+            self.best_chainlock = Some(pending.clone());
+            self.save_best_chainlock().await;
+            return Some(pending);
+        }
+
+        if self.masternode_lists_lag(&pending).await {
+            self.pending_validation = Some(pending);
+        } else {
+            self.progress.add_invalid(1);
+        }
+        None
+    }
+
+    /// Whether the engine's newest masternode list is below the chainlock's
+    /// height, so a failed validation may only mean the lists covering its
+    /// signing quorum have not arrived yet.
+    async fn masternode_lists_lag(&self, chainlock: &ChainLock) -> bool {
+        let engine = self.masternode_engine.read().await;
+        engine
+            .masternode_lists
+            .last_key_value()
+            .is_some_and(|(&newest, _)| newest < chainlock.block_height)
     }
 
     /// Process an incoming ChainLock message.
@@ -169,6 +202,12 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> ChainLockManager<H, M> {
             // Update best ChainLock and persist to storage
             self.best_chainlock = Some(chainlock.clone());
             self.save_best_chainlock().await;
+        } else if self.masternode_lists_lag(chainlock).await {
+            tracing::debug!(
+                "Deferring ChainLock at height {} until masternode lists reach it",
+                height
+            );
+            self.pending_validation = Some(chainlock.clone());
         } else {
             self.progress.add_invalid(1);
         }
@@ -476,7 +515,66 @@ mod tests {
             }]
         ));
         assert!(manager.best_chainlock().is_none());
+        assert_eq!(manager.progress.invalid(), 0);
+        assert_eq!(manager.pending_validation.as_ref().map(|cl| cl.block_height), Some(1_000));
+    }
+
+    #[tokio::test]
+    async fn test_deferred_chainlock_is_rejected_once_lists_reach_it() {
+        use crate::network::RequestSender;
+        use tokio::sync::mpsc::unbounded_channel;
+
+        let mut manager = create_test_manager().await;
+        manager
+            .masternode_engine
+            .write()
+            .await
+            .masternode_lists
+            .insert(100, MasternodeList::empty(BlockHash::all_zeros(), 100));
+        let _ = manager.on_masternode_ready().await;
+        let _ = manager.process_chainlock(&create_test_chainlock(1_000)).await.unwrap();
+
+        let event = SyncEvent::MasternodeStateUpdated {
+            height: 500,
+            qr_info_result: None,
+        };
+        let (tx, _rx) = unbounded_channel();
+        let requests = RequestSender::new(tx);
+        assert!(manager.handle_sync_event(&event, &requests).await.unwrap().is_empty());
+        assert_eq!(manager.progress.invalid(), 0);
+        assert!(manager.pending_validation.is_some());
+
+        manager
+            .masternode_engine
+            .write()
+            .await
+            .masternode_lists
+            .insert(1_000, MasternodeList::empty(BlockHash::all_zeros(), 1_000));
+        let event = SyncEvent::MasternodeStateUpdated {
+            height: 1_000,
+            qr_info_result: None,
+        };
+        assert!(manager.handle_sync_event(&event, &requests).await.unwrap().is_empty());
         assert_eq!(manager.progress.invalid(), 1);
+        assert!(manager.pending_validation.is_none());
+        assert!(manager.best_chainlock().is_none());
+    }
+
+    #[tokio::test]
+    async fn test_chainlock_below_the_newest_list_is_rejected_immediately() {
+        let mut manager = create_test_manager().await;
+        manager
+            .masternode_engine
+            .write()
+            .await
+            .masternode_lists
+            .insert(2_000, MasternodeList::empty(BlockHash::all_zeros(), 2_000));
+        let _ = manager.on_masternode_ready().await;
+
+        let _ = manager.process_chainlock(&create_test_chainlock(1_000)).await.unwrap();
+
+        assert_eq!(manager.progress.invalid(), 1);
+        assert!(manager.pending_validation.is_none());
     }
 
     #[tokio::test]
