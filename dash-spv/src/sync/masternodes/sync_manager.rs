@@ -10,7 +10,7 @@ use async_trait::async_trait;
 use dashcore::network::message::NetworkMessage;
 use dashcore::network::message_qrinfo::QRInfo;
 use dashcore::sml::llmq_type::QUORUM_MEMBER_LIST_OFFSET;
-use dashcore::sml::masternode_list_engine::{MasternodeListEngine, WORK_DIFF_DEPTH};
+use dashcore::sml::masternode_list_engine::MasternodeListEngine;
 use dashcore::{BlockHash, QuorumHash};
 use dashcore_hashes::Hash;
 use std::collections::{BTreeSet, HashSet};
@@ -164,8 +164,8 @@ pub(super) async fn build_mnlistdiff_request_pairs<S: BlockHeaderStorage>(
 ///
 /// Resolves heights for every hash enumerated by
 /// [`MasternodeListEngine::qr_info_referenced_block_hashes`], plus the cycle boundary
-/// block for each work-block diff (`work_height + WORK_DIFF_DEPTH`), which is needed
-/// for rotated quorum storage key calculation.
+/// block of each [work block](MasternodeListEngine::qr_info_work_block_hashes), which
+/// is needed for rotated quorum storage key calculation.
 pub(super) async fn feed_qrinfo_heights_to_engine<S: BlockHeaderStorage>(
     engine: &mut MasternodeListEngine,
     qr_info: &QRInfo,
@@ -180,25 +180,12 @@ pub(super) async fn feed_qrinfo_heights_to_engine<S: BlockHeaderStorage>(
         }
     }
 
-    // Feed cycle boundary heights for all diffs (current and historical cycles).
-    // Each diff's block_hash is at the "work block" height; the cycle boundary is
-    // WORK_DIFF_DEPTH higher.
-    let mut work_block_hashes = vec![
-        qr_info.mn_list_diff_h.block_hash,
-        qr_info.mn_list_diff_at_h_minus_c.block_hash,
-        qr_info.mn_list_diff_at_h_minus_2c.block_hash,
-        qr_info.mn_list_diff_at_h_minus_3c.block_hash,
-    ];
-
-    if let Some((_, diff)) = &qr_info.quorum_snapshot_and_mn_list_diff_at_h_minus_4c {
-        work_block_hashes.push(diff.block_hash);
-    }
-
-    for work_block_hash in work_block_hashes {
+    for work_block_hash in MasternodeListEngine::qr_info_work_block_hashes(qr_info) {
         if let Ok(Some(work_block_height)) =
             storage.get_header_height_by_hash(&work_block_hash).await
         {
-            let cycle_boundary_height = work_block_height + WORK_DIFF_DEPTH;
+            let cycle_boundary_height =
+                MasternodeListEngine::cycle_boundary_height(work_block_height);
             if let Ok(Some(cycle_boundary_header)) = storage.get_header(cycle_boundary_height).await
             {
                 let cycle_boundary_hash = *cycle_boundary_header.hash();
