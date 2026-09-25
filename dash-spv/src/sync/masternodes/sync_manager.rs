@@ -245,9 +245,9 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
                     self.sync_state.known_mn_list_heights.len()
                 );
 
-                // Get quorum hashes and build request pairs, chaining from known heights
+                // Member lists of the quorums still to validate, chaining from known heights
                 let quorum_hashes =
-                    engine.latest_masternode_list_non_rotating_quorum_hashes(&[], false);
+                    engine.latest_masternode_list_unverified_non_rotating_quorum_hashes();
                 let storage = self.header_storage.read().await;
                 let request_pairs = build_mnlistdiff_request_pairs(
                     &*storage,

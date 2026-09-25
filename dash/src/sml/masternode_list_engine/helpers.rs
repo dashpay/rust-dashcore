@@ -73,21 +73,30 @@ impl MasternodeListEngine {
         let mut older: BTreeSet<CoreBlockHeight> =
             self.qr_info_base_list(tip).map(|list| list.known_height).into_iter().collect();
         older.extend(
-            self.latest_masternode_list()
-                .into_iter()
-                .flat_map(|list| list.quorums.iter())
-                .filter(|(llmq_type, _)| !llmq_type.is_rotating_quorum_type())
-                .flat_map(|(_, quorums)| quorums.values())
-                .filter(|quorum| quorum.verified != LLMQEntryVerificationStatus::Verified)
-                .filter_map(|quorum| {
-                    self.block_container.get_height(&quorum.quorum_entry.quorum_hash)
-                })
+            self.latest_masternode_list_unverified_non_rotating_quorum_hashes()
+                .iter()
+                .filter_map(|quorum_hash| self.block_container.get_height(quorum_hash))
                 .map(|height| height.saturating_sub(QUORUM_MEMBER_LIST_OFFSET)),
         );
         NeededLists {
             recent: tip.saturating_sub(interval),
             older,
         }
+    }
+
+    /// Non-rotating quorums of the newest list that are not `Verified` yet: the
+    /// ones whose work-block list (DIP-6) is still needed to validate them.
+    pub fn latest_masternode_list_unverified_non_rotating_quorum_hashes(
+        &self,
+    ) -> BTreeSet<QuorumHash> {
+        self.latest_masternode_list()
+            .into_iter()
+            .flat_map(|list| list.quorums.iter())
+            .filter(|(llmq_type, _)| !llmq_type.is_rotating_quorum_type())
+            .flat_map(|(_, quorums)| quorums.values())
+            .filter(|quorum| quorum.verified != LLMQEntryVerificationStatus::Verified)
+            .map(|quorum| quorum.quorum_entry.quorum_hash)
+            .collect()
     }
 
     /// Drops the lists [`Self::needed_lists`] leaves out and the snapshots,
@@ -711,5 +720,44 @@ mod prune_tests {
                 panic!("ChainLock at {height} no longer verifies after pruning: {e}")
             });
         }
+    }
+
+    /// On the mainnet engine fixture pruned at its tip, 13 Verified quorums
+    /// have lost their work-block list. Asking for the member list of every
+    /// non-rotating quorum, as the SPV did, fetches them again on each QRInfo;
+    /// only the unverified ones need theirs.
+    #[test]
+    fn a_pruned_engine_asks_only_for_the_member_lists_of_unverified_quorums() {
+        let data = hex::decode(include_str!(
+            "../../../tests/data/test_DML_diffs/masternode_list_engine.hex"
+        ))
+        .unwrap();
+        let mut engine: MasternodeListEngine =
+            bincode::decode_from_slice(&data, bincode::config::standard()).unwrap().0;
+        let tip = *engine.masternode_lists.keys().next_back().unwrap();
+        engine.prune_obsolete_lists(tip, &BTreeSet::new());
+
+        let latest = engine.latest_masternode_list().unwrap();
+        let verified_without_list: BTreeSet<QuorumHash> = latest
+            .quorums
+            .iter()
+            .filter(|(llmq_type, _)| !llmq_type.is_rotating_quorum_type())
+            .flat_map(|(_, quorums)| quorums.values())
+            .filter(|quorum| quorum.verified == LLMQEntryVerificationStatus::Verified)
+            .map(|quorum| quorum.quorum_entry.quorum_hash)
+            .filter(|quorum_hash| {
+                engine.block_container.get_height(quorum_hash).is_some_and(|height| {
+                    !engine.masternode_lists.contains_key(&(height - QUORUM_MEMBER_LIST_OFFSET))
+                })
+            })
+            .collect();
+        assert_eq!(verified_without_list.len(), 13);
+        assert!(
+            verified_without_list
+                .is_subset(&engine.latest_masternode_list_non_rotating_quorum_hashes(&[], false))
+        );
+
+        let asked = engine.latest_masternode_list_unverified_non_rotating_quorum_hashes();
+        assert!(asked.is_disjoint(&verified_without_list));
     }
 }
