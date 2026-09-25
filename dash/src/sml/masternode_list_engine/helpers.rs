@@ -2,6 +2,7 @@ use crate::QuorumHash;
 use crate::prelude::CoreBlockHeight;
 use crate::sml::llmq_entry_verification::LLMQEntryVerificationStatus;
 use crate::sml::llmq_type::LLMQType;
+use crate::sml::llmq_type::network::NetworkLLMQExt;
 use crate::sml::masternode_list::MasternodeList;
 use crate::sml::masternode_list_engine::MasternodeListEngine;
 use crate::sml::quorum_entry::qualified_quorum_entry::QualifiedQuorumEntry;
@@ -13,7 +14,24 @@ use crate::sml::quorum_entry::qualified_quorum_entry::QualifiedQuorumEntry;
 /// miss to a fixed span of lists rather than every list the engine has accumulated.
 const QUORUM_WALK_BACK_ACTIVE_WINDOWS: u32 = 4;
 
+/// Cycles below the tip cycle the oldest diff of a QRInfo requested with
+/// `extraShare` reaches (h-4c, DIP-24). Its base must sit at or below that for
+/// every diff to be served against it rather than against genesis.
+const QRINFO_BASE_CYCLES_BEHIND: u32 = 4;
+
 impl MasternodeListEngine {
+    /// The list the next QRInfo at `tip` diffs from: the newest one at or below
+    /// the h-4c cycle its oldest diff reaches (DIP-24). `None` when no list is
+    /// that old, and the request then carries no base.
+    pub fn qr_info_base_list(&self, tip: CoreBlockHeight) -> Option<&MasternodeList> {
+        let interval = self.network.isd_llmq_type().params().dkg_params.interval;
+        if interval == 0 {
+            return None;
+        }
+        let reach = (tip - tip % interval).checked_sub(QRINFO_BASE_CYCLES_BEHIND * interval)?;
+        self.masternode_lists.range(..=reach).next_back().map(|(_, list)| list)
+    }
+
     /// Retrieves the closest masternode lists before and after a given core block height.
     ///
     /// This function searches the `masternode_lists` map to find the nearest masternode lists
