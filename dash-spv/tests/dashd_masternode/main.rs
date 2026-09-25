@@ -12,4 +12,5 @@ mod helpers;
 mod setup;
 mod tests_chainlock;
 mod tests_instantsend;
+mod tests_platform;
 mod tests_sync;
