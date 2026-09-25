@@ -13,7 +13,7 @@ use crate::bls_sig_utils::BLSSignature;
 use crate::consensus::Encodable;
 use crate::hash_types::QuorumSigningSignId;
 use crate::internal_macros::impl_consensus_encoding;
-use crate::sml::llmq_type::LLMQType;
+use crate::sml::llmq_type::{LLMQ_SIGN_HEIGHT_OFFSET, LLMQType};
 use crate::{BlockHash, QuorumHash, QuorumSigningRequestId, VarInt, io};
 
 const CL_REQUEST_ID_PREFIX: &str = "clsig";
@@ -51,6 +51,11 @@ impl ChainLock {
         engine.input(&self.block_height.to_le_bytes());
 
         Ok(QuorumSigningRequestId::from_engine(engine))
+    }
+
+    /// Height of the masternode list that holds the quorum signing this ChainLock.
+    pub fn signing_height(&self) -> u32 {
+        self.block_height.saturating_sub(LLMQ_SIGN_HEIGHT_OFFSET)
     }
 
     pub fn sign_id(
