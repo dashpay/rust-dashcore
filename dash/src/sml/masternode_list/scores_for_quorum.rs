@@ -78,7 +78,7 @@ impl MasternodeList {
         hpmn_only: bool,
     ) -> BTreeMap<ScoreHash, &QualifiedMasternodeListEntry> {
         Self::scores_for_quorum_for_masternodes(
-            self.masternodes.values(),
+            self.masternodes.values().map(|mn| &**mn),
             quorum_modifier,
             hpmn_only,
         )
