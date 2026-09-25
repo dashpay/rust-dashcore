@@ -379,12 +379,10 @@ impl MasternodeListEngine {
             };
             if do_check {
                 return self.verify_chain_lock_with_masternode_list(chain_lock, after, &request_id);
-            } else if let Some(initial_error) = initial_error {
-                return Err(initial_error);
             }
         }
 
-        Ok(())
+        Err(initial_error.unwrap_or(MessageVerificationError::NoMasternodeLists))
     }
 
     /// Helper function to verify a ChainLock using a specific masternode list.
@@ -470,6 +468,34 @@ mod tests {
             "6fcbf58004b118d865a448bf89d9299c64d4ecedd754dabec655090224de91cd"
         );
         mn_list_engine.verify_is_lock(&lock).expect("expected to verify is lock");
+    }
+
+    /// A genuine ChainLock replayed at a height signed by the newest list: its
+    /// signature no longer matches the request id, and with no list above to
+    /// retry against, that failure has to stand.
+    #[test]
+    fn chain_lock_replayed_above_the_newest_list_is_rejected() {
+        let block_hex =
+            include_str!("../../../tests/data/test_DML_diffs/masternode_list_engine.hex");
+        let data = hex::decode(block_hex).expect("decode hex");
+        let mn_list_engine: MasternodeListEngine =
+            bincode::decode_from_slice(&data, bincode::config::standard())
+                .expect("expected to decode")
+                .0;
+        let newest = mn_list_engine.latest_masternode_list().expect("newest").known_height;
+
+        let genuine = ChainLock {
+            block_height: 2243495,
+            block_hash: BlockHash::from_slice(hex::decode("000000000000000d88580463cafe168b2f465f40f01916ad95fe9be459c26491").unwrap().as_slice()).unwrap().reverse(),
+            signature: BLSSignature::from_hex("a6bc4dcf7afb042e0b0258a994f5a77856971a32a3ad3ee89d21e1011a77211070bec7c2ef50c293722cbae135b904640b482479f836120e0be7d42ce332a7c58096d8d8006920ef3dbcc47b5f7ed00aeb68d58bc514f4401bd72b247bf23699").unwrap(),
+        };
+        mn_list_engine.verify_chain_lock(&genuine).expect("verifies at its own height");
+
+        let replayed = ChainLock {
+            block_height: newest + 1_000,
+            ..genuine
+        };
+        assert!(mn_list_engine.verify_chain_lock(&replayed).is_err());
     }
 
     #[test]
