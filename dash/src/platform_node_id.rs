@@ -154,6 +154,11 @@ mod tests {
             bincode::encode_to_vec(crate::PubkeyHash::from_byte_array(bytes), config)
                 .expect("encode pubkey hash");
         assert_eq!(node_id_bytes, pubkey_hash_bytes);
+        assert_eq!(node_id_bytes, bytes, "the canonical order is the persisted order");
+
+        let (decoded, _): (PlatformNodeId, _) =
+            bincode::decode_from_slice(&node_id_bytes, config).expect("decode node id");
+        assert_eq!(decoded.to_byte_array(), bytes);
     }
 
     #[test]
