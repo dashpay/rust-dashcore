@@ -10,7 +10,30 @@ use std::time::Duration;
 use tokio::sync::{broadcast, watch};
 use tokio::time;
 
-use super::setup::{TestContext, SYNC_TIMEOUT};
+use super::setup::{ClientHandle, TestContext, SYNC_TIMEOUT};
+
+/// Waits for the SPV to surface a masternode list at the controller's tip.
+pub(super) async fn follow_tip(ctx: &TestContext, client_handle: &mut ClientHandle) {
+    let tip = ctx.mn_ctx.controller.get_block_count();
+    wait_for_mn_state_event_above(&mut client_handle.sync_event_receiver, tip - 1, SYNC_TIMEOUT)
+        .await;
+}
+
+/// Mines `blocks` blocks up to five at a time, following each step with the SPV.
+pub(super) async fn mine_and_follow(
+    ctx: &TestContext,
+    client_handle: &mut ClientHandle,
+    blocks: u32,
+) {
+    let addr = ctx.mn_ctx.controller.get_new_address();
+    let mut mined = 0;
+    while mined < blocks {
+        let step = (blocks - mined).min(5);
+        ctx.mn_ctx.controller.generate_blocks(step.into(), &addr);
+        follow_tip(ctx, client_handle).await;
+        mined += step;
+    }
+}
 
 /// Mine a DKG cycle and wait for the SPV to surface a `MasternodeStateUpdated`
 /// event above `baseline_height`.
