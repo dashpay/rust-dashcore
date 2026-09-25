@@ -12,11 +12,12 @@ use dashcore::sml::masternode_list_engine::{MasternodeListEngine, QRInfoFeedResu
 use tokio::sync::RwLock;
 
 use super::pipeline::MnListDiffPipeline;
-use crate::error::{SyncError, SyncResult};
+use crate::error::{StorageResult, SyncError, SyncResult};
 use crate::network::RequestSender;
-use crate::storage::BlockHeaderStorage;
+use crate::storage::{BlockHeaderStorage, MasternodeStorage, PersistentMasternodeStorage};
 use crate::sync::{MasternodesProgress, SyncEvent, SyncManager, SyncState};
 use dashcore::network::message_qrinfo::QRInfo;
+use dashcore::network::message_sml::MnListDiff;
 use dashcore::BlockHash;
 use std::collections::BTreeSet;
 
@@ -265,6 +266,8 @@ pub struct MasternodesManager<H: BlockHeaderStorage> {
     network: dashcore::Network,
     /// Sync state tracking.
     pub(super) sync_state: MasternodeSyncState,
+    /// Where the messages that built the engine are kept for the next start.
+    message_storage: Option<Arc<RwLock<PersistentMasternodeStorage<H>>>>,
 }
 
 impl<H: BlockHeaderStorage> MasternodesManager<H> {
@@ -273,6 +276,7 @@ impl<H: BlockHeaderStorage> MasternodesManager<H> {
         header_storage: Arc<RwLock<H>>,
         engine: Arc<RwLock<MasternodeListEngine>>,
         network: dashcore::Network,
+        message_storage: Option<Arc<RwLock<PersistentMasternodeStorage<H>>>>,
     ) -> Self {
         // Recover sync state from the engine's stored masternode lists so that a
         // restart can resume from where the previous run left off.
@@ -303,7 +307,22 @@ impl<H: BlockHeaderStorage> MasternodesManager<H> {
             engine,
             network,
             sync_state,
+            message_storage,
         }
+    }
+
+    pub(super) async fn store_diff(&self, height: u32, diff: &MnListDiff) -> StorageResult<()> {
+        let Some(storage) = &self.message_storage else {
+            return Ok(());
+        };
+        storage.write().await.store_diff(height, diff).await
+    }
+
+    pub(super) async fn store_qr_info(&self, height: u32, qr_info: &QRInfo) -> StorageResult<()> {
+        let Some(storage) = &self.message_storage else {
+            return Ok(());
+        };
+        storage.write().await.store_qr_info(height, qr_info).await
     }
 
     /// Decide which [`PipelineMode`] to use when a new header lands at `tip_height`
@@ -662,7 +681,7 @@ mod tests {
     async fn create_test_manager_for(network: dashcore::Network) -> TestMasternodesManager {
         let storage = DiskStorageManager::with_temp_dir().await.unwrap();
         let engine = Arc::new(RwLock::new(MasternodeListEngine::default_for_network(network)));
-        MasternodesManager::new(storage.block_headers(), engine, network).await
+        MasternodesManager::new(storage.block_headers(), engine, network, None).await
     }
 
     async fn create_test_manager() -> TestMasternodesManager {
@@ -699,6 +718,7 @@ mod tests {
             block_headers,
             Arc::new(RwLock::new(engine)),
             dashcore::Network::Regtest,
+            None,
         )
         .await;
         manager.set_state(SyncState::Synced);
@@ -930,6 +950,7 @@ mod tests {
             storage.block_headers(),
             Arc::new(RwLock::new(engine)),
             dashcore::Network::Testnet,
+            None,
         )
         .await;
 

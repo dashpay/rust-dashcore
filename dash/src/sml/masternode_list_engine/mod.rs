@@ -311,7 +311,7 @@ fn build_cycle_quorum_map(
 /// [`MasternodeListEngine::qr_info_referenced_block_hashes`] exists to tell a
 /// caller which heights to feed before [`MasternodeListEngine::feed_qr_info`]
 /// needs them, so both must walk the same set of diffs.
-fn qr_info_diffs(qr_info: &QRInfo) -> Vec<&MnListDiff> {
+pub fn qr_info_diffs(qr_info: &QRInfo) -> Vec<&MnListDiff> {
     let mut diffs: Vec<&MnListDiff> = vec![
         &qr_info.mn_list_diff_tip,
         &qr_info.mn_list_diff_h,
