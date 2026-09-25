@@ -36,7 +36,7 @@ pub use crate::storage::blocks::{BlockStorage, PersistentBlockStorage};
 pub use crate::storage::filter_headers::{FilterHeaderStorage, PersistentFilterHeaderStorage};
 pub use crate::storage::filters::{FilterStorage, PersistentFilterStorage};
 pub(crate) use crate::storage::masternode::feed_qrinfo_heights_to_engine;
-pub use crate::storage::masternode::{MasternodeStorage, PersistentMasternodeStorage};
+pub use crate::storage::masternode::{MasternodeStorage, MessageLog, PersistentMasternodeStorage};
 pub use crate::storage::metadata::{MetadataStorage, PersistentMetadataStorage};
 pub use crate::storage::peers::{PeerStorage, PersistentPeerStorage};
 
@@ -481,11 +481,8 @@ impl masternode::MasternodeStorage for DiskStorageManager {
         quorum_hash: QuorumHash,
         height: CoreBlockHeight,
     ) -> StorageResult<Option<QualifiedQuorumEntry>> {
-        self.masternodes
-            .read()
-            .await
-            .quorum_entry_at_or_before(llmq_type, quorum_hash, height)
-            .await
+        let log = self.masternodes.read().await.message_log();
+        log.quorum_entry_at_or_before(llmq_type, quorum_hash, height).await
     }
 }
 

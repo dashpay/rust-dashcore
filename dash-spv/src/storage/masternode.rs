@@ -82,6 +82,17 @@ pub struct PersistentMasternodeStorage<H: BlockHeaderStorage> {
     qr_infos: IndexMap,
 }
 
+/// The stored messages as of when it was taken, and where their heights
+/// resolve. A replay runs on this rather than on the storage, so a caller can
+/// release the storage lock first and a long replay does not hold up the
+/// masternode sync storing the next message.
+pub struct MessageLog<H: BlockHeaderStorage> {
+    headers: Arc<RwLock<H>>,
+    network: Network,
+    diffs: IndexMap,
+    qr_infos: IndexMap,
+}
+
 impl<H: BlockHeaderStorage> PersistentMasternodeStorage<H> {
     const FOLDER_NAME: &str = "masternodes";
     const DIFF_PREFIX: &str = "diff_";
@@ -169,6 +180,24 @@ impl<H: BlockHeaderStorage> PersistentMasternodeStorage<H> {
         })
     }
 
+    pub fn message_log(&self) -> MessageLog<H> {
+        MessageLog {
+            headers: Arc::clone(&self.headers),
+            network: self.network,
+            diffs: self.diffs.clone(),
+            qr_infos: self.qr_infos.clone(),
+        }
+    }
+
+    fn apply(engine: &mut MasternodeListEngine, height: CoreBlockHeight, message: Message) -> bool {
+        match message {
+            Message::QrInfo(qr_info) => engine.feed_qr_info(*qr_info, true, true).is_ok(),
+            Message::Diff(diff) => engine.apply_diff(*diff, Some(height), false, None).is_ok(),
+        }
+    }
+}
+
+impl<H: BlockHeaderStorage> MessageLog<H> {
     /// Rebuilds the lists in `floor..=height`. A QRInfo builds lists back to its
     /// `h-4c` work block, so messages stored up to six cycles above `height` can
     /// still produce one of them.
@@ -191,7 +220,8 @@ impl<H: BlockHeaderStorage> PersistentMasternodeStorage<H> {
     /// apply in the order of their newest base, so each comes after the one that
     /// built the list it extends, and a list outside `retain` survives only while
     /// a message still to be applied builds on it. They are read once to plan
-    /// that order and again to apply, so only one is held in memory at a time.
+    /// that order and again to apply, so only one is held in memory at a time,
+    /// and the header storage is locked per message rather than for the pass.
     async fn replay(
         &self,
         until: Option<CoreBlockHeight>,
@@ -207,35 +237,34 @@ impl<H: BlockHeaderStorage> PersistentMasternodeStorage<H> {
 
         let mut plan = Vec::new();
         let mut needed: HashMap<BlockHash, usize> = HashMap::new();
-        {
+        for (height, kind, path) in entries {
+            let message = match PersistentMasternodeStorage::<H>::read_entry(path, kind).await {
+                Ok(message) => message,
+                Err(e) => {
+                    tracing::warn!("Skipping unreadable masternode message at {height}: {e}");
+                    continue;
+                }
+            };
             let headers = self.headers.read().await;
-            for (height, kind, path) in entries {
-                let message = match Self::read_entry(path, kind).await {
-                    Ok(message) => message,
-                    Err(e) => {
-                        tracing::warn!("Skipping unreadable masternode message at {height}: {e}");
-                        continue;
-                    }
-                };
-                match &message {
-                    Message::QrInfo(qr_info) => {
-                        feed_qrinfo_heights_to_engine(&mut engine, qr_info, &*headers).await;
-                    }
-                    Message::Diff(diff) => {
-                        engine.feed_block_height(height, diff.block_hash);
-                        if let Ok(Some(base_height)) =
-                            headers.get_header_height_by_hash(&diff.base_block_hash).await
-                        {
-                            engine.feed_block_height(base_height, diff.base_block_hash);
-                        }
+            match &message {
+                Message::QrInfo(qr_info) => {
+                    feed_qrinfo_heights_to_engine(&mut engine, qr_info, &*headers).await;
+                }
+                Message::Diff(diff) => {
+                    engine.feed_block_height(height, diff.block_hash);
+                    if let Ok(Some(base_height)) =
+                        headers.get_header_height_by_hash(&diff.base_block_hash).await
+                    {
+                        engine.feed_block_height(base_height, diff.base_block_hash);
                     }
                 }
-                let bases = message.base_hashes();
-                for base in &bases {
-                    *needed.entry(*base).or_default() += 1;
-                }
-                plan.push((height, kind, path, bases));
             }
+            drop(headers);
+            let bases = message.base_hashes();
+            for base in &bases {
+                *needed.entry(*base).or_default() += 1;
+            }
+            plan.push((height, kind, path, bases));
         }
 
         let newest_base = |bases: &[BlockHash]| {
@@ -251,11 +280,13 @@ impl<H: BlockHeaderStorage> PersistentMasternodeStorage<H> {
         };
         let replayed_to = plan.iter().map(|(height, ..)| *height).max();
         for (height, kind, path, bases) in plan {
-            match Self::read_entry(path, kind).await {
-                Ok(message) => match Self::apply(&mut engine, height, message) {
-                    true => stats.applied += 1,
-                    false => tracing::warn!("Masternode message at {height} does not apply"),
-                },
+            match PersistentMasternodeStorage::<H>::read_entry(path, kind).await {
+                Ok(message) => {
+                    match PersistentMasternodeStorage::<H>::apply(&mut engine, height, message) {
+                        true => stats.applied += 1,
+                        false => tracing::warn!("Masternode message at {height} does not apply"),
+                    }
+                }
                 Err(e) => tracing::warn!("Masternode message at {height} became unreadable: {e}"),
             }
             for base in &bases {
@@ -286,11 +317,19 @@ impl<H: BlockHeaderStorage> PersistentMasternodeStorage<H> {
         Ok((engine, stats))
     }
 
-    fn apply(engine: &mut MasternodeListEngine, height: CoreBlockHeight, message: Message) -> bool {
-        match message {
-            Message::QrInfo(qr_info) => engine.feed_qr_info(*qr_info, true, true).is_ok(),
-            Message::Diff(diff) => engine.apply_diff(*diff, Some(height), false, None).is_ok(),
-        }
+    /// The quorum as [`MasternodeListEngine::quorum_entry_for_hash_at_or_before_height`]
+    /// would resolve it from the lists stored up to `height`.
+    pub async fn quorum_entry_at_or_before(
+        &self,
+        llmq_type: LLMQType,
+        quorum_hash: QuorumHash,
+        height: CoreBlockHeight,
+    ) -> StorageResult<Option<QualifiedQuorumEntry>> {
+        let floor = MasternodeListEngine::quorum_walk_back_floor(llmq_type, height);
+        let (engine, _) = self.replay_around(floor, height).await?;
+        Ok(engine
+            .quorum_entry_for_hash_at_or_before_height(llmq_type, quorum_hash, height)
+            .map(|(_, quorum)| quorum.clone()))
     }
 }
 
@@ -374,7 +413,7 @@ impl<H: BlockHeaderStorage> MasternodeStorage for PersistentMasternodeStorage<H>
     }
 
     async fn load_engine(&self) -> StorageResult<MasternodeListEngine> {
-        Ok(self.replay(None, Retain::Obsolete).await?.0)
+        Ok(self.message_log().replay(None, Retain::Obsolete).await?.0)
     }
 
     async fn quorum_entry_at_or_before(
@@ -383,11 +422,7 @@ impl<H: BlockHeaderStorage> MasternodeStorage for PersistentMasternodeStorage<H>
         quorum_hash: QuorumHash,
         height: CoreBlockHeight,
     ) -> StorageResult<Option<QualifiedQuorumEntry>> {
-        let floor = MasternodeListEngine::quorum_walk_back_floor(llmq_type, height);
-        let (engine, _) = self.replay_around(floor, height).await?;
-        Ok(engine
-            .quorum_entry_for_hash_at_or_before_height(llmq_type, quorum_hash, height)
-            .map(|(_, quorum)| quorum.clone()))
+        self.message_log().quorum_entry_at_or_before(llmq_type, quorum_hash, height).await
     }
 }
 
@@ -587,7 +622,7 @@ mod tests {
         let tip = 300;
         let storage = chained_storage(&dir, tip).await;
 
-        let (engine, stats) = storage.replay(None, Retain::Obsolete).await.unwrap();
+        let (engine, stats) = storage.message_log().replay(None, Retain::Obsolete).await.unwrap();
         let needed_lists = engine.needed_lists(tip);
         let interval = Network::Regtest.isd_llmq_type().params().dkg_params.interval as usize;
 
@@ -612,7 +647,7 @@ mod tests {
         let mut storage = chained_storage(&dir, tip).await;
         storage.store_diff(tip + 1, &diff_between(10, tip + 1)).await.unwrap();
 
-        let (engine, stats) = storage.replay(None, Retain::Obsolete).await.unwrap();
+        let (engine, stats) = storage.message_log().replay(None, Retain::Obsolete).await.unwrap();
 
         assert_eq!(
             stats.applied,
@@ -632,7 +667,7 @@ mod tests {
         let storage = chained_storage(&dir, 400).await;
         let until = 150 + 6 * 24 + 8;
 
-        let (engine, stats) = storage.replay_around(150, 150).await.unwrap();
+        let (engine, stats) = storage.message_log().replay_around(150, 150).await.unwrap();
 
         assert_eq!(stats.total, until as usize, "messages past the reach are not read");
         assert_eq!(
@@ -700,6 +735,165 @@ mod tests {
             .unwrap()
             .expect("storage rebuilds the list the walk-back reaches");
         assert_eq!(quorum.quorum_entry.quorum_hash, quorum_hash);
+    }
+
+    /// Mainnet-shaped history: the real full list at 2_227_096 (≈3300 masternodes)
+    /// followed by `blocks` incremental diffs, one per block, as the live
+    /// Incremental pipeline stores them. Files are written without fsync to keep
+    /// setup fast; the replay path reads them exactly as it would in production.
+    async fn mainnet_history(
+        dir: &TempDir,
+        blocks: u32,
+    ) -> (PersistentMasternodeStorage<MockHeaderStorage>, CoreBlockHeight) {
+        type S = PersistentMasternodeStorage<MockHeaderStorage>;
+        let full: MnListDiff = deserialize(include_bytes!(
+            "../../../dash/tests/data/test_DML_diffs/mn_list_diff_0_2227096.bin"
+        ))
+        .unwrap();
+        let base = 2_227_096;
+        let folder = dir.path().join(S::FOLDER_NAME);
+        std::fs::create_dir_all(&folder).unwrap();
+        let mut map: HashMap<BlockHash, u32> = HashMap::new();
+        map.insert(full.block_hash, base);
+        std::fs::write(folder.join(S::file_name(S::DIFF_PREFIX, base)), serialize(&full)).unwrap();
+        let mut prev = full.block_hash;
+        for height in base + 1..=base + blocks {
+            let hash = height_hash(height);
+            map.insert(hash, height);
+            let diff = MnListDiff {
+                base_block_hash: prev,
+                block_hash: hash,
+                new_masternodes: vec![],
+                ..MnListDiff::dummy(0x00, 0x01)
+            };
+            std::fs::write(folder.join(S::file_name(S::DIFF_PREFIX, height)), serialize(&diff))
+                .unwrap();
+            prev = hash;
+        }
+        let storage = PersistentMasternodeStorage::open(
+            dir.path(),
+            Arc::new(RwLock::new(MockHeaderStorage(map))),
+            Network::Mainnet,
+        )
+        .await
+        .unwrap();
+        (storage, base + blocks)
+    }
+
+    /// A lookup replays from a [`MessageLog`] taken under the storage lock and
+    /// released before the replay, so the next message the masternode sync
+    /// stores does not wait for the replay to finish.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_storage_lookup_does_not_hold_up_storing_the_next_message() {
+        let dir = TempDir::new().unwrap();
+        let (storage, tip) = mainnet_history(&dir, 576).await;
+        let storage = Arc::new(RwLock::new(storage));
+
+        let log = storage.read().await.message_log();
+        let lookup = tokio::spawn(async move {
+            log.quorum_entry_at_or_before(
+                LLMQType::Llmqtype100_67,
+                QuorumHash::from_byte_array([0x42; 32]),
+                tip,
+            )
+            .await
+        });
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+        let next = MnListDiff {
+            base_block_hash: height_hash(tip),
+            block_hash: height_hash(tip + 1),
+            ..MnListDiff::dummy(0x00, 0x01)
+        };
+        storage.write().await.store_diff(tip + 1, &next).await.unwrap();
+
+        assert!(
+            !lookup.is_finished(),
+            "the next diff was only stored once the lookup's replay had finished"
+        );
+        assert!(lookup.await.unwrap().unwrap().is_none());
+    }
+
+    /// Header storage whose hash lookups take a while, as a disk-backed one can.
+    struct SlowHeaderStorage(MockHeaderStorage);
+
+    #[async_trait]
+    impl BlockHeaderStorage for SlowHeaderStorage {
+        async fn store_headers(
+            &mut self,
+            headers: &[crate::types::HashedBlockHeader],
+        ) -> StorageResult<()> {
+            self.0.store_headers(headers).await
+        }
+        async fn store_headers_at_height(
+            &mut self,
+            headers: &[crate::types::HashedBlockHeader],
+            height: u32,
+        ) -> StorageResult<()> {
+            self.0.store_headers_at_height(headers, height).await
+        }
+        async fn load_headers(
+            &self,
+            range: std::ops::Range<u32>,
+        ) -> StorageResult<Vec<crate::types::HashedBlockHeader>> {
+            self.0.load_headers(range).await
+        }
+        async fn get_tip_height(&self) -> Option<u32> {
+            self.0.get_tip_height().await
+        }
+        async fn get_tip(&self) -> Option<crate::storage::BlockHeaderTip> {
+            self.0.get_tip().await
+        }
+        async fn get_start_height(&self) -> Option<u32> {
+            self.0.get_start_height().await
+        }
+        async fn get_stored_headers_len(&self) -> u32 {
+            self.0.get_stored_headers_len().await
+        }
+        async fn get_header_height_by_hash(&self, hash: &BlockHash) -> StorageResult<Option<u32>> {
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+            self.0.get_header_height_by_hash(hash).await
+        }
+        async fn truncate_above(&mut self, target_height: u32) -> StorageResult<()> {
+            self.0.truncate_above(target_height).await
+        }
+    }
+
+    /// Planning a replay resolves every message's heights against the header
+    /// storage. It locks that storage per message, so a header write lands
+    /// between two messages instead of after the whole pass.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_replay_does_not_hold_the_header_storage_for_the_whole_pass() {
+        type S = PersistentMasternodeStorage<SlowHeaderStorage>;
+        let dir = TempDir::new().unwrap();
+        let tip = 300;
+        let folder = dir.path().join(S::FOLDER_NAME);
+        std::fs::create_dir_all(&folder).unwrap();
+        for height in 1..=tip {
+            std::fs::write(
+                folder.join(S::file_name(S::DIFF_PREFIX, height)),
+                serialize(&diff_between(height - 1, height)),
+            )
+            .unwrap();
+        }
+        let map = (0..=tip).map(|h| (height_hash(h), h)).collect();
+        let headers = Arc::new(RwLock::new(SlowHeaderStorage(MockHeaderStorage(map))));
+        let storage = S::open(dir.path(), Arc::clone(&headers), Network::Regtest).await.unwrap();
+
+        let log = storage.message_log();
+        let replay = tokio::spawn(async move { log.replay(None, Retain::Obsolete).await });
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+        let start = std::time::Instant::now();
+        drop(headers.write().await);
+        let waited = start.elapsed();
+
+        assert!(!replay.is_finished(), "the replay has to still be planning for this to test it");
+        replay.await.unwrap().unwrap();
+        assert!(
+            waited < std::time::Duration::from_millis(500),
+            "a header write waited {waited:?} behind a replay's planning pass"
+        );
     }
 
     #[test]

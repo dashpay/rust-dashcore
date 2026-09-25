@@ -8,7 +8,7 @@
 
 use crate::error::{Result, SpvError};
 use crate::network::NetworkManager;
-use crate::storage::{MasternodeStorage, StorageManager};
+use crate::storage::StorageManager;
 use dashcore::sml::llmq_type::LLMQType;
 use dashcore::sml::masternode_list_engine::MasternodeListEngine;
 use dashcore::sml::quorum_entry::qualified_quorum_entry::QualifiedQuorumEntry;
@@ -63,8 +63,8 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
             Some(quorum) => Some(quorum),
             None => {
                 let masternodes = self.storage.lock().await.masternodes();
-                let storage = masternodes.read().await;
-                storage.quorum_entry_at_or_before(quorum_type, quorum_hash, height).await?
+                let log = masternodes.read().await.message_log();
+                log.quorum_entry_at_or_before(quorum_type, quorum_hash, height).await?
             }
         };
 
