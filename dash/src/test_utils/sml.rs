@@ -2,7 +2,9 @@ use hashes::Hash;
 
 use crate::network::message_qrinfo::{MNSkipListMode, QRInfo, QuorumSnapshot};
 use crate::network::message_sml::MnListDiff;
-use crate::{BlockHash, Transaction};
+use crate::sml::masternode_list::MasternodeList;
+use crate::sml::masternode_list_engine::MasternodeListEngine;
+use crate::{BlockHash, Network, Transaction};
 
 fn dummy_hash(byte: u8) -> BlockHash {
     BlockHash::from_slice(&[byte; 32]).unwrap()
@@ -26,6 +28,45 @@ impl MnListDiff {
             new_quorums: vec![],
             quorums_chainlock_signatures: vec![],
         }
+    }
+
+    /// An empty diff from `BlockHash::dummy(base)` to `BlockHash::dummy(tip)`,
+    /// which an engine holding the list at `base` applies.
+    pub fn dummy_between(base: u32, tip: u32) -> Self {
+        MnListDiff {
+            base_block_hash: BlockHash::dummy(base),
+            block_hash: BlockHash::dummy(tip),
+            total_transactions: 1,
+            coinbase_tx: Transaction {
+                version: 3,
+                ..Transaction::dummy_empty()
+            },
+            ..MnListDiff::dummy_empty(0x00, 0x00)
+        }
+    }
+}
+
+impl MasternodeListEngine {
+    /// The mainnet engine of `tests/data/test_DML_diffs/masternode_list_engine.hex`,
+    /// 29 lists up to 2243493.
+    #[cfg(feature = "bincode")]
+    pub fn mainnet_fixture() -> Self {
+        let data =
+            hex::decode(include_str!("../../tests/data/test_DML_diffs/masternode_list_engine.hex"))
+                .unwrap();
+        bincode::decode_from_slice(&data, bincode::config::standard()).unwrap().0
+    }
+
+    /// A mainnet engine holding an empty list at each of `heights`.
+    pub fn dummy_with_lists(heights: &[u32]) -> Self {
+        let mut engine = MasternodeListEngine::default_for_network(Network::Mainnet);
+        for &height in heights {
+            engine.feed_block_height(height, BlockHash::dummy(height));
+            engine
+                .masternode_lists
+                .insert(height, MasternodeList::empty(BlockHash::dummy(height), height));
+        }
+        engine
     }
 }
 
