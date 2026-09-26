@@ -9,8 +9,11 @@ use dashcore::consensus::{deserialize, serialize, Decodable, Encodable};
 use dashcore::network::message_qrinfo::QRInfo;
 use dashcore::network::message_sml::MnListDiff;
 use dashcore::prelude::CoreBlockHeight;
-use dashcore::sml::masternode_list_engine::{qr_info_diffs, MasternodeListEngine};
-use dashcore::{BlockHash, Network};
+use dashcore::sml::llmq_type::network::NetworkLLMQExt;
+use dashcore::sml::llmq_type::LLMQType;
+use dashcore::sml::masternode_list_engine::{qr_info_diffs, MasternodeListEngine, WORK_DIFF_DEPTH};
+use dashcore::sml::quorum_entry::qualified_quorum_entry::QualifiedQuorumEntry;
+use dashcore::{BlockHash, Network, QuorumHash};
 
 use crate::error::{StorageError, StorageResult};
 use crate::storage::{io::atomic_write, BlockHeaderStorage};
@@ -45,6 +48,15 @@ pub trait MasternodeStorage: Send + Sync + 'static {
 
 pub struct PersistentMasternodeStorage<H: BlockHeaderStorage> {
     storage_path: PathBuf,
+    headers: Arc<RwLock<H>>,
+    network: Network,
+    diffs: IndexMap,
+    qr_infos: IndexMap,
+}
+
+/// The stored messages as of when it was taken. A replay runs on this, so the
+/// caller can release the storage lock before it starts.
+pub struct MessageLog<H: BlockHeaderStorage> {
     headers: Arc<RwLock<H>>,
     network: Network,
     diffs: IndexMap,
@@ -138,45 +150,58 @@ impl<H: BlockHeaderStorage> PersistentMasternodeStorage<H> {
         })
     }
 
-    /// Rebuilds the engine from every stored message. Messages apply in the
-    /// order of their newest base, so each comes after the one that built the
-    /// list it extends. They are read once to plan that order and again to
-    /// apply, so only one is held in memory at a time.
-    async fn replay(&self) -> StorageResult<MasternodeListEngine> {
+    pub fn message_log(&self) -> MessageLog<H> {
+        MessageLog {
+            headers: Arc::clone(&self.headers),
+            network: self.network,
+            diffs: self.diffs.clone(),
+            qr_infos: self.qr_infos.clone(),
+        }
+    }
+}
+
+impl<H: BlockHeaderStorage> MessageLog<H> {
+    /// Rebuilds the engine from the messages stored up to `until`, calling
+    /// `visit` after each one. Messages apply in the order of their newest
+    /// base, so each comes after the one that built the list it extends. They
+    /// are read once to plan that order and again to apply, so only one is held
+    /// in memory at a time, and the header storage is locked per message.
+    async fn replay(
+        &self,
+        until: CoreBlockHeight,
+        mut visit: impl FnMut(&MasternodeListEngine),
+    ) -> MasternodeListEngine {
         let mut engine = MasternodeListEngine::default_for_network(self.network);
 
-        let entries = self
-            .diffs
-            .iter()
-            .map(|(height, path)| (*height, Kind::Diff, path))
-            .chain(self.qr_infos.iter().map(|(height, path)| (*height, Kind::QrInfo, path)));
+        let entries =
+            self.diffs.range(..=until).map(|(height, path)| (*height, Kind::Diff, path)).chain(
+                self.qr_infos.range(..=until).map(|(height, path)| (*height, Kind::QrInfo, path)),
+            );
 
         let mut plan = Vec::new();
-        {
+        for (height, kind, path) in entries {
+            let message = match PersistentMasternodeStorage::<H>::read_entry(path, kind).await {
+                Ok(message) => message,
+                Err(e) => {
+                    tracing::warn!("Skipping unreadable masternode message at {height}: {e}");
+                    continue;
+                }
+            };
             let headers = self.headers.read().await;
-            for (height, kind, path) in entries {
-                let message = match Self::read_entry(path, kind).await {
-                    Ok(message) => message,
-                    Err(e) => {
-                        tracing::warn!("Skipping unreadable masternode message at {height}: {e}");
-                        continue;
-                    }
-                };
-                match &message {
-                    Message::QrInfo(qr_info) => {
-                        feed_qrinfo_heights_to_engine(&mut engine, qr_info, &*headers).await;
-                    }
-                    Message::Diff(diff) => {
-                        engine.feed_block_height(height, diff.block_hash);
-                        if let Ok(Some(base_height)) =
-                            headers.get_header_height_by_hash(&diff.base_block_hash).await
-                        {
-                            engine.feed_block_height(base_height, diff.base_block_hash);
-                        }
+            match &message {
+                Message::QrInfo(qr_info) => {
+                    feed_qrinfo_heights_to_engine(&mut engine, qr_info, &*headers).await;
+                }
+                Message::Diff(diff) => {
+                    engine.feed_block_height(height, diff.block_hash);
+                    if let Ok(Some(base_height)) =
+                        headers.get_header_height_by_hash(&diff.base_block_hash).await
+                    {
+                        engine.feed_block_height(base_height, diff.base_block_hash);
                     }
                 }
-                plan.push((height, kind, path, message.base_hashes()));
             }
+            plan.push((height, kind, path, message.base_hashes()));
         }
 
         let newest_base = |bases: &[BlockHash]| {
@@ -189,13 +214,14 @@ impl<H: BlockHeaderStorage> PersistentMasternodeStorage<H> {
         let total = plan.len();
         let mut applied = 0;
         for (height, kind, path, _) in plan {
-            match Self::read_entry(path, kind).await {
-                Ok(message) => match Self::apply(&mut engine, height, message) {
+            match PersistentMasternodeStorage::<H>::read_entry(path, kind).await {
+                Ok(message) => match apply(&mut engine, height, message) {
                     true => applied += 1,
                     false => tracing::warn!("Masternode message at {height} does not apply"),
                 },
                 Err(e) => tracing::warn!("Masternode message at {height} became unreadable: {e}"),
             }
+            visit(&engine);
         }
 
         tracing::debug!(
@@ -203,14 +229,40 @@ impl<H: BlockHeaderStorage> PersistentMasternodeStorage<H> {
             engine.masternode_lists.len()
         );
 
-        Ok(engine)
+        engine
     }
 
-    fn apply(engine: &mut MasternodeListEngine, height: CoreBlockHeight, message: Message) -> bool {
-        match message {
-            Message::QrInfo(qr_info) => engine.feed_qr_info(*qr_info, true, true).is_ok(),
-            Message::Diff(diff) => engine.apply_diff(*diff, Some(height), false, None).is_ok(),
-        }
+    /// The quorum as the engine would have resolved it at `height` before its
+    /// retention window dropped the lists holding it. A QRInfo builds lists
+    /// back to its h-4c work block, so messages stored up to six rotation
+    /// cycles above `height` still count.
+    pub async fn quorum_entry_at_or_before(
+        &self,
+        llmq_type: LLMQType,
+        quorum_hash: QuorumHash,
+        height: CoreBlockHeight,
+    ) -> Option<QualifiedQuorumEntry> {
+        let cycle = self.network.isd_llmq_type().params().dkg_params.interval;
+        let until = height.saturating_add(cycle.saturating_mul(6)).saturating_add(WORK_DIFF_DEPTH);
+        let mut found: Option<(CoreBlockHeight, QualifiedQuorumEntry)> = None;
+        self.replay(until, |engine| {
+            let hit =
+                engine.quorum_entry_for_hash_at_or_before_height(llmq_type, quorum_hash, height);
+            if let Some((list_height, quorum)) = hit {
+                if found.as_ref().is_none_or(|(best, _)| list_height >= *best) {
+                    found = Some((list_height, quorum.clone()));
+                }
+            }
+        })
+        .await;
+        found.map(|(_, quorum)| quorum)
+    }
+}
+
+fn apply(engine: &mut MasternodeListEngine, height: CoreBlockHeight, message: Message) -> bool {
+    match message {
+        Message::QrInfo(qr_info) => engine.feed_qr_info(*qr_info, true, true).is_ok(),
+        Message::Diff(diff) => engine.apply_diff(*diff, Some(height), false, None).is_ok(),
     }
 }
 
@@ -260,7 +312,7 @@ impl<H: BlockHeaderStorage> MasternodeStorage for PersistentMasternodeStorage<H>
     }
 
     async fn load_engine(&self) -> StorageResult<MasternodeListEngine> {
-        self.replay().await
+        Ok(self.message_log().replay(CoreBlockHeight::MAX, |_| {}).await)
     }
 }
 
@@ -412,6 +464,80 @@ mod tests {
             engine.masternode_lists.contains_key(&100),
             "the readable message still rebuilds its list"
         );
+    }
+
+    /// A Platform quorum mined at 1 and retired at 2, then a diff per block up to
+    /// past the retention window, written without fsync to keep the setup fast.
+    #[tokio::test]
+    async fn a_lookup_rebuilds_a_quorum_only_lists_out_of_the_window_held() {
+        use dashcore::bls_sig_utils::{BLSPublicKey, BLSSignature};
+        use dashcore::hash_types::QuorumVVecHash;
+        use dashcore::network::message_sml::{DeletedQuorum, QuorumCLSigObject};
+        use dashcore::transaction::special_transaction::quorum_commitment::QuorumEntry;
+        type S = PersistentMasternodeStorage<MockHeaderStorage>;
+
+        let tip = 2_500;
+        let llmq_type = Network::Regtest.platform_type();
+        let quorum_hash = QuorumHash::from_byte_array([0xAB; 32]);
+        let mined = MnListDiff {
+            block_hash: BlockHash::dummy(1),
+            new_quorums: vec![QuorumEntry {
+                version: 1,
+                llmq_type,
+                quorum_hash,
+                quorum_index: None,
+                signers: vec![true; 3],
+                valid_members: vec![true; 3],
+                quorum_public_key: BLSPublicKey::from([7; 48]),
+                quorum_vvec_hash: QuorumVVecHash::all_zeros(),
+                threshold_sig: BLSSignature::from([1; 96]),
+                all_commitment_aggregated_signature: BLSSignature::from([1; 96]),
+            }],
+            quorums_chainlock_signatures: vec![QuorumCLSigObject {
+                signature: BLSSignature::from([1; 96]),
+                index_set: vec![0],
+            }],
+            ..MnListDiff::dummy(0x00, 0x01)
+        };
+        let retired = MnListDiff {
+            deleted_quorums: vec![DeletedQuorum {
+                llmq_type,
+                quorum_hash,
+            }],
+            ..MnListDiff::dummy_between(1, 2)
+        };
+
+        let dir = TempDir::new().unwrap();
+        let folder = dir.path().join(S::FOLDER_NAME);
+        std::fs::create_dir_all(&folder).unwrap();
+        let write = |height, diff: &MnListDiff| {
+            std::fs::write(folder.join(S::file_name(S::DIFF_PREFIX, height)), serialize(diff))
+                .unwrap()
+        };
+        write(1, &mined);
+        write(2, &retired);
+        for height in 3..=tip {
+            write(height, &MnListDiff::dummy_between(height - 1, height));
+        }
+        let heights = (1..=tip).map(|height| (BlockHash::dummy(height), height)).collect();
+        let storage = S::open(
+            dir.path(),
+            Arc::new(RwLock::new(MockHeaderStorage(heights))),
+            Network::Regtest,
+        )
+        .await
+        .unwrap();
+
+        let engine = storage.load_engine().await.unwrap();
+        assert!(engine
+            .quorum_entry_for_hash_at_or_before_height(llmq_type, quorum_hash, 100)
+            .is_none());
+
+        let log = storage.message_log();
+        let quorum = log.quorum_entry_at_or_before(llmq_type, quorum_hash, 100).await;
+        assert_eq!(quorum.map(|quorum| quorum.quorum_entry.quorum_hash), Some(quorum_hash));
+        let unknown = QuorumHash::from_byte_array([0xCD; 32]);
+        assert!(log.quorum_entry_at_or_before(llmq_type, unknown, 100).await.is_none());
     }
 
     #[test]
