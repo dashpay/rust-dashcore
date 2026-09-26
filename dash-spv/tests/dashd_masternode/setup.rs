@@ -41,6 +41,11 @@ pub(super) struct ClientHandle {
 }
 
 impl ClientHandle {
+    pub(super) fn start(&mut self) {
+        let run_client = self.client.clone();
+        self.run_handle = Some(tokio::task::spawn(async move { run_client.run().await }));
+    }
+
     pub(super) async fn stop(&mut self) {
         tracing::info!("Stopping client run loop...");
         self.client.stop().await.expect("client stop failed");
@@ -165,6 +170,15 @@ pub(super) async fn create_and_start_client(
     config: &ClientConfig,
     wallet: Arc<RwLock<WalletManager<ManagedWalletInfo>>>,
 ) -> ClientHandle {
+    let mut client_handle = create_client(config, wallet).await;
+    client_handle.start();
+    client_handle
+}
+
+pub(super) async fn create_client(
+    config: &ClientConfig,
+    wallet: Arc<RwLock<WalletManager<ManagedWalletInfo>>>,
+) -> ClientHandle {
     let network_manager =
         PeerNetworkManager::new(config).await.expect("Failed to create network manager");
     let storage_manager =
@@ -183,13 +197,10 @@ pub(super) async fn create_and_start_client(
 
     let engine =
         client.masternode_list_engine().expect("Engine should be initialized after creation");
-    let run_client = client.clone();
-
-    let run_handle = tokio::task::spawn(async move { run_client.run().await });
 
     ClientHandle {
         client,
-        run_handle: Some(run_handle),
+        run_handle: None,
         progress_receiver,
         sync_event_receiver,
         wallet_event_receiver,
