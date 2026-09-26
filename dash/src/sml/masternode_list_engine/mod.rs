@@ -1473,6 +1473,10 @@ impl MasternodeListEngine {
 
     /// Applies a masternode list diff to create or update a masternode list.
     ///
+    /// A diff built on the newest list moves the tip and prunes the lists that
+    /// fall out of the retention window. Other diffs may share an older base, so
+    /// they prune nothing.
+    ///
     /// # Parameters
     /// - `masternode_list_diff`: The diff to apply
     /// - `diff_end_height`: Optional height where the diff applies (will be looked up if None)
@@ -1481,8 +1485,30 @@ impl MasternodeListEngine {
     ///
     /// # Returns
     /// Result containing an optional BLS signature for rotation cycles, or an error.
-    #[allow(unused_variables)]
     pub fn apply_diff(
+        &mut self,
+        masternode_list_diff: MnListDiff,
+        diff_end_height: Option<CoreBlockHeight>,
+        verify_quorums: bool,
+        previous_chain_lock_sigs: Option<[BLSSignature; 3]>,
+    ) -> Result<Option<BLSSignature>, SmlError> {
+        let extended_tip = self
+            .latest_masternode_list()
+            .filter(|list| list.block_hash == masternode_list_diff.base_block_hash)
+            .map(|list| list.known_height);
+        let result = self.apply_diff_to_base(
+            masternode_list_diff,
+            diff_end_height,
+            verify_quorums,
+            previous_chain_lock_sigs,
+        );
+        if let (Ok(_), Some(base)) = (&result, extended_tip) {
+            self.prune_after_extending(base);
+        }
+        result
+    }
+
+    fn apply_diff_to_base(
         &mut self,
         masternode_list_diff: MnListDiff,
         diff_end_height: Option<CoreBlockHeight>,
@@ -1599,7 +1625,7 @@ impl MasternodeListEngine {
             let (masternode_list, rotation_sig) = base_masternode_list.apply_diff(
                 masternode_list_diff.clone(),
                 diff_end_height,
-                None,
+                previous_chain_lock_sigs,
                 self.network,
             )?;
             if verify_quorums {
@@ -2433,10 +2459,7 @@ mod tests {
 
     #[test]
     fn deserialize_mn_list_engine_and_validate_non_rotated_quorums() {
-        let block_hex =
-            include_str!("../../../tests/data/test_DML_diffs/masternode_list_engine.hex");
-        let data = hex::decode(block_hex).expect("decode hex");
-        let mut mn_list_engine: MasternodeListEngine = decode_fixture(&data);
+        let mut mn_list_engine = MasternodeListEngine::mainnet_fixture();
 
         assert_eq!(mn_list_engine.masternode_lists.len(), 29);
 
@@ -2466,10 +2489,7 @@ mod tests {
     #[test]
     fn deserialize_mn_list_engine_and_validate_non_rotated_quorums_when_reconstructing_chain_locks()
     {
-        let block_hex =
-            include_str!("../../../tests/data/test_DML_diffs/masternode_list_engine.hex");
-        let data = hex::decode(block_hex).expect("decode hex");
-        let mut mn_list_engine: MasternodeListEngine = decode_fixture(&data);
+        let mut mn_list_engine = MasternodeListEngine::mainnet_fixture();
 
         assert_eq!(mn_list_engine.masternode_lists.len(), 29);
 
@@ -2498,10 +2518,7 @@ mod tests {
 
     #[test]
     fn deserialize_mn_list_engine_and_validate_rotated_quorums_individually() {
-        let block_hex =
-            include_str!("../../../tests/data/test_DML_diffs/masternode_list_engine.hex");
-        let data = hex::decode(block_hex).expect("decode hex");
-        let mn_list_engine: MasternodeListEngine = decode_fixture(&data);
+        let mn_list_engine = MasternodeListEngine::mainnet_fixture();
 
         for (cycle_hash, quorums) in mn_list_engine.rotated_quorums_per_cycle.iter() {
             for (index, quorum) in quorums.iter() {
@@ -2517,10 +2534,7 @@ mod tests {
 
     #[test]
     fn deserialize_mn_list_engine_and_validate_rotated_quorums_collectively() {
-        let block_hex =
-            include_str!("../../../tests/data/test_DML_diffs/masternode_list_engine.hex");
-        let data = hex::decode(block_hex).expect("decode hex");
-        let mn_list_engine: MasternodeListEngine = decode_fixture(&data);
+        let mn_list_engine = MasternodeListEngine::mainnet_fixture();
 
         for quorums in mn_list_engine.rotated_quorums_per_cycle.values() {
             mn_list_engine
