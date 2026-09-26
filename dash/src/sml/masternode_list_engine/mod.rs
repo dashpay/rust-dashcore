@@ -1481,7 +1481,6 @@ impl MasternodeListEngine {
     ///
     /// # Returns
     /// Result containing an optional BLS signature for rotation cycles, or an error.
-    #[allow(unused_variables)]
     pub fn apply_diff(
         &mut self,
         masternode_list_diff: MnListDiff,
@@ -1599,7 +1598,7 @@ impl MasternodeListEngine {
             let (masternode_list, rotation_sig) = base_masternode_list.apply_diff(
                 masternode_list_diff.clone(),
                 diff_end_height,
-                None,
+                previous_chain_lock_sigs,
                 self.network,
             )?;
             if verify_quorums {
@@ -2433,10 +2432,7 @@ mod tests {
 
     #[test]
     fn deserialize_mn_list_engine_and_validate_non_rotated_quorums() {
-        let block_hex =
-            include_str!("../../../tests/data/test_DML_diffs/masternode_list_engine.hex");
-        let data = hex::decode(block_hex).expect("decode hex");
-        let mut mn_list_engine: MasternodeListEngine = decode_fixture(&data);
+        let mut mn_list_engine = MasternodeListEngine::mainnet_fixture();
 
         assert_eq!(mn_list_engine.masternode_lists.len(), 29);
 
@@ -2466,10 +2462,7 @@ mod tests {
     #[test]
     fn deserialize_mn_list_engine_and_validate_non_rotated_quorums_when_reconstructing_chain_locks()
     {
-        let block_hex =
-            include_str!("../../../tests/data/test_DML_diffs/masternode_list_engine.hex");
-        let data = hex::decode(block_hex).expect("decode hex");
-        let mut mn_list_engine: MasternodeListEngine = decode_fixture(&data);
+        let mut mn_list_engine = MasternodeListEngine::mainnet_fixture();
 
         assert_eq!(mn_list_engine.masternode_lists.len(), 29);
 
@@ -2498,10 +2491,7 @@ mod tests {
 
     #[test]
     fn deserialize_mn_list_engine_and_validate_rotated_quorums_individually() {
-        let block_hex =
-            include_str!("../../../tests/data/test_DML_diffs/masternode_list_engine.hex");
-        let data = hex::decode(block_hex).expect("decode hex");
-        let mn_list_engine: MasternodeListEngine = decode_fixture(&data);
+        let mn_list_engine = MasternodeListEngine::mainnet_fixture();
 
         for (cycle_hash, quorums) in mn_list_engine.rotated_quorums_per_cycle.iter() {
             for (index, quorum) in quorums.iter() {
@@ -2517,10 +2507,7 @@ mod tests {
 
     #[test]
     fn deserialize_mn_list_engine_and_validate_rotated_quorums_collectively() {
-        let block_hex =
-            include_str!("../../../tests/data/test_DML_diffs/masternode_list_engine.hex");
-        let data = hex::decode(block_hex).expect("decode hex");
-        let mn_list_engine: MasternodeListEngine = decode_fixture(&data);
+        let mn_list_engine = MasternodeListEngine::mainnet_fixture();
 
         for quorums in mn_list_engine.rotated_quorums_per_cycle.values() {
             mn_list_engine

@@ -1,14 +1,14 @@
-use crate::QuorumHash;
 use crate::prelude::CoreBlockHeight;
 use crate::sml::llmq_entry_verification::LLMQEntryVerificationStatus;
-use crate::sml::llmq_type::LLMQType;
 use crate::sml::llmq_type::network::NetworkLLMQExt;
-use crate::sml::masternode_list::MasternodeList;
-#[cfg(feature = "quorum_validation")]
-use crate::sml::masternode_list::QuorumMap;
-use crate::sml::masternode_list_engine::MasternodeListEngine;
+use crate::sml::llmq_type::{LLMQType, QUORUM_MEMBER_LIST_OFFSET};
+use crate::sml::masternode_list::{MasternodeList, QuorumMap};
+use crate::sml::masternode_list_engine::{
+    MasternodeListEngine, MasternodeListEngineBlockContainer,
+};
 use crate::sml::quorum_entry::qualified_quorum_entry::QualifiedQuorumEntry;
-#[cfg(feature = "quorum_validation")]
+use crate::{BlockHash, QuorumHash};
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
 /// How many active windows below the lookup height [`MasternodeListEngine::quorum_entry_for_hash_at_or_before_height`]
@@ -23,6 +23,12 @@ const QUORUM_WALK_BACK_ACTIVE_WINDOWS: u32 = 4;
 /// every diff to be served against it rather than against genesis.
 const QRINFO_BASE_CYCLES_BEHIND: u32 = 4;
 
+/// Blocks a quorum of `llmq_type` stays active for.
+fn active_window(llmq_type: LLMQType) -> CoreBlockHeight {
+    let params = llmq_type.params();
+    params.signing_active_quorum_count.saturating_mul(params.dkg_params.interval)
+}
+
 impl MasternodeListEngine {
     /// The list the next QRInfo at `tip` diffs from: the newest one at or below
     /// the h-4c cycle its oldest diff reaches (DIP-24). `None` when no list is
@@ -34,6 +40,77 @@ impl MasternodeListEngine {
         }
         let reach = (tip - tip % interval).checked_sub(QRINFO_BASE_CYCLES_BEHIND * interval)?;
         self.masternode_lists.range(..=reach).next_back().map(|(_, list)| list)
+    }
+
+    /// How far below the newest list the engine still reads a list: the QRInfo
+    /// base and quarters, the work block of every active quorum, and Platform's
+    /// walk-back.
+    fn retention_window(&self) -> CoreBlockHeight {
+        let rotation_interval = self.network.isd_llmq_type().params().dkg_params.interval;
+        let qr_info = (QRINFO_BASE_CYCLES_BEHIND + 1).saturating_mul(rotation_interval);
+        let platform = active_window(self.network.platform_type())
+            .saturating_mul(QUORUM_WALK_BACK_ACTIVE_WINDOWS);
+        let member_lists = self
+            .network
+            .enabled_llmq_types()
+            .into_iter()
+            .filter(|llmq_type| !llmq_type.is_rotating_quorum_type())
+            .map(|llmq_type| active_window(llmq_type).saturating_add(QUORUM_MEMBER_LIST_OFFSET))
+            .max()
+            .unwrap_or_default();
+        qr_info.max(platform).max(member_lists)
+    }
+
+    /// Drops the lists out of the retention window of the newest one, except the
+    /// next QRInfo's base, and the state only they referenced. A diff requested
+    /// from a dropped list no longer applies, so call this with none in flight.
+    pub fn prune_old_lists(&mut self) {
+        let Some(tip) = self.latest_masternode_list().map(|list| list.known_height) else {
+            return;
+        };
+        let qr_info_base = self.qr_info_base_list(tip).map_or(tip, |list| list.known_height);
+        let floor = tip.saturating_sub(self.retention_window()).min(qr_info_base);
+        let before = self.masternode_lists.len();
+        self.masternode_lists.retain(|height, _| *height >= floor);
+        if self.masternode_lists.len() == before {
+            return;
+        }
+
+        let below_floor = |container: &MasternodeListEngineBlockContainer, hash: &BlockHash| {
+            container.get_height(hash).is_some_and(|height| height < floor)
+        };
+        let container = &self.block_container;
+        self.known_snapshots.retain(|hash, _| !below_floor(container, hash));
+        self.rotated_quorums_per_cycle.retain(|hash, _| !below_floor(container, hash));
+
+        let lists = &self.masternode_lists;
+        for statuses in self.quorum_statuses.values_mut() {
+            statuses.retain(|_, (heights, _, _)| {
+                heights.retain(|height| lists.contains_key(height));
+                !heights.is_empty()
+            });
+        }
+        self.quorum_statuses.retain(|_, statuses| !statuses.is_empty());
+
+        let mut referenced: BTreeSet<BlockHash> = self.known_snapshots.keys().copied().collect();
+        let mut previous: Option<&Arc<QuorumMap>> = None;
+        for list in self.masternode_lists.values() {
+            referenced.insert(list.block_hash);
+            if previous.is_some_and(|quorums| Arc::ptr_eq(quorums, &list.quorums)) {
+                continue;
+            }
+            referenced.extend(list.quorums.values().flat_map(|quorums| quorums.keys().copied()));
+            previous = Some(&list.quorums);
+        }
+        for (cycle_hash, quorums) in &self.rotated_quorums_per_cycle {
+            referenced.insert(*cycle_hash);
+            referenced.extend(quorums.values().map(|quorum| quorum.quorum_entry.quorum_hash));
+        }
+        let MasternodeListEngineBlockContainer::BTreeMapContainer(container) =
+            &mut self.block_container;
+        container.block_hashes.retain(|height, hash| *height >= floor || referenced.contains(hash));
+        let block_hashes = &container.block_hashes;
+        container.block_heights.retain(|_, height| block_hashes.contains_key(height));
     }
 
     /// Sets the verification status of a quorum in the lists at `heights`.
@@ -131,11 +208,9 @@ impl MasternodeListEngine {
         quorum_hash: QuorumHash,
         height: CoreBlockHeight,
     ) -> Option<(CoreBlockHeight, &QualifiedQuorumEntry)> {
-        let params = llmq_type.params();
-        let active_window =
-            params.signing_active_quorum_count.saturating_mul(params.dkg_params.interval);
-        let floor =
-            height.saturating_sub(active_window.saturating_mul(QUORUM_WALK_BACK_ACTIVE_WINDOWS));
+        let floor = height.saturating_sub(
+            active_window(llmq_type).saturating_mul(QUORUM_WALK_BACK_ACTIVE_WINDOWS),
+        );
 
         self.masternode_lists.range(floor..=height).rev().find_map(|(_, list)| {
             list.quorum_entry_of_type_for_quorum_hash(llmq_type, quorum_hash)
@@ -314,55 +389,17 @@ mod shared_map_tests {
     use crate::network::message_sml::MnListDiff;
     use crate::prelude::CoreBlockHeight;
     use crate::sml::llmq_entry_verification::LLMQEntryVerificationStatus;
-    use crate::sml::masternode_list::MasternodeList;
     use crate::sml::masternode_list_engine::MasternodeListEngine;
-    use crate::transaction::Transaction;
-    use crate::{BlockHash, Network, QuorumHash};
+    use crate::{BlockHash, QuorumHash};
     use hashes::Hash;
     use std::sync::Arc;
 
     const TIP: CoreBlockHeight = 1_000_000;
 
-    fn block_hash(height: CoreBlockHeight) -> BlockHash {
-        let mut bytes = [0xab; 32];
-        bytes[..4].copy_from_slice(&height.to_le_bytes());
-        BlockHash::from_byte_array(bytes)
-    }
-
-    fn engine_with_list(height: CoreBlockHeight) -> MasternodeListEngine {
-        let mut engine = MasternodeListEngine::default_for_network(Network::Mainnet);
-        engine.feed_block_height(height, block_hash(height));
-        engine.masternode_lists.insert(height, MasternodeList::empty(block_hash(height), height));
-        engine
-    }
-
-    fn empty_diff(base: CoreBlockHeight, tip: CoreBlockHeight) -> MnListDiff {
-        MnListDiff {
-            version: 1,
-            base_block_hash: block_hash(base),
-            block_hash: block_hash(tip),
-            total_transactions: 1,
-            merkle_hashes: vec![],
-            merkle_flags: vec![],
-            coinbase_tx: Transaction {
-                version: 3,
-                lock_time: 0,
-                input: vec![],
-                output: vec![],
-                special_transaction_payload: None,
-            },
-            deleted_masternodes: vec![],
-            new_masternodes: vec![],
-            deleted_quorums: vec![],
-            new_quorums: vec![],
-            quorums_chainlock_signatures: vec![],
-        }
-    }
-
     #[test]
     fn a_diff_that_changes_nothing_shares_the_lists_maps() {
-        let mut engine = engine_with_list(TIP - 1);
-        engine.apply_diff(empty_diff(TIP - 1, TIP), Some(TIP), false, None).unwrap();
+        let mut engine = MasternodeListEngine::dummy_with_lists(&[TIP - 1]);
+        engine.apply_diff(MnListDiff::dummy_between(TIP - 1, TIP), Some(TIP), false, None).unwrap();
 
         let base = &engine.masternode_lists[&(TIP - 1)];
         let next = &engine.masternode_lists[&TIP];
@@ -377,9 +414,10 @@ mod shared_map_tests {
     #[cfg(feature = "quorum_validation")]
     fn a_verified_quorum_is_not_validated_again() {
         let quorum_height = TIP - 100;
-        let quorum_hash = QuorumHash::from_byte_array(block_hash(quorum_height).to_byte_array());
-        let mut engine = engine_with_list(TIP);
-        engine.feed_block_height(quorum_height, block_hash(quorum_height));
+        let quorum_hash =
+            QuorumHash::from_byte_array(BlockHash::dummy(quorum_height).to_byte_array());
+        let mut engine = MasternodeListEngine::dummy_with_lists(&[TIP]);
+        engine.feed_block_height(quorum_height, BlockHash::dummy(quorum_height));
         Arc::make_mut(&mut engine.masternode_lists.get_mut(&TIP).unwrap().quorums)
             .entry(PLATFORM_TYPE)
             .or_default()
@@ -398,15 +436,17 @@ mod shared_map_tests {
     #[cfg(feature = "quorum_validation")]
     fn a_status_change_keeps_the_lists_that_shared_a_quorum_map_sharing() {
         let quorum_hash = QuorumHash::from_byte_array([0x42; 32]);
-        let mut engine = engine_with_list(TIP - 2);
+        let mut engine = MasternodeListEngine::dummy_with_lists(&[TIP - 2]);
         let mut quorum = quorum_entry(quorum_hash, 1);
         quorum.verified = LLMQEntryVerificationStatus::Unknown;
         Arc::make_mut(&mut engine.masternode_lists.get_mut(&(TIP - 2)).unwrap().quorums)
             .entry(PLATFORM_TYPE)
             .or_default()
             .insert(quorum_hash, Arc::new(quorum));
-        engine.apply_diff(empty_diff(TIP - 2, TIP - 1), Some(TIP - 1), false, None).unwrap();
-        engine.apply_diff(empty_diff(TIP - 1, TIP), Some(TIP), false, None).unwrap();
+        engine
+            .apply_diff(MnListDiff::dummy_between(TIP - 2, TIP - 1), Some(TIP - 1), false, None)
+            .unwrap();
+        engine.apply_diff(MnListDiff::dummy_between(TIP - 1, TIP), Some(TIP), false, None).unwrap();
 
         engine.set_quorum_status_in_lists(
             [TIP - 2, TIP - 1, TIP],
@@ -422,5 +462,100 @@ mod shared_map_tests {
             lists[2].quorums[&PLATFORM_TYPE][&quorum_hash].verified,
             LLMQEntryVerificationStatus::Verified
         );
+    }
+}
+
+#[cfg(test)]
+mod prune_tests {
+    use super::tests::PLATFORM_TYPE;
+    use super::*;
+    use crate::bls_sig_utils::BLSPublicKey;
+    use crate::network::message_qrinfo::QuorumSnapshot;
+    use crate::sml::masternode_list_engine::MasternodeListEngine;
+    use crate::{BlockHash, Network};
+    use hashes::Hash;
+
+    const TIP: CoreBlockHeight = 1_000_000;
+    /// Within the window at `TIP` and below the next QRInfo's h-4c reach.
+    const QR_INFO_BASE: CoreBlockHeight = 998_000;
+
+    fn heights(engine: &MasternodeListEngine) -> Vec<CoreBlockHeight> {
+        engine.masternode_lists.keys().copied().collect()
+    }
+
+    /// 400_85's active window plus 8, beyond Platform's walk-back (2304) and
+    /// the QRInfo reach (1440).
+    #[test]
+    fn the_mainnet_window_reaches_the_oldest_active_quorums_work_block() {
+        let engine = MasternodeListEngine::default_for_network(Network::Mainnet);
+        assert_eq!(engine.retention_window(), 4 * 576 + 8);
+    }
+
+    #[test]
+    fn pruning_drops_the_lists_below_the_window() {
+        let floor =
+            TIP - MasternodeListEngine::default_for_network(Network::Mainnet).retention_window();
+        let mut engine = MasternodeListEngine::dummy_with_lists(&[1_000, floor - 1, floor, TIP]);
+
+        engine.prune_old_lists();
+
+        assert_eq!(heights(&engine), vec![floor, TIP]);
+    }
+
+    #[test]
+    fn the_next_qr_info_base_survives_a_sparse_history() {
+        let base = TIP - 10_000;
+        let mut engine = MasternodeListEngine::dummy_with_lists(&[base, TIP]);
+
+        engine.prune_old_lists();
+
+        assert_eq!(engine.qr_info_base_list(TIP).map(|list| list.known_height), Some(base));
+    }
+
+    #[test]
+    fn pruning_drops_the_state_only_pruned_lists_referenced() {
+        let old = 900_000;
+        let kept = TIP - 100;
+        let mut engine = MasternodeListEngine::dummy_with_lists(&[old, QR_INFO_BASE, kept, TIP]);
+        for height in [old, kept] {
+            engine.known_snapshots.insert(BlockHash::dummy(height), QuorumSnapshot::dummy());
+            engine.rotated_quorums_per_cycle.insert(BlockHash::dummy(height), Default::default());
+        }
+        let quorum_hash = QuorumHash::from_byte_array([0x42; 32]);
+        engine.quorum_statuses.entry(PLATFORM_TYPE).or_default().insert(
+            quorum_hash,
+            (BTreeSet::from([old]), BLSPublicKey::from([1; 48]), Default::default()),
+        );
+
+        engine.prune_old_lists();
+        assert_eq!(heights(&engine), vec![QR_INFO_BASE, kept, TIP]);
+
+        assert_eq!(
+            engine.known_snapshots.keys().collect::<Vec<_>>(),
+            vec![&BlockHash::dummy(kept)]
+        );
+        assert_eq!(
+            engine.rotated_quorums_per_cycle.keys().collect::<Vec<_>>(),
+            vec![&BlockHash::dummy(kept)]
+        );
+        assert!(engine.quorum_statuses.is_empty(), "no retained list holds the quorum");
+        assert!(!engine.block_container.contains_hash(&BlockHash::dummy(old)));
+        assert!(engine.block_container.contains_hash(&BlockHash::dummy(kept)));
+    }
+
+    /// The two ChainLocks of `chain_lock_verification`, after pruning its fixture.
+    #[test]
+    #[cfg(feature = "message_verification")]
+    fn prune_keeps_what_chain_locks_near_the_tip_verify_against() {
+        use crate::ChainLock;
+
+        let mut engine = MasternodeListEngine::mainnet_fixture();
+        let before = engine.masternode_lists.len();
+        engine.prune_old_lists();
+        assert!(engine.masternode_lists.len() < before);
+
+        for chain_lock in ChainLock::mainnet_fixture_pair() {
+            engine.verify_chain_lock(&chain_lock).unwrap();
+        }
     }
 }

@@ -405,22 +405,15 @@ impl MasternodeListEngine {
 
 #[cfg(test)]
 mod tests {
-    use crate::bls_sig_utils::BLSSignature;
     use crate::consensus::deserialize;
     use crate::hashes::Hash;
     use crate::sml::llmq_type::LLMQType;
     use crate::sml::masternode_list_engine::MasternodeListEngine;
-    use crate::{BlockHash, ChainLock, InstantLock, QuorumHash};
+    use crate::{ChainLock, InstantLock, QuorumHash};
 
     #[test]
     pub fn is_lock_verification() {
-        let block_hex =
-            include_str!("../../../tests/data/test_DML_diffs/masternode_list_engine.hex");
-        let data = hex::decode(block_hex).expect("decode hex");
-        let mn_list_engine: MasternodeListEngine =
-            bincode::decode_from_slice(&data, bincode::config::standard())
-                .expect("expected to decode")
-                .0;
+        let mn_list_engine = MasternodeListEngine::mainnet_fixture();
 
         let lock_data = hex::decode("01018d53e7997ead57409750942af0d5e0aafc06f852a9a52308f4781b6a8220298f00000000c6f9d8c63dd15937ea70aaddb7890daad42c91bf6818e2bf76d183d6f2d9215b4b5f84978fad9dde7ab52bdcc0674be891e9029cc1ef0cb01200000000000000a27c98836c4c04653ab81eb4e07ddfc2c8c2c1036b75247969c05a4f25451cd78913a971f1899d9f2bddec9cf8e0104004f72f20c2856453e5aa3bcd2a8200670ec28feda38f67cc400fc72ef1966956656ec0765478c9d16e9a9e470c07f9ed").expect("expected valid hex");
         let lock: InstantLock = deserialize(lock_data.as_slice()).expect("expected to deserialize");
@@ -456,20 +449,10 @@ mod tests {
     /// retry against, that failure has to stand.
     #[test]
     fn chain_lock_replayed_above_the_newest_list_is_rejected() {
-        let block_hex =
-            include_str!("../../../tests/data/test_DML_diffs/masternode_list_engine.hex");
-        let data = hex::decode(block_hex).expect("decode hex");
-        let mn_list_engine: MasternodeListEngine =
-            bincode::decode_from_slice(&data, bincode::config::standard())
-                .expect("expected to decode")
-                .0;
+        let mn_list_engine = MasternodeListEngine::mainnet_fixture();
         let newest = mn_list_engine.latest_masternode_list().expect("newest").known_height;
 
-        let genuine = ChainLock {
-            block_height: 2243495,
-            block_hash: BlockHash::from_slice(hex::decode("000000000000000d88580463cafe168b2f465f40f01916ad95fe9be459c26491").unwrap().as_slice()).unwrap().reverse(),
-            signature: BLSSignature::from_hex("a6bc4dcf7afb042e0b0258a994f5a77856971a32a3ad3ee89d21e1011a77211070bec7c2ef50c293722cbae135b904640b482479f836120e0be7d42ce332a7c58096d8d8006920ef3dbcc47b5f7ed00aeb68d58bc514f4401bd72b247bf23699").unwrap(),
-        };
+        let [genuine, _] = ChainLock::mainnet_fixture_pair();
         mn_list_engine.verify_chain_lock(&genuine).expect("verifies at its own height");
 
         let replayed = ChainLock {
@@ -481,23 +464,13 @@ mod tests {
 
     #[test]
     pub fn chain_lock_verification() {
-        let block_hex =
-            include_str!("../../../tests/data/test_DML_diffs/masternode_list_engine.hex");
-        let data = hex::decode(block_hex).expect("decode hex");
-        let mn_list_engine: MasternodeListEngine =
-            bincode::decode_from_slice(&data, bincode::config::standard())
-                .expect("expected to decode")
-                .0;
+        let mn_list_engine = MasternodeListEngine::mainnet_fixture();
 
         let height = mn_list_engine.latest_masternode_list().expect("height").known_height;
 
         assert_eq!(height, 2243493);
 
-        let chain_lock = ChainLock {
-            block_height: 2243495,
-            block_hash: BlockHash::from_slice(hex::decode("000000000000000d88580463cafe168b2f465f40f01916ad95fe9be459c26491").unwrap().as_slice()).unwrap().reverse(),
-            signature: BLSSignature::from_hex("a6bc4dcf7afb042e0b0258a994f5a77856971a32a3ad3ee89d21e1011a77211070bec7c2ef50c293722cbae135b904640b482479f836120e0be7d42ce332a7c58096d8d8006920ef3dbcc47b5f7ed00aeb68d58bc514f4401bd72b247bf23699").unwrap(),
-        };
+        let [chain_lock, next_chain_lock] = ChainLock::mainnet_fixture_pair();
 
         let request_id = chain_lock.request_id().expect("expected to make request id");
         assert_eq!(
@@ -524,11 +497,7 @@ mod tests {
 
         // let's do another to make sure it wasn't a 1/4 fluke
 
-        let chain_lock = ChainLock {
-            block_height: 2243496,
-            block_hash: BlockHash::from_slice(hex::decode("000000000000001f9ff71c513c0ccef0c7c392f0df8bcb3c7c5764dcc1f4c89b").unwrap().as_slice()).unwrap().reverse(),
-            signature: BLSSignature::from_hex("88270e60bee7dd9cea3c0a1b85e51d52f01e55a35033ef0434979b9121bc07ed8e45adae1f99e4d8fa2ea760920d844e1383030103b1c503cee45a2fcddc5cd7e73d1823d199e8231fadee2b3cadb1c6fc2ea255b988334b47d35ce865275699").unwrap(),
-        };
+        let chain_lock = next_chain_lock;
 
         let request_id = chain_lock.request_id().expect("expected to make request id");
         assert_eq!(
@@ -559,13 +528,7 @@ mod tests {
     pub fn is_lock_quorum_not_found_error() {
         use crate::sml::message_verification_error::MessageVerificationError;
 
-        let block_hex =
-            include_str!("../../../tests/data/test_DML_diffs/masternode_list_engine.hex");
-        let data = hex::decode(block_hex).expect("decode hex");
-        let mut mn_list_engine: MasternodeListEngine =
-            bincode::decode_from_slice(&data, bincode::config::standard())
-                .expect("expected to decode")
-                .0;
+        let mut mn_list_engine = MasternodeListEngine::mainnet_fixture();
 
         let lock_data = hex::decode("01018d53e7997ead57409750942af0d5e0aafc06f852a9a52308f4781b6a8220298f00000000c6f9d8c63dd15937ea70aaddb7890daad42c91bf6818e2bf76d183d6f2d9215b4b5f84978fad9dde7ab52bdcc0674be891e9029cc1ef0cb01200000000000000a27c98836c4c04653ab81eb4e07ddfc2c8c2c1036b75247969c05a4f25451cd78913a971f1899d9f2bddec9cf8e0104004f72f20c2856453e5aa3bcd2a8200670ec28feda38f67cc400fc72ef1966956656ec0765478c9d16e9a9e470c07f9ed").expect("expected valid hex");
         let lock: InstantLock = deserialize(lock_data.as_slice()).expect("expected to deserialize");

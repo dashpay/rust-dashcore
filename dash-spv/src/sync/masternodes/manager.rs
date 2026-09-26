@@ -472,9 +472,14 @@ impl<H: BlockHeaderStorage> MasternodesManager<H> {
         match std::mem::take(&mut self.sync_state.pipeline_mode) {
             PipelineMode::QuorumValidation {
                 qr_info_result,
-            } => self.verify_and_complete(qr_info_result).await,
+            } => {
+                let events = self.verify_and_complete(qr_info_result).await?;
+                self.prune_old_lists().await;
+                Ok(events)
+            }
             PipelineMode::Incremental => {
                 let mut events = self.complete_incremental_pipeline().await?;
+                self.prune_old_lists().await;
                 if self.state() == SyncState::Synced && self.sync_state.qrinfo_in_flight.is_none() {
                     let tip = self.progress.block_header_tip_height();
                     if matches!(self.next_pipeline_mode(tip), PipelineMode::QuorumValidation { .. })
@@ -498,6 +503,14 @@ impl<H: BlockHeaderStorage> MasternodesManager<H> {
                 }
                 Ok(events)
             }
+        }
+    }
+
+    /// Drops the engine's old lists. Only with no request in flight, since a
+    /// response built on a dropped list could not be applied.
+    async fn prune_old_lists(&self) {
+        if !self.sync_state.has_pending_requests() {
+            self.engine.write().await.prune_old_lists();
         }
     }
 
@@ -943,6 +956,27 @@ mod tests {
             200,
             "new() must seed progress.current_height from the engine's tip list height"
         );
+    }
+
+    #[tokio::test]
+    async fn old_lists_are_pruned_only_with_no_request_in_flight() {
+        let mut manager = create_test_manager_for(dashcore::Network::Mainnet).await;
+        *manager.engine.write().await =
+            MasternodeListEngine::dummy_with_lists(&[1_000, 998_000, 1_000_000]);
+        let heights = |engine: &MasternodeListEngine| -> Vec<u32> {
+            engine.masternode_lists.keys().copied().collect()
+        };
+
+        manager
+            .sync_state
+            .mnlistdiff_pipeline
+            .queue_requests(vec![(BlockHash::dummy(1_000), BlockHash::dummy(1_500))]);
+        manager.prune_old_lists().await;
+        assert_eq!(heights(&*manager.engine.read().await), vec![1_000, 998_000, 1_000_000]);
+
+        manager.sync_state.clear_pending();
+        manager.prune_old_lists().await;
+        assert_eq!(heights(&*manager.engine.read().await), vec![998_000, 1_000_000]);
     }
 
     /// Counterpart to the recovery test: when the engine has no stored
