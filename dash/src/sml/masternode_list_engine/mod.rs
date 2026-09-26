@@ -1632,6 +1632,10 @@ impl MasternodeListEngine {
 
     /// Verifies non-rotating quorums in a masternode list at a specific block height.
     ///
+    /// A commitment is verified once, against the list at its work block
+    /// (DIP-6); a quorum already `Verified` is not checked again, so that list
+    /// is no longer needed once the quorum is verified.
+    ///
     /// This function is only available when the `quorum_validation` feature is enabled.
     ///
     /// # Parameters
@@ -1680,9 +1684,14 @@ impl MasternodeListEngine {
                 }
             } else {
                 for (quorum_hash, quorum_entry) in hash_to_quorum_entries {
-                    let mut validated = (**quorum_entry).clone();
-                    validated.update_quorum_status(self.validate_quorum(quorum_entry));
-                    let new_status = validated.verified;
+                    let new_status =
+                        if quorum_entry.verified == LLMQEntryVerificationStatus::Verified {
+                            LLMQEntryVerificationStatus::Verified
+                        } else {
+                            let mut validated = (**quorum_entry).clone();
+                            validated.update_quorum_status(self.validate_quorum(quorum_entry));
+                            validated.verified
+                        };
                     results.push((
                         *quorum_type,
                         *quorum_hash,

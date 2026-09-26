@@ -370,6 +370,30 @@ mod shared_map_tests {
         assert!(Arc::ptr_eq(&base.quorums, &next.quorums));
     }
 
+    /// Once `Verified`, a non-rotating quorum is not validated again. This one
+    /// would fail if it were: it has too few signers for its type and there is
+    /// no list at its work block.
+    #[test]
+    #[cfg(feature = "quorum_validation")]
+    fn a_verified_quorum_is_not_validated_again() {
+        let quorum_height = TIP - 100;
+        let quorum_hash = QuorumHash::from_byte_array(block_hash(quorum_height).to_byte_array());
+        let mut engine = engine_with_list(TIP);
+        engine.feed_block_height(quorum_height, block_hash(quorum_height));
+        Arc::make_mut(&mut engine.masternode_lists.get_mut(&TIP).unwrap().quorums)
+            .entry(PLATFORM_TYPE)
+            .or_default()
+            .insert(quorum_hash, Arc::new(quorum_entry(quorum_hash, 1)));
+        assert!(!engine.masternode_lists.contains_key(&(quorum_height - 8)));
+
+        engine.verify_non_rotating_masternode_list_quorums(TIP, &[]).unwrap();
+
+        assert_eq!(
+            engine.masternode_lists[&TIP].quorums[&PLATFORM_TYPE][&quorum_hash].verified,
+            LLMQEntryVerificationStatus::Verified
+        );
+    }
+
     #[test]
     #[cfg(feature = "quorum_validation")]
     fn a_status_change_keeps_the_lists_that_shared_a_quorum_map_sharing() {
