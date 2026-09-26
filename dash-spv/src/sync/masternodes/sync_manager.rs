@@ -295,7 +295,7 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
                 let quorum_hashes =
                     engine.latest_masternode_list_non_rotating_quorum_hashes(&[], false);
                 let storage = self.header_storage.read().await;
-                let request_pairs = build_mnlistdiff_request_pairs(
+                let mut request_pairs = build_mnlistdiff_request_pairs(
                     &*storage,
                     &quorum_hashes,
                     &self.sync_state.known_mn_list_heights,
@@ -305,6 +305,8 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
                 // Drop locks before potentially long operations
                 drop(engine);
                 drop(storage);
+                self.drop_tip_copy().await;
+                request_pairs.extend(self.quorum_mining_requests(None).await);
 
                 if let Some(ref qr_info_result) = qr_info_result {
                     tracing::info!(
@@ -421,6 +423,24 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
 
                 self.progress.add_diffs_processed(1);
                 self.sync_state.mnlistdiff_pipeline.receive(diff);
+                let tip_diff = matches!(self.sync_state.pipeline_mode, PipelineMode::Incremental)
+                    && !self.sync_state.mining_heights_requested.contains(&target_height);
+                if apply_ok && tip_diff {
+                    self.drop_tip_copy().await;
+                    if diff.deleted_masternodes.is_empty()
+                        && diff.new_masternodes.is_empty()
+                        && diff.deleted_quorums.is_empty()
+                        && diff.new_quorums.is_empty()
+                    {
+                        self.sync_state.tip_copy = Some(target_height);
+                    }
+                }
+                if apply_ok {
+                    let located = self.quorum_mining_requests(Some(target_height)).await;
+                    if !located.is_empty() {
+                        self.sync_state.mnlistdiff_pipeline.queue_requests(located);
+                    }
+                }
                 self.sync_state.mnlistdiff_pipeline.send_pending(requests)?;
 
                 // Check if all responses received
@@ -430,6 +450,7 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
                     // spurious `MasternodeStateUpdated` for stale state. The next
                     // `BlockHeadersStored` event will re-drive an incremental update.
                     if !apply_ok
+                        && !self.sync_state.mining_heights_requested.contains(&target_height)
                         && matches!(self.sync_state.pipeline_mode, PipelineMode::Incremental)
                     {
                         return Ok(vec![]);
@@ -753,9 +774,14 @@ mod tests {
     use dashcore::network::message_qrinfo::{QRInfo, QuorumSnapshot};
     use dashcore::network::message_sml::MnListDiff;
     use dashcore::sml::llmq_type::LLMQType;
+    use dashcore::sml::masternode_list::MasternodeList;
     use dashcore::sml::masternode_list_engine::MasternodeListEngine;
+    use dashcore::sml::masternode_list_entry::{
+        EntryMasternodeType, MasternodeListEntry, MasternodeNetInfo,
+    };
     use dashcore::transaction::special_transaction::quorum_commitment::QuorumEntry;
-    use dashcore::{BlockHash, Network};
+    use dashcore::transaction::{OutPoint, Transaction};
+    use dashcore::{BlockHash, Network, ProTxHash, PubkeyHash, ScriptBuf, TxIn, TxOut, Witness};
     use dashcore_hashes::Hash;
     use std::collections::HashMap;
     use std::sync::Arc;
@@ -1176,6 +1202,91 @@ mod tests {
     /// `tick` must reissue MnListDiff requests that a disconnect moved back to
     /// pending. Nothing else can: every other `send_pending` call site hangs off a
     /// response handler, and after a disconnect no response is coming.
+    fn tip_diff(
+        base: BlockHash,
+        target: BlockHash,
+        new_masternodes: Vec<MasternodeListEntry>,
+    ) -> MnListDiff {
+        MnListDiff {
+            version: 1,
+            base_block_hash: base,
+            block_hash: target,
+            total_transactions: 1,
+            merkle_hashes: vec![],
+            merkle_flags: vec![],
+            coinbase_tx: Transaction {
+                version: 1,
+                lock_time: 0,
+                input: vec![TxIn {
+                    previous_output: OutPoint::null(),
+                    script_sig: ScriptBuf::new(),
+                    sequence: 0xffffffff,
+                    witness: Witness::new(),
+                }],
+                output: vec![TxOut {
+                    value: 0,
+                    script_pubkey: ScriptBuf::new(),
+                }],
+                special_transaction_payload: None,
+            },
+            deleted_masternodes: vec![],
+            new_masternodes,
+            deleted_quorums: vec![],
+            new_quorums: vec![],
+            quorums_chainlock_signatures: vec![],
+        }
+    }
+
+    /// A tip diff that changes nothing leaves one copy of the list at the tip, which the next
+    /// one moves up; a diff that changes something keeps its list and drops the copy.
+    #[tokio::test]
+    async fn test_incremental_diffs_keep_lists_only_where_the_list_changes() {
+        let storage = DiskStorageManager::with_temp_dir().await.unwrap();
+        let block_headers = storage.block_headers();
+        let headers: Vec<HashedBlockHeader> =
+            Header::dummy_batch(0..104).iter().map(HashedBlockHeader::from).collect();
+        let hash = |height: usize| *headers[height].hash();
+        block_headers.write().await.store_headers(&headers[..=100]).await.unwrap();
+
+        let mut engine = MasternodeListEngine::default_for_network(Network::Regtest);
+        engine.feed_block_height(100, hash(100));
+        engine.masternode_lists.insert(100, MasternodeList::empty(hash(100), 100));
+        let engine = Arc::new(RwLock::new(engine));
+        let mut manager =
+            MasternodesManager::new(block_headers.clone(), engine.clone(), Network::Regtest).await;
+        manager.set_state(SyncState::Synced);
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let requests = RequestSender::new(tx);
+        let peer = "127.0.0.1:9999".parse().unwrap();
+        let registration = MasternodeListEntry {
+            version: 1,
+            pro_reg_tx_hash: ProTxHash::from_byte_array([7; 32]),
+            confirmed_hash: None,
+            service_address: MasternodeNetInfo::Legacy("127.0.0.1:19999".parse().unwrap()),
+            operator_public_key: BLSPublicKey::from([0; 48]),
+            key_id_voting: PubkeyHash::all_zeros(),
+            is_valid: true,
+            mn_type: EntryMasternodeType::Regular,
+        };
+
+        for (height, new_masternodes, lists) in [
+            (101, vec![], [100, 101]),
+            (102, vec![], [100, 102]),
+            (103, vec![registration], [100, 103]),
+        ] {
+            block_headers.write().await.store_headers(&headers[height..=height]).await.unwrap();
+            manager.send_tip_mnlistdiff_update(&requests).await.unwrap();
+            let base = manager.sync_state.last_synced_block_hash.unwrap();
+            let diff = tip_diff(base, hash(height), new_masternodes);
+            manager
+                .handle_message(Message::new(peer, NetworkMessage::MnListDiff(diff)), &requests)
+                .await
+                .unwrap();
+            let kept: Vec<u32> = engine.read().await.masternode_lists.keys().copied().collect();
+            assert_eq!(kept, lists, "lists after the diff to {height}");
+        }
+    }
+
     #[tokio::test]
     async fn test_tick_reissues_requeued_mnlistdiffs() {
         let (mut manager, requests, mut rx, _) = syncing_manager_awaiting_qrinfo(200).await;

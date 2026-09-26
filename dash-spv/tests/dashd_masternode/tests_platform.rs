@@ -168,8 +168,9 @@ async fn assert_lookups_at_every_height(
     ctx: &TestContext,
     client_handle: &ClientHandle,
 ) -> (u32, BTreeMap<(LLMQType, QuorumHash), (u32, u32)>) {
-    let (tip, reach) = {
+    let (lowest, tip, reach) = {
         let engine = client_handle.engine.read().await;
+        let lowest = *engine.masternode_lists.keys().next().expect("a list");
         let mut reach = BTreeMap::new();
         for (height, list) in &engine.masternode_lists {
             for (llmq_type, quorums) in &list.quorums {
@@ -178,7 +179,7 @@ async fn assert_lookups_at_every_height(
                 }
             }
         }
-        (engine.latest_masternode_list().expect("a tip list").known_height, reach)
+        (lowest, engine.latest_masternode_list().expect("a tip list").known_height, reach)
     };
 
     let at_tip: BTreeSet<_> =
@@ -187,9 +188,15 @@ async fn assert_lookups_at_every_height(
 
     let dashd: BTreeMap<_, _> =
         reach.keys().map(|&(t, hash)| ((t, hash), dashd_quorum(ctx, t, hash))).collect();
+    let cycle = Network::Regtest.isd_llmq_type().params().dkg_params.interval;
+    let recent = lowest.max(tip.saturating_sub(cycle));
     for (&(llmq_type, hash), &(first, _)) in &reach {
         let mined = dashd[&(llmq_type, hash)].0;
-        assert!(first >= mined, "{llmq_type} {hash} is in a list at {first}, mined at {mined}");
+        if first > recent {
+            assert_eq!(first, mined, "{llmq_type} {hash}: first list holding it, mined block");
+        } else {
+            assert!(first >= mined, "{llmq_type} {hash} is in a list at {first}, mined at {mined}");
+        }
     }
 
     let mut hashes: BTreeSet<QuorumHash> = reach.keys().map(|(_, hash)| *hash).collect();
@@ -205,10 +212,9 @@ async fn assert_lookups_at_every_height(
             * params.signing_active_quorum_count
             * params.dkg_params.interval;
         for hash in &hashes {
-            let expected = reach.get(&(llmq_type, *hash)).map(|&(first, last)| {
-                let (mined, key) = dashd[&(llmq_type, *hash)];
-                (mined, first..=last + walk_back, key)
-            });
+            let expected = reach
+                .get(&(llmq_type, *hash))
+                .map(|&(first, last)| (first..=last + walk_back, dashd[&(llmq_type, *hash)].1));
             for height in 0..=tip + walk_back + 1 {
                 let result = platform_quorum_public_key(
                     &client_handle.client,
@@ -218,13 +224,11 @@ async fn assert_lookups_at_every_height(
                 )
                 .await;
                 match &expected {
-                    Some((_, found, key)) if found.contains(&height) => assert_eq!(
+                    Some((found, key)) if found.contains(&height) => assert_eq!(
                         result.as_ref(),
                         Ok(key),
                         "{llmq_type} {hash} at {height}, found from lists at {found:?}"
                     ),
-                    // Mined but in no list yet: left to the test of dashd's active quorums.
-                    Some((mined, found, _)) if (*mined..*found.start()).contains(&height) => {}
                     _ => assert!(
                         result.as_ref().is_err_and(|e| e.contains("Quorum not found")),
                         "{llmq_type} {hash} at {height} must miss, got {result:?}"
@@ -401,35 +405,24 @@ async fn test_platform_quorum_lookups_across_rotations() {
     client_handle.stop().await;
 }
 
-/// A proof can carry any height its quorum is active at. From the first list the
-/// SPV holds to its tip, after the sync and after three DKG cycles, every quorum
+/// A proof can carry any height its quorum is active at. In the last rotation
+/// cycle below the SPV tip, where Platform's core heights fall, every quorum
 /// dashd has active resolves to dashd's key.
-#[tokio::test]
-async fn test_platform_quorum_lookups_wherever_dashd_has_the_quorum_active() {
-    let Some(mut ctx) = TestContext::new(false).await else {
-        return;
-    };
-    let config =
-        create_mn_test_config(ctx.storage_path().to_path_buf(), ctx.mn_ctx.controller_addr);
-    let mut client_handle = create_client(&config, create_dummy_wallet()).await;
-    sync(&ctx, &mut client_handle).await;
-    for _ in 0..3 {
-        ctx.mn_ctx.mine_dkg_cycle().expect("DKG cycle should succeed");
-        follow_tip(&ctx, &mut client_handle).await;
-    }
-
+async fn assert_active_quorums_resolve(ctx: &TestContext, client_handle: &ClientHandle) {
     let heights = {
         let engine = client_handle.engine.read().await;
         let first = *engine.masternode_lists.keys().next().expect("a list");
-        first..=engine.latest_masternode_list().expect("a tip list").known_height
+        let tip = engine.latest_masternode_list().expect("a tip list").known_height;
+        let cycle = Network::Regtest.isd_llmq_type().params().dkg_params.interval;
+        first.max(tip.saturating_sub(cycle) + 1)..=tip
     };
     let mut keys = BTreeMap::new();
     let mut misses: BTreeMap<_, Vec<u32>> = BTreeMap::new();
     for height in heights {
-        for (llmq_type, hash) in dashd_active_quorums(&ctx, height) {
+        for (llmq_type, hash) in dashd_active_quorums(ctx, height) {
             let (_, key) = *keys
                 .entry((llmq_type, hash))
-                .or_insert_with(|| dashd_quorum(&ctx, llmq_type, hash));
+                .or_insert_with(|| dashd_quorum(ctx, llmq_type, hash));
             let result = platform_quorum_public_key(
                 &client_handle.client,
                 llmq_type as u8 as u32,
@@ -443,6 +436,25 @@ async fn test_platform_quorum_lookups_wherever_dashd_has_the_quorum_active() {
         }
     }
     assert!(misses.is_empty(), "quorums dashd has active, missed at these heights: {misses:?}");
+}
+
+/// Right after the sync, and after three DKG cycles followed by the SPV.
+#[tokio::test]
+async fn test_platform_quorum_lookups_wherever_dashd_has_the_quorum_active() {
+    let Some(mut ctx) = TestContext::new(false).await else {
+        return;
+    };
+    let config =
+        create_mn_test_config(ctx.storage_path().to_path_buf(), ctx.mn_ctx.controller_addr);
+    let mut client_handle = create_client(&config, create_dummy_wallet()).await;
+    sync(&ctx, &mut client_handle).await;
+    assert_active_quorums_resolve(&ctx, &client_handle).await;
+
+    for _ in 0..3 {
+        ctx.mn_ctx.mine_dkg_cycle().expect("DKG cycle should succeed");
+        follow_tip(&ctx, &mut client_handle).await;
+    }
+    assert_active_quorums_resolve(&ctx, &client_handle).await;
 
     client_handle.stop().await;
 }

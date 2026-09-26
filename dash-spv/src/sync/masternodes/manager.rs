@@ -18,7 +18,7 @@ use crate::storage::BlockHeaderStorage;
 use crate::sync::{MasternodesProgress, SyncEvent, SyncManager, SyncState};
 use dashcore::network::message_qrinfo::QRInfo;
 use dashcore::BlockHash;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// Single enum that serves two roles in the masternode-sync flow:
 ///
@@ -131,6 +131,13 @@ pub(super) struct MasternodeSyncState {
     /// without sending (no stored tip, tip at genesis) cannot turn it into a
     /// per-tick retry loop.
     pub(super) last_qrinfo_dispatch: Option<Instant>,
+    /// Heights already requested to locate the block a quorum was mined in.
+    pub(super) mining_heights_requested: BTreeSet<u32>,
+    /// Height of the tip list kept only as the next diff's base: an empty diff made it, so it
+    /// repeats the list below.
+    pub(super) tip_copy: Option<u32>,
+    /// The masternode list is known unchanged from the list below up to this height.
+    pub(super) unchanged_through: Option<u32>,
 }
 
 impl MasternodeSyncState {
@@ -146,6 +153,7 @@ impl MasternodeSyncState {
         self.mnlistdiff_pipeline.clear();
         self.qrinfo_in_flight = None;
         self.pipeline_mode = PipelineMode::default();
+        self.mining_heights_requested.clear();
     }
 
     /// Peer-disconnect counterpart to [`Self::clear_pending`].
@@ -444,6 +452,112 @@ impl<H: BlockHeaderStorage> MasternodesManager<H> {
         self.sync_state.mnlistdiff_pipeline.queue_requests(vec![(base_hash, new_tip_hash)]);
         self.sync_state.mnlistdiff_pipeline.send_pending(requests)?;
         Ok(vec![])
+    }
+
+    /// Drops the tip copy once a newer list stands above it: the list below it answers every
+    /// lookup the same, and the blocks up to it are known unchanged.
+    pub(super) async fn drop_tip_copy(&mut self) {
+        let Some(height) = self.sync_state.tip_copy.take() else {
+            return;
+        };
+        let mut engine = self.engine.write().await;
+        let Some(copy) = engine.masternode_lists.remove(&height) else {
+            return;
+        };
+        if self.sync_state.last_synced_block_hash == Some(copy.block_hash) {
+            self.sync_state.last_synced_block_hash =
+                engine.latest_masternode_list().map(|list| list.block_hash);
+        }
+        self.sync_state.known_mn_list_heights.remove(&height);
+        self.sync_state.unchanged_through = Some(height);
+    }
+
+    /// Diffs that bisect where each quorum was mined, so the engine keeps a list at that block.
+    ///
+    /// A diff over several blocks only says a quorum entered after its base list. For every
+    /// quorum the list below its first holding list lacks, this asks for the middle of the
+    /// heights between the two lists inside the quorum's mining window, diffed from the lower
+    /// list. Only lists in the last rotation cycle below the tip count: older ones would chase
+    /// every quorum mined since the oldest list, and Platform's proofs carry heights near the
+    /// tip. Compares the lists next to `around`, or all of them when it is `None`.
+    pub(super) async fn quorum_mining_requests(
+        &mut self,
+        around: Option<u32>,
+    ) -> Vec<(BlockHash, BlockHash)> {
+        let entered: Vec<_> = {
+            let engine = self.engine.read().await;
+            let lists = &engine.masternode_lists;
+            let Some(&tip) = lists.keys().next_back() else {
+                return Vec::new();
+            };
+            let cycle = self.network.isd_llmq_type().params().dkg_params.interval;
+            let recent = tip.saturating_sub(cycle);
+            let (low, high) = around.map_or((recent + 1, tip), |height| (height, height));
+            let low = lists.range(..low).next_back().map_or(low, |(h, _)| *h);
+            let high = lists.range(high + 1..).next().map_or(high, |(h, _)| *h);
+            let lists: Vec<_> = lists.range(low..=high).map(|(_, list)| list).collect();
+            lists
+                .windows(2)
+                .filter(|pair| pair[1].known_height > recent)
+                .flat_map(|pair| {
+                    let (below, list) = (pair[0], pair[1]);
+                    list.quorums.iter().flat_map(move |(&llmq_type, quorums)| {
+                        quorums
+                            .keys()
+                            .filter(move |&&hash| {
+                                below
+                                    .quorum_entry_of_type_for_quorum_hash(llmq_type, hash)
+                                    .is_none()
+                            })
+                            .map(move |&hash| {
+                                (
+                                    llmq_type,
+                                    hash,
+                                    below.known_height,
+                                    below.block_hash,
+                                    list.known_height,
+                                )
+                            })
+                    })
+                })
+                .collect()
+        };
+
+        let storage = self.header_storage.read().await;
+        let mut targets = BTreeMap::new();
+        for (llmq_type, quorum_hash, below, below_hash, first) in entered {
+            let Ok(Some(quorum_height)) = storage.get_header_height_by_hash(&quorum_hash).await
+            else {
+                continue;
+            };
+            let dkg = llmq_type.params().dkg_params;
+            if dkg.interval == 0 {
+                continue;
+            }
+            let cycle = quorum_height - quorum_height % dkg.interval;
+            let unchanged = self
+                .sync_state
+                .unchanged_through
+                .filter(|height| (below..first).contains(height))
+                .unwrap_or(below);
+            let low = (unchanged + 1).max(cycle + dkg.mining_window_start);
+            let high = (first - 1).min(cycle + dkg.mining_window_end);
+            if low <= high {
+                targets.entry(low + (high - low) / 2).or_insert(below_hash);
+            }
+        }
+
+        let mut requests = Vec::new();
+        for (height, base_hash) in targets {
+            if !self.sync_state.mining_heights_requested.insert(height) {
+                continue;
+            }
+            match storage.get_header(height).await {
+                Ok(Some(header)) => requests.push((base_hash, *header.hash())),
+                _ => tracing::warn!(height, "No header to locate a quorum's mining block at"),
+            }
+        }
+        requests
     }
 
     /// Dispatch pipeline completion based on the current `PipelineMode`. Called when
