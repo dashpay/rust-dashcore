@@ -20,7 +20,7 @@ use crate::network::pool::PeerPool;
 use crate::network::reputation::{ChangeReason, PeerReputationManager, ReputationAware};
 use crate::network::{
     HandshakeManager, Message, MessageDispatcher, MessageType, NetworkEvent, NetworkManager,
-    NetworkRequest, Peer, RequestSender,
+    NetworkRequest, Peer, PeerStatsSnapshot, RequestSender,
 };
 use crate::storage::{PeerStorage, PersistentPeerStorage, PersistentStorage};
 use async_trait::async_trait;
@@ -499,6 +499,13 @@ impl PeerNetworkManager {
                             // Request addresses from the peer for discovery
                             if let Err(e) = peer.send_message(NetworkMessage::GetAddr).await {
                                 tracing::warn!("Failed to send GetAddr to {}: {}", addr, e);
+                            }
+
+                            // Ping immediately so latency stats are available
+                            // right away instead of after the first
+                            // maintenance tick.
+                            if let Err(e) = peer.send_ping().await {
+                                tracing::warn!("Failed to send initial ping to {}: {}", addr, e);
                             }
 
                             // Record successful connection
@@ -1947,6 +1954,15 @@ impl NetworkManager for PeerNetworkManager {
     fn peer_count(&self) -> usize {
         // Use cached counter to avoid blocking in async context
         self.connected_peer_count.load(Ordering::Relaxed)
+    }
+
+    async fn peer_stats(&self) -> Vec<PeerStatsSnapshot> {
+        let peers = self.pool.get_all_peers().await;
+        let mut stats = Vec::with_capacity(peers.len());
+        for (_, peer) in peers {
+            stats.push(peer.read().await.stats_snapshot());
+        }
+        stats
     }
 
     async fn broadcast(&self, message: NetworkMessage) -> NetworkResult<()> {
