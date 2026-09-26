@@ -1,18 +1,18 @@
 [package]
 name = "dashcore-rpc"
-version = { workspace = true }
 authors = [
     "Steven Roose <steven@stevenroose.org>",
     "Jean Pierre Dudey <jeandudey@hotmail.com>",
     "Dawid Ciężarkiewicz <dpc@dpc.pw>",
 ]
-license = "CC0-1.0"
-homepage = "https://github.com/dashevo/rust-dashcore/"
-repository = "https://github.com/dashevo/rust-dashcore/"
 description = "RPC client library for the Dash Core JSON-RPC API."
 keywords = ["crypto", "dash", "dash-core", "rpc"]
 readme = "README.md"
-edition = "2024"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+version.workspace = true
 
 [lib]
 name = "dashcore_rpc"

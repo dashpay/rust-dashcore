@@ -1,13 +1,14 @@
 [package]
 name = "dashcore-crypto"
-version = { workspace = true }
-authors = ["The Dash Core Developers"]
-license = "CC0-1.0"
-repository = "https://github.com/dashpay/rust-dashcore/"
 description = "Cryptographic primitives shared by rust-dashcore crates."
+edition = "2021"
 categories = ["cryptography::cryptocurrencies"]
 keywords = ["crypto", "dash", "bls", "secp256k1"]
-edition = "2021"
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+version.workspace = true
 
 [features]
 default = []

@@ -1,11 +1,13 @@
 [package]
 name = "key-wallet-manager"
-version = { workspace = true }
-authors = ["The Dash Core Developers"]
-edition = "2021"
 description = "High-level wallet management for Dash (WalletManager, WalletInterface, events, compact filters)"
+edition = "2021"
 keywords = ["dash", "wallet", "manager", "spv"]
-license = "CC0-1.0"
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+version.workspace = true
 
 [features]
 default = []

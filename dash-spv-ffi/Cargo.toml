@@ -1,11 +1,12 @@
 [package]
 name = "dash-spv-ffi"
-version = { workspace = true }
-edition = "2021"
-authors = ["Dash Core Developers"]
-license = "CC0-1.0"
 description = "FFI bindings for the Dash SPV client"
-repository = "https://github.com/dashpay/rust-dashcore"
+edition = "2021"
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+version.workspace = true
 
 [lib]
 name = "dash_spv_ffi"

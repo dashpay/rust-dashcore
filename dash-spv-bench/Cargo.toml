@@ -1,9 +1,12 @@
 [package]
 name = "dash-spv-bench"
-version = { workspace = true }
 edition = "2021"
-license = "CC0-1.0"
 publish = false
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+version.workspace = true
 
 [dependencies]
 dash-spv = { path = "../dash-spv" }

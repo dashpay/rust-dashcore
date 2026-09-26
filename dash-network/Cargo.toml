@@ -1,11 +1,12 @@
 [package]
 name = "dash-network"
-version = { workspace = true }
-edition = "2024"
-authors = ["Dash Core Team"]
 description = "The `Network` enum and its pure helpers (magic bytes, activation heights, default P2P ports) extracted from `dashcore` into a minimal-dependency crate so that lightweight consumers can depend on it without pulling in the full protocol library."
-license = "CC0-1.0"
-repository = "https://github.com/dashpay/rust-dashcore"
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+version.workspace = true
 
 [lib]
 name = "dash_network"

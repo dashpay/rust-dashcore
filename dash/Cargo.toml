@@ -1,21 +1,20 @@
 [package]
 name = "dashcore"
-version = { workspace = true }
 authors = [
     "Samuel Westrich <sam@dash.org>",
     "Anton Suprunchuk <anton@dash.org>",
     "Dmitrii Golubev <dmitrii.golubev@dash.org>"
 ]
-license = "CC0-1.0"
-homepage = "https://github.com/dashevo/rust-dashcore/"
-repository = "https://github.com/dashevo/rust-dashcore/"
-documentation = "https://dashcore.readme.io/docs"
 description = "General purpose library for using and interoperating with Dash Core payment chain."
 categories = ["cryptography::cryptocurrencies"]
 keywords = [ "crypto", "dash" ]
 readme = "../README.md"
 exclude = ["tests", "contrib"]
-edition = "2024"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+version.workspace = true
 
 # Please don't forget to add relevant features to docs.rs below
 [features]

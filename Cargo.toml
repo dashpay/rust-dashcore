@@ -9,6 +9,11 @@ dash-pkc = { git = "https://github.com/dashpay/base-sdk", rev = "e6402ced257c370
 dash-types = { git = "https://github.com/dashpay/base-sdk", rev = "e6402ced257c370a586ade9840ebbf545a4b7926", default-features = false }
 
 [workspace.package]
+authors = ["The rust-dashcore Developers"]
+edition = "2024"
+license = "CC0-1.0"
+repository = "https://github.com/dashpay/rust-dashcore"
+rust-version = "1.89.0"
 version = "0.45.0"
 
 [patch.crates-io]
