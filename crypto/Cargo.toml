@@ -13,7 +13,8 @@ edition = "2021"
 default = []
 
 bincode = ["dep:bincode", "dep:bincode_derive", "dashcore_hashes/bincode", "dash-network/bincode"]
-bls = ["dep:dash-pkc", "dep:tracing"]
+bls = ["dep:dash-pkc", "dash-pkc/bls", "dep:tracing"]
+eddsa = ["dep:dash-pkc", "dash-pkc/eddsa"]
 serde = ["dep:serde", "dash-types/serde", "dashcore_hashes/serde", "dash-network/serde", "secp256k1/serde"]
 
 [dependencies]
@@ -21,7 +22,7 @@ base58ck = { version = "0.1.0" }
 bincode = { workspace = true, optional = true }
 bincode_derive = { workspace = true, optional = true }
 dash-network = { path = "../dash-network" }
-dash-pkc = { version = "=0.1.0-beta", default-features = false, features = ["bls", "std"], optional = true }
+dash-pkc = { version = "=0.1.0-beta", default-features = false, features = ["bls", "eddsa", "std"], optional = true }
 dash-types = { version = "=0.1.0-beta", default-features = false, features = ["codec"] }
 dashcore_hashes = { path = "../hashes" }
 hex = { version = "0.4" }
@@ -36,3 +37,4 @@ unexpected_cfgs = { level = "deny", check-cfg = ['cfg(bench)', 'cfg(fuzzing)', '
 
 [dev-dependencies]
 hex_lit = { version = "0.1.1", features = ["rust_v_1_46"] }
+serde_json = { version = "1.0" }

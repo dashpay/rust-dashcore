@@ -29,7 +29,7 @@ secp-recovery = ["secp256k1/recovery"]
 signer = ["secp-recovery", "rand", "base64"]
 core-block-hash-use-x11 = ["dashcore_hashes/x11"]
 bls = ["dashcore-crypto/bls"]
-eddsa = ["ed25519-dalek"]
+eddsa = ["dashcore-crypto/eddsa"]
 quorum_validation = ["bls"]
 message_verification = ["bls"]
 bincode = [ "dep:bincode", "dep:bincode_derive", "dashcore-crypto/bincode", "dashcore_hashes/bincode", "dash-network/bincode" ]
@@ -57,7 +57,6 @@ anyhow = { version= "1.0" }
 hex = { version= "0.4" }
 bincode = { workspace = true, optional = true }
 bincode_derive = { workspace = true, optional = true }
-ed25519-dalek = { version = "2.1", features = ["rand_core"], optional = true }
 blake3 = "1.8.1"
 thiserror = "2"
 bitvec = "1.0"

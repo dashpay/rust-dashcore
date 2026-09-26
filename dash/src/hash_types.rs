@@ -67,6 +67,7 @@ macro_rules! impl_asref_push_bytes {
 pub use newtypes::*;
 
 mod newtypes {
+    pub use dashcore_crypto::eddsa::EddsaPkHash;
     pub use dashcore_crypto::key::{PubkeyHash, WPubkeyHash};
 
     use core::str::FromStr;
@@ -214,6 +215,23 @@ mod newtypes {
     impl_hashencode!(Sha256dHash);
 
     impl_asref_push_bytes!(PubkeyHash, ScriptHash, WPubkeyHash, WScriptHash);
+
+    impl crate::consensus::Encodable for EddsaPkHash {
+        fn consensus_encode<W: crate::io::Write + ?Sized>(
+            &self,
+            w: &mut W,
+        ) -> Result<usize, crate::io::Error> {
+            self.as_bytes().consensus_encode(w)
+        }
+    }
+
+    impl crate::consensus::Decodable for EddsaPkHash {
+        fn consensus_decode<R: crate::io::Read + ?Sized>(
+            r: &mut R,
+        ) -> Result<Self, crate::consensus::encode::Error> {
+            Ok(Self::from_bytes(<[u8; 20]>::consensus_decode(r)?))
+        }
+    }
 
     impl Txid {
         /// Create a Txid from a string
@@ -376,12 +394,52 @@ mod newtypes {
     }
 }
 
-#[cfg(all(test, feature = "serde"))]
+#[cfg(test)]
 mod tests {
     use core::str::FromStr;
 
     use super::*;
+    use crate::consensus::{deserialize, serialize};
+
     use serde_derive::{Deserialize, Serialize};
+
+    #[test]
+    fn consensus_round_trip() {
+        let mut wire = [0u8; 20];
+        for (i, byte) in wire.iter_mut().enumerate() {
+            *byte = i as u8;
+        }
+
+        let node_id = EddsaPkHash::from_bytes(wire);
+        let encoded = serialize(&node_id);
+        assert_eq!(encoded.len(), 20);
+        assert_eq!(encoded, wire, "the stored order is the wire order");
+        let decoded: EddsaPkHash = deserialize(&encoded).expect("decode node id");
+        assert_eq!(decoded, node_id);
+    }
+
+    /// Mainnet evonode example from issue #887: the ProRegTx wire bytes carry
+    /// the `uint160` internal (reversed) order, while the canonical id — as
+    /// dashmate/Tenderdash derive and display it — is the byte-reversal.
+    #[test]
+    fn consensus_decode_yields_canonical_order() {
+        let wire_bytes = crate::internal_macros::hex!("8cb97997a418f4814a63d3564b9574a393437968");
+        let node_id: EddsaPkHash = deserialize(&wire_bytes).expect("decode node id");
+        assert_eq!(node_id.to_string(), "68794393a374954b56d3634a81f418a49779b98c");
+        assert_eq!(serialize(&node_id), wire_bytes, "re-encoding restores wire order");
+    }
+
+    /// A node id decoded from the wire must compare equal to one derived from
+    /// the matching Ed25519 public key — the mismatch reported in issue #887.
+    #[cfg(feature = "eddsa")]
+    #[test]
+    fn decoded_wire_id_matches_derived_id() {
+        let public_key = [7u8; 32];
+        let derived = dashcore_crypto::eddsa::EddsaPkBytes::from_bytes(public_key).hash();
+
+        let decoded: EddsaPkHash = deserialize(&derived.to_bytes()).expect("decode node id");
+        assert_eq!(decoded, derived);
+    }
 
     /// Regression test for the bug where hash newtypes' `Deserialize` errored
     /// with "bad hex string length 32 (expected 64)" (or similar) when an
@@ -392,6 +450,7 @@ mod tests {
     /// replayed into the HR branch as raw bytes — which the previous
     /// string-only `HexVisitor` rejected because `from_str` saw 32 UTF-8 chars
     /// instead of the expected 64-char hex form.
+    #[cfg(feature = "serde")]
     #[test]
     fn serde_round_trip_through_internally_tagged_enum() {
         #[derive(Debug, PartialEq, Serialize, Deserialize)]
@@ -469,6 +528,7 @@ mod tests {
     /// 20-byte hash (PubkeyHash) goes through the same path. Smaller hash
     /// length exercises a different `raw_len_bytes` / `hex_len_bytes`
     /// disambiguation in the visitor.
+    #[cfg(feature = "serde")]
     #[test]
     fn serde_round_trip_through_internally_tagged_enum_pubkey_hash() {
         #[derive(Debug, PartialEq, Serialize, Deserialize)]

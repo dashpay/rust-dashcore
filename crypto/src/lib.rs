@@ -25,6 +25,7 @@ pub(crate) mod serde_utils;
 
 pub mod bls;
 pub mod ecdsa;
+pub mod eddsa;
 pub mod key;
 pub mod sighash;
 pub mod taproot;
