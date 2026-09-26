@@ -11,6 +11,7 @@ mod message_dispatcher;
 pub mod peer;
 pub mod pool;
 mod reputation;
+pub mod transport;
 
 mod message_type;
 #[cfg(test)]
@@ -39,6 +40,7 @@ pub use peer::Peer;
 pub(crate) use reputation::PeerReputation;
 use std::net::SocketAddr;
 use tokio::sync::mpsc::UnboundedReceiver;
+pub use transport::{Transport, TransportPreference, V1Transport};
 
 const FILTER_TYPE_DEFAULT: u8 = 0;
 
