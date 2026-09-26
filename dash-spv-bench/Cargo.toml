@@ -20,6 +20,15 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3.20", features = ["env-filter"] }
 indicatif = "0.18"
 
+[target.'cfg(target_os = "linux")'.dependencies]
+pprof = { version = "0.14", features = ["flamegraph"], optional = true }
+tikv-jemallocator = { version = "0.7", features = ["profiling"], optional = true }
+jemalloc_pprof = { version = "0.9", features = ["flamegraph", "symbolize"], optional = true }
+
+[features]
+cpu-profile = ["dep:pprof"]
+heap-profile = ["dep:tikv-jemallocator", "dep:jemalloc_pprof"]
+
 [[bin]]
 name = "dash-spv-bench"
 path = "src/main.rs"
