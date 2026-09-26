@@ -57,9 +57,14 @@ tracing = "0.1"
 async-trait = "0.1"
 
 [dev-dependencies]
+criterion = "0.8.1"
 dashcore = { path="../dash", features = ["test-utils"] }
 hex = "0.4"
 key-wallet = { path = ".", features = ["test-utils", "bip38", "serde", "bincode", "eddsa", "bls"] }
 rand = { version = "0.9", features = ["std", "std_rng", "thread_rng"] }
 test-case = "3.3"
 tokio = { version = "1", features = ["macros", "rt"] }
+
+[[bench]]
+name = "address_generation"
+harness = false
