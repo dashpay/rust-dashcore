@@ -269,8 +269,8 @@ impl<H: BlockHeaderStorage> MessageLog<H> {
 
 fn apply(engine: &mut MasternodeListEngine, height: CoreBlockHeight, message: Message) -> bool {
     match message {
-        Message::QrInfo(qr_info) => engine.feed_qr_info(*qr_info, true, true).is_ok(),
-        Message::Diff(diff) => engine.apply_diff(*diff, Some(height), false, None).is_ok(),
+        Message::QrInfo(qr_info) => engine.feed_qr_info(*qr_info).is_ok(),
+        Message::Diff(diff) => engine.apply_diff(*diff, Some(height), None).is_ok(),
     }
 }
 
@@ -327,17 +327,7 @@ impl<H: BlockHeaderStorage> MasternodeStorage for PersistentMasternodeStorage<H>
     }
 
     async fn load_engine(&self) -> StorageResult<MasternodeListEngine> {
-        let mut engine = self.message_log().replay(CoreBlockHeight::MAX, |_| {}).await;
-
-        // The live sync verifies the newest list's non-rotating quorums once a
-        // pipeline completes; the replay has to do the same.
-        if let Some(height) = engine.latest_masternode_list().map(|list| list.known_height) {
-            if let Err(e) = engine.verify_non_rotating_masternode_list_quorums(height, &[]) {
-                tracing::warn!("Could not verify the replayed quorums at {height}: {e}");
-            }
-        }
-
-        Ok(engine)
+        Ok(self.message_log().replay(CoreBlockHeight::MAX, |_| {}).await)
     }
 }
 

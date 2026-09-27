@@ -216,7 +216,7 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
                 tracing::info!("Fed {} block heights to engine", fed);
 
                 // Feed QRInfo to engine first to populate masternode lists
-                let qr_info_result = match engine.feed_qr_info(qr_info.clone(), true, true) {
+                let qr_info_result = match engine.feed_qr_info(qr_info.clone()) {
                     Ok(qr_info_result) => qr_info_result,
                     Err(e) => {
                         tracing::error!("QRInfo feed into engine failed: {}", e);
@@ -374,22 +374,21 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
                 let mut engine = self.engine.write().await;
                 engine.feed_block_height(target_height, diff.block_hash);
 
-                let apply_ok =
-                    match engine.apply_diff(diff.clone(), Some(target_height), false, None) {
-                        Ok(_) => {
-                            self.sync_state.known_mn_list_heights.insert(target_height);
-                            tracing::debug!("Applied MnListDiff at height {}", target_height);
-                            true
-                        }
-                        Err(e) => {
-                            tracing::warn!(
-                                "Failed to apply MnListDiff at height {}: {}",
-                                target_height,
-                                e
-                            );
-                            false
-                        }
-                    };
+                let apply_ok = match engine.apply_diff(diff.clone(), Some(target_height), None) {
+                    Ok(_) => {
+                        self.sync_state.known_mn_list_heights.insert(target_height);
+                        tracing::debug!("Applied MnListDiff at height {}", target_height);
+                        true
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            "Failed to apply MnListDiff at height {}: {}",
+                            target_height,
+                            e
+                        );
+                        false
+                    }
+                };
                 drop(engine);
 
                 if apply_ok {
