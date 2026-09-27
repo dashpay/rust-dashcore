@@ -40,7 +40,7 @@ pub const DEFAULT_INTERNAL_GAP_LIMIT: u32 = 30;
 /// per account instead of ~60. BIP158 filter matching is a set intersection,
 /// so the extra scripts add negligible per-block work; the derivation is a
 /// one-time keychain expansion.
-pub const DEFAULT_COINJOIN_GAP_LIMIT: u32 = 100;
+pub const DEFAULT_COINJOIN_GAP_LIMIT: u32 = 400;
 
 /// Standard gap limit for special purpose keys (identity, provider keys)
 pub const DEFAULT_SPECIAL_GAP_LIMIT: u32 = 5;
