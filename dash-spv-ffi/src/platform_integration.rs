@@ -1,4 +1,5 @@
 use crate::{set_last_error, FFIDashSpvClient, FFIErrorCode};
+use dash_spv::error::SpvError;
 use dashcore::hashes::Hash;
 use dashcore::sml::llmq_type::LLMQType;
 use dashcore::QuorumHash;
@@ -86,27 +87,24 @@ pub unsafe extern "C" fn ffi_dash_spv_get_quorum_public_key(
     let llmq_type: LLMQType = (quorum_type as u8).into();
     let quorum_hash = QuorumHash::from_byte_array(hash_array);
 
-    // Get the masternode list engine directly for efficient access
-    let engine = match spv_client.masternode_list_engine() {
-        Ok(engine) => engine,
-        Err(e) => {
-            return FFIResult::error(
-                FFIErrorCode::RuntimeError,
-                &format!(
-                    "Masternode list engine not initialized: {}. Core SDK may still be syncing.",
-                    e
-                ),
-            );
-        }
-    };
+    if let Err(e) = spv_client.masternode_list_engine() {
+        return FFIResult::error(
+            FFIErrorCode::RuntimeError,
+            &format!(
+                "Masternode list engine not initialized: {}. Core SDK may still be syncing.",
+                e
+            ),
+        );
+    }
 
-    let engine_guard = engine.blocking_read();
-    match engine_guard.quorum_entry_for_hash_at_or_before_height(
+    let lookup = client.runtime.block_on(spv_client.get_quorum_at_height(
+        core_chain_locked_height,
         llmq_type,
         quorum_hash,
-        core_chain_locked_height,
-    ) {
-        Some((_list_height, quorum)) => {
+    ));
+
+    match lookup {
+        Ok(quorum) => {
             let pubkey_bytes: &[u8; 48] = quorum.quorum_entry.quorum_public_key.as_ref();
             std::ptr::copy_nonoverlapping(pubkey_bytes.as_ptr(), out_pubkey, QUORUM_PUBKEY_SIZE);
 
@@ -115,13 +113,16 @@ pub unsafe extern "C" fn ffi_dash_spv_get_quorum_public_key(
                 error_message: ptr::null(),
             }
         }
-        None => FFIResult::error(
+        Err(SpvError::QuorumLookupError(_)) => FFIResult::error(
             FFIErrorCode::ValidationError,
             &format!(
                 "Quorum not found: type {} at or before height {} with hash {:x}",
                 quorum_type, core_chain_locked_height, quorum_hash
             ),
         ),
+        Err(e) => {
+            FFIResult::error(FFIErrorCode::RuntimeError, &format!("Quorum lookup failed: {}", e))
+        }
     }
 }
 
