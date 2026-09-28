@@ -33,8 +33,8 @@ use std::collections::BTreeSet;
 ///
 /// | Variant             | Decision action                              | Completion flow                          |
 /// |---------------------|----------------------------------------------|------------------------------------------|
-/// | `QuorumValidation`  | Fire `getqrinfo` (which queues historical diffs for non-rotating quorum verification). | Full `verify_and_complete`: hard-fails into `Error` on verification failure, transitions initial sync to `Synced` on success. |
-/// | `Incremental`       | Fire a targeted `GetMnListDiff` from the latest known masternode list tip to the new header tip. | Lightweight verification at the latest height. On failure, log warn and stay in `Synced`. A single failed tip refresh should not kill the whole sync state. |
+/// | `QuorumValidation`  | Fire `getqrinfo` (which queues historical diffs for non-rotating quorum verification). | `complete_quorum_validation`: transitions initial sync to `Synced`. |
+/// | `Incremental`       | Fire a targeted `GetMnListDiff` from the latest known masternode list tip to the new header tip. | Records the latest list as synced and stays in `Synced`. |
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum PipelineMode {
     /// Full `getqrinfo` request / post-QRInfo historical cycle diffs. See enum docs.
@@ -491,7 +491,7 @@ impl<H: BlockHeaderStorage> MasternodesManager<H> {
         match std::mem::take(&mut self.sync_state.pipeline_mode) {
             PipelineMode::QuorumValidation {
                 qr_info_result,
-            } => self.verify_and_complete(qr_info_result).await,
+            } => self.complete_quorum_validation(qr_info_result).await,
             PipelineMode::Incremental => {
                 let mut events = self.complete_incremental_pipeline().await?;
                 if self.state() == SyncState::Synced && self.sync_state.qrinfo_in_flight.is_none() {
@@ -520,26 +520,13 @@ impl<H: BlockHeaderStorage> MasternodesManager<H> {
         }
     }
 
-    /// Complete the Incremental pipeline: verify non-rotating quorums at the latest
-    /// engine height and update progress on success. On verification failure, log at
-    /// warn level and return `Ok(vec![])` without changing state. A single failed
-    /// tip refresh should not bounce the whole sync into Error.
+    /// Complete the Incremental pipeline: record the engine's newest list as synced.
     async fn complete_incremental_pipeline(&mut self) -> SyncResult<Vec<SyncEvent>> {
-        let mut engine = self.engine.write().await;
+        let engine = self.engine.read().await;
         let Some((&height, list)) = engine.masternode_lists.iter().next_back() else {
             return Ok(vec![]);
         };
         let latest_block_hash = list.block_hash;
-
-        if let Err(e) = engine.verify_non_rotating_masternode_list_quorums(height, &[]) {
-            tracing::warn!(
-                height,
-                "Incremental quorum verification failed, keeping previous state: {}",
-                e
-            );
-            drop(engine);
-            return Ok(vec![]);
-        }
         drop(engine);
 
         self.sync_state.last_synced_block_hash = Some(latest_block_hash);
@@ -605,33 +592,21 @@ impl<H: BlockHeaderStorage> MasternodesManager<H> {
         Ok(vec![])
     }
 
-    /// Verify quorums and mark complete.
+    /// Mark the QRInfo pipeline complete.
     ///
     /// For initial sync (state == Syncing), emits MasternodeStateUpdated and logs completion.
     /// For incremental updates (state == Synced), updates quietly without events.
-    pub(super) async fn verify_and_complete(
+    pub(super) async fn complete_quorum_validation(
         &mut self,
         qr_info_result: Option<QRInfoFeedResult>,
     ) -> SyncResult<Vec<SyncEvent>> {
         let mut events = Vec::new();
         let is_initial_sync = self.state() == SyncState::Syncing;
 
-        let mut engine = self.engine.write().await;
+        let engine = self.engine.read().await;
 
-        // Get the latest height from the engine and verify at that height
         if let Some((&height, list)) = engine.masternode_lists.iter().next_back() {
             let latest_block_hash = list.block_hash;
-            if let Err(e) = engine.verify_non_rotating_masternode_list_quorums(height, &[]) {
-                drop(engine);
-                self.set_state(SyncState::Error);
-                return Err(SyncError::MasternodeSyncFailed(format!(
-                    "Quorum verification failed at height {}: {}",
-                    height, e
-                )));
-            }
-
-            tracing::info!("Non-rotating quorum verification completed at height {}", height);
-
             self.sync_state.last_synced_block_hash = Some(latest_block_hash);
             self.progress.update_current_height(height);
 

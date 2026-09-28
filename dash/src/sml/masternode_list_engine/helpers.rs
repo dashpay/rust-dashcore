@@ -401,7 +401,7 @@ mod shared_map_tests {
     #[test]
     fn a_diff_that_changes_nothing_shares_the_lists_maps() {
         let mut engine = MasternodeListEngine::dummy_with_lists(&[TIP - 1]);
-        engine.apply_diff(MnListDiff::dummy_between(TIP - 1, TIP), Some(TIP), false, None).unwrap();
+        engine.apply_diff(MnListDiff::dummy_between(TIP - 1, TIP), Some(TIP), None).unwrap();
 
         let base = &engine.masternode_lists[&(TIP - 1)];
         let next = &engine.masternode_lists[&TIP];
@@ -436,6 +436,39 @@ mod shared_map_tests {
 
     #[test]
     #[cfg(feature = "quorum_validation")]
+    fn applying_a_diff_verifies_the_newest_lists_quorums() {
+        use crate::sml::llmq_entry_verification::LLMQEntryVerificationSkipStatus;
+        use crate::sml::quorum_validation_error::QuorumValidationError;
+
+        let quorum_hash = QuorumHash::from_byte_array([0x42; 32]);
+        let not_marked = LLMQEntryVerificationStatus::Skipped(
+            LLMQEntryVerificationSkipStatus::NotMarkedForVerification,
+        );
+        let mut engine = MasternodeListEngine::dummy_with_lists(&[TIP - 1]);
+        let mut quorum = quorum_entry(quorum_hash, 1);
+        quorum.verified = not_marked.clone();
+        Arc::make_mut(&mut engine.masternode_lists.get_mut(&(TIP - 1)).unwrap().quorums)
+            .entry(PLATFORM_TYPE)
+            .or_default()
+            .insert(quorum_hash, Arc::new(quorum.clone()));
+        engine.quorum_statuses.entry(PLATFORM_TYPE).or_default().insert(
+            quorum_hash,
+            ([TIP - 1].into(), quorum.quorum_entry.quorum_public_key, not_marked.clone()),
+        );
+
+        engine.apply_diff(MnListDiff::dummy_between(TIP - 1, TIP), Some(TIP), None).unwrap();
+
+        assert_eq!(
+            engine.masternode_lists[&TIP].quorums[&PLATFORM_TYPE][&quorum_hash].verified,
+            LLMQEntryVerificationStatus::Invalid(QuorumValidationError::InsufficientSigners {
+                required: 8,
+                found: 4,
+            })
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "quorum_validation")]
     fn a_status_change_keeps_the_lists_that_shared_a_quorum_map_sharing() {
         let quorum_hash = QuorumHash::from_byte_array([0x42; 32]);
         let mut engine = MasternodeListEngine::dummy_with_lists(&[TIP - 2]);
@@ -444,11 +477,19 @@ mod shared_map_tests {
         Arc::make_mut(&mut engine.masternode_lists.get_mut(&(TIP - 2)).unwrap().quorums)
             .entry(PLATFORM_TYPE)
             .or_default()
-            .insert(quorum_hash, Arc::new(quorum));
+            .insert(quorum_hash, Arc::new(quorum.clone()));
+        engine.quorum_statuses.entry(PLATFORM_TYPE).or_default().insert(
+            quorum_hash,
+            (
+                [TIP - 2].into(),
+                quorum.quorum_entry.quorum_public_key,
+                LLMQEntryVerificationStatus::Unknown,
+            ),
+        );
         engine
-            .apply_diff(MnListDiff::dummy_between(TIP - 2, TIP - 1), Some(TIP - 1), false, None)
+            .apply_diff(MnListDiff::dummy_between(TIP - 2, TIP - 1), Some(TIP - 1), None)
             .unwrap();
-        engine.apply_diff(MnListDiff::dummy_between(TIP - 1, TIP), Some(TIP), false, None).unwrap();
+        engine.apply_diff(MnListDiff::dummy_between(TIP - 1, TIP), Some(TIP), None).unwrap();
 
         engine.set_quorum_status_in_lists(
             [TIP - 2, TIP - 1, TIP],
@@ -500,9 +541,7 @@ mod prune_tests {
             - MasternodeListEngine::default_for_network(Network::Mainnet).retention_window();
         let mut engine = MasternodeListEngine::dummy_with_lists(&[1_000, floor - 1, floor, TIP]);
 
-        engine
-            .apply_diff(MnListDiff::dummy_between(TIP, TIP + 1), Some(TIP + 1), false, None)
-            .unwrap();
+        engine.apply_diff(MnListDiff::dummy_between(TIP, TIP + 1), Some(TIP + 1), None).unwrap();
 
         assert_eq!(heights(&engine), vec![floor, TIP, TIP + 1]);
     }
@@ -514,13 +553,11 @@ mod prune_tests {
         let mut engine = MasternodeListEngine::dummy_with_lists(&[base, QR_INFO_BASE]);
 
         for (from, to) in [(base, TIP - 100), (base, TIP)] {
-            engine.apply_diff(MnListDiff::dummy_between(from, to), Some(to), false, None).unwrap();
+            engine.apply_diff(MnListDiff::dummy_between(from, to), Some(to), None).unwrap();
         }
         assert_eq!(heights(&engine), vec![base, QR_INFO_BASE, TIP - 100, TIP]);
 
-        engine
-            .apply_diff(MnListDiff::dummy_between(TIP, TIP + 1), Some(TIP + 1), false, None)
-            .unwrap();
+        engine.apply_diff(MnListDiff::dummy_between(TIP, TIP + 1), Some(TIP + 1), None).unwrap();
         assert_eq!(heights(&engine), vec![QR_INFO_BASE, TIP - 100, TIP, TIP + 1]);
     }
 
@@ -531,9 +568,7 @@ mod prune_tests {
         let base = TIP - 10_000;
         let mut engine = MasternodeListEngine::dummy_with_lists(&[base, TIP]);
 
-        engine
-            .apply_diff(MnListDiff::dummy_between(TIP, TIP + 1), Some(TIP + 1), false, None)
-            .unwrap();
+        engine.apply_diff(MnListDiff::dummy_between(TIP, TIP + 1), Some(TIP + 1), None).unwrap();
 
         assert_eq!(engine.qr_info_base_list(TIP + 1).map(|list| list.known_height), Some(base));
     }
