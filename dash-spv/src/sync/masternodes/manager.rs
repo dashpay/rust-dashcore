@@ -92,10 +92,6 @@ pub(super) struct MasternodeSyncState {
     pub(super) qrinfo_in_flight: Option<QRInfoInFlight>,
     /// Current retry count for QRInfo.
     pub(super) qrinfo_retry_count: u8,
-    /// Block hash of the latest masternode list the engine holds. Initialized from
-    /// engine state on startup (so it survives restarts) and refreshed after every
-    /// successful pipeline completion.
-    pub(super) last_synced_block_hash: Option<BlockHash>,
     /// Rotation cycle boundary heights we have successfully freshly-validated. Used
     /// to stop firing QRInfo for a cycle once its rotated quorums are verified.
     /// Subsequent tip updates within the same cycle take the `Incremental` path.
@@ -280,13 +276,8 @@ impl<H: BlockHeaderStorage> MasternodesManager<H> {
     ) -> Self {
         // Recover sync state from the engine's stored masternode lists so that a
         // restart can resume from where the previous run left off.
-        let (current_height, last_synced_block_hash) = {
-            let engine_guard = engine.read().await;
-            match engine_guard.masternode_lists.iter().next_back() {
-                Some((&height, list)) => (height, Some(list.block_hash)),
-                None => (0, None),
-            }
-        };
+        let current_height =
+            engine.read().await.masternode_lists.keys().next_back().copied().unwrap_or(0);
 
         // Load block header tip for progress display
         let header_tip =
@@ -298,8 +289,7 @@ impl<H: BlockHeaderStorage> MasternodesManager<H> {
         initial_progress.update_block_header_tip_height(header_tip);
         initial_progress.set_state(SyncState::WaitingForConnections);
 
-        let mut sync_state = MasternodeSyncState::new();
-        sync_state.last_synced_block_hash = last_synced_block_hash;
+        let sync_state = MasternodeSyncState::new();
 
         Self {
             progress: initial_progress,
@@ -311,15 +301,21 @@ impl<H: BlockHeaderStorage> MasternodesManager<H> {
         }
     }
 
+    /// Messages are stored only until the sync reaches the tip. Once synced,
+    /// nothing is, and the next start catches up from the last stored message.
+    fn storage_while_syncing(&self) -> Option<&Arc<RwLock<PersistentMasternodeStorage<H>>>> {
+        self.message_storage.as_ref().filter(|_| self.state() != SyncState::Synced)
+    }
+
     pub(super) async fn store_diff(&self, height: u32, diff: &MnListDiff) -> StorageResult<()> {
-        let Some(storage) = &self.message_storage else {
+        let Some(storage) = self.storage_while_syncing() else {
             return Ok(());
         };
         storage.write().await.store_diff(height, diff).await
     }
 
     pub(super) async fn store_qr_info(&self, height: u32, qr_info: &QRInfo) -> StorageResult<()> {
-        let Some(storage) = &self.message_storage else {
+        let Some(storage) = self.storage_while_syncing() else {
             return Ok(());
         };
         storage.write().await.store_qr_info(height, qr_info).await
@@ -449,7 +445,9 @@ impl<H: BlockHeaderStorage> MasternodesManager<H> {
             }
         };
 
-        let Some(base_hash) = self.sync_state.last_synced_block_hash else {
+        let Some(base_hash) =
+            self.engine.read().await.latest_masternode_list().map(|list| list.block_hash)
+        else {
             // No stored masternode list at all, so a targeted diff is not possible.
             // This should only happen transiently before the first successful sync.
             return Ok(vec![]);
@@ -523,13 +521,11 @@ impl<H: BlockHeaderStorage> MasternodesManager<H> {
     /// Complete the Incremental pipeline: record the engine's newest list as synced.
     async fn complete_incremental_pipeline(&mut self) -> SyncResult<Vec<SyncEvent>> {
         let engine = self.engine.read().await;
-        let Some((&height, list)) = engine.masternode_lists.iter().next_back() else {
+        let Some(&height) = engine.masternode_lists.keys().next_back() else {
             return Ok(vec![]);
         };
-        let latest_block_hash = list.block_hash;
         drop(engine);
 
-        self.sync_state.last_synced_block_hash = Some(latest_block_hash);
         self.progress.update_current_height(height);
         tracing::debug!("Incremental MnListDiff complete at height {}", height);
         Ok(vec![SyncEvent::MasternodeStateUpdated {
@@ -605,9 +601,7 @@ impl<H: BlockHeaderStorage> MasternodesManager<H> {
 
         let engine = self.engine.read().await;
 
-        if let Some((&height, list)) = engine.masternode_lists.iter().next_back() {
-            let latest_block_hash = list.block_hash;
-            self.sync_state.last_synced_block_hash = Some(latest_block_hash);
+        if let Some(&height) = engine.masternode_lists.keys().next_back() {
             self.progress.update_current_height(height);
 
             events.push(SyncEvent::MasternodeStateUpdated {
@@ -906,14 +900,10 @@ mod tests {
         assert!(matches!(manager.next_pipeline_mode(50), PipelineMode::Incremental));
     }
 
-    /// On restart, `MasternodesManager::new` must recover
-    /// `last_synced_block_hash` from the engine's stored masternode lists so
-    /// the next pipeline run can target the correct base. Without recovery,
-    /// `send_tip_mnlistdiff_update` would early-return for lack of a base
-    /// hash and the SPV would re-run the full QRInfo flow on every restart
-    /// instead of resuming.
+    /// On restart, `MasternodesManager::new` must recover its height from the
+    /// engine's stored masternode lists.
     #[tokio::test]
-    async fn test_masternode_manager_recovers_last_synced_hash_from_engine() {
+    async fn test_masternode_manager_recovers_its_height_from_engine() {
         let storage = DiskStorageManager::with_temp_dir().await.unwrap();
         let mut engine = MasternodeListEngine::default_for_network(dashcore::Network::Testnet);
         let tip_hash = BlockHash::from_byte_array([0xAB; 32]);
@@ -930,25 +920,17 @@ mod tests {
         .await;
 
         assert_eq!(
-            manager.sync_state.last_synced_block_hash,
-            Some(tip_hash),
-            "new() must recover last_synced_block_hash from the engine's tip list"
-        );
-        assert_eq!(
             manager.progress.current_height(),
             200,
             "new() must seed progress.current_height from the engine's tip list height"
         );
     }
 
-    /// Counterpart to the recovery test: when the engine has no stored
-    /// masternode lists, `new()` must leave `last_synced_block_hash` as None
-    /// so the QRInfo path knows it must run from scratch instead of trying
-    /// to issue a targeted GetMnListDiff against a bogus base.
+    /// Counterpart to the recovery test: with no stored masternode lists,
+    /// `new()` starts from height 0.
     #[tokio::test]
     async fn test_masternode_manager_starts_clean_with_empty_engine() {
         let manager = create_test_manager_for(dashcore::Network::Testnet).await;
-        assert_eq!(manager.sync_state.last_synced_block_hash, None);
         assert_eq!(manager.progress.current_height(), 0);
     }
 
