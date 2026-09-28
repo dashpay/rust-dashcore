@@ -101,6 +101,16 @@ pub struct TransactionCheckResult {
     /// [`ManagedCoreFundsAccount::drop_conflicted_transactions`]:
     ///     crate::managed_account::ManagedCoreFundsAccount
     pub released_outpoints: Vec<OutPoint>,
+    /// Outpoints this check added to the wallet's lock set: the collateral of
+    /// a ProRegTx, which coin selection now skips. Only new entries are
+    /// listed, so a ProRegTx seen again reports nothing.
+    ///
+    /// Filled whether or not the transaction is otherwise relevant: the
+    /// registration may involve nothing of this wallet's but the collateral,
+    /// or the collateral may not have arrived yet. A store that persists
+    /// wallet state records these; see
+    /// [`ManagedWalletInfo::locked_outpoints`](crate::wallet::ManagedWalletInfo::locked_outpoints).
+    pub locked_outpoints: Vec<OutPoint>,
 }
 
 /// Enum representing the type of Core account that matched with embedded data
@@ -432,6 +442,7 @@ impl ManagedAccountCollection {
             updated_records: Vec::new(),
             swept_transactions: Vec::new(),
             released_outpoints: Vec::new(),
+            locked_outpoints: Vec::new(),
         };
 
         for account_type in account_types {
