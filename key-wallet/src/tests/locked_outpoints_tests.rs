@@ -12,6 +12,7 @@ use dashcore::blockdata::transaction::special_transaction::provider_update_revoc
 use dashcore::blockdata::transaction::special_transaction::provider_update_service::ProviderUpdateServicePayload;
 use dashcore::blockdata::transaction::special_transaction::TransactionPayload;
 use dashcore::bls_sig_utils::{BLSPublicKey, BLSSignature};
+use dashcore::ephemerealdata::instant_lock::InstantLock;
 use dashcore::hash_types::InputsHash;
 use dashcore::hashes::Hash;
 use dashcore::{
@@ -42,6 +43,27 @@ fn block(height: u32) -> TransactionContext {
         BlockHash::from_byte_array([height as u8; 32]),
         1_700_000_000 + height,
     ))
+}
+
+fn chain_locked_block(height: u32) -> TransactionContext {
+    TransactionContext::InChainLockedBlock(BlockInfo::new(
+        height,
+        BlockHash::from_byte_array([height as u8; 32]),
+        1_700_000_000 + height,
+    ))
+}
+
+/// Seen in the mempool, without an InstantSend lock.
+fn in_mempool(_tx: &Transaction) -> TransactionContext {
+    TransactionContext::Mempool
+}
+
+/// Seen in the mempool with an InstantSend lock.
+fn instant_locked(tx: &Transaction) -> TransactionContext {
+    TransactionContext::InstantSend(InstantLock {
+        txid: tx.txid(),
+        ..InstantLock::default()
+    })
 }
 
 /// An address that is not the wallet's.
@@ -226,6 +248,8 @@ async fn a_registration_locks_its_external_collateral_whichever_arrives_first(
 }
 
 #[test_case(&[TransactionContext::Mempool, block(101)] ; "seen in the mempool, then mined")]
+#[test_case(&[TransactionContext::Mempool] ; "seen only in the mempool")]
+#[test_case(&[TransactionContext::InstantSend(InstantLock::default())] ; "seen instant send locked")]
 #[test_case(&[block(101)] ; "first seen mined")]
 #[tokio::test]
 async fn a_registration_locks_the_collateral_it_creates(sightings: &[TransactionContext]) {
@@ -258,6 +282,88 @@ async fn a_registration_locks_the_collateral_it_creates(sightings: &[Transaction
     assert_eq!(reported, vec![collateral], "reported once, when first locked");
     assert_eq!(ctx.managed_wallet.balance().locked(), COLLATERAL);
     assert!(is_out_of_coins(send(&mut ctx, DASH, SelectionStrategy::LargestFirst)));
+}
+
+/// A ProRegTx that is not in a block is not a registration yet, so the coin
+/// it names stays spendable. An InstantSend lock does not change that.
+#[test_case(in_mempool ; "in the mempool")]
+#[test_case(instant_locked ; "instant send locked")]
+#[tokio::test]
+async fn an_unconfirmed_registration_leaves_the_collateral_it_names_unlocked(
+    sighting: fn(&Transaction) -> TransactionContext,
+) {
+    let mut ctx = TestWalletContext::new_random();
+    let collateral = receive(&mut ctx, COLLATERAL, 0x01, 100).await;
+    ctx.managed_wallet.update_last_processed_height(TIP);
+    let registration = registration(collateral, vec![], 0xEE);
+
+    let result = ctx.check_transaction(&registration, sighting(&registration)).await;
+
+    assert!(result.locked_outpoints.is_empty());
+    assert!(!result.state_modified, "nothing changed");
+    assert!(!ctx.managed_wallet.is_outpoint_locked(&collateral));
+    assert!(!ctx.bip44_account().utxos[&collateral].is_locked);
+    assert_eq!(ctx.managed_wallet.balance().spendable(), COLLATERAL);
+    assert_eq!(ctx.managed_wallet.balance().locked(), 0);
+    let tx = send(&mut ctx, DASH, SelectionStrategy::LargestFirst).expect("the coin is spendable");
+    assert_eq!(spent(&tx), vec![collateral]);
+}
+
+/// The block that confirms a ProRegTx first seen unconfirmed locks the
+/// collateral it names.
+#[test_case(in_mempool, block(101) ; "mempool, then a block")]
+#[test_case(in_mempool, chain_locked_block(101) ; "mempool, then a chainlocked block")]
+#[test_case(instant_locked, block(101) ; "instant send, then a block")]
+#[tokio::test]
+async fn the_block_holding_a_registration_first_seen_unconfirmed_locks_its_collateral(
+    first: fn(&Transaction) -> TransactionContext,
+    mined: TransactionContext,
+) {
+    let mut ctx = TestWalletContext::new_random();
+    let collateral = receive(&mut ctx, COLLATERAL, 0x01, 100).await;
+    let registration = registration(collateral, vec![], 0xEE);
+    let unconfirmed = ctx.check_transaction(&registration, first(&registration)).await;
+    assert!(unconfirmed.locked_outpoints.is_empty());
+
+    let result = ctx.check_transaction(&registration, mined).await;
+
+    assert_eq!(result.locked_outpoints, vec![collateral]);
+    assert!(result.state_modified, "the lock set is persisted state");
+    assert!(ctx.bip44_account().utxos[&collateral].is_locked);
+    assert_eq!(ctx.managed_wallet.balance().locked(), COLLATERAL);
+    ctx.managed_wallet.update_last_processed_height(TIP);
+    assert!(is_out_of_coins(send(&mut ctx, DASH, SelectionStrategy::LargestFirst)));
+}
+
+/// An unconfirmed sighting locks the collateral a ProRegTx creates as that
+/// coin arrives, not again once the wallet holds it: an unlock stays until a
+/// block holding the ProRegTx locks the coin again.
+#[test_case(in_mempool ; "in the mempool")]
+#[test_case(instant_locked ; "instant send locked")]
+#[tokio::test]
+async fn an_unconfirmed_sighting_does_not_relock_a_created_collateral_after_an_unlock(
+    sighting: fn(&Transaction) -> TransactionContext,
+) {
+    let mut ctx = TestWalletContext::new_random();
+    let to_wallet = TxOut {
+        value: COLLATERAL,
+        script_pubkey: ctx.receive_address.script_pubkey(),
+    };
+    let registration = registration(OutPoint::new(Txid::all_zeros(), 0), vec![to_wallet], 0xEE);
+    let collateral = OutPoint::new(registration.txid(), 0);
+    let first = ctx.check_transaction(&registration, TransactionContext::Mempool).await;
+    assert_eq!(first.locked_outpoints, vec![collateral]);
+    assert!(ctx.managed_wallet.unlock_outpoint(&collateral));
+
+    let again = ctx.check_transaction(&registration, sighting(&registration)).await;
+
+    assert!(again.locked_outpoints.is_empty());
+    assert!(!ctx.managed_wallet.is_outpoint_locked(&collateral));
+    assert_eq!(ctx.managed_wallet.balance().locked(), 0);
+
+    let mined = ctx.check_transaction(&registration, block(101)).await;
+    assert_eq!(mined.locked_outpoints, vec![collateral]);
+    assert_eq!(ctx.managed_wallet.balance().locked(), COLLATERAL);
 }
 
 #[tokio::test]
