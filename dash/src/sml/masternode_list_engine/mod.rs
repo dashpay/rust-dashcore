@@ -2313,7 +2313,9 @@ mod tests {
 
     /// A diff whose resulting list does not match its coinbase is refused
     /// whether it starts the engine, extends a list or arrives in a QRInfo,
-    /// and no list is stored for its block.
+    /// and no list is stored for its block. A refused extension leaves the
+    /// engine as it was: its quorums are neither recorded in
+    /// `quorum_statuses` nor verified.
     #[test]
     fn a_diff_that_does_not_match_its_coinbase_is_not_applied() {
         let tampered = |mut diff: MnListDiff| {
@@ -2341,12 +2343,14 @@ mod tests {
         engine
             .apply_diff(MnListDiff::mainnet_fixture_0_2227096(), Some(2227096), None)
             .expect("the untouched diff applies");
+        let before = engine.clone();
         assert!(refused(engine.apply_diff(
             tampered(MnListDiff::mainnet_fixture_2227096_2241332()),
             Some(2241332),
             None,
         )));
         assert!(!engine.masternode_lists.contains_key(&2241332));
+        assert!(engine == before, "a refused diff leaves the engine as it was");
     }
 
     #[test]
