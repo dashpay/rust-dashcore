@@ -144,7 +144,9 @@ impl TransactionBuilder {
     }
 
     /// Add a funding account's spendable UTXOs to the candidate input set,
-    /// skipping any already reserved by another in-flight build.
+    /// skipping any already reserved by another in-flight build and any the
+    /// wallet has locked (see
+    /// [`ManagedWalletInfo::locked_outpoints`](crate::wallet::ManagedWalletInfo::locked_outpoints)).
     ///
     /// Call it once per funding account: coin selection then draws from the
     /// union of their UTXOs, and the first account supplies the change
@@ -179,8 +181,9 @@ impl TransactionBuilder {
     /// does.
     ///
     /// Reservation bookkeeping is unchanged: `owned` still covers every
-    /// unreserved UTXO of the account, so whichever seeded outpoints selection
-    /// picks are reserved by the account that holds them.
+    /// unreserved, unlocked UTXO of the account, so whichever seeded outpoints
+    /// selection picks are reserved by the account that holds them. A seeded
+    /// outpoint the account holds locked is dropped, as with `add_funding`.
     pub fn add_funding_reservation_only(
         self,
         funds_acc: &mut ManagedCoreFundsAccount,
@@ -212,8 +215,17 @@ impl TransactionBuilder {
         // here would leave a pre-seeded input unreserved and free for a
         // concurrent build to select.
         let mut owned: HashSet<OutPoint> = HashSet::new();
+        // Coins the wallet has locked, such as masternode collateral. Never a
+        // candidate, and a copy seeded by `add_inputs` is dropped below: a
+        // caller-built `Utxo` carries whatever lock flag it was cloned with,
+        // while this account's own coin carries the current one.
+        let mut locked: HashSet<OutPoint> = HashSet::new();
         for utxo in funds_acc.utxos.values() {
             if reserved.contains(&utxo.outpoint) {
+                continue;
+            }
+            if utxo.is_locked {
+                locked.insert(utxo.outpoint);
                 continue;
             }
             owned.insert(utxo.outpoint);
@@ -225,6 +237,9 @@ impl TransactionBuilder {
             }
         }
         self.funding.push((funds_acc.reservations().clone(), owned));
+        if !locked.is_empty() {
+            self.inputs.retain(|utxo| !locked.contains(&utxo.outpoint));
+        }
         self.inputs.extend(candidates);
         if self.change_addr.is_none() {
             self.change_addr = funds_acc.next_change_address(Some(&acc.account_xpub), true).ok();

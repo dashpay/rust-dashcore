@@ -118,7 +118,8 @@ pub trait WalletInfoInterface: Sized + WalletTransactionChecker + ManagedAccount
     /// Get all UTXOs for the wallet
     fn utxos(&self) -> BTreeSet<&Utxo>;
 
-    /// Get spendable UTXOs (confirmed and not locked)
+    /// Get spendable UTXOs: mature and not locked (see
+    /// [`ManagedWalletInfo::locked_outpoints`]).
     fn get_spendable_utxos(&self) -> BTreeSet<&Utxo>;
 
     /// Get the wallet balance
@@ -472,6 +473,10 @@ impl WalletInfoInterface for ManagedWalletInfo {
     }
 
     fn update_balance(&mut self) {
+        // The locked bucket is read from each coin's lock flag, which follows
+        // the wallet's lock set; bring every flag up to date first.
+        self.refresh_all_lock_flags();
+
         // Only funds-bearing accounts contribute to the wallet balance.
         let mut balance = WalletCoreBalance::default();
         let last_processed_height = self.last_processed_height();
