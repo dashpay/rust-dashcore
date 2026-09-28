@@ -18,6 +18,8 @@ use crate::managed_account::managed_account_type::ManagedAccountType;
 use crate::AddressInfo;
 use crate::ExtendedPubKey;
 use crate::Network;
+#[cfg(feature = "bls")]
+use dashcore::bls_sig_utils::{BLSPublicKey, BlsScheme};
 use dashcore::{Address, ScriptBuf, Txid};
 
 /// Common trait for "core" managed account types — both funds-bearing
@@ -400,7 +402,7 @@ pub trait ManagedAccountTrait {
         &mut self,
         account_xpub: Option<ExtendedBLSPubKey>,
         add_to_state: bool,
-    ) -> Result<dashcore::blsful::PublicKey<dashcore::blsful::Bls12381G2Impl>, &'static str> {
+    ) -> Result<BLSPublicKey, &'static str> {
         match self.managed_account_type_mut() {
             ManagedAccountType::ProviderOperatorKeys {
                 addresses,
@@ -421,14 +423,11 @@ pub trait ManagedAccountTrait {
 
                 addresses.mark_index_used(info.index);
 
-                use dashcore::blsful::{Bls12381G2Impl, PublicKey, SerializationFormat};
-                let public_key = PublicKey::<Bls12381G2Impl>::from_bytes_with_mode(
-                    &pub_key_bytes,
-                    SerializationFormat::Modern,
-                )
-                .map_err(|_| "Failed to deserialize BLS public key")?;
-
-                Ok(public_key)
+                BLSPublicKey::try_from(pub_key_bytes.as_slice())
+                    .map_err(|_| "BLS public key was not 48 bytes")?
+                    .as_scheme(BlsScheme::Modern)
+                    .canonicalize()
+                    .map_err(|_| "Failed to deserialize BLS public key")
             }
             _ => Err("This method only works for ProviderOperatorKeys accounts"),
         }

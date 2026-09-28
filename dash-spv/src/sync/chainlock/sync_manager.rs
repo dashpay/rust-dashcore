@@ -79,17 +79,28 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> SyncManager for ChainLockManager
         _requests: &RequestSender,
     ) -> SyncResult<Vec<SyncEvent>> {
         // `MasternodeStateUpdated` fires on every MnListDiff / QRInfo
-        // update; the work below is strictly one-shot startup work, so
-        // gate the entire branch on the not-ready transition. Also drop
-        // buffered events that arrive between `stop_sync` and the next
+        // update. Once ready, each one only retries a deferred chainlock;
+        // the rest below is one-shot startup work. Also drop buffered
+        // events that arrive between `stop_sync` and the next
         // `start_sync`, otherwise the one-shot would force `Synced` while
         // peerless. `MasternodeStateUpdated` re-fires once `MasternodesManager`
         // completes a sync cycle after reconnect.
         if !matches!(event, SyncEvent::MasternodeStateUpdated { .. })
-            || self.masternode_ready
             || self.state() == SyncState::WaitingForConnections
         {
             return Ok(vec![]);
+        }
+
+        if self.masternode_ready {
+            return Ok(self
+                .revalidate_pending()
+                .await
+                .map(|chain_lock| SyncEvent::ChainLockReceived {
+                    chain_lock,
+                    validated: true,
+                })
+                .into_iter()
+                .collect());
         }
 
         let chainlock = self.on_masternode_ready().await;

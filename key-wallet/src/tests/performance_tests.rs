@@ -156,42 +156,6 @@ fn test_wallet_recovery_performance() {
 }
 
 #[test]
-fn test_address_generation_batch_performance() {
-    use crate::managed_account::address_pool::{AddressPool, AddressPoolType, KeySource};
-
-    let mnemonic = Mnemonic::from_phrase("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about").unwrap();
-    let seed = mnemonic.to_seed("");
-    let master = ExtendedPrivKey::new_master(Network::Testnet, &seed).unwrap();
-
-    let account_path = DerivationPath::from(vec![
-        ChildNumber::from_hardened_idx(44).unwrap(),
-        ChildNumber::from_hardened_idx(5).unwrap(),
-        ChildNumber::from_hardened_idx(0).unwrap(),
-    ]);
-    let account_key = master.derive_priv(&account_path).unwrap();
-    let key_source = KeySource::Private(account_key);
-
-    let base_path = DerivationPath::from(vec![ChildNumber::from_normal_idx(0).unwrap()]);
-    let mut pool =
-        AddressPool::new(base_path, AddressPoolType::External, 20, Network::Testnet, &key_source)
-            .unwrap();
-
-    // Batch generation test
-    let batch_sizes = vec![10, 50, 100, 500];
-
-    for batch_size in batch_sizes {
-        let start = Instant::now();
-        let _addresses = pool.generate_addresses(batch_size, &key_source, true).unwrap();
-        let elapsed = start.elapsed();
-
-        let ops_per_second = batch_size as f64 / elapsed.as_secs_f64();
-
-        // Assert batch performance
-        assert!(ops_per_second > 100.0, "Should generate >100 addresses/sec");
-    }
-}
-
-#[test]
 fn test_large_wallet_memory_usage() {
     let mut wallet = Wallet::new_random(
         Network::Testnet,

@@ -1032,7 +1032,6 @@ impl ManagedCoreFundsAccount {
                 // Check if operator_public_key matches any of our BLS public keys
                 for address_info in addresses.addresses.values() {
                     if let Some(PublicKeyType::BLS(bls_key)) = &address_info.public_key {
-                        // Compare the byte arrays - BLSPublicKey implements AsRef<[u8; 48]>
                         let operator_key_bytes: &[u8; 48] = operator_public_key.as_ref();
                         if bls_key.len() == 48 && bls_key.as_slice() == operator_key_bytes {
                             return Some(AccountMatch {

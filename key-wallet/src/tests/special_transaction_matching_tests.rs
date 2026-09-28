@@ -351,7 +351,7 @@ async fn provider_registration_with_owner_key_hash_matches_provider_owner_keys()
         ProviderMasternodeType::Regular,
         derive_pubkey_hash(&owner_addr),
         derive_pubkey_hash(&voting_addr),
-        operator_pk.0.to_compressed().into(),
+        operator_pk,
         ScriptBuf::new(),
         None,
     );
@@ -386,7 +386,7 @@ async fn provider_registration_with_voting_key_hash_matches_provider_voting_keys
         ProviderMasternodeType::Regular,
         derive_pubkey_hash(&owner_addr),
         derive_pubkey_hash(&voting_addr),
-        operator_pk.0.to_compressed().into(),
+        operator_pk,
         ScriptBuf::new(),
         None,
     );
@@ -422,7 +422,7 @@ async fn provider_registration_with_operator_public_key_matches_provider_operato
         ProviderMasternodeType::Regular,
         derive_pubkey_hash(&owner_addr),
         derive_pubkey_hash(&voting_addr),
-        operator_pk.0.to_compressed().into(),
+        operator_pk,
         ScriptBuf::new(),
         None,
     );
@@ -487,7 +487,7 @@ async fn provider_registration_extends_operator_key_gap_limit() {
         ProviderMasternodeType::Regular,
         derive_pubkey_hash(&owner_addr),
         derive_pubkey_hash(&voting_addr),
-        operator_pk.0.to_compressed().into(),
+        operator_pk,
         ScriptBuf::new(),
         None,
     );
@@ -560,7 +560,7 @@ async fn provider_registration_with_platform_node_id_matches_provider_platform_k
         ProviderMasternodeType::HighPerformance,
         derive_pubkey_hash(&owner_addr),
         derive_pubkey_hash(&voting_addr),
-        operator_pk.0.to_compressed().into(),
+        operator_pk,
         ScriptBuf::new(),
         Some(platform_node_id),
     );
@@ -613,7 +613,7 @@ async fn provider_update_registrar_with_voting_key_change_matches_provider_votin
                 version: 1,
                 pro_tx_hash: Txid::from_byte_array([1u8; 32]),
                 provider_mode: 0,
-                operator_public_key: operator_pk.0.to_compressed().into(),
+                operator_public_key: operator_pk,
                 voting_key_hash: derive_pubkey_hash(&voting_addr),
                 script_payout: ScriptBuf::new(),
                 inputs_hash: [3u8; 32].into(),
@@ -666,7 +666,7 @@ async fn provider_update_registrar_with_operator_key_change_matches_provider_ope
                 version: 1,
                 pro_tx_hash: Txid::from_byte_array([1u8; 32]),
                 provider_mode: 0,
-                operator_public_key: operator_pk.0.to_compressed().into(),
+                operator_public_key: operator_pk,
                 voting_key_hash: derive_pubkey_hash(&voting_addr),
                 script_payout: ScriptBuf::new(),
                 inputs_hash: [3u8; 32].into(),

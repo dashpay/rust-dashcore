@@ -1,4 +1,5 @@
 use crate::bls_sig_utils::BLSSignature;
+use std::sync::Arc;
 
 use crate::Network;
 use crate::network::constants::NetworkExt;
@@ -91,7 +92,7 @@ impl TryFromWithBlockHashLookup<MnListDiff> for MasternodeList {
         let masternodes = diff
             .new_masternodes
             .into_iter()
-            .map(|entry| (entry.pro_reg_tx_hash.reverse(), entry.into()))
+            .map(|entry| (entry.pro_reg_tx_hash.reverse(), Arc::new(entry.into())))
             .collect::<BTreeMap<_, _>>();
 
         // Build a vector of optional signatures with slots matching new_quorums length
@@ -118,13 +119,13 @@ impl TryFromWithBlockHashLookup<MnListDiff> for MasternodeList {
 
         let quorums = diff.new_quorums.into_iter().enumerate().fold(
             BTreeMap::new(),
-            |mut map: BTreeMap<LLMQType, BTreeMap<QuorumHash, QualifiedQuorumEntry>>,
+            |mut map: BTreeMap<LLMQType, BTreeMap<QuorumHash, Arc<QualifiedQuorumEntry>>>,
              (idx, quorum)| {
                 map.entry(quorum.llmq_type).or_default().insert(quorum.quorum_hash, {
                     let entry_hash = quorum.calculate_entry_hash();
                     let commitment_hash = quorum.calculate_commitment_hash();
 
-                    QualifiedQuorumEntry {
+                    Arc::new(QualifiedQuorumEntry {
                         quorum_entry: quorum,
                         verified: LLMQEntryVerificationStatus::Skipped(
                             LLMQEntryVerificationSkipStatus::NotMarkedForVerification,
@@ -137,7 +138,7 @@ impl TryFromWithBlockHashLookup<MnListDiff> for MasternodeList {
                             .flatten()
                             .copied()
                             .map(VerifyingChainLockSignaturesType::NonRotating),
-                    }
+                    })
                 });
                 map
             },
@@ -149,8 +150,8 @@ impl TryFromWithBlockHashLookup<MnListDiff> for MasternodeList {
             known_height,
             masternode_merkle_root: diff.merkle_hashes.first().cloned(),
             llmq_merkle_root: None, // Adjust based on real data availability
-            masternodes,
-            quorums,
+            masternodes: masternodes.into(),
+            quorums: quorums.into(),
         })
     }
 }

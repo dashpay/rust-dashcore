@@ -1,5 +1,6 @@
 use crate::BlockHash;
 use crate::prelude::CoreBlockHeight;
+use crate::sml::llmq_type::QUORUM_MEMBER_LIST_OFFSET;
 use crate::sml::masternode_list::MasternodeList;
 use crate::sml::masternode_list_engine::MasternodeListEngine;
 use crate::sml::masternode_list_entry::qualified_masternode_list_entry::QualifiedMasternodeListEntry;
@@ -11,24 +12,22 @@ use crate::sml::quorum_validation_error::QuorumValidationError;
 
 impl MasternodeListEngine {
     #[allow(dead_code)]
-    pub(crate) fn masternode_list_and_height_for_block_hash_8_blocks_ago(
+    pub(crate) fn masternode_list_and_height_for_quorum_members(
         &self,
         block_hash: &BlockHash,
     ) -> Result<(&MasternodeList, CoreBlockHeight), QuorumValidationError> {
-        if let Some(height) = self.block_container.get_height(block_hash) {
-            if let Some(masternode_list) = self.masternode_lists.get(&(height.saturating_sub(8))) {
-                Ok((masternode_list, height.saturating_sub(8)))
-            } else {
-                Err(QuorumValidationError::RequiredMasternodeListNotPresent(
-                    height.saturating_sub(8),
-                ))
-            }
-        } else {
-            Err(QuorumValidationError::RequiredBlockNotPresent(
+        let Some(height) = self.block_container.get_height(block_hash) else {
+            return Err(QuorumValidationError::RequiredBlockNotPresent(
                 *block_hash,
-                "looking for masternode list and height for block hash 8 blocks ago".to_string(),
-            ))
-        }
+                "looking for the masternode list a quorum's members are selected from".to_string(),
+            ));
+        };
+
+        let member_list_height = height.saturating_sub(QUORUM_MEMBER_LIST_OFFSET);
+        self.masternode_lists
+            .get(&member_list_height)
+            .map(|masternode_list| (masternode_list, member_list_height))
+            .ok_or(QuorumValidationError::RequiredMasternodeListNotPresent(member_list_height))
     }
 
     #[allow(dead_code)]
@@ -36,10 +35,8 @@ impl MasternodeListEngine {
         &self,
         quorum: &QualifiedQuorumEntry,
     ) -> Result<Vec<&QualifiedMasternodeListEntry>, QuorumValidationError> {
-        let (masternode_list, known_block_height) = self
-            .masternode_list_and_height_for_block_hash_8_blocks_ago(
-                &quorum.quorum_entry.quorum_hash,
-            )?;
+        let (masternode_list, known_block_height) =
+            self.masternode_list_and_height_for_quorum_members(&quorum.quorum_entry.quorum_hash)?;
         let Some(VerifyingChainLockSignaturesType::NonRotating(chain_lock_sig)) =
             quorum.verifying_chain_lock_signature
         else {

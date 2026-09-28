@@ -20,19 +20,19 @@ edition = "2024"
 # Please don't forget to add relevant features to docs.rs below
 [features]
 default = ["secp-recovery", "bincode" ]
-base64 = [ "base64-compat" ]
+base64 = [ "dep:base64" ]
 rand-std = ["secp256k1/rand"]
 rand = ["secp256k1/rand"]
-serde = ["dep:serde", "dashcore_hashes/serde", "secp256k1/serde", "dash-network/serde"]
+serde = ["dep:serde", "dashcore-crypto/serde", "dashcore_hashes/serde", "secp256k1/serde", "dash-network/serde"]
 secp-lowmemory = ["secp256k1/lowmemory"]
 secp-recovery = ["secp256k1/recovery"]
 signer = ["secp-recovery", "rand", "base64"]
 core-block-hash-use-x11 = ["dashcore_hashes/x11"]
-bls = ["blsful"]
+bls = ["dashcore-crypto/bls"]
 eddsa = ["ed25519-dalek"]
 quorum_validation = ["bls"]
 message_verification = ["bls"]
-bincode = [ "dep:bincode", "dep:bincode_derive", "dashcore_hashes/bincode", "dash-network/bincode" ]
+bincode = [ "dep:bincode", "dep:bincode_derive", "dashcore-crypto/bincode", "dashcore_hashes/bincode", "dash-network/bincode" ]
 qrinfo-capture = ["bincode"]
 test-utils = []
 
@@ -44,19 +44,19 @@ rustdoc-args = ["--cfg", "docsrs"]
 internals = { path = "../internals", package = "dashcore-private" }
 bech32 = { version = "0.9.1" }
 dashcore_hashes = { path = "../hashes" }
+dashcore-crypto = { path = "../crypto" }
 dash-network = { path = "../dash-network" }
+dash-types = { version = "=0.1.0-beta", default-features = false, features = ["codec"] }
 secp256k1 = { version = "0.33.1" }
-rustversion = { version="1.0.20"}
-serde = { version = "1.0.219", default-features = false, features = [ "derive", "alloc" ], optional = true }
+serde = { version = "1.0.219", default-features = false, features = [ "derive", "alloc", "rc" ], optional = true }
 
-base64-compat = { version = "1.0.0", optional = true }
+base64 = { version = "0.22", optional = true }
 bitcoinconsensus = { version = "0.20.2-0.5.0", default-features = false, optional = true }
 hex_lit = "0.1.1"
 anyhow = { version= "1.0" }
 hex = { version= "0.4" }
 bincode = { workspace = true, optional = true }
 bincode_derive = { workspace = true, optional = true }
-blsful = { git = "https://github.com/dashpay/agora-blsful", rev = "0c34a7a488a0bd1c9a9a2196e793b303ad35c900", optional = true }
 ed25519-dalek = { version = "2.1", features = ["rand_core"], optional = true }
 blake3 = "1.8.1"
 thiserror = "2"
@@ -72,18 +72,9 @@ bincode = { workspace = true, features = ["serde"] }
 assert_matches = "1.5.0"
 dashcore = { path = ".", features = ["core-block-hash-use-x11", "message_verification", "quorum_validation", "signer"] }
 criterion = "0.5"
-key-wallet = { path = "../key-wallet" }
 
 [[example]]
 name = "handshake"
-
-[[example]]
-name = "ecdsa-psbt"
-required-features = ["bitcoinconsensus"]
-
-[[example]]
-name = "taproot-psbt"
-required-features = ["rand-std", "bitcoinconsensus"]
 
 [[bench]]
 name = "transaction"

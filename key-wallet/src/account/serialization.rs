@@ -87,7 +87,8 @@ mod tests {
         let seed = [42u8; 32];
         let bls_private = ExtendedBLSPrivKey::new_master(Network::Testnet, &seed)
             .expect("Failed to create BLS private key from seed");
-        let bls_public = ExtendedBLSPubKey::from_private_key(&bls_private);
+        let bls_public = ExtendedBLSPubKey::from_private_key(&bls_private)
+            .expect("Failed to derive BLS public key");
         let public_key_bytes = bls_public.to_bytes();
 
         let account = BLSAccount::from_public_key_bytes(

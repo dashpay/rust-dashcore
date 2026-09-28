@@ -34,6 +34,10 @@ pub const DASH_SIGNED_MSG_PREFIX: &[u8] = b"\x19DarkCoin Signed Message:\n";
 mod message_signing {
     use core::fmt;
 
+    #[cfg(feature = "base64")]
+    use base64::Engine as _;
+    #[cfg(feature = "base64")]
+    use base64::engine::general_purpose::STANDARD as BASE64;
     use hashes::{Hash, sha256d};
     use internals::write_err;
     use secp256k1;
@@ -182,14 +186,14 @@ mod message_signing {
         /// Convert a signature from base64 encoding.
         #[cfg(feature = "base64")]
         pub fn from_base64(s: &str) -> Result<MessageSignature, MessageSignatureError> {
-            let bytes = base64::decode(s).map_err(|_| MessageSignatureError::InvalidBase64)?;
+            let bytes = BASE64.decode(s).map_err(|_| MessageSignatureError::InvalidBase64)?;
             MessageSignature::from_slice(&bytes)
         }
 
         /// Convert to base64 encoding.
         #[cfg(feature = "base64")]
         pub fn to_base64(self) -> String {
-            base64::encode(&self.serialize()[..])
+            BASE64.encode(&self.serialize()[..])
         }
     }
 
@@ -198,11 +202,7 @@ mod message_signing {
         fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
             let bytes = self.serialize();
             // This avoids the allocation of a String.
-            write!(
-                f,
-                "{}",
-                base64::display::Base64Display::with_config(&bytes[..], base64::STANDARD)
-            )
+            write!(f, "{}", base64::display::Base64Display::new(&bytes[..], &BASE64))
         }
     }
 
@@ -228,6 +228,10 @@ pub fn signed_msg_hash(msg: &str) -> sha256d::Hash {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(feature = "base64")]
+    use base64::Engine as _;
+    #[cfg(feature = "base64")]
+    use base64::engine::general_purpose::STANDARD as BASE64;
 
     #[test]
     fn test_signed_msg_hash() {
@@ -295,7 +299,7 @@ mod tests {
         let signature =
             super::MessageSignature::from_base64(signature_base64).expect("message signature");
 
-        let pubkey = PublicKey::from_slice(&base64::decode(pubkey_base64).expect("base64 string"))
+        let pubkey = PublicKey::from_slice(&BASE64.decode(pubkey_base64).expect("base64 string"))
             .expect("pubkey slice");
 
         let p2pkh = Address::p2pkh(&pubkey, Network::Mainnet);

@@ -4,6 +4,7 @@
 groups:
   core:
     - dashcore
+    - dashcore-crypto
     - dashcore_hashes
     - dashcore-private
     - dash-network

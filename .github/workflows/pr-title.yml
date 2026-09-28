@@ -26,5 +26,6 @@ jobs:
             docs
             feat
             fix
+            perf
             refactor
             test

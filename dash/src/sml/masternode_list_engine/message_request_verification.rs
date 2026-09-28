@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 
 use hashes::Hash;
 
+use crate::bls_sig_utils::BlsScheme;
 use crate::hash_types::QuorumOrderingHash;
 use crate::sml::llmq_type::network::NetworkLLMQExt;
 use crate::sml::masternode_list::MasternodeList;
@@ -205,7 +206,11 @@ impl MasternodeListEngine {
             instant_lock.signature
         );
 
-        match quorum.verify_message_digest(sign_id.to_byte_array(), instant_lock.signature) {
+        match quorum.verify_message_digest(
+            sign_id.to_byte_array(),
+            instant_lock.signature,
+            BlsScheme::Modern,
+        ) {
             Ok(()) => {
                 tracing::info!(
                     "IS lock verified: txid={}, quorum_index={}, quorum_hash={}",
@@ -230,10 +235,10 @@ impl MasternodeListEngine {
     }
 
     /// Retrieves the potential quorum for verifying a ChainLock from the masternode list **before or at**
-    /// block height **(chain_lock.block_height - 8)**.
+    /// the ChainLock's [signing height](ChainLock::signing_height).
     ///
     /// This function attempts to find the quorum responsible for signing the ChainLock by looking at
-    /// the masternode list at or before the signing height, following DIP 24 logic.
+    /// the masternode list at or before the signing height.
     ///
     /// # Arguments
     /// * `chain_lock` - A reference to the `ChainLock` for which the quorum is needed.
@@ -251,9 +256,7 @@ impl MasternodeListEngine {
         &self,
         chain_lock: &ChainLock,
     ) -> Result<Option<&QualifiedQuorumEntry>, MessageVerificationError> {
-        // Retrieve the masternode list at or before (block_height - 8)
-        let (before, _) =
-            self.masternode_lists_around_height(chain_lock.block_height.saturating_sub(8));
+        let (before, _) = self.masternode_lists_around_height(chain_lock.signing_height());
 
         // Compute the signing request ID
         let request_id = chain_lock.request_id().map_err(|e| e.to_string())?;
@@ -271,10 +274,10 @@ impl MasternodeListEngine {
     }
 
     /// Retrieves the potential quorum for verifying a ChainLock from the masternode list **after**
-    /// block height **(chain_lock.block_height - 8)**.
+    /// the ChainLock's [signing height](ChainLock::signing_height).
     ///
     /// This function looks at the next available masternode list to determine if a quorum exists
-    /// for signing the ChainLock, following DIP 24.
+    /// for signing the ChainLock.
     ///
     /// # Arguments
     /// * `chain_lock` - A reference to the `ChainLock` for which the quorum is needed.
@@ -292,9 +295,7 @@ impl MasternodeListEngine {
         &self,
         chain_lock: &ChainLock,
     ) -> Result<Option<&QualifiedQuorumEntry>, MessageVerificationError> {
-        // Retrieve the masternode list after (block_height - 8)
-        let (_, after) =
-            self.masternode_lists_around_height(chain_lock.block_height.saturating_sub(8));
+        let (_, after) = self.masternode_lists_around_height(chain_lock.signing_height());
 
         // Compute the signing request ID
         let request_id = chain_lock.request_id().map_err(|e| e.to_string())?;
@@ -313,8 +314,8 @@ impl MasternodeListEngine {
 
     /// Verifies a ChainLock (`ChainLock`) by checking its signature against the responsible quorum.
     ///
-    /// This function attempts to validate the `ChainLock` signature using the correct quorum at
-    /// **block height - 8**, as required by DIP 24. If the verification fails for the "before" masternode
+    /// This function attempts to validate the `ChainLock` signature using the correct quorum at the
+    /// ChainLock's [signing height](ChainLock::signing_height). If the verification fails for the "before" masternode
     /// list, it retries using the "after" masternode list (if available).
     ///
     /// # Arguments
@@ -331,7 +332,7 @@ impl MasternodeListEngine {
     /// - `Other`: If computing the request ID or signing ID fails.
     ///
     /// # Implementation Details
-    /// - Retrieves masternode lists **before and after** `chain_lock.block_height - 8`.
+    /// - Retrieves masternode lists **before and after** the ChainLock's signing height.
     /// - Finds the **quorum with the lowest ordering hash** for the signing request.
     /// - Computes the **signing ID** and verifies the ChainLock signature.
     /// - If verification fails with the "before" list, it attempts verification with the "after" list.
@@ -339,47 +340,30 @@ impl MasternodeListEngine {
         &self,
         chain_lock: &ChainLock,
     ) -> Result<(), MessageVerificationError> {
-        // Retrieve masternode lists surrounding the signing height (block_height - 8)
-        let (before, after) =
-            self.masternode_lists_around_height(chain_lock.block_height.saturating_sub(8));
-
-        if before.is_none() && after.is_none() {
-            return Err(MessageVerificationError::NoMasternodeLists);
-        }
         // Compute the signing request ID
         let request_id = chain_lock.request_id().map_err(|e| e.to_string())?;
 
-        // Attempt verification using the "before" masternode list
-        let initial_error = if let Some(before) = before {
-            let Err(e) =
-                self.verify_chain_lock_with_masternode_list(chain_lock, before, &request_id)
-            else {
-                return Ok(());
-            };
-            Some(e)
-        } else {
-            None
-        };
+        match self.masternode_lists_around_height(chain_lock.signing_height()) {
+            (None, None) => Err(MessageVerificationError::NoMasternodeLists),
+            (Some(list), None) | (None, Some(list)) => {
+                self.verify_chain_lock_with_masternode_list(chain_lock, list, &request_id)
+            }
+            (Some(before), Some(after)) => {
+                let Err(initial_error) =
+                    self.verify_chain_lock_with_masternode_list(chain_lock, before, &request_id)
+                else {
+                    return Ok(());
+                };
 
-        let chain_lock_quorum_type = self.network.chain_locks_type();
-
-        // If "before" verification fails, attempt verification using the "after" masternode list
-        if let Some(after) = after {
-            // Only do this verification if the quorums actually changed
-            let do_check = if let Some(before) = before {
-                before.quorums.get(&chain_lock_quorum_type)
-                    != after.quorums.get(&chain_lock_quorum_type)
-            } else {
-                true
-            };
-            if do_check {
-                return self.verify_chain_lock_with_masternode_list(chain_lock, after, &request_id);
-            } else if let Some(initial_error) = initial_error {
-                return Err(initial_error);
+                // Only retry with the "after" list if the chain lock quorums actually changed
+                let quorum_type = self.network.chain_locks_type();
+                if before.quorums.get(&quorum_type) != after.quorums.get(&quorum_type) {
+                    self.verify_chain_lock_with_masternode_list(chain_lock, after, &request_id)
+                } else {
+                    Err(initial_error)
+                }
             }
         }
-
-        Ok(())
     }
 
     /// Helper function to verify a ChainLock using a specific masternode list.
@@ -411,29 +395,25 @@ impl MasternodeListEngine {
             )
             .map_err(|e| e.to_string())?;
 
-        quorum.verify_message_digest(sign_id.to_byte_array(), chain_lock.signature)
+        quorum.verify_message_digest(
+            sign_id.to_byte_array(),
+            chain_lock.signature,
+            BlsScheme::Modern,
+        )
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::bls_sig_utils::BLSSignature;
     use crate::consensus::deserialize;
     use crate::hashes::Hash;
-    use crate::hashes::hex::FromHex;
     use crate::sml::llmq_type::LLMQType;
     use crate::sml::masternode_list_engine::MasternodeListEngine;
-    use crate::{BlockHash, ChainLock, InstantLock, QuorumHash};
+    use crate::{ChainLock, InstantLock, QuorumHash};
 
     #[test]
     pub fn is_lock_verification() {
-        let block_hex =
-            include_str!("../../../tests/data/test_DML_diffs/masternode_list_engine.hex");
-        let data = hex::decode(block_hex).expect("decode hex");
-        let mn_list_engine: MasternodeListEngine =
-            bincode::decode_from_slice(&data, bincode::config::standard())
-                .expect("expected to decode")
-                .0;
+        let mn_list_engine = MasternodeListEngine::mainnet_fixture();
 
         let lock_data = hex::decode("01018d53e7997ead57409750942af0d5e0aafc06f852a9a52308f4781b6a8220298f00000000c6f9d8c63dd15937ea70aaddb7890daad42c91bf6818e2bf76d183d6f2d9215b4b5f84978fad9dde7ab52bdcc0674be891e9029cc1ef0cb01200000000000000a27c98836c4c04653ab81eb4e07ddfc2c8c2c1036b75247969c05a4f25451cd78913a971f1899d9f2bddec9cf8e0104004f72f20c2856453e5aa3bcd2a8200670ec28feda38f67cc400fc72ef1966956656ec0765478c9d16e9a9e470c07f9ed").expect("expected valid hex");
         let lock: InstantLock = deserialize(lock_data.as_slice()).expect("expected to deserialize");
@@ -464,25 +444,33 @@ mod tests {
         mn_list_engine.verify_is_lock(&lock).expect("expected to verify is lock");
     }
 
+    /// A genuine ChainLock replayed at a height signed by the newest list: its
+    /// signature no longer matches the request id, and with no list above to
+    /// retry against, that failure has to stand.
+    #[test]
+    fn chain_lock_replayed_above_the_newest_list_is_rejected() {
+        let mn_list_engine = MasternodeListEngine::mainnet_fixture();
+        let newest = mn_list_engine.latest_masternode_list().expect("newest").known_height;
+
+        let [genuine, _] = ChainLock::mainnet_fixture_pair();
+        mn_list_engine.verify_chain_lock(&genuine).expect("verifies at its own height");
+
+        let replayed = ChainLock {
+            block_height: newest + 1_000,
+            ..genuine
+        };
+        assert!(mn_list_engine.verify_chain_lock(&replayed).is_err());
+    }
+
     #[test]
     pub fn chain_lock_verification() {
-        let block_hex =
-            include_str!("../../../tests/data/test_DML_diffs/masternode_list_engine.hex");
-        let data = hex::decode(block_hex).expect("decode hex");
-        let mn_list_engine: MasternodeListEngine =
-            bincode::decode_from_slice(&data, bincode::config::standard())
-                .expect("expected to decode")
-                .0;
+        let mn_list_engine = MasternodeListEngine::mainnet_fixture();
 
         let height = mn_list_engine.latest_masternode_list().expect("height").known_height;
 
         assert_eq!(height, 2243493);
 
-        let chain_lock = ChainLock {
-            block_height: 2243495,
-            block_hash: BlockHash::from_slice(hex::decode("000000000000000d88580463cafe168b2f465f40f01916ad95fe9be459c26491").unwrap().as_slice()).unwrap().reverse(),
-            signature: BLSSignature::from_hex("a6bc4dcf7afb042e0b0258a994f5a77856971a32a3ad3ee89d21e1011a77211070bec7c2ef50c293722cbae135b904640b482479f836120e0be7d42ce332a7c58096d8d8006920ef3dbcc47b5f7ed00aeb68d58bc514f4401bd72b247bf23699").unwrap(),
-        };
+        let [chain_lock, next_chain_lock] = ChainLock::mainnet_fixture_pair();
 
         let request_id = chain_lock.request_id().expect("expected to make request id");
         assert_eq!(
@@ -509,11 +497,7 @@ mod tests {
 
         // let's do another to make sure it wasn't a 1/4 fluke
 
-        let chain_lock = ChainLock {
-            block_height: 2243496,
-            block_hash: BlockHash::from_slice(hex::decode("000000000000001f9ff71c513c0ccef0c7c392f0df8bcb3c7c5764dcc1f4c89b").unwrap().as_slice()).unwrap().reverse(),
-            signature: BLSSignature::from_hex("88270e60bee7dd9cea3c0a1b85e51d52f01e55a35033ef0434979b9121bc07ed8e45adae1f99e4d8fa2ea760920d844e1383030103b1c503cee45a2fcddc5cd7e73d1823d199e8231fadee2b3cadb1c6fc2ea255b988334b47d35ce865275699").unwrap(),
-        };
+        let chain_lock = next_chain_lock;
 
         let request_id = chain_lock.request_id().expect("expected to make request id");
         assert_eq!(
@@ -544,13 +528,7 @@ mod tests {
     pub fn is_lock_quorum_not_found_error() {
         use crate::sml::message_verification_error::MessageVerificationError;
 
-        let block_hex =
-            include_str!("../../../tests/data/test_DML_diffs/masternode_list_engine.hex");
-        let data = hex::decode(block_hex).expect("decode hex");
-        let mut mn_list_engine: MasternodeListEngine =
-            bincode::decode_from_slice(&data, bincode::config::standard())
-                .expect("expected to decode")
-                .0;
+        let mut mn_list_engine = MasternodeListEngine::mainnet_fixture();
 
         let lock_data = hex::decode("01018d53e7997ead57409750942af0d5e0aafc06f852a9a52308f4781b6a8220298f00000000c6f9d8c63dd15937ea70aaddb7890daad42c91bf6818e2bf76d183d6f2d9215b4b5f84978fad9dde7ab52bdcc0674be891e9029cc1ef0cb01200000000000000a27c98836c4c04653ab81eb4e07ddfc2c8c2c1036b75247969c05a4f25451cd78913a971f1899d9f2bddec9cf8e0104004f72f20c2856453e5aa3bcd2a8200670ec28feda38f67cc400fc72ef1966956656ec0765478c9d16e9a9e470c07f9ed").expect("expected valid hex");
         let lock: InstantLock = deserialize(lock_data.as_slice()).expect("expected to deserialize");

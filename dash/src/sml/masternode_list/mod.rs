@@ -10,6 +10,7 @@ mod rotated_quorums_info;
 mod scores_for_quorum;
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 #[cfg(feature = "bincode")]
 use bincode::{Decode, Encode};
@@ -31,9 +32,17 @@ pub struct MasternodeList {
     pub llmq_merkle_root: Option<MerkleRootQuorums>,
     // The pro_tx_hash here is reversed
     // todo, see if we should remove this reversal
-    pub masternodes: BTreeMap<ProTxHash, QualifiedMasternodeListEntry>,
-    pub quorums: BTreeMap<LLMQType, BTreeMap<QuorumHash, QualifiedQuorumEntry>>,
+    pub masternodes: Arc<MasternodeMap>,
+    pub quorums: Arc<QuorumMap>,
 }
+
+/// Masternodes keyed by their reversed pro_tx_hash. Lists share the map until a
+/// diff changes it, and a changed map still shares every entry it kept.
+pub type MasternodeMap = BTreeMap<ProTxHash, Arc<QualifiedMasternodeListEntry>>;
+
+/// Quorums by type and hash, shared between lists like [`MasternodeMap`] until a
+/// diff or a verification status change touches them.
+pub type QuorumMap = BTreeMap<LLMQType, BTreeMap<QuorumHash, Arc<QualifiedQuorumEntry>>>;
 
 impl MasternodeList {
     pub fn empty(block_hash: BlockHash, block_height: u32) -> Self {
@@ -41,11 +50,11 @@ impl MasternodeList {
     }
 
     pub fn build(
-        masternodes: BTreeMap<ProTxHash, QualifiedMasternodeListEntry>,
-        quorums: BTreeMap<LLMQType, BTreeMap<QuorumHash, QualifiedQuorumEntry>>,
+        masternodes: impl Into<Arc<MasternodeMap>>,
+        quorums: impl Into<Arc<QuorumMap>>,
         block_hash: BlockHash,
         block_height: u32,
     ) -> MasternodeListBuilder {
-        MasternodeListBuilder::new(masternodes, quorums, block_hash, block_height)
+        MasternodeListBuilder::new(masternodes.into(), quorums.into(), block_hash, block_height)
     }
 }

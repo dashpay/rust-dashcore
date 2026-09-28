@@ -14,13 +14,6 @@
 - `address_metadata_tests.rs` - Tests need updating for new architecture
 - `wallet_comprehensive_tests.rs` - Advanced tests need reimplementation
 
-### 2. PSBT (Partially Signed Bitcoin Transaction) Support
-**Location**: `psbt/serialize.rs`, `psbt/map/input.rs`  
-**Priority**: MEDIUM  
-**TODOs**:
-- Add support for writing into a writer for key-source
-- Implement Proof of reserves commitment
-
 ## Enhanced Wallet Manager
 
 ### 1. Real Address Derivation

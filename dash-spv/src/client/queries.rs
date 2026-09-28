@@ -8,11 +8,12 @@
 
 use crate::error::{Result, SpvError};
 use crate::network::NetworkManager;
-use crate::storage::StorageManager;
+use crate::storage::{BlockHeaderStorage, StorageManager};
+use dashcore::hashes::Hash;
 use dashcore::sml::llmq_type::LLMQType;
 use dashcore::sml::masternode_list_engine::MasternodeListEngine;
 use dashcore::sml::quorum_entry::qualified_quorum_entry::QualifiedQuorumEntry;
-use dashcore::QuorumHash;
+use dashcore::{BlockHash, QuorumHash};
 use key_wallet_manager::WalletInterface;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -43,7 +44,8 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
         }
     }
 
-    /// Get a quorum entry by type and hash at a specific block height.
+    /// Get a quorum entry by type and hash at a specific block height. A height
+    /// whose lists the engine no longer holds is rebuilt from storage.
     /// Returns `SpvError::QuorumLookupError` if the quorum is not found.
     pub async fn get_quorum_at_height(
         &self,
@@ -51,33 +53,66 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
         quorum_type: LLMQType,
         quorum_hash: QuorumHash,
     ) -> Result<QualifiedQuorumEntry> {
-        let masternode_engine = self.masternode_list_engine()?;
-        let masternode_engine_guard = masternode_engine.read().await;
-        match masternode_engine_guard.quorum_entry_for_hash_at_or_before_height(
-            quorum_type,
-            quorum_hash,
-            height,
-        ) {
-            Some((list_height, quorum)) => {
-                tracing::debug!(
-                    "Found quorum type {} at list height {} (requested {}) with hash {}",
-                    quorum_type,
-                    list_height,
-                    height,
-                    hex::encode(quorum_hash)
-                );
-                Ok(quorum.clone())
-            }
+        let (in_memory, oldest_list) = {
+            let engine = self.masternode_list_engine()?;
+            let engine = engine.read().await;
+            let quorum = engine
+                .quorum_entry_for_hash_at_or_before_height(quorum_type, quorum_hash, height)
+                .map(|(_, quorum)| quorum.clone());
+            (quorum, engine.masternode_lists.keys().next().copied())
+        };
+
+        let quorum = match in_memory {
+            Some(quorum) => Some(quorum),
             None => {
-                let message = format!(
-                    "Quorum not found: type {} at or before height {} with hash {}",
-                    quorum_type,
-                    height,
-                    hex::encode(quorum_hash)
-                );
-                tracing::warn!("{}", message);
-                Err(SpvError::QuorumLookupError(message))
+                let (headers, masternodes) = {
+                    let storage = self.storage.lock().await;
+                    (storage.block_headers(), storage.masternodes())
+                };
+                let quorum_block = BlockHash::from_byte_array(quorum_hash.to_byte_array());
+                let mined = headers.read().await.get_header_height_by_hash(&quorum_block).await?;
+                if storage_may_hold(mined, height, oldest_list) {
+                    let log = masternodes.read().await.message_log();
+                    log.quorum_entry_at_or_before(quorum_type, quorum_hash, height).await
+                } else {
+                    None
+                }
             }
-        }
+        };
+
+        quorum.ok_or_else(|| {
+            let message = format!(
+                "Quorum not found: type {} at or before height {} with hash {}",
+                quorum_type,
+                height,
+                hex::encode(quorum_hash)
+            );
+            tracing::warn!("{}", message);
+            SpvError::QuorumLookupError(message)
+        })
+    }
+}
+
+/// Whether the stored messages can resolve a quorum the engine missed. A
+/// quorum's hash is the block it was mined in, so a hash outside the header
+/// chain names no quorum, one mined above `height` was not active there, and
+/// one mined at or above the engine's oldest list was held by every list the
+/// engine kept since. Only a quorum mined below that list may sit in lists the
+/// engine has pruned.
+fn storage_may_hold(mined: Option<u32>, height: u32, oldest_list: Option<u32>) -> bool {
+    mined.is_some_and(|mined| mined <= height && oldest_list.is_none_or(|oldest| mined < oldest))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::storage_may_hold;
+
+    #[test]
+    fn only_a_quorum_mined_below_the_oldest_list_goes_to_storage() {
+        assert!(!storage_may_hold(None, 1_000, Some(500)), "not a block in the header chain");
+        assert!(!storage_may_hold(Some(1_001), 1_000, Some(500)), "mined above the lookup");
+        assert!(!storage_may_hold(Some(600), 1_000, Some(500)), "the engine held all its lists");
+        assert!(storage_may_hold(Some(400), 1_000, Some(500)), "its lists may be pruned");
+        assert!(storage_may_hold(Some(400), 1_000, None), "the engine holds no list yet");
     }
 }

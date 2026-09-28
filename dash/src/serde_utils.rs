@@ -348,13 +348,7 @@ macro_rules! serde_string_deserialize_impl {
     };
 }
 
-macro_rules! serde_string_impl {
-    ($name:ty, $expecting:literal) => {
-        $crate::serde_utils::serde_string_deserialize_impl!($name, $expecting);
-        $crate::serde_utils::serde_string_serialize_impl!($name, $expecting);
-    };
-}
-pub(crate) use {serde_string_deserialize_impl, serde_string_impl, serde_string_serialize_impl};
+pub(crate) use {serde_string_deserialize_impl, serde_string_serialize_impl};
 
 /// A combination macro where the human-readable serialization is done like
 /// serde_string_impl and the non-human-readable impl is done as a struct.

@@ -131,10 +131,7 @@ impl<E> EncodeSigningDataResult<E> {
 /// format.
 ///
 /// There is one major exception to this: to avoid deserialization ambiguity,
-/// if the transaction has no inputs, it is serialized in the BIP141 style. Be
-/// aware that this differs from the transaction format in PSBT, which _never_
-/// uses BIP141. (Ordinarily there is no conflict, since in PSBT transactions
-/// are always unsigned and therefore their inputs have empty witnesses.)
+/// if the transaction has no inputs, it is serialized in the BIP141 style.
 ///
 /// The specific ambiguity is that Segwit uses the flag bytes `0001` where an old
 /// serializer would read the number of transaction inputs. The old serializer
@@ -334,10 +331,6 @@ impl Transaction {
     /// cannot be unambiguously serialized; we make a choice that adds two extra bytes. For more
     /// details see [BIP 141](https://github.com/bitcoin/bips/blob/master/bip-0141.mediawiki)
     /// which uses a "input count" of `0x00` as a `marker` for a Segwit-encoded transaction.
-    ///
-    /// If you need to use 0-input transactions, we strongly recommend you do so using the PSBT
-    /// API. The unsigned transaction encoded within PSBT is always a non-segwit transaction
-    /// and can therefore avoid this ambiguity.
     #[inline]
     pub fn weight(&self) -> Weight {
         Weight::from_wu(self.scaled_size(WITNESS_SCALE_FACTOR) as u64)

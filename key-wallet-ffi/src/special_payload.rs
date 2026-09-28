@@ -386,7 +386,7 @@ pub(crate) fn mainnet_shape_proreg_payload() -> ProviderRegistrationPayload {
     use dashcore::blockdata::transaction::special_transaction::provider_registration::ProviderMasternodeType;
     use std::str::FromStr;
 
-    let key_hash = dashcore::PubkeyHash::from_hex("70993555a01f7e8d6179d6135b5c56809d2d1d36")
+    let key_hash = dashcore::PubkeyHash::from_str("70993555a01f7e8d6179d6135b5c56809d2d1d36")
         .expect("hash160");
     ProviderRegistrationPayload {
         version: 1,

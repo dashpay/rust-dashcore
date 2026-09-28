@@ -299,8 +299,10 @@ impl Decodable for ProviderRegistrationPayload {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
+    use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4};
 
+    use base64::Engine as _;
+    use base64::engine::general_purpose::STANDARD as BASE64;
     use hashes::Hash;
 
     use crate::bls_sig_utils::BLSPublicKey;
@@ -312,8 +314,6 @@ mod tests {
         ProviderMasternodeType, ProviderRegistrationPayload,
     };
     use crate::{OutPoint, PubkeyHash, ScriptBuf, Txid};
-
-    use std::net::IpAddr;
 
     use crate::Network;
     use crate::PrivateKey;
@@ -411,7 +411,7 @@ mod tests {
         let owner_key_hash_hex = "3dd03f9ec192b5f275a433bfc90f468ee1a3eb4c";
         assert_eq!(
             owner_key_hash_hex,
-            expected_provider_registration_payload.owner_key_hash.to_hex()
+            expected_provider_registration_payload.owner_key_hash.to_string()
         );
 
         let operator_key_hex = "157b10706659e25eb362b5d902d809f9160b1688e201ee6e94b40f9b5062d7074683ef05a2d5efb7793c47059c878dfa";
@@ -423,7 +423,7 @@ mod tests {
         let voting_key_hash_hex = "d38a30fafe61575db40f05ab0a08d55119b0aad3";
         assert_eq!(
             voting_key_hash_hex,
-            expected_provider_registration_payload.voting_key_hash.to_hex()
+            expected_provider_registration_payload.voting_key_hash.to_string()
         );
 
         let inputs_hash_hex = "7ba273b835b1017da314a3363760835ff5ac20278c160604cb8773750b997734";
@@ -459,7 +459,7 @@ mod tests {
             collateral_private_key.to_bytes().as_slice(),
         )
         .expect("expected to sign message digest");
-        let base64_signature = base64::encode(signature.as_slice());
+        let base64_signature = BASE64.encode(signature.as_slice());
 
         assert_eq!(
             expected_base64_signature, base64_signature,
@@ -487,9 +487,9 @@ mod tests {
                     masternode_mode: provider_mode,
                     collateral_outpoint,
                     service_address: SocketAddr::V4(SocketAddrV4::new(address, port)),
-                    owner_key_hash: PubkeyHash::from_hex(owner_key_hash_hex).unwrap(),
+                    owner_key_hash: PubkeyHash::from_str(owner_key_hash_hex).unwrap(),
                     operator_public_key: BLSPublicKey::from_hex(operator_key_hex).unwrap(),
-                    voting_key_hash: PubkeyHash::from_hex(voting_key_hash_hex).unwrap(),
+                    voting_key_hash: PubkeyHash::from_str(voting_key_hash_hex).unwrap(),
                     operator_reward,
                     script_payout,
                     inputs_hash: InputsHash::from_hex(inputs_hash_hex).unwrap(),
@@ -591,7 +591,7 @@ mod tests {
         let owner_key_hash_hex = "3dd03f9ec192b5f275a433bfc90f468ee1a3eb4c";
         assert_eq!(
             owner_key_hash_hex,
-            expected_provider_registration_payload.owner_key_hash.to_hex()
+            expected_provider_registration_payload.owner_key_hash.to_string()
         );
 
         let operator_key_hex = "157b10706659e25eb362b5d902d809f9160b1688e201ee6e94b40f9b5062d7074683ef05a2d5efb7793c47059c878dfa";
@@ -603,7 +603,7 @@ mod tests {
         let voting_key_hash_hex = "d38a30fafe61575db40f05ab0a08d55119b0aad3";
         assert_eq!(
             voting_key_hash_hex,
-            expected_provider_registration_payload.voting_key_hash.to_hex()
+            expected_provider_registration_payload.voting_key_hash.to_string()
         );
 
         let inputs_hash_hex = "7ba273b835b1017da314a3363760835ff5ac20278c160604cb8773750b997734";
@@ -635,11 +635,11 @@ mod tests {
 
         let expected_base64_signature = "H7N+ScH/K4BXcTk5pVE+bnEacc/y5RfmIk33JO11Cu8bf5rZ7GErSnJQIy4eQA2nGKlQHh2aVWVSbksf9owCh2M=";
         let signature = sign_hash(
-            base64::decode(&expected_base64_signature).expect("expected valid base64").as_slice(),
+            BASE64.decode(expected_base64_signature).expect("expected valid base64").as_slice(),
             collateral_private_key.to_bytes().as_slice(),
         )
         .expect("expected to sign message digest");
-        let base64_signature = base64::encode(signature.as_slice());
+        let base64_signature = BASE64.encode(signature.as_slice());
 
         assert_eq!(
             expected_base64_signature, base64_signature,
@@ -667,9 +667,9 @@ mod tests {
                     masternode_mode: provider_mode,
                     collateral_outpoint,
                     service_address,
-                    owner_key_hash: PubkeyHash::from_hex(owner_key_hash_hex).unwrap(),
+                    owner_key_hash: PubkeyHash::from_str(owner_key_hash_hex).unwrap(),
                     operator_public_key: BLSPublicKey::from_hex(operator_key_hex).unwrap(),
-                    voting_key_hash: PubkeyHash::from_hex(voting_key_hash_hex).unwrap(),
+                    voting_key_hash: PubkeyHash::from_str(voting_key_hash_hex).unwrap(),
                     operator_reward,
                     script_payout,
                     inputs_hash: InputsHash::from_hex(inputs_hash_hex).unwrap(),

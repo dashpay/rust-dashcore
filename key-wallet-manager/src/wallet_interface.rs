@@ -21,6 +21,7 @@ pub struct BlockProcessingResult {
     /// Cached scriptPubKeys of addresses freshly generated per wallet during
     /// gap-limit maintenance.
     pub new_scripts: BTreeMap<WalletId, Vec<ScriptBuf>>,
+    pub reapply_heights: BTreeMap<WalletId, BTreeSet<CoreBlockHeight>>,
 }
 
 /// Result of processing a mempool transaction through the wallet
@@ -217,6 +218,8 @@ pub trait WalletInterface: Send + Sync + 'static {
     /// `process_block_for_wallets` to avoid interleaving promotions with
     /// in-flight block processing.
     fn apply_chain_lock(&mut self, chain_lock: ChainLock);
+
+    fn note_chain_lock_height(&mut self, _height: CoreBlockHeight) {}
 
     /// Provide a human-readable description of the wallet implementation.
     ///

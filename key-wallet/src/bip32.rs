@@ -32,16 +32,6 @@ use secp256k1::{self, XOnlyPublicKey};
 #[cfg(feature = "serde")]
 use serde;
 
-use crate::dip9::{
-    ASSET_LOCK_ADDRESS_TOPUP_PATH_MAINNET, ASSET_LOCK_ADDRESS_TOPUP_PATH_TESTNET,
-    ASSET_LOCK_SHIELDED_ADDRESS_TOPUP_PATH_MAINNET, ASSET_LOCK_SHIELDED_ADDRESS_TOPUP_PATH_TESTNET,
-    COINJOIN_PATH_MAINNET, COINJOIN_PATH_TESTNET, DASH_BIP44_PATH_MAINNET, DASH_BIP44_PATH_TESTNET,
-    IDENTITY_AUTHENTICATION_PATH_MAINNET, IDENTITY_AUTHENTICATION_PATH_TESTNET,
-    IDENTITY_INVITATION_PATH_MAINNET, IDENTITY_INVITATION_PATH_TESTNET,
-    IDENTITY_REGISTRATION_PATH_MAINNET, IDENTITY_REGISTRATION_PATH_TESTNET,
-    IDENTITY_TOPUP_PATH_MAINNET, IDENTITY_TOPUP_PATH_TESTNET,
-};
-use base58ck;
 #[cfg(feature = "bincode")]
 use bincode_derive::{Decode, Encode};
 use dashcore::Network;
@@ -50,6 +40,7 @@ use zeroize::Zeroize;
 /// XpubIdentifier as a hash160 result
 type XpubIdentifier = hash160::Hash;
 
+pub use crate::dip9::{ApplicationKeyPurpose, KeyDerivationType};
 pub use secp256k1::Keypair;
 pub use secp256k1::PublicKey;
 /// Re-export key types from secp256k1
@@ -1009,173 +1000,7 @@ impl<'de, C> bincode::BorrowDecode<'de, C> for DerivationPath {
     }
 }
 
-#[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
-#[repr(u32)]
-pub enum KeyDerivationType {
-    ECDSA = 0,
-    BLS = 1,
-}
-
-impl From<KeyDerivationType> for u32 {
-    fn from(val: KeyDerivationType) -> Self {
-        match val {
-            KeyDerivationType::ECDSA => 0,
-            KeyDerivationType::BLS => 1,
-        }
-    }
-}
-
 impl DerivationPath {
-    pub fn bip_44_account(network: Network, account: u32) -> Self {
-        let mut root_derivation_path: DerivationPath = match network {
-            Network::Mainnet => DASH_BIP44_PATH_MAINNET,
-            _ => DASH_BIP44_PATH_TESTNET,
-        }
-        .into();
-        root_derivation_path.0.extend(&[ChildNumber::Hardened {
-            index: account,
-        }]);
-        root_derivation_path
-    }
-    pub fn bip_44_payment_path(
-        network: Network,
-        account: u32,
-        change: bool,
-        address_index: u32,
-    ) -> Self {
-        let mut root_derivation_path: DerivationPath = match network {
-            Network::Mainnet => DASH_BIP44_PATH_MAINNET,
-            _ => DASH_BIP44_PATH_TESTNET,
-        }
-        .into();
-        root_derivation_path.0.extend(&[
-            ChildNumber::Hardened {
-                index: account,
-            },
-            ChildNumber::Normal {
-                index: change.into(),
-            },
-            ChildNumber::Normal {
-                index: address_index,
-            },
-        ]);
-        root_derivation_path
-    }
-    pub fn coinjoin_path(network: Network, account: u32) -> Self {
-        let mut root_derivation_path: DerivationPath = match network {
-            Network::Mainnet => COINJOIN_PATH_MAINNET,
-            _ => COINJOIN_PATH_TESTNET,
-        }
-        .into();
-        root_derivation_path.0.extend(&[ChildNumber::Hardened {
-            index: account,
-        }]);
-        root_derivation_path
-    }
-
-    /// This might have been used in the past
-    pub fn identity_registration_path_child_non_hardened(network: Network, index: u32) -> Self {
-        let mut root_derivation_path: DerivationPath = match network {
-            Network::Mainnet => IDENTITY_REGISTRATION_PATH_MAINNET,
-            _ => IDENTITY_REGISTRATION_PATH_TESTNET,
-        }
-        .into();
-        root_derivation_path.0.extend(&[ChildNumber::Normal {
-            index,
-        }]);
-        root_derivation_path
-    }
-
-    pub fn identity_registration_path(network: Network, index: u32) -> Self {
-        let mut root_derivation_path: DerivationPath = match network {
-            Network::Mainnet => IDENTITY_REGISTRATION_PATH_MAINNET,
-            _ => IDENTITY_REGISTRATION_PATH_TESTNET,
-        }
-        .into();
-        root_derivation_path.0.extend(&[ChildNumber::Hardened {
-            index,
-        }]);
-        root_derivation_path
-    }
-
-    pub fn identity_top_up_path(network: Network, identity_index: u32, top_up_index: u32) -> Self {
-        let mut root_derivation_path: DerivationPath = match network {
-            Network::Mainnet => IDENTITY_TOPUP_PATH_MAINNET,
-            _ => IDENTITY_TOPUP_PATH_TESTNET,
-        }
-        .into();
-        root_derivation_path.0.extend(&[
-            ChildNumber::Hardened {
-                index: identity_index,
-            },
-            ChildNumber::Normal {
-                index: top_up_index,
-            },
-        ]);
-        root_derivation_path
-    }
-
-    pub fn identity_invitation_path(network: Network, index: u32) -> Self {
-        let mut root_derivation_path: DerivationPath = match network {
-            Network::Mainnet => IDENTITY_INVITATION_PATH_MAINNET,
-            _ => IDENTITY_INVITATION_PATH_TESTNET,
-        }
-        .into();
-        root_derivation_path.0.extend(&[ChildNumber::Hardened {
-            index,
-        }]);
-        root_derivation_path
-    }
-
-    pub fn asset_lock_address_top_up_path(network: Network, index: u32) -> Self {
-        let mut root_derivation_path: DerivationPath = match network {
-            Network::Mainnet => ASSET_LOCK_ADDRESS_TOPUP_PATH_MAINNET,
-            _ => ASSET_LOCK_ADDRESS_TOPUP_PATH_TESTNET,
-        }
-        .into();
-        root_derivation_path.0.extend(&[ChildNumber::Hardened {
-            index,
-        }]);
-        root_derivation_path
-    }
-
-    pub fn asset_lock_shielded_address_top_up_path(network: Network, index: u32) -> Self {
-        let mut root_derivation_path: DerivationPath = match network {
-            Network::Mainnet => ASSET_LOCK_SHIELDED_ADDRESS_TOPUP_PATH_MAINNET,
-            _ => ASSET_LOCK_SHIELDED_ADDRESS_TOPUP_PATH_TESTNET,
-        }
-        .into();
-        root_derivation_path.0.extend(&[ChildNumber::Hardened {
-            index,
-        }]);
-        root_derivation_path
-    }
-
-    pub fn identity_authentication_path(
-        network: Network,
-        key_type: KeyDerivationType,
-        identity_index: u32,
-        key_index: u32,
-    ) -> Self {
-        let mut root_derivation_path: DerivationPath = match network {
-            Network::Mainnet => IDENTITY_AUTHENTICATION_PATH_MAINNET,
-            _ => IDENTITY_AUTHENTICATION_PATH_TESTNET,
-        }
-        .into();
-        root_derivation_path.0.extend(&[
-            ChildNumber::Hardened {
-                index: key_type.into(),
-            },
-            ChildNumber::Hardened {
-                index: identity_index,
-            },
-            ChildNumber::Hardened {
-                index: key_index,
-            },
-        ]);
-        root_derivation_path
-    }
-
     pub fn derive_priv_ecdsa_for_master_seed(
         &self,
         seed: &[u8],
@@ -1469,7 +1294,7 @@ pub enum Error {
     /// Encoded extended key data has wrong length
     WrongExtendedKeyLength(usize),
     /// Base58 encoding error
-    Base58(base58ck::Error),
+    Base58(base58::Error),
     /// Hexadecimal decoding error
     Hex(dashcore_hashes::hex::Error),
     /// `PublicKey` hex should be 66 or 130 digits long.
@@ -1522,8 +1347,8 @@ impl From<secp256k1::Error> for Error {
     }
 }
 
-impl From<base58ck::Error> for Error {
-    fn from(err: base58ck::Error) -> Self {
+impl From<base58::Error> for Error {
+    fn from(err: base58::Error) -> Self {
         Error::Base58(err)
     }
 }
@@ -2090,7 +1915,7 @@ impl ExtendedPubKey {
 
 impl fmt::Display for ExtendedPrivKey {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-        fmt.write_str(&base58ck::encode_check(&self.encode()[..]))
+        fmt.write_str(&base58::encode_check(&self.encode()[..]))
     }
 }
 
@@ -2098,14 +1923,14 @@ impl FromStr for ExtendedPrivKey {
     type Err = Error;
 
     fn from_str(inp: &str) -> Result<ExtendedPrivKey, Error> {
-        let data = base58ck::decode_check(inp)?;
+        let data = base58::decode_check(inp)?;
         ExtendedPrivKey::decode(&data)
     }
 }
 
 impl fmt::Display for ExtendedPubKey {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-        fmt.write_str(&base58ck::encode_check(&self.encode()[..]))
+        fmt.write_str(&base58::encode_check(&self.encode()[..]))
     }
 }
 
@@ -2113,7 +1938,7 @@ impl FromStr for ExtendedPubKey {
     type Err = Error;
 
     fn from_str(inp: &str) -> Result<ExtendedPubKey, Error> {
-        let data = base58ck::decode_check(inp)?;
+        let data = base58::decode_check(inp)?;
         ExtendedPubKey::decode(&data)
     }
 }
@@ -2674,6 +2499,136 @@ mod tests {
             3,
         );
         assert_eq!(path.to_string(), "m/9'/1'/5'/0'/1'/2'/3'");
+    }
+
+    #[test]
+    fn test_application_session_authentication_path() {
+        let path = DerivationPath::application_session_authentication_path(
+            Network::Mainnet,
+            [0x01; 32],
+            [0x02; 32],
+        );
+        assert_eq!(
+            path.to_string(),
+            format!("m/9'/5'/5'/6'/0'/0x{}'/0x{}'", "01".repeat(32), "02".repeat(32))
+        );
+
+        let path = DerivationPath::application_session_authentication_path(
+            Network::Testnet,
+            [0x01; 32],
+            [0x02; 32],
+        );
+        assert_eq!(
+            path.to_string(),
+            format!("m/9'/1'/5'/6'/0'/0x{}'/0x{}'", "01".repeat(32), "02".repeat(32))
+        );
+    }
+
+    #[test]
+    fn test_application_encryption_path() {
+        let path = DerivationPath::application_encryption_path(
+            Network::Mainnet,
+            [0x01; 32],
+            [0x02; 32],
+            ApplicationKeyPurpose::Encryption,
+        );
+        assert_eq!(
+            path.to_string(),
+            format!("m/9'/5'/5'/7'/0'/0x{}'/0x{}'/1'", "01".repeat(32), "02".repeat(32))
+        );
+
+        let path = DerivationPath::application_encryption_path(
+            Network::Testnet,
+            [0x01; 32],
+            [0x02; 32],
+            ApplicationKeyPurpose::Decryption,
+        );
+        assert_eq!(
+            path.to_string(),
+            format!("m/9'/1'/5'/7'/0'/0x{}'/0x{}'/2'", "01".repeat(32), "02".repeat(32))
+        );
+    }
+
+    /// Pinned public keys for the all-zero-entropy test mnemonic. A change here orphans registered
+    /// encryption keys, which wallets re-derive from seed. The uniform ids match the vectors
+    /// dashpay/platform pins; the non-uniform ones catch a byte-order or argument-order change.
+    #[test]
+    fn test_application_key_vectors() {
+        let seed = crate::mnemonic::Mnemonic::from_phrase(
+            "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
+        )
+        .unwrap()
+        .to_seed("");
+        let ascending: [u8; 32] = core::array::from_fn(|i| i as u8);
+        let descending: [u8; 32] = core::array::from_fn(|i| 0xff - i as u8);
+        let public_key_hex = |path: DerivationPath, network| {
+            hex::encode(
+                path.derive_pub_ecdsa_for_master_seed(&seed, network)
+                    .unwrap()
+                    .public_key
+                    .serialize(),
+            )
+        };
+
+        let session = |identity_id, request_id| {
+            public_key_hex(
+                DerivationPath::application_session_authentication_path(
+                    Network::Testnet,
+                    identity_id,
+                    request_id,
+                ),
+                Network::Testnet,
+            )
+        };
+        let encryption = |identity_id, contract_id, key_purpose| {
+            public_key_hex(
+                DerivationPath::application_encryption_path(
+                    Network::Mainnet,
+                    identity_id,
+                    contract_id,
+                    key_purpose,
+                ),
+                Network::Mainnet,
+            )
+        };
+
+        assert_eq!(
+            session([0x35; 32], [0x6B; 32]),
+            "022c8b2e806244482374b1caf8306146dc03aad3b99a5954efd5e70a0eddd37a5d"
+        );
+        assert_eq!(
+            encryption([0x35; 32], [0x6B; 32], ApplicationKeyPurpose::Encryption),
+            "03e989de1b62f137231cc06659c810c17100becd1f5e23d5710faa7602769fe434"
+        );
+        assert_eq!(
+            session(ascending, descending),
+            "0278ad78c1a220924bf0e06e1111c61422efeace068f30efa825604b436970b230"
+        );
+        assert_eq!(
+            encryption(ascending, descending, ApplicationKeyPurpose::Encryption),
+            "03c4e462229f176595ec17e28e9096d3cfbc42496fb8ed4d48f8f58355d6105aa9"
+        );
+        assert_eq!(
+            encryption(ascending, descending, ApplicationKeyPurpose::Decryption),
+            "031fd0a3cfc01bebb89d43c2e12a6321c37ebdacb62c09495899e5b65a24fa5c99"
+        );
+
+        // The builder's path is the documented string, byte order included.
+        let parsed: DerivationPath = format!(
+            "m/9'/1'/5'/6'/0'/0x{}'/0x{}'",
+            hex::encode(ascending),
+            hex::encode(descending)
+        )
+        .parse()
+        .unwrap();
+        assert_eq!(
+            parsed,
+            DerivationPath::application_session_authentication_path(
+                Network::Testnet,
+                ascending,
+                descending,
+            )
+        );
     }
 
     #[test]

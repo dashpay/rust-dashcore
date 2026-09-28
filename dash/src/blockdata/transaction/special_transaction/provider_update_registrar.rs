@@ -222,7 +222,7 @@ mod tests {
         );
 
         // We should verify the script payouts match
-        let pubkey_hash = PubkeyHash::from_hex("56bcf3cac49235537d6ce0fb3214d8850a6db777")
+        let pubkey_hash = PubkeyHash::from_str("56bcf3cac49235537d6ce0fb3214d8850a6db777")
             .expect("expected to get pubkey hash");
         let script_payout = ScriptBuf::new_p2pkh(&pubkey_hash);
         assert_eq!(expected_provider_update_registrar_payload.script_payout, script_payout);
@@ -249,7 +249,7 @@ mod tests {
                     pro_tx_hash,
                     provider_mode,
                     operator_public_key: BLSPublicKey::from_hex(operator_key_hex).unwrap(),
-                    voting_key_hash: PubkeyHash::from_hex(voting_key_hash_hex).unwrap(),
+                    voting_key_hash: PubkeyHash::from_str(voting_key_hash_hex).unwrap(),
                     script_payout,
                     inputs_hash: InputsHash::from_hex(inputs_hash_hex).unwrap(),
                     payload_sig,

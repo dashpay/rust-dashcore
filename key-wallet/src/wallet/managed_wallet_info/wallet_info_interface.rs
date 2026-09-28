@@ -20,7 +20,7 @@ use dashcore::address::Payload;
 use dashcore::ephemerealdata::chain_lock::ChainLock;
 use dashcore::ephemerealdata::instant_lock::InstantLock;
 use dashcore::prelude::CoreBlockHeight;
-use dashcore::{Address as DashAddress, ScriptBuf, Transaction, Txid};
+use dashcore::{Address as DashAddress, OutPoint, ScriptBuf, Transaction, Txid};
 
 /// Outcome of [`WalletInfoInterface::apply_chain_lock`].
 ///
@@ -246,6 +246,8 @@ pub trait WalletInfoInterface: Sized + WalletTransactionChecker + ManagedAccount
         ApplyChainLockOutcome::default()
     }
 
+    fn note_chain_lock_height(&mut self, _height: CoreBlockHeight) {}
+
     /// Update chain state and process any matured transactions
     /// This should be called when the chain tip advances to a new height
     fn update_last_processed_height(&mut self, current_height: u32);
@@ -277,6 +279,8 @@ pub trait WalletInfoInterface: Sized + WalletTransactionChecker + ManagedAccount
     /// of ours and still change state by rewriting its context or by the
     /// sweep removing a loser, so this is broader than "a UTXO was marked".
     fn mark_instant_send_utxos(&mut self, txid: &Txid, lock: &InstantLock) -> bool;
+
+    fn unrecorded_spend_heights(&self, tx: &Transaction) -> BTreeSet<CoreBlockHeight>;
 
     /// Return the aggregated monitor revision across all accounts.
     /// Increments whenever the monitored address set changes.
@@ -383,6 +387,13 @@ impl WalletInfoInterface for ManagedWalletInfo {
         ApplyChainLockOutcome {
             locked_transactions,
             metadata_advanced: advance,
+        }
+    }
+
+    fn note_chain_lock_height(&mut self, height: CoreBlockHeight) {
+        if self.noted_chain_lock_height.is_none_or(|noted| height > noted) {
+            self.noted_chain_lock_height = Some(height);
+            self.prune_finalized_observed_spends();
         }
     }
 
@@ -574,8 +585,10 @@ impl WalletInfoInterface for ManagedWalletInfo {
                 any_changed = true;
             }
             if let Some(record) = account.transactions_mut().get_mut(txid) {
-                record.update_context(TransactionContext::InstantSend(lock.clone()));
-                any_changed = true;
+                if !record.is_confirmed() {
+                    record.update_context(TransactionContext::InstantSend(lock.clone()));
+                    any_changed = true;
+                }
                 if locked_transaction.is_none() {
                     locked_transaction = Some(record.transaction.clone());
                 }
@@ -601,13 +614,94 @@ impl WalletInfoInterface for ManagedWalletInfo {
     fn monitor_revision(&self) -> u64 {
         self.accounts.all_accounts().iter().map(|a| a.monitor_revision()).sum()
     }
+
+    fn unrecorded_spend_heights(&self, tx: &Transaction) -> BTreeSet<CoreBlockHeight> {
+        let txid = tx.txid();
+        (0..tx.output.len() as u32)
+            .map(|vout| OutPoint::new(txid, vout))
+            .filter(|outpoint| {
+                self.accounts
+                    .all_accounts()
+                    .into_iter()
+                    .filter_map(|account| account.as_funds())
+                    .any(|account| account.spent_before_funded.contains_key(outpoint))
+            })
+            .filter_map(|outpoint| self.observed_spent_outpoints.get(&outpoint).copied())
+            .collect()
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::test_utils::TestWalletContext;
+    use crate::transaction_checking::BlockInfo;
     use crate::wallet::initialization::WalletAccountCreationOptions;
+    use dashcore::hashes::Hash;
+    use dashcore::BlockHash;
+
+    /// An IS lock for a transaction the wallet already holds as mined must not
+    /// overwrite its block context: `InstantSend` carries no `BlockInfo`, so
+    /// the record would lose its height, and chainlock promotion — which only
+    /// promotes `InBlock` records — would skip it forever (issue #1020).
+    #[tokio::test]
+    async fn late_instant_lock_leaves_a_mined_record_promotable() {
+        let mut ctx = TestWalletContext::new_random();
+        let tx = Transaction::dummy(&ctx.receive_address, 0..1, &[100_000]);
+        let mined = TransactionContext::InBlock(BlockInfo::new(
+            2_000,
+            BlockHash::from_byte_array([0x20; 32]),
+            1_700_000_000,
+        ));
+        assert!(ctx.check_transaction(&tx, mined).await.is_relevant);
+
+        let txid = tx.txid();
+        let lock = InstantLock {
+            txid,
+            ..InstantLock::default()
+        };
+
+        ctx.managed_wallet.mark_instant_send_utxos(&txid, &lock);
+
+        let record = ctx.transaction(&txid);
+        assert!(
+            matches!(record.context, TransactionContext::InBlock(_)),
+            "a mined record must keep its block context, got {}",
+            record.context
+        );
+        assert_eq!(record.height(), Some(2_000), "the record must keep its height");
+        assert!(
+            ctx.first_utxo().is_instantlocked,
+            "the lock must still flag the transaction's UTXOs"
+        );
+
+        let outcome = ctx.managed_wallet.apply_chain_lock(ChainLock::dummy(2_010));
+        assert!(
+            outcome.locked_transactions.values().any(|txids| txids.contains(&txid)),
+            "a chainlock above the record's height must promote it"
+        );
+    }
+
+    /// The guard must not swallow the case it does not cover: a lock for a
+    /// transaction that is still unconfirmed has to apply as before.
+    #[tokio::test]
+    async fn instant_lock_still_applies_to_an_unconfirmed_record() {
+        let (mut ctx, tx) = TestWalletContext::new_random().with_mempool_funding(100_000).await;
+        let txid = tx.txid();
+        let lock = InstantLock {
+            txid,
+            ..InstantLock::default()
+        };
+
+        assert!(ctx.managed_wallet.mark_instant_send_utxos(&txid, &lock));
+
+        let record = ctx.transaction(&txid);
+        assert!(
+            matches!(record.context, TransactionContext::InstantSend(_)),
+            "an unconfirmed record must take the lock, got {}",
+            record.context
+        );
+    }
 
     /// A wallet that owns a UTXO must surface that UTXO's outpoint as a bare
     /// filter element, consensus-serialized to the 36-byte form Dash Core

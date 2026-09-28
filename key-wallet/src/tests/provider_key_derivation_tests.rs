@@ -39,7 +39,7 @@ fn bls_operator_keys_match_dashbls_reference() {
 
     // The stored account xpub must be the account-level key at m/9'/5'/3'/3'.
     assert_eq!(
-        hex::encode(account.bls_public_key.to_bytes_legacy()),
+        hex::encode(account.bls_public_key.to_bytes_legacy().unwrap()),
         "8d794d053504db3727c1f51aea2112e440fadbade687a9c0243b61523c8ab8eb64061f0a5ec5d8df4b7ec8bdfe722c19"
     );
 
@@ -47,7 +47,7 @@ fn bls_operator_keys_match_dashbls_reference() {
     let key0_pub =
         account.bls_public_key.derive_pub_legacy(ChildNumber::from_normal_idx(0).unwrap()).unwrap();
     assert_eq!(
-        hex::encode(key0_pub.to_bytes_legacy()),
+        hex::encode(key0_pub.to_bytes_legacy().unwrap()),
         "078cad04aae29eb76171937eb7101452b401b026efbc27db840f130374e6a9ec8443d917277f8921e0ba6678a7709875"
     );
     // Same point in modern/IETF (basic-scheme) serialization, as it appears in
@@ -61,12 +61,12 @@ fn bls_operator_keys_match_dashbls_reference() {
     let seed = hex::decode(TEST_SEED_HEX).unwrap();
     let sk0 = account.derive_from_seed_private_key_at(&seed, 0).unwrap();
     assert_eq!(
-        hex::encode(sk0.to_be_bytes()),
+        hex::encode(*sk0.to_bytes()),
         "11122e1ad656d0610ce0f80d40da874d67ea656a3e66ed371c915ec3a488a43a"
     );
     let sk1 = account.derive_from_seed_private_key_at(&seed, 1).unwrap();
     assert_eq!(
-        hex::encode(sk1.to_be_bytes()),
+        hex::encode(*sk1.to_bytes()),
         "1a4e3318640cd4e50222184d0ea111abf8a0c18a0e5dc3ed45dad85009db4e31"
     );
 }
@@ -84,14 +84,14 @@ fn bls_operator_keys_testnet_match_dashbls_reference() {
     let key0_pub =
         account.bls_public_key.derive_pub_legacy(ChildNumber::from_normal_idx(0).unwrap()).unwrap();
     assert_eq!(
-        hex::encode(key0_pub.to_bytes_legacy()),
+        hex::encode(key0_pub.to_bytes_legacy().unwrap()),
         "09d8beabae708de1638487f1aff44b38e8c07d9b09f22d76329d6c8ec01e2ad4d030b660bca40ddbd222373a72c5bcef"
     );
 
     let seed = hex::decode(TEST_SEED_HEX).unwrap();
     let sk0 = account.derive_from_seed_private_key_at(&seed, 0).unwrap();
     assert_eq!(
-        hex::encode(sk0.to_be_bytes()),
+        hex::encode(*sk0.to_bytes()),
         "3346dfd71627f9f31cad3ee66fe7b673c32cb077b2eb38c621d7e61c30e46dbd"
     );
 }
@@ -217,7 +217,7 @@ fn operator_key_at_is_wallet_state_agnostic() {
     for account in [resident, &watch_only] {
         let key0 = account.operator_public_key_at(0).expect("gate-free derivation must succeed");
         assert_eq!(
-            hex::encode(key0.to_bytes_legacy()),
+            hex::encode(key0.to_bytes_legacy().unwrap()),
             "078cad04aae29eb76171937eb7101452b401b026efbc27db840f130374e6a9ec8443d917277f8921e0ba6678a7709875"
         );
         assert_eq!(
@@ -230,19 +230,19 @@ fn operator_key_at_is_wallet_state_agnostic() {
     let seed = hex::decode(TEST_SEED_HEX).unwrap();
     let sk0 = BLSAccount::operator_private_key_at(&seed, Network::Mainnet, 0).unwrap();
     assert_eq!(
-        hex::encode(sk0.to_be_bytes()),
+        hex::encode(*sk0.to_bytes()),
         "11122e1ad656d0610ce0f80d40da874d67ea656a3e66ed371c915ec3a488a43a"
     );
     let sk1 = BLSAccount::operator_private_key_at(&seed, Network::Mainnet, 1).unwrap();
     assert_eq!(
-        hex::encode(sk1.to_be_bytes()),
+        hex::encode(*sk1.to_bytes()),
         "1a4e3318640cd4e50222184d0ea111abf8a0c18a0e5dc3ed45dad85009db4e31"
     );
 
     // Testnet vectors (coin type 1: m/9'/1'/3'/3').
     let sk0_testnet = BLSAccount::operator_private_key_at(&seed, Network::Testnet, 0).unwrap();
     assert_eq!(
-        hex::encode(sk0_testnet.to_be_bytes()),
+        hex::encode(*sk0_testnet.to_bytes()),
         "3346dfd71627f9f31cad3ee66fe7b673c32cb077b2eb38c621d7e61c30e46dbd"
     );
 }

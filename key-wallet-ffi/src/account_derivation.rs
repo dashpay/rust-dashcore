@@ -88,7 +88,7 @@ pub unsafe extern "C" fn bls_account_derive_private_key_from_seed(
         account.inner().derive_from_seed_private_key_at(seed_slice, index),
         error
     );
-    unwrap_or_return!(CString::new(hex::encode(sk.to_be_bytes())), error).into_raw()
+    unwrap_or_return!(CString::new(hex::encode(*sk.to_bytes())), error).into_raw()
 }
 
 /// Derive a BLS private key from a mnemonic + optional passphrase at the given index.
@@ -127,7 +127,7 @@ pub unsafe extern "C" fn bls_account_derive_private_key_from_mnemonic(
         account.inner().derive_from_mnemonic_private_key_at(mnemonic_str, passphrase_str, index,),
         error
     );
-    unwrap_or_return!(CString::new(hex::encode(sk.to_be_bytes())), error).into_raw()
+    unwrap_or_return!(CString::new(hex::encode(*sk.to_bytes())), error).into_raw()
 }
 
 // ========================= EdDSA (feature = "eddsa") =========================

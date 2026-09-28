@@ -30,6 +30,7 @@ allow = [
     "MPL-2.0",
     "Unicode-3.0",
     "MITNFA",
+    "BSL-1.0",
 ]
 confidence-threshold = 0.8
 

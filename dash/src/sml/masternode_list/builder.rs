@@ -1,25 +1,22 @@
-use std::collections::BTreeMap;
+use std::sync::Arc;
 
+use crate::BlockHash;
 use crate::hash_types::{MerkleRootMasternodeList, MerkleRootQuorums};
-use crate::sml::llmq_type::LLMQType;
-use crate::sml::masternode_list::MasternodeList;
-use crate::sml::masternode_list_entry::qualified_masternode_list_entry::QualifiedMasternodeListEntry;
-use crate::sml::quorum_entry::qualified_quorum_entry::QualifiedQuorumEntry;
-use crate::{BlockHash, ProTxHash, QuorumHash};
+use crate::sml::masternode_list::{MasternodeList, MasternodeMap, QuorumMap};
 
 pub struct MasternodeListBuilder {
     pub block_hash: BlockHash,
     pub block_height: u32,
     pub masternode_merkle_root: Option<MerkleRootMasternodeList>,
     pub llmq_merkle_root: Option<MerkleRootQuorums>,
-    pub masternodes: BTreeMap<ProTxHash, QualifiedMasternodeListEntry>,
-    pub quorums: BTreeMap<LLMQType, BTreeMap<QuorumHash, QualifiedQuorumEntry>>,
+    pub masternodes: Arc<MasternodeMap>,
+    pub quorums: Arc<QuorumMap>,
 }
 
 impl MasternodeListBuilder {
     pub fn new(
-        masternodes: BTreeMap<ProTxHash, QualifiedMasternodeListEntry>,
-        quorums: BTreeMap<LLMQType, BTreeMap<QuorumHash, QualifiedQuorumEntry>>,
+        masternodes: Arc<MasternodeMap>,
+        quorums: Arc<QuorumMap>,
         block_hash: BlockHash,
         block_height: u32,
     ) -> Self {

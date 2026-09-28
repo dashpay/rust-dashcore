@@ -32,7 +32,7 @@
 //!
 //! * `secp-recovery` - enables calculating public key from a signature and message.
 //! * `signer` - enables singing and validation ECDSA helpers.
-//! * `base64` - (dependency), enables encoding of PSBTs and message signatures.
+//! * `base64` - (dependency), enables encoding of message signatures.
 //! * `unstable` - enables unstable features for testing.
 //! * `rand` - (dependency), makes it more convenient to generate random values.
 //! * `bincode` - (dependency), implements bincode serialization and deserialization.
@@ -69,8 +69,6 @@ pub extern crate bitcoinconsensus;
 pub extern crate dashcore_hashes as hashes;
 pub extern crate secp256k1;
 
-#[cfg(feature = "blsful")]
-pub use blsful;
 #[cfg(feature = "ed25519-dalek")]
 pub use ed25519_dalek;
 
@@ -94,7 +92,7 @@ pub mod serde_utils;
 pub mod network;
 pub mod address;
 pub mod amount;
-pub mod base58;
+pub use dashcore_crypto::base58;
 pub mod bip152;
 pub mod bip158;
 pub mod blockdata;

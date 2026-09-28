@@ -22,8 +22,6 @@ pub(super) struct FiltersBatch {
     scanned: bool,
     /// Number of blocks still being downloaded for this batch.
     pending_blocks: u32,
-    /// Whether rescan has been completed for this batch.
-    rescan_complete: bool,
     /// Wallets that were behind for this batch's height range at scan time —
     /// and therefore need their `synced_height` advanced when the batch
     /// commits — each mapped to the wallet's `account_generation` at scan
@@ -33,10 +31,6 @@ pub(super) struct FiltersBatch {
     /// current account set (dashpay/rust-dashcore#649). Already-synced wallets
     /// must not be touched.
     scanned_wallets: BTreeMap<WalletId, u64>,
-    /// Cached scriptPubKeys discovered during block processing that still
-    /// need rescan, attributed per wallet so we can rerun matching only
-    /// against the wallet that produced each new script.
-    collected_scripts: HashMap<WalletId, HashSet<ScriptBuf>>,
     /// Every script already matched against this batch's filters, per wallet.
     tested_scripts: HashMap<WalletId, HashSet<ScriptBuf>>,
 }
@@ -55,9 +49,7 @@ impl FiltersBatch {
             verified: false,
             scanned: false,
             pending_blocks: 0,
-            rescan_complete: false,
             scanned_wallets: BTreeMap::new(),
-            collected_scripts: HashMap::new(),
             tested_scripts: HashMap::new(),
         }
     }
@@ -106,22 +98,6 @@ impl FiltersBatch {
         self.pending_blocks = self.pending_blocks.saturating_sub(1);
         self.pending_blocks
     }
-    /// Returns whether rescan has been completed for this batch.
-    pub(super) fn rescan_complete(&self) -> bool {
-        self.rescan_complete
-    }
-    /// Mark rescan as complete for this batch.
-    pub(super) fn mark_rescan_complete(&mut self) {
-        self.rescan_complete = true;
-    }
-    /// Add scriptPubKeys discovered during block processing for later rescan.
-    pub(super) fn add_scripts_for_wallet(
-        &mut self,
-        wallet_id: WalletId,
-        scripts: impl IntoIterator<Item = ScriptBuf>,
-    ) {
-        self.collected_scripts.entry(wallet_id).or_default().extend(scripts);
-    }
     /// Record that `scripts` have been matched against this batch's filters.
     pub(super) fn mark_tested<I: IntoIterator<Item = ScriptBuf>>(
         &mut self,
@@ -141,10 +117,6 @@ impl FiltersBatch {
         monitored.iter().filter(move |script| tested.is_none_or(|t| !t.contains(*script)))
     }
 
-    /// Take collected per-wallet scripts for rescan, leaving the map empty.
-    pub(super) fn take_collected_scripts(&mut self) -> HashMap<WalletId, HashSet<ScriptBuf>> {
-        std::mem::take(&mut self.collected_scripts)
-    }
     /// Record the wallets that were behind for this batch at scan time, each
     /// with its `account_generation` snapshot.
     pub(super) fn set_scanned_wallets(&mut self, wallets: BTreeMap<WalletId, u64>) {
