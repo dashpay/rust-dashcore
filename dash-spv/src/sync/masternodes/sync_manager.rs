@@ -726,7 +726,7 @@ mod tests {
     use crate::sync::{MasternodesManager, SyncManager, SyncState};
     use crate::test_utils::MockHeaderStorage;
     use crate::types::HashedBlockHeader;
-    use crate::SyncError;
+    use crate::{ClientConfig, SyncError};
     use dashcore::block::Header;
     use dashcore::bls_sig_utils::{BLSPublicKey, BLSSignature};
     use dashcore::hash_types::QuorumVVecHash;
@@ -742,6 +742,7 @@ mod tests {
     use std::sync::Arc;
     use std::time::Duration;
     use std::time::Instant;
+    use test_case::test_case;
     use tokio::sync::{mpsc, RwLock};
 
     fn make_quorum_entry(hash_byte: u8, index: i16) -> QuorumEntry {
@@ -988,6 +989,65 @@ mod tests {
         let tip_hash = manager.sync_state.qrinfo_in_flight.expect("QRInfo in flight").tip;
         rx.try_recv().expect("initial GetQRInfo is queued");
         (manager, requests, rx, tip_hash)
+    }
+
+    /// Diffs are stored only until the sync reaches the tip. Once synced,
+    /// nothing is, and the next start catches up from the last stored message.
+    #[test_case(SyncState::Syncing, true; "while syncing")]
+    #[test_case(SyncState::Synced, false; "once synced")]
+    #[tokio::test]
+    async fn a_diff_is_stored_only_until_the_sync_reaches_the_tip(state: SyncState, stored: bool) {
+        use dashcore::sml::masternode_list::MasternodeList;
+
+        let tip = 100;
+        let target = tip + 1;
+        let dir = tempfile::TempDir::new().unwrap();
+        let storage =
+            DiskStorageManager::new(&ClientConfig::testnet().with_storage_path(dir.path()))
+                .await
+                .unwrap();
+        let headers = Header::dummy_batch(0..target + 1);
+        let block_headers = storage.block_headers();
+        block_headers
+            .write()
+            .await
+            .store_headers(&headers.iter().map(HashedBlockHeader::from).collect::<Vec<_>>())
+            .await
+            .unwrap();
+        let tip_hash = headers[tip as usize].block_hash();
+        let target_hash = headers[target as usize].block_hash();
+        let mut engine = MasternodeListEngine::default_for_network(Network::Regtest);
+        engine.feed_block_height(tip, tip_hash);
+        engine.masternode_lists.insert(tip, MasternodeList::empty(tip_hash, tip));
+        let engine = Arc::new(RwLock::new(engine));
+        let mut manager = MasternodesManager::new(
+            block_headers,
+            Arc::clone(&engine),
+            Network::Regtest,
+            Some(storage.masternodes()),
+        )
+        .await;
+        manager.set_state(SyncState::Synced);
+        manager.progress.update_block_header_tip_height(target);
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let requests = RequestSender::new(tx);
+        manager.send_tip_mnlistdiff_update(&requests).await.unwrap();
+        manager.set_state(state);
+
+        let diff = MnListDiff {
+            base_block_hash: tip_hash,
+            block_hash: target_hash,
+            ..MnListDiff::dummy_between(0, 0)
+        };
+        let peer = "127.0.0.1:19999".parse().unwrap();
+        manager
+            .handle_message(Message::new(peer, NetworkMessage::MnListDiff(diff)), &requests)
+            .await
+            .unwrap();
+
+        assert!(engine.read().await.masternode_lists.contains_key(&target));
+        let file = dir.path().join("masternodes").join(format!("diff_{target}.dat"));
+        assert_eq!(file.exists(), stored);
     }
 
     /// A QRInfo the engine rejects must not release the request slot.
