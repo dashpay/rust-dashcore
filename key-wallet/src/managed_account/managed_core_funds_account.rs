@@ -358,9 +358,9 @@ impl ManagedCoreFundsAccount {
         // scratch, so carry forward flags that must not regress. An
         // InstantSend lock is permanent for a txid (DIP-0010) and
         // trust only ever settles, so both latch monotonically. A
-        // coin reservation is orthogonal to chain context and is kept
-        // as-is. `is_confirmed` stays freshly derived so a reorg can
-        // still downgrade it.
+        // coin lock follows the wallet's lock set, not chain context,
+        // and is kept as-is. `is_confirmed` stays freshly derived so a
+        // reorg can still downgrade it.
         copies.extend(self.utxos.get(&outpoint).cloned());
         if !copies.is_empty() {
             output.is_instantlocked |= copies.iter().any(|copy| copy.is_instantlocked);

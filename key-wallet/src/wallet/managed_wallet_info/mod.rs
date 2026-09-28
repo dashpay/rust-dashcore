@@ -8,6 +8,7 @@ pub mod coin_selection;
 pub mod fee;
 pub mod helpers;
 pub use helpers::AbandonOutcome;
+mod locked_outpoints;
 pub mod managed_account_operations;
 pub mod managed_accounts;
 pub mod transaction_builder;
@@ -148,6 +149,16 @@ pub struct ManagedWalletInfo {
     pub(crate) account_generation: u64,
     #[cfg_attr(feature = "serde", serde(skip))]
     pub(crate) noted_chain_lock_height: Option<CoreBlockHeight>,
+    /// Outpoints the wallet will not spend: masternode collateral, and
+    /// anything locked by hand. The source of truth for coin locks; see
+    /// [`Self::locked_outpoints`] for the rules.
+    ///
+    /// `#[serde(default)]` loads a snapshot written before this field existed
+    /// with no locks, in self-describing formats (e.g. JSON). As with
+    /// `observed_spent_outpoints`, non-self-describing serde formats cannot
+    /// default a missing field.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub(crate) locked_outpoints: BTreeSet<OutPoint>,
 }
 
 /// Serde adapter for [`ManagedWalletInfo::observed_spent_outpoints`] that
@@ -255,6 +266,7 @@ impl ManagedWalletInfo {
             spent_claims: BTreeMap::new(),
             account_generation: 0,
             noted_chain_lock_height: None,
+            locked_outpoints: BTreeSet::new(),
         }
     }
 
@@ -273,6 +285,7 @@ impl ManagedWalletInfo {
             spent_claims: BTreeMap::new(),
             account_generation: 0,
             noted_chain_lock_height: None,
+            locked_outpoints: BTreeSet::new(),
         }
     }
 
@@ -301,6 +314,7 @@ impl ManagedWalletInfo {
             spent_claims: BTreeMap::new(),
             account_generation: 0,
             noted_chain_lock_height: None,
+            locked_outpoints: BTreeSet::new(),
         }
     }
 
