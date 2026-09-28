@@ -423,6 +423,11 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
                     if !apply_ok
                         && matches!(self.sync_state.pipeline_mode, PipelineMode::Incremental)
                     {
+                        // A start that tried to catch up with a tip diff falls back
+                        // to a QRInfo, or nothing would resume the sync.
+                        if self.state() == SyncState::Syncing {
+                            return self.send_qrinfo_for_tip(requests).await;
+                        }
                         return Ok(vec![]);
                     }
                     tracing::info!("All MnListDiff responses received");
@@ -578,12 +583,23 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
                         }
                     }
                 }
-                tracing::info!(
-                    "Headers sync complete at {}, starting masternode sync",
-                    self.progress.block_header_tip_height()
-                );
                 self.sync_state.qrinfo_retry_count = 0;
                 self.sync_state.clear_pending();
+                // An engine replayed from storage that holds the tip's rotation
+                // cycle verified only needs the lists since, not a QRInfo.
+                let tip = self.progress.block_header_tip_height();
+                if self.holds_the_tip_cycle(tip) {
+                    tracing::info!(
+                        "Headers sync complete at {tip}, catching up from the stored masternode lists"
+                    );
+                    self.set_state(SyncState::Syncing);
+                    let events = self.send_tip_mnlistdiff_update(requests).await?;
+                    if self.sync_state.has_pending_requests() {
+                        return Ok(events);
+                    }
+                    return self.complete_pipeline(requests).await;
+                }
+                tracing::info!("Headers sync complete at {tip}, starting masternode sync");
                 return self.send_qrinfo_for_tip(requests).await;
             }
         }
@@ -1058,6 +1074,66 @@ mod tests {
         assert!(engine.read().await.masternode_lists.contains_key(&target));
         let file = dir.path().join("masternodes").join(format!("diff_{target}.dat"));
         assert_eq!(file.exists(), stored);
+    }
+
+    /// A start whose replayed engine holds the tip's rotation cycle verified
+    /// catches up with a tip diff from its newest list instead of a QRInfo.
+    #[tokio::test]
+    async fn a_start_holding_the_tip_cycle_catches_up_with_a_tip_diff() {
+        use crate::sync::SyncEvent;
+        use dashcore::sml::llmq_entry_verification::LLMQEntryVerificationStatus;
+        use dashcore::sml::llmq_type::network::NetworkLLMQExt;
+        use dashcore::sml::masternode_list::MasternodeList;
+        use dashcore::sml::quorum_entry::qualified_quorum_entry::QualifiedQuorumEntry;
+
+        // Regtest rotates every 24 blocks, so 71 is in the cycle at 48.
+        let tip = 71;
+        let storage = DiskStorageManager::with_temp_dir().await.unwrap();
+        let headers = Header::dummy_batch(0..tip + 1);
+        let hash = |height: u32| headers[height as usize].block_hash();
+        let stored = headers.iter().map(HashedBlockHeader::from).collect::<Vec<_>>();
+        storage.block_headers().write().await.store_headers(&stored).await.unwrap();
+        let mut engine = MasternodeListEngine::default_for_network(Network::Regtest);
+        engine.feed_block_height(tip - 1, hash(tip - 1));
+        engine.masternode_lists.insert(tip - 1, MasternodeList::empty(hash(tip - 1), tip - 1));
+        engine.feed_block_height(48, hash(48));
+        let active = Network::Regtest.isd_llmq_type().active_quorum_count() as u16;
+        let cycle = (0..active).map(|index| {
+            let mut quorum =
+                QualifiedQuorumEntry::from(make_quorum_entry(index as u8, index as i16));
+            quorum.verified = LLMQEntryVerificationStatus::Verified;
+            (index, quorum)
+        });
+        engine.rotated_quorums_per_cycle.insert(hash(48), cycle.collect());
+        let mut manager = MasternodesManager::new(
+            storage.block_headers(),
+            Arc::new(RwLock::new(engine)),
+            Network::Regtest,
+            None,
+        )
+        .await;
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let requests = RequestSender::new(tx);
+
+        let headers_synced = SyncEvent::BlockHeaderSyncComplete {
+            tip_height: tip,
+        };
+        manager.handle_sync_event(&headers_synced, &requests).await.unwrap();
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(NetworkRequest::SendMessage(NetworkMessage::GetMnListD(request)))
+                if (request.base_block_hash, request.block_hash) == (hash(tip - 1), hash(tip))
+        ));
+
+        let diff = MnListDiff {
+            base_block_hash: hash(tip - 1),
+            block_hash: hash(tip),
+            ..MnListDiff::dummy_between(0, 0)
+        };
+        let peer = "127.0.0.1:19999".parse().unwrap();
+        let message = Message::new(peer, NetworkMessage::MnListDiff(diff));
+        manager.handle_message(message, &requests).await.unwrap();
+        assert_eq!(manager.state(), SyncState::Synced);
     }
 
     /// A QRInfo the engine rejects must not release the request slot.
