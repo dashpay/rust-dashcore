@@ -7,7 +7,7 @@ use super::{Wallet, WalletType};
 use crate::account::{Account, AccountType, StandardAccountType};
 use crate::error::Result;
 use crate::Error;
-use dashcore::ecdsa::EcdsaPublicKey;
+use dashcore::ecdsa::{EcdsaPublicKey, EcdsaSecretKey};
 use hex_conservative::DisplayHex;
 
 impl Wallet {
@@ -408,10 +408,11 @@ impl Wallet {
     /// * `path` - The derivation path (e.g., "m/44'/5'/0'/0/0")
     ///
     /// # Returns
-    /// The private key (SecretKey), or an error if the wallet is watch-only or path is invalid
-    pub fn derive_private_key(&self, path: &crate::DerivationPath) -> Result<secp256k1::SecretKey> {
+    /// The private key, or an error if the wallet is watch-only or the path
+    /// is invalid.
+    pub fn derive_private_key(&self, path: &crate::DerivationPath) -> Result<EcdsaSecretKey> {
         let extended = self.derive_extended_private_key(path)?;
-        Ok(extended.private_key)
+        Ok(extended.private_key.clone())
     }
 
     /// Derive a private key at a specific derivation path and return as WIF
@@ -512,7 +513,7 @@ impl Wallet {
             // For hardened paths, derive the private key first, then get public key
             let private_key = self.derive_private_key(path)?;
 
-            Ok(secp256k1::PublicKey::from_secret_key(&private_key).into())
+            Ok(private_key.public_key())
         } else {
             // For non-hardened paths, derive directly from public key
             let extended = self.derive_extended_public_key(path)?;

@@ -155,9 +155,9 @@ mod tests {
     #[test]
     #[cfg(feature = "rand-std")]
     fn public_key_constructors() {
-        use crate::crypto::ecdsa::generate;
+        use crate::crypto::ecdsa::EcdsaSecretKey;
 
-        let pk = generate().public_key();
+        let pk = EcdsaSecretKey::generate().public_key();
 
         let _ = PublicKey::new(pk);
         let _ = PublicKey::new_uncompressed(pk);

@@ -23,11 +23,11 @@
 //!
 //! ```rust
 //! # #[cfg(feature = "rand-std")] {
-//! use dashcore::ecdsa::generate;
+//! use dashcore::ecdsa::EcdsaSecretKey;
 //! use dashcore::{Address, PublicKey, Network};
 //!
 //! // Generate random key pair.
-//! let public_key = PublicKey::new(generate().public_key());
+//! let public_key = PublicKey::new(EcdsaSecretKey::generate().public_key());
 //!
 //! // Generate pay-to-pubkey-hash address.
 //! let address = Address::p2pkh(&public_key, Network::Mainnet);

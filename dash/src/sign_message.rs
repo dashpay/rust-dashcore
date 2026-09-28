@@ -250,16 +250,18 @@ mod tests {
 
         use secp256k1;
 
-        use crate::crypto::ecdsa::generate;
+        use crate::crypto::ecdsa::EcdsaSecretKey;
         use crate::{Address, AddressType, Network};
 
         let message = "rust-dash MessageSignature test";
         let msg_hash = signed_msg_hash(message);
         let msg = secp256k1::Message::from_digest(msg_hash.to_byte_array());
 
-        let privkey = generate();
-        let secp_sig =
-            secp256k1::ecdsa::RecoverableSignature::sign_ecdsa_recoverable(msg, &privkey);
+        let privkey = EcdsaSecretKey::generate();
+        let secp_sig = secp256k1::ecdsa::RecoverableSignature::sign_ecdsa_recoverable(
+            msg,
+            &privkey.clone().into(),
+        );
         let signature = MessageSignature {
             signature: secp_sig,
             compressed: true,
@@ -269,7 +271,7 @@ mod tests {
         let signature2 = MessageSignature::from_str(&signature.to_string()).unwrap();
         let pubkey = signature2.recover_pubkey(msg_hash).unwrap();
         assert!(pubkey.compressed);
-        assert_eq!(pubkey.inner, secp256k1::PublicKey::from_secret_key(&privkey).into());
+        assert_eq!(pubkey.inner, privkey.public_key());
 
         let p2pkh = Address::p2pkh(&pubkey, Network::Mainnet);
         assert_eq!(signature2.is_signed_by_address(&p2pkh, msg_hash), Ok(true));

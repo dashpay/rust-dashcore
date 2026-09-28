@@ -976,11 +976,11 @@ impl TransactionSigner for Wallet {
         let derived_xpriv = root_ext_priv.derive_priv(&path).map_err(|e| {
             BuilderError::SigningFailed(format!("couldn't derive extended priv key: {}", e))
         })?;
-        let key = derived_xpriv.private_key;
+        let key = secp256k1::SecretKey::from(&derived_xpriv.private_key);
 
         let message = Message::from_digest(*sighash.as_byte_array());
         let signature = key.sign_ecdsa(message);
-        let pubkey = EcdsaPublicKey::from(secp256k1::PublicKey::from_secret_key(&key));
+        let pubkey = derived_xpriv.private_key.public_key();
 
         Ok((signature, pubkey))
     }

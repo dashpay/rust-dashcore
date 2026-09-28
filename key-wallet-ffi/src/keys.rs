@@ -4,7 +4,7 @@ use crate::error::{FFIError, FFIErrorCode};
 use crate::types::FFIWallet;
 use crate::{check_ptr, deref_ptr, unwrap_or_return};
 use dash_network::ffi::FFINetwork;
-use dashcore::ecdsa::EcdsaPublicKey;
+use dashcore::ecdsa::{EcdsaPublicKey, EcdsaSecretKey};
 use hex_conservative::DisplayHex;
 use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_uint};
@@ -12,7 +12,7 @@ use std::ptr;
 
 /// Opaque type for a private key (SecretKey)
 pub struct FFIPrivateKey {
-    inner: secp256k1::SecretKey,
+    inner: EcdsaSecretKey,
 }
 
 /// Opaque type for an extended private key
@@ -60,7 +60,7 @@ impl FFIExtendedPubKey {
 
 impl FFIPrivateKey {
     #[inline]
-    pub(crate) fn from_secret(inner: secp256k1::SecretKey) -> Self {
+    pub(crate) fn from_secret(inner: EcdsaSecretKey) -> Self {
         FFIPrivateKey {
             inner,
         }
@@ -256,7 +256,7 @@ pub unsafe extern "C" fn extended_private_key_get_private_key(
 ) -> *mut FFIPrivateKey {
     let extended = deref_ptr!(extended_key, error);
     Box::into_raw(Box::new(FFIPrivateKey {
-        inner: extended.inner.private_key,
+        inner: extended.inner.private_key.clone(),
     }))
 }
 
@@ -278,7 +278,7 @@ pub unsafe extern "C" fn private_key_to_wif(
     let network_rust: key_wallet::Network = network.into();
 
     // Convert to WIF format
-    let dash_key = dashcore::PrivateKey::new(key.inner, network_rust);
+    let dash_key = dashcore::PrivateKey::new(key.inner.clone(), network_rust);
 
     let wif = dash_key.to_wif();
     unwrap_or_return!(CString::new(wif), error).into_raw()

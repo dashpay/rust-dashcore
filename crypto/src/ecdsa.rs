@@ -14,14 +14,13 @@ use core::str::FromStr;
 
 #[cfg(feature = "rand")]
 use bitcoin_crypto::key::rand;
-#[cfg(feature = "rand")]
-use bitcoin_crypto::secp256k1::SecretKey;
+use bitcoin_crypto::key::Keypair;
 use dash_types::type_cvrt;
 use hex_conservative::DisplayHex;
 use internals::debug_from_display;
 use secp256k1;
 use thiserror::Error as ThisError;
-use zeroize::Zeroize;
+use zeroize::{Zeroize, Zeroizing};
 
 pub use bitcoin_crypto::ecdsa::{DecodeError, ParseSignatureError, SerializedSignature, Signature};
 
@@ -34,12 +33,6 @@ pub const ECDSA_PK_UNCOMPRESSED_LEN: usize = 65;
 /// Scalar (secret key or tweak) length.
 pub const ECDSA_SK_LEN: usize = 32;
 
-/// Draws a random secret key from the thread RNG.
-#[cfg(feature = "rand")]
-pub fn generate() -> SecretKey {
-    SecretKey::new(&mut rand::rng())
-}
-
 /// Errors produced by secp256k1 operations.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, ThisError)]
 #[non_exhaustive]
@@ -47,6 +40,9 @@ pub enum EcdsaError {
     /// Public key bytes are not a usable curve point.
     #[error("invalid secp256k1 public key")]
     InvalidPublicKey,
+    /// Secret key bytes are zero or not below the curve order.
+    #[error("invalid secp256k1 secret key")]
+    InvalidSecretKey,
     /// Tweak is out of range or produced the point at infinity.
     #[error("invalid secp256k1 tweak")]
     InvalidTweak,
@@ -113,19 +109,66 @@ type_cvrt!(From<secp256k1::PublicKey> for EcdsaPublicKey, |pk| Self(*pk));
 type_cvrt!(From<EcdsaPublicKey> for secp256k1::PublicKey, |pk| pk.0);
 
 /// A secp256k1 secret key.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Eq, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(transparent))]
 pub struct EcdsaSecretKey(secp256k1::SecretKey);
 
-type_cvrt!(From<secp256k1::SecretKey> for EcdsaSecretKey, |sk| Self(*sk));
-type_cvrt!(From<EcdsaSecretKey> for secp256k1::SecretKey, |sk| sk.0);
+impl EcdsaSecretKey {
+    /// Wraps a big-endian scalar.
+    pub fn from_bytes(bytes: &[u8; ECDSA_SK_LEN]) -> Result<Self, EcdsaError> {
+        secp256k1::SecretKey::from_secret_bytes(*bytes)
+            .map(Self)
+            .map_err(|_| EcdsaError::InvalidSecretKey)
+    }
+
+    /// Copies out the big-endian scalar.
+    pub fn to_bytes(&self) -> Zeroizing<[u8; ECDSA_SK_LEN]> {
+        Zeroizing::new(self.0.to_secret_bytes())
+    }
+
+    /// Derives the corresponding public key.
+    pub fn public_key(&self) -> EcdsaPublicKey {
+        EcdsaPublicKey(self.0.public_key())
+    }
+
+    /// Adds `tweak` to the scalar.
+    pub fn add_tweak(&self, tweak: &[u8; ECDSA_SK_LEN]) -> Result<Self, EcdsaError> {
+        let tweak =
+            secp256k1::Scalar::from_be_bytes(*tweak).map_err(|_| EcdsaError::InvalidTweak)?;
+        self.0.add_tweak(&tweak).map(Self).map_err(|_| EcdsaError::InvalidTweak)
+    }
+
+    /// Draws a random scalar from the thread RNG.
+    #[cfg(feature = "rand")]
+    pub fn generate() -> Self {
+        Self(secp256k1::SecretKey::new(&mut rand::rng()))
+    }
+}
 
 impl Zeroize for EcdsaSecretKey {
     fn zeroize(&mut self) {
         self.0.non_secure_erase();
     }
 }
+
+impl Drop for EcdsaSecretKey {
+    fn drop(&mut self) {
+        self.zeroize();
+    }
+}
+
+impl fmt::Debug for EcdsaSecretKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("EcdsaSecretKey(..)")
+    }
+}
+
+type_cvrt!(From<secp256k1::SecretKey> for EcdsaSecretKey, |sk| Self(*sk));
+type_cvrt!(From<EcdsaSecretKey> for secp256k1::SecretKey, |sk| sk.0);
+type_cvrt!(From<EcdsaSecretKey> for Keypair, |sk| {
+    Self::from(secp256k1::Keypair::from_secret_key(&sk.0))
+});
 
 /// A secp256k1 ECDSA signature, without a sighash type.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]

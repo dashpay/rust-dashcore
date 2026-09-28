@@ -37,9 +37,9 @@ impl Drop for RootExtendedPrivKey {
 
 impl RootExtendedPrivKey {
     /// Create a new RootExtendedPrivKey
-    pub fn new(root_private_key: secp256k1::SecretKey, root_chain_code: ChainCode) -> Self {
+    pub fn new(root_private_key: EcdsaSecretKey, root_chain_code: ChainCode) -> Self {
         Self {
-            root_private_key: root_private_key.into(),
+            root_private_key,
             root_chain_code,
         }
     }
@@ -54,7 +54,7 @@ impl RootExtendedPrivKey {
     /// Create from an ExtendedPrivKey (must be depth 0)
     pub fn from_extended_priv_key(key: &ExtendedPrivKey) -> Self {
         Self {
-            root_private_key: key.private_key.into(),
+            root_private_key: key.private_key.clone(),
             root_chain_code: key.chain_code,
         }
     }
@@ -66,7 +66,7 @@ impl RootExtendedPrivKey {
             depth: 0,
             parent_fingerprint: Default::default(),
             child_number: ChildNumber::from(0),
-            private_key: self.root_private_key.into(),
+            private_key: self.root_private_key.clone(),
             chain_code: self.root_chain_code,
         }
     }
@@ -79,7 +79,7 @@ impl RootExtendedPrivKey {
         // Convert secp256k1 private key bytes to BLS private key
         // The scalar is read little-endian from the secp secret, the bag holds
         // big-endian, so the bytes are reversed going in.
-        let mut scalar_bytes = secp256k1::SecretKey::from(self.root_private_key).to_secret_bytes();
+        let mut scalar_bytes = self.root_private_key.to_bytes();
         scalar_bytes.reverse();
 
         ExtendedBLSPrivKey::from_parts(
@@ -87,7 +87,7 @@ impl RootExtendedPrivKey {
             0,
             Default::default(),
             ChildNumber::from(0),
-            BlsSkBytes::from_bytes(scalar_bytes),
+            BlsSkBytes::from_bytes(*scalar_bytes),
             self.root_chain_code,
         )
         .map_err(|_| {
@@ -107,21 +107,21 @@ impl RootExtendedPrivKey {
 
         // Convert secp256k1 private key bytes to Ed25519 seed
         // Ed25519 uses 32-byte seeds to generate keys
-        let seed_bytes = secp256k1::SecretKey::from(self.root_private_key).to_secret_bytes();
+        let seed_bytes = self.root_private_key.to_bytes();
 
         // Create Ed25519 extended private key from seed using new_master
-        let eddsa_key = ExtendedEd25519PrivKey::new_master(network, &seed_bytes).map_err(|e| {
-            Error::InvalidParameter(format!("Failed to convert to EdDSA key: {:?}", e))
-        })?;
+        let eddsa_key =
+            ExtendedEd25519PrivKey::new_master(network, &seed_bytes[..]).map_err(|e| {
+                Error::InvalidParameter(format!("Failed to convert to EdDSA key: {:?}", e))
+            })?;
 
         Ok(eddsa_key)
     }
 
     /// Get the corresponding public key
     pub fn to_root_extended_pub_key(&self) -> RootExtendedPubKey {
-        let public_key = secp256k1::PublicKey::from_secret_key(&self.root_private_key.into());
         RootExtendedPubKey {
-            root_public_key: public_key.into(),
+            root_public_key: self.root_private_key.public_key(),
             root_chain_code: self.root_chain_code,
         }
     }
@@ -134,8 +134,8 @@ impl Encode for RootExtendedPrivKey {
         encoder: &mut E,
     ) -> Result<(), bincode::error::EncodeError> {
         // Encode the private key as 32 bytes
-        let private_key_bytes = secp256k1::SecretKey::from(self.root_private_key).to_secret_bytes();
-        bincode::Encode::encode(&private_key_bytes, encoder)?;
+        let private_key_bytes = self.root_private_key.to_bytes();
+        bincode::Encode::encode(&*private_key_bytes, encoder)?;
 
         // Encode the chain code
         bincode::Encode::encode(&self.root_chain_code, encoder)?;
@@ -151,16 +151,15 @@ impl<C> Decode<C> for RootExtendedPrivKey {
     ) -> Result<Self, bincode::error::DecodeError> {
         // Decode the private key bytes
         let private_key_bytes: [u8; 32] = bincode::Decode::decode(decoder)?;
-        let root_private_key =
-            secp256k1::SecretKey::from_secret_bytes(private_key_bytes).map_err(|e| {
-                bincode::error::DecodeError::OtherString(format!("Invalid private key: {}", e))
-            })?;
+        let root_private_key = EcdsaSecretKey::from_bytes(&private_key_bytes).map_err(|e| {
+            bincode::error::DecodeError::OtherString(format!("Invalid private key: {}", e))
+        })?;
 
         // Decode the chain code
         let root_chain_code: ChainCode = bincode::Decode::decode(decoder)?;
 
         Ok(Self {
-            root_private_key: root_private_key.into(),
+            root_private_key,
             root_chain_code,
         })
     }
@@ -171,8 +170,7 @@ impl<'de, C> BorrowDecode<'de, C> for RootExtendedPrivKey {
     fn borrow_decode<D: bincode::de::BorrowDecoder<'de, Context = C>>(
         decoder: &mut D,
     ) -> Result<Self, bincode::error::DecodeError> {
-        // For borrowed decode, we still need to copy the data since secp256k1::SecretKey
-        // doesn't support borrowing from the decoder
+        // `EcdsaSecretKey` cannot borrow from the decoder, so decode a copy.
         <Self as Decode<C>>::decode(decoder)
     }
 }
@@ -204,7 +202,7 @@ impl FromOnNetwork<RootExtendedPrivKey> for ExtendedPrivKey {
             depth: 0,
             parent_fingerprint: Default::default(),
             child_number: ChildNumber::from(0),
-            private_key: value.root_private_key.into(),
+            private_key: value.root_private_key.clone(),
             chain_code: value.root_chain_code,
         }
     }
@@ -304,8 +302,7 @@ impl<'de, C> BorrowDecode<'de, C> for RootExtendedPubKey {
     fn borrow_decode<D: bincode::de::BorrowDecoder<'de, Context = C>>(
         decoder: &mut D,
     ) -> Result<Self, bincode::error::DecodeError> {
-        // For borrowed decode, we still need to copy the data since secp256k1::PublicKey
-        // doesn't support borrowing from the decoder
+        // `EcdsaPublicKey` cannot borrow from the decoder, so decode a copy.
         <Self as Decode<C>>::decode(decoder)
     }
 }

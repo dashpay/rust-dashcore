@@ -34,7 +34,7 @@ use serde;
 
 #[cfg(feature = "bincode")]
 use bincode_derive::{Decode, Encode};
-use dashcore::ecdsa::{EcdsaError, EcdsaPublicKey};
+use dashcore::ecdsa::{EcdsaError, EcdsaPublicKey, EcdsaSecretKey};
 use dashcore::{base58, Network};
 use hex_conservative::DisplayHex;
 use zeroize::Zeroize;
@@ -44,8 +44,6 @@ type XpubIdentifier = hash160::Hash;
 
 pub use crate::dip9::{ApplicationKeyPurpose, KeyDerivationType};
 pub use dashcore::key::Keypair;
-/// Re-export key types from secp256k1
-pub use secp256k1::SecretKey as PrivateKey;
 
 /// A chain code
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -338,19 +336,17 @@ pub struct ExtendedPrivKey {
     /// Child number of the key used to derive from parent (0 for master)
     pub child_number: ChildNumber,
     /// Private key
-    pub private_key: secp256k1::SecretKey,
+    pub private_key: EcdsaSecretKey,
     /// Chain code
     pub chain_code: ChainCode,
 }
 
-// Hand-written (not `#[derive(Zeroize)]`): `secp256k1::SecretKey` has no
-// `Zeroize` impl, only `non_secure_erase()`, so a derive would not compile.
 // `Drop` (below) calls this, so the value is wiped automatically on scope exit
 // with no caller action required. Cf. `RootExtendedPrivKey`.
 impl zeroize::Zeroize for ExtendedPrivKey {
     fn zeroize(&mut self) {
         // Secret key material.
-        self.private_key.non_secure_erase();
+        self.private_key.zeroize();
         self.chain_code.zeroize();
         // Derivation metadata — cleared too so the whole value is wiped.
         self.depth.zeroize();
@@ -379,7 +375,7 @@ impl bincode::Encode for ExtendedPrivKey {
         self.parent_fingerprint.encode(encoder)?;
         self.child_number.encode(encoder)?;
         // Encode the private key as bytes
-        self.private_key.to_secret_bytes().encode(encoder)?;
+        self.private_key.to_bytes().encode(encoder)?;
         self.chain_code.encode(encoder)?;
         Ok(())
     }
@@ -396,10 +392,9 @@ impl<C> bincode::Decode<C> for ExtendedPrivKey {
         let child_number = ChildNumber::decode(decoder)?;
         // Decode the private key from bytes
         let private_key_bytes: [u8; 32] = <[u8; 32]>::decode(decoder)?;
-        let private_key =
-            secp256k1::SecretKey::from_secret_bytes(private_key_bytes).map_err(|e| {
-                bincode::error::DecodeError::OtherString(format!("Invalid private key: {}", e))
-            })?;
+        let private_key = EcdsaSecretKey::from_bytes(&private_key_bytes).map_err(|e| {
+            bincode::error::DecodeError::OtherString(format!("Invalid private key: {}", e))
+        })?;
         let chain_code = ChainCode::decode(decoder)?;
 
         Ok(ExtendedPrivKey {
@@ -418,26 +413,7 @@ impl<'de, C> bincode::BorrowDecode<'de, C> for ExtendedPrivKey {
     fn borrow_decode<D: bincode::de::BorrowDecoder<'de, Context = C>>(
         decoder: &mut D,
     ) -> Result<Self, bincode::error::DecodeError> {
-        let network = Network::borrow_decode(decoder)?;
-        let depth = u8::borrow_decode(decoder)?;
-        let parent_fingerprint = Fingerprint::borrow_decode(decoder)?;
-        let child_number = ChildNumber::borrow_decode(decoder)?;
-        // Decode the private key from bytes
-        let private_key_bytes: [u8; 32] = <[u8; 32]>::borrow_decode(decoder)?;
-        let private_key =
-            secp256k1::SecretKey::from_secret_bytes(private_key_bytes).map_err(|e| {
-                bincode::error::DecodeError::OtherString(format!("Invalid private key: {}", e))
-            })?;
-        let chain_code = ChainCode::borrow_decode(decoder)?;
-
-        Ok(ExtendedPrivKey {
-            network,
-            depth,
-            parent_fingerprint,
-            child_number,
-            private_key,
-            chain_code,
-        })
+        <Self as bincode::Decode<C>>::decode(decoder)
     }
 }
 
@@ -1323,7 +1299,7 @@ impl ExtendedPrivKey {
             depth: 0,
             parent_fingerprint: Default::default(),
             child_number: ChildNumber::from_normal_idx(0)?,
-            private_key: secp256k1::SecretKey::from_secret_bytes(hmac_secret_half(&hmac_result))?,
+            private_key: EcdsaSecretKey::from_bytes(&hmac_secret_half(&hmac_result))?,
             chain_code: ChainCode::from_hmac(hmac_result),
         })
     }
@@ -1331,7 +1307,7 @@ impl ExtendedPrivKey {
     /// Constructs BIP340 keypair for Schnorr signatures and Taproot use matching the internal
     /// secret key representation.
     pub fn to_keypair(&self) -> Keypair {
-        Keypair::from(secp256k1::Keypair::from_secret_key(&self.private_key))
+        Keypair::from(&self.private_key)
     }
 
     /// Attempts to derive an extended private key from a path.
@@ -1353,7 +1329,7 @@ impl ExtendedPrivKey {
                 index,
             } => {
                 // Non-hardened key: compute public data and use that
-                hmac_engine.input(&self.private_key.public_key().serialize()[..]);
+                hmac_engine.input(&self.private_key.public_key().to_compressed()[..]);
                 hmac_engine.input(&index.to_be_bytes());
             }
             ChildNumber::Hardened {
@@ -1361,14 +1337,14 @@ impl ExtendedPrivKey {
             } => {
                 // Hardened key: use only secret data to prevent public derivation
                 hmac_engine.input(&[0u8]);
-                hmac_engine.input(&self.private_key[..]);
+                hmac_engine.input(&self.private_key.to_bytes()[..]);
                 hmac_engine.input(&(index | (1 << 31)).to_be_bytes());
             }
             ChildNumber::Normal256 {
                 index,
             } => {
                 // Non-hardened key with 256-bit index
-                hmac_engine.input(&self.private_key.public_key().serialize()[..]);
+                hmac_engine.input(&self.private_key.public_key().to_compressed()[..]);
                 hmac_engine.input(&index);
             }
             ChildNumber::Hardened256 {
@@ -1376,16 +1352,16 @@ impl ExtendedPrivKey {
             } => {
                 // Hardened key with 256-bit index
                 hmac_engine.input(&[0u8]);
-                hmac_engine.input(&self.private_key[..]);
+                hmac_engine.input(&self.private_key.to_bytes()[..]);
                 hmac_engine.input(&index);
             }
         }
         let hmac_result: Hmac<sha512::Hash> = Hmac::from_engine(hmac_engine);
-        // IL added to the parent scalar; this rejects IL >= n and a zero sum,
-        // the two cases BIP32 declares invalid.
-        let tweaked = secp256k1::Scalar::from_be_bytes(hmac_secret_half(&hmac_result))
-            .ok()
-            .and_then(|il| self.private_key.add_tweak(&il).ok())
+        // IL added to the parent scalar; `add_tweak` rejects IL >= n and a zero
+        // sum, the two cases BIP32 declares invalid.
+        let tweaked = self
+            .private_key
+            .add_tweak(&hmac_secret_half(&hmac_result))
             .expect("statistically impossible to hit");
 
         Ok(ExtendedPrivKey {
@@ -1439,8 +1415,8 @@ impl ExtendedPrivKey {
             chain_code: data[13..45]
                 .try_into()
                 .expect("45 - 13 == 32, which is the ChainCode length"),
-            private_key: secp256k1::SecretKey::from_secret_bytes(
-                <[u8; 32]>::try_from(&data[46..78]).expect("78 - 46 == 32, the key length"),
+            private_key: EcdsaSecretKey::from_bytes(
+                data[46..78].try_into().expect("78 - 46 == 32, the key length"),
             )?,
         })
     }
@@ -1459,7 +1435,7 @@ impl ExtendedPrivKey {
         ret[9..13].copy_from_slice(&u32::from(self.child_number).to_be_bytes());
         ret[13..45].copy_from_slice(&self.chain_code[..]);
         ret[45] = 0;
-        ret[46..78].copy_from_slice(&self.private_key[..]);
+        ret[46..78].copy_from_slice(&self.private_key.to_bytes()[..]);
         ret
     }
 
@@ -1495,8 +1471,8 @@ impl ExtendedPrivKey {
         };
 
         let chain_code = data[42..74].try_into().expect("32 bytes for chain code");
-        let private_key = secp256k1::SecretKey::from_secret_bytes(
-            <[u8; 32]>::try_from(&data[75..107]).expect("107 - 75 == 32, the key length"),
+        let private_key = EcdsaSecretKey::from_bytes(
+            &<[u8; 32]>::try_from(&data[75..107]).expect("107 - 75 == 32, the key length"),
         )?;
 
         Ok(ExtendedPrivKey {
@@ -1555,7 +1531,7 @@ impl ExtendedPrivKey {
 
         // Key data (33 bytes)
         ret[74] = 0x00; // Padding for private key
-        ret[75..107].copy_from_slice(&self.private_key[..]);
+        ret[75..107].copy_from_slice(&self.private_key.to_bytes()[..]);
 
         ret
     }
@@ -1572,7 +1548,7 @@ impl ExtendedPrivKey {
 
     /// Convert to a PrivateKey for signing operations
     pub fn to_priv(&self) -> dashcore::PrivateKey {
-        dashcore::PrivateKey::new(self.private_key, self.network)
+        dashcore::PrivateKey::new(self.private_key.clone(), self.network)
     }
 }
 
@@ -1590,7 +1566,7 @@ impl ExtendedPubKey {
             depth: sk.depth,
             parent_fingerprint: sk.parent_fingerprint,
             child_number: sk.child_number,
-            public_key: sk.private_key.public_key().into(),
+            public_key: sk.private_key.public_key(),
             chain_code: sk.chain_code,
         }
     }
@@ -1614,10 +1590,7 @@ impl ExtendedPubKey {
 
     /// Compute the scalar tweak added to this key to get a child key
     /// Compute the scalar tweak added to this key to get a child key
-    pub fn ckd_pub_tweak(
-        &self,
-        i: ChildNumber,
-    ) -> Result<(secp256k1::SecretKey, ChainCode), Error> {
+    pub fn ckd_pub_tweak(&self, i: ChildNumber) -> Result<(EcdsaSecretKey, ChainCode), Error> {
         match i {
             ChildNumber::Hardened {
                 ..
@@ -1635,8 +1608,7 @@ impl ExtendedPubKey {
 
                 let hmac_result: Hmac<sha512::Hash> = Hmac::from_engine(hmac_engine);
 
-                let private_key =
-                    secp256k1::SecretKey::from_secret_bytes(hmac_secret_half(&hmac_result))?;
+                let private_key = EcdsaSecretKey::from_bytes(&hmac_secret_half(&hmac_result))?;
                 let chain_code = ChainCode::from_hmac(hmac_result);
                 Ok((private_key, chain_code))
             }
@@ -1654,8 +1626,7 @@ impl ExtendedPubKey {
                 let hmac_result: Hmac<sha512::Hash> = Hmac::from_engine(hmac_engine);
 
                 // IL must be less than n (order of the curve)
-                let private_key =
-                    secp256k1::SecretKey::from_secret_bytes(hmac_secret_half(&hmac_result))?;
+                let private_key = EcdsaSecretKey::from_bytes(&hmac_secret_half(&hmac_result))?;
                 let chain_code = ChainCode::from_hmac(hmac_result);
 
                 Ok((private_key, chain_code))
@@ -1666,7 +1637,7 @@ impl ExtendedPubKey {
     /// Public->Public child key derivation
     pub fn ckd_pub(&self, i: ChildNumber) -> Result<ExtendedPubKey, Error> {
         let (sk, chain_code) = self.ckd_pub_tweak(i)?;
-        let tweaked = self.public_key.add_tweak(&sk.to_secret_bytes())?;
+        let tweaked = self.public_key.add_tweak(&sk.to_bytes())?;
 
         Ok(ExtendedPubKey {
             network: self.network,
@@ -2287,7 +2258,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "Secp256k1(InvalidSecretKey)")]
+    #[should_panic(expected = "Ecdsa(InvalidSecretKey)")]
     fn schnorr_broken_privkey_zeros() {
         /* this is how we generate key:
         let mut sk = ONE_KEY;
@@ -2315,7 +2286,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "Secp256k1(InvalidSecretKey)")]
+    #[should_panic(expected = "Ecdsa(InvalidSecretKey)")]
     fn schnorr_broken_privkey_ffs() {
         // Xpriv having secret key set to all 0xFF's
         let xpriv_str = "xprv9s21ZrQH143K24Mfq5zL5MhWK9hUhhGbd45hLXo2Pq2oqzMMo63oStZzFAzHGBP2UuGCqWLTAPLcMtD9y5gkZ6Eq3Rjuahrv17fENZ3QzxW";

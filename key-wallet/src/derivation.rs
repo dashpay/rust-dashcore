@@ -309,7 +309,7 @@ mod tests {
         )
         .unwrap();
         // Skip the first byte (network prefix) and compare the actual 32-byte key
-        assert_eq!(&derived_key.private_key.to_secret_bytes(), &expected_with_prefix[1..]);
+        assert_eq!(&derived_key.private_key.to_bytes()[..], &expected_with_prefix[1..]);
 
         // Test m/0'/0/97 path for zero padding test (from DashSync)
         let path_zero_padding = DerivationPath::from(vec![
@@ -331,7 +331,7 @@ mod tests {
             "00136c1ad038f9a00871895322a487ed14f1cdc4d22ad351cfa1a0d235975dd7",
         )
         .unwrap();
-        assert_eq!(&derived_key_zero.private_key.to_secret_bytes(), &expected_zero_padded[..]);
+        assert_eq!(&derived_key_zero.private_key.to_bytes()[..], &expected_zero_padded[..]);
     }
 
     // ✓ Test extended key serialization (from DashSync DSBIP32Tests.m)
@@ -424,7 +424,10 @@ mod tests {
         ]);
 
         let identity_key = master_key.derive_priv(&identity_auth_path).unwrap();
-        assert_ne!(&identity_key.private_key[..], &master_key.private_key[..]);
+        assert_ne!(
+            &identity_key.private_key.to_bytes()[..],
+            &master_key.private_key.to_bytes()[..]
+        );
 
         // Test identity registration derivation
         // m/9'/5'/1'/1 (DIP-9: Identity Registration)
@@ -444,7 +447,7 @@ mod tests {
         ]);
 
         let reg_key = master_key.derive_priv(&identity_reg_path).unwrap();
-        assert_ne!(&reg_key.private_key[..], &identity_key.private_key[..]);
+        assert_ne!(&reg_key.private_key.to_bytes()[..], &identity_key.private_key.to_bytes()[..]);
 
         // Test identity top-up derivation
         // m/9'/5'/1'/2 (DIP-9: Identity Top-up)
@@ -464,8 +467,8 @@ mod tests {
         ]);
 
         let topup_key = master_key.derive_priv(&identity_topup_path).unwrap();
-        assert_ne!(&topup_key.private_key[..], &reg_key.private_key[..]);
-        assert_ne!(&topup_key.private_key[..], &identity_key.private_key[..]);
+        assert_ne!(&topup_key.private_key.to_bytes()[..], &reg_key.private_key.to_bytes()[..]);
+        assert_ne!(&topup_key.private_key.to_bytes()[..], &identity_key.private_key.to_bytes()[..]);
 
         // Test provider voting derivation (masternode voting)
         // m/3'/1'/0' (Provider voting)
@@ -482,7 +485,7 @@ mod tests {
         ]);
 
         let voting_key = master_key.derive_priv(&provider_voting_path).unwrap();
-        assert_ne!(&voting_key.private_key[..], &topup_key.private_key[..]);
+        assert_ne!(&voting_key.private_key.to_bytes()[..], &topup_key.private_key.to_bytes()[..]);
 
         // Test provider operator derivation
         // m/3'/0'/0' (Provider operator)
@@ -499,7 +502,10 @@ mod tests {
         ]);
 
         let operator_key = master_key.derive_priv(&provider_op_path).unwrap();
-        assert_ne!(&operator_key.private_key[..], &voting_key.private_key[..]);
+        assert_ne!(
+            &operator_key.private_key.to_bytes()[..],
+            &voting_key.private_key.to_bytes()[..]
+        );
     }
 
     // ✓ Test derivation path builder pattern
@@ -542,7 +548,7 @@ mod tests {
 
         // Test derivation with the built path
         let derived = master_key.derive_priv(&bip44_path).unwrap();
-        assert_ne!(&derived.private_key[..], &master_key.private_key[..]);
+        assert_ne!(&derived.private_key.to_bytes()[..], &master_key.private_key.to_bytes()[..]);
     }
 
     // ✓ Test key signing and verification
@@ -564,11 +570,9 @@ mod tests {
         let message_hash = dashcore_hashes::sha256::Hash::hash(message);
 
         // Sign the message (deterministic signing)
-        let signature1 = signing_key
-            .private_key
+        let signature1 = secp256k1::SecretKey::from(&signing_key.private_key)
             .sign_ecdsa(secp256k1::Message::from_digest(message_hash.to_byte_array()));
-        let signature2 = signing_key
-            .private_key
+        let signature2 = secp256k1::SecretKey::from(&signing_key.private_key)
             .sign_ecdsa(secp256k1::Message::from_digest(message_hash.to_byte_array()));
 
         // Signatures should be the same (deterministic)
@@ -605,7 +609,7 @@ mod tests {
         // Create recoverable signature
         let signature = secp256k1::ecdsa::RecoverableSignature::sign_ecdsa_recoverable(
             secp256k1::Message::from_digest(message_hash.to_byte_array()),
-            &signing_key.private_key,
+            &secp256k1::SecretKey::from(&signing_key.private_key),
         );
 
         // Recover the public key from signature
@@ -719,8 +723,7 @@ mod tests {
         // Verify the DashPay key can sign and verify messages
         let message = b"DashPay contact message";
         let message_hash = dashcore_hashes::sha256::Hash::hash(message);
-        let signature = dashpay_key
-            .private_key
+        let signature = secp256k1::SecretKey::from(&dashpay_key.private_key)
             .sign_ecdsa(secp256k1::Message::from_digest(message_hash.to_byte_array()));
 
         let verified = signature.verify(

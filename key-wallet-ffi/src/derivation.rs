@@ -5,6 +5,7 @@ use crate::keys::FFIExtendedPrivKey;
 use crate::keys::FFIExtendedPubKey;
 use crate::{check_ptr, deref_ptr, unwrap_or_return};
 use dash_network::ffi::FFINetwork;
+use dashcore::ecdsa::EcdsaSecretKey;
 use dashcore::Network;
 use key_wallet::{ExtendedPrivKey, ExtendedPubKey};
 use std::ffi::{CStr, CString};
@@ -480,13 +481,13 @@ pub unsafe extern "C" fn key_wallet_derive_address_from_key(
     };
 
     // Create a secp256k1 private key
-    let secret_key = match secp256k1::SecretKey::from_secret_bytes(key_bytes) {
+    let secret_key = match EcdsaSecretKey::from_bytes(&key_bytes) {
         Ok(sk) => sk,
         Err(_) => return ptr::null_mut(),
     };
 
     // Get public key
-    let public_key = secp256k1::PublicKey::from_secret_key(&secret_key);
+    let public_key = secret_key.public_key();
 
     // Convert to dashcore PublicKey
     let dash_pubkey = dashcore::PublicKey::new(public_key);
@@ -610,7 +611,7 @@ pub unsafe extern "C" fn key_wallet_derive_private_key_from_seed(
     };
 
     // Copy private key bytes
-    let key_bytes = derived_key.private_key.to_secret_bytes();
+    let key_bytes = derived_key.private_key.to_bytes();
     ptr::copy_nonoverlapping(key_bytes.as_ptr(), key_out, 32);
 
     0
