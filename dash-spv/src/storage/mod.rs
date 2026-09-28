@@ -33,7 +33,9 @@ pub use crate::storage::block_headers::{
 pub use crate::storage::blocks::{BlockStorage, PersistentBlockStorage};
 pub use crate::storage::filter_headers::{FilterHeaderStorage, PersistentFilterHeaderStorage};
 pub use crate::storage::filters::{FilterStorage, PersistentFilterStorage};
-pub(crate) use crate::storage::masternode::feed_qrinfo_heights_to_engine;
+pub(crate) use crate::storage::masternode::{
+    feed_qrinfo_heights_to_engine, verify_diff_coinbase, verify_qr_info_coinbases,
+};
 pub use crate::storage::masternode::{MasternodeStorage, PersistentMasternodeStorage};
 pub use crate::storage::metadata::{MetadataStorage, PersistentMetadataStorage};
 pub use crate::storage::peers::{PeerStorage, PersistentPeerStorage};

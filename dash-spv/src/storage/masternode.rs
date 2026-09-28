@@ -15,7 +15,7 @@ use dashcore::sml::masternode_list_engine::{qr_info_diffs, MasternodeListEngine,
 use dashcore::sml::quorum_entry::qualified_quorum_entry::QualifiedQuorumEntry;
 use dashcore::{BlockHash, Network, QuorumHash};
 
-use crate::error::{StorageError, StorageResult};
+use crate::error::{StorageError, StorageResult, SyncError, SyncResult};
 use crate::storage::{io::atomic_write, BlockHeaderStorage};
 
 type IndexMap = BTreeMap<CoreBlockHeight, PathBuf>;
@@ -196,6 +196,14 @@ impl<H: BlockHeaderStorage> MessageLog<H> {
                 );
                 continue;
             }
+            let proven = match &message {
+                Message::Diff(diff) => verify_diff_coinbase(&*headers, diff).await,
+                Message::QrInfo(qr_info) => verify_qr_info_coinbases(&*headers, qr_info).await,
+            };
+            if let Err(e) = proven {
+                tracing::warn!("Skipping masternode message at {height}: {e}");
+                continue;
+            }
             match &message {
                 Message::QrInfo(qr_info) => {
                     feed_qrinfo_heights_to_engine(&mut engine, qr_info, &*headers).await;
@@ -341,6 +349,44 @@ impl<H: BlockHeaderStorage> MasternodeStorage for PersistentMasternodeStorage<H>
     }
 }
 
+/// Checks that `diff`'s coinbase is the first transaction of the stored block
+/// the diff names, see [`MnListDiff::verify_coinbase_merkle_proof`].
+///
+/// The engine checks the list a diff builds against that coinbase whenever it
+/// applies the diff, so a diff that passes both ties its list to the header
+/// chain. A diff naming a block without a stored header cannot be checked and
+/// fails with `SyncError::MissingDependency`, an unproven one with
+/// `SyncError::Validation`.
+pub(crate) async fn verify_diff_coinbase<S: BlockHeaderStorage>(
+    storage: &S,
+    diff: &MnListDiff,
+) -> SyncResult<()> {
+    let header = match storage.get_header_height_by_hash(&diff.block_hash).await? {
+        Some(height) => storage.get_header(height).await?,
+        None => None,
+    }
+    .filter(|header| *header.hash() == diff.block_hash)
+    .ok_or_else(|| {
+        SyncError::MissingDependency(format!(
+            "no stored header for the masternode list diff block {}",
+            diff.block_hash
+        ))
+    })?;
+    diff.verify_coinbase_merkle_proof(header.header().merkle_root)
+        .map_err(|e| SyncError::Validation(e.to_string()))
+}
+
+/// [`verify_diff_coinbase`] for every diff a QRInfo carries.
+pub(crate) async fn verify_qr_info_coinbases<S: BlockHeaderStorage>(
+    storage: &S,
+    qr_info: &QRInfo,
+) -> SyncResult<()> {
+    for diff in qr_info_diffs(qr_info) {
+        verify_diff_coinbase(storage, diff).await?;
+    }
+    Ok(())
+}
+
 /// Feed QRInfo block heights to the engine from storage.
 ///
 /// Resolves heights for every hash enumerated by
@@ -388,6 +434,10 @@ pub(crate) async fn feed_qrinfo_heights_to_engine<S: BlockHeaderStorage>(
 mod tests {
     use super::*;
     use crate::test_utils::MockHeaderStorage;
+    use dashcore::block::Header;
+    use dashcore::network::message::{NetworkMessage, RawNetworkMessage};
+    use dashcore::sml::masternode_list_entry::MasternodeListEntry;
+    use dashcore::TxMerkleNode;
     use dashcore_hashes::Hash;
 
     use tempfile::TempDir;
@@ -396,31 +446,53 @@ mod tests {
         BlockHash::from_slice(&[byte; 32]).unwrap()
     }
 
+    /// Knows the heights of `heights` and holds the header that proves the
+    /// coinbase of each of `diffs`.
+    fn headers(heights: &[(u8, u32)], diffs: &[&MnListDiff]) -> MockHeaderStorage {
+        let map = heights.iter().map(|(b, h)| (hash(*b), *h)).collect();
+        diffs
+            .iter()
+            .fold(MockHeaderStorage::new(map), |headers, diff| headers.with_header_for(diff))
+    }
+
     async fn open_storage(
         dir: &TempDir,
-        heights: &[(u8, u32)],
+        headers: MockHeaderStorage,
     ) -> PersistentMasternodeStorage<MockHeaderStorage> {
-        let map = heights.iter().map(|(b, h)| (hash(*b), *h)).collect();
         PersistentMasternodeStorage::open(
             dir.path(),
-            Arc::new(RwLock::new(MockHeaderStorage(map))),
+            Arc::new(RwLock::new(headers)),
             Network::Regtest,
         )
         .await
         .expect("open")
     }
 
+    /// [`MnListDiff::dummy`] from `base` to `tip` applied on the list the
+    /// dummy diff from genesis to `base` built.
+    fn dummy_on_dummy(base: u8, tip: u8) -> MnListDiff {
+        MnListDiff::dummy(base, tip).with_coinbase_committing_to(
+            &[MasternodeListEntry::dummy(base), MasternodeListEntry::dummy(tip)],
+            &[],
+        )
+    }
+
     #[tokio::test]
     async fn a_reopened_storage_replays_what_was_stored() {
         let dir = TempDir::new().unwrap();
         let heights = [(0x00, 0), (0xAA, 100), (0xBB, 200)];
+        let (first, second) = (MnListDiff::dummy(0x00, 0xAA), dummy_on_dummy(0xAA, 0xBB));
         {
-            let mut storage = open_storage(&dir, &heights).await;
-            storage.store_diff(100, &MnListDiff::dummy(0x00, 0xAA)).await.unwrap();
-            storage.store_diff(200, &MnListDiff::dummy(0xAA, 0xBB)).await.unwrap();
+            let mut storage = open_storage(&dir, headers(&heights, &[])).await;
+            storage.store_diff(100, &first).await.unwrap();
+            storage.store_diff(200, &second).await.unwrap();
         }
 
-        let engine = open_storage(&dir, &heights).await.load_engine().await.unwrap();
+        let engine = open_storage(&dir, headers(&heights, &[&first, &second]))
+            .await
+            .load_engine()
+            .await
+            .unwrap();
 
         assert_eq!(engine.masternode_lists.keys().copied().collect::<Vec<_>>(), vec![100, 200]);
         assert_eq!(engine.masternode_lists[&200].block_hash, hash(0xBB));
@@ -441,26 +513,28 @@ mod tests {
 
         let dir = TempDir::new().unwrap();
         let quorum_hash = QuorumHash::from_byte_array([0xAB; 32]);
+        let quorum = QuorumEntry {
+            version: 1,
+            llmq_type: LLMQType::LlmqtypeTest,
+            quorum_hash,
+            quorum_index: None,
+            signers: vec![true; 3],
+            valid_members: vec![true; 3],
+            quorum_public_key: BLSPublicKey::from([7; 48]),
+            quorum_vvec_hash: QuorumVVecHash::all_zeros(),
+            threshold_sig: BLSSignature::from([1; 96]),
+            all_commitment_aggregated_signature: BLSSignature::from([1; 96]),
+        };
         let diff = MnListDiff {
-            new_quorums: vec![QuorumEntry {
-                version: 1,
-                llmq_type: LLMQType::LlmqtypeTest,
-                quorum_hash,
-                quorum_index: None,
-                signers: vec![true; 3],
-                valid_members: vec![true; 3],
-                quorum_public_key: BLSPublicKey::from([7; 48]),
-                quorum_vvec_hash: QuorumVVecHash::all_zeros(),
-                threshold_sig: BLSSignature::from([1; 96]),
-                all_commitment_aggregated_signature: BLSSignature::from([1; 96]),
-            }],
+            new_quorums: vec![quorum.clone()],
             quorums_chainlock_signatures: vec![QuorumCLSigObject {
                 signature: BLSSignature::from([1; 96]),
                 index_set: vec![0],
             }],
             ..MnListDiff::dummy(0x00, 0xAA)
-        };
-        let mut storage = open_storage(&dir, &[(0x00, 0), (0xAA, 100)]).await;
+        }
+        .with_coinbase_committing_to(&[MasternodeListEntry::dummy(0xAA)], &[quorum]);
+        let mut storage = open_storage(&dir, headers(&[(0x00, 0), (0xAA, 100)], &[&diff])).await;
         storage.store_diff(100, &diff).await.unwrap();
 
         let engine = storage.load_engine().await.unwrap();
@@ -481,9 +555,10 @@ mod tests {
     #[tokio::test]
     async fn replay_skips_a_message_whose_block_left_the_chain() {
         let dir = TempDir::new().unwrap();
-        let mut storage = open_storage(&dir, &[(0x00, 0), (0xAA, 100)]).await;
-        storage.store_diff(100, &MnListDiff::dummy(0x00, 0xAA)).await.unwrap();
-        storage.store_diff(200, &MnListDiff::dummy(0xAA, 0xBB)).await.unwrap();
+        let first = MnListDiff::dummy(0x00, 0xAA);
+        let mut storage = open_storage(&dir, headers(&[(0x00, 0), (0xAA, 100)], &[&first])).await;
+        storage.store_diff(100, &first).await.unwrap();
+        storage.store_diff(200, &dummy_on_dummy(0xAA, 0xBB)).await.unwrap();
 
         let engine = storage.load_engine().await.unwrap();
 
@@ -493,12 +568,17 @@ mod tests {
     #[tokio::test]
     async fn replay_skips_an_orphan_and_keeps_going() {
         let dir = TempDir::new().unwrap();
-        let mut storage =
-            open_storage(&dir, &[(0x00, 0), (0xAA, 100), (0xBB, 150), (0xDD, 120)]).await;
+        let (first, orphan, second) = (
+            MnListDiff::dummy(0x00, 0xAA),
+            MnListDiff::dummy(0xEE, 0xDD),
+            dummy_on_dummy(0xAA, 0xBB),
+        );
+        let heights = [(0x00, 0), (0xAA, 100), (0xBB, 150), (0xDD, 120)];
+        let mut storage = open_storage(&dir, headers(&heights, &[&first, &orphan, &second])).await;
 
-        storage.store_diff(100, &MnListDiff::dummy(0x00, 0xAA)).await.unwrap();
-        storage.store_diff(120, &MnListDiff::dummy(0xEE, 0xDD)).await.unwrap();
-        storage.store_diff(150, &MnListDiff::dummy(0xAA, 0xBB)).await.unwrap();
+        storage.store_diff(100, &first).await.unwrap();
+        storage.store_diff(120, &orphan).await.unwrap();
+        storage.store_diff(150, &second).await.unwrap();
 
         let engine = storage.load_engine().await.expect("replay must not fail on an orphan");
 
@@ -512,7 +592,7 @@ mod tests {
     #[tokio::test]
     async fn storing_the_same_height_twice_keeps_the_newer_message() {
         let dir = TempDir::new().unwrap();
-        let mut storage = open_storage(&dir, &[]).await;
+        let mut storage = open_storage(&dir, MockHeaderStorage::default()).await;
 
         storage.store_diff(100, &MnListDiff::dummy(0x00, 0xAA)).await.unwrap();
         storage.store_diff(100, &MnListDiff::dummy(0x00, 0xBB)).await.unwrap();
@@ -531,15 +611,17 @@ mod tests {
         let folder = dir.path().join(PersistentMasternodeStorage::<MockHeaderStorage>::FOLDER_NAME);
         tokio::fs::create_dir_all(&folder).await.unwrap();
 
+        let diff = MnListDiff::dummy(0x00, 0xAA);
+        let heights = [(0x00, 0), (0xAA, 100)];
         {
-            let mut storage = open_storage(&dir, &[(0x00, 0), (0xAA, 100)]).await;
-            storage.store_diff(100, &MnListDiff::dummy(0x00, 0xAA)).await.unwrap();
+            let mut storage = open_storage(&dir, headers(&heights, &[&diff])).await;
+            storage.store_diff(100, &diff).await.unwrap();
         }
 
         tokio::fs::write(folder.join("diff_50.dat"), b"not a diff").await.unwrap();
         tokio::fs::write(folder.join("diff_abc.dat"), b"x").await.unwrap();
 
-        let storage = open_storage(&dir, &[(0x00, 0), (0xAA, 100)]).await;
+        let storage = open_storage(&dir, headers(&heights, &[&diff])).await;
         assert_eq!(
             storage.diffs.keys().copied().collect::<Vec<_>>(),
             vec![50, 100],
@@ -567,32 +649,40 @@ mod tests {
         let tip = 2_500;
         let llmq_type = Network::Regtest.platform_type();
         let quorum_hash = QuorumHash::from_byte_array([0xAB; 32]);
+        let quorum = QuorumEntry {
+            version: 1,
+            llmq_type,
+            quorum_hash,
+            quorum_index: None,
+            signers: vec![true; 3],
+            valid_members: vec![true; 3],
+            quorum_public_key: BLSPublicKey::from([7; 48]),
+            quorum_vvec_hash: QuorumVVecHash::all_zeros(),
+            threshold_sig: BLSSignature::from([1; 96]),
+            all_commitment_aggregated_signature: BLSSignature::from([1; 96]),
+        };
+        let masternodes = [MasternodeListEntry::dummy(0x01)];
         let mined = MnListDiff {
             block_hash: BlockHash::dummy(1),
-            new_quorums: vec![QuorumEntry {
-                version: 1,
-                llmq_type,
-                quorum_hash,
-                quorum_index: None,
-                signers: vec![true; 3],
-                valid_members: vec![true; 3],
-                quorum_public_key: BLSPublicKey::from([7; 48]),
-                quorum_vvec_hash: QuorumVVecHash::all_zeros(),
-                threshold_sig: BLSSignature::from([1; 96]),
-                all_commitment_aggregated_signature: BLSSignature::from([1; 96]),
-            }],
+            new_quorums: vec![quorum.clone()],
             quorums_chainlock_signatures: vec![QuorumCLSigObject {
                 signature: BLSSignature::from([1; 96]),
                 index_set: vec![0],
             }],
             ..MnListDiff::dummy(0x00, 0x01)
-        };
+        }
+        .with_coinbase_committing_to(&masternodes, &[quorum]);
         let retired = MnListDiff {
             deleted_quorums: vec![DeletedQuorum {
                 llmq_type,
                 quorum_hash,
             }],
             ..MnListDiff::dummy_between(1, 2)
+        }
+        .with_coinbase_committing_to(&masternodes, &[]);
+        let unchanged = |height| {
+            MnListDiff::dummy_between(height - 1, height)
+                .with_coinbase_committing_to(&masternodes, &[])
         };
 
         let dir = TempDir::new().unwrap();
@@ -602,19 +692,18 @@ mod tests {
             std::fs::write(folder.join(S::file_name(S::DIFF_PREFIX, height)), serialize(diff))
                 .unwrap()
         };
+        let heights = (1..=tip).map(|height| (BlockHash::dummy(height), height)).collect();
+        let mut headers =
+            MockHeaderStorage::new(heights).with_header_for(&mined).with_header_for(&retired);
         write(1, &mined);
         write(2, &retired);
         for height in 3..=tip {
-            write(height, &MnListDiff::dummy_between(height - 1, height));
+            let diff = unchanged(height);
+            write(height, &diff);
+            headers = headers.with_header_for(&diff);
         }
-        let heights = (1..=tip).map(|height| (BlockHash::dummy(height), height)).collect();
-        let storage = S::open(
-            dir.path(),
-            Arc::new(RwLock::new(MockHeaderStorage(heights))),
-            Network::Regtest,
-        )
-        .await
-        .unwrap();
+        let storage =
+            S::open(dir.path(), Arc::new(RwLock::new(headers)), Network::Regtest).await.unwrap();
 
         let engine = storage.load_engine().await.unwrap();
         assert!(engine
@@ -626,6 +715,73 @@ mod tests {
         assert_eq!(quorum.map(|quorum| quorum.quorum_entry.quorum_hash), Some(quorum_hash));
         let unknown = QuorumHash::from_byte_array([0xCD; 32]);
         assert!(log.quorum_entry_at_or_before(llmq_type, unknown, 100).await.is_none());
+    }
+
+    #[tokio::test]
+    async fn replay_skips_a_message_its_block_header_does_not_prove() {
+        let dir = TempDir::new().unwrap();
+        let diff = MnListDiff::dummy(0x00, 0xAA);
+        let heights = [(0x00, 0), (0xAA, 100)];
+        let unproven = headers(&heights, &[]).with_header(hash(0xAA), TxMerkleNode::all_zeros());
+        let mut storage = open_storage(&dir, unproven).await;
+        storage.store_diff(100, &diff).await.unwrap();
+
+        let engine = storage.load_engine().await.unwrap();
+        assert!(engine.masternode_lists.is_empty(), "a coinbase the header does not prove");
+
+        let engine =
+            open_storage(&dir, headers(&heights, &[&diff])).await.load_engine().await.unwrap();
+        assert!(engine.masternode_lists.contains_key(&100), "the header that proves it");
+    }
+
+    /// The mainnet QRInfo capture and a header storage holding the headers of
+    /// its blocks, as public block explorers serve them. Each header hashes to
+    /// the block hash of one of the diffs.
+    fn mainnet_qr_info_with_headers() -> (QRInfo, MockHeaderStorage) {
+        const HEADERS: [(u32, &str); 5] = [
+            (2224359, "00000020552ffd09b040ec6aafd6a76fe586eed37dca3a88b653732027000000000000001a28433a3aaf9be619f3d9ae713e329a48c35a366afd488662a159df84d4484f08deb367ccfe2619980e0ae3"),
+            (2224216, "000000203d986f88b0a06213229d3ab8a3650bc86af8e04fb3d9be9b20000000000000000bbea6733e6180f312fbd891d5dbd72f3089d66af33e9292aa4e1be985652ffc8186b367773b2c196646dce8"),
+            (2223928, "000000200c2693bfeffebad43ea41aca74fb652f58e3264d65454ace1d0000000000000040a50328f3f6e173ce97b4d1fa9e0b3f36948e6888be0adf39d024540e4bb950a2d5b26799c12b19821af24e"),
+            (2223640, "00000020174c02dd39c2371274cf025eeb2b70b9a156ad1327ecded51200000000000000785ec2546f5347f4960171ee93b319094a34aa4cab8277f985434b6b4b4fa6e9fb21b267ba072f19b46b3938"),
+            (2223352, "000000207654d9fcd141892f9d47cf5c40d46d133d573e8bb9fbaf350400000000000000925d75e37bfd754cc73d6f54629ab6e1e38eb917a3452a73d1377be0d6c62876d36eb16781f3231902819b59"),
+        ];
+        let hex = include_str!("../../../dash/tests/data/test_DML_diffs/QR_INFO_0_2224359.hex");
+        let message: RawNetworkMessage = deserialize(&hex::decode(hex).unwrap()).unwrap();
+        let NetworkMessage::QRInfo(qr_info) = message.payload else {
+            panic!("expected a qrinfo message");
+        };
+
+        let headers: Vec<(u32, Header)> = HEADERS
+            .iter()
+            .map(|(height, header)| (*height, deserialize(&hex::decode(header).unwrap()).unwrap()))
+            .collect();
+        let heights =
+            headers.iter().map(|(height, header)| (header.block_hash(), *height)).collect();
+        let storage =
+            headers.iter().fold(MockHeaderStorage::new(heights), |storage, (_, header)| {
+                storage.with_header(header.block_hash(), header.merkle_root)
+            });
+        (qr_info, storage)
+    }
+
+    #[tokio::test]
+    async fn every_diff_of_a_qr_info_is_proven_by_its_stored_block_header() {
+        let (qr_info, storage) = mainnet_qr_info_with_headers();
+        verify_qr_info_coinbases(&storage, &qr_info).await.expect("every coinbase is proven");
+
+        let mut swapped = qr_info.clone();
+        swapped.mn_list_diff_h.coinbase_tx = qr_info.mn_list_diff_tip.coinbase_tx.clone();
+        assert!(matches!(
+            verify_qr_info_coinbases(&storage, &swapped).await,
+            Err(SyncError::Validation(_))
+        ));
+
+        let mut unknown = qr_info;
+        unknown.mn_list_diff_h.block_hash = hash(0x09);
+        assert!(matches!(
+            verify_qr_info_coinbases(&storage, &unknown).await,
+            Err(SyncError::MissingDependency(_))
+        ));
     }
 
     #[test]

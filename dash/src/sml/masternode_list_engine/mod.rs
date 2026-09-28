@@ -1107,6 +1107,9 @@ impl MasternodeListEngine {
     /// surface as `QuorumValidationError::RequiredBlockNotPresent` once they are
     /// actually needed.
     ///
+    /// Every diff is applied through [`Self::apply_diff`] and so checked against
+    /// the coinbase commitments of its block.
+    ///
     /// # Parameters
     /// - `qr_info`: The QRInfo message containing quorum snapshots and diffs
     /// - `verify_tip_non_rotated_quorums`: Whether to verify non-rotating quorums at the tip
@@ -1473,6 +1476,11 @@ impl MasternodeListEngine {
 
     /// Applies a masternode list diff to create or update a masternode list.
     ///
+    /// The list the diff builds has to match the coinbase commitments of the
+    /// diff's block, see [`MasternodeList::verify_coinbase_merkle_roots`]. Tying
+    /// that coinbase to the block header is up to the caller, who holds the
+    /// header: see [`MnListDiff::verify_coinbase_merkle_proof`].
+    ///
     /// A diff built on the newest list moves the tip and prunes the lists that
     /// fall out of the retention window. Other diffs may share an older base, so
     /// they prune nothing. A diff requested from a list older than the window
@@ -1757,13 +1765,13 @@ impl MasternodeListEngine {
 #[cfg(test)]
 mod tests {
     use crate::Network;
-    use crate::consensus::deserialize;
     use crate::hashes::Hash;
     use crate::network::message_qrinfo::QRInfo;
     use crate::network::message_sml::MnListDiff;
     #[cfg(feature = "quorum_validation")]
     use crate::network::message_sml::QuorumCLSigObject;
     use crate::prelude::CoreBlockHeight;
+    use crate::sml::error::SmlError;
     use crate::sml::llmq_entry_verification::{
         LLMQEntryVerificationSkipStatus, LLMQEntryVerificationStatus,
     };
@@ -1798,6 +1806,8 @@ mod tests {
         crate::QuorumHash,
         crate::bls_sig_utils::{BLSPublicKey, BLSSignature},
         crate::hash_types::QuorumVVecHash,
+        crate::sml::masternode_list_entry::MasternodeListEntry,
+        crate::transaction::special_transaction::TransactionPayload,
         crate::transaction::special_transaction::quorum_commitment::QuorumEntry,
     };
 
@@ -1837,9 +1847,7 @@ mod tests {
         new_quorums: Vec<QuorumEntry>,
         groups: Vec<(BLSSignature, Vec<u16>)>,
     ) -> MnListDiff {
-        let diff_bytes: &[u8] =
-            include_bytes!("../../../tests/data/test_DML_diffs/mn_list_diff_0_2227096.bin");
-        let mut diff: MnListDiff = deserialize(diff_bytes).expect("expected to deserialize");
+        let mut diff = MnListDiff::mainnet_fixture_0_2227096();
         diff.block_hash = end_hash;
         diff.new_quorums = new_quorums;
         diff.quorums_chainlock_signatures = groups
@@ -2130,19 +2138,14 @@ mod tests {
 
     #[test]
     fn validate_from_mn_list_diff_chain_locks() {
-        let mn_list_diff_bytes: &[u8] =
-            include_bytes!("../../../tests/data/test_DML_diffs/mn_list_diff_0_2227096.bin");
-        // This one is serialized not with bincode, but with core consensus
-        let diff: MnListDiff = deserialize(mn_list_diff_bytes).expect("expected to deserialize");
-        let mut masternode_list_engine =
-            MasternodeListEngine::initialize_with_diff_to_height(diff, 2227096, Network::Mainnet)
-                .expect("expected to start engine");
+        let mut masternode_list_engine = MasternodeListEngine::initialize_with_diff_to_height(
+            MnListDiff::mainnet_fixture_0_2227096(),
+            2227096,
+            Network::Mainnet,
+        )
+        .expect("expected to start engine");
 
-        let mn_list_diff_bytes_2: &[u8] =
-            include_bytes!("../../../tests/data/test_DML_diffs/mn_list_diff_2227096_2241332.bin");
-        // This one is serialized not with bincode, but with core consensus
-        let diff_2: MnListDiff =
-            deserialize(mn_list_diff_bytes_2).expect("expected to deserialize");
+        let diff_2 = MnListDiff::mainnet_fixture_2227096_2241332();
 
         masternode_list_engine
             .apply_diff(diff_2, Some(2241332), false, None)
@@ -2220,12 +2223,12 @@ mod tests {
 
     #[cfg(feature = "quorum_validation")]
     fn load_qrinfo_2240504_fixture() -> (MasternodeListEngine, QRInfo) {
-        let mn_list_diff_bytes: &[u8] =
-            include_bytes!("../../../tests/data/test_DML_diffs/mn_list_diff_0_2227096.bin");
-        let diff: MnListDiff = deserialize(mn_list_diff_bytes).expect("expected to deserialize");
-        let mut engine =
-            MasternodeListEngine::initialize_with_diff_to_height(diff, 2227096, Network::Mainnet)
-                .expect("expected to start engine");
+        let mut engine = MasternodeListEngine::initialize_with_diff_to_height(
+            MnListDiff::mainnet_fixture_0_2227096(),
+            2227096,
+            Network::Mainnet,
+        )
+        .expect("expected to start engine");
 
         let block_container_bytes: &[u8] =
             include_bytes!("../../../tests/data/test_DML_diffs/block_container_2240504.dat");
@@ -2237,14 +2240,72 @@ mod tests {
             decode_fixture(mn_list_diffs_bytes);
         let qr_info_bytes: &[u8] =
             include_bytes!("../../../tests/data/test_DML_diffs/qrinfo_2240504.dat");
-        let qr_info: QRInfo = decode_fixture(qr_info_bytes);
+        let mut qr_info: QRInfo = decode_fixture(qr_info_bytes);
+        for diff in qr_info_diffs_mut(&mut qr_info) {
+            restore_2240504_capture(diff);
+        }
 
         engine.block_container = block_container;
-        for ((_start_height, height), diff) in mn_list_diffs.into_iter() {
+        for ((_start_height, height), mut diff) in mn_list_diffs.into_iter() {
+            restore_2240504_capture(&mut diff);
             engine.apply_diff(diff, Some(height), false, None).expect("expected to apply diff");
         }
 
         (engine, qr_info)
+    }
+
+    /// The 2240504 fixtures are bincode captures from a build that decoded an
+    /// unset service address as `0.0.0.0` and held platform node ids in Core's
+    /// wire order. Both feed the entry hash, so the lists they build match
+    /// `merkleRootMNList` only once the diff is back to what the current
+    /// decoder makes of Core's bytes.
+    #[cfg(feature = "quorum_validation")]
+    fn restore_2240504_capture(diff: &mut MnListDiff) {
+        diff.restore_core_service_addresses();
+        diff.reverse_platform_node_ids();
+    }
+
+    /// Points the coinbase `merkleRootQuorums` of every diff in `qr_info` at
+    /// the quorum set that diff builds on the engine's lists. Tests that edit
+    /// commitments to reach the rotation paths use it: the coinbase check
+    /// refuses an edited diff before those paths run.
+    #[cfg(feature = "quorum_validation")]
+    fn recommit_quorum_roots(engine: &MasternodeListEngine, qr_info: &mut QRInfo) {
+        for diff in qr_info_diffs_mut(qr_info) {
+            let base = engine
+                .masternode_list_for_block_hash(&diff.base_block_hash)
+                .expect("every diff of the fixture builds on a list the engine holds");
+            let computed = match base.apply_diff(diff.clone(), 0, None, engine.network) {
+                Ok(_) => continue,
+                Err(SmlError::QuorumMerkleRootMismatch {
+                    computed,
+                    ..
+                }) => computed,
+                Err(e) => panic!("the edit must only move the quorum root: {e}"),
+            };
+            let Some(TransactionPayload::CoinbasePayloadType(payload)) =
+                &mut diff.coinbase_tx.special_transaction_payload
+            else {
+                panic!("the fixture's coinbase carries a payload");
+            };
+            payload.merkle_root_quorums = computed;
+        }
+    }
+
+    #[cfg(feature = "quorum_validation")]
+    fn qr_info_diffs_mut(qr_info: &mut QRInfo) -> Vec<&mut MnListDiff> {
+        let mut diffs: Vec<&mut MnListDiff> = vec![
+            &mut qr_info.mn_list_diff_tip,
+            &mut qr_info.mn_list_diff_h,
+            &mut qr_info.mn_list_diff_at_h_minus_c,
+            &mut qr_info.mn_list_diff_at_h_minus_2c,
+            &mut qr_info.mn_list_diff_at_h_minus_3c,
+        ];
+        if let Some((_, diff)) = &mut qr_info.quorum_snapshot_and_mn_list_diff_at_h_minus_4c {
+            diffs.push(diff);
+        }
+        diffs.extend(qr_info.mn_list_diff_list.iter_mut());
+        diffs
     }
 
     /// Captured 2026-08-09 from a fresh mainnet sync at tip 2518986 (cycle
@@ -2269,6 +2330,71 @@ mod tests {
         };
         engine.block_container = block_container;
         (engine, qr_info)
+    }
+
+    /// A diff whose resulting list does not match its coinbase is refused
+    /// whether it starts the engine, extends a list or arrives in a QRInfo,
+    /// and no list is stored for its block.
+    #[test]
+    fn a_diff_that_does_not_match_its_coinbase_is_not_applied() {
+        let tampered = |mut diff: MnListDiff| {
+            diff.new_masternodes[0].is_valid = !diff.new_masternodes[0].is_valid;
+            diff
+        };
+        fn refused<T>(result: Result<T, SmlError>) -> bool {
+            matches!(result, Err(SmlError::MasternodeListMerkleRootMismatch { .. }))
+        }
+
+        assert!(refused(MasternodeListEngine::initialize_with_diff_to_height(
+            tampered(MnListDiff::mainnet_fixture_0_2227096()),
+            2227096,
+            Network::Mainnet,
+        )));
+
+        let mut engine = MasternodeListEngine::default_for_network(Network::Mainnet);
+        assert!(refused(engine.apply_diff(
+            tampered(MnListDiff::mainnet_fixture_0_2227096()),
+            Some(2227096),
+            false,
+            None,
+        )));
+        assert!(engine.masternode_lists.is_empty());
+
+        engine
+            .apply_diff(MnListDiff::mainnet_fixture_0_2227096(), Some(2227096), false, None)
+            .expect("the untouched diff applies");
+        assert!(refused(engine.apply_diff(
+            tampered(MnListDiff::mainnet_fixture_2227096_2241332()),
+            Some(2241332),
+            false,
+            None,
+        )));
+        assert!(!engine.masternode_lists.contains_key(&2241332));
+    }
+
+    #[test]
+    #[cfg(feature = "quorum_validation")]
+    fn a_qr_info_diff_that_does_not_match_its_coinbase_fails_the_feed() {
+        let (_, qr_info) = load_qrinfo_2518986_fixture();
+        let diff_count = qr_info_diffs(&qr_info).len();
+        assert!(diff_count >= 5, "the fixture carries every QRInfo diff");
+
+        for position in 0..diff_count {
+            let (mut engine, mut qr_info) = load_qrinfo_2518986_fixture();
+            qr_info_diffs_mut(&mut qr_info)[position]
+                .new_masternodes
+                .push(MasternodeListEntry::dummy(0x11));
+            let result = engine.feed_qr_info(qr_info, true, true);
+            assert!(
+                matches!(
+                    result,
+                    Err(QuorumValidationError::SMLError(
+                        SmlError::MasternodeListMerkleRootMismatch { .. }
+                    ))
+                ),
+                "diff {position} of the QRInfo: {result:?}"
+            );
+        }
     }
 
     #[test]
@@ -2594,6 +2720,7 @@ mod tests {
         for diff in qr_info.mn_list_diff_list.iter_mut() {
             strip(diff);
         }
+        recommit_quorum_roots(&engine, &mut qr_info);
 
         let entries: Vec<QualifiedQuorumEntry> =
             qr_info.last_commitment_per_index.iter().cloned().map(Into::into).collect();
@@ -2820,6 +2947,7 @@ mod tests {
             .all_commitment_aggregated_signature;
         qr_info.mn_list_diff_h.new_quorums[corrupt_position].all_commitment_aggregated_signature =
             foreign_signature;
+        recommit_quorum_roots(&engine, &mut qr_info);
         let h_block_hash = qr_info.mn_list_diff_h.block_hash;
 
         // The captured container has no height for the commitments of the
@@ -2894,6 +3022,7 @@ mod tests {
         let (mut engine, mut qr_info) = load_qrinfo_2240504_fixture();
         qr_info.mn_list_diff_h.new_quorums[corrupt_position].all_commitment_aggregated_signature =
             foreign_signature;
+        recommit_quorum_roots(&engine, &mut qr_info);
         let feed_result = engine
             .feed_qr_info(qr_info, true, true)
             .expect("previous-cycle corruption must not abort the feed")

@@ -23,6 +23,11 @@ impl MasternodeList {
     /// - Adds or updates new masternodes.
     /// - Removes deleted quorums.
     /// - Adds or updates new quorums.
+    /// - Checks the resulting list against the diff's coinbase, see
+    ///   [`MasternodeList::verify_coinbase_merkle_roots`].
+    ///
+    /// The coinbase is taken as given. [`MnListDiff::verify_coinbase_merkle_proof`] ties it to
+    /// the block header, which only the caller holds.
     ///
     /// # Parameters
     ///
@@ -32,12 +37,15 @@ impl MasternodeList {
     /// # Returns
     ///
     /// - `Ok(MasternodeList)`: A new `MasternodeList` reflecting the applied changes.
-    /// - `Err(SmlError)`: An error if the base block hash does not match the expected value.
+    /// - `Err(SmlError)`: An error if the diff does not apply to this list.
     ///
     /// # Errors
     ///
     /// - Returns `SmlError::BaseBlockHashMismatch` if the `base_block_hash` of the `diff`
     ///   does not match the expected block hash of the current masternode list.
+    /// - Returns `SmlError::MissingCoinbasePayload`, `SmlError::MasternodeListMerkleRootMismatch`
+    ///   or `SmlError::QuorumMerkleRootMismatch` if the resulting list does not match the
+    ///   coinbase commitments.
     pub fn apply_diff(
         &self,
         diff: MnListDiff,
@@ -52,6 +60,8 @@ impl MasternodeList {
                 found: diff.base_block_hash,
             });
         }
+
+        let coinbase_tx = diff.coinbase_tx;
 
         let mut updated_masternodes = Arc::clone(&self.masternodes);
         if !diff.deleted_masternodes.is_empty() || !diff.new_masternodes.is_empty() {
@@ -69,13 +79,14 @@ impl MasternodeList {
             && diff.new_quorums.is_empty()
             && diff.quorums_chainlock_signatures.is_empty()
         {
-            let builder = MasternodeList::build(
+            let masternode_list = MasternodeList::build(
                 updated_masternodes,
                 shared_quorums,
                 diff.block_hash,
                 diff_end_height,
-            );
-            return Ok((builder.build(), None));
+            )
+            .build_matching_coinbase(&coinbase_tx)?;
+            return Ok((masternode_list, None));
         }
         let updated_quorums = Arc::make_mut(&mut shared_quorums);
 
@@ -165,42 +176,36 @@ impl MasternodeList {
             );
         }
 
-        // Create and return the new MasternodeList
-        let builder = MasternodeList::build(
+        // Create the new MasternodeList and return it once the coinbase vouches for it
+        let masternode_list = MasternodeList::build(
             updated_masternodes,
             shared_quorums,
             diff.block_hash,
             diff_end_height,
-        );
+        )
+        .build_matching_coinbase(&coinbase_tx)?;
 
-        Ok((builder.build(), rotating_sig))
+        Ok((masternode_list, rotating_sig))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::consensus::deserialize;
     use crate::sml::masternode_list::from_diff::TryFromWithBlockHashLookup;
 
     #[test]
     fn apply_diff_post_v20_requires_chainlock_signatures() {
         // Create base list from first diff
-        let base_diff_bytes: &[u8] =
-            include_bytes!("../../../tests/data/test_DML_diffs/mn_list_diff_0_2227096.bin");
-        let base_diff: MnListDiff = deserialize(base_diff_bytes).expect("expected to deserialize");
-
         let base_list = MasternodeList::try_from_with_block_hash_lookup(
-            base_diff,
+            MnListDiff::mainnet_fixture_0_2227096(),
             |_| Some(2_227_096),
             Network::Mainnet,
         )
         .expect("expected to create base list");
 
         // Load second diff and clear signatures
-        let diff_bytes: &[u8] =
-            include_bytes!("../../../tests/data/test_DML_diffs/mn_list_diff_2227096_2241332.bin");
-        let mut diff: MnListDiff = deserialize(diff_bytes).expect("expected to deserialize");
+        let mut diff = MnListDiff::mainnet_fixture_2227096_2241332();
         diff.quorums_chainlock_signatures.clear();
 
         // Height 2241332 is post-V20 on mainnet (1,987,776)
@@ -218,22 +223,16 @@ mod tests {
     #[test]
     fn apply_diff_pre_v20_allows_missing_chainlock_signatures() {
         // Create base list from first diff at pre-V20 height
-        let base_diff_bytes: &[u8] =
-            include_bytes!("../../../tests/data/test_DML_diffs/mn_list_diff_0_2227096.bin");
-        let base_diff: MnListDiff = deserialize(base_diff_bytes).expect("expected to deserialize");
-
         let base_height = 1_800_000u32;
         let base_list = MasternodeList::try_from_with_block_hash_lookup(
-            base_diff,
+            MnListDiff::mainnet_fixture_0_2227096(),
             |_| Some(base_height),
             Network::Mainnet,
         )
         .expect("expected to create base list");
 
         // Load second diff and clear signatures
-        let diff_bytes: &[u8] =
-            include_bytes!("../../../tests/data/test_DML_diffs/mn_list_diff_2227096_2241332.bin");
-        let mut diff: MnListDiff = deserialize(diff_bytes).expect("expected to deserialize");
+        let mut diff = MnListDiff::mainnet_fixture_2227096_2241332();
 
         // Fix base_block_hash to match our base list
         diff.base_block_hash = base_list.block_hash;

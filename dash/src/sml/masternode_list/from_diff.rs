@@ -144,29 +144,19 @@ impl TryFromWithBlockHashLookup<MnListDiff> for MasternodeList {
             },
         );
 
-        // Construct `MasternodeList`
-        Ok(MasternodeList {
-            block_hash: diff.block_hash,
-            known_height,
-            masternode_merkle_root: diff.merkle_hashes.first().cloned(),
-            llmq_merkle_root: None, // Adjust based on real data availability
-            masternodes: masternodes.into(),
-            quorums: quorums.into(),
-        })
+        // Construct the `MasternodeList` and return it once the coinbase vouches for it
+        MasternodeList::build(masternodes, quorums, diff.block_hash, known_height)
+            .build_matching_coinbase(&diff.coinbase_tx)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::consensus::deserialize;
 
     #[test]
     fn post_v20_requires_chainlock_signatures() {
-        let mn_list_diff_bytes: &[u8] =
-            include_bytes!("../../../tests/data/test_DML_diffs/mn_list_diff_0_2227096.bin");
-        let mut diff: MnListDiff =
-            deserialize(mn_list_diff_bytes).expect("expected to deserialize");
+        let mut diff = MnListDiff::mainnet_fixture_0_2227096();
 
         // Clear signatures to simulate missing data
         diff.quorums_chainlock_signatures.clear();
@@ -189,10 +179,7 @@ mod tests {
 
     #[test]
     fn pre_v20_allows_missing_chainlock_signatures() {
-        let mn_list_diff_bytes: &[u8] =
-            include_bytes!("../../../tests/data/test_DML_diffs/mn_list_diff_0_2227096.bin");
-        let mut diff: MnListDiff =
-            deserialize(mn_list_diff_bytes).expect("expected to deserialize");
+        let mut diff = MnListDiff::mainnet_fixture_0_2227096();
 
         // Clear signatures to simulate pre-V20 data
         diff.quorums_chainlock_signatures.clear();
