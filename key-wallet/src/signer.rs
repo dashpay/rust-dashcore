@@ -12,8 +12,7 @@
 //! sync derive-and-sign in `async {}` without meaningful overhead.
 
 use async_trait::async_trait;
-use dashcore::ecdsa::EcdsaPublicKey;
-use secp256k1::ecdsa;
+use dashcore::ecdsa::{EcdsaPublicKey, EcdsaSignature};
 
 use crate::bip32::{DerivationPath, ExtendedPubKey};
 
@@ -118,7 +117,7 @@ pub trait Signer: Send + Sync {
         &self,
         path: &DerivationPath,
         sighash: [u8; 32],
-    ) -> Result<(ecdsa::Signature, EcdsaPublicKey), Self::Error>;
+    ) -> Result<(EcdsaSignature, EcdsaPublicKey), Self::Error>;
 
     /// Return the compressed public key at `path` without signing.
     ///

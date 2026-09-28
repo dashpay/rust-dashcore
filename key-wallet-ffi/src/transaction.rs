@@ -8,6 +8,7 @@ use crate::{check_ptr, FFIWalletManager};
 use crate::{deref_ptr, deref_ptr_mut, unwrap_or_return};
 use dash_network::ffi::FFINetwork;
 use dashcore::blockdata::script::Builder;
+use dashcore::ecdsa::EcdsaSecretKey;
 use dashcore::{
     consensus, hashes::Hash, sighash::SighashCache, EcdsaSighashType, Network, OutPoint, Script,
     ScriptBuf, Transaction, TxIn, TxOut, Txid,
@@ -18,7 +19,6 @@ use key_wallet::wallet::managed_wallet_info::asset_lock_builder::{
 use key_wallet::wallet::managed_wallet_info::coin_selection::SelectionStrategy::BranchAndBound;
 use key_wallet::wallet::managed_wallet_info::fee::FeeRate;
 use key_wallet::wallet::managed_wallet_info::transaction_building::AccountTypePreference;
-use secp256k1::{Message, SecretKey};
 use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
 use std::ptr;
@@ -596,7 +596,7 @@ pub unsafe extern "C" fn transaction_sign_input(
     let Ok(privkey_bytes) = <[u8; 32]>::try_from(slice::from_raw_parts(private_key, 32)) else {
         return -1;
     };
-    let privkey = match SecretKey::from_secret_bytes(privkey_bytes) {
+    let privkey = match EcdsaSecretKey::from_bytes(&privkey_bytes) {
         Ok(k) => k,
         Err(_) => {
             return -1;
@@ -604,15 +604,14 @@ pub unsafe extern "C" fn transaction_sign_input(
     };
 
     // Sign
-    let message = Message::from_digest(sighash);
-    let sig = privkey.sign_ecdsa(message);
+    let sig = privkey.sign(&sighash);
 
     // Build signature script (simplified P2PKH)
-    let pubkey = dashcore::PublicKey::new(secp256k1::PublicKey::from_secret_key(&privkey));
+    let pubkey = dashcore::PublicKey::new(privkey.public_key());
     tx.inner.input[input_index].script_sig = Builder::new()
         .push_slice(
             dashcore::ecdsa::Signature {
-                signature: sig,
+                signature: sig.into(),
                 sighash_type: EcdsaSighashType::from_consensus(sighash_type),
             }
             .serialize(),
@@ -992,6 +991,7 @@ pub unsafe extern "C" fn wallet_build_and_sign_asset_lock_transaction(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use dashcore::ecdsa::EcdsaSignature;
 
     #[test]
     fn script_p2pkh_is_dup_hash160_push_equalverify_checksig() {
@@ -1015,8 +1015,7 @@ mod tests {
     #[test_case::test_case(0xffff_ff81, false ; "all anyone can pay with high bits")]
     fn sign_input_appends_the_sighash_type_it_signed(sighash_type: u32, ok: bool) {
         let secret = [0x42u8; 32];
-        let pubkey =
-            secp256k1::PublicKey::from_secret_key(&SecretKey::from_secret_bytes(secret).unwrap());
+        let pubkey = EcdsaSecretKey::from_bytes(&secret).unwrap().public_key();
         let script_pubkey = ScriptBuf::new_p2pkh(&dashcore::PublicKey::new(pubkey).pubkey_hash());
 
         unsafe {
@@ -1048,7 +1047,7 @@ mod tests {
                 let sig = pushes.next().unwrap();
                 let (&hash_ty, der) = sig.split_last().unwrap();
                 assert_eq!(hash_ty as u32, sighash_type);
-                assert_eq!(pushes.next().unwrap(), pubkey.serialize());
+                assert_eq!(pushes.next().unwrap(), pubkey.to_compressed());
                 assert_eq!(pushes.next(), None);
 
                 let mut sighash = [0u8; 32];
@@ -1063,10 +1062,8 @@ mod tests {
                     ),
                     0
                 );
-                secp256k1::ecdsa::Signature::from_der(der)
-                    .unwrap()
-                    .verify(Message::from_digest(sighash), &pubkey)
-                    .unwrap();
+                let sig = EcdsaSignature::from_der(der).unwrap();
+                pubkey.verify(&sighash, sig).unwrap();
             }
 
             transaction_destroy(tx);

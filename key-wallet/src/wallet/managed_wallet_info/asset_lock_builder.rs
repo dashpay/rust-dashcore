@@ -651,6 +651,7 @@ mod tests {
     use crate::signer::{ExtendedPubKeySigner, SignerMethod};
     use crate::wallet::initialization::WalletAccountCreationOptions;
     use crate::{Network, Utxo};
+    use dashcore::ecdsa::EcdsaSignature;
     use dashcore::{OutPoint, ScriptBuf, Txid};
     use dashcore_hashes::Hash;
     use std::collections::HashSet;
@@ -1005,14 +1006,13 @@ mod tests {
             &self,
             path: &DerivationPath,
             sighash: [u8; 32],
-        ) -> Result<(secp256k1::ecdsa::Signature, EcdsaPublicKey), Self::Error> {
+        ) -> Result<(EcdsaSignature, EcdsaPublicKey), Self::Error> {
             let xpriv = self
                 .root
                 .to_extended_priv_key(self.network)
                 .derive_priv(path)
                 .map_err(|e| e.to_string())?;
-            let msg = secp256k1::Message::from_digest(sighash);
-            let sig = secp256k1::SecretKey::from(&xpriv.private_key).sign_ecdsa(msg);
+            let sig = xpriv.private_key.sign(&sighash);
             let pk = xpriv.private_key.public_key();
             Ok((sig, pk))
         }
@@ -1144,7 +1144,7 @@ mod tests {
                 &self,
                 _: &DerivationPath,
                 _: [u8; 32],
-            ) -> Result<(secp256k1::ecdsa::Signature, EcdsaPublicKey), Self::Error> {
+            ) -> Result<(EcdsaSignature, EcdsaPublicKey), Self::Error> {
                 unreachable!("should be rejected before any signing is attempted")
             }
             async fn public_key(&self, _: &DerivationPath) -> Result<EcdsaPublicKey, Self::Error> {
@@ -1587,7 +1587,7 @@ mod tests {
                 &self,
                 _path: &DerivationPath,
                 _sighash: [u8; 32],
-            ) -> Result<(secp256k1::ecdsa::Signature, EcdsaPublicKey), Self::Error> {
+            ) -> Result<(EcdsaSignature, EcdsaPublicKey), Self::Error> {
                 Err("signing device unavailable".to_string())
             }
 

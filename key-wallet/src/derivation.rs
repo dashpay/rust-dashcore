@@ -570,20 +570,15 @@ mod tests {
         let message_hash = dashcore_hashes::sha256::Hash::hash(message);
 
         // Sign the message (deterministic signing)
-        let signature1 = secp256k1::SecretKey::from(&signing_key.private_key)
-            .sign_ecdsa(secp256k1::Message::from_digest(message_hash.to_byte_array()));
-        let signature2 = secp256k1::SecretKey::from(&signing_key.private_key)
-            .sign_ecdsa(secp256k1::Message::from_digest(message_hash.to_byte_array()));
+        let signature1 = signing_key.private_key.sign(&message_hash.to_byte_array());
+        let signature2 = signing_key.private_key.sign(&message_hash.to_byte_array());
 
         // Signatures should be the same (deterministic)
         assert_eq!(signature1, signature2);
 
         // Verify the signature
         let pubkey = ExtendedPubKey::from_priv(&signing_key);
-        let verified = signature1.verify(
-            secp256k1::Message::from_digest(message_hash.to_byte_array()),
-            &pubkey.public_key.into(),
-        );
+        let verified = pubkey.public_key.verify(&message_hash.to_byte_array(), signature1);
         assert!(verified.is_ok());
     }
 
@@ -723,13 +718,9 @@ mod tests {
         // Verify the DashPay key can sign and verify messages
         let message = b"DashPay contact message";
         let message_hash = dashcore_hashes::sha256::Hash::hash(message);
-        let signature = secp256k1::SecretKey::from(&dashpay_key.private_key)
-            .sign_ecdsa(secp256k1::Message::from_digest(message_hash.to_byte_array()));
+        let signature = dashpay_key.private_key.sign(&message_hash.to_byte_array());
 
-        let verified = signature.verify(
-            secp256k1::Message::from_digest(message_hash.to_byte_array()),
-            &dashpay_pubkey.public_key.into(),
-        );
+        let verified = dashpay_pubkey.public_key.verify(&message_hash.to_byte_array(), signature);
         assert!(verified.is_ok());
     }
 }
