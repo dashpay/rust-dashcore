@@ -56,14 +56,12 @@ pub struct QRInfoFeedResult {
     /// than this covers only part of the cycle however well it verifies.
     pub expected_rotated_quorum_count: usize,
     /// Rotated quorums for which no cached `QualifiedQuorumEntry` existed and one
-    /// was constructed fresh. Incremented independently of `verify_rotated_quorums`
-    /// and the final verification outcome. Pair with `fully_verified_count` to
+    /// was constructed fresh. Incremented independently of the final
+    /// verification outcome. Pair with `fully_verified_count` to
     /// distinguish cache-hit observability from a trust signal.
     pub newly_qualified_count: usize,
     /// Rotated quorums whose `.verified` is `LLMQEntryVerificationStatus::Verified`
-    /// after this call settled. May be non-zero even when
-    /// `verify_rotated_quorums == false` because cached entries returned by
-    /// `known_qualified_quorum_entry` retain their prior `Verified` status.
+    /// after this call settled.
     /// A cycle is only stored in `rotated_quorums_per_cycle` when every entry
     /// is `Verified`.
     pub fully_verified_count: usize,
@@ -811,8 +809,7 @@ impl MasternodeListEngine {
     /// sign and must not enter the map. A later QRInfo with complete context
     /// will store the cycle. Also preserve an already-fully-Verified cycle
     /// across subsequent QRInfo responses: a thin `mn_list_diff_h` can produce
-    /// Skipped entries, and a `verify_rotated_quorums == false` call can leave
-    /// entries unverified, neither of which must downgrade it.
+    /// Skipped entries, which must not downgrade it.
     ///
     /// The number of entries a peer serves is not fixed, so verified entries
     /// merge into the stored cycle per quorum index instead of replacing it.
@@ -1107,21 +1104,19 @@ impl MasternodeListEngine {
     /// surface as `QuorumValidationError::RequiredBlockNotPresent` once they are
     /// actually needed.
     ///
-    /// Every diff is applied through [`Self::apply_diff`] and so checked against
-    /// the coinbase commitments of its block.
+    /// Every diff is checked against the coinbase commitments of its block, as
+    /// [`Self::apply_diff`] checks one, before its list is stored. The
+    /// non-rotating quorums of the newest list are verified once, after the
+    /// last diff.
     ///
     /// # Parameters
     /// - `qr_info`: The QRInfo message containing quorum snapshots and diffs
-    /// - `verify_tip_non_rotated_quorums`: Whether to verify non-rotating quorums at the tip
-    /// - `verify_rotated_quorums`: Whether to verify rotating quorums
     ///
     /// # Returns
     /// Result indicating success or a quorum validation error.
     pub fn feed_qr_info(
         &mut self,
         qr_info: QRInfo,
-        verify_tip_non_rotated_quorums: bool,
-        verify_rotated_quorums: bool,
     ) -> Result<Option<QRInfoFeedResult>, QuorumValidationError> {
         #[cfg(feature = "qrinfo-capture")]
         self.dump_qr_info_capture(&qr_info);
@@ -1162,7 +1157,7 @@ impl MasternodeListEngine {
         // Apply quorum snapshots and masternode list diffs
         for (snapshot, diff) in quorum_snapshot_list.into_iter().zip(mn_list_diff_list) {
             self.known_snapshots.insert(diff.block_hash, snapshot);
-            self.apply_diff(diff, None, false, None)?;
+            self.apply_and_prune(diff, None, None)?;
         }
 
         #[cfg(feature = "quorum_validation")]
@@ -1194,7 +1189,7 @@ impl MasternodeListEngine {
         #[cfg(feature = "quorum_validation")]
         let mut newly_qualified_count: usize = 0;
         #[cfg(feature = "quorum_validation")]
-        let mut fully_verified_count: usize = 0;
+        let fully_verified_count: usize;
         #[cfg(feature = "quorum_validation")]
         let mut previous_cycle_invalid_count: usize = 0;
         if let Some((quorum_snapshot_at_h_minus_4c, mn_list_diff_at_h_minus_4c)) =
@@ -1202,32 +1197,31 @@ impl MasternodeListEngine {
         {
             self.known_snapshots
                 .insert(mn_list_diff_at_h_minus_4c.block_hash, quorum_snapshot_at_h_minus_4c);
-            self.apply_diff(mn_list_diff_at_h_minus_4c, None, false, None)?;
+            self.apply_and_prune(mn_list_diff_at_h_minus_4c, None, None)?;
         }
 
         self.known_snapshots
             .insert(mn_list_diff_at_h_minus_3c.block_hash, quorum_snapshot_at_h_minus_3c);
-        self.apply_diff(mn_list_diff_at_h_minus_3c, None, false, None)?;
+        self.apply_and_prune(mn_list_diff_at_h_minus_3c, None, None)?;
         self.known_snapshots
             .insert(mn_list_diff_at_h_minus_2c.block_hash, quorum_snapshot_at_h_minus_2c);
-        let maybe_sig_h_minus_2c =
-            self.apply_diff(mn_list_diff_at_h_minus_2c, None, false, None)?;
+        let maybe_sig_h_minus_2c = self.apply_and_prune(mn_list_diff_at_h_minus_2c, None, None)?;
         self.known_snapshots
             .insert(mn_list_diff_at_h_minus_c.block_hash, quorum_snapshot_at_h_minus_c);
-        let maybe_sig_h_minus_c = self.apply_diff(mn_list_diff_at_h_minus_c, None, false, None)?;
+        let maybe_sig_h_minus_c = self.apply_and_prune(mn_list_diff_at_h_minus_c, None, None)?;
         // The h-c cycle's rotated quorums live on `masternode_lists[h]` (mined
         // in the `(h-c, h]` diff range), not on `masternode_lists[h-c]` where
         // the cycle two back resides.
         #[cfg(feature = "quorum_validation")]
         let work_block_hash_h = mn_list_diff_h.block_hash;
-        let maybe_sig_h = self.apply_diff(mn_list_diff_h, None, false, None)?;
+        let maybe_sig_h = self.apply_and_prune(mn_list_diff_h, None, None)?;
 
         let sigs = match (maybe_sig_h_minus_2c, maybe_sig_h_minus_c, maybe_sig_h) {
             (Some(s2), Some(s1), Some(s0)) => Some([s2, s1, s0]),
             _ => None,
         };
 
-        self.apply_diff(mn_list_diff_tip, None, verify_tip_non_rotated_quorums, sigs)?;
+        self.apply_and_prune(mn_list_diff_tip, None, sigs)?;
 
         // The active set at the h work block can only be validated when the
         // h-4c diff supplies the masternode lists and snapshots for its
@@ -1284,7 +1278,7 @@ impl MasternodeListEngine {
         }
 
         #[cfg(feature = "quorum_validation")]
-        if verify_rotated_quorums {
+        {
             let mut updates: Vec<(
                 BTreeSet<CoreBlockHeight>,
                 LLMQType,
@@ -1437,27 +1431,11 @@ impl MasternodeListEngine {
                     self.set_quorum_status_in_lists(heights, quorum_type, quorum_hash, &new_status);
                 }
             }
-        } else if let Some(cycle_key) = cycle_key {
-            fully_verified_count = qualified_last_commitment_per_index
-                .iter()
-                .filter(|q| matches!(q.verified, LLMQEntryVerificationStatus::Verified))
-                .count();
-            stored_cycle_height = self.store_cycle_if_fully_verified(
-                cycle_key,
-                qualified_last_commitment_per_index,
-                rotation_quorum_type,
-            )?;
-        }
-
-        #[cfg(not(feature = "quorum_validation"))]
-        if verify_rotated_quorums {
-            return Err(QuorumValidationError::FeatureNotTurnedOn(
-                "quorum validation feature is not turned on".to_string(),
-            ));
         }
 
         #[cfg(feature = "quorum_validation")]
         {
+            self.verify_newest_quorums();
             Ok(Some(QRInfoFeedResult {
                 rotated_quorum_count,
                 expected_rotated_quorum_count: rotation_quorum_type.active_quorum_count() as usize,
@@ -1477,9 +1455,12 @@ impl MasternodeListEngine {
     /// Applies a masternode list diff to create or update a masternode list.
     ///
     /// The list the diff builds has to match the coinbase commitments of the
-    /// diff's block, see [`MasternodeList::verify_coinbase_merkle_roots`]. Tying
-    /// that coinbase to the block header is up to the caller, who holds the
-    /// header: see [`MnListDiff::verify_coinbase_merkle_proof`].
+    /// diff's block, see [`MasternodeList::verify_coinbase_merkle_roots`]. The
+    /// check runs before the list is stored or its quorums are recorded in
+    /// `quorum_statuses`, so a refused diff leaves the engine as it was and
+    /// none of its quorums is verified. Tying that coinbase to the block header
+    /// is up to the caller, who holds the header: see
+    /// [`MnListDiff::verify_coinbase_merkle_proof`].
     ///
     /// A diff built on the newest list moves the tip and prunes the lists that
     /// fall out of the retention window. Other diffs may share an older base, so
@@ -1490,8 +1471,10 @@ impl MasternodeListEngine {
     /// # Parameters
     /// - `masternode_list_diff`: The diff to apply
     /// - `diff_end_height`: Optional height where the diff applies (will be looked up if None)
-    /// - `verify_quorums`: Whether to verify quorums in the resulting list
     /// - `previous_chain_lock_sigs`: Optional previous chain lock signatures for rotation validation
+    ///
+    /// Once applied, the non-rotating quorums of the newest list are verified:
+    /// the diff may have brought one, or the work-block list one needs.
     ///
     /// # Returns
     /// Result containing an optional BLS signature for rotation cycles, or an error.
@@ -1499,7 +1482,21 @@ impl MasternodeListEngine {
         &mut self,
         masternode_list_diff: MnListDiff,
         diff_end_height: Option<CoreBlockHeight>,
-        verify_quorums: bool,
+        previous_chain_lock_sigs: Option<[BLSSignature; 3]>,
+    ) -> Result<Option<BLSSignature>, SmlError> {
+        let result =
+            self.apply_and_prune(masternode_list_diff, diff_end_height, previous_chain_lock_sigs);
+        #[cfg(feature = "quorum_validation")]
+        if result.is_ok() {
+            self.verify_newest_quorums();
+        }
+        result
+    }
+
+    fn apply_and_prune(
+        &mut self,
+        masternode_list_diff: MnListDiff,
+        diff_end_height: Option<CoreBlockHeight>,
         previous_chain_lock_sigs: Option<[BLSSignature; 3]>,
     ) -> Result<Option<BLSSignature>, SmlError> {
         let extended_tip = self
@@ -1509,7 +1506,6 @@ impl MasternodeListEngine {
         let result = self.apply_diff_to_base(
             masternode_list_diff,
             diff_end_height,
-            verify_quorums,
             previous_chain_lock_sigs,
         );
         if let (Ok(_), Some(base)) = (&result, extended_tip) {
@@ -1522,7 +1518,6 @@ impl MasternodeListEngine {
         &mut self,
         masternode_list_diff: MnListDiff,
         diff_end_height: Option<CoreBlockHeight>,
-        verify_quorums: bool,
         previous_chain_lock_sigs: Option<[BLSSignature; 3]>,
     ) -> Result<Option<BLSSignature>, SmlError> {
         if let Some(known_genesis_block_hash) = self
@@ -1592,33 +1587,12 @@ impl MasternodeListEngine {
                             LLMQEntryVerificationStatus::Unknown,
                         ));
                     heights.insert(diff_end_height);
-                    if !verify_quorums {
-                        if quorum.verified != *status {
-                            changes.push((
-                                BTreeSet::from([diff_end_height]),
-                                *quorum_type,
-                                quorum.quorum_entry.quorum_hash,
-                                status.clone(),
-                            ));
-                        }
-                        continue;
-                    }
-                    if quorum.verified == LLMQEntryVerificationStatus::Verified {
-                        *status = quorum.verified.clone();
-                        continue;
-                    }
-                    let mut validated = (**quorum).clone();
-                    self.validate_and_update_quorum_status(&mut validated);
-                    let statuses = self.quorum_statuses.entry(*quorum_type).or_default();
-                    let (heights, _, status) =
-                        statuses.get_mut(&quorum.quorum_entry.quorum_hash).expect("inserted above");
-                    *status = validated.verified.clone();
-                    if validated.verified != quorum.verified {
+                    if quorum.verified != *status {
                         changes.push((
-                            heights.clone(),
+                            BTreeSet::from([diff_end_height]),
                             *quorum_type,
                             quorum.quorum_entry.quorum_hash,
-                            validated.verified,
+                            status.clone(),
                         ));
                     }
                 }
@@ -1638,11 +1612,6 @@ impl MasternodeListEngine {
                 previous_chain_lock_sigs,
                 self.network,
             )?;
-            if verify_quorums {
-                return Err(SmlError::FeatureNotTurnedOn(
-                    "quorum validation feature is not turned on".to_string(),
-                ));
-            }
             for (quorum_type, quorums) in masternode_list.quorums.iter() {
                 let masternode_lists_having_quorum_hash_for_quorum_type =
                     self.quorum_statuses.entry(*quorum_type).or_default();
@@ -1681,7 +1650,17 @@ impl MasternodeListEngine {
     /// # Returns
     /// Result indicating success or a quorum validation error.
     #[cfg(feature = "quorum_validation")]
-    pub fn verify_non_rotating_masternode_list_quorums(
+    fn verify_newest_quorums(&mut self) {
+        let Some(height) = self.latest_masternode_list().map(|list| list.known_height) else {
+            return;
+        };
+        if let Err(e) = self.verify_non_rotating_masternode_list_quorums(height, &[]) {
+            tracing::warn!("Could not verify the quorums of the list at {height}: {e}");
+        }
+    }
+
+    #[cfg(feature = "quorum_validation")]
+    fn verify_non_rotating_masternode_list_quorums(
         &mut self,
         block_height: CoreBlockHeight,
         exclude_quorum_types: &[LLMQType],
@@ -2148,7 +2127,7 @@ mod tests {
         let diff_2 = MnListDiff::mainnet_fixture_2227096_2241332();
 
         masternode_list_engine
-            .apply_diff(diff_2, Some(2241332), false, None)
+            .apply_diff(diff_2, Some(2241332), None)
             .expect("expected to apply diff");
 
         // Map of expected quorum_hash -> expected_signature
@@ -2248,7 +2227,7 @@ mod tests {
         engine.block_container = block_container;
         for ((_start_height, height), mut diff) in mn_list_diffs.into_iter() {
             restore_2240504_capture(&mut diff);
-            engine.apply_diff(diff, Some(height), false, None).expect("expected to apply diff");
+            engine.apply_diff(diff, Some(height), None).expect("expected to apply diff");
         }
 
         (engine, qr_info)
@@ -2355,18 +2334,16 @@ mod tests {
         assert!(refused(engine.apply_diff(
             tampered(MnListDiff::mainnet_fixture_0_2227096()),
             Some(2227096),
-            false,
             None,
         )));
         assert!(engine.masternode_lists.is_empty());
 
         engine
-            .apply_diff(MnListDiff::mainnet_fixture_0_2227096(), Some(2227096), false, None)
+            .apply_diff(MnListDiff::mainnet_fixture_0_2227096(), Some(2227096), None)
             .expect("the untouched diff applies");
         assert!(refused(engine.apply_diff(
             tampered(MnListDiff::mainnet_fixture_2227096_2241332()),
             Some(2241332),
-            false,
             None,
         )));
         assert!(!engine.masternode_lists.contains_key(&2241332));
@@ -2384,7 +2361,7 @@ mod tests {
             qr_info_diffs_mut(&mut qr_info)[position]
                 .new_masternodes
                 .push(MasternodeListEntry::dummy(0x11));
-            let result = engine.feed_qr_info(qr_info, true, true);
+            let result = engine.feed_qr_info(qr_info);
             assert!(
                 matches!(
                     result,
@@ -2418,7 +2395,7 @@ mod tests {
             mixed_cycle_bases
         );
 
-        let result = engine.feed_qr_info(qr_info, true, true);
+        let result = engine.feed_qr_info(qr_info);
         let feed_result = match result {
             Ok(feed_result) => feed_result.expect("expected a feed result"),
             Err(e) => panic!("first QRInfo on a fresh engine must feed cleanly: {}", e),
@@ -2480,7 +2457,7 @@ mod tests {
         let (mut engine, mut qr_info) = load_qrinfo_2518986_fixture();
         qr_info.last_commitment_per_index.pop().expect("fixture must carry commitments");
         let feed_result = engine
-            .feed_qr_info(qr_info, true, true)
+            .feed_qr_info(qr_info)
             .expect("a truncated active set must still feed cleanly")
             .expect("expected a feed result");
         assert_eq!(feed_result.rotated_quorum_count, 31);
@@ -2546,7 +2523,7 @@ mod tests {
              swap fixture or update assertion if this changes"
         );
 
-        masternode_list_engine.feed_qr_info(qr_info, true, true).expect("expected to feed_qr_info");
+        masternode_list_engine.feed_qr_info(qr_info).expect("expected to feed_qr_info");
 
         // Both cycles must be stored: the current cycle from
         // `last_commitment_per_index` and the previous cycle from
@@ -2680,7 +2657,7 @@ mod tests {
         qr_info.mn_list_diff_at_h_minus_2c.quorums_chainlock_signatures.clear();
 
         // feed_qr_info should fail for post-V20 blocks with missing signatures
-        let result = masternode_list_engine.feed_qr_info(qr_info, false, false);
+        let result = masternode_list_engine.feed_qr_info(qr_info);
 
         assert!(
             result.is_err(),
@@ -2733,7 +2710,7 @@ mod tests {
         let isd_type = engine.network.isd_llmq_type();
 
         engine
-            .feed_qr_info(qr_info, false, true)
+            .feed_qr_info(qr_info)
             .expect("feed_qr_info should succeed even when rotation sigs are missing");
 
         assert!(
@@ -2783,7 +2760,7 @@ mod tests {
         }
 
         let feed_result = engine
-            .feed_qr_info(qr_info, false, false)
+            .feed_qr_info(qr_info)
             .expect("an unresolvable cycle key must not abort the feed")
             .expect("expected a feed result");
 
@@ -2829,7 +2806,7 @@ mod tests {
         qr_info.last_commitment_per_index[0].all_commitment_aggregated_signature =
             BLSSignature::from([0u8; 96]);
 
-        let result = engine.feed_qr_info(qr_info, false, true);
+        let result = engine.feed_qr_info(qr_info);
 
         // Both `AllCommitmentAggregatedSignatureNotValid` (per-quorum check)
         // and `InvalidFinalSignature` (rotation-cycle aggregate) are valid
@@ -2884,7 +2861,7 @@ mod tests {
             BLSSignature::from([0u8; 96]);
 
         let feed_result = engine
-            .feed_qr_info(qr_info, false, true)
+            .feed_qr_info(qr_info)
             .expect("an inferred quarter signature must not abort the feed")
             .expect("expected a feed result");
 
@@ -2974,7 +2951,7 @@ mod tests {
         engine.feed_block_height(oldest_quarter + WORK_DIFF_DEPTH, keying_commitment);
 
         let feed_result = engine
-            .feed_qr_info(qr_info, true, true)
+            .feed_qr_info(qr_info)
             .expect("previous-cycle corruption must not abort the feed")
             .expect("expected a feed result");
 
@@ -3024,7 +3001,7 @@ mod tests {
             foreign_signature;
         recommit_quorum_roots(&engine, &mut qr_info);
         let feed_result = engine
-            .feed_qr_info(qr_info, true, true)
+            .feed_qr_info(qr_info)
             .expect("previous-cycle corruption must not abort the feed")
             .expect("expected a feed result");
         assert_eq!(
@@ -3046,7 +3023,7 @@ mod tests {
     #[test]
     fn store_cycle_if_fully_verified_short_circuits() {
         let (mut engine, qr_info) = load_qrinfo_2240504_fixture();
-        engine.feed_qr_info(qr_info, false, true).expect("first feed should succeed");
+        engine.feed_qr_info(qr_info).expect("first feed should succeed");
 
         let cycle_key = *engine
             .rotated_quorums_per_cycle

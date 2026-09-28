@@ -215,9 +215,10 @@ impl MnListDiff {
         }
     }
 
-    /// Reverses every platform node id. Bincode captures made before
-    /// `PlatformNodeId` held its bytes in canonical order decode with the
-    /// Core wire order, which the entry hash then reverses once more.
+    /// Reverses every platform node id. Bincode persists the id in canonical
+    /// order, but captures made before it did hold Core's wire order, which
+    /// the decoder then takes as canonical and the entry hash reverses once
+    /// more. The bytes such a capture holds are the wire order.
     pub fn reverse_platform_node_ids(&mut self) {
         for entry in &mut self.new_masternodes {
             if let EntryMasternodeType::HighPerformance {
@@ -225,9 +226,8 @@ impl MnListDiff {
                 ..
             } = &mut entry.mn_type
             {
-                let mut bytes = platform_node_id.to_byte_array();
-                bytes.reverse();
-                *platform_node_id = PlatformNodeId::from_byte_array(bytes);
+                *platform_node_id =
+                    PlatformNodeId::from_bytes(platform_node_id.to_canonical_bytes());
             }
         }
     }

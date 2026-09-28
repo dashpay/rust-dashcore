@@ -11,6 +11,7 @@ use crate::sync::{
 use crate::SyncError;
 use async_trait::async_trait;
 use dashcore::network::message::NetworkMessage;
+use dashcore::sml::llmq_type::network::NetworkLLMQExt;
 use dashcore::sml::llmq_type::QUORUM_MEMBER_LIST_OFFSET;
 use dashcore::{BlockHash, QuorumHash};
 use dashcore_hashes::Hash;
@@ -229,7 +230,7 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
                 tracing::info!("Fed {} block heights to engine", fed);
 
                 // Feed QRInfo to engine first to populate masternode lists
-                let qr_info_result = match engine.feed_qr_info(qr_info.clone(), true, true) {
+                let qr_info_result = match engine.feed_qr_info(qr_info.clone()) {
                     Ok(qr_info_result) => qr_info_result,
                     Err(e) => {
                         tracing::error!("QRInfo feed into engine failed: {}", e);
@@ -258,9 +259,18 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
                     self.sync_state.known_mn_list_heights.len()
                 );
 
-                // Get quorum hashes and build request pairs, chaining from known heights
+                // Get quorum hashes and build request pairs, chaining from known heights.
+                // A retired quorum type keeps its last quorums in the list, but they
+                // are never validated, so their work-block lists are not requested.
+                let tip = engine.latest_masternode_list().map_or(0, |list| list.known_height);
+                let retired = engine
+                    .network
+                    .enabled_llmq_types()
+                    .into_iter()
+                    .filter(|llmq_type| engine.network.should_skip_quorum_type(llmq_type, tip))
+                    .collect::<Vec<_>>();
                 let quorum_hashes =
-                    engine.latest_masternode_list_non_rotating_quorum_hashes(&[], false);
+                    engine.latest_masternode_list_non_rotating_quorum_hashes(&retired, false);
                 let storage = self.header_storage.read().await;
                 let request_pairs = build_mnlistdiff_request_pairs(
                     &*storage,
@@ -393,7 +403,7 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
                         let mut engine = self.engine.write().await;
                         engine.feed_block_height(target_height, diff.block_hash);
 
-                        match engine.apply_diff(diff.clone(), Some(target_height), false, None) {
+                        match engine.apply_diff(diff.clone(), Some(target_height), None) {
                             Ok(_) => {
                                 self.sync_state.known_mn_list_heights.insert(target_height);
                                 tracing::debug!("Applied MnListDiff at height {}", target_height);
@@ -754,7 +764,7 @@ mod tests {
     use crate::sync::{MasternodesManager, SyncManager, SyncState};
     use crate::test_utils::MockHeaderStorage;
     use crate::types::HashedBlockHeader;
-    use crate::SyncError;
+    use crate::{ClientConfig, SyncError};
     use dashcore::block::Header;
     use dashcore::bls_sig_utils::{BLSPublicKey, BLSSignature};
     use dashcore::hash_types::QuorumVVecHash;
@@ -770,6 +780,7 @@ mod tests {
     use std::sync::Arc;
     use std::time::Duration;
     use std::time::Instant;
+    use test_case::test_case;
     use tokio::sync::{mpsc, RwLock};
 
     fn make_quorum_entry(hash_byte: u8, index: i16) -> QuorumEntry {
@@ -1017,6 +1028,68 @@ mod tests {
         let tip_hash = manager.sync_state.qrinfo_in_flight.expect("QRInfo in flight").tip;
         rx.try_recv().expect("initial GetQRInfo is queued");
         (manager, requests, rx, tip_hash)
+    }
+
+    /// Diffs are stored only until the sync reaches the tip. Once synced,
+    /// nothing is, and the next start catches up from the last stored message.
+    #[test_case(SyncState::Syncing, true; "while syncing")]
+    #[test_case(SyncState::Synced, false; "once synced")]
+    #[tokio::test]
+    async fn a_diff_is_stored_only_until_the_sync_reaches_the_tip(state: SyncState, stored: bool) {
+        use dashcore::sml::masternode_list::MasternodeList;
+
+        let tip = 100;
+        let target = tip + 1;
+        let dir = tempfile::TempDir::new().unwrap();
+        let storage =
+            DiskStorageManager::new(&ClientConfig::testnet().with_storage_path(dir.path()))
+                .await
+                .unwrap();
+        let template = MnListDiff::dummy_between(0, 0);
+        let mut headers = Header::dummy_batch(0..target + 1);
+        // The stored header of the diff's block proves its coinbase.
+        headers[target as usize].merkle_root = template.dummy_block_merkle_root();
+        let block_headers = storage.block_headers();
+        block_headers
+            .write()
+            .await
+            .store_headers(&headers.iter().map(HashedBlockHeader::from).collect::<Vec<_>>())
+            .await
+            .unwrap();
+        let tip_hash = headers[tip as usize].block_hash();
+        let target_hash = headers[target as usize].block_hash();
+        let mut engine = MasternodeListEngine::default_for_network(Network::Regtest);
+        engine.feed_block_height(tip, tip_hash);
+        engine.masternode_lists.insert(tip, MasternodeList::empty(tip_hash, tip));
+        let engine = Arc::new(RwLock::new(engine));
+        let mut manager = MasternodesManager::new(
+            block_headers,
+            Arc::clone(&engine),
+            Network::Regtest,
+            Some(storage.masternodes()),
+        )
+        .await;
+        manager.set_state(SyncState::Synced);
+        manager.progress.update_block_header_tip_height(target);
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let requests = RequestSender::new(tx);
+        manager.send_tip_mnlistdiff_update(&requests).await.unwrap();
+        manager.set_state(state);
+
+        let diff = MnListDiff {
+            base_block_hash: tip_hash,
+            block_hash: target_hash,
+            ..template
+        };
+        let peer = "127.0.0.1:19999".parse().unwrap();
+        manager
+            .handle_message(Message::new(peer, NetworkMessage::MnListDiff(diff)), &requests)
+            .await
+            .unwrap();
+
+        assert!(engine.read().await.masternode_lists.contains_key(&target));
+        let file = dir.path().join("masternodes").join(format!("diff_{target}.dat"));
+        assert_eq!(file.exists(), stored);
     }
 
     /// A QRInfo the engine rejects must not release the request slot.
