@@ -103,13 +103,17 @@ pub struct TransactionCheckResult {
     pub released_outpoints: Vec<OutPoint>,
     /// Outpoints this check added to the wallet's lock set: the collateral of
     /// a ProRegTx, which coin selection now skips. Only new entries are
-    /// listed, so a ProRegTx seen again reports nothing.
+    /// listed, so a ProRegTx seen again reports nothing. A collateral the
+    /// ProRegTx names is locked only in a block context; see
+    /// [`ManagedWalletInfo::locked_outpoints`](crate::wallet::ManagedWalletInfo::locked_outpoints).
     ///
     /// Filled whether or not the transaction is otherwise relevant: the
     /// registration may involve nothing of this wallet's but the collateral,
     /// or the collateral may not have arrived yet. A store that persists
-    /// wallet state records these; see
-    /// [`ManagedWalletInfo::locked_outpoints`](crate::wallet::ManagedWalletInfo::locked_outpoints).
+    /// wallet state records these. A lock moves a coin the wallet holds from
+    /// the spendable to the locked balance, so a caller that checked with
+    /// `update_balance = false` refreshes the balance of a wallet whose check
+    /// lists any, as it does for a relevant transaction.
     pub locked_outpoints: Vec<OutPoint>,
 }
 

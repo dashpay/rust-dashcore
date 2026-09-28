@@ -109,6 +109,15 @@ pub struct CheckTransactionsResult {
     /// see [`crate::events::WalletEvent::TransactionsSwept`] for why a
     /// consumer needs this set named explicitly instead of re-deriving it.
     pub per_wallet_released_outpoints: BTreeMap<WalletId, Vec<OutPoint>>,
+    /// Outpoints this check added to each wallet's lock set, grouped by
+    /// wallet: the collateral of a ProRegTx (see
+    /// [`ManagedWalletInfo::locked_outpoints`]). Gathered whether or not the
+    /// transaction is relevant to the wallet, since a ProRegTx in a block
+    /// locks a coin the wallet holds even when nothing else ties it to the
+    /// wallet. A lock moves that coin from the spendable to the locked
+    /// balance, so a caller that checked with `update_balance = false`
+    /// refreshes these wallets as well as the affected ones.
+    pub per_wallet_locked_outpoints: BTreeMap<WalletId, Vec<OutPoint>>,
 }
 
 impl CheckTransactionsResult {
@@ -660,6 +669,14 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletManager<T> {
                         .entry(*wallet_id)
                         .or_default()
                         .extend(check_result.released_outpoints);
+                }
+
+                if !check_result.locked_outpoints.is_empty() {
+                    result
+                        .per_wallet_locked_outpoints
+                        .entry(*wallet_id)
+                        .or_default()
+                        .extend(check_result.locked_outpoints);
                 }
 
                 if !check_result.new_addresses.is_empty() {
