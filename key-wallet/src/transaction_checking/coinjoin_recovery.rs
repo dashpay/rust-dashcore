@@ -18,6 +18,7 @@
 //! carry forward.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::sync::{LazyLock, Mutex};
 
 use dashcore::blockdata::transaction::Transaction;
 use dashcore::ScriptBuf;
@@ -30,8 +31,35 @@ use crate::KeySource;
 
 /// How far past the generated end of each CoinJoin chain a missing output is
 /// searched for. Derivation only; nothing in this window is watched unless an
-/// output is found in it.
-pub const COINJOIN_RECOVERY_PROBE_WINDOW: u32 = 2_000;
+/// output is found in it. DashSync derived up to ~10,500 CoinJoin addresses on
+/// heavily mixed wallets.
+pub const COINJOIN_RECOVERY_PROBE_WINDOW: u32 = 10_000;
+
+/// Scripts derived for probing, per CoinJoin chain, so that the many one-sided
+/// mixes of one wallet derive the window once rather than once each. The whole
+/// window is always compared — a mix can return more of our coins than the
+/// inputs we know about — so the cache changes cost, never the result.
+#[derive(Default)]
+struct ProbeCache {
+    scripts: HashMap<ScriptBuf, u32>,
+    /// Every index below this is in `scripts`.
+    derived_until: u32,
+}
+
+static PROBE_CACHE: LazyLock<Mutex<HashMap<String, ProbeCache>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// Identifies the chain a key source derives, for the probe cache.
+fn pool_key(key_source: &KeySource) -> String {
+    match key_source {
+        KeySource::Public(xpub) => xpub.to_string(),
+        KeySource::Private(xpriv) => {
+            crate::bip32::ExtendedPubKey::from_priv(&dashcore::secp256k1::Secp256k1::new(), xpriv)
+                .to_string()
+        }
+        _ => String::new(),
+    }
+}
 
 impl ManagedWalletInfo {
     /// Extend a CoinJoin pool to any output of `tx` that is ours but lies past
@@ -93,19 +121,32 @@ impl ManagedWalletInfo {
             let mut extended = false;
             for pool in account.managed_account_type_mut().address_pools_mut() {
                 let start = pool.highest_generated.map(|h| h + 1).unwrap_or(0);
-                let mut found: Vec<u32> = Vec::new();
-                for probe in start..start.saturating_add(COINJOIN_RECOVERY_PROBE_WINDOW) {
-                    let address = match pool.generate_address_at_index(probe, &key_source, false) {
-                        Ok(address) => address,
-                        Err(e) => {
-                            tracing::warn!(error = %e, "CoinJoin recovery: derivation failed");
-                            break;
+                let end = start.saturating_add(COINJOIN_RECOVERY_PROBE_WINDOW);
+                let cache_key =
+                    format!("{:?}/{:?}/{}", pool.pool_type, pool.base_path, pool_key(&key_source));
+                let mut found: Vec<u32> = {
+                    let mut caches = PROBE_CACHE.lock().unwrap_or_else(|e| e.into_inner());
+                    let cache = caches.entry(cache_key).or_default();
+                    while cache.derived_until < end {
+                        let probe = cache.derived_until;
+                        match pool.generate_address_at_index(probe, &key_source, false) {
+                            Ok(address) => {
+                                cache.scripts.insert(address.script_pubkey(), probe);
+                                cache.derived_until += 1;
+                            }
+                            Err(e) => {
+                                tracing::warn!(error = %e, "CoinJoin recovery: derivation failed");
+                                break;
+                            }
                         }
-                    };
-                    if unclaimed.contains(&address.script_pubkey()) {
-                        found.push(probe);
                     }
-                }
+                    unclaimed
+                        .iter()
+                        .filter_map(|script| cache.scripts.get(script).copied())
+                        .filter(|index| (start..end).contains(index))
+                        .collect()
+                };
+                found.sort_unstable();
                 let Some(&highest) = found.last() else {
                     continue;
                 };
@@ -364,5 +405,81 @@ mod tests {
         let beyond = coinjoin_address(&mut fx, false, 100 + COINJOIN_RECOVERY_PROBE_WINDOW + 10);
         let result = fund_and_mix(&mut fx, beyond).await;
         assert_eq!(result.total_received, 0);
+    }
+
+    /// A mix can return more of our coins than the inputs the wallet knows
+    /// about (one of ours came from an address it has not discovered yet).
+    /// Every one of them in the window must be found, not just as many as the
+    /// known inputs.
+    #[tokio::test]
+    async fn every_returned_coin_is_found_not_just_the_known_inputs() {
+        let mut fx = fixture();
+        let far_a = coinjoin_address(&mut fx, false, 300);
+        let far_b = coinjoin_address(&mut fx, false, 900);
+        let first = coinjoin_address(&mut fx, false, 0);
+        let funding = dashcore::Transaction::dummy(&first, 0..1, &[DENOM]);
+        fx.managed.check_core_transaction(&funding, block(1), &mut fx.wallet, true, true).await;
+
+        let mix = dashcore::Transaction {
+            version: 2,
+            lock_time: 0,
+            input: vec![
+                TxIn {
+                    previous_output: OutPoint {
+                        txid: funding.txid(),
+                        vout: 0,
+                    },
+                    ..Default::default()
+                },
+                // Ours as well, but on an address the wallet has not discovered.
+                TxIn {
+                    previous_output: OutPoint {
+                        txid: Txid::from_byte_array([0xb1; 32]),
+                        vout: 0,
+                    },
+                    ..Default::default()
+                },
+                TxIn {
+                    previous_output: OutPoint {
+                        txid: Txid::from_byte_array([0xb2; 32]),
+                        vout: 0,
+                    },
+                    ..Default::default()
+                },
+            ],
+            output: vec![
+                TxOut {
+                    value: DENOM,
+                    script_pubkey: far_a.script_pubkey(),
+                },
+                TxOut {
+                    value: DENOM,
+                    script_pubkey: Address::dummy(NETWORK, 4).script_pubkey(),
+                },
+                TxOut {
+                    value: DENOM,
+                    script_pubkey: far_b.script_pubkey(),
+                },
+            ],
+            special_transaction_payload: None,
+        };
+        let result =
+            fx.managed.check_core_transaction(&mix, block(2), &mut fx.wallet, true, true).await;
+
+        assert_eq!(result.total_received, 2 * DENOM, "both returned coins must be credited");
+        assert_eq!(fx.managed.balance.total(), 2 * DENOM);
+    }
+
+    /// Two wallets probing the same indices never see each other's scripts.
+    #[tokio::test]
+    async fn probe_cache_is_per_wallet() {
+        let mut first = fixture();
+        let far = coinjoin_address(&mut first, false, 400);
+        assert_eq!(fund_and_mix(&mut first, far).await.total_received, DENOM);
+
+        let mut second = fixture();
+        let foreign = coinjoin_address(&mut first, false, 400);
+        let result = fund_and_mix(&mut second, foreign).await;
+        assert_eq!(result.total_received, 0, "the first wallet's address is not ours");
     }
 }
