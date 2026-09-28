@@ -8,6 +8,7 @@ use crate::sync::{
 use crate::SyncError;
 use async_trait::async_trait;
 use dashcore::network::message::NetworkMessage;
+use dashcore::sml::llmq_type::network::NetworkLLMQExt;
 use dashcore::sml::llmq_type::QUORUM_MEMBER_LIST_OFFSET;
 use dashcore::{BlockHash, QuorumHash};
 use dashcore_hashes::Hash;
@@ -245,9 +246,18 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
                     self.sync_state.known_mn_list_heights.len()
                 );
 
-                // Get quorum hashes and build request pairs, chaining from known heights
+                // Get quorum hashes and build request pairs, chaining from known heights.
+                // A retired quorum type keeps its last quorums in the list, but they
+                // are never validated, so their work-block lists are not requested.
+                let tip = engine.latest_masternode_list().map_or(0, |list| list.known_height);
+                let retired = engine
+                    .network
+                    .enabled_llmq_types()
+                    .into_iter()
+                    .filter(|llmq_type| engine.network.should_skip_quorum_type(llmq_type, tip))
+                    .collect::<Vec<_>>();
                 let quorum_hashes =
-                    engine.latest_masternode_list_non_rotating_quorum_hashes(&[], false);
+                    engine.latest_masternode_list_non_rotating_quorum_hashes(&retired, false);
                 let storage = self.header_storage.read().await;
                 let request_pairs = build_mnlistdiff_request_pairs(
                     &*storage,
