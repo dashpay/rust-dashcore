@@ -7,6 +7,7 @@
 //! [`ManagedWalletInfo::locked_outpoints`] for the full rules.
 
 use super::ManagedWalletInfo;
+use crate::transaction_checking::TransactionContext;
 use crate::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
 use dashcore::blockdata::transaction::special_transaction::TransactionPayload;
 use dashcore::hashes::Hash;
@@ -42,11 +43,26 @@ impl ManagedWalletInfo {
     ///
     /// # What locks an outpoint
     ///
-    /// - A ProRegTx. The wallet locks the collateral of every masternode
-    ///   registration it processes, so an ordinary send never spends it:
+    /// - A ProRegTx. The wallet locks the collateral of the masternode
+    ///   registrations it processes, so an ordinary send never spends it:
     ///   spending the collateral would end the registration. The collateral is
     ///   the ProRegTx's `collateralOutpoint`, or, when that names a null txid,
-    ///   the ProRegTx's own output at `collateralIndex`.
+    ///   the ProRegTx's own output at `collateralIndex`. When it is locked
+    ///   depends on which:
+    ///   - A collateral the ProRegTx names is locked once the ProRegTx is in a
+    ///     block ([`TransactionContext::InBlock`] or
+    ///     [`TransactionContext::InChainLockedBlock`]). Until then it is not a
+    ///     registration: the network may never accept it, and the wallet does
+    ///     not check a ProRegTx's payload itself. Dash Core likewise locks such
+    ///     a collateral once a block adds the registration to its masternode
+    ///     list. An [`TransactionContext::InstantSend`] context counts as
+    ///     unconfirmed here: the wallet does not verify InstantSend locks, and
+    ///     cannot tell whether its caller did.
+    ///   - A collateral the ProRegTx creates is locked from its first
+    ///     sighting, mempool included, as the coin arrives: it is the
+    ///     ProRegTx's own output, so the lock can hold no other coin. An
+    ///     unconfirmed sighting does not lock that output again once the
+    ///     wallet holds it; a block does.
     /// - [`Self::lock_outpoint`].
     ///
     /// Only [`Self::unlock_outpoint`] removes an outpoint. A coin's amount is
@@ -54,10 +70,10 @@ impl ManagedWalletInfo {
     ///
     /// # Order does not matter
     ///
-    /// An entry does not need a coin behind it. A collateral seen after its
-    /// ProRegTx, or a coin locked before it arrives, arrives locked. A ProRegTx
-    /// naming a coin that is not this wallet's leaves an entry that never
-    /// matches anything.
+    /// An entry does not need a coin behind it. A collateral seen after the
+    /// block holding its ProRegTx, or a coin locked before it arrives, arrives
+    /// locked. A ProRegTx naming a coin that is not this wallet's leaves an
+    /// entry that never matches anything.
     ///
     /// # How long a lock lasts
     ///
@@ -72,8 +88,9 @@ impl ManagedWalletInfo {
     /// coin is spent the entry has nothing to act on, and a coin whose spend is
     /// reorged out or swept comes back locked.
     ///
-    /// Processing a ProRegTx again (the block that confirms it, a rescan) locks
-    /// its collateral again, as Core does on load.
+    /// Processing a ProRegTx in a block again (a rescan, or the block that
+    /// confirms a ProRegTx first seen in the mempool) locks its collateral
+    /// again, as Core does on load.
     ///
     /// # The set is the source of truth
     ///
@@ -83,6 +100,13 @@ impl ManagedWalletInfo {
     /// this set: when the coin arrives, when its outpoint is locked or
     /// unlocked, and on every balance refresh. A flag written on a held coin
     /// directly is overwritten by the next refresh.
+    ///
+    /// A lock or an unlock moves a held coin between the spendable and the
+    /// locked balance. [`Self::lock_outpoint`], [`Self::unlock_outpoint`] and a
+    /// transaction check with `update_balance` refresh the balance themselves;
+    /// a check without it leaves the refresh to its caller, which refreshes
+    /// every wallet whose check lists a lock in
+    /// [`TransactionCheckResult::locked_outpoints`](crate::transaction_checking::TransactionCheckResult::locked_outpoints).
     ///
     /// # Persistence
     ///
@@ -134,13 +158,36 @@ impl ManagedWalletInfo {
         true
     }
 
-    /// Lock the collateral `tx` registers when it is a ProRegTx.
+    /// Lock the collateral `tx` registers when it is a ProRegTx that locks it
+    /// in `context`: a collateral it names only in a block, its own output in
+    /// a block or, unconfirmed, as that coin arrives. See
+    /// [`Self::locked_outpoints`].
     ///
     /// Returns the collateral when it was not locked before. Only updates the
     /// set: the caller refreshes the flags of the coins involved.
-    pub(crate) fn lock_masternode_collateral(&mut self, tx: &Transaction) -> Option<OutPoint> {
+    pub(crate) fn lock_masternode_collateral(
+        &mut self,
+        tx: &Transaction,
+        context: &TransactionContext,
+    ) -> Option<OutPoint> {
         let collateral = masternode_collateral(tx)?;
+        if !context.confirmed() {
+            // Only a null collateral txid yields the ProRegTx's own txid: no
+            // transaction can name itself.
+            let creates_it = collateral.txid == tx.txid();
+            if !creates_it || self.holds_coin(&collateral) {
+                return None;
+            }
+        }
         self.locked_outpoints.insert(collateral).then_some(collateral)
+    }
+
+    /// Whether a funds account of this wallet holds `outpoint` as a coin.
+    fn holds_coin(&self, outpoint: &OutPoint) -> bool {
+        self.accounts
+            .all_funding_accounts()
+            .iter()
+            .any(|account| account.utxos.contains_key(outpoint))
     }
 
     /// Set the lock flag of each coin this wallet holds among `outpoints` to

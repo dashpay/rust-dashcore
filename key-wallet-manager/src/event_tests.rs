@@ -4,25 +4,28 @@ use crate::wallet_interface::WalletInterface;
 use dashcore::block::{Block, Header, Version};
 use dashcore::blockdata::script::Builder;
 use dashcore::blockdata::transaction::special_transaction::asset_lock::AssetLockPayload;
+use dashcore::blockdata::transaction::special_transaction::provider_registration::{
+    ProviderMasternodeType, ProviderRegistrationPayload,
+};
 use dashcore::blockdata::transaction::special_transaction::TransactionPayload;
-use dashcore::bls_sig_utils::BLSSignature;
+use dashcore::bls_sig_utils::{BLSPublicKey, BLSSignature};
 use dashcore::ephemerealdata::chain_lock::ChainLock;
 use dashcore::ephemerealdata::instant_lock::InstantLock;
-use dashcore::hash_types::CycleHash;
+use dashcore::hash_types::{CycleHash, InputsHash};
 use dashcore::hashes::Hash;
 use dashcore::opcodes;
 use dashcore::{
-    BlockHash, CompactTarget, OutPoint, PublicKey, ScriptBuf, TxIn, TxMerkleNode, TxOut, Txid,
-    Witness,
+    BlockHash, CompactTarget, OutPoint, PubkeyHash, PublicKey, ScriptBuf, TxIn, TxMerkleNode,
+    TxOut, Txid, Witness,
 };
 use key_wallet::account::StandardAccountType;
 use key_wallet::managed_account::address_pool::{AddressPoolType, PublicKeyType};
 use key_wallet::managed_account::managed_account_trait::ManagedAccountTrait;
 use key_wallet::managed_account::managed_account_type::ManagedAccountType;
-use key_wallet::transaction_checking::{TransactionRouter, TransactionType};
+use key_wallet::transaction_checking::{BlockInfo, TransactionRouter, TransactionType};
 use key_wallet::wallet::managed_wallet_info::transaction_building::AccountTypePreference;
 use key_wallet::AccountType;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 fn make_block(txdata: Vec<Transaction>, seed: u8, time: u32) -> Block {
     Block {
@@ -1268,6 +1271,183 @@ async fn test_update_wallet_synced_height_does_not_re_emit_when_unchanged() {
         "no SyncHeightAdvanced should fire when height went backwards, got {:?}",
         events
     );
+}
+
+// ---------------------------------------------------------------------------
+// Masternode collateral locks
+// ---------------------------------------------------------------------------
+
+/// A ProRegTx registering `collateral` and paying `outputs`. Its fee input and
+/// keys belong to no one the test wallet knows; `seed` varies the txid.
+fn masternode_registration(collateral: OutPoint, outputs: Vec<TxOut>, seed: u8) -> Transaction {
+    let key_hash = PubkeyHash::from_byte_array([0x70; 20]);
+    Transaction {
+        version: 3,
+        lock_time: 0,
+        input: vec![TxIn {
+            previous_output: OutPoint::new(Txid::from_byte_array([seed; 32]), 0),
+            ..Default::default()
+        }],
+        output: outputs,
+        special_transaction_payload: Some(TransactionPayload::ProviderRegistrationPayloadType(
+            ProviderRegistrationPayload {
+                version: 1,
+                masternode_type: ProviderMasternodeType::Regular,
+                masternode_mode: 0,
+                collateral_outpoint: collateral,
+                service_address: "127.0.0.1:19999".parse().expect("socket address"),
+                owner_key_hash: key_hash,
+                operator_public_key: BLSPublicKey::from([0x11; 48]),
+                voting_key_hash: key_hash,
+                operator_reward: 0,
+                script_payout: ScriptBuf::new(),
+                inputs_hash: InputsHash::all_zeros(),
+                signature: vec![0x33; 65],
+                platform_node_id: None,
+                platform_p2p_port: None,
+                platform_http_port: None,
+            },
+        )),
+    }
+}
+
+fn bip44_account_0() -> AccountType {
+    AccountType::Standard {
+        index: 0,
+        standard_account_type: StandardAccountType::BIP44Account,
+    }
+}
+
+/// A wallet holding one coin of `TX_AMOUNT`, mined at height 100.
+async fn manager_holding_a_coin() -> (WalletManager, WalletId, OutPoint) {
+    let (mut manager, wallet_id, addr) = setup_manager_with_wallet();
+    let funding = create_tx_paying_to(&addr, 0xc0);
+    let block = make_block(vec![funding.clone()], 0xc0, 1_000);
+    manager
+        .process_block_for_wallets(&block, block.block_hash(), 100, &BTreeSet::from([wallet_id]))
+        .await;
+    (manager, wallet_id, OutPoint::new(funding.txid(), 0))
+}
+
+/// A ProRegTx locks a collateral it names at the block that holds it, not
+/// from the mempool. The mempool sighting changes nothing and emits nothing;
+/// the block's `BlockProcessed` carries the coin in the locked balance.
+#[tokio::test]
+async fn test_registration_locks_a_named_collateral_at_its_block_not_from_the_mempool() {
+    let (mut manager, wallet_id, collateral) = manager_holding_a_coin().await;
+    let registration = masternode_registration(collateral, vec![], 0xc1);
+    let mut rx = manager.subscribe_events();
+
+    let result = manager.process_mempool_transaction(&registration, None).await;
+
+    assert!(!result.is_relevant);
+    assert_no_events(&mut rx);
+    let info = manager.get_wallet_info(&wallet_id).expect("wallet info");
+    assert!(!info.is_outpoint_locked(&collateral));
+    assert_eq!(info.balance().spendable(), TX_AMOUNT);
+    assert_eq!(info.balance().locked(), 0);
+
+    let block = make_block(vec![registration], 0xc1, 1_001);
+    manager
+        .process_block_for_wallets(&block, block.block_hash(), 101, &BTreeSet::from([wallet_id]))
+        .await;
+
+    assert!(manager
+        .get_wallet_info(&wallet_id)
+        .expect("wallet info")
+        .is_outpoint_locked(&collateral));
+    let events = drain_events(&mut rx);
+    assert_eq!(events.len(), 1, "one BlockProcessed expected, got {:?}", events);
+    match &events[0] {
+        WalletEvent::BlockProcessed {
+            inserted,
+            updated,
+            balance,
+            account_balances,
+            ..
+        } => {
+            assert!(inserted.is_empty() && updated.is_empty(), "the ProRegTx records nothing");
+            assert_eq!(balance.locked(), TX_AMOUNT);
+            assert_eq!(balance.spendable(), 0);
+            let account = account_balances.get(&bip44_account_0()).expect("the coin's account");
+            assert_eq!(account.locked(), TX_AMOUNT);
+        }
+        other => panic!("expected BlockProcessed, got {:?}", other),
+    }
+}
+
+/// An InstantSend lock does not make a ProRegTx a registration: the coin it
+/// names stays spendable until a block holds the ProRegTx.
+#[tokio::test]
+async fn test_instant_locked_registration_locks_no_collateral_it_names() {
+    let (mut manager, wallet_id, collateral) = manager_holding_a_coin().await;
+    let registration = masternode_registration(collateral, vec![], 0xc2);
+    let mut rx = manager.subscribe_events();
+
+    manager
+        .process_mempool_transaction(&registration, Some(dummy_instant_lock(registration.txid())))
+        .await;
+
+    assert_no_events(&mut rx);
+    let info = manager.get_wallet_info(&wallet_id).expect("wallet info");
+    assert!(!info.is_outpoint_locked(&collateral));
+    assert_eq!(info.balance().spendable(), TX_AMOUNT);
+    assert_eq!(info.balance().locked(), 0);
+}
+
+/// A ProRegTx that creates its collateral locks it from the mempool, and the
+/// `TransactionDetected` for the coin carries it in the locked balance.
+#[tokio::test]
+async fn test_mempool_registration_creating_its_collateral_emits_the_locked_balance() {
+    let (mut manager, wallet_id, addr) = setup_manager_with_wallet();
+    let to_wallet = TxOut {
+        value: TX_AMOUNT,
+        script_pubkey: addr.script_pubkey(),
+    };
+    // A null collateral txid: the collateral is this ProRegTx's output 0.
+    let registration =
+        masternode_registration(OutPoint::new(Txid::all_zeros(), 0), vec![to_wallet], 0xc3);
+    let collateral = OutPoint::new(registration.txid(), 0);
+    let mut rx = manager.subscribe_events();
+
+    let result = manager.process_mempool_transaction(&registration, None).await;
+
+    assert!(result.is_relevant);
+    let events = drain_events(&mut rx);
+    assert_eq!(events.len(), 1, "one TransactionDetected expected, got {:?}", events);
+    match &events[0] {
+        WalletEvent::TransactionDetected {
+            record,
+            balance,
+            account_balances,
+            ..
+        } => {
+            assert_eq!(record.txid, registration.txid());
+            assert_eq!(balance.locked(), TX_AMOUNT);
+            assert_eq!(balance.spendable(), 0, "the collateral is not spendable balance");
+            let account = account_balances.get(&bip44_account_0()).expect("the coin's account");
+            assert_eq!(account.locked(), TX_AMOUNT);
+        }
+        other => panic!("expected TransactionDetected, got {:?}", other),
+    }
+    let info = manager.get_wallet_info(&wallet_id).expect("wallet info");
+    assert!(info.is_outpoint_locked(&collateral));
+    assert_eq!(info.balance().locked(), TX_AMOUNT);
+}
+
+/// A check reports the locks it took per wallet, including for a wallet the
+/// transaction is otherwise irrelevant to, so a caller that checks with
+/// `update_balance = false` knows which balances to refresh.
+#[tokio::test]
+async fn test_check_transaction_reports_a_lock_for_a_wallet_it_is_otherwise_irrelevant_to() {
+    let (mut manager, wallet_id, collateral) = manager_holding_a_coin().await;
+    let registration = masternode_registration(collateral, vec![], 0xc4);
+    let mined = TransactionContext::InBlock(BlockInfo::new(101, BlockHash::all_zeros(), 1_001));
+
+    let result = manager.check_transaction_in_all_wallets(&registration, mined, true, false).await;
+
+    assert!(result.affected_wallets.is_empty());
+    assert_eq!(result.per_wallet_locked_outpoints, BTreeMap::from([(wallet_id, vec![collateral])]));
 }
 
 // ---------------------------------------------------------------------------

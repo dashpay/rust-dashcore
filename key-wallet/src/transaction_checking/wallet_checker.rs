@@ -32,9 +32,12 @@ pub trait WalletTransactionChecker {
     /// The context parameter indicates where the transaction comes from (mempool, block, etc.)
     ///
     /// With `update_state`, a ProRegTx also locks the collateral it
-    /// registers, relevant or not, so coin selection skips it; new locks are
-    /// listed in [`TransactionCheckResult::locked_outpoints`]. See
-    /// [`ManagedWalletInfo::locked_outpoints`].
+    /// registers, relevant or not, so coin selection skips it: a collateral it
+    /// names once the ProRegTx is in a block, its own output from any context.
+    /// New locks are listed in [`TransactionCheckResult::locked_outpoints`];
+    /// with `update_balance = false`, refresh the balance of a wallet whose
+    /// check lists any, since a lock moves a held coin to the locked balance.
+    /// See [`ManagedWalletInfo::locked_outpoints`].
     async fn check_core_transaction(
         &mut self,
         tx: &Transaction,
@@ -125,7 +128,7 @@ impl WalletTransactionChecker for ManagedWalletInfo {
 
         // Before the accounts record `tx`, so a collateral the ProRegTx
         // creates itself is locked from the moment it becomes a coin.
-        let collateral = self.lock_masternode_collateral(tx);
+        let collateral = self.lock_masternode_collateral(tx, &context);
 
         let mut result = self
             .check_core_transaction_inner(tx, context, wallet, update_state, update_balance)
