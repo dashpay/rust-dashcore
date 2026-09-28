@@ -1581,6 +1581,23 @@ mod tests {
         assert_eq!(actual, expected);
     }
 
+    #[cfg(feature = "serde")]
+    #[test]
+    fn compact_target_serde() {
+        let compact = CompactTarget::from_consensus(0x1d00_ffff);
+        assert_eq!(serde_json::to_string(&compact).unwrap(), "486604799");
+        assert_eq!(serde_json::from_str::<CompactTarget>("486604799").unwrap(), compact);
+        assert!(serde_json::from_str::<CompactTarget>("\"0x1d00ffff\"").is_err());
+
+        let config = bincode::config::standard();
+        let encoded = bincode::serde::encode_to_vec(compact, config).unwrap();
+        assert_eq!(encoded, crate::internal_macros::hex!("fcffff001d"));
+        assert_eq!(
+            bincode::serde::decode_from_slice::<CompactTarget, _>(&encoded, config).unwrap().0,
+            compact
+        );
+    }
+
     #[test]
     fn compact_target_from_hex_invalid_hex_should_err() {
         let hex = "0xzbf9";
