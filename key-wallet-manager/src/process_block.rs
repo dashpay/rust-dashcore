@@ -254,26 +254,30 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
             per_wallet_released
         );
 
-        if let Some(lock) = instant_lock {
-            for (wallet_id, records) in per_wallet_updated_records {
-                if records.is_empty() {
-                    continue;
-                }
-                let Some(info) = self.wallet_infos.get(&wallet_id) else {
-                    continue;
-                };
-                let balance = info.balance();
-                let account_balances =
-                    per_wallet_account_diff.get(&wallet_id).cloned().unwrap_or_default();
-                for record in records {
-                    let event = WalletEvent::TransactionInstantLocked {
+        for (wallet_id, records) in per_wallet_updated_records {
+            let Some(info) = self.wallet_infos.get(&wallet_id) else {
+                continue;
+            };
+            let balance = info.balance();
+            let account_balances =
+                per_wallet_account_diff.get(&wallet_id).cloned().unwrap_or_default();
+            for record in records {
+                let txid = record.txid;
+                self.emit_event(WalletEvent::TransactionDetected {
+                    wallet_id,
+                    record: Box::new(record),
+                    balance,
+                    account_balances: account_balances.clone(),
+                    addresses_derived: Vec::new(),
+                });
+                if let Some(lock) = instant_lock.as_ref().filter(|lock| lock.txid == txid) {
+                    self.emit_event(WalletEvent::TransactionInstantLocked {
                         wallet_id,
-                        txid: record.txid,
+                        txid,
                         instant_lock: lock.clone(),
                         balance,
                         account_balances: account_balances.clone(),
-                    };
-                    self.emit_event(event);
+                    });
                 }
             }
         }

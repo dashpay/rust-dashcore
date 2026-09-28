@@ -71,6 +71,10 @@ pub struct ManagedCoreFundsAccount {
     /// re-establish which coins are spent.
     #[cfg_attr(feature = "serde", serde(skip))]
     reservations: ReservationSet,
+    /// Late funding outputs awaiting attribution to account-local spender records.
+    /// Drained at wallet scope before returning; never persisted.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    born_spent_outputs: Vec<(OutPoint, u64, Address)>,
 }
 
 /// What [`ManagedCoreFundsAccount::apply_abandon`] removed from one account.
@@ -108,6 +112,7 @@ impl ManagedCoreFundsAccount {
             spent_outpoints: HashSet::new(),
             spent_before_funded: BTreeMap::new(),
             reservations: ReservationSet::default(),
+            born_spent_outputs: Vec::new(),
         }
     }
 
@@ -136,6 +141,7 @@ impl ManagedCoreFundsAccount {
             spent_outpoints: HashSet::new(),
             spent_before_funded: BTreeMap::new(),
             reservations: ReservationSet::default(),
+            born_spent_outputs: Vec::new(),
         }
     }
 
@@ -329,6 +335,11 @@ impl ManagedCoreFundsAccount {
                                     outpoint = %outpoint,
                                     "Skipping UTXO already spent by previously processed transaction"
                                 );
+                                self.born_spent_outputs.push((
+                                    outpoint,
+                                    output.value,
+                                    addr.clone(),
+                                ));
                                 continue;
                             }
 
@@ -341,6 +352,11 @@ impl ManagedCoreFundsAccount {
                                     outpoint = %outpoint,
                                     "Skipping UTXO already observed spent in an earlier-processed block (#649)"
                                 );
+                                self.born_spent_outputs.push((
+                                    outpoint,
+                                    output.value,
+                                    addr.clone(),
+                                ));
                                 self.spent_before_funded.insert(
                                     outpoint,
                                     Utxo::new(
@@ -416,6 +432,88 @@ impl ManagedCoreFundsAccount {
             }
             _ => {}
         }
+    }
+
+    /// Attribute a late funding output only to its owning account's spender slices.
+    pub(crate) fn attribute_spent_input(
+        &mut self,
+        outpoint: &OutPoint,
+        value: u64,
+        address: &Address,
+        spenders: &[TransactionRecord],
+    ) -> Vec<TransactionRecord> {
+        if !self.contains_address(address) {
+            return Vec::new();
+        }
+        let mut corrected = Vec::new();
+        for template in spenders {
+            let Some(input_index) = template
+                .transaction
+                .input
+                .iter()
+                .position(|input| &input.previous_output == outpoint)
+            else {
+                continue;
+            };
+            let mut record =
+                self.keys.transactions().get(&template.txid).cloned().unwrap_or_else(|| {
+                    let mut record = template.clone();
+                    record.account_type = self.keys.managed_account_type().to_account_type();
+                    record.input_details.clear();
+                    record.output_details.clear();
+                    record
+                });
+            if record.input_details.iter().any(|d| d.index == input_index as u32) {
+                continue;
+            }
+            record.input_details.push(InputDetail {
+                index: input_index as u32,
+                value,
+                address: address.clone(),
+            });
+            record.input_details.sort_by_key(|d| d.index);
+            for (index, output) in record.transaction.output.iter().enumerate() {
+                if record.output_details.iter().any(|detail| detail.index == index as u32) {
+                    continue;
+                }
+                let output_address =
+                    Address::from_script(&output.script_pubkey, self.keys.network()).ok();
+                let pool = output_address.as_ref().and_then(|addr| {
+                    self.managed_account_type()
+                        .address_pools()
+                        .into_iter()
+                        .find(|pool| pool.address_index(addr).is_some())
+                });
+                let role = match pool {
+                    Some(pool) if pool.pool_type == address_pool::AddressPoolType::Internal => {
+                        OutputRole::Change
+                    }
+                    Some(_) => OutputRole::Received,
+                    None if output.script_pubkey.is_provably_unspendable() => {
+                        OutputRole::Unspendable
+                    }
+                    None => OutputRole::Sent,
+                };
+                record.output_details.push(OutputDetail {
+                    index: index as u32,
+                    value: output.value,
+                    address: output_address,
+                    role,
+                });
+            }
+            record.output_details.sort_by_key(|detail| detail.index);
+            record.recompute_net_and_direction();
+            self.keys.transactions_mut().insert(record.txid, record.clone());
+            self.spent_outpoints.insert(*outpoint);
+            corrected.push(record);
+        }
+        corrected
+    }
+
+    /// Drain the born-spent outputs staged by [`Self::update_utxos`] since
+    /// the last drain, for the wallet-scope attribution sweep.
+    pub(crate) fn take_born_spent_outputs(&mut self) -> Vec<(OutPoint, u64, Address)> {
+        std::mem::take(&mut self.born_spent_outputs)
     }
 
     /// Drop the spent-marks that `freed` contributed, keeping every mark a
@@ -1335,6 +1433,7 @@ impl<'de> Deserialize<'de> for ManagedCoreFundsAccount {
             spent_outpoints,
             spent_before_funded: helper.spent_before_funded,
             reservations: ReservationSet::default(),
+            born_spent_outputs: Vec::new(),
         })
     }
 }
