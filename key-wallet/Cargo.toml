@@ -51,6 +51,7 @@ tracing = "0.1"
 async-trait = "0.1"
 
 [dev-dependencies]
+bincode = { workspace = true, features = ["serde"] }
 criterion = "0.8.1"
 dashcore = { path="../dash", features = ["test-utils"] }
 key-wallet = { path = ".", features = ["test-utils", "serde", "bincode", "eddsa", "bls"] }

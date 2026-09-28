@@ -397,3 +397,122 @@ impl Wallet {
         }
     }
 }
+
+#[cfg(all(test, feature = "serde"))]
+mod tests {
+    use super::*;
+    use hex_conservative::{hex, DisplayHex};
+
+    /// BIP32 test vector 1.
+    const SEED: [u8; 16] = hex!("000102030405060708090a0b0c0d0e0f");
+    const SK_HEX: &str = "e8f32e723decf4051aefac8e2c93c9c5b214313817cdb01a1494b917c8436b35";
+    const PK_HEX: &str = "0339a36013301597daef41fbe593a02cc513d0b55527ec2df1050e2e8ff49c85c2";
+    const PK_UNCOMPRESSED_HEX: &str = "0439a36013301597daef41fbe593a02cc513d0b55527ec2df1050e2e8ff49c85c2\
+                                       3cbe7ded0e7ce6a594896b8f62888fdbc5c8821305e2ea42bf01e37300116281";
+    const CHAIN_CODE_HEX: &str = "873dff81c02f525623fd1fe5167eac3a55a049de3d314bb42ee227ffed37d508";
+
+    /// Both root keys serialize as hex in human-readable formats and as bare
+    /// fixed-size tuples otherwise. The public key is in compressed form.
+    #[test]
+    fn serde_layout_of_root_keys() {
+        let sk = RootExtendedPrivKey::new_master(&SEED).expect("master key");
+        let pk = sk.to_root_extended_pub_key();
+
+        let sk_json = serde_json::to_string(&sk).expect("serialize private key");
+        assert_eq!(
+            sk_json,
+            format!(
+                "{{\"root_private_key\":\"{}\",\"root_chain_code\":\"{}\"}}",
+                SK_HEX, CHAIN_CODE_HEX
+            )
+        );
+        let pk_json = serde_json::to_string(&pk).expect("serialize public key");
+        assert_eq!(
+            pk_json,
+            format!(
+                "{{\"root_public_key\":\"{}\",\"root_chain_code\":\"{}\"}}",
+                PK_HEX, CHAIN_CODE_HEX
+            )
+        );
+
+        let config = bincode::config::standard();
+        let chain_code = format!("40{}", CHAIN_CODE_HEX.as_bytes().to_lower_hex_string());
+        let sk_bin = bincode::serde::encode_to_vec(&sk, config).expect("encode private key");
+        assert_eq!(sk_bin.to_lower_hex_string(), format!("{}{}", SK_HEX, chain_code));
+        let pk_bin = bincode::serde::encode_to_vec(&pk, config).expect("encode public key");
+        assert_eq!(pk_bin.to_lower_hex_string(), format!("{}{}", PK_HEX, chain_code));
+
+        let sk_back: RootExtendedPrivKey =
+            serde_json::from_str(&sk_json).expect("parse private key");
+        assert_eq!(sk_back.root_private_key, sk.root_private_key);
+        let (sk_back, _): (RootExtendedPrivKey, _) =
+            bincode::serde::decode_from_slice(&sk_bin, config).expect("decode private key");
+        assert_eq!(sk_back.root_private_key, sk.root_private_key);
+        let pk_back: RootExtendedPubKey = serde_json::from_str(&pk_json).expect("parse public key");
+        assert_eq!(pk_back.root_public_key, pk.root_public_key);
+        let (pk_back, _): (RootExtendedPubKey, _) =
+            bincode::serde::decode_from_slice(&pk_bin, config).expect("decode public key");
+        assert_eq!(pk_back.root_public_key, pk.root_public_key);
+    }
+
+    /// Both root keys take hex in either case, and the public key also takes
+    /// its uncompressed encoding. Malformed or invalid keys are rejected in
+    /// both formats.
+    #[test]
+    fn serde_input_of_root_keys() {
+        let sk = RootExtendedPrivKey::new_master(&SEED).expect("master key");
+        let pk = sk.to_root_extended_pub_key();
+        let pk_json = |key: &str| {
+            format!(
+                "{{\"root_public_key\":\"{}\",\"root_chain_code\":\"{}\"}}",
+                key, CHAIN_CODE_HEX
+            )
+        };
+        let sk_json = |key: &str| {
+            format!(
+                "{{\"root_private_key\":\"{}\",\"root_chain_code\":\"{}\"}}",
+                key, CHAIN_CODE_HEX
+            )
+        };
+
+        for key in [PK_UNCOMPRESSED_HEX.to_string(), PK_HEX.to_uppercase()] {
+            let back: RootExtendedPubKey = serde_json::from_str(&pk_json(&key)).expect("parse");
+            assert_eq!(back.root_public_key, pk.root_public_key);
+            assert_eq!(serde_json::to_string(&back).expect("serialize"), pk_json(PK_HEX));
+        }
+        let bad_point = format!("05{}", &PK_HEX[2..]);
+        let prefixed = format!("0x{}", PK_HEX);
+        for key in [&PK_HEX[..64], &bad_point, &prefixed] {
+            assert!(serde_json::from_str::<RootExtendedPubKey>(&pk_json(key)).is_err(), "{}", key);
+        }
+
+        let back: RootExtendedPrivKey =
+            serde_json::from_str(&sk_json(&SK_HEX.to_uppercase())).expect("parse");
+        assert_eq!(back.root_private_key, sk.root_private_key);
+        let long = format!("{}00", SK_HEX);
+        let zero = "00".repeat(32);
+        let order = "fffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141";
+        for key in [&SK_HEX[..62], &long, &zero, order] {
+            assert!(serde_json::from_str::<RootExtendedPrivKey>(&sk_json(key)).is_err(), "{}", key);
+        }
+
+        let config = bincode::config::standard();
+        let chain_code = format!("40{}", CHAIN_CODE_HEX.as_bytes().to_lower_hex_string());
+        let decode = |hex: &str| hex_conservative::decode_to_vec(hex).expect("decode hex");
+        let wrong_prefix = decode(&format!("04{}{}", &PK_HEX[2..], chain_code));
+        assert!(bincode::serde::decode_from_slice::<RootExtendedPubKey, _>(&wrong_prefix, config)
+            .is_err());
+        assert!(bincode::serde::decode_from_slice::<RootExtendedPubKey, _>(
+            &decode(&PK_HEX[..64]),
+            config
+        )
+        .is_err());
+        let zero = decode(&format!("{}{}", zero, chain_code));
+        assert!(bincode::serde::decode_from_slice::<RootExtendedPrivKey, _>(&zero, config).is_err());
+        assert!(bincode::serde::decode_from_slice::<RootExtendedPrivKey, _>(
+            &decode(&SK_HEX[..62]),
+            config
+        )
+        .is_err());
+    }
+}
