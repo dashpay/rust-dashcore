@@ -552,7 +552,7 @@ async fn provider_registration_with_platform_node_id_matches_provider_platform_k
         .expect("provider_platform_keys managed")
         .next_eddsa_platform_key(eddsa, true)
         .expect("derive platform");
-    let platform_node_id = dashcore::PlatformNodeId::from_byte_array(
+    let platform_node_id = dashcore::PlatformNodeId::from_canonical_bytes(
         derive_pubkey_hash(&platform_info.address).to_byte_array(),
     );
 

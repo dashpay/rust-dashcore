@@ -547,7 +547,9 @@ impl AddressPool {
                             public_key_bytes.len()
                         ))
                     })?;
-                let node_id = crate::derivation_slip10::tenderdash_node_id(pubkey_arr);
+                let node_id = dashcore::eddsa::EddsaPkBytes::from_bytes(*pubkey_arr)
+                    .hash()
+                    .to_canonical_bytes();
 
                 use dashcore::address::Payload;
                 use dashcore::hashes::Hash;

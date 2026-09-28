@@ -406,7 +406,7 @@ mod tests {
             port: 0,
             script_payout: ScriptBuf::from(vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 0]),
             inputs_hash: InputsHash::all_zeros(),
-            platform_node_id: Some(PlatformNodeId::from_byte_array([0; 20])),
+            platform_node_id: Some(PlatformNodeId::from_bytes([0; 20])),
             platform_p2p_port: Some(0),
             platform_http_port: Some(0),
             payload_sig: BLSSignature::from([0; 96]),
@@ -448,7 +448,7 @@ mod tests {
         assert_eq!(encoded.len(), 207);
 
         let decoded = ProviderUpdateServicePayload::consensus_decode(&mut &encoded[..]).unwrap();
-        assert_eq!(decoded.platform_node_id, Some(PlatformNodeId::from_byte_array([0; 20])));
+        assert_eq!(decoded.platform_node_id, Some(PlatformNodeId::from_bytes([0; 20])));
         assert_eq!(decoded.platform_p2p_port, Some(0));
         assert_eq!(decoded.platform_http_port, Some(0));
     }

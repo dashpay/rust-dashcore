@@ -6,8 +6,6 @@
 
 //! BLS12-381 public key and signatures.
 
-use core::str::FromStr;
-
 #[cfg(feature = "bls")]
 use dash_pkc::__deps::ff::PrimeField;
 #[cfg(feature = "bls")]
@@ -15,7 +13,7 @@ use dash_pkc::bls::{
     BlsPublicKey as PkcPublicKey, BlsScChia, BlsScIetf, BlsScheme as PkcScheme,
     BlsSecretKey as PkcSecretKey, BlsSignature as PkcSignature, Fr,
 };
-use dash_types::{make_bytes, make_sbytes, type_cvrt};
+use dash_types::{make_bytes, make_sbytes};
 use hex::FromHexError;
 #[cfg(feature = "bls")]
 use thiserror::Error as ThisError;
@@ -107,14 +105,6 @@ impl BlsPkBytes {
     }
 }
 
-impl FromStr for BlsPkBytes {
-    type Err = FromHexError;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        Self::from_hex(s)
-    }
-}
-
 #[cfg(feature = "bincode")]
 impl bincode::Encode for BlsPkBytes {
     fn encode<E: bincode::enc::Encoder>(
@@ -142,12 +132,6 @@ impl<'de, C> bincode::BorrowDecode<'de, C> for BlsPkBytes {
         <Self as bincode::Decode<C>>::decode(decoder)
     }
 }
-
-type_cvrt!(
-    for[] TryFrom<&[u8]> for BlsPkBytes,
-    core::array::TryFromSliceError,
-    |v| Ok(Self::from_bytes(<[u8; BLS_PK_LEN]>::try_from(*v)?))
-);
 
 /// A [`BlsPkBytes`] paired with the scheme to read it under.
 #[cfg(feature = "bls")]
@@ -360,14 +344,6 @@ impl BlsSigBytes {
     }
 }
 
-impl FromStr for BlsSigBytes {
-    type Err = FromHexError;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        Self::from_hex(s)
-    }
-}
-
 #[cfg(feature = "bincode")]
 impl bincode::Encode for BlsSigBytes {
     fn encode<E: bincode::enc::Encoder>(
@@ -395,12 +371,6 @@ impl<'de, C> bincode::BorrowDecode<'de, C> for BlsSigBytes {
         <Self as bincode::Decode<C>>::decode(decoder)
     }
 }
-
-type_cvrt!(
-    for[] TryFrom<&[u8]> for BlsSigBytes,
-    core::array::TryFromSliceError,
-    |v| Ok(Self::from_bytes(<[u8; BLS_SIG_LEN]>::try_from(*v)?))
-);
 
 /// A [`BlsSigBytes`] paired with the scheme to read it under.
 #[cfg(feature = "bls")]
