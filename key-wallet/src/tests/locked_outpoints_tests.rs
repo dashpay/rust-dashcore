@@ -615,22 +615,55 @@ async fn special_transaction_funding_skips_the_collateral_even_when_seeded() {
     assert_eq!(spent(&tx), vec![spare.expect("spare coin")]);
 }
 
-/// The chunked drain path offers only what the caller seeds; a seeded copy of
-/// a coin the account holds locked is dropped all the same.
+/// Funding records the coins the account holds locked, and the build drops
+/// them just before coin selection, so a copy seeded after the funding call is
+/// dropped too. `LargestFirst` would take the 1,000 DASH collateral first.
+#[test_case(false ; "seeded before funding")]
+#[test_case(true ; "seeded after funding")]
 #[tokio::test]
-async fn reservation_only_funding_drops_a_seeded_collateral() {
+async fn funding_drops_a_seeded_collateral(seeded_after_funding: bool) {
+    let (mut ctx, collateral, spare) = registered_wallet(Some(SPARE)).await;
+    let stale = stale_copy(&ctx, collateral);
+    let account = ctx.wallet.accounts.standard_bip44_accounts.get(&0).expect("BIP44").clone();
+    let funds = ctx.managed_wallet.accounts.standard_bip44_accounts.get_mut(&0).expect("BIP44");
+
+    let builder = TransactionBuilder::new()
+        .set_current_height(TIP)
+        .set_selection_strategy(SelectionStrategy::LargestFirst);
+    let builder = if seeded_after_funding {
+        builder.add_funding(funds, &account).add_inputs([stale])
+    } else {
+        builder.add_inputs([stale]).add_funding(funds, &account)
+    };
+    let (tx, _fee, _reservation) = builder
+        .add_output(&elsewhere().assume_checked(), DASH)
+        .build_unsigned_reserved()
+        .expect("the spare coin funds the payment");
+
+    assert_eq!(spent(&tx), vec![spare.expect("spare coin")]);
+}
+
+/// The chunked drain path offers only what the caller seeds; a seeded copy of
+/// a coin the account holds locked is dropped all the same, whichever call
+/// comes first.
+#[test_case(false ; "seeded before funding")]
+#[test_case(true ; "seeded after funding")]
+#[tokio::test]
+async fn reservation_only_funding_drops_a_seeded_collateral(seeded_after_funding: bool) {
     let (mut ctx, collateral, _) = registered_wallet(None).await;
     let stale = stale_copy(&ctx, collateral);
     let account = ctx.wallet.accounts.standard_bip44_accounts.get(&0).expect("BIP44").clone();
     let funds = ctx.managed_wallet.accounts.standard_bip44_accounts.get_mut(&0).expect("BIP44");
 
-    let result = TransactionBuilder::new()
+    let builder = TransactionBuilder::new()
         .set_current_height(TIP)
-        .set_selection_strategy(SelectionStrategy::All)
-        .add_inputs([stale])
-        .add_funding_reservation_only(funds, &account)
-        .add_output(&elsewhere().assume_checked(), DASH)
-        .build_unsigned_reserved();
+        .set_selection_strategy(SelectionStrategy::All);
+    let builder = if seeded_after_funding {
+        builder.add_funding_reservation_only(funds, &account).add_inputs([stale])
+    } else {
+        builder.add_inputs([stale]).add_funding_reservation_only(funds, &account)
+    };
+    let result = builder.add_output(&elsewhere().assume_checked(), DASH).build_unsigned_reserved();
 
     assert!(matches!(result, Err(BuilderError::CoinSelection(SelectionError::NoUtxosAvailable))));
 }
