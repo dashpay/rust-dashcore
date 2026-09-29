@@ -753,7 +753,7 @@ mod tests {
 
         let decoded: ProviderRegistrationPayload =
             deserialize(&encoded).expect("deserialize zero-filled payload");
-        assert_eq!(decoded.platform_node_id, Some(crate::PlatformNodeId::from_byte_array([0; 20])));
+        assert_eq!(decoded.platform_node_id, Some(crate::PlatformNodeId::from_bytes([0; 20])));
         assert_eq!(decoded.platform_p2p_port, Some(0));
         assert_eq!(decoded.platform_http_port, Some(0));
     }

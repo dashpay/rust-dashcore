@@ -439,7 +439,7 @@ pub trait ManagedAccountTrait {
         &mut self,
         account_xpriv: crate::derivation_slip10::ExtendedEd25519PrivKey,
         add_to_state: bool,
-    ) -> Result<(crate::derivation_slip10::VerifyingKey, AddressInfo), &'static str> {
+    ) -> Result<(dashcore::eddsa::EddsaPkBytes, AddressInfo), &'static str> {
         match self.managed_account_type_mut() {
             ManagedAccountType::ProviderPlatformKeys {
                 addresses,
@@ -457,10 +457,10 @@ pub trait ManagedAccountTrait {
 
                 addresses.mark_index_used(info.index);
 
-                let verifying_key = crate::derivation_slip10::VerifyingKey::from_bytes(
-                    &pub_key_bytes.try_into().map_err(|_| "Invalid EdDSA public key length")?,
-                )
-                .map_err(|_| "Failed to deserialize EdDSA public key")?;
+                let verifying_key = dashcore::eddsa::EddsaPkBytes::from_bytes(
+                    pub_key_bytes.try_into().map_err(|_| "Invalid EdDSA public key length")?,
+                );
+                verifying_key.validate().map_err(|_| "Failed to deserialize EdDSA public key")?;
 
                 Ok((verifying_key, info))
             }

@@ -110,10 +110,10 @@ fn ed25519_platform_node_keys_match_slip10_reference() {
     // The stored account key must be the account-level key at m/9'/5'/3'/4'.
     let expected_account_sk =
         hex::decode("80035d9c2f89971a9c9fad826bba8be9328f1686ae555e912949c2c32800c379").unwrap();
-    let expected_account_pk = dashcore::ed25519_dalek::SigningKey::from_bytes(
+    let expected_account_pk = dashcore::eddsa::EddsaSkBytes::from_bytes(
         expected_account_sk.as_slice().try_into().unwrap(),
     )
-    .verifying_key();
+    .public_key();
     assert_eq!(account.ed25519_public_key.public_key, expected_account_pk);
 
     // Platform node key 0 (hardened child 0') via the seed-based signing path.
@@ -133,20 +133,19 @@ fn ed25519_platform_node_keys_match_slip10_reference() {
 #[test]
 fn ed25519_platform_node_id_matches_tenderdash_convention() {
     use crate::account::eddsa_account::EdDSAAccount;
-    use crate::derivation_slip10::tenderdash_node_id;
 
     // Platform node key 0 (m/9'/5'/3'/4'/0') for TEST_SEED — the same key the
     // SLIP-0010 vector above pins. Public key and node id cross-checked with
     // an independent Ed25519 implementation (pyca/cryptography).
     let seed = hex::decode(TEST_SEED_HEX).unwrap();
     let sk0 = EdDSAAccount::platform_node_key_at(&seed, Network::Mainnet, 0).unwrap();
-    let pubkey = sk0.verifying_key();
+    let pubkey = sk0.public_key();
     assert_eq!(
         hex::encode(pubkey.to_bytes()),
         "3130c14339391cf26a68d86879e180ee9a16b660f5aa91f560f67c0abe8cf789"
     );
     assert_eq!(
-        hex::encode(tenderdash_node_id(&pubkey.to_bytes())),
+        hex::encode(pubkey.hash().to_canonical_bytes()),
         "302f2615e6955cce8ed3cff81e8011bfd3a2991f"
     );
 }

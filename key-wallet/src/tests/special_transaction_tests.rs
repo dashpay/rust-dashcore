@@ -206,7 +206,7 @@ fn create_special_transaction(tx_type: SpecialTransactionType) -> Transaction {
                 script_payout: ScriptBuf::new(),
                 inputs_hash: InputsHash::from_byte_array([6u8; 32]),
                 signature: vec![7u8; 96],
-                platform_node_id: Some(PlatformNodeId::from_byte_array([8u8; 20])),
+                platform_node_id: Some(PlatformNodeId::from_bytes([8u8; 20])),
                 platform_p2p_port: Some(26656),
                 platform_http_port: Some(443),
             };
@@ -231,7 +231,7 @@ fn create_special_transaction(tx_type: SpecialTransactionType) -> Transaction {
                 port: 19999,
                 script_payout: ScriptBuf::new(),
                 inputs_hash: InputsHash::from_byte_array([10u8; 32]),
-                platform_node_id: Some(PlatformNodeId::from_byte_array([12u8; 20])),
+                platform_node_id: Some(PlatformNodeId::from_bytes([12u8; 20])),
                 platform_p2p_port: Some(26656),
                 platform_http_port: Some(443),
                 payload_sig: BLSSignature::from([11u8; 96]),
