@@ -104,7 +104,7 @@ impl FilterStorage for PersistentFilterStorage {
     }
 
     async fn clear_filters(&mut self) -> StorageResult<()> {
-        self.filters.write().await.clear()
+        self.filters.write().await.clear().await
     }
 
     async fn truncate_above(&mut self, target_height: u32) -> StorageResult<()> {

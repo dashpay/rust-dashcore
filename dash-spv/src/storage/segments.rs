@@ -79,9 +79,6 @@ pub struct SegmentCache<I: Persistable> {
     tip_height: Option<u32>,
     start_height: Option<u32>,
     segments_dir: PathBuf,
-    /// Segment ids whose backing files must be removed on the next `persist`.
-    /// Populated by `truncate_above` for segments that are dropped entirely.
-    to_delete: HashSet<u32>,
 }
 
 impl<I: Persistable> SegmentCache<I> {
@@ -95,7 +92,6 @@ impl<I: Persistable> SegmentCache<I> {
             tip_height: None,
             start_height: None,
             segments_dir: segments_dir.clone(),
-            to_delete: HashSet::new(),
         };
 
         // Building the metadata
@@ -172,8 +168,6 @@ impl<I: Persistable> SegmentCache<I> {
         &'a mut self,
         segment_id: &u32,
     ) -> StorageResult<&'a mut Segment<I>> {
-        let segments_len = self.segments.len();
-
         if self.segments.contains_key(segment_id) {
             tracing::trace!(
                 "SegmentCache<{}>: segment {segment_id} cache hit",
@@ -184,7 +178,7 @@ impl<I: Persistable> SegmentCache<I> {
             return Ok(segment);
         }
 
-        if segments_len >= Self::MAX_ACTIVE_SEGMENTS {
+        if self.segments.len() >= Self::MAX_ACTIVE_SEGMENTS {
             let key_to_evict =
                 self.segments.iter().min_by_key(|(_, s)| s.last_accessed).map(|(k, _)| *k);
 
@@ -196,24 +190,13 @@ impl<I: Persistable> SegmentCache<I> {
             }
         }
 
-        // If the segment is queued for deletion, return a fresh empty segment.
-        // The next `persist` will atomically overwrite the stale file.
-        // Otherwise, load it from disk.
-        let (segment, source) = if self.to_delete.remove(segment_id) {
-            (Segment::new(*segment_id, vec![], SegmentState::Dirty), "new")
-        } else {
-            let segment = Segment::load(&self.segments_dir, *segment_id).await?;
-            let source = if segment.state == SegmentState::Clean {
-                "disk"
-            } else {
-                "new"
-            };
-            (segment, source)
-        };
-        tracing::trace!(
-            "SegmentCache<{}>: segment {segment_id} cache miss ({source})",
-            std::any::type_name::<I>()
-        );
+        let segment = Segment::load(&self.segments_dir, *segment_id).await?;
+        if segment.state == SegmentState::Clean {
+            tracing::trace!(
+                "SegmentCache<{}>: segment {segment_id} cache miss",
+                std::any::type_name::<I>()
+            );
+        }
 
         let segment = self.segments.entry(*segment_id).or_insert(segment);
         Ok(segment)
@@ -222,19 +205,17 @@ impl<I: Persistable> SegmentCache<I> {
     /// Load a contiguous range of items by height.
     ///
     /// Returns `StorageError::InvalidArgument` when the requested range extends
-    /// into a segment queued for deletion by a prior `truncate_above` (before
-    /// the next `persist`). Callers reading across a truncation boundary must
-    /// clamp their range to `tip_height` first, or fall back to per-item reads
-    /// via `get_item`, which returns `Ok(None)` for those slots.
+    /// above the tip. Callers reading across a truncation boundary must clamp
+    /// their range to `tip_height` first, or fall back to per-item reads via
+    /// `get_item`, which returns `Ok(None)` for those slots.
     pub async fn get_items(&mut self, height_range: Range<u32>) -> StorageResult<Vec<I>> {
         debug_assert!(height_range.start < height_range.end);
 
         let start = height_range.start;
         let end = height_range.end;
 
-        // Reject ranges that extend past the current tip. After a within-segment
-        // `truncate_above`, the boundary segment is not in `to_delete` so the
-        // loop guard below cannot catch overruns into its sentinel tail.
+        // Reject ranges that extend past the current tip, including the
+        // sentinel tail a `truncate_above` leaves in the boundary segment.
         if end > self.next_height() {
             return Err(StorageError::InvalidArgument(format!(
                 "get_items range {height_range:?} extends above tip {:?}",
@@ -267,16 +248,6 @@ impl<I: Persistable> SegmentCache<I> {
         let end_segment = Self::height_to_segment_id(end - 1);
 
         for segment_id in start_segment..=end_segment {
-            // Same guard as `get_item`: a segment queued for deletion holds
-            // nothing but sentinels by construction. Loading it via
-            // `get_segment_mut` would consume the deletion intent and queue
-            // an all-sentinel rewrite, so refuse the read instead.
-            if self.to_delete.contains(&segment_id) {
-                return Err(StorageError::InvalidArgument(format!(
-                    "get_items range {height_range:?} extends into segment {segment_id} queued for deletion"
-                )));
-            }
-
             let segment = self.get_segment_mut(&segment_id).await?;
 
             let seg_start = if segment_id == start_segment {
@@ -325,21 +296,19 @@ impl<I: Persistable> SegmentCache<I> {
     /// Get a single item by height. Returns `None` for sentinel (empty) slots.
     /// Unlike `get_items()`, this does not assert dense storage, safe for sparse data.
     ///
-    /// For heights in a segment queued for deletion by a prior `truncate_above`
-    /// (before the next `persist`), this returns `Ok(None)` rather than the
+    /// For heights above the tip this returns `Ok(None)` rather than the
     /// `StorageError::InvalidArgument` that `get_items` returns. Callers must
     /// not interpret `Ok(None)` here as a fallback for an error from `get_items`.
     /// The two APIs report truncated slots differently by design.
     pub async fn get_item(&mut self, height: u32) -> StorageResult<Option<I>> {
-        let segment_id = Self::height_to_segment_id(height);
-
-        // A segment queued for deletion holds nothing but sentinels by
-        // construction. Short-circuit so a read above the truncated tip does
-        // not consume the deletion intent in `get_segment_mut` and replace
-        // the stale on-disk file with a fresh all-sentinel blob.
-        if self.to_delete.contains(&segment_id) {
+        // Loading a segment outside the stored range would create it empty and
+        // the next `persist` would write it back.
+        if self.start_height.is_none_or(|start| height < start)
+            || self.tip_height.is_none_or(|tip| height > tip)
+        {
             return Ok(None);
         }
+        let segment_id = Self::height_to_segment_id(height);
 
         let offset = Self::height_to_offset(height);
         let segment = self.get_segment_mut(&segment_id).await?;
@@ -401,8 +370,8 @@ impl<I: Persistable> SegmentCache<I> {
 
     /// Truncate the cache so that no items above `target_height` remain.
     ///
-    /// Segments entirely above the target are dropped from memory and queued for
-    /// deletion on the next `persist`. The segment containing `target_height + 1`
+    /// Segments entirely above the target are dropped from memory and their
+    /// files deleted. The segment containing `target_height + 1`
     /// has its tail slots reset to `I::sentinel()` so subsequent `Segment::insert`
     /// calls into the same range remain sound.
     ///
@@ -410,10 +379,9 @@ impl<I: Persistable> SegmentCache<I> {
     /// resulting cache would have a hole below its origin. Callers must guard
     /// against truncating an empty cache except as a no-op (no error).
     ///
-    /// The truncation is not durable until the next successful `persist` call.
-    /// A crash between `truncate_above` and `persist` may leave orphaned segment
-    /// files on disk, causing `tip_height` to be recomputed from stale data on
-    /// restart and the cache to reopen at the pre-truncation tip.
+    /// The reset of the boundary segment is not durable until the next
+    /// successful `persist` call. A crash in between reopens the cache with the
+    /// boundary segment's pre-truncation items.
     pub async fn truncate_above(&mut self, target_height: u32) -> StorageResult<()> {
         let tip = match self.tip_height {
             Some(tip) => tip,
@@ -436,18 +404,15 @@ impl<I: Persistable> SegmentCache<I> {
         let boundary_offset = Self::height_to_offset(target_height);
         let max_segment_id = Self::height_to_segment_id(tip);
 
-        // Load the boundary segment first so any disk I/O error is surfaced
-        // before mutating cache state. After this point only infallible
-        // in-memory operations run, so the function cannot leave the cache
-        // in a half-truncated state.
+        // Load the boundary segment first so a read error is surfaced before
+        // mutating cache state.
         if boundary_offset + 1 < Segment::<I>::ITEMS_PER_SEGMENT {
             let segment = self.get_segment_mut(&boundary_segment_id).await?;
             segment.reset_above(boundary_offset);
         }
 
-        for segment_id in (boundary_segment_id + 1)..=max_segment_id {
-            self.segments.remove(&segment_id);
-            self.to_delete.insert(segment_id);
+        for id in (boundary_segment_id + 1)..=max_segment_id {
+            self.remove_segment(id).await?;
         }
 
         self.tip_height = Some(target_height);
@@ -458,18 +423,15 @@ impl<I: Persistable> SegmentCache<I> {
     /// Drop every stored item, leaving the cache empty.
     ///
     /// All backing segment files — including segments not currently resident
-    /// in memory — are queued for deletion on the next `persist`. Like
-    /// `truncate_above`, the deletion is not durable until that `persist`
-    /// succeeds; a crash in between leaves the old files on disk and the
-    /// cache reopens with the pre-clear contents.
+    /// in memory — are deleted.
     ///
     /// The directory scan runs to completion *before* any cache state is
     /// mutated: a failed scan must not leave the cache reporting empty while
     /// persisted segment files survive on disk, since those would resurrect
     /// after restart. A missing segments directory is treated as an empty
     /// (already-cleared) cache; any other I/O error is propagated.
-    pub fn clear(&mut self) -> StorageResult<()> {
-        // Queue every on-disk segment file, discovered by directory scan since
+    pub async fn clear(&mut self) -> StorageResult<()> {
+        // Collect every on-disk segment file, discovered by directory scan since
         // only up to MAX_ACTIVE_SEGMENTS of them are resident in memory.
         let mut to_delete = HashSet::new();
         match fs::read_dir(&self.segments_dir) {
@@ -490,12 +452,13 @@ impl<I: Persistable> SegmentCache<I> {
 
         // Scan succeeded — now it is safe to mutate cache state. Resident
         // segments may be dirty and not persisted yet, so the scan above
-        // cannot see them. Queue their ids too; `persist` ignores missing
-        // files.
+        // cannot see them; `remove_segment` ignores their missing files.
         to_delete.extend(self.segments.keys().copied());
 
-        self.to_delete.extend(to_delete);
-        self.segments.clear();
+        for id in to_delete {
+            self.remove_segment(id).await?;
+        }
+
         self.tip_height = None;
         self.start_height = None;
 
@@ -505,24 +468,23 @@ impl<I: Persistable> SegmentCache<I> {
     pub async fn persist(&mut self, segments_dir: impl Into<PathBuf>) {
         let segments_dir = segments_dir.into();
 
-        let mut failed = HashSet::new();
-        for id in self.to_delete.drain() {
-            let path = segments_dir.join(I::segment_file_name(id));
-            match tokio::fs::remove_file(&path).await {
-                Ok(_) => {}
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-                Err(e) => {
-                    tracing::error!("Failed to delete segment file {:?}: {}", path, e);
-                    failed.insert(id);
-                }
-            }
-        }
-        self.to_delete.extend(failed);
-
         for (id, segments) in self.segments.iter_mut() {
             if let Err(e) = segments.persist(&segments_dir).await {
                 tracing::error!("Failed to persist segment with id {id}: {e}");
             }
+        }
+    }
+
+    async fn remove_segment(&mut self, id: u32) -> StorageResult<()> {
+        self.segments.remove(&id);
+
+        let path = self.segments_dir.join(I::segment_file_name(id));
+        match tokio::fs::remove_file(&path).await {
+            Ok(_) => Ok(()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(e) => Err(StorageError::WriteFailed(format!(
+                "Failed to delete segment file {path:?}: {e}"
+            ))),
         }
     }
 
@@ -964,9 +926,8 @@ mod tests {
         let mut cache = SegmentCache::<FilterHeader>::load_or_new(tmp_dir.path()).await.unwrap();
         cache.truncate_above(ITEMS_PER_SEGMENT - 1).await.unwrap();
 
-        // Re-store into the dropped segment BEFORE persist runs. Without the
-        // to_delete check in get_segment_mut, the stale on-disk file would be
-        // loaded and the insert would hit the sentinel debug_assert.
+        // Re-store into the dropped segment before persist runs: its file is
+        // gone, so the insert starts from an empty segment.
         let replacement = FilterHeader::dummy_batch(500..505);
         cache.store_items_at_height(&replacement, ITEMS_PER_SEGMENT).await.unwrap();
         assert_eq!(cache.tip_height(), Some(ITEMS_PER_SEGMENT + 4));
@@ -998,10 +959,10 @@ mod tests {
 
         let mut cache = SegmentCache::<FilterHeader>::load_or_new(tmp_dir.path()).await.unwrap();
         cache.truncate_above(ITEMS_PER_SEGMENT - 1).await.unwrap();
+        assert!(!dropped_segment_file.exists());
 
-        // Reading above the truncated tip must not cancel the pending deletion.
-        // Without the to_delete short-circuit in get_item, this read would
-        // remove the entry from to_delete and queue an all-sentinel rewrite.
+        // Reading above the truncated tip must not bring the segment back as an
+        // all-sentinel file on the next persist.
         assert_eq!(cache.get_item(ITEMS_PER_SEGMENT + 2).await.unwrap(), None);
         assert_eq!(cache.get_item(ITEMS_PER_SEGMENT).await.unwrap(), None);
 
@@ -1027,9 +988,8 @@ mod tests {
         let mut cache = SegmentCache::<FilterHeader>::load_or_new(tmp_dir.path()).await.unwrap();
         cache.truncate_above(ITEMS_PER_SEGMENT - 1).await.unwrap();
 
-        // A range read that spans into a segment queued for deletion must
-        // error rather than consuming the deletion intent and handing back
-        // sentinels.
+        // A range read that spans into the dropped segment must error rather
+        // than bring it back as sentinels.
         assert!(matches!(
             cache.get_items(ITEMS_PER_SEGMENT..ITEMS_PER_SEGMENT + 5).await,
             Err(StorageError::InvalidArgument(_))
@@ -1049,9 +1009,9 @@ mod tests {
         cache.store_items_at_height(&items, 0).await.unwrap();
         cache.truncate_above(9).await.unwrap();
 
-        // The boundary segment is not in `to_delete`, but reading past the
-        // truncated tip would land in its sentinel tail. Fail fast instead of
-        // panicking on the `last_valid_offset` debug_assert.
+        // Reading past the truncated tip would land in the boundary segment's
+        // sentinel tail. Fail fast instead of panicking on the
+        // `last_valid_offset` debug_assert.
         assert!(matches!(cache.get_items(0..15).await, Err(StorageError::InvalidArgument(_))));
         assert!(matches!(cache.get_items(8..11).await, Err(StorageError::InvalidArgument(_))));
 
@@ -1206,14 +1166,16 @@ mod tests {
 
         // Reopen (so only the min/max segments are resident) and clear.
         let mut cache = SegmentCache::<FilterHeader>::load_or_new(tmp_dir.path()).await.unwrap();
-        cache.clear().unwrap();
+        cache.clear().await.unwrap();
+        assert!(!file_0.exists());
+        assert!(!file_1.exists());
 
         assert_eq!(cache.tip_height(), None);
         assert_eq!(cache.start_height(), None);
         assert_eq!(cache.get_item(3).await.unwrap(), None);
         assert!(cache.get_items(0..5).await.is_err());
 
-        // The deletion becomes durable on persist.
+        // Reads after the clear must not bring the files back.
         cache.persist(tmp_dir.path()).await;
         assert!(!file_0.exists());
         assert!(!file_1.exists());
@@ -1247,7 +1209,7 @@ mod tests {
         // without an intervening persist.
         let more = FilterHeader::dummy_batch(100..105);
         cache.store_items_at_height(&more, 10).await.unwrap();
-        cache.clear().unwrap();
+        cache.clear().await.unwrap();
 
         assert_eq!(cache.tip_height(), None);
         assert_eq!(cache.start_height(), None);
