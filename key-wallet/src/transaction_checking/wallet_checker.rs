@@ -6,6 +6,8 @@
 pub(crate) use super::account_checker::TransactionCheckResult;
 use super::transaction_context::TransactionContext;
 use super::transaction_router::{AccountTypeToCheck, TransactionRouter};
+#[cfg(not(feature = "keep-finalized-transactions"))]
+use crate::managed_account::ManagedAccountRefMut;
 use crate::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
 use crate::wallet::managed_wallet_info::ManagedWalletInfo;
 use crate::{KeySource, Wallet};
@@ -77,6 +79,23 @@ impl ManagedWalletInfo {
                             *existing = record;
                         } else {
                             result.updated_records.push(record);
+                        }
+                    }
+                }
+            }
+        }
+        // Keep every input available until the complete correction has been captured.
+        #[cfg(not(feature = "keep-finalized-transactions"))]
+        for mut account in self.accounts.all_accounts_mut() {
+            let account_type = account.managed_account_type().to_account_type();
+            for record in &result.updated_records {
+                if record.account_type == account_type && record.context.is_chain_locked() {
+                    match &mut account {
+                        ManagedAccountRefMut::Funds(funds) => {
+                            funds.keys_mut().drop_finalized_transaction(&record.txid);
+                        }
+                        ManagedAccountRefMut::Keys(keys) => {
+                            keys.drop_finalized_transaction(&record.txid);
                         }
                     }
                 }
@@ -3811,6 +3830,75 @@ mod tests {
         assert!(!utxo.is_trusted, "external payment is not a self-send change");
         assert_eq!(ctx.managed_wallet.balance.confirmed(), 0);
         assert_eq!(ctx.managed_wallet.balance.unconfirmed(), payment_value);
+    }
+
+    #[test]
+    fn born_spent_attribution_preserves_finalized_retention() {
+        use crate::account::TransactionRecord;
+
+        for already_finalized in [false, true] {
+            let mut ctx = TestWalletContext::new_random();
+            let funding = Transaction::dummy(&ctx.receive_address, 0..1, &[40_000, 60_000]);
+            let outpoints: Vec<_> = (0..2)
+                .map(|vout| OutPoint {
+                    txid: funding.txid(),
+                    vout,
+                })
+                .collect();
+            let mut spender = Transaction::dummy(&ctx.receive_address, 0..2, &[99_000]);
+            for (input, outpoint) in spender.input.iter_mut().zip(&outpoints) {
+                input.previous_output = *outpoint;
+            }
+            let txid = spender.txid();
+            let sibling = ctx.managed_wallet.coinjoin_managed_account_at_index_mut(0).unwrap();
+            let template = TransactionRecord::new(
+                spender,
+                sibling.managed_account_type().to_account_type(),
+                TransactionContext::InChainLockedBlock(BlockInfo::new(
+                    2,
+                    BlockHash::all_zeros(),
+                    123,
+                )),
+                TransactionType::Standard,
+                TransactionDirection::Incoming,
+                Vec::new(),
+                Vec::new(),
+                0,
+            );
+            sibling.transactions_mut().insert(txid, template.clone());
+            if already_finalized {
+                let owner = ctx.managed_wallet.first_bip44_managed_account_mut().unwrap();
+                let mut record = template;
+                record.account_type = owner.managed_account_type().to_account_type();
+                owner.transactions_mut().insert(txid, record);
+                #[cfg(not(feature = "keep-finalized-transactions"))]
+                owner.keys_mut().drop_finalized_transaction(&txid);
+            }
+            let mut result = ctx.managed_wallet.accounts.check_transaction(&funding, &[]);
+            ctx.managed_wallet.attribute_born_spent(
+                &[
+                    (outpoints[0], 40_000, ctx.receive_address.clone()),
+                    (outpoints[1], 60_000, ctx.receive_address.clone()),
+                ],
+                &mut result,
+            );
+            let owner = ctx.managed_wallet.first_bip44_managed_account().unwrap();
+            #[cfg(not(feature = "keep-finalized-transactions"))]
+            if already_finalized {
+                assert!(result.updated_records.is_empty(), "do not resurrect finalized records");
+                assert!(!owner.transactions().contains_key(&txid));
+                continue;
+            }
+            assert_eq!(result.updated_records.len(), 1);
+            let corrected = &result.updated_records[0];
+            assert_eq!(corrected.input_details.len(), 2, "publish all late inputs together");
+            assert_eq!(corrected.net_amount, -1_000);
+            assert!(owner.transaction_is_finalized(&txid));
+            assert_eq!(
+                owner.transactions().contains_key(&txid),
+                cfg!(feature = "keep-finalized-transactions"),
+            );
+        }
     }
 
     /// A late input belongs to its funding account even when another account first saw the spender.

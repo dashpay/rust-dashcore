@@ -449,6 +449,10 @@ impl ManagedCoreFundsAccount {
         }
         let mut corrected = Vec::new();
         for template in spenders {
+            #[cfg(not(feature = "keep-finalized-transactions"))]
+            if self.keys.transaction_is_finalized(&template.txid) {
+                continue;
+            }
             let Some(input_index) = template
                 .transaction
                 .input
