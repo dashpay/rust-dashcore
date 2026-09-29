@@ -15,17 +15,19 @@ use tokio::time;
 
 use super::setup::{TestContext, SYNC_TIMEOUT};
 
-/// Files under each top-level directory of the storage at `root`.
+/// Files under each top-level entry of the storage at `root`, a top-level file counting as one.
 pub(super) fn storage_snapshot(root: &Path) -> BTreeMap<String, usize> {
     let mut counts = BTreeMap::new();
     let Ok(entries) = std::fs::read_dir(root) else {
         return counts;
     };
     for entry in entries.flatten() {
-        if !entry.path().is_dir() {
-            continue;
-        }
-        let files = walkdir_count(&entry.path());
+        let path = entry.path();
+        let files = if path.is_dir() {
+            walkdir_count(&path)
+        } else {
+            1
+        };
         counts.insert(entry.file_name().to_string_lossy().into_owned(), files);
     }
     counts
@@ -52,6 +54,7 @@ pub(super) const EXPECTED_STORAGE: &[(&str, &str)] = &[
     ("block_headers", "headers synced to the tip"),
     ("filter_headers", "filter headers synced to the tip"),
     ("metadata", "sync checkpoints"),
+    ("version.json", "the storage version system"),
     ("peers", "peer set and reputations"),
     ("masternodes", "the masternode messages this session stored"),
 ];
