@@ -8,10 +8,13 @@ mod io;
 mod lockfile;
 mod masternode;
 mod metadata;
+mod migrator;
 mod peers;
 mod segments;
+
 use crate::error::StorageResult;
 use crate::storage::lockfile::LockFile;
+use crate::storage::migrator::StorageMigrator;
 use crate::types::{HashedBlock, HashedBlockHeader};
 use crate::ClientConfig;
 use async_trait::async_trait;
@@ -137,6 +140,8 @@ impl DiskStorageManager {
 
         let lock_file = LockFile::new(lock_file)?;
 
+        StorageMigrator::migrate(&storage_path).await?;
+
         let block_headers =
             Arc::new(RwLock::new(PersistentBlockHeaderStorage::open(&storage_path).await?));
 
@@ -248,6 +253,8 @@ impl StorageManager for DiskStorageManager {
 
         // Instantiate storages again once persisted data has been cleared
         let storage_path = &self.storage_path;
+
+        StorageMigrator::migrate(storage_path).await?;
 
         self.block_headers =
             Arc::new(RwLock::new(PersistentBlockHeaderStorage::open(storage_path).await?));
