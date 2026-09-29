@@ -1,5 +1,7 @@
 mod dashboard;
 mod metrics;
+#[cfg(target_os = "linux")]
+mod profile;
 
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -40,11 +42,11 @@ fn load_mnemonics() -> Vec<String> {
         .unwrap_or_default()
 }
 
-fn peak_rss_kb() -> Option<u64> {
+fn proc_status_kb(field: &str) -> Option<u64> {
     std::fs::read_to_string("/proc/self/status")
         .ok()?
         .lines()
-        .find_map(|line| line.strip_prefix("VmHWM:"))?
+        .find_map(|line| line.strip_prefix(field))?
         .split_whitespace()
         .next()?
         .parse()
@@ -88,6 +90,9 @@ async fn main() -> Result<()> {
                 .with_filter(file_filter),
         )
         .init();
+
+    #[cfg(target_os = "linux")]
+    let profilers = profile::start();
 
     let mode = env_or("BENCH_MODE", "local").trim().to_ascii_lowercase();
     let (network, remote) = match mode.as_str() {
@@ -197,9 +202,13 @@ async fn main() -> Result<()> {
     run_handle.abort();
     let _ = run_handle.await;
 
+    let peak_rss_kb = proc_status_kb("VmHWM:");
+    #[cfg(target_os = "linux")]
+    profilers.finish(&output_dir);
+
     use std::fmt::Write as _;
     let mut report = format!("{m}\n");
-    if let Some(kb) = peak_rss_kb() {
+    if let Some(kb) = peak_rss_kb {
         let _ = writeln!(report, "peak_rss_mib:         {}", kb / 1024);
     }
 
