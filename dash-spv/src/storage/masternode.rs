@@ -6,6 +6,7 @@ use async_trait::async_trait;
 use tokio::sync::RwLock;
 
 use dashcore::consensus::{deserialize, serialize, Decodable, Encodable};
+use dashcore::network::constants::NetworkExt;
 use dashcore::network::message_qrinfo::QRInfo;
 use dashcore::network::message_sml::MnListDiff;
 use dashcore::prelude::CoreBlockHeight;
@@ -172,6 +173,9 @@ impl<H: BlockHeaderStorage> MessageLog<H> {
         mut visit: impl FnMut(&MasternodeListEngine),
     ) -> MasternodeListEngine {
         let mut engine = MasternodeListEngine::default_for_network(self.network);
+        if let Some(genesis) = self.network.known_genesis_block_hash() {
+            engine.feed_block_height(0, genesis);
+        }
 
         let entries =
             self.diffs.range(..=until).map(|(height, path)| (*height, Kind::Diff, path)).chain(
@@ -631,6 +635,55 @@ mod tests {
             Message::QrInfo(Box::new(qr_info)).base_hashes(),
             vec![hash(0xA0)],
             "the empty diff at the start of the chain needs its list to exist already"
+        );
+    }
+
+    /// Mainnet headers start at a checkpoint, so the genesis a first QRInfo
+    /// is built from has no height. A work-block diff requested from a list
+    /// that QRInfo built still has to replay after it.
+    #[tokio::test]
+    async fn replay_applies_a_diff_on_a_list_of_a_qr_info_built_from_genesis() {
+        use dashcore::sml::masternode_list_engine::MasternodeListEngineBlockContainer;
+
+        fn decode<T: bincode::Decode<()>>(bytes: &[u8]) -> T {
+            bincode::decode_from_slice(bytes, bincode::config::standard()).unwrap().0
+        }
+
+        let MasternodeListEngineBlockContainer::BTreeMapContainer(container) = decode(
+            include_bytes!("../../../dash/tests/data/test_DML_diffs/block_container_2518986.dat"),
+        );
+        let qr_info: QRInfo =
+            decode(include_bytes!("../../../dash/tests/data/test_DML_diffs/qrinfo_2518986.dat"));
+
+        let mut heights: std::collections::HashMap<_, _> =
+            container.block_heights.into_iter().collect();
+        heights.remove(&Network::Mainnet.known_genesis_block_hash().unwrap());
+        let tip_height = heights[&qr_info.mn_list_diff_tip.block_hash];
+        let base = qr_info.mn_list_diff_at_h_minus_c.block_hash;
+        let work_block_height = heights[&base] + 24;
+        heights.insert(hash(0xEE), work_block_height);
+
+        let dir = TempDir::new().unwrap();
+        let mut storage = PersistentMasternodeStorage::open(
+            dir.path(),
+            Arc::new(RwLock::new(MockHeaderStorage(heights))),
+            Network::Mainnet,
+        )
+        .await
+        .unwrap();
+        storage.store_qr_info(tip_height, &qr_info).await.unwrap();
+        let diff = MnListDiff {
+            base_block_hash: base,
+            ..MnListDiff::dummy(0x00, 0xEE)
+        };
+        storage.store_diff(work_block_height, &diff).await.unwrap();
+
+        let engine = storage.load_engine().await.unwrap();
+
+        assert!(engine.masternode_lists.contains_key(&tip_height), "the QRInfo replays");
+        assert!(
+            engine.masternode_lists.contains_key(&work_block_height),
+            "the diff on the QRInfo's h-c list replays after the QRInfo"
         );
     }
 }
