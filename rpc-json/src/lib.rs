@@ -2069,6 +2069,10 @@ pub struct MasternodeAddresses {
     pub platform_https: Vec<String>,
 }
 
+/// Host of a platform entry in a diff whose port changed alone. Core's diff does not carry the
+/// masternode's address then, so it prints this in place of the primary core P2P host.
+const PLACEHOLDER_PLATFORM_HOST: &str = "255.255.255.255";
+
 impl MasternodeAddresses {
     /// First valid `(host, port)` from a `"host:port"` array, if any.
     ///
@@ -2076,6 +2080,65 @@ impl MasternodeAddresses {
     /// skipped because Dash Core uses `0` as a "not set" sentinel.
     fn first_valid_host_port(addrs: &[String]) -> Option<(String, u32)> {
         addrs.iter().filter_map(|a| parse_host_port(a)).find(|(_, p)| *p != 0)
+    }
+
+    /// A masternode's addresses after a diff's `addresses`, as Core prints the resulting full
+    /// state. `current` is `None` when the state predates nested addresses, so its core address
+    /// is unknown.
+    ///
+    /// Core's diff prints `addresses` per changed purpose, not as a whole. A changed core
+    /// address (`core_address_changed`: the diff prints `service`) prints the whole new
+    /// `core_p2p`; an extended-address masternode's diff then prints every purpose, while a
+    /// legacy Evo's leaves out a platform entry whose port did not change, and Core renders it
+    /// on the new primary address. A legacy Evo's platform port changing alone prints the
+    /// entry with [`PLACEHOLDER_PLATFORM_HOST`] for the primary host; with the primary host
+    /// unknown the entry is dropped, leaving the flat port the diff also prints. Without a core
+    /// address Core prints no platform entries.
+    fn merged_with_diff(current: Option<Self>, diff: Self, core_address_changed: bool) -> Self {
+        let core_address_changed = core_address_changed || !diff.core_p2p.is_empty();
+        let current_known = current.is_some();
+        let current = current.unwrap_or_default();
+        let core_p2p = if core_address_changed {
+            diff.core_p2p
+        } else {
+            current.core_p2p
+        };
+        if core_p2p.is_empty() && (core_address_changed || current_known) {
+            return Self::default();
+        }
+        let primary_host =
+            core_p2p.first().and_then(|entry| parse_host_port(entry)).map(|(h, _)| h);
+        let on_primary_host = |entry: &String| {
+            let (_, port) = parse_host_port(entry)?;
+            Some(format!("{}:{port}", primary_host.as_ref()?))
+        };
+        let platform = |diff_entries: Vec<String>, entries: Vec<String>| -> Vec<String> {
+            if !diff_entries.is_empty() {
+                // The diff's entries replace the purpose's, the placeholder host resolved.
+                diff_entries
+                    .into_iter()
+                    .filter_map(|entry| match parse_host_port(&entry) {
+                        Some((host, _)) if host == PLACEHOLDER_PLATFORM_HOST => {
+                            on_primary_host(&entry)
+                        }
+                        _ => Some(entry),
+                    })
+                    .collect()
+            } else if core_address_changed {
+                // A legacy Evo's platform entries follow its primary address.
+                entries
+                    .iter()
+                    .map(|entry| on_primary_host(entry).unwrap_or_else(|| entry.clone()))
+                    .collect()
+            } else {
+                entries
+            }
+        };
+        Self {
+            platform_p2p: platform(diff.platform_p2p, current.platform_p2p),
+            platform_https: platform(diff.platform_https, current.platform_https),
+            core_p2p,
+        }
     }
 }
 
@@ -2158,6 +2221,9 @@ pub struct DMNState {
     #[deprecated(note = "Core 23+ nested addresses.platform_https should be used instead")]
     #[serde(default, rename = "platformHTTPPort", deserialize_with = "deserialize_u32_opt")]
     pub legacy_platform_http_port: Option<u32>,
+    /// Nested addresses; `None` when the source predates them (Core before 23, or a state
+    /// rebuilt from stored ports). [`apply_diff`](Self::apply_diff) merges a diff's per-purpose
+    /// `addresses` into them.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub addresses: Option<MasternodeAddresses>,
 }
@@ -2165,11 +2231,13 @@ pub struct DMNState {
 impl DMNState {
     /// Resolved platform P2P `(host, port)`.
     ///
-    /// Prefers the Core 23+ nested `addresses.platform_p2p` entry, returning its
-    /// host and port verbatim. Falls back to the deprecated top-level
-    /// `platformP2PPort`, pairing it with the node IP from [`service`](Self::service)
-    /// because Dash deploys platform services on the masternode's core IP. Returns
-    /// `None` when no source yields a non-zero in-range port.
+    /// Prefers the first Core 23+ nested `addresses.platform_p2p` entry with a non-zero port,
+    /// returning its host and port verbatim. Otherwise falls back to the deprecated top-level
+    /// `platformP2PPort` as-is, zero included, paired with the node IP from
+    /// [`service`](Self::service) because Dash deploys platform services on the masternode's
+    /// core IP. The fallback also covers nested addresses without a platform entry, which is
+    /// how Core prints a legacy Evo without an address (`addresses: {}` beside its flat ports).
+    /// Returns `None` when neither source has a port.
     #[allow(deprecated)]
     pub fn platform_p2p_address(&self) -> Option<(String, u32)> {
         self.addresses
@@ -2180,11 +2248,8 @@ impl DMNState {
 
     /// Resolved platform HTTPS `(host, port)`.
     ///
-    /// Prefers the Core 23+ nested `addresses.platform_https` entry, returning its
-    /// host and port verbatim. Falls back to the deprecated top-level
-    /// `platformHTTPPort`, pairing it with the node IP from [`service`](Self::service)
-    /// because Dash deploys platform services on the masternode's core IP. Returns
-    /// `None` when no source yields a non-zero in-range port.
+    /// Resolved like [`platform_p2p_address`](Self::platform_p2p_address), from
+    /// `addresses.platform_https` and the deprecated top-level `platformHTTPPort`.
     #[allow(deprecated)]
     pub fn platform_http_address(&self) -> Option<(String, u32)> {
         self.addresses
@@ -2193,11 +2258,10 @@ impl DMNState {
             .or_else(|| self.legacy_platform_address(self.legacy_platform_http_port))
     }
 
-    /// Pairs a legacy platform port with the node IP, dropping zero, absent, and
-    /// out-of-`u16`-range ports so the result honors the TCP/UDP port range.
+    /// Pairs a legacy platform port with the node IP, dropping absent and out-of-`u16`-range
+    /// ports so the result honors the TCP/UDP port range.
     fn legacy_platform_address(&self, port: Option<u32>) -> Option<(String, u32)> {
         port.and_then(|p| u16::try_from(p).ok())
-            .filter(|&p| p != 0)
             .map(|p| (self.service.ip().to_string(), u32::from(p)))
     }
 }
@@ -2332,6 +2396,8 @@ impl DMNStateDiff {
     /// entry. The legacy top-level `platformP2PPort` is not resolved here: a diff
     /// carries no node IP to pair it with, so a host would have to be fabricated.
     /// Read the legacy port via [`legacy_platform_p2p_port`](Self::legacy_platform_p2p_port).
+    /// A legacy Evo's port-only diff prints the host as `255.255.255.255`, standing for the
+    /// masternode's primary address; [`DMNState::apply_diff`] resolves it.
     pub fn platform_p2p_address(&self) -> Option<(String, u32)> {
         self.addresses
             .as_ref()
@@ -2345,6 +2411,8 @@ impl DMNStateDiff {
     /// entry. The legacy top-level `platformHTTPPort` is not resolved here: a diff
     /// carries no node IP to pair it with, so a host would have to be fabricated.
     /// Read the legacy port via [`legacy_platform_http_port`](Self::legacy_platform_http_port).
+    /// A legacy Evo's port-only diff prints the host as `255.255.255.255`, standing for the
+    /// masternode's primary address; [`DMNState::apply_diff`] resolves it.
     pub fn platform_http_address(&self) -> Option<(String, u32)> {
         self.addresses
             .as_ref()
@@ -2477,6 +2545,18 @@ impl DMNState {
         }
     }
 
+    /// Applies a diff as Core prints it.
+    ///
+    /// Core's diff prints `addresses` per changed purpose rather than as a whole, so they are
+    /// merged per purpose: a changed core address moves a legacy Evo's platform entries onto
+    /// it, and the `255.255.255.255` host of a legacy Evo's port-only change stands for the
+    /// primary core address. For a legacy Evo the resolved platform addresses are then the
+    /// same however the changes are batched into diffs. A diff that prints `service` but no
+    /// `addresses` empties the addresses (a revocation or an operator change). The flat
+    /// platform ports keep what the diff prints, so after an extended-address Evo's revocation
+    /// they keep their last value, while Core's full state prints `-1`; which value that is
+    /// can depend on how Core batched the changes before the revocation, because the diff
+    /// doesn't say whether the Evo was extended-address when it was reset.
     pub fn apply_diff(&mut self, diff: DMNStateDiff) {
         let DMNStateDiff {
             service,
@@ -2543,8 +2623,22 @@ impl DMNState {
             self.legacy_platform_http_port = Some(legacy_platform_http_port);
         }
 
-        if let Some(addresses) = addresses {
-            self.addresses = addresses;
+        match addresses {
+            Some(Some(addresses)) => {
+                self.addresses = Some(MasternodeAddresses::merged_with_diff(
+                    self.addresses.take(),
+                    addresses,
+                    service.is_some(),
+                ));
+            }
+            Some(None) => self.addresses = None,
+            // Core prints `service` but no `addresses` when a masternode's addresses were
+            // emptied (a revocation or an operator change). The flat platform ports stay as the
+            // diff left them: a legacy Evo keeps printing them after a revocation.
+            None if service.is_some() && self.addresses.is_some() => {
+                self.addresses = Some(MasternodeAddresses::default());
+            }
+            None => {}
         }
     }
 }
@@ -3824,9 +3918,9 @@ mod tests {
 
     #[test]
     #[allow(deprecated)]
-    fn dmn_state_zero_legacy_port_no_addresses_resolves_to_none() {
-        // Legacy port present but zero and no `addresses` -> accessor returns None,
-        // never `(host, 0)`.
+    fn dmn_state_zero_legacy_port_no_addresses_resolves_as_is() {
+        // The legacy fallback returns the flat port as-is, zero included: a consumer that
+        // builds members from the flat ports sees this masternode, so the accessor must too.
         let json = r#"{
             "service": "192.0.2.1:9999",
             "registeredHeight": 123456,
@@ -3840,7 +3934,11 @@ mod tests {
         }"#;
         let state: DMNState = serde_json::from_str(json).expect("expected to deserialize json");
         assert_eq!(state.legacy_platform_p2p_port, Some(0), "raw legacy zero deserialized as-is");
-        assert_eq!(state.platform_p2p_address(), None, "zero legacy with no addresses -> None");
+        assert_eq!(
+            state.platform_p2p_address(),
+            Some(("192.0.2.1".to_string(), 0)),
+            "zero legacy port with no addresses resolves as-is"
+        );
     }
 
     #[test]
@@ -3918,9 +4016,13 @@ mod tests {
     #[test]
     fn dmn_state_apply_diff_propagates_addresses() {
         // Stored entry has a zero legacy port and no addresses; a diff carrying a
-        // nested `addresses` object must make the merged state resolvable.
+        // nested `addresses` object must make the merged state resolve its entry.
         let mut state = dmn_state_with_legacy_p2p_zero();
-        assert_eq!(state.platform_p2p_address(), None, "unresolvable before diff");
+        assert_eq!(
+            state.platform_p2p_address(),
+            Some(("192.0.2.1".to_string(), 0)),
+            "only the zero legacy port before the diff"
+        );
 
         let diff = DMNStateDiff {
             service: None,
@@ -4846,6 +4948,193 @@ mod tests {
         assert_eq!(diff.payout_address, None);
         assert_eq!(diff.payouts, None);
         assert_compare_then_apply_round_trips(&older, &newer);
+    }
+
+    // Network fields of a diff as Core's diff emitter prints them (`CDeterministicMNStateDiff::
+    // ToJson`), applied to Core's full state of the same masternode. The emitter prints
+    // `addresses` per changed field rather than as a whole:
+    // - a changed core address prints `service` and `core_p2p`; a legacy (version 1/2) Evo's
+    //   platform entries, which Core renders on the primary address, are left out unless their
+    //   port changed too;
+    // - a legacy Evo's changed platform port alone prints `255.255.255.255:<port>`, the host
+    //   standing for the primary address;
+    // - emptied addresses (revocation, operator change) print `service` (`[::]:0`) and no
+    //   `addresses` at all.
+    // For a legacy Evo, applying a diff must give the full state Core prints afterwards,
+    // whichever way the changes are batched into diffs.
+
+    /// Core's full state of the `CORE_V24_LEGACY_EVO_STATE` Evo with the given core IP and
+    /// platform ports (`GetNetInfoWithLegacyFields` renders them on the core IP).
+    fn legacy_evo_full_state(ip: &str, p2p_port: u16, http_port: u16) -> DMNState {
+        let mut state: serde_json::Value =
+            serde_json::from_str(CORE_V24_LEGACY_EVO_STATE).expect("valid json");
+        state["service"] = json!(format!("{ip}:9999"));
+        state["addresses"] = json!({
+            "core_p2p": [format!("{ip}:9999")],
+            "platform_https": [format!("{ip}:{http_port}")],
+            "platform_p2p": [format!("{ip}:{p2p_port}")]
+        });
+        state["platformP2PPort"] = json!(p2p_port);
+        state["platformHTTPPort"] = json!(http_port);
+        serde_json::from_value(state).expect("expected to deserialize json")
+    }
+
+    /// Core's full state of that Evo after a revocation: no addresses, `[::]:0` as the service,
+    /// operator fields reset, and the flat platform ports left as they were.
+    fn revoked_legacy_evo_full_state() -> DMNState {
+        let mut state: serde_json::Value =
+            serde_json::from_str(CORE_V24_LEGACY_EVO_STATE).expect("valid json");
+        state["version"] = json!(1);
+        state["service"] = json!("[::]:0");
+        state["addresses"] = json!({});
+        state["PoSeBanHeight"] = json!(1300);
+        state["revocationReason"] = json!(1);
+        state["platformNodeID"] = json!("0000000000000000000000000000000000000000");
+        state["pubKeyOperator"] = json!("0".repeat(96));
+        serde_json::from_value(state).expect("expected to deserialize json")
+    }
+
+    fn core_diff(json: serde_json::Value) -> DMNStateDiff {
+        serde_json::from_value(json).expect("expected to deserialize json")
+    }
+
+    fn applied(mut state: DMNState, diffs: impl IntoIterator<Item = DMNStateDiff>) -> DMNState {
+        for diff in diffs {
+            state.apply_diff(diff);
+        }
+        state
+    }
+
+    #[test]
+    fn legacy_evo_core_address_diff_moves_platform_entries_to_the_new_address() {
+        // ProUpServTx changing only the core IP of a legacy Evo.
+        let diff = core_diff(json!({
+            "service": "192.0.2.41:9999",
+            "addresses": {"core_p2p": ["192.0.2.41:9999"]}
+        }));
+        let state = applied(legacy_evo_full_state("192.0.2.40", 26656, 443), [diff]);
+        assert_eq!(state, legacy_evo_full_state("192.0.2.41", 26656, 443));
+        assert_eq!(state.platform_p2p_address(), Some(("192.0.2.41".to_string(), 26656)));
+        assert_eq!(state.platform_http_address(), Some(("192.0.2.41".to_string(), 443)));
+    }
+
+    #[test]
+    fn legacy_evo_port_only_diff_resolves_the_placeholder_host_to_the_primary_address() {
+        // ProUpServTx changing only the platform P2P port of a legacy Evo.
+        let diff = core_diff(json!({
+            "platformP2PPort": 36656,
+            "addresses": {"platform_p2p": ["255.255.255.255:36656"]}
+        }));
+        let state = applied(legacy_evo_full_state("192.0.2.40", 26656, 443), [diff]);
+        assert_eq!(state, legacy_evo_full_state("192.0.2.40", 36656, 443));
+        assert_eq!(state.platform_p2p_address(), Some(("192.0.2.40".to_string(), 36656)));
+    }
+
+    #[test]
+    fn legacy_evo_diffs_give_the_same_state_however_they_are_batched() {
+        // The core IP changes at one height and the platform P2P port at the next: one listdiff
+        // across both heights, or one per height.
+        let across_both = core_diff(json!({
+            "service": "192.0.2.41:9999",
+            "platformP2PPort": 36656,
+            "addresses": {"core_p2p": ["192.0.2.41:9999"], "platform_p2p": ["192.0.2.41:36656"]}
+        }));
+        let address_change = core_diff(json!({
+            "service": "192.0.2.41:9999",
+            "addresses": {"core_p2p": ["192.0.2.41:9999"]}
+        }));
+        let port_change = core_diff(json!({
+            "platformP2PPort": 36656,
+            "addresses": {"platform_p2p": ["255.255.255.255:36656"]}
+        }));
+
+        let expected = legacy_evo_full_state("192.0.2.41", 36656, 443);
+        let full = legacy_evo_full_state("192.0.2.40", 26656, 443);
+        assert_eq!(applied(full.clone(), [across_both.clone()]), expected);
+        assert_eq!(applied(full, [address_change.clone(), port_change.clone()]), expected);
+
+        // A state rebuilt from stored ports alone resolves the same platform ports.
+        let mut reloaded = legacy_evo_full_state("192.0.2.40", 26656, 443);
+        reloaded.addresses = None;
+        for diffs in [vec![across_both], vec![address_change, port_change]] {
+            let state = applied(reloaded.clone(), diffs);
+            assert_eq!(state.platform_p2p_address(), Some(("192.0.2.41".to_string(), 36656)));
+            assert_eq!(state.platform_http_address(), Some(("192.0.2.41".to_string(), 443)));
+        }
+    }
+
+    #[test]
+    fn reloaded_state_without_addresses_resolves_the_legacy_ports_after_a_core_address_diff() {
+        // A consumer that stores only the platform ports rebuilds the state with `addresses:
+        // None`. A diff that carries only `core_p2p` must not hide those ports.
+        let diff = core_diff(json!({
+            "service": "192.0.2.41:9999",
+            "addresses": {"core_p2p": ["192.0.2.41:9999"]}
+        }));
+        let mut reloaded = legacy_evo_full_state("192.0.2.40", 26656, 443);
+        reloaded.addresses = None;
+        let reloaded = applied(reloaded, [diff.clone()]);
+        let from_full_state = applied(legacy_evo_full_state("192.0.2.40", 26656, 443), [diff]);
+
+        assert_eq!(reloaded.platform_p2p_address(), Some(("192.0.2.41".to_string(), 26656)));
+        assert_eq!(reloaded.platform_http_address(), Some(("192.0.2.41".to_string(), 443)));
+        assert_eq!(reloaded.platform_p2p_address(), from_full_state.platform_p2p_address());
+        assert_eq!(reloaded.platform_http_address(), from_full_state.platform_http_address());
+    }
+
+    #[test]
+    #[allow(deprecated)]
+    fn revoked_legacy_evo_resolves_its_flat_platform_ports() {
+        // Core 23 and 24 print a revoked legacy Evo with `addresses: {}` (no platform entries
+        // for a masternode without an address) beside its unchanged flat ports. Consumers that
+        // read the flat ports keep the masternode, so the accessors fall back to them as-is.
+        let revoked = revoked_legacy_evo_full_state();
+        assert_eq!(revoked.addresses, Some(MasternodeAddresses::default()));
+        assert_eq!(revoked.platform_p2p_address(), Some(("::".to_string(), 26656)));
+        assert_eq!(revoked.platform_http_address(), Some(("::".to_string(), 443)));
+
+        // Nested addresses with a core entry but no platform entry fall back the same way.
+        let mut core_only = revoked.clone();
+        core_only.addresses = Some(MasternodeAddresses {
+            core_p2p: vec!["192.0.2.40:9999".to_string()],
+            ..Default::default()
+        });
+        assert_eq!(core_only.platform_p2p_address(), Some(("::".to_string(), 26656)));
+
+        // The revocation diff: `service` and no `addresses`, ports untouched.
+        let diff = core_diff(json!({
+            "version": 1,
+            "service": "[::]:0",
+            "PoSeBanHeight": 1300,
+            "revocationReason": 1,
+            "pubKeyOperator": "0".repeat(96),
+            "platformNodeID": "0000000000000000000000000000000000000000"
+        }));
+        let state = applied(legacy_evo_full_state("192.0.2.40", 26656, 443), [diff]);
+        assert_eq!(state, revoked, "applying Core's diff yields Core's new full state");
+        assert_eq!(state.legacy_platform_p2p_port, Some(26656));
+    }
+
+    #[test]
+    #[allow(deprecated)]
+    fn extaddr_evo_revocation_diff_empties_its_addresses() {
+        // Revoking an extended-address Evo empties its addresses; Core's diff prints `service`
+        // (`[::]:0`) and no `addresses`. Its flat ports stay as Core's diff left them: a legacy
+        // Evo's revocation diff looks the same, and its flat ports must survive (see
+        // `revoked_legacy_evo_resolves_its_flat_platform_ports`).
+        let diff = core_diff(json!({
+            "service": "[::]:0",
+            "PoSeBanHeight": 1300,
+            "revocationReason": 1,
+            "pubKeyOperator": "0".repeat(96),
+            "platformNodeID": "0000000000000000000000000000000000000000"
+        }));
+        let raised: DMNState =
+            serde_json::from_str(CORE_V24_RAISED_EVO_STATE).expect("expected to deserialize json");
+        let state = applied(raised, [diff]);
+        assert_eq!(state.addresses, Some(MasternodeAddresses::default()));
+        assert_eq!(state.service, unspecified_service());
+        assert_eq!(state.legacy_platform_p2p_port, Some(36656));
     }
 
     #[test]
