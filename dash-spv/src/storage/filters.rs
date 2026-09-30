@@ -161,7 +161,7 @@ mod tests {
 
         storage.persist(tmp_dir.path()).await.unwrap();
         let segment_file =
-            tmp_dir.path().join(PersistentFilterStorage::FOLDER_NAME).join("segment_0000.dat");
+            tmp_dir.path().join(PersistentFilterStorage::FOLDER_NAME).join("segment_000000.dat");
         assert!(segment_file.exists());
 
         // The start height survives a reload.

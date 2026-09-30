@@ -30,7 +30,7 @@ pub(super) trait Persistable: Sized + Encodable + Decodable + PartialEq + Clone 
     const ITEMS_PER_SEGMENT: u32;
 
     fn segment_file_name(segment_id: u32) -> String {
-        format!("{}_{:04}.{}", Self::SEGMENT_PREFIX, segment_id, Self::DATA_FILE_EXTENSION)
+        format!("{}_{:06}.{}", Self::SEGMENT_PREFIX, segment_id, Self::DATA_FILE_EXTENSION)
     }
 
     fn sentinel() -> Self;
@@ -142,13 +142,13 @@ impl<I: Persistable> SegmentCache<I> {
     }
 
     /// Parse the segment id out of a segment file name of the form
-    /// `{SEGMENT_PREFIX}_{id:04}.{DATA_FILE_EXTENSION}` (see
+    /// `{SEGMENT_PREFIX}_{id:06}.{DATA_FILE_EXTENSION}` (see
     /// [`Persistable::segment_file_name`]).
     ///
     /// The entire remaining component between the `{prefix}_` and
     /// `.{extension}` fixtures must parse as a `u32`, so trailing junk
-    /// (`segment_0000junk.dat`) is rejected and ids longer than the
-    /// zero-padding width (`segment_100000.dat`) are accepted, not truncated.
+    /// (`segment_000000junk.dat`) is rejected and ids longer than the
+    /// zero-padding width (`segment_1000000.dat`) are accepted, not truncated.
     fn parse_segment_id(file_name: &str) -> Option<u32> {
         let separator = format!("{}_", I::SEGMENT_PREFIX);
         let suffix = format!(".{}", I::DATA_FILE_EXTENSION);
@@ -1273,19 +1273,19 @@ mod tests {
     fn test_parse_segment_id() {
         type Cache = SegmentCache<FilterHeader>;
 
-        // Round-trips the writer's `{prefix}_{id:04}.{ext}` format for a range
+        // Round-trips the writer's `{prefix}_{id:06}.{ext}` format for a range
         // of ids, including ones wider than the zero-padding.
-        for id in [0u32, 1, 42, 9999, 10_000, 100_000, u32::MAX] {
+        for id in [0u32, 1, 42, 999_999, 1_000_000, u32::MAX] {
             assert_eq!(Cache::parse_segment_id(&FilterHeader::segment_file_name(id)), Some(id));
         }
 
         // Zero-padded low ids parse to their numeric value, not truncated.
-        assert_eq!(Cache::parse_segment_id("segment_0000.dat"), Some(0));
-        assert_eq!(Cache::parse_segment_id("segment_0005.dat"), Some(5));
+        assert_eq!(Cache::parse_segment_id("segment_000000.dat"), Some(0));
+        assert_eq!(Cache::parse_segment_id("segment_000005.dat"), Some(5));
 
         // Ids wider than the padding are accepted whole, never truncated to
-        // the first four digits.
-        assert_eq!(Cache::parse_segment_id("segment_100000.dat"), Some(100_000));
+        // the first six digits.
+        assert_eq!(Cache::parse_segment_id("segment_1000000.dat"), Some(1_000_000));
 
         // Trailing junk between the id and the extension is rejected rather
         // than silently parsed as a prefix of the component.
