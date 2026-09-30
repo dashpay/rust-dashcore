@@ -2003,8 +2003,10 @@ pub struct MasternodeListItem {
     pub pro_tx_hash: ProTxHash,
     pub collateral_hash: Txid,
     pub collateral_index: u32,
-    #[serde(deserialize_with = "deserialize_address")]
-    pub collateral_address: [u8; 20],
+    /// `None` when Core prints no `collateralAddress`: the collateral output has no address (a
+    /// shared masternode's), or Core cannot look the collateral transaction up (no `-txindex`).
+    #[serde(default, deserialize_with = "deserialize_address_optional")]
+    pub collateral_address: Option<[u8; 20]>,
     pub operator_reward: f32,
     pub state: DMNState,
 }
@@ -2097,6 +2099,19 @@ fn parse_host_port(addr: &str) -> Option<(String, u32)> {
     Some((host.to_string(), u32::from(port)))
 }
 
+/// One entry of a masternode's owner payout list.
+#[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
+pub struct DMNPayout {
+    /// Hash of the payout address: the key hash of a P2PKH script or the script hash of a P2SH
+    /// script. Only [`script`](Self::script) tells the two apart.
+    #[serde(deserialize_with = "deserialize_address")]
+    pub address: [u8; 20],
+    /// The payout script, P2PKH or P2SH.
+    pub script: ScriptBuf,
+    /// Share of the owner reward in basis points; the entries of a list sum to 10000.
+    pub reward: u16,
+}
+
 #[serde_as]
 #[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -2111,12 +2126,20 @@ pub struct DMNState {
     #[serde(default, rename = "PoSeBanHeight", deserialize_with = "deserialize_u32_opt")]
     pub pose_ban_height: Option<u32>,
     pub revocation_reason: u32,
-    #[serde(deserialize_with = "deserialize_address")]
-    pub owner_address: [u8; 20],
+    /// `None` for a shared masternode, whose owners are its share holders.
+    #[serde(default, deserialize_with = "deserialize_address_optional")]
+    pub owner_address: Option<[u8; 20]>,
     #[serde(deserialize_with = "deserialize_address")]
     pub voting_address: [u8; 20],
-    #[serde(deserialize_with = "deserialize_address")]
-    pub payout_address: [u8; 20],
+    /// Single owner payout address. Core prints at most one of `payoutAddress` and `payouts`,
+    /// and neither for a shared masternode; [`apply_diff`](Self::apply_diff) keeps at most one
+    /// of `payout_address` and [`payouts`](Self::payouts) set.
+    #[serde(default, deserialize_with = "deserialize_address_optional")]
+    pub payout_address: Option<[u8; 20]>,
+    /// Owner payout list, which replaces [`payout_address`](Self::payout_address) from the
+    /// extended-address ProTx version on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub payouts: Option<Vec<DMNPayout>>,
     #[serde(with = "hex")]
     pub pub_key_operator: Vec<u8>,
     #[serde(default, deserialize_with = "deserialize_address_optional")]
@@ -2192,7 +2215,10 @@ pub struct DMNStateDiff {
     pub revocation_reason: Option<u32>,
     pub owner_address: Option<[u8; 20]>,
     pub voting_address: Option<[u8; 20]>,
+    /// Setting it clears [`DMNState::payouts`] on [`DMNState::apply_diff`].
     pub payout_address: Option<[u8; 20]>,
+    /// Setting it clears [`DMNState::payout_address`] on [`DMNState::apply_diff`].
+    pub payouts: Option<Vec<DMNPayout>>,
     pub pub_key_operator: Option<Vec<u8>>,
     pub operator_payout_address: Option<Option<[u8; 20]>>,
     pub platform_node_id: Option<[u8; 20]>,
@@ -2225,6 +2251,7 @@ impl TryFrom<DMNStateDiffIntermediate> for DMNStateDiff {
             legacy_platform_p2p_port,
             legacy_platform_http_port,
             payout_address,
+            payouts,
             pub_key_operator,
             addresses,
         } = value;
@@ -2285,6 +2312,7 @@ impl TryFrom<DMNStateDiffIntermediate> for DMNStateDiff {
             owner_address,
             voting_address,
             payout_address,
+            payouts,
             pub_key_operator,
             operator_payout_address,
             platform_node_id,
@@ -2329,6 +2357,14 @@ impl DMNState {
     pub fn compare_to_older_dmn_state(&self, older: &DMNState) -> Option<DMNStateDiff> {
         older.compare_to_newer_dmn_state(self)
     }
+    /// The diff that [`apply_diff`](Self::apply_diff) turns `self` into `newer` with, or `None`
+    /// when they match.
+    ///
+    /// A field that goes from `Some` to `None` with nothing replacing it (the legacy platform
+    /// ports, `owner_address`, `platform_node_id`, or both payout fields at once) cannot be
+    /// expressed: the diff leaves it out and applying it keeps the old value. Core makes none of
+    /// those transitions except on revoking an extended-address Evo, whose printed ports turn
+    /// to `-1`, and Core's own diff does not print that change either.
     pub fn compare_to_newer_dmn_state(&self, newer: &DMNState) -> Option<DMNStateDiff> {
         let mut has_diff = false;
         let diff = DMNStateDiff {
@@ -2367,7 +2403,7 @@ impl DMNState {
             },
             owner_address: if self.owner_address != newer.owner_address {
                 has_diff = true;
-                Some(newer.owner_address)
+                newer.owner_address
             } else {
                 None
             },
@@ -2379,7 +2415,13 @@ impl DMNState {
             },
             payout_address: if self.payout_address != newer.payout_address {
                 has_diff = true;
-                Some(newer.payout_address)
+                newer.payout_address
+            } else {
+                None
+            },
+            payouts: if self.payouts != newer.payouts {
+                has_diff = true;
+                newer.payouts.clone()
             } else {
                 None
             },
@@ -2444,6 +2486,7 @@ impl DMNState {
             owner_address,
             voting_address,
             payout_address,
+            payouts,
             pub_key_operator,
             operator_payout_address,
             platform_node_id,
@@ -2468,14 +2511,20 @@ impl DMNState {
             self.revocation_reason = revocation_reason;
         }
         if let Some(owner_address) = owner_address {
-            self.owner_address = owner_address;
+            self.owner_address = Some(owner_address);
         }
 
         if let Some(voting_address) = voting_address {
             self.voting_address = voting_address;
         }
+        // A payout address and a payout list are alternatives: setting one clears the other.
         if let Some(payout_address) = payout_address {
-            self.payout_address = payout_address;
+            self.payout_address = Some(payout_address);
+            self.payouts = None;
+        }
+        if let Some(payouts) = payouts {
+            self.payouts = Some(payouts);
+            self.payout_address = None;
         }
         if let Some(operator_payout_address) = operator_payout_address {
             self.operator_payout_address = operator_payout_address;
@@ -3046,6 +3095,8 @@ pub struct DMNStateDiffIntermediate {
     pub legacy_platform_http_port: Option<u32>,
     #[serde(default)]
     pub payout_address: Option<String>,
+    #[serde(default)]
+    pub payouts: Option<Vec<DMNPayout>>,
     #[serde(default, deserialize_with = "deserialize_hex_opt")]
     pub pub_key_operator: Option<Vec<u8>>,
     // Three-state: missing field = None, `null` = Some(None), object = Some(Some(_)).
@@ -3167,8 +3218,10 @@ pub struct ProTxInfo {
     #[serde(with = "hex")]
     pub collateral_hash: Vec<u8>,
     pub collateral_index: u32,
-    #[serde_as(as = "Bytes")]
-    pub collateral_address: Vec<u8>,
+    /// `None` when Core prints no `collateralAddress`: the collateral output has no address (a
+    /// shared masternode's), or Core cannot look the collateral transaction up (no `-txindex`).
+    #[serde(default, deserialize_with = "deserialize_address_optional")]
+    pub collateral_address: Option<[u8; 20]>,
     pub operator_reward: u32,
     pub state: DMNState,
     pub confirmations: u32,
@@ -3465,13 +3518,14 @@ mod tests {
     use std::net::SocketAddr;
 
     use dashcore::hashes::Hash;
+    use dashcore::{PubkeyHash, ScriptBuf, ScriptHash};
     use serde::{Deserialize, Serialize};
     use serde_json::json;
 
     use crate::{
-        DMNState, DMNStateDiff, ExtendedQuorumListResult, Masternode, MasternodeAddresses,
-        MasternodeListDiff, MasternodeStatus, MnSyncStatus, QuorumMasternodeListItem, QuorumType,
-        deserialize_u32_opt, parse_host_port,
+        DMNPayout, DMNState, DMNStateDiff, ExtendedQuorumListResult, Masternode,
+        MasternodeAddresses, MasternodeListDiff, MasternodeStatus, MnSyncStatus, ProTxInfo,
+        QuorumMasternodeListItem, QuorumType, deserialize_u32_opt, parse_host_port,
     };
 
     #[test]
@@ -3880,6 +3934,7 @@ mod tests {
             owner_address: None,
             voting_address: None,
             payout_address: None,
+            payouts: None,
             pub_key_operator: None,
             operator_payout_address: None,
             platform_node_id: None,
@@ -4222,6 +4277,575 @@ mod tests {
 
         let tor = &list["35215134107b5e423d327cab12d2b4c60a9b769301096e05a95916676d2f7867-0"];
         assert_eq!(tor.address, unspecified_service());
+    }
+
+    // `protx listdiff` as Dash Core v24 prints it with `-deprecatedrpc=service`
+    // (`CDeterministicMN::ToJson`, `CDeterministicMNState::ToJson`,
+    // `CDeterministicMNStateDiff::ToJson`).
+    // Owner payouts: a shared masternode prints `shares` and neither `ownerAddress`,
+    // `payoutAddress` nor `collateralAddress` (its collateral output has no address); an
+    // extended-address (version 3) masternode prints `payouts` instead of `payoutAddress`.
+    //
+    // addedMNs:
+    //   0: shared Regular
+    //   1: extended-address Regular, one payout
+    //   2: extended-address Regular, Tor primary address, two payouts (P2PKH and P2SH)
+    //   3: extended-address Evo with no addresses
+    //   4: extended-address Evo, IPv6 primary address, two payouts
+    // updatedMNs:
+    //   legacy Evo raised to version 3 by a ProUpServTx: its payout address moves into
+    //   `payouts` and the cleared script prints no `payoutAddress`
+    //   version 3 Regular whose ProUpRegTx changes only the payouts
+    //
+    // Payout and share addresses, other than the legacy payout address moved into `payouts`,
+    // encode repeated-byte hashes (0x11 ... 0xdd) so the expected hashes read directly; 0x77
+    // is P2SH, the rest P2PKH.
+    const CORE_V24_LISTDIFF: &str = r#"{
+      "baseHeight": 1200,
+      "blockHeight": 1260,
+      "addedMNs": [
+        {
+          "type": "Regular",
+          "proTxHash": "a4d26868017c0ccffe2efe50944ef4211834660cca834c6e9f86dec6a88246fa",
+          "collateralHash": "a4d26868017c0ccffe2efe50944ef4211834660cca834c6e9f86dec6a88246fa",
+          "collateralIndex": 1,
+          "operatorReward": 0,
+          "state": {
+            "version": 3,
+            "service": "192.0.2.30:9999",
+            "addresses": {
+              "core_p2p": ["192.0.2.30:9999"]
+            },
+            "registeredHeight": 1210,
+            "lastPaidHeight": 0,
+            "consecutivePayments": 0,
+            "PoSePenalty": 0,
+            "PoSeRevivedHeight": -1,
+            "PoSeBanHeight": -1,
+            "revocationReason": 0,
+            "votingAddress": "ySM11LUD65Bi4p1gm68XLkdWc65TBKRzvQ",
+            "shares": [
+              {
+                "amount": 60000000000,
+                "refundAddress": "yMsgnH1xKGa85n4bq2imrZbG2KgrmGttAV",
+                "refundScript": "76a914111111111111111111111111111111111111111188ac",
+                "rewardAddress": "yPRviMJaEHGafsc5EKovpa5Nw2Jewo9mdj",
+                "rewardScript": "76a914222222222222222222222222222222222222222288ac",
+                "ownerAddress": "yQzAeRbC9Hy3Fy9Ydcu5naZVqivT95Ka2R"
+              },
+              {
+                "amount": 40000000000,
+                "refundAddress": "ySYQaVsp4JfVr4h22uzEkb3ckRYFHJwGq9",
+                "refundScript": "76a914444444444444444444444444444444444444444488ac",
+                "rewardAddress": "ySYQaVsp4JfVr4h22uzEkb3ckRYFHJwGq9",
+                "rewardScript": "76a914444444444444444444444444444444444444444488ac",
+                "ownerAddress": "yVetSeT3tL4R2FmxqWAYgc1rZpmqbMcFhL"
+              }
+            ],
+            "earlyPeriodBlocks": 1000,
+            "earlyPenalty": 100000000,
+            "pubKeyOperator": "8ed3f0c208efbcfc815cbfb94490dc68cf2e29d44dd9f8a91e20e06057aa110d7062c8ab7ccc85a9ff0c88760157f563"
+          }
+        },
+        {
+          "type": "Regular",
+          "proTxHash": "813a7c3f28817988a8e6ce66e07e43e261e78398373bfbaae94c898645111d6b",
+          "collateralHash": "ff6226e6c97bfcf40b6d04e12e3f75678024988823bfba28cde2a9ac11b1a765",
+          "collateralIndex": 1,
+          "collateralAddress": "yNqYnF9sHURjwRmhZMLFGQ3WjC5DZNJMUi",
+          "operatorReward": 0,
+          "state": {
+            "version": 3,
+            "service": "192.0.2.31:9999",
+            "addresses": {
+              "core_p2p": ["192.0.2.31:9999"]
+            },
+            "registeredHeight": 1220,
+            "lastPaidHeight": 0,
+            "consecutivePayments": 0,
+            "PoSePenalty": 0,
+            "PoSeRevivedHeight": -1,
+            "PoSeBanHeight": -1,
+            "revocationReason": 0,
+            "ownerAddress": "yPBWCdMRY5PsS3hJzs7csbdWQVRR85yxUz",
+            "votingAddress": "ySM11LUD65Bi4p1gm68XLkdWc65TBKRzvQ",
+            "payouts": [
+              {
+                "address": "yU6eWaARyKMxSAEVSD5PibXjf8A3TH4gqJ",
+                "script": "76a914555555555555555555555555555555555555555588ac",
+                "reward": 10000
+              }
+            ],
+            "pubKeyOperator": "8ed3f0c208efbcfc815cbfb94490dc68cf2e29d44dd9f8a91e20e06057aa110d7062c8ab7ccc85a9ff0c88760157f563"
+          }
+        },
+        {
+          "type": "Regular",
+          "proTxHash": "3023ffd989974768b0dfc347410ad923fa6d3f1eee90180bd0c435e81cb1a82f",
+          "collateralHash": "35215134107b5e423d327cab12d2b4c60a9b769301096e05a95916676d2f7867",
+          "collateralIndex": 0,
+          "collateralAddress": "yd2PwFoqtEJdnJVSEzBDMxVnFVgEvJyvyY",
+          "operatorReward": 0,
+          "state": {
+            "version": 3,
+            "service": "pg6mmjiyjmcrsslvykfwnntlaru7p5svn6y2ymmju6nubxndf4pscryd.onion:9999",
+            "addresses": {
+              "core_p2p": [
+                "pg6mmjiyjmcrsslvykfwnntlaru7p5svn6y2ymmju6nubxndf4pscryd.onion:9999",
+                "192.0.2.32:9999"
+              ]
+            },
+            "registeredHeight": 1230,
+            "lastPaidHeight": 0,
+            "consecutivePayments": 0,
+            "PoSePenalty": 0,
+            "PoSeRevivedHeight": -1,
+            "PoSeBanHeight": -1,
+            "revocationReason": 0,
+            "ownerAddress": "yLtkvxSueGSufQZQq8L9GVHch9QRqJqGkZ",
+            "votingAddress": "yLtkvxSueGSufQZQq8L9GVHch9QRqJqGkZ",
+            "payouts": [
+              {
+                "address": "yYmNJo2HiMTLCSrue6Lrccz6PE1S1ELq2T",
+                "script": "76a914888888888888888888888888888888888888888888ac",
+                "reward": 7000
+              },
+              {
+                "address": "8qK9EafotWgreuSxH2x8ySZnKVDVivy3Zf",
+                "script": "a914777777777777777777777777777777777777777787",
+                "reward": 3000
+              }
+            ],
+            "pubKeyOperator": "a792ce1af5f7bb9281053b3934cb8b08d00d075a56498e1a525388ce467f188e8a80911fd96a20982baa9b9678452534"
+          }
+        },
+        {
+          "type": "Evo",
+          "proTxHash": "6f1757595185032c808321af3e2e8468fae10b8f91e2a657d7a4c7122f4b2706",
+          "collateralHash": "cbf3c744b1c18fe1866e79972818c98fb1a268736f1757595185032c808321af",
+          "collateralIndex": 0,
+          "collateralAddress": "ybhjexnMcGckdJCyUwFu3F25zPo4mqQg1k",
+          "operatorReward": 0,
+          "state": {
+            "version": 3,
+            "service": "[::]:0",
+            "addresses": {},
+            "registeredHeight": 1240,
+            "lastPaidHeight": 0,
+            "consecutivePayments": 0,
+            "PoSePenalty": 0,
+            "PoSeRevivedHeight": -1,
+            "PoSeBanHeight": -1,
+            "revocationReason": 0,
+            "ownerAddress": "yPBWCdMRY5PsS3hJzs7csbdWQVRR85yxUz",
+            "votingAddress": "ySM11LUD65Bi4p1gm68XLkdWc65TBKRzvQ",
+            "platformNodeID": "cbf3c744b1c18fe1866e79972818c98fb1a26873",
+            "platformP2PPort": -1,
+            "platformHTTPPort": -1,
+            "payouts": [
+              {
+                "address": "yaKcEsJudN9nnYQP3PS1adUDHvdE6sjNiQ",
+                "script": "76a914999999999999999999999999999999999999999988ac",
+                "reward": 10000
+              }
+            ],
+            "pubKeyOperator": "8ed3f0c208efbcfc815cbfb94490dc68cf2e29d44dd9f8a91e20e06057aa110d7062c8ab7ccc85a9ff0c88760157f563"
+          }
+        },
+        {
+          "type": "Evo",
+          "proTxHash": "aecd2830b843e6a84283ba290492a213e355cea7c5026e6118a21e1bfbc36783",
+          "collateralHash": "59cd030a1a4cd43a53c3a600c20f64ed07399873aecd2830b843e6a84283ba29",
+          "collateralIndex": 0,
+          "collateralAddress": "yNqYnF9sHURjwRmhZMLFGQ3WjC5DZNJMUi",
+          "operatorReward": 0,
+          "state": {
+            "version": 3,
+            "service": "[2001:db8::4]:9999",
+            "addresses": {
+              "core_p2p": ["[2001:db8::4]:9999"],
+              "platform_p2p": ["[2001:db8::4]:26656"],
+              "platform_https": ["[2001:db8::4]:443"]
+            },
+            "registeredHeight": 1250,
+            "lastPaidHeight": 0,
+            "consecutivePayments": 0,
+            "PoSePenalty": 0,
+            "PoSeRevivedHeight": -1,
+            "PoSeBanHeight": -1,
+            "revocationReason": 0,
+            "ownerAddress": "yPBWCdMRY5PsS3hJzs7csbdWQVRR85yxUz",
+            "votingAddress": "ySM11LUD65Bi4p1gm68XLkdWc65TBKRzvQ",
+            "platformNodeID": "4bcc85253e395ec272998a0722ac3ee1dd3965f7",
+            "platformP2PPort": 26656,
+            "platformHTTPPort": 443,
+            "payouts": [
+              {
+                "address": "ybsrAwbXYNrFNdwrSgXAYdxLCdF2GdFbqY",
+                "script": "76a914aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa88ac",
+                "reward": 5000
+              },
+              {
+                "address": "ydS671t9TPYhxjVKqycKWeST7KrpUM1c4t",
+                "script": "76a914bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb88ac",
+                "reward": 5000
+              }
+            ],
+            "pubKeyOperator": "a792ce1af5f7bb9281053b3934cb8b08d00d075a56498e1a525388ce467f188e8a80911fd96a20982baa9b9678452534"
+          }
+        }
+      ],
+      "removedMNs": [],
+      "updatedMNs": [
+        {
+          "ca3d32c4f2ef62eaf736bf41bb3235a832ec1eb6d8dfaccd4d3555e70f6757b0": {
+            "version": 3,
+            "service": "192.0.2.40:9999",
+            "payouts": [
+              {
+                "address": "yX4Ve7Q8Y4jscV4LZJD8HVCHKyePzR3MhA",
+                "script": "76a91475d57974b6e29a4a70df57a3b11195ce0a0dc81788ac",
+                "reward": 10000
+              }
+            ],
+            "platformP2PPort": 36656,
+            "platformHTTPPort": 1443,
+            "addresses": {
+              "core_p2p": ["192.0.2.40:9999"],
+              "platform_p2p": ["192.0.2.40:36656"],
+              "platform_https": ["192.0.2.40:1443"]
+            }
+          }
+        },
+        {
+          "27978dd892b7c876c238be1a6141461c2824f3497dd0058e160979bc8f0a0bef": {
+            "payouts": [
+              {
+                "address": "yezL36AmNQFAYq2oFGhUUeva22UccZnF8F",
+                "script": "76a914cccccccccccccccccccccccccccccccccccccccc88ac",
+                "reward": 2500
+              },
+              {
+                "address": "ygYZyATPHQwd8vaGeZndSfQgvj6Qro5WbT",
+                "script": "76a914dddddddddddddddddddddddddddddddddddddddd88ac",
+                "reward": 7500
+              }
+            ]
+          }
+        }
+      ]
+    }"#;
+
+    /// The full state of the legacy Evo that the first `CORE_V24_LISTDIFF` diff raises to
+    /// version 3, as Core v24 prints it before that diff.
+    const CORE_V24_LEGACY_EVO_STATE: &str = r#"{
+      "version": 2,
+      "service": "192.0.2.40:9999",
+      "addresses": {
+        "core_p2p": ["192.0.2.40:9999"],
+        "platform_https": ["192.0.2.40:443"],
+        "platform_p2p": ["192.0.2.40:26656"]
+      },
+      "registeredHeight": 900,
+      "lastPaidHeight": 1190,
+      "consecutivePayments": 0,
+      "PoSePenalty": 0,
+      "PoSeRevivedHeight": -1,
+      "PoSeBanHeight": -1,
+      "revocationReason": 0,
+      "ownerAddress": "yPBWCdMRY5PsS3hJzs7csbdWQVRR85yxUz",
+      "votingAddress": "ySM11LUD65Bi4p1gm68XLkdWc65TBKRzvQ",
+      "platformNodeID": "9e391c2c041a122a779bafe09d6c47ea600dfcbe",
+      "platformP2PPort": 26656,
+      "platformHTTPPort": 443,
+      "payoutAddress": "yX4Ve7Q8Y4jscV4LZJD8HVCHKyePzR3MhA",
+      "pubKeyOperator": "8ed3f0c208efbcfc815cbfb94490dc68cf2e29d44dd9f8a91e20e06057aa110d7062c8ab7ccc85a9ff0c88760157f563"
+    }"#;
+
+    /// The same Evo after the diff, as Core v24 prints its full state.
+    const CORE_V24_RAISED_EVO_STATE: &str = r#"{
+      "version": 3,
+      "service": "192.0.2.40:9999",
+      "addresses": {
+        "core_p2p": ["192.0.2.40:9999"],
+        "platform_p2p": ["192.0.2.40:36656"],
+        "platform_https": ["192.0.2.40:1443"]
+      },
+      "registeredHeight": 900,
+      "lastPaidHeight": 1190,
+      "consecutivePayments": 0,
+      "PoSePenalty": 0,
+      "PoSeRevivedHeight": -1,
+      "PoSeBanHeight": -1,
+      "revocationReason": 0,
+      "ownerAddress": "yPBWCdMRY5PsS3hJzs7csbdWQVRR85yxUz",
+      "votingAddress": "ySM11LUD65Bi4p1gm68XLkdWc65TBKRzvQ",
+      "platformNodeID": "9e391c2c041a122a779bafe09d6c47ea600dfcbe",
+      "platformP2PPort": 36656,
+      "platformHTTPPort": 1443,
+      "payouts": [
+        {
+          "address": "yX4Ve7Q8Y4jscV4LZJD8HVCHKyePzR3MhA",
+          "script": "76a91475d57974b6e29a4a70df57a3b11195ce0a0dc81788ac",
+          "reward": 10000
+        }
+      ],
+      "pubKeyOperator": "8ed3f0c208efbcfc815cbfb94490dc68cf2e29d44dd9f8a91e20e06057aa110d7062c8ab7ccc85a9ff0c88760157f563"
+    }"#;
+
+    fn core_v24_listdiff() -> MasternodeListDiff {
+        serde_json::from_str(CORE_V24_LISTDIFF).expect("Core v24 listdiff must deserialize")
+    }
+
+    #[test]
+    fn core_v24_listdiff_with_shared_and_extended_address_masternodes_deserializes() {
+        let diff = core_v24_listdiff();
+        assert_eq!(diff.added_mns.len(), 5);
+        assert_eq!(diff.updated_mns.len(), 2);
+    }
+
+    /// `protx info` for a `CORE_V24_LISTDIFF` added masternode: the listdiff entry plus
+    /// confirmations and meta info.
+    fn core_v24_protx_info(added_index: usize) -> ProTxInfo {
+        let listdiff: serde_json::Value =
+            serde_json::from_str(CORE_V24_LISTDIFF).expect("valid json");
+        let mut info = listdiff["addedMNs"][added_index].clone();
+        info["confirmations"] = json!(50);
+        info["metaInfo"] = json!({
+            "lastDSQ": 0,
+            "mixingTxCount": 0,
+            "outboundAttemptCount": 0,
+            "lastOutboundAttempt": 0,
+            "lastOutboundAttemptElapsed": 1727700000,
+            "lastOutboundSuccess": 0,
+            "lastOutboundSuccessElapsed": 1727700000,
+            "is_platform_banned": false,
+            "platform_ban_height_updated": 0
+        });
+        serde_json::from_value(info).expect("Core v24 protx info must deserialize")
+    }
+
+    fn hash160(hex: &str) -> [u8; 20] {
+        hex::decode(hex).expect("valid hex").try_into().expect("20 bytes")
+    }
+
+    #[test]
+    fn core_v24_protx_info_has_no_collateral_address_only_for_shared_masternode() {
+        assert_eq!(core_v24_protx_info(0).collateral_address, None, "shared collateral");
+        assert_eq!(
+            core_v24_protx_info(1).collateral_address,
+            Some(hash160("1ba1ae9799af495a38619dad703a079919a48144")),
+            "yNqYnF9sHURjwRmhZMLFGQ3WjC5DZNJMUi"
+        );
+    }
+
+    #[test]
+    fn core_v24_masternode_status_of_extended_address_masternode_deserializes() {
+        let listdiff: serde_json::Value =
+            serde_json::from_str(CORE_V24_LISTDIFF).expect("valid json");
+        let status: MasternodeStatus = serde_json::from_value(json!({
+            "outpoint": "35215134107b5e423d327cab12d2b4c60a9b769301096e05a95916676d2f7867-0",
+            "service": TOR_SERVICE,
+            "proTxHash": "3023ffd989974768b0dfc347410ad923fa6d3f1eee90180bd0c435e81cb1a82f",
+            "type": "Regular",
+            "collateralHash": "35215134107b5e423d327cab12d2b4c60a9b769301096e05a95916676d2f7867",
+            "collateralIndex": 0,
+            "dmnState": listdiff["addedMNs"][2]["state"],
+            "state": "READY",
+            "status": "Ready",
+            "quorumParticipation": true
+        }))
+        .expect("extended-address masternode status must deserialize");
+        assert_eq!(status.dmn_state.service, unspecified_service());
+    }
+
+    fn p2pkh_payout(key_hash: [u8; 20], reward: u16) -> DMNPayout {
+        DMNPayout {
+            address: key_hash,
+            script: ScriptBuf::new_p2pkh(&PubkeyHash::from_byte_array(key_hash)),
+            reward,
+        }
+    }
+
+    fn p2sh_payout(script_hash: [u8; 20], reward: u16) -> DMNPayout {
+        DMNPayout {
+            address: script_hash,
+            script: ScriptBuf::new_p2sh(&ScriptHash::from_byte_array(script_hash)),
+            reward,
+        }
+    }
+
+    #[test]
+    fn shared_masternode_has_no_owner_payout_or_collateral_address() {
+        // Its owners and reward recipients are the share holders, which are not modelled.
+        let shared = &core_v24_listdiff().added_mns[0];
+        assert_eq!(shared.collateral_address, None);
+        assert_eq!(shared.state.owner_address, None);
+        assert_eq!(shared.state.payout_address, None);
+        assert_eq!(shared.state.payouts, None);
+        assert_eq!(
+            shared.state.voting_address,
+            hash160("421c03add2c804421451c4e022258778175e60d8")
+        );
+    }
+
+    #[test]
+    fn extended_address_masternode_has_payouts_instead_of_payout_address() {
+        let added = core_v24_listdiff().added_mns;
+
+        let one_payout = &added[1];
+        assert_eq!(one_payout.state.payout_address, None);
+        assert_eq!(one_payout.state.payouts, Some(vec![p2pkh_payout([0x55; 20], 10000)]));
+        assert_eq!(
+            one_payout.state.owner_address,
+            Some(hash160("1f67d90f35e3c5070c368ae6f3635aac357e47df"))
+        );
+        assert_eq!(
+            one_payout.collateral_address,
+            Some(hash160("1ba1ae9799af495a38619dad703a079919a48144"))
+        );
+
+        // A P2SH payout's address is its script hash; only the script tells it from a key hash.
+        let two_payouts = &added[2].state;
+        assert_eq!(two_payouts.payout_address, None);
+        assert_eq!(
+            two_payouts.payouts,
+            Some(vec![p2pkh_payout([0x88; 20], 7000), p2sh_payout([0x77; 20], 3000)])
+        );
+        let payouts = two_payouts.payouts.as_deref().expect("payouts");
+        assert!(payouts[0].script.is_p2pkh());
+        assert!(payouts[1].script.is_p2sh());
+    }
+
+    #[test]
+    #[allow(deprecated)]
+    fn extended_address_evo_without_addresses_has_no_service_or_platform_ports() {
+        let evo = &core_v24_listdiff().added_mns[3].state;
+        assert_eq!(evo.service, unspecified_service());
+        assert_eq!(evo.addresses, Some(MasternodeAddresses::default()));
+        assert_eq!(evo.legacy_platform_p2p_port, None);
+        assert_eq!(evo.legacy_platform_http_port, None);
+        assert_eq!(evo.platform_p2p_address(), None);
+        assert_eq!(evo.platform_http_address(), None);
+        assert_eq!(evo.payouts, Some(vec![p2pkh_payout([0x99; 20], 10000)]));
+    }
+
+    #[test]
+    fn tor_primary_address_reads_as_unspecified_service_and_stays_in_addresses() {
+        let tor = &core_v24_listdiff().added_mns[2].state;
+        assert_eq!(tor.service, unspecified_service());
+        assert_eq!(
+            tor.addresses.as_ref().map(|addresses| addresses.core_p2p.clone()),
+            Some(vec![TOR_SERVICE.to_string(), "192.0.2.32:9999".to_string()])
+        );
+    }
+
+    #[test]
+    #[allow(deprecated)]
+    fn ipv6_primary_address_and_platform_addresses_resolve() {
+        let evo = &core_v24_listdiff().added_mns[4].state;
+        assert_eq!(
+            evo.service,
+            "[2001:db8::4]:9999".parse::<SocketAddr>().expect("valid socket address")
+        );
+        assert_eq!(evo.platform_p2p_address(), Some(("[2001:db8::4]".to_string(), 26656)));
+        assert_eq!(evo.platform_http_address(), Some(("[2001:db8::4]".to_string(), 443)));
+        assert_eq!(evo.legacy_platform_p2p_port, Some(26656));
+        assert_eq!(evo.legacy_platform_http_port, Some(443));
+    }
+
+    #[test]
+    fn legacy_to_extended_address_diff_moves_payout_address_into_payouts() {
+        let listdiff = core_v24_listdiff();
+        let (_, diff) = &listdiff.updated_mns[0];
+        let mut state: DMNState =
+            serde_json::from_str(CORE_V24_LEGACY_EVO_STATE).expect("expected to deserialize json");
+        let legacy_payout = state.payout_address.expect("a legacy masternode has a payout address");
+
+        // Core clears the legacy payout script, which prints no `payoutAddress`.
+        assert_eq!(diff.payout_address, None);
+        assert_eq!(diff.payouts, Some(vec![p2pkh_payout(legacy_payout, 10000)]));
+
+        state.apply_diff(diff.clone());
+        assert_eq!(state.payout_address, None, "payouts replace the payout address");
+        let raised: DMNState =
+            serde_json::from_str(CORE_V24_RAISED_EVO_STATE).expect("expected to deserialize json");
+        assert_eq!(state, raised, "applying Core's diff yields Core's new full state");
+    }
+
+    #[test]
+    fn extended_address_payout_change_diff_carries_only_payouts() {
+        let listdiff = core_v24_listdiff();
+        let (_, diff) = &listdiff.updated_mns[1];
+        let new_payouts = vec![p2pkh_payout([0xcc; 20], 2500), p2pkh_payout([0xdd; 20], 7500)];
+        assert_eq!(diff.payout_address, None);
+        assert_eq!(diff.payouts, Some(new_payouts.clone()));
+
+        let mut state = listdiff.added_mns[1].state.clone();
+        state.apply_diff(diff.clone());
+        assert_eq!(state.payouts, Some(new_payouts));
+        assert_eq!(state.payout_address, None);
+    }
+
+    #[test]
+    fn apply_diff_keeps_at_most_one_of_payout_address_and_payouts() {
+        // Core never moves a masternode back to a single payout address, but if a diff sets
+        // one, it replaces the payouts rather than coexisting with them.
+        let mut state = core_v24_listdiff().added_mns[1].state.clone();
+        let diff: DMNStateDiff =
+            serde_json::from_value(json!({"payoutAddress": "yVetSeT3tL4R2FmxqWAYgc1rZpmqbMcFhL"}))
+                .expect("expected to deserialize json");
+        state.apply_diff(diff);
+        assert_eq!(state.payout_address, Some([0x66; 20]));
+        assert_eq!(state.payouts, None);
+    }
+
+    fn assert_compare_then_apply_round_trips(older: &DMNState, newer: &DMNState) {
+        let diff = older.compare_to_newer_dmn_state(newer).expect("the states differ");
+        let mut applied = older.clone();
+        applied.apply_diff(diff);
+        assert_eq!(&applied, newer);
+    }
+
+    #[test]
+    fn compare_then_apply_round_trips_legacy_to_extended_address() {
+        let legacy: DMNState =
+            serde_json::from_str(CORE_V24_LEGACY_EVO_STATE).expect("expected to deserialize json");
+        let raised: DMNState =
+            serde_json::from_str(CORE_V24_RAISED_EVO_STATE).expect("expected to deserialize json");
+        assert_compare_then_apply_round_trips(&legacy, &raised);
+    }
+
+    #[test]
+    #[allow(deprecated)]
+    fn compare_then_apply_round_trips_extended_address_to_extended_address() {
+        // A ProUpRegTx changing the payouts and a ProUpServTx changing the platform ports.
+        let older = core_v24_listdiff().added_mns[4].state.clone();
+        let mut newer = older.clone();
+        newer.payouts = Some(vec![p2pkh_payout([0xcc; 20], 2500), p2pkh_payout([0xdd; 20], 7500)]);
+        newer.addresses = Some(MasternodeAddresses {
+            core_p2p: vec!["[2001:db8::4]:9999".to_string()],
+            platform_p2p: vec!["[2001:db8::4]:36656".to_string()],
+            platform_https: vec!["[2001:db8::4]:1443".to_string()],
+        });
+        newer.legacy_platform_p2p_port = Some(36656);
+        newer.legacy_platform_http_port = Some(1443);
+        assert_compare_then_apply_round_trips(&older, &newer);
+    }
+
+    #[test]
+    fn compare_then_apply_round_trips_shared_masternode() {
+        // A ProUpSharedRegTx changing the voting and operator keys.
+        let older = core_v24_listdiff().added_mns[0].state.clone();
+        let mut newer = older.clone();
+        newer.voting_address = [0xee; 20];
+        newer.pub_key_operator = hex::decode("a792ce1af5f7bb9281053b3934cb8b08d00d075a56498e1a525388ce467f188e8a80911fd96a20982baa9b9678452534").expect("valid hex");
+
+        let diff = older.compare_to_newer_dmn_state(&newer).expect("the states differ");
+        assert_eq!(diff.owner_address, None);
+        assert_eq!(diff.payout_address, None);
+        assert_eq!(diff.payouts, None);
+        assert_compare_then_apply_round_trips(&older, &newer);
     }
 
     #[test]
