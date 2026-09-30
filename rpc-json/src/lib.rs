@@ -24,7 +24,7 @@ use std::collections::HashMap;
 use std::error::Error;
 use std::fmt;
 use std::fmt::{Display, Formatter};
-use std::net::SocketAddr;
+use std::net::{IpAddr, Ipv6Addr, SocketAddr};
 use std::str::FromStr;
 
 use dashcore::address;
@@ -42,7 +42,7 @@ use key_wallet::bip32;
 use serde::de::Error as SerdeError;
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use serde_json::Value;
-use serde_with::{Bytes, DisplayFromStr, serde_as};
+use serde_with::{Bytes, DeserializeAs, DisplayFromStr, serde_as};
 //TODO(stevenroose) consider using a Time type
 
 #[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
@@ -1951,7 +1951,7 @@ pub struct GetMasternodeCountResult {
 pub struct Masternode {
     #[serde(rename = "proTxHash")]
     pub pro_tx_hash: ProTxHash,
-    #[serde_as(as = "DisplayFromStr")]
+    #[serde_as(serialize_as = "DisplayFromStr", deserialize_as = "ServiceOrUnspecified")]
     pub address: SocketAddr,
     #[serde_as(as = "Bytes")]
     pub payee: Vec<u8>,
@@ -1960,9 +1960,9 @@ pub struct Masternode {
     pub node_type: String,
     #[serde(rename = "platformNodeID")]
     pub platform_node_id: Option<String>,
-    #[serde(rename = "platformP2PPort")]
+    #[serde(default, rename = "platformP2PPort", deserialize_with = "deserialize_u32_opt")]
     pub platform_p2p_port: Option<u32>,
-    #[serde(rename = "platformHTTPPort")]
+    #[serde(default, rename = "platformHTTPPort", deserialize_with = "deserialize_u32_opt")]
     pub platform_http_port: Option<u32>,
     #[serde(rename = "pospenaltyscore")]
     pub pos_penalty_score: u32,
@@ -2101,7 +2101,9 @@ fn parse_host_port(addr: &str) -> Option<(String, u32)> {
 #[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DMNState {
-    #[serde_as(as = "DisplayFromStr")]
+    /// Primary core P2P address. `[::]:0` when the masternode has no address or its primary
+    /// address has no IP form (Tor, I2P); the nested [`addresses`](Self::addresses) keep those.
+    #[serde_as(serialize_as = "DisplayFromStr", deserialize_as = "ServiceOrUnspecified")]
     pub service: SocketAddr,
     pub registered_height: u32,
     #[serde(default, rename = "PoSeRevivedHeight", deserialize_with = "deserialize_u32_opt")]
@@ -2125,11 +2127,13 @@ pub struct DMNState {
         rename = "platformNodeID"
     )]
     pub platform_node_id: Option<[u8; 20]>,
+    /// `None` when absent or negative: Core prints `-1` for an Evo with no addresses.
     #[deprecated(note = "Core 23+ nested addresses.platform_p2p should be used instead")]
-    #[serde(default, rename = "platformP2PPort")]
+    #[serde(default, rename = "platformP2PPort", deserialize_with = "deserialize_u32_opt")]
     pub legacy_platform_p2p_port: Option<u32>,
+    /// `None` when absent or negative: Core prints `-1` for an Evo with no addresses.
     #[deprecated(note = "Core 23+ nested addresses.platform_https should be used instead")]
-    #[serde(default, rename = "platformHTTPPort")]
+    #[serde(default, rename = "platformHTTPPort", deserialize_with = "deserialize_u32_opt")]
     pub legacy_platform_http_port: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub addresses: Option<MasternodeAddresses>,
@@ -2514,7 +2518,7 @@ pub enum MasternodeState {
 pub struct MasternodeStatus {
     #[serde(default, deserialize_with = "deserialize_outpoint")]
     pub outpoint: dashcore::OutPoint,
-    #[serde_as(as = "DisplayFromStr")]
+    #[serde_as(serialize_as = "DisplayFromStr", deserialize_as = "ServiceOrUnspecified")]
     pub service: SocketAddr,
     #[serde(rename = "proTxHash")]
     pub pro_tx_hash: ProTxHash,
@@ -2973,7 +2977,7 @@ pub struct QuorumMasternodeListItem {
     pub pro_reg_tx_hash: Vec<u8>,
     #[serde(with = "hex")]
     pub confirmed_hash: Vec<u8>,
-    #[serde_as(as = "DisplayFromStr")]
+    #[serde_as(serialize_as = "DisplayFromStr", deserialize_as = "ServiceOrUnspecified")]
     pub service: SocketAddr,
     #[serde(with = "hex")]
     pub pub_key_operator: Vec<u8>,
@@ -3008,6 +3012,7 @@ pub struct MasternodeDiff {
 #[serde(rename_all = "camelCase")]
 pub struct DMNStateDiffIntermediate {
     #[serde(default)]
+    #[serde_as(deserialize_as = "Option<ServiceOrUnspecified>")]
     pub service: Option<SocketAddr>,
     #[serde(default)]
     pub registered_height: Option<u32>,
@@ -3034,10 +3039,10 @@ pub struct DMNStateDiffIntermediate {
     #[serde(default, rename = "platformNodeID")]
     pub platform_node_id: Option<String>,
     #[deprecated(note = "Core 23+ nested addresses.platform_p2p should be used instead")]
-    #[serde(default, rename = "platformP2PPort")]
+    #[serde(default, rename = "platformP2PPort", deserialize_with = "deserialize_u32_opt")]
     pub legacy_platform_p2p_port: Option<u32>,
     #[deprecated(note = "Core 23+ nested addresses.platform_https should be used instead")]
-    #[serde(default, rename = "platformHTTPPort")]
+    #[serde(default, rename = "platformHTTPPort", deserialize_with = "deserialize_u32_opt")]
     pub legacy_platform_http_port: Option<u32>,
     #[serde(default)]
     pub payout_address: Option<String>,
@@ -3382,15 +3387,18 @@ where
     })
 }
 
+/// Reads an optional `u32` that Core prints as `-1` (or any negative value) when not set.
+/// `null` also reads as `None`; a value above `u32::MAX` is an error.
 fn deserialize_u32_opt<'de, D>(deserializer: D) -> Result<Option<u32>, D::Error>
 where
     D: Deserializer<'de>,
 {
-    let val = i64::deserialize(deserializer)?;
-    if val < 0 {
-        return Ok(None);
+    match Option::<i64>::deserialize(deserializer)? {
+        Some(val) if val >= 0 => u32::try_from(val)
+            .map(Some)
+            .map_err(|_| D::Error::invalid_value(de::Unexpected::Signed(val), &"a u32")),
+        _ => Ok(None),
     }
-    Ok(Some(val as u32))
 }
 
 fn deserialize_u32_2opt<'de, D>(deserializer: D) -> Result<Option<Option<u32>>, D::Error>
@@ -3418,15 +3426,52 @@ where
     Ok(Some(Option::<MasternodeAddresses>::deserialize(deserializer)?))
 }
 
+/// The `service` Dash Core prints for a masternode without an address.
+const UNSPECIFIED_SERVICE: SocketAddr = SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), 0);
+
+/// Reads a masternode `service`, the primary core P2P address as `"ip:port"`.
+///
+/// The primary address may be a Tor (`.onion`) or I2P (`.i2p`) address, which has no
+/// [`SocketAddr`] form. It reads as `[::]:0`, the value Core prints for a masternode without an
+/// address, so that one such entry does not fail a whole masternode list; where the type models
+/// the nested `addresses` object, the entry stays readable there. Any other value that is not
+/// an `ip:port` is an error.
+struct ServiceOrUnspecified;
+
+impl<'de> DeserializeAs<'de, SocketAddr> for ServiceOrUnspecified {
+    fn deserialize_as<D>(deserializer: D) -> Result<SocketAddr, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let service = String::deserialize(deserializer)?;
+        match service.parse() {
+            Ok(service) => Ok(service),
+            Err(_) if is_privacy_network_service(&service) => Ok(UNSPECIFIED_SERVICE),
+            Err(err) => Err(D::Error::custom(format_args!("invalid service {service:?}: {err}"))),
+        }
+    }
+}
+
+/// Whether `service` is a Tor or I2P `host:port` as Core prints it.
+fn is_privacy_network_service(service: &str) -> bool {
+    service.rsplit_once(':').is_some_and(|(host, port)| {
+        (host.ends_with(".onion") || host.ends_with(".i2p")) && port.parse::<u16>().is_ok()
+    })
+}
+
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+    use std::net::SocketAddr;
+
     use dashcore::hashes::Hash;
     use serde::{Deserialize, Serialize};
     use serde_json::json;
 
     use crate::{
-        DMNState, DMNStateDiff, ExtendedQuorumListResult, MasternodeAddresses, MasternodeListDiff,
-        MnSyncStatus, QuorumType, deserialize_u32_opt, parse_host_port,
+        DMNState, DMNStateDiff, ExtendedQuorumListResult, Masternode, MasternodeAddresses,
+        MasternodeListDiff, MasternodeStatus, MnSyncStatus, QuorumMasternodeListItem, QuorumType,
+        deserialize_u32_opt, parse_host_port,
     };
 
     #[test]
@@ -3908,6 +3953,275 @@ mod tests {
         // Empty host must be rejected.
         assert_eq!(parse_host_port(":36656"), None, "empty host rejected");
         assert_eq!(parse_host_port(":443"), None, "empty host rejected");
+    }
+
+    // Network fields as Dash Core v24 prints them. `service` is the primary core P2P entry,
+    // which may be a Tor or I2P address; an extended-address Evo with no addresses prints
+    // `service` as `[::]:0` and both platform ports as `-1` (src/evo/core_write.cpp,
+    // `GetPlatformPort`).
+
+    const TOR_SERVICE: &str = "pg6mmjiyjmcrsslvykfwnntlaru7p5svn6y2ymmju6nubxndf4pscryd.onion:9999";
+    const I2P_SERVICE: &str = "udhdrtrcetjm5sxzskjyr5ztpeszydbh4dpl3pl4utgqqw2v4jna.b32.i2p:0";
+
+    fn unspecified_service() -> SocketAddr {
+        "[::]:0".parse().expect("valid socket address")
+    }
+
+    /// An Evo state entry with the given network fields and a legacy payout address.
+    fn evo_state_json(service: &str, p2p_port: i64, http_port: i64) -> serde_json::Value {
+        json!({
+            "service": service,
+            "registeredHeight": 850319,
+            "lastPaidHeight": 0,
+            "consecutivePayments": 0,
+            "PoSePenalty": 0,
+            "PoSeRevivedHeight": -1,
+            "PoSeBanHeight": -1,
+            "revocationReason": 0,
+            "ownerAddress": "yPBWCdMRY5PsS3hJzs7csbdWQVRR85yxUz",
+            "votingAddress": "ySM11LUD65Bi4p1gm68XLkdWc65TBKRzvQ",
+            "platformNodeID": "f2dbd9b0a1f541a7c44d34a58674d0262f5feca5",
+            "platformP2PPort": p2p_port,
+            "platformHTTPPort": http_port,
+            "payoutAddress": "yX4Ve7Q8Y4jscV4LZJD8HVCHKyePzR3MhA",
+            "pubKeyOperator": "8ed3f0c208efbcfc815cbfb94490dc68cf2e29d44dd9f8a91e20e06057aa110d7062c8ab7ccc85a9ff0c88760157f563"
+        })
+    }
+
+    #[test]
+    fn dmn_state_non_ip_service_reads_as_unspecified_address() {
+        // A Tor or I2P primary address has no `SocketAddr` form. It must not fail the entry,
+        // and with it the whole masternode list: it reads as `[::]:0`, which is what Core
+        // prints for a masternode without an address.
+        for service in [TOR_SERVICE, I2P_SERVICE] {
+            let state: DMNState = serde_json::from_value(evo_state_json(service, 26656, 443))
+                .expect("non-IP service must not fail the entry");
+            assert_eq!(state.service, unspecified_service(), "{service}");
+            assert_eq!(
+                serde_json::to_value(&state).expect("serializable")["service"],
+                "[::]:0",
+                "serializes in Core's `ip:port` form"
+            );
+        }
+
+        // Any IP service is kept, including IPv6 and CJDNS (fc00::/8, printed as IPv6).
+        for service in ["[2001:db8::1]:9999", "[fc32:17ea:e415:c3bf:9808:149d:b5a2:c9aa]:9999"] {
+            let state: DMNState = serde_json::from_value(evo_state_json(service, 26656, 443))
+                .expect("expected to deserialize json");
+            assert_eq!(
+                state.service,
+                service.parse::<SocketAddr>().expect("valid socket address"),
+                "{service}"
+            );
+        }
+    }
+
+    #[test]
+    fn malformed_service_is_still_an_error() {
+        // Only a Tor or I2P host reads as `[::]:0`. Anything else that is not an `ip:port` is
+        // not something Core prints, so it fails the entry rather than hiding behind `[::]:0`.
+        for service in [
+            "192.0.2.1",
+            "192.0.2.1:99999",
+            "",
+            "not an address",
+            "[2001:db8::1]",
+            "192.0.2.1:9999 ",
+            "server-1.example.com:9999",
+            "pg6mmjiyjmcrsslvykfwnntlaru7p5svn6y2ymmju6nubxndf4pscryd.onion",
+            "pg6mmjiyjmcrsslvykfwnntlaru7p5svn6y2ymmju6nubxndf4pscryd.onion:99999",
+        ] {
+            let state = serde_json::from_value::<DMNState>(evo_state_json(service, 26656, 443));
+            assert!(state.is_err(), "{service:?} must fail the entry, got {state:?}");
+            let diff = serde_json::from_value::<DMNStateDiff>(json!({"service": service}));
+            assert!(diff.is_err(), "{service:?} must fail the diff, got {diff:?}");
+        }
+
+        // An absent or null `service` in a diff means "unchanged".
+        let diff: DMNStateDiff =
+            serde_json::from_value(json!({"service": null})).expect("null service is unchanged");
+        assert_eq!(diff.service, None);
+    }
+
+    #[test]
+    #[allow(deprecated)]
+    fn dmn_state_negative_platform_ports_read_as_absent() {
+        // `-1` is Core's "no port" for an extended-address Evo with no addresses.
+        let state: DMNState = serde_json::from_value(evo_state_json("[::]:0", -1, -1))
+            .expect("-1 platform ports must not fail the entry");
+        assert_eq!(state.legacy_platform_p2p_port, None);
+        assert_eq!(state.legacy_platform_http_port, None);
+        assert_eq!(state.platform_p2p_address(), None);
+        assert_eq!(state.platform_http_address(), None);
+    }
+
+    #[test]
+    fn dmn_state_diff_non_ip_service_reads_as_unspecified_address() {
+        // A ProUpServTx that makes a Tor address the primary core P2P entry. The Tor entry
+        // stays readable in `addresses`.
+        let diff: DMNStateDiff = serde_json::from_value(json!({
+            "service": TOR_SERVICE,
+            "addresses": {
+                "core_p2p": [TOR_SERVICE, "192.0.2.10:9999"]
+            }
+        }))
+        .expect("non-IP service must not fail the diff");
+        assert_eq!(diff.service, Some(unspecified_service()));
+        assert_eq!(
+            diff.addresses.flatten().map(|addresses| addresses.core_p2p),
+            Some(vec![TOR_SERVICE.to_string(), "192.0.2.10:9999".to_string()])
+        );
+    }
+
+    #[test]
+    #[allow(deprecated)]
+    fn dmn_state_diff_negative_platform_ports_read_as_absent() {
+        // Core's diff never prints `-1` (it prints the scalar port or the live netInfo port);
+        // this guards that diffs parse platform ports like full entries do.
+        let diff: DMNStateDiff =
+            serde_json::from_value(json!({"platformP2PPort": -1, "platformHTTPPort": -1}))
+                .expect("-1 platform ports must not fail the diff");
+        assert_eq!(diff.legacy_platform_p2p_port, None);
+        assert_eq!(diff.legacy_platform_http_port, None);
+    }
+
+    #[test]
+    #[allow(deprecated)]
+    fn extaddr_evo_port_only_diff_carries_the_new_port_only_in_addresses() {
+        // An extended-address Evo keeps its platform ports in `addresses` and its scalar ports
+        // at 0, so a ProUpServTx that changes only a platform port reports neither
+        // `platformP2PPort` nor `platformHTTPPort` in the diff.
+        let diff: DMNStateDiff = serde_json::from_value(json!({
+            "service": "192.0.2.20:9999",
+            "addresses": {
+                "core_p2p": ["192.0.2.20:9999", "[2001:db8::20]:9999"],
+                "platform_p2p": ["192.0.2.20:36668"],
+                "platform_https": ["192.0.2.20:1443"]
+            }
+        }))
+        .expect("expected to deserialize json");
+        assert_eq!(diff.legacy_platform_p2p_port, None);
+        assert_eq!(diff.legacy_platform_http_port, None);
+        assert_eq!(diff.platform_p2p_address(), Some(("192.0.2.20".to_string(), 36668)));
+
+        let mut state: DMNState = serde_json::from_value(evo_state_json("192.0.2.20:9999", 0, 0))
+            .expect("expected to deserialize json");
+        state.apply_diff(diff);
+        assert_eq!(state.platform_p2p_address(), Some(("192.0.2.20".to_string(), 36668)));
+        assert_eq!(state.platform_http_address(), Some(("192.0.2.20".to_string(), 1443)));
+    }
+
+    #[test]
+    #[allow(deprecated)]
+    fn platform_ports_out_of_u32_range_are_an_error_and_null_is_absent() {
+        // A port past `u32::MAX` must fail rather than wrap to a plausible port.
+        let state = serde_json::from_value::<DMNState>(evo_state_json(
+            "192.0.2.1:9999",
+            (1i64 << 32) + 26656,
+            443,
+        ));
+        assert!(state.is_err(), "2^32 + 26656 must not read as 26656: {state:?}");
+
+        // `null` reads as "no port", as it did for a plain `Option<u32>`.
+        let mut json = evo_state_json("192.0.2.1:9999", 26656, 443);
+        json["platformP2PPort"] = serde_json::Value::Null;
+        json["platformHTTPPort"] = serde_json::Value::Null;
+        let state: DMNState = serde_json::from_value(json).expect("null port is absent");
+        assert_eq!(state.legacy_platform_p2p_port, None);
+        assert_eq!(state.legacy_platform_http_port, None);
+    }
+
+    #[test]
+    fn masternode_status_non_ip_service_reads_as_unspecified_address() {
+        let status: MasternodeStatus = serde_json::from_value(json!({
+            "outpoint": "ff6226e6c97bfcf40b6d04e12e3f75678024988823bfba28cde2a9ac11b1a765-1",
+            "service": TOR_SERVICE,
+            "proTxHash": "c560a9be2be9db79e1aaa16e4dd3cd22bddcb0155f88aba68aa4797d375ef370",
+            "type": "Evo",
+            "collateralHash": "ff6226e6c97bfcf40b6d04e12e3f75678024988823bfba28cde2a9ac11b1a765",
+            "collateralIndex": 1,
+            "dmnState": evo_state_json(TOR_SERVICE, 26656, 443),
+            "state": "READY",
+            "status": "Ready",
+            "quorumParticipation": true
+        }))
+        .expect("non-IP service must not fail the status");
+        assert_eq!(status.service, unspecified_service());
+        assert_eq!(status.dmn_state.service, unspecified_service());
+    }
+
+    #[test]
+    fn quorum_masternode_list_item_non_ip_service_reads_as_unspecified_address() {
+        // A `protx diff` mnList entry of a masternode whose primary address is Tor.
+        let item: QuorumMasternodeListItem = serde_json::from_value(json!({
+            "nVersion": 3,
+            "nType": 0,
+            "proRegTxHash": "c560a9be2be9db79e1aaa16e4dd3cd22bddcb0155f88aba68aa4797d375ef370",
+            "confirmedHash": "000000c8d2f1a47d3cbbd3c3a4a4f0f2e04ec1d3cb14ae8f4f14f16e1ad6c9d4",
+            "service": TOR_SERVICE,
+            "addresses": {
+                "core_p2p": [TOR_SERVICE]
+            },
+            "pubKeyOperator": "8ed3f0c208efbcfc815cbfb94490dc68cf2e29d44dd9f8a91e20e06057aa110d7062c8ab7ccc85a9ff0c88760157f563",
+            "votingAddress": "ySM11LUD65Bi4p1gm68XLkdWc65TBKRzvQ",
+            "isValid": true
+        }))
+        .expect("non-IP service must not fail the entry");
+        assert_eq!(item.service, unspecified_service());
+    }
+
+    #[test]
+    fn masternode_list_entries_with_negative_ports_or_non_ip_address_parse() {
+        // `masternodelist json` with an extended-address Evo that has no addresses and a
+        // masternode whose primary address is Tor. One such entry must not fail the list.
+        let list: HashMap<String, Masternode> = serde_json::from_value(json!({
+            "ff6226e6c97bfcf40b6d04e12e3f75678024988823bfba28cde2a9ac11b1a765-1": {
+                "proTxHash": "c560a9be2be9db79e1aaa16e4dd3cd22bddcb0155f88aba68aa4797d375ef370",
+                "address": "[::]:0",
+                "addresses": {},
+                "payee": "yX4Ve7Q8Y4jscV4LZJD8HVCHKyePzR3MhA",
+                "status": "ENABLED",
+                "type": "Evo",
+                "platformNodeID": "f2dbd9b0a1f541a7c44d34a58674d0262f5feca5",
+                "platformP2PPort": -1,
+                "platformHTTPPort": -1,
+                "pospenaltyscore": 0,
+                "consecutivePayments": 0,
+                "lastpaidtime": 0,
+                "lastpaidblock": 0,
+                "owneraddress": "yPBWCdMRY5PsS3hJzs7csbdWQVRR85yxUz",
+                "votingaddress": "ySM11LUD65Bi4p1gm68XLkdWc65TBKRzvQ",
+                "collateraladdress": "yNqYnF9sHURjwRmhZMLFGQ3WjC5DZNJMUi",
+                "pubkeyoperator": "8ed3f0c208efbcfc815cbfb94490dc68cf2e29d44dd9f8a91e20e06057aa110d7062c8ab7ccc85a9ff0c88760157f563"
+            },
+            "35215134107b5e423d327cab12d2b4c60a9b769301096e05a95916676d2f7867-0": {
+                "proTxHash": "9a8cfd0e5fa3a7467b81a5a2fa41e40f7981591cfb62d86e35db37962c128bb0",
+                "address": TOR_SERVICE,
+                "addresses": {
+                    "core_p2p": [TOR_SERVICE]
+                },
+                "payee": "ybhjexnMcGckdJCyUwFu3F25zPo4mqQg1k",
+                "status": "ENABLED",
+                "type": "Regular",
+                "pospenaltyscore": 0,
+                "consecutivePayments": 3,
+                "lastpaidtime": 1727700000,
+                "lastpaidblock": 1641,
+                "owneraddress": "yLtkvxSueGSufQZQq8L9GVHch9QRqJqGkZ",
+                "votingaddress": "yLtkvxSueGSufQZQq8L9GVHch9QRqJqGkZ",
+                "collateraladdress": "yd2PwFoqtEJdnJVSEzBDMxVnFVgEvJyvyY",
+                "pubkeyoperator": "a792ce1af5f7bb9281053b3934cb8b08d00d075a56498e1a525388ce467f188e8a80911fd96a20982baa9b9678452534"
+            }
+        }))
+        .expect("one such entry must not fail the list");
+
+        let evo = &list["ff6226e6c97bfcf40b6d04e12e3f75678024988823bfba28cde2a9ac11b1a765-1"];
+        assert_eq!(evo.platform_p2p_port, None);
+        assert_eq!(evo.platform_http_port, None);
+        assert_eq!(evo.address, unspecified_service());
+
+        let tor = &list["35215134107b5e423d327cab12d2b4c60a9b769301096e05a95916676d2f7867-0"];
+        assert_eq!(tor.address, unspecified_service());
     }
 
     #[test]
