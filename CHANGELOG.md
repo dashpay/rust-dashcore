@@ -6,12 +6,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
-### Fixed
-
-- Keep late wallet input attribution account-local, restore outgoing history details,
-  and emit complete accounting corrections without assigning another transaction’s InstantSend lock.
-  Preserve finalized-record retention after collecting all late input corrections.
-
 ### Changed
 
 - **Breaking:** the `bincode` feature and binary serialization dependencies now use
