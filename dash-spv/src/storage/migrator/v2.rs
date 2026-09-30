@@ -24,12 +24,7 @@ const TMP_DIR: &str = "tmp";
 
 const BLOCK_HEADER_LEN: usize = 80;
 const HASH_LEN: usize = 32;
-
-const SENTINEL_BLOCK_HEADER: [u8; BLOCK_HEADER_LEN] = {
-    let mut header = [0xFF; BLOCK_HEADER_LEN];
-    header[3] = 0x7F;
-    header
-};
+const SENTINEL_VERSION: [u8; 4] = i32::MAX.to_le_bytes();
 
 #[derive(Clone, Copy)]
 enum ItemKind {
@@ -59,16 +54,23 @@ pub struct V2Migrator;
 #[async_trait]
 impl Migrator for V2Migrator {
     async fn apply_migration(&self, storage_path: &Path) -> Result<(), MigratorError> {
+        let tmp = storage_path.join(TMP_DIR);
+        remove_dir_if_exists(&tmp)?;
+
         for (folder, kind, items_per_segment) in FOLDERS {
             migrate_folder(storage_path, folder, kind, items_per_segment)?;
         }
 
-        let tmp = storage_path.join(TMP_DIR);
-        if tmp.exists() {
-            fs::remove_dir_all(tmp)?;
-        }
+        remove_dir_if_exists(&tmp)?;
 
         Ok(())
+    }
+}
+
+fn remove_dir_if_exists(path: &Path) -> io::Result<()> {
+    match fs::remove_dir_all(path) {
+        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
+        result => result,
     }
 }
 
@@ -79,35 +81,30 @@ fn migrate_folder(
     items_per_segment: u32,
 ) -> Result<(), MigratorError> {
     let folder = storage_path.join(name);
-    let tmp = storage_path.join(TMP_DIR);
-    let staged = tmp.join(name);
-    let replaced = tmp.join(format!("{name}.old"));
-
-    if replaced.exists() {
-        if !folder.exists() {
-            fs::rename(&staged, &folder)?;
-        }
-        fs::remove_dir_all(&tmp)?;
-        return Ok(());
-    }
+    let staged = storage_path.join(TMP_DIR).join(name);
 
     let legacy_ids = legacy_segment_ids(&folder)?;
     if legacy_ids.is_empty() {
         return Ok(());
     }
 
-    if tmp.exists() {
-        fs::remove_dir_all(&tmp)?;
-    }
+    remove_dir_if_exists(&staged)?;
     fs::create_dir_all(&staged)?;
 
-    for legacy_id in legacy_ids {
+    for &legacy_id in &legacy_ids {
         split_segment(&folder, &staged, legacy_id, kind, items_per_segment)?;
     }
 
-    fs::rename(&folder, &replaced)?;
-    fs::rename(&staged, &folder)?;
-    fs::remove_dir_all(&tmp)?;
+    for entry in fs::read_dir(&staged)? {
+        let entry = entry?;
+        fs::rename(entry.path(), folder.join(entry.file_name()))?;
+    }
+
+    for legacy_id in legacy_ids {
+        fs::remove_file(folder.join(legacy_segment_file_name(legacy_id)))?;
+    }
+
+    remove_dir_if_exists(&staged)?;
 
     Ok(())
 }
@@ -148,10 +145,7 @@ fn split_segment(
     kind: ItemKind,
     items_per_segment: u32,
 ) -> Result<(), MigratorError> {
-    let legacy_path = folder.join(format!(
-        "{SEGMENT_PREFIX}_{legacy_id:0width$}.{SEGMENT_EXTENSION}",
-        width = LEGACY_SEGMENT_ID_DIGITS
-    ));
+    let legacy_path = folder.join(legacy_segment_file_name(legacy_id));
     let mut reader = BufReader::new(File::open(&legacy_path)?);
 
     let segments_per_legacy = LEGACY_ITEMS_PER_SEGMENT / items_per_segment;
@@ -165,7 +159,11 @@ fn split_segment(
             items.push(item);
         }
 
-        if items.iter().any(|item| !is_sentinel(item, kind)) {
+        if items.is_empty() {
+            return Ok(());
+        }
+
+        if !items.iter().all(|item| is_sentinel(item, kind)) {
             let id = legacy_id * segments_per_legacy + chunk;
             write_segment(&staged.join(segment_file_name(id)), &items)?;
         }
@@ -182,6 +180,10 @@ fn split_segment(
     }
 
     Ok(())
+}
+
+fn legacy_segment_file_name(id: u32) -> String {
+    format!("{SEGMENT_PREFIX}_{id:0width$}.{SEGMENT_EXTENSION}", width = LEGACY_SEGMENT_ID_DIGITS)
 }
 
 fn segment_file_name(id: u32) -> String {
@@ -226,13 +228,10 @@ fn read_fixed<R: Read>(reader: &mut R, len: usize) -> Result<(), encode::Error> 
 
 fn is_sentinel(item: &[u8], kind: ItemKind) -> bool {
     match kind {
-        ItemKind::BlockHeader => item[..BLOCK_HEADER_LEN] == SENTINEL_BLOCK_HEADER,
-        ItemKind::FilterHeader => item.iter().all(|b| *b == 0),
+        ItemKind::BlockHeader => item[..4] == SENTINEL_VERSION,
+        ItemKind::FilterHeader => item == [0; HASH_LEN],
         ItemKind::Filter => item == [0],
-        ItemKind::Block => {
-            item[HASH_LEN..BLOCK_HEADER_LEN + HASH_LEN] == SENTINEL_BLOCK_HEADER
-                && item[BLOCK_HEADER_LEN + HASH_LEN..] == [0]
-        }
+        ItemKind::Block => item[HASH_LEN..HASH_LEN + 4] == SENTINEL_VERSION,
     }
 }
 
