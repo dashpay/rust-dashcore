@@ -1,4 +1,5 @@
 mod v1;
+mod v2;
 
 use std::io;
 use std::path::{Path, PathBuf};
@@ -9,8 +10,9 @@ use serde::{Deserialize, Serialize};
 use crate::error::{StorageError, StorageResult};
 use crate::storage::io::atomic_write;
 use v1::V1Migrator;
+use v2::V2Migrator;
 
-pub const CURRENT_VERSION: u32 = 1;
+pub const CURRENT_VERSION: u32 = 2;
 
 #[async_trait]
 trait Migrator {
@@ -116,7 +118,7 @@ async fn migration_loop(storage_path: &Path) -> Result<(), MigratorError> {
     while version < CURRENT_VERSION {
         tracing::info!("Migrating storage from version {} to {}", version, version + 1);
 
-        const MIGRATORS: &[&dyn Migrator; CURRENT_VERSION as usize] = &[&V1Migrator];
+        const MIGRATORS: &[&dyn Migrator; CURRENT_VERSION as usize] = &[&V1Migrator, &V2Migrator];
 
         MIGRATORS[version as usize].apply_migration(storage_path).await?;
 
