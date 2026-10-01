@@ -245,7 +245,11 @@ fn read_item<R: Read>(reader: &mut R, kind: ItemKind) -> Result<Option<Vec<u8>>,
 
     match result {
         Ok(()) => Ok(Some(tee.bytes)),
-        Err(encode::Error::Io(e)) if e.kind() == io::ErrorKind::UnexpectedEof => Ok(None),
+        Err(encode::Error::Io(e))
+            if e.kind() == io::ErrorKind::UnexpectedEof && tee.bytes.is_empty() =>
+        {
+            Ok(None)
+        }
         Err(e) => Err(MigratorError::Corruption(format!("Failed to decode legacy item: {e}"))),
     }
 }
