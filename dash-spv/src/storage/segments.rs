@@ -3,7 +3,7 @@
 use std::{
     collections::{HashMap, HashSet},
     fs::{self, File},
-    io::BufReader,
+    io::{BufReader, Seek, SeekFrom},
     ops::Range,
     path::{Path, PathBuf},
     time::Instant,
@@ -28,6 +28,8 @@ pub(super) trait Persistable: Sized + Encodable + Decodable + PartialEq + Clone 
     const SEGMENT_PREFIX: &'static str = "segment";
     const DATA_FILE_EXTENSION: &'static str = "dat";
     const ITEMS_PER_SEGMENT: u32;
+    /// The encoded size of every item, when it is fixed.
+    const ENCODED_SIZE: Option<u64> = None;
 
     fn segment_file_name(segment_id: u32) -> String {
         format!("{}_{:06}.{}", Self::SEGMENT_PREFIX, segment_id, Self::DATA_FILE_EXTENSION)
@@ -46,6 +48,7 @@ impl Persistable for Vec<u8> {
 
 impl Persistable for HashedBlockHeader {
     const ITEMS_PER_SEGMENT: u32 = 10_000;
+    const ENCODED_SIZE: Option<u64> = Some(112);
 
     fn sentinel() -> Self {
         let header = BlockHeader {
@@ -63,6 +66,7 @@ impl Persistable for HashedBlockHeader {
 
 impl Persistable for FilterHeader {
     const ITEMS_PER_SEGMENT: u32 = 50_000;
+    const ENCODED_SIZE: Option<u64> = Some(32);
 
     fn sentinel() -> Self {
         FilterHeader::from_byte_array([0u8; 32])
@@ -318,15 +322,24 @@ impl<I: Persistable> SegmentCache<I> {
             return Ok(None);
         }
         let segment_id = Self::height_to_segment_id(height);
-
         let offset = Self::height_to_offset(height);
-        let segment = self.get_segment_mut(&segment_id).await?;
-        let item = segment.get_single(offset);
-        if *item == I::sentinel() {
-            Ok(None)
-        } else {
-            Ok(Some(item.clone()))
-        }
+
+        // A fixed-size item of a segment that is not resident is read on its
+        // own, without loading the segment.
+        let item = match I::ENCODED_SIZE {
+            Some(size) if !self.segments.contains_key(&segment_id) => {
+                let mut file =
+                    File::open(self.segments_dir.join(I::segment_file_name(segment_id)))?;
+
+                file.seek(SeekFrom::Start(offset as u64 * size))?;
+
+                I::consensus_decode(&mut BufReader::new(file))
+                    .map_err(|e| StorageError::ReadFailed(format!("Failed to decode item: {e}")))?
+            }
+            _ => self.get_segment_mut(&segment_id).await?.get_single(offset).clone(),
+        };
+
+        Ok(Some(item).filter(|item| *item != I::sentinel()))
     }
 
     pub async fn store_items(&mut self, items: &[I]) -> StorageResult<()> {
