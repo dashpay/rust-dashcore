@@ -1,207 +1,206 @@
-//! InstantLock validation functionality.
+use std::collections::BTreeMap;
 
-use dashcore::{sml::masternode_list_engine::MasternodeListEngine, InstantLock};
+use dashcore::bls_sig_utils::BlsScheme;
+use dashcore::sml::message_verification_error::MessageVerificationError;
+use dashcore::sml::quorum_entry::qualified_quorum_entry::QualifiedQuorumEntry;
+use dashcore::{InstantLock, QuorumSigningRequestId};
 use dashcore_hashes::Hash;
 
-use crate::{
-    error::{ValidationError, ValidationResult},
-    validation::Validator,
-};
+use crate::error::{ValidationError, ValidationResult};
+use crate::validation::Validator;
 
-/// Validates InstantLock messages. Requires a masternode engine to verify
-/// BLS signatures. Never accept InstantLocks from the network without full
-/// signature verification.
+/// Validates InstantLock messages against the rotated quorums of their cycle.
+/// Never accept InstantLocks from the network without full signature
+/// verification.
+///
+/// A malformed lock fails with [`ValidationError::InvalidInstantLock`], one
+/// whose signature does not verify, or whose quorum is not in the cycle, with
+/// [`ValidationError::InvalidSignature`].
 pub struct InstantLockValidator<'a> {
-    masternode_engine: &'a MasternodeListEngine,
+    /// The rotated quorums of the lock's cycle, by quorum index.
+    cycle_quorums: &'a BTreeMap<u16, QualifiedQuorumEntry>,
 }
 
 impl Validator<&InstantLock> for InstantLockValidator<'_> {
-    /// Validate an InstantLock with full BLS signature verification.
-    ///
-    /// This performs complete validation including:
-    /// - Structural validation (non-zero txid, signature, inputs)
-    /// - BLS signature verification using cyclehash-based quorum selection (DIP 24)
     fn validate(&self, instant_lock: &InstantLock) -> ValidationResult<()> {
         self.validate_structure(instant_lock)?;
-        self.validate_signature(instant_lock)?;
-
-        tracing::debug!(
-            "InstantLock fully validated (structure + signature) for txid {}",
-            instant_lock.txid
-        );
-
-        Ok(())
+        self.validate_signature(instant_lock).map_err(|e| {
+            ValidationError::InvalidSignature(format!(
+                "InstantLock BLS signature verification failed: {e}"
+            ))
+        })
     }
 }
 
 impl<'a> InstantLockValidator<'a> {
-    pub fn new(masternode_engine: &'a MasternodeListEngine) -> Self {
+    pub fn new(cycle_quorums: &'a BTreeMap<u16, QualifiedQuorumEntry>) -> Self {
         Self {
-            masternode_engine,
+            cycle_quorums,
         }
     }
 
-    /// This method is a helper for validating the structure of an InstanLock.
-    /// Don't call or expose this method directly, use `validate()` instead.
     fn validate_structure(&self, instant_lock: &InstantLock) -> ValidationResult<()> {
-        // Check transaction ID is not zero (null txid)
         if instant_lock.txid == dashcore::Txid::all_zeros() {
             return Err(ValidationError::InvalidInstantLock(
                 "InstantLock transaction ID cannot be zero".to_string(),
             ));
         }
 
-        // Check signature is not zero (null signature)
         if instant_lock.signature.is_zeroed() {
             return Err(ValidationError::InvalidInstantLock(
                 "InstantLock signature cannot be zero".to_string(),
             ));
         }
 
-        // Check inputs are present
         if instant_lock.inputs.is_empty() {
             return Err(ValidationError::InvalidInstantLock(
                 "InstantLock must have at least one input".to_string(),
             ));
         }
 
-        // Validate each input - ensure no input has a null txid
-        for (idx, input) in instant_lock.inputs.iter().enumerate() {
-            if input.txid == dashcore::Txid::all_zeros() {
-                return Err(ValidationError::InvalidInstantLock(format!(
-                    "InstantLock input {} has null transaction ID",
-                    idx
-                )));
-            }
+        if let Some(idx) =
+            instant_lock.inputs.iter().position(|input| input.txid == dashcore::Txid::all_zeros())
+        {
+            return Err(ValidationError::InvalidInstantLock(format!(
+                "InstantLock input {idx} has null transaction ID"
+            )));
         }
 
         Ok(())
     }
 
-    /// This method is a helper for validating the signature of an InstanLock.
-    /// Don't call or expose this method directly, use `validate()` instead.
-    fn validate_signature(&self, instant_lock: &InstantLock) -> ValidationResult<()> {
-        // Use the proper verification from the masternode engine which:
-        // 1. Uses cyclehash to get the set of rotated quorums
-        // 2. Uses request_id to select the specific quorum (DIP 24)
-        // 3. Verifies the BLS signature with that quorum's public key
-        self.masternode_engine.verify_is_lock(instant_lock).map_err(|e| {
-            ValidationError::InvalidSignature(format!(
-                "InstantLock BLS signature verification failed: {}",
-                e
-            ))
-        })?;
+    /// The quorum of the cycle that signs the lock (DIP-24), with the lock's
+    /// request id and the quorum index it selects.
+    fn signing_quorum(
+        &self,
+        instant_lock: &InstantLock,
+    ) -> Result<(&'a QualifiedQuorumEntry, QuorumSigningRequestId, u16), MessageVerificationError>
+    {
+        let cycle_hash = instant_lock.cyclehash;
+        let quorums = self.cycle_quorums;
+        let llmq_type = quorums
+            .values()
+            .next()
+            .ok_or(MessageVerificationError::CycleHashNotPresent(cycle_hash))?
+            .quorum_entry
+            .llmq_type;
 
-        tracing::debug!(
-            "InstantLock signature verified for txid {} using cyclehash {:x}",
-            instant_lock.txid,
-            instant_lock.cyclehash
+        let request_id = instant_lock.request_id().map_err(|e| e.to_string())?;
+        // `selectionHash.GetUint64(3)` and the index bits as Dash Core takes them.
+        let selection_hash_64 =
+            u64::from_le_bytes(request_id.to_byte_array()[24..32].try_into().unwrap());
+        let n = llmq_type.active_quorum_count().ilog2();
+        let quorum_index = (((1 << n) - 1) & (selection_hash_64 >> (64 - n - 1))) as u16;
+
+        let quorum = quorums
+            .get(&quorum_index)
+            .ok_or(MessageVerificationError::QuorumIndexNotFound(quorum_index, cycle_hash))?;
+        Ok((quorum, request_id, quorum_index))
+    }
+
+    fn validate_signature(
+        &self,
+        instant_lock: &InstantLock,
+    ) -> Result<(), MessageVerificationError> {
+        let (quorum, request_id, quorum_index) = self.signing_quorum(instant_lock)?;
+        let quorum_hash = quorum.quorum_entry.quorum_hash;
+
+        let sign_id = instant_lock
+            .sign_id(quorum.quorum_entry.llmq_type, quorum_hash, Some(request_id))
+            .map_err(|e| e.to_string())?;
+
+        let result = quorum.verify_message_digest(
+            sign_id.to_byte_array(),
+            instant_lock.signature,
+            BlsScheme::Modern,
         );
-
-        Ok(())
+        match &result {
+            Ok(()) => tracing::info!(
+                "IS lock {} verified by quorum {quorum_hash} (index {quorum_index})",
+                instant_lock.txid
+            ),
+            Err(e) => tracing::warn!(
+                "IS lock {} failed against quorum {quorum_hash} (index {quorum_index}): {e}",
+                instant_lock.txid
+            ),
+        }
+        result
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dashcore::Network;
-    use dashcore_hashes::Hash;
+    use crate::sml_engine::test_support::TestEngine;
+    use dashcore::consensus::deserialize;
+    use dashcore::sml::llmq_type::LLMQType;
+    use dashcore::QuorumHash;
+    use test_case::test_case;
 
-    #[test]
-    fn test_valid_instantlock() {
-        let masternode_engine = MasternodeListEngine::default_for_network(Network::Testnet);
-        let validator = InstantLockValidator::new(&masternode_engine);
-
-        let is_lock = InstantLock::dummy(0..3);
-
-        // Structural validation only (for testing)
-        assert!(validator.validate_structure(&is_lock).is_ok());
+    /// An IS lock of the mainnet fixture's cycle, signed by its quorum at index 23.
+    fn fixture_is_lock() -> InstantLock {
+        deserialize(&hex::decode("01018d53e7997ead57409750942af0d5e0aafc06f852a9a52308f4781b6a8220298f00000000c6f9d8c63dd15937ea70aaddb7890daad42c91bf6818e2bf76d183d6f2d9215b4b5f84978fad9dde7ab52bdcc0674be891e9029cc1ef0cb01200000000000000a27c98836c4c04653ab81eb4e07ddfc2c8c2c1036b75247969c05a4f25451cd78913a971f1899d9f2bddec9cf8e0104004f72f20c2856453e5aa3bcd2a8200670ec28feda38f67cc400fc72ef1966956656ec0765478c9d16e9a9e470c07f9ed").unwrap()).unwrap()
     }
 
     #[test]
-    fn test_empty_inputs() {
-        let masternode_engine = MasternodeListEngine::default_for_network(Network::Testnet);
-        let validator = InstantLockValidator::new(&masternode_engine);
+    fn a_well_formed_lock_passes_the_structure_check() {
+        assert!(InstantLockValidator::new(&BTreeMap::new())
+            .validate_structure(&InstantLock::dummy(0..3))
+            .is_ok());
+    }
+
+    #[test_case(|lock| lock.inputs.clear(), "at least one input"; "no inputs")]
+    #[test_case(|lock| lock.signature = dashcore::bls_sig_utils::BLSSignature::from([0; 96]), "signature cannot be zero"; "zero signature")]
+    #[test_case(|lock| lock.txid = dashcore::Txid::all_zeros(), "transaction ID cannot be zero"; "null txid")]
+    #[test_case(|lock| lock.inputs[1].txid = dashcore::Txid::all_zeros(), "input 1 has null transaction ID"; "null input txid")]
+    fn a_malformed_lock_fails_the_structure_check(malform: fn(&mut InstantLock), reason: &str) {
         let mut is_lock = InstantLock::dummy(0..3);
-        is_lock.inputs.clear();
+        malform(&mut is_lock);
 
-        let result = validator.validate_structure(&is_lock);
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("at least one input"));
+        match InstantLockValidator::new(&BTreeMap::new()).validate_structure(&is_lock) {
+            Err(ValidationError::InvalidInstantLock(message)) => assert!(message.contains(reason)),
+            other => panic!("expected InvalidInstantLock({reason}), got {other:?}"),
+        }
     }
 
     #[test]
-    fn test_empty_signature() {
-        let masternode_engine = MasternodeListEngine::default_for_network(Network::Testnet);
-        let validator = InstantLockValidator::new(&masternode_engine);
-        let mut is_lock = InstantLock::dummy(0..3);
-        is_lock.signature = dashcore::bls_sig_utils::BLSSignature::from([0; 96]);
+    fn a_lock_verifies_against_the_quorum_its_request_id_selects() {
+        let engine = TestEngine::mainnet_fixture();
+        let lock = fixture_is_lock();
+        let validator =
+            InstantLockValidator::new(engine.rotated_quorums_of_cycle(&lock.cyclehash).unwrap());
 
-        // Zero signatures should be rejected as invalid structure
-        let result = validator.validate_structure(&is_lock);
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("signature cannot be zero"));
-    }
+        let request_id = lock.request_id().expect("expected to make request id");
+        assert_eq!(
+            hex::encode(request_id),
+            "481ca36cf80fde8fda333915e33c27014dad65fa9f3b54bc4d8bc45be7c81ddf"
+        );
+        let quorum_hash = QuorumHash::from_slice(
+            hex::decode("00000000000000197368b224f2f01031991dd07aad0b43b2293a51fce8853ba0")
+                .expect("expected bytes")
+                .as_slice(),
+        )
+        .expect("expected quorum hash")
+        .reverse();
+        let (quorum, _, index) = validator.signing_quorum(&lock).expect("expected to get quorum");
+        assert_eq!(index, 23);
+        assert_eq!(quorum.quorum_entry.quorum_hash, quorum_hash);
+        let sign_id =
+            lock.sign_id(LLMQType::Llmqtype60_75, quorum_hash, None).expect("expected sign id");
+        assert_eq!(
+            hex::encode(sign_id),
+            "6fcbf58004b118d865a448bf89d9299c64d4ecedd754dabec655090224de91cd"
+        );
+        validator.validate(&lock).expect("expected to verify is lock");
 
-    #[test]
-    fn test_null_txid() {
-        let masternode_engine = MasternodeListEngine::default_for_network(Network::Testnet);
-        let validator = InstantLockValidator::new(&masternode_engine);
-        let mut is_lock = InstantLock::dummy(0..3);
-        is_lock.txid = dashcore::Txid::all_zeros();
-
-        // Null txid should be rejected as invalid structure
-        let result = validator.validate_structure(&is_lock);
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("transaction ID cannot be zero"));
-    }
-
-    #[test]
-    fn test_null_input_txid() {
-        let masternode_engine = MasternodeListEngine::default_for_network(Network::Testnet);
-        let validator = InstantLockValidator::new(&masternode_engine);
-        let mut is_lock = InstantLock::dummy(0..3);
-        // Set the second input to have a null txid
-        is_lock.inputs[1].txid = dashcore::Txid::all_zeros();
-
-        // Null input txid should be rejected as invalid structure
-        let result = validator.validate_structure(&is_lock);
-        assert!(result.is_err());
-        let err_str = result.unwrap_err().to_string();
-        assert!(err_str.contains("input") && err_str.contains("null transaction ID"));
-    }
-
-    // Note: test_signature_validation_without_quorum has been removed as BLS signature
-    // verification now requires MasternodeListEngine, not the simplified QuorumManager.
-
-    // Note: test_signature_validation_with_quorum_invalid_signature has been removed
-    // as BLS signature verification now requires MasternodeListEngine with properly
-    // populated rotated quorums implementing DIP 24 quorum selection.
-
-    #[test]
-    fn test_request_id_computation() {
-        let is_lock = InstantLock::dummy(0..3);
-
-        // Verify request ID can be computed
-        let request_id = is_lock.request_id();
-        assert!(request_id.is_ok());
-
-        // Same inputs should produce same request ID
-        let is_lock2 = InstantLock::dummy(0..3);
-        let request_id2 = is_lock2.request_id();
-        assert!(request_id2.is_ok());
-        assert_eq!(request_id.unwrap(), request_id2.unwrap());
-    }
-
-    #[test]
-    fn test_edge_case_many_inputs() {
-        let masternode_engine = MasternodeListEngine::default_for_network(Network::Testnet);
-        let validator = InstantLockValidator::new(&masternode_engine);
-
-        // Create lock with many inputs
-        let lock = InstantLock::dummy(0..100);
-
-        assert!(validator.validate_structure(&lock).is_ok());
+        // Without its quorum index in the cycle, the lock cannot be resolved.
+        let mut quorums = engine.rotated_quorums_of_cycle(&lock.cyclehash).unwrap().clone();
+        quorums.remove(&23);
+        match InstantLockValidator::new(&quorums).signing_quorum(&lock) {
+            Err(MessageVerificationError::QuorumIndexNotFound(23, hash)) => {
+                assert_eq!(hash, lock.cyclehash)
+            }
+            other => panic!("expected QuorumIndexNotFound(23), got: {:?}", other.map(|_| ())),
+        }
     }
 }

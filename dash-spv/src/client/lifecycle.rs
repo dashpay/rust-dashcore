@@ -13,9 +13,10 @@ use super::{ClientConfig, DashSpvClient, EventHandler};
 use crate::chain::checkpoints::CheckpointManager;
 use crate::error::{Result, SpvError};
 use crate::network::NetworkManager;
+use crate::sml_engine::MasternodeListEngine;
 use crate::storage::{
-    BlockHeaderStorage, BlockStorage, FilterHeaderStorage, FilterStorage, MasternodeStorage,
-    StorageManager,
+    BlockHeaderStorage, BlockStorage, FilterHeaderStorage, FilterStorage,
+    PersistentBlockHeaderStorage, StorageManager,
 };
 use crate::sync::{
     BlockHeadersManager, BlocksManager, ChainLockManager, FilterHeadersManager, FiltersManager,
@@ -25,7 +26,6 @@ use crate::types::HashedBlockHeader;
 use dashcore::block::{Header as BlockHeader, Version};
 use dashcore::network::constants::NetworkExt;
 use dashcore::pow::CompactTarget;
-use dashcore::sml::masternode_list_engine::MasternodeListEngine;
 use dashcore::TxMerkleNode;
 use dashcore_hashes::Hash;
 use key_wallet_manager::WalletInterface;
@@ -57,12 +57,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
 
         let masternode_engine = {
             if config.enable_masternodes {
-                let loader = storage.masternodes();
-                let engine = loader.read().await.load_engine().await;
-                let engine = engine.unwrap_or_else(|e| {
-                    tracing::warn!("Could not replay masternode messages, rebuilding: {}", e);
-                    MasternodeListEngine::default_for_network(config.network)
-                });
+                let engine = storage.masternodes().read().await.load_engine().await;
                 Some(Arc::new(RwLock::new(engine)))
             } else {
                 None
@@ -123,7 +118,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
         config: &ClientConfig,
         storage: &S,
         wallet: &Arc<RwLock<W>>,
-        masternode_engine: Option<&Arc<RwLock<MasternodeListEngine>>>,
+        masternode_engine: Option<&Arc<RwLock<MasternodeListEngine<PersistentBlockHeaderStorage>>>>,
     ) -> Result<SyncManagers<W>> {
         let mut managers: SyncManagers<W> = Managers::default();
 

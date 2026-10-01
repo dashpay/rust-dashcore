@@ -8,7 +8,7 @@
 //! - Configuration updates
 //! - Terminal UI accessors
 
-use dashcore::sml::masternode_list_engine::MasternodeListEngine;
+use crate::sml_engine::MasternodeListEngine;
 use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
 use tokio::task::JoinHandle;
@@ -111,7 +111,8 @@ pub struct DashSpvClient<W: WalletInterface, N: NetworkManager, S: StorageManage
     pub(super) storage: Arc<Mutex<S>>,
     /// External wallet implementation (required)
     pub(super) wallet: Arc<RwLock<W>>,
-    pub(super) masternode_engine: Option<Arc<RwLock<MasternodeListEngine>>>,
+    pub(super) masternode_engine:
+        Option<Arc<RwLock<MasternodeListEngine<PersistentBlockHeaderStorage>>>>,
     pub(super) sync_coordinator: Arc<Mutex<SyncCoordinator>>,
     /// The running sync loop, `None` while stopped. A loop whose `shutdown` is
     /// cancelled has failed and waits to be torn down. `run` and `stop` hold
@@ -190,7 +191,8 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
         self.sync_coordinator.lock().await.reset_progress();
         if let Some(engine) = &self.masternode_engine {
             let network = self.config.read().await.network;
-            *engine.write().await = MasternodeListEngine::default_for_network(network);
+            let headers = self.storage.lock().await.block_headers();
+            *engine.write().await = MasternodeListEngine::new(network, headers);
         }
 
         Ok(())
