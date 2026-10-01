@@ -1,18 +1,13 @@
 use super::manager::PipelineMode;
 use crate::error::SyncResult;
 use crate::network::{Message, MessageType, RequestSender};
-use crate::storage::{feed_qrinfo_heights_to_engine, BlockHeaderStorage};
+use crate::storage::BlockHeaderStorage;
 use crate::sync::{
     ManagerIdentifier, MasternodesManager, SyncEvent, SyncManager, SyncManagerProgress, SyncState,
 };
 use crate::SyncError;
 use async_trait::async_trait;
 use dashcore::network::message::NetworkMessage;
-use dashcore::sml::llmq_type::network::NetworkLLMQExt;
-use dashcore::sml::llmq_type::QUORUM_MEMBER_LIST_OFFSET;
-use dashcore::{BlockHash, QuorumHash};
-use dashcore_hashes::Hash;
-use std::collections::{BTreeSet, HashSet};
 use std::time::{Duration, Instant};
 
 /// Per-attempt timeout schedule for QRInfo, indexed by the in-flight attempt's
@@ -50,113 +45,6 @@ const QRINFO_STALL_WATCHDOG: Duration = Duration::from_secs(60);
 fn qrinfo_timeout_for(retry_count: u8) -> Duration {
     let idx = (retry_count as usize).min(QRINFO_TIMEOUT_SCHEDULE_SECS.len() - 1);
     Duration::from_secs(QRINFO_TIMEOUT_SCHEDULE_SECS[idx])
-}
-
-/// Build MnListDiff request pairs (base_hash, target_hash) for quorum validation.
-///
-/// Chains diffs from known heights where we have masternode lists, per DIP-0004:
-/// - Uses all-zeros base for full list requests when no known height exists below target
-/// - Finds the nearest known height below the target to use as base
-pub(super) async fn build_mnlistdiff_request_pairs<S: BlockHeaderStorage>(
-    storage: &S,
-    quorum_hashes: &BTreeSet<QuorumHash>,
-    known_heights: &BTreeSet<u32>,
-) -> SyncResult<Vec<(BlockHash, BlockHash)>> {
-    let mut request_pairs = Vec::new();
-    let mut seen_targets = HashSet::new();
-
-    for quorum_hash in quorum_hashes {
-        let quorum_block_hash = *quorum_hash;
-
-        let quorum_height = match storage.get_header_height_by_hash(&quorum_block_hash).await {
-            Ok(Some(height)) => height,
-            Ok(None) => {
-                tracing::warn!("Height not found for quorum hash {}, skipping", quorum_block_hash);
-                continue;
-            }
-            Err(e) => {
-                tracing::warn!(
-                    "Failed to get height for quorum hash {}: {}, skipping",
-                    quorum_block_hash,
-                    e
-                );
-                continue;
-            }
-        };
-
-        let validation_height = quorum_height.saturating_sub(QUORUM_MEMBER_LIST_OFFSET);
-
-        // Skip if we already have this height
-        if known_heights.contains(&validation_height) {
-            continue;
-        }
-
-        // Skip duplicates
-        if seen_targets.contains(&validation_height) {
-            continue;
-        }
-        seen_targets.insert(validation_height);
-
-        // Find nearest known height BELOW validation_height to use as base
-        let base_height = known_heights.range(..validation_height).next_back().copied();
-
-        let base_hash = if let Some(height) = base_height {
-            match storage.get_header(height).await {
-                Ok(Some(h)) => *h.hash(),
-                Ok(None) => {
-                    tracing::warn!("Base header not found at height {}, using all-zeros", height);
-                    BlockHash::all_zeros()
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        "Failed to get base header at height {}: {}, using all-zeros",
-                        height,
-                        e
-                    );
-                    BlockHash::all_zeros()
-                }
-            }
-        } else {
-            // No known height below target - request full list per DIP-0004
-            BlockHash::all_zeros()
-        };
-
-        let target_hash = match storage.get_header(validation_height).await {
-            Ok(Some(h)) => *h.hash(),
-            Ok(None) => {
-                tracing::warn!("Target header not found at height {}, skipping", validation_height);
-                continue;
-            }
-            Err(e) => {
-                tracing::warn!(
-                    "Failed to get target header at height {}: {}, skipping",
-                    validation_height,
-                    e
-                );
-                continue;
-            }
-        };
-
-        tracing::debug!(
-            "Adding MnListDiff request: base_height={:?}, target_height={}",
-            base_height,
-            validation_height
-        );
-
-        request_pairs.push((base_hash, target_hash));
-    }
-
-    // Sort by target height for sequential application
-    let storage_ref = storage;
-    let mut pairs_with_height = Vec::new();
-    for (base, target) in request_pairs {
-        if let Ok(Some(height)) = storage_ref.get_header_height_by_hash(&target).await {
-            pairs_with_height.push((height, base, target));
-        }
-    }
-    pairs_with_height.sort_by_key(|(h, _, _)| *h);
-
-    Ok(pairs_with_height.into_iter().map(|(_, base, target)| (base, target)).collect())
 }
 
 #[async_trait]
@@ -209,15 +97,8 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
                 }
                 tracing::info!("Processing QRInfo message");
 
-                // Feed block heights to engine using internal storage
-                let storage = self.header_storage.read().await;
                 let mut engine = self.engine.write().await;
-                let fed = feed_qrinfo_heights_to_engine(&mut engine, qr_info, &*storage).await;
-                drop(storage);
-                tracing::info!("Fed {} block heights to engine", fed);
-
-                // Feed QRInfo to engine first to populate masternode lists
-                let qr_info_result = match engine.feed_qr_info(qr_info.clone()) {
+                let qr_info_result = match engine.feed_qr_info(qr_info.clone()).await {
                     Ok(qr_info_result) => qr_info_result,
                     Err(e) => {
                         tracing::error!("QRInfo feed into engine failed: {}", e);
@@ -238,77 +119,33 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
                     }
                 };
 
-                // Populate known_mn_list_heights from engine after QRInfo processing
-                self.sync_state.known_mn_list_heights =
-                    engine.masternode_lists.keys().copied().collect();
-                tracing::debug!(
-                    "Engine has masternode lists at {} heights",
-                    self.sync_state.known_mn_list_heights.len()
-                );
-
-                // Get quorum hashes and build request pairs, chaining from known heights.
-                // A retired quorum type keeps its last quorums in the list, but they
-                // are never validated, so their work-block lists are not requested.
-                let tip = engine.latest_masternode_list().map_or(0, |list| list.known_height);
-                let retired = engine
-                    .network
-                    .enabled_llmq_types()
-                    .into_iter()
-                    .filter(|llmq_type| engine.network.should_skip_quorum_type(llmq_type, tip))
-                    .collect::<Vec<_>>();
-                let quorum_hashes =
-                    engine.latest_masternode_list_non_rotating_quorum_hashes(&retired, false);
-                let storage = self.header_storage.read().await;
-                let request_pairs = build_mnlistdiff_request_pairs(
-                    &*storage,
-                    &quorum_hashes,
-                    &self.sync_state.known_mn_list_heights,
-                )
-                .await?;
-
-                let tip_hash = qr_info.mn_list_diff_tip.block_hash;
-                let tip_height = storage.get_header_height_by_hash(&tip_hash).await;
-
-                // Drop locks before potentially long operations
+                let request_pairs = engine.missing_work_block_list_requests().await;
+                let tip_height = engine.height_of(&qr_info.mn_list_diff_tip.block_hash).await;
                 drop(engine);
-                drop(storage);
 
-                match tip_height {
-                    Ok(Some(height)) => {
-                        if let Err(e) = self.store_qr_info(height, qr_info).await {
-                            tracing::warn!(
-                                "Could not store QRInfo at {height}, a restart syncs it again: {e}"
-                            );
-                        }
-                    }
-                    Ok(None) => tracing::warn!(
-                        "QRInfo tip {tip_hash} has no known height, a restart syncs it again"
-                    ),
-                    Err(e) => {
-                        tracing::warn!("Could not resolve QRInfo tip {tip_hash} height: {e}")
+                if let Some(height) = tip_height {
+                    if let Err(e) = self.store_qr_info(height, qr_info).await {
+                        tracing::warn!(
+                            "Could not store QRInfo at {height}, a restart syncs it again: {e}"
+                        );
                     }
                 }
 
-                if let Some(ref qr_info_result) = qr_info_result {
-                    tracing::info!(
-                        "QRInfo processed: stored_cycle_height={:?}, rotated_quorum_count={}/{}, fully_verified_count={}, newly_qualified_count={}, cycle_key_unresolved={}, previous_cycle_invalid_count={}",
-                        qr_info_result.stored_cycle_height,
-                        qr_info_result.rotated_quorum_count,
-                        qr_info_result.expected_rotated_quorum_count,
-                        qr_info_result.fully_verified_count,
-                        qr_info_result.newly_qualified_count,
-                        qr_info_result.cycle_key_unresolved,
-                        qr_info_result.previous_cycle_invalid_count,
-                    );
-                    // If every rotated quorum in this QRInfo ended up Verified,
-                    // mark the cycle validated so `next_pipeline_mode` will
-                    // return `Incremental` for every subsequent header in this
-                    // cycle. No more QRInfo requests for this cycle until the
-                    // next boundary.
-                    if qr_info_result.all_fully_verified() {
-                        if let Some(ref stored_cycle_height) = qr_info_result.stored_cycle_height {
-                            self.mark_cycle_validated(*stored_cycle_height);
-                        }
+                tracing::info!(
+                    "QRInfo processed: stored_cycle_height={:?}, rotated_quorum_count={}/{}, fully_verified_count={}",
+                    qr_info_result.stored_cycle_height,
+                    qr_info_result.rotated_quorum_count,
+                    qr_info_result.expected_rotated_quorum_count,
+                    qr_info_result.fully_verified_count,
+                );
+                // If every rotated quorum in this QRInfo ended up Verified,
+                // mark the cycle validated so `next_pipeline_mode` will
+                // return `Incremental` for every subsequent header in this
+                // cycle. No more QRInfo requests for this cycle until the
+                // next boundary.
+                if qr_info_result.all_fully_verified() {
+                    if let Some(ref stored_cycle_height) = qr_info_result.stored_cycle_height {
+                        self.mark_cycle_validated(*stored_cycle_height);
                     }
                 }
 
@@ -316,7 +153,7 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
                 // Carry the result on the mode so `complete_pipeline` can pass it
                 // into the resulting `MasternodeStateUpdated` event.
                 self.sync_state.pipeline_mode = PipelineMode::QuorumValidation {
-                    qr_info_result,
+                    qr_info_result: Some(qr_info_result),
                 };
 
                 // Every fallible step has now succeeded, so the request slot can
@@ -353,40 +190,19 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
 
                 tracing::debug!("Processing MnListDiff message for {}", diff.block_hash);
 
-                // Get target height from storage
-                let storage = self.header_storage.read().await;
-                let target_height = match storage.get_header_height_by_hash(&diff.block_hash).await
-                {
-                    Ok(Some(h)) => h,
-                    Ok(None) => {
-                        tracing::warn!(
-                            "Height not found for MnListDiff block {}, requeuing for retry",
-                            diff.block_hash
-                        );
-                        self.sync_state.mnlistdiff_pipeline.requeue(diff);
-                        self.sync_state.mnlistdiff_pipeline.send_pending(requests)?;
-                        return Ok(vec![]);
-                    }
-                    Err(e) => {
-                        tracing::warn!(
-                            "Failed to get height for MnListDiff block {}: {}, requeuing for retry",
-                            diff.block_hash,
-                            e
-                        );
-                        self.sync_state.mnlistdiff_pipeline.requeue(diff);
-                        self.sync_state.mnlistdiff_pipeline.send_pending(requests)?;
-                        return Ok(vec![]);
-                    }
-                };
-                drop(storage);
-
-                // Apply diff to engine
                 let mut engine = self.engine.write().await;
-                engine.feed_block_height(target_height, diff.block_hash);
-
-                let apply_ok = match engine.apply_diff(diff.clone(), Some(target_height), None) {
+                let Some(target_height) = engine.height_of(&diff.block_hash).await else {
+                    drop(engine);
+                    tracing::warn!(
+                        "Height not found for MnListDiff block {}, requeuing for retry",
+                        diff.block_hash
+                    );
+                    self.sync_state.mnlistdiff_pipeline.requeue(diff);
+                    self.sync_state.mnlistdiff_pipeline.send_pending(requests)?;
+                    return Ok(vec![]);
+                };
+                let apply_ok = match engine.apply_diff(diff.clone()).await {
                     Ok(_) => {
-                        self.sync_state.known_mn_list_heights.insert(target_height);
                         tracing::debug!("Applied MnListDiff at height {}", target_height);
                         true
                     }
@@ -729,116 +545,24 @@ mod tests {
         qrinfo_timeout_for, MAX_RETRY_ATTEMPTS, QRINFO_STALL_WATCHDOG, QRINFO_TIMEOUT_SCHEDULE_SECS,
     };
     use crate::network::{Message, NetworkRequest, RequestSender};
+    use crate::sml_engine::MasternodeListEngine;
     use crate::storage::{
-        feed_qrinfo_heights_to_engine, BlockHeaderStorage, DiskStorageManager,
-        PersistentBlockHeaderStorage, StorageManager,
+        BlockHeaderStorage, DiskStorageManager, PersistentBlockHeaderStorage, StorageManager,
     };
     use crate::sync::{MasternodesManager, SyncManager, SyncState};
-    use crate::test_utils::MockHeaderStorage;
     use crate::types::HashedBlockHeader;
     use crate::{ClientConfig, SyncError};
     use dashcore::block::Header;
-    use dashcore::bls_sig_utils::{BLSPublicKey, BLSSignature};
-    use dashcore::hash_types::QuorumVVecHash;
     use dashcore::network::message::NetworkMessage;
-    use dashcore::network::message_qrinfo::{QRInfo, QuorumSnapshot};
+    use dashcore::network::message_qrinfo::QRInfo;
     use dashcore::network::message_sml::MnListDiff;
-    use dashcore::sml::llmq_type::LLMQType;
-    use dashcore::sml::masternode_list_engine::MasternodeListEngine;
-    use dashcore::transaction::special_transaction::quorum_commitment::QuorumEntry;
     use dashcore::{BlockHash, Network};
     use dashcore_hashes::Hash;
-    use std::collections::HashMap;
     use std::sync::Arc;
     use std::time::Duration;
     use std::time::Instant;
     use test_case::test_case;
     use tokio::sync::{mpsc, RwLock};
-
-    fn make_quorum_entry(hash_byte: u8, index: i16) -> QuorumEntry {
-        QuorumEntry {
-            version: 1,
-            llmq_type: LLMQType::Llmqtype50_60,
-            quorum_hash: BlockHash::from_slice(&[hash_byte; 32]).unwrap(),
-            quorum_index: Some(index),
-            signers: vec![],
-            valid_members: vec![],
-            quorum_public_key: BLSPublicKey::from([0u8; 48]),
-            quorum_vvec_hash: QuorumVVecHash::from_slice(&[0u8; 32]).unwrap(),
-            threshold_sig: BLSSignature::from([0u8; 96]),
-            all_commitment_aggregated_signature: BLSSignature::from([0u8; 96]),
-        }
-    }
-
-    /// Verifies that `feed_qrinfo_heights_to_engine` feeds the engine's
-    /// `block_container` with heights for every hash source in a `QRInfo` message:
-    /// - base and tip hashes for each of the five standard diffs
-    /// - base and tip hashes for the optional h-minus-4c diff
-    /// - base and tip hashes for each entry in `mn_list_diff_list`
-    /// - every `QuorumEntry::quorum_hash` in `last_commitment_per_index`
-    ///
-    /// The last category is the invariant the parent commit fixed: before that,
-    /// only Q[0] (the cycle boundary, already present as a diff endpoint) was
-    /// fed. Q[1]..Q[N-1] were silently missing, causing lookup failures during IS
-    /// lock and rotated quorum formation verification.
-    #[tokio::test]
-    async fn test_feed_qrinfo_heights_to_engine_covers_every_hash_source() {
-        // Each hash category uses a distinct leading byte so failures are easy to diagnose.
-        // Diffs:        0x01..0x0E  (base/tip pairs for each diff field)
-        // Commitments:  0x80..0x83  (last_commitment_per_index quorum hashes)
-        let expected_hashes: &[u8] = &[
-            0x01, 0x02, // mn_list_diff_tip:          base, tip
-            0x03, 0x04, // mn_list_diff_h:             base, tip
-            0x05, 0x06, // mn_list_diff_at_h_minus_c:  base, tip
-            0x07, 0x08, // mn_list_diff_at_h_minus_2c: base, tip
-            0x09, 0x0A, // mn_list_diff_at_h_minus_3c: base, tip
-            0x0B, 0x0C, // mn_list_diff_at_h_minus_4c: base, tip  (optional)
-            0x0D, 0x0E, // mn_list_diff_list[0]:       base, tip
-            0x80, 0x81, 0x82, 0x83, // last_commitment_per_index Q[0]..Q[3]
-        ];
-
-        let mut height_map = HashMap::new();
-        for (i, &b) in expected_hashes.iter().enumerate() {
-            height_map.insert(BlockHash::from_slice(&[b; 32]).unwrap(), 100 + i as u32);
-        }
-
-        let qr_info = QRInfo {
-            quorum_snapshot_at_h_minus_c: QuorumSnapshot::dummy(),
-            quorum_snapshot_at_h_minus_2c: QuorumSnapshot::dummy(),
-            quorum_snapshot_at_h_minus_3c: QuorumSnapshot::dummy(),
-            mn_list_diff_tip: MnListDiff::dummy_empty(0x01, 0x02),
-            mn_list_diff_h: MnListDiff::dummy_empty(0x03, 0x04),
-            mn_list_diff_at_h_minus_c: MnListDiff::dummy_empty(0x05, 0x06),
-            mn_list_diff_at_h_minus_2c: MnListDiff::dummy_empty(0x07, 0x08),
-            mn_list_diff_at_h_minus_3c: MnListDiff::dummy_empty(0x09, 0x0A),
-            quorum_snapshot_and_mn_list_diff_at_h_minus_4c: Some((
-                QuorumSnapshot::dummy(),
-                MnListDiff::dummy_empty(0x0B, 0x0C),
-            )),
-            mn_list_diff_list: vec![MnListDiff::dummy_empty(0x0D, 0x0E)],
-            last_commitment_per_index: [0x80u8, 0x81, 0x82, 0x83]
-                .iter()
-                .enumerate()
-                .map(|(i, &b)| make_quorum_entry(b, i as i16))
-                .collect(),
-            quorum_snapshot_list: vec![QuorumSnapshot::dummy()],
-        };
-
-        let mut engine = MasternodeListEngine {
-            network: Network::Testnet,
-            ..Default::default()
-        };
-        feed_qrinfo_heights_to_engine(&mut engine, &qr_info, &MockHeaderStorage(height_map)).await;
-
-        for &b in expected_hashes {
-            let hash = BlockHash::from_slice(&[b; 32]).unwrap();
-            assert!(
-                engine.block_container.contains_hash(&hash),
-                "hash 0x{:02X} not fed to engine.block_container",
-                b
-            );
-        }
-    }
 
     /// The QRInfo retry budget escalates: a tight first timeout fails over
     /// fast when one peer drops the request silently, while later attempts
@@ -982,7 +706,7 @@ mod tests {
             )
             .await
             .unwrap();
-        let engine = MasternodeListEngine::default_for_network(Network::Regtest);
+        let engine = MasternodeListEngine::new(Network::Regtest, Arc::clone(&block_headers));
         let mut manager = MasternodesManager::new(
             block_headers,
             Arc::new(RwLock::new(engine)),
@@ -1026,8 +750,7 @@ mod tests {
             .unwrap();
         let tip_hash = headers[tip as usize].block_hash();
         let target_hash = headers[target as usize].block_hash();
-        let mut engine = MasternodeListEngine::default_for_network(Network::Regtest);
-        engine.feed_block_height(tip, tip_hash);
+        let mut engine = MasternodeListEngine::new(Network::Regtest, Arc::clone(&block_headers));
         engine.masternode_lists.insert(tip, MasternodeList::empty(tip_hash, tip));
         let engine = Arc::new(RwLock::new(engine));
         let mut manager = MasternodesManager::new(

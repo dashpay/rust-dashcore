@@ -7,9 +7,10 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 
+use crate::sml_engine::MasternodeListEngine;
+use crate::storage::BlockHeaderStorage;
 use dashcore::ephemerealdata::instant_lock::InstantLock;
 use dashcore::hashes::Hash;
-use dashcore::sml::masternode_list_engine::MasternodeListEngine;
 use dashcore::Txid;
 use tokio::sync::RwLock;
 
@@ -99,11 +100,11 @@ impl PendingInstantLock {
 /// - Validates InstantLocks when masternode engine is available
 /// - Queues InstantLocks for later validation when engine not ready
 /// - Emits InstantLockReceived events
-pub struct InstantSendManager {
+pub struct InstantSendManager<H: BlockHeaderStorage> {
     /// Current progress of the manager.
     pub(super) progress: InstantSendProgress,
     /// Shared Masternode list engine.
-    engine: Arc<RwLock<MasternodeListEngine>>,
+    engine: Arc<RwLock<MasternodeListEngine<H>>>,
     /// InstantLocks indexed by txid.
     instantlocks: HashMap<Txid, InstantLockEntry>,
     /// Pending InstantLocks awaiting the quorum data required to verify them.
@@ -119,9 +120,9 @@ pub struct InstantSendManager {
     pub(super) last_validated_engine_height: Option<u32>,
 }
 
-impl InstantSendManager {
+impl<H: BlockHeaderStorage> InstantSendManager<H> {
     /// Create a new InstantSend manager.
-    pub fn new(engine: Arc<RwLock<MasternodeListEngine>>) -> Self {
+    pub fn new(engine: Arc<RwLock<MasternodeListEngine<H>>>) -> Self {
         Self {
             progress: InstantSendProgress::default(),
             engine,
@@ -394,7 +395,7 @@ impl InstantSendManager {
     }
 }
 
-impl std::fmt::Debug for InstantSendManager {
+impl<H: BlockHeaderStorage> std::fmt::Debug for InstantSendManager<H> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("InstantSendManager")
             .field("progress", &self.progress)
@@ -407,7 +408,9 @@ impl std::fmt::Debug for InstantSendManager {
 mod tests {
     use super::*;
     use crate::network::{MessageType, RequestSender};
+    use crate::sml_engine::test_support::TestEngine;
     use crate::sync::{ManagerIdentifier, SyncManager, SyncManagerProgress, SyncState};
+    use crate::test_utils::MockHeaderStorage;
     use dashcore::bls_sig_utils::BLSSignature;
     use dashcore::hash_types::CycleHash;
     use dashcore::hashes::Hash;
@@ -419,7 +422,7 @@ mod tests {
     /// new tip height. Empty lists carry no rotated quorums, so InstantLock
     /// verification still fails — which is exactly what we want when exercising
     /// the "engine advanced but the needed quorum is still absent" path.
-    async fn advance_engine_height(manager: &InstantSendManager, height: u32) {
+    async fn advance_engine_height(manager: &TestInstantSendManager, height: u32) {
         let mut engine = manager.engine.write().await;
         engine.masternode_lists.insert(
             height,
@@ -466,11 +469,11 @@ mod tests {
         }
     }
 
-    fn create_test_manager() -> InstantSendManager {
-        let engine = Arc::new(RwLock::new(MasternodeListEngine::default_for_network(
-            dashcore::Network::Testnet,
-        )));
-        InstantSendManager::new(engine)
+    type TestInstantSendManager = InstantSendManager<MockHeaderStorage>;
+
+    fn create_test_manager() -> TestInstantSendManager {
+        let engine = TestEngine::empty(dashcore::Network::Testnet);
+        InstantSendManager::new(Arc::new(RwLock::new(engine)))
     }
 
     #[tokio::test]

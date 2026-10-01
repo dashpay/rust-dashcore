@@ -67,6 +67,7 @@ pub mod client;
 pub mod error;
 pub mod logging;
 pub mod network;
+mod sml_engine;
 pub mod storage;
 pub mod sync;
 pub mod types;
@@ -88,12 +89,6 @@ pub use dashcore::{Address, BlockHash, Network, OutPoint, QuorumHash, ScriptBuf}
 
 // Re-export hash trait
 pub use dashcore::hashes::Hash;
-
-// Re-export MasternodeListEngine and related types
-pub use dashcore::sml::masternode_list_engine::{
-    MasternodeListEngine, MasternodeListEngineBTreeMapBlockContainer,
-    MasternodeListEngineBlockContainer,
-};
 
 // Re-export LLMQ types
 pub use dashcore::sml::llmq_type::{LLMQType, LlmqDevnetParams};

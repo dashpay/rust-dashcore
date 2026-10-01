@@ -17,9 +17,6 @@ pub enum MessageVerificationError {
     #[error("Required cycle not present to verify instant send: {0}")]
     CycleHashNotPresent(CycleHash),
 
-    #[error("Required cycle present but has no quorum: {0}")]
-    CycleHashEmpty(CycleHash),
-
     #[error("Quorum with index {0} not found in cycle {1}")]
     QuorumIndexNotFound(u16, CycleHash),
 

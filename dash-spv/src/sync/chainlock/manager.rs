@@ -7,9 +7,9 @@
 
 use std::sync::Arc;
 
+use crate::sml_engine::MasternodeListEngine;
 use dashcore::ephemerealdata::chain_lock::ChainLock;
 use dashcore::hash_types::ChainLockHash;
-use dashcore::sml::masternode_list_engine::MasternodeListEngine;
 use std::collections::HashSet;
 use tokio::sync::RwLock;
 
@@ -35,7 +35,7 @@ pub struct ChainLockManager<H: BlockHeaderStorage, M: MetadataStorage> {
     /// Metadata storage for persisting the best chainlock.
     metadata_storage: Arc<RwLock<M>>,
     /// Masternode engine for BLS signature validation.
-    masternode_engine: Arc<RwLock<MasternodeListEngine>>,
+    masternode_engine: Arc<RwLock<MasternodeListEngine<H>>>,
     /// The best (highest height) validated ChainLock.
     best_chainlock: Option<ChainLock>,
     /// ChainLock hashes that have been requested (to avoid duplicate requests).
@@ -54,7 +54,7 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> ChainLockManager<H, M> {
     pub async fn new(
         header_storage: Arc<RwLock<H>>,
         metadata_storage: Arc<RwLock<M>>,
-        masternode_engine: Arc<RwLock<MasternodeListEngine>>,
+        masternode_engine: Arc<RwLock<MasternodeListEngine<H>>>,
     ) -> Self {
         let mut manager = Self {
             progress: ChainLockProgress::default(),
@@ -347,16 +347,20 @@ mod tests {
 
     async fn create_test_manager() -> TestChainLockManager {
         let storage = DiskStorageManager::with_temp_dir().await.unwrap();
-        let engine =
-            Arc::new(RwLock::new(MasternodeListEngine::default_for_network(Network::Testnet)));
+        let engine = Arc::new(RwLock::new(MasternodeListEngine::new(
+            Network::Testnet,
+            storage.block_headers(),
+        )));
         ChainLockManager::new(storage.block_headers(), storage.metadata(), engine).await
     }
 
     async fn create_test_manager_with_storage(
         storage: &DiskStorageManager,
     ) -> TestChainLockManager {
-        let engine =
-            Arc::new(RwLock::new(MasternodeListEngine::default_for_network(Network::Testnet)));
+        let engine = Arc::new(RwLock::new(MasternodeListEngine::new(
+            Network::Testnet,
+            storage.block_headers(),
+        )));
         ChainLockManager::new(storage.block_headers(), storage.metadata(), engine).await
     }
 
