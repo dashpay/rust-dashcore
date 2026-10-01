@@ -4,6 +4,7 @@ mod block_headers;
 mod blocks;
 mod filter_headers;
 mod filters;
+mod header_hash_index;
 mod io;
 mod lockfile;
 mod masternode;
