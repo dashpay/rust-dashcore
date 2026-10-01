@@ -119,10 +119,10 @@ mod tests {
         let data = hex::decode(block_hex).expect("decode hex");
         let mn_list_diff: RawNetworkMessage = deserialize(&data).expect("deserialize MnListDiff");
         if let NetworkMessage::MnListDiff(diff) = mn_list_diff.payload {
-            let serialized = serialize(&diff);
+            let serialized = serialize(&*diff);
             let deserialized: MnListDiff =
                 deserialize(serialized.as_slice()).expect("expected to deserialize");
-            assert_eq!(deserialized, diff);
+            assert_eq!(deserialized, *diff);
         }
     }
 }

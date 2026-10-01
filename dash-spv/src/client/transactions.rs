@@ -38,13 +38,13 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
 
         if !self.config.read().await.enable_mempool_tracking {
             // Legacy untracked path: fan out to every peer.
-            network_guard.broadcast(NetworkMessage::Tx(tx.clone())).await?;
+            network_guard.broadcast(NetworkMessage::Tx(Box::new(tx.clone()))).await?;
         }
 
         // Inject locally so the mempool manager picks it up through handle_tx.
         // With tracking enabled the manager performs the actual (targeted)
         // network send when it processes this message.
-        network_guard.dispatch_local(NetworkMessage::Tx(tx.clone())).await;
+        network_guard.dispatch_local(NetworkMessage::Tx(Box::new(tx.clone()))).await;
 
         Ok(())
     }

@@ -197,7 +197,7 @@ pub enum NetworkMessage {
     /// `mempool`
     MemPool,
     /// tx
-    Tx(transaction::Transaction),
+    Tx(Box<transaction::Transaction>),
     /// `block`
     Block(block::Block),
     /// `headers`
@@ -262,11 +262,11 @@ pub enum NetworkMessage {
     /// `getmnlistd`
     GetMnListD(message_sml::GetMnListDiff),
     /// `mnlistdiff`
-    MnListDiff(message_sml::MnListDiff),
+    MnListDiff(Box<message_sml::MnListDiff>),
     /// `getqrinfo`
     GetQRInfo(message_qrinfo::GetQRInfo),
     /// `qrinfo`
-    QRInfo(message_qrinfo::QRInfo),
+    QRInfo(Box<message_qrinfo::QRInfo>),
     /// `clsig`
     CLSig(ChainLock),
     /// `isdlock`
@@ -398,7 +398,7 @@ impl Encodable for RawNetworkMessage {
             NetworkMessage::NotFound(ref dat) => serialize(dat),
             NetworkMessage::GetBlocks(ref dat) => serialize(dat),
             NetworkMessage::GetHeaders(ref dat) => serialize(dat),
-            NetworkMessage::Tx(ref dat) => serialize(dat),
+            NetworkMessage::Tx(ref dat) => serialize(&**dat),
             NetworkMessage::Block(ref dat) => serialize(dat),
             NetworkMessage::Headers(ref dat) => serialize(&HeaderSerializationWrapper(dat)),
             NetworkMessage::GetHeaders2(ref dat) => serialize(dat),
@@ -435,9 +435,9 @@ impl Encodable for RawNetworkMessage {
                 ..
             } => serialize(data),
             NetworkMessage::GetMnListD(ref dat) => serialize(dat),
-            NetworkMessage::MnListDiff(ref dat) => serialize(dat),
+            NetworkMessage::MnListDiff(ref dat) => serialize(&**dat),
             NetworkMessage::GetQRInfo(ref dat) => serialize(dat),
-            NetworkMessage::QRInfo(ref dat) => serialize(dat),
+            NetworkMessage::QRInfo(ref dat) => serialize(&**dat),
             NetworkMessage::CLSig(ref dat) => serialize(dat),
             NetworkMessage::ISLock(ref dat) => serialize(dat),
             NetworkMessage::SendDsq(wants_dsq) => serialize(&(wants_dsq as u8)),
@@ -582,7 +582,9 @@ impl Decodable for RawNetworkMessage {
                 Decodable::consensus_decode_from_finite_reader(&mut mem_d)?,
             ),
             "filterclear" => NetworkMessage::FilterClear,
-            "tx" => NetworkMessage::Tx(Decodable::consensus_decode_from_finite_reader(&mut mem_d)?),
+            "tx" => NetworkMessage::Tx(Box::new(Decodable::consensus_decode_from_finite_reader(
+                &mut mem_d,
+            )?)),
             "getcfilters" => NetworkMessage::GetCFilters(
                 Decodable::consensus_decode_from_finite_reader(&mut mem_d)?,
             ),
@@ -630,15 +632,15 @@ impl Decodable for RawNetworkMessage {
             "getmnlistd" => NetworkMessage::GetMnListD(
                 Decodable::consensus_decode_from_finite_reader(&mut mem_d)?,
             ),
-            "mnlistdiff" => NetworkMessage::MnListDiff(
+            "mnlistdiff" => NetworkMessage::MnListDiff(Box::new(
                 Decodable::consensus_decode_from_finite_reader(&mut mem_d)?,
-            ),
+            )),
             "getqrinfo" => NetworkMessage::GetQRInfo(
                 Decodable::consensus_decode_from_finite_reader(&mut mem_d)?,
             ),
-            "qrinfo" => {
-                NetworkMessage::QRInfo(Decodable::consensus_decode_from_finite_reader(&mut mem_d)?)
-            }
+            "qrinfo" => NetworkMessage::QRInfo(Box::new(
+                Decodable::consensus_decode_from_finite_reader(&mut mem_d)?,
+            )),
             "clsig" => {
                 NetworkMessage::CLSig(Decodable::consensus_decode_from_finite_reader(&mut mem_d)?)
             }
@@ -739,7 +741,7 @@ mod test {
                 hash_x11([50u8; 32]).into(),
             )),
             NetworkMessage::MemPool,
-            NetworkMessage::Tx(tx),
+            NetworkMessage::Tx(Box::new(tx)),
             NetworkMessage::Block(block),
             NetworkMessage::Headers(vec![header]),
             NetworkMessage::SendHeaders,

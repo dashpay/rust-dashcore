@@ -98,7 +98,7 @@ impl RequestSender {
         tx: dashcore::Transaction,
         peer_address: SocketAddr,
     ) -> NetworkResult<()> {
-        self.send_message_to_peer(NetworkMessage::Tx(tx), peer_address)
+        self.send_message_to_peer(NetworkMessage::Tx(Box::new(tx)), peer_address)
     }
 
     /// Request inventory from a specific peer.
