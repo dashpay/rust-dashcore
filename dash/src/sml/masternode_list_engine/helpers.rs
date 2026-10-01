@@ -394,6 +394,7 @@ mod shared_map_tests {
     use crate::sml::masternode_list_engine::MasternodeListEngine;
     use crate::{BlockHash, QuorumHash};
     use hashes::Hash;
+    use std::slice;
     use std::sync::Arc;
 
     const TIP: CoreBlockHeight = 1_000_000;
@@ -455,8 +456,10 @@ mod shared_map_tests {
             quorum_hash,
             ([TIP - 1].into(), quorum.quorum_entry.quorum_public_key, not_marked.clone()),
         );
+        let unchanged = MnListDiff::dummy_between(TIP - 1, TIP)
+            .with_coinbase_committing_to(&[], slice::from_ref(&quorum.quorum_entry));
 
-        engine.apply_diff(MnListDiff::dummy_between(TIP - 1, TIP), Some(TIP), None).unwrap();
+        engine.apply_diff(unchanged, Some(TIP), None).unwrap();
 
         assert_eq!(
             engine.masternode_lists[&TIP].quorums[&PLATFORM_TYPE][&quorum_hash].verified,
@@ -474,6 +477,7 @@ mod shared_map_tests {
         let mut engine = MasternodeListEngine::dummy_with_lists(&[TIP - 2]);
         let mut quorum = quorum_entry(quorum_hash, 1);
         quorum.verified = LLMQEntryVerificationStatus::Unknown;
+        let commitment = quorum.quorum_entry.clone();
         Arc::make_mut(&mut engine.masternode_lists.get_mut(&(TIP - 2)).unwrap().quorums)
             .entry(PLATFORM_TYPE)
             .or_default()
@@ -486,10 +490,12 @@ mod shared_map_tests {
                 LLMQEntryVerificationStatus::Unknown,
             ),
         );
-        engine
-            .apply_diff(MnListDiff::dummy_between(TIP - 2, TIP - 1), Some(TIP - 1), None)
-            .unwrap();
-        engine.apply_diff(MnListDiff::dummy_between(TIP - 1, TIP), Some(TIP), None).unwrap();
+        let unchanged = |base, tip| {
+            MnListDiff::dummy_between(base, tip)
+                .with_coinbase_committing_to(&[], slice::from_ref(&commitment))
+        };
+        engine.apply_diff(unchanged(TIP - 2, TIP - 1), Some(TIP - 1), None).unwrap();
+        engine.apply_diff(unchanged(TIP - 1, TIP), Some(TIP), None).unwrap();
 
         engine.set_quorum_status_in_lists(
             [TIP - 2, TIP - 1, TIP],

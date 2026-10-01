@@ -1,7 +1,10 @@
 use super::manager::PipelineMode;
 use crate::error::SyncResult;
 use crate::network::{Message, MessageType, RequestSender};
-use crate::storage::{feed_qrinfo_heights_to_engine, BlockHeaderStorage};
+use crate::storage::{
+    feed_qrinfo_heights_to_engine, verify_diff_coinbase, verify_qr_info_coinbases,
+    BlockHeaderStorage,
+};
 use crate::sync::{
     ManagerIdentifier, MasternodesManager, SyncEvent, SyncManager, SyncManagerProgress, SyncState,
 };
@@ -209,8 +212,18 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
                 }
                 tracing::info!("Processing QRInfo message");
 
-                // Feed block heights to engine using internal storage
+                // Every diff's coinbase has to be the first transaction of its
+                // stored block before the engine checks the lists against it.
                 let storage = self.header_storage.read().await;
+                if let Err(e) = verify_qr_info_coinbases(&*storage, qr_info).await {
+                    drop(storage);
+                    tracing::error!("QRInfo does not match the stored block headers: {}", e);
+                    // Rejected like a response the engine refuses, see below.
+                    self.sync_state.qrinfo_rejected();
+                    return Err(SyncError::MasternodeSyncFailed(e.to_string()));
+                }
+
+                // Feed block heights to engine using internal storage
                 let mut engine = self.engine.write().await;
                 let fed = feed_qrinfo_heights_to_engine(&mut engine, qr_info, &*storage).await;
                 drop(storage);
@@ -378,28 +391,43 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
                         return Ok(vec![]);
                     }
                 };
+
+                // The diff's coinbase has to be the first transaction of the
+                // stored block before the engine checks the list against it.
+                let proven = verify_diff_coinbase(&*storage, diff).await;
                 drop(storage);
 
-                // Apply diff to engine
-                let mut engine = self.engine.write().await;
-                engine.feed_block_height(target_height, diff.block_hash);
+                let apply_ok = match proven {
+                    Ok(()) => {
+                        // Apply diff to engine
+                        let mut engine = self.engine.write().await;
+                        engine.feed_block_height(target_height, diff.block_hash);
 
-                let apply_ok = match engine.apply_diff(diff.clone(), Some(target_height), None) {
-                    Ok(_) => {
-                        self.sync_state.known_mn_list_heights.insert(target_height);
-                        tracing::debug!("Applied MnListDiff at height {}", target_height);
-                        true
+                        match engine.apply_diff(diff.clone(), Some(target_height), None) {
+                            Ok(_) => {
+                                self.sync_state.known_mn_list_heights.insert(target_height);
+                                tracing::debug!("Applied MnListDiff at height {}", target_height);
+                                true
+                            }
+                            Err(e) => {
+                                tracing::warn!(
+                                    "Failed to apply MnListDiff at height {}: {}",
+                                    target_height,
+                                    e
+                                );
+                                false
+                            }
+                        }
                     }
                     Err(e) => {
                         tracing::warn!(
-                            "Failed to apply MnListDiff at height {}: {}",
+                            "MnListDiff at height {} does not match its block header: {}",
                             target_height,
                             e
                         );
                         false
                     }
                 };
-                drop(engine);
 
                 if apply_ok {
                     if let Err(e) = self.store_diff(target_height, diff).await {
@@ -724,7 +752,7 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
 
 #[cfg(test)]
 mod tests {
-    use super::super::manager::{MasternodeSyncState, QRInfoInFlight};
+    use super::super::manager::{MasternodeSyncState, PipelineMode, QRInfoInFlight};
     use super::{
         qrinfo_timeout_for, MAX_RETRY_ATTEMPTS, QRINFO_STALL_WATCHDOG, QRINFO_TIMEOUT_SCHEDULE_SECS,
     };
@@ -746,7 +774,7 @@ mod tests {
     use dashcore::sml::llmq_type::LLMQType;
     use dashcore::sml::masternode_list_engine::MasternodeListEngine;
     use dashcore::transaction::special_transaction::quorum_commitment::QuorumEntry;
-    use dashcore::{BlockHash, Network};
+    use dashcore::{BlockHash, Network, TxMerkleNode};
     use dashcore_hashes::Hash;
     use std::collections::HashMap;
     use std::sync::Arc;
@@ -828,7 +856,8 @@ mod tests {
             network: Network::Testnet,
             ..Default::default()
         };
-        feed_qrinfo_heights_to_engine(&mut engine, &qr_info, &MockHeaderStorage(height_map)).await;
+        feed_qrinfo_heights_to_engine(&mut engine, &qr_info, &MockHeaderStorage::new(height_map))
+            .await;
 
         for &b in expected_hashes {
             let hash = BlockHash::from_slice(&[b; 32]).unwrap();
@@ -1016,7 +1045,10 @@ mod tests {
             DiskStorageManager::new(&ClientConfig::testnet().with_storage_path(dir.path()))
                 .await
                 .unwrap();
-        let headers = Header::dummy_batch(0..target + 1);
+        let template = MnListDiff::dummy_between(0, 0);
+        let mut headers = Header::dummy_batch(0..target + 1);
+        // The stored header of the diff's block proves its coinbase.
+        headers[target as usize].merkle_root = template.dummy_block_merkle_root();
         let block_headers = storage.block_headers();
         block_headers
             .write()
@@ -1047,7 +1079,7 @@ mod tests {
         let diff = MnListDiff {
             base_block_hash: tip_hash,
             block_hash: target_hash,
-            ..MnListDiff::dummy_between(0, 0)
+            ..template
         };
         let peer = "127.0.0.1:19999".parse().unwrap();
         manager
@@ -1140,6 +1172,64 @@ mod tests {
             SyncState::Syncing,
             "giving up must resolve the state, not leave it silently Syncing"
         );
+    }
+
+    /// A diff reaches the engine only once its coinbase proof leads to the
+    /// merkle root of the stored header of its block. A diff that fails is
+    /// dropped like one the engine refuses.
+    #[tokio::test]
+    async fn test_mnlistdiff_applies_only_when_its_block_header_proves_the_coinbase() {
+        let tip = 200u32;
+        let peer = "127.0.0.1:19999".parse().unwrap();
+        for header_proves_it in [true, false] {
+            let template = MnListDiff::dummy(0x00, 0x01);
+            let mut headers = Header::dummy_batch(0..tip + 1);
+            headers[tip as usize].merkle_root = if header_proves_it {
+                template.dummy_block_merkle_root()
+            } else {
+                TxMerkleNode::all_zeros()
+            };
+            let tip_hash = headers[tip as usize].block_hash();
+            let storage = DiskStorageManager::with_temp_dir().await.unwrap();
+            let block_headers = storage.block_headers();
+            block_headers
+                .write()
+                .await
+                .store_headers(&headers.iter().map(HashedBlockHeader::from).collect::<Vec<_>>())
+                .await
+                .unwrap();
+            let engine =
+                Arc::new(RwLock::new(MasternodeListEngine::default_for_network(Network::Regtest)));
+            let mut manager =
+                MasternodesManager::new(block_headers, Arc::clone(&engine), Network::Regtest, None)
+                    .await;
+            manager.set_state(SyncState::Synced);
+            manager.sync_state.pipeline_mode = PipelineMode::Incremental;
+            let (tx, _rx) = mpsc::unbounded_channel();
+            let requests = RequestSender::new(tx);
+            manager
+                .sync_state
+                .mnlistdiff_pipeline
+                .queue_requests(vec![(BlockHash::all_zeros(), tip_hash)]);
+            manager.sync_state.mnlistdiff_pipeline.send_pending(&requests).unwrap();
+
+            let diff = MnListDiff {
+                block_hash: tip_hash,
+                ..template
+            };
+            manager
+                .handle_message(Message::new(peer, NetworkMessage::MnListDiff(diff)), &requests)
+                .await
+                .expect("an unusable diff is dropped, not an error");
+
+            assert_eq!(
+                engine.read().await.masternode_lists.contains_key(&tip),
+                header_proves_it,
+                "header proves the coinbase: {header_proves_it}"
+            );
+            assert_eq!(manager.sync_state.known_mn_list_heights.contains(&tip), header_proves_it);
+            assert!(manager.sync_state.mnlistdiff_pipeline.is_complete());
+        }
     }
 
     /// The stall watchdog is the backstop for every route into the stranded state

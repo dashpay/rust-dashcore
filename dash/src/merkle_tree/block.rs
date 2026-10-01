@@ -225,6 +225,23 @@ impl PartialMerkleTree {
         &self.hashes
     }
 
+    /// Builds a partial merkle tree from the parts it is serialized as: the block's total
+    /// transaction count, the hashes in depth-first order, and the flag bits packed eight per
+    /// byte, least significant bit first.
+    ///
+    /// Messages that embed a partial merkle tree field by field, such as `mnlistdiff`, use this to
+    /// check their proof with [`Self::extract_matches`]. Nothing is validated here.
+    pub fn from_parts(num_transactions: u32, hashes: Vec<TxMerkleNode>, flag_bytes: &[u8]) -> Self {
+        let bits = (0..flag_bytes.len() * 8)
+            .map(|p| (flag_bytes[p / 8] & (1 << (p % 8) as u8)) != 0)
+            .collect();
+        PartialMerkleTree {
+            num_transactions,
+            hashes,
+            bits,
+        }
+    }
+
     /// Construct a partial merkle tree
     /// The `txids` are the transaction hashes of the block and the `matches` is the contains flags
     /// wherever a tx hash should be included in the proof.
@@ -457,18 +474,8 @@ impl Decodable for PartialMerkleTree {
     fn consensus_decode<R: io::Read + ?Sized>(r: &mut R) -> Result<Self, encode::Error> {
         let num_transactions: u32 = Decodable::consensus_decode(r)?;
         let hashes: Vec<TxMerkleNode> = Decodable::consensus_decode(r)?;
-
         let bytes: Vec<u8> = Decodable::consensus_decode(r)?;
-        let mut bits: Vec<bool> = vec![false; bytes.len() * 8];
-
-        for (p, bit) in bits.iter_mut().enumerate() {
-            *bit = (bytes[p / 8] & (1 << (p % 8) as u8)) != 0;
-        }
-        Ok(PartialMerkleTree {
-            num_transactions,
-            hashes,
-            bits,
-        })
+        Ok(PartialMerkleTree::from_parts(num_transactions, hashes, &bytes))
     }
 }
 

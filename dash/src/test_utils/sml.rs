@@ -1,17 +1,26 @@
-use std::net::SocketAddr;
+use std::collections::BTreeMap;
+use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
+use std::sync::Arc;
 
 use hashes::Hash;
 
-use crate::bls_sig_utils::BLSPublicKey;
+use crate::bls_sig_utils::{BLSPublicKey, BLSSignature};
+use crate::consensus::deserialize;
 use crate::hash_types::{MerkleRootMasternodeList, ProTxHash};
 use crate::network::message_qrinfo::{MNSkipListMode, QRInfo, QuorumSnapshot};
 use crate::network::message_sml::MnListDiff;
-use crate::sml::masternode_list::MasternodeList;
+use crate::sml::masternode_list::{MasternodeList, QuorumMap};
 use crate::sml::masternode_list_engine::MasternodeListEngine;
 use crate::sml::masternode_list_entry::{
     EntryMasternodeType, MasternodeListEntry, MasternodeNetInfo,
 };
-use crate::{BlockHash, Network, PubkeyHash, Transaction};
+use crate::transaction::special_transaction::TransactionPayload;
+use crate::transaction::special_transaction::coinbase::CoinbasePayload;
+use crate::transaction::special_transaction::quorum_commitment::QuorumEntry;
+use crate::{
+    BlockHash, Network, OutPoint, PlatformNodeId, PubkeyHash, ScriptBuf, Transaction, TxIn,
+    TxMerkleNode, Witness,
+};
 
 fn dummy_hash(byte: u8) -> BlockHash {
     BlockHash::from_slice(&[byte; 32]).unwrap()
@@ -36,14 +45,17 @@ impl MnListDiff {
     /// Carries one masternode and one merkle hash, the minimum
     /// [`MasternodeList`] conversion accepts. Use this when the diff has to
     /// apply to an engine.
+    ///
+    /// The coinbase commits to a list holding only that masternode, which is
+    /// what the diff builds from genesis. A diff applied on top of another
+    /// list builds more, and needs [`Self::with_coinbase_committing_to`].
     pub fn dummy(base_byte: u8, tip_byte: u8) -> Self {
+        let masternode = MasternodeListEntry::dummy(tip_byte);
         MnListDiff {
-            total_transactions: 1,
-            merkle_hashes: vec![MerkleRootMasternodeList::from([tip_byte; 32])],
-            merkle_flags: vec![1],
-            new_masternodes: vec![MasternodeListEntry::dummy(tip_byte)],
+            new_masternodes: vec![masternode.clone()],
             ..MnListDiff::dummy_empty(base_byte, tip_byte)
         }
+        .with_coinbase_committing_to(&[masternode], &[])
     }
 
     /// Hashes only. An engine rejects this as an incomplete diff, which is what
@@ -66,17 +78,157 @@ impl MnListDiff {
     }
 
     /// An empty diff from `BlockHash::dummy(base)` to `BlockHash::dummy(tip)`,
-    /// which an engine holding the list at `base` applies.
+    /// which an engine holding an empty list at `base` applies. On any other
+    /// list it needs [`Self::with_coinbase_committing_to`].
     pub fn dummy_between(base: u32, tip: u32) -> Self {
         MnListDiff {
             base_block_hash: BlockHash::dummy(base),
             block_hash: BlockHash::dummy(tip),
-            total_transactions: 1,
-            coinbase_tx: Transaction {
-                version: 3,
-                ..Transaction::dummy_empty()
-            },
             ..MnListDiff::dummy_empty(0x00, 0x00)
+        }
+        .with_coinbase_committing_to(&[], &[])
+    }
+
+    /// Replaces the coinbase with one whose payload commits to a list of
+    /// exactly `masternodes` and `quorums`, and the merkle proof with that of a
+    /// block holding only this coinbase. The diff then passes the coinbase
+    /// checks wherever applying it builds that list, and its proof leads to
+    /// [`Self::dummy_block_merkle_root`].
+    pub fn with_coinbase_committing_to(
+        mut self,
+        masternodes: &[MasternodeListEntry],
+        quorums: &[QuorumEntry],
+    ) -> Self {
+        let masternodes = masternodes
+            .iter()
+            .map(|entry| (entry.pro_reg_tx_hash.reverse(), Arc::new(entry.clone().into())))
+            .collect::<BTreeMap<_, _>>();
+        let mut quorum_map = QuorumMap::new();
+        for quorum in quorums {
+            quorum_map
+                .entry(quorum.llmq_type)
+                .or_default()
+                .insert(quorum.quorum_hash, Arc::new(quorum.clone().into()));
+        }
+        let (masternode_root, quorum_root) =
+            MasternodeList::build(masternodes, quorum_map, self.block_hash, 0)
+                .build()
+                .coinbase_merkle_roots();
+
+        self.coinbase_tx = Transaction {
+            version: 3,
+            lock_time: 0,
+            input: vec![TxIn {
+                previous_output: OutPoint::null(),
+                script_sig: ScriptBuf::new(),
+                sequence: 0xffffffff,
+                witness: Witness::new(),
+            }],
+            output: vec![],
+            special_transaction_payload: Some(TransactionPayload::CoinbasePayloadType(
+                CoinbasePayload::new(
+                    0,
+                    masternode_root,
+                    quorum_root,
+                    Some(0),
+                    Some(BLSSignature::from([0; 96])),
+                    Some(0),
+                ),
+            )),
+        };
+        self.total_transactions = 1;
+        self.merkle_hashes =
+            vec![MerkleRootMasternodeList::from_raw_hash(self.coinbase_tx.txid().to_raw_hash())];
+        self.merkle_flags = vec![1];
+        self
+    }
+
+    /// The merkle root of a block holding only this diff's coinbase, which the
+    /// proof [`Self::with_coinbase_committing_to`] sets up leads to.
+    pub fn dummy_block_merkle_root(&self) -> TxMerkleNode {
+        TxMerkleNode::from_raw_hash(self.coinbase_tx.txid().to_raw_hash())
+    }
+
+    /// `tests/data/test_DML_diffs/mn_list_diff_0_2227096.bin`, the mainnet
+    /// diff from genesis to 2227096, with the service addresses restored by
+    /// [`Self::restore_core_service_addresses`].
+    pub fn mainnet_fixture_0_2227096() -> Self {
+        Self::legacy_address_fixture(include_bytes!(
+            "../../tests/data/test_DML_diffs/mn_list_diff_0_2227096.bin"
+        ))
+    }
+
+    /// `tests/data/test_DML_diffs/mn_list_diff_2227096_2241332.bin`, the
+    /// mainnet diff from 2227096 to 2241332, with the service addresses
+    /// restored by [`Self::restore_core_service_addresses`].
+    pub fn mainnet_fixture_2227096_2241332() -> Self {
+        Self::legacy_address_fixture(include_bytes!(
+            "../../tests/data/test_DML_diffs/mn_list_diff_2227096_2241332.bin"
+        ))
+    }
+
+    /// `artifacts/mn_list_diff_testnet_0_1296600.bin`, the testnet diff from
+    /// genesis to 1296600, with the service addresses restored by
+    /// [`Self::restore_core_service_addresses`].
+    pub fn testnet_fixture_0_1296600() -> Self {
+        Self::legacy_address_fixture(include_bytes!(
+            "../../artifacts/mn_list_diff_testnet_0_1296600.bin"
+        ))
+    }
+
+    fn legacy_address_fixture(bytes: &[u8]) -> Self {
+        let mut diff: MnListDiff = deserialize(bytes).expect("fixture decodes");
+        diff.restore_core_service_addresses();
+        diff
+    }
+
+    /// Rewrites legacy service addresses into the bytes Dash Core sends: an
+    /// IPv4 address as IPv4-mapped IPv6 (`::ffff:a.b.c.d`) and an unset one as
+    /// all zeros (`::`).
+    ///
+    /// The `.bin` fixtures were written by an encoder that stored IPv4
+    /// addresses as IPv4-compatible IPv6 (`::a.b.c.d`) or an unset address as
+    /// `::ffff:0.0.0.0`, and bincode captures made before the decoder kept
+    /// `::` apart from `0.0.0.0` hold unset addresses as `0.0.0.0`. The
+    /// address is part of the entry hash, so the lists those fixtures build
+    /// match `merkleRootMNList` of their coinbase only once this restores
+    /// Core's bytes.
+    pub fn restore_core_service_addresses(&mut self) {
+        for entry in &mut self.new_masternodes {
+            let MasternodeNetInfo::Legacy(address) = &mut entry.service_address else {
+                continue;
+            };
+            match *address {
+                SocketAddr::V6(v6) => {
+                    let octets = v6.ip().octets();
+                    if octets[..12] == [0; 12] && octets[12..] != [0; 4] {
+                        let ip = Ipv4Addr::new(octets[12], octets[13], octets[14], octets[15]);
+                        *address = SocketAddr::V4(SocketAddrV4::new(ip, v6.port()));
+                    }
+                }
+                SocketAddr::V4(v4) if v4.ip().is_unspecified() => {
+                    *address =
+                        SocketAddr::V6(SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, v4.port(), 0, 0));
+                }
+                SocketAddr::V4(_) => {}
+            }
+        }
+    }
+
+    /// Reverses every platform node id. Bincode persists the id in canonical
+    /// order, but captures made before it did hold Core's wire order, which
+    /// the decoder then takes as canonical and the entry hash reverses once
+    /// more. The bytes such a capture holds are the wire order.
+    pub fn reverse_platform_node_ids(&mut self) {
+        for entry in &mut self.new_masternodes {
+            if let EntryMasternodeType::HighPerformance {
+                platform_node_id,
+                ..
+            } = &mut entry.mn_type
+            {
+                *platform_node_id =
+                    PlatformNodeId::from_bytes(platform_node_id.to_canonical_bytes());
+            }
         }
     }
 }
