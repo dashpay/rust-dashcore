@@ -1,10 +1,11 @@
-use std::fs::{self, File};
+use std::fs::File;
 use std::io::{self, BufReader, BufWriter, Read, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
 use dashcore::consensus::{encode, Decodable};
 use dashcore::Block;
+use tokio::task::JoinSet;
 
 use super::{Migrator, MigratorError};
 
@@ -21,6 +22,7 @@ const FILTERS_PER_SEGMENT: u32 = 2_000;
 const BLOCKS_PER_SEGMENT: u32 = 1_000;
 
 const TMP_DIR: &str = "tmp";
+const WORKERS_PER_FOLDER: usize = 4;
 
 const BLOCK_HEADER_LEN: usize = 80;
 const HASH_LEN: usize = 32;
@@ -55,87 +57,115 @@ pub struct V2Migrator;
 impl Migrator for V2Migrator {
     async fn apply_migration(&self, storage_path: &Path) -> Result<(), MigratorError> {
         let tmp = storage_path.join(TMP_DIR);
-        remove_dir_if_exists(&tmp)?;
+        remove_dir_if_exists(&tmp).await?;
 
-        for (folder, kind, items_per_segment) in FOLDERS {
-            migrate_folder(storage_path, folder, kind, items_per_segment)?;
+        let mut folders = JoinSet::new();
+        for (name, kind, items_per_segment) in FOLDERS {
+            folders.spawn(migrate_folder(
+                storage_path.to_path_buf(),
+                name,
+                kind,
+                items_per_segment,
+            ));
+        }
+        while let Some(result) = folders.join_next().await {
+            result.expect("folder migration panicked")?;
         }
 
-        remove_dir_if_exists(&tmp)?;
+        remove_dir_if_exists(&tmp).await?;
 
         Ok(())
     }
 }
 
-fn remove_dir_if_exists(path: &Path) -> io::Result<()> {
-    match fs::remove_dir_all(path) {
+async fn remove_dir_if_exists(path: &Path) -> io::Result<()> {
+    match tokio::fs::remove_dir_all(path).await {
         Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
         result => result,
     }
 }
 
-fn migrate_folder(
-    storage_path: &Path,
-    name: &str,
+async fn migrate_folder(
+    storage_path: PathBuf,
+    name: &'static str,
     kind: ItemKind,
     items_per_segment: u32,
 ) -> Result<(), MigratorError> {
     let folder = storage_path.join(name);
     let staged = storage_path.join(TMP_DIR).join(name);
 
-    let legacy_ids = legacy_segment_ids(&folder)?;
+    let (legacy_ids, has_current) = segment_ids(&folder).await?;
     if legacy_ids.is_empty() {
         return Ok(());
     }
-
-    remove_dir_if_exists(&staged)?;
-    fs::create_dir_all(&staged)?;
-
-    for &legacy_id in &legacy_ids {
-        split_segment(&folder, &staged, legacy_id, kind, items_per_segment)?;
+    if has_current {
+        return Err(MigratorError::Corruption(format!(
+            "{folder:?} holds both legacy and current segment files"
+        )));
     }
 
-    for entry in fs::read_dir(&staged)? {
-        let entry = entry?;
-        fs::rename(entry.path(), folder.join(entry.file_name()))?;
+    tokio::fs::create_dir_all(&staged).await?;
+
+    let mut workers = JoinSet::new();
+    for worker in 0..WORKERS_PER_FOLDER {
+        let ids: Vec<u32> =
+            legacy_ids.iter().skip(worker).step_by(WORKERS_PER_FOLDER).copied().collect();
+        let (folder, staged) = (folder.clone(), staged.clone());
+        workers.spawn_blocking(move || {
+            ids.into_iter().try_for_each(|legacy_id| {
+                split_segment(&folder, &staged, legacy_id, kind, items_per_segment)
+            })
+        });
+    }
+    while let Some(result) = workers.join_next().await {
+        result.expect("migration worker panicked")?;
+    }
+
+    let mut staged_entries = tokio::fs::read_dir(&staged).await?;
+    while let Some(entry) = staged_entries.next_entry().await? {
+        tokio::fs::rename(entry.path(), folder.join(entry.file_name())).await?;
     }
 
     for legacy_id in legacy_ids {
-        fs::remove_file(folder.join(legacy_segment_file_name(legacy_id)))?;
+        tokio::fs::remove_file(folder.join(legacy_segment_file_name(legacy_id))).await?;
     }
-
-    remove_dir_if_exists(&staged)?;
 
     Ok(())
 }
 
-fn legacy_segment_ids(folder: &Path) -> Result<Vec<u32>, MigratorError> {
-    let entries = match fs::read_dir(folder) {
+async fn segment_ids(folder: &Path) -> Result<(Vec<u32>, bool), MigratorError> {
+    let mut entries = match tokio::fs::read_dir(folder).await {
         Ok(entries) => entries,
-        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok((Vec::new(), false)),
         Err(e) => return Err(e.into()),
     };
 
     let prefix = format!("{SEGMENT_PREFIX}_");
     let suffix = format!(".{SEGMENT_EXTENSION}");
 
-    let mut ids = Vec::new();
-    for entry in entries {
-        let name = entry?.file_name();
+    let mut legacy_ids = Vec::new();
+    let mut has_current = false;
+    while let Some(entry) = entries.next_entry().await? {
+        let name = entry.file_name();
         let Some(digits) = name
             .to_str()
             .and_then(|name| name.strip_prefix(&prefix))
             .and_then(|rest| rest.strip_suffix(&suffix))
+            .filter(|digits| digits.bytes().all(|b| b.is_ascii_digit()))
         else {
             continue;
         };
-        if digits.len() == LEGACY_SEGMENT_ID_DIGITS && digits.bytes().all(|b| b.is_ascii_digit()) {
-            ids.push(digits.parse().expect("four ascii digits fit in a u32"));
+        match digits.len() {
+            LEGACY_SEGMENT_ID_DIGITS => {
+                legacy_ids.push(digits.parse().expect("four ascii digits fit in a u32"))
+            }
+            SEGMENT_ID_DIGITS => has_current = true,
+            _ => {}
         }
     }
-    ids.sort_unstable();
+    legacy_ids.sort_unstable();
 
-    Ok(ids)
+    Ok((legacy_ids, has_current))
 }
 
 fn split_segment(
