@@ -8,7 +8,7 @@
 //! - Configuration updates
 //! - Terminal UI accessors
 
-use dashcore::sml::masternode_list_engine::MasternodeListEngine;
+use crate::sml_engine::MasternodeListEngine;
 use std::sync::Arc;
 use tokio::sync::{watch, Mutex, RwLock};
 
@@ -109,7 +109,8 @@ pub struct DashSpvClient<W: WalletInterface, N: NetworkManager, S: StorageManage
     pub(super) storage: Arc<Mutex<S>>,
     /// External wallet implementation (required)
     pub(super) wallet: Arc<RwLock<W>>,
-    pub(super) masternode_engine: Option<Arc<RwLock<MasternodeListEngine>>>,
+    pub(super) masternode_engine:
+        Option<Arc<RwLock<MasternodeListEngine<PersistentBlockHeaderStorage>>>>,
     pub(super) sync_coordinator: Arc<Mutex<PersistentSyncCoordinator<W>>>,
     /// `true` while running, `false` once a stop is requested. Stored as a
     /// `watch` so a stop is observed immediately rather than polled.

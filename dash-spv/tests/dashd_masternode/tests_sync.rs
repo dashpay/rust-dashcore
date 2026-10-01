@@ -281,12 +281,11 @@ async fn test_masternode_list_sync_with_quorum_rotation() {
         // Incremental event that fires before the QRInfo window opens.
         let pre_dkg_max_cycle: u32 = {
             let engine = client_handle.engine.read().await;
-            engine
-                .rotated_quorums_per_cycle
-                .keys()
-                .filter_map(|h| engine.block_container.get_height(h))
-                .max()
-                .unwrap_or(0)
+            let mut max_cycle = 0;
+            for cycle_hash in engine.rotated_quorums_per_cycle.keys() {
+                max_cycle = max_cycle.max(engine.height_of(cycle_hash).await.unwrap_or(0));
+            }
+            max_cycle
         };
 
         let quorum_hash =
@@ -413,11 +412,10 @@ async fn test_rotated_quorums_stored_when_sync_starts_post_dkg() {
             stored
         );
         assert_all_rotated_quorums_verified(&engine);
-        let mut heights: Vec<u32> = engine
-            .rotated_quorums_per_cycle
-            .keys()
-            .filter_map(|h| engine.block_container.get_height(h))
-            .collect();
+        let mut heights: Vec<u32> = Vec::new();
+        for cycle_hash in engine.rotated_quorums_per_cycle.keys() {
+            heights.extend(engine.height_of(cycle_hash).await);
+        }
         heights.sort_unstable();
         heights.dedup();
         assert!(

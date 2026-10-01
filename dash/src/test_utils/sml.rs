@@ -6,12 +6,10 @@ use crate::bls_sig_utils::BLSPublicKey;
 use crate::hash_types::{MerkleRootMasternodeList, ProTxHash};
 use crate::network::message_qrinfo::{MNSkipListMode, QRInfo, QuorumSnapshot};
 use crate::network::message_sml::MnListDiff;
-use crate::sml::masternode_list::MasternodeList;
-use crate::sml::masternode_list_engine::MasternodeListEngine;
 use crate::sml::masternode_list_entry::{
     EntryMasternodeType, MasternodeListEntry, MasternodeNetInfo,
 };
-use crate::{BlockHash, Network, PubkeyHash, Transaction};
+use crate::{BlockHash, PubkeyHash, Transaction};
 
 fn dummy_hash(byte: u8) -> BlockHash {
     BlockHash::from_slice(&[byte; 32]).unwrap()
@@ -34,7 +32,7 @@ impl MasternodeListEntry {
 
 impl MnListDiff {
     /// Carries one masternode and one merkle hash, the minimum
-    /// [`MasternodeList`] conversion accepts. Use this when the diff has to
+    /// [`MasternodeList`](crate::sml::masternode_list::MasternodeList) conversion accepts. Use this when the diff has to
     /// apply to an engine.
     pub fn dummy(base_byte: u8, tip_byte: u8) -> Self {
         MnListDiff {
@@ -78,30 +76,6 @@ impl MnListDiff {
             },
             ..MnListDiff::dummy_empty(0x00, 0x00)
         }
-    }
-}
-
-impl MasternodeListEngine {
-    /// The mainnet engine of `tests/data/test_DML_diffs/masternode_list_engine.hex`,
-    /// 29 lists up to 2243493.
-    #[cfg(feature = "bincode")]
-    pub fn mainnet_fixture() -> Self {
-        let data =
-            hex::decode(include_str!("../../tests/data/test_DML_diffs/masternode_list_engine.hex"))
-                .unwrap();
-        bincode::decode_from_slice(&data, bincode::config::standard()).unwrap().0
-    }
-
-    /// A mainnet engine holding an empty list at each of `heights`.
-    pub fn dummy_with_lists(heights: &[u32]) -> Self {
-        let mut engine = MasternodeListEngine::default_for_network(Network::Mainnet);
-        for &height in heights {
-            engine.feed_block_height(height, BlockHash::dummy(height));
-            engine
-                .masternode_lists
-                .insert(height, MasternodeList::empty(BlockHash::dummy(height), height));
-        }
-        engine
     }
 }
 

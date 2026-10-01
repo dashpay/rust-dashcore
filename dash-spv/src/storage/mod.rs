@@ -23,7 +23,6 @@ use dashcore::hash_types::FilterHeader;
 use dashcore::network::message_qrinfo::QRInfo;
 use dashcore::network::message_sml::MnListDiff;
 use dashcore::prelude::CoreBlockHeight;
-use dashcore::sml::masternode_list_engine::MasternodeListEngine;
 use dashcore::Network;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
@@ -37,7 +36,6 @@ pub use crate::storage::block_headers::{
 pub use crate::storage::blocks::{BlockStorage, PersistentBlockStorage};
 pub use crate::storage::filter_headers::{FilterHeaderStorage, PersistentFilterHeaderStorage};
 pub use crate::storage::filters::{FilterStorage, PersistentFilterStorage};
-pub(crate) use crate::storage::masternode::feed_qrinfo_heights_to_engine;
 pub use crate::storage::masternode::{MasternodeStorage, PersistentMasternodeStorage};
 pub use crate::storage::metadata::{MetadataStorage, PersistentMetadataStorage};
 pub use crate::storage::peers::{PeerStorage, PersistentPeerStorage};
@@ -467,10 +465,6 @@ impl masternode::MasternodeStorage for DiskStorageManager {
         qr_info: &QRInfo,
     ) -> StorageResult<()> {
         self.masternodes.write().await.store_qr_info(height, qr_info).await
-    }
-
-    async fn load_engine(&self) -> StorageResult<MasternodeListEngine> {
-        self.masternodes.read().await.load_engine().await
     }
 }
 
