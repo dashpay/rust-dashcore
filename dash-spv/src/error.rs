@@ -63,6 +63,19 @@ pub enum NetworkError {
 
     #[error("Address parse error: {0}")]
     AddressParse(String),
+
+    // BIP324 V2 transport errors
+    #[error("V2 handshake failed: {0}")]
+    V2HandshakeFailed(String),
+
+    #[error("V2 decryption failed: {0}")]
+    V2DecryptionFailed(String),
+
+    #[error("V2 encryption failed: {0}")]
+    V2EncryptionFailed(String),
+
+    #[error("V2 not supported by peer")]
+    V2NotSupported,
 }
 
 /// Storage-related errors.

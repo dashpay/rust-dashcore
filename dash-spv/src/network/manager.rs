@@ -18,6 +18,7 @@ use crate::network::discovery::DnsDiscovery;
 use crate::network::latency::PeerLatency;
 use crate::network::pool::PeerPool;
 use crate::network::reputation::{ChangeReason, PeerReputationManager, ReputationAware};
+use crate::network::transport::TransportPreference;
 use crate::network::{
     HandshakeManager, Message, MessageDispatcher, MessageType, NetworkEvent, NetworkManager,
     NetworkRequest, Peer, RequestSender,
@@ -188,6 +189,8 @@ pub struct PeerNetworkManager {
     capability_rejected: Arc<RwLock<HashMap<SocketAddr, Instant>>>,
     /// Cached count of currently connected peers for fast, non-blocking queries
     connected_peer_count: Arc<AtomicUsize>,
+    /// Transport preference for peer connections (V1, V2, or V2 with fallback)
+    transport_preference: TransportPreference,
     /// Disable headers2 after decompression failure
     headers2_disabled: Arc<Mutex<HashSet<SocketAddr>>>,
     /// Global bound for CPU-heavy headers2 decompression work.
@@ -316,6 +319,7 @@ impl PeerNetworkManager {
             required_services,
             capability_rejected: Arc::new(RwLock::new(HashMap::new())),
             connected_peer_count: Arc::new(AtomicUsize::new(0)),
+            transport_preference: config.transport_preference,
             headers2_disabled: Arc::new(Mutex::new(HashSet::new())),
             headers2_decompression_semaphore: Arc::new(Semaphore::new(
                 headers2_decompression_parallelism(),
@@ -443,6 +447,7 @@ impl PeerNetworkManager {
         let required_services = self.required_services;
         let capability_rejected = self.capability_rejected.clone();
         let connected_peer_count = self.connected_peer_count.clone();
+        let transport_preference = self.transport_preference;
         let headers2_disabled = self.headers2_disabled.clone();
         let headers2_decompression_semaphore = self.headers2_decompression_semaphore.clone();
         let message_dispatcher = self.message_dispatcher.clone();
@@ -460,7 +465,12 @@ impl PeerNetworkManager {
             tracing::debug!("Attempting to connect to {}", addr);
 
             let connect_result = tokio::select! {
-                result = Peer::connect(addr, CONNECTION_TIMEOUT.as_secs(), network) => result,
+                result = Peer::connect(
+                    addr,
+                    CONNECTION_TIMEOUT.as_secs(),
+                    network,
+                    transport_preference,
+                ) => result,
                 _ = shutdown_token.cancelled() => {
                     tracing::debug!("Connection to {} cancelled by shutdown", addr);
                     pool.remove_peer(&addr).await;
@@ -1879,6 +1889,7 @@ impl Clone for PeerNetworkManager {
             required_services: self.required_services,
             capability_rejected: self.capability_rejected.clone(),
             connected_peer_count: self.connected_peer_count.clone(),
+            transport_preference: self.transport_preference,
             headers2_disabled: self.headers2_disabled.clone(),
             headers2_decompression_semaphore: self.headers2_decompression_semaphore.clone(),
             message_dispatcher: self.message_dispatcher.clone(),
@@ -2080,6 +2091,7 @@ impl PeerNetworkManager {
             required_services,
             capability_rejected: Arc::new(RwLock::new(HashMap::new())),
             connected_peer_count: Arc::new(AtomicUsize::new(0)),
+            transport_preference: TransportPreference::V1Only,
             headers2_disabled: Arc::new(Mutex::new(HashSet::new())),
             headers2_decompression_semaphore: Arc::new(Semaphore::new(
                 headers2_decompression_parallelism(),
