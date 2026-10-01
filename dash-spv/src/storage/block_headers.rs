@@ -1,10 +1,10 @@
 //! Header storage operations for DiskStorageManager.
 
-use std::collections::HashMap;
 use std::ops::Range;
 use std::path::PathBuf;
 
 use crate::error::StorageResult;
+use crate::storage::header_hash_index::HeaderHashIndex;
 use crate::storage::segments::SegmentCache;
 use crate::storage::PersistentStorage;
 use crate::types::HashedBlockHeader;
@@ -104,7 +104,7 @@ pub trait BlockHeaderStorage: Send + Sync + 'static {
 
 pub struct PersistentBlockHeaderStorage {
     block_headers: RwLock<SegmentCache<HashedBlockHeader>>,
-    header_hash_index: HashMap<BlockHash, u32>,
+    header_hash_index: HeaderHashIndex,
 }
 
 impl PersistentBlockHeaderStorage {
@@ -120,14 +120,14 @@ impl PersistentStorage for PersistentBlockHeaderStorage {
         let mut block_headers: SegmentCache<HashedBlockHeader> =
             SegmentCache::load_or_new(&segments_folder).await?;
 
-        let mut header_hash_index = HashMap::new();
+        let mut header_hash_index = HeaderHashIndex::default();
 
         if let (Some(start), Some(end)) = (block_headers.start_height(), block_headers.tip_height())
         {
             let headers = block_headers.get_items(start..end + 1).await?;
             for (i, header) in headers.iter().enumerate() {
                 let height = start + i as u32;
-                header_hash_index.insert(*header.hash(), height);
+                header_hash_index.insert(header.hash(), height);
             }
         }
 
@@ -165,7 +165,7 @@ impl BlockHeaderStorage for PersistentBlockHeaderStorage {
         self.block_headers.write().await.store_items_at_height(headers, height).await?;
 
         for header in headers {
-            self.header_hash_index.insert(*header.hash(), height);
+            self.header_hash_index.insert(header.hash(), height);
             height += 1;
         }
 
@@ -215,7 +215,17 @@ impl BlockHeaderStorage for PersistentBlockHeaderStorage {
         &self,
         hash: &dashcore::BlockHash,
     ) -> StorageResult<Option<u32>> {
-        Ok(self.header_hash_index.get(hash).copied())
+        let heights = self.header_hash_index.get(hash);
+        if heights.is_empty() {
+            return Ok(None);
+        }
+        let mut block_headers = self.block_headers.write().await;
+        for height in heights {
+            if block_headers.get_item(height).await?.is_some_and(|header| header.hash() == hash) {
+                return Ok(Some(height));
+            }
+        }
+        Ok(None)
     }
 
     async fn truncate_above(&mut self, target_height: u32) -> StorageResult<()> {
@@ -224,7 +234,7 @@ impl BlockHeaderStorage for PersistentBlockHeaderStorage {
         block_headers.truncate_above(target_height).await?;
         drop(block_headers);
         if needs_index_prune {
-            self.header_hash_index.retain(|_, h| *h <= target_height);
+            self.header_hash_index.truncate_above(target_height);
         }
         Ok(())
     }
