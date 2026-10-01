@@ -2234,8 +2234,8 @@ impl DMNState {
     /// Prefers the first Core 23+ nested `addresses.platform_p2p` entry with a non-zero port,
     /// returning its host and port verbatim. Otherwise falls back to the deprecated top-level
     /// `platformP2PPort` as-is, zero included, paired with the node IP from
-    /// [`service`](Self::service) because Dash deploys platform services on the masternode's
-    /// core IP. The fallback also covers nested addresses without a platform entry, which is
+    /// [`service`](Self::service) (bracketed when IPv6) because Dash deploys platform services
+    /// on the masternode's core IP. The fallback also covers nested addresses without a platform entry, which is
     /// how Core prints a legacy Evo without an address (`addresses: {}` beside its flat ports).
     /// Returns `None` when neither source has a port.
     #[allow(deprecated)]
@@ -2259,10 +2259,16 @@ impl DMNState {
     }
 
     /// Pairs a legacy platform port with the node IP, dropping absent and out-of-`u16`-range
-    /// ports so the result honors the TCP/UDP port range.
+    /// ports so the result honors the TCP/UDP port range. An IPv6 node IP is bracketed, as
+    /// nested entries print it, so either source joins with its port into a socket address.
     fn legacy_platform_address(&self, port: Option<u32>) -> Option<(String, u32)> {
-        port.and_then(|p| u16::try_from(p).ok())
-            .map(|p| (self.service.ip().to_string(), u32::from(p)))
+        port.and_then(|p| u16::try_from(p).ok()).map(|p| {
+            let host = match self.service.ip() {
+                IpAddr::V4(ip) => ip.to_string(),
+                IpAddr::V6(ip) => format!("[{ip}]"),
+            };
+            (host, u32::from(p))
+        })
     }
 }
 
@@ -5084,14 +5090,30 @@ mod tests {
 
     #[test]
     #[allow(deprecated)]
+    fn legacy_fallback_brackets_an_ipv6_host_like_the_nested_path() {
+        // Both sources must give a host that `format!("{host}:{port}")` turns into a valid
+        // socket address, so an IPv6 node IP is bracketed as nested entries are.
+        let mut state = revoked_legacy_evo_full_state();
+        state.service = "[2001:db8::4]:9999".parse().expect("valid socket address");
+        state.addresses = None;
+        let (host, port) = state.platform_p2p_address().expect("legacy port");
+        assert_eq!(host, "[2001:db8::4]");
+        assert!(format!("{host}:{port}").parse::<SocketAddr>().is_ok());
+
+        state.service = "192.0.2.40:9999".parse().expect("valid socket address");
+        assert_eq!(state.platform_p2p_address(), Some(("192.0.2.40".to_string(), 26656)));
+    }
+
+    #[test]
+    #[allow(deprecated)]
     fn revoked_legacy_evo_resolves_its_flat_platform_ports() {
         // Core 23 and 24 print a revoked legacy Evo with `addresses: {}` (no platform entries
         // for a masternode without an address) beside its unchanged flat ports. Consumers that
         // read the flat ports keep the masternode, so the accessors fall back to them as-is.
         let revoked = revoked_legacy_evo_full_state();
         assert_eq!(revoked.addresses, Some(MasternodeAddresses::default()));
-        assert_eq!(revoked.platform_p2p_address(), Some(("::".to_string(), 26656)));
-        assert_eq!(revoked.platform_http_address(), Some(("::".to_string(), 443)));
+        assert_eq!(revoked.platform_p2p_address(), Some(("[::]".to_string(), 26656)));
+        assert_eq!(revoked.platform_http_address(), Some(("[::]".to_string(), 443)));
 
         // Nested addresses with a core entry but no platform entry fall back the same way.
         let mut core_only = revoked.clone();
@@ -5099,7 +5121,7 @@ mod tests {
             core_p2p: vec!["192.0.2.40:9999".to_string()],
             ..Default::default()
         });
-        assert_eq!(core_only.platform_p2p_address(), Some(("::".to_string(), 26656)));
+        assert_eq!(core_only.platform_p2p_address(), Some(("[::]".to_string(), 26656)));
 
         // The revocation diff: `service` and no `addresses`, ports untouched.
         let diff = core_diff(json!({
