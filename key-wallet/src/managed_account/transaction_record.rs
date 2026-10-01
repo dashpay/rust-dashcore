@@ -141,17 +141,31 @@ impl TransactionRecord {
             .sum();
         let spent: i64 = self.input_details.iter().map(|i| i.value as i64).sum();
         self.net_amount = owned - spent;
-        if self.direction != TransactionDirection::CoinJoin {
-            let has_inputs = !self.input_details.is_empty();
-            let has_sent = self.output_details.iter().any(|d| d.role == OutputRole::Sent);
-            let has_our_outputs = owned > 0;
-            self.direction = if !has_sent && has_inputs && has_our_outputs {
-                TransactionDirection::Internal
-            } else if has_inputs {
-                TransactionDirection::Outgoing
-            } else {
-                TransactionDirection::Incoming
-            };
+        self.direction = Self::direction_for(
+            self.transaction_type,
+            !self.input_details.is_empty(),
+            &self.output_details,
+        );
+    }
+
+    /// Classify account-local flow consistently for initial records and late-input corrections.
+    pub(crate) fn direction_for(
+        transaction_type: TransactionType,
+        has_inputs: bool,
+        output_details: &[OutputDetail],
+    ) -> TransactionDirection {
+        let has_sent = output_details.iter().any(|d| d.role == OutputRole::Sent);
+        let has_our_outputs = output_details
+            .iter()
+            .any(|d| matches!(d.role, OutputRole::Received | OutputRole::Change));
+        if transaction_type == TransactionType::CoinJoin {
+            TransactionDirection::CoinJoin
+        } else if !has_sent && has_inputs && has_our_outputs {
+            TransactionDirection::Internal
+        } else if has_inputs {
+            TransactionDirection::Outgoing
+        } else {
+            TransactionDirection::Incoming
         }
     }
 

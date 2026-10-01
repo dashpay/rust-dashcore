@@ -32,6 +32,11 @@ pub trait WalletTransactionChecker {
     /// Callers that batch multiple transactions (e.g. block processing) can pass `false`
     /// and refresh once at the end via `update_last_processed_height`.
     ///
+    /// Late funding corrects accounting only while the spender's full record is retained.
+    /// By default, ChainLocks prune funds records to txids; later funding cannot correct
+    /// those records or previously emitted copies. Enable `keep-finalized-transactions`
+    /// before processing for corrections after finalization, at the cost of retaining history.
+    ///
     /// The context parameter indicates where the transaction comes from (mempool, block, etc.)
     ///
     async fn check_core_transaction(
@@ -1227,6 +1232,15 @@ mod tests {
         // Check UTXO state - the funding tx's UTXO should NOT have been added
         // because the stored spend_tx spends it
         let account = managed_wallet.first_bip44_managed_account().expect("Should have account");
+
+        let record = &account.transactions()[&spend_tx.txid()];
+        assert_eq!(record.net_amount, -50_000);
+        assert_eq!(record.direction, TransactionDirection::Internal);
+        assert_eq!(record.input_details.len(), 1);
+        assert_eq!(record.input_details[0].index, 0);
+        assert_eq!(record.input_details[0].value, 100_000);
+        assert_eq!(fund_result.updated_records[0].txid, spend_tx.txid());
+        assert!(fund_result.state_modified);
 
         // Should still only have one UTXO (the change from spend_tx)
         assert_eq!(
@@ -3832,75 +3846,6 @@ mod tests {
         assert_eq!(ctx.managed_wallet.balance.unconfirmed(), payment_value);
     }
 
-    #[test]
-    fn born_spent_attribution_preserves_finalized_retention() {
-        use crate::account::TransactionRecord;
-
-        for already_finalized in [false, true] {
-            let mut ctx = TestWalletContext::new_random();
-            let funding = Transaction::dummy(&ctx.receive_address, 0..1, &[40_000, 60_000]);
-            let outpoints: Vec<_> = (0..2)
-                .map(|vout| OutPoint {
-                    txid: funding.txid(),
-                    vout,
-                })
-                .collect();
-            let mut spender = Transaction::dummy(&ctx.receive_address, 0..2, &[99_000]);
-            for (input, outpoint) in spender.input.iter_mut().zip(&outpoints) {
-                input.previous_output = *outpoint;
-            }
-            let txid = spender.txid();
-            let sibling = ctx.managed_wallet.coinjoin_managed_account_at_index_mut(0).unwrap();
-            let template = TransactionRecord::new(
-                spender,
-                sibling.managed_account_type().to_account_type(),
-                TransactionContext::InChainLockedBlock(BlockInfo::new(
-                    2,
-                    BlockHash::all_zeros(),
-                    123,
-                )),
-                TransactionType::Standard,
-                TransactionDirection::Incoming,
-                Vec::new(),
-                Vec::new(),
-                0,
-            );
-            sibling.transactions_mut().insert(txid, template.clone());
-            if already_finalized {
-                let owner = ctx.managed_wallet.first_bip44_managed_account_mut().unwrap();
-                let mut record = template;
-                record.account_type = owner.managed_account_type().to_account_type();
-                owner.transactions_mut().insert(txid, record);
-                #[cfg(not(feature = "keep-finalized-transactions"))]
-                owner.keys_mut().drop_finalized_transaction(&txid);
-            }
-            let mut result = ctx.managed_wallet.accounts.check_transaction(&funding, &[]);
-            ctx.managed_wallet.attribute_born_spent(
-                &[
-                    (outpoints[0], 40_000, ctx.receive_address.clone()),
-                    (outpoints[1], 60_000, ctx.receive_address.clone()),
-                ],
-                &mut result,
-            );
-            let owner = ctx.managed_wallet.first_bip44_managed_account().unwrap();
-            #[cfg(not(feature = "keep-finalized-transactions"))]
-            if already_finalized {
-                assert!(result.updated_records.is_empty(), "do not resurrect finalized records");
-                assert!(!owner.transactions().contains_key(&txid));
-                continue;
-            }
-            assert_eq!(result.updated_records.len(), 1);
-            let corrected = &result.updated_records[0];
-            assert_eq!(corrected.input_details.len(), 2, "publish all late inputs together");
-            assert_eq!(corrected.net_amount, -1_000);
-            assert!(owner.transaction_is_finalized(&txid));
-            assert_eq!(
-                owner.transactions().contains_key(&txid),
-                cfg!(feature = "keep-finalized-transactions"),
-            );
-        }
-    }
-
     /// A late input belongs to its funding account even when another account first saw the spender.
     #[tokio::test]
     async fn born_spent_attribution_reaches_sibling_account_spenders() {
@@ -4027,145 +3972,139 @@ mod tests {
         }
     }
 
-    /// InstantSend backfill must publish corrections before its early return.
+    /// An imported account can discover a mempool child before its known parent's IS redelivery.
     #[tokio::test]
     async fn born_spent_attribution_runs_on_the_instant_send_backfill_branch() {
-        const FUND1: u64 = 50_000;
-        const BACK: u64 = 40_000;
-        let mut wallet =
-            Wallet::new_random(Network::Testnet, WalletAccountCreationOptions::Default)
-                .expect("Should create wallet");
-        wallet
-            .add_account(
-                AccountType::Standard {
-                    index: 1,
-                    standard_account_type: StandardAccountType::BIP44Account,
-                },
-                None,
-            )
-            .expect("Should add second BIP44 account");
-        let mut managed_wallet =
-            ManagedWalletInfo::from_wallet_with_name(&wallet, "Test".to_string(), 0);
-        let xpub0 =
-            wallet.accounts.standard_bip44_accounts.get(&0).expect("account 0").account_xpub;
-        let address0 = managed_wallet
-            .bip44_managed_account_at_index_mut(0)
-            .expect("managed account 0")
-            .next_receive_address(Some(&xpub0), true)
-            .expect("address for account 0");
-        let xpub1 =
-            wallet.accounts.standard_bip44_accounts.get(&1).expect("account 1").account_xpub;
-        let address1 = managed_wallet
+        use crate::wallet::managed_wallet_info::managed_account_operations::ManagedAccountOperations;
+        let mut ctx = TestWalletContext::new_random();
+        let account_type = AccountType::Standard {
+            index: 1,
+            standard_account_type: StandardAccountType::BIP44Account,
+        };
+        ctx.wallet.add_account(account_type, None).unwrap();
+        let xpub = ctx.wallet.accounts.standard_bip44_accounts[&1].account_xpub;
+        let mut preview =
+            ManagedWalletInfo::from_wallet_with_name(&ctx.wallet, "preview".into(), 0);
+        let address = preview
             .bip44_managed_account_at_index_mut(1)
-            .expect("managed account 1")
-            .next_receive_address(Some(&xpub1), true)
-            .expect("address for account 1");
-
-        // Funding pays both accounts; mempool delivery reaches both.
-        let mut funding_tx = Transaction::dummy(&address0, 0..1, &[100_000]);
-        funding_tx.output.push(TxOut {
-            value: FUND1,
-            script_pubkey: address1.script_pubkey(),
+            .unwrap()
+            .next_receive_address(Some(&xpub), true)
+            .unwrap();
+        let mut funding = Transaction::dummy(&ctx.receive_address, 0..1, &[100_000]);
+        funding.output.push(TxOut {
+            value: 50_000,
+            script_pubkey: address.script_pubkey(),
         });
-        let funding_txid = funding_tx.txid();
-        let funded_outpoint = OutPoint {
-            txid: funding_txid,
-            vout: 1,
-        };
-        let mut wallet_mut = wallet;
-        let mempool = managed_wallet
-            .check_core_transaction(
-                &funding_tx,
-                TransactionContext::Mempool,
-                &mut wallet_mut,
-                true,
-                true,
+        let first = ctx.check_transaction(&funding, TransactionContext::Mempool).await;
+        assert_eq!(first.new_records.len(), 1);
+
+        ctx.managed_wallet.add_managed_account(&ctx.wallet, account_type).unwrap();
+        let mut spender = Transaction::dummy(&address, 1..2, &[40_000]);
+        let outpoint = OutPoint::new(funding.txid(), 1);
+        spender.input[0].previous_output = outpoint;
+        ctx.check_transaction(&spender, TransactionContext::Mempool).await;
+        let result = ctx
+            .check_transaction(
+                &funding,
+                TransactionContext::InstantSend(InstantLock {
+                    txid: funding.txid(),
+                    ..InstantLock::default()
+                }),
             )
             .await;
-        assert!(mempool.is_relevant && mempool.is_new_transaction);
-        assert_eq!(mempool.affected_accounts.len(), 2);
+        assert!(!result.is_new_transaction);
+        assert!(result.state_modified);
+        assert_eq!(result.new_records.len(), 1);
+        assert_eq!(result.new_records[0].account_type, account_type);
+        let corrected = result.updated_records.iter().find(|r| r.txid == spender.txid()).unwrap();
+        assert_eq!(corrected.net_amount, -10_000);
+        assert_eq!(corrected.input_details.len(), 1);
+        assert_eq!(corrected.context, TransactionContext::Mempool);
+        assert!(!ctx
+            .managed_wallet
+            .bip44_managed_account_at_index(1)
+            .unwrap()
+            .utxos
+            .contains_key(&outpoint));
+    }
 
-        // Account 1 loses the delivery; account 0 keeps the record, so the
-        // wallet-level `is_new` is false when the IS lock arrives.
-        {
-            let account1 =
-                managed_wallet.bip44_managed_account_at_index_mut(1).expect("managed account 1");
-            account1.transactions_mut().remove(&funding_txid);
-            account1.utxos.clear();
+    #[tokio::test]
+    async fn born_spent_attribution_preserves_coinjoin_direction() {
+        let mut ctx = TestWalletContext::new_random();
+        let funding = Transaction::dummy(&ctx.receive_address, 10..11, &[100_001_000]);
+        let mut spender = Transaction::dummy(&ctx.receive_address, 11..14, &[100_001_000; 3]);
+        spender.input[1].previous_output = OutPoint::new(funding.txid(), 0);
+        let first = ctx.check_transaction(&spender, TransactionContext::Mempool).await;
+        assert_eq!(first.new_records[0].direction, TransactionDirection::CoinJoin);
+        let result = ctx.check_transaction(&funding, TransactionContext::Mempool).await;
+        let record = result.updated_records.iter().find(|r| r.txid == spender.txid()).unwrap();
+        assert_eq!(record.direction, TransactionDirection::CoinJoin);
+        assert_eq!(record.input_details[0].index, 1);
+        assert_eq!(record.net_amount, 200_002_000);
+    }
+
+    #[tokio::test]
+    async fn born_spent_attribution_internal_change_including_zero_value() {
+        use crate::managed_account::transaction_record::OutputRole;
+        for change_value in [0, 98_000] {
+            let mut ctx = TestWalletContext::new_random();
+            let change = ctx
+                .managed_wallet
+                .first_bip44_managed_account_mut()
+                .unwrap()
+                .next_change_address(Some(&ctx.xpub), true)
+                .unwrap();
+            let funding = Transaction::dummy(&ctx.receive_address, 20..21, &[100_000]);
+            let mut spender = Transaction::dummy(&change, 21..22, &[change_value]);
+            spender.input[0].previous_output = OutPoint::new(funding.txid(), 0);
+            ctx.check_transaction(&spender, TransactionContext::Mempool).await;
+            let result = ctx.check_transaction(&funding, TransactionContext::Mempool).await;
+            let record = result.updated_records.iter().find(|r| r.txid == spender.txid()).unwrap();
+            assert_eq!(record.direction, TransactionDirection::Internal);
+            assert_eq!(record.net_amount, change_value as i64 - 100_000);
+            assert_eq!(record.output_details[0].role, OutputRole::Change);
+            assert!(result.state_modified);
         }
+    }
 
-        // A spend of account 1's output is mined before account 1 re-learns
-        // the funding: recorded with the income-only net (+BACK).
-        let spender_tx = Transaction {
-            version: 1,
-            lock_time: 0,
-            input: vec![TxIn {
-                previous_output: funded_outpoint,
-                script_sig: ScriptBuf::new(),
-                sequence: 0xffffffff,
-                witness: dashcore::Witness::new(),
-            }],
-            output: vec![TxOut {
-                value: BACK,
-                script_pubkey: address1.script_pubkey(),
-            }],
-            special_transaction_payload: None,
-        };
-        let spender_txid = spender_tx.txid();
-        let spender_context = TransactionContext::InBlock(BlockInfo::new(
-            2,
-            BlockHash::from_slice(&[3u8; 32]).expect("block hash"),
-            1_650_000_100,
-        ));
-        let result = managed_wallet
-            .check_core_transaction(&spender_tx, spender_context, &mut wallet_mut, true, true)
-            .await;
-        assert!(result.is_relevant && result.is_new_transaction);
-        {
-            let account1 =
-                managed_wallet.bip44_managed_account_at_index(1).expect("managed account 1");
-            let record = account1.transactions().get(&spender_txid).expect("spender record");
-            assert_eq!(record.net_amount, BACK as i64, "income-only until the funding is seen");
-        }
+    #[tokio::test]
+    async fn born_spent_correction_marks_state_modified_on_unchanged_funding_redelivery() {
+        let mut ctx = TestWalletContext::new_random();
+        let mut preview = ctx.bip44_account().clone();
+        let late_address = preview
+            .next_receive_addresses(Some(&ctx.xpub), 100, true)
+            .unwrap()
+            .last()
+            .unwrap()
+            .clone();
+        assert!(!ctx.bip44_account().contains_address(&late_address));
+        let mut funding = Transaction::dummy(&ctx.receive_address, 40..41, &[30_000]);
+        funding.output.push(TxOut {
+            value: 100_000,
+            script_pubkey: late_address.script_pubkey(),
+        });
+        let fund_context =
+            TransactionContext::InBlock(BlockInfo::new(1, BlockHash::all_zeros(), 100));
+        ctx.check_transaction(&funding, fund_context.clone()).await;
+        let mut spender = Transaction::dummy(&ctx.receive_address, 41..42, &[98_000]);
+        spender.input[0].previous_output = OutPoint::new(funding.txid(), 1);
+        ctx.check_transaction(
+            &spender,
+            TransactionContext::InBlock(BlockInfo::new(2, BlockHash::all_zeros(), 200)),
+        )
+        .await;
+        assert_eq!(ctx.transaction(&spender.txid()).net_amount, 98_000);
 
-        // The IS-locked funding takes the `!is_new` branch: account 0 is
-        // updated, account 1 is backfilled — and the backfill stages the
-        // born-spent output, which this branch must drain before returning.
-        let is_lock = InstantLock {
-            txid: funding_txid,
-            ..InstantLock::default()
-        };
-        let result = managed_wallet
-            .check_core_transaction(
-                &funding_tx,
-                TransactionContext::InstantSend(is_lock),
-                &mut wallet_mut,
-                true,
-                true,
-            )
-            .await;
-        assert!(result.is_relevant);
-        assert!(!result.is_new_transaction, "account 0 still holds the record");
-        assert_eq!(result.new_records.len(), 1, "account 1 backfilled");
-        assert_eq!(result.new_records[0].txid, funding_txid);
-
-        let account1 = managed_wallet.bip44_managed_account_at_index(1).expect("managed account 1");
-        let record = account1.transactions().get(&spender_txid).expect("spender record");
-        assert_eq!(
-            record.net_amount,
-            BACK as i64 - FUND1 as i64,
-            "IS backfill branch must attribute the born-spent funding output immediately"
-        );
-        assert_eq!(record.input_details.len(), 1);
-        assert!(
-            !account1.utxos.contains_key(&funded_outpoint),
-            "a born-spent output never becomes spendable"
-        );
-        let corrected = result
-            .updated_records
-            .iter()
-            .find(|r| r.txid == spender_txid)
-            .expect("corrected spender record must surface in updated_records");
-        assert_eq!(corrected.net_amount, BACK as i64 - FUND1 as i64);
+        ctx.managed_wallet
+            .first_bip44_managed_account_mut()
+            .unwrap()
+            .next_receive_addresses(Some(&ctx.xpub), 100, true)
+            .unwrap();
+        assert!(ctx.bip44_account().contains_address(&late_address));
+        let result = ctx.check_transaction(&funding, fund_context).await;
+        assert_eq!(result.updated_records.len(), 1);
+        assert_eq!(result.updated_records[0].txid, spender.txid());
+        assert_eq!(result.updated_records[0].net_amount, -2000);
+        assert!(result.state_modified, "a correction alone must trigger persistence");
     }
 }

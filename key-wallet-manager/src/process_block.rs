@@ -281,13 +281,16 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
                 per_wallet_account_diff.get(&wallet_id).cloned().unwrap_or_default();
             for record in records {
                 let txid = record.txid;
-                self.emit_event(WalletEvent::TransactionDetected {
-                    wallet_id,
-                    record: Box::new(record),
-                    balance,
-                    account_balances: account_balances.clone(),
-                    addresses_derived: Vec::new(),
-                });
+                // The arriving tx only changes lock status; other txids carry late-input corrections.
+                if txid != tx.txid() {
+                    self.emit_event(WalletEvent::TransactionDetected {
+                        wallet_id,
+                        record: Box::new(record),
+                        balance,
+                        account_balances: account_balances.clone(),
+                        addresses_derived: Vec::new(),
+                    });
+                }
                 if let Some(lock) = instant_lock.as_ref().filter(|lock| lock.txid == txid) {
                     self.emit_event(WalletEvent::TransactionInstantLocked {
                         wallet_id,
