@@ -121,7 +121,7 @@ impl WalletTransactionChecker for ManagedWalletInfo {
 
         // A CoinJoin coin of ours that came back past the pool's gap limit is
         // found here, before the check, so the check below credits it (32008).
-        let recovered = if update_state {
+        let recovered = if update_state && relevant_types.contains(&AccountTypeToCheck::CoinJoin) {
             self.recover_coinjoin_outputs(tx, wallet)
         } else {
             Vec::new()
