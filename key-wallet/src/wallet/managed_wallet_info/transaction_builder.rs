@@ -95,6 +95,11 @@ pub struct TransactionBuilder {
     /// account that holds the UTXO, so each account reserves its own share of
     /// the chosen inputs — all under the one token this build is stamped with.
     funding: Vec<(ReservationSet, HashSet<OutPoint>)>,
+    /// Outpoints coin selection must never spend. See [`Self::exclude_outpoints`].
+    excluded: HashSet<OutPoint>,
+    /// Outpoints the caller seeded through [`Self::add_inputs`], told apart
+    /// from funding candidates so an excluded one is refused, not dropped.
+    seeded: HashSet<OutPoint>,
 }
 
 impl Default for TransactionBuilder {
@@ -119,7 +124,24 @@ impl TransactionBuilder {
             special_payload: None,
             payload_finalizer: None,
             funding: Vec::new(),
+            excluded: HashSet::new(),
+            seeded: HashSet::new(),
         }
+    }
+
+    /// Never spend these outpoints, whatever the strategy and whichever call
+    /// offered them. A funding candidate that is excluded is left out of
+    /// selection, as if the account did not hold it; an input the caller seeded
+    /// with [`Self::add_inputs`] that is excluded fails the build with
+    /// [`BuilderError::ExcludedInput`], since the caller asked for exactly that
+    /// coin. Applies regardless of call order and accumulates across calls.
+    ///
+    /// For coins the wallet holds but must not spend for now, decided by the
+    /// caller (for example the outputs of a transaction whose broadcast outcome
+    /// is not known yet); nothing is recorded on the wallet.
+    pub fn exclude_outpoints(mut self, outpoints: impl IntoIterator<Item = OutPoint>) -> Self {
+        self.excluded.extend(outpoints);
+        self
     }
 
     /// Restrict coin selection to final inputs: confirmed or
@@ -233,7 +255,10 @@ impl TransactionBuilder {
     }
 
     pub fn add_inputs(mut self, inputs: impl IntoIterator<Item = Utxo>) -> Self {
-        self.inputs.extend(inputs);
+        for utxo in inputs {
+            self.seeded.insert(utxo.outpoint);
+            self.inputs.push(utxo);
+        }
         self
     }
 
@@ -552,6 +577,18 @@ impl TransactionBuilder {
             }
             _ => self.outputs.iter().map(|o| o.value).sum(),
         };
+
+        if let Some(outpoint) =
+            self.seeded.iter().find(|outpoint| self.excluded.contains(outpoint)).copied()
+        {
+            return Err(BuilderError::ExcludedInput {
+                outpoint,
+            });
+        }
+        if !self.excluded.is_empty() {
+            let excluded = &self.excluded;
+            self.inputs.retain(|utxo| !excluded.contains(&utxo.outpoint));
+        }
 
         if self.require_final_inputs {
             self.inputs.retain(|utxo| utxo.is_confirmed || utxo.is_instantlocked);
@@ -1124,6 +1161,11 @@ pub enum BuilderError {
         len: usize,
         max: usize,
     },
+    /// An input seeded with `add_inputs` is one the caller also excluded with
+    /// `exclude_outpoints`.
+    ExcludedInput {
+        outpoint: OutPoint,
+    },
 }
 
 impl fmt::Display for BuilderError {
@@ -1155,6 +1197,11 @@ impl fmt::Display for BuilderError {
                 max,
             } => {
                 write!(f, "OP_RETURN payload too large: {len} bytes (max {max})")
+            }
+            Self::ExcludedInput {
+                outpoint,
+            } => {
+                write!(f, "Input {outpoint} is excluded from this transaction")
             }
         }
     }
@@ -2760,6 +2807,96 @@ mod tests {
         assert!(
             TransactionBuilder::estimated_payload_size(&grown)
                 > TransactionBuilder::estimated_payload_size(&placeholder)
+        );
+    }
+
+    #[test]
+    fn excluded_outpoint_is_never_offered_by_funding() {
+        let ctx = TestWalletContext::new_random();
+        let account =
+            ctx.wallet.accounts.standard_bip44_accounts.get(&0).expect("BIP44 account").clone();
+
+        // Both orders: excluding before and after the funding call.
+        for exclude_first in [true, false] {
+            let mut funds = ManagedCoreFundsAccount::dummy_bip44();
+            let held = Utxo::dummy(0x01, 900_000, 100, false, true);
+            let free = Utxo::dummy(0x02, 500_000, 100, false, true);
+            funds.utxos.insert(held.outpoint, held.clone());
+            funds.utxos.insert(free.outpoint, free.clone());
+
+            let builder = TransactionBuilder::new()
+                .set_current_height(200)
+                .set_selection_strategy(SelectionStrategy::All);
+            let builder = if exclude_first {
+                builder.exclude_outpoints([held.outpoint]).add_funding(&mut funds, &account)
+            } else {
+                builder.add_funding(&mut funds, &account).exclude_outpoints([held.outpoint])
+            };
+            let (tx, _fee, _token) = builder
+                .add_output(&ctx.receive_address, 100_000)
+                .build_unsigned_reserved()
+                .expect("build");
+
+            let prevouts: Vec<OutPoint> = tx.input.iter().map(|i| i.previous_output).collect();
+            assert_eq!(
+                prevouts,
+                vec![free.outpoint],
+                "an excluded outpoint must not be selected (exclude_first = {exclude_first})"
+            );
+            assert!(!funds.reservations().reserved(200).contains(&held.outpoint));
+        }
+    }
+
+    #[test]
+    fn excluded_outpoint_seeded_by_the_caller_is_refused() {
+        let ctx = TestWalletContext::new_random();
+        let account =
+            ctx.wallet.accounts.standard_bip44_accounts.get(&0).expect("BIP44 account").clone();
+
+        let mut funds = ManagedCoreFundsAccount::dummy_bip44();
+        let held = Utxo::dummy(0x01, 900_000, 100, false, true);
+        funds.utxos.insert(held.outpoint, held.clone());
+
+        // Explicitly seeded and excluded: refused with the outpoint named, not
+        // silently dropped — the caller asked for exactly this coin.
+        let result = TransactionBuilder::new()
+            .set_current_height(200)
+            .set_selection_strategy(SelectionStrategy::All)
+            .add_inputs(vec![held.clone()])
+            .add_funding_reservation_only(&mut funds, &account)
+            .exclude_outpoints([held.outpoint])
+            .add_output(&ctx.receive_address, 100_000)
+            .build_unsigned_reserved();
+
+        assert_eq!(
+            result.err(),
+            Some(BuilderError::ExcludedInput {
+                outpoint: held.outpoint
+            })
+        );
+        assert!(funds.reservations().reserved(200).is_empty(), "a refused build reserves nothing");
+    }
+
+    #[test]
+    fn excluding_the_only_coin_reports_insufficient_funds() {
+        let ctx = TestWalletContext::new_random();
+        let account =
+            ctx.wallet.accounts.standard_bip44_accounts.get(&0).expect("BIP44 account").clone();
+
+        let mut funds = ManagedCoreFundsAccount::dummy_bip44();
+        let held = Utxo::dummy(0x01, 900_000, 100, false, true);
+        funds.utxos.insert(held.outpoint, held.clone());
+
+        let result = TransactionBuilder::new()
+            .set_current_height(200)
+            .add_funding(&mut funds, &account)
+            .exclude_outpoints([held.outpoint])
+            .add_output(&ctx.receive_address, 100_000)
+            .build_unsigned_reserved();
+
+        assert!(
+            matches!(result, Err(BuilderError::CoinSelection(_))),
+            "an excluded coin is not available: {result:?}"
         );
     }
 }
