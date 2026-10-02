@@ -22,11 +22,11 @@
 //! are found only by a rescan from wallet creation, which is also what applies
 //! this recovery to a wallet that synced before it existed.
 
-use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
 
 use dashcore::blockdata::transaction::Transaction;
-use dashcore::ScriptBuf;
+use dashcore::hashes::Hash;
+use dashcore::{PubkeyHash, ScriptBuf};
 
 use super::account_checker::DerivedAddressInfo;
 use super::transaction_router::{
@@ -62,7 +62,8 @@ struct ProbeRange {
     account_xpub: ExtendedPubKey,
     /// The chain's branch key, derived once per run.
     branch: ExtendedPubKey,
-    scripts: HashMap<ScriptBuf, u32>,
+    /// Every probed address is P2PKH, so its key hash identifies it.
+    hashes: HashMap<PubkeyHash, u32>,
     from: u32,
     until: u32,
 }
@@ -98,15 +99,19 @@ fn is_coinjoin_amount(value: u64) -> bool {
         || (COINJOIN_MIN_COLLATERAL..=COINJOIN_MAX_COLLATERAL).contains(&value)
 }
 
-/// The P2PKH script of `branch`'s child `index`, as the pool derives it.
-fn probe_script(
-    branch: &ExtendedPubKey,
-    index: u32,
-    network: crate::Network,
-) -> crate::Result<ScriptBuf> {
+/// The key hash of `branch`'s child `index`, which the pool pays as P2PKH.
+fn probe_hash(branch: &ExtendedPubKey, index: u32) -> crate::Result<PubkeyHash> {
     let child = ChildNumber::from_normal_idx(index).map_err(crate::Error::Bip32)?;
     let key = branch.ckd_pub(child).map_err(crate::Error::Bip32)?;
-    Ok(dashcore::Address::p2pkh(&dashcore::PublicKey::new(key.public_key), network).script_pubkey())
+    Ok(dashcore::PublicKey::new(key.public_key).pubkey_hash())
+}
+
+/// The key hash a P2PKH script pays; `None` for any other script.
+fn p2pkh_hash(script: &ScriptBuf) -> Option<PubkeyHash> {
+    if !script.is_p2pkh() {
+        return None;
+    }
+    PubkeyHash::from_slice(&script.as_bytes()[3..23]).ok()
 }
 
 impl ManagedWalletInfo {
@@ -144,12 +149,12 @@ impl ManagedWalletInfo {
                 || accounts.iter().filter_map(|account| account.as_funds()).any(|account| {
                     tx.input.iter().any(|input| account.utxos.contains_key(&input.previous_output))
                 }));
-        let unclaimed: HashSet<ScriptBuf> =
-            unclaimed.into_iter().map(|output| output.script_pubkey.clone()).collect();
         drop(accounts);
         if !involved {
             return derived;
         }
+        let unclaimed: HashSet<PubkeyHash> =
+            unclaimed.iter().filter_map(|output| p2pkh_hash(&output.script_pubkey)).collect();
 
         for (&index, account) in self.accounts.coinjoin_accounts.iter_mut() {
             let account_type = account.managed_account_type().to_account_type();
@@ -171,48 +176,43 @@ impl ManagedWalletInfo {
                 // indices below the pool end are watched already. A start
                 // outside the cached run (the pool moved past it, or was
                 // replaced) or another key starts afresh.
-                let range = match chains.entry(key) {
-                    Entry::Occupied(entry)
-                        if entry.get().account_xpub == account_xpub
-                            && (entry.get().from..=entry.get().until).contains(&start) =>
+                let reusable = chains.get(&key).is_some_and(|range| {
+                    range.account_xpub == account_xpub
+                        && (range.from..=range.until).contains(&start)
+                });
+                if !reusable {
+                    let branch = match ChildNumber::from_normal_idx(branch_index)
+                        .and_then(|child| account_xpub.ckd_pub(child))
                     {
-                        entry.into_mut()
-                    }
-                    entry => {
-                        let branch = match ChildNumber::from_normal_idx(branch_index)
-                            .and_then(|child| account_xpub.ckd_pub(child))
-                        {
-                            Ok(branch) => branch,
-                            Err(e) => {
-                                tracing::warn!(error = %e, "CoinJoin recovery: branch derivation failed");
-                                continue;
-                            }
-                        };
-                        let fresh = ProbeRange {
+                        Ok(branch) => branch,
+                        Err(e) => {
+                            tracing::warn!(error = %e, "CoinJoin recovery: branch derivation failed");
+                            continue;
+                        }
+                    };
+                    chains.insert(
+                        key,
+                        ProbeRange {
                             account_xpub,
                             branch,
-                            scripts: HashMap::new(),
+                            hashes: HashMap::new(),
                             from: start,
                             until: start,
-                        };
-                        match entry {
-                            Entry::Occupied(mut entry) => {
-                                entry.insert(fresh);
-                                entry.into_mut()
-                            }
-                            Entry::Vacant(entry) => entry.insert(fresh),
-                        }
-                    }
+                        },
+                    );
+                }
+                let Some(range) = chains.get_mut(&key) else {
+                    continue;
                 };
                 if start > range.from {
-                    range.scripts.retain(|_, index| *index >= start);
+                    range.hashes.retain(|_, index| *index >= start);
                     range.from = start;
                 }
                 while range.until < end {
                     let probe = range.until;
-                    match probe_script(&range.branch, probe, pool.network) {
-                        Ok(script) => {
-                            range.scripts.insert(script, probe);
+                    match probe_hash(&range.branch, probe) {
+                        Ok(hash) => {
+                            range.hashes.insert(hash, probe);
                             range.until += 1;
                         }
                         Err(e) => {
@@ -225,10 +225,8 @@ impl ManagedWalletInfo {
                         }
                     }
                 }
-                let mut found: Vec<u32> = unclaimed
-                    .iter()
-                    .filter_map(|script| range.scripts.get(script).copied())
-                    .collect();
+                let mut found: Vec<u32> =
+                    unclaimed.iter().filter_map(|hash| range.hashes.get(hash).copied()).collect();
                 found.sort_unstable();
                 let Some(&highest) = found.last() else {
                     continue;
@@ -639,7 +637,7 @@ mod tests {
             .get(&(0, AddressPoolType::External))
             .expect("cached chain");
         assert_eq!(range.from, new_start, "the cache moves up with the pool");
-        assert!(range.scripts.values().all(|&index| index >= new_start));
+        assert!(range.hashes.values().all(|&index| index >= new_start));
     }
 
     /// A mix spends a known coin of ours and one the wallet has not found yet;
