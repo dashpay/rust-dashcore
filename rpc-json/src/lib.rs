@@ -2213,16 +2213,12 @@ pub struct DMNState {
         rename = "platformNodeID"
     )]
     pub platform_node_id: Option<[u8; 20]>,
-    /// Core's flat `platformP2PPort`, which Core 24 prints only with `-deprecatedrpc=service`.
-    /// `None` when absent or negative: Core prints `-1` for an Evo with no addresses. Prefer
-    /// [`platform_p2p_address`](Self::platform_p2p_address), which reads the nested
-    /// `addresses` first and falls back to this; the field remains only for evonodes whose
-    /// ports Core prints nowhere else.
+    /// `None` when absent or negative: Core prints `-1` for an Evo with no addresses.
+    #[deprecated(note = "Core 23+ nested addresses.platform_p2p should be used instead")]
     #[serde(default, rename = "platformP2PPort", deserialize_with = "deserialize_u32_opt")]
     pub legacy_platform_p2p_port: Option<u32>,
-    /// Core's flat `platformHTTPPort`, resolved like
-    /// [`legacy_platform_p2p_port`](Self::legacy_platform_p2p_port); prefer
-    /// [`platform_http_address`](Self::platform_http_address).
+    /// `None` when absent or negative: Core prints `-1` for an Evo with no addresses.
+    #[deprecated(note = "Core 23+ nested addresses.platform_https should be used instead")]
     #[serde(default, rename = "platformHTTPPort", deserialize_with = "deserialize_u32_opt")]
     pub legacy_platform_http_port: Option<u32>,
     /// Nested addresses; `None` when the source predates them (Core before 23, or a state
@@ -2242,6 +2238,7 @@ impl DMNState {
     /// on the masternode's core IP. The fallback also covers nested addresses without a platform entry, which is
     /// how Core prints a legacy Evo without an address (`addresses: {}` beside its flat ports).
     /// Returns `None` when neither source has a port.
+    #[allow(deprecated)]
     pub fn platform_p2p_address(&self) -> Option<(String, u32)> {
         self.addresses
             .as_ref()
@@ -2253,6 +2250,7 @@ impl DMNState {
     ///
     /// Resolved like [`platform_p2p_address`](Self::platform_p2p_address), from
     /// `addresses.platform_https` and the deprecated top-level `platformHTTPPort`.
+    #[allow(deprecated)]
     pub fn platform_http_address(&self) -> Option<(String, u32)> {
         self.addresses
             .as_ref()
@@ -2294,10 +2292,9 @@ pub struct DMNStateDiff {
     pub pub_key_operator: Option<Vec<u8>>,
     pub operator_payout_address: Option<Option<[u8; 20]>>,
     pub platform_node_id: Option<[u8; 20]>,
-    /// Core's flat `platformP2PPort`, printed only when the legacy port field changed; see
-    /// [`DMNState::legacy_platform_p2p_port`].
+    #[deprecated(note = "Core 23+ nested addresses.platform_p2p should be used instead")]
     pub legacy_platform_p2p_port: Option<u32>,
-    /// Core's flat `platformHTTPPort`; see [`DMNState::legacy_platform_http_port`].
+    #[deprecated(note = "Core 23+ nested addresses.platform_https should be used instead")]
     pub legacy_platform_http_port: Option<u32>,
     /// Three-state nested addresses: `None` = unchanged, `Some(None)` = cleared,
     /// `Some(Some(_))` = set. Mirrors [`pose_ban_height`](Self::pose_ban_height).
@@ -2307,6 +2304,7 @@ pub struct DMNStateDiff {
 impl TryFrom<DMNStateDiffIntermediate> for DMNStateDiff {
     type Error = encode::Error;
 
+    #[allow(deprecated)]
     fn try_from(value: DMNStateDiffIntermediate) -> Result<Self, Self::Error> {
         let DMNStateDiffIntermediate {
             service,
@@ -2388,7 +2386,9 @@ impl TryFrom<DMNStateDiffIntermediate> for DMNStateDiff {
             pub_key_operator,
             operator_payout_address,
             platform_node_id,
+            #[allow(deprecated)]
             legacy_platform_p2p_port,
+            #[allow(deprecated)]
             legacy_platform_http_port,
             addresses,
         })
@@ -2519,6 +2519,7 @@ impl DMNState {
             } else {
                 None
             },
+            #[allow(deprecated)]
             legacy_platform_p2p_port: if self.legacy_platform_p2p_port
                 != newer.legacy_platform_p2p_port
             {
@@ -2527,6 +2528,7 @@ impl DMNState {
             } else {
                 None
             },
+            #[allow(deprecated)]
             legacy_platform_http_port: if self.legacy_platform_http_port
                 != newer.legacy_platform_http_port
             {
@@ -2574,7 +2576,9 @@ impl DMNState {
             pub_key_operator,
             operator_payout_address,
             platform_node_id,
+            #[allow(deprecated)]
             legacy_platform_p2p_port,
+            #[allow(deprecated)]
             legacy_platform_http_port,
             addresses,
             ..
@@ -2615,10 +2619,12 @@ impl DMNState {
             self.platform_node_id = Some(platform_node_id);
         }
 
+        #[allow(deprecated)]
         if let Some(legacy_platform_p2p_port) = legacy_platform_p2p_port {
             self.legacy_platform_p2p_port = Some(legacy_platform_p2p_port);
         }
 
+        #[allow(deprecated)]
         if let Some(legacy_platform_http_port) = legacy_platform_http_port {
             self.legacy_platform_http_port = Some(legacy_platform_http_port);
         }
@@ -3181,8 +3187,10 @@ pub struct DMNStateDiffIntermediate {
     pub voting_address: Option<String>,
     #[serde(default, rename = "platformNodeID")]
     pub platform_node_id: Option<String>,
+    #[deprecated(note = "Core 23+ nested addresses.platform_p2p should be used instead")]
     #[serde(default, rename = "platformP2PPort", deserialize_with = "deserialize_u32_opt")]
     pub legacy_platform_p2p_port: Option<u32>,
+    #[deprecated(note = "Core 23+ nested addresses.platform_https should be used instead")]
     #[serde(default, rename = "platformHTTPPort", deserialize_with = "deserialize_u32_opt")]
     pub legacy_platform_http_port: Option<u32>,
     #[serde(default)]
@@ -3795,6 +3803,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn dmn_state_core23_addresses_resolve_platform_ports() {
         // Core 23 entry: legacy platformP2PPort/platformHTTPPort absent, ports live
         // in the nested `addresses` object. Raw fields stay None; accessors resolve.
@@ -3829,6 +3838,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn dmn_state_diff_core23_addresses_resolve_platform_ports() {
         // updatedMNs entry carrying only the new `addresses` object.
         let json = r#"{
@@ -3886,6 +3896,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn dmn_state_zero_legacy_port_resolves_to_addresses() {
         // Transitional entry: legacy port present but zero -> addresses wins (new-first).
         let json = r#"{
@@ -3912,6 +3923,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn dmn_state_zero_legacy_port_no_addresses_resolves_as_is() {
         // The legacy fallback returns the flat port as-is, zero included: a consumer that
         // builds members from the flat ports sees this masternode, so the accessor must too.
@@ -4034,7 +4046,9 @@ mod tests {
             pub_key_operator: None,
             operator_payout_address: None,
             platform_node_id: None,
+            #[allow(deprecated)]
             legacy_platform_p2p_port: None,
+            #[allow(deprecated)]
             legacy_platform_http_port: None,
             addresses: Some(Some(MasternodeAddresses {
                 core_p2p: vec![],
@@ -4193,6 +4207,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn dmn_state_negative_platform_ports_read_as_absent() {
         // `-1` is Core's "no port" for an extended-address Evo with no addresses.
         let state: DMNState = serde_json::from_value(evo_state_json("[::]:0", -1, -1))
@@ -4222,6 +4237,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn dmn_state_diff_negative_platform_ports_read_as_absent() {
         // Core's diff never prints `-1` (it prints the scalar port or the live netInfo port);
         // this guards that diffs parse platform ports like full entries do.
@@ -4233,6 +4249,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn extaddr_evo_port_only_diff_carries_the_new_port_only_in_addresses() {
         // An extended-address Evo keeps its platform ports in `addresses` and its scalar ports
         // at 0, so a ProUpServTx that changes only a platform port reports neither
@@ -4258,6 +4275,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn platform_ports_out_of_u32_range_are_an_error_and_null_is_absent() {
         // A port past `u32::MAX` must fail rather than wrap to a plausible port.
         let state = serde_json::from_value::<DMNState>(evo_state_json(
@@ -4808,6 +4826,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn extended_address_evo_without_addresses_has_no_service_or_platform_ports() {
         let evo = &core_v24_listdiff().added_mns[3].state;
         assert_eq!(evo.service, unspecified_service());
@@ -4830,6 +4849,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn ipv6_primary_address_and_platform_addresses_resolve() {
         let evo = &core_v24_listdiff().added_mns[4].state;
         assert_eq!(
@@ -4905,6 +4925,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn compare_then_apply_round_trips_extended_address_to_extended_address() {
         // A ProUpRegTx changing the payouts and a ProUpServTx changing the platform ports.
         let older = core_v24_listdiff().added_mns[4].state.clone();
@@ -5068,6 +5089,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn legacy_fallback_brackets_an_ipv6_host_like_the_nested_path() {
         // Both sources must give a host that `format!("{host}:{port}")` turns into a valid
         // socket address, so an IPv6 node IP is bracketed as nested entries are.
@@ -5083,6 +5105,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn revoked_legacy_evo_resolves_its_flat_platform_ports() {
         // Core 23 and 24 print a revoked legacy Evo with `addresses: {}` (no platform entries
         // for a masternode without an address) beside its unchanged flat ports. Consumers that
@@ -5115,6 +5138,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn extaddr_evo_revocation_diff_empties_its_addresses() {
         // Revoking an extended-address Evo empties its addresses; Core's diff prints `service`
         // (`[::]:0`) and no `addresses`. Its flat ports stay as Core's diff left them: a legacy
