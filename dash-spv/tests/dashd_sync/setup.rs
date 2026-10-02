@@ -247,6 +247,12 @@ pub(super) struct ClientHandle {
 }
 
 impl ClientHandle {
+    /// Spawns the client's run loop.
+    pub(super) fn spawn_run(&mut self) {
+        let client = self.client.clone();
+        self.run_handle = Some(tokio::task::spawn(async move { client.run().await }));
+    }
+
     /// Stops the SPV client and awaits the termination of the background run task.
     pub(super) async fn stop(&mut self) {
         tracing::info!("Stopping client run loop...");
@@ -300,18 +306,16 @@ pub(super) async fn create_and_start_client(
         let w = client.wallet().read().await;
         w.subscribe_events()
     };
-    let run_client = client.clone();
-
-    let run_handle = tokio::task::spawn(async move { run_client.run().await });
-
-    ClientHandle {
+    let mut handle = ClientHandle {
         client,
-        run_handle: Some(run_handle),
+        run_handle: None,
         progress_receiver,
         sync_event_receiver,
         network_event_receiver,
         wallet_event_receiver,
-    }
+    };
+    handle.spawn_run();
+    handle
 }
 
 /// Create test client config pointing to a specific peer (exclusive mode).
