@@ -24,7 +24,6 @@ use dashcore::blockdata::transaction::Transaction;
 use dashcore::ScriptBuf;
 
 use super::account_checker::DerivedAddressInfo;
-use super::transaction_router::AccountTypeToCheck;
 use crate::managed_account::managed_account_trait::ManagedAccountTrait;
 use crate::wallet::{ManagedWalletInfo, Wallet};
 use crate::KeySource;
@@ -53,10 +52,7 @@ static PROBE_CACHE: LazyLock<Mutex<HashMap<String, ProbeCache>>> =
 fn pool_key(key_source: &KeySource) -> String {
     match key_source {
         KeySource::Public(xpub) => xpub.to_string(),
-        KeySource::Private(xpriv) => {
-            crate::bip32::ExtendedPubKey::from_priv(&dashcore::secp256k1::Secp256k1::new(), xpriv)
-                .to_string()
-        }
+        KeySource::Private(xpriv) => crate::bip32::ExtendedPubKey::from_priv(xpriv).to_string(),
         _ => String::new(),
     }
 }
@@ -76,7 +72,7 @@ impl ManagedWalletInfo {
     ) -> Vec<DerivedAddressInfo> {
         let mut derived = Vec::new();
 
-        for (&index, account) in self.accounts.coinjoin_accounts.iter_mut() {
+        for account in self.accounts.coinjoin_accounts.values_mut() {
             // Our denominations spent by this transaction, and how many outputs
             // of each value it already pays to our pools.
             let mut spent: BTreeMap<u64, usize> = BTreeMap::new();
@@ -111,13 +107,12 @@ impl ManagedWalletInfo {
                 continue;
             }
 
-            let key_source =
-                wallet.key_source_for_account_type(&AccountTypeToCheck::CoinJoin, Some(index));
+            let account_type = account.managed_account_type().to_account_type();
+            let key_source = wallet.key_source_for_account(account_type);
             if matches!(key_source, KeySource::NoKeySource) {
                 continue;
             }
 
-            let account_type = account.managed_account_type().to_account_type();
             let mut extended = false;
             for pool in account.managed_account_type_mut().address_pools_mut() {
                 let start = pool.highest_generated.map(|h| h + 1).unwrap_or(0);
