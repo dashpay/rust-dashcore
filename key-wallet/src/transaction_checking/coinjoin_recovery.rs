@@ -9,9 +9,10 @@
 //! stays invisible no matter how often the wallet rescans (ticket 32008).
 //!
 //! A wider gap only moves the wall. Instead, the wallet looks past it whenever
-//! a coin of ours may have gone there: a transaction that spends any of our
-//! coins — a mix, or DashSync creating denominations from the main account —
-//! and pays a CoinJoin denomination to a script no account of ours holds. Only
+//! a coin of ours may have gone there: a transaction that spends or pays any
+//! coin of ours — a mix, or DashSync creating denominations and collaterals
+//! from the main account — and pays a CoinJoin denomination or collateral
+//! amount to a script no account of ours holds. Only
 //! then is the chain derived past the generated end of the pool and compared
 //! against those outputs. Counting what came back is not enough: a mix can
 //! also spend a coin of ours the wallet has not found yet, whose return then
@@ -54,6 +55,8 @@ pub struct CoinJoinProbeCache {
 /// A contiguous run of derived indices `[from, until)` of one chain.
 #[derive(Default)]
 struct ProbeRange {
+    /// The branch key the scripts were derived from.
+    branch: Option<crate::bip32::ExtendedPubKey>,
     scripts: HashMap<ScriptBuf, u32>,
     from: u32,
     until: u32,
@@ -78,8 +81,9 @@ impl std::fmt::Debug for CoinJoinProbeCache {
 }
 
 /// The chain's branch key (`<account>/0` or `<account>/1`), derived once per
-/// probe so each index costs one child derivation. `None` for key sources
-/// that only the pool's own derivation handles.
+/// probe so each index costs one child derivation. `None` for anything but a
+/// public key source on an external or internal chain, which is all a CoinJoin
+/// account has.
 fn probe_branch(
     key_source: &KeySource,
     pool_type: AddressPoolType,
@@ -95,6 +99,12 @@ fn probe_branch(
     xpub.ckd_pub(crate::bip32::ChildNumber::from_normal_idx(branch).ok()?).ok()
 }
 
+/// A CoinJoin denomination, or a collateral amount (Dash Core
+/// `CCoinJoin::IsCollateralAmount`: one to four times 0.0001 DASH).
+fn is_coinjoin_amount(value: u64) -> bool {
+    COINJOIN_DENOMINATIONS.contains(&value) || (10_000..=40_000).contains(&value)
+}
+
 /// The P2PKH script of `branch`'s child `index`, as the pool derives it.
 fn probe_script(
     branch: &crate::bip32::ExtendedPubKey,
@@ -108,8 +118,8 @@ fn probe_script(
 
 impl ManagedWalletInfo {
     /// Extend a CoinJoin pool to any output of `tx` that is ours but lies past
-    /// the pool's generated end, when `tx` spends a coin of ours and pays a
-    /// CoinJoin denomination to a script no account of ours holds.
+    /// the pool's generated end, when `tx` involves us and pays a CoinJoin
+    /// denomination or collateral amount to a script no account of ours holds.
     ///
     /// Must run before the transaction is checked, so that the outputs found
     /// here are credited by the regular check. Returns the addresses added to
@@ -121,26 +131,29 @@ impl ManagedWalletInfo {
     ) -> Vec<DerivedAddressInfo> {
         let mut derived = Vec::new();
 
-        let spends_ours = self.accounts.all_funding_accounts().iter().any(|account| {
-            tx.input.iter().any(|input| account.utxos.contains_key(&input.previous_output))
-        });
-        if !spends_ours {
+        // Cheap first: most transactions pay no CoinJoin-shaped amount at all.
+        if !tx.output.iter().any(|output| is_coinjoin_amount(output.value)) {
             return derived;
         }
         let accounts = self.accounts.all_accounts();
+        let is_ours = |script: &ScriptBuf| {
+            accounts.iter().any(|account| account.contains_script_pub_key(script))
+        };
         let unclaimed: HashSet<ScriptBuf> = tx
             .output
             .iter()
-            .filter(|output| COINJOIN_DENOMINATIONS.contains(&output.value))
-            .filter(|output| {
-                !accounts
-                    .iter()
-                    .any(|account| account.contains_script_pub_key(&output.script_pubkey))
-            })
+            .filter(|output| is_coinjoin_amount(output.value) && !is_ours(&output.script_pubkey))
             .map(|output| output.script_pubkey.clone())
             .collect();
+        // The transaction must involve us: it spends a coin of ours, or pays
+        // one of our addresses (its spend can arrive before the coin it spends).
+        let involved = !unclaimed.is_empty()
+            && (tx.output.iter().any(|output| is_ours(&output.script_pubkey))
+                || self.accounts.all_funding_accounts().iter().any(|account| {
+                    tx.input.iter().any(|input| account.utxos.contains_key(&input.previous_output))
+                }));
         drop(accounts);
-        if unclaimed.is_empty() {
+        if !involved {
             return derived;
         }
 
@@ -155,17 +168,22 @@ impl ManagedWalletInfo {
             for pool in account.managed_account_type_mut().address_pools_mut() {
                 let start = pool.highest_generated.map(|h| h + 1).unwrap_or(0);
                 let end = start.saturating_add(COINJOIN_RECOVERY_PROBE_WINDOW);
+                let Some(branch) = probe_branch(&key_source, pool.pool_type) else {
+                    continue;
+                };
                 let mut found: Vec<u32> = {
                     let range = self
                         .coinjoin_probe_cache
                         .chains
                         .entry((index, pool.pool_type))
                         .or_default();
-                    // The cache covers `[start, end)` only: indices below the
-                    // pool end are watched already. A start outside the cached
-                    // run (the pool moved past it, or was replaced) starts afresh.
-                    if start < range.from || start > range.until {
+                    // The cache covers `[start, end)` of this branch key only:
+                    // indices below the pool end are watched already. A start
+                    // outside the cached run (the pool moved past it, or was
+                    // replaced) or another key starts afresh.
+                    if range.branch != Some(branch) || start < range.from || start > range.until {
                         *range = ProbeRange {
+                            branch: Some(branch),
                             from: start,
                             until: start,
                             ..Default::default()
@@ -174,16 +192,9 @@ impl ManagedWalletInfo {
                         range.scripts.retain(|_, index| *index >= start);
                         range.from = start;
                     }
-                    let branch = probe_branch(&key_source, pool.pool_type);
                     while range.until < end && range.failed_at.is_none() {
                         let probe = range.until;
-                        let script = match &branch {
-                            Some(branch) => probe_script(branch, probe, pool.network),
-                            None => pool
-                                .generate_address_at_index(probe, &key_source, false)
-                                .map(|address| address.script_pubkey()),
-                        };
-                        match script {
+                        match probe_script(&branch, probe, pool.network) {
                             Ok(script) => {
                                 range.scripts.insert(script, probe);
                                 range.until += 1;
@@ -728,5 +739,78 @@ mod tests {
         assert_eq!(result.total_received, 2 * DENOM, "both denominations must be credited");
         let coinjoin = fx.managed.first_coinjoin_managed_account().expect("account");
         assert_eq!(coinjoin.utxos.len(), 2);
+    }
+
+    /// The mix arrives before the coin it spends (rescan delivery order): no
+    /// input is known yet, but an output to our pool shows the mix is ours.
+    #[tokio::test]
+    async fn a_mix_seen_before_its_funding_still_recovers_the_far_coin() {
+        let mut fx = fixture();
+        let near = coinjoin_address(&mut fx, false, 5);
+        let far = coinjoin_address(&mut fx, false, PAST_GAP + 300);
+        let mix = dashcore::Transaction {
+            version: 2,
+            lock_time: 0,
+            input: (0xd1..=0xd3)
+                .map(|n| TxIn {
+                    previous_output: OutPoint {
+                        txid: Txid::from_byte_array([n; 32]),
+                        vout: 0,
+                    },
+                    ..Default::default()
+                })
+                .collect(),
+            output: vec![
+                TxOut {
+                    value: DENOM,
+                    script_pubkey: near.script_pubkey(),
+                },
+                TxOut {
+                    value: DENOM,
+                    script_pubkey: Address::dummy(NETWORK, 6).script_pubkey(),
+                },
+                TxOut {
+                    value: DENOM,
+                    script_pubkey: far.script_pubkey(),
+                },
+            ],
+            special_transaction_payload: None,
+        };
+        let result =
+            fx.managed.check_core_transaction(&mix, block(3), &mut fx.wallet, true, true).await;
+        assert_eq!(result.total_received, 2 * DENOM, "both of our outputs must be credited");
+    }
+
+    /// A collateral output (0.0004 DASH) past the wall is ours as well.
+    #[tokio::test]
+    async fn a_collateral_output_past_the_gap_is_recovered() {
+        const COLLATERAL: u64 = 40_000;
+        let mut fx = fixture();
+        let first = coinjoin_address(&mut fx, false, 0);
+        let funding = dashcore::Transaction::dummy(&first, 0..1, &[DENOM]);
+        fx.managed.check_core_transaction(&funding, block(1), &mut fx.wallet, true, true).await;
+        let far = coinjoin_address(&mut fx, false, PAST_GAP + 300);
+        let make_collateral = dashcore::Transaction {
+            version: 2,
+            lock_time: 0,
+            input: vec![TxIn {
+                previous_output: OutPoint {
+                    txid: funding.txid(),
+                    vout: 0,
+                },
+                ..Default::default()
+            }],
+            output: vec![TxOut {
+                value: COLLATERAL,
+                script_pubkey: far.script_pubkey(),
+            }],
+            special_transaction_payload: None,
+        };
+        let result = fx
+            .managed
+            .check_core_transaction(&make_collateral, block(2), &mut fx.wallet, true, true)
+            .await;
+        assert_eq!(result.total_received, COLLATERAL, "the collateral must be credited");
+        assert_eq!(fx.managed.balance.total(), COLLATERAL);
     }
 }
