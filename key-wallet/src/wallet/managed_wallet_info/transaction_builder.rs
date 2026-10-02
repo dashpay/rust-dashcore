@@ -154,6 +154,12 @@ impl TransactionBuilder {
         self
     }
 
+    /// The outputs added so far, in order — for a caller that needs the
+    /// requested amount, e.g. to explain a failed selection.
+    pub fn outputs(&self) -> &[TxOut] {
+        &self.outputs
+    }
+
     /// Restrict coin selection to final inputs: confirmed or
     /// InstantSend-locked UTXOs. Per DIP-0010 only such inputs are
     /// InstantSend-eligible, so transactions that must receive an
