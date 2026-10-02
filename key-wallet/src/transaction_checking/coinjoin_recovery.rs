@@ -31,9 +31,11 @@ use crate::wallet::{ManagedWalletInfo, Wallet};
 use crate::KeySource;
 
 /// How far past the generated end of each CoinJoin chain a missing output is
-/// searched for. Derivation only; nothing in this window is watched unless an
-/// output is found in it. DashSync derived up to ~10,500 CoinJoin addresses on
-/// heavily mixed wallets.
+/// searched for: the widest run of empty addresses that recovery can cross in
+/// one step. Each recovered coin moves the pool end, so the window travels with
+/// it; DashSync derived up to ~10,500 CoinJoin addresses on heavily mixed
+/// wallets. Derivation only; nothing in this window is watched unless an
+/// output is found in it.
 pub const COINJOIN_RECOVERY_PROBE_WINDOW: u32 = 10_000;
 
 /// Scripts derived for probing, per CoinJoin chain of one wallet, so that the
@@ -52,6 +54,9 @@ struct ProbeRange {
     scripts: HashMap<ScriptBuf, u32>,
     from: u32,
     until: u32,
+    /// The first index that failed to derive; nothing at or above it is tried
+    /// again.
+    failed_at: Option<u32>,
 }
 
 /// A clone starts empty: the cache is only an optimisation, and copying tens
@@ -135,16 +140,20 @@ impl ManagedWalletInfo {
                         .chains
                         .entry((index, pool.pool_type))
                         .or_default();
-                    // Pools only grow, so a start below the cached run means the
-                    // pool was replaced; derive afresh from the new start.
-                    if start < range.from || range.until == 0 {
+                    // The cache covers `[start, end)` only: indices below the
+                    // pool end are watched already. A start outside the cached
+                    // run (the pool moved past it, or was replaced) starts afresh.
+                    if start < range.from || start > range.until {
                         *range = ProbeRange {
                             from: start,
                             until: start,
                             ..Default::default()
                         };
+                    } else if start > range.from {
+                        range.scripts.retain(|_, index| *index >= start);
+                        range.from = start;
                     }
-                    while range.until < end {
+                    while range.until < end && range.failed_at.is_none() {
                         let probe = range.until;
                         match pool.generate_address_at_index(probe, &key_source, false) {
                             Ok(address) => {
@@ -152,8 +161,12 @@ impl ManagedWalletInfo {
                                 range.until += 1;
                             }
                             Err(e) => {
-                                tracing::warn!(error = %e, "CoinJoin recovery: derivation failed");
-                                break;
+                                tracing::warn!(
+                                    error = %e,
+                                    index = probe,
+                                    "CoinJoin recovery: derivation failed, searching below it only"
+                                );
+                                range.failed_at = Some(probe);
                             }
                         }
                     }
@@ -171,12 +184,21 @@ impl ManagedWalletInfo {
                 let pool_type = pool.pool_type;
                 let mut new_infos = Vec::new();
                 for next in start..=highest {
-                    if pool.generate_address_at_index(next, &key_source, true).is_err() {
+                    if let Err(e) = pool.generate_address_at_index(next, &key_source, true) {
+                        tracing::error!(
+                            error = %e,
+                            index = next,
+                            "CoinJoin recovery: failed to extend pool, coins above it stay missing"
+                        );
+                        found.retain(|&index| index < next);
                         break;
                     }
                     if let Some(info) = pool.info_at_index(next) {
                         new_infos.push(info.clone());
                     }
+                }
+                if new_infos.is_empty() {
+                    continue;
                 }
                 for &probe in &found {
                     pool.mark_index_used(probe);
@@ -238,8 +260,12 @@ mod tests {
     }
 
     fn fixture() -> Fixture {
+        fixture_on(NETWORK)
+    }
+
+    fn fixture_on(network: Network) -> Fixture {
         let mut wallet =
-            Wallet::new_random(NETWORK, WalletAccountCreationOptions::None).expect("wallet");
+            Wallet::new_random(network, WalletAccountCreationOptions::None).expect("wallet");
         wallet
             .add_account(
                 AccountType::CoinJoin {
@@ -304,7 +330,22 @@ mod tests {
         let funded =
             fx.managed.check_core_transaction(&funding, block(1), &mut fx.wallet, true, true).await;
         assert_eq!(funded.total_received, DENOM, "funding must be credited");
+        let spend = OutPoint {
+            txid: funding.txid(),
+            vout: 0,
+        };
+        mix_spending(fx, spend, ours, 2).await.1
+    }
 
+    /// Mixes our coin at `spend` with two foreign ones at `height`; ours comes
+    /// back to `ours` as output 1. Returns the mix's outpoint for ours too.
+    async fn mix_spending(
+        fx: &mut Fixture,
+        spend: OutPoint,
+        ours: Address,
+        height: u32,
+    ) -> (OutPoint, crate::transaction_checking::TransactionCheckResult) {
+        let network = fx.wallet.network;
         let foreign_input = |n: u8| TxIn {
             previous_output: OutPoint {
                 txid: Txid::from_byte_array([n; 32]),
@@ -318,10 +359,7 @@ mod tests {
             input: vec![
                 foreign_input(0xa1),
                 TxIn {
-                    previous_output: OutPoint {
-                        txid: funding.txid(),
-                        vout: 0,
-                    },
+                    previous_output: spend,
                     ..Default::default()
                 },
                 foreign_input(0xa2),
@@ -329,7 +367,7 @@ mod tests {
             output: vec![
                 TxOut {
                     value: DENOM,
-                    script_pubkey: Address::dummy(NETWORK, 1).script_pubkey(),
+                    script_pubkey: Address::dummy(network, 1).script_pubkey(),
                 },
                 TxOut {
                     value: DENOM,
@@ -337,12 +375,20 @@ mod tests {
                 },
                 TxOut {
                     value: DENOM,
-                    script_pubkey: Address::dummy(NETWORK, 2).script_pubkey(),
+                    script_pubkey: Address::dummy(network, 2).script_pubkey(),
                 },
             ],
             special_transaction_payload: None,
         };
-        fx.managed.check_core_transaction(&mix, block(2), &mut fx.wallet, true, true).await
+        let result = fx
+            .managed
+            .check_core_transaction(&mix, block(height), &mut fx.wallet, true, true)
+            .await;
+        let returned = OutPoint {
+            txid: mix.txid(),
+            vout: 1,
+        };
+        (returned, result)
     }
 
     /// 32008: the mixed coin comes back past the gap limit. Without recovery the
@@ -504,5 +550,50 @@ mod tests {
         let foreign = coinjoin_address(&mut first, false, PAST_GAP + 300);
         let result = fund_and_mix(&mut second, foreign).await;
         assert_eq!(result.total_received, 0, "the first wallet's address is not ours");
+    }
+
+    /// A wallet on mainnet recovers the same way (32008 is a mainnet wallet).
+    #[tokio::test]
+    async fn mixed_coin_returned_past_the_gap_limit_is_recovered_on_mainnet() {
+        let mut fx = fixture_on(Network::Mainnet);
+        let far = coinjoin_address(&mut fx, false, PAST_GAP + 250);
+        let result = fund_and_mix(&mut fx, far).await;
+        assert_eq!(result.total_received, DENOM, "the far output must be credited");
+        assert_eq!(fx.managed.balance.total(), DENOM);
+    }
+
+    /// The recovered coin is mixed again and comes back past the new pool end:
+    /// the second recovery reuses the cache, moved up to the new end.
+    #[tokio::test]
+    async fn a_recovered_coin_mixed_again_past_the_new_end_is_recovered() {
+        let mut fx = fixture();
+        let first_far = coinjoin_address(&mut fx, false, PAST_GAP + 200);
+        let first = coinjoin_address(&mut fx, false, 0);
+        let funding = dashcore::Transaction::dummy(&first, 0..1, &[DENOM]);
+        fx.managed.check_core_transaction(&funding, block(1), &mut fx.wallet, true, true).await;
+        let spend = OutPoint {
+            txid: funding.txid(),
+            vout: 0,
+        };
+        let (recovered, result) = mix_spending(&mut fx, spend, first_far, 2).await;
+        assert_eq!(result.total_received, DENOM, "the first far output must be credited");
+
+        let new_start = pool_end(&fx, AddressPoolType::External).expect("pool end") + 1;
+        let second_far = coinjoin_address(&mut fx, false, new_start + 500);
+        let (_, result) = mix_spending(&mut fx, recovered, second_far.clone(), 3).await;
+        assert_eq!(result.total_sent, DENOM, "the recovered coin is debited");
+        assert_eq!(result.total_received, DENOM, "the second far output must be credited");
+        assert_eq!(fx.managed.balance.total(), DENOM, "exactly one coin, at the second address");
+        let account = fx.managed.first_coinjoin_managed_account().expect("account");
+        assert!(account.utxos.values().any(|utxo| utxo.address == second_far));
+
+        let range = fx
+            .managed
+            .coinjoin_probe_cache
+            .chains
+            .get(&(0, AddressPoolType::External))
+            .expect("cached chain");
+        assert_eq!(range.from, new_start, "the cache moves up with the pool");
+        assert!(range.scripts.values().all(|&index| index >= new_start));
     }
 }
