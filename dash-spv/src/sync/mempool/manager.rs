@@ -717,7 +717,8 @@ impl<W: WalletInterface> MempoolManager<W> {
                     // recipients are gone); relay through everyone rather
                     // than letting the transaction stall.
                     if !current_peers.is_empty() {
-                        let _ = requests.broadcast(NetworkMessage::Tx(state.transaction.clone()));
+                        let _ = requests
+                            .broadcast(NetworkMessage::Tx(Box::new(state.transaction.clone())));
                         state.sent_to.extend(current_peers.iter().copied());
                     }
                 } else {
@@ -728,7 +729,7 @@ impl<W: WalletInterface> MempoolManager<W> {
                     }
                 }
             } else {
-                let _ = requests.broadcast(NetworkMessage::Tx(state.transaction.clone()));
+                let _ = requests.broadcast(NetworkMessage::Tx(Box::new(state.transaction.clone())));
             }
             tracing::debug!("Rebroadcast unconfirmed transaction {}", txid);
             state.last_broadcast = now;
