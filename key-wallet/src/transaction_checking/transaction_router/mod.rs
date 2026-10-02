@@ -48,6 +48,11 @@ pub(crate) const COINJOIN_DENOMINATIONS: [u64; 5] = [
     100_001,       // 0.001 DASH + fee
 ];
 
+/// The CoinJoin collateral range (Dash Core `CCoinJoin::IsCollateralAmount`):
+/// from the smallest denomination / 10 up to four times that.
+pub(crate) const COINJOIN_MIN_COLLATERAL: u64 = COINJOIN_DENOMINATIONS[4] / 10;
+pub(crate) const COINJOIN_MAX_COLLATERAL: u64 = COINJOIN_MIN_COLLATERAL * 4;
+
 impl TransactionRouter {
     /// Classify a transaction based on its type and payload
     pub fn classify_transaction(tx: &Transaction) -> TransactionType {

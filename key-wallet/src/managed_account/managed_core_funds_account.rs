@@ -788,6 +788,24 @@ impl ManagedCoreFundsAccount {
         record_after
     }
 
+    /// Credit the outputs of a transaction finalized before the wallet could
+    /// attribute them: CoinJoin recovery (32008) finds a coin of ours past the
+    /// gap limit in a mix that a chainlock already made final, where
+    /// [`Self::confirm_transaction`] no longer touches UTXOs. No-op for a
+    /// transaction that is not finalized.
+    pub(crate) fn credit_outputs_of_finalized(
+        &mut self,
+        tx: &Transaction,
+        account_match: &AccountMatch,
+        context: TransactionContext,
+        observed_spent: &BTreeMap<OutPoint, CoreBlockHeight>,
+        external_final_parents: &BTreeSet<OutPoint>,
+    ) {
+        if self.keys.transaction_is_finalized(&tx.txid()) {
+            self.update_utxos(tx, account_match, context, observed_spent, external_final_parents);
+        }
+    }
+
     /// Record a new transaction and update UTXOs for spendable account types.
     ///
     /// `observed_spent` is the wallet-level `observed_spent_outpoints` view

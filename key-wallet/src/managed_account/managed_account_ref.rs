@@ -413,6 +413,27 @@ impl<'a> ManagedAccountRefMut<'a> {
         }
     }
 
+    /// See [`ManagedCoreFundsAccount::credit_outputs_of_finalized`]. No-op for
+    /// the [`Keys`](Self::Keys) variant (no UTXOs).
+    pub(crate) fn credit_outputs_of_finalized(
+        &mut self,
+        tx: &Transaction,
+        account_match: &AccountMatch,
+        context: TransactionContext,
+        observed_spent: &BTreeMap<OutPoint, CoreBlockHeight>,
+        external_final_parents: &BTreeSet<OutPoint>,
+    ) {
+        if let ManagedAccountRefMut::Funds(a) = self {
+            a.credit_outputs_of_finalized(
+                tx,
+                account_match,
+                context,
+                observed_spent,
+                external_final_parents,
+            );
+        }
+    }
+
     /// Mark all UTXOs belonging to `txid` as InstantSend-locked.
     ///
     /// Returns `true` if any UTXO was newly marked. Always returns `false`

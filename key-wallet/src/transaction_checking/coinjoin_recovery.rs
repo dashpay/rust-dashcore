@@ -28,7 +28,10 @@ use dashcore::blockdata::transaction::Transaction;
 use dashcore::ScriptBuf;
 
 use super::account_checker::DerivedAddressInfo;
-use super::transaction_router::COINJOIN_DENOMINATIONS;
+use super::transaction_router::{
+    COINJOIN_DENOMINATIONS, COINJOIN_MAX_COLLATERAL, COINJOIN_MIN_COLLATERAL,
+};
+use crate::bip32::{ChildNumber, ExtendedPubKey};
 use crate::managed_account::address_pool::AddressPoolType;
 use crate::managed_account::managed_account_trait::ManagedAccountTrait;
 use crate::wallet::{ManagedWalletInfo, Wallet};
@@ -53,16 +56,14 @@ pub struct CoinJoinProbeCache {
 }
 
 /// A contiguous run of derived indices `[from, until)` of one chain.
-#[derive(Default)]
 struct ProbeRange {
-    /// The branch key the scripts were derived from.
-    branch: Option<crate::bip32::ExtendedPubKey>,
+    /// The account key the run belongs to; another key starts afresh.
+    account_xpub: ExtendedPubKey,
+    /// The chain's branch key, derived once per run.
+    branch: ExtendedPubKey,
     scripts: HashMap<ScriptBuf, u32>,
     from: u32,
     until: u32,
-    /// The first index that failed to derive; nothing at or above it is tried
-    /// again.
-    failed_at: Option<u32>,
 }
 
 /// A clone starts empty: the cache is only an optimisation, and copying tens
@@ -80,38 +81,29 @@ impl std::fmt::Debug for CoinJoinProbeCache {
     }
 }
 
-/// The chain's branch key (`<account>/0` or `<account>/1`), derived once per
-/// probe so each index costs one child derivation. `None` for anything but a
-/// public key source on an external or internal chain, which is all a CoinJoin
-/// account has.
-fn probe_branch(
-    key_source: &KeySource,
-    pool_type: AddressPoolType,
-) -> Option<crate::bip32::ExtendedPubKey> {
-    let branch = match pool_type {
-        AddressPoolType::External => 0,
-        AddressPoolType::Internal => 1,
-        AddressPoolType::Absent | AddressPoolType::AbsentHardened => return None,
-    };
-    let KeySource::Public(xpub) = key_source else {
-        return None;
-    };
-    xpub.ckd_pub(crate::bip32::ChildNumber::from_normal_idx(branch).ok()?).ok()
+/// The branch index of a CoinJoin chain; `None` for pools a CoinJoin account
+/// does not have.
+fn branch_index(pool_type: AddressPoolType) -> Option<u32> {
+    match pool_type {
+        AddressPoolType::External => Some(0),
+        AddressPoolType::Internal => Some(1),
+        AddressPoolType::Absent | AddressPoolType::AbsentHardened => None,
+    }
 }
 
-/// A CoinJoin denomination, or a collateral amount (Dash Core
-/// `CCoinJoin::IsCollateralAmount`: one to four times 0.0001 DASH).
+/// A CoinJoin denomination or collateral amount.
 fn is_coinjoin_amount(value: u64) -> bool {
-    COINJOIN_DENOMINATIONS.contains(&value) || (10_000..=40_000).contains(&value)
+    COINJOIN_DENOMINATIONS.contains(&value)
+        || (COINJOIN_MIN_COLLATERAL..=COINJOIN_MAX_COLLATERAL).contains(&value)
 }
 
 /// The P2PKH script of `branch`'s child `index`, as the pool derives it.
 fn probe_script(
-    branch: &crate::bip32::ExtendedPubKey,
+    branch: &ExtendedPubKey,
     index: u32,
     network: crate::Network,
 ) -> crate::Result<ScriptBuf> {
-    let child = crate::bip32::ChildNumber::from_normal_idx(index).map_err(crate::Error::Bip32)?;
+    let child = ChildNumber::from_normal_idx(index).map_err(crate::Error::Bip32)?;
     let key = branch.ckd_pub(child).map_err(crate::Error::Bip32)?;
     Ok(dashcore::Address::p2pkh(&dashcore::PublicKey::new(key.public_key), network).script_pubkey())
 }
@@ -139,16 +131,25 @@ impl ManagedWalletInfo {
         let is_ours = |script: &ScriptBuf| {
             accounts.iter().any(|account| account.contains_script_pub_key(script))
         };
+        // Every output no account of ours holds is compared once probing; a
+        // CoinJoin-shaped one among them is what starts it.
         let unclaimed: HashSet<ScriptBuf> = tx
             .output
             .iter()
-            .filter(|output| is_coinjoin_amount(output.value) && !is_ours(&output.script_pubkey))
+            .filter(|output| !is_ours(&output.script_pubkey))
             .map(|output| output.script_pubkey.clone())
             .collect();
+        let coinjoin_shaped_unclaimed = tx.output.iter().any(|output| {
+            is_coinjoin_amount(output.value) && unclaimed.contains(&output.script_pubkey)
+        });
         // The transaction must involve us: it spends a coin of ours, or pays
-        // one of our addresses (its spend can arrive before the coin it spends).
-        let involved = !unclaimed.is_empty()
+        // one of our addresses (its spend can arrive before the coin it spends),
+        // or a rescan redelivers it after its spend of our coin was recorded.
+        let involved = coinjoin_shaped_unclaimed
             && (tx.output.iter().any(|output| is_ours(&output.script_pubkey))
+                || tx.input.iter().any(|input| {
+                    self.observed_spent_outpoints.contains_key(&input.previous_output)
+                })
                 || self.accounts.all_funding_accounts().iter().any(|account| {
                     tx.input.iter().any(|input| account.utxos.contains_key(&input.previous_output))
                 }));
@@ -160,60 +161,78 @@ impl ManagedWalletInfo {
         for (&index, account) in self.accounts.coinjoin_accounts.iter_mut() {
             let account_type = account.managed_account_type().to_account_type();
             let key_source = wallet.key_source_for_account(account_type);
-            if matches!(key_source, KeySource::NoKeySource) {
+            let KeySource::Public(account_xpub) = key_source else {
                 continue;
-            }
+            };
 
             let mut extended = false;
             for pool in account.managed_account_type_mut().address_pools_mut() {
-                let start = pool.highest_generated.map(|h| h + 1).unwrap_or(0);
-                let end = start.saturating_add(COINJOIN_RECOVERY_PROBE_WINDOW);
-                let Some(branch) = probe_branch(&key_source, pool.pool_type) else {
+                let Some(branch_index) = branch_index(pool.pool_type) else {
                     continue;
                 };
-                let mut found: Vec<u32> = {
-                    let range = self
-                        .coinjoin_probe_cache
-                        .chains
-                        .entry((index, pool.pool_type))
-                        .or_default();
-                    // The cache covers `[start, end)` of this branch key only:
-                    // indices below the pool end are watched already. A start
-                    // outside the cached run (the pool moved past it, or was
-                    // replaced) or another key starts afresh.
-                    if range.branch != Some(branch) || start < range.from || start > range.until {
-                        *range = ProbeRange {
-                            branch: Some(branch),
+                let start = pool.highest_generated.map(|h| h + 1).unwrap_or(0);
+                let end = start.saturating_add(COINJOIN_RECOVERY_PROBE_WINDOW);
+                let chains = &mut self.coinjoin_probe_cache.chains;
+                let key = (index, pool.pool_type);
+                // The cache covers `[start, end)` of this account key only:
+                // indices below the pool end are watched already. A start
+                // outside the cached run (the pool moved past it, or was
+                // replaced) or another key starts afresh.
+                let fresh = match chains.get(&key) {
+                    Some(range) => {
+                        range.account_xpub != account_xpub
+                            || start < range.from
+                            || start > range.until
+                    }
+                    None => true,
+                };
+                if fresh {
+                    let branch = match ChildNumber::from_normal_idx(branch_index)
+                        .and_then(|child| account_xpub.ckd_pub(child))
+                    {
+                        Ok(branch) => branch,
+                        Err(e) => {
+                            tracing::warn!(error = %e, "CoinJoin recovery: branch derivation failed");
+                            continue;
+                        }
+                    };
+                    chains.insert(
+                        key,
+                        ProbeRange {
+                            account_xpub,
+                            branch,
+                            scripts: HashMap::new(),
                             from: start,
                             until: start,
-                            ..Default::default()
-                        };
-                    } else if start > range.from {
-                        range.scripts.retain(|_, index| *index >= start);
-                        range.from = start;
-                    }
-                    while range.until < end && range.failed_at.is_none() {
-                        let probe = range.until;
-                        match probe_script(&branch, probe, pool.network) {
-                            Ok(script) => {
-                                range.scripts.insert(script, probe);
-                                range.until += 1;
-                            }
-                            Err(e) => {
-                                tracing::warn!(
-                                    error = %e,
-                                    index = probe,
-                                    "CoinJoin recovery: derivation failed, searching below it only"
-                                );
-                                range.failed_at = Some(probe);
-                            }
+                        },
+                    );
+                }
+                let range = chains.get_mut(&key).expect("inserted above");
+                if start > range.from {
+                    range.scripts.retain(|_, index| *index >= start);
+                    range.from = start;
+                }
+                while range.until < end {
+                    let probe = range.until;
+                    match probe_script(&range.branch, probe, pool.network) {
+                        Ok(script) => {
+                            range.scripts.insert(script, probe);
+                            range.until += 1;
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                error = %e,
+                                index = probe,
+                                "CoinJoin recovery: derivation failed, searching below it only"
+                            );
+                            break;
                         }
                     }
-                    unclaimed
-                        .iter()
-                        .filter_map(|script| range.scripts.get(script).copied())
-                        .collect()
-                };
+                }
+                let mut found: Vec<u32> = unclaimed
+                    .iter()
+                    .filter_map(|script| range.scripts.get(script).copied())
+                    .collect();
                 found.sort_unstable();
                 let Some(&highest) = found.last() else {
                     continue;
@@ -812,5 +831,82 @@ mod tests {
             .await;
         assert_eq!(result.total_received, COLLATERAL, "the collateral must be credited");
         assert_eq!(fx.managed.balance.total(), COLLATERAL);
+    }
+
+    /// A wallet synced before recovery existed holds the one-sided mix as a
+    /// chain-locked record. A rescan redelivers it once the far coin is in
+    /// reach; the coin must be credited even though the record is final.
+    #[tokio::test]
+    async fn a_finalized_one_sided_mix_redelivered_by_a_rescan_is_credited() {
+        let mut fx = fixture();
+        let far_index = PAST_GAP + COINJOIN_RECOVERY_PROBE_WINDOW + 500;
+        let far = coinjoin_address(&mut fx, false, far_index);
+        let first = coinjoin_address(&mut fx, false, 0);
+        let funding = dashcore::Transaction::dummy(&first, 0..1, &[DENOM]);
+        fx.managed.check_core_transaction(&funding, block(1), &mut fx.wallet, true, true).await;
+        let spend = OutPoint {
+            txid: funding.txid(),
+            vout: 0,
+        };
+        let (_, before) = mix_spending(&mut fx, spend, far.clone(), 2).await;
+        assert_eq!(before.total_received, 0, "out of reach: booked as a one-sided loss");
+        assert_eq!(fx.managed.balance.total(), 0);
+
+        // The pool grows (other recoveries) until the far coin is in reach.
+        {
+            let key_source = fx.key_source.clone();
+            let account = fx.managed.first_coinjoin_managed_account_mut().expect("account");
+            let pool = account
+                .managed_account_type_mut()
+                .address_pools_mut()
+                .into_iter()
+                .find(|pool| pool.pool_type == AddressPoolType::External)
+                .expect("external pool");
+            for index in 0..far_index - 1_000 {
+                pool.generate_address_at_index(index, &key_source, true).expect("derive");
+            }
+        }
+
+        let (_, again) = mix_spending(&mut fx, spend, far.clone(), 2).await;
+        assert_eq!(again.total_received, DENOM, "the far coin must be credited on redelivery");
+        assert_eq!(fx.managed.balance.total(), DENOM);
+    }
+
+    /// DashSync's denomination-creating transaction sent its odd change to the
+    /// CoinJoin internal chain past the wall; it is found with the coins.
+    #[tokio::test]
+    async fn odd_change_past_the_gap_beside_a_far_denomination_is_recovered() {
+        const CHANGE: u64 = 1_234_567;
+        let mut fx = fixture();
+        let first = coinjoin_address(&mut fx, false, 0);
+        let funding = dashcore::Transaction::dummy(&first, 0..1, &[DENOM + CHANGE]);
+        fx.managed.check_core_transaction(&funding, block(1), &mut fx.wallet, true, true).await;
+        let far = coinjoin_address(&mut fx, false, PAST_GAP + 300);
+        let change = coinjoin_address(&mut fx, true, PAST_GAP + 600);
+        let create = dashcore::Transaction {
+            version: 2,
+            lock_time: 0,
+            input: vec![TxIn {
+                previous_output: OutPoint {
+                    txid: funding.txid(),
+                    vout: 0,
+                },
+                ..Default::default()
+            }],
+            output: vec![
+                TxOut {
+                    value: DENOM,
+                    script_pubkey: far.script_pubkey(),
+                },
+                TxOut {
+                    value: CHANGE,
+                    script_pubkey: change.script_pubkey(),
+                },
+            ],
+            special_transaction_payload: None,
+        };
+        let result =
+            fx.managed.check_core_transaction(&create, block(2), &mut fx.wallet, true, true).await;
+        assert_eq!(result.total_received, DENOM + CHANGE, "the change must be credited too");
     }
 }
