@@ -350,67 +350,6 @@ impl PeerNetworkManager {
         &self.network_event_sender
     }
 
-    /// Start the network manager
-    pub async fn start(&self) -> Result<(), Error> {
-        tracing::info!("Starting peer network manager for {:?}", self.network);
-
-        let mut peer_addresses: Vec<AddrV2Message> = self
-            .initial_peers
-            .iter()
-            .map(|addr| AddrV2Message::new(*addr, ServiceFlags::NETWORK))
-            .collect();
-
-        if self.exclusive_mode {
-            tracing::info!(
-                "Exclusive peer mode: connecting ONLY to {} specified peer(s)",
-                self.initial_peers.len()
-            );
-        } else {
-            // Load saved peers from disk
-            let saved_peers = self.peer_store.load_peers().await.unwrap_or_else(|e| {
-                tracing::warn!("Failed to load peers: {}", e);
-                Vec::new()
-            });
-            peer_addresses.extend(saved_peers);
-
-            // If we still have no peers, immediately discover via DNS
-            if peer_addresses.is_empty() {
-                tracing::info!(
-                    "No peers configured, performing immediate DNS discovery for {:?}",
-                    self.network
-                );
-                let dns_peers = self.discovery.discover_peers(self.network).await;
-                let dns_peers_found = dns_peers.len();
-                peer_addresses.extend(
-                    dns_peers
-                        .into_iter()
-                        .take(self.max_peers)
-                        .map(|addr| AddrV2Message::new(addr, ServiceFlags::NETWORK)),
-                );
-                tracing::info!(
-                    "DNS discovery found {} peers, using {} for startup",
-                    dns_peers_found,
-                    peer_addresses.len()
-                );
-            } else {
-                tracing::info!(
-                    "Starting with {} peers from disk (DNS discovery will be used later if needed)",
-                    peer_addresses.len()
-                );
-            }
-        }
-
-        self.addrv2_handler.handle_addrv2(peer_addresses.clone()).await;
-
-        // Start maintenance loop
-        self.start_maintenance_loop().await;
-
-        // Start request processing task for managers to queue outgoing messages
-        self.start_request_processor().await;
-
-        Ok(())
-    }
-
     /// Connect to a specific peer
     async fn connect_to_peer(&self, addr: SocketAddr) {
         // Check reputation first
@@ -1116,6 +1055,10 @@ impl PeerNetworkManager {
                     }
                 }
             }
+            // Requests queued by the stopped session must not reach the peers
+            // of the next one.
+            while request_rx.try_recv().is_ok() {}
+            *this.request_rx.lock().await = Some(request_rx);
         });
     }
 
@@ -1793,40 +1736,6 @@ impl PeerNetworkManager {
         self.reputation_manager.unban_peer(addr).await;
     }
 
-    /// Shutdown the network manager
-    pub async fn shutdown(&self) {
-        tracing::info!("Shutting down peer network manager");
-        self.shutdown_token.cancel();
-
-        // Save known peers before shutdown
-        let addresses = self.addrv2_handler.get_addresses_for_peer(MAX_ADDR_TO_STORE).await;
-        if !addresses.is_empty() {
-            if let Err(e) = self.peer_store.save_peers(&addresses).await {
-                tracing::warn!("Failed to save peers on shutdown: {}", e);
-            }
-        }
-
-        // Save reputation data before shutdown
-        if let Err(e) = self.reputation_manager.save_to_storage(&*self.peer_store).await {
-            tracing::warn!("Failed to save reputation data on shutdown: {}", e);
-        }
-
-        // Drain tasks while holding the lock.  connect_to_peer() already uses
-        // `select!` with the cancellation token when acquiring this lock, so no
-        // deadlock can occur once the shutdown token is cancelled above.
-        let mut tasks = self.tasks.lock().await;
-        while let Some(result) = tasks.join_next().await {
-            if let Err(e) = result {
-                tracing::error!("Task join error: {}", e);
-            }
-        }
-
-        // Disconnect all peers
-        for addr in self.pool.get_connected_addresses().await {
-            self.pool.remove_peer(&addr).await;
-        }
-    }
-
     async fn record_capability_rejection(&self, addr: SocketAddr) {
         Self::record_capability_rejection_in(&self.capability_rejected, addr).await;
     }
@@ -1905,12 +1814,104 @@ impl NetworkManager for PeerNetworkManager {
         PeerNetworkManager::request_sender(self)
     }
 
-    async fn connect(&mut self) -> NetworkResult<()> {
-        self.start().await.map_err(|e| NetworkError::ConnectionFailed(e.to_string()))
+    async fn start(&mut self) -> NetworkResult<()> {
+        if self.shutdown_token.is_cancelled() {
+            self.shutdown_token = CancellationToken::new();
+        }
+
+        tracing::info!("Starting peer network manager for {:?}", self.network);
+
+        let mut peer_addresses: Vec<AddrV2Message> = self
+            .initial_peers
+            .iter()
+            .map(|addr| AddrV2Message::new(*addr, ServiceFlags::NETWORK))
+            .collect();
+
+        if self.exclusive_mode {
+            tracing::info!(
+                "Exclusive peer mode: connecting ONLY to {} specified peer(s)",
+                self.initial_peers.len()
+            );
+        } else {
+            // Load saved peers from disk
+            let saved_peers = self.peer_store.load_peers().await.unwrap_or_else(|e| {
+                tracing::warn!("Failed to load peers: {}", e);
+                Vec::new()
+            });
+            peer_addresses.extend(saved_peers);
+
+            // If we still have no peers, immediately discover via DNS
+            if peer_addresses.is_empty() {
+                tracing::info!(
+                    "No peers configured, performing immediate DNS discovery for {:?}",
+                    self.network
+                );
+                let dns_peers = self.discovery.discover_peers(self.network).await;
+                let dns_peers_found = dns_peers.len();
+                peer_addresses.extend(
+                    dns_peers
+                        .into_iter()
+                        .take(self.max_peers)
+                        .map(|addr| AddrV2Message::new(addr, ServiceFlags::NETWORK)),
+                );
+                tracing::info!(
+                    "DNS discovery found {} peers, using {} for startup",
+                    dns_peers_found,
+                    peer_addresses.len()
+                );
+            } else {
+                tracing::info!(
+                    "Starting with {} peers from disk (DNS discovery will be used later if needed)",
+                    peer_addresses.len()
+                );
+            }
+        }
+
+        self.addrv2_handler.handle_addrv2(peer_addresses.clone()).await;
+
+        // Start maintenance loop
+        self.start_maintenance_loop().await;
+
+        // Start request processing task for managers to queue outgoing messages
+        self.start_request_processor().await;
+
+        Ok(())
     }
 
-    async fn disconnect(&mut self) -> NetworkResult<()> {
-        self.shutdown().await;
+    async fn stop(&mut self) -> NetworkResult<()> {
+        tracing::info!("Shutting down peer network manager");
+        self.shutdown_token.cancel();
+
+        // Save known peers before shutdown
+        let addresses = self.addrv2_handler.get_addresses_for_peer(MAX_ADDR_TO_STORE).await;
+        if !addresses.is_empty() {
+            if let Err(e) = self.peer_store.save_peers(&addresses).await {
+                tracing::warn!("Failed to save peers on shutdown: {}", e);
+            }
+        }
+
+        // Save reputation data before shutdown
+        if let Err(e) = self.reputation_manager.save_to_storage(&*self.peer_store).await {
+            tracing::warn!("Failed to save reputation data on shutdown: {}", e);
+        }
+
+        // Drain tasks while holding the lock.  connect_to_peer() already uses
+        // `select!` with the cancellation token when acquiring this lock, so no
+        // deadlock can occur once the shutdown token is cancelled above.
+        let mut tasks = self.tasks.lock().await;
+        while let Some(result) = tasks.join_next().await {
+            if let Err(e) = result {
+                tracing::error!("Task join error: {}", e);
+            }
+        }
+
+        // Disconnect all peers
+        for addr in self.pool.get_connected_addresses().await {
+            self.pool.remove_peer(&addr).await;
+        }
+        self.connected_peer_count.store(0, Ordering::Relaxed);
+        self.outstanding_requests.lock().await.clear();
+
         Ok(())
     }
 

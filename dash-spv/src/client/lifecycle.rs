@@ -3,20 +3,17 @@
 //! This module contains:
 //! - Constructor (`new`)
 //! - Startup logic (`start`)
-//! - Shutdown logic (`stop`, `shutdown`)
+//! - Shutdown logic (`stop`)
 //! - Sync initiation (`start_sync`)
 //! - Genesis block initialization
 //! - Wallet data loading
 
+use super::core::SyncManagers;
 use super::{ClientConfig, DashSpvClient, EventHandler};
 use crate::chain::checkpoints::CheckpointManager;
 use crate::error::{Result, SpvError};
 use crate::network::NetworkManager;
-use crate::storage::{
-    MasternodeStorage, PersistentBlockHeaderStorage, PersistentBlockStorage,
-    PersistentFilterHeaderStorage, PersistentFilterStorage, PersistentMetadataStorage,
-    StorageManager,
-};
+use crate::storage::{MasternodeStorage, StorageManager};
 use crate::sync::{
     BlockHeadersManager, BlocksManager, ChainLockManager, FilterHeadersManager, FiltersManager,
     InstantSendManager, Managers, MasternodesManager, MempoolManager, SyncCoordinator,
@@ -47,20 +44,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
         config.validate().map_err(SpvError::Config)?;
         config.apply_global_overrides().map_err(SpvError::Config)?;
 
-        // Resolve where to anchor the chain. An explicit `start_from_height` always
-        // wins. Otherwise fall back to the wallet birth height so we don't sync headers
-        // and filter headers from genesis when the wallet only cares about recent blocks.
-        // The wallet-derived height is floored at the network minimum: no HD/BIP39 wallet
-        // can predate mainnet's activation height, so a low or zero birth height must never
-        // drag mainnet sync below it.
-        let start_from_height = match config.start_from_height {
-            Some(height) => Some(height),
-            None => {
-                let birth_height = wallet.read().await.earliest_required_height().await;
-                let start = birth_height.max(config.network.hd_wallet_sync_floor());
-                (start > 0).then_some(start)
-            }
-        };
+        let start_from_height = Self::resolve_start_height(&config, &wallet).await;
 
         // Initialize genesis block or checkpoint before creating managers,
         // so they can read the tip from storage during construction.
@@ -80,14 +64,63 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
             }
         };
 
-        let mut managers: Managers<
-            PersistentBlockHeaderStorage,
-            PersistentFilterHeaderStorage,
-            PersistentFilterStorage,
-            PersistentBlockStorage,
-            PersistentMetadataStorage,
-            W,
-        > = Managers::default();
+        // Report the progress of the data already in storage before the first run.
+        let initial_progress =
+            Self::build_managers(&config, &storage, &wallet, masternode_engine.as_ref())
+                .await?
+                .progress();
+
+        // Wrap storage in Arc<Mutex>
+        let storage = Arc::new(Mutex::new(storage));
+
+        let client = Self {
+            config: Arc::new(RwLock::new(config)),
+            network: Arc::new(Mutex::new(network)),
+            storage,
+            wallet,
+            masternode_engine,
+            sync_coordinator: Arc::new(Mutex::new(SyncCoordinator::new(initial_progress.clone()))),
+            running: Arc::new(watch::Sender::new(false)),
+            event_handlers: Arc::new(event_handlers),
+        };
+
+        // Load wallet data from storage
+        client.load_wallet_data().await?;
+
+        // Emit initial progress so callers get immediate feedback
+        for event_handler in client.event_handlers.iter() {
+            event_handler.on_progress(&initial_progress);
+        }
+
+        Ok(client)
+    }
+
+    /// Resolve where to anchor the chain.
+    ///
+    /// An explicit `start_from_height` always wins. Otherwise fall back to the wallet
+    /// birth height so we don't sync headers and filter headers from genesis when the
+    /// wallet only cares about recent blocks. The wallet-derived height is floored at
+    /// the network minimum: no HD/BIP39 wallet can predate mainnet's activation height,
+    /// so a low or zero birth height must never drag mainnet sync below it.
+    async fn resolve_start_height(config: &ClientConfig, wallet: &RwLock<W>) -> Option<u32> {
+        match config.start_from_height {
+            Some(height) => Some(height),
+            None => {
+                let birth_height = wallet.read().await.earliest_required_height().await;
+                let start = birth_height.max(config.network.hd_wallet_sync_floor());
+                (start > 0).then_some(start)
+            }
+        }
+    }
+
+    /// Build the sync managers enabled by `config` on top of `storage`.
+    async fn build_managers(
+        config: &ClientConfig,
+        storage: &S,
+        wallet: &Arc<RwLock<W>>,
+        masternode_engine: Option<&Arc<RwLock<MasternodeListEngine>>>,
+    ) -> Result<SyncManagers<W>> {
+        let mut managers: SyncManagers<W> = Managers::default();
 
         let checkpoint_manager = Arc::new(CheckpointManager::for_network(config.network));
         managers.block_headers = Some(
@@ -119,10 +152,9 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
         }
 
         // Build masternode manager if enabled
-        if config.enable_masternodes {
-            let masternode_list_engine = masternode_engine
-                .clone()
-                .expect("Masternode list engine must exist if masternodes are enabled");
+        if let Some(masternode_list_engine) =
+            masternode_engine.filter(|_| config.enable_masternodes)
+        {
             managers.masternode = Some(
                 MasternodesManager::new(
                     storage.block_headers(),
@@ -155,32 +187,17 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
             ));
         }
 
-        let sync_coordinator = SyncCoordinator::new(managers).await;
+        Ok(managers)
+    }
 
-        // Wrap storage in Arc<Mutex>
-        let storage = Arc::new(Mutex::new(storage));
+    /// Build the sync managers, resuming from wherever storage left off.
+    async fn build_sync_managers(&self) -> Result<SyncManagers<W>> {
+        let config = self.config.read().await.clone();
+        let mut storage = self.storage.lock().await;
+        let start_from_height = Self::resolve_start_height(&config, &self.wallet).await;
+        Self::initialize_genesis_block(&config, start_from_height, &mut storage).await?;
 
-        let client = Self {
-            config: Arc::new(RwLock::new(config)),
-            network: Arc::new(Mutex::new(network)),
-            storage,
-            wallet,
-            masternode_engine,
-            sync_coordinator: Arc::new(Mutex::new(sync_coordinator)),
-            running: Arc::new(watch::Sender::new(false)),
-            event_handlers: Arc::new(event_handlers),
-        };
-
-        // Load wallet data from storage
-        client.load_wallet_data().await?;
-
-        // Emit initial progress so callers get immediate feedback
-        let initial_progress = client.sync_coordinator.lock().await.progress().clone();
-        for event_handler in client.event_handlers.iter() {
-            event_handler.on_progress(&initial_progress);
-        }
-
-        Ok(client)
+        Self::build_managers(&config, &storage, &self.wallet, self.masternode_engine.as_ref()).await
     }
 
     /// Start the SPV client: spawn sync tasks and connect to the network.
@@ -189,22 +206,44 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
             return Err(SpvError::Config("Client already running".to_string()));
         }
 
-        // Start all sync tasks before connecting to the network to make sure initial connection
-        // events are handled correctly in the sync coordinator.
-        if let Err(e) =
-            self.sync_coordinator.lock().await.start(&mut *self.network.lock().await).await
-        {
-            tracing::error!("Failed to start sync coordinator: {}", e);
-            return Err(SpvError::Sync(e));
+        self.storage.lock().await.start().await;
+        if let Err(e) = self.start_sync().await {
+            self.storage.lock().await.stop().await;
+            return Err(e);
         }
-
-        // Connect to network
-        self.network.lock().await.connect().await?;
 
         // Only mark as running after all startup operations succeed.
         // `send_replace` always stores the value regardless of receiver count,
         // so this is correct even when `run()` has not subscribed yet.
         self.running.send_replace(true);
+
+        Ok(())
+    }
+
+    /// Start the sync managers and the network on top of a started storage.
+    async fn start_sync(&self) -> Result<()> {
+        let managers = self.build_sync_managers().await?;
+
+        // Start all sync tasks before connecting to the network to make sure initial connection
+        // events are handled correctly in the sync coordinator.
+        if let Err(e) = self
+            .sync_coordinator
+            .lock()
+            .await
+            .start(managers, &mut *self.network.lock().await)
+            .await
+        {
+            tracing::error!("Failed to start sync coordinator: {}", e);
+            return Err(SpvError::Sync(e));
+        }
+
+        // Start the network
+        if let Err(e) = self.network.lock().await.start().await {
+            if let Err(e) = self.sync_coordinator.lock().await.shutdown().await {
+                tracing::warn!("Error shutting down sync coordinator: {}", e);
+            }
+            return Err(e.into());
+        }
 
         Ok(())
     }
@@ -228,22 +267,17 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
             tracing::warn!("Error shutting down sync coordinator: {}", e);
         }
 
-        // Disconnect from network
-        self.network.lock().await.disconnect().await?;
+        // Stop the network
+        self.network.lock().await.stop().await?;
 
-        // Shutdown storage to ensure all data is persisted
+        // Stop storage to ensure all data is persisted
         {
             let mut storage = self.storage.lock().await;
-            storage.shutdown().await;
-            tracing::info!("Storage shutdown completed - all data persisted");
+            storage.stop().await;
+            tracing::info!("Storage stopped - all data persisted");
         }
 
         Ok(())
-    }
-
-    /// Shutdown the SPV client (alias for stop).
-    pub async fn shutdown(&self) -> Result<()> {
-        self.stop().await
     }
 
     /// Initialize genesis block or checkpoint in storage.

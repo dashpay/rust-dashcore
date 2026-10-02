@@ -198,7 +198,7 @@ async fn main() -> Result<()> {
     }
     let m = handler.snapshot();
 
-    let _ = client.shutdown().await;
+    let _ = client.stop().await;
     run_handle.abort();
     let _ = run_handle.await;
 
