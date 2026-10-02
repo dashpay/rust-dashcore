@@ -163,6 +163,22 @@ impl TransactionBuilder {
         &self.outputs
     }
 
+    /// The fee rate the build will pay.
+    pub fn fee_rate(&self) -> FeeRate {
+        self.fee_rate
+    }
+
+    /// The coin-selection strategy the build will use.
+    pub fn selection_strategy(&self) -> &SelectionStrategy {
+        &self.selection_strategy
+    }
+
+    /// Whether the build carries a special-transaction payload — whose own
+    /// outputs or size [`Self::outputs`] does not show.
+    pub fn has_special_payload(&self) -> bool {
+        self.special_payload.is_some() || self.payload_finalizer.is_some()
+    }
+
     /// Restrict coin selection to final inputs: confirmed or
     /// InstantSend-locked UTXOs. Per DIP-0010 only such inputs are
     /// InstantSend-eligible, so transactions that must receive an
