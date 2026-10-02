@@ -74,6 +74,35 @@ impl std::fmt::Debug for CoinJoinProbeCache {
     }
 }
 
+/// The chain's branch key (`<account>/0` or `<account>/1`), derived once per
+/// probe so each index costs one child derivation. `None` for key sources
+/// that only the pool's own derivation handles.
+fn probe_branch(
+    key_source: &KeySource,
+    pool_type: AddressPoolType,
+) -> Option<crate::bip32::ExtendedPubKey> {
+    let branch = match pool_type {
+        AddressPoolType::External => 0,
+        AddressPoolType::Internal => 1,
+        AddressPoolType::Absent | AddressPoolType::AbsentHardened => return None,
+    };
+    let KeySource::Public(xpub) = key_source else {
+        return None;
+    };
+    xpub.ckd_pub(crate::bip32::ChildNumber::from_normal_idx(branch).ok()?).ok()
+}
+
+/// The P2PKH script of `branch`'s child `index`, as the pool derives it.
+fn probe_script(
+    branch: &crate::bip32::ExtendedPubKey,
+    index: u32,
+    network: crate::Network,
+) -> crate::Result<ScriptBuf> {
+    let child = crate::bip32::ChildNumber::from_normal_idx(index).map_err(crate::Error::Bip32)?;
+    let key = branch.ckd_pub(child).map_err(crate::Error::Bip32)?;
+    Ok(dashcore::Address::p2pkh(&dashcore::PublicKey::new(key.public_key), network).script_pubkey())
+}
+
 impl ManagedWalletInfo {
     /// Extend a CoinJoin pool to any output of `tx` that is ours but lies past
     /// the pool's generated end, when `tx` shows that one of our denominations
@@ -153,11 +182,18 @@ impl ManagedWalletInfo {
                         range.scripts.retain(|_, index| *index >= start);
                         range.from = start;
                     }
+                    let branch = probe_branch(&key_source, pool.pool_type);
                     while range.until < end && range.failed_at.is_none() {
                         let probe = range.until;
-                        match pool.generate_address_at_index(probe, &key_source, false) {
-                            Ok(address) => {
-                                range.scripts.insert(address.script_pubkey(), probe);
+                        let script = match &branch {
+                            Some(branch) => probe_script(branch, probe, pool.network),
+                            None => pool
+                                .generate_address_at_index(probe, &key_source, false)
+                                .map(|address| address.script_pubkey()),
+                        };
+                        match script {
+                            Ok(script) => {
+                                range.scripts.insert(script, probe);
                                 range.until += 1;
                             }
                             Err(e) => {
@@ -173,7 +209,6 @@ impl ManagedWalletInfo {
                     unclaimed
                         .iter()
                         .filter_map(|script| range.scripts.get(script).copied())
-                        .filter(|index| (start..end).contains(index))
                         .collect()
                 };
                 found.sort_unstable();
@@ -200,17 +235,8 @@ impl ManagedWalletInfo {
                 if new_infos.is_empty() {
                     continue;
                 }
-                for &probe in &found {
-                    pool.mark_index_used(probe);
-                }
-                match pool.maintain_gap_limit(&key_source) {
-                    Ok(infos) => new_infos.extend(infos),
-                    Err(e) => tracing::error!(
-                        error = %e,
-                        "CoinJoin recovery: failed to maintain gap limit after extending pool"
-                    ),
-                }
-
+                // The check that follows marks the found addresses used and
+                // extends the gap past them, as for any other output of ours.
                 tracing::info!(
                     txid = %tx.txid(),
                     pool_type = ?pool_type,
