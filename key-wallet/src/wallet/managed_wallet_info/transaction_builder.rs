@@ -97,9 +97,10 @@ pub struct TransactionBuilder {
     funding: Vec<(ReservationSet, HashSet<OutPoint>)>,
     /// Outpoints coin selection must never spend. See [`Self::exclude_outpoints`].
     excluded: HashSet<OutPoint>,
-    /// Outpoints the caller seeded through [`Self::add_inputs`], told apart
-    /// from funding candidates so an excluded one is refused, not dropped.
-    seeded: HashSet<OutPoint>,
+    /// Index ranges of `inputs` the caller seeded through [`Self::add_inputs`],
+    /// one per call, in call order — told apart from funding candidates so an
+    /// excluded one is refused, not dropped. Read only when `excluded` is set.
+    seeded: Vec<std::ops::Range<usize>>,
 }
 
 impl Default for TransactionBuilder {
@@ -125,20 +126,29 @@ impl TransactionBuilder {
             payload_finalizer: None,
             funding: Vec::new(),
             excluded: HashSet::new(),
-            seeded: HashSet::new(),
+            seeded: Vec::new(),
         }
     }
 
     /// Never spend these outpoints, whatever the strategy and whichever call
-    /// offered them. A funding candidate that is excluded is left out of
-    /// selection, as if the account did not hold it; an input the caller seeded
-    /// with [`Self::add_inputs`] that is excluded fails the build with
-    /// [`BuilderError::ExcludedInput`], since the caller asked for exactly that
-    /// coin. Applies regardless of call order and accumulates across calls.
+    /// offered them. Applies regardless of call order and accumulates across
+    /// calls.
+    ///
+    /// - A funding candidate that is excluded is left out of selection, as if
+    ///   the account did not hold it — like a reserved or locked one.
+    /// - An input the caller seeded with [`Self::add_inputs`] that is excluded
+    ///   fails the build with [`BuilderError::ExcludedInput`], naming the first
+    ///   such input in seeding order. Unlike a seeded input that is reserved or
+    ///   not final (silently dropped), the caller asked for exactly that coin
+    ///   and also said not to spend it, so the build refuses instead of
+    ///   guessing.
     ///
     /// For coins the wallet holds but must not spend for now, decided by the
     /// caller (for example the outputs of a transaction whose broadcast outcome
-    /// is not known yet); nothing is recorded on the wallet.
+    /// is not known yet); nothing is recorded on the wallet. Only builds that
+    /// call this see the exclusion: the wallet-level helpers
+    /// (`ManagedWalletInfo::build_and_sign_transaction`, the funded builder
+    /// behind it) construct their own builder and take no exclusions.
     pub fn exclude_outpoints(mut self, outpoints: impl IntoIterator<Item = OutPoint>) -> Self {
         self.excluded.extend(outpoints);
         self
@@ -255,9 +265,10 @@ impl TransactionBuilder {
     }
 
     pub fn add_inputs(mut self, inputs: impl IntoIterator<Item = Utxo>) -> Self {
-        for utxo in inputs {
-            self.seeded.insert(utxo.outpoint);
-            self.inputs.push(utxo);
+        let start = self.inputs.len();
+        self.inputs.extend(inputs);
+        if self.inputs.len() > start {
+            self.seeded.push(start..self.inputs.len());
         }
         self
     }
@@ -578,14 +589,19 @@ impl TransactionBuilder {
             _ => self.outputs.iter().map(|o| o.value).sum(),
         };
 
-        if let Some(outpoint) =
-            self.seeded.iter().find(|outpoint| self.excluded.contains(outpoint)).copied()
-        {
-            return Err(BuilderError::ExcludedInput {
-                outpoint,
-            });
-        }
         if !self.excluded.is_empty() {
+            // `inputs` is untouched since seeding, so the ranges still index it.
+            let refused = self
+                .seeded
+                .iter()
+                .flat_map(|range| self.inputs[range.clone()].iter())
+                .map(|utxo| utxo.outpoint)
+                .find(|outpoint| self.excluded.contains(outpoint));
+            if let Some(outpoint) = refused {
+                return Err(BuilderError::ExcludedInput {
+                    outpoint,
+                });
+            }
             let excluded = &self.excluded;
             self.inputs.retain(|utxo| !excluded.contains(&utxo.outpoint));
         }
@@ -2854,27 +2870,67 @@ mod tests {
             ctx.wallet.accounts.standard_bip44_accounts.get(&0).expect("BIP44 account").clone();
 
         let mut funds = ManagedCoreFundsAccount::dummy_bip44();
+        let free = Utxo::dummy(0x03, 300_000, 100, false, true);
+        let first = Utxo::dummy(0x01, 900_000, 100, false, true);
+        let second = Utxo::dummy(0x02, 800_000, 100, false, true);
+        for utxo in [&free, &first, &second] {
+            funds.utxos.insert(utxo.outpoint, utxo.clone());
+        }
+
+        // Explicitly seeded and excluded: refused, not silently dropped — the
+        // caller asked for exactly these coins. The first excluded one in
+        // seeding order is named, every run (the exclusion set is unordered).
+        for _ in 0..8 {
+            let result = TransactionBuilder::new()
+                .set_current_height(200)
+                .set_selection_strategy(SelectionStrategy::All)
+                .add_inputs(vec![free.clone(), first.clone()])
+                .add_inputs(vec![second.clone()])
+                .add_funding_reservation_only(&mut funds, &account)
+                .exclude_outpoints([second.outpoint, first.outpoint])
+                .add_output(&ctx.receive_address, 100_000)
+                .build_unsigned_reserved();
+
+            assert_eq!(
+                result.err(),
+                Some(BuilderError::ExcludedInput {
+                    outpoint: first.outpoint
+                })
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn excluded_candidate_with_a_failed_sign_leaves_no_reservation() {
+        let ctx = TestWalletContext::new_random();
+        let account =
+            ctx.wallet.accounts.standard_bip44_accounts.get(&0).expect("BIP44 account").clone();
+
+        let mut funds = ManagedCoreFundsAccount::dummy_bip44();
         let held = Utxo::dummy(0x01, 900_000, 100, false, true);
+        let free = Utxo::dummy(0x02, 1_000_000, 100, false, true);
         funds.utxos.insert(held.outpoint, held.clone());
+        funds.utxos.insert(free.outpoint, free.clone());
 
-        // Explicitly seeded and excluded: refused with the outpoint named, not
-        // silently dropped — the caller asked for exactly this coin.
-        let result = TransactionBuilder::new()
+        let builder = TransactionBuilder::new()
             .set_current_height(200)
+            .set_fee_rate(FeeRate::normal())
             .set_selection_strategy(SelectionStrategy::All)
-            .add_inputs(vec![held.clone()])
-            .add_funding_reservation_only(&mut funds, &account)
+            .add_funding(&mut funds, &account)
             .exclude_outpoints([held.outpoint])
-            .add_output(&ctx.receive_address, 100_000)
-            .build_unsigned_reserved();
+            .set_change_address(Address::dummy(Network::Testnet, 1))
+            .add_output(&Address::dummy(Network::Testnet, 0), 500_000);
 
-        assert_eq!(
-            result.err(),
-            Some(BuilderError::ExcludedInput {
-                outpoint: held.outpoint
-            })
+        // Selection succeeds on `free` and reserves it; signing then fails.
+        let result = builder.build_signed(&ctx.wallet, |_addr| None).await;
+        assert!(result.is_err());
+
+        // The excluded coin was never reserved, and the selected one is
+        // released: nothing is left behind either way.
+        assert!(
+            funds.reservations().reserved(200).is_empty(),
+            "a failed build must release what it reserved and never reserve an excluded coin"
         );
-        assert!(funds.reservations().reserved(200).is_empty(), "a refused build reserves nothing");
     }
 
     #[test]
