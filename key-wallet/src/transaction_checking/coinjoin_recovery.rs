@@ -8,23 +8,26 @@
 //! empty addresses wider than any fixed gap, and every mixed coin past that run
 //! stays invisible no matter how often the wallet rescans (ticket 32008).
 //!
-//! A wider gap only moves the wall. Instead, the wallet reacts to the evidence
-//! that a coin went missing: a transaction that spends our CoinJoin coins of a
-//! denomination but pays fewer outputs of that denomination back to our
-//! CoinJoin pools. For such a transaction only, the chain is derived past the
-//! generated end of the pool and compared against the transaction's unclaimed
-//! outputs of that denomination. A match extends the pool up to it; the regular
+//! A wider gap only moves the wall. Instead, the wallet looks past it whenever
+//! a coin of ours may have gone there: a transaction that spends any of our
+//! coins — a mix, or DashSync creating denominations from the main account —
+//! and pays a CoinJoin denomination to a script no account of ours holds. Only
+//! then is the chain derived past the generated end of the pool and compared
+//! against those outputs. Counting what came back is not enough: a mix can
+//! also spend a coin of ours the wallet has not found yet, whose return then
+//! hides the one that is missing. A match extends the pool up to it; the regular
 //! gap maintenance and SPV's matching of newly derived scripts carry it forward
 //! from this block. Coins paid to the new addresses in blocks already scanned
 //! are found only by a rescan from wallet creation, which is also what applies
 //! this recovery to a wallet that synced before it existed.
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
 
 use dashcore::blockdata::transaction::Transaction;
 use dashcore::ScriptBuf;
 
 use super::account_checker::DerivedAddressInfo;
+use super::transaction_router::COINJOIN_DENOMINATIONS;
 use crate::managed_account::address_pool::AddressPoolType;
 use crate::managed_account::managed_account_trait::ManagedAccountTrait;
 use crate::wallet::{ManagedWalletInfo, Wallet};
@@ -105,8 +108,8 @@ fn probe_script(
 
 impl ManagedWalletInfo {
     /// Extend a CoinJoin pool to any output of `tx` that is ours but lies past
-    /// the pool's generated end, when `tx` shows that one of our denominations
-    /// was spent without coming back.
+    /// the pool's generated end, when `tx` spends a coin of ours and pays a
+    /// CoinJoin denomination to a script no account of ours holds.
     ///
     /// Must run before the transaction is checked, so that the outputs found
     /// here are credited by the regular check. Returns the addresses added to
@@ -118,41 +121,30 @@ impl ManagedWalletInfo {
     ) -> Vec<DerivedAddressInfo> {
         let mut derived = Vec::new();
 
+        let spends_ours = self.accounts.all_funding_accounts().iter().any(|account| {
+            tx.input.iter().any(|input| account.utxos.contains_key(&input.previous_output))
+        });
+        if !spends_ours {
+            return derived;
+        }
+        let accounts = self.accounts.all_accounts();
+        let unclaimed: HashSet<ScriptBuf> = tx
+            .output
+            .iter()
+            .filter(|output| COINJOIN_DENOMINATIONS.contains(&output.value))
+            .filter(|output| {
+                !accounts
+                    .iter()
+                    .any(|account| account.contains_script_pub_key(&output.script_pubkey))
+            })
+            .map(|output| output.script_pubkey.clone())
+            .collect();
+        drop(accounts);
+        if unclaimed.is_empty() {
+            return derived;
+        }
+
         for (&index, account) in self.accounts.coinjoin_accounts.iter_mut() {
-            // Our denominations spent by this transaction, and how many outputs
-            // of each value it already pays to our pools.
-            let mut spent: BTreeMap<u64, usize> = BTreeMap::new();
-            for input in &tx.input {
-                if let Some(utxo) = account.utxos.get(&input.previous_output) {
-                    *spent.entry(utxo.txout.value).or_default() += 1;
-                }
-            }
-            if spent.is_empty() {
-                continue;
-            }
-
-            let pools = account.managed_account_type().address_pools();
-            let is_ours =
-                |script: &ScriptBuf| pools.iter().any(|pool| pool.contains_script_pubkey(script));
-            let mut returned: HashMap<u64, usize> = HashMap::new();
-            let mut unclaimed: HashSet<ScriptBuf> = HashSet::new();
-            for output in &tx.output {
-                if !spent.contains_key(&output.value) {
-                    continue;
-                }
-                if is_ours(&output.script_pubkey) {
-                    *returned.entry(output.value).or_default() += 1;
-                } else {
-                    unclaimed.insert(output.script_pubkey.clone());
-                }
-            }
-            let missing = spent
-                .iter()
-                .any(|(value, count)| returned.get(value).copied().unwrap_or(0) < *count);
-            if !missing || unclaimed.is_empty() {
-                continue;
-            }
-
             let account_type = account.managed_account_type().to_account_type();
             let key_source = wallet.key_source_for_account(account_type);
             if matches!(key_source, KeySource::NoKeySource) {
@@ -456,9 +448,10 @@ mod tests {
         assert_eq!(fx.managed.balance.total(), DENOM);
     }
 
-    /// A normal mix that returns the coin inside the pool derives nothing extra.
+    /// A normal mix that returns the coin inside the pool extends nothing:
+    /// the other participants' outputs are probed and found not ours.
     #[tokio::test]
-    async fn mix_returning_inside_the_pool_does_not_probe() {
+    async fn mix_returning_inside_the_pool_extends_nothing() {
         let mut fx = fixture();
         let near = coinjoin_address(&mut fx, false, 5);
         let result = fund_and_mix(&mut fx, near).await;
@@ -621,5 +614,119 @@ mod tests {
             .expect("cached chain");
         assert_eq!(range.from, new_start, "the cache moves up with the pool");
         assert!(range.scripts.values().all(|&index| index >= new_start));
+    }
+
+    /// A mix spends a known coin of ours and one the wallet has not found yet;
+    /// one coin comes back inside the pool, the other past the wall. As many
+    /// came back as the wallet knew went in, yet one is still missing.
+    #[tokio::test]
+    async fn a_return_for_an_undiscovered_input_does_not_hide_a_far_coin() {
+        let mut fx = fixture();
+        let near = coinjoin_address(&mut fx, false, 5);
+        let far = coinjoin_address(&mut fx, false, PAST_GAP + 300);
+        let first = coinjoin_address(&mut fx, false, 0);
+        let funding = dashcore::Transaction::dummy(&first, 0..1, &[DENOM]);
+        fx.managed.check_core_transaction(&funding, block(1), &mut fx.wallet, true, true).await;
+
+        let input = |txid: Txid| TxIn {
+            previous_output: OutPoint {
+                txid,
+                vout: 0,
+            },
+            ..Default::default()
+        };
+        let mix = dashcore::Transaction {
+            version: 2,
+            lock_time: 0,
+            input: vec![
+                input(funding.txid()),
+                // Ours, on an address the wallet has not discovered.
+                input(Txid::from_byte_array([0xc1; 32])),
+                input(Txid::from_byte_array([0xc2; 32])),
+            ],
+            output: vec![
+                TxOut {
+                    value: DENOM,
+                    script_pubkey: near.script_pubkey(),
+                },
+                TxOut {
+                    value: DENOM,
+                    script_pubkey: Address::dummy(NETWORK, 5).script_pubkey(),
+                },
+                TxOut {
+                    value: DENOM,
+                    script_pubkey: far.script_pubkey(),
+                },
+            ],
+            special_transaction_payload: None,
+        };
+        let result =
+            fx.managed.check_core_transaction(&mix, block(2), &mut fx.wallet, true, true).await;
+        assert_eq!(result.total_received, 2 * DENOM, "both returned coins must be credited");
+        assert_eq!(fx.managed.balance.total(), 2 * DENOM);
+    }
+
+    /// DashSync created denominations from the main account onto CoinJoin
+    /// addresses past the wall; no CoinJoin coin is spent, yet they are ours.
+    #[tokio::test]
+    async fn denominations_created_past_the_gap_from_the_main_account_are_recovered() {
+        let mut fx = fixture();
+        fx.wallet
+            .add_account(
+                AccountType::Standard {
+                    index: 0,
+                    standard_account_type: crate::account::StandardAccountType::BIP44Account,
+                },
+                None,
+            )
+            .expect("BIP44 account");
+        fx.managed = ManagedWalletInfo::from_wallet_with_name(&fx.wallet, "Test".to_string(), 0);
+        let main_xpub =
+            fx.wallet.accounts.standard_bip44_accounts.get(&0).expect("BIP44 account").account_xpub;
+        let main = {
+            let account = fx.managed.first_bip44_managed_account_mut().expect("account");
+            let pool = account
+                .managed_account_type_mut()
+                .address_pools_mut()
+                .into_iter()
+                .find(|pool| pool.pool_type == AddressPoolType::External)
+                .expect("external pool");
+            pool.generate_address_at_index(0, &KeySource::Public(main_xpub), false).expect("derive")
+        };
+        let funding = dashcore::Transaction::dummy(&main, 0..1, &[5 * DENOM]);
+        let funded =
+            fx.managed.check_core_transaction(&funding, block(1), &mut fx.wallet, true, true).await;
+        assert_eq!(funded.total_received, 5 * DENOM, "funding must be credited");
+
+        let far_a = coinjoin_address(&mut fx, false, PAST_GAP + 400);
+        let far_b = coinjoin_address(&mut fx, false, PAST_GAP + 401);
+        let create = dashcore::Transaction {
+            version: 2,
+            lock_time: 0,
+            input: vec![TxIn {
+                previous_output: OutPoint {
+                    txid: funding.txid(),
+                    vout: 0,
+                },
+                ..Default::default()
+            }],
+            output: vec![
+                TxOut {
+                    value: DENOM,
+                    script_pubkey: far_a.script_pubkey(),
+                },
+                TxOut {
+                    value: DENOM,
+                    script_pubkey: far_b.script_pubkey(),
+                },
+            ],
+            special_transaction_payload: None,
+        };
+        let result =
+            fx.managed.check_core_transaction(&create, block(2), &mut fx.wallet, true, true).await;
+        assert_eq!(result.total_sent, 5 * DENOM);
+        assert_eq!(result.total_received, 2 * DENOM, "both denominations must be credited");
+        let coinjoin = fx.managed.first_coinjoin_managed_account().expect("account");
+        assert_eq!(coinjoin.utxos.len(), 2);
     }
 }
