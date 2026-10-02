@@ -38,6 +38,21 @@ pub enum TransactionType {
 /// Router for determining which accounts to check for a transaction
 pub struct TransactionRouter;
 
+/// Standard CoinJoin denominations, each including the per-round fee
+/// (Dash Core `coinjoin/common.h`): denom + denom/1000 + 1, with COIN = 100_000_000.
+pub(crate) const COINJOIN_DENOMINATIONS: [u64; 5] = [
+    1_000_010_000, // 10 DASH + fee
+    100_001_000,   // 1 DASH + fee
+    10_000_100,    // 0.1 DASH + fee
+    1_000_010,     // 0.01 DASH + fee
+    100_001,       // 0.001 DASH + fee
+];
+
+/// The CoinJoin collateral range (Dash Core `CCoinJoin::IsCollateralAmount`):
+/// from the smallest denomination / 10 up to four times that.
+pub(crate) const COINJOIN_MIN_COLLATERAL: u64 = COINJOIN_DENOMINATIONS[4] / 10;
+pub(crate) const COINJOIN_MAX_COLLATERAL: u64 = COINJOIN_MIN_COLLATERAL * 4;
+
 impl TransactionRouter {
     /// Classify a transaction based on its type and payload
     pub fn classify_transaction(tx: &Transaction) -> TransactionType {
@@ -188,16 +203,6 @@ impl TransactionRouter {
 
     /// Check if transaction has denomination outputs typical of CoinJoin
     fn has_denomination_outputs(tx: &Transaction) -> bool {
-        // Standard CoinJoin denominations, each including the per-round fee
-        // (Dash Core `coinjoin/common.h`): denom + denom/1000 + 1, with COIN = 100_000_000.
-        const COINJOIN_DENOMINATIONS: [u64; 5] = [
-            1_000_010_000, // 10 DASH + fee
-            100_001_000,   // 1 DASH + fee
-            10_000_100,    // 0.1 DASH + fee
-            1_000_010,     // 0.01 DASH + fee
-            100_001,       // 0.001 DASH + fee
-        ];
-
         let mut denomination_count = 0;
         for output in &tx.output {
             if COINJOIN_DENOMINATIONS.contains(&output.value) {
