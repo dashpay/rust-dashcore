@@ -104,7 +104,7 @@ impl FilterStorage for PersistentFilterStorage {
     }
 
     async fn clear_filters(&mut self) -> StorageResult<()> {
-        self.filters.write().await.clear()
+        self.filters.write().await.clear().await
     }
 
     async fn truncate_above(&mut self, target_height: u32) -> StorageResult<()> {
@@ -161,7 +161,7 @@ mod tests {
 
         storage.persist(tmp_dir.path()).await.unwrap();
         let segment_file =
-            tmp_dir.path().join(PersistentFilterStorage::FOLDER_NAME).join("segment_0000.dat");
+            tmp_dir.path().join(PersistentFilterStorage::FOLDER_NAME).join("segment_000000.dat");
         assert!(segment_file.exists());
 
         // The start height survives a reload.

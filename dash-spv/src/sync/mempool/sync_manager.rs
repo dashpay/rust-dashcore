@@ -51,7 +51,7 @@ impl<W: WalletInterface + 'static> SyncManager for MempoolManager<W> {
         match msg.inner() {
             NetworkMessage::Inv(inv) => self.handle_inv(inv, msg.peer_address(), requests).await,
             NetworkMessage::Tx(tx) => {
-                self.handle_tx(tx.clone(), msg.peer_address(), requests).await
+                self.handle_tx((**tx).clone(), msg.peer_address(), requests).await
             }
             _ => Ok(vec![]),
         }

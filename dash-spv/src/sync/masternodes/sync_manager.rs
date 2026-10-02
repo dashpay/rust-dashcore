@@ -217,7 +217,7 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
                 tracing::info!("Fed {} block heights to engine", fed);
 
                 // Feed QRInfo to engine first to populate masternode lists
-                let qr_info_result = match engine.feed_qr_info(qr_info.clone()) {
+                let qr_info_result = match engine.feed_qr_info((**qr_info).clone()) {
                     Ok(qr_info_result) => qr_info_result,
                     Err(e) => {
                         tracing::error!("QRInfo feed into engine failed: {}", e);
@@ -384,7 +384,8 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
                 let mut engine = self.engine.write().await;
                 engine.feed_block_height(target_height, diff.block_hash);
 
-                let apply_ok = match engine.apply_diff(diff.clone(), Some(target_height), None) {
+                let apply_ok = match engine.apply_diff((**diff).clone(), Some(target_height), None)
+                {
                     Ok(_) => {
                         self.sync_state.known_mn_list_heights.insert(target_height);
                         tracing::debug!("Applied MnListDiff at height {}", target_height);
@@ -1051,7 +1052,10 @@ mod tests {
         };
         let peer = "127.0.0.1:19999".parse().unwrap();
         manager
-            .handle_message(Message::new(peer, NetworkMessage::MnListDiff(diff)), &requests)
+            .handle_message(
+                Message::new(peer, NetworkMessage::MnListDiff(Box::new(diff))),
+                &requests,
+            )
             .await
             .unwrap();
 
@@ -1081,7 +1085,7 @@ mod tests {
         let (mut manager, requests, mut rx, tip_hash) = syncing_manager_awaiting_qrinfo(200).await;
         let peer = "127.0.0.1:19999".parse().unwrap();
         let bad_response =
-            || Message::new(peer, NetworkMessage::QRInfo(qrinfo_with_tip_hash(tip_hash)));
+            || Message::new(peer, NetworkMessage::QRInfo(Box::new(qrinfo_with_tip_hash(tip_hash))));
 
         for attempt in 0..MAX_RETRY_ATTEMPTS - 1 {
             let err = manager
