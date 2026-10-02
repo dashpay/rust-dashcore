@@ -207,6 +207,21 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
         }
 
         self.storage.lock().await.start().await;
+        if let Err(e) = self.start_sync().await {
+            self.storage.lock().await.stop().await;
+            return Err(e);
+        }
+
+        // Only mark as running after all startup operations succeed.
+        // `send_replace` always stores the value regardless of receiver count,
+        // so this is correct even when `run()` has not subscribed yet.
+        self.running.send_replace(true);
+
+        Ok(())
+    }
+
+    /// Start the sync managers and the network on top of a started storage.
+    async fn start_sync(&self) -> Result<()> {
         let managers = self.build_sync_managers().await?;
 
         // Start all sync tasks before connecting to the network to make sure initial connection
@@ -229,11 +244,6 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
             }
             return Err(e.into());
         }
-
-        // Only mark as running after all startup operations succeed.
-        // `send_replace` always stores the value regardless of receiver count,
-        // so this is correct even when `run()` has not subscribed yet.
-        self.running.send_replace(true);
 
         Ok(())
     }
