@@ -2336,6 +2336,142 @@ async fn late_funding_block_publishes_spender_correction() {
 }
 
 #[tokio::test]
+async fn late_funding_recorded_sibling_spender_needs_no_reapply() {
+    let (mut manager, wallet_id, addr) = setup_manager_with_wallet();
+    let sibling_address = manager.wallet_infos[&wallet_id]
+        .coinjoin_managed_account_at_index(0)
+        .unwrap()
+        .managed_account_type()
+        .address_pools()
+        .into_iter()
+        .find(|pool| pool.pool_type == AddressPoolType::External)
+        .unwrap()
+        .address_at_index(0)
+        .unwrap()
+        .clone();
+    let mut funding = create_tx_paying_to(&addr, 0xd9);
+    funding.output[0].value = 1_000_000;
+    let mut spender = create_tx_paying_to(&sibling_address, 0xda);
+    spender.input[0].previous_output = OutPoint::new(funding.txid(), 0);
+    spender.output[0].value = 900_000;
+    let wallets = BTreeSet::from([wallet_id]);
+    let spend_block = make_block(vec![spender.clone()], 0xdb, 200);
+    manager.process_block_for_wallets(&spend_block, spend_block.block_hash(), 2, &wallets).await;
+    assert!(!manager.wallet_infos[&wallet_id]
+        .first_bip44_managed_account()
+        .unwrap()
+        .transactions()
+        .contains_key(&spender.txid()));
+
+    let mut rx = manager.subscribe_events();
+    let fund_block = make_block(vec![funding.clone()], 0xdc, 100);
+    let result =
+        manager.process_block_for_wallets(&fund_block, fund_block.block_hash(), 1, &wallets).await;
+    let events = drain_events(&mut rx);
+    let corrected = events
+        .iter()
+        .find_map(|event| match event {
+            WalletEvent::BlockProcessed {
+                updated,
+                ..
+            } => updated.iter().find(|record| {
+                record.txid == spender.txid()
+                    && matches!(record.account_type, AccountType::Standard { .. })
+            }),
+            _ => None,
+        })
+        .expect("funding event contains reconstructed BIP44 spender");
+    assert_eq!(corrected.net_amount, -1_000_000);
+    assert_eq!(corrected.input_details.len(), 1);
+    assert_eq!(corrected.input_details[0].value, 1_000_000);
+    assert_eq!(corrected.context.block_info().unwrap().height(), 2);
+    let info = &manager.wallet_infos[&wallet_id];
+    let funding_account = info.first_bip44_managed_account().unwrap();
+    let stored = &funding_account.transactions()[&spender.txid()];
+    assert_eq!(stored.net_amount, corrected.net_amount);
+    assert_eq!(stored.input_details.len(), 1);
+    assert!(!funding_account.utxos.contains_key(&OutPoint::new(funding.txid(), 0)));
+    let sibling =
+        &info.coinjoin_managed_account_at_index(0).unwrap().transactions()[&spender.txid()];
+    assert_eq!(sibling.net_amount, 900_000);
+    assert!(sibling.input_details.is_empty(), "inputs belong only to BIP44");
+    assert!(result.reapply_heights.is_empty(), "corrected spender must not reload block 2");
+    assert!(info.unrecorded_spend_heights(&funding).is_empty());
+
+    let again =
+        manager.process_block_for_wallets(&fund_block, fund_block.block_hash(), 1, &wallets).await;
+    assert!(again.reapply_heights.is_empty());
+    assert!(drain_events(&mut rx).iter().all(|event| !matches!(
+        event, WalletEvent::BlockProcessed { updated, .. } if !updated.is_empty()
+    )));
+}
+
+#[tokio::test]
+async fn late_funding_finalized_sibling_preserves_correction_path() {
+    let (mut manager, wallet_id, addr) = setup_manager_with_wallet();
+    let sibling_address = manager.wallet_infos[&wallet_id]
+        .coinjoin_managed_account_at_index(0)
+        .unwrap()
+        .managed_account_type()
+        .address_pools()
+        .into_iter()
+        .find(|pool| pool.pool_type == AddressPoolType::External)
+        .unwrap()
+        .address_at_index(0)
+        .unwrap()
+        .clone();
+    let funding = create_tx_paying_to(&addr, 0xdd);
+    let mut spender = create_tx_paying_to(&sibling_address, 0xde);
+    spender.input[0].previous_output = OutPoint::new(funding.txid(), 0);
+    spender.output[0].value = TX_AMOUNT - 2000;
+    let wallets = BTreeSet::from([wallet_id]);
+    let spend_block = make_block(vec![spender.clone()], 0xdf, 200);
+    manager.process_block_for_wallets(&spend_block, spend_block.block_hash(), 2, &wallets).await;
+    manager.apply_chain_lock(ChainLock::dummy(2));
+
+    let mut rx = manager.subscribe_events();
+    let fund_block = make_block(vec![funding.clone()], 0xe0, 100);
+    let result =
+        manager.process_block_for_wallets(&fund_block, fund_block.block_hash(), 1, &wallets).await;
+    let correction_events = if cfg!(feature = "keep-finalized-transactions") {
+        assert!(result.reapply_heights.is_empty());
+        drain_events(&mut rx)
+    } else {
+        assert_eq!(result.reapply_heights.get(&wallet_id), Some(&BTreeSet::from([2])));
+        drain_events(&mut rx);
+        manager
+            .process_block_for_wallets(&spend_block, spend_block.block_hash(), 2, &wallets)
+            .await;
+        drain_events(&mut rx)
+    };
+    let corrected = correction_events
+        .iter()
+        .find_map(|event| match event {
+            WalletEvent::BlockProcessed {
+                inserted,
+                updated,
+                ..
+            } => inserted.iter().chain(updated).find(|record| {
+                record.txid == spender.txid()
+                    && matches!(record.account_type, AccountType::Standard { .. })
+            }),
+            _ => None,
+        })
+        .expect("owning account receives the complete chainlocked spender slice");
+    assert_eq!(corrected.net_amount, -(TX_AMOUNT as i64));
+    assert_eq!(corrected.input_details.len(), 1);
+    assert_eq!(corrected.input_details[0].value, TX_AMOUNT);
+    assert!(corrected.context.is_chain_locked());
+    let account = manager.wallet_infos[&wallet_id].first_bip44_managed_account().unwrap();
+    assert!(account.transaction_is_finalized(&spender.txid()));
+    assert_eq!(
+        account.transactions().contains_key(&spender.txid()),
+        cfg!(feature = "keep-finalized-transactions")
+    );
+    assert!(!account.utxos.contains_key(&OutPoint::new(funding.txid(), 0)));
+}
+
+#[tokio::test]
 async fn finalized_spender_late_funding_chainlock_first() {
     finalized_spender_late_funding_retention_policy(true).await;
 }

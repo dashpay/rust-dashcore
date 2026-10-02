@@ -424,17 +424,6 @@ impl<'a> ManagedAccountRefMut<'a> {
         }
     }
 
-    /// Drain the born-spent funding outputs staged during the last
-    /// `record_transaction` / `confirm_transaction` call (out-of-order
-    /// funding — see `ManagedCoreFundsAccount::take_born_spent_outputs`).
-    /// Always empty for the [`Keys`](Self::Keys) variant.
-    pub(crate) fn take_born_spent_outputs(&mut self) -> Vec<(OutPoint, u64, Address)> {
-        match self {
-            ManagedAccountRefMut::Funds(a) => a.take_born_spent_outputs(),
-            ManagedAccountRefMut::Keys(_) => Vec::new(),
-        }
-    }
-
     /// Attribute a late funding output to its owning account, using known spender templates.
     /// Always empty for the [`Keys`](Self::Keys) variant.
     pub(crate) fn attribute_spent_input(

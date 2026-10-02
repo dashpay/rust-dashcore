@@ -69,10 +69,6 @@ pub struct ManagedCoreFundsAccount {
     /// re-establish which coins are spent.
     #[cfg_attr(feature = "serde", serde(skip))]
     reservations: ReservationSet,
-    /// Late funding outputs awaiting attribution to account-local spender records.
-    /// Drained at wallet scope before returning; never persisted.
-    #[cfg_attr(feature = "serde", serde(skip))]
-    born_spent_outputs: Vec<(OutPoint, u64, Address)>,
 }
 
 /// What [`ManagedCoreFundsAccount::apply_abandon`] removed from one account.
@@ -110,7 +106,6 @@ impl ManagedCoreFundsAccount {
             spent_outpoints: HashSet::new(),
             spent_before_funded: BTreeMap::new(),
             reservations: ReservationSet::default(),
-            born_spent_outputs: Vec::new(),
         }
     }
 
@@ -139,7 +134,6 @@ impl ManagedCoreFundsAccount {
             spent_outpoints: HashSet::new(),
             spent_before_funded: BTreeMap::new(),
             reservations: ReservationSet::default(),
-            born_spent_outputs: Vec::new(),
         }
     }
 
@@ -194,7 +188,7 @@ impl ManagedCoreFundsAccount {
     }
 
     /// Check if an outpoint was spent by a previously recorded transaction.
-    fn is_outpoint_spent(&self, outpoint: &OutPoint) -> bool {
+    pub(crate) fn is_outpoint_spent(&self, outpoint: &OutPoint) -> bool {
         self.spent_outpoints.contains(outpoint)
     }
 
@@ -333,11 +327,6 @@ impl ManagedCoreFundsAccount {
                                     outpoint = %outpoint,
                                     "Skipping UTXO already spent by previously processed transaction"
                                 );
-                                self.born_spent_outputs.push((
-                                    outpoint,
-                                    output.value,
-                                    addr.clone(),
-                                ));
                                 continue;
                             }
 
@@ -352,11 +341,6 @@ impl ManagedCoreFundsAccount {
                                     outpoint = %outpoint,
                                     "Skipping UTXO already observed spent in an earlier-processed block (#649)"
                                 );
-                                self.born_spent_outputs.push((
-                                    outpoint,
-                                    output.value,
-                                    addr.clone(),
-                                ));
                                 self.spent_before_funded.insert(
                                     outpoint,
                                     Utxo::new(
@@ -512,12 +496,6 @@ impl ManagedCoreFundsAccount {
             corrected.push(record);
         }
         corrected
-    }
-
-    /// Drain the born-spent outputs staged by [`Self::update_utxos`] since
-    /// the last drain, for the wallet-scope attribution sweep.
-    pub(crate) fn take_born_spent_outputs(&mut self) -> Vec<(OutPoint, u64, Address)> {
-        std::mem::take(&mut self.born_spent_outputs)
     }
 
     /// Drop the spent-marks that `freed` contributed, keeping every mark a
@@ -1425,7 +1403,6 @@ impl<'de> Deserialize<'de> for ManagedCoreFundsAccount {
             spent_outpoints,
             spent_before_funded: helper.spent_before_funded,
             reservations: ReservationSet::default(),
-            born_spent_outputs: Vec::new(),
         })
     }
 }

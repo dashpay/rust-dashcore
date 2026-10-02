@@ -51,16 +51,24 @@ pub trait WalletTransactionChecker {
 
 impl ManagedWalletInfo {
     /// Find spenders across accounts and attribute each input only to its owning account.
-    /// Drain before returning from transaction processing so corrections survive persistence.
-    fn attribute_born_spent(
-        &mut self,
-        born_spent: &[(OutPoint, u64, Address)],
-        result: &mut TransactionCheckResult,
-    ) {
-        if born_spent.is_empty() {
-            return;
-        }
-        for (outpoint, value, address) in born_spent {
+    fn attribute_born_spent(&mut self, tx: &Transaction, result: &mut TransactionCheckResult) {
+        let txid = tx.txid();
+        let born_spent: Vec<_> = tx
+            .output
+            .iter()
+            .enumerate()
+            .filter_map(|(vout, output)| {
+                let address = Address::from_script(&output.script_pubkey, self.network).ok()?;
+                let outpoint = OutPoint::new(txid, vout as u32);
+                self.accounts
+                    .all_accounts()
+                    .into_iter()
+                    .filter_map(|account| account.as_funds())
+                    .any(|account| account.is_outpoint_spent(&outpoint))
+                    .then_some((outpoint, output.value, address))
+            })
+            .collect();
+        for (outpoint, value, address) in &born_spent {
             let spenders: BTreeMap<_, _> = self
                 .accounts
                 .all_accounts()
@@ -284,7 +292,6 @@ impl WalletTransactionChecker for ManagedWalletInfo {
                 // already holding a record — backfill via `record_transaction`
                 // before marking UTXOs so the freshly registered UTXOs get the
                 // IS-lock flag too.
-                let mut born_spent_instant: Vec<(OutPoint, u64, Address)> = Vec::new();
                 for account_match in result.affected_accounts.clone() {
                     let Some(mut account) = self
                         .accounts
@@ -309,10 +316,9 @@ impl WalletTransactionChecker for ManagedWalletInfo {
                         );
                         account.mark_utxos_instant_send(&txid);
                         result.new_records.push(record);
-                        born_spent_instant.extend(account.take_born_spent_outputs());
                     }
                 }
-                self.attribute_born_spent(&born_spent_instant, &mut result);
+                self.attribute_born_spent(tx, &mut result);
                 if update_balance {
                     self.update_balance();
                 }
@@ -326,7 +332,6 @@ impl WalletTransactionChecker for ManagedWalletInfo {
         }
 
         // Process each affected account
-        let mut born_spent: Vec<(OutPoint, u64, Address)> = Vec::new();
         for account_match in result.affected_accounts.clone() {
             let Some(mut account) =
                 self.accounts.get_by_account_type_match_mut(&account_match.account_type_match)
@@ -364,8 +369,6 @@ impl WalletTransactionChecker for ManagedWalletInfo {
                 }
             }
 
-            born_spent.extend(account.take_born_spent_outputs());
-
             for address_info in account_match.account_type_match.all_involved_addresses() {
                 account.mark_address_used(&address_info.address);
             }
@@ -401,7 +404,7 @@ impl WalletTransactionChecker for ManagedWalletInfo {
             }
         }
 
-        self.attribute_born_spent(&born_spent, &mut result);
+        self.attribute_born_spent(tx, &mut result);
 
         if is_new {
             // Populate dedup sets when a tx arrives with an initial IS status
