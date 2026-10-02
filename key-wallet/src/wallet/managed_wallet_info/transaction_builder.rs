@@ -97,10 +97,10 @@ pub struct TransactionBuilder {
     funding: Vec<(ReservationSet, HashSet<OutPoint>)>,
     /// Outpoints coin selection must never spend. See [`Self::exclude_outpoints`].
     excluded: HashSet<OutPoint>,
-    /// Index ranges of `inputs` the caller seeded through [`Self::add_inputs`],
-    /// one per call, in call order — told apart from funding candidates so an
-    /// excluded one is refused, not dropped. Read only when `excluded` is set.
-    seeded: Vec<std::ops::Range<usize>>,
+    /// Outpoints the caller seeded through [`Self::add_inputs`], in seeding
+    /// order — told apart from funding candidates so an excluded one is
+    /// refused, not dropped. Read only when `excluded` is set.
+    seeded: Vec<OutPoint>,
 }
 
 impl Default for TransactionBuilder {
@@ -154,8 +154,11 @@ impl TransactionBuilder {
         self
     }
 
-    /// The outputs added so far, in order — for a caller that needs the
-    /// requested amount, e.g. to explain a failed selection.
+    /// The explicit outputs added so far, in order. Not the full requested
+    /// amount in every build: a special payload's own outputs (an asset
+    /// lock's credit outputs) are not included, and under
+    /// `SelectionStrategy::All` the output amount is a placeholder the drain
+    /// replaces.
     pub fn outputs(&self) -> &[TxOut] {
         &self.outputs
     }
@@ -273,9 +276,8 @@ impl TransactionBuilder {
     pub fn add_inputs(mut self, inputs: impl IntoIterator<Item = Utxo>) -> Self {
         let start = self.inputs.len();
         self.inputs.extend(inputs);
-        if self.inputs.len() > start {
-            self.seeded.push(start..self.inputs.len());
-        }
+        let seeded = self.inputs[start..].iter().map(|utxo| utxo.outpoint);
+        self.seeded.extend(seeded);
         self
     }
 
@@ -596,13 +598,8 @@ impl TransactionBuilder {
         };
 
         if !self.excluded.is_empty() {
-            // `inputs` is untouched since seeding, so the ranges still index it.
-            let refused = self
-                .seeded
-                .iter()
-                .flat_map(|range| self.inputs[range.clone()].iter())
-                .map(|utxo| utxo.outpoint)
-                .find(|outpoint| self.excluded.contains(outpoint));
+            let refused =
+                self.seeded.iter().copied().find(|outpoint| self.excluded.contains(outpoint));
             if let Some(outpoint) = refused {
                 return Err(BuilderError::ExcludedInput {
                     outpoint,
@@ -2928,8 +2925,13 @@ mod tests {
             .add_output(&Address::dummy(Network::Testnet, 0), 500_000);
 
         // Selection succeeds on `free` and reserves it; signing then fails.
+        // Asserting the variant proves the build got past selection, so the
+        // release below is the failed-sign path, not an early return.
         let result = builder.build_signed(&ctx.wallet, |_addr| None).await;
-        assert!(result.is_err());
+        assert!(
+            matches!(result, Err(BuilderError::SigningFailed(_))),
+            "the build must fail at signing, after selection reserved: {result:?}"
+        );
 
         // The excluded coin was never reserved, and the selected one is
         // released: nothing is left behind either way.
