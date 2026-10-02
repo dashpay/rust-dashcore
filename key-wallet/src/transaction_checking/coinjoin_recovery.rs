@@ -22,6 +22,7 @@
 //! are found only by a rescan from wallet creation, which is also what applies
 //! this recovery to a wallet that synced before it existed.
 
+use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
 
 use dashcore::blockdata::transaction::Transaction;
@@ -128,31 +129,23 @@ impl ManagedWalletInfo {
             return derived;
         }
         let accounts = self.accounts.all_accounts();
-        let is_ours = |script: &ScriptBuf| {
-            accounts.iter().any(|account| account.contains_script_pub_key(script))
-        };
         // Every output no account of ours holds is compared once probing; a
         // CoinJoin-shaped one among them is what starts it.
-        let unclaimed: HashSet<ScriptBuf> = tx
-            .output
-            .iter()
-            .filter(|output| !is_ours(&output.script_pubkey))
-            .map(|output| output.script_pubkey.clone())
-            .collect();
-        let coinjoin_shaped_unclaimed = tx.output.iter().any(|output| {
-            is_coinjoin_amount(output.value) && unclaimed.contains(&output.script_pubkey)
-        });
-        // The transaction must involve us: it spends a coin of ours, or pays
-        // one of our addresses (its spend can arrive before the coin it spends),
-        // or a rescan redelivers it after its spend of our coin was recorded.
-        let involved = coinjoin_shaped_unclaimed
-            && (tx.output.iter().any(|output| is_ours(&output.script_pubkey))
-                || tx.input.iter().any(|input| {
-                    self.observed_spent_outpoints.contains_key(&input.previous_output)
-                })
-                || self.accounts.all_funding_accounts().iter().any(|account| {
+        let (claimed, unclaimed): (Vec<&dashcore::TxOut>, Vec<&dashcore::TxOut>) =
+            tx.output.iter().partition(|output| {
+                accounts
+                    .iter()
+                    .any(|account| account.contains_script_pub_key(&output.script_pubkey))
+            });
+        // The transaction must involve us: it pays one of our addresses (its
+        // spend can arrive before the coin it spends), or spends a coin of ours.
+        let involved = unclaimed.iter().any(|output| is_coinjoin_amount(output.value))
+            && (!claimed.is_empty()
+                || accounts.iter().filter_map(|account| account.as_funds()).any(|account| {
                     tx.input.iter().any(|input| account.utxos.contains_key(&input.previous_output))
                 }));
+        let unclaimed: HashSet<ScriptBuf> =
+            unclaimed.into_iter().map(|output| output.script_pubkey.clone()).collect();
         drop(accounts);
         if !involved {
             return derived;
@@ -178,36 +171,39 @@ impl ManagedWalletInfo {
                 // indices below the pool end are watched already. A start
                 // outside the cached run (the pool moved past it, or was
                 // replaced) or another key starts afresh.
-                let fresh = match chains.get(&key) {
-                    Some(range) => {
-                        range.account_xpub != account_xpub
-                            || start < range.from
-                            || start > range.until
-                    }
-                    None => true,
-                };
-                if fresh {
-                    let branch = match ChildNumber::from_normal_idx(branch_index)
-                        .and_then(|child| account_xpub.ckd_pub(child))
+                let range = match chains.entry(key) {
+                    Entry::Occupied(entry)
+                        if entry.get().account_xpub == account_xpub
+                            && (entry.get().from..=entry.get().until).contains(&start) =>
                     {
-                        Ok(branch) => branch,
-                        Err(e) => {
-                            tracing::warn!(error = %e, "CoinJoin recovery: branch derivation failed");
-                            continue;
-                        }
-                    };
-                    chains.insert(
-                        key,
-                        ProbeRange {
+                        entry.into_mut()
+                    }
+                    entry => {
+                        let branch = match ChildNumber::from_normal_idx(branch_index)
+                            .and_then(|child| account_xpub.ckd_pub(child))
+                        {
+                            Ok(branch) => branch,
+                            Err(e) => {
+                                tracing::warn!(error = %e, "CoinJoin recovery: branch derivation failed");
+                                continue;
+                            }
+                        };
+                        let fresh = ProbeRange {
                             account_xpub,
                             branch,
                             scripts: HashMap::new(),
                             from: start,
                             until: start,
-                        },
-                    );
-                }
-                let range = chains.get_mut(&key).expect("inserted above");
+                        };
+                        match entry {
+                            Entry::Occupied(mut entry) => {
+                                entry.insert(fresh);
+                                entry.into_mut()
+                            }
+                            Entry::Vacant(entry) => entry.insert(fresh),
+                        }
+                    }
+                };
                 if start > range.from {
                     range.scripts.retain(|_, index| *index >= start);
                     range.from = start;
@@ -831,45 +827,6 @@ mod tests {
             .await;
         assert_eq!(result.total_received, COLLATERAL, "the collateral must be credited");
         assert_eq!(fx.managed.balance.total(), COLLATERAL);
-    }
-
-    /// A wallet synced before recovery existed holds the one-sided mix as a
-    /// chain-locked record. A rescan redelivers it once the far coin is in
-    /// reach; the coin must be credited even though the record is final.
-    #[tokio::test]
-    async fn a_finalized_one_sided_mix_redelivered_by_a_rescan_is_credited() {
-        let mut fx = fixture();
-        let far_index = PAST_GAP + COINJOIN_RECOVERY_PROBE_WINDOW + 500;
-        let far = coinjoin_address(&mut fx, false, far_index);
-        let first = coinjoin_address(&mut fx, false, 0);
-        let funding = dashcore::Transaction::dummy(&first, 0..1, &[DENOM]);
-        fx.managed.check_core_transaction(&funding, block(1), &mut fx.wallet, true, true).await;
-        let spend = OutPoint {
-            txid: funding.txid(),
-            vout: 0,
-        };
-        let (_, before) = mix_spending(&mut fx, spend, far.clone(), 2).await;
-        assert_eq!(before.total_received, 0, "out of reach: booked as a one-sided loss");
-        assert_eq!(fx.managed.balance.total(), 0);
-
-        // The pool grows (other recoveries) until the far coin is in reach.
-        {
-            let key_source = fx.key_source.clone();
-            let account = fx.managed.first_coinjoin_managed_account_mut().expect("account");
-            let pool = account
-                .managed_account_type_mut()
-                .address_pools_mut()
-                .into_iter()
-                .find(|pool| pool.pool_type == AddressPoolType::External)
-                .expect("external pool");
-            for index in 0..far_index - 1_000 {
-                pool.generate_address_at_index(index, &key_source, true).expect("derive");
-            }
-        }
-
-        let (_, again) = mix_spending(&mut fx, spend, far.clone(), 2).await;
-        assert_eq!(again.total_received, DENOM, "the far coin must be credited on redelivery");
-        assert_eq!(fx.managed.balance.total(), DENOM);
     }
 
     /// DashSync's denomination-creating transaction sent its odd change to the

@@ -129,8 +129,7 @@ impl WalletTransactionChecker for ManagedWalletInfo {
 
         // Check only relevant account types
         let mut result = self.accounts.check_transaction(tx, &relevant_types);
-        let recovered_any = !recovered.is_empty();
-        if recovered_any {
+        if !recovered.is_empty() {
             result.new_addresses.extend(recovered);
             result.state_modified = true;
         }
@@ -304,17 +303,6 @@ impl WalletTransactionChecker for ManagedWalletInfo {
                     } else {
                         result.new_records.push(record);
                     }
-                } else if recovered_any && account.transaction_is_finalized(&tx.txid()) {
-                    // A coin recovered past the gap in a mix that was already
-                    // final: confirming no longer updates UTXOs, so credit it.
-                    account.credit_outputs_of_finalized(
-                        tx,
-                        &account_match,
-                        context.clone(),
-                        &self.observed_spent_outpoints,
-                        &external_final_parents,
-                    );
-                    result.state_modified = true;
                 }
             }
 
