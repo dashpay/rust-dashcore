@@ -66,8 +66,11 @@ pub trait StorageManager:
     /// Deletes in-disk and in-memory data
     async fn clear(&mut self) -> StorageResult<()>;
 
+    /// Starts the background tasks, restarting them after a [`Self::stop`].
+    async fn start(&mut self);
+
     /// Stops all background tasks and persists the data.
-    async fn shutdown(&mut self);
+    async fn stop(&mut self);
 
     /// Returns shared access to the block headers storage.
     fn block_headers(&self) -> Arc<RwLock<PersistentBlockHeaderStorage>>;
@@ -186,6 +189,10 @@ impl DiskStorageManager {
 
     /// Start the background worker saving data every 5 seconds
     async fn start_worker(&mut self) {
+        if self.worker_handle.as_ref().is_some_and(|handle| !handle.is_finished()) {
+            return;
+        }
+
         let block_headers = Arc::clone(&self.block_headers);
         let filter_headers = Arc::clone(&self.filter_headers);
         let filters = Arc::clone(&self.filters);
@@ -212,8 +219,8 @@ impl DiskStorageManager {
     }
 
     /// Stop the background worker without forcing a save.
-    fn stop_worker(&self) {
-        if let Some(handle) = &self.worker_handle {
+    fn stop_worker(&mut self) {
+        if let Some(handle) = self.worker_handle.take() {
             handle.abort();
         }
     }
@@ -233,6 +240,7 @@ impl DiskStorageManager {
 impl StorageManager for DiskStorageManager {
     async fn clear(&mut self) -> StorageResult<()> {
         // First, stop the background worker to avoid races with file deletion
+        let worker_was_running = self.worker_handle.is_some();
         self.stop_worker();
 
         // Remove all files and directories under storage_path
@@ -273,14 +281,18 @@ impl StorageManager for DiskStorageManager {
             .await?,
         ));
 
-        // Restart the background worker for future operations
-        self.start_worker().await;
+        if worker_was_running {
+            self.start_worker().await;
+        }
 
         Ok(())
     }
 
-    /// Shutdown the storage manager.
-    async fn shutdown(&mut self) {
+    async fn start(&mut self) {
+        self.start_worker().await;
+    }
+
+    async fn stop(&mut self) {
         self.stop_worker();
 
         self.persist().await;
@@ -552,7 +564,7 @@ mod tests {
         let non_existing_header = storage.get_header(non_existing_height).await.unwrap();
         assert!(non_existing_header.is_none());
 
-        storage.shutdown().await;
+        storage.stop().await;
         drop(storage);
         let storage = DiskStorageManager::new(&config).await.expect("Unable to open storage");
 
@@ -578,7 +590,7 @@ mod tests {
 
         check_storage(&storage, &headers).await?;
 
-        storage.shutdown().await;
+        storage.stop().await;
         drop(storage);
 
         let storage = DiskStorageManager::new(&config).await?;
@@ -640,7 +652,7 @@ mod tests {
                 assert_eq!(height, Some(i as u32), "Height mismatch for header {}", i);
             }
 
-            storage.shutdown().await;
+            storage.stop().await;
         }
 
         // Test persistence - reload storage and verify index still works

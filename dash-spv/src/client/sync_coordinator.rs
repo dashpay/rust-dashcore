@@ -13,18 +13,12 @@ use super::DashSpvClient;
 use crate::error::Result;
 use crate::network::NetworkManager;
 use crate::storage::StorageManager;
-use crate::sync::SyncProgress;
 use crate::SpvError;
 use key_wallet_manager::WalletInterface;
 
 const SYNC_COORDINATOR_TICK_MS: Duration = Duration::from_millis(100);
 
 impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, N, S> {
-    /// Get current sync progress.
-    pub async fn sync_progress(&self) -> SyncProgress {
-        self.sync_coordinator.lock().await.progress().clone()
-    }
-
     /// Start the client and run the sync loop until `stop()` is called.
     ///
     /// Subscribes to all event channels internally and dispatches events to the

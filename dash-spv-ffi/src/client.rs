@@ -254,32 +254,12 @@ pub unsafe extern "C" fn dash_spv_ffi_client_get_sync_progress(
 
     let client = &(*client);
 
-    let progress = client.runtime.block_on(async { client.inner.sync_progress().await });
-
-    Box::into_raw(Box::new(FFISyncProgress::from(progress)))
-}
-
-/// Get the current manager-based sync progress.
-///
-/// Returns the new parallel sync system's progress with per-manager details.
-/// Use `dash_spv_ffi_sync_progress_destroy` to free the returned struct.
-///
-/// # Safety
-/// - `client` must be a valid, non-null pointer.
-#[no_mangle]
-pub unsafe extern "C" fn dash_spv_ffi_client_get_manager_sync_progress(
-    client: *mut FFIDashSpvClient,
-) -> *mut FFISyncProgress {
-    null_check!(client, std::ptr::null_mut());
-
-    let client = &(*client);
-
     let progress = client.runtime.block_on(async { client.inner.progress().await });
 
     Box::into_raw(Box::new(FFISyncProgress::from(progress)))
 }
 
-/// Clear all persisted SPV storage (headers, filters, metadata, sync state).
+/// Stop the client and clear all persisted SPV storage (headers, filters, metadata, sync state).
 ///
 /// # Safety
 /// - `client` must be a valid, non-null pointer.
@@ -289,14 +269,8 @@ pub unsafe extern "C" fn dash_spv_ffi_client_clear_storage(client: *mut FFIDashS
 
     let client = &(*client);
 
-    let result = client.runtime.block_on(async {
-        // Try to stop before clearing to ensure no in-flight writes race the wipe.
-        if let Err(e) = client.inner.stop().await {
-            tracing::warn!("Failed to stop client before clearing storage: {}", e);
-        }
-
-        client.inner.clear_storage().await
-    });
+    let result = client.runtime.block_on(client.inner.clear_storage());
+    client.wait_for_run_task();
 
     match result {
         Ok(_) => FFIErrorCode::Success as i32,

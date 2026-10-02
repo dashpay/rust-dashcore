@@ -4,7 +4,7 @@ This document provides a comprehensive reference for all FFI (Foreign Function I
 
 **Auto-generated**: This documentation is automatically generated from the source code. Do not edit manually.
 
-**Total Functions**: 44
+**Total Functions**: 43
 
 ## Table of Contents
 
@@ -57,11 +57,10 @@ Functions: 19
 
 ### Synchronization
 
-Functions: 3
+Functions: 2
 
 | Function | Description | Module |
 |----------|-------------|--------|
-| `dash_spv_ffi_client_get_manager_sync_progress` | Get the current manager-based sync progress | client |
 | `dash_spv_ffi_client_get_sync_progress` | Get the current sync progress snapshot | client |
 | `dash_spv_ffi_sync_progress_destroy` | Destroy an `FFISyncProgress` object and all its nested pointers | types |
 
@@ -108,7 +107,7 @@ Functions: 13
 | `dash_spv_ffi_block_headers_progress_destroy` | Destroy an `FFIBlockHeadersProgress` object | types |
 | `dash_spv_ffi_blocks_progress_destroy` | Destroy an `FFIBlocksProgress` object | types |
 | `dash_spv_ffi_chainlock_progress_destroy` | Destroy an `FFIChainLockProgress` object | types |
-| `dash_spv_ffi_client_clear_storage` | Clear all persisted SPV storage (headers, filters, metadata, sync state) | client |
+| `dash_spv_ffi_client_clear_storage` | Stop the client and clear all persisted SPV storage (headers, filters,... | client |
 | `dash_spv_ffi_client_get_wallet_manager` | Get the wallet manager from the SPV client  Returns a pointer to an... | client |
 | `dash_spv_ffi_client_run` | Start the SPV client and begin syncing in the background | client |
 | `dash_spv_ffi_filter_headers_progress_destroy` | Destroy an `FFIFilterHeadersProgress` object | types |
@@ -461,22 +460,6 @@ dash_spv_ffi_config_testnet() -> *mut FFIClientConfig
 
 ### Synchronization - Detailed
 
-#### `dash_spv_ffi_client_get_manager_sync_progress`
-
-```c
-dash_spv_ffi_client_get_manager_sync_progress(client: *mut FFIDashSpvClient,) -> *mut FFISyncProgress
-```
-
-**Description:**
-Get the current manager-based sync progress.  Returns the new parallel sync system's progress with per-manager details. Use `dash_spv_ffi_sync_progress_destroy` to free the returned struct.  # Safety - `client` must be a valid, non-null pointer.
-
-**Safety:**
-- `client` must be a valid, non-null pointer.
-
-**Module:** `client`
-
----
-
 #### `dash_spv_ffi_client_get_sync_progress`
 
 ```c
@@ -664,7 +647,7 @@ dash_spv_ffi_client_clear_storage(client: *mut FFIDashSpvClient) -> i32
 ```
 
 **Description:**
-Clear all persisted SPV storage (headers, filters, metadata, sync state).  # Safety - `client` must be a valid, non-null pointer.
+Stop the client and clear all persisted SPV storage (headers, filters, metadata, sync state).  # Safety - `client` must be a valid, non-null pointer.
 
 **Safety:**
 - `client` must be a valid, non-null pointer.

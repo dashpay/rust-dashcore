@@ -76,7 +76,7 @@ async fn test_masternode_list_sync() {
 
     client_handle.stop().await;
 
-    let final_progress = client_handle.client.sync_progress().await;
+    let final_progress = client_handle.client.progress().await;
 
     // Headers should also be synced
     let header_height = final_progress.headers().unwrap().current_height();

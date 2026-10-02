@@ -19,10 +19,10 @@ use crate::storage::{
     PersistentBlockHeaderStorage, PersistentBlockStorage, PersistentFilterHeaderStorage,
     PersistentFilterStorage, PersistentMetadataStorage, StorageManager,
 };
-use crate::sync::SyncCoordinator;
+use crate::sync::{Managers, SyncCoordinator};
 use key_wallet_manager::WalletInterface;
 
-pub(super) type PersistentSyncCoordinator<W> = SyncCoordinator<
+pub(super) type SyncManagers<W> = Managers<
     PersistentBlockHeaderStorage,
     PersistentFilterHeaderStorage,
     PersistentFilterStorage,
@@ -110,7 +110,7 @@ pub struct DashSpvClient<W: WalletInterface, N: NetworkManager, S: StorageManage
     /// External wallet implementation (required)
     pub(super) wallet: Arc<RwLock<W>>,
     pub(super) masternode_engine: Option<Arc<RwLock<MasternodeListEngine>>>,
-    pub(super) sync_coordinator: Arc<Mutex<PersistentSyncCoordinator<W>>>,
+    pub(super) sync_coordinator: Arc<Mutex<SyncCoordinator>>,
     /// `true` while running, `false` once a stop is requested. Stored as a
     /// `watch` so a stop is observed immediately rather than polled.
     pub(super) running: Arc<watch::Sender<bool>>,
@@ -170,12 +170,17 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
 
     // ============ Storage Operations ============
 
-    /// Clear all persisted storage (headers, filters, state, sync state) and reset in-memory state.
+    /// Stop the client and clear all persisted storage (headers, filters, state, sync state)
+    /// and the in-memory state derived from it.
     pub async fn clear_storage(&self) -> Result<()> {
-        // Wipe on-disk persistence fully
-        {
-            let mut storage = self.storage.lock().await;
-            storage.clear().await.map_err(SpvError::Storage)?;
+        self.stop().await?;
+
+        self.storage.lock().await.clear().await?;
+
+        self.sync_coordinator.lock().await.reset_progress();
+        if let Some(engine) = &self.masternode_engine {
+            let network = self.config.read().await.network;
+            *engine.write().await = MasternodeListEngine::default_for_network(network);
         }
 
         Ok(())
