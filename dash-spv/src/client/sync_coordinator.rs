@@ -14,6 +14,7 @@ use super::DashSpvClient;
 use crate::error::Result;
 use crate::network::NetworkManager;
 use crate::storage::StorageManager;
+use crate::sync::SyncEvent;
 use crate::SpvError;
 use key_wallet_manager::WalletInterface;
 
@@ -33,12 +34,15 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
     /// from another task or thread.
     pub async fn run(&self) -> Result<()> {
         let mut sync_loop = self.sync_loop.lock().await;
+        self.run_locked(&mut sync_loop).await
+    }
+
+    /// Start the client while the caller holds the lock on `sync_loop`.
+    pub(super) async fn run_locked(&self, sync_loop: &mut Option<SyncLoop>) -> Result<()> {
         // A loop that failed and still waits for its own stop is done: tear it
         // down here, so the client really runs again.
         if let Some(failed) = sync_loop.take_if(|running| running.shutdown.is_cancelled()) {
-            if let Err(e) = self.stop_locked(failed).await {
-                tracing::warn!("Error stopping the failed sync loop: {}", e);
-            }
+            self.stop_locked(failed).await;
         }
         if sync_loop.is_some() {
             return Ok(());
@@ -51,6 +55,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
         // Subscribe and spawn monitors before startup so we don't miss early
         // connection events.
         let sync_event_rx = self.subscribe_sync_events().await;
+        let mut fork_rx = self.subscribe_sync_events().await;
         let chainlock_dispatch_rx = self.subscribe_sync_events().await;
         let network_event_rx = self.subscribe_network_events().await;
         let progress_rx = self.subscribe_progress().await;
@@ -122,8 +127,9 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
 
         let client = self.clone();
         let shutdown = monitor_shutdown.clone();
+
         let task = tokio::spawn(async move {
-            tracing::info!("Starting continuous network monitoring...");
+            tracing::info!("Starting continuous sync monitoring...");
 
             // Run the sync loop
             let mut sync_coordinator_tick_interval =
@@ -135,7 +141,20 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
                         client.sync_coordinator.lock().await.tick().await.err().map(Into::into)
                     }
                     _ = monitor_shutdown.cancelled() => {
-                        tracing::info!("Stopping network monitoring");
+                        break None
+                    }
+                    Ok(SyncEvent::ForkDetected { fork_height }) = fork_rx.recv() => {
+                        // Recovering stops this task, so it runs in a task of its own,
+                        // which only acts on a loop whose token is cancelled.
+                        monitor_shutdown.cancel();
+                        let client = client.clone();
+
+                        tokio::spawn(async move {
+                            if let Err(e) = client.handle_fork(fork_height).await {
+                                tracing::warn!("Error recovering from the fork: {}", e);
+                            }
+                        });
+
                         break None
                     }
                     Some(msg) = monitor_failure_rx.recv() => {
@@ -153,6 +172,8 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
 
             // Signal monitors to shut down before channels close
             monitor_shutdown.cancel();
+            tracing::info!("Stopping sync monitoring");
+
             let _ = tokio::join!(
                 sync_task,
                 chainlock_dispatch_task,
@@ -169,13 +190,10 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
                     handler.on_error(&e.to_string());
                 }
                 // Stopping waits for this task, so it runs in a task of its own.
-                tokio::spawn(async move {
-                    if let Err(e) = client.stop_failed().await {
-                        tracing::warn!("Error stopping the client after a sync failure: {}", e);
-                    }
-                });
+                tokio::spawn(async move { client.stop_failed().await });
             }
         });
+
         *sync_loop = Some(SyncLoop {
             task,
             shutdown,

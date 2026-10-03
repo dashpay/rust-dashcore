@@ -45,7 +45,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Sync in the background until Ctrl-C.
     tokio::signal::ctrl_c().await?;
-    client.stop().await?;
+    client.stop().await;
 
     println!("Done!");
     Ok(())

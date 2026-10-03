@@ -156,15 +156,9 @@ pub unsafe extern "C" fn dash_spv_ffi_client_stop(client: *mut FFIDashSpvClient)
 
     let client = &(*client);
 
-    let result = client.runtime.block_on(async { client.inner.stop().await });
+    client.runtime.block_on(client.inner.stop());
 
-    match result {
-        Ok(()) => FFIErrorCode::Success as i32,
-        Err(e) => {
-            set_last_error(&e.to_string());
-            FFIErrorCode::from(e) as i32
-        }
-    }
+    FFIErrorCode::Success as i32
 }
 
 /// Start the SPV client and begin syncing in the background.
@@ -369,9 +363,7 @@ pub unsafe extern "C" fn dash_spv_ffi_client_destroy(client: *mut FFIDashSpvClie
     if !client.is_null() {
         let client = Box::from_raw(client);
 
-        client.runtime.block_on(async {
-            let _ = client.inner.stop().await;
-        });
+        client.runtime.block_on(client.inner.stop());
 
         tracing::info!("FFI client destroyed and all tasks cleaned up");
     }

@@ -408,7 +408,7 @@ async fn run_client<S: dash_spv::storage::StorageManager>(
 
     // Sync in the background until Ctrl-C.
     tokio::signal::ctrl_c().await?;
-    client.stop().await?;
+    client.stop().await;
 
     Ok(())
 }

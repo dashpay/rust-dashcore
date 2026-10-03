@@ -183,7 +183,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
     /// Stop the client and clear all persisted storage (headers, filters, state, sync state)
     /// and the in-memory state derived from it.
     pub async fn clear_storage(&self) -> Result<()> {
-        self.stop().await?;
+        self.stop().await;
 
         self.storage.lock().await.clear().await?;
 
