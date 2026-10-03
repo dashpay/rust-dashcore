@@ -13,7 +13,10 @@ use super::{ClientConfig, DashSpvClient, EventHandler};
 use crate::chain::checkpoints::CheckpointManager;
 use crate::error::{Result, SpvError};
 use crate::network::NetworkManager;
-use crate::storage::{MasternodeStorage, StorageManager};
+use crate::storage::{
+    BlockHeaderStorage, BlockStorage, FilterHeaderStorage, FilterStorage, MasternodeStorage,
+    StorageManager,
+};
 use crate::sync::{
     BlockHeadersManager, BlocksManager, ChainLockManager, FilterHeadersManager, FiltersManager,
     InstantSendManager, Managers, MasternodesManager, MempoolManager, SyncCoordinator,
@@ -26,6 +29,8 @@ use dashcore::sml::masternode_list_engine::MasternodeListEngine;
 use dashcore::TxMerkleNode;
 use dashcore_hashes::Hash;
 use key_wallet_manager::WalletInterface;
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
 
@@ -248,6 +253,36 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
             Some(failed) => self.stop_locked(failed).await,
             None => Ok(()),
         }
+    }
+
+    /// Recover from a fork at `fork_height`: stop the client, drop the stored
+    /// chain above the fork and run again, so the client syncs onto the branch
+    /// the network follows. A loop that was stopped or replaced in the meantime
+    /// is left alone.
+    ///
+    /// Boxed because the client it runs again can recover from a fork too.
+    pub(super) fn handle_fork(
+        &self,
+        fork_height: u32,
+    ) -> Pin<Box<dyn Future<Output = Result<()>> + Send + '_>> {
+        Box::pin(async move {
+            let mut sync_loop = self.sync_loop.lock().await;
+            let Some(forked) = sync_loop.take_if(|running| running.shutdown.is_cancelled()) else {
+                return Ok(());
+            };
+            self.stop_locked(forked).await?;
+
+            tracing::warn!("Fork at height {}, dropping the stored chain above it", fork_height);
+            {
+                let mut storage = self.storage.lock().await;
+                BlockHeaderStorage::truncate_above(&mut *storage, fork_height).await?;
+                FilterHeaderStorage::truncate_above(&mut *storage, fork_height).await?;
+                FilterStorage::truncate_above(&mut *storage, fork_height).await?;
+                BlockStorage::truncate_above(&mut *storage, fork_height).await?;
+            }
+
+            self.run_locked(&mut sync_loop).await
+        })
     }
 
     /// Stop `sync_loop` and everything it drives. The caller holds the lock.

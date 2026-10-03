@@ -177,6 +177,15 @@ pub enum SyncEvent {
         result: BroadcastResult,
     },
 
+    /// A peer sent headers that branch off the stored chain below its tip.
+    ///
+    /// Emitted by: `BlockHeadersManager`
+    /// Consumed by: The client, which drops the stored chain above the fork and syncs again
+    ForkDetected {
+        /// Height of the last block both chains share
+        fork_height: u32,
+    },
+
     /// Sync has reached the chain tip (all managers idle).
     ///
     /// Emitted on every not-synced to synced transition. Cycle 0 is the
@@ -276,6 +285,9 @@ impl fmt::Display for SyncEvent {
                 txid,
                 result,
             } => write!(f, "TransactionBroadcastResult(txid={}, result={})", txid, result),
+            SyncEvent::ForkDetected {
+                fork_height,
+            } => write!(f, "ForkDetected(height={})", fork_height),
             SyncEvent::SyncComplete {
                 header_tip,
                 cycle,
