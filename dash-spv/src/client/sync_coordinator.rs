@@ -5,6 +5,7 @@ use std::time::Duration;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
+use super::core::SyncLoop;
 use super::event_handler::{
     spawn_broadcast_monitor, spawn_chainlock_wallet_dispatch, spawn_progress_monitor,
     spawn_reservation_sweep,
@@ -19,20 +20,33 @@ use key_wallet_manager::WalletInterface;
 const SYNC_COORDINATOR_TICK_MS: Duration = Duration::from_millis(100);
 
 impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, N, S> {
-    /// Start the client and run the sync loop until `stop()` is called.
+    /// Start the client and run the sync loop in the background until `stop()` is called.
     ///
     /// Subscribes to all event channels internally and dispatches events to the
-    /// event handler provided at construction. Calls `start()` internally, runs
-    /// continuous network monitoring, and calls `stop()` before returning.
+    /// event handler provided at construction. Starts the storage, the sync
+    /// managers and the network, and returns once the client is running. If the
+    /// sync loop fails, it reports the error through `on_error` and stops the client.
+    /// Does nothing if the client is already running.
+    ///
+    /// Starting can take a few seconds, e.g. when peers have to be discovered
+    /// through DNS. If blocking the caller that long is a problem, call `run`
+    /// from another task or thread.
     pub async fn run(&self) -> Result<()> {
+        let mut sync_loop = self.sync_loop.lock().await;
+        // A loop that failed and still waits for its own stop is done: tear it
+        // down here, so the client really runs again.
+        if let Some(failed) = sync_loop.take_if(|running| running.shutdown.is_cancelled()) {
+            if let Err(e) = self.stop_locked(failed).await {
+                tracing::warn!("Error stopping the failed sync loop: {}", e);
+            }
+        }
+        if sync_loop.is_some() {
+            return Ok(());
+        }
+
         let handlers = self.event_handlers.clone();
         let monitor_shutdown = CancellationToken::new();
         let (monitor_failure_tx, mut monitor_failure_rx) = mpsc::channel::<String>(1);
-
-        // Subscribe before `start()` so a `stop()` that races startup is never
-        // missed: the receiver records the version at subscription time, so any
-        // later state change is observed even if it lands before the loop runs.
-        let mut stop_rx = self.running.subscribe();
 
         // Subscribe and spawn monitors before startup so we don't miss early
         // connection events.
@@ -83,7 +97,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
             monitor_failure_tx,
         );
 
-        if let Err(e) = self.start().await {
+        if let Err(e) = self.start_sync().await {
             monitor_shutdown.cancel();
             let _ = tokio::join!(
                 sync_task,
@@ -99,75 +113,74 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
         }
 
         // Spawn the reservation sweep only after startup succeeds: it mutates
-        // wallet state, so a slow or failing `start()` must not let it reclaim
+        // wallet state, so a slow or failing startup must not let it reclaim
         // reservations while `run()` is still on its way to returning an error.
         let reservation_sweep_task =
             self.config.read().await.reservation_sweep_ttl_secs.map(|ttl| {
                 spawn_reservation_sweep(self.wallet.clone(), ttl, monitor_shutdown.clone())
             });
 
-        // `start()` flipped the state to `true`. Consume that edge so `changed()`
-        // only fires on the subsequent transition to `false` (the stop request).
-        // If a `stop()` already raced in, this reads `false` and the loop's first
-        // guard breaks immediately.
-        stop_rx.borrow_and_update();
+        let client = self.clone();
+        let shutdown = monitor_shutdown.clone();
+        let task = tokio::spawn(async move {
+            tracing::info!("Starting continuous network monitoring...");
 
-        tracing::info!("Starting continuous network monitoring...");
+            // Run the sync loop
+            let mut sync_coordinator_tick_interval =
+                tokio::time::interval(SYNC_COORDINATOR_TICK_MS);
 
-        // Run the sync loop
-        let mut sync_coordinator_tick_interval = tokio::time::interval(SYNC_COORDINATOR_TICK_MS);
+            let error: Option<SpvError> = loop {
+                let error: Option<SpvError> = tokio::select! {
+                    _ = sync_coordinator_tick_interval.tick() => {
+                        client.sync_coordinator.lock().await.tick().await.err().map(Into::into)
+                    }
+                    _ = monitor_shutdown.cancelled() => {
+                        tracing::info!("Stopping network monitoring");
+                        break None
+                    }
+                    Some(msg) = monitor_failure_rx.recv() => {
+                        break Some(crate::SpvError::ChannelFailure(
+                            "event monitor".into(),
+                            msg,
+                        ))
+                    }
+                };
 
-        let error: Option<SpvError> = loop {
-            if !self.is_running() {
-                tracing::info!("Stopping network monitoring");
-                break None;
-            }
-
-            let error: Option<SpvError> = tokio::select! {
-                _ = sync_coordinator_tick_interval.tick() => {
-                    self.sync_coordinator.lock().await.tick().await.err().map(Into::into)
-                }
-                _ = stop_rx.changed() => {
-                    tracing::debug!("DashSpvClient run loop stop requested");
-                    break None
-                }
-                Some(msg) = monitor_failure_rx.recv() => {
-                    break Some(crate::SpvError::ChannelFailure(
-                        "event monitor".into(),
-                        msg,
-                    ))
+                if error.is_some() {
+                    break error;
                 }
             };
 
-            if error.is_some() {
-                break error;
+            // Signal monitors to shut down before channels close
+            monitor_shutdown.cancel();
+            let _ = tokio::join!(
+                sync_task,
+                chainlock_dispatch_task,
+                network_task,
+                wallet_task,
+                progress_task
+            );
+            if let Some(task) = reservation_sweep_task {
+                let _ = task.await;
             }
-        };
 
-        // Signal monitors to shut down before channels close
-        monitor_shutdown.cancel();
-        let _ = tokio::join!(
-            sync_task,
-            chainlock_dispatch_task,
-            network_task,
-            wallet_task,
-            progress_task
-        );
-        if let Some(task) = reservation_sweep_task {
-            let _ = task.await;
-        }
-
-        if let Some(ref e) = error {
-            for handler in handlers.iter() {
-                handler.on_error(&e.to_string());
+            if let Some(e) = error {
+                for handler in handlers.iter() {
+                    handler.on_error(&e.to_string());
+                }
+                // Stopping waits for this task, so it runs in a task of its own.
+                tokio::spawn(async move {
+                    if let Err(e) = client.stop_failed().await {
+                        tracing::warn!("Error stopping the client after a sync failure: {}", e);
+                    }
+                });
             }
-        }
+        });
+        *sync_loop = Some(SyncLoop {
+            task,
+            shutdown,
+        });
 
-        let stop_result = self.stop().await;
-
-        match error {
-            Some(e) => Err(e),
-            None => stop_result,
-        }
+        Ok(())
     }
 }

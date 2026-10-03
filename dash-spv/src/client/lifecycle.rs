@@ -2,12 +2,12 @@
 //!
 //! This module contains:
 //! - Constructor (`new`)
-//! - Startup logic (`start`)
 //! - Shutdown logic (`stop`)
 //! - Sync initiation (`start_sync`)
 //! - Genesis block initialization
 //! - Wallet data loading
 
+use super::core::SyncLoop;
 use super::core::SyncManagers;
 use super::{ClientConfig, DashSpvClient, EventHandler};
 use crate::chain::checkpoints::CheckpointManager;
@@ -27,7 +27,7 @@ use dashcore::TxMerkleNode;
 use dashcore_hashes::Hash;
 use key_wallet_manager::WalletInterface;
 use std::sync::Arc;
-use tokio::sync::{watch, Mutex, RwLock};
+use tokio::sync::{Mutex, RwLock};
 
 impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, N, S> {
     /// Create a new SPV client with the given configuration, network, storage, and wallet.
@@ -80,7 +80,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
             wallet,
             masternode_engine,
             sync_coordinator: Arc::new(Mutex::new(SyncCoordinator::new(initial_progress.clone()))),
-            running: Arc::new(watch::Sender::new(false)),
+            sync_loop: Arc::new(Mutex::new(None)),
             event_handlers: Arc::new(event_handlers),
         };
 
@@ -200,28 +200,8 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
         Self::build_managers(&config, &storage, &self.wallet, self.masternode_engine.as_ref()).await
     }
 
-    /// Start the SPV client: spawn sync tasks and connect to the network.
-    pub(super) async fn start(&self) -> Result<()> {
-        if self.is_running() {
-            return Err(SpvError::Config("Client already running".to_string()));
-        }
-
-        self.storage.lock().await.start().await;
-        if let Err(e) = self.start_sync().await {
-            self.storage.lock().await.stop().await;
-            return Err(e);
-        }
-
-        // Only mark as running after all startup operations succeed.
-        // `send_replace` always stores the value regardless of receiver count,
-        // so this is correct even when `run()` has not subscribed yet.
-        self.running.send_replace(true);
-
-        Ok(())
-    }
-
-    /// Start the sync managers and the network on top of a started storage.
-    async fn start_sync(&self) -> Result<()> {
+    /// Start the sync managers, the network and the storage worker.
+    pub(super) async fn start_sync(&self) -> Result<()> {
         let managers = self.build_sync_managers().await?;
 
         // Start all sync tasks before connecting to the network to make sure initial connection
@@ -245,21 +225,46 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
             return Err(e.into());
         }
 
+        // Start persisting last, so a failed start leaves nothing to stop.
+        self.storage.lock().await.start().await;
+
         Ok(())
     }
 
     /// Stop the SPV client.
     pub async fn stop(&self) -> Result<()> {
-        // Check if already stopped
-        if !*self.running.borrow() {
-            return Ok(());
+        let mut sync_loop = self.sync_loop.lock().await;
+        match sync_loop.take() {
+            Some(running) => self.stop_locked(running).await,
+            None => Ok(()),
         }
+    }
 
-        // Flip the running state before tearing anything down so a concurrent
-        // `run()` loop wakes immediately and breaks out before it can lock the
+    /// Stop the client if its sync loop failed. A loop that was stopped or
+    /// replaced by a later `run` in the meantime is left alone.
+    pub(super) async fn stop_failed(&self) -> Result<()> {
+        let mut sync_loop = self.sync_loop.lock().await;
+        match sync_loop.take_if(|running| running.shutdown.is_cancelled()) {
+            Some(failed) => self.stop_locked(failed).await,
+            None => Ok(()),
+        }
+    }
+
+    /// Stop `sync_loop` and everything it drives. The caller holds the lock.
+    pub(super) async fn stop_locked(
+        &self,
+        SyncLoop {
+            task,
+            shutdown,
+        }: SyncLoop,
+    ) -> Result<()> {
+        // Stop the sync loop before tearing anything down so it cannot lock the
         // sync coordinator again. This prevents a tick from racing against the
         // shutdown below.
-        self.running.send_replace(false);
+        shutdown.cancel();
+        if let Err(e) = task.await {
+            tracing::warn!("Sync loop task failed: {}", e);
+        }
 
         // Shut down sync coordinator: signals cancellation and waits for manager
         // tasks to drain before we tear down the network and storage layers.

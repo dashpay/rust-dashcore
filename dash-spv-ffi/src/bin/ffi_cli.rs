@@ -640,7 +640,7 @@ fn main() {
 
         println!("Event and progress callbacks configured, starting sync...");
 
-        // Run client - starts sync in background and returns immediately
+        // Run client - starts sync in background and returns once started
         let rc = dash_spv_ffi_client_run(client);
         if rc != FFIErrorCode::Success as i32 {
             eprintln!("Client run failed: {}", ffi_string_to_rust(dash_spv_ffi_get_last_error()));

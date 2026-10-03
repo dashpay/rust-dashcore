@@ -43,6 +43,10 @@
 //!
 //!     client.run().await?;
 //!
+//!     // Sync in the background until Ctrl-C.
+//!     tokio::signal::ctrl_c().await?;
+//!     client.stop().await?;
+//!
 //!     Ok(())
 //! }
 //! ```

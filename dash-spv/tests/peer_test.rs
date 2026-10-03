@@ -52,8 +52,7 @@ async fn test_peer_connection() {
     let client =
         DashSpvClient::new(config, network_manager, storage_manager, wallet, vec![]).await.unwrap();
 
-    let run_client = client.clone();
-    let handle = tokio::spawn(async move { run_client.run().await });
+    client.run().await.expect("Should run");
 
     // Give it time to connect to peers
     time::sleep(Duration::from_secs(5)).await;
@@ -63,7 +62,6 @@ async fn test_peer_connection() {
     assert!(peer_count > 0, "Should have connected to at least one peer");
 
     client.stop().await.expect("Should stop");
-    let _ = handle.await;
 }
 
 #[tokio::test]
@@ -89,8 +87,7 @@ async fn test_peer_persistence() {
                 .await
                 .unwrap();
 
-        let run_client = client.clone();
-        let handle = tokio::spawn(async move { run_client.run().await });
+        client.run().await.expect("Should run");
 
         time::sleep(Duration::from_secs(5)).await;
 
@@ -98,7 +95,6 @@ async fn test_peer_persistence() {
         assert!(peer_count > 0, "Should have connected to peers");
 
         client.stop().await.expect("Should stop");
-        let _ = handle.await;
     }
 
     // Second run: should load saved peers
@@ -117,9 +113,8 @@ async fn test_peer_persistence() {
             .unwrap();
 
         // Should connect faster due to saved peers
-        let run_client = client.clone();
         let start = tokio::time::Instant::now();
-        let handle = tokio::spawn(async move { run_client.run().await });
+        client.run().await.expect("Should run");
 
         // Wait for connection but with shorter timeout
         time::sleep(Duration::from_secs(3)).await;
@@ -131,7 +126,6 @@ async fn test_peer_persistence() {
         println!("Connected to {} peers in {:?} (using saved peers)", peer_count, elapsed);
 
         client.stop().await.expect("Should stop");
-        let _ = handle.await;
     }
 }
 

@@ -10,7 +10,9 @@
 
 use dashcore::sml::masternode_list_engine::MasternodeListEngine;
 use std::sync::Arc;
-use tokio::sync::{watch, Mutex, RwLock};
+use tokio::sync::{Mutex, RwLock};
+use tokio::task::JoinHandle;
+use tokio_util::sync::CancellationToken;
 
 use super::ClientConfig;
 use crate::error::{Result, SpvError};
@@ -111,10 +113,18 @@ pub struct DashSpvClient<W: WalletInterface, N: NetworkManager, S: StorageManage
     pub(super) wallet: Arc<RwLock<W>>,
     pub(super) masternode_engine: Option<Arc<RwLock<MasternodeListEngine>>>,
     pub(super) sync_coordinator: Arc<Mutex<SyncCoordinator>>,
-    /// `true` while running, `false` once a stop is requested. Stored as a
-    /// `watch` so a stop is observed immediately rather than polled.
-    pub(super) running: Arc<watch::Sender<bool>>,
+    /// The running sync loop, `None` while stopped. A loop whose `shutdown` is
+    /// cancelled has failed and waits to be torn down. `run` and `stop` hold
+    /// the lock throughout, so they never overlap.
+    pub(super) sync_loop: Arc<Mutex<Option<SyncLoop>>>,
     pub(super) event_handlers: Arc<Vec<Arc<dyn super::EventHandler>>>,
+}
+
+/// The background task of a running client.
+pub(super) struct SyncLoop {
+    pub(super) task: JoinHandle<()>,
+    /// Stops the loop and the event monitors it runs.
+    pub(super) shutdown: CancellationToken,
 }
 
 impl<W: WalletInterface, N: NetworkManager, S: StorageManager> Clone for DashSpvClient<W, N, S> {
@@ -126,7 +136,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> Clone for DashSpv
             wallet: Arc::clone(&self.wallet),
             masternode_engine: self.masternode_engine.clone(),
             sync_coordinator: Arc::clone(&self.sync_coordinator),
-            running: Arc::clone(&self.running),
+            sync_loop: Arc::clone(&self.sync_loop),
             event_handlers: Arc::clone(&self.event_handlers),
         }
     }
@@ -152,9 +162,9 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
 
     // ============ State Queries ============
 
-    /// Check if the client is running.
-    pub fn is_running(&self) -> bool {
-        *self.running.borrow()
+    /// Check if the client is running. Waits for an ongoing `run` or `stop` to finish.
+    pub async fn is_running(&self) -> bool {
+        self.sync_loop.lock().await.as_ref().is_some_and(|running| !running.shutdown.is_cancelled())
     }
 
     /// Returns the current chain tip hash if available.

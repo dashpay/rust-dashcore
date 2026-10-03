@@ -214,7 +214,8 @@ async fn test_sync_with_random_restarts() {
     tracing::info!("Sync completed after {} random restarts (seed={})", num_restarts, seed);
 }
 
-/// Verify the same client instance syncs again on every run after a stop.
+/// Verify the same client syncs again after being stopped, including after
+/// runs that were stopped right away.
 #[tokio::test]
 async fn test_sync_restarts_same_client() {
     let Some(ctx) = TestContext::new(TestChain::Full).await else {
@@ -222,38 +223,40 @@ async fn test_sync_restarts_same_client() {
     };
     let mut client_handle = ctx.spawn_new_client().await;
 
-    for run in 0..3 {
-        if run > 0 {
-            client_handle.sync_event_receiver = client_handle.sync_event_receiver.resubscribe();
-            client_handle.spawn_run();
-        }
-        wait_for_sync_complete(&mut client_handle.sync_event_receiver, ctx.dashd.initial_height)
-            .await;
+    for _ in 0..3 {
+        client_handle.run().await;
         client_handle.stop().await;
-        assert!(!client_handle.client.is_running());
     }
+
+    client_handle.run().await;
+    wait_for_sync_complete(&mut client_handle.sync_event_receiver, ctx.dashd.initial_height).await;
+    client_handle.stop().await;
+
+    ctx.assert_synced(&client_handle.client.progress().await).await;
 }
 
-/// Verify clearing the storage of a running client stops it, and its next run
-/// syncs from scratch.
+/// Verify clearing the storage of a running client stops it, and the client
+/// syncs from scratch after its storage was cleared again between runs.
 #[tokio::test]
 async fn test_clear_storage_stops_running_client() {
-    let Some(ctx) = TestContext::new(TestChain::Full).await else {
+    let Some(ctx) = TestContext::new(TestChain::Minimal).await else {
         return;
     };
     let mut client_handle = ctx.spawn_new_client().await;
     wait_for_sync_complete(&mut client_handle.sync_event_receiver, ctx.dashd.initial_height).await;
 
     client_handle.client.clear_storage().await.unwrap();
-    let run_handle = client_handle.run_handle.take().unwrap();
-    run_handle.await.unwrap().unwrap();
-
-    assert!(!client_handle.client.is_running());
+    assert!(!client_handle.client.is_running().await);
     assert_eq!(client_handle.client.tip_height().await, 0);
     assert_eq!(client_handle.client.progress().await, SyncProgress::default());
 
+    client_handle.stop().await;
+    client_handle.run().await;
+    client_handle.client.clear_storage().await.unwrap();
+
     client_handle.sync_event_receiver = client_handle.sync_event_receiver.resubscribe();
-    client_handle.spawn_run();
+    client_handle.run().await;
     wait_for_sync_complete(&mut client_handle.sync_event_receiver, ctx.dashd.initial_height).await;
     client_handle.stop().await;
+    ctx.assert_synced(&client_handle.client.progress().await).await;
 }
