@@ -255,6 +255,11 @@ pub trait WalletInfoInterface: Sized + WalletTransactionChecker + ManagedAccount
     /// Record that the durable wallet sync checkpoint has advanced to `current_height`.
     fn update_synced_height(&mut self, current_height: u32);
 
+    /// Drop what the wallet recorded from blocks above `height`, as if they were
+    /// never processed: their transactions, the UTXOs they created, and the sync
+    /// heights past `height`. Used when a fork replaces the chain above it.
+    fn truncate_above(&mut self, height: CoreBlockHeight);
+
     /// Records whose coinbase maturity threshold lies in
     /// `(old_height, new_height]`, i.e. coinbase records that just matured
     /// during the height advance from `old_height` to `new_height`.
@@ -543,6 +548,32 @@ impl WalletInfoInterface for ManagedWalletInfo {
         // A newly committed checkpoint can lift the finality boundary when the
         // chainlock was already ahead of the old synced_height.
         self.prune_finalized_observed_spends();
+    }
+
+    fn truncate_above(&mut self, height: CoreBlockHeight) {
+        let dropped: BTreeSet<Txid> = self
+            .accounts
+            .all_accounts()
+            .iter()
+            .flat_map(|account| account.transactions().values())
+            .filter(|record| record.height().is_some_and(|block| block > height))
+            .map(|record| record.txid)
+            .collect();
+
+        for account in self.accounts.all_accounts_mut() {
+            match account {
+                ManagedAccountRefMut::Funds(funds) => {
+                    funds.apply_abandon(&dropped);
+                }
+                ManagedAccountRefMut::Keys(keys) => {
+                    keys.transactions_mut().retain(|txid, _| !dropped.contains(txid));
+                }
+            }
+        }
+
+        self.metadata.synced_height = self.metadata.synced_height.min(height);
+        self.metadata.last_processed_height = self.metadata.last_processed_height.min(height);
+        self.update_balance();
     }
 
     fn matured_coinbase_records(

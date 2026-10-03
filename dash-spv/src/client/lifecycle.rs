@@ -256,8 +256,8 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
     }
 
     /// Recover from a fork at `fork_height`: stop the client, drop the stored
-    /// chain above the fork and run again, so the client syncs onto the branch
-    /// the network follows. A loop that was stopped or replaced in the meantime
+    /// chain and what the wallets recorded above the fork, and run again, so the
+    /// client syncs onto the branch the network follows. A loop that was stopped or replaced in the meantime
     /// is left alone.
     ///
     /// Boxed because the client it runs again can recover from a fork too.
@@ -280,6 +280,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
                 FilterStorage::truncate_above(&mut *storage, fork_height).await?;
                 BlockStorage::truncate_above(&mut *storage, fork_height).await?;
             }
+            self.wallet.write().await.truncate_above(fork_height);
 
             self.run_locked(&mut sync_loop).await
         })
