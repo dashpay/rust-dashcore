@@ -11,7 +11,7 @@ use crate::wallet::managed_wallet_info::ManagedWalletInfo;
 use crate::{KeySource, Wallet};
 use async_trait::async_trait;
 use dashcore::blockdata::transaction::Transaction;
-use dashcore::{Amount, SignedAmount};
+use dashcore::{Amount, OutPoint, SignedAmount};
 
 /// Extension trait for ManagedWalletInfo to add transaction checking capabilities
 #[async_trait]
@@ -31,6 +31,13 @@ pub trait WalletTransactionChecker {
     ///
     /// The context parameter indicates where the transaction comes from (mempool, block, etc.)
     ///
+    /// With `update_state`, a ProRegTx also locks the collateral it
+    /// registers, relevant or not, so coin selection skips it: a collateral it
+    /// names once the ProRegTx is in a block, its own output from any context.
+    /// New locks are listed in [`TransactionCheckResult::locked_outpoints`];
+    /// with `update_balance = false`, refresh the balance of a wallet whose
+    /// check lists any, since a lock moves a held coin to the locked balance.
+    /// See [`ManagedWalletInfo::locked_outpoints`].
     async fn check_core_transaction(
         &mut self,
         tx: &Transaction,
@@ -106,6 +113,55 @@ impl ManagedWalletInfo {
 #[async_trait]
 impl WalletTransactionChecker for ManagedWalletInfo {
     async fn check_core_transaction(
+        &mut self,
+        tx: &Transaction,
+        context: TransactionContext,
+        wallet: &mut Wallet,
+        update_state: bool,
+        update_balance: bool,
+    ) -> TransactionCheckResult {
+        if !update_state {
+            return self
+                .check_core_transaction_inner(tx, context, wallet, update_state, update_balance)
+                .await;
+        }
+
+        // Before the accounts record `tx`, so a collateral the ProRegTx
+        // creates itself is locked from the moment it becomes a coin.
+        let collateral = self.lock_masternode_collateral(tx, &context);
+
+        let mut result = self
+            .check_core_transaction_inner(tx, context, wallet, update_state, update_balance)
+            .await;
+
+        // Bring the lock flags of the coins involved in line with the lock
+        // set: the coins `tx` pays this wallet, and a collateral the wallet
+        // already held. The balance refresh inside the check does this when it
+        // runs, but not every path reaches one: an otherwise irrelevant
+        // ProRegTx returns early, and block processing passes
+        // `update_balance = false` and refreshes once per block.
+        let txid = tx.txid();
+        let outputs = (0..tx.output.len() as u32).map(|vout| OutPoint::new(txid, vout));
+        let flags_changed = self.refresh_lock_flags(outputs.chain(collateral));
+
+        if let Some(collateral) = collateral {
+            result.locked_outpoints.push(collateral);
+            // The lock set is persisted wallet state.
+            result.state_modified = true;
+        }
+        if flags_changed && update_balance {
+            self.update_balance();
+        }
+
+        result
+    }
+}
+
+impl ManagedWalletInfo {
+    /// Everything [`WalletTransactionChecker::check_core_transaction`] does
+    /// except keeping coin locks: the caller locks a ProRegTx's collateral and
+    /// refreshes the lock flags around it.
+    async fn check_core_transaction_inner(
         &mut self,
         tx: &Transaction,
         context: TransactionContext,

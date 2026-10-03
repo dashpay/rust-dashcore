@@ -175,11 +175,23 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
         // changed. The cached `.balance` field is stale until
         // `update_balance()` runs, so the pre-snapshot taken here captures
         // the pre-transaction state.
+        //
+        // A wallet whose lock set this check grew is refreshed too, relevant
+        // or not, since a lock moves a held coin to the locked balance.
+        // Off-chain only a ProRegTx's own output locks, and only as that coin
+        // arrives, so the lock rides the `TransactionDetected` of the wallet
+        // the ProRegTx pays.
+        let refreshed: BTreeSet<WalletId> = check_result
+            .affected_wallets
+            .iter()
+            .chain(check_result.per_wallet_locked_outpoints.keys())
+            .copied()
+            .collect();
         let mut per_wallet_account_diff: BTreeMap<
             WalletId,
             BTreeMap<AccountType, WalletCoreBalance>,
         > = BTreeMap::new();
-        for wallet_id in &check_result.affected_wallets {
+        for wallet_id in &refreshed {
             if let Some(info) = self.wallet_infos.get_mut(wallet_id) {
                 let prior = info.account_balances();
                 info.update_balance();

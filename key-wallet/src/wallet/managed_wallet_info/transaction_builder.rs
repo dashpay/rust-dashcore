@@ -95,6 +95,11 @@ pub struct TransactionBuilder {
     /// account that holds the UTXO, so each account reserves its own share of
     /// the chosen inputs — all under the one token this build is stamped with.
     funding: Vec<(ReservationSet, HashSet<OutPoint>)>,
+    /// Outpoints a funding account holds locked, such as masternode
+    /// collateral, captured by `add_funding`. Coin selection never sees them,
+    /// whether the account offered them or `add_inputs` seeded them, before
+    /// the funding call or after it: see `assemble_unsigned`.
+    locked: HashSet<OutPoint>,
 }
 
 impl Default for TransactionBuilder {
@@ -119,6 +124,7 @@ impl TransactionBuilder {
             special_payload: None,
             payload_finalizer: None,
             funding: Vec::new(),
+            locked: HashSet::new(),
         }
     }
 
@@ -144,7 +150,9 @@ impl TransactionBuilder {
     }
 
     /// Add a funding account's spendable UTXOs to the candidate input set,
-    /// skipping any already reserved by another in-flight build.
+    /// skipping any already reserved by another in-flight build and any the
+    /// wallet has locked (see
+    /// [`ManagedWalletInfo::locked_outpoints`](crate::wallet::ManagedWalletInfo::locked_outpoints)).
     ///
     /// Call it once per funding account: coin selection then draws from the
     /// union of their UTXOs, and the first account supplies the change
@@ -179,8 +187,9 @@ impl TransactionBuilder {
     /// does.
     ///
     /// Reservation bookkeeping is unchanged: `owned` still covers every
-    /// unreserved UTXO of the account, so whichever seeded outpoints selection
-    /// picks are reserved by the account that holds them.
+    /// unreserved, unlocked UTXO of the account, so whichever seeded outpoints
+    /// selection picks are reserved by the account that holds them. A seeded
+    /// outpoint the account holds locked is dropped, as with `add_funding`.
     pub fn add_funding_reservation_only(
         self,
         funds_acc: &mut ManagedCoreFundsAccount,
@@ -213,6 +222,15 @@ impl TransactionBuilder {
         // concurrent build to select.
         let mut owned: HashSet<OutPoint> = HashSet::new();
         for utxo in funds_acc.utxos.values() {
+            // A coin the wallet has locked, such as masternode collateral, is
+            // never a candidate. Record it so `assemble_unsigned` also drops a
+            // copy seeded by `add_inputs`, before this call or after it: a
+            // caller-built `Utxo` carries whatever lock flag it was cloned
+            // with, while this account's own coin carries the current one.
+            if utxo.is_locked {
+                self.locked.insert(utxo.outpoint);
+                continue;
+            }
             if reserved.contains(&utxo.outpoint) {
                 continue;
             }
@@ -237,6 +255,11 @@ impl TransactionBuilder {
         self
     }
 
+    /// Add `inputs` to the candidate input set.
+    ///
+    /// In a funded build, an input that a funding account holds reserved or
+    /// locked is dropped just before coin selection, whether it was added
+    /// before the funding call or after it.
     pub fn add_inputs(mut self, inputs: impl IntoIterator<Item = Utxo>) -> Self {
         self.inputs.extend(inputs);
         self
@@ -563,18 +586,23 @@ impl TransactionBuilder {
         }
 
         if !self.funding.is_empty() {
-            // Every UTXO a funding account offers is unreserved, but a seeded
-            // one need not be: `add_inputs` does not consult a reservation set,
-            // and may run after the funding call. Drop those here so no path
+            // Every UTXO a funding account offers is unreserved and unlocked,
+            // but a seeded one need not be: `add_inputs` consults neither the
+            // reservation sets nor the accounts' locks, and may run after the
+            // funding call. Drop those here, just before selection, so no path
             // into the builder can spend an outpoint another in-flight build
-            // holds.
+            // holds or one the wallet has locked, such as masternode
+            // collateral.
             let height = self.current_height;
             let reserved: HashSet<OutPoint> = self
                 .funding
                 .iter()
                 .flat_map(|(reservations, _)| reservations.reserved(height))
                 .collect();
-            self.inputs.retain(|utxo| !reserved.contains(&utxo.outpoint));
+            let locked = &self.locked;
+            self.inputs.retain(|utxo| {
+                !reserved.contains(&utxo.outpoint) && !locked.contains(&utxo.outpoint)
+            });
         }
 
         // Must match `calculate_base_size`, including the conservative VIN0 routing-script size.

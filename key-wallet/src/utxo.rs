@@ -30,7 +30,12 @@ pub struct Utxo {
     pub is_confirmed: bool,
     /// Whether this UTXO has an InstantLock
     pub is_instantlocked: bool,
-    /// Whether this UTXO is locked (not available for spending)
+    /// Whether this UTXO is locked: coin selection skips it and its value
+    /// counts as locked balance.
+    ///
+    /// For a coin a wallet holds, the wallet sets this from its lock set,
+    /// [`ManagedWalletInfo::locked_outpoints`](crate::wallet::ManagedWalletInfo::locked_outpoints),
+    /// which is where such a coin is locked and unlocked.
     pub is_locked: bool,
     /// Whether this UTXO comes from a "trusted" mempool transaction — one we
     /// created ourselves, recognised because it spends at least one of our
@@ -100,12 +105,21 @@ impl Utxo {
         }
     }
 
-    /// Lock this UTXO to prevent it from being selected
+    /// Lock this UTXO to prevent it from being selected.
+    ///
+    /// For a coin outside a wallet, such as one handed to a transaction
+    /// builder. A wallet overwrites the flag of a coin it holds from its lock
+    /// set: lock that coin with
+    /// [`ManagedWalletInfo::lock_outpoint`](crate::wallet::ManagedWalletInfo::lock_outpoint).
     pub fn lock(&mut self) {
         self.is_locked = true;
     }
 
-    /// Unlock this UTXO to allow it to be selected
+    /// Unlock this UTXO to allow it to be selected.
+    ///
+    /// For a coin outside a wallet, as with [`Self::lock`]. Unlock a coin a
+    /// wallet holds with
+    /// [`ManagedWalletInfo::unlock_outpoint`](crate::wallet::ManagedWalletInfo::unlock_outpoint).
     pub fn unlock(&mut self) {
         self.is_locked = false;
     }
