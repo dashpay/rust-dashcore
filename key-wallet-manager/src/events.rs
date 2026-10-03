@@ -180,9 +180,10 @@ fn format_account_balances(map: &BTreeMap<AccountType, WalletCoreBalance>) -> St
 /// consumers can persist the record(s) and balance atomically.
 #[derive(Debug, Clone)]
 pub enum WalletEvent {
-    /// First time the wallet sees an off-chain wallet-relevant transaction
-    /// (mempool, or directly via an InstantSend lock — in that case
-    /// `record.context` is `InstantSend(..)`).
+    /// An off-chain transaction was detected or its accounting details were corrected.
+    /// Corrections retain the transaction's own confirmation context; consumers upsert by account and txid.
+    /// Lock-only updates use `TransactionInstantLocked`. Accounting corrections after ChainLock
+    /// require `keep-finalized-transactions`; default retention drops the full spender record.
     TransactionDetected {
         /// ID of the affected wallet.
         wallet_id: WalletId,

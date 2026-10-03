@@ -20,9 +20,7 @@ use crate::managed_account::managed_account_trait::ManagedAccountTrait;
 use crate::managed_account::managed_account_type::ManagedAccountType;
 use crate::managed_account::managed_core_keys_account::ManagedCoreKeysAccount;
 use crate::managed_account::reservation::{ReservationSet, ReservationToken};
-use crate::managed_account::transaction_record::{
-    InputDetail, OutputDetail, OutputRole, TransactionDirection,
-};
+use crate::managed_account::transaction_record::{InputDetail, OutputDetail, OutputRole};
 use crate::transaction_checking::transaction_router::TransactionType;
 use crate::transaction_checking::{AccountMatch, TransactionContext};
 use crate::utxo::Utxo;
@@ -190,7 +188,7 @@ impl ManagedCoreFundsAccount {
     }
 
     /// Check if an outpoint was spent by a previously recorded transaction.
-    fn is_outpoint_spent(&self, outpoint: &OutPoint) -> bool {
+    pub(crate) fn is_outpoint_spent(&self, outpoint: &OutPoint) -> bool {
         self.spent_outpoints.contains(outpoint)
     }
 
@@ -418,6 +416,86 @@ impl ManagedCoreFundsAccount {
             }
             _ => {}
         }
+    }
+
+    /// Attribute a late funding output only to its owning account's spender slices.
+    pub(crate) fn attribute_spent_input(
+        &mut self,
+        outpoint: &OutPoint,
+        value: u64,
+        address: &Address,
+        spenders: &[TransactionRecord],
+    ) -> Vec<TransactionRecord> {
+        if !self.contains_address(address) {
+            return Vec::new();
+        }
+        let mut corrected = Vec::new();
+        for template in spenders {
+            #[cfg(not(feature = "keep-finalized-transactions"))]
+            if self.keys.transaction_is_finalized(&template.txid) {
+                continue;
+            }
+            let Some(input_index) = template
+                .transaction
+                .input
+                .iter()
+                .position(|input| &input.previous_output == outpoint)
+            else {
+                continue;
+            };
+            let mut record =
+                self.keys.transactions().get(&template.txid).cloned().unwrap_or_else(|| {
+                    let mut record = template.clone();
+                    record.account_type = self.keys.managed_account_type().to_account_type();
+                    record.input_details.clear();
+                    record.output_details.clear();
+                    record
+                });
+            if record.input_details.iter().any(|d| d.index == input_index as u32) {
+                continue;
+            }
+            record.input_details.push(InputDetail {
+                index: input_index as u32,
+                value,
+                address: address.clone(),
+            });
+            record.input_details.sort_by_key(|d| d.index);
+            for (index, output) in record.transaction.output.iter().enumerate() {
+                if record.output_details.iter().any(|detail| detail.index == index as u32) {
+                    continue;
+                }
+                let output_address =
+                    Address::from_script(&output.script_pubkey, self.keys.network()).ok();
+                let pool = output_address.as_ref().and_then(|addr| {
+                    self.managed_account_type()
+                        .address_pools()
+                        .into_iter()
+                        .find(|pool| pool.address_index(addr).is_some())
+                });
+                let role = match pool {
+                    Some(pool) if pool.pool_type == address_pool::AddressPoolType::Internal => {
+                        OutputRole::Change
+                    }
+                    Some(_) => OutputRole::Received,
+                    None if output.script_pubkey.is_provably_unspendable() => {
+                        OutputRole::Unspendable
+                    }
+                    None => OutputRole::Sent,
+                };
+                record.output_details.push(OutputDetail {
+                    index: index as u32,
+                    value: output.value,
+                    address: output_address,
+                    role,
+                });
+            }
+            record.output_details.sort_by_key(|detail| detail.index);
+            record.recompute_net_and_direction();
+            self.keys.transactions_mut().insert(record.txid, record.clone());
+            self.spent_outpoints.insert(*outpoint);
+            corrected.push(record);
+        }
+        corrected
     }
 
     /// Drop the spent-marks that `freed` contributed, keeping every mark a
@@ -889,20 +967,8 @@ impl ManagedCoreFundsAccount {
             });
         }
 
-        // Determine direction
-        let has_sent = output_details.iter().any(|d| d.role == OutputRole::Sent);
-        let has_our_outputs = output_details
-            .iter()
-            .any(|d| d.role == OutputRole::Received || d.role == OutputRole::Change);
-        let direction = if transaction_type == TransactionType::CoinJoin {
-            TransactionDirection::CoinJoin
-        } else if !has_sent && has_inputs && has_our_outputs {
-            TransactionDirection::Internal
-        } else if has_inputs {
-            TransactionDirection::Outgoing
-        } else {
-            TransactionDirection::Incoming
-        };
+        let direction =
+            TransactionRecord::direction_for(transaction_type, has_inputs, &output_details);
 
         let tx_record = TransactionRecord::new(
             tx.clone(),
@@ -1376,6 +1442,7 @@ mod conflict_sweep_walk_tests {
     use super::*;
     use crate::account::AccountType;
     use crate::account::StandardAccountType;
+    use crate::managed_account::transaction_record::TransactionDirection;
     use crate::transaction_checking::BlockInfo;
     use dashcore::ephemerealdata::instant_lock::InstantLock;
     use dashcore::hashes::Hash;
@@ -1591,6 +1658,88 @@ mod conflict_sweep_walk_tests {
             visits <= 3 * records,
             "the walk must stay linear in records plus edges: {visits} visits \
              against {records} records"
+        );
+    }
+}
+
+#[cfg(test)]
+mod attribution_tests {
+    use super::*;
+    use crate::account::{AccountType, StandardAccountType};
+    use crate::test_utils::TestWalletContext;
+    use crate::transaction_checking::BlockInfo;
+    use crate::wallet::ManagedWalletInfo;
+    use dashcore::hashes::Hash;
+    use dashcore::{BlockHash, TxOut};
+
+    #[tokio::test]
+    async fn born_spent_attribution_reconstructs_imported_account_change_and_spent_mark() {
+        use crate::managed_account::transaction_record::OutputRole;
+        use crate::wallet::managed_wallet_info::managed_account_operations::ManagedAccountOperations;
+        let mut ctx = TestWalletContext::new_random();
+        let account_type = AccountType::Standard {
+            index: 1,
+            standard_account_type: StandardAccountType::BIP44Account,
+        };
+        ctx.wallet.add_account(account_type, None).unwrap();
+        let xpub = ctx.wallet.accounts.standard_bip44_accounts[&1].account_xpub;
+        let mut preview =
+            ManagedWalletInfo::from_wallet_with_name(&ctx.wallet, "preview".into(), 0);
+        let account = preview.bip44_managed_account_at_index_mut(1).unwrap();
+        let receive = account.next_receive_address(Some(&xpub), true).unwrap();
+        let change = account.next_change_address(Some(&xpub), true).unwrap();
+        let funding = Transaction::dummy(&receive, 30..31, &[100_000]);
+        let outpoint = OutPoint::new(funding.txid(), 0);
+        let mut spender = Transaction::dummy(&ctx.receive_address, 31..32, &[60_000]);
+        spender.input[0].previous_output = outpoint;
+        spender.output.push(TxOut {
+            value: 39_000,
+            script_pubkey: change.script_pubkey(),
+        });
+        ctx.check_transaction(
+            &spender,
+            TransactionContext::InBlock(BlockInfo::new(2, BlockHash::all_zeros(), 200)),
+        )
+        .await;
+        ctx.managed_wallet.add_managed_account(&ctx.wallet, account_type).unwrap();
+        let result = ctx
+            .check_transaction(
+                &funding,
+                TransactionContext::InBlock(BlockInfo::new(1, BlockHash::all_zeros(), 100)),
+            )
+            .await;
+        let corrected =
+            result.updated_records.iter().find(|r| r.account_type == account_type).unwrap();
+        assert_eq!(corrected.net_amount, -61_000);
+        assert_eq!(corrected.output_details[1].role, OutputRole::Change);
+        assert_eq!(corrected.output_details[1].address.as_ref(), Some(&change));
+        assert_eq!(corrected.input_details.len(), 1);
+        assert!(
+            ctx.managed_wallet
+                .bip44_managed_account_at_index(1)
+                .unwrap()
+                .is_outpoint_spent(&outpoint),
+            "late attribution must mark the input spent in its owning account"
+        );
+        assert!(result.state_modified);
+        assert!(!ctx
+            .managed_wallet
+            .bip44_managed_account_at_index(1)
+            .unwrap()
+            .utxos
+            .contains_key(&outpoint));
+        ctx.check_transaction(
+            &funding,
+            TransactionContext::InBlock(BlockInfo::new(1, BlockHash::all_zeros(), 100)),
+        )
+        .await;
+        assert!(
+            !ctx.managed_wallet
+                .bip44_managed_account_at_index(1)
+                .unwrap()
+                .utxos
+                .contains_key(&outpoint),
+            "confirming funding must not resurrect an attributed spent coin"
         );
     }
 }

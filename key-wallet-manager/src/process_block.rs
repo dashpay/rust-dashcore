@@ -272,26 +272,33 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
             per_wallet_released
         );
 
-        if let Some(lock) = instant_lock {
-            for (wallet_id, records) in per_wallet_updated_records {
-                if records.is_empty() {
-                    continue;
-                }
-                let Some(info) = self.wallet_infos.get(&wallet_id) else {
-                    continue;
-                };
-                let balance = info.balance();
-                let account_balances =
-                    per_wallet_account_diff.get(&wallet_id).cloned().unwrap_or_default();
-                for record in records {
-                    let event = WalletEvent::TransactionInstantLocked {
+        for (wallet_id, records) in per_wallet_updated_records {
+            let Some(info) = self.wallet_infos.get(&wallet_id) else {
+                continue;
+            };
+            let balance = info.balance();
+            let account_balances =
+                per_wallet_account_diff.get(&wallet_id).cloned().unwrap_or_default();
+            for record in records {
+                let txid = record.txid;
+                // The arriving tx only changes lock status; other txids carry late-input corrections.
+                if txid != tx.txid() {
+                    self.emit_event(WalletEvent::TransactionDetected {
                         wallet_id,
-                        txid: record.txid,
+                        record: Box::new(record),
+                        balance,
+                        account_balances: account_balances.clone(),
+                        addresses_derived: Vec::new(),
+                    });
+                }
+                if let Some(lock) = instant_lock.as_ref().filter(|lock| lock.txid == txid) {
+                    self.emit_event(WalletEvent::TransactionInstantLocked {
+                        wallet_id,
+                        txid,
                         instant_lock: lock.clone(),
                         balance,
                         account_balances: account_balances.clone(),
-                    };
-                    self.emit_event(event);
+                    });
                 }
             }
         }
@@ -698,6 +705,8 @@ mod tests {
         let (mut manager, wallet_id, addr) = setup_manager_with_wallet();
         let funding = create_tx_paying_to(&addr, 0xaa);
         let spend = spend_first_output_of(&funding);
+        let spent_outpoint = OutPoint::new(funding.txid(), 0);
+        let spender_txid = spend.txid();
         let wallets = BTreeSet::from([wallet_id]);
 
         let mut spend_block = make_block(vec![spend]);
@@ -711,10 +720,19 @@ mod tests {
             .process_block_for_wallets(&funding_block, funding_block.block_hash(), 100, &wallets)
             .await;
         assert_eq!(result.reapply_heights, BTreeMap::from([(wallet_id, BTreeSet::from([200]))]));
+        let account = manager.wallet_infos[&wallet_id].first_bip44_managed_account().unwrap();
+        assert!(!account.transactions().contains_key(&spender_txid));
+        assert!(!account.utxos.contains_key(&spent_outpoint));
 
         manager
             .process_block_for_wallets(&spend_block, spend_block.block_hash(), 200, &wallets)
             .await;
+        let account = manager.wallet_infos[&wallet_id].first_bip44_managed_account().unwrap();
+        let recorded = &account.transactions()[&spender_txid];
+        assert_eq!(recorded.net_amount, -(TX_AMOUNT as i64));
+        assert_eq!(recorded.input_details.len(), 1);
+        assert_eq!(recorded.input_details[0].value, TX_AMOUNT);
+        assert!(!account.utxos.contains_key(&spent_outpoint));
         let again = manager
             .process_block_for_wallets(&funding_block, funding_block.block_hash(), 100, &wallets)
             .await;
