@@ -237,21 +237,19 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
     }
 
     /// Stop the SPV client.
-    pub async fn stop(&self) -> Result<()> {
+    pub async fn stop(&self) {
         let mut sync_loop = self.sync_loop.lock().await;
-        match sync_loop.take() {
-            Some(running) => self.stop_locked(running).await,
-            None => Ok(()),
+        if let Some(running) = sync_loop.take() {
+            self.stop_locked(running).await;
         }
     }
 
     /// Stop the client if its sync loop failed. A loop that was stopped or
     /// replaced by a later `run` in the meantime is left alone.
-    pub(super) async fn stop_failed(&self) -> Result<()> {
+    pub(super) async fn stop_failed(&self) {
         let mut sync_loop = self.sync_loop.lock().await;
-        match sync_loop.take_if(|running| running.shutdown.is_cancelled()) {
-            Some(failed) => self.stop_locked(failed).await,
-            None => Ok(()),
+        if let Some(failed) = sync_loop.take_if(|running| running.shutdown.is_cancelled()) {
+            self.stop_locked(failed).await;
         }
     }
 
@@ -270,7 +268,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
             let Some(forked) = sync_loop.take_if(|running| running.shutdown.is_cancelled()) else {
                 return Ok(());
             };
-            self.stop_locked(forked).await?;
+            self.stop_locked(forked).await;
 
             tracing::warn!("Fork at height {}, dropping the stored chain above it", fork_height);
             {
@@ -292,7 +290,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
             task,
             shutdown,
         }: SyncLoop,
-    ) -> Result<()> {
+    ) {
         // Stop the sync loop before tearing anything down so it cannot lock the
         // sync coordinator again. This prevents a tick from racing against the
         // shutdown below.
@@ -308,7 +306,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
         }
 
         // Stop the network
-        self.network.lock().await.stop().await?;
+        self.network.lock().await.stop().await;
 
         // Stop storage to ensure all data is persisted
         {
@@ -316,8 +314,6 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
             storage.stop().await;
             tracing::info!("Storage stopped - all data persisted");
         }
-
-        Ok(())
     }
 
     /// Initialize genesis block or checkpoint in storage.

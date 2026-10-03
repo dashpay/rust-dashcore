@@ -61,7 +61,7 @@ async fn test_peer_connection() {
     let peer_count = client.peer_count().await;
     assert!(peer_count > 0, "Should have connected to at least one peer");
 
-    client.stop().await.expect("Should stop");
+    client.stop().await;
 }
 
 #[tokio::test]
@@ -94,7 +94,7 @@ async fn test_peer_persistence() {
         let peer_count = client.peer_count().await;
         assert!(peer_count > 0, "Should have connected to peers");
 
-        client.stop().await.expect("Should stop");
+        client.stop().await;
     }
 
     // Second run: should load saved peers
@@ -125,7 +125,7 @@ async fn test_peer_persistence() {
         let elapsed = start.elapsed();
         println!("Connected to {} peers in {:?} (using saved peers)", peer_count, elapsed);
 
-        client.stop().await.expect("Should stop");
+        client.stop().await;
     }
 }
 

@@ -193,7 +193,7 @@ async fn main() -> Result<()> {
     }
     let m = handler.snapshot();
 
-    let _ = client.stop().await;
+    client.stop().await;
 
     let peak_rss_kb = proc_status_kb("VmHWM:");
     #[cfg(target_os = "linux")]

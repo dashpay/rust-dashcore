@@ -254,7 +254,7 @@ impl ClientHandle {
     /// Stops the SPV client.
     pub(super) async fn stop(&mut self) {
         tracing::info!("Stopping client...");
-        self.client.stop().await.expect("client stop failed");
+        self.client.stop().await;
     }
 }
 

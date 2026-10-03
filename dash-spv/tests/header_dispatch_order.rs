@@ -140,7 +140,7 @@ fn peer_reader_preserves_compressed_then_regular_header_order() {
             timeout(Duration::from_secs(2), headers.recv()).await.unwrap().unwrap();
         assert_eq!(second_message.inner(), &NetworkMessage::Headers(vec![second]));
 
-        manager.stop().await.unwrap();
+        manager.stop().await;
         close_tx.send(()).unwrap();
         server.await.unwrap();
     });

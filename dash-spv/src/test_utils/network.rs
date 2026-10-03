@@ -136,9 +136,8 @@ impl NetworkManager for MockNetworkManager {
         Ok(())
     }
 
-    async fn stop(&mut self) -> NetworkResult<()> {
+    async fn stop(&mut self) {
         self.connected = false;
-        Ok(())
     }
 
     async fn send_message(&mut self, message: NetworkMessage) -> NetworkResult<()> {

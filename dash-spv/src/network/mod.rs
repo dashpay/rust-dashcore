@@ -212,7 +212,7 @@ pub trait NetworkManager: Send + Sync + 'static {
     async fn start(&mut self) -> NetworkResult<()>;
 
     /// Disconnects from the network and stops all background tasks.
-    async fn stop(&mut self) -> NetworkResult<()>;
+    async fn stop(&mut self);
 
     /// Send a message to a peer.
     async fn send_message(&mut self, message: NetworkMessage) -> NetworkResult<()>;

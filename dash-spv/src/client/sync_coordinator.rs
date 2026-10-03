@@ -42,9 +42,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
         // A loop that failed and still waits for its own stop is done: tear it
         // down here, so the client really runs again.
         if let Some(failed) = sync_loop.take_if(|running| running.shutdown.is_cancelled()) {
-            if let Err(e) = self.stop_locked(failed).await {
-                tracing::warn!("Error stopping the failed sync loop: {}", e);
-            }
+            self.stop_locked(failed).await;
         }
         if sync_loop.is_some() {
             return Ok(());
@@ -192,11 +190,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
                     handler.on_error(&e.to_string());
                 }
                 // Stopping waits for this task, so it runs in a task of its own.
-                tokio::spawn(async move {
-                    if let Err(e) = client.stop_failed().await {
-                        tracing::warn!("Error stopping the client after a sync failure: {}", e);
-                    }
-                });
+                tokio::spawn(async move { client.stop_failed().await });
             }
         });
 

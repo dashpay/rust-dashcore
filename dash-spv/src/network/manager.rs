@@ -1878,7 +1878,7 @@ impl NetworkManager for PeerNetworkManager {
         Ok(())
     }
 
-    async fn stop(&mut self) -> NetworkResult<()> {
+    async fn stop(&mut self) {
         tracing::info!("Shutting down peer network manager");
         self.shutdown_token.cancel();
 
@@ -1911,8 +1911,6 @@ impl NetworkManager for PeerNetworkManager {
         }
         self.connected_peer_count.store(0, Ordering::Relaxed);
         self.outstanding_requests.lock().await.clear();
-
-        Ok(())
     }
 
     async fn send_message(&mut self, message: NetworkMessage) -> NetworkResult<()> {
