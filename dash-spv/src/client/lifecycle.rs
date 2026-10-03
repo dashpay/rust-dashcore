@@ -234,14 +234,30 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
     /// Stop the SPV client.
     pub async fn stop(&self) -> Result<()> {
         let mut sync_loop = self.sync_loop.lock().await;
-        let Some(SyncLoop {
+        match sync_loop.take() {
+            Some(running) => self.stop_locked(running).await,
+            None => Ok(()),
+        }
+    }
+
+    /// Stop the client if its sync loop failed. A loop that was stopped or
+    /// replaced by a later `run` in the meantime is left alone.
+    pub(super) async fn stop_failed(&self) -> Result<()> {
+        let mut sync_loop = self.sync_loop.lock().await;
+        match sync_loop.take_if(|running| running.shutdown.is_cancelled()) {
+            Some(failed) => self.stop_locked(failed).await,
+            None => Ok(()),
+        }
+    }
+
+    /// Stop `sync_loop` and everything it drives. The caller holds the lock.
+    pub(super) async fn stop_locked(
+        &self,
+        SyncLoop {
             task,
             shutdown,
-        }) = sync_loop.take()
-        else {
-            return Ok(());
-        };
-
+        }: SyncLoop,
+    ) -> Result<()> {
         // Stop the sync loop before tearing anything down so it cannot lock the
         // sync coordinator again. This prevents a tick from racing against the
         // shutdown below.

@@ -113,8 +113,9 @@ pub struct DashSpvClient<W: WalletInterface, N: NetworkManager, S: StorageManage
     pub(super) wallet: Arc<RwLock<W>>,
     pub(super) masternode_engine: Option<Arc<RwLock<MasternodeListEngine>>>,
     pub(super) sync_coordinator: Arc<Mutex<SyncCoordinator>>,
-    /// The running sync loop, `None` while stopped. `run` and `stop` hold the
-    /// lock throughout, so they never overlap.
+    /// The running sync loop, `None` while stopped. A loop whose `shutdown` is
+    /// cancelled has failed and waits to be torn down. `run` and `stop` hold
+    /// the lock throughout, so they never overlap.
     pub(super) sync_loop: Arc<Mutex<Option<SyncLoop>>>,
     pub(super) event_handlers: Arc<Vec<Arc<dyn super::EventHandler>>>,
 }
@@ -163,7 +164,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
 
     /// Check if the client is running. Waits for an ongoing `run` or `stop` to finish.
     pub async fn is_running(&self) -> bool {
-        self.sync_loop.lock().await.is_some()
+        self.sync_loop.lock().await.as_ref().is_some_and(|running| !running.shutdown.is_cancelled())
     }
 
     /// Returns the current chain tip hash if available.
