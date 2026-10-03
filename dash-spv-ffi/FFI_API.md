@@ -679,7 +679,7 @@ dash_spv_ffi_client_run(client: *mut FFIDashSpvClient) -> i32
 ```
 
 **Description:**
-Start the SPV client and begin syncing in the background.  Uses the event callbacks provided at client creation time. Returns immediately after spawning the sync task.  # Safety - `client` must be a valid, non-null pointer to a created client.  # Returns 0 on success, error code on failure.
+Start the SPV client and begin syncing in the background.  Uses the event callbacks provided at client creation time. Returns once the storage, the sync managers and the network are started.  Starting can take a few seconds, e.g. when peers have to be discovered through DNS. If blocking the calling thread that long is a problem (such as a UI thread), call this from another thread.  # Safety - `client` must be a valid, non-null pointer to a created client.  # Returns 0 on success, error code on failure.
 
 **Safety:**
 - `client` must be a valid, non-null pointer to a created client.

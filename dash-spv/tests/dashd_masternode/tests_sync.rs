@@ -150,7 +150,7 @@ async fn test_masternode_list_sync_with_restart() {
          not default and let a fresh dashd sync cover for it"
     );
 
-    client_handle.start();
+    client_handle.run().await;
     let second_mn_progress =
         wait_for_masternode_sync(&mut client_handle.progress_receiver, SYNC_TIMEOUT).await;
     let second_height = second_mn_progress.current_height();

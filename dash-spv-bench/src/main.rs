@@ -184,12 +184,7 @@ async fn main() -> Result<()> {
     .await
     .map_err(|e| anyhow!("client new: {e}"))?;
 
-    let run_client = client.clone();
-    let run_handle = tokio::spawn(async move {
-        if let Err(e) = run_client.run().await {
-            tracing::error!("client run() exited with error: {e}");
-        }
-    });
+    client.run().await.map_err(|e| anyhow!("client run: {e}"))?;
 
     tokio::select! {
         _ = handler.wait_done() => {}
@@ -199,8 +194,6 @@ async fn main() -> Result<()> {
     let m = handler.snapshot();
 
     let _ = client.stop().await;
-    run_handle.abort();
-    let _ = run_handle.await;
 
     let peak_rss_kb = proc_status_kb("VmHWM:");
     #[cfg(target_os = "linux")]
