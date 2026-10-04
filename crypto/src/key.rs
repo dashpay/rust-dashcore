@@ -136,7 +136,9 @@ impl PublicKey {
         }
     }
 
-    fn with_serialized<R, F: FnOnce(&[u8]) -> R>(&self, f: F) -> R {
+    /// Calls `f` with the key's SEC1 encoding, compressed or not as
+    /// `compressed` says, without allocating.
+    pub fn with_serialized<R, F: FnOnce(&[u8]) -> R>(&self, f: F) -> R {
         if self.compressed {
             f(&self.inner.serialize())
         } else {
