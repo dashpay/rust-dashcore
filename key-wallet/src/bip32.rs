@@ -28,13 +28,14 @@ use core::str::FromStr;
 use std::error;
 
 use dashcore::key::XOnlyPublicKey;
+use dashcore::secp256k1;
 use dashcore_hashes::{hash160, sha512, Hash, HashEngine, Hmac, HmacEngine};
 #[cfg(feature = "serde")]
 use serde;
 
 #[cfg(feature = "bincode")]
 use bincode_derive::{Decode, Encode};
-use dashcore::ecdsa::{EcdsaError, EcdsaPublicKey, EcdsaSecretKey};
+use dashcore::ecdsa::{EcdsaError, EcdsaPublicKey, EcdsaSecretKey, ECDSA_SK_LEN};
 use dashcore::{base58, Network};
 use hex_conservative::DisplayHex;
 use zeroize::Zeroize;
@@ -1191,8 +1192,6 @@ pub type KeySource = (Fingerprint, DerivationPath);
 pub enum Error {
     /// A pk->pk derivation was attempted on a hardened key
     CannotDeriveFromHardenedKey,
-    /// A secp256k1 error occurred
-    Secp256k1(secp256k1::Error),
     /// An ECDSA key error occurred
     Ecdsa(EcdsaError),
     /// A child number was provided that was out of range
@@ -1221,7 +1220,6 @@ impl fmt::Display for Error {
             Error::CannotDeriveFromHardenedKey => {
                 f.write_str("cannot derive hardened key from public key")
             }
-            Error::Secp256k1(ref e) => fmt::Display::fmt(e, f),
             Error::Ecdsa(ref e) => fmt::Display::fmt(e, f),
             Error::InvalidChildNumber(ref n) => {
                 write!(f, "child number {} is invalid (not within [0, 2^31 - 1])", n)
@@ -1249,16 +1247,9 @@ impl fmt::Display for Error {
 impl error::Error for Error {
     fn cause(&self) -> Option<&dyn error::Error> {
         match *self {
-            Error::Secp256k1(ref e) => Some(e),
             Error::Ecdsa(ref e) => Some(e),
             _ => None,
         }
-    }
-}
-
-impl From<secp256k1::Error> for Error {
-    fn from(e: secp256k1::Error) -> Error {
-        Error::Secp256k1(e)
     }
 }
 
@@ -1275,11 +1266,8 @@ impl From<base58::DecodeCheckError> for Error {
 }
 
 /// The secret-key half of a BIP32 HMAC-SHA512 output.
-fn hmac_secret_half(hmac: &Hmac<sha512::Hash>) -> [u8; secp256k1::constants::SECRET_KEY_SIZE] {
-    *hmac
-        .as_byte_array()
-        .first_chunk::<{ secp256k1::constants::SECRET_KEY_SIZE }>()
-        .expect("sha512 HMAC output is 64 bytes")
+fn hmac_secret_half(hmac: &Hmac<sha512::Hash>) -> [u8; ECDSA_SK_LEN] {
+    *hmac.as_byte_array().first_chunk::<ECDSA_SK_LEN>().expect("sha512 HMAC output is 64 bytes")
 }
 
 impl ExtendedPrivKey {

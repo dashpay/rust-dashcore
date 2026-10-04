@@ -41,9 +41,6 @@ pub enum Error {
     /// Base58 encoding error
     #[error("key base58 error")]
     Base58(#[from] base58::DecodeCheckError),
-    /// secp256k1-related error
-    #[error("key secp256k1 error")]
-    Secp256k1(#[from] secp256k1::Error),
     /// ECDSA key error
     #[error("key ECDSA error")]
     Ecdsa(#[from] EcdsaError),
