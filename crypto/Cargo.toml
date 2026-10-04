@@ -19,7 +19,7 @@ eddsa = ["dep:dash-pkc", "dash-pkc/eddsa"]
 serde = ["dep:serde", "dash-types/serde", "dashcore_hashes/serde", "dash-network/serde", "secp256k1/serde"]
 
 [dependencies]
-base58ck = { version = "0.1.0" }
+base58ck = { workspace = true }
 bincode = { workspace = true, optional = true }
 bincode_derive = { workspace = true, optional = true }
 dash-network = { path = "../dash-network" }

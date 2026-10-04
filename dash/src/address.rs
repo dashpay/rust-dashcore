@@ -74,7 +74,7 @@ use crate::taproot::{TapNodeHash, TapTweak};
 #[non_exhaustive]
 pub enum Error {
     /// Base58 encoding error.
-    Base58(base58::Error),
+    Base58(base58::DecodeCheckError),
     /// The address version byte was not one we recognise.
     InvalidAddressVersion(u8),
     /// The base58 decoded correctly but the payload was the wrong length.
@@ -178,8 +178,8 @@ impl std::error::Error for Error {
 }
 
 #[doc(hidden)]
-impl From<base58::Error> for Error {
-    fn from(e: base58::Error) -> Error {
+impl From<base58::DecodeCheckError> for Error {
+    fn from(e: base58::DecodeCheckError) -> Error {
         Error::Base58(e)
     }
 }
@@ -649,13 +649,13 @@ impl<'a> fmt::Display for AddressEncoding<'a> {
                 let mut prefixed = [0; 21];
                 prefixed[0] = self.p2pkh_prefix;
                 prefixed[1..].copy_from_slice(&hash[..]);
-                base58::encode_check_to_fmt(fmt, &prefixed[..])
+                fmt.write_str(base58::Base58CkString::encode_unbounded(&prefixed[..]).as_str())
             }
             Payload::ScriptHash(hash) => {
                 let mut prefixed = [0; 21];
                 prefixed[0] = self.p2sh_prefix;
                 prefixed[1..].copy_from_slice(&hash[..]);
-                base58::encode_check_to_fmt(fmt, &prefixed[..])
+                fmt.write_str(base58::Base58CkString::encode_unbounded(&prefixed[..]).as_str())
             }
             Payload::WitnessProgram(witness_prog) => {
                 let (version, prog) = (witness_prog.version(), witness_prog.program());

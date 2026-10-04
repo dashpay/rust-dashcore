@@ -34,7 +34,7 @@ use serde;
 
 #[cfg(feature = "bincode")]
 use bincode_derive::{Decode, Encode};
-use dashcore::Network;
+use dashcore::{base58, Network};
 use zeroize::Zeroize;
 
 /// XpubIdentifier as a hash160 result
@@ -1294,7 +1294,7 @@ pub enum Error {
     /// Encoded extended key data has wrong length
     WrongExtendedKeyLength(usize),
     /// Base58 encoding error
-    Base58(base58::Error),
+    Base58(base58::DecodeCheckError),
     /// Hexadecimal decoding error
     Hex(dashcore_hashes::hex::Error),
     /// `PublicKey` hex should be 66 or 130 digits long.
@@ -1347,8 +1347,8 @@ impl From<secp256k1::Error> for Error {
     }
 }
 
-impl From<base58::Error> for Error {
-    fn from(err: base58::Error) -> Self {
+impl From<base58::DecodeCheckError> for Error {
+    fn from(err: base58::DecodeCheckError) -> Self {
         Error::Base58(err)
     }
 }
@@ -1915,7 +1915,7 @@ impl ExtendedPubKey {
 
 impl fmt::Display for ExtendedPrivKey {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-        fmt.write_str(&base58::encode_check(&self.encode()[..]))
+        fmt.write_str(base58::Base58CkString::encode_unbounded(&self.encode()[..]).as_str())
     }
 }
 
@@ -1930,7 +1930,7 @@ impl FromStr for ExtendedPrivKey {
 
 impl fmt::Display for ExtendedPubKey {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-        fmt.write_str(&base58::encode_check(&self.encode()[..]))
+        fmt.write_str(base58::Base58CkString::encode_unbounded(&self.encode()[..]).as_str())
     }
 }
 

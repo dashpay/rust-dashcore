@@ -30,7 +30,7 @@ use crate::base58;
 #[non_exhaustive]
 pub enum Error {
     /// Base58 encoding error
-    Base58(base58::Error),
+    Base58(base58::DecodeCheckError),
     /// secp256k1-related error
     Secp256k1(secp256k1::Error),
     /// Invalid key prefix error
@@ -88,8 +88,8 @@ impl std::error::Error for Error {
 }
 
 #[doc(hidden)]
-impl From<base58::Error> for Error {
-    fn from(e: base58::Error) -> Error {
+impl From<base58::DecodeCheckError> for Error {
+    fn from(e: base58::DecodeCheckError) -> Error {
         Error::Base58(e)
     }
 }
@@ -400,11 +400,11 @@ impl PrivateKey {
         ret[1..33].copy_from_slice(&self.inner[..]);
         let privkey = if self.compressed {
             ret[33] = 1;
-            base58::encode_check(&ret[..])
+            base58::Base58CkString::encode_unbounded(&ret[..])
         } else {
-            base58::encode_check(&ret[..33])
+            base58::Base58CkString::encode_unbounded(&ret[..33])
         };
-        fmt.write_str(&privkey)
+        fmt.write_str(privkey.as_str())
     }
 
     /// Get WIF encoding of this private key.

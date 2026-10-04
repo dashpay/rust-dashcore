@@ -18,6 +18,9 @@ zeroize = { version = "1.8", features = ["derive"] }
 dash-pkc = { git = "https://github.com/dashpay/base-sdk", rev = "e6402ced257c370a586ade9840ebbf545a4b7926", default-features = false }
 dash-types = { git = "https://github.com/dashpay/base-sdk", rev = "e6402ced257c370a586ade9840ebbf545a4b7926", default-features = false }
 
+# Packages from `rust-bitcoin/rust-bitcoin`
+base58ck = { version = "0.5.0" }
+
 [workspace.package]
 authors = ["The rust-dashcore Developers"]
 edition = "2024"
