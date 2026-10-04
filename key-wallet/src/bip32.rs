@@ -1573,11 +1573,7 @@ impl ExtendedPrivKey {
 
     /// Convert to a PrivateKey for signing operations
     pub fn to_priv(&self) -> dashcore::PrivateKey {
-        dashcore::PrivateKey {
-            compressed: true,
-            network: self.network,
-            inner: self.private_key,
-        }
+        dashcore::PrivateKey::new(self.private_key, self.network)
     }
 }
 
