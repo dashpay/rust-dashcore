@@ -3,7 +3,7 @@
 use core::convert::TryInto;
 
 use anyhow::{anyhow, bail};
-use hashes::{Hash, ripemd160, sha256, sha256d};
+use hashes::{Hash, hash160, sha256d};
 
 use crate::PublicKey as ECDSAPublicKey;
 use crate::prelude::Vec;
@@ -43,9 +43,8 @@ pub fn verify_hash_signature(
         Message::from_digest(data_hash.try_into().map_err(|_| anyhow!("Invalid hash length"))?);
     let recovered_public_key = signature.recover(msg).map_err(anyhow::Error::msg)?;
 
-    let recovered_compressed_public_key = recovered_public_key.serialize();
-    let hash_recovered_key = ripemd160_sha256(&recovered_compressed_public_key);
-    let are_equal = public_key_id == hash_recovered_key;
+    let hash_recovered_key = ECDSAPublicKey::new(recovered_public_key).pubkey_hash();
+    let are_equal = public_key_id == hash_recovered_key.as_byte_array();
 
     if are_equal {
         Ok(())
@@ -83,8 +82,7 @@ pub fn double_sha(payload: impl AsRef<[u8]>) -> Vec<u8> {
 
 /// calculates the RIPEMD169(SHA256(data))
 pub fn ripemd160_sha256(data: &[u8]) -> Vec<u8> {
-    let hash = sha256::Hash::hash(data).to_byte_array();
-    ripemd160::Hash::hash(&hash).to_byte_array().to_vec()
+    hash160::Hash::hash(data).to_byte_array().to_vec()
 }
 
 #[cfg(test)]

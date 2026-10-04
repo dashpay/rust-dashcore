@@ -1843,11 +1843,11 @@ impl ExtendedPubKey {
         })
     }
 
-    /// Returns the HASH160 of the chaincode
+    /// Returns the HASH160 of the compressed public key
     pub fn identifier(&self) -> XpubIdentifier {
-        let mut engine = XpubIdentifier::engine();
-        engine.input(&self.public_key.serialize());
-        XpubIdentifier::from_engine(engine)
+        XpubIdentifier::from_byte_array(
+            dashcore::PublicKey::new(self.public_key).pubkey_hash().to_byte_array(),
+        )
     }
 
     /// Returns the first four bytes of the identifier
