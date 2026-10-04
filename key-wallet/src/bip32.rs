@@ -1296,7 +1296,7 @@ pub enum Error {
     /// Base58 encoding error
     Base58(base58::DecodeCheckError),
     /// Hexadecimal decoding error
-    Hex(dashcore_hashes::hex::Error),
+    Hex(dashcore_hashes::hex::HexToArrayError),
     /// `PublicKey` hex should be 66 or 130 digits long.
     InvalidPublicKeyHexLength(usize),
     /// Something is not supported based on active features

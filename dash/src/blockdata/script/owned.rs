@@ -168,7 +168,7 @@ impl ScriptBuf {
     }
 
     /// Creates a [`ScriptBuf`] from a hex string.
-    pub fn from_hex(s: &str) -> Result<Self, hex::Error> {
+    pub fn from_hex(s: &str) -> Result<Self, hex::HexToBytesError> {
         use hashes::hex::FromHex;
 
         let v = Vec::from_hex(s)?;

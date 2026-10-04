@@ -20,6 +20,7 @@ dash-types = { git = "https://github.com/dashpay/base-sdk", rev = "e6402ced257c3
 
 # Packages from `rust-bitcoin/rust-bitcoin`
 base58ck = { version = "0.5.0" }
+bitcoin_hashes = { version = "0.14.101", default-features = false }
 
 [workspace.package]
 authors = ["The rust-dashcore Developers"]

@@ -40,7 +40,7 @@ pub enum Error {
     /// The base58 decoded correctly but the payload was the wrong length.
     InvalidBase58PayloadLength(usize),
     /// Hex decoding error
-    Hex(hex::Error),
+    Hex(hex::HexToArrayError),
     /// `PublicKey` hex should be 66 or 130 digits long.
     InvalidHexLength(usize),
     /// Something is not supported based on active features
@@ -102,8 +102,8 @@ impl From<secp256k1::Error> for Error {
 }
 
 #[doc(hidden)]
-impl From<hex::Error> for Error {
-    fn from(e: hex::Error) -> Self {
+impl From<hex::HexToArrayError> for Error {
+    fn from(e: hex::HexToArrayError) -> Self {
         Error::Hex(e)
     }
 }

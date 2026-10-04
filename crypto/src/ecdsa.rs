@@ -217,11 +217,11 @@ impl<'a> IntoIterator for &'a SerializedSignature {
 }
 
 /// A key-related error.
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
+#[derive(Clone, PartialEq, Eq, Debug)]
 #[non_exhaustive]
 pub enum Error {
     /// Hex encoding error
-    HexEncoding(hex::Error),
+    HexEncoding(hex::HexToBytesError),
     /// Base58 encoding error
     NonStandardSighashType(u32),
     /// Empty Signature
@@ -267,8 +267,8 @@ impl From<NonStandardSighashType> for Error {
     }
 }
 
-impl From<hex::Error> for Error {
-    fn from(err: hex::Error) -> Self {
+impl From<hex::HexToBytesError> for Error {
+    fn from(err: hex::HexToBytesError) -> Self {
         Error::HexEncoding(err)
     }
 }
