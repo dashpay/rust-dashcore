@@ -7,9 +7,10 @@ use crate::types::{
 use crate::{check_ptr, FFIWalletManager};
 use crate::{deref_ptr, deref_ptr_mut, unwrap_or_return};
 use dash_network::ffi::FFINetwork;
+use dashcore::blockdata::script::Builder;
 use dashcore::{
-    consensus, hashes::Hash, sighash::SighashCache, Network, OutPoint, Script, ScriptBuf,
-    Transaction, TxIn, TxOut, Txid,
+    consensus, hashes::Hash, sighash::SighashCache, EcdsaSighashType, Network, OutPoint, Script,
+    ScriptBuf, Transaction, TxIn, TxOut, Txid,
 };
 use key_wallet::wallet::managed_wallet_info::asset_lock_builder::{
     AssetLockFundingType, CreditOutputFunding,
@@ -601,19 +602,17 @@ pub unsafe extern "C" fn transaction_sign_input(
     let sig = privkey.sign_ecdsa(message);
 
     // Build signature script (simplified P2PKH)
-    let mut sig_bytes = sig.serialize_der().to_vec();
-    sig_bytes.push(sighash_type as u8);
-
-    let pubkey = secp256k1::PublicKey::from_secret_key(&privkey);
-    let pubkey_bytes = pubkey.serialize();
-
-    let mut script_sig = vec![];
-    script_sig.push(sig_bytes.len() as u8);
-    script_sig.extend_from_slice(&sig_bytes);
-    script_sig.push(pubkey_bytes.len() as u8);
-    script_sig.extend_from_slice(&pubkey_bytes);
-
-    tx.inner.input[input_index].script_sig = ScriptBuf::from(script_sig);
+    let pubkey = dashcore::PublicKey::new(secp256k1::PublicKey::from_secret_key(&privkey));
+    tx.inner.input[input_index].script_sig = Builder::new()
+        .push_slice(
+            dashcore::ecdsa::Signature {
+                sig,
+                hash_ty: EcdsaSighashType::from_consensus(sighash_type),
+            }
+            .serialize(),
+        )
+        .push_key(&pubkey)
+        .into_script();
     0
 }
 
@@ -639,12 +638,8 @@ pub unsafe extern "C" fn script_p2pkh(
         return -1;
     }
 
-    let hash_slice = slice::from_raw_parts(pubkey_hash, 20);
-
-    // Build P2PKH script: OP_DUP OP_HASH160 <hash> OP_EQUALVERIFY OP_CHECKSIG
-    let mut script = vec![0x76, 0xa9, 0x14]; // OP_DUP OP_HASH160 PUSH(20)
-    script.extend_from_slice(hash_slice);
-    script.extend_from_slice(&[0x88, 0xac]); // OP_EQUALVERIFY OP_CHECKSIG
+    let hash = <[u8; 20]>::try_from(slice::from_raw_parts(pubkey_hash, 20)).expect("20 bytes");
+    let script = ScriptBuf::new_p2pkh(&dashcore::PubkeyHash::from_byte_array(hash));
 
     let size = script.len() as u32;
 
@@ -659,7 +654,7 @@ pub unsafe extern "C" fn script_p2pkh(
         return -1;
     }
 
-    ptr::copy_nonoverlapping(script.as_ptr(), out_buf, script.len());
+    ptr::copy_nonoverlapping(script.as_bytes().as_ptr(), out_buf, script.len());
     *out_len = size;
     0
 }
@@ -991,6 +986,18 @@ pub unsafe extern "C" fn wallet_build_and_sign_asset_lock_transaction(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn script_p2pkh_is_dup_hash160_push_equalverify_checksig() {
+        let hash = [0x11u8; 20];
+        let mut out = [0u8; 25];
+        let mut len = out.len() as u32;
+        assert_eq!(unsafe { script_p2pkh(hash.as_ptr(), out.as_mut_ptr(), &mut len) }, 0);
+        assert_eq!(len, 25);
+        assert_eq!(out[..3], [0x76, 0xa9, 0x14]);
+        assert_eq!(out[3..23], hash);
+        assert_eq!(out[23..], [0x88, 0xac]);
+    }
 
     fn preference(kind: FFIAccountTypePreferenceKind) -> FFIAccountTypePreference {
         FFIAccountTypePreference {
