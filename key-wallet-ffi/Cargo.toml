@@ -36,10 +36,10 @@ key-wallet = { path = "../key-wallet" }
 key-wallet-manager = { path = "../key-wallet-manager" }
 dashcore = { path = "../dash" }
 dash-network = { path = "../dash-network", features = ["ffi"] }
-secp256k1 = { version = "0.33.1" }
+secp256k1 = { workspace = true }
 tokio = { version = "1.32", features = ["rt-multi-thread", "sync"] }
 libc = "0.2"
-hex = "0.4"
+hex = { workspace = true }
 
 [build-dependencies]
 cbindgen = "0.29"
@@ -48,4 +48,4 @@ cbindgen = "0.29"
 dashcore = { path = "../dash", features = ["test-utils"] }
 key-wallet = { path = "../key-wallet", features = ["test-utils"] }
 key-wallet-manager = { path = "../key-wallet-manager", features = ["test-utils"] }
-hex = "0.4"
+hex = { workspace = true }

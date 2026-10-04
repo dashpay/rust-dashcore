@@ -36,16 +36,16 @@ dashcore = { path = "../dash" }
 async-trait = "0.1"
 tokio = { version = "1", features = ["macros", "rt", "sync"] }
 tracing = "0.1"
-zeroize = { version = "1.8", features = ["derive"] }
-rayon = { version = "1.11", optional = true }
+zeroize = { workspace = true }
+rayon = { workspace = true, optional = true }
 bincode = { workspace = true, optional = true }
-serde = { version = "1.0", default-features = false, features = ["derive"], optional = true }
+serde = { workspace = true, features = ["derive"], optional = true }
 
 [dev-dependencies]
 key-wallet = { path = "../key-wallet", features = ["test-utils", "bincode"] }
 dashcore = { path = "../dash", features = ["test-utils"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
-hex = "0.4"
+hex = { workspace = true }
 criterion = "0.8.1"
 
 [[bench]]

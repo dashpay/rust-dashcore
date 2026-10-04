@@ -22,7 +22,7 @@ bincode = ["dep:bincode", "dep:bincode_derive"]
 ffi = []
 
 [dependencies]
-serde = { version = "1.0.219", default-features = false, features = ["derive"], optional = true }
+serde = { workspace = true, features = ["derive"], optional = true }
 bincode = { workspace = true, optional = true }
 bincode_derive = { workspace = true, optional = true }
 

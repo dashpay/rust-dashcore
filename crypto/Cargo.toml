@@ -26,10 +26,10 @@ dash-network = { path = "../dash-network" }
 dash-pkc = { workspace = true, features = ["std"], optional = true }
 dash-types = { workspace = true, features = ["codec"] }
 dashcore_hashes = { path = "../hashes" }
-hex = { version = "0.4" }
+hex = { workspace = true }
 internals = { path = "../internals", package = "dashcore-private" }
-secp256k1 = { version = "0.33.1" }
-serde = { version = "1.0.219", default-features = false, features = [ "derive", "alloc" ], optional = true }
+secp256k1 = { workspace = true }
+serde = { workspace = true, features = ["derive", "alloc"], optional = true }
 thiserror = "2"
 tracing = { version = "0.1", optional = true }
 
@@ -37,5 +37,5 @@ tracing = { version = "0.1", optional = true }
 unexpected_cfgs = { level = "deny", check-cfg = ['cfg(bench)', 'cfg(fuzzing)', 'cfg(kani)'] }
 
 [dev-dependencies]
-hex_lit = { version = "0.1.1", features = ["rust_v_1_46"] }
+hex_lit = { workspace = true, features = ["rust_v_1_46"] }
 serde_json = { version = "1.0" }

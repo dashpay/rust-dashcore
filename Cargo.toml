@@ -3,8 +3,18 @@ members = ["dash", "crypto", "dash-network", "hashes", "internals", "fuzz", "rpc
 resolver = "2"
 
 [workspace.dependencies]
+# Packages shared across crates
 bincode = { package = "grovedb-bincode", version = "=2.1.0" }
 bincode_derive = { package = "grovedb-bincode-derive", version = "=2.1.0" }
+futures = "0.3"
+hex = "0.4"
+hex_lit = "0.1.1"
+rayon = "1.11"
+secp256k1 = "0.33.1" # must match with version used in `dash-pkc`
+serde = { version = "1.0.219", default-features = false }
+zeroize = { version = "1.8", features = ["derive"] }
+
+# Packages from `dashpay/base-sdk`, MUST share same version ACROSS crates
 dash-pkc = { git = "https://github.com/dashpay/base-sdk", rev = "e6402ced257c370a586ade9840ebbf545a4b7926", default-features = false }
 dash-types = { git = "https://github.com/dashpay/base-sdk", rev = "e6402ced257c370a586ade9840ebbf545a4b7926", default-features = false }
 

@@ -46,14 +46,14 @@ dashcore_hashes = { path = "../hashes" }
 dashcore-crypto = { path = "../crypto" }
 dash-network = { path = "../dash-network" }
 dash-types = { workspace = true, features = ["codec"] }
-secp256k1 = { version = "0.33.1" }
-serde = { version = "1.0.219", default-features = false, features = [ "derive", "alloc", "rc" ], optional = true }
+secp256k1 = { workspace = true }
+serde = { workspace = true, features = ["derive", "alloc", "rc"], optional = true }
 
 base64 = { version = "0.22", optional = true }
 bitcoinconsensus = { version = "0.20.2-0.5.0", default-features = false, optional = true }
-hex_lit = "0.1.1"
+hex_lit = { workspace = true }
 anyhow = { version= "1.0" }
-hex = { version= "0.4" }
+hex = { workspace = true }
 bincode = { workspace = true, optional = true }
 bincode_derive = { workspace = true, optional = true }
 blake3 = "1.8.1"
@@ -65,7 +65,7 @@ tracing = "0.1"
 serde_json = "1.0.140"
 serde_test = "1.0.177"
 serde_derive = "1.0.219"
-secp256k1 = { features = [ "recovery", "rand" ], version = "0.33.1" }
+secp256k1 = { workspace = true, features = ["recovery", "rand"] }
 bincode = { workspace = true, features = ["serde"] }
 assert_matches = "1.5.0"
 dashcore = { path = ".", features = ["core-block-hash-use-x11", "message_verification", "quorum_validation", "signer"] }
