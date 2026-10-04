@@ -19,6 +19,20 @@ mod tests {
     use crate::crypto::key::{PrivateKey, PublicKey};
     use crate::io;
 
+    /// Core's `DecodeSecret` takes a 34-byte payload only when it ends in
+    /// the 0x01 compression flag.
+    #[test_case::test_matrix([0x00, 0x02, 0xff])]
+    fn wif_compression_flag_must_be_one(flag: u8) {
+        let mut data =
+            crate::base58::decode_check("cVt4o7BGAig1UXywgGSmARhxMdzP5qvQsxKkSsc1XEkw3tDTQFpy")
+                .unwrap();
+        data[33] = flag;
+        assert_eq!(
+            PrivateKey::from_wif(crate::base58::Base58CkString::encode_unbounded(&data).as_str()),
+            Err(crate::crypto::key::Error::InvalidWifCompressionFlag(flag))
+        );
+    }
+
     #[test]
     fn test_key_derivation() {
         // testnet compressed

@@ -39,6 +39,9 @@ pub enum Error {
     InvalidAddressVersion(u8),
     /// The base58 decoded correctly but the payload was the wrong length.
     InvalidBase58PayloadLength(usize),
+    /// A 34-byte WIF payload ended in something other than the `0x01`
+    /// compression flag.
+    InvalidWifCompressionFlag(u8),
     /// Hex decoding error
     Hex(hex_conservative::DecodeFixedLengthBytesError),
     /// `PublicKey` hex should be 66 or 130 digits long.
@@ -59,6 +62,9 @@ impl fmt::Display for Error {
                 write!(f, "length {} invalid for this base58 type", l)
             }
             Error::InvalidKeyPrefix(b) => write!(f, "key prefix invalid: {}", b),
+            Error::InvalidWifCompressionFlag(b) => {
+                write!(f, "WIF compression flag must be 0x01, got: {:#04x}", b)
+            }
             Error::Hex(e) => write_err!(f, "key hex decoding error"; e),
             Error::InvalidHexLength(got) => {
                 write!(f, "PublicKey hex should be 66 or 130 digits long, got: {}", got)
@@ -81,6 +87,7 @@ impl std::error::Error for Error {
             InvalidAddressVersion(_)
             | InvalidBase58PayloadLength(_)
             | InvalidKeyPrefix(_)
+            | InvalidWifCompressionFlag(_)
             | InvalidHexLength(_) => None,
             NotSupported(_) => None,
         }
@@ -413,9 +420,12 @@ impl PrivateKey {
     pub fn from_wif(wif: &str) -> Result<PrivateKey, Error> {
         let data = base58::decode_check(wif)?;
 
+        // Core's `DecodeSecret` takes a 34th byte as the compression flag
+        // only when it is exactly 0x01.
         let compressed = match data.len() {
             33 => false,
-            34 => true,
+            34 if data[33] == 1 => true,
+            34 => return Err(Error::InvalidWifCompressionFlag(data[33])),
             _ => {
                 return Err(Error::InvalidBase58PayloadLength(data.len()));
             }
