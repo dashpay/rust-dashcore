@@ -19,7 +19,8 @@ use hashes::{Hash, sha256, sha256d};
 pub use dashcore_crypto::sighash::SplitAnyoneCanPay;
 pub use dashcore_crypto::sighash::{
     EcdsaSighashType, InvalidSighashTypeError, LegacySighash, NonStandardSighashType,
-    SegwitV0Sighash, SighashTypeParseError, TapSighash, TapSighashTag, TapSighashType,
+    NonStandardSighashTypeError, SegwitV0Sighash, SighashTypeParseError, TapSighash, TapSighashTag,
+    TapSighashType,
 };
 
 use crate::blockdata::transaction::txin::TxIn;
@@ -113,7 +114,7 @@ pub struct ScriptPath<'s> {
 }
 
 /// Possible errors in computing the signature message.
-#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
+#[derive(Clone, PartialEq, Eq, Debug)]
 #[non_exhaustive]
 pub enum Error {
     /// Could happen only by using `*_encode_signing_*` methods with custom writers, engines writers
@@ -153,7 +154,7 @@ pub enum Error {
     WrongAnnex,
 
     /// Invalid Sighash type.
-    InvalidSighashType(u32),
+    InvalidSighashType(InvalidSighashTypeError),
 }
 
 impl fmt::Display for Error {
@@ -193,8 +194,8 @@ impl fmt::Display for Error {
             WrongAnnex => {
                 write!(f, "Annex must be at least one byte long and the first bytes must be `0x50`")
             }
-            InvalidSighashType(hash_ty) => {
-                write!(f, "Invalid taproot signature hash type : {} ", hash_ty)
+            InvalidSighashType(e) => {
+                write!(f, "Invalid taproot signature hash type : {} ", e)
             }
         }
     }
@@ -291,7 +292,7 @@ impl<'s> From<ScriptPath<'s>> for TapLeafHash {
 
 impl From<InvalidSighashTypeError> for Error {
     fn from(e: InvalidSighashTypeError) -> Self {
-        Error::InvalidSighashType(e.0)
+        Error::InvalidSighashType(e)
     }
 }
 
@@ -881,8 +882,8 @@ impl<'a> Encodable for Annex<'a> {
 }
 
 fn is_invalid_use_of_sighash_single(sighash: u32, input_index: usize, output_len: usize) -> bool {
-    let ty = EcdsaSighashType::from_consensus(sighash);
-    ty == EcdsaSighashType::Single && input_index >= output_len
+    // Upstream's `from_consensus` keeps non-standard flags as they are, so mask the way ours did.
+    (sighash & 0x9f) == 0x03 && input_index >= output_len
 }
 
 #[cfg(test)]
@@ -1461,7 +1462,7 @@ mod tests {
         for s in sht_mistakes {
             assert_eq!(
                 TapSighashType::from_str(s).unwrap_err().to_string(),
-                format!("Unrecognized SIGHASH string '{}'", s)
+                format!("failed to parse '{}' as SIGHASH string", s)
             );
         }
     }

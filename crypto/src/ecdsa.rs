@@ -19,7 +19,7 @@ use secp256k1;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
-use crate::sighash::{EcdsaSighashType, NonStandardSighashType};
+use crate::sighash::EcdsaSighashType;
 
 const MAX_SIG_LEN: usize = 73;
 
@@ -61,7 +61,7 @@ impl Signature {
         let mut buf = [0u8; MAX_SIG_LEN];
         let signature = self.sig.serialize_der();
         buf[..signature.len()].copy_from_slice(&signature);
-        buf[signature.len()] = self.hash_ty as u8;
+        buf[signature.len()] = self.hash_ty.to_consensus_u8();
         SerializedSignature {
             data: buf,
             len: signature.len() + 1,
@@ -74,14 +74,19 @@ impl Signature {
     /// [`serialize`](Self::serialize) method instead.
     pub fn to_vec(self) -> Vec<u8> {
         // TODO: add support to serialize to a writer to SerializedSig
-        self.sig.serialize_der().iter().copied().chain(iter::once(self.hash_ty as u8)).collect()
+        self.sig
+            .serialize_der()
+            .iter()
+            .copied()
+            .chain(iter::once(self.hash_ty.to_consensus_u8()))
+            .collect()
     }
 }
 
 impl fmt::Display for Signature {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt::LowerHex::fmt(&self.sig.serialize_der().as_hex(), f)?;
-        fmt::LowerHex::fmt(&[self.hash_ty as u8].as_hex(), f)
+        fmt::LowerHex::fmt(&[self.hash_ty.to_consensus_u8()].as_hex(), f)
     }
 }
 
@@ -93,7 +98,8 @@ impl FromStr for Signature {
         let (sighash_byte, signature) = bytes.split_last().ok_or(Error::EmptySignature)?;
         Ok(Signature {
             sig: secp256k1::ecdsa::Signature::from_der(signature)?,
-            hash_ty: EcdsaSighashType::from_standard(*sighash_byte as u32)?,
+            hash_ty: EcdsaSighashType::from_standard(*sighash_byte as u32)
+                .map_err(|_| Error::NonStandardSighashType(*sighash_byte as u32))?,
         })
     }
 }
@@ -222,7 +228,7 @@ impl<'a> IntoIterator for &'a SerializedSignature {
 pub enum Error {
     /// Hex encoding error
     HexEncoding(hex::HexToBytesError),
-    /// Base58 encoding error
+    /// Non-standard sighash type
     NonStandardSighashType(u32),
     /// Empty Signature
     EmptySignature,
@@ -258,12 +264,6 @@ impl std::error::Error for Error {
 impl From<secp256k1::Error> for Error {
     fn from(e: secp256k1::Error) -> Error {
         Error::Secp256k1(e)
-    }
-}
-
-impl From<NonStandardSighashType> for Error {
-    fn from(err: NonStandardSighashType) -> Self {
-        Error::NonStandardSighashType(err.0)
     }
 }
 

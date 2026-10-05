@@ -10,7 +10,7 @@ futures = "0.3"
 hex = "0.4"
 hex_lit = "0.1.1"
 rayon = "1.11"
-secp256k1 = "0.33.1" # must match with version used in `dash-pkc`
+secp256k1 = "0.33.1" # must match with version used in `bitcoin-crypto` and `dash-pkc`
 serde = { version = "1.0.219", default-features = false }
 zeroize = { version = "1.8", features = ["derive"] }
 
@@ -18,9 +18,10 @@ zeroize = { version = "1.8", features = ["derive"] }
 dash-pkc = { git = "https://github.com/dashpay/base-sdk", rev = "e6402ced257c370a586ade9840ebbf545a4b7926", default-features = false }
 dash-types = { git = "https://github.com/dashpay/base-sdk", rev = "e6402ced257c370a586ade9840ebbf545a4b7926", default-features = false }
 
-# Packages from `rust-bitcoin/rust-bitcoin`
+# Packages from `rust-bitcoin/rust-bitcoin`, `bitcoin-crypto` uses revision due to `secp256k1`
 base58ck = { version = "0.5.0" }
 bitcoin_hashes = { version = "0.14.101", default-features = false }
+bitcoin-crypto = { git = "https://github.com/rust-bitcoin/rust-bitcoin", rev = "7ba35c7c1dd63892bfb9c9395bbd80e2ab5df516", default-features = false }
 
 [workspace.package]
 authors = ["The rust-dashcore Developers"]

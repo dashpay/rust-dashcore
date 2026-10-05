@@ -16,10 +16,11 @@ default = []
 bincode = ["dep:bincode", "dep:bincode_derive", "dashcore_hashes/bincode", "dash-network/bincode"]
 bls = ["dep:dash-pkc", "dash-pkc/bls", "dep:tracing"]
 eddsa = ["dep:dash-pkc", "dash-pkc/eddsa"]
-serde = ["dep:serde", "dash-types/serde", "dashcore_hashes/serde", "dash-network/serde", "secp256k1/serde"]
+serde = ["dep:serde", "bitcoin-crypto/serde", "dash-types/serde", "dashcore_hashes/serde", "dash-network/serde", "secp256k1/serde"]
 
 [dependencies]
 base58ck = { workspace = true }
+bitcoin-crypto = { workspace = true, features = ["std", "hex"] }
 bincode = { workspace = true, optional = true }
 bincode_derive = { workspace = true, optional = true }
 dash-network = { path = "../dash-network" }

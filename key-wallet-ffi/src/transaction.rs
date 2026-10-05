@@ -8,8 +8,8 @@ use crate::{check_ptr, FFIWalletManager};
 use crate::{deref_ptr, deref_ptr_mut, unwrap_or_return};
 use dash_network::ffi::FFINetwork;
 use dashcore::{
-    consensus, hashes::Hash, sighash::SighashCache, EcdsaSighashType, Network, OutPoint, Script,
-    ScriptBuf, Transaction, TxIn, TxOut, Txid,
+    consensus, hashes::Hash, sighash::SighashCache, Network, OutPoint, Script, ScriptBuf,
+    Transaction, TxIn, TxOut, Txid,
 };
 use key_wallet::wallet::managed_wallet_info::asset_lock_builder::{
     AssetLockFundingType, CreditOutputFunding,
@@ -509,7 +509,7 @@ pub unsafe extern "C" fn transaction_destroy(tx: *mut FFITransaction) {
 ///
 /// # Returns
 /// - 0 on success
-/// - -1 on error
+/// - -1 on error, including a `sighash_type` above 0xff
 #[no_mangle]
 pub unsafe extern "C" fn transaction_sighash(
     tx: *const FFITransaction,
@@ -519,7 +519,9 @@ pub unsafe extern "C" fn transaction_sighash(
     sighash_type: u32,
     hash_out: *mut u8,
 ) -> i32 {
-    if tx.is_null() || script_pubkey.is_null() || hash_out.is_null() {
+    // The signature carries only the low byte, so a wider flag would sign
+    // a hash nobody can reproduce.
+    if tx.is_null() || script_pubkey.is_null() || hash_out.is_null() || sighash_type > 0xff {
         return -1;
     }
 
@@ -527,10 +529,9 @@ pub unsafe extern "C" fn transaction_sighash(
     let script_slice = slice::from_raw_parts(script_pubkey, script_pubkey_len as usize);
     let script = Script::from_bytes(script_slice);
 
-    let sighash_type = EcdsaSighashType::from_consensus(sighash_type);
     let cache = SighashCache::new(&tx.inner);
 
-    match cache.legacy_signature_hash(input_index as usize, script, sighash_type.to_u32()) {
+    match cache.legacy_signature_hash(input_index as usize, script, sighash_type) {
         Ok(hash) => {
             let hash_bytes: &[u8] = hash.as_ref();
             ptr::copy_nonoverlapping(hash_bytes.as_ptr(), hash_out, 32);
@@ -997,6 +998,31 @@ mod tests {
             user_identity_id: [7u8; 32],
             friend_identity_id: [9u8; 32],
         }
+    }
+
+    #[test]
+    fn sighash_rejects_flags_wider_than_a_byte() {
+        let tx = FFITransaction {
+            inner: Transaction {
+                version: 2,
+                lock_time: 0,
+                input: vec![TxIn::default()],
+                output: vec![TxOut::default()],
+                special_transaction_payload: None,
+            },
+        };
+        let script = [0x51u8];
+        let sighash = |flag: u32| {
+            let mut out = [0u8; 32];
+            let ret =
+                unsafe { transaction_sighash(&tx, 0, script.as_ptr(), 1, flag, out.as_mut_ptr()) };
+            (ret, out)
+        };
+
+        assert_eq!(sighash(0x01).0, 0);
+        assert_eq!(sighash(0xff).0, 0);
+        assert_eq!(sighash(0x100).0, -1);
+        assert_eq!(sighash(0x181).0, -1);
     }
 
     /// Every kind must map to its own preference. A transposed arm here would

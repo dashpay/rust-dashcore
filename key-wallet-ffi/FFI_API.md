@@ -3788,7 +3788,7 @@ transaction_sighash(tx: *const FFITransaction, input_index: u32, script_pubkey: 
 ```
 
 **Description:**
-Calculate signature hash for an input  # Safety - `tx` must be a valid pointer to an FFITransaction - `script_pubkey` must be a valid pointer to the script pubkey - `hash_out` must be a valid pointer to a buffer of at least 32 bytes  # Returns - 0 on success - -1 on error
+Calculate signature hash for an input  # Safety - `tx` must be a valid pointer to an FFITransaction - `script_pubkey` must be a valid pointer to the script pubkey - `hash_out` must be a valid pointer to a buffer of at least 32 bytes  # Returns - 0 on success - -1 on error, including a `sighash_type` above 0xff
 
 **Safety:**
 - `tx` must be a valid pointer to an FFITransaction - `script_pubkey` must be a valid pointer to the script pubkey - `hash_out` must be a valid pointer to a buffer of at least 32 bytes

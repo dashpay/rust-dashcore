@@ -285,7 +285,7 @@ impl Witness {
         // Note that a maximal length ECDSA signature is 72 bytes, plus the sighash type makes 73
         let mut sig = [0; 73];
         sig[..signature.len()].copy_from_slice(signature);
-        sig[signature.len()] = hash_type as u8;
+        sig[signature.len()] = hash_type.to_consensus_u8();
         self.push(&sig[..signature.len() + 1]);
     }
 

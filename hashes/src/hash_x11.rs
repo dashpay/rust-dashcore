@@ -25,7 +25,7 @@ use std::io;
 use std::vec::Vec;
 
 use crate::hex::FromHex as _;
-use crate::{hex, FromSliceError, Hash as _, HashEngine as _};
+use crate::{hex, FromSliceError, HashEngine as _};
 
 /// Output of the X11 hash function.
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
