@@ -827,6 +827,34 @@ pub type OnTransactionsSweptCallback = Option<
     ),
 >;
 
+/// Callback for `WalletEvent::ChainTruncated`.
+///
+/// Fires once per wallet when a fork replaced the chain above `height` and the
+/// wallet dropped what it recorded from the blocks above it. A consumer
+/// mirroring wallet state to disk must delete the `txids_count` transactions
+/// at `txids` with any UTXO they created, mark the `restored_outpoints_count`
+/// coins at `restored_outpoints` unspent, and lower its synced height to
+/// `height`. `txids` and `restored_outpoints` are null when their count is 0.
+///
+/// All pointer parameters are borrowed and only valid for the duration of the
+/// callback. `balance` is the wallet's balance *after* the truncation;
+/// `account_balances` follows the same contract as on
+/// [`OnTransactionDetectedCallback`].
+pub type OnChainTruncatedCallback = Option<
+    extern "C" fn(
+        wallet_id: *const c_char,
+        height: u32,
+        txids: *const [u8; 32],
+        txids_count: usize,
+        restored_outpoints: *const FFIOutPoint,
+        restored_outpoints_count: usize,
+        balance: *const FFIBalance,
+        account_balances: *const FFIAccountBalance,
+        account_balances_count: u32,
+        user_data: *mut c_void,
+    ),
+>;
+
 /// Callback for `WalletEvent::TransactionInstantLocked`.
 ///
 /// Fires when an InstantSend lock is applied to a previously-seen off-chain
@@ -988,6 +1016,7 @@ pub struct FFIWalletEventCallbacks {
     pub on_block_processed: OnWalletBlockProcessedCallback,
     pub on_sync_height_advanced: OnSyncHeightAdvancedCallback,
     pub on_chain_lock_processed: OnWalletChainLockProcessedCallback,
+    pub on_chain_truncated: OnChainTruncatedCallback,
     pub user_data: *mut c_void,
 }
 
@@ -1004,6 +1033,7 @@ impl Default for FFIWalletEventCallbacks {
             on_block_processed: None,
             on_sync_height_advanced: None,
             on_chain_lock_processed: None,
+            on_chain_truncated: None,
             user_data: std::ptr::null_mut(),
         }
     }
@@ -1161,6 +1191,58 @@ impl FFIWalletEventCallbacks {
                         %superseded_by,
                         "no on_transactions_swept callback set; the consumer will keep \
                          mirroring transactions the wallet removed"
+                    );
+                }
+            }
+            WalletEvent::ChainTruncated {
+                wallet_id,
+                height,
+                txids,
+                restored_outpoints,
+                balance,
+                account_balances,
+            } => {
+                if let Some(cb) = self.on_chain_truncated {
+                    let c_wallet_id = CString::new(hex::encode(wallet_id)).unwrap_or_default();
+                    let raw_txids: Vec<[u8; 32]> =
+                        txids.iter().map(|t| t.to_byte_array()).collect();
+                    let txids_ptr = if raw_txids.is_empty() {
+                        ptr::null()
+                    } else {
+                        raw_txids.as_ptr()
+                    };
+                    let ffi_restored_outpoints = FFIOutPoint::from_slice(restored_outpoints);
+                    let restored_outpoints_ptr = if ffi_restored_outpoints.is_empty() {
+                        ptr::null()
+                    } else {
+                        ffi_restored_outpoints.as_ptr()
+                    };
+                    let ffi_balance = FFIBalance::from(*balance);
+                    let ffi_account_balances = FFIAccountBalance::from_map(account_balances);
+                    let account_balances_ptr = if ffi_account_balances.is_empty() {
+                        ptr::null()
+                    } else {
+                        ffi_account_balances.as_ptr()
+                    };
+
+                    cb(
+                        c_wallet_id.as_ptr(),
+                        *height,
+                        txids_ptr,
+                        raw_txids.len(),
+                        restored_outpoints_ptr,
+                        ffi_restored_outpoints.len(),
+                        &ffi_balance as *const FFIBalance,
+                        account_balances_ptr,
+                        ffi_account_balances.len() as u32,
+                        self.user_data,
+                    );
+                } else {
+                    tracing::warn!(
+                        wallet_id = %hex::encode(wallet_id),
+                        height,
+                        "no on_chain_truncated callback set; the consumer will keep \
+                         mirroring transactions the wallet dropped after a fork"
                     );
                 }
             }

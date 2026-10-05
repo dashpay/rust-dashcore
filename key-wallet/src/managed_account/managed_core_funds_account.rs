@@ -27,6 +27,7 @@ use crate::transaction_checking::transaction_router::TransactionType;
 use crate::transaction_checking::{AccountMatch, TransactionContext};
 use crate::utxo::Utxo;
 use crate::wallet::balance::WalletCoreBalance;
+use crate::wallet::managed_wallet_info::wallet_info_interface::Truncation;
 use crate::{ExtendedPubKey, Network};
 use dashcore::blockdata::transaction::OutPoint;
 use dashcore::prelude::CoreBlockHeight;
@@ -65,6 +66,9 @@ pub struct ManagedCoreFundsAccount {
     /// Ours, but spent before the funding arrived, so never in `utxos` (#649).
     /// Input matching falls back to these.
     pub(crate) spent_before_funded: BTreeMap<OutPoint, Utxo>,
+    /// The UTXOs removed by each spend not yet chainlocked, so a fork that drops
+    /// the spend can put them back.
+    unsettled_spends: BTreeMap<Txid, Vec<Utxo>>,
     /// Outpoints reserved by in-flight transaction builds so concurrent builds
     /// do not select the same UTXO before the first build's transaction is
     /// processed. Empty after a restart, where chain and mempool sync
@@ -107,6 +111,7 @@ impl ManagedCoreFundsAccount {
             utxos: BTreeMap::new(),
             spent_outpoints: HashSet::new(),
             spent_before_funded: BTreeMap::new(),
+            unsettled_spends: BTreeMap::new(),
             reservations: ReservationSet::default(),
         }
     }
@@ -135,6 +140,7 @@ impl ManagedCoreFundsAccount {
             utxos: BTreeMap::new(),
             spent_outpoints: HashSet::new(),
             spent_before_funded: BTreeMap::new(),
+            unsettled_spends: BTreeMap::new(),
             reservations: ReservationSet::default(),
         }
     }
@@ -402,14 +408,18 @@ impl ManagedCoreFundsAccount {
                     self.spent_outpoints.insert(input.previous_output);
                     self.spent_before_funded.remove(&input.previous_output);
 
-                    if self.utxos.remove(&input.previous_output).is_some() {
+                    if let Some(spent) = self.utxos.remove(&input.previous_output) {
                         tracing::debug!(
                             outpoint = %input.previous_output,
                             txid = %tx.txid(),
                             "Removed spent UTXO"
                         );
+                        self.unsettled_spends.entry(txid).or_default().push(spent);
                         utxos_changed = true;
                     }
+                }
+                if context.is_chain_locked() {
+                    self.unsettled_spends.remove(&txid);
                 }
 
                 if utxos_changed {
@@ -491,6 +501,7 @@ impl ManagedCoreFundsAccount {
         let mut records = 0;
         let mut freed: HashSet<OutPoint> = HashSet::new();
         for txid in abandoned {
+            self.unsettled_spends.remove(txid);
             if let Some(record) = self.keys.transactions_mut().remove(txid) {
                 records += 1;
                 freed.extend(record.transaction.input.iter().map(|input| input.previous_output));
@@ -506,6 +517,58 @@ impl ManagedCoreFundsAccount {
         AbandonRemoval {
             utxos,
             records,
+        }
+    }
+
+    /// Drop the transactions recorded in blocks above `height`, like
+    /// [`Self::apply_abandon`], and put back the coins they spent from
+    /// transactions the fork keeps, along with the ones held in
+    /// `spent_before_funded` for a spend in `dropped_spends`, the spends observed
+    /// above `height`.
+    pub(crate) fn truncate_above(
+        &mut self,
+        height: CoreBlockHeight,
+        dropped_spends: &BTreeSet<OutPoint>,
+    ) -> Truncation {
+        let dropped: BTreeSet<Txid> = self
+            .keys
+            .transactions()
+            .values()
+            .filter(|record| record.height().is_some_and(|block| block > height))
+            .map(|record| record.txid)
+            .collect();
+        let mut spent: Vec<Utxo> = dropped
+            .iter()
+            .filter_map(|txid| self.unsettled_spends.remove(txid))
+            .flatten()
+            .collect();
+        self.apply_abandon(&dropped);
+        spent.extend(
+            dropped_spends.iter().filter_map(|outpoint| self.spent_before_funded.remove(outpoint)),
+        );
+
+        let mut restored = Vec::new();
+        for mut utxo in spent {
+            let outpoint = utxo.outpoint;
+            if dropped.contains(&outpoint.txid) || self.spent_outpoints.contains(&outpoint) {
+                continue;
+            }
+            // Spent in a block, so funded in one the fork keeps.
+            utxo.is_confirmed = true;
+            if let Some(height) =
+                self.keys.transactions().get(&outpoint.txid).and_then(|parent| parent.height())
+            {
+                utxo.height = height;
+            }
+            self.utxos.insert(outpoint, utxo);
+            restored.push(outpoint);
+        }
+        if !restored.is_empty() {
+            self.keys.bump_monitor_revision();
+        }
+        Truncation {
+            txids: dropped.into_iter().collect(),
+            restored_outpoints: restored,
         }
     }
 
@@ -655,6 +718,7 @@ impl ManagedCoreFundsAccount {
                 changed = true;
             }
             self.spent_before_funded.retain(|outpoint, _| outpoint.txid != *loser);
+            self.unsettled_spends.remove(loser);
             if let Some(record) = self.keys.transactions_mut().remove(loser) {
                 freed.extend(record.transaction.input.iter().map(|input| input.previous_output));
             }
@@ -968,7 +1032,11 @@ impl ManagedCoreFundsAccount {
     /// spentness or maturity, only the certainty of its parent
     /// transaction.
     pub(crate) fn apply_chain_lock(&mut self, cl_height: CoreBlockHeight) -> Vec<Txid> {
-        self.keys.apply_chain_lock(cl_height)
+        let promoted = self.keys.apply_chain_lock(cl_height);
+        for txid in &promoted {
+            self.unsettled_spends.remove(txid);
+        }
+        promoted
     }
 
     /// Update the account balance.
@@ -1324,6 +1392,8 @@ impl<'de> Deserialize<'de> for ManagedCoreFundsAccount {
             utxos: BTreeMap<OutPoint, Utxo>,
             #[serde(default)]
             spent_before_funded: BTreeMap<OutPoint, Utxo>,
+            #[serde(default)]
+            unsettled_spends: BTreeMap<Txid, Vec<Utxo>>,
         }
 
         let helper = Helper::deserialize(deserializer)?;
@@ -1336,6 +1406,7 @@ impl<'de> Deserialize<'de> for ManagedCoreFundsAccount {
             utxos: helper.utxos,
             spent_outpoints,
             spent_before_funded: helper.spent_before_funded,
+            unsettled_spends: helper.unsettled_spends,
             reservations: ReservationSet::default(),
         })
     }

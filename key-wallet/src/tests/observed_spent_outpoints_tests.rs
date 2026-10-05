@@ -30,6 +30,7 @@ use crate::managed_account::transaction_record::TransactionDirection;
 use crate::test_utils::TestWalletContext;
 use crate::transaction_checking::{BlockInfo, TransactionContext};
 use crate::wallet::managed_wallet_info::managed_account_operations::ManagedAccountOperations;
+use crate::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
 use crate::wallet::ManagedWalletInfo;
 use crate::AccountType;
 
@@ -652,4 +653,33 @@ async fn recording_observed_spend_reports_state_modified() {
     let mempool_spend = spending_tx(&[OutPoint::new(Txid::from([0x78; 32]), 0)]);
     let result = ctx.check_transaction(&mempool_spend, TransactionContext::Mempool).await;
     assert!(!result.state_modified, "a mempool spend records nothing");
+}
+
+#[test]
+fn truncate_above_drops_spends_observed_above_the_fork() {
+    let mut info = ManagedWalletInfo::dummy(9);
+    let op_kept = OutPoint::new(Txid::from([0x01; 32]), 0);
+    let op_dropped = OutPoint::new(Txid::from([0x02; 32]), 0);
+    info.record_observed_spends(&spending_tx(&[op_kept]), 100);
+    info.record_observed_spends(&spending_tx(&[op_dropped]), 101);
+
+    info.truncate_above(100);
+
+    assert!(info.observed_spent_outpoints().contains_key(&op_kept));
+    assert!(!info.observed_spent_outpoints().contains_key(&op_dropped));
+}
+
+#[tokio::test]
+async fn truncate_above_restores_a_held_output_whose_spend_it_drops() {
+    let (mut ctx, funding, _spend) = spend_first_context(in_block(100, 1)).await;
+    let outpoint = OutPoint::new(funding.txid(), 0);
+
+    let truncation = ctx.managed_wallet.truncate_above(150);
+
+    assert_eq!(truncation.restored_outpoints, vec![outpoint]);
+    let account = ctx.managed_wallet.first_bip44_managed_account().expect("BIP44 account");
+    assert!(account.spent_before_funded.is_empty());
+    let utxo = account.utxos.get(&outpoint).expect("the held output is a UTXO again");
+    assert!(utxo.is_confirmed);
+    assert_eq!(ctx.managed_wallet.balance.total(), SPEND_FIRST_FUNDING_VALUE);
 }

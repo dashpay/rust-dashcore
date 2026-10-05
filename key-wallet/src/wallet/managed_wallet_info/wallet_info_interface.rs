@@ -45,6 +45,15 @@ pub struct ApplyChainLockOutcome {
     pub metadata_advanced: bool,
 }
 
+/// What [`WalletInfoInterface::truncate_above`] changed.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Truncation {
+    /// Transactions removed: they were recorded in blocks above the height.
+    pub txids: Vec<Txid>,
+    /// Coins those transactions spent, unspent again.
+    pub restored_outpoints: Vec<OutPoint>,
+}
+
 /// Trait that wallet info types must implement to work with WalletManager
 pub trait WalletInfoInterface: Sized + WalletTransactionChecker + ManagedAccountOperations {
     /// Create a wallet info from an existing wallet, seeding the sync checkpoint at
@@ -254,6 +263,13 @@ pub trait WalletInfoInterface: Sized + WalletTransactionChecker + ManagedAccount
 
     /// Record that the durable wallet sync checkpoint has advanced to `current_height`.
     fn update_synced_height(&mut self, current_height: u32);
+
+    /// Drop what the wallet recorded from blocks above `height`, as if they were
+    /// never processed: their transactions, the UTXOs they created, the spends
+    /// observed in them, and the sync heights past `height`. The coins those
+    /// transactions spent are unspent again. Used when a fork replaces the chain
+    /// above `height`.
+    fn truncate_above(&mut self, height: CoreBlockHeight) -> Truncation;
 
     /// Records whose coinbase maturity threshold lies in
     /// `(old_height, new_height]`, i.e. coinbase records that just matured
@@ -543,6 +559,47 @@ impl WalletInfoInterface for ManagedWalletInfo {
         // A newly committed checkpoint can lift the finality boundary when the
         // chainlock was already ahead of the old synced_height.
         self.prune_finalized_observed_spends();
+    }
+
+    fn truncate_above(&mut self, height: CoreBlockHeight) -> Truncation {
+        let dropped_spends: BTreeSet<OutPoint> = self
+            .observed_spent_outpoints
+            .iter()
+            .filter(|(_, spent_at)| **spent_at > height)
+            .map(|(outpoint, _)| *outpoint)
+            .collect();
+        self.observed_spent_outpoints.retain(|outpoint, _| !dropped_spends.contains(outpoint));
+
+        let mut txids = BTreeSet::new();
+        let mut restored_outpoints = Vec::new();
+        for account in self.accounts.all_accounts_mut() {
+            match account {
+                ManagedAccountRefMut::Funds(funds) => {
+                    let truncation = funds.truncate_above(height, &dropped_spends);
+                    txids.extend(truncation.txids);
+                    restored_outpoints.extend(truncation.restored_outpoints);
+                }
+                ManagedAccountRefMut::Keys(keys) => {
+                    keys.transactions_mut().retain(|txid, record| {
+                        let dropped = record.height().is_some_and(|block| block > height);
+                        if dropped {
+                            txids.insert(*txid);
+                        }
+                        !dropped
+                    });
+                }
+            }
+        }
+
+        self.metadata.synced_height = self.metadata.synced_height.min(height);
+        self.metadata.last_processed_height = self.metadata.last_processed_height.min(height);
+        self.update_balance();
+
+        restored_outpoints.sort_unstable();
+        Truncation {
+            txids: txids.into_iter().collect(),
+            restored_outpoints,
+        }
     }
 
     fn matured_coinbase_records(

@@ -1244,6 +1244,45 @@ async fn test_update_wallet_synced_height_emits_event_per_wallet() {
 }
 
 #[tokio::test]
+async fn test_truncate_above_emits_chain_truncated_per_wallet() {
+    let (mut manager, wallet_id, addr) = setup_manager_with_wallet();
+    let wallets = BTreeSet::from([wallet_id]);
+    let funding = create_tx_paying_to(&addr, 0xcc);
+    let block = make_block(vec![funding.clone()], 0xcc, 1000);
+    manager.process_block_for_wallets(&block, block.block_hash(), 100, &wallets).await;
+
+    let mut spend = create_tx_paying_to(&addr, 0xdd);
+    spend.input[0].previous_output = OutPoint::new(funding.txid(), 0);
+    spend.output[0].value = TX_AMOUNT - 1_000;
+    let block = make_block(vec![spend.clone()], 0xdd, 1001);
+    manager.process_block_for_wallets(&block, block.block_hash(), 101, &wallets).await;
+
+    let mut rx = manager.subscribe_events();
+    manager.truncate_above(100);
+
+    let events = drain_events(&mut rx);
+    assert_eq!(events.len(), 1, "one event per wallet expected, got {:?}", events);
+    match &events[0] {
+        WalletEvent::ChainTruncated {
+            wallet_id: wid,
+            height,
+            txids,
+            restored_outpoints,
+            balance,
+            account_balances,
+        } => {
+            assert_eq!(*wid, wallet_id);
+            assert_eq!(*height, 100);
+            assert_eq!(txids, &vec![spend.txid()]);
+            assert_eq!(restored_outpoints, &vec![OutPoint::new(funding.txid(), 0)]);
+            assert_eq!(balance.total(), TX_AMOUNT);
+            assert_eq!(account_balances.values().map(|b| b.total()).sum::<u64>(), TX_AMOUNT);
+        }
+        other => panic!("expected ChainTruncated, got {:?}", other),
+    }
+}
+
+#[tokio::test]
 async fn test_update_wallet_synced_height_does_not_re_emit_when_unchanged() {
     let (mut manager, wallet_id, _addr) = setup_manager_with_wallet();
     let mut rx = manager.subscribe_events();

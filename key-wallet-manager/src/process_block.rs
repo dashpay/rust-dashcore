@@ -381,6 +381,25 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
         }
     }
 
+    fn truncate_above(&mut self, height: CoreBlockHeight) {
+        let mut events = Vec::new();
+        for (wallet_id, info) in self.wallet_infos.iter_mut() {
+            let prior = info.account_balances();
+            let truncation = info.truncate_above(height);
+            events.push(WalletEvent::ChainTruncated {
+                wallet_id: *wallet_id,
+                height,
+                txids: truncation.txids,
+                restored_outpoints: truncation.restored_outpoints,
+                balance: info.balance(),
+                account_balances: diff_account_balances(&prior, &info.account_balances()),
+            });
+        }
+        for event in events {
+            self.emit_event(event);
+        }
+    }
+
     fn update_wallet_last_processed_height(
         &mut self,
         wallet_id: &WalletId,

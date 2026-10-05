@@ -93,7 +93,7 @@ pub trait BlockHeaderStorage: Send + Sync + 'static {
     /// Drop all headers with `height > target_height`.
     ///
     /// Truncating above the current tip is a no-op, truncating below
-    /// `start_height` returns an error. Changes are applied in-memory and
+    /// `start_height` drops everything. Changes are applied in-memory and
     /// flushed on the next `persist`.
     ///
     /// The truncation is not durable until the next successful `persist` call.
