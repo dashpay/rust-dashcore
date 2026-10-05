@@ -139,6 +139,11 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> BlockHeadersManager<H, M> {
         let matched = self.pipeline.receive_headers(headers)?;
 
         if matched.is_none() && !headers.is_empty() {
+            if let Some(fork_height) = self.fork_height(headers).await? {
+                return Ok(vec![SyncEvent::ForkDetected {
+                    fork_height,
+                }]);
+            }
             tracing::debug!(
                 "Headers not matched by pipeline (prev_hash: {}), may be post-sync update",
                 headers[0].header().prev_blockhash
@@ -174,6 +179,25 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> BlockHeadersManager<H, M> {
             self.progress.bump_last_activity();
         }
         Ok(events)
+    }
+
+    /// Height where `headers` branch off the stored chain below its tip, if they do.
+    async fn fork_height(&self, headers: &[HashedBlockHeader]) -> SyncResult<Option<u32>> {
+        let storage = self.header_storage.read().await;
+
+        // Skip the headers we already store: a peer may resend part of our chain.
+        for header in headers {
+            if storage.get_header_height_by_hash(header.hash()).await?.is_some() {
+                continue;
+            }
+
+            let parent = storage.get_header_height_by_hash(&header.header().prev_blockhash).await?;
+            let tip = storage.get_tip_height().await;
+
+            return Ok(parent.filter(|&parent| tip.is_some_and(|tip| parent < tip)));
+        }
+
+        Ok(None)
     }
 
     /// Write segments that finished downloading into storage.

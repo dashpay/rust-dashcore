@@ -70,6 +70,30 @@ pub(super) async fn wait_for_sync(
     }
 }
 
+/// Wait for the next `SyncComplete` and check it reached `target_height`.
+///
+/// Unlike [`wait_for_sync`], a value left over from a previous run cannot
+/// satisfy it, so it also works right after restarting a client.
+pub(super) async fn wait_for_sync_complete(
+    sync_event_receiver: &mut broadcast::Receiver<SyncEvent>,
+    target_height: u32,
+) {
+    tokio::time::timeout(SYNC_TIMEOUT, async {
+        loop {
+            if let Ok(SyncEvent::SyncComplete {
+                header_tip,
+                ..
+            }) = sync_event_receiver.recv().await
+            {
+                assert_eq!(header_tip, target_height);
+                return;
+            }
+        }
+    })
+    .await
+    .expect("Timeout waiting for SyncComplete");
+}
+
 /// Count all unique transactions across wallet accounts.
 pub(super) async fn count_wallet_transactions(
     wallet: &Arc<RwLock<WalletManager<ManagedWalletInfo>>>,

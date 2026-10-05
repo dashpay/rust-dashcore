@@ -9,7 +9,6 @@ mod tests {
     use dash_network::ffi::FFINetwork;
     use serial_test::serial;
     use std::ffi::CString;
-    use std::sync::mpsc;
     use std::sync::{Arc as StdArc, Mutex as StdMutex};
     use std::thread;
     use std::time::Duration;
@@ -213,57 +212,17 @@ mod tests {
 
     #[test]
     #[serial]
-    fn test_client_error_callback_fires_on_start_failure() {
-        let (tx, rx) = mpsc::channel::<String>();
-        let tx_ptr = Box::into_raw(Box::new(tx));
-
-        extern "C" fn on_error(
-            error: *const std::os::raw::c_char,
-            user_data: *mut std::os::raw::c_void,
-        ) {
-            let tx = unsafe { &*(user_data as *const mpsc::Sender<String>) };
-            let error_str = unsafe { std::ffi::CStr::from_ptr(error) }.to_str().unwrap().to_owned();
-            let _ = tx.send(error_str);
-        }
-
+    fn test_client_run_twice_succeeds() {
         unsafe {
             let (config, _temp_dir) = create_test_config_with_dir();
-            let callbacks = FFIEventCallbacks {
-                error: FFIClientErrorCallback {
-                    on_error: Some(on_error),
-                    user_data: tx_ptr as *mut std::os::raw::c_void,
-                },
-                ..FFIEventCallbacks::default()
-            };
-            let client = dash_spv_ffi_client_new(config, callbacks);
+            let client = dash_spv_ffi_client_new(config, FFIEventCallbacks::default());
             assert!(!client.is_null());
 
-            // Call run() twice — the second run's sync thread will call
-            // start() on the already-running client, triggering "already running"
-            let run_result = dash_spv_ffi_client_run(client);
-            assert_eq!(run_result, FFIErrorCode::Success as i32);
-
-            // Brief wait for the first run's sync thread to complete start()
-            thread::sleep(Duration::from_millis(200));
-
-            let _run_result2 = dash_spv_ffi_client_run(client);
-
-            // Wait for the error callback to fire (with timeout)
-            let error_msg = rx
-                .recv_timeout(Duration::from_secs(5))
-                .expect("Error callback should have been called on start failure");
-            assert!(
-                error_msg.contains("already running"),
-                "Expected 'already running' error, got: {}",
-                error_msg
-            );
+            // A second `run` on a running client does nothing.
+            assert_eq!(dash_spv_ffi_client_run(client), FFIErrorCode::Success as i32);
+            assert_eq!(dash_spv_ffi_client_run(client), FFIErrorCode::Success as i32);
 
             dash_spv_ffi_client_stop(client);
-
-            // Free the sender only after stop has joined all threads,
-            // so no background thread can call on_error with a dangling user_data.
-            drop(Box::from_raw(tx_ptr));
-
             dash_spv_ffi_client_destroy(client);
             dash_spv_ffi_config_destroy(config);
         }

@@ -404,17 +404,11 @@ async fn run_client<S: dash_spv::storage::StorageManager>(
             }
         };
 
-    let stop_client = client.clone();
-    tokio::spawn(async move {
-        if tokio::signal::ctrl_c().await.is_ok() {
-            tracing::debug!("Shutdown signal received");
-            if let Err(e) = stop_client.stop().await {
-                tracing::warn!("Error during ctrl-c stop: {}", e);
-            }
-        }
-    });
-
     client.run().await?;
+
+    // Sync in the background until Ctrl-C.
+    tokio::signal::ctrl_c().await?;
+    client.stop().await;
 
     Ok(())
 }
