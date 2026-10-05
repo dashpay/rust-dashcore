@@ -142,11 +142,12 @@ mod tests {
     use dashcore::consensus::deserialize;
     use dashcore::sml::llmq_type::LLMQType;
     use dashcore::QuorumHash;
+    use hex_conservative::DisplayHex;
     use test_case::test_case;
 
     /// An IS lock of the mainnet fixture's cycle, signed by its quorum at index 23.
     fn fixture_is_lock() -> InstantLock {
-        deserialize(&hex::decode("01018d53e7997ead57409750942af0d5e0aafc06f852a9a52308f4781b6a8220298f00000000c6f9d8c63dd15937ea70aaddb7890daad42c91bf6818e2bf76d183d6f2d9215b4b5f84978fad9dde7ab52bdcc0674be891e9029cc1ef0cb01200000000000000a27c98836c4c04653ab81eb4e07ddfc2c8c2c1036b75247969c05a4f25451cd78913a971f1899d9f2bddec9cf8e0104004f72f20c2856453e5aa3bcd2a8200670ec28feda38f67cc400fc72ef1966956656ec0765478c9d16e9a9e470c07f9ed").unwrap()).unwrap()
+        deserialize(&hex_conservative::decode_to_vec("01018d53e7997ead57409750942af0d5e0aafc06f852a9a52308f4781b6a8220298f00000000c6f9d8c63dd15937ea70aaddb7890daad42c91bf6818e2bf76d183d6f2d9215b4b5f84978fad9dde7ab52bdcc0674be891e9029cc1ef0cb01200000000000000a27c98836c4c04653ab81eb4e07ddfc2c8c2c1036b75247969c05a4f25451cd78913a971f1899d9f2bddec9cf8e0104004f72f20c2856453e5aa3bcd2a8200670ec28feda38f67cc400fc72ef1966956656ec0765478c9d16e9a9e470c07f9ed").unwrap()).unwrap()
     }
 
     #[test]
@@ -177,13 +178,15 @@ mod tests {
 
         let request_id = lock.request_id().expect("expected to make request id");
         assert_eq!(
-            hex::encode(request_id),
+            request_id.as_byte_array().to_lower_hex_string(),
             "481ca36cf80fde8fda333915e33c27014dad65fa9f3b54bc4d8bc45be7c81ddf"
         );
         let quorum_hash = QuorumHash::from_slice(
-            hex::decode("00000000000000197368b224f2f01031991dd07aad0b43b2293a51fce8853ba0")
-                .expect("expected bytes")
-                .as_slice(),
+            hex_conservative::decode_to_vec(
+                "00000000000000197368b224f2f01031991dd07aad0b43b2293a51fce8853ba0",
+            )
+            .expect("expected bytes")
+            .as_slice(),
         )
         .expect("expected quorum hash")
         .reverse();
@@ -193,7 +196,7 @@ mod tests {
         let sign_id =
             lock.sign_id(LLMQType::Llmqtype60_75, quorum_hash, None).expect("expected sign id");
         assert_eq!(
-            hex::encode(sign_id),
+            sign_id.as_byte_array().to_lower_hex_string(),
             "6fcbf58004b118d865a448bf89d9299c64d4ecedd754dabec655090224de91cd"
         );
         validator.validate(&lock).expect("expected to verify is lock");

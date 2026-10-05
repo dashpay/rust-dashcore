@@ -11,6 +11,7 @@ use dash_spv::network::NetworkEvent;
 use dash_spv::sync::{SyncEvent, SyncProgress};
 use dash_spv::EventHandler;
 use dashcore::hashes::Hash;
+use hex_conservative::DisplayHex;
 use key_wallet::account::AccountType;
 use key_wallet::WalletCoreBalance;
 use key_wallet_ffi::managed_account::{FFIAccountType, FFITransactionRecord};
@@ -1120,7 +1121,7 @@ impl FFIWalletEventCallbacks {
                 account_balances,
             } => {
                 if let Some(cb) = self.on_transactions_swept {
-                    let wallet_id_hex = hex::encode(wallet_id);
+                    let wallet_id_hex = wallet_id.to_lower_hex_string();
                     let c_wallet_id = CString::new(wallet_id_hex).unwrap_or_default();
                     let raw_txids: Vec<[u8; 32]> =
                         txids.iter().map(|t| t.to_byte_array()).collect();
@@ -1159,7 +1160,7 @@ impl FFIWalletEventCallbacks {
                     // additive, so a consumer that leaves this one unset keeps
                     // transactions the wallet has already dropped.
                     tracing::warn!(
-                        wallet_id = %hex::encode(wallet_id),
+                        wallet_id = %wallet_id.to_lower_hex_string(),
                         swept = txids.len(),
                         %superseded_by,
                         "no on_transactions_swept callback set; the consumer will keep \
@@ -1175,7 +1176,7 @@ impl FFIWalletEventCallbacks {
                 addresses_derived,
             } => {
                 if let Some(cb) = self.on_transaction_detected {
-                    let wallet_id_hex = hex::encode(wallet_id);
+                    let wallet_id_hex = wallet_id.to_lower_hex_string();
                     let c_wallet_id = CString::new(wallet_id_hex).unwrap_or_default();
                     let ffi_record = FFITransactionRecord::from(record.as_ref());
                     let ffi_balance = FFIBalance::from(*balance);
@@ -1215,7 +1216,7 @@ impl FFIWalletEventCallbacks {
                 account_balances,
             } => {
                 if let Some(cb) = self.on_transaction_instant_locked {
-                    let wallet_id_hex = hex::encode(wallet_id);
+                    let wallet_id_hex = wallet_id.to_lower_hex_string();
                     let c_wallet_id = CString::new(wallet_id_hex).unwrap_or_default();
                     let txid_bytes = *txid.as_byte_array();
                     let islock_bytes = dashcore::consensus::serialize(instant_lock);
@@ -1253,7 +1254,7 @@ impl FFIWalletEventCallbacks {
                 chain_lock,
             } => {
                 if let Some(cb) = self.on_block_processed {
-                    let wallet_id_hex = hex::encode(wallet_id);
+                    let wallet_id_hex = wallet_id.to_lower_hex_string();
                     let c_wallet_id = CString::new(wallet_id_hex).unwrap_or_default();
                     let ffi_inserted: Vec<FFITransactionRecord> =
                         inserted.iter().map(FFITransactionRecord::from).collect();
@@ -1337,7 +1338,7 @@ impl FFIWalletEventCallbacks {
                 height,
             } => {
                 if let Some(cb) = self.on_sync_height_advanced {
-                    let wallet_id_hex = hex::encode(wallet_id);
+                    let wallet_id_hex = wallet_id.to_lower_hex_string();
                     let c_wallet_id = CString::new(wallet_id_hex).unwrap_or_default();
                     cb(c_wallet_id.as_ptr(), *height, self.user_data);
                 }
@@ -1348,7 +1349,7 @@ impl FFIWalletEventCallbacks {
                 locked_transactions,
             } => {
                 if let Some(cb) = self.on_chain_lock_processed {
-                    let wallet_id_hex = hex::encode(wallet_id);
+                    let wallet_id_hex = wallet_id.to_lower_hex_string();
                     let c_wallet_id = CString::new(wallet_id_hex).unwrap_or_default();
                     let ffi_finalized = FFIChainlockedTxid::from_map(locked_transactions);
                     let finalized_ptr = if ffi_finalized.is_empty() {
@@ -1637,7 +1638,11 @@ mod tests {
         });
 
         let captured = CAPTURED.lock().unwrap().take().expect("callback fired");
-        assert_eq!(captured.wallet_id_hex, hex::encode(wallet_id), "wallet_id hex-encoding");
+        assert_eq!(
+            captured.wallet_id_hex,
+            wallet_id.to_lower_hex_string(),
+            "wallet_id hex-encoding"
+        );
         assert_eq!(captured.cl_height, 777, "cl_height");
         assert_eq!(captured.cl_hash, expected_hash, "cl_hash round-trip");
         assert_eq!(captured.cl_signature, expected_sig, "cl_signature round-trip");

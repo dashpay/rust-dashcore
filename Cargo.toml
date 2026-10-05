@@ -7,8 +7,6 @@ resolver = "2"
 bincode = { package = "grovedb-bincode", version = "=2.1.0" }
 bincode_derive = { package = "grovedb-bincode-derive", version = "=2.1.0" }
 futures = "0.3"
-hex = "0.4"
-hex_lit = "0.1.1"
 rayon = "1.11"
 secp256k1 = "0.33.1" # must match with version used in `bitcoin-crypto` and `dash-pkc`
 serde = { version = "1.0.219", default-features = false }

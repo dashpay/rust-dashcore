@@ -20,6 +20,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 use super::DashSpvClient;
+use hex_conservative::DisplayHex;
 
 impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, N, S> {
     // ============ Peer Queries ============
@@ -107,7 +108,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
                 "Quorum not found: type {} at or before height {} with hash {}",
                 quorum_type,
                 height,
-                hex::encode(quorum_hash)
+                quorum_hash.as_byte_array().to_lower_hex_string()
             );
             tracing::warn!("{}", message);
             SpvError::QuorumLookupError(message)
