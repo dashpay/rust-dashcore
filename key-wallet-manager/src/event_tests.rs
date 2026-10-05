@@ -2336,7 +2336,7 @@ async fn late_funding_block_publishes_spender_correction() {
 }
 
 #[tokio::test]
-async fn late_funding_recorded_sibling_spender_needs_no_reapply() {
+async fn late_funding_recorded_sibling_spender_is_corrected_after_reapply() {
     let (mut manager, wallet_id, addr) = setup_manager_with_wallet();
     let sibling_address = manager.wallet_infos[&wallet_id]
         .coinjoin_managed_account_at_index(0)
@@ -2367,20 +2367,36 @@ async fn late_funding_recorded_sibling_spender_needs_no_reapply() {
     let fund_block = make_block(vec![funding.clone()], 0xdc, 100);
     let result =
         manager.process_block_for_wallets(&fund_block, fund_block.block_hash(), 1, &wallets).await;
+    assert_eq!(result.reapply_heights, BTreeMap::from([(wallet_id, BTreeSet::from([2]))]));
+    drain_events(&mut rx);
+    for (replay_wallet_id, heights) in result.reapply_heights {
+        for height in heights {
+            let replay = manager
+                .process_block_for_wallets(
+                    &spend_block,
+                    spend_block.block_hash(),
+                    height,
+                    &BTreeSet::from([replay_wallet_id]),
+                )
+                .await;
+            assert!(replay.reapply_heights.is_empty());
+        }
+    }
     let events = drain_events(&mut rx);
     let corrected = events
         .iter()
         .find_map(|event| match event {
             WalletEvent::BlockProcessed {
+                inserted,
                 updated,
                 ..
-            } => updated.iter().find(|record| {
+            } => inserted.iter().chain(updated).find(|record| {
                 record.txid == spender.txid()
                     && matches!(record.account_type, AccountType::Standard { .. })
             }),
             _ => None,
         })
-        .expect("funding event contains reconstructed BIP44 spender");
+        .expect("replayed block publishes the BIP44 spender");
     assert_eq!(corrected.net_amount, -1_000_000);
     assert_eq!(corrected.input_details.len(), 1);
     assert_eq!(corrected.input_details[0].value, 1_000_000);
@@ -2395,7 +2411,6 @@ async fn late_funding_recorded_sibling_spender_needs_no_reapply() {
         &info.coinjoin_managed_account_at_index(0).unwrap().transactions()[&spender.txid()];
     assert_eq!(sibling.net_amount, 900_000);
     assert!(sibling.input_details.is_empty(), "inputs belong only to BIP44");
-    assert!(result.reapply_heights.is_empty(), "corrected spender must not reload block 2");
     assert!(info.unrecorded_spend_heights(&funding).is_empty());
 
     let again =
@@ -2433,17 +2448,22 @@ async fn late_funding_finalized_sibling_preserves_correction_path() {
     let fund_block = make_block(vec![funding.clone()], 0xe0, 100);
     let result =
         manager.process_block_for_wallets(&fund_block, fund_block.block_hash(), 1, &wallets).await;
-    let correction_events = if cfg!(feature = "keep-finalized-transactions") {
-        assert!(result.reapply_heights.is_empty());
-        drain_events(&mut rx)
-    } else {
-        assert_eq!(result.reapply_heights.get(&wallet_id), Some(&BTreeSet::from([2])));
-        drain_events(&mut rx);
-        manager
-            .process_block_for_wallets(&spend_block, spend_block.block_hash(), 2, &wallets)
-            .await;
-        drain_events(&mut rx)
-    };
+    assert_eq!(result.reapply_heights, BTreeMap::from([(wallet_id, BTreeSet::from([2]))]));
+    drain_events(&mut rx);
+    for (replay_wallet_id, heights) in result.reapply_heights {
+        for height in heights {
+            let replay = manager
+                .process_block_for_wallets(
+                    &spend_block,
+                    spend_block.block_hash(),
+                    height,
+                    &BTreeSet::from([replay_wallet_id]),
+                )
+                .await;
+            assert!(replay.reapply_heights.is_empty());
+        }
+    }
+    let correction_events = drain_events(&mut rx);
     let corrected = correction_events
         .iter()
         .find_map(|event| match event {

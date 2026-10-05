@@ -1593,9 +1593,10 @@ mod attribution_tests {
     use dashcore::{BlockHash, TxOut};
 
     #[tokio::test]
-    async fn born_spent_attribution_reconstructs_imported_account_change_and_spent_mark() {
+    async fn late_funding_replay_restores_imported_account_change_and_spent_mark() {
         use crate::managed_account::transaction_record::OutputRole;
         use crate::wallet::managed_wallet_info::managed_account_operations::ManagedAccountOperations;
+        use crate::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
         let mut ctx = TestWalletContext::new_random();
         let account_type = AccountType::Standard {
             index: 1,
@@ -1622,14 +1623,31 @@ mod attribution_tests {
         )
         .await;
         ctx.managed_wallet.add_managed_account(&ctx.wallet, account_type).unwrap();
-        let result = ctx
-            .check_transaction(
-                &funding,
-                TransactionContext::InBlock(BlockInfo::new(1, BlockHash::all_zeros(), 100)),
-            )
-            .await;
-        let corrected =
-            result.updated_records.iter().find(|r| r.account_type == account_type).unwrap();
+        ctx.check_transaction(
+            &funding,
+            TransactionContext::InBlock(BlockInfo::new(1, BlockHash::all_zeros(), 100)),
+        )
+        .await;
+        let heights = ctx.managed_wallet.unrecorded_spend_heights(&funding);
+        assert_eq!(heights, BTreeSet::from([2]));
+        let mut corrections = Vec::new();
+        for height in heights {
+            let result = ctx
+                .check_transaction(
+                    &spender,
+                    TransactionContext::InBlock(BlockInfo::new(
+                        height,
+                        BlockHash::all_zeros(),
+                        200,
+                    )),
+                )
+                .await;
+            assert!(result.state_modified);
+            corrections.extend(result.new_records);
+            corrections.extend(result.updated_records);
+        }
+        assert!(ctx.managed_wallet.unrecorded_spend_heights(&funding).is_empty());
+        let corrected = corrections.iter().find(|r| r.account_type == account_type).unwrap();
         assert_eq!(corrected.net_amount, -61_000);
         assert_eq!(corrected.output_details[1].role, OutputRole::Change);
         assert_eq!(corrected.output_details[1].address.as_ref(), Some(&change));
@@ -1641,7 +1659,6 @@ mod attribution_tests {
                 .is_outpoint_spent(&outpoint),
             "late attribution must mark the input spent in its owning account"
         );
-        assert!(result.state_modified);
         assert!(!ctx
             .managed_wallet
             .bip44_managed_account_at_index(1)

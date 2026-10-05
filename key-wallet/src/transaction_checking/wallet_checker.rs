@@ -3840,7 +3840,7 @@ mod tests {
 
     /// A late input belongs to its funding account even when another account first saw the spender.
     #[tokio::test]
-    async fn born_spent_attribution_reaches_sibling_account_spenders() {
+    async fn late_funding_replay_recovers_missing_sibling_account_records() {
         for own_change in [0, 50_000] {
             let network = Network::Testnet;
             let mut wallet =
@@ -3929,8 +3929,7 @@ mod tests {
                 );
             }
 
-            // Funding second (height 1) — recognized by BIP44, whose account-
-            // local record may be missing. Attribution must create or update its own slice.
+            // Funding corrects existing slices and requests replay for missing ones.
             let result = managed_wallet
                 .check_core_transaction(
                     &funding_tx,
@@ -3946,6 +3945,34 @@ mod tests {
                 .await;
             assert!(result.is_relevant);
 
+            let heights = managed_wallet.unrecorded_spend_heights(&funding_tx);
+            assert_eq!(
+                heights,
+                if own_change == 0 {
+                    BTreeSet::from([2])
+                } else {
+                    BTreeSet::new()
+                }
+            );
+            let mut corrections = result.updated_records;
+            for height in heights {
+                let replay = managed_wallet
+                    .check_core_transaction(
+                        &spender_tx,
+                        TransactionContext::InBlock(BlockInfo::new(
+                            height,
+                            BlockHash::from_slice(&[3u8; 32]).expect("hash"),
+                            1_650_000_100,
+                        )),
+                        &mut wallet,
+                        true,
+                        true,
+                    )
+                    .await;
+                corrections.extend(replay.new_records);
+                corrections.extend(replay.updated_records);
+            }
+            assert!(managed_wallet.unrecorded_spend_heights(&funding_tx).is_empty());
             let cj = managed_wallet.coinjoin_managed_account_at_index(0).expect("cj");
             let record = cj.transactions().get(&spender_txid).expect("spender record");
             assert_eq!(record.net_amount, BACK as i64);
@@ -3958,8 +3985,11 @@ mod tests {
                 record.net_amount + outgoing.net_amount,
                 (BACK + own_change) as i64 - FUND as i64
             );
-            let corrected =
-                result.updated_records.iter().find(|r| r.txid == spender_txid).expect("correction");
+            assert!(!bip44.utxos.contains_key(&funded_outpoint));
+            let corrected = corrections
+                .iter()
+                .find(|r| r.txid == spender_txid && r.account_type == outgoing.account_type)
+                .expect("correction");
             assert_eq!(corrected.net_amount, outgoing.net_amount);
         }
     }
