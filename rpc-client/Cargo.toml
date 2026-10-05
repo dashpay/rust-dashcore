@@ -27,5 +27,3 @@ tracing = "0.1"
 # Used for deserialization of JSON.
 serde = { workspace = true, features = ["std", "derive"] }
 serde_json = { version="1.0", features=["preserve_order"] }
-
-hex = { workspace = true, features = ["serde"] }

@@ -23,7 +23,7 @@ serde = { workspace = true, features = ["std", "derive"] }
 serde_json = { version="1.0", features=["preserve_order"] }
 serde_with = "2.1.0"
 serde_repr = "0.1"
-hex = { workspace = true, features = ["serde"] }
+hex-conservative = { workspace = true }
 
 key-wallet = { path = "../key-wallet", default-features = false, features=["serde", "getrandom"] }
 dashcore = { path = "../dash", features=["secp-recovery", "rand-std", "signer", "serde"] }

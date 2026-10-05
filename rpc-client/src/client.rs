@@ -25,6 +25,7 @@ use crate::dashcore::{ScriptBuf, block, consensus};
 use crate::error::*;
 use crate::json;
 use crate::queryable;
+use dashcore::hashes::Hash;
 use dashcore::hashes::hex::FromHex;
 use dashcore::secp256k1::ecdsa::Signature;
 use dashcore::{
@@ -158,7 +159,7 @@ pub trait RawTx: Sized + Clone {
 
 impl RawTx for &Transaction {
     fn raw_hex(self) -> String {
-        hex::encode(consensus::encode::serialize(&self))
+        consensus::encode::serialize(&self).to_lower_hex_string()
     }
 }
 
@@ -1625,8 +1626,8 @@ pub trait RpcApi: Sized {
     /// If the returned height is higher that the given chain lock this means that we ignored the chain lock because core had something better.
     fn submit_chain_lock(&self, chain_lock: &ChainLock) -> Result<u32> {
         let mut args = [
-            into_json(hex::encode(chain_lock.block_hash))?,
-            into_json(hex::encode(chain_lock.signature.as_bytes()))?,
+            into_json(chain_lock.block_hash.as_byte_array().to_lower_hex_string())?,
+            into_json(chain_lock.signature.as_bytes().to_lower_hex_string())?,
             into_json(chain_lock.block_height)?,
         ];
         self.call::<u32>("submitchainlock", handle_defaults(&mut args, &[null()]))
