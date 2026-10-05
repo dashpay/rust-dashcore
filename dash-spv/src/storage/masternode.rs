@@ -289,22 +289,28 @@ impl Message {
     fn base_hashes(&self) -> Vec<BlockHash> {
         match self {
             Message::Diff(diff) => vec![diff.base_block_hash],
-            Message::QrInfo(qr_info) => {
-                let diffs = qr_info_diffs(qr_info);
-                let produced: HashSet<BlockHash> = diffs
-                    .iter()
-                    .filter(|d| d.block_hash != d.base_block_hash)
-                    .map(|d| d.block_hash)
-                    .collect();
-                let bases: HashSet<BlockHash> = diffs
-                    .iter()
-                    .map(|d| d.base_block_hash)
-                    .filter(|base| !produced.contains(base))
-                    .collect();
-                bases.into_iter().collect()
-            }
+            Message::QrInfo(qr_info) => qr_info_bases(qr_info).into_iter().collect(),
         }
     }
+}
+
+/// Block hashes of the lists a QRInfo's diffs build.
+fn qr_info_built(qr_info: &QRInfo) -> HashSet<BlockHash> {
+    qr_info_diffs(qr_info)
+        .iter()
+        .filter(|d| d.block_hash != d.base_block_hash)
+        .map(|d| d.block_hash)
+        .collect()
+}
+
+/// Block hashes of the lists a QRInfo is applied on top of.
+fn qr_info_bases(qr_info: &QRInfo) -> HashSet<BlockHash> {
+    let built = qr_info_built(qr_info);
+    qr_info_diffs(qr_info)
+        .iter()
+        .map(|d| d.base_block_hash)
+        .filter(|base| !built.contains(base))
+        .collect()
 }
 
 #[async_trait]
@@ -323,6 +329,17 @@ impl<H: BlockHeaderStorage> MasternodeStorage for PersistentMasternodeStorage<H>
         height: CoreBlockHeight,
         qr_info: &QRInfo,
     ) -> StorageResult<()> {
+        // A QRInfo for the tip already stored, requested from a list the stored
+        // one built, would replace the message it is applied on top of.
+        if let Some(path) = self.qr_infos.get(&height) {
+            if let Ok(stored) = Self::read_message::<QRInfo>(path).await {
+                if stored.mn_list_diff_tip.block_hash == qr_info.mn_list_diff_tip.block_hash
+                    && !qr_info_bases(qr_info).is_disjoint(&qr_info_built(&stored))
+                {
+                    return Ok(());
+                }
+            }
+        }
         let folder = self.folder();
         Self::store_message(&folder, &mut self.qr_infos, Self::QRINFO_PREFIX, height, qr_info).await
     }

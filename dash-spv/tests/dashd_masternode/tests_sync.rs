@@ -88,7 +88,8 @@ async fn test_masternode_list_sync() {
     );
 }
 
-/// Sync masternode list, stop, restart with same storage, verify incremental sync.
+/// Sync masternode list, stop, restart with same storage twice without new blocks,
+/// and verify each start rebuilds the first session's list from storage.
 #[tokio::test]
 async fn test_masternode_list_sync_with_restart() {
     let Some(ctx) = TestContext::new(true).await else {
@@ -168,13 +169,21 @@ async fn test_masternode_list_sync_with_restart() {
     let after_second = storage_snapshot(ctx.storage_path());
     assert_storage_did_not_shrink(&after_first, &after_second, "masternode restart");
 
-    tracing::info!(
-        "Restart verified: first_height={}, second_height={}",
-        first_height,
-        second_height
-    );
-
     client_handle.stop().await;
+    drop(client_handle);
+
+    // The second session requested a QRInfo for the same tip. Storing it in place
+    // of the first one, which built the list it is based on, broke the next replay.
+    let client_handle = create_client(&config, Arc::clone(&wallet)).await;
+    let replayed_tip = {
+        let engine = client_handle.engine.read().await;
+        engine
+            .masternode_lists
+            .iter()
+            .next_back()
+            .map(|(height, list)| (*height, list.block_hash, list.masternodes.len()))
+    };
+    assert_eq!(replayed_tip, first_tip, "a second restart must still replay the stored list");
 }
 
 /// Sync to pre-generated height, generate new blocks, verify incremental update.
