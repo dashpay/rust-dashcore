@@ -281,7 +281,7 @@ mod tests {
     #[test]
     fn deserialize_serialize_mn_list_diff() {
         let block_hex = include_str!("../../../../tests/data/test_DML_diffs/DML_0_2221605.hex");
-        let data = hex::decode(block_hex).expect("decode hex");
+        let data = hex_conservative::decode_to_vec(block_hex).expect("decode hex");
         let mn_list_diff: RawNetworkMessage = deserialize(&data).expect("deserialize MnListDiff");
         if let NetworkMessage::MnListDiff(diff) = mn_list_diff.payload {
             let quorum = diff.new_quorums.first().expect("expected a quorum");

@@ -11,7 +11,7 @@
 use core::default::Default;
 
 use hashes::{Hash, sha256d};
-use hex_lit::hex;
+use hex_conservative::hex;
 
 use crate::blockdata::block::{self, Block};
 use crate::blockdata::locktime::absolute;

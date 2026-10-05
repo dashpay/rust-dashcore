@@ -478,7 +478,7 @@ mod tests {
         };
 
         // Decode hex to bytes
-        let block_bytes = match hex::decode(&block_hex_string) {
+        let block_bytes = match hex_conservative::decode_to_vec(&block_hex_string) {
             Ok(bytes) => bytes,
             Err(e) => {
                 panic!("❌ Failed to decode hex: {}", e);
@@ -589,7 +589,7 @@ mod tests {
             }
         };
 
-        let block_bytes = match hex::decode(&block_hex_string) {
+        let block_bytes = match hex_conservative::decode_to_vec(&block_hex_string) {
             Ok(bytes) => bytes,
             Err(e) => {
                 panic!("❌ Failed to decode hex: {}", e);

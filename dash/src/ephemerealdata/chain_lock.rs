@@ -78,8 +78,6 @@ impl ChainLock {
 #[cfg(test)]
 mod tests {
 
-    use hex::FromHex;
-
     use super::*;
     use crate::consensus::deserialize;
     use crate::internal_macros::hex;
@@ -116,7 +114,7 @@ mod tests {
         let expected_request_id =
             "5d92e094e2aa582b76e8bf519f42c5e8fc141bbe548e9660726f744adad03966";
 
-        let vec = Vec::from_hex(hex).unwrap();
+        let vec = hex_conservative::decode_to_vec(hex).unwrap();
 
         let chain_lokc: ChainLock = deserialize(&vec).unwrap();
 
