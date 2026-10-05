@@ -1382,10 +1382,12 @@ impl ExtendedPrivKey {
             }
         }
         let hmac_result: Hmac<sha512::Hash> = Hmac::from_engine(hmac_engine);
-        let sk = secp256k1::SecretKey::from_secret_bytes(hmac_secret_half(&hmac_result))
+        // IL added to the parent scalar; this rejects IL >= n and a zero sum,
+        // the two cases BIP32 declares invalid.
+        let tweaked = secp256k1::Scalar::from_be_bytes(hmac_secret_half(&hmac_result))
+            .ok()
+            .and_then(|il| self.private_key.add_tweak(&il).ok())
             .expect("statistically impossible to hit");
-        let tweaked =
-            sk.add_tweak(&self.private_key.into()).expect("statistically impossible to hit");
 
         Ok(ExtendedPrivKey {
             network: self.network,
