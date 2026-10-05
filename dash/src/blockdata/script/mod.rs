@@ -725,9 +725,9 @@ pub fn bytes_to_asm_fmt(script: &[u8], f: &mut dyn fmt::Write) -> fmt::Result {
         if data_len > 0 {
             f.write_str(" ")?;
             if data_len <= iter.len() {
-                for ch in iter.by_ref().take(data_len) {
-                    write!(f, "{:02x}", ch)?;
-                }
+                let (data, rest) = iter.as_slice().split_at(data_len);
+                write!(f, "{:x}", data.as_hex())?;
+                iter = rest.iter();
             } else {
                 f.write_str("<push past end>")?;
                 break;
