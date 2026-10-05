@@ -594,12 +594,8 @@ impl WalletInfoInterface for ManagedWalletInfo {
                 }
             }
         }
-        // An IS lock settles this transaction's inputs, so any recorded
-        // competing spend can never confirm. This is the path the live
-        // dash-spv pipeline takes for a lock arriving after the transaction is
-        // already tracked (`process_instant_send_lock`), and it had no sweep —
-        // the one in `check_core_transaction` is only reachable on a first
-        // sighting that already carries the lock.
+        // Lock-only callers still settle conflicts when full transaction checking
+        // cannot attribute the transaction, including spends with no owned outputs.
         let swept = locked_transaction.is_some_and(|tx| {
             !self.sweep_conflicts(&tx, &TransactionContext::InstantSend(lock.clone())).is_empty()
         });

@@ -279,6 +279,7 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
             let balance = info.balance();
             let account_balances =
                 per_wallet_account_diff.get(&wallet_id).cloned().unwrap_or_default();
+            let mut lock_emitted = false;
             for record in records {
                 let txid = record.txid;
                 // The arriving tx only changes lock status; other txids carry late-input corrections.
@@ -291,7 +292,10 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
                         addresses_derived: Vec::new(),
                     });
                 }
-                if let Some(lock) = instant_lock.as_ref().filter(|lock| lock.txid == txid) {
+                if let Some(lock) =
+                    instant_lock.as_ref().filter(|lock| lock.txid == txid && !lock_emitted)
+                {
+                    lock_emitted = true;
                     self.emit_event(WalletEvent::TransactionInstantLocked {
                         wallet_id,
                         txid,
@@ -443,6 +447,16 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
         for info in self.wallet_infos.values_mut() {
             info.note_chain_lock_height(height);
         }
+    }
+
+    async fn process_mempool_instant_send_lock(
+        &mut self,
+        tx: &Transaction,
+        instant_lock: InstantLock,
+    ) {
+        self.process_mempool_transaction(tx, Some(instant_lock.clone())).await;
+        // Preserve lock-only handling for spend-only or already-confirmed records.
+        self.process_instant_send_lock(instant_lock);
     }
 
     fn process_instant_send_lock(&mut self, instant_lock: InstantLock) {

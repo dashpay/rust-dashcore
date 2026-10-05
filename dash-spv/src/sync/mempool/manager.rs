@@ -623,7 +623,9 @@ impl<W: WalletInterface> MempoolManager<W> {
         };
         if let Some(lock) = instant_lock_opt {
             let mut wallet = self.wallet.write().await;
-            wallet.process_instant_send_lock(lock);
+            if let Some(tx) = self.transactions.get(&txid) {
+                wallet.process_mempool_instant_send_lock(&tx.transaction, lock).await;
+            }
         }
         events
     }
@@ -1346,6 +1348,9 @@ mod tests {
         assert_eq!(changes.len(), 1);
         assert_eq!(changes[0].0, txid);
         assert!(matches!(changes[0].1, TransactionContext::InstantSend(_)));
+        let locks = wallet.processed_instant_locks.lock().await;
+        assert_eq!(locks.len(), 1, "custom wallets receive the tracked lock once");
+        assert_eq!(locks[0], (txid, Some(dummy_instant_lock(txid))));
     }
 
     #[tokio::test]
