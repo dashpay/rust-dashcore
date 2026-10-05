@@ -475,7 +475,7 @@ impl fmt::Debug for ExtendedPrivKey {
 }
 
 /// Extended public key
-#[derive(Copy, Clone, PartialEq, Eq, Debug, PartialOrd, Ord, Hash)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug, Hash)]
 pub struct ExtendedPubKey {
     /// The network this key is to be used on
     pub network: Network,
@@ -1253,8 +1253,6 @@ pub enum Error {
     Hex(hex_conservative::DecodeFixedLengthBytesError),
     /// `PublicKey` hex should be 66 or 130 digits long.
     InvalidPublicKeyHexLength(usize),
-    /// Something is not supported based on active features
-    NotSupported(String),
 }
 
 impl fmt::Display for Error {
@@ -1280,7 +1278,6 @@ impl fmt::Display for Error {
             Error::InvalidPublicKeyHexLength(got) => {
                 write!(f, "PublicKey hex should be 66 or 130 digits long, got: {}", got)
             }
-            Error::NotSupported(ref msg) => write!(f, "Not supported: {}", msg),
         }
     }
 }
