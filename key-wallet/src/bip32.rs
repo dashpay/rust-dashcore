@@ -893,6 +893,10 @@ impl FromStr for ChildNumber {
         if index_str.starts_with("0x") || index_str.starts_with("0X") {
             // Parse as a 256-bit hex number
             let hex_str = &index_str[2..];
+            // An odd digit count would be read as if a trailing `0` were appended.
+            if !hex_str.len().is_multiple_of(2) {
+                return Err(Error::InvalidChildNumberFormat);
+            }
             // Simple hex decoder
             let hex_bytes = hex_str
                 .as_bytes()
@@ -1951,6 +1955,24 @@ mod tests {
     use super::*;
     use dashcore::Network::{self, Mainnet};
     use hex_conservative::DisplayHex;
+    use test_case::{test_case, test_matrix};
+
+    const INDEX_256: &str = "00000000000000000000000000000000000000000000000000000000000000ab";
+
+    #[test_matrix(["0x", "0X"], [INDEX_256.to_owned(), INDEX_256.to_uppercase()], ["", "'"])]
+    fn child_number_256_round_trips(prefix: &str, digits: String, suffix: &str) {
+        let parsed: ChildNumber = format!("{prefix}{digits}{suffix}").parse().unwrap();
+        assert_eq!(parsed.is_hardened(), !suffix.is_empty());
+        assert_eq!(parsed.to_string(), format!("0x{INDEX_256}{suffix}"));
+    }
+
+    // 63 digits must not parse as if a trailing `0` were appended.
+    #[test_case(&INDEX_256[1..] ; "odd length")]
+    #[test_case(&INDEX_256[2..] ; "too short")]
+    #[test_case("00000000000000000000000000000000000000000000000000000000000000zz" ; "invalid digit")]
+    fn child_number_256_rejects(digits: &str) {
+        assert!(format!("0x{digits}").parse::<ChildNumber>().is_err());
+    }
 
     #[test]
     fn test_parse_derivation_path() {
