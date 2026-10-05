@@ -727,8 +727,6 @@ impl Drop for FFIDerivedAddress {
 /// funding arrival corrects an earlier transaction's accounting. Consumers must
 /// upsert by wallet, account and txid; a correction retains the spender's context.
 /// A plain InstantSend lock on a known mempool transaction emits only the lock callback.
-/// Corrections after ChainLock require `keep-finalized-transactions` to retain
-/// the spender's full record; default retention cannot repair an already pruned row.
 ///
 /// All pointer parameters are borrowed and only valid for the duration of the
 /// callback. `balance` is the wallet's balance *after* the transaction was

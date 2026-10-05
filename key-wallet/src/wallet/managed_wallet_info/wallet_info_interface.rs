@@ -280,8 +280,6 @@ pub trait WalletInfoInterface: Sized + WalletTransactionChecker + ManagedAccount
     /// sweep removing a loser, so this is broader than "a UTXO was marked".
     fn mark_instant_send_utxos(&mut self, txid: &Txid, lock: &InstantLock) -> bool;
 
-    /// Return observed spend heights still missing attribution in an output's owning account.
-    /// Retained spenders are attributed in place; absent or pruned templates need block replay.
     fn unrecorded_spend_heights(&self, tx: &Transaction) -> BTreeSet<CoreBlockHeight>;
 
     /// Return the aggregated monitor revision across all accounts.
@@ -626,12 +624,7 @@ impl WalletInfoInterface for ManagedWalletInfo {
                     .all_accounts()
                     .into_iter()
                     .filter_map(|account| account.as_funds())
-                    .any(|account| {
-                        // Attribution marks the owning slice spent. A pruned sibling's
-                        // mark alone cannot supply the missing record for this account.
-                        account.spent_before_funded.contains_key(outpoint)
-                            && !account.is_outpoint_spent(outpoint)
-                    })
+                    .any(|account| account.spent_before_funded.contains_key(outpoint))
             })
             .filter_map(|outpoint| self.observed_spent_outpoints.get(&outpoint).copied())
             .collect()

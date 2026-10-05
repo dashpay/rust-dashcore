@@ -6,15 +6,14 @@
 pub(crate) use super::account_checker::TransactionCheckResult;
 use super::transaction_context::TransactionContext;
 use super::transaction_router::{AccountTypeToCheck, TransactionRouter};
-#[cfg(not(feature = "keep-finalized-transactions"))]
-use crate::managed_account::ManagedAccountRefMut;
+use crate::managed_account::managed_account_trait::ManagedAccountTrait;
+use crate::managed_account::transaction_record::{InputDetail, OutputDetail, OutputRole};
 use crate::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
 use crate::wallet::managed_wallet_info::ManagedWalletInfo;
 use crate::{KeySource, Wallet};
 use async_trait::async_trait;
 use dashcore::blockdata::transaction::Transaction;
 use dashcore::{Address, Amount, OutPoint, SignedAmount};
-use std::collections::BTreeMap;
 
 /// Extension trait for ManagedWalletInfo to add transaction checking capabilities
 #[async_trait]
@@ -50,67 +49,58 @@ pub trait WalletTransactionChecker {
 }
 
 impl ManagedWalletInfo {
-    /// Find spenders across accounts and attribute each input only to its owning account.
-    fn attribute_born_spent(&mut self, tx: &Transaction, result: &mut TransactionCheckResult) {
+    /// Correct late inputs in existing records; missing account slices use block replay.
+    fn attribute_late_inputs(&mut self, tx: &Transaction, result: &mut TransactionCheckResult) {
         let txid = tx.txid();
-        let born_spent: Vec<_> = tx
-            .output
-            .iter()
-            .enumerate()
-            .filter_map(|(vout, output)| {
-                let address = Address::from_script(&output.script_pubkey, self.network).ok()?;
-                let outpoint = OutPoint::new(txid, vout as u32);
-                self.accounts
-                    .all_accounts()
-                    .into_iter()
-                    .filter_map(|account| account.as_funds())
-                    .any(|account| account.is_outpoint_spent(&outpoint))
-                    .then_some((outpoint, output.value, address))
-            })
-            .collect();
-        for (outpoint, value, address) in &born_spent {
-            let spenders: BTreeMap<_, _> = self
-                .accounts
-                .all_accounts()
-                .into_iter()
-                .flat_map(|account| account.transactions().values())
-                .filter(|record| {
-                    record.transaction.input.iter().any(|input| input.previous_output == *outpoint)
-                })
-                .map(|record| (record.txid, record.clone()))
-                .collect();
-            let spenders: Vec<_> = spenders.into_values().collect();
-            for mut account in self.accounts.all_accounts_mut() {
-                let corrected = account.attribute_spent_input(outpoint, *value, address, &spenders);
-                if !corrected.is_empty() {
-                    result.state_modified = true;
-                    for record in corrected {
-                        if let Some(existing) = result.updated_records.iter_mut().find(|existing| {
-                            existing.txid == record.txid
-                                && existing.account_type == record.account_type
-                        }) {
-                            *existing = record;
-                        } else {
-                            result.updated_records.push(record);
-                        }
-                    }
-                }
-            }
-        }
-        // Keep every input available until the complete correction has been captured.
-        #[cfg(not(feature = "keep-finalized-transactions"))]
         for mut account in self.accounts.all_accounts_mut() {
-            let account_type = account.managed_account_type().to_account_type();
-            for record in &result.updated_records {
-                if record.account_type == account_type && record.context.is_chain_locked() {
-                    match &mut account {
-                        ManagedAccountRefMut::Funds(funds) => {
-                            funds.keys_mut().drop_finalized_transaction(&record.txid);
-                        }
-                        ManagedAccountRefMut::Keys(keys) => {
-                            keys.drop_finalized_transaction(&record.txid);
+            let Some(funds) = account.as_funds_mut() else {
+                continue;
+            };
+            for (vout, output) in tx.output.iter().enumerate() {
+                let outpoint = OutPoint::new(txid, vout as u32);
+                if !funds.is_outpoint_spent(&outpoint) {
+                    continue;
+                }
+                let Ok(address) = Address::from_script(&output.script_pubkey, self.network) else {
+                    continue;
+                };
+                if !funds.contains_address(&address) {
+                    continue;
+                }
+                for record in funds.transactions_mut().values_mut() {
+                    let Some(index) =
+                        record.transaction.input.iter().position(|i| i.previous_output == outpoint)
+                    else {
+                        continue;
+                    };
+                    if record.input_details.iter().any(|d| d.index == index as u32) {
+                        continue;
+                    }
+                    record.input_details.push(InputDetail {
+                        index: index as u32,
+                        value: output.value,
+                        address: address.clone(),
+                    });
+                    record.input_details.sort_by_key(|d| d.index);
+                    // Records without known inputs omit foreign outputs.
+                    for (index, output) in record.transaction.output.iter().enumerate() {
+                        if record.output_details.iter().all(|d| d.index != index as u32) {
+                            record.output_details.push(OutputDetail {
+                                index: index as u32,
+                                role: OutputRole::Sent,
+                                address: Address::from_script(&output.script_pubkey, self.network)
+                                    .ok(),
+                                value: output.value,
+                            });
                         }
                     }
+                    record.output_details.sort_by_key(|d| d.index);
+                    record.recompute_net_and_direction();
+                    result
+                        .updated_records
+                        .retain(|r| r.txid != record.txid || r.account_type != record.account_type);
+                    result.updated_records.push(record.clone());
+                    result.state_modified = true;
                 }
             }
         }
@@ -318,7 +308,6 @@ impl WalletTransactionChecker for ManagedWalletInfo {
                         result.new_records.push(record);
                     }
                 }
-                self.attribute_born_spent(tx, &mut result);
                 if update_balance {
                     self.update_balance();
                 }
@@ -404,7 +393,7 @@ impl WalletTransactionChecker for ManagedWalletInfo {
             }
         }
 
-        self.attribute_born_spent(tx, &mut result);
+        self.attribute_late_inputs(tx, &mut result);
 
         if is_new {
             // Populate dedup sets when a tx arrives with an initial IS status

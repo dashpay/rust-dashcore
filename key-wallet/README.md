@@ -271,26 +271,11 @@ Core dependencies:
 
 ## Late funding and finalized transaction history
 
-When funding arrives after its spender, retained transaction records receive corrected
-input details, direction, and net amount. Funding outputs are matched against existing
-account spend marks; no separate attribution queue is stored. Each missing owning-account
-slice has one correction path:
-
-- A full spender record retained by a wallet account supplies in-place attribution.
-  Once the owning slice is attributed, it does not request block replay.
-- A spender recorded nowhere requires the block replay introduced in #1015. Replay also
-  handles a missing owning slice when a sibling's full spender record has been pruned:
-  the sibling's remaining spend mark alone cannot reconstruct that slice.
-
-With default features, ChainLocks discard full funds records and retain only transaction
-IDs. Funding discovered after that pruning cannot
-repair the earlier record or an application’s persisted copy: an incoming change record may
-remain incorrect. This applies whether the spender arrives below an existing ChainLock or
-a ChainLock arrives between the spender and its funding.
-
-Enable `keep-finalized-transactions` before processing if your application needs accounting
-corrections after finalization. It retains the full transaction history and therefore uses
-more memory. Enabling it after records have been discarded does not recover those records.
+Late funding corrects input details, direction, and net amount in retained spender records
+within the owning account. Missing account records are recovered through block replay.
+With default features, ChainLocks prune full records, so later funding cannot correct
+an already-pruned spender or its persisted copy. Enable `keep-finalized-transactions`
+before processing to retain those records, at the cost of keeping finalized history in memory.
 
 ## Contributing
 

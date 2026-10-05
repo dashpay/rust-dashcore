@@ -423,23 +423,6 @@ impl<'a> ManagedAccountRefMut<'a> {
             ManagedAccountRefMut::Keys(_) => false,
         }
     }
-
-    /// Attribute a late funding output to its owning account, using known spender templates.
-    /// Always empty for the [`Keys`](Self::Keys) variant.
-    pub(crate) fn attribute_spent_input(
-        &mut self,
-        outpoint: &OutPoint,
-        value: u64,
-        address: &Address,
-        spenders: &[TransactionRecord],
-    ) -> Vec<TransactionRecord> {
-        match self {
-            ManagedAccountRefMut::Funds(a) => {
-                a.attribute_spent_input(outpoint, value, address, spenders)
-            }
-            ManagedAccountRefMut::Keys(_) => Vec::new(),
-        }
-    }
 }
 
 /// Owned managed core account, either funds-bearing or keys-only.
