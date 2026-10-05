@@ -35,6 +35,7 @@ use serde;
 #[cfg(feature = "bincode")]
 use bincode_derive::{Decode, Encode};
 use dashcore::{base58, Network};
+use hex_conservative::DisplayHex;
 use zeroize::Zeroize;
 
 /// XpubIdentifier as a hash160 result
@@ -90,10 +91,7 @@ impl TryFrom<&[u8]> for ChainCode {
 
 impl fmt::Display for ChainCode {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        for &byte in &self.0 {
-            write!(f, "{:02x}", byte)?;
-        }
-        Ok(())
+        write!(f, "{:x}", self.0.as_hex())
     }
 }
 
@@ -122,10 +120,7 @@ impl zeroize::Zeroize for Fingerprint {
 
 impl fmt::LowerHex for ChainCode {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        for &byte in &self.0 {
-            write!(f, "{:02x}", byte)?;
-        }
-        Ok(())
+        write!(f, "{:x}", self.0.as_hex())
     }
 }
 
@@ -194,9 +189,7 @@ impl<'de> serde::Deserialize<'de> for ChainCode {
         use serde::de::Error;
 
         let s = String::deserialize(deserializer)?;
-        let mut bytes = [0u8; 32];
-        crate::utils::parse_hex_bytes(&s, &mut bytes).map_err(D::Error::custom)?;
-        Ok(ChainCode(bytes))
+        hex_conservative::decode_to_array(&s).map(ChainCode).map_err(D::Error::custom)
     }
 }
 
@@ -244,10 +237,7 @@ impl TryFrom<&[u8]> for Fingerprint {
 
 impl fmt::Display for Fingerprint {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        for &byte in &self.0 {
-            write!(f, "{:02x}", byte)?;
-        }
-        Ok(())
+        write!(f, "{:x}", self.0.as_hex())
     }
 }
 
@@ -261,19 +251,15 @@ impl core::str::FromStr for Fingerprint {
     type Err = Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let mut bytes = [0u8; 4];
-        crate::utils::parse_hex_bytes(s, &mut bytes)
-            .map_err(|_| Error::InvalidPublicKeyHexLength(s.len()))?;
-        Ok(Fingerprint(bytes))
+        hex_conservative::decode_to_array(s)
+            .map(Fingerprint)
+            .map_err(|_| Error::InvalidPublicKeyHexLength(s.len()))
     }
 }
 
 impl fmt::LowerHex for Fingerprint {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        for &byte in &self.0 {
-            write!(f, "{:02x}", byte)?;
-        }
-        Ok(())
+        write!(f, "{:x}", self.0.as_hex())
     }
 }
 
@@ -852,10 +838,7 @@ impl fmt::Display for ChildNumber {
             ChildNumber::Hardened256 {
                 index,
             } => {
-                write!(f, "0x")?;
-                for byte in index {
-                    write!(f, "{:02x}", byte)?;
-                }
+                write!(f, "0x{:x}", index.as_hex())?;
                 write!(
                     f,
                     "{}",
@@ -869,11 +852,7 @@ impl fmt::Display for ChildNumber {
             ChildNumber::Normal256 {
                 index,
             } => {
-                write!(f, "0x")?;
-                for byte in index {
-                    write!(f, "{:02x}", byte)?;
-                }
-                Ok(())
+                write!(f, "0x{:x}", index.as_hex())
             }
         }
     }
@@ -893,37 +872,8 @@ impl FromStr for ChildNumber {
         if index_str.starts_with("0x") || index_str.starts_with("0X") {
             // Parse as a 256-bit hex number
             let hex_str = &index_str[2..];
-            // An odd digit count would be read as if a trailing `0` were appended.
-            if !hex_str.len().is_multiple_of(2) {
-                return Err(Error::InvalidChildNumberFormat);
-            }
-            // Simple hex decoder
-            let hex_bytes = hex_str
-                .as_bytes()
-                .chunks(2)
-                .map(|chunk| {
-                    let high = chunk[0];
-                    let low = chunk.get(1).copied().unwrap_or(b'0');
-                    let h = match high {
-                        b'0'..=b'9' => high - b'0',
-                        b'a'..=b'f' => high - b'a' + 10,
-                        b'A'..=b'F' => high - b'A' + 10,
-                        _ => return Err(Error::InvalidChildNumberFormat),
-                    };
-                    let l = match low {
-                        b'0'..=b'9' => low - b'0',
-                        b'a'..=b'f' => low - b'a' + 10,
-                        b'A'..=b'F' => low - b'A' + 10,
-                        _ => return Err(Error::InvalidChildNumberFormat),
-                    };
-                    Ok((h << 4) | l)
-                })
-                .collect::<Result<Vec<u8>, Error>>()?;
-            if hex_bytes.len() != 32 {
-                return Err(Error::InvalidChildNumberFormat);
-            }
-            let mut index_bytes = [0u8; 32];
-            index_bytes[32 - hex_bytes.len()..].copy_from_slice(&hex_bytes);
+            let index_bytes = hex_conservative::decode_to_array::<32>(hex_str)
+                .map_err(|_| Error::InvalidChildNumberFormat)?;
             if is_hardened {
                 Ok(ChildNumber::Hardened256 {
                     index: index_bytes,

@@ -24,6 +24,7 @@ use crate::Network;
 use bincode_derive::{Decode, Encode};
 use core::fmt;
 use dashcore_hashes::{sha256, Hash};
+use hex_conservative::DisplayHex;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroize;
@@ -205,8 +206,7 @@ impl Wallet {
 impl fmt::Display for Wallet {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         // Format wallet ID as hex string (first 8 chars)
-        let id_hex =
-            self.wallet_id.iter().take(4).map(|b| format!("{:02x}", b)).collect::<String>();
+        let id_hex = self.wallet_id[..4].to_lower_hex_string();
 
         let total_accounts: usize = self.accounts.count();
 
@@ -720,7 +720,7 @@ mod tests {
         // regardless of the network passed to from_mnemonic.
         let none = Wallet::compute_wallet_id_from_root_extended_pub_key(&root, None);
         assert_eq!(
-            hex_lower(&none),
+            none.to_lower_hex_string(),
             "93401f55c5bc17629140344a2098ebdeb204dfdf1576e87605fbc7b655c86f08",
             "network-independent wallet id digest must remain byte-for-byte stable"
         );
@@ -728,7 +728,7 @@ mod tests {
         let mainnet =
             Wallet::compute_wallet_id_from_root_extended_pub_key(&root, Some(Network::Mainnet));
         assert_eq!(
-            hex_lower(&mainnet),
+            mainnet.to_lower_hex_string(),
             "0b91f36de2613a410303e8309b4f92a150738ae018695d2030b33e64ccea7b2e",
             "network-scoped (mainnet) wallet id digest must remain byte-for-byte stable; \
              a change here means DOMAIN_TAG or a discriminant byte shifted"
@@ -764,9 +764,5 @@ mod tests {
         let external =
             Wallet::new_external_signable(Network::Mainnet, stored_id, AccountCollection::new());
         assert_eq!(external.compute_wallet_id(), stored_id);
-    }
-
-    fn hex_lower(bytes: &[u8]) -> String {
-        bytes.iter().map(|b| format!("{:02x}", b)).collect()
     }
 }

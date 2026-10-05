@@ -35,7 +35,6 @@ pub mod mnemonic;
 pub mod seed;
 pub mod signer;
 pub mod transaction_checking;
-pub(crate) mod utils;
 pub mod utxo;
 pub mod wallet;
 
