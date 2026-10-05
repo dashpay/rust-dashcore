@@ -269,14 +269,6 @@ Core dependencies:
 - `bip39`: Mnemonic phrase support
 - Additional optional dependencies for specialized features
 
-## Late funding and finalized transaction history
-
-Late funding corrects input details, direction, and net amount in retained spender records
-within the owning account. Missing account records are recovered through block replay.
-With default features, ChainLocks prune full records, so later funding cannot correct
-an already-pruned spender or its persisted copy. Enable `keep-finalized-transactions`
-before processing to retain those records, at the cost of keeping finalized history in memory.
-
 ## Contributing
 
 Contributions are welcome! Please ensure:
