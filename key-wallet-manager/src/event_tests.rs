@@ -2121,30 +2121,43 @@ async fn dropped_persistence_consumer_does_not_wedge_emission() {
 }
 
 #[tokio::test]
-async fn should_emit_late_input_corrections_without_borrowing_funding_lock() {
+async fn late_funding_mempool_publishes_complete_correction() {
+    use key_wallet::managed_account::transaction_record::{OutputRole, TransactionDirection};
+
     for locked_funding in [false, true] {
         let (mut manager, wallet_id, addr) = setup_manager_with_wallet();
-        let funding = create_tx_paying_to(&addr, 0xa1);
-        let mut spender = create_tx_paying_to(&addr, 0xa2);
-        spender.input[0].previous_output = OutPoint {
-            txid: funding.txid(),
-            vout: 0,
-        };
-        spender.output[0].value = TX_AMOUNT - 2000;
+        let mut funding = create_tx_paying_to(&addr, 0xa1);
+        funding.output.push(funding.output[0].clone());
+        let earlier_funding = create_tx_paying_to(&addr, 0xa2);
+        let mut spender = create_tx_paying_to(&addr, 0xa3);
+        spender.input = [
+            OutPoint::new(funding.txid(), 1),
+            OutPoint::new(funding.txid(), 0),
+            OutPoint::new(earlier_funding.txid(), 0),
+        ]
+        .into_iter()
+        .map(|previous_output| TxIn {
+            previous_output,
+            ..spender.input[0].clone()
+        })
+        .collect();
+        spender.output[0].value = 3 * TX_AMOUNT - 2000;
         spender.output.push(TxOut {
             value: 1000,
-            script_pubkey: ScriptBuf::new_p2pkh(
-                &PublicKey::from_slice(&[2; 33]).unwrap().pubkey_hash(),
-            ),
+            script_pubkey: Address::dummy(Network::Testnet, 999).script_pubkey(),
         });
         manager.process_mempool_transaction(&spender, None).await;
+        manager.process_mempool_transaction(&earlier_funding, None).await;
+        let account = manager.wallet_infos[&wallet_id].first_bip44_managed_account().unwrap();
+        assert_eq!(account.transactions()[&spender.txid()].input_details.len(), 1);
+
         let mut rx = manager.subscribe_events();
         let lock = locked_funding.then(|| dummy_instant_lock(funding.txid()));
         manager.process_mempool_transaction(&funding, lock.clone()).await;
         let events = drain_events(&mut rx);
-        let corrected = events
+        let corrections: Vec<_> = events
             .iter()
-            .find_map(|event| match event {
+            .filter_map(|event| match event {
                 WalletEvent::TransactionDetected {
                     wallet_id: id,
                     record,
@@ -2152,408 +2165,111 @@ async fn should_emit_late_input_corrections_without_borrowing_funding_lock() {
                 } if *id == wallet_id && record.txid == spender.txid() => Some(record),
                 _ => None,
             })
-            .expect("the corrected spender must reach persistence subscribers");
+            .collect();
+        assert_eq!(corrections.len(), 1, "publish one complete correction");
+        let corrected = corrections[0];
         assert_eq!(corrected.net_amount, -2000);
-        assert_eq!(
-            corrected.direction,
-            key_wallet::managed_account::transaction_record::TransactionDirection::Outgoing
-        );
-        assert_eq!(corrected.input_details.len(), 1);
+        assert_eq!(corrected.direction, TransactionDirection::Outgoing);
         assert_eq!(corrected.context, TransactionContext::Mempool);
+        assert_eq!(
+            corrected.input_details.iter().map(|d| (d.index, d.value)).collect::<Vec<_>>(),
+            vec![(0, TX_AMOUNT), (1, TX_AMOUNT), (2, TX_AMOUNT)]
+        );
+        assert_eq!(corrected.output_details.len(), 2);
+        assert_eq!(corrected.output_details[1].role, OutputRole::Sent);
         assert!(
             !events.iter().any(|event| matches!(event,
                 WalletEvent::TransactionInstantLocked { txid, .. } if *txid == spender.txid()
             )),
-            "the funding lock must never be assigned to its spender"
+            "the funding lock belongs only to the funding transaction"
         );
         manager.process_mempool_transaction(&funding, lock).await;
         assert_no_events(&mut rx);
-    }
-}
 
-#[tokio::test]
-async fn should_preserve_attributed_inputs_when_another_funding_arrives() {
-    let (mut manager, _, addr) = setup_manager_with_wallet();
-    let first = create_tx_paying_to(&addr, 0xb1);
-    let second = create_tx_paying_to(&addr, 0xb2);
-    let mut spender = create_tx_paying_to(&addr, 0xb3);
-    spender.input[0].previous_output = OutPoint {
-        txid: first.txid(),
-        vout: 0,
-    };
-    let mut input = spender.input[0].clone();
-    input.previous_output.txid = second.txid();
-    spender.input.push(input);
-    spender.output[0].value = 2 * TX_AMOUNT - 1000;
-    manager.process_mempool_transaction(&spender, None).await;
-    manager.process_mempool_transaction(&second, None).await;
-    let mut rx = manager.subscribe_events();
-    manager.process_mempool_transaction(&first, None).await;
-    let events = drain_events(&mut rx);
-    let corrected = events
-        .iter()
-        .find_map(|event| match event {
-            WalletEvent::TransactionDetected {
-                record,
-                ..
-            } if record.txid == spender.txid() => Some(record),
-            _ => None,
-        })
-        .expect("second input correction");
-    assert_eq!(corrected.net_amount, -1000);
-    assert_eq!(corrected.input_details.len(), 2);
-    assert_eq!(corrected.input_details[0].index, 0);
-    assert_eq!(corrected.input_details[1].index, 1);
-    manager.process_mempool_transaction(&second, None).await;
-    assert_no_events(&mut rx);
-}
-
-#[tokio::test]
-async fn should_emit_one_complete_correction_for_multiple_inputs_from_one_parent() {
-    let (mut manager, _, addr) = setup_manager_with_wallet();
-    let mut funding = create_tx_paying_to(&addr, 0xc1);
-    funding.output.push(funding.output[0].clone());
-    let mut spender = create_tx_paying_to(&addr, 0xc2);
-    spender.input[0].previous_output = OutPoint {
-        txid: funding.txid(),
-        vout: 0,
-    };
-    let mut input = spender.input[0].clone();
-    input.previous_output.vout = 1;
-    spender.input.push(input);
-    spender.output[0].value = 2 * TX_AMOUNT - 1000;
-    manager.process_mempool_transaction(&spender, None).await;
-    let mut rx = manager.subscribe_events();
-    manager.process_mempool_transaction(&funding, None).await;
-    let events = drain_events(&mut rx);
-    let corrected: Vec<_> = events
-        .iter()
-        .filter_map(|event| match event {
-            WalletEvent::TransactionDetected {
-                record,
-                ..
-            } if record.txid == spender.txid() => Some(record),
-            _ => None,
-        })
-        .collect();
-    assert_eq!(corrected.len(), 1, "one final slice per account and transaction");
-    assert_eq!(corrected[0].net_amount, -1000);
-    assert_eq!(corrected[0].input_details.len(), 2);
-}
-
-#[tokio::test]
-async fn known_mempool_instant_lock_emits_only_lock_event() {
-    let (mut manager, wallet_id, addr) = setup_manager_with_wallet();
-    let tx = create_tx_paying_to(&addr, 0xd1);
-    manager.process_mempool_transaction(&tx, None).await;
-    let mut rx = manager.subscribe_events();
-    manager.process_mempool_transaction(&tx, Some(dummy_instant_lock(tx.txid()))).await;
-    let events = drain_events(&mut rx);
-    assert_eq!(events.len(), 1, "a lock must not detect a known transaction again");
-    assert!(matches!(&events[0], WalletEvent::TransactionInstantLocked { wallet_id: id, txid, .. }
-        if *id == wallet_id && *txid == tx.txid()));
-}
-
-#[tokio::test]
-async fn confirming_funding_after_mempool_spend_preserves_attribution() {
-    let (mut manager, wallet_id, addr) = setup_manager_with_wallet();
-    let funding = create_tx_paying_to(&addr, 0xd2);
-    let mut spender = create_tx_paying_to(&addr, 0xd3);
-    spender.input[0].previous_output = OutPoint::new(funding.txid(), 0);
-    spender.output[0].value = TX_AMOUNT - 2000;
-    spender.output.push(TxOut {
-        value: 1000,
-        script_pubkey: Address::dummy(Network::Testnet, 999).script_pubkey(),
-    });
-    manager.process_mempool_transaction(&funding, None).await;
-    manager.process_mempool_transaction(&spender, None).await;
-    let mut rx = manager.subscribe_events();
-    let block = make_block(vec![funding], 0xd4, 100);
-    manager
-        .process_block_for_wallets(&block, block.block_hash(), 1, &BTreeSet::from([wallet_id]))
-        .await;
-    let account = manager.wallet_infos[&wallet_id].first_bip44_managed_account().unwrap();
-    let record = &account.transactions()[&spender.txid()];
-    assert_eq!(record.net_amount, -2000);
-    assert_eq!(record.input_details.len(), 1);
-    assert_eq!(
-        record.direction,
-        key_wallet::managed_account::transaction_record::TransactionDirection::Outgoing
-    );
-    for event in drain_events(&mut rx) {
-        if let WalletEvent::BlockProcessed {
-            updated,
-            ..
-        } = event
-        {
-            assert!(
-                updated.iter().all(|record| record.txid != spender.txid()),
-                "unchanged spender needs no correction"
-            );
+        // Funding confirmation must not attribute the same inputs again.
+        let block = make_block(vec![funding, earlier_funding], 0xa4, 100);
+        manager
+            .process_block_for_wallets(&block, block.block_hash(), 1, &BTreeSet::from([wallet_id]))
+            .await;
+        let account = manager.wallet_infos[&wallet_id].first_bip44_managed_account().unwrap();
+        let stored = &account.transactions()[&spender.txid()];
+        assert_eq!(stored.net_amount, -2000);
+        assert_eq!(stored.input_details.len(), 3);
+        assert_eq!(account.utxos.len(), 1);
+        for input in &spender.input {
+            assert!(!account.utxos.contains_key(&input.previous_output));
         }
+        assert!(drain_events(&mut rx).iter().all(|event| !matches!(event,
+            WalletEvent::BlockProcessed { updated, .. }
+                if updated.iter().any(|r| r.txid == spender.txid())
+        )));
+
+        manager
+            .process_mempool_transaction(&spender, Some(dummy_instant_lock(spender.txid())))
+            .await;
+        let events = drain_events(&mut rx);
+        assert_eq!(events.len(), 1, "a lock alone must not redetect the spender");
+        assert!(matches!(&events[0], WalletEvent::TransactionInstantLocked { txid, .. }
+            if *txid == spender.txid()));
     }
 }
 
 #[tokio::test]
 async fn late_funding_block_publishes_spender_correction() {
-    let (mut manager, wallet_id, addr) = setup_manager_with_wallet();
-    let funding = create_tx_paying_to(&addr, 0xd5);
-    let mut spender = create_tx_paying_to(&addr, 0xd6);
-    spender.input[0].previous_output = OutPoint::new(funding.txid(), 0);
-    spender.output[0].value = TX_AMOUNT - 2000;
-    let spend_block = make_block(vec![spender.clone()], 0xd7, 200);
-    let wallets = BTreeSet::from([wallet_id]);
-    manager.process_block_for_wallets(&spend_block, spend_block.block_hash(), 2, &wallets).await;
-    let mut rx = manager.subscribe_events();
-    let fund_block = make_block(vec![funding.clone()], 0xd8, 100);
-    manager.process_block_for_wallets(&fund_block, fund_block.block_hash(), 1, &wallets).await;
-    let events = drain_events(&mut rx);
-    let updated = events
-        .iter()
-        .find_map(|event| match event {
-            WalletEvent::BlockProcessed {
-                updated,
-                ..
-            } => Some(updated),
-            _ => None,
-        })
-        .expect("block event");
-    let record =
-        updated.iter().find(|record| record.txid == spender.txid()).expect("spender correction");
-    assert_eq!(record.net_amount, -2000);
-    assert_eq!(record.input_details.len(), 1);
-    assert_eq!(record.input_details[0].value, TX_AMOUNT);
-    assert_eq!(
-        record.direction,
-        key_wallet::managed_account::transaction_record::TransactionDirection::Internal
-    );
-    assert_eq!(record.context.block_info().unwrap().height(), 2);
-    assert!(!manager.wallet_infos[&wallet_id]
-        .first_bip44_managed_account()
-        .unwrap()
-        .utxos
-        .contains_key(&OutPoint::new(funding.txid(), 0)));
-}
+    use key_wallet::managed_account::transaction_record::{OutputRole, TransactionDirection};
 
-#[tokio::test]
-async fn late_funding_recorded_sibling_spender_is_corrected_after_reapply() {
-    let (mut manager, wallet_id, addr) = setup_manager_with_wallet();
-    let sibling_address = manager.wallet_infos[&wallet_id]
-        .coinjoin_managed_account_at_index(0)
-        .unwrap()
-        .managed_account_type()
-        .address_pools()
-        .into_iter()
-        .find(|pool| pool.pool_type == AddressPoolType::External)
-        .unwrap()
-        .address_at_index(0)
-        .unwrap()
-        .clone();
-    let mut funding = create_tx_paying_to(&addr, 0xd9);
-    funding.output[0].value = 1_000_000;
-    let mut spender = create_tx_paying_to(&sibling_address, 0xda);
-    spender.input[0].previous_output = OutPoint::new(funding.txid(), 0);
-    spender.output[0].value = 900_000;
-    let wallets = BTreeSet::from([wallet_id]);
-    let spend_block = make_block(vec![spender.clone()], 0xdb, 200);
-    manager.process_block_for_wallets(&spend_block, spend_block.block_hash(), 2, &wallets).await;
-    assert!(!manager.wallet_infos[&wallet_id]
-        .first_bip44_managed_account()
-        .unwrap()
-        .transactions()
-        .contains_key(&spender.txid()));
-
-    let mut rx = manager.subscribe_events();
-    let fund_block = make_block(vec![funding.clone()], 0xdc, 100);
-    let result =
-        manager.process_block_for_wallets(&fund_block, fund_block.block_hash(), 1, &wallets).await;
-    assert_eq!(result.reapply_heights, BTreeMap::from([(wallet_id, BTreeSet::from([2]))]));
-    drain_events(&mut rx);
-    for (replay_wallet_id, heights) in result.reapply_heights {
-        for height in heights {
-            let replay = manager
-                .process_block_for_wallets(
-                    &spend_block,
-                    spend_block.block_hash(),
-                    height,
-                    &BTreeSet::from([replay_wallet_id]),
-                )
-                .await;
-            assert!(replay.reapply_heights.is_empty());
-        }
-    }
-    let events = drain_events(&mut rx);
-    let corrected = events
-        .iter()
-        .find_map(|event| match event {
-            WalletEvent::BlockProcessed {
-                inserted,
-                updated,
-                ..
-            } => inserted.iter().chain(updated).find(|record| {
-                record.txid == spender.txid()
-                    && matches!(record.account_type, AccountType::Standard { .. })
-            }),
-            _ => None,
-        })
-        .expect("replayed block publishes the BIP44 spender");
-    assert_eq!(corrected.net_amount, -1_000_000);
-    assert_eq!(corrected.input_details.len(), 1);
-    assert_eq!(corrected.input_details[0].value, 1_000_000);
-    assert_eq!(corrected.context.block_info().unwrap().height(), 2);
-    let info = &manager.wallet_infos[&wallet_id];
-    let funding_account = info.first_bip44_managed_account().unwrap();
-    let stored = &funding_account.transactions()[&spender.txid()];
-    assert_eq!(stored.net_amount, corrected.net_amount);
-    assert_eq!(stored.input_details.len(), 1);
-    assert!(!funding_account.utxos.contains_key(&OutPoint::new(funding.txid(), 0)));
-    let sibling =
-        &info.coinjoin_managed_account_at_index(0).unwrap().transactions()[&spender.txid()];
-    assert_eq!(sibling.net_amount, 900_000);
-    assert!(sibling.input_details.is_empty(), "inputs belong only to BIP44");
-    assert!(info.unrecorded_spend_heights(&funding).is_empty());
-
-    let again =
-        manager.process_block_for_wallets(&fund_block, fund_block.block_hash(), 1, &wallets).await;
-    assert!(again.reapply_heights.is_empty());
-    assert!(drain_events(&mut rx).iter().all(|event| !matches!(
-        event, WalletEvent::BlockProcessed { updated, .. } if !updated.is_empty()
-    )));
-}
-
-#[tokio::test]
-async fn late_funding_finalized_sibling_preserves_correction_path() {
-    let (mut manager, wallet_id, addr) = setup_manager_with_wallet();
-    let sibling_address = manager.wallet_infos[&wallet_id]
-        .coinjoin_managed_account_at_index(0)
-        .unwrap()
-        .managed_account_type()
-        .address_pools()
-        .into_iter()
-        .find(|pool| pool.pool_type == AddressPoolType::External)
-        .unwrap()
-        .address_at_index(0)
-        .unwrap()
-        .clone();
-    let funding = create_tx_paying_to(&addr, 0xdd);
-    let mut spender = create_tx_paying_to(&sibling_address, 0xde);
-    spender.input[0].previous_output = OutPoint::new(funding.txid(), 0);
-    spender.output[0].value = TX_AMOUNT - 2000;
-    let wallets = BTreeSet::from([wallet_id]);
-    let spend_block = make_block(vec![spender.clone()], 0xdf, 200);
-    manager.process_block_for_wallets(&spend_block, spend_block.block_hash(), 2, &wallets).await;
-    manager.apply_chain_lock(ChainLock::dummy(2));
-
-    let mut rx = manager.subscribe_events();
-    let fund_block = make_block(vec![funding.clone()], 0xe0, 100);
-    let result =
-        manager.process_block_for_wallets(&fund_block, fund_block.block_hash(), 1, &wallets).await;
-    assert_eq!(result.reapply_heights, BTreeMap::from([(wallet_id, BTreeSet::from([2]))]));
-    drain_events(&mut rx);
-    for (replay_wallet_id, heights) in result.reapply_heights {
-        for height in heights {
-            let replay = manager
-                .process_block_for_wallets(
-                    &spend_block,
-                    spend_block.block_hash(),
-                    height,
-                    &BTreeSet::from([replay_wallet_id]),
-                )
-                .await;
-            assert!(replay.reapply_heights.is_empty());
-        }
-    }
-    let correction_events = drain_events(&mut rx);
-    let corrected = correction_events
-        .iter()
-        .find_map(|event| match event {
-            WalletEvent::BlockProcessed {
-                inserted,
-                updated,
-                ..
-            } => inserted.iter().chain(updated).find(|record| {
-                record.txid == spender.txid()
-                    && matches!(record.account_type, AccountType::Standard { .. })
-            }),
-            _ => None,
-        })
-        .expect("owning account receives the complete chainlocked spender slice");
-    assert_eq!(corrected.net_amount, -(TX_AMOUNT as i64));
-    assert_eq!(corrected.input_details.len(), 1);
-    assert_eq!(corrected.input_details[0].value, TX_AMOUNT);
-    assert!(corrected.context.is_chain_locked());
-    let account = manager.wallet_infos[&wallet_id].first_bip44_managed_account().unwrap();
-    assert!(account.transaction_is_finalized(&spender.txid()));
-    assert_eq!(
-        account.transactions().contains_key(&spender.txid()),
-        cfg!(feature = "keep-finalized-transactions")
-    );
-    assert!(!account.utxos.contains_key(&OutPoint::new(funding.txid(), 0)));
-}
-
-#[tokio::test]
-async fn finalized_spender_late_funding_chainlock_first() {
-    finalized_spender_late_funding_retention_policy(true).await;
-}
-
-#[tokio::test]
-async fn finalized_spender_late_funding_chainlock_between() {
-    finalized_spender_late_funding_retention_policy(false).await;
-}
-
-async fn finalized_spender_late_funding_retention_policy(chainlock_first: bool) {
-    let (mut manager, wallet_id, addr) = setup_manager_with_wallet();
-    let wallets = BTreeSet::from([wallet_id]);
-    let funding = create_tx_paying_to(&addr, 0xe1);
-    let mut spender = create_tx_paying_to(&addr, 0xe2);
-    spender.input[0].previous_output = OutPoint::new(funding.txid(), 0);
-    spender.output[0].value = TX_AMOUNT - 2000;
-    if chainlock_first {
-        manager.apply_chain_lock(ChainLock::dummy(2));
-    }
-    let mut rx = manager.subscribe_events();
-    let block = make_block(vec![spender.clone()], 0xe3, 200);
-    manager.process_block_for_wallets(&block, block.block_hash(), 2, &wallets).await;
-    let initial = drain_events(&mut rx);
-    let incoming = initial
-        .iter()
-        .find_map(|event| match event {
-            WalletEvent::BlockProcessed {
-                inserted,
-                ..
-            } => inserted.iter().find(|r| r.txid == spender.txid()),
-            _ => None,
-        })
-        .expect("initial spender record");
-    assert_eq!(incoming.net_amount, (TX_AMOUNT - 2000) as i64);
-    assert_eq!(
-        incoming.direction,
-        key_wallet::managed_account::transaction_record::TransactionDirection::Incoming
-    );
-    if !chainlock_first {
-        manager.apply_chain_lock(ChainLock::dummy(2));
-    }
-    let mut rx = manager.subscribe_events();
-    let block = make_block(vec![funding], 0xe4, 100);
-    manager.process_block_for_wallets(&block, block.block_hash(), 1, &wallets).await;
-    let events = drain_events(&mut rx);
-    let correction = events.iter().find_map(|event| match event {
-        WalletEvent::BlockProcessed {
-            updated,
-            ..
-        } => updated.iter().find(|r| r.txid == spender.txid()),
-        _ => None,
-    });
-    let account = manager.wallet_infos[&wallet_id].first_bip44_managed_account().unwrap();
-    assert!(account.transaction_is_finalized(&spender.txid()));
-    if cfg!(feature = "keep-finalized-transactions") {
-        let record = correction.expect("retained finalized spender is correctable");
-        assert_eq!(record.net_amount, -2000);
+    for change_value in [0, TX_AMOUNT - 2000] {
+        let (mut manager, wallet_id, addr) = setup_manager_with_wallet();
+        let change = manager
+            .wallet_infos
+            .get_mut(&wallet_id)
+            .unwrap()
+            .first_bip44_managed_account_mut()
+            .unwrap()
+            .next_change_address(None, true)
+            .unwrap();
+        let funding = create_tx_paying_to(&addr, 0xd5);
+        let mut spender = create_tx_paying_to(&change, 0xd6);
+        spender.input[0].previous_output = OutPoint::new(funding.txid(), 0);
+        spender.output[0].value = change_value;
+        let spend_block = make_block(vec![spender.clone()], 0xd7, 200);
+        let wallets = BTreeSet::from([wallet_id]);
+        manager
+            .process_block_for_wallets(&spend_block, spend_block.block_hash(), 2, &wallets)
+            .await;
+        let mut rx = manager.subscribe_events();
+        let fund_block = make_block(vec![funding.clone()], 0xd8, 100);
+        let result = manager
+            .process_block_for_wallets(&fund_block, fund_block.block_hash(), 1, &wallets)
+            .await;
+        assert!(result.reapply_heights.is_empty());
+        let events = drain_events(&mut rx);
+        let updated = events
+            .iter()
+            .find_map(|event| match event {
+                WalletEvent::BlockProcessed {
+                    updated,
+                    ..
+                } => Some(updated),
+                _ => None,
+            })
+            .expect("block correction event");
+        assert_eq!(updated.len(), 1);
+        let record = &updated[0];
+        assert_eq!(record.txid, spender.txid());
+        assert_eq!(record.net_amount, change_value as i64 - TX_AMOUNT as i64);
         assert_eq!(record.input_details.len(), 1);
-        assert!(record.context.is_chain_locked());
-        assert_eq!(account.transactions()[&spender.txid()].net_amount, -2000);
-    } else {
-        assert!(correction.is_none(), "txid-only retention cannot reconstruct accounting");
-        assert!(!account.transactions().contains_key(&spender.txid()));
+        assert_eq!(record.input_details[0].value, TX_AMOUNT);
+        assert_eq!(record.input_details[0].index, 0);
+        assert_eq!(record.direction, TransactionDirection::Internal);
+        assert_eq!(record.output_details[0].role, OutputRole::Change);
+        assert_eq!(record.context.block_info().unwrap().height(), 2);
+        assert_eq!(record.context.block_info().unwrap().block_hash(), spend_block.block_hash());
+        let account = manager.wallet_infos[&wallet_id].first_bip44_managed_account().unwrap();
+        assert_eq!(account.transactions()[&spender.txid()].net_amount, record.net_amount);
+        assert!(!account.utxos.contains_key(&OutPoint::new(funding.txid(), 0)));
+
+        manager.process_block_for_wallets(&fund_block, fund_block.block_hash(), 1, &wallets).await;
+        assert_no_events(&mut rx);
     }
 }
