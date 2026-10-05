@@ -1952,6 +1952,7 @@ mod tests {
     use super::ChildNumber::{Hardened, Normal};
     use super::*;
     use dashcore::Network::{self, Mainnet};
+    use hex_conservative::DisplayHex;
 
     #[test]
     fn test_parse_derivation_path() {
@@ -2562,12 +2563,11 @@ mod tests {
         let ascending: [u8; 32] = core::array::from_fn(|i| i as u8);
         let descending: [u8; 32] = core::array::from_fn(|i| 0xff - i as u8);
         let public_key_hex = |path: DerivationPath, network| {
-            hex::encode(
-                path.derive_pub_ecdsa_for_master_seed(&seed, network)
-                    .unwrap()
-                    .public_key
-                    .serialize(),
-            )
+            path.derive_pub_ecdsa_for_master_seed(&seed, network)
+                .unwrap()
+                .public_key
+                .serialize()
+                .to_lower_hex_string()
         };
 
         let session = |identity_id, request_id| {
@@ -2616,8 +2616,8 @@ mod tests {
         // The builder's path is the documented string, byte order included.
         let parsed: DerivationPath = format!(
             "m/9'/1'/5'/6'/0'/0x{}'/0x{}'",
-            hex::encode(ascending),
-            hex::encode(descending)
+            ascending.to_lower_hex_string(),
+            descending.to_lower_hex_string()
         )
         .parse()
         .unwrap();
@@ -2636,7 +2636,7 @@ mod tests {
         let path = DerivationPath::bip_44_account(Network::Mainnet, 0);
         let sk = path
             .derive_priv_ecdsa_for_master_seed(
-                hex::decode(HEX_SEED).unwrap().as_ref(),
+                hex_conservative::decode_to_vec(HEX_SEED).unwrap().as_ref(),
                 Network::Mainnet,
             )
             .unwrap();
@@ -2652,7 +2652,7 @@ mod tests {
         let path = DerivationPath::bip_44_account(Network::Mainnet, 0);
         let pk = path
             .derive_pub_ecdsa_for_master_seed(
-                hex::decode(HEX_SEED).unwrap().as_ref(),
+                hex_conservative::decode_to_vec(HEX_SEED).unwrap().as_ref(),
                 Network::Mainnet,
             )
             .unwrap();
@@ -2668,7 +2668,7 @@ mod tests {
         let path = DerivationPath::bip_44_payment_path(Network::Mainnet, 0, true, 3);
         let sk = path
             .derive_priv_ecdsa_for_master_seed(
-                hex::decode(HEX_SEED).unwrap().as_ref(),
+                hex_conservative::decode_to_vec(HEX_SEED).unwrap().as_ref(),
                 Network::Mainnet,
             )
             .unwrap();
@@ -2681,7 +2681,7 @@ mod tests {
         let path = DerivationPath::bip_44_payment_path(Network::Mainnet, 0, false, 3);
         let sk = path
             .derive_priv_ecdsa_for_master_seed(
-                hex::decode(HEX_SEED).unwrap().as_ref(),
+                hex_conservative::decode_to_vec(HEX_SEED).unwrap().as_ref(),
                 Network::Mainnet,
             )
             .unwrap();
@@ -2694,7 +2694,7 @@ mod tests {
         let path = DerivationPath::bip_44_payment_path(Network::Mainnet, 0, true, 3);
         let sk = path
             .derive_pub_ecdsa_for_master_seed(
-                hex::decode(HEX_SEED).unwrap().as_ref(),
+                hex_conservative::decode_to_vec(HEX_SEED).unwrap().as_ref(),
                 Network::Mainnet,
             )
             .unwrap();
@@ -2709,7 +2709,7 @@ mod tests {
         let path = DerivationPath::bip_44_payment_path(Network::Mainnet, 0, false, 3);
         let sk = path
             .derive_pub_ecdsa_for_master_seed(
-                hex::decode(HEX_SEED).unwrap().as_ref(),
+                hex_conservative::decode_to_vec(HEX_SEED).unwrap().as_ref(),
                 Network::Mainnet,
             )
             .unwrap();

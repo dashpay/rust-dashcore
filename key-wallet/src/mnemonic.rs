@@ -439,7 +439,7 @@ impl fmt::Display for Mnemonic {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hex::FromHex;
+    use hex_conservative::DisplayHex;
 
     #[test]
     #[cfg(feature = "getrandom")]
@@ -532,17 +532,17 @@ mod tests {
     #[test]
     fn test_bip39_test_vectors() {
         // Test vector 1: all zeros entropy
-        let entropy = Vec::from_hex("00000000000000000000000000000000").unwrap();
+        let entropy = hex_conservative::decode_to_vec("00000000000000000000000000000000").unwrap();
         let mnemonic = Mnemonic::from_entropy(&entropy, Language::English).unwrap();
         let expected_phrase = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
         assert_eq!(mnemonic.phrase(), expected_phrase);
 
         let seed = mnemonic.to_seed("TREZOR");
         let expected_seed = "c55257c360c07c72029aebc1b53c05ed0362ada38ead3e3e9efa3708e53495531f09a6987599d18264c1e1c92f2cf141630c7a3c4ab7c81b2f001698e7463b04";
-        assert_eq!(hex::encode(seed), expected_seed);
+        assert_eq!(seed.to_lower_hex_string(), expected_seed);
 
         // Test vector 2: 0x7f7f... entropy
-        let entropy = Vec::from_hex("7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f").unwrap();
+        let entropy = hex_conservative::decode_to_vec("7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f").unwrap();
         let mnemonic = Mnemonic::from_entropy(&entropy, Language::English).unwrap();
         let expected_phrase =
             "legal winner thank year wave sausage worth useful legal winner thank yellow";
@@ -550,10 +550,10 @@ mod tests {
 
         let seed = mnemonic.to_seed("TREZOR");
         let expected_seed = "2e8905819b8723fe2c1d161860e5ee1830318dbf49a83bd451cfb8440c28bd6fa457fe1296106559a3c80937a1c1069be3a3a5bd381ee6260e8d9739fce1f607";
-        assert_eq!(hex::encode(seed), expected_seed);
+        assert_eq!(seed.to_lower_hex_string(), expected_seed);
 
         // Test vector 3: 0x8080... entropy
-        let entropy = Vec::from_hex("80808080808080808080808080808080").unwrap();
+        let entropy = hex_conservative::decode_to_vec("80808080808080808080808080808080").unwrap();
         let mnemonic = Mnemonic::from_entropy(&entropy, Language::English).unwrap();
         let expected_phrase =
             "letter advice cage absurd amount doctor acoustic avoid letter advice cage above";
@@ -561,24 +561,26 @@ mod tests {
 
         let seed = mnemonic.to_seed("TREZOR");
         let expected_seed = "d71de856f81a8acc65e6fc851a38d4d7ec216fd0796d0a6827a3ad6ed5511a30fa280f12eb2e47ed2ac03b5c462a0358d18d69fe4f985ec81778c1b370b652a8";
-        assert_eq!(hex::encode(seed), expected_seed);
+        assert_eq!(seed.to_lower_hex_string(), expected_seed);
 
         // Test vector 4: all ones entropy
-        let entropy = Vec::from_hex("ffffffffffffffffffffffffffffffff").unwrap();
+        let entropy = hex_conservative::decode_to_vec("ffffffffffffffffffffffffffffffff").unwrap();
         let mnemonic = Mnemonic::from_entropy(&entropy, Language::English).unwrap();
         let expected_phrase = "zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo wrong";
         assert_eq!(mnemonic.phrase(), expected_phrase);
 
         let seed = mnemonic.to_seed("TREZOR");
         let expected_seed = "ac27495480225222079d7be181583751e86f571027b0497b5b5d11218e0a8a13332572917f0f8e5a589620c6f15b11c61dee327651a14c34e18231052e48c069";
-        assert_eq!(hex::encode(seed), expected_seed);
+        assert_eq!(seed.to_lower_hex_string(), expected_seed);
     }
 
     // ✓ Test 18-word mnemonics (from DashSync)
     #[test]
     fn test_18_word_mnemonics() {
         // Test 18-word mnemonic
-        let entropy = Vec::from_hex("000000000000000000000000000000000000000000000000").unwrap();
+        let entropy =
+            hex_conservative::decode_to_vec("000000000000000000000000000000000000000000000000")
+                .unwrap();
         let mnemonic = Mnemonic::from_entropy(&entropy, Language::English).unwrap();
         let expected_phrase = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon agent";
         assert_eq!(mnemonic.phrase(), expected_phrase);
@@ -586,16 +588,17 @@ mod tests {
 
         let seed = mnemonic.to_seed("TREZOR");
         let expected_seed = "035895f2f481b1b0f01fcf8c289c794660b289981a78f8106447707fdd9666ca06da5a9a565181599b79f53b844d8a71dd9f439c52a3d7b3e8a79c906ac845fa";
-        assert_eq!(hex::encode(seed), expected_seed);
+        assert_eq!(seed.to_lower_hex_string(), expected_seed);
     }
 
     // ✓ Test 24-word mnemonics (from DashSync)
     #[test]
     fn test_24_word_mnemonics() {
         // Test 24-word mnemonic
-        let entropy =
-            Vec::from_hex("0000000000000000000000000000000000000000000000000000000000000000")
-                .unwrap();
+        let entropy = hex_conservative::decode_to_vec(
+            "0000000000000000000000000000000000000000000000000000000000000000",
+        )
+        .unwrap();
         let mnemonic = Mnemonic::from_entropy(&entropy, Language::English).unwrap();
         let expected_phrase = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art";
         assert_eq!(mnemonic.phrase(), expected_phrase);
@@ -603,14 +606,14 @@ mod tests {
 
         let seed = mnemonic.to_seed("TREZOR");
         let expected_seed = "bda85446c68413707090a52022edd26a1c9462295029f2e60cd7c4f2bbd3097170af7a4d73245cafa9c3cca8d561a7c3de6f5d4a10be8ed2a5e608d68f92fcc8";
-        assert_eq!(hex::encode(seed), expected_seed);
+        assert_eq!(seed.to_lower_hex_string(), expected_seed);
     }
 
     // ✓ Test random entropy examples (from DashSync)
     #[test]
     fn test_random_entropy_examples() {
         // Test random entropy 1
-        let entropy = Vec::from_hex("77c2b00716cec7213839159e404db50d").unwrap();
+        let entropy = hex_conservative::decode_to_vec("77c2b00716cec7213839159e404db50d").unwrap();
         let mnemonic = Mnemonic::from_entropy(&entropy, Language::English).unwrap();
         let expected_phrase =
             "jelly better achieve collect unaware mountain thought cargo oxygen act hood bridge";
@@ -618,17 +621,19 @@ mod tests {
 
         let seed = mnemonic.to_seed("TREZOR");
         let expected_seed = "b5b6d0127db1a9d2226af0c3346031d77af31e918dba64287a1b44b8ebf63cdd52676f672a290aae502472cf2d602c051f3e6f18055e84e4c43897fc4e51a6ff";
-        assert_eq!(hex::encode(seed), expected_seed);
+        assert_eq!(seed.to_lower_hex_string(), expected_seed);
 
         // Test random entropy 2
-        let entropy = Vec::from_hex("b63a9c59a6e641f288ebc103017f1da9f8290b3da6bdef7b").unwrap();
+        let entropy =
+            hex_conservative::decode_to_vec("b63a9c59a6e641f288ebc103017f1da9f8290b3da6bdef7b")
+                .unwrap();
         let mnemonic = Mnemonic::from_entropy(&entropy, Language::English).unwrap();
         let expected_phrase = "renew stay biology evidence goat welcome casual join adapt armor shuffle fault little machine walk stumble urge swap";
         assert_eq!(mnemonic.phrase(), expected_phrase);
 
         let seed = mnemonic.to_seed("TREZOR");
         let expected_seed = "9248d83e06f4cd98debf5b6f010542760df925ce46cf38a1bdb4e4de7d21f5c39366941c69e1bdbf2966e0f6e6dbece898a0e2f0a4c2b3e640953dfe8b7bbdc5";
-        assert_eq!(hex::encode(seed), expected_seed);
+        assert_eq!(seed.to_lower_hex_string(), expected_seed);
     }
 
     // ✓ Test Unicode normalization (from DashSync - Czech test case)
@@ -661,7 +666,7 @@ mod tests {
         // English (test_mnemonic_validation) and Portuguese
         // (test_portuguese_mnemonic); the other languages were only built via
         // from_entropy in test_multiple_languages, never validate()'d.
-        let entropy = Vec::from_hex("00000000000000000000000000000000").unwrap();
+        let entropy = hex_conservative::decode_to_vec("00000000000000000000000000000000").unwrap();
         for language in [
             Language::French,
             Language::Spanish,
@@ -690,7 +695,7 @@ mod tests {
 
         // Test that we can create mnemonics in different languages
         // (We can't easily test actual phrases without the word lists, but we can test the API)
-        let entropy = Vec::from_hex("00000000000000000000000000000000").unwrap();
+        let entropy = hex_conservative::decode_to_vec("00000000000000000000000000000000").unwrap();
 
         let _mnemonic_fr = Mnemonic::from_entropy(&entropy, Language::French).unwrap();
         let _mnemonic_es = Mnemonic::from_entropy(&entropy, Language::Spanish).unwrap();
@@ -709,7 +714,7 @@ mod tests {
     #[test]
     fn test_portuguese_mnemonic() {
         // Test with known entropy
-        let entropy = Vec::from_hex("00000000000000000000000000000000").unwrap();
+        let entropy = hex_conservative::decode_to_vec("00000000000000000000000000000000").unwrap();
         let mnemonic_pt = Mnemonic::from_entropy(&entropy, Language::Portuguese).unwrap();
 
         // Portuguese phrase for all zeros entropy
@@ -721,7 +726,7 @@ mod tests {
         let seed = mnemonic_pt.to_seed("TREZOR");
         // Portuguese mnemonic with same entropy produces a different seed than English
         let expected_seed = "ab9742b024a1e8bd241b76f8b3a157e9d442da60277bc8f36b8b23afe163de79414fb49fd1a8dd26f4ea7f0dc965c760b3b80727557bdca61e1f0b0f069952f2";
-        assert_eq!(hex::encode(seed), expected_seed);
+        assert_eq!(seed.to_lower_hex_string(), expected_seed);
 
         // Test parsing a Portuguese mnemonic phrase
         let phrase_pt = "abacate abacate abacate abacate abacate abacate abacate abacate abacate abacate abacate abater";
@@ -1153,7 +1158,10 @@ mod tests {
             mnemonic.language(),
             Language::ChineseSimplified | Language::ChineseTraditional
         ));
-        assert_eq!(mnemonic.to_seed("").to_vec(), Vec::from_hex(DUAL_LIST_SEED_HEX).unwrap());
+        assert_eq!(
+            mnemonic.to_seed("").to_vec(),
+            hex_conservative::decode_to_vec(DUAL_LIST_SEED_HEX).unwrap()
+        );
     }
 
     #[test]
@@ -1169,7 +1177,7 @@ mod tests {
         assert_eq!(mnemonic.language(), Language::French);
         assert_eq!(
             mnemonic.to_seed("TREZOR").to_vec(),
-            Vec::from_hex(FRENCH_SEED_TREZOR_HEX).unwrap()
+            hex_conservative::decode_to_vec(FRENCH_SEED_TREZOR_HEX).unwrap()
         );
     }
 
