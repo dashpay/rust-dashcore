@@ -308,6 +308,7 @@ impl WalletTransactionChecker for ManagedWalletInfo {
                         result.new_records.push(record);
                     }
                 }
+                self.attribute_late_inputs(tx, &mut result);
                 if update_balance {
                     self.update_balance();
                 }
@@ -3992,6 +3993,62 @@ mod tests {
                 .expect("correction");
             assert_eq!(corrected.net_amount, outgoing.net_amount);
         }
+    }
+
+    /// An imported account can discover a mempool child before its known parent's IS redelivery.
+    #[tokio::test]
+    async fn born_spent_attribution_runs_on_the_instant_send_backfill_branch() {
+        use crate::wallet::managed_wallet_info::managed_account_operations::ManagedAccountOperations;
+        let mut ctx = TestWalletContext::new_random();
+        let account_type = AccountType::Standard {
+            index: 1,
+            standard_account_type: StandardAccountType::BIP44Account,
+        };
+        ctx.wallet.add_account(account_type, None).unwrap();
+        let xpub = ctx.wallet.accounts.standard_bip44_accounts[&1].account_xpub;
+        let mut preview =
+            ManagedWalletInfo::from_wallet_with_name(&ctx.wallet, "preview".into(), 0);
+        let address = preview
+            .bip44_managed_account_at_index_mut(1)
+            .unwrap()
+            .next_receive_address(Some(&xpub), true)
+            .unwrap();
+        let mut funding = Transaction::dummy(&ctx.receive_address, 0..1, &[100_000]);
+        funding.output.push(TxOut {
+            value: 50_000,
+            script_pubkey: address.script_pubkey(),
+        });
+        let first = ctx.check_transaction(&funding, TransactionContext::Mempool).await;
+        assert_eq!(first.new_records.len(), 1);
+
+        ctx.managed_wallet.add_managed_account(&ctx.wallet, account_type).unwrap();
+        let mut spender = Transaction::dummy(&address, 1..2, &[40_000]);
+        let outpoint = OutPoint::new(funding.txid(), 1);
+        spender.input[0].previous_output = outpoint;
+        ctx.check_transaction(&spender, TransactionContext::Mempool).await;
+        let result = ctx
+            .check_transaction(
+                &funding,
+                TransactionContext::InstantSend(InstantLock {
+                    txid: funding.txid(),
+                    ..InstantLock::default()
+                }),
+            )
+            .await;
+        assert!(!result.is_new_transaction);
+        assert!(result.state_modified);
+        assert_eq!(result.new_records.len(), 1);
+        assert_eq!(result.new_records[0].account_type, account_type);
+        let corrected = result.updated_records.iter().find(|r| r.txid == spender.txid()).unwrap();
+        assert_eq!(corrected.net_amount, -10_000);
+        assert_eq!(corrected.input_details.len(), 1);
+        assert_eq!(corrected.context, TransactionContext::Mempool);
+        assert!(!ctx
+            .managed_wallet
+            .bip44_managed_account_at_index(1)
+            .unwrap()
+            .utxos
+            .contains_key(&outpoint));
     }
 
     #[tokio::test]
