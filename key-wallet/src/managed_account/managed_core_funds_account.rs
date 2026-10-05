@@ -62,6 +62,10 @@ pub struct ManagedCoreFundsAccount {
     /// Rebuilt from `transactions` during deserialization.
     #[cfg_attr(feature = "serde", serde(skip_serializing))]
     spent_outpoints: HashSet<OutPoint>,
+    /// External spent claims, including claimants with no retained transaction body.
+    /// Reapplied by the persistence owner after loading; never encoded in snapshots.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    restored_spent_claims: BTreeMap<OutPoint, Option<Txid>>,
     /// Ours, but spent before the funding arrived, so never in `utxos` (#649).
     /// Input matching falls back to these.
     pub(crate) spent_before_funded: BTreeMap<OutPoint, Utxo>,
@@ -110,6 +114,7 @@ impl ManagedCoreFundsAccount {
             balance: WalletCoreBalance::default(),
             utxos: BTreeMap::new(),
             spent_outpoints: HashSet::new(),
+            restored_spent_claims: BTreeMap::new(),
             spent_before_funded: BTreeMap::new(),
             reservations: ReservationSet::default(),
             born_spent_outputs: Vec::new(),
@@ -139,6 +144,7 @@ impl ManagedCoreFundsAccount {
             balance: WalletCoreBalance::default(),
             utxos: BTreeMap::new(),
             spent_outpoints: HashSet::new(),
+            restored_spent_claims: BTreeMap::new(),
             spent_before_funded: BTreeMap::new(),
             reservations: ReservationSet::default(),
             born_spent_outputs: Vec::new(),
@@ -198,6 +204,11 @@ impl ManagedCoreFundsAccount {
     /// Check if an outpoint was spent by a previously recorded transaction.
     fn is_outpoint_spent(&self, outpoint: &OutPoint) -> bool {
         self.spent_outpoints.contains(outpoint)
+    }
+
+    pub(crate) fn restore_spent_outpoints(&mut self, outpoints: &[(OutPoint, Option<Txid>)]) {
+        self.spent_outpoints.extend(outpoints.iter().map(|(outpoint, _)| *outpoint));
+        self.restored_spent_claims.extend(outpoints.iter().copied());
     }
 
     /// Collect the outpoints among `tx`'s inputs that this account holds as a
@@ -536,11 +547,18 @@ impl ManagedCoreFundsAccount {
     /// `spent_outpoints` itself, so a caller that needs to tell a
     /// persistence mirror which coins are genuinely free again has to catch
     /// it here or not at all.
-    fn release_spent_marks(&mut self, freed: &HashSet<OutPoint>) -> HashSet<OutPoint> {
+    pub(crate) fn release_spent_marks(
+        &mut self,
+        freed: &HashSet<OutPoint>,
+        removed: &BTreeSet<Txid>,
+    ) -> HashSet<OutPoint> {
+        self.restored_spent_claims
+            .retain(|_, claimant| claimant.is_none_or(|txid| !removed.contains(&txid)));
         if freed.is_empty() {
             return HashSet::new();
         }
-        let still_spent = rebuild_spent_outpoints(&self.keys);
+        let mut still_spent = rebuild_spent_outpoints(&self.keys);
+        still_spent.extend(self.restored_spent_claims.keys().copied());
         let released: HashSet<OutPoint> = freed.difference(&still_spent).copied().collect();
         self.spent_outpoints
             .retain(|outpoint| !freed.contains(outpoint) || still_spent.contains(outpoint));
@@ -593,7 +611,7 @@ impl ManagedCoreFundsAccount {
             }
         }
         if records > 0 {
-            self.release_spent_marks(&freed);
+            self.release_spent_marks(&freed, abandoned);
         }
 
         if utxos > 0 {
@@ -769,7 +787,7 @@ impl ManagedCoreFundsAccount {
         // the winner is recorded, so no live record claims the outpoint yet.
         // Only the loser's *extra* inputs are genuinely released.
         freed.retain(|outpoint| !spent.contains(outpoint));
-        let released = self.release_spent_marks(&freed);
+        let released = self.release_spent_marks(&freed, &losers);
         if changed {
             self.keys.bump_monitor_revision();
         }
@@ -1431,6 +1449,7 @@ impl<'de> Deserialize<'de> for ManagedCoreFundsAccount {
             balance: helper.balance,
             utxos: helper.utxos,
             spent_outpoints,
+            restored_spent_claims: BTreeMap::new(),
             spent_before_funded: helper.spent_before_funded,
             reservations: ReservationSet::default(),
             born_spent_outputs: Vec::new(),

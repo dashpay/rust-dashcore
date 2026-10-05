@@ -326,6 +326,23 @@ impl ManagedWalletInfo {
         &self.observed_spent_outpoints
     }
 
+    /// Restore durable spent-output guards after loading wallet state.
+    ///
+    /// Call after restoring all funding accounts and replaying history/finality,
+    /// using the persistence layer's final spent set, including unknown-owner
+    /// outpoints. Existing UTXOs must already exclude these spent outputs.
+    /// This additive, idempotent operation only prevents future funding insertion;
+    /// it creates no history or observation heights and changes no UTXOs or balances.
+    /// Guards survive ChainLock pruning and must be reapplied after each reload
+    /// (and after adding funding accounts to the restored snapshot).
+    /// A known spender permits release only when that transaction is removed;
+    /// an unknown spender (`None`) keeps its guard through conflict/abandonment.
+    pub fn restore_spent_outpoints(&mut self, outpoints: &[(OutPoint, Option<Txid>)]) {
+        for account in self.accounts.all_funding_accounts_mut() {
+            account.restore_spent_outpoints(outpoints);
+        }
+    }
+
     /// Record every outpoint `tx` spends into [`Self::observed_spent_outpoints`]
     /// at `height`. Insert-only bookkeeping — it never touches account UTXO sets,
     /// so it is safe to call before `record_transaction` builds a spend's

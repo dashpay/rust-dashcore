@@ -181,6 +181,14 @@ impl ManagedWalletInfo {
             result.released_outpoints.sort_unstable();
             result.released_outpoints.dedup();
             result.retain_unclaimed(&self.accounts);
+            // Restored guards also live in accounts that never recorded the loser.
+            let mut released = result.released_outpoints.iter().copied().collect();
+            let removed = result.txids.iter().copied().collect();
+            for account in self.accounts.all_funding_accounts_mut() {
+                let account_released = account.release_spent_marks(&released, &removed);
+                released.retain(|outpoint| account_released.contains(outpoint));
+            }
+            result.released_outpoints.retain(|outpoint| released.contains(outpoint));
         }
         result
     }
@@ -305,6 +313,15 @@ impl ManagedWalletInfo {
             }
         }
 
+        let mut freed: HashSet<OutPoint> = self
+            .accounts
+            .all_accounts()
+            .into_iter()
+            .flat_map(|account| account.transactions().iter())
+            .filter(|(txid, _)| abandoned.contains(*txid))
+            .flat_map(|(_, record)| record.transaction.input.iter())
+            .map(|input| input.previous_output)
+            .collect();
         let mut utxos_removed = 0;
         let mut records_removed = 0;
         for account in self.accounts.all_accounts_mut() {
@@ -328,6 +345,18 @@ impl ManagedWalletInfo {
                     }
                 }
             }
+        }
+
+        // Only release known inputs with no surviving claimant anywhere in the wallet.
+        for account in self.accounts.all_accounts() {
+            for record in account.transactions().values() {
+                for input in &record.transaction.input {
+                    freed.remove(&input.previous_output);
+                }
+            }
+        }
+        for account in self.accounts.all_funding_accounts_mut() {
+            account.release_spent_marks(&freed, &abandoned);
         }
 
         AbandonOutcome {
