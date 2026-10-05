@@ -31,7 +31,7 @@ const DEFAULT_SYNC_EVENT_CAPACITY: usize = 10000;
 
 /// Macro to spawn a manager if present.
 macro_rules! spawn_manager {
-    ($self:expr, $manager:expr, $network:expr) => {
+    ($manager:expr, $network:expr, $sync_event_sender:expr, $shutdown:expr, $tasks:expr, $progress_receivers:expr) => {
         if let Some(manager) = $manager {
             let identifier = manager.identifier();
             let wanted_message_types = manager.wanted_message_types();
@@ -48,15 +48,15 @@ macro_rules! spawn_manager {
 
             let context = SyncManagerTaskContext {
                 message_receiver,
-                sync_event_sender: $self.sync_event_sender.clone(),
+                sync_event_sender: $sync_event_sender.clone(),
                 network_event_receiver: network_event_rx,
                 requests,
-                shutdown: $self.shutdown.clone(),
+                shutdown: $shutdown.clone(),
                 progress_sender,
             };
 
-            $self.tasks.spawn(manager.run(context));
-            $self.progress_receivers.push(progress_receiver);
+            $tasks.spawn(manager.run(context));
+            $progress_receivers.push(progress_receiver);
         }
     };
 }
@@ -104,76 +104,62 @@ where
     }
 }
 
+impl<H, FH, F, B, M, W> Managers<H, FH, F, B, M, W>
+where
+    H: BlockHeaderStorage,
+    FH: FilterHeaderStorage,
+    F: FilterStorage,
+    B: BlockStorage,
+    M: MetadataStorage,
+    W: WalletInterface + 'static,
+{
+    pub(crate) fn progress(&self) -> SyncProgress {
+        let mut progress = SyncProgress::default();
+        try_update_progress(self.block_headers.as_ref(), &mut progress);
+        try_update_progress(self.filter_headers.as_ref(), &mut progress);
+        try_update_progress(self.filters.as_ref(), &mut progress);
+        try_update_progress(self.blocks.as_ref(), &mut progress);
+        try_update_progress(self.masternode.as_ref(), &mut progress);
+        try_update_progress(self.chainlock.as_ref(), &mut progress);
+        try_update_progress(self.instantsend.as_ref(), &mut progress);
+        try_update_progress(self.mempool.as_ref(), &mut progress);
+        progress
+    }
+}
+
 /// Sync coordinator handling the separate sync managers.
 ///
 /// - Spawns each manager in its own tokio task
 /// - Tracks and aggregates progress via watch channels
 /// - Coordinates graceful shutdown
-pub struct SyncCoordinator<H, FH, F, B, M, W>
-where
-    H: BlockHeaderStorage,
-    FH: FilterHeaderStorage,
-    F: FilterStorage,
-    B: BlockStorage,
-    M: MetadataStorage,
-    W: WalletInterface + 'static,
-{
-    /// Manager instances provided on construction and consumed in start spawned tasks.
-    managers: Managers<H, FH, F, B, M, W>,
-    /// Progress receivers from spawned manager tasks.
-    progress_receivers: Vec<watch::Receiver<SyncManagerProgress>>,
-    /// JoinSet for managing spawned tasks.
-    tasks: JoinSet<SyncResult<ManagerIdentifier>>,
+///
+/// The event and progress channels live as long as the coordinator, so
+/// subscribers keep receiving across runs; each [`Self::start`] runs a fresh
+/// set of managers until the next [`Self::shutdown`].
+pub struct SyncCoordinator {
     /// Event bus for inter-manager communication.
     sync_event_sender: broadcast::Sender<SyncEvent>,
     /// Watch channel sender for progress updates.
     progress_sender: watch::Sender<SyncProgress>,
-    /// Watch channel receiver for progress updates.
-    progress_receiver: watch::Receiver<SyncProgress>,
-    /// Time when sync started (for duration logging).
-    sync_start_time: Option<Instant>,
-    /// Shutdown token for all tasks.
-    shutdown: CancellationToken,
-    /// Handle for the progress aggregation task.
-    progress_task: Option<tokio::task::JoinHandle<()>>,
+    /// The managers' tasks, from `start` until `shutdown`.
+    run: Option<SyncRun>,
 }
 
-impl<H, FH, F, B, M, W> SyncCoordinator<H, FH, F, B, M, W>
-where
-    H: BlockHeaderStorage,
-    FH: FilterHeaderStorage,
-    F: FilterStorage,
-    B: BlockStorage,
-    M: MetadataStorage,
-    W: WalletInterface + 'static,
-{
-    /// Create a new coordinator with the given config.
-    pub(crate) async fn new(managers: Managers<H, FH, F, B, M, W>) -> Self {
-        let mut initial_progress = SyncProgress::default();
+/// The tasks spawned by one [`SyncCoordinator::start`].
+struct SyncRun {
+    tasks: JoinSet<SyncResult<ManagerIdentifier>>,
+    shutdown: CancellationToken,
+    progress_task: tokio::task::JoinHandle<()>,
+    start_time: Instant,
+}
 
-        try_update_progress(managers.block_headers.as_ref(), &mut initial_progress);
-        try_update_progress(managers.filter_headers.as_ref(), &mut initial_progress);
-        try_update_progress(managers.filters.as_ref(), &mut initial_progress);
-        try_update_progress(managers.blocks.as_ref(), &mut initial_progress);
-        try_update_progress(managers.masternode.as_ref(), &mut initial_progress);
-        try_update_progress(managers.chainlock.as_ref(), &mut initial_progress);
-        try_update_progress(managers.instantsend.as_ref(), &mut initial_progress);
-        try_update_progress(managers.mempool.as_ref(), &mut initial_progress);
-
-        tracing::info!("Initial sync progress {}", initial_progress.clone());
-
-        let (progress_sender, progress_receiver) = watch::channel(initial_progress);
-
+impl SyncCoordinator {
+    /// Create a stopped coordinator reporting `initial_progress`.
+    pub(crate) fn new(initial_progress: SyncProgress) -> Self {
         Self {
-            managers,
-            progress_receivers: Vec::new(),
-            tasks: JoinSet::new(),
             sync_event_sender: broadcast::Sender::new(DEFAULT_SYNC_EVENT_CAPACITY),
-            progress_sender,
-            progress_receiver,
-            sync_start_time: None,
-            shutdown: CancellationToken::new(),
-            progress_task: None,
+            progress_sender: watch::Sender::new(initial_progress),
+            run: None,
         }
     }
 
@@ -187,64 +173,83 @@ where
         self.sync_event_sender.subscribe()
     }
 
-    /// Start all managers by spawning each in its own task.
+    /// Reset the reported progress, e.g. after the storage is wiped.
+    pub(crate) fn reset_progress(&self) {
+        self.progress_sender.send_replace(SyncProgress::default());
+    }
+
+    /// Start `managers` by spawning each in its own task.
     ///
     /// Each manager receives:
     /// - A message stream filtered by its subscribed types
     /// - An event bus subscription for inter-manager events
     /// - A request sender for outgoing network messages
     /// - A shutdown token for graceful termination
-    pub async fn start<N>(&mut self, network: &mut N) -> SyncResult<()>
+    pub async fn start<H, FH, F, B, M, W, N>(
+        &mut self,
+        managers: Managers<H, FH, F, B, M, W>,
+        network: &mut N,
+    ) -> SyncResult<()>
     where
+        H: BlockHeaderStorage,
+        FH: FilterHeaderStorage,
+        F: FilterStorage,
+        B: BlockStorage,
+        M: MetadataStorage,
+        W: WalletInterface + 'static,
         N: NetworkManager,
     {
-        if !self.tasks.is_empty() {
+        if self.run.is_some() {
             return Err(SyncError::InvalidState("SyncCoordinator already started".to_string()));
         }
 
+        let initial_progress = managers.progress();
+        tracing::info!("Initial sync progress {}", initial_progress.clone());
+        self.progress_sender.send_replace(initial_progress);
+
         tracing::info!("Starting sync managers in separate tasks");
 
-        // Record sync start time
-        let sync_start_time = Instant::now();
-        self.sync_start_time = Some(sync_start_time);
+        let start_time = Instant::now();
+        let shutdown = CancellationToken::new();
+        let mut tasks = JoinSet::new();
+        let mut progress_receivers = Vec::new();
 
-        // Take managers for spawning
-        let block_headers = self.managers.block_headers.take();
-        let filter_headers = self.managers.filter_headers.take();
-        let filters = self.managers.filters.take();
-        let blocks = self.managers.blocks.take();
-        let masternode = self.managers.masternode.take();
-        let chainlock = self.managers.chainlock.take();
-        let instantsend = self.managers.instantsend.take();
-        let mempool = self.managers.mempool.take();
+        let Managers {
+            block_headers,
+            filter_headers,
+            filters,
+            blocks,
+            masternode,
+            chainlock,
+            instantsend,
+            mempool,
+        } = managers;
+        let events = &self.sync_event_sender;
+        spawn_manager!(block_headers, network, events, shutdown, tasks, progress_receivers);
+        spawn_manager!(filter_headers, network, events, shutdown, tasks, progress_receivers);
+        spawn_manager!(filters, network, events, shutdown, tasks, progress_receivers);
+        spawn_manager!(blocks, network, events, shutdown, tasks, progress_receivers);
+        spawn_manager!(masternode, network, events, shutdown, tasks, progress_receivers);
+        spawn_manager!(chainlock, network, events, shutdown, tasks, progress_receivers);
+        spawn_manager!(instantsend, network, events, shutdown, tasks, progress_receivers);
+        spawn_manager!(mempool, network, events, shutdown, tasks, progress_receivers);
 
-        // Spawn each manager using the macro
-        spawn_manager!(self, block_headers, network);
-        spawn_manager!(self, filter_headers, network);
-        spawn_manager!(self, filters, network);
-        spawn_manager!(self, blocks, network);
-        spawn_manager!(self, masternode, network);
-        spawn_manager!(self, chainlock, network);
-        spawn_manager!(self, instantsend, network);
-        spawn_manager!(self, mempool, network);
+        tracing::info!("All {} manager tasks spawned", progress_receivers.len());
 
-        // Clone receivers for progress task
-        let receivers = self.progress_receivers.clone();
+        let progress_task = tokio::spawn(run_progress_task(
+            progress_receivers,
+            self.progress_sender.clone(),
+            self.sync_event_sender.clone(),
+            shutdown.clone(),
+            start_time,
+        ));
 
-        // Spawn progress aggregation task
-        let progress_sender = self.progress_sender.clone();
-        let sync_event_sender = self.sync_event_sender.clone();
-        let shutdown = self.shutdown.clone();
-
-        self.progress_task = Some(tokio::spawn(run_progress_task(
-            receivers,
-            progress_sender,
-            sync_event_sender,
+        self.run = Some(SyncRun {
+            tasks,
             shutdown,
-            sync_start_time,
-        )));
-
-        tracing::info!("All {} manager tasks spawned", self.progress_receivers.len());
+            progress_task,
+            start_time,
+        });
 
         Ok(())
     }
@@ -254,7 +259,10 @@ where
     /// Progress aggregation is handled reactively by the dedicated progress task.
     /// This method only checks for completed manager tasks (errors or early exits).
     pub async fn tick(&mut self) -> SyncResult<()> {
-        while let Some(result) = self.tasks.try_join_next() {
+        let Some(run) = self.run.as_mut() else {
+            return Ok(());
+        };
+        while let Some(result) = run.tasks.try_join_next() {
             match result {
                 Ok(Ok(identifier)) => {
                     tracing::debug!("{} task completed successfully", identifier);
@@ -275,14 +283,18 @@ where
 
     /// Gracefully shutdown all manager tasks.
     pub async fn shutdown(&mut self) -> SyncResult<()> {
+        let Some(mut run) = self.run.take() else {
+            return Ok(());
+        };
+
         tracing::info!("Shutting down SyncCoordinator");
 
         // Signal all tasks to shutdown
-        self.shutdown.cancel();
+        run.shutdown.cancel();
 
         // Wait for all manager tasks to complete with timeout
         let drain_tasks = async {
-            while let Some(result) = self.tasks.join_next().await {
+            while let Some(result) = run.tasks.join_next().await {
                 match result {
                     Ok(Ok(identifier)) => {
                         tracing::debug!("{} task completed during shutdown", identifier);
@@ -301,15 +313,16 @@ where
             tracing::warn!(
                 "Shutdown timeout after {:?}, {} tasks may not have completed cleanly",
                 TASK_JOIN_TIMEOUT,
-                self.tasks.len()
+                run.tasks.len()
             );
         }
 
+        run.tasks.shutdown().await;
+
         // Wait for progress task to complete with timeout
-        if let Some(handle) = self.progress_task.take() {
-            if tokio::time::timeout(Duration::from_secs(1), handle).await.is_err() {
-                tracing::warn!("Progress task did not complete within timeout");
-            }
+        if tokio::time::timeout(Duration::from_secs(1), &mut run.progress_task).await.is_err() {
+            tracing::warn!("Progress task did not complete within timeout");
+            run.progress_task.abort();
         }
 
         tracing::info!("Shutdown complete");
@@ -319,33 +332,25 @@ where
 
     /// Get current progress.
     pub fn progress(&self) -> SyncProgress {
-        self.progress_receiver.borrow().clone()
+        self.progress_sender.borrow().clone()
     }
 
     /// Check if all managers are idle (sync complete).
     pub fn is_synced(&self) -> bool {
-        self.progress_receiver.borrow().is_synced()
+        self.progress_sender.borrow().is_synced()
     }
 
     /// Get the duration since sync started.
     pub fn sync_duration(&self) -> Option<Duration> {
-        self.sync_start_time.map(|start| start.elapsed())
+        self.run.as_ref().map(|run| run.start_time.elapsed())
     }
 }
 
-impl<H, FH, F, B, M, W> std::fmt::Debug for SyncCoordinator<H, FH, F, B, M, W>
-where
-    H: BlockHeaderStorage,
-    FH: FilterHeaderStorage,
-    F: FilterStorage,
-    B: BlockStorage,
-    M: MetadataStorage,
-    W: WalletInterface + 'static,
-{
+impl std::fmt::Debug for SyncCoordinator {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("SyncCoordinator")
-            .field("manager_count", &self.tasks.len())
-            .field("progress", &*self.progress_receiver.borrow())
+            .field("manager_count", &self.run.as_ref().map_or(0, |run| run.tasks.len()))
+            .field("progress", &*self.progress_sender.borrow())
             .finish()
     }
 }

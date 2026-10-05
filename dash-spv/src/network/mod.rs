@@ -208,11 +208,11 @@ pub trait NetworkManager: Send + Sync + 'static {
     /// Messages sent via this sender are delivered to the network asynchronously.
     fn request_sender(&self) -> RequestSender;
 
-    /// Connect to the network.
-    async fn connect(&mut self) -> NetworkResult<()>;
+    /// Connects to the network, restarting it after a [`Self::stop`].
+    async fn start(&mut self) -> NetworkResult<()>;
 
-    /// Disconnect from the network.
-    async fn disconnect(&mut self) -> NetworkResult<()>;
+    /// Disconnects from the network and stops all background tasks.
+    async fn stop(&mut self);
 
     /// Send a message to a peer.
     async fn send_message(&mut self, message: NetworkMessage) -> NetworkResult<()>;

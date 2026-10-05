@@ -461,6 +461,9 @@ impl FFISyncEventCallbacks {
                     cb((*manager).into(), c_error.as_ptr(), self.user_data);
                 }
             }
+            SyncEvent::ForkDetected {
+                ..
+            } => {}
             SyncEvent::SyncComplete {
                 header_tip,
                 cycle,

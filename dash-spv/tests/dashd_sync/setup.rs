@@ -234,8 +234,6 @@ pub(super) type TestClient =
 pub(super) struct ClientHandle {
     /// The underlying SPV client instance.
     pub(super) client: TestClient,
-    /// The handle to the client's run loop task.
-    pub(super) run_handle: Option<tokio::task::JoinHandle<dash_spv::error::Result<()>>>,
     /// A channel for receiving progress updates.
     pub(super) progress_receiver: watch::Receiver<SyncProgress>,
     /// A channel for receiving sync events.
@@ -247,13 +245,16 @@ pub(super) struct ClientHandle {
 }
 
 impl ClientHandle {
-    /// Stops the SPV client and awaits the termination of the background run task.
+    /// Starts the SPV client.
+    pub(super) async fn run(&mut self) {
+        tracing::info!("Starting client...");
+        self.client.run().await.expect("client run failed");
+    }
+
+    /// Stops the SPV client.
     pub(super) async fn stop(&mut self) {
-        tracing::info!("Stopping client run loop...");
-        self.client.stop().await.expect("client stop failed");
-        if let Some(handle) = self.run_handle.take() {
-            handle.await.expect("Run task panicked").expect("Run task returned error");
-        }
+        tracing::info!("Stopping client...");
+        self.client.stop().await;
     }
 }
 
@@ -300,18 +301,15 @@ pub(super) async fn create_and_start_client(
         let w = client.wallet().read().await;
         w.subscribe_events()
     };
-    let run_client = client.clone();
-
-    let run_handle = tokio::task::spawn(async move { run_client.run().await });
-
-    ClientHandle {
+    let mut handle = ClientHandle {
         client,
-        run_handle: Some(run_handle),
         progress_receiver,
         sync_event_receiver,
         network_event_receiver,
         wallet_event_receiver,
-    }
+    };
+    handle.run().await;
+    handle
 }
 
 /// Create test client config pointing to a specific peer (exclusive mode).

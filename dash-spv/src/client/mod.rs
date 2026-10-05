@@ -8,7 +8,7 @@
 //!
 //! - `config.rs` - Client configuration
 //! - `core.rs` - Core `DashSpvClient` struct definition and simple accessors
-//! - `lifecycle.rs` - Client lifecycle (new, start, stop, shutdown)
+//! - `lifecycle.rs` - Client lifecycle (new, stop)
 //! - `events.rs` - Event emission and progress tracking receivers
 //! - `queries.rs` - Peer, masternode, and balance queries
 //! - `transactions.rs` - Transaction operations (e.g., broadcast)

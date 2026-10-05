@@ -131,14 +131,13 @@ impl NetworkManager for MockNetworkManager {
         RequestSender::new(self.request_tx.clone())
     }
 
-    async fn connect(&mut self) -> NetworkResult<()> {
+    async fn start(&mut self) -> NetworkResult<()> {
         self.connected = true;
         Ok(())
     }
 
-    async fn disconnect(&mut self) -> NetworkResult<()> {
+    async fn stop(&mut self) {
         self.connected = false;
-        Ok(())
     }
 
     async fn send_message(&mut self, message: NetworkMessage) -> NetworkResult<()> {
