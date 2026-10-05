@@ -13,5 +13,4 @@
 #![warn(missing_docs)]
 
 pub mod error;
-pub mod hex;
 pub mod macros;
