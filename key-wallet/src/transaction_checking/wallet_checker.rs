@@ -6,12 +6,14 @@
 pub(crate) use super::account_checker::TransactionCheckResult;
 use super::transaction_context::TransactionContext;
 use super::transaction_router::{AccountTypeToCheck, TransactionRouter};
+use crate::managed_account::managed_account_trait::ManagedAccountTrait;
+use crate::managed_account::transaction_record::{InputDetail, OutputDetail, OutputRole};
 use crate::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
 use crate::wallet::managed_wallet_info::ManagedWalletInfo;
 use crate::{KeySource, Wallet};
 use async_trait::async_trait;
 use dashcore::blockdata::transaction::Transaction;
-use dashcore::{Amount, SignedAmount};
+use dashcore::{Address, Amount, OutPoint, SignedAmount};
 
 /// Extension trait for ManagedWalletInfo to add transaction checking capabilities
 #[async_trait]
@@ -29,6 +31,11 @@ pub trait WalletTransactionChecker {
     /// Callers that batch multiple transactions (e.g. block processing) can pass `false`
     /// and refresh once at the end via `update_last_processed_height`.
     ///
+    /// Late funding corrects accounting only while the spender's full record is retained.
+    /// By default, ChainLocks prune funds records to txids; later funding cannot correct
+    /// those records or previously emitted copies. Enable `keep-finalized-transactions`
+    /// before processing for corrections after finalization, at the cost of retaining history.
+    ///
     /// The context parameter indicates where the transaction comes from (mempool, block, etc.)
     ///
     async fn check_core_transaction(
@@ -42,6 +49,63 @@ pub trait WalletTransactionChecker {
 }
 
 impl ManagedWalletInfo {
+    /// Correct late inputs in existing records; missing account slices use block replay.
+    fn attribute_late_inputs(&mut self, tx: &Transaction, result: &mut TransactionCheckResult) {
+        let txid = tx.txid();
+        for mut account in self.accounts.all_accounts_mut() {
+            let Some(funds) = account.as_funds_mut() else {
+                continue;
+            };
+            for (vout, output) in tx.output.iter().enumerate() {
+                let outpoint = OutPoint::new(txid, vout as u32);
+                if !funds.is_outpoint_spent(&outpoint) {
+                    continue;
+                }
+                let Ok(address) = Address::from_script(&output.script_pubkey, self.network) else {
+                    continue;
+                };
+                if !funds.contains_address(&address) {
+                    continue;
+                }
+                for record in funds.transactions_mut().values_mut() {
+                    let Some(index) =
+                        record.transaction.input.iter().position(|i| i.previous_output == outpoint)
+                    else {
+                        continue;
+                    };
+                    if record.input_details.iter().any(|d| d.index == index as u32) {
+                        continue;
+                    }
+                    record.input_details.push(InputDetail {
+                        index: index as u32,
+                        value: output.value,
+                        address: address.clone(),
+                    });
+                    record.input_details.sort_by_key(|d| d.index);
+                    // Records without known inputs omit foreign outputs.
+                    for (index, output) in record.transaction.output.iter().enumerate() {
+                        if record.output_details.iter().all(|d| d.index != index as u32) {
+                            record.output_details.push(OutputDetail {
+                                index: index as u32,
+                                role: OutputRole::Sent,
+                                address: Address::from_script(&output.script_pubkey, self.network)
+                                    .ok(),
+                                value: output.value,
+                            });
+                        }
+                    }
+                    record.output_details.sort_by_key(|d| d.index);
+                    record.recompute_net_and_direction();
+                    result
+                        .updated_records
+                        .retain(|r| r.txid != record.txid || r.account_type != record.account_type);
+                    result.updated_records.push(record.clone());
+                    result.state_modified = true;
+                }
+            }
+        }
+    }
+
     /// Promote records whose first sighting already consumed the live UTXO
     /// evidence used by transaction relevance checks.
     ///
@@ -328,6 +392,8 @@ impl WalletTransactionChecker for ManagedWalletInfo {
                 account.bump_monitor_revision();
             }
         }
+
+        self.attribute_late_inputs(tx, &mut result);
 
         if is_new {
             // Populate dedup sets when a tx arrives with an initial IS status

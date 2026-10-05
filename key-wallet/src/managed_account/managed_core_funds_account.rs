@@ -20,9 +20,7 @@ use crate::managed_account::managed_account_trait::ManagedAccountTrait;
 use crate::managed_account::managed_account_type::ManagedAccountType;
 use crate::managed_account::managed_core_keys_account::ManagedCoreKeysAccount;
 use crate::managed_account::reservation::{ReservationSet, ReservationToken};
-use crate::managed_account::transaction_record::{
-    InputDetail, OutputDetail, OutputRole, TransactionDirection,
-};
+use crate::managed_account::transaction_record::{InputDetail, OutputDetail, OutputRole};
 use crate::transaction_checking::transaction_router::TransactionType;
 use crate::transaction_checking::{AccountMatch, TransactionContext};
 use crate::utxo::Utxo;
@@ -190,7 +188,7 @@ impl ManagedCoreFundsAccount {
     }
 
     /// Check if an outpoint was spent by a previously recorded transaction.
-    fn is_outpoint_spent(&self, outpoint: &OutPoint) -> bool {
+    pub(crate) fn is_outpoint_spent(&self, outpoint: &OutPoint) -> bool {
         self.spent_outpoints.contains(outpoint)
     }
 
@@ -889,20 +887,8 @@ impl ManagedCoreFundsAccount {
             });
         }
 
-        // Determine direction
-        let has_sent = output_details.iter().any(|d| d.role == OutputRole::Sent);
-        let has_our_outputs = output_details
-            .iter()
-            .any(|d| d.role == OutputRole::Received || d.role == OutputRole::Change);
-        let direction = if transaction_type == TransactionType::CoinJoin {
-            TransactionDirection::CoinJoin
-        } else if !has_sent && has_inputs && has_our_outputs {
-            TransactionDirection::Internal
-        } else if has_inputs {
-            TransactionDirection::Outgoing
-        } else {
-            TransactionDirection::Incoming
-        };
+        let direction =
+            TransactionRecord::direction_for(transaction_type, has_inputs, &output_details);
 
         let tx_record = TransactionRecord::new(
             tx.clone(),
@@ -1376,6 +1362,7 @@ mod conflict_sweep_walk_tests {
     use super::*;
     use crate::account::AccountType;
     use crate::account::StandardAccountType;
+    use crate::managed_account::transaction_record::TransactionDirection;
     use crate::transaction_checking::BlockInfo;
     use dashcore::ephemerealdata::instant_lock::InstantLock;
     use dashcore::hashes::Hash;
