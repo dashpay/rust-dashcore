@@ -7,6 +7,12 @@
 
 use std::collections::BTreeMap;
 
+#[cfg(feature = "bls")]
+use dashcore::bls_sig_utils::{BLSPublicKey, BlsScheme};
+#[cfg(feature = "eddsa")]
+use dashcore::eddsa::{EddsaPkBytes, EddsaPublicKey};
+use dashcore::{Address, ScriptBuf, Txid};
+
 use crate::account::TransactionRecord;
 #[cfg(feature = "bls")]
 use crate::derivation_bls_bip32::ExtendedBLSPubKey;
@@ -18,9 +24,6 @@ use crate::managed_account::managed_account_type::ManagedAccountType;
 use crate::AddressInfo;
 use crate::ExtendedPubKey;
 use crate::Network;
-#[cfg(feature = "bls")]
-use dashcore::bls_sig_utils::{BLSPublicKey, BlsScheme};
-use dashcore::{Address, ScriptBuf, Txid};
 
 /// Common trait for "core" managed account types — both funds-bearing
 /// (`ManagedCoreFundsAccount`) and keys-only (`ManagedCoreKeysAccount`).
@@ -439,7 +442,7 @@ pub trait ManagedAccountTrait {
         &mut self,
         account_xpriv: crate::derivation_slip10::ExtendedEd25519PrivKey,
         add_to_state: bool,
-    ) -> Result<(dashcore::eddsa::EddsaPkBytes, AddressInfo), &'static str> {
+    ) -> Result<(EddsaPkBytes, AddressInfo), &'static str> {
         match self.managed_account_type_mut() {
             ManagedAccountType::ProviderPlatformKeys {
                 addresses,
@@ -457,10 +460,11 @@ pub trait ManagedAccountTrait {
 
                 addresses.mark_index_used(info.index);
 
-                let verifying_key = dashcore::eddsa::EddsaPkBytes::from_bytes(
+                let verifying_key = EddsaPkBytes::from_bytes(
                     pub_key_bytes.try_into().map_err(|_| "Invalid EdDSA public key length")?,
                 );
-                verifying_key.validate().map_err(|_| "Failed to deserialize EdDSA public key")?;
+                EddsaPublicKey::try_from(verifying_key)
+                    .map_err(|_| "Failed to deserialize EdDSA public key")?;
 
                 Ok((verifying_key, info))
             }

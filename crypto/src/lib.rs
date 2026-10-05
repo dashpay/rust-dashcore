@@ -12,7 +12,6 @@
 extern crate alloc;
 
 pub extern crate base58ck as base58;
-#[cfg(feature = "bls")]
 pub extern crate dash_pkc;
 pub extern crate dashcore_hashes as hashes;
 pub extern crate secp256k1;
