@@ -9,37 +9,14 @@ use dashcore_hashes::Hash;
 use crate::error::{ValidationError, ValidationResult};
 use crate::validation::Validator;
 
-/// Validates InstantLock messages against the rotated quorums of their cycle.
-/// Never accept InstantLocks from the network without full signature
-/// verification.
+/// Rejects malformed InstantLocks. Needs no quorum data, so it runs before a
+/// lock is looked up, queued or cached.
 ///
-/// A malformed lock fails with [`ValidationError::InvalidInstantLock`], one
-/// whose signature does not verify, or whose quorum is not in the cycle, with
-/// [`ValidationError::InvalidSignature`].
-pub struct InstantLockValidator<'a> {
-    /// The rotated quorums of the lock's cycle, by quorum index.
-    cycle_quorums: &'a BTreeMap<u16, QualifiedQuorumEntry>,
-}
+/// A malformed lock fails with [`ValidationError::InvalidInstantLock`].
+pub struct InstantLockStructureValidator;
 
-impl Validator<&InstantLock> for InstantLockValidator<'_> {
+impl Validator<&InstantLock> for InstantLockStructureValidator {
     fn validate(&self, instant_lock: &InstantLock) -> ValidationResult<()> {
-        self.validate_structure(instant_lock)?;
-        self.validate_signature(instant_lock).map_err(|e| {
-            ValidationError::InvalidSignature(format!(
-                "InstantLock BLS signature verification failed: {e}"
-            ))
-        })
-    }
-}
-
-impl<'a> InstantLockValidator<'a> {
-    pub fn new(cycle_quorums: &'a BTreeMap<u16, QualifiedQuorumEntry>) -> Self {
-        Self {
-            cycle_quorums,
-        }
-    }
-
-    fn validate_structure(&self, instant_lock: &InstantLock) -> ValidationResult<()> {
         if instant_lock.txid == dashcore::Txid::all_zeros() {
             return Err(ValidationError::InvalidInstantLock(
                 "InstantLock transaction ID cannot be zero".to_string(),
@@ -67,6 +44,36 @@ impl<'a> InstantLockValidator<'a> {
         }
 
         Ok(())
+    }
+}
+
+/// Verifies an InstantLock's signature against the rotated quorums of its
+/// cycle. It does not check the lock's structure: run
+/// [`InstantLockStructureValidator`] first. Never accept InstantLocks from the
+/// network without both.
+///
+/// A lock whose signature does not verify, or whose quorum is not in the
+/// cycle, fails with [`ValidationError::InvalidSignature`].
+pub struct InstantLockValidator<'a> {
+    /// The rotated quorums of the lock's cycle, by quorum index.
+    cycle_quorums: &'a BTreeMap<u16, QualifiedQuorumEntry>,
+}
+
+impl Validator<&InstantLock> for InstantLockValidator<'_> {
+    fn validate(&self, instant_lock: &InstantLock) -> ValidationResult<()> {
+        self.validate_signature(instant_lock).map_err(|e| {
+            ValidationError::InvalidSignature(format!(
+                "InstantLock BLS signature verification failed: {e}"
+            ))
+        })
+    }
+}
+
+impl<'a> InstantLockValidator<'a> {
+    pub fn new(cycle_quorums: &'a BTreeMap<u16, QualifiedQuorumEntry>) -> Self {
+        Self {
+            cycle_quorums,
+        }
     }
 
     /// The quorum of the cycle that signs the lock (DIP-24), with the lock's
@@ -144,9 +151,7 @@ mod tests {
 
     #[test]
     fn a_well_formed_lock_passes_the_structure_check() {
-        assert!(InstantLockValidator::new(&BTreeMap::new())
-            .validate_structure(&InstantLock::dummy(0..3))
-            .is_ok());
+        assert!(InstantLockStructureValidator.validate(&InstantLock::dummy(0..3)).is_ok());
     }
 
     #[test_case(|lock| lock.inputs.clear(), "at least one input"; "no inputs")]
@@ -157,7 +162,7 @@ mod tests {
         let mut is_lock = InstantLock::dummy(0..3);
         malform(&mut is_lock);
 
-        match InstantLockValidator::new(&BTreeMap::new()).validate_structure(&is_lock) {
+        match InstantLockStructureValidator.validate(&is_lock) {
             Err(ValidationError::InvalidInstantLock(message)) => assert!(message.contains(reason)),
             other => panic!("expected InvalidInstantLock({reason}), got {other:?}"),
         }

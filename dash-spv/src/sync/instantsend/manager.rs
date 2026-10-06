@@ -13,9 +13,9 @@ use dashcore::ephemerealdata::instant_lock::InstantLock;
 use dashcore::Txid;
 use tokio::sync::RwLock;
 
-use crate::error::{SyncResult, ValidationError};
+use crate::error::SyncResult;
 use crate::sync::{InstantSendProgress, SyncEvent, SyncState};
-use crate::validation::{InstantLockValidator, Validator};
+use crate::validation::{InstantLockStructureValidator, InstantLockValidator, Validator};
 
 /// Maximum number of pending InstantLocks awaiting validation.
 const MAX_PENDING_INSTANTLOCKS: usize = 500;
@@ -147,6 +147,14 @@ impl<H: BlockHeaderStorage> InstantSendManager<H> {
             return Ok(vec![]);
         }
 
+        // A malformed lock is dropped before it is queued or cached, so it can
+        // neither stay pending nor shadow the genuine lock for its txid.
+        if let Err(e) = InstantLockStructureValidator.validate(instantlock) {
+            tracing::warn!("Invalid InstantLock for txid {}: {}", txid, e);
+            self.progress.add_invalid(1);
+            return Ok(vec![]);
+        }
+
         // Until the engine knows the lock's cycle, or when its signature does not
         // verify, the engine may only lack its quorum yet: the lock is kept pending.
         let engine = self.engine.read().await;
@@ -156,11 +164,6 @@ impl<H: BlockHeaderStorage> InstantSendManager<H> {
         drop(engine);
         let validated = match result {
             Some(Ok(())) => true,
-            Some(Err(ValidationError::InvalidInstantLock(reason))) => {
-                tracing::warn!("Invalid InstantLock for txid {}: {}", txid, reason);
-                self.progress.add_invalid(1);
-                return Ok(vec![]);
-            }
             Some(Err(e)) => {
                 tracing::warn!("InstantLock for txid {} not verified yet: {}", txid, e);
                 false
@@ -388,6 +391,7 @@ mod tests {
     use dashcore::hashes::Hash;
     use dashcore::sml::masternode_list::MasternodeList;
     use dashcore::{BlockHash, OutPoint};
+    use test_case::test_case;
     use tokio::sync::mpsc::unbounded_channel;
 
     /// Insert an empty masternode list at `height` so the shared engine reports a
@@ -495,6 +499,30 @@ mod tests {
         // Second should be ignored as duplicate
         let events2 = manager.process_instantlock(&islock2).await.unwrap();
         assert_eq!(events2.len(), 0);
+    }
+
+    #[test_case(|lock| lock.txid = Txid::all_zeros(); "null txid")]
+    #[test_case(|lock| lock.signature = BLSSignature::from([0; 96]); "zero signature")]
+    #[test_case(|lock| lock.inputs.clear(); "no inputs")]
+    #[test_case(|lock| lock.inputs[0].txid = Txid::all_zeros(); "null input txid")]
+    #[tokio::test]
+    async fn a_malformed_lock_of_an_unknown_cycle_is_dropped(malform: fn(&mut InstantLock)) {
+        let mut manager = create_test_manager();
+        let txid = Txid::from_byte_array([1u8; 32]);
+        let mut malformed = create_test_instantlock(txid);
+        malform(&mut malformed);
+
+        let events = manager.process_instantlock(&malformed).await.unwrap();
+
+        assert!(events.is_empty(), "no InstantLockReceived for a malformed lock");
+        assert_eq!(manager.pending_count(), 0, "a malformed lock is not kept pending");
+        assert!(manager.instantlocks.is_empty(), "a malformed lock is not cached");
+        assert_eq!(manager.progress.invalid(), 1);
+
+        // Not cached, so the well-formed lock for the transaction still gets in.
+        let events = manager.process_instantlock(&create_test_instantlock(txid)).await.unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(manager.pending_count(), 1);
     }
 
     #[tokio::test]
