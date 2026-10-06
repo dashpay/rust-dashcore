@@ -122,7 +122,7 @@ pub struct InstantSendManager<H: BlockHeaderStorage> {
 
 impl<H: BlockHeaderStorage> InstantSendManager<H> {
     /// Create a new InstantSend manager.
-    pub fn new(engine: Arc<RwLock<MasternodeListEngine<H>>>) -> Self {
+    pub(crate) fn new(engine: Arc<RwLock<MasternodeListEngine<H>>>) -> Self {
         Self {
             progress: InstantSendProgress::default(),
             engine,

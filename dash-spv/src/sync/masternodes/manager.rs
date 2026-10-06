@@ -266,7 +266,7 @@ pub struct MasternodesManager<H: BlockHeaderStorage> {
 
 impl<H: BlockHeaderStorage> MasternodesManager<H> {
     /// Create a new masternode manager with the given header storage.
-    pub async fn new(
+    pub(crate) async fn new(
         header_storage: Arc<RwLock<H>>,
         engine: Arc<RwLock<MasternodeListEngine<H>>>,
         network: dashcore::Network,

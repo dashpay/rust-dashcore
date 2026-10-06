@@ -30,7 +30,7 @@ use tokio::sync::RwLock;
 /// Blocks between a rotation cycle's base and its work block (Dash Core's `WORK_DIFF_DEPTH`).
 pub const WORK_DIFF_DEPTH: u32 = 8;
 
-/// What a [`MasternodeListEngine::feed_qr_info`] call settled for the active
+/// What feeding a QRInfo to the masternode list engine settled for the active
 /// rotation set it served.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct QRInfoFeedResult {

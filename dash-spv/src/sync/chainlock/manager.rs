@@ -53,7 +53,7 @@ pub struct ChainLockManager<H: BlockHeaderStorage, M: MetadataStorage> {
 
 impl<H: BlockHeaderStorage, M: MetadataStorage> ChainLockManager<H, M> {
     /// Create a new ChainLock manager.
-    pub async fn new(
+    pub(crate) async fn new(
         header_storage: Arc<RwLock<H>>,
         metadata_storage: Arc<RwLock<M>>,
         masternode_engine: Arc<RwLock<MasternodeListEngine<H>>>,
