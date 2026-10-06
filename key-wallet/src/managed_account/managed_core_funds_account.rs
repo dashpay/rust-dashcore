@@ -223,10 +223,19 @@ impl ManagedCoreFundsAccount {
             .any(|claimant| claimant.is_some_and(|txid| removed.contains(&txid)))
     }
 
+    /// Make the restored claims on the inputs of `tx` permanent (`None`),
+    /// whoever their claimant is: `tx` is final, so those outpoints are
+    /// spent for good and removing the old claimant must not release them.
+    pub(crate) fn settle_restored_claims_spent_by(&mut self, tx: &Transaction) {
+        for input in &tx.input {
+            if let Some(claimant) = self.restored_spent_claims.get_mut(&input.previous_output) {
+                *claimant = None;
+            }
+        }
+    }
+
     /// Settle every restored claim whose claimant is in `removed`:
     ///
-    /// * outpoint in `winner_inputs` — a final transaction spent it, so the
-    ///   claim becomes permanent (`None`);
     /// * outpoint in `live_spenders` — a live record somewhere in the wallet
     ///   still spends it, so that record becomes the claimant;
     /// * otherwise the claim is dropped, and the outpoint returned.
@@ -237,7 +246,6 @@ impl ManagedCoreFundsAccount {
     pub(crate) fn release_restored_claims(
         &mut self,
         removed: &BTreeSet<Txid>,
-        winner_inputs: &BTreeSet<OutPoint>,
         live_spenders: &HashMap<OutPoint, Txid>,
     ) -> Vec<OutPoint> {
         let mut released = Vec::new();
@@ -245,14 +253,11 @@ impl ManagedCoreFundsAccount {
             if !claimant.is_some_and(|txid| removed.contains(&txid)) {
                 return true;
             }
-            *claimant = if winner_inputs.contains(outpoint) {
-                None
-            } else if let Some(survivor) = live_spenders.get(outpoint) {
-                Some(*survivor)
-            } else {
+            let Some(survivor) = live_spenders.get(outpoint) else {
                 released.push(*outpoint);
                 return false;
             };
+            *claimant = Some(*survivor);
             true
         });
         released

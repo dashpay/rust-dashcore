@@ -315,6 +315,40 @@ async fn claim_on_winner_input_stays_guarded_after_claimant_is_swept() {
     assert!(!ctx.managed_wallet.accounts.standard_bip44_accounts[&1].utxos.contains_key(&spent));
 }
 
+/// The claimant has no record, so no sweep can remove it. A final spend of
+/// the outpoint still settles it: abandoning the old claimant afterwards
+/// must not release the guard. An unconfirmed spend settles nothing.
+#[test_case::test_case(true; "final spend")]
+#[test_case::test_case(false; "unconfirmed spend")]
+#[tokio::test]
+async fn final_spend_makes_a_recordless_claim_permanent(is_final: bool) {
+    let (mut ctx, address) = restore_context();
+    let funding = Transaction::dummy(&address, 20..21, &[150_000]);
+    let spent = OutPoint::new(funding.txid(), 0);
+    let claimant = Txid::from([0x77; 32]);
+    ctx.managed_wallet.restore_spent_outpoints(&[(spent, Some(claimant))]);
+
+    let context = if is_final {
+        in_block(100)
+    } else {
+        TransactionContext::Mempool
+    };
+    assert!(ctx.managed_wallet.sweep_conflicts(&spending_tx(&[spent]), &context).is_empty());
+    ctx.managed_wallet.abandon_transaction(claimant);
+
+    assert!(ctx
+        .managed_wallet
+        .accounts
+        .all_funding_accounts()
+        .iter()
+        .all(|account| account.is_outpoint_spent(&spent) == is_final));
+    ctx.check_transaction(&funding, TransactionContext::Mempool).await;
+    assert_eq!(
+        ctx.managed_wallet.accounts.standard_bip44_accounts[&1].utxos.contains_key(&spent),
+        !is_final
+    );
+}
+
 /// Two live records spend the claimed outpoint. Removing the claimant hands
 /// the claim to the survivor, so the outpoint stays guarded in every funding
 /// account until the survivor is removed too.

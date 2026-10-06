@@ -19,9 +19,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   are unchanged, but Rust consumers must use the fork for compatible `Encode`/`Decode` traits.
   The dependency switch does not automatically opt types into `DecodeUntrusted`.
 - `ManagedWalletInfo::sweep_conflicts` and `abandon_transaction_with_spends` in `key-wallet` also release
-  restored spent-output claims whose claimant they remove. An outpoint the winning transaction spends
-  stays guarded permanently, one another live record spends is claimed by that record, and
-  `released_outpoints` lists an outpoint only once no funding account guards it.
+  restored spent-output claims whose claimant they remove. A restored outpoint that a confirmed or
+  InstantSend-locked transaction spends stays guarded permanently, one another live record spends is
+  claimed by that record, and `released_outpoints` lists an outpoint only once no funding account
+  guards it.
 
 ## 0.44.0 - 2026-07-01
 
