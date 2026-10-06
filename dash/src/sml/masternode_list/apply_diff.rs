@@ -223,7 +223,9 @@ mod tests {
     }
 
     /// Each non-rotating quorum a diff brings keeps the ChainLock signature
-    /// its `quorumsCLSigs` group assigns it.
+    /// its `quorumsCLSigs` group assigns it. A rotating one gets none, not even
+    /// its own group's: Core keys it to the quorum's work block, which a lone
+    /// diff does not carry.
     #[test]
     fn apply_diff_attaches_each_quorums_chain_lock_signature() {
         let base_diff: MnListDiff = deserialize(include_bytes!(
@@ -236,9 +238,31 @@ mod tests {
             "../../../tests/data/test_DML_diffs/mn_list_diff_2227096_2241332.bin"
         ))
         .expect("expected to deserialize");
+        let signed_rotating: Vec<_> = diff
+            .new_quorums
+            .iter()
+            .enumerate()
+            .filter(|(idx, quorum)| {
+                quorum.llmq_type.is_rotating_quorum_type()
+                    && diff
+                        .quorums_chainlock_signatures
+                        .iter()
+                        .any(|group| group.index_set.contains(&(*idx as u16)))
+            })
+            .map(|(_, quorum)| (quorum.llmq_type, quorum.quorum_hash))
+            .collect();
+        assert!(!signed_rotating.is_empty(), "the diff brings signed rotating quorums");
         let masternode_list = base_list
             .apply_diff(diff, 2_241_332, Network::Mainnet)
             .expect("expected to apply diff");
+
+        for (llmq_type, quorum_hash) in signed_rotating {
+            assert_eq!(
+                masternode_list.quorums[&llmq_type][&quorum_hash].verifying_chain_lock_signature,
+                None,
+                "rotating quorum {quorum_hash} must carry no ChainLock signature"
+            );
+        }
 
         let expected_signatures: BTreeMap<&str, Vec<u8>> = BTreeMap::from([
             ("000000000000000fcc3b58235989afa1962b6d6f238a2201190452123231a704", hex::decode("8ba84befb59e4f16160ca69a5a4785b314bd3f2ed9ae435daacdba23b3079b0fabc909f159ec80243b8ccc4c95f63bdb1176749b83fffc429be426e899982bc50e15f4d923df91b341c2cfdf47620a7ee35502593b1484b9f444466e04da52fd").unwrap()),

@@ -352,6 +352,7 @@ mod tests {
     use dashcore_hashes::Hash;
 
     use tempfile::TempDir;
+    use test_case::test_case;
 
     fn hash(byte: u8) -> BlockHash {
         BlockHash::from_slice(&[byte; 32]).unwrap()
@@ -484,6 +485,58 @@ mod tests {
                 .await
                 .expect("read back");
         assert_eq!(stored.block_hash, hash(0xBB), "the second write wins");
+    }
+
+    /// A QRInfo chaining `start`, `start + 1`, `start + 2`, `start + 3` and
+    /// `tip`, applied on top of the list at `start`.
+    fn chained_qr_info(start: u8, tip: u8) -> QRInfo {
+        QRInfo {
+            mn_list_diff_at_h_minus_3c: MnListDiff::dummy_empty(start, start),
+            mn_list_diff_at_h_minus_2c: MnListDiff::dummy_empty(start, start + 1),
+            mn_list_diff_at_h_minus_c: MnListDiff::dummy_empty(start + 1, start + 2),
+            mn_list_diff_h: MnListDiff::dummy_empty(start + 2, start + 3),
+            mn_list_diff_tip: MnListDiff::dummy_empty(start + 3, tip),
+            ..QRInfo::dummy(tip)
+        }
+    }
+
+    /// The QRInfo stored at `height`, `None` when the file does not decode.
+    async fn stored_qr_info(
+        storage: &PersistentMasternodeStorage<MockHeaderStorage>,
+        height: CoreBlockHeight,
+    ) -> Option<QRInfo> {
+        PersistentMasternodeStorage::<MockHeaderStorage>::read_message(&storage.qr_infos[&height])
+            .await
+            .ok()
+    }
+
+    #[test_case(chained_qr_info(0xA2, 0xE0), false, false; "keeps the stored one it builds on")]
+    #[test_case(chained_qr_info(0x10, 0xE0), false, true; "replaces it when unrelated")]
+    #[test_case(chained_qr_info(0xA2, 0xEF), false, true; "replaces it for another tip after a reorg")]
+    #[test_case(chained_qr_info(0xA2, 0xE0), true, true; "replaces a stored file that does not decode")]
+    #[tokio::test]
+    async fn a_same_tip_qr_info_replaces_the_stored_one_unless_built_on_it(
+        incoming: QRInfo,
+        corrupt_stored: bool,
+        replaces: bool,
+    ) {
+        let height = 100;
+        let stored = chained_qr_info(0xA0, 0xE0);
+        let dir = TempDir::new().unwrap();
+        let mut storage = open_storage(&dir, &[]).await;
+        storage.store_qr_info(height, &stored).await.unwrap();
+        if corrupt_stored {
+            tokio::fs::write(&storage.qr_infos[&height], b"not a qrinfo").await.unwrap();
+        }
+
+        storage.store_qr_info(height, &incoming).await.unwrap();
+
+        let expected = if replaces {
+            incoming
+        } else {
+            stored
+        };
+        assert_eq!(stored_qr_info(&storage, height).await, Some(expected));
     }
 
     #[tokio::test]

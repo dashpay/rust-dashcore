@@ -1298,6 +1298,7 @@ mod tests {
             mixed_cycle_bases
         );
 
+        let h_block_hash = qr_info.mn_list_diff_h.block_hash;
         let feed_result = engine
             .feed_qr_info(qr_info)
             .await
@@ -1345,6 +1346,24 @@ mod tests {
             previous_cycle.values().all(|q| q.verified == LLMQEntryVerificationStatus::Verified),
             "every stored previous-cycle quorum must be verified"
         );
+
+        // The list at h holds the same previous-cycle quorums and must agree
+        // with the stored cycle instead of reading them as skipped.
+        let h_height =
+            engine.height_of(&h_block_hash).await.expect("expected the height of the h block");
+        let h_quorums =
+            &engine.masternode_lists[&h_height].quorums[&engine.network.isd_llmq_type()];
+        for quorum in previous_cycle.values() {
+            let on_h = h_quorums
+                .get(&quorum.quorum_entry.quorum_hash)
+                .expect("the list at h holds every stored previous-cycle quorum");
+            assert_eq!(
+                on_h.verified,
+                LLMQEntryVerificationStatus::Verified,
+                "quorum {} on the list at h must read as verified",
+                quorum.quorum_entry.quorum_hash
+            );
+        }
 
         // How many commitments a peer serves is up to the peer. A set one
         // entry short still verifies entry by entry, yet the index it omits
@@ -1728,6 +1747,104 @@ mod tests {
             engine.rotated_quorums_per_cycle.get(&shrink_key),
             Some(&stored_before),
             "a smaller verified set must not shrink a larger stored cycle"
+        );
+    }
+
+    /// The non-rotating quorums of the newest list still to validate ask for
+    /// the list at their work block, oldest first, each from the nearest lower
+    /// list the engine holds.
+    #[tokio::test]
+    async fn missing_work_block_list_requests_target_unverified_non_rotating_quorums() {
+        use dashcore::sml::llmq_type::QUORUM_MEMBER_LIST_OFFSET;
+        use std::sync::Arc;
+
+        let work = |mined: CoreBlockHeight| mined - QUORUM_MEMBER_LIST_OFFSET;
+        let tip = 2_000_000;
+        // Mined heights of the quorums of the tip list.
+        let first = 1_000_008;
+        let second = 1_999_008;
+        let held = 1_995_008;
+        let verified = 1_999_108;
+        let rotating = 1_999_208;
+        let retired = 1_999_308;
+        let no_work_block = 1_999_408;
+        let not_in_chain = BlockHash::dummy(42);
+        let older_list = 1_500_000;
+
+        let blocks: Vec<_> = [
+            first,
+            work(first),
+            second,
+            work(second),
+            held,
+            work(held),
+            // The skipped quorums' work blocks are known, so only their filter
+            // leaves them out.
+            verified,
+            work(verified),
+            rotating,
+            work(rotating),
+            retired,
+            work(retired),
+            no_work_block,
+            older_list,
+            tip,
+        ]
+        .into_iter()
+        .map(|height| (height, BlockHash::dummy(height)))
+        .collect();
+        let mut engine = engine_knowing_blocks(&blocks);
+        assert!(engine.missing_work_block_list_requests().await.is_empty(), "no list, no request");
+
+        let quorum = |llmq_type, block_hash, verified| {
+            let mut entry: QualifiedQuorumEntry = quorum_entry(llmq_type, block_hash, None).into();
+            entry.verified = verified;
+            entry
+        };
+        let unknown = LLMQEntryVerificationStatus::Unknown;
+        let quorums = [
+            quorum(LLMQType::Llmqtype400_60, BlockHash::dummy(second), unknown.clone()),
+            quorum(LLMQType::Llmqtype400_60, BlockHash::dummy(first), unknown.clone()),
+            quorum(LLMQType::Llmqtype400_60, BlockHash::dummy(held), unknown.clone()),
+            quorum(LLMQType::Llmqtype400_60, not_in_chain, unknown.clone()),
+            quorum(LLMQType::Llmqtype400_60, BlockHash::dummy(no_work_block), unknown.clone()),
+            // Mined in the same block as a 400_60 quorum: one request for both.
+            quorum(LLMQType::Llmqtype100_67, BlockHash::dummy(second), unknown.clone()),
+            quorum(
+                LLMQType::Llmqtype400_85,
+                BlockHash::dummy(verified),
+                LLMQEntryVerificationStatus::Verified,
+            ),
+            quorum(LLMQType::Llmqtype60_75, BlockHash::dummy(rotating), unknown.clone()),
+            // Retired on mainnet at this height.
+            quorum(LLMQType::Llmqtype50_60, BlockHash::dummy(retired), unknown),
+        ];
+        let mut quorum_map: BTreeMap<LLMQType, BTreeMap<QuorumHash, Arc<QualifiedQuorumEntry>>> =
+            BTreeMap::new();
+        for entry in quorums {
+            quorum_map
+                .entry(entry.quorum_entry.llmq_type)
+                .or_default()
+                .insert(entry.quorum_entry.quorum_hash, Arc::new(entry));
+        }
+        engine
+            .masternode_lists
+            .insert(older_list, MasternodeList::empty(BlockHash::dummy(older_list), older_list));
+        engine
+            .masternode_lists
+            .insert(work(held), MasternodeList::empty(BlockHash::dummy(work(held)), work(held)));
+        engine.masternode_lists.insert(
+            tip,
+            MasternodeList::build(BTreeMap::new(), quorum_map, BlockHash::dummy(tip), tip).build(),
+        );
+
+        assert_eq!(
+            engine.missing_work_block_list_requests().await,
+            vec![
+                (BlockHash::all_zeros(), BlockHash::dummy(work(first))),
+                (BlockHash::dummy(work(held)), BlockHash::dummy(work(second))),
+            ],
+            "a work block below every list starts from the empty list"
         );
     }
 }
