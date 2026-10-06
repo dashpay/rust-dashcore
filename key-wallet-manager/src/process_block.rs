@@ -11,6 +11,7 @@ use key_wallet::account::AccountType;
 use key_wallet::managed_account::transaction_record::TransactionRecord;
 use key_wallet::transaction_checking::{BlockInfo, DerivedAddressInfo, TransactionContext};
 use key_wallet::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
+use key_wallet::wallet::managed_wallet_info::SpentOutpointChanges;
 use key_wallet::WalletCoreBalance;
 use std::collections::{BTreeMap, BTreeSet};
 use tokio::sync::broadcast;
@@ -50,6 +51,7 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
         let mut per_wallet_inserted: BTreeMap<WalletId, Vec<TransactionRecord>> = BTreeMap::new();
         let mut per_wallet_updated: BTreeMap<WalletId, Vec<TransactionRecord>> = BTreeMap::new();
         let mut per_wallet_derived: BTreeMap<WalletId, Vec<DerivedAddressInfo>> = BTreeMap::new();
+        let mut per_wallet_claims: BTreeMap<WalletId, SpentOutpointChanges> = BTreeMap::new();
         let mut relevant_positions: BTreeMap<WalletId, Vec<usize>> = BTreeMap::new();
 
         for (position, tx) in block.txdata.iter().enumerate() {
@@ -93,6 +95,7 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
             // removed ones, and that attribution is lost once the block's
             // transactions are folded together.
             let mut per_wallet_released = check_result.per_wallet_released_outpoints;
+            let mut per_wallet_changes = check_result.per_wallet_spent_outpoint_changes;
             for (wallet_id, txids) in check_result.per_wallet_swept {
                 if txids.is_empty() {
                     continue;
@@ -109,6 +112,9 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
                     // mined height is the block's height.
                     winner_mined_height: Some(height),
                     released_outpoints,
+                    spent_outpoint_changes: per_wallet_changes
+                        .remove(&wallet_id)
+                        .unwrap_or_default(),
                     balance: info.balance(),
                     account_balances: BTreeMap::new(),
                 };
@@ -120,6 +126,13 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
                  dropped here, stranding those coins marked spent forever: {:?}",
                 per_wallet_released
             );
+            // A transaction that swept nothing only made claims, by being
+            // recorded; those ride on the block event with its record.
+            for (wallet_id, changes) in per_wallet_changes {
+                let block = per_wallet_claims.entry(wallet_id).or_default();
+                block.claimed.extend(changes.claimed);
+                block.released.extend(changes.released);
+            }
         }
 
         for (wallet_id, positions) in relevant_positions {
@@ -142,6 +155,7 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
             per_wallet_inserted,
             per_wallet_updated,
             per_wallet_derived,
+            per_wallet_claims,
         );
 
         result
@@ -192,6 +206,8 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
         let per_wallet_updated_records =
             std::mem::take(&mut check_result.per_wallet_updated_records);
         let mut per_wallet_derived = std::mem::take(&mut check_result.new_addresses);
+        let mut per_wallet_changes =
+            std::mem::take(&mut check_result.per_wallet_spent_outpoint_changes);
 
         for (wallet_id, records) in per_wallet_new_records {
             let Some(info) = self.wallet_infos.get(&wallet_id) else {
@@ -208,6 +224,15 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
             // record so persisters scoping by `record.account_type` get
             // the correct rows.
             let mut derived_for_wallet = per_wallet_derived.remove(&wallet_id).unwrap_or_default();
+            // The claim changes ride on the sweep's event when this
+            // transaction swept, otherwise on its first record.
+            let swept =
+                check_result.per_wallet_swept.get(&wallet_id).is_some_and(|t| !t.is_empty());
+            let mut spent_outpoint_changes = if swept {
+                None
+            } else {
+                per_wallet_changes.remove(&wallet_id)
+            };
             for record in records {
                 let record_account = record.account_type;
                 let (for_record, rest): (Vec<_>, Vec<_>) =
@@ -219,6 +244,7 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
                     balance,
                     account_balances: account_balances.clone(),
                     addresses_derived: project_derived_addresses(for_record),
+                    spent_outpoint_changes: spent_outpoint_changes.take().unwrap_or_default(),
                 };
                 self.emit_event(event);
             }
@@ -257,6 +283,7 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
                 // and an IS-locked winner is by definition not mined yet.
                 winner_mined_height: None,
                 released_outpoints,
+                spent_outpoint_changes: per_wallet_changes.remove(&wallet_id).unwrap_or_default(),
                 balance: info.balance(),
                 account_balances: per_wallet_account_diff
                     .get(&wallet_id)
@@ -270,6 +297,12 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
             "released outpoints for a wallet that emitted no sweep would be dropped \
              here, stranding those coins marked spent forever: {:?}",
             per_wallet_released
+        );
+        debug_assert!(
+            per_wallet_changes.is_empty(),
+            "spent-outpoint claim changes with no event to carry them would never \
+             reach persistence: {:?}",
+            per_wallet_changes
         );
 
         for (wallet_id, records) in per_wallet_updated_records {
@@ -289,6 +322,7 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
                         balance,
                         account_balances: account_balances.clone(),
                         addresses_derived: Vec::new(),
+                        spent_outpoint_changes: SpentOutpointChanges::default(),
                     });
                 }
                 if let Some(lock) = instant_lock.as_ref().filter(|lock| lock.txid == txid) {
@@ -397,6 +431,7 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
         self.finalize_block_advance(
             height,
             &wallets,
+            BTreeMap::new(),
             BTreeMap::new(),
             BTreeMap::new(),
             BTreeMap::new(),
@@ -530,6 +565,7 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletManager<T> {
         mut per_wallet_inserted: BTreeMap<WalletId, Vec<TransactionRecord>>,
         mut per_wallet_updated: BTreeMap<WalletId, Vec<TransactionRecord>>,
         mut per_wallet_derived: BTreeMap<WalletId, Vec<DerivedAddressInfo>>,
+        mut per_wallet_claims: BTreeMap<WalletId, SpentOutpointChanges>,
     ) {
         if wallets.is_empty() {
             return;
@@ -596,11 +632,13 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletManager<T> {
                 project_derived_addresses(derived_for_wallet);
             let chain_lock =
                 info.last_applied_chain_lock().filter(|cl| height <= cl.block_height).cloned();
+            let spent_outpoint_changes = per_wallet_claims.remove(wallet_id).unwrap_or_default();
 
             if !inserted.is_empty()
                 || !updated.is_empty()
                 || !matured.is_empty()
                 || !addresses_derived.is_empty()
+                || !spent_outpoint_changes.is_empty()
                 || balance_changed
             {
                 let event = WalletEvent::BlockProcessed {
@@ -613,6 +651,7 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletManager<T> {
                     balance: new_balance,
                     account_balances,
                     addresses_derived,
+                    spent_outpoint_changes,
                 };
                 self.emit_event(event);
             }

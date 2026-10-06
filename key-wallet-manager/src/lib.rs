@@ -33,8 +33,8 @@ use key_wallet::transaction_checking::{DerivedAddressInfo, TransactionContext};
 use key_wallet::wallet::managed_wallet_info::coin_selection::SelectionStrategy;
 use key_wallet::wallet::managed_wallet_info::transaction_building::AccountTypePreference;
 use key_wallet::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
-use key_wallet::wallet::managed_wallet_info::AbandonOutcome;
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
+use key_wallet::wallet::managed_wallet_info::{AbandonOutcome, SpentOutpointChanges};
 use key_wallet::{AccountType, Address, ExtendedPrivKey, Mnemonic, Network, Wallet};
 use key_wallet::{ExtendedPubKey, WalletCoreBalance};
 use std::collections::{BTreeMap, BTreeSet};
@@ -109,6 +109,9 @@ pub struct CheckTransactionsResult {
     /// see [`crate::events::WalletEvent::TransactionsSwept`] for why a
     /// consumer needs this set named explicitly instead of re-deriving it.
     pub per_wallet_released_outpoints: BTreeMap<WalletId, Vec<OutPoint>>,
+    /// Spent-outpoint claim changes this check made, grouped by wallet: the
+    /// sweep's and those of recording the transaction.
+    pub per_wallet_spent_outpoint_changes: BTreeMap<WalletId, SpentOutpointChanges>,
 }
 
 impl CheckTransactionsResult {
@@ -660,6 +663,11 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletManager<T> {
                         .entry(*wallet_id)
                         .or_default()
                         .extend(check_result.released_outpoints);
+                }
+                if !check_result.spent_outpoint_changes.is_empty() {
+                    result
+                        .per_wallet_spent_outpoint_changes
+                        .insert(*wallet_id, check_result.spent_outpoint_changes);
                 }
 
                 if !check_result.new_addresses.is_empty() {

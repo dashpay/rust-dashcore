@@ -22,6 +22,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   serialization traits as Platform. Existing bincode encodings and C interfaces
   are unchanged, but Rust consumers must use the fork for compatible `Encode`/`Decode` traits.
   The dependency switch does not automatically opt types into `DecodeUntrusted`.
+- **Breaking:** `WalletEvent::TransactionDetected`, `BlockProcessed` and `TransactionsSwept` in `key-wallet-manager`
+  carry `spent_outpoint_changes`, and `CheckTransactionsResult` gains `per_wallet_spent_outpoint_changes`, so a
+  persistence consumer receives each spent-outpoint claim change with the event that caused it. Code that builds or
+  exhaustively matches these variants, or builds the `key-wallet` results that gained the field, must add it. The C
+  callbacks in `dash-spv-ffi` do not forward it.
 
 ### Fixed
 

@@ -24,6 +24,39 @@ use key_wallet::wallet::managed_wallet_info::transaction_building::AccountTypePr
 use key_wallet::AccountType;
 use std::collections::BTreeSet;
 
+/// Assert that applying every emitted claim change, in order, the way a
+/// persistence mirror does, leaves exactly the wallet's own claims.
+fn assert_events_fold_to_wallet_claims(
+    rx: &mut broadcast::Receiver<WalletEvent>,
+    manager: &WalletManager<ManagedWalletInfo>,
+    wallet_id: &WalletId,
+) {
+    let mut rows = BTreeMap::new();
+    for event in drain_events(rx) {
+        let changes = match event {
+            WalletEvent::TransactionDetected {
+                spent_outpoint_changes,
+                ..
+            }
+            | WalletEvent::BlockProcessed {
+                spent_outpoint_changes,
+                ..
+            }
+            | WalletEvent::TransactionsSwept {
+                spent_outpoint_changes,
+                ..
+            } => spent_outpoint_changes,
+            _ => continue,
+        };
+        rows.extend(changes.claimed);
+        for outpoint in changes.released {
+            rows.remove(&outpoint);
+        }
+    }
+    let info = manager.get_wallet_info(wallet_id).expect("wallet");
+    assert_eq!(rows, info.spent_outpoint_claims());
+}
+
 fn make_block(txdata: Vec<Transaction>, seed: u8, time: u32) -> Block {
     Block {
         header: Header {
@@ -80,7 +113,12 @@ async fn test_mempool_tx_emits_single_event_with_balance() {
             balance,
             account_balances,
             addresses_derived: _,
+            spent_outpoint_changes,
         } => {
+            let claimed: Vec<_> =
+                tx.input.iter().map(|input| (input.previous_output, Some(tx.txid()))).collect();
+            assert_eq!(spent_outpoint_changes.claimed, claimed, "every input is claimed");
+            assert!(spent_outpoint_changes.released.is_empty());
             assert_eq!(*wid, wallet_id);
             assert_eq!(record.txid, tx.txid());
             assert_eq!(record.context, TransactionContext::Mempool);
@@ -133,6 +171,7 @@ async fn test_mempool_tx_with_instant_lock_emits_detected_event_with_locked_bala
             balance,
             account_balances,
             addresses_derived: _,
+            spent_outpoint_changes: _,
         } => {
             assert_eq!(*wid, wallet_id);
             assert!(matches!(record.context, TransactionContext::InstantSend(_)));
@@ -349,7 +388,11 @@ async fn test_block_with_new_tx_emits_inserted_record() {
             account_balances,
             addresses_derived: _,
             chain_lock: _,
+            spent_outpoint_changes,
         } => {
+            let claimed: Vec<_> =
+                tx.input.iter().map(|input| (input.previous_output, Some(tx.txid()))).collect();
+            assert_eq!(spent_outpoint_changes.claimed, claimed, "every input is claimed");
             assert_eq!(*wid, wallet_id);
             assert_eq!(*height, 100);
             assert_eq!(inserted.len(), 1);
@@ -415,7 +458,9 @@ async fn test_block_confirming_known_mempool_tx_emits_updated_record() {
             account_balances,
             addresses_derived: _,
             chain_lock: _,
+            spent_outpoint_changes,
         } => {
+            assert!(spent_outpoint_changes.is_empty(), "the mempool sighting already claimed");
             assert_eq!(*wid, wallet_id);
             assert_eq!(*height, 200);
             assert!(inserted.is_empty());
@@ -859,6 +904,7 @@ async fn test_block_with_index_less_account_tx_carries_account_type() {
 #[tokio::test]
 async fn test_block_winner_emits_swept_event_naming_the_released_outpoints() {
     let (mut manager, wallet_id, addr) = setup_manager_with_wallet();
+    let mut every_event = manager.subscribe_events();
 
     // One funding transaction pays us twice, so the loser can spend a coin
     // the winner does not.
@@ -942,8 +988,11 @@ async fn test_block_winner_emits_swept_event_naming_the_released_outpoints() {
                 superseded_by,
                 winner_mined_height,
                 released_outpoints,
+                spent_outpoint_changes: changes,
                 ..
-            } => Some((wid, txids, superseded_by, winner_mined_height, released_outpoints)),
+            } => {
+                Some((wid, txids, superseded_by, winner_mined_height, released_outpoints, changes))
+            }
             _ => None,
         })
         .unwrap_or_else(|| panic!("a sweep must be emitted, got {:?}", events));
@@ -959,6 +1008,12 @@ async fn test_block_winner_emits_swept_event_naming_the_released_outpoints() {
          height the manager has seen"
     );
     assert_eq!(swept.4, &vec![coin_b], "only the coin the winner did not take is released");
+    assert_eq!(swept.5.released, vec![coin_b]);
+    assert!(
+        swept.5.claimed.contains(&(coin_a, Some(winner.txid()))),
+        "the winner takes over the claim on the coin it beat the loser to"
+    );
+    assert_events_fold_to_wallet_claims(&mut every_event, &manager, &wallet_id);
 }
 
 /// The mempool emission site's counterpart to the block test above, pinning
@@ -972,6 +1027,7 @@ async fn test_block_winner_emits_swept_event_naming_the_released_outpoints() {
 #[tokio::test]
 async fn test_is_locked_mempool_winner_sweeps_with_no_mined_height() {
     let (mut manager, wallet_id, addr) = setup_manager_with_wallet();
+    let mut every_event = manager.subscribe_events();
 
     // Same shape as the block test: one funding transaction pays us twice so
     // the loser spends a coin the winner does not.
@@ -1052,8 +1108,11 @@ async fn test_is_locked_mempool_winner_sweeps_with_no_mined_height() {
                 superseded_by,
                 winner_mined_height,
                 released_outpoints,
+                spent_outpoint_changes: changes,
                 ..
-            } => Some((wid, txids, superseded_by, winner_mined_height, released_outpoints)),
+            } => {
+                Some((wid, txids, superseded_by, winner_mined_height, released_outpoints, changes))
+            }
             _ => None,
         })
         .unwrap_or_else(|| panic!("a sweep must be emitted, got {:?}", events));
@@ -1067,6 +1126,12 @@ async fn test_is_locked_mempool_winner_sweeps_with_no_mined_height() {
          consumer a finality horizon the winner does not have"
     );
     assert_eq!(swept.4, &vec![coin_b], "only the coin the winner did not take is released");
+    assert_eq!(swept.5.released, vec![coin_b]);
+    assert!(
+        swept.5.claimed.contains(&(coin_a, Some(winner.txid()))),
+        "the winner takes over the claim on the coin it beat the loser to"
+    );
+    assert_events_fold_to_wallet_claims(&mut every_event, &manager, &wallet_id);
 }
 
 #[tokio::test]

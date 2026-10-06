@@ -15,6 +15,7 @@ use key_wallet::account::AccountType;
 use key_wallet::managed_account::address_pool::{AddressPoolType, PublicKeyType};
 use key_wallet::managed_account::transaction_record::TransactionRecord;
 use key_wallet::transaction_checking::DerivedAddressInfo;
+use key_wallet::wallet::managed_wallet_info::SpentOutpointChanges;
 use key_wallet::WalletCoreBalance;
 
 use crate::WalletId;
@@ -205,6 +206,11 @@ pub enum WalletEvent {
         /// these rows transactionally with `record` so UTXOs landing on
         /// them retain a parent address row.
         addresses_derived: Vec<DerivedAddress>,
+        /// Spent-outpoint claims recording this transaction made, on the
+        /// first event emitted for it; empty on the others, and when the
+        /// transaction also swept, since its `TransactionsSwept` carries
+        /// them then. Persist with `record`.
+        spent_outpoint_changes: SpentOutpointChanges,
     },
     /// An InstantSend lock was applied to a previously-seen off-chain
     /// wallet-relevant transaction.
@@ -263,7 +269,7 @@ pub enum WalletEvent {
         /// frees B). Mark these coins spendable again.
         ///
         /// Upstream computes this distinction — see
-        /// `ManagedCoreFundsAccount::release_spent_marks` in key-wallet — and
+        /// `ManagedWalletInfo::sweep_conflicts` in key-wallet — and
         /// then has nowhere else to put it: `superseded_by` need not be
         /// wallet-relevant at all, so it can spend our coin while paying only
         /// external addresses and never appear anywhere else in this
@@ -277,20 +283,14 @@ pub enum WalletEvent {
         /// every input of every transaction it deletes here, so it only
         /// needs to know which of them came free, not which removal freed
         /// which.
-        ///
-        /// One pre-existing limitation, inherited from `release_spent_marks`
-        /// rather than introduced with this field: it decides what stays
-        /// spent from the wallet's *live* records, and under the default
-        /// `keep-finalized-transactions = off` a chainlocked record is pruned
-        /// to just its txid. So if this wallet ever recorded a second spend
-        /// of a coin an already-pruned chainlocked transaction took — which
-        /// needs that second spend to arrive after the pruning, since
-        /// otherwise the chainlocked arrival would have swept it — and that
-        /// second spend is later swept on a different input, the coin is
-        /// reported released though it is spent on chain. The inputs of a
-        /// pruned record survive nowhere else, so this cannot be resolved at
-        /// this layer.
         released_outpoints: Vec<OutPoint>,
+        /// Every spent-outpoint claim that changed while processing
+        /// `superseded_by`: those the removed transactions held, released or
+        /// handed to `superseded_by` or to another surviving spender, and
+        /// those made by recording `superseded_by` itself. Its `released`
+        /// contains `released_outpoints`, plus outputs of the removed
+        /// transactions, which are not coins.
+        spent_outpoint_changes: SpentOutpointChanges,
         /// Wallet balance after the removal.
         balance: WalletCoreBalance,
         /// Post-event balance **snapshots** for accounts whose balance
@@ -340,6 +340,10 @@ pub enum WalletEvent {
         /// transactionally with the inserted/updated records so UTXOs
         /// landing on them retain a parent address row.
         addresses_derived: Vec<DerivedAddress>,
+        /// Spent-outpoint claims made by recording this block's
+        /// transactions, in block order. A transaction that also swept is
+        /// left out: its `TransactionsSwept`, emitted first, carries them.
+        spent_outpoint_changes: SpentOutpointChanges,
     },
     /// The wallet's scan cursor advanced because the filter pipeline
     /// committed a batch covering blocks up to `height`. No records or
@@ -539,6 +543,7 @@ mod display_tests {
             superseded_by: Txid::from_raw_hash(dashcore::hashes::Hash::from_byte_array([2u8; 32])),
             winner_mined_height,
             released_outpoints: Vec::new(),
+            spent_outpoint_changes: SpentOutpointChanges::default(),
             balance: WalletCoreBalance::default(),
             account_balances: BTreeMap::new(),
         }

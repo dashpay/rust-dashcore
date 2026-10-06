@@ -1115,6 +1115,9 @@ impl FFIWalletEventCallbacks {
                 // needs it there, at which point the addition must be a
                 // flagged breaking change like #962's.
                 winner_mined_height: _,
+                // TODO: forward to C consumers too; like the height above it
+                // needs a flagged breaking change to the callbacks.
+                spent_outpoint_changes: _,
                 released_outpoints,
                 balance,
                 account_balances,
@@ -1173,6 +1176,7 @@ impl FFIWalletEventCallbacks {
                 balance,
                 account_balances,
                 addresses_derived,
+                spent_outpoint_changes: _,
             } => {
                 if let Some(cb) = self.on_transaction_detected {
                     let wallet_id_hex = hex::encode(wallet_id);
@@ -1251,6 +1255,7 @@ impl FFIWalletEventCallbacks {
                 account_balances,
                 addresses_derived,
                 chain_lock,
+                spent_outpoint_changes: _,
             } => {
                 if let Some(cb) = self.on_block_processed {
                     let wallet_id_hex = hex::encode(wallet_id);
@@ -1424,6 +1429,7 @@ mod tests {
             superseded_by: Txid::from_byte_array([2u8; 32]),
             winner_mined_height: Some(1_000),
             released_outpoints: Vec::new(),
+            spent_outpoint_changes: Default::default(),
             balance: WalletCoreBalance::default(),
             account_balances: BTreeMap::new(),
         });
@@ -1481,6 +1487,7 @@ mod tests {
                     vout: 7,
                 },
             ],
+            spent_outpoint_changes: Default::default(),
             balance: WalletCoreBalance::new(123_456, 0, 0, 0),
             account_balances: BTreeMap::new(),
         });
