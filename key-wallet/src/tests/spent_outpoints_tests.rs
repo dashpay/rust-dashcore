@@ -273,6 +273,76 @@ async fn reported_claim_changes_round_trip_through_restore() {
     assert_eq!(wallets[0], wallets[1], "the restored wallet must match the uninterrupted one");
 }
 
+/// Reloading the wallet must preserve a sibling account's permanent spent guard.
+#[test_case::test_case(0; "unknown_in_first_account")]
+#[test_case::test_case(1; "unknown_in_second_account")]
+#[tokio::test]
+async fn should_preserve_cross_account_unknown_claim_after_restore_and_abandon(
+    unknown_account: u32,
+) {
+    let (mut ctx, address) = restore_context();
+    let addresses = [ctx.receive_address.clone(), address];
+    let known_account = 1 - unknown_account;
+    let pristine = ctx.managed_wallet.clone();
+    let funding = Transaction::dummy(&addresses[unknown_account as usize], 20..21, &[150_000]);
+    let spent = OutPoint::new(funding.txid(), 0);
+    let foreign_spend = spending_tx(&[spent]);
+    let mut late = spending_tx(&[spent]);
+    late.output = Transaction::dummy(&addresses[known_account as usize], 30..31, &[140_000]).output;
+    let mut rows = BTreeMap::new();
+
+    // Public checker entry points create one account's unknown-spender guard.
+    for (tx, context) in [(&foreign_spend, in_block(20)), (&funding, in_block(10))] {
+        let result = ctx.check_transaction(tx, context).await;
+        fold_claims(&mut rows, &result.spent_outpoint_changes, &ctx);
+    }
+    assert_eq!(rows.get(&spent), Some(&None));
+    assert!(!ctx.managed_wallet.accounts.standard_bip44_accounts[&unknown_account]
+        .utxos
+        .contains_key(&spent));
+    ctx.managed_wallet.update_synced_height(200);
+    ctx.managed_wallet.apply_chain_lock(ChainLock::dummy(200));
+    assert!(!ctx.managed_wallet.observed_spent_outpoints().contains_key(&spent));
+
+    // A late mempool arrival also matches the other account through its output.
+    let result = ctx.check_transaction(&late, TransactionContext::Mempool).await;
+    assert!(result.is_relevant);
+    fold_claims(&mut rows, &result.spent_outpoint_changes, &ctx);
+    let uninterrupted = ctx.managed_wallet.clone();
+    let mut outcomes = Vec::new();
+    for restored in [false, true] {
+        let mut branch_rows = rows.clone();
+        ctx.managed_wallet = if restored {
+            pristine.clone()
+        } else {
+            uninterrupted.clone()
+        };
+        if restored {
+            ctx.managed_wallet
+                .restore_spent_outpoints(&rows.clone().into_iter().collect::<Vec<_>>());
+            // Retain/replay the claimant's record too: this is not an abandonment
+            // caused solely by the claimant's transaction record being missing.
+            let result = ctx.check_transaction(&late, TransactionContext::Mempool).await;
+            fold_claims(&mut branch_rows, &result.spent_outpoint_changes, &ctx);
+        }
+        assert!(ctx.managed_wallet.accounts.standard_bip44_accounts[&known_account]
+            .has_transaction(&late.txid()));
+        let outcome = ctx.managed_wallet.abandon_transaction(late.txid());
+        fold_claims(&mut branch_rows, &outcome.spent_outpoint_changes, &ctx);
+        let claim_after_abandon = ctx.managed_wallet.spent_outpoint_claims().get(&spent).copied();
+        let result = ctx.check_transaction(&funding, in_block(10)).await;
+        fold_claims(&mut branch_rows, &result.spent_outpoint_changes, &ctx);
+        let credited = ctx.managed_wallet.accounts.standard_bip44_accounts[&unknown_account]
+            .utxos
+            .contains_key(&spent);
+        eprintln!("restored={restored}, released_spent={}, claim={claim_after_abandon:?}, credited={credited}, balance={}",
+            outcome.spent_outpoint_changes.released.contains(&spent), ctx.managed_wallet.balance.total());
+        outcomes.push((claim_after_abandon, credited, ctx.managed_wallet.balance.total()));
+    }
+    assert_eq!(outcomes[0], (Some(None), false, 0));
+    assert_eq!(outcomes[1], outcomes[0], "restoring reported claims must preserve the permanent guard and never re-credit a spent coin");
+}
+
 /// Create a transaction that spends the given outpoints.
 fn spending_tx(spent: &[OutPoint]) -> Transaction {
     Transaction {

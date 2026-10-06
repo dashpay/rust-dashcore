@@ -361,13 +361,21 @@ impl ManagedWalletInfo {
     /// [`Self::restore_spent_outpoints`] takes.
     ///
     /// Equal to the rows a mirror keeps by applying every
-    /// [`SpentOutpointChanges`]. Where accounts name different spenders for
-    /// one outpoint, the first account's stands.
+    /// [`SpentOutpointChanges`]. An unknown spender in any account dominates
+    /// known spenders, preserving its permanent guard on restore. Otherwise,
+    /// where accounts name different spenders, the first account's stands.
     pub fn spent_outpoint_claims(&self) -> BTreeMap<OutPoint, Option<Txid>> {
         let mut claims = BTreeMap::new();
         for account in self.accounts.all_accounts().into_iter().filter_map(|a| a.as_funds()) {
             for (outpoint, claimant) in account.spent_claims() {
-                claims.entry(outpoint).or_insert(claimant);
+                claims
+                    .entry(outpoint)
+                    .and_modify(|existing| {
+                        if claimant.is_none() {
+                            *existing = None;
+                        }
+                    })
+                    .or_insert(claimant);
             }
         }
         claims

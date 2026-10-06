@@ -237,7 +237,7 @@ impl ManagedWalletInfo {
     }
 
     /// The wallet-level spent claim on each of `outpoints`: `None` when no
-    /// account holds one, otherwise the first holding account's claimant.
+    /// account holds one. Unknown claimants dominate; otherwise the first stands.
     pub(crate) fn spent_claims_on(
         &self,
         outpoints: impl IntoIterator<Item = OutPoint>,
@@ -246,7 +246,18 @@ impl ManagedWalletInfo {
             self.accounts.all_accounts().into_iter().filter_map(|a| a.as_funds()).collect();
         outpoints
             .into_iter()
-            .map(|outpoint| (outpoint, accounts.iter().find_map(|a| a.spent_claim(&outpoint))))
+            .map(|outpoint| {
+                let claim = accounts.iter().filter_map(|a| a.spent_claim(&outpoint)).reduce(
+                    |first, next| {
+                        if next.is_none() {
+                            None
+                        } else {
+                            first
+                        }
+                    },
+                );
+                (outpoint, claim)
+            })
             .collect()
     }
 
