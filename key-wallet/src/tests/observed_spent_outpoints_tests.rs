@@ -663,7 +663,7 @@ fn truncate_above_drops_spends_observed_above_the_fork() {
     info.record_observed_spends(&spending_tx(&[op_kept]), 100);
     info.record_observed_spends(&spending_tx(&[op_dropped]), 101);
 
-    info.truncate_above(100);
+    info.truncate_above(100).expect("truncates");
 
     assert!(info.observed_spent_outpoints().contains_key(&op_kept));
     assert!(!info.observed_spent_outpoints().contains_key(&op_dropped));
@@ -674,7 +674,7 @@ async fn truncate_above_restores_a_held_output_whose_spend_it_drops() {
     let (mut ctx, funding, _spend) = spend_first_context(in_block(100, 1)).await;
     let outpoint = OutPoint::new(funding.txid(), 0);
 
-    let truncation = ctx.managed_wallet.truncate_above(150);
+    let truncation = ctx.managed_wallet.truncate_above(150).expect("truncates");
 
     assert_eq!(truncation.restored_outpoints, vec![outpoint]);
     let account = ctx.managed_wallet.first_bip44_managed_account().expect("BIP44 account");

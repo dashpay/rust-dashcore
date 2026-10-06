@@ -15,7 +15,7 @@ use crate::transaction_checking::WalletTransactionChecker;
 use crate::wallet::managed_wallet_info::transaction_building::AccountTypePreference;
 use crate::wallet::managed_wallet_info::TransactionRecord;
 use crate::wallet::ManagedWalletInfo;
-use crate::{Network, Utxo, Wallet, WalletCoreBalance};
+use crate::{Error, Network, Utxo, Wallet, WalletCoreBalance};
 use dashcore::address::Payload;
 use dashcore::ephemerealdata::chain_lock::ChainLock;
 use dashcore::ephemerealdata::instant_lock::InstantLock;
@@ -269,7 +269,10 @@ pub trait WalletInfoInterface: Sized + WalletTransactionChecker + ManagedAccount
     /// observed in them, and the sync heights past `height`. The coins those
     /// transactions spent are unspent again. Used when a fork replaces the chain
     /// above `height`.
-    fn truncate_above(&mut self, height: CoreBlockHeight) -> Truncation;
+    ///
+    /// Fails with [`Error::TruncateBelowChainLock`] and changes nothing when
+    /// `height` is below the applied ChainLock, whose blocks are final.
+    fn truncate_above(&mut self, height: CoreBlockHeight) -> Result<Truncation, Error>;
 
     /// Records whose coinbase maturity threshold lies in
     /// `(old_height, new_height]`, i.e. coinbase records that just matured
@@ -561,7 +564,16 @@ impl WalletInfoInterface for ManagedWalletInfo {
         self.prune_finalized_observed_spends();
     }
 
-    fn truncate_above(&mut self, height: CoreBlockHeight) -> Truncation {
+    fn truncate_above(&mut self, height: CoreBlockHeight) -> Result<Truncation, Error> {
+        if let Some(chain_lock) =
+            self.last_applied_chain_lock().filter(|chain_lock| height < chain_lock.block_height)
+        {
+            return Err(Error::TruncateBelowChainLock {
+                height,
+                chain_locked: chain_lock.block_height,
+            });
+        }
+
         let dropped_spends: BTreeSet<OutPoint> = self
             .observed_spent_outpoints
             .iter()
@@ -596,10 +608,10 @@ impl WalletInfoInterface for ManagedWalletInfo {
         self.update_balance();
 
         restored_outpoints.sort_unstable();
-        Truncation {
+        Ok(Truncation {
             txids: txids.into_iter().collect(),
             restored_outpoints,
-        }
+        })
     }
 
     fn matured_coinbase_records(

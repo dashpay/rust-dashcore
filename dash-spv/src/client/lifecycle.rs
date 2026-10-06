@@ -271,14 +271,23 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
             self.stop_locked(forked).await;
 
             tracing::warn!("Fork at height {}, dropping the stored chain above it", fork_height);
-            {
+            // The wallets go first: a wallet refusing the fork leaves storage as
+            // it is, and storage failing after them keeps the fork unstored, so
+            // it is detected and retried.
+            let truncated = async {
+                self.wallet.write().await.truncate_above(fork_height)?;
                 let mut storage = self.storage.lock().await;
                 BlockHeaderStorage::truncate_above(&mut *storage, fork_height).await?;
                 FilterHeaderStorage::truncate_above(&mut *storage, fork_height).await?;
                 FilterStorage::truncate_above(&mut *storage, fork_height).await?;
                 BlockStorage::truncate_above(&mut *storage, fork_height).await?;
+                Ok::<_, Box<dyn std::error::Error + Send + Sync>>(())
             }
-            self.wallet.write().await.truncate_above(fork_height);
+            .await;
+
+            if let Err(e) = truncated {
+                tracing::warn!("Fork at height {} not followed: {}", fork_height, e);
+            }
 
             self.run_locked(&mut sync_loop).await
         })

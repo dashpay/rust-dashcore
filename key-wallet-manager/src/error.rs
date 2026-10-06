@@ -28,6 +28,15 @@ pub enum WalletError {
     TransactionBuild(String),
     /// Insufficient funds
     InsufficientFunds,
+    /// A truncation below a wallet's applied ChainLock, whose blocks are final
+    TruncateBelowChainLock {
+        /// The wallet that refused the truncation
+        wallet_id: WalletId,
+        /// The height asked to truncate above
+        height: u32,
+        /// The height of the wallet's applied ChainLock
+        chain_locked: u32,
+    },
 }
 
 impl core::fmt::Display for WalletError {
@@ -56,6 +65,21 @@ impl core::fmt::Display for WalletError {
             WalletError::InvalidParameter(msg) => write!(f, "Invalid parameter: {}", msg),
             WalletError::TransactionBuild(err) => write!(f, "Transaction build failed: {}", err),
             WalletError::InsufficientFunds => write!(f, "Insufficient funds"),
+            WalletError::TruncateBelowChainLock {
+                wallet_id,
+                height,
+                chain_locked,
+            } => {
+                write!(f, "Cannot truncate wallet ")?;
+                for byte in wallet_id.iter() {
+                    write!(f, "{:02x}", byte)?;
+                }
+                write!(
+                    f,
+                    " above {}: blocks up to the ChainLock at {} are final",
+                    height, chain_locked
+                )
+            }
         }
     }
 }

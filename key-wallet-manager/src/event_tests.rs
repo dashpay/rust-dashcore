@@ -1258,7 +1258,7 @@ async fn test_truncate_above_emits_chain_truncated_per_wallet() {
     manager.process_block_for_wallets(&block, block.block_hash(), 101, &wallets).await;
 
     let mut rx = manager.subscribe_events();
-    manager.truncate_above(100);
+    manager.truncate_above(100).expect("truncates");
 
     let events = drain_events(&mut rx);
     assert_eq!(events.len(), 1, "one event per wallet expected, got {:?}", events);
@@ -1279,6 +1279,41 @@ async fn test_truncate_above_emits_chain_truncated_per_wallet() {
             assert_eq!(account_balances.values().map(|b| b.total()).sum::<u64>(), TX_AMOUNT);
         }
         other => panic!("expected ChainTruncated, got {:?}", other),
+    }
+}
+
+#[tokio::test]
+async fn test_truncate_above_below_a_chain_lock_changes_no_wallet() {
+    let (mut manager, locked_id, _addr) = setup_manager_with_wallet();
+    manager.update_wallet_synced_height(&locked_id, 200);
+    manager.apply_chain_lock(ChainLock::dummy(100));
+    // Created after the ChainLock, so only `locked_id` refuses.
+    let other_id = manager
+        .create_wallet_from_mnemonic(
+            "legal winner thank year wave sausage worth useful legal winner thank yellow",
+            0,
+            key_wallet::wallet::initialization::WalletAccountCreationOptions::Default,
+        )
+        .unwrap();
+    manager.update_wallet_synced_height(&other_id, 200);
+    let mut rx = manager.subscribe_events();
+
+    match manager.truncate_above(99) {
+        Err(WalletError::TruncateBelowChainLock {
+            wallet_id,
+            height: 99,
+            chain_locked: 100,
+        }) => assert_eq!(wallet_id, locked_id),
+        other => panic!("expected TruncateBelowChainLock, got {:?}", other),
+    }
+    assert!(drain_events(&mut rx).is_empty(), "a refused truncation emits nothing");
+    for wallet_id in [locked_id, other_id] {
+        assert_eq!(manager.get_wallet_info(&wallet_id).unwrap().synced_height(), 200);
+    }
+
+    manager.truncate_above(100).expect("truncates at the ChainLock");
+    for wallet_id in [locked_id, other_id] {
+        assert_eq!(manager.get_wallet_info(&wallet_id).unwrap().synced_height(), 100);
     }
 }
 

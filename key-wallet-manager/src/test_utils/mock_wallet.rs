@@ -1,5 +1,6 @@
 use crate::{
-    BlockProcessingResult, MempoolTransactionResult, WalletEvent, WalletId, WalletInterface,
+    BlockProcessingResult, MempoolTransactionResult, WalletError, WalletEvent, WalletId,
+    WalletInterface,
 };
 use dashcore::ephemerealdata::chain_lock::ChainLock;
 use dashcore::ephemerealdata::instant_lock::InstantLock;
@@ -234,8 +235,9 @@ impl WalletInterface for MockWallet {
         }
     }
 
-    fn truncate_above(&mut self, height: CoreBlockHeight) {
+    fn truncate_above(&mut self, height: CoreBlockHeight) -> Result<(), WalletError> {
         self.synced_height = self.synced_height.min(height);
+        Ok(())
     }
 
     fn update_wallet_last_processed_height(
@@ -366,8 +368,9 @@ impl WalletInterface for NonMatchingMockWallet {
         }
     }
 
-    fn truncate_above(&mut self, height: CoreBlockHeight) {
+    fn truncate_above(&mut self, height: CoreBlockHeight) -> Result<(), WalletError> {
         self.synced_height = self.synced_height.min(height);
+        Ok(())
     }
 
     fn update_wallet_last_processed_height(
@@ -545,10 +548,11 @@ impl WalletInterface for MultiMockWallet {
         }
     }
 
-    fn truncate_above(&mut self, height: CoreBlockHeight) {
+    fn truncate_above(&mut self, height: CoreBlockHeight) -> Result<(), WalletError> {
         for state in self.wallets.values_mut() {
             state.synced_height = state.synced_height.min(height);
         }
+        Ok(())
     }
 
     fn update_wallet_last_processed_height(
