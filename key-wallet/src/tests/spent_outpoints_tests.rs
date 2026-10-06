@@ -1,6 +1,7 @@
 //! Tests for spent_outpoints deserialization and tracking.
 
 use dashcore::blockdata::transaction::{OutPoint, Transaction};
+use dashcore::ephemerealdata::chain_lock::ChainLock;
 use dashcore::hashes::Hash;
 use dashcore::{BlockHash, TxIn, Txid};
 
@@ -11,6 +12,135 @@ use crate::managed_account::transaction_record::TransactionDirection;
 use crate::managed_account::ManagedCoreFundsAccount;
 use crate::test_utils::TestWalletContext;
 use crate::transaction_checking::{BlockInfo, TransactionContext, TransactionType};
+use crate::wallet::initialization::WalletAccountCreationOptions;
+use crate::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
+use crate::wallet::{ManagedWalletInfo, Wallet};
+use crate::Network;
+
+fn restore_context() -> (TestWalletContext, dashcore::Address) {
+    let wallet = Wallet::from_seed_bytes(
+        [42; 64],
+        Network::Testnet,
+        WalletAccountCreationOptions::BIP44AccountsOnly([0, 1].into_iter().collect()),
+    )
+    .unwrap();
+    let mut managed_wallet = ManagedWalletInfo::from_wallet(&wallet, 0);
+    let mut address = |index| {
+        let xpub = wallet.accounts.standard_bip44_accounts[&index].account_xpub;
+        managed_wallet
+            .accounts
+            .standard_bip44_accounts
+            .get_mut(&index)
+            .unwrap()
+            .next_receive_address(Some(&xpub), true)
+            .unwrap()
+    };
+    let receive_address = address(0);
+    let second_address = address(1);
+    let xpub = wallet.accounts.standard_bip44_accounts[&0].account_xpub;
+    (
+        TestWalletContext {
+            wallet,
+            managed_wallet,
+            receive_address,
+            xpub,
+        },
+        second_address,
+    )
+}
+
+#[tokio::test]
+async fn restored_spends_survive_finality_without_records() {
+    let (mut ctx, address) = restore_context();
+    let funding = Transaction::dummy(&address, 10..11, &[150_000, 90_000]);
+    let claims = [
+        (OutPoint::new(funding.txid(), 0), None),
+        (OutPoint::new(funding.txid(), 1), Some(Txid::from([0x99; 32]))),
+    ];
+    ctx.managed_wallet.restore_spent_outpoints(&claims);
+    ctx.managed_wallet.restore_spent_outpoints(&claims);
+    ctx.managed_wallet.restore_spent_outpoints(&[]);
+    assert!(ctx.managed_wallet.accounts.all_accounts().iter().all(|a| a.transactions().is_empty()));
+    assert!(ctx.managed_wallet.accounts.all_funding_accounts().iter().all(|a| a.utxos.is_empty()));
+    assert_eq!(ctx.managed_wallet.balance.total(), 0);
+    assert!(ctx.managed_wallet.observed_spent_outpoints().is_empty());
+    ctx.managed_wallet.update_synced_height(200);
+    ctx.managed_wallet.apply_chain_lock(ChainLock::dummy(200));
+    ctx.check_transaction(&funding, TransactionContext::Mempool).await;
+    assert!(
+        ctx.managed_wallet.accounts.standard_bip44_accounts[&1].utxos.is_empty(),
+        "restored claims must prevent credit without any spending transaction body"
+    );
+    assert_eq!(ctx.managed_wallet.balance.total(), 0);
+}
+
+#[test_case::test_case(false; "conflict")]
+#[test_case::test_case(true; "abandonment")]
+#[tokio::test]
+async fn restored_spends_release_only_removed_claimants(abandon: bool) {
+    for kind in 0..4 {
+        let (mut ctx, address) = restore_context();
+        let funding = Transaction::dummy(&address, 20..21, &[150_000, 90_000]);
+        let spent = OutPoint::new(funding.txid(), 0);
+        let unrelated = OutPoint::new(funding.txid(), 1);
+        let contested = OutPoint::new(Txid::from([0x55; 32]), 0);
+        let mut loser = spending_tx(&[contested, spent]);
+        loser.output = Transaction::dummy(&ctx.receive_address, 30..31, &[140_000]).output;
+        let claimant = match kind {
+            0 | 3 => Some(loser.txid()),
+            1 => None,
+            _ => Some(Txid::from([0x99; 32])),
+        };
+        ctx.managed_wallet.restore_spent_outpoints(&[(spent, claimant), (unrelated, None)]);
+        ctx.check_transaction(&loser, TransactionContext::Mempool).await;
+        assert!(ctx.bip44_account().has_transaction(&loser.txid()));
+        assert!(
+            !ctx.managed_wallet.accounts.standard_bip44_accounts[&1].has_transaction(&loser.txid())
+        );
+        if kind == 3 {
+            let mut survivor = spending_tx(&[spent]);
+            survivor.output = loser.output.clone();
+            ctx.check_transaction(&survivor, TransactionContext::Mempool).await;
+            assert!(ctx.bip44_account().has_transaction(&survivor.txid()));
+        }
+        if abandon {
+            assert_eq!(ctx.managed_wallet.abandon_transaction(loser.txid()).records_removed, 1);
+        } else {
+            let result = ctx
+                .check_transaction(
+                    &spending_tx(&[contested]),
+                    TransactionContext::InBlock(BlockInfo::new(
+                        100,
+                        BlockHash::from([0x66; 32]),
+                        1_700_000_000,
+                    )),
+                )
+                .await;
+            assert_eq!(result.swept_transactions, vec![loser.txid()]);
+            assert_eq!(result.released_outpoints.contains(&spent), kind == 0);
+        }
+        ctx.check_transaction(&funding, TransactionContext::Mempool).await;
+        let account = &ctx.managed_wallet.accounts.standard_bip44_accounts[&1];
+        assert_eq!(
+            account.utxos.contains_key(&spent),
+            kind == 0,
+            "claimant kind {kind}, abandon={abandon}"
+        );
+        assert!(!account.utxos.contains_key(&unrelated));
+    }
+}
+
+#[test]
+fn restored_spends_leave_snapshot_encoding_unchanged() {
+    let mut info = ManagedWalletInfo::dummy(1);
+    info.accounts.standard_bip44_accounts.insert(0, ManagedCoreFundsAccount::dummy_bip44());
+    let before = serde_json::to_string(&info).unwrap();
+    info.restore_spent_outpoints(&[(OutPoint::new(Txid::from([0x88; 32]), 0), None)]);
+    let after = serde_json::to_string(&info).unwrap();
+    assert_eq!(before, after);
+    let restored: ManagedWalletInfo = serde_json::from_str(&after).unwrap();
+    assert_eq!(serde_json::to_string(&restored).unwrap(), before);
+}
 
 /// Create a transaction that spends the given outpoints.
 fn spending_tx(spent: &[OutPoint]) -> Transaction {
