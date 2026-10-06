@@ -24,6 +24,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   claimed by that record, and `released_outpoints` lists an outpoint only once no funding account
   guards it.
 
+### Fixed
+
+- `ManagedWalletInfo::sweep_conflicts` and `abandon_transaction_with_spends` in `key-wallet` keep an
+  outpoint guarded when the removed transaction spent it and a live transaction recorded only in
+  another account still spends it. Before, the funding account dropped its guard and credited the
+  coin when its funding transaction arrived.
+
 ## 0.44.0 - 2026-07-01
 
 ### Added

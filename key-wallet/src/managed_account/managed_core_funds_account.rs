@@ -60,10 +60,12 @@ pub struct ManagedCoreFundsAccount {
     /// Rebuilt from `transactions` during deserialization.
     #[cfg_attr(feature = "serde", serde(skip_serializing))]
     spent_outpoints: HashSet<OutPoint>,
-    /// Spent outpoints restored from external persistence, each with the
-    /// transaction named as its spender; `None` guards permanently. Guards
-    /// on its own, apart from `spent_outpoints`, and is reapplied after
-    /// loading rather than serialized.
+    /// Spent outpoints claimed apart from this account's own records, each
+    /// with the transaction named as its spender; `None` guards permanently.
+    /// Restored from external persistence, or inherited when a record
+    /// removed here leaves a live record in another account spending the
+    /// outpoint. Guards on its own, apart from `spent_outpoints`, and is
+    /// reapplied after loading rather than serialized.
     #[cfg_attr(feature = "serde", serde(skip))]
     restored_spent_claims: BTreeMap<OutPoint, Option<Txid>>,
     /// Ours, but spent before the funding arrived, so never in `utxos` (#649).
@@ -78,13 +80,16 @@ pub struct ManagedCoreFundsAccount {
 }
 
 /// What [`ManagedCoreFundsAccount::apply_abandon`] removed from one account.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct AbandonRemoval {
     /// UTXOs the abandoned transactions had contributed.
     pub utxos: usize,
     /// Transaction records actually dropped — a txid the account never held
     /// removes nothing.
     pub records: usize,
+    /// Outpoints whose mark this account released: inputs of the dropped
+    /// records that none of its surviving records spends.
+    pub released: HashSet<OutPoint>,
 }
 
 /// What [`ManagedCoreFundsAccount::drop_conflicted_transactions`] removed
@@ -230,6 +235,16 @@ impl ManagedCoreFundsAccount {
         for input in &tx.input {
             if let Some(claimant) = self.restored_spent_claims.get_mut(&input.previous_output) {
                 *claimant = None;
+            }
+        }
+    }
+
+    /// Claim each outpoint for the live record still spending it, unless
+    /// this account already guards it.
+    pub(crate) fn inherit_spent_claims(&mut self, still_spent: &[(OutPoint, Txid)]) {
+        for (outpoint, spender) in still_spent {
+            if !self.is_outpoint_spent(outpoint) {
+                self.restored_spent_claims.insert(*outpoint, Some(*spender));
             }
         }
     }
@@ -510,9 +525,10 @@ impl ManagedCoreFundsAccount {
     /// persistence mirror which coins are genuinely free again has to catch
     /// it here or not at all.
     ///
-    /// Restored claims are not consulted: one may still guard a returned
-    /// outpoint. `ManagedWalletInfo::release_restored_claims` settles those
-    /// wallet-wide.
+    /// Neither restored claims nor other accounts are consulted: a claim may
+    /// still guard a returned outpoint, and a live record in another account
+    /// may still spend it. `ManagedWalletInfo` settles both wallet-wide, in
+    /// `release_restored_claims` and `inherit_spent_claims`.
     fn release_spent_marks(&mut self, freed: &HashSet<OutPoint>) -> HashSet<OutPoint> {
         if freed.is_empty() {
             return HashSet::new();
@@ -569,9 +585,7 @@ impl ManagedCoreFundsAccount {
                 freed.extend(record.transaction.input.iter().map(|input| input.previous_output));
             }
         }
-        if records > 0 {
-            self.release_spent_marks(&freed);
-        }
+        let released = self.release_spent_marks(&freed);
 
         if utxos > 0 {
             self.keys.bump_monitor_revision();
@@ -579,6 +593,7 @@ impl ManagedCoreFundsAccount {
         AbandonRemoval {
             utxos,
             records,
+            released,
         }
     }
 

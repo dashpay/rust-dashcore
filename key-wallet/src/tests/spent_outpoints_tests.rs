@@ -392,6 +392,78 @@ async fn claim_passes_to_a_surviving_spender_until_it_is_removed_too(abandon: bo
     assert!(ctx.managed_wallet.accounts.standard_bip44_accounts[&1].utxos.contains_key(&spent));
 }
 
+/// Account 0 records a spend of its coin, whose funding is still to come, and
+/// account 1 alone records a second one. The first spend is then removed.
+/// Returns the funding, the surviving spend and the survivor's other input.
+async fn remove_spend_with_survivor_in_second_account(
+    ctx: &mut TestWalletContext,
+    second_address: &dashcore::Address,
+    abandon: bool,
+) -> (Transaction, Transaction, OutPoint) {
+    let funding = Transaction::dummy(&ctx.receive_address, 20..21, &[150_000]);
+    let coin = OutPoint::new(funding.txid(), 0);
+    let removed_input = OutPoint::new(Txid::from([0x55; 32]), 0);
+    let survivor_input = OutPoint::new(Txid::from([0x56; 32]), 0);
+    let removed = spend_paying(&[removed_input, coin], &ctx.receive_address);
+    let survivor = spend_paying(&[survivor_input, coin], second_address);
+    ctx.check_transaction(&removed, TransactionContext::Mempool).await;
+    ctx.check_transaction(&survivor, TransactionContext::Mempool).await;
+    assert!(ctx.bip44_account().has_transaction(&removed.txid()));
+    assert!(!ctx.bip44_account().has_transaction(&survivor.txid()));
+
+    if abandon {
+        assert_eq!(ctx.managed_wallet.abandon_transaction(removed.txid()).records_removed, 1);
+    } else {
+        let result = ctx.check_transaction(&spending_tx(&[removed_input]), in_block(100)).await;
+        assert_eq!(result.swept_transactions, vec![removed.txid()]);
+        assert!(result.released_outpoints.is_empty());
+    }
+    (funding, survivor, survivor_input)
+}
+
+/// An account releases a mark from its own records alone. A record removed
+/// from account 0 while account 1 still holds a live spend of the coin must
+/// leave the coin guarded in account 0, until that spend is removed too.
+#[test_case::test_case(false; "conflict")]
+#[test_case::test_case(true; "abandonment")]
+#[tokio::test]
+async fn coin_stays_guarded_until_another_accounts_spend_is_removed_too(abandon: bool) {
+    let (mut ctx, second_address) = restore_context();
+    let (funding, survivor, survivor_input) =
+        remove_spend_with_survivor_in_second_account(&mut ctx, &second_address, abandon).await;
+    let coin = OutPoint::new(funding.txid(), 0);
+    assert!(ctx
+        .managed_wallet
+        .accounts
+        .all_funding_accounts()
+        .iter()
+        .all(|account| account.is_outpoint_spent(&coin)));
+
+    if abandon {
+        assert_eq!(ctx.managed_wallet.abandon_transaction(survivor.txid()).records_removed, 1);
+    } else {
+        let result = ctx.check_transaction(&spending_tx(&[survivor_input]), in_block(101)).await;
+        assert_eq!(result.swept_transactions, vec![survivor.txid()]);
+        assert_eq!(result.released_outpoints, vec![coin]);
+    }
+    ctx.check_transaction(&funding, TransactionContext::Mempool).await;
+    assert!(ctx.bip44_account().utxos.contains_key(&coin));
+}
+
+/// The funding arrives while account 1 still holds a live spend of the coin.
+#[test_case::test_case(false; "conflict")]
+#[test_case::test_case(true; "abandonment")]
+#[tokio::test]
+async fn funding_is_not_credited_while_another_accounts_spend_is_live(abandon: bool) {
+    let (mut ctx, second_address) = restore_context();
+    let (funding, _, _) =
+        remove_spend_with_survivor_in_second_account(&mut ctx, &second_address, abandon).await;
+
+    ctx.check_transaction(&funding, TransactionContext::Mempool).await;
+
+    assert!(!ctx.bip44_account().utxos.contains_key(&OutPoint::new(funding.txid(), 0)));
+}
+
 /// The claimant's removal frees the outpoint in every account holding the
 /// claim, and the sweep reports it exactly once.
 #[tokio::test]
