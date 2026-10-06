@@ -13,8 +13,6 @@ mod test_macros;
 
 #[cfg(test)]
 mod address_metadata_tests;
-#[cfg(all(test, feature = "bip38"))]
-mod bip38_tests;
 #[cfg(test)]
 mod mnemonic_tests;
 #[cfg(test)]
@@ -24,8 +22,6 @@ mod wallet_comprehensive_tests;
 
 pub mod account;
 pub mod bip32;
-#[cfg(feature = "bip38")]
-pub mod bip38;
 pub mod derivation;
 #[cfg(feature = "bls")]
 pub mod derivation_bls_bip32;
@@ -47,8 +43,6 @@ pub use dashcore;
 
 pub use account::{Account, AccountCollection, AccountType};
 pub use bip32::{ChildNumber, DerivationPath, ExtendedPrivKey, ExtendedPubKey};
-#[cfg(feature = "bip38")]
-pub use bip38::{encrypt_private_key, generate_intermediate_code, Bip38EncryptedKey, Bip38Mode};
 pub use dashcore::Network;
 pub use dashcore::{Address, AddressType};
 pub use derivation::{DerivationPathBuilder, DerivationStrategy, KeyDerivation};
