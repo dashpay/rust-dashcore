@@ -882,8 +882,9 @@ impl<'a> Encodable for Annex<'a> {
 }
 
 fn is_invalid_use_of_sighash_single(sighash: u32, input_index: usize, output_len: usize) -> bool {
-    // Upstream's `from_consensus` keeps non-standard flags as they are, so mask the way ours did.
-    (sighash & 0x9f) == 0x03 && input_index >= output_len
+    // Core checks `(nHashType & 0x1f) == SIGHASH_SINGLE`, so ANYONECANPAY
+    // counts as well.
+    EcdsaSighashType::from_consensus(sighash).is_single() && input_index >= output_len
 }
 
 #[cfg(test)]
@@ -903,8 +904,6 @@ mod tests {
 
     #[test]
     fn sighash_single_bug() {
-        const SIGHASH_SINGLE: u32 = 3;
-
         // We need a tx with more inputs than outputs.
         let tx = Transaction {
             version: 1,
@@ -916,10 +915,15 @@ mod tests {
         let script = ScriptBuf::new();
         let cache = SighashCache::new(&tx);
 
-        let got = cache.legacy_signature_hash(1, &script, SIGHASH_SINGLE).expect("sighash");
-        let want = LegacySighash::from_slice(&UINT256_ONE).unwrap();
+        let one = LegacySighash::from_slice(&UINT256_ONE).unwrap();
 
-        assert_eq!(got, want)
+        // Low five bits say SINGLE, with or without ANYONECANPAY.
+        for flag in [0x03, 0x23, 0x83, 0xa3] {
+            let got = cache.legacy_signature_hash(1, &script, flag).expect("sighash");
+            assert_eq!(got, one, "{flag:#x}");
+        }
+        let got = cache.legacy_signature_hash(1, &script, 0x01).expect("sighash");
+        assert_ne!(got, one);
     }
 
     #[ignore]
